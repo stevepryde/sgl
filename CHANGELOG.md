@@ -20,6 +20,11 @@ docs and specs the entry links.
   framing (reserved bits, an unmasked client frame), was reported as
   `Transport`; now `Peer` and `ProtocolViolation` respectively. No
   game-code change needed unless the game branches on `Transport`.
+- `sgl-2d` `SpritePass::prepare`: a frame with more instances than the
+  device's `max_buffer_size` holds (about 3.3 million at the 256 MiB
+  default) grew the instance buffer past it, a wgpu validation error; it now
+  draws the first that many (world, then screen) and drops the rest, which
+  `draw_stats` reflects. No game-code change needed.
 - `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and

@@ -879,6 +879,10 @@ impl SpritePass {
     /// frame; [`draw_world`](Self::draw_world) and
     /// [`draw_screen`](Self::draw_screen) then encode the batches into
     /// their passes. Instances whose texture was never uploaded are skipped.
+    /// The instance buffer holds at most the device's `max_buffer_size`
+    /// worth of instances (about 3.3 million at wgpu's default 256 MiB);
+    /// the first that many in draw order (world, then screen) are drawn and
+    /// the rest are dropped, as [`draw_stats`](Self::draw_stats) reports.
     #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
@@ -895,12 +899,17 @@ impl SpritePass {
         self.raw.clear();
         self.batches.clear();
         self.target_size = target_size;
+        // The most instances one buffer the device accepts can hold.
+        let max_instances = device.limits().max_buffer_size / size_of::<InstanceRaw>() as u64;
         let channels = [
             (0usize, &list.world, world_units),
             (1usize, &list.screen, WorldUnits::default()),
         ];
-        for (camera, channel, units) in channels {
+        'convert: for (camera, channel, units) in channels {
             for inst in channel {
+                if self.raw.len() as u64 >= max_instances {
+                    break 'convert; // over the device's buffer limit: drop the rest
+                }
                 let Some(entry) = self.entries.get(&inst.texture) else {
                     continue; // never uploaded — skip, never panic mid-frame
                 };
@@ -954,7 +963,7 @@ impl SpritePass {
         );
         let needed = self.raw.len() as u64;
         if needed > self.instance_capacity {
-            let new_cap = needed.next_power_of_two();
+            let new_cap = needed.next_power_of_two().min(max_instances);
             self.instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("sprite instance buffer"),
                 size: new_cap * size_of::<InstanceRaw>() as u64,
@@ -2284,6 +2293,67 @@ mod gpu_tests {
         };
         for p in bytes.chunks_exact(4) {
             assert_eq!(p, [128, 128, 128, 255], "{p:?}");
+        }
+    }
+
+    /// #437: a frame with more instances than one buffer the device accepts
+    /// can hold draws the first that many and drops the rest, with no
+    /// validation error. The oracle is the device's own validation at a
+    /// small `max_buffer_size`: growing to the next power of two (512
+    /// instances for 400) would create a buffer past it.
+    #[test]
+    fn instances_past_the_device_buffer_limit_are_dropped() {
+        // `device()` reports (or, under SGL_REQUIRE_GPU, fails on) a host
+        // without an adapter; this test needs its own limits.
+        if device().is_none() {
+            return;
+        }
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+                .expect("an adapter, as device() found one");
+        let max_instances = 300u64;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                max_buffer_size: max_instances * size_of::<InstanceRaw>() as u64,
+                ..wgpu::Limits::default()
+            },
+            ..Default::default()
+        }))
+        .unwrap();
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut pass = SpritePass::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+            LightingSpace::Gamma,
+        );
+        let mut assets = Assets::<Texture>::new();
+        let white = assets.insert("white.png".into(), flat(1, 1, [255; 4]));
+        pass.upload(&device, &queue, white, assets.get(white).unwrap())
+            .unwrap();
+        // 400 one-pixel sprites, one per pixel of a 20 × 20 target in row
+        // order: the first 300 fill rows 0..15.
+        let side = 20u32;
+        let mut list = DrawList::new();
+        for i in 0..side * side {
+            let (x, y) = ((i % side) as f32, (i / side) as f32);
+            list.push_screen(SpriteInstance::new(white, Vec2::new(x + 0.5, y + 0.5)));
+        }
+        let pixels = draw_screen_target(&device, &queue, &mut pass, &list, (side, side));
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        if let Some(error) = pollster::block_on(validation.pop()) {
+            panic!("{error}");
+        }
+        assert_eq!(pass.draw_stats().screen.instances, max_instances as u32);
+        for (i, p) in pixels.chunks_exact(4).enumerate() {
+            let expected = if (i as u64) < max_instances {
+                [255; 4]
+            } else {
+                [0; 4]
+            };
+            assert_eq!(p, expected, "pixel {i}");
         }
     }
 }
