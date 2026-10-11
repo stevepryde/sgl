@@ -913,3 +913,52 @@ fn instancing_beyond_the_load_limit_is_rejected() {
         .to_string();
     assert!(error.contains("bytes one load may"), "{error}");
 }
+
+// Plausible defect: work for each morph-weight channel that walks its
+// mesh's primitives, which costs channels times primitives: 30000 channels
+// on nodes outside the scene, all using a mesh of 60000 primitives without
+// targets before its morphed one, a file of about 4 MB. A per-channel walk
+// visits 1.8 billion primitives, tens of seconds even optimized; linear
+// import reads it in a fraction of a second. The bound sits far above what
+// a slow, shared runner needs for the linear import.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn many_morph_weight_channels_on_a_mesh_of_many_primitives_import_in_linear_time() {
+    const PRIMITIVES: usize = 60_000;
+    const CHANNELS: usize = 30_000;
+    let mut buffer = Buffer::default();
+    let positions = buffer.floats(&[0., 0., 0., 1., 0., 0., 0., 1., 0.], "VEC3", 3);
+    let normals = buffer.floats(&[0., 0., 1., 0., 0., 1., 0., 0., 1.], "VEC3", 3);
+    let times = buffer.floats(&[0.], "SCALAR", 1);
+    let weights = buffer.floats(&[1.], "SCALAR", 1);
+    let mut primitives = vec![json!({"attributes": {"POSITION": positions}}); PRIMITIVES];
+    primitives.push(
+        json!({"attributes": {"POSITION": positions, "NORMAL": normals},
+        "targets": [{"POSITION": normals}]}),
+    );
+    let mut nodes = vec![json!({"mesh": 0})];
+    nodes.extend(vec![json!({"mesh": 1}); CHANNELS]);
+    let channels: Vec<Value> = (1..=CHANNELS)
+        .map(|node| json!({"sampler": 0, "target": {"node": node, "path": "weights"}}))
+        .collect();
+    let document = json!({
+        "asset": {"version": "2.0"},
+        "meshes": [
+            {"primitives": [{"attributes": {"POSITION": positions, "NORMAL": normals}}]},
+            {"primitives": primitives}
+        ],
+        "nodes": nodes,
+        "animations": [{"samplers": [{"input": times, "output": weights}], "channels": channels}],
+        "scenes": [{"nodes": [0]}], "scene": 0
+    });
+    let bytes = buffer.glb(document);
+    let start = std::time::Instant::now();
+    let asset = load_slice(&bytes).unwrap();
+    let elapsed = start.elapsed();
+    assert_eq!(asset.rig.clips[0].channels.len(), CHANNELS);
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "a {} byte file took {elapsed:?} to import",
+        bytes.len()
+    );
+}
