@@ -42,8 +42,8 @@ pub(crate) struct PreparedRayModel {
 /// table, each mesh's packed vertices (`shading::packed_vertex`), from a
 /// multiple of `VERTEX_WORDS`, indices and shader data, where it has any,
 /// and its BVH. The geometry is
-/// validated: indices name vertices, positions are finite and normals are
-/// finite and not zero. Refuses a mesh whose vertices name more than 65,536
+/// validated: indices name vertices, positions, UVs and lightmap UVs are
+/// finite and normals are finite and not zero. Refuses a mesh whose vertices name more than 65,536
 /// distinct lightmap chart bounds.
 pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, SceneError> {
     let table_word = meshes.len() * MESH_WORDS;

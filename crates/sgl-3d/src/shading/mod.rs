@@ -443,11 +443,18 @@ pub(crate) static LIGHTS: Module = Module {
         &SHADOW_MASK_SLOTS,
     ],
 };
+/// A normal under a matrix by its cofactor (`cofactor_normal`): the drawn
+/// instance's pose's (`object_normal`) and the deform stage's skin's.
+pub(crate) static NORMAL_TRANSFORM: Module = Module {
+    name: "normal_transform",
+    source: include_str!("normal_transform.wgsl"),
+    deps: &[],
+};
 /// Reads `view` and the drawn instances' object records.
 pub(crate) static VERTEX: Module = Module {
     name: "vertex",
     source: include_str!("vertex.wgsl"),
-    deps: &[&BIND_SCENE],
+    deps: &[&BIND_SCENE, &NORMAL_TRANSFORM],
 };
 /// The material's shader functions where SGL3D calls them: its vertex
 /// function before the pose and the context of its surface function. Reads
@@ -456,7 +463,7 @@ pub(crate) static VERTEX: Module = Module {
 pub(crate) static MATERIAL_SHADER: Module = Module {
     name: "material_shader",
     source: include_str!("material_shader.wgsl"),
-    deps: &[&VERTEX, &shader::SHADER_CONTRACT],
+    deps: &[&VERTEX, &PBR, &shader::SHADER_CONTRACT],
 };
 /// The G-buffer's targets: their encode and decode functions. Its traced
 /// lobe is the one `SPECULAR_LOBES` selects.

@@ -6,6 +6,8 @@
 // Source-completion camera. With SOURCE_FOG, the frame's fog volume fogs
 // what completion and composition write; `fog` holds one over its length and
 // over its detail spread (fog.wgsl), and the share of its fog the sky takes.
+// SOURCE_ORTHOGRAPHIC marks an orthographic projection
+// (projection_perspective false).
 struct SourceCamera {
  inverse:mat4x4<f32>,
  eye:vec4<f32>,
@@ -14,6 +16,7 @@ struct SourceCamera {
  flags:u32,
 }
 const SOURCE_FOG:u32=1u;
+const SOURCE_ORTHOGRAPHIC:u32=2u;
 // The frame's fog volume (stages/fog.wgsl) and its sampler.
 @group(0) @binding(25) var source_fog_volume:texture_3d<f32>;
 @group(0) @binding(26) var source_fog_sampler:sampler;
@@ -38,7 +41,7 @@ struct ReflectionEnvironment {
 // `world`, seen from the camera; `anisotropy` is its anisotropy target's
 // texel (gbuffer_anisotropy).
 fn source_lobes(normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotropy:vec4<f32>,world:vec3<f32>,camera:SourceCamera)->array<SpecularLobe,2> {
- let view=normalize(camera.eye.xyz-world);
+ let view=pbr_view(world,camera.eye.xyz,-camera.forward,(camera.flags&SOURCE_ORTHOGRAPHIC)==0u);
  let normal=gbuffer_base_normal(normals);
  let base_dfg=lookup_dfg(source_lookup_tables,env_sampler,specular_nv(normal,view),material.roughness);
  return specular_lobes(normal,gbuffer_coat_normal(normals),view,f0.rgb,material.f90,material.roughness,base_dfg,material.coat,material.coat_roughness,gbuffer_anisotropy(anisotropy),source_lookup_tables,env_sampler);

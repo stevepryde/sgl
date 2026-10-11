@@ -154,7 +154,7 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
  }
  var s:Surface;
  s.position=i.world;
- s.view=normalize(view.eye-i.world);
+ s.view=material_view(i.world);
  s.normal=n;
  s.geometry_normal=geometry_normal;
  s.base=vec4(decaled.base,m.base_color.a);

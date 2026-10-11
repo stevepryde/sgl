@@ -20,6 +20,58 @@ docs and specs the entry links.
   non-finite delta, so `Scene::add_asset` refused the file with
   `SceneError::InvalidDeformation`, or, a few ulps off, a huge one; its
   delta is now zero. No game-code change needed.
+- `sgl-3d` `PreparedModel::new` (and `Scene::add_asset`): a vertex with a
+  non-finite `uv` or `lightmap_uv`, or a mesh whose UVs span more than `f32`
+  holds, loaded, an infinite UV collapsing its whole mesh's UVs onto one
+  texel; the mesh is now refused with `SceneError::NonFiniteGeometry`. No
+  game-code change needed.
+- `sgl-net` UDP client: a deny that overtook the accept of a retried confirm
+  (or whose accept was lost) left the server holding that connection until
+  `timeout_ms`; the client now answers the deny with a disconnect, so the
+  server reports `Disconnected { reason: Peer }` right after `Connected`. No
+  game-code change needed.
+- `sgl-3d` `Scene::add_decal`/`set_decal`: a decal atlas too large for the
+  CPU to build (one 8192-square image in the browser) panicked when the
+  next frame packed it, and an image wider than the device's textures could
+  stall or overflow packing; both are now refused with `SceneError::DeviceLimit`
+  when the decal is added, at most 2 GiB of atlas in the browser and 8 GiB
+  natively. In the browser, keep the decal images in use within that
+  ([Decals](crates/sgl-3d/README.md#decals)); no other game-code changes.
+- `sgl-3d` orthographic `Camera` shading and `SurfaceContext::view`: the
+  view vector pointed from each surface toward `Camera::eye`, so highlights
+  and Fresnel varied across a flat surface and vanished on one between the
+  eye and a near plane behind it; it is now the camera's backward axis at
+  every surface. No game-code changes.
+- `sgl-3d` deformation (`Scene::set_instance_deformation`): a deforming mesh
+  above 4,194,240 vertices failed device validation every frame it deformed;
+  it now deforms. No game-code changes needed.
+- `sgl-net` native WebSocket keepalive: an unsolicited 8-byte pong arriving
+  after the reply to this side's ping, before the next `poll` or `flush`,
+  discarded the reply, so this side never pinged again and its `rtt` stopped
+  updating; the reply now counts. No game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown`: for one frame after a selection,
+  click-away, Escape, `Ui::close_popups` or `Ui::cancel_interactions` closed
+  the popover, widgets under where it was could not hover or take a press;
+  they now respond at once. No game-code change needed.
+- `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
+  (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
+  (`FrameInput::camera_cut`, a resize or another scene) in a frame where the
+  feature did not run could leave its history from before the reset in use
+  when it resumed; any reset now ends it. No game-code change needed.
+- `sgl-net` WebSocket transports (`NativeWebSocketServer`,
+  `NativeWebSocketClient`, `BrowserWebSocketClient`): a peer closed for
+  `ProtocolViolation` or `InboundOverflow` discarded the messages received
+  before the offending frame; they are now delivered before its
+  `Disconnected`. No game-code change needed.
+- `sgl-3d` `Scene::set_instance_deformation`: a joint matrix scaling an axis
+  to zero gave its skinned vertices NaN normals, and a mirrored skin turned
+  them against its deformed faces; skinned normals now face the deformed
+  winding, a flattened surface takes its flattened normal, and a normal the
+  skin collapses keeps its unskinned direction. No game-code change needed.
+- `sgl-post-fx` `TemporalAntiAliasing::prepare_resources`: the frame after a
+  resize resolved against the zeroed, recreated history instead of resetting
+  accumulation, which shifted bright HDR texels; it now takes the current
+  colour, as after `reset_accumulation`. No game-code changes needed.
 - `sgl-3d` glTF import and `asset::Vertex::tangent`: a tangent a few f32
   ulps off its normal counted as a frame, its rounding normalised into an
   arbitrary tangent; a tangent within 0.02° of its normal is now along it:

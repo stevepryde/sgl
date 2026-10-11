@@ -84,11 +84,12 @@ struct MaterialSurface {
 }
 // What material_surface evaluates at: the fragment's render-frame
 // `position` (displaced), its interpolated `geometry_normal` on the shaded
-// side, the unit direction toward the eye `view`, its `uv` and `color`,
-// material_vertex's `custom`, the instance's data, pose and the pose's axis
-// scales `model_scale`, the frame's `time` and `phase`, whether it is the
-// material's authored `front`, its `pixel` in the pass's target in texels,
-// and its linear `view_depth` in metres.
+// side, the unit direction toward the viewer `view` (toward the eye under a
+// perspective projection, the camera's backward axis under an orthographic
+// one), its `uv` and `color`, material_vertex's `custom`, the instance's
+// data, pose and the pose's axis scales `model_scale`, the frame's `time`
+// and `phase`, whether it is the material's authored `front`, its `pixel` in
+// the pass's target in texels, and its linear `view_depth` in metres.
 struct SurfaceContext {
  position:vec3<f32>,
  geometry_normal:vec3<f32>,
