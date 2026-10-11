@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import: an animation sampler with two keyframes at the same
+  time loaded; it now fails the load, as glTF requires strictly increasing
+  times. Re-export the file with distinct keyframe times; no game-code
+  change needed.
 - `sgl-net` UDP client: a `ConnectDeny` arriving after the accept (reordered)
   or naming a cookie the client was not confirming removed the connection and
   reported `Denied` after `Connected`; it is now ignored, and only a deny for
