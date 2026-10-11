@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `AsepriteSheet::parse`: a one-frame Hash export, whose key
+  Aseprite writes without a frame number (`"player.aseprite"`), failed with
+  `FrameKey` or `MissingFrameIndex`; a single-entry Hash now loads as frame
+  0. No game-code change needed.
 - `sgl-net` UDP transport: a first round trip measured as 0 ms (loopback,
   sub-millisecond LAN) was treated as unmeasured, keeping the 200 ms
   retransmission timeout; it now seeds the estimate, giving the 50 ms floor,

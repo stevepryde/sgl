@@ -121,7 +121,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    bounds, layout, icons and platform cursor mapping.
 8. **Aseprite.** `AseSheet::parse` accepts Hash and Array exports; Hash frame
    indices are recovered from trailing digits and must be exactly
-   `0..len` (gap, duplicate, or missing digits is an error). Tags are
+   `0..len` (gap, duplicate, or missing digits is an error); a single-entry
+   Hash is frame 0 whatever its key, as Aseprite omits the number. Tags are
    inclusive ranges validated against the frame count; `direction` defaults
    to `forward` and expands `forward`, `reverse`, `pingpong`, and
    `pingpong_reverse` into frame orders. A frame rect outside the sheet is an
