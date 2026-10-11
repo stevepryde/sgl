@@ -1,8 +1,23 @@
 // KHR_materials_anisotropy acfcbe65e40c53d6d3aa55a7299982bf2c01c75d.
 // Shared authored frame and named KHR bent-normal IBL approximation.
+// A tangent that vanishes in unit normal `n`'s plane (a skinned or morphed
+// tangent made parallel to its normal, or a ray hit whose vertex tangents
+// all vanished) takes the frame an absent tangent takes where its vertex is
+// packed (packed_vertex.rs): Duff et al. 2017's orthonormal vector, glam's
+// any_orthonormal_vector, and handedness +1 where it has none.
 fn pbr_tangent_frame(n:vec3<f32>,tangent:vec4<f32>)->mat3x3<f32> {
- let t=normalize(tangent.xyz-n*dot(n,tangent.xyz));
- return mat3x3(t,cross(n,t)*tangent.w,n);
+ let projected=tangent.xyz-n*dot(n,tangent.xyz);
+ var t:vec3<f32>;
+ if dot(projected,projected)<1e-12 {
+  let hemisphere=select(-1.,1.,n.z>=0.);
+  let a=-1./(hemisphere+n.z);
+  let b=n.x*n.y*a;
+  t=vec3(b,hemisphere+n.y*n.y*a,-n.y);
+ } else {
+  t=normalize(projected);
+ }
+ let handedness=select(tangent.w,1.,tangent.w==0.);
+ return mat3x3(t,cross(n,t)*handedness,n);
 }
 fn pbr_resolve_anisotropy(n:vec3<f32>,frame:mat3x3<f32>,material_strength:f32,rotation:f32,textured:bool,texel:vec3<f32>)->vec4<f32> {
  if material_strength<=0. {

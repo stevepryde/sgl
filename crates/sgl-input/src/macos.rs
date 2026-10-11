@@ -1,6 +1,7 @@
 //! The only FFI boundary. All framework access and callback installation/removal
 //! happens on the main thread. Blocks own only a channel sender and input IDs;
 //! they never borrow Rust state or dereference the framework's callback pointer.
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ptr::NonNull;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -135,7 +136,6 @@ impl Drop for Pad {
 pub(crate) struct Backend {
     _main_thread: MainThreadMarker,
     connections: Connections<Pad>,
-    previous_background_events: bool,
     sender: Sender<Update>,
     receiver: Receiver<Update>,
 }
@@ -145,11 +145,12 @@ impl Backend {
             MainThreadMarker::new().ok_or("Create gamepad input on the window's main thread")?;
         // SAFETY: Main-thread, process-local framework setting. Keep releases
         // flowing when the window loses focus; the game gates actions, not state.
-        let previous_background_events = unsafe {
-            let previous = GCController::shouldMonitorBackgroundEvents();
-            GCController::setShouldMonitorBackgroundEvents(true);
-            previous
-        };
+        BACKGROUND_EVENTS.with(|owners| unsafe {
+            owners.acquire(
+                || GCController::shouldMonitorBackgroundEvents(),
+                |on| GCController::setShouldMonitorBackgroundEvents(on),
+            );
+        });
         let (sender, receiver) = mpsc::channel();
         Ok(Self {
             _main_thread: main_thread,
@@ -157,7 +158,6 @@ impl Backend {
                 pads: BTreeMap::new(),
                 next_id: 0,
             },
-            previous_background_events,
             sender,
             receiver,
         })
@@ -241,9 +241,48 @@ impl Drop for Backend {
     fn drop(&mut self) {
         self.connections.pads.clear();
         // SAFETY: The main-thread-bound owner restores the process-local value
-        // only after removing its callbacks. No system preference is changed.
-        unsafe {
-            GCController::setShouldMonitorBackgroundEvents(self.previous_background_events);
+        // only after removing its callbacks, and only as the last owner. No
+        // system preference is changed.
+        BACKGROUND_EVENTS.with(|owners| unsafe {
+            owners.release(|on| GCController::setShouldMonitorBackgroundEvents(on));
+        });
+    }
+}
+
+thread_local! {
+    /// Owners are main-thread-bound, so the main thread's count is the
+    /// process's.
+    static BACKGROUND_EVENTS: BackgroundEvents = const { BackgroundEvents::new() };
+}
+
+/// Background event delivery shared by every live owner: the first turns it
+/// on and remembers the value it found; the last restores that value. An
+/// owner replaced in place (`pads = Gamepads::new()?`) is built before the old
+/// one drops, so a per-owner saved value would restore "off" under the live
+/// one. Generic over the framework calls so the sequence is tested without it.
+struct BackgroundEvents {
+    owners: Cell<usize>,
+    previous: Cell<bool>,
+}
+impl BackgroundEvents {
+    const fn new() -> Self {
+        Self {
+            owners: Cell::new(0),
+            previous: Cell::new(false),
+        }
+    }
+    fn acquire(&self, read: impl FnOnce() -> bool, set: impl FnOnce(bool)) {
+        if self.owners.get() == 0 {
+            self.previous.set(read());
+            set(true);
+        }
+        self.owners.set(self.owners.get() + 1);
+    }
+    fn release(&self, set: impl FnOnce(bool)) {
+        let owners = self.owners.get() - 1;
+        self.owners.set(owners);
+        if owners == 0 {
+            set(self.previous.get());
         }
     }
 }
@@ -252,6 +291,33 @@ impl Drop for Backend {
 mod tests {
     use super::*;
     use crate::{Button, State};
+
+    /// #530: replacing a live owner keeps background delivery on, and the
+    /// value found before the first owner returns once none is left (the
+    /// README's restore-on-drop promise). `flag` stands in for the
+    /// framework's process-wide setting.
+    #[test]
+    fn replacing_a_live_owner_keeps_background_events_on() {
+        let flag = Cell::new(false);
+        let owners = BackgroundEvents::new();
+        let acquire = || owners.acquire(|| flag.get(), |on| flag.set(on));
+        let release = || owners.release(|on| flag.set(on));
+
+        acquire();
+        assert!(flag.get());
+        // `pads = Gamepads::new()?`: the new owner exists before the old drops.
+        acquire();
+        release();
+        assert!(flag.get(), "the live owner keeps background events");
+        release();
+        assert!(!flag.get(), "the last owner restores the original value");
+
+        // A value the game had already turned on stays on afterwards.
+        flag.set(true);
+        acquire();
+        release();
+        assert!(flag.get());
+    }
 
     /// #302: a press and release queued before an unplug are reported before
     /// its disconnect, and a callback from the old connection that arrives
