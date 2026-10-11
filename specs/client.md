@@ -54,9 +54,10 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    page sized to it, holding nothing else (the least recently used stale one is
    rebuilt at the new glyph's size); an upload wider than the device allows
    fails with `TextureError::TooLarge`, which the game logs. A glyph whose page
-   would exceed `MAX_GLYPH_PAGE_SIZE` (16384; 8192 on wasm32, WebGPU's default
-   limit) is not drawn; its advance applies. Text whose raster size (`px ×
-   pixel_scale`) is not positive and finite draws nothing and measures zero.
+   would exceed `MAX_GLYPH_PAGE_SIZE` (8192, the default
+   `max_texture_dimension_2d` that `Gpu` requests) is not drawn; its advance
+   applies. Text whose raster size (`px × pixel_scale`) is not positive and
+   finite draws nothing and measures zero.
    Outline and shadow are offset copies of the glyph quads, at most
    `MAX_RING_WIDTH` wide; a non-finite width draws no ring. `pixel_scale = 1`
    is bit-identical to unscaled rendering.
