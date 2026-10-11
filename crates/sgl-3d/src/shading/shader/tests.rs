@@ -96,9 +96,9 @@ fn the_contract_is_accepted() {
 // counted-loop rule and SHADER_LOOP_BUDGET: a loop bounded by a parameter
 // or a `while` is unbounded, as is a counter whose limit plus step, or
 // start plus step, overflows its type, which wraps before it passes the
-// limit (`i <= 4294967295u` holds for every u32); a 16 by 16 nest makes the budget's 256
-// iterations, a 17 by 17 one 289 and two loops of 200 one after the other
-// 400, each over it.
+// limit (`i <= 4294967295u` holds for every u32); a 16 by 16 nest makes
+// the budget's 256 iterations, a 17 by 17 one 289 and two loops of 200 one
+// after the other 400, each over it.
 #[wasm_bindgen_test(unsupported = test)]
 fn loops_are_counted_within_the_budget() {
     let unbounded = |body: &str| {
