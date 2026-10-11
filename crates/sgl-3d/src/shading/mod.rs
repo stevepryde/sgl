@@ -456,7 +456,7 @@ pub(crate) static VERTEX: Module = Module {
 pub(crate) static MATERIAL_SHADER: Module = Module {
     name: "material_shader",
     source: include_str!("material_shader.wgsl"),
-    deps: &[&VERTEX, &shader::SHADER_CONTRACT],
+    deps: &[&VERTEX, &PBR, &shader::SHADER_CONTRACT],
 };
 /// The G-buffer's targets: their encode and decode functions. Its traced
 /// lobe is the one `SPECULAR_LOBES` selects.

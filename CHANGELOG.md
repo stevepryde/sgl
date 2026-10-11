@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` orthographic `Camera` shading and `SurfaceContext::view`: the
+  view vector pointed from each surface toward `Camera::eye`, so highlights
+  and Fresnel varied across a flat surface and vanished on one between the
+  eye and a near plane behind it; it is now the camera's backward axis at
+  every surface. No game-code changes.
 - `sgl-3d` `Scene::set_baked_specular_probes`: when the probes' influence
   boxes together spanned more than about 7e12 m on each axis, probe captures
   and world-space ray hits found none of them; they now do. A box whose `max - min` overflows f32
