@@ -63,7 +63,8 @@
 
 // PROVENANCE.md DFX-52: how far a world normal's squared length may be from 1 and still be traced.
 // Generous above the rounding of every common normal encoding (8-bit snorm components, the coarsest,
-// move it by under 0.02); a zero or non-finite normal is far outside it.
+// move it by under 0.02); a zero or infinite normal is far outside it, and a NaN one fails the test
+// where the backend keeps IEEE NaN comparisons.
 #define SSR_NORMAL_LENGTH_SQ_TOLERANCE 0.1
 
 // Defaults are those of the host structure (src/structures.rs).
