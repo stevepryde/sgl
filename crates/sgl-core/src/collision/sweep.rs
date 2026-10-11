@@ -723,6 +723,22 @@ mod tests {
         assert!(contacts.wall);
     }
 
+    /// #427: a body resting exactly on a floor at coordinates that round
+    /// stays on it when it moves down, and snapping finds the floor.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_body_exactly_touching_a_floor_at_rounding_coordinates_stays_on_it() {
+        let floor = aabb(1.090_340_4, 4.337_375_6, 50.0, 0.125);
+        let set = set_with(&[(floor, ColliderFlags::SOLID)]);
+        let body = aabb(1.090_340_4, 4.711_776_3, 0.4, 0.249_400_84);
+        assert_eq!(body.min().y.to_bits(), floor.max().y.to_bits());
+        let (effective, contacts) =
+            move_and_collide(body, Vec2::new(0.0, -3.0), &set, &config(Vec2::Y));
+        assert!(effective.y >= 0.0, "fell {}", effective.y);
+        assert!(contacts.floor && contacts.down_blocked);
+        let (_, contacts) = snap_to_ground(body, &set, &config(Vec2::Y));
+        assert!(contacts.floor, "snapping finds the floor it rests on");
+    }
+
     /// #315: an embedded body is still free to move out of the collider.
     #[wasm_bindgen_test(unsupported = test)]
     fn an_embedded_body_can_move_out() {

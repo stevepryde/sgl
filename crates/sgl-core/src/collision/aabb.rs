@@ -75,10 +75,11 @@ pub struct Hit {
 /// first contact, or `None` if the motion does not enter `target` within
 /// `[0, 1]`.
 ///
-/// A closed-form slab test on the Minkowski sum: `target` is grown by `body`'s
-/// half-extents and `body` is swept as a point at its center. The normal comes
-/// from the **last axis to enter** — the axis whose entry time is greatest —
-/// signed against the motion on that axis.
+/// A closed-form slab test: on each axis, entry and exit times come from the
+/// gaps between the boxes' own edges ([`Aabb::min`] and [`Aabb::max`], as
+/// [`Aabb::overlaps`] reads them), so boxes that touch enter at exactly
+/// `t = 0`. The normal comes from the **last axis to enter** — the axis whose
+/// entry time is greatest — signed against the motion on that axis.
 ///
 /// Semantics at the edges, all of which return `None` rather than an invented
 /// contact:
@@ -99,13 +100,11 @@ pub fn sweep_aabb(body: &Aabb, delta: Vec2, target: &Aabb) -> Option<Hit> {
         return None;
     }
 
-    let expanded = Aabb::new(target.center, target.half + body.half);
-    let p = body.center;
-    let min = expanded.min();
-    let max = expanded.max();
+    let (b_min, b_max) = (body.min(), body.max());
+    let (t_min, t_max) = (target.min(), target.max());
 
-    let (entry_x, exit_x) = slab(p.x, delta.x, min.x, max.x)?;
-    let (entry_y, exit_y) = slab(p.y, delta.y, min.y, max.y)?;
+    let (entry_x, exit_x) = slab(b_min.x, b_max.x, delta.x, t_min.x, t_max.x)?;
+    let (entry_y, exit_y) = slab(b_min.y, b_max.y, delta.y, t_min.y, t_max.y)?;
 
     let entry = entry_x.max(entry_y);
     let exit = exit_x.min(exit_y);
@@ -126,27 +125,34 @@ pub fn sweep_aabb(body: &Aabb, delta: Vec2, target: &Aabb) -> Option<Hit> {
         Vec2::new(0.0, if delta.y > 0.0 { -1.0 } else { 1.0 })
     };
 
-    Some(Hit { t: entry, normal })
+    // `+ 0.0` turns the `-0.0` a touching body moving toward `-axis` gets
+    // into `0.0`, so mirrored sweeps report the same `t`.
+    Some(Hit {
+        t: entry + 0.0,
+        normal,
+    })
 }
 
-/// Entry and exit times of `pos + t * d` crossing the slab `[lo, hi]`.
+/// Entry and exit times of the interval `[b_lo, b_hi]` moving by `d` across
+/// the interval `[t_lo, t_hi]`, from the gaps between their edges.
 ///
 /// Motion smaller than `f32::EPSILON` counts as parallel: it cannot carry the
-/// point across a slab it is outside of, and dividing by it would manufacture
-/// enormous or infinite times. A parallel point already strictly inside the
-/// slab is unconstrained on this axis (`-inf`..`inf`) and lets the other axis
-/// decide; a parallel point outside can never enter.
-fn slab(pos: f32, d: f32, lo: f32, hi: f32) -> Option<(f32, f32)> {
+/// body across a slab it is outside of, and dividing by it would manufacture
+/// enormous or infinite times. A parallel body already overlapping the slab
+/// (strictly, as [`Aabb::overlaps`] tests) is unconstrained on this axis
+/// (`-inf`..`inf`) and lets the other axis decide; one outside or only
+/// touching can never enter.
+fn slab(b_lo: f32, b_hi: f32, d: f32, t_lo: f32, t_hi: f32) -> Option<(f32, f32)> {
     if d.abs() < f32::EPSILON {
-        if pos > lo && pos < hi {
+        if b_hi > t_lo && b_lo < t_hi {
             Some((f32::NEG_INFINITY, f32::INFINITY))
         } else {
             None
         }
+    } else if d > 0.0 {
+        Some(((t_lo - b_hi) / d, (t_hi - b_lo) / d))
     } else {
-        let t1 = (lo - pos) / d;
-        let t2 = (hi - pos) / d;
-        Some((t1.min(t2), t1.max(t2)))
+        Some(((t_hi - b_lo) / d, (t_lo - b_hi) / d))
     }
 }
 
@@ -200,6 +206,20 @@ mod tests {
             &target,
         );
         assert!(scrape.is_some());
+    }
+
+    /// #427: a body resting exactly on a floor at coordinates that round
+    /// (its bottom edge equals the floor's top edge, so it does not overlap)
+    /// hits the floor at once when it moves down, rather than missing it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_body_exactly_touching_at_rounding_coordinates_hits_at_once() {
+        let body = aabb(1.090_340_4, 4.711_776_3, 0.4, 0.249_400_84);
+        let floor = aabb(1.090_340_4, 4.337_375_6, 50.0, 0.125);
+        assert_eq!(body.min().y.to_bits(), floor.max().y.to_bits());
+        assert!(!body.overlaps(&floor));
+        let hit = sweep_aabb(&body, Vec2::new(0.0, -3.0), &floor).expect("touching is a contact");
+        assert_eq!(hit.t.to_bits(), 0.0f32.to_bits());
+        assert_eq!(hit.normal, Vec2::Y);
     }
 
     fn aabb(cx: f32, cy: f32, hx: f32, hy: f32) -> Aabb {

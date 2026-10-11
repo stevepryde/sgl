@@ -962,6 +962,86 @@ fn alpha_cutoffs_outside_gltfs_bound_are_refused() {
     scene.set_material(&queue, material, values).unwrap();
 }
 
+// Plausible defects: a core value outside its documented range (metallic,
+// roughness, clearcoat, clearcoat roughness or base alpha outside glTF's
+// 0..=1, a base colour, emission or environment scale negative or not
+// finite) accepted when it is added or edited, so a NaN reaches the uniform
+// and ray record and poisons temporal history or a clearcoat or blended
+// coverage above 1 adds energy; a value
+// on a bound refused; or a refused edit applied anyway. The oracles are
+// glTF 2.0's and KHR_materials_clearcoat's bounds and the refusal's
+// contract: nothing changes.
+#[test]
+fn core_values_outside_their_bounds_are_refused() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let invalid: [fn(&mut asset::Material); 9] = [
+        |m| m.roughness = f32::NAN,
+        |m| m.roughness = 1.01,
+        |m| m.metallic = -0.1,
+        |m| m.clearcoat = 5.,
+        |m| m.coat_roughness = f32::NAN,
+        |m| m.base = [0.5, -0.1, 0.5, 1.],
+        |m| m.base = [0.5, 0.5, 0.5, f32::NAN],
+        |m| m.base = [0.5, 0.5, 0.5, 1.01],
+        |m| m.emissive = [f32::INFINITY, 0., 0.],
+    ];
+    for change in invalid {
+        let mut asset = test_support::cube();
+        change(&mut asset.materials[0]);
+        assert!(matches!(
+            scene.add_asset(&device, &queue, asset),
+            Err(SceneError::InvalidMaterialFactors)
+        ));
+    }
+    let material = scene
+        .add_asset(&device, &queue, test_support::cube())
+        .unwrap()
+        .materials[0];
+    let before = scene.material(material).unwrap();
+    let edits = invalid
+        .map(|change| {
+            let mut authored = test_support::cube().materials[0].clone();
+            change(&mut authored);
+            SurfaceMaterial {
+                base: authored.base,
+                emission: authored.emissive,
+                metallic: authored.metallic,
+                roughness: authored.roughness,
+                clearcoat: authored.clearcoat,
+                coat_roughness: authored.coat_roughness,
+                ..before
+            }
+        })
+        .into_iter()
+        .chain([SurfaceMaterial {
+            environment_scale: -1.,
+            ..before
+        }]);
+    for values in edits {
+        assert!(matches!(
+            scene.set_material(&queue, material, values),
+            Err(SceneError::InvalidMaterialFactors)
+        ));
+        assert_eq!(scene.material(material).unwrap(), before);
+    }
+    for bound in [0., 1.] {
+        let values = SurfaceMaterial {
+            base: [bound; 4],
+            emission: [bound; 3],
+            metallic: bound,
+            roughness: bound,
+            clearcoat: bound,
+            coat_roughness: bound,
+            environment_scale: bound,
+            ..before
+        };
+        scene.set_material(&queue, material, values).unwrap();
+    }
+}
+
 // Plausible defects: a film outside KHR_materials_iridescence's schema (a
 // strength outside 0..1, an IOR below 1, a negative thickness, or any not
 // finite) accepted when it is added or edited, so the film's Fresnel turns

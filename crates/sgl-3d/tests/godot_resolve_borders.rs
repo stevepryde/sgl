@@ -8,7 +8,7 @@ fn resolve_borders_match_hardware_filtering_and_clamp_metadata() {
         pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default()));
     let Ok(adapter) = adapter else {
         assert!(
-            std::env::var_os("SGL_REQUIRE_GPU").is_none(),
+            !std::env::var("SGL_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0"),
             "GPU required"
         );
         eprintln!("skipping GPU regression: no adapter");
