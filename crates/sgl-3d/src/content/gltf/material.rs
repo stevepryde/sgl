@@ -190,7 +190,11 @@ pub(super) fn read_material(
         // Authority: EXT_materials_bump's schema (KhronosGroup/glTF#2339):
         // bumpFactor in 0..100, default 1.
         bump_scale: bump
-            .map(|b| scalar(b, "EXT_materials_bump", "bumpFactor", 1.0, 0.0..=100.0))
+            .map(|b| {
+                scalar(b, "bumpFactor", 1.0, 0.0..=100.0, |message| {
+                    format!("material {name}: bump {message}")
+                })
+            })
             .transpose()?
             .unwrap_or(1.0),
         transmission: transmission.factor,
@@ -327,8 +331,8 @@ fn read_clearcoat<'a>(
             return Err(error(&format!("unsupported property {key}")).into());
         }
     }
-    clearcoat.factor = scalar(value, CLEARCOAT, "clearcoatFactor", 0.0, 0.0..=1.0)?;
-    clearcoat.roughness = scalar(value, CLEARCOAT, "clearcoatRoughnessFactor", 0.0, 0.0..=1.0)?;
+    clearcoat.factor = scalar(value, "clearcoatFactor", 0.0, 0.0..=1.0, error)?;
+    clearcoat.roughness = scalar(value, "clearcoatRoughnessFactor", 0.0, 0.0..=1.0, error)?;
     clearcoat.texture = extension_texture(value, "clearcoatTexture", document, &error)?;
     clearcoat.roughness_texture =
         extension_texture(value, "clearcoatRoughnessTexture", document, &error)?;
@@ -542,15 +546,13 @@ fn read_specular(
     Ok((factor as f32, color))
 }
 
-const CLEARCOAT: &str = "KHR_materials_clearcoat";
-
-/// `extension`'s number `key` in `range`, `default` when absent.
+/// The number `key` in `range`, `default` when absent.
 fn scalar(
     value: &serde_json::Value,
-    extension: &str,
     key: &str,
     default: f32,
     range: std::ops::RangeInclusive<f64>,
+    error: impl Fn(&str) -> String,
 ) -> Result<f32> {
     match value.get(key) {
         None => Ok(default),
@@ -559,11 +561,11 @@ fn scalar(
             .filter(|v| range.contains(v))
             .map(|v| v as f32)
             .ok_or_else(|| {
-                format!(
-                    "{extension} {key} must be a number in {}..{}",
+                error(&format!(
+                    "{key} must be a number in {}..{}",
                     range.start(),
                     range.end()
-                )
+                ))
                 .into()
             }),
     }
