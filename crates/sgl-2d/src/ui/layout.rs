@@ -119,7 +119,8 @@ impl UiFrame<'_> {
     /// valid range. Draws after this clip to `rect` within the enclosing clip
     /// (including text) until [`scroll_area_end`](Self::scroll_area_end);
     /// scroll areas nest. The wheel scrolls the innermost hovered area with
-    /// content to scroll, applied at its end.
+    /// content to scroll, applied at its end, so the content shows it from the
+    /// next frame.
     pub fn scroll_area_begin(&mut self, name: &str, rect: Rect, content_h: f32, offset: &mut f32) {
         let id = widget_id(name);
         let view_h = rect.size().y;

@@ -17,8 +17,9 @@ docs and specs the entry links.
 
 - `sgl-2d` `UiFrame::scroll_area_end`: one wheel tick scrolled every nested
   scroll area under the pointer; it now scrolls only the innermost hovered area
-  with content to scroll, applied at its end, so `scroll_area_end` takes the
-  area's offset. Pass the offset given to its `scroll_area_begin`:
+  with content to scroll, applied at its end (so it shows from the next frame,
+  not the same one), and `scroll_area_end` takes the area's offset. Pass the
+  offset given to its `scroll_area_begin`:
   `frame.scroll_area_end(&mut offset);`.
 - `sgl-3d` `asset::load*`: a KHR material extension object (anisotropy,
   clearcoat, iridescence, sheen, diffuse transmission, transmission, volume,

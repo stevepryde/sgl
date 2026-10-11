@@ -164,7 +164,7 @@ rectangles so their text, accent and surface roles follow the selected palette.
   outside its scrolling content. A scroll area clips within the enclosing
   clip and restores it at `scroll_area_end`, which takes the same offset; the
   wheel scrolls only the innermost hovered area with content to scroll, applied
-  at its end. Restore enclosing clips yourself
+  at its end, so the content shows it from the next frame. Restore enclosing clips yourself
   after custom clipping. Widget borders extend outside their hit rectangles:
   inset content from viewport edges and reserve gaps for focus/selection strokes
   and the scrollbar. Clip long row names to their allocated space; provide
