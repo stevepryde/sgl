@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `fetch_runtime_bundle` (wasm): listed assets were fetched from
+  `assets/{path}` relative to the page, whatever the manifest URL; they are
+  now fetched relative to the manifest's directory. Serve the manifest from
+  the asset root, e.g. `fetch_runtime_bundle("assets/manifest.txt")`.
 - `sgl-input` `Gamepads::poll`: a button pressed while the macOS handler was
   being installed could yield two `ButtonPressed` events and one release; a
   press of a button already held is now dropped on every target. No
