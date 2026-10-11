@@ -693,3 +693,16 @@ Use the [current specs](README.md) for implementation and the
   (b130438) applies `rgb × fog.a + fog.rgb` to every blend mode, and SGL3D
   departs from it here. Blended surfaces keep `c × T + S` over their
   coverage, which their over blend replaces.
+- **D-45** Decision, 2026-10-11 (#542): a bump map's strength stays per
+  pixel in raster and per metre at ray hits. Raster follows three.js r185's
+  `BumpMapNode`, whose height gradient is a screen-space difference over one
+  pixel's UV step; a ray hit has no pixel, so it takes the height gradient
+  per metre on its triangle's UV frame. Reflections, probe captures and
+  dynamic GI therefore show a bump stronger than the camera does, by the
+  metres a pixel covers. Matching them needs a ray footprint at the hit,
+  such as Wicked Engine's `RayCone` (Akenine-Möller et al., "Improved
+  Shader and Texture Level of Detail Using Ray Cones", JCGT 2021), which
+  SGL3D lacks: its hits sample textures at LOD 0. Filament and Bevy have
+  no bump maps to follow, and a per-metre raster would depart from
+  three.js, the port. A ray footprint, which hit mip selection would take
+  too, is the foundation that would let the two agree.

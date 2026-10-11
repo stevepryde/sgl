@@ -132,7 +132,10 @@ pub struct SurfaceMaterial {
     /// no geometry uploaded per frame. Needs a normal map that repeats on
     /// both axes. `None` draws the map once at the material's UVs.
     pub normal_layers: Option<[NormalLayer; 2]>,
-    /// Bump height multiplier.
+    /// Bump height multiplier: the height change over one pixel times this
+    /// tilts the camera's surface, as three.js's `bumpScale`, and over one
+    /// metre at a reflection, probe or dynamic GI ray's hit, which therefore
+    /// shows the bump stronger (specs/decisions.md D-45).
     pub bump_scale: f32,
     /// The share of the light behind the surface that passes through it,
     /// refracted, in `0..=1` (`KHR_materials_transmission`), in place of
