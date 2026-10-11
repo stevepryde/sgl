@@ -19,6 +19,11 @@ docs and specs the entry links.
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and
   layout matches a cold cache and `measure`. No game-code change needed.
+- `sgl-net` `NativeWebSocketClient::connect`: tried only the host's first
+  resolved address (so `localhost` could be refused when `::1` came first),
+  and the TCP connect and HTTP upgrade each took a full `handshake_timeout`;
+  now each resolved address is tried in order within one
+  `handshake_timeout` covering the upgrade too. No game-code change needed.
 - `sgl-2d` `Overlay::circle`: a negative radius drew a full circle; a
   radius that is not positive (including NaN) now emits nothing. No
   game-code change needed.

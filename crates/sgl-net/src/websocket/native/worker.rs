@@ -191,17 +191,16 @@ impl IoWorker {
     }
 
     /// Upgrades a client's nonblocking `stream` on the caller's thread,
-    /// waiting on this worker's readiness for at most `timeout`, and keeps the
+    /// waiting on this worker's readiness until `deadline`, and keeps the
     /// socket for the worker to serve. The socket never changes hands, so
     /// bytes read past the upgrade response stay with it.
     pub(super) fn connect(
         &mut self,
         request: ClientRequest,
         stream: std::net::TcpStream,
-        timeout: Duration,
+        deadline: Instant,
         shared: Arc<SharedPeer>,
     ) -> io::Result<ClientResponse> {
-        let deadline = Instant::now() + timeout;
         let token = self.next_token();
         let mut stream = TcpStream::from_std(stream);
         self.poll.registry().register(
