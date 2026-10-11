@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Settings::screen_space_reflections`: on Metal (and Vulkan without
+  robust access) the screen's edge columns and rows could reconstruct a wrong
+  surface normal for their rays, offsetting and bouncing them; edge pixels now
+  take the same normal as the interior on every backend. No game-code change
+  needed.
 - `sgl-net` `memory_duplex`: flushed unreliable messages the peer had not
   polled counted against the sender's unreliable bounds, so `send` returned
   `WouldBlock` and the peer later got the oldest; now only unflushed ones
