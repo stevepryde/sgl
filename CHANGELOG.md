@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` anisotropic materials: a tangent that skinning or morphing
+  cancelled or turned along its normal, or a ray hit whose vertex tangents
+  all vanished, shaded NaN; it now takes an arbitrary tangent in the
+  normal's plane, keeping its handedness (+1 where it has none), as a vertex
+  without a tangent does. No game-code change needed.
 - `sgl-2d` `fetch_runtime_bundle` (wasm): listed assets were fetched from
   `assets/{path}` relative to the page, whatever the manifest URL; they are
   now fetched relative to the manifest's directory. Serve the manifest from

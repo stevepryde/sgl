@@ -260,9 +260,8 @@ fn scene_decode_hit(raw:RawSceneHit,origin:vec3<f32>,direction:vec3<f32>)->Scene
   let vertex_n=normalize((normal_matrix*vec4(frames[k].normal,0.)).xyz);
   let transformed=(world*vec4(authored.xyz,0.)).xyz;
   let projected=transformed-vertex_n*dot(vertex_n,transformed);
-  if dot(projected,projected)>0. {
-   tangent+=vec4(normalize(projected),authored.w)*b[k];
-  }
+  let direction=select(vec3(0.),normalize(projected),dot(projected,projected)>0.);
+  tangent+=vec4(direction,authored.w)*b[k];
  }
  tangent.w*=select(1.,-1.,dot(world[0].xyz,cross(world[1].xyz,world[2].xyz))<0.);
  result.authored_tangent=tangent;
