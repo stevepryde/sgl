@@ -20,8 +20,9 @@ docs and specs the entry links.
   flakes lost the coat's highlight and a sphere light's highlight popped off
   as its centre crossed the horizon; it now reaches a surface while the
   base or the coat normal faces any of its sphere, as directional lights
-  already did, in lighting and ray-traced shadows alike. No game-code change
-  needed.
+  already did, in lighting and ray-traced shadows alike; the directional
+  light's ray-traced shadow now traces its whole disc too. No game-code
+  change needed.
 - `sgl-net` UDP client: a `ConnectDeny` arriving after the accept (reordered)
   or naming a cookie the client was not confirming removed the connection and
   reported `Denied` after `Connected`; it is now ignored, and only a deny for
