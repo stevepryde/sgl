@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
+  near the bottom or right edge of a viewport whose size is not a multiple
+  of 64 skipped surfaces there (SGL3D showed probes or sky instead); they
+  now find them. No game-code change needed.
 - `sgl-3d` `BakedSpecularProbe::proxy`: a proxy box reaching more than
   about 1e19 m from its capture centre made box projection sample an
   arbitrary texel; it now samples toward the ray's hit on the proxy, which
