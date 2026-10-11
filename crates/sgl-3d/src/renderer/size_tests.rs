@@ -157,12 +157,14 @@ fn resize_between_render_and_finish_restarts_history() {
 }
 
 // Plausible defect: the fog's froxel volume is sized from the output by a
-// ratio with no bound, so a tall portrait frame asks for a volume taller
-// than the device's 3D texture limit (60×1900 at High asked for 2090
-// froxels, past 2048) and wgpu panics creating it. The oracle is wgpu's
-// validation: rendering frames with fog on (atmosphere allowed and turned
-// on, a dense medium) at tall and wide sizes, at each fog quality, raises
-// no validation error.
+// ratio with no bound, or without the device's 3D texture limit, so a tall
+// portrait frame asks for a volume taller than that limit and wgpu panics
+// creating it: at High, 1×8192 asked for about 524k froxels tall, past any
+// device's limit, and 60×1900 for 2090, past the 2048 of Metal, D3D12 and
+// WebGPU. The oracle is wgpu's validation: rendering those frames with
+// High fog on (atmosphere allowed and turned on, a dense medium) raises no
+// validation error. The sizing's other shapes and qualities are
+// `stages::fog::tests`'.
 #[test]
 fn thin_sizes_render_with_fog() {
     let Some((device, queue)) = test_support::device() else {
@@ -170,60 +172,55 @@ fn thin_sizes_render_with_fog() {
     };
     let mut scene = Scene::new(&device, &queue);
     test_support::add_static(&device, &queue, &mut scene, test_support::cube());
-    for fog_quality in [
-        crate::settings::FogQuality::High,
-        crate::settings::FogQuality::Low,
-    ] {
-        let settings = Settings {
-            fog_quality,
-            ..Settings::default()
-        };
-        for size in [[60, 1900], [1900, 60], [1, 8192]] {
-            let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let mut renderer = Renderer::new(
-                &device,
-                &queue,
-                wgpu::TextureFormat::Rgba8Unorm,
-                size,
-                1.,
-                &settings,
-            )
-            .unwrap();
-            let output = crate::view::targets::target(
-                &device,
-                "thin fog",
-                size,
-                wgpu::TextureFormat::Rgba8Unorm,
-            );
-            let eye = glam::Vec3::new(2.4, 2., 3.3);
-            let mut input = FrameInput::new(Camera {
-                eye,
-                view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),
-                projection: crate::perspective(
-                    55f32.to_radians(),
-                    size[0] as f32 / size[1] as f32,
-                    0.1,
-                ),
-            });
-            input.atmosphere = true;
-            input.fog.density = 0.05;
-            let mut encoder = device.create_command_encoder(&Default::default());
-            renderer.render(
-                &device,
-                &queue,
-                &mut encoder,
-                &mut scene,
-                &input,
-                &settings,
-                &output,
-                None,
-            );
-            queue.submit([encoder.finish()]);
-            renderer.finish_frame(&mut scene);
-            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-            if let Some(error) = pollster::block_on(validation.pop()) {
-                panic!("{size:?}, fog {fog_quality:?}: {error}");
-            }
+    let settings = Settings {
+        fog_quality: crate::settings::FogQuality::High,
+        ..Settings::default()
+    };
+    for size in [[60, 1900], [1, 8192]] {
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut renderer = Renderer::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            size,
+            1.,
+            &settings,
+        )
+        .unwrap();
+        let output = crate::view::targets::target(
+            &device,
+            "thin fog",
+            size,
+            wgpu::TextureFormat::Rgba8Unorm,
+        );
+        let eye = glam::Vec3::new(2.4, 2., 3.3);
+        let mut input = FrameInput::new(Camera {
+            eye,
+            view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),
+            projection: crate::perspective(
+                55f32.to_radians(),
+                size[0] as f32 / size[1] as f32,
+                0.1,
+            ),
+        });
+        input.atmosphere = true;
+        input.fog.density = 0.05;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            &mut scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(&mut scene);
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        if let Some(error) = pollster::block_on(validation.pop()) {
+            panic!("{size:?}: {error}");
         }
     }
 }
