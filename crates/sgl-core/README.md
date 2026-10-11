@@ -33,7 +33,8 @@ Use its interpolation fraction for presentation, keeping game simulation
 separate from rendering.
 
 `SplitMix64` and canonical hashes have frozen cross-target contracts.
-`random::Rng` is deterministic for a seed within its dependency version;
+`random::Rng` is deterministic for a seed, the same on every target, within
+its dependency version;
 its stream is not promised across dependency upgrades. Choose according to
 the game's replay or persistence requirements.
 
