@@ -103,3 +103,16 @@ pub(crate) fn irradiance_half(value: f32) -> u16 {
         (((exponent + 14) as u32) * 1024 + rounded) as u16
     }
 }
+
+// Finite nonnegative binary16, as `irradiance_half` writes it, to binary32:
+// exact, as every binary16 value is a binary32 one.
+pub(crate) fn half_value(bits: u16) -> f32 {
+    let exponent = u32::from(bits >> 10 & 31);
+    let fraction = u32::from(bits & 1023);
+    if exponent == 0 {
+        // Subnormal: the fraction in units of 2^-24.
+        fraction as f32 * f32::from_bits((127 - 24) << 23)
+    } else {
+        f32::from_bits((exponent + 127 - 15) << 23 | fraction << 13)
+    }
+}
