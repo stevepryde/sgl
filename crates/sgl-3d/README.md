@@ -2600,8 +2600,8 @@ not supported, since SGL3D needs compute.
 - **No blocking readback.** `Renderer::capture_specular_probe` blocks for its
   readback, which WebGPU cannot: in the browser it fails with
   `ProbeError::Readback` before rendering. Capture natively and load the
-  baked probes. The `diagnostics` feature's `diagnostics::read` also blocks
-  and is native-only.
+  baked probes. The `diagnostics` feature's `diagnostics::read` also blocks,
+  so a browser build does not have it.
 
 `browser_smoke` (`examples/browser_smoke.rs`) is the browser lane's test and a
 minimal page integration: device creation; procedural content (a textured

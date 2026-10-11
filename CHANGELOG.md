@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Renderer::read_scene`, `Renderer::capture_scene` and
+  `CaptureError`, and `sgl-3d` `diagnostics::read`: a browser build compiled
+  them and hung the tab when called; they are now native-only, a compile
+  error on `wasm32`. No game-code changes for native games; a browser game
+  drops those calls.
 - `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
   (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
   (`FrameInput::camera_cut`, a resize or another scene) in a frame where the

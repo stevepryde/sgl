@@ -51,7 +51,9 @@ pub mod sprite;
 pub(crate) mod test_gpu;
 pub mod text;
 
-pub use blit::{CaptureError, Renderer};
+#[cfg(not(target_arch = "wasm32"))]
+pub use blit::CaptureError;
+pub use blit::Renderer;
 pub use camera::{Camera, WorldUnits};
 pub use draw::{DrawList, Rect, SpriteInstance};
 pub use gpu::{Context, Frame, Gpu, GpuError, RendererInitError};

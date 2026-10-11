@@ -153,6 +153,10 @@ pub enum DiagnosticTarget {
     Exposure,
 }
 
+/// `texture`'s rows, `bpp` bytes a texel, without row padding. Blocks until
+/// the GPU copy completes, so it is native-only: a browser cannot block on a
+/// WebGPU map.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn read(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

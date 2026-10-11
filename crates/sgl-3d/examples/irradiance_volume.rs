@@ -43,6 +43,10 @@
 //! fall by a fifth a level; and a solid cell takes the mean of its air
 //! neighbours', so the volume's filter blends no darkness from rock into
 //! the faces about it.
+// Native-only: it blocks on GPU readback (`diagnostics::read`).
+#![cfg_attr(target_arch = "wasm32", no_main)]
+#![cfg(not(target_arch = "wasm32"))]
+
 use sgl_3d::glam::{IVec3, Mat4, Vec3, camera};
 use sgl_3d::{
     Backdrop, Camera, DirectionalLight, DirectionalShadow, EnvironmentId, Exposure, FrameInput,
