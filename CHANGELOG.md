@@ -22,6 +22,15 @@ docs and specs the entry links.
   square froxels, each side within the device's 3D texture limit (at 16:9
   High 170×96 where it was 163×100, Low 85×48 where it was 81×50). No
   game-code change needed.
+- `sgl-core` `Grid2::filled`: returned `Self` and panicked when the cells
+  could not be allocated (the largest byte grid on wasm32); now returns
+  `Result<Self, GridError>` with the new `GridError::TooLarge`. Add `?` or
+  `.expect("grid fits")`: `Grid2::filled(w, h, 0u8)?`; exhaustive matches
+  on `GridError` add the `TooLarge` arm.
+- `sgl-2d` `TextRenderer::draw` / `measure`: a negative size panicked in
+  `draw` and measured negative in `measure`; a size that is not positive
+  and finite now draws nothing and measures `Vec2::ZERO`. No game-code
+  change needed.
 - `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
   UDP and memory reported nothing for a connection the caller closed (UDP
   sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
