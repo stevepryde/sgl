@@ -812,6 +812,8 @@ pub struct NativeWebSocketClientConfig {
     pub timeout_ms: u64,
     /// Maximum wall-clock time spent resolving the host, connecting across
     /// every resolved address tried in turn, and completing the HTTP upgrade.
+    /// A host lookup still running at the deadline cannot be cancelled: it
+    /// keeps running on a background thread and its result is discarded.
     pub handshake_timeout: Duration,
     /// The connection's reliable lanes: weights and per-lane bounds.
     pub reliable: ReliableConfig,
