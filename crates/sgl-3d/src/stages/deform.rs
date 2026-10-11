@@ -6,6 +6,7 @@
 //! Reads: the scene's deformations for the frame (`Scene::deformations`)
 //! and the scene source. Writes: the deforming instances' deformed vertices
 //! in the scene source. Honours: nothing. Timing group: "deform".
+use crate::shading::culling::dispatch_side;
 use crate::shading::deformation::DeformDispatch;
 use crate::view::frame::FrameContext;
 
@@ -16,10 +17,18 @@ pub(crate) static DEFORM: crate::shading::Module = crate::shading::Module {
         &crate::shading::SCENE_SOURCE,
         &crate::shading::PACKED_VERTEX,
         &crate::shading::DEFORMATION,
+        &crate::shading::NORMAL_TRANSFORM,
     ],
 };
 /// The entry point the deform stage's pipeline is created with.
 pub(crate) const DEFORM_ENTRY: &str = "deform";
+
+/// The workgroups along x and y that deform `vertex_count` vertices, one an
+/// invocation, 64 a workgroup, remapped to two dimensions as the cull's
+/// dispatches are; the shader linearises by `num_workgroups.x`.
+fn workgroups(vertex_count: u32) -> [u32; 2] {
+    dispatch_side(vertex_count.div_ceil(64))
+}
 
 /// The bytes between dispatch records: a record rounded up to the device's
 /// uniform offset `alignment`, so every record's dynamic offset is aligned.
@@ -150,7 +159,8 @@ impl Deform {
         pass.set_pipeline(&self.pipeline);
         for (index, record) in work.iter().enumerate() {
             pass.set_bind_group(0, group, &[(index as u64 * self.stride) as u32]);
-            pass.dispatch_workgroups(record.vertex_count.div_ceil(64), 1, 1);
+            let [x, y] = workgroups(record.vertex_count);
+            pass.dispatch_workgroups(x, y, 1);
         }
     }
 }
@@ -183,6 +193,25 @@ mod tests {
             let stride = stride(alignment);
             assert_eq!(stride % u64::from(alignment), 0, "alignment {alignment}");
             assert!(stride >= std::mem::size_of::<DeformDispatch>() as u64);
+        }
+    }
+
+    // Defect: a mesh past 65 535 × 64 vertices dispatched along x alone,
+    // which wgpu refuses on a device of WebGPU's default
+    // `max_compute_workgroups_per_dimension`, or a remap that leaves its last
+    // vertices undeformed. The oracle is that limit and the vertex count:
+    // each dimension within the limit, and 64 invocations a workgroup reach
+    // every vertex.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_large_mesh_dispatches_within_the_limit_and_reaches_every_vertex() {
+        let limit = wgpu::Limits::default().max_compute_workgroups_per_dimension;
+        for vertex_count in [1, limit * 64, limit * 64 + 1, u32::MAX] {
+            let [x, y] = workgroups(vertex_count);
+            assert!(x <= limit && y <= limit, "{vertex_count}: {x} × {y}");
+            assert!(
+                u64::from(x) * u64::from(y) * 64 >= u64::from(vertex_count),
+                "{vertex_count}: {x} × {y}"
+            );
         }
     }
 }

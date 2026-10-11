@@ -22,6 +22,12 @@ struct View {
  flags:u32,
 }
 const VIEW_PROBE_CAPTURE:u32=1u;
+// Whether `projection` divides by view depth (a perspective projection)
+// rather than keeping clip w at 1 (an orthographic one): Filament ef1a133's
+// isPerspectiveProjection (shaders/src/surface_getters.fs 62–64).
+fn projection_perspective(projection:mat4x4<f32>)->bool {
+ return projection[2][3]!=0.;
+}
 // A light at infinity (FrameInput::directional_lights).
 struct DirectionalLight {
  // From a receiver toward the light; any nonzero length.

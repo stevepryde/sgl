@@ -151,6 +151,9 @@ impl AccumulationBufferInfo {
 
         self.width = width;
         self.height = height;
+        // DFX-53: the buffers created below hold no history, so the next
+        // frame is a reset, as the first is.
+        self.last_frame_idx = None;
 
         if self.constant_buffer.is_none() {
             self.constant_buffer = Some(device.create_buffer_init(
@@ -213,8 +216,8 @@ impl AccumulationBufferInfo {
         queue: &wgpu::Queue,
         attribs: &TemporalAntiAliasingAttribs,
     ) {
-        // No history on the first frame, nor if frames were skipped
-        // (PROVENANCE.md DFX-50).
+        // No history on the first frame, after the buffers' recreation, nor
+        // if frames were skipped (PROVENANCE.md DFX-50, DFX-53).
         let reset_accumulation = self
             .last_frame_idx
             .is_none_or(|last| self.current_frame_idx != last.wrapping_add(1))

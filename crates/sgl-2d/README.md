@@ -16,7 +16,9 @@ adds text and widgets: `cargo run -p sgl-2d --example tool_ui`.
 
 The game keeps composition; do not wrap the canvas in another engine layer.
 For resource lifetimes, color spaces, and presentation behavior, read the
-[2D rendering contract](../../specs/rendering.md).
+[2D rendering contract](../../specs/rendering.md). `Renderer::read_scene` and
+`capture_scene` block for their readback and are native-only; a browser build
+does not have them.
 
 ## Assets and text
 
@@ -40,8 +42,9 @@ pane layout, themes, input ordering, clipping, and keyboard behavior.
 For HUDs over SGL3D, share the game-owned wgpu device and queue and draw UI
 after the 3D scene. A HUD that drives `canvas::sprite::SpritePass` itself
 keeps one pass: `upload` adds a texture or replaces a known handle's pixels
-(an invalid texture returns a `TextureError`), and `draw_stats`
-reports the draws `draw_screen` encodes. Follow the
+(an invalid texture returns a `TextureError`), `upload_normal` registers a
+diffuse's normal map after its `upload` or replaces it under a different
+handle, and `draw_stats` reports the draws `draw_screen` encodes. Follow the
 [SGL3D frame lifecycle](../sgl-3d/docs/README.md#a-frame)
 and [3D integration conventions](../../docs/3d-development.md).
 `sgl_core::math` and SGL3D's `sgl_3d::glam` re-export the same workspace glam

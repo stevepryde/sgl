@@ -194,7 +194,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     client that has not connected takes that cookie from the accept, and a
     client that has confirmed takes a payload carrying its nonces as the
     accept. A client honours a deny only before it connects and only for the
-    cookie it holds.
+    cookie it holds, and answers it with one best-effort disconnect for that
+    cookie, so a server that already admitted a retried confirm frees the
+    connection rather than waiting out `timeout_ms`.
 13. WebSocket frames use the 18-byte version-2 envelope: magic, version, flags
     (kind 0 reliable, 1 latest, 2 unreliable; FIRST; MORE), lane, big-endian
     sequence (0 for reliable and unreliable, strictly increasing for latest),
@@ -271,10 +273,15 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     fragment while assembling, a declared total above the receiver's
     `max_message_bytes` or not above the first fragment, a middle fragment
     that reaches the total, and a last fragment that misses it are
-    `ProtocolViolation`, and nothing from the offending datagram or frame is
-    delivered. The receiver's cap governs, so both ends configure the same
-    one. The total is checked before anything is buffered, and the buffer
-    grows geometrically with what arrives, reserving at most twice what has
+    `ProtocolViolation`. On every transport, a connection that ends with
+    `ProtocolViolation` or `InboundOverflow` delivers nothing from the
+    offending datagram or frame, but still delivers the messages it had
+    queued for `poll` before it, then its `Disconnected` (requirement 2).
+    On UDP a reliable message still held for lane room, or completed in the
+    same step that finds the violation, goes with the connection. The
+    receiver's cap governs, so both ends configure the same one. The total
+    is checked before anything is buffered, and the buffer grows
+    geometrically with what arrives, reserving at most twice what has
     arrived and never past the total, so a lane holds at most one partial
     message of the cap (plus, on UDP, its window of buffered fragments);
     the UDP endpoint's `global_reliable_inbound_bytes` caps the received

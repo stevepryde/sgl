@@ -30,6 +30,7 @@
 //!   and the composite multiplies in linear then sRGB-encodes exactly once
 //!   into the composited target.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 use crate::assets::{Assets, Handle, Texture};
@@ -181,6 +182,7 @@ fn scene_targets(
 }
 
 /// Scene-capture failures ([`Renderer::capture_scene`]).
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub enum CaptureError {
     /// The GPU readback failed (map/poll error).
@@ -189,6 +191,7 @@ pub enum CaptureError {
     Encode(image::ImageError),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl std::fmt::Display for CaptureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -198,6 +201,7 @@ impl std::fmt::Display for CaptureError {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl std::error::Error for CaptureError {}
 
 /// The lighting composite: `albedo × (canvas_modulate + light_accum)` over a
@@ -814,8 +818,11 @@ impl Renderer {
 
     /// Register `normal` as the companion normal map of the already-uploaded
     /// `diffuse` texture (R-6, PR-4). Sprites then opt in by setting their
-    /// `normal` field to this handle. The normal map must match the
-    /// diffuse's dimensions, or a [`TextureError`] refuses it.
+    /// `normal` field to this handle. A different `normal` replaces the
+    /// diffuse's current normal map; the same one again changes nothing.
+    /// The normal map must match the diffuse's dimensions, and the diffuse
+    /// must be uploaded, or a [`TextureError`] refuses it. Follows
+    /// [`SpritePass::upload_normal`](super::sprite::SpritePass::upload_normal).
     pub fn upload_normal_map(
         &mut self,
         gpu: &Gpu,
@@ -1051,7 +1058,9 @@ impl Renderer {
     /// Read the composited scene target (lit scene + UI) back as tightly
     /// packed, fully opaque RGBA8 rows — the sRGB-encoded bytes the
     /// swapchain shows, in either lighting space. Reflects the last
-    /// submitted frame; blocks until the GPU copy completes.
+    /// submitted frame; blocks until the GPU copy completes, so it is
+    /// native-only: a browser cannot block on a WebGPU map.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn read_scene(&self, gpu: &Gpu) -> Result<Vec<u8>, CaptureError> {
         let (w, h) = (self.logical_width, self.logical_height);
         let unpadded = 4 * w;
@@ -1123,7 +1132,8 @@ impl Renderer {
     }
 
     /// [`read_scene`](Self::read_scene) written to `path` as a PNG (AR-9:
-    /// the visual-parity screenshot harness, AC-PR-1).
+    /// the visual-parity screenshot harness, AC-PR-1). Native-only.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn capture_scene(&self, gpu: &Gpu, path: &Path) -> Result<(), CaptureError> {
         let (w, h) = (self.logical_width, self.logical_height);
         let pixels = self.read_scene(gpu)?;

@@ -15,6 +15,106 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import: a small file whose morph-weight keyframes or
+  instanced meshes declared gigabytes of data could abort the process; a
+  scene listing a root twice or a child as a root now fails the load, as
+  does one whose meshes (each instance counted), skins and clips would
+  take more than 4 GiB natively or 1 GiB in the browser. No game-code
+  change needed.
+- `sgl-2d` `Renderer::read_scene`, `Renderer::capture_scene` and
+  `CaptureError`, and `sgl-3d` `diagnostics::read`: a browser build compiled
+  them and hung the tab when called; they are now native-only, a compile
+  error on `wasm32`. No game-code changes for native games; a browser game
+  drops those calls.
+- `sgl-3d` glTF import, `deformation::MorphDelta::tangent`: a morphed
+  vertex whose `TANGENT` lies along its normal (loaded as absent) got a
+  non-finite delta, so `Scene::add_asset` refused the file with
+  `SceneError::InvalidDeformation`, or, a few ulps off, a huge one; its
+  delta is now zero. No game-code change needed.
+- `sgl-3d` `PreparedModel::new` (and `Scene::add_asset`): a vertex with a
+  non-finite `uv` or `lightmap_uv`, or a mesh whose UVs span more than `f32`
+  holds, loaded, an infinite UV collapsing its whole mesh's UVs onto one
+  texel; the mesh is now refused with `SceneError::NonFiniteGeometry`. No
+  game-code change needed.
+- `sgl-net` UDP client: a deny that overtook the accept of a retried confirm
+  (or whose accept was lost) left the server holding that connection until
+  `timeout_ms`; the client now answers the deny with a disconnect, so the
+  server reports `Disconnected { reason: Peer }` right after `Connected`. No
+  game-code change needed.
+- `sgl-3d` `Scene::add_decal`/`set_decal`: a decal atlas too large for the
+  CPU to build (one 8192-square image in the browser) panicked when the
+  next frame packed it, and an image wider than the device's textures could
+  stall or overflow packing; both are now refused with `SceneError::DeviceLimit`
+  when the decal is added, at most 2 GiB of atlas in the browser and 8 GiB
+  natively. In the browser, keep the decal images in use within that
+  ([Decals](crates/sgl-3d/README.md#decals)); no other game-code changes.
+- `sgl-3d` orthographic `Camera` shading and `SurfaceContext::view`: the
+  view vector pointed from each surface toward `Camera::eye`, so highlights
+  and Fresnel varied across a flat surface and vanished on one between the
+  eye and a near plane behind it; it is now the camera's backward axis at
+  every surface. No game-code changes.
+- `sgl-3d` deformation (`Scene::set_instance_deformation`): a deforming mesh
+  above 4,194,240 vertices failed device validation every frame it deformed;
+  it now deforms. No game-code changes needed.
+- `sgl-net` native WebSocket keepalive: an unsolicited 8-byte pong arriving
+  after the reply to this side's ping, before the next `poll` or `flush`,
+  discarded the reply, so this side never pinged again and its `rtt` stopped
+  updating; the reply now counts. No game-code changes needed.
+- `sgl-2d` `UiFrame::dropdown`: for one frame after a selection,
+  click-away, Escape, `Ui::close_popups` or `Ui::cancel_interactions` closed
+  the popover, widgets under where it was could not hover or take a press;
+  they now respond at once. No game-code change needed.
+- `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
+  (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
+  (`FrameInput::camera_cut`, a resize or another scene) in a frame where the
+  feature did not run could leave its history from before the reset in use
+  when it resumed; any reset now ends it. No game-code change needed.
+- `sgl-net` WebSocket transports (`NativeWebSocketServer`,
+  `NativeWebSocketClient`, `BrowserWebSocketClient`): a peer closed for
+  `ProtocolViolation` or `InboundOverflow` discarded the messages received
+  before the offending frame; they are now delivered before its
+  `Disconnected`. No game-code change needed.
+- `sgl-3d` `Scene::set_instance_deformation`: a joint matrix scaling an axis
+  to zero gave its skinned vertices NaN normals, and a mirrored skin turned
+  them against its deformed faces; skinned normals now face the deformed
+  winding, a flattened surface takes its flattened normal, and a normal the
+  skin collapses keeps its unskinned direction. No game-code change needed.
+- `sgl-post-fx` `TemporalAntiAliasing::prepare_resources`: the frame after a
+  resize resolved against the zeroed, recreated history instead of resetting
+  accumulation, which shifted bright HDR texels; it now takes the current
+  colour, as after `reset_accumulation`. No game-code changes needed.
+- `sgl-3d` glTF import and `asset::Vertex::tangent`: a tangent a few f32
+  ulps off its normal counted as a frame, its rounding normalised into an
+  arbitrary tangent; a tangent within 0.02° of its normal is now along it:
+  absent on a material without anisotropy, refused on an anisotropic one
+  (import error, or `SceneError::MissingAnisotropyTangents`). No game-code
+  change needed.
+- `sgl-3d` `Scene::set_baked_specular_probes`: when the probes' influence
+  boxes together spanned more than about 7e12 m on each axis, probe captures
+  and world-space ray hits found none of them; they now do. A box whose `max - min` overflows f32
+  (e.g. `-f32::MAX..f32::MAX`) is now refused with
+  `ProbeError::InvalidProbe`; give such a box a smaller, finite extent.
+- `sgl-post-fx` `ScreenSpaceReflection` and
+  `ScreenSpaceReflectionAttribs::most_detailed_mip`: a zero world normal
+  gave its ray a NaN direction, a non-unit one a skewed ray, and a
+  `most_detailed_mip` past the depth hierarchy's top level started rays at
+  a level that does not exist; a normal whose squared length is more than
+  0.1 from 1 now reports a miss, and `most_detailed_mip` counts as the top
+  level at most. A game feeding SSR directly writes unit world normals;
+  SGL3D games need no change.
+- `sgl-3d` `AutoExposure::speed_brighten`/`speed_darken`: a NaN speed made
+  the adapted exposure NaN until a history reset, a negative one moved it
+  away from its target, an infinite one adapted instantly, and a speed of 0
+  over an infinite `FrameInput::frame_time_ms` moved it or made it NaN; a
+  nonfinite or negative speed now takes the default (3 and 1), and 0 holds.
+  For instant adaptation, use `f32::MAX` instead of `f32::INFINITY`.
+- `sgl-2d` `SpritePass::upload_normal` and `Renderer::upload_normal_map`: a
+  second normal map under a different handle for a diffuse was ignored
+  (returning `Ok`, even when mis-sized); it now replaces the first, and a
+  mis-sized one returns `TextureError::SizeMismatch`. A call before the
+  diffuse's upload, previously a debug panic or silent no-op, returns the
+  new `TextureError::DiffuseNotUploaded`. Upload the diffuse first; an
+  exhaustive `match` on `TextureError` adds the variant.
 - `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
   controller callback, including those a newer owner had installed, so the
   newer one stopped receiving input; it now clears only callbacks it still

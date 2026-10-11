@@ -199,6 +199,10 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
     var Position: vec3<f32>;
     InitialAdvanceRay(Origin, Direction, InvDirection, CurrentMipResolution, InvCurrentMipResolution, FloorOffset, UVOffset, &Position, &CurrentT);
 
+    // DFX-52: the hierarchy's top mip, SSR_DEPTH_HIERARCHY_MAX_MIP (screen_space_reflection.rs)
+    // or lower where the screen's longer side is under 64 pixels.
+    let TopMip = i32(textureNumLevels(g_TextureDepthHierarchy)) - 1;
+
     // DFX-30: at most SSR_MAX_TRAVERSAL_INTERSECTIONS lookups.
     let MostIntersections = min(MaxTraversalIntersections, u32(SSR_MAX_TRAVERSAL_INTERSECTIONS));
     var Idx = 0u;
@@ -238,7 +242,7 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
         let SkippedTile = AdvanceRay(Origin, Direction, InvDirection, CurrentMipPosition, InvCurrentMipResolution, FloorOffset, UVOffset, SurfaceDepth, &Position, &CurrentT);
 
         // Don't increase mip further than this because we did not generate it
-        let NextMipIsOutOfRange = SkippedTile && (CurrentMip >= SSR_DEPTH_HIERARCHY_MAX_MIP);
+        let NextMipIsOutOfRange = SkippedTile && (CurrentMip >= TopMip);
         if (!NextMipIsOutOfRange)
         {
             CurrentMip += select(-1, 1, SkippedTile);
@@ -353,6 +357,15 @@ fn SampleReflectionVector(View: vec3<f32>, Normal: vec3<f32>, Roughness: f32, Pi
     return vec4<f32>(TangentToWorld * SampleDirTS, PDF);
 }
 
+// The zero radiance and ray the pass writes where it does not trace.
+fn Miss() -> PSOutput
+{
+    var Output: PSOutput;
+    Output.Specular = vec4<f32>(0.0);
+    Output.DirectionPDF = vec4<f32>(0.0);
+    return Output;
+}
+
 @fragment
 fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 {
@@ -363,10 +376,7 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     // DFX-41: the block passed the mask on its closest depth, but the pixel traced may be
     // background, which has no surface to reflect from; it reports a miss.
     if (IsBackground(LoadDepthHierarchy(vec2<i32>(Position), 0))) {
-        var Miss: PSOutput;
-        Miss.Specular = vec4<f32>(0.0);
-        Miss.DirectionPDF = vec4<f32>(0.0);
-        return Miss;
+        return Miss();
     }
 #else
     let Position = VSOut.f4PixelPos.xy;
@@ -374,6 +384,11 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 
     let ScreenCoordUV = Position * g_Camera.f4ViewportSize.zw;
     let NormalWS = LoadNormalWS(vec2<i32>(Position));
+    // PROVENANCE.md DFX-52: a normal that is not unit length, outside the input contract, has
+    // no tangent frame to sample a reflection from (a zero normal's is NaN); it reports a miss.
+    if (!(abs(dot(NormalWS, NormalWS) - 1.0) <= SSR_NORMAL_LENGTH_SQ_TOLERANCE)) {
+        return Miss();
+    }
     let NormalVS = (g_Camera.mView * vec4<f32>(NormalWS, 0.0)).xyz;
     let Roughness = LoadRoughness(vec2<i32>(Position));
 
