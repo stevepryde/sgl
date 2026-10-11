@@ -17,8 +17,8 @@ docs and specs the entry links.
 
 - `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned
   `SendError::Disconnected`; it now returns `UnknownConnection`, like every
-  other server transport. No game-code change needed unless the game matched
-  `Disconnected` on the server side.
+  other server transport. A game that matched `Disconnected` from a server
+  send should match `UnknownConnection`; otherwise no game-code change needed.
 - `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
   light again on top of the background, so even a black glow brightened the
   fog; glow now adds only its own light dimmed by the fog in front of it, so
