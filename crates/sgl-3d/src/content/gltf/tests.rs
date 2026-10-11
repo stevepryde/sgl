@@ -322,6 +322,46 @@ fn hierarchical_reflection_preserves_surface_orientation() {
 }
 
 #[test]
+fn a_tiny_uniform_scale_loads_and_a_collapsed_axis_is_refused() {
+    // A uniform scale of 3e-4 (determinant 2.7e-11) is invertible and must
+    // load at its scaled positions; a zero scale on one axis is singular.
+    let fixture_scaled = |scale: [f32; 3]| {
+        let source = serde_json::json!({
+            "asset": {"version": "2.0"},
+            "buffers": [{"uri": "fixture.bin", "byteLength": 72}],
+            "bufferViews": [{"buffer": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 36}],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0]},
+                {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"}
+            ],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1}}]}],
+            "nodes": [{"scale": scale, "mesh": 0}],
+            "scenes": [{"nodes": [0]}], "scene": 0
+        });
+        let values: [f32; 18] = [
+            0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 1., 0., 0., 1.,
+        ];
+        Fixture::new(&serde_json::to_vec(&source).unwrap(), &values)
+    };
+    let tiny = fixture_scaled([3e-4; 3]);
+    let asset = load(&tiny.path()).unwrap();
+    let mesh = &asset.meshes[0];
+    for (vertex, expected) in
+        mesh.vertices
+            .iter()
+            .zip([[0., 0., 0.], [3e-4, 0., 0.], [0., 3e-4, 0.]])
+    {
+        assert!((Vec3::from_array(vertex.position) - Vec3::from_array(expected)).length() < 1e-9);
+        assert!((Vec3::from_array(vertex.normal) - Vec3::Z).length() < 1e-5);
+    }
+    let collapsed = fixture_scaled([1., 1., 0.]);
+    let Err(error) = load(&collapsed.path()) else {
+        panic!("a zero-scale axis loaded");
+    };
+    assert!(error.to_string().contains("singular"), "{error}");
+}
+
+#[test]
 fn emitted_strength_is_preserved_unless_the_caller_caps_it() {
     // KHR_materials_emissive_strength multiplies the authored color. The
     // application option limits strength, not the resulting color channels.
