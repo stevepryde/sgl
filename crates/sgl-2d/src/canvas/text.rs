@@ -368,8 +368,9 @@ impl TextRenderer {
 
     /// Single-line size of `text` at `px`: width = advances + kerning,
     /// height = [`line_height`](Self::line_height). Pure metrics — no
-    /// rasterization. A size that is not positive and finite measures
-    /// zero, matching [`draw`](Self::draw), which draws nothing at it.
+    /// rasterization. A size whose raster size (`px × pixel_scale`) is not
+    /// positive and finite measures zero, matching [`draw`](Self::draw),
+    /// which draws nothing at it.
     ///
     /// **Coupling with [`draw`](Self::draw)**: `draw` advances the pen with
     /// metrics fetched at `px × pixel_scale` and divided back by the scale,
@@ -379,7 +380,7 @@ impl TextRenderer {
     /// `draw`'s advance math ever stops being a pure rescale of the `px`
     /// metrics, route this through the same `raster_px / s` computation.
     pub fn measure(&self, text: &str, px: f32) -> Vec2 {
-        if !drawable_px(px) {
+        if !drawable_px(px * self.pixel_scale) {
             return Vec2::ZERO;
         }
         let mut width = 0.0;
@@ -1174,7 +1175,7 @@ mod tests {
         assert_eq!(tr.page_count(), 0);
     }
 
-    /// #429: a negative or infinite size draws nothing, measures zero and
+    /// #429: a negative or non-finite size draws nothing, measures zero and
     /// does not panic.
     #[wasm_bindgen_test(unsupported = test)]
     fn negative_and_non_finite_sizes_draw_nothing() {
@@ -1188,6 +1189,10 @@ mod tests {
             assert!(list.screen.is_empty(), "{px} drew glyphs");
             assert_eq!(tr.measure("Hello", px), Vec2::ZERO, "{px}");
         }
+        // A finite size whose raster size overflows measures zero, as
+        // `draw` draws nothing at it.
+        tr.set_pixel_scale(2.0);
+        assert_eq!(tr.measure("Hello", f32::MAX), Vec2::ZERO);
         assert_eq!(tr.page_count(), 0);
     }
 
