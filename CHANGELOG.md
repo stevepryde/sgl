@@ -20,6 +20,31 @@ docs and specs the entry links.
   and Fresnel varied across a flat surface and vanished on one between the
   eye and a near plane behind it; it is now the camera's backward axis at
   every surface. No game-code changes.
+- `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
+  (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
+  (`FrameInput::camera_cut`, a resize or another scene) in a frame where the
+  feature did not run could leave its history from before the reset in use
+  when it resumed; any reset now ends it. No game-code change needed.
+- `sgl-net` WebSocket transports (`NativeWebSocketServer`,
+  `NativeWebSocketClient`, `BrowserWebSocketClient`): a peer closed for
+  `ProtocolViolation` or `InboundOverflow` discarded the messages received
+  before the offending frame; they are now delivered before its
+  `Disconnected`. No game-code change needed.
+- `sgl-3d` `Scene::set_instance_deformation`: a joint matrix scaling an axis
+  to zero gave its skinned vertices NaN normals, and a mirrored skin turned
+  them against its deformed faces; skinned normals now face the deformed
+  winding, a flattened surface takes its flattened normal, and a normal the
+  skin collapses keeps its unskinned direction. No game-code change needed.
+- `sgl-post-fx` `TemporalAntiAliasing::prepare_resources`: the frame after a
+  resize resolved against the zeroed, recreated history instead of resetting
+  accumulation, which shifted bright HDR texels; it now takes the current
+  colour, as after `reset_accumulation`. No game-code changes needed.
+- `sgl-3d` glTF import and `asset::Vertex::tangent`: a tangent a few f32
+  ulps off its normal counted as a frame, its rounding normalised into an
+  arbitrary tangent; a tangent within 0.02° of its normal is now along it:
+  absent on a material without anisotropy, refused on an anisotropic one
+  (import error, or `SceneError::MissingAnisotropyTangents`). No game-code
+  change needed.
 - `sgl-3d` `Scene::set_baked_specular_probes`: when the probes' influence
   boxes together spanned more than about 7e12 m on each axis, probe captures
   and world-space ray hits found none of them; they now do. A box whose `max - min` overflows f32

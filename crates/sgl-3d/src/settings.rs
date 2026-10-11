@@ -230,7 +230,7 @@ pub enum DynamicGiQuality {
 
 impl DynamicGiQuality {
     /// The most rays a probe traces a frame, while it runs.
-    pub(crate) fn rays(self) -> Option<u32> {
+    pub(crate) const fn rays(self) -> Option<u32> {
         let most = crate::shading::dynamic_gi::MOST_RAYS;
         match self {
             Self::Off => None,

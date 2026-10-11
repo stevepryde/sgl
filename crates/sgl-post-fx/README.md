@@ -116,10 +116,13 @@ the previous execution, which time the transition fade instead of a clock
 (DFX-24): pass the measured frame time, or create the context with
 `CreateInfo::transition_duration` 0, as SGL3D does. With the default
 duration of 1.0 and `frame_time` left at 0, SSR's output stays zero.
-SSR discards its history by the rule DiligentFX's TAA uses:
-- on its first execution,
+SSR and TAA discard their history:
+- on their first execution,
 - after skipped frame indices,
-- when `RenderAttributes::reset_accumulation` asks.
+- after a resize (or SSR's half-resolution change) recreates it (DFX-49,
+  DFX-53),
+- when SSR's `RenderAttributes::reset_accumulation` or
+  `TemporalAntiAliasingAttribs::reset_accumulation` asks.
 
 TAA finds the closest motion vectors in its resolve, from the depth buffer
 and motion vectors it is given (DFX-13). Both are listed in PROVENANCE.md.
