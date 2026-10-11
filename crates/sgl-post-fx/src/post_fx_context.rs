@@ -23,6 +23,9 @@ pub struct FeatureFlags(pub u32);
 impl FeatureFlags {
     pub const NONE: Self = Self(0);
     pub const REVERSED_DEPTH: Self = Self(1 << 0);
+    /// R16Unorm reprojected and previous depths. The device needs
+    /// `TEXTURE_FORMAT_16BIT_NORM`, `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`
+    /// and an adapter that renders to R16Unorm.
     pub const HALF_PRECISION_DEPTH: Self = Self(1 << 1);
     pub const TEMPORAL_UPSCALING: Self = Self(1 << 2);
 
@@ -287,17 +290,26 @@ impl PostFXContext {
         self.frame_desc.index = desc.index;
         self.feature_flags = feature_flags;
 
-        if self.frame_desc.width == desc.width && self.frame_desc.height == desc.height {
-            return;
-        }
-
-        self.frame_desc = *desc;
-
         let depth_format = if feature_flags.contains(FeatureFlags::HALF_PRECISION_DEPTH) {
             wgpu::TextureFormat::R16Unorm
         } else {
             wgpu::TextureFormat::R32Float
         };
+        // Upstream compares only the size; a toggled HALF_PRECISION_DEPTH
+        // must recreate the depths too, or the pipelines keyed by the new
+        // flags target the old format (PROVENANCE.md DFX-1).
+        if self.frame_desc.width == desc.width
+            && self.frame_desc.height == desc.height
+            && self
+                .reprojected_depth
+                .as_ref()
+                .is_some_and(|depth| depth.texture().format() == depth_format)
+        {
+            return;
+        }
+
+        self.frame_desc = *desc;
+
         let (width, height) = (self.frame_desc.width, self.frame_desc.height);
         self.reprojected_depth = Some(view(&texture_2d(
             device,
