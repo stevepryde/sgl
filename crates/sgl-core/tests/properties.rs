@@ -351,7 +351,7 @@ fn catch_up_clock_conserves_supplied_time() {
 fn grid_cells_are_addressable_exactly_inside_their_bounds() {
     let strategy = (0u16..40, 0u16..40, 0u16..64, 0u16..64, 0usize..2000);
     check(strategy, |(w, h, x, y, wrong_len)| {
-        let grid = Grid2::filled(w, h, 0u8);
+        let grid = Grid2::filled(w, h, 0u8).expect("small grid");
         prop_assert_eq!(grid.get(x, y).is_some(), x < w && y < h);
         prop_assert_eq!(grid.row(y).is_some(), y < h);
         let cells = usize::from(w) * usize::from(h);
