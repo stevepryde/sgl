@@ -18,6 +18,9 @@
 // are rejected because this Godot/Supnik Z-parameterization cannot represent them.
 // SGL3D also writes the post-projection depth of each receiver's reflected
 // point, the input of godot_reflections_temporal.wgsl's hit reprojection.
+// Radiance above binary16's range (+infinity) reads as its largest finite
+// value, as FSR2's PrepareRgb clamps its input, so the tone map makes no
+// inf / inf (#464).
 
 // The most steps a trace takes, the top of Godot's `ssr_max_steps` range
 // (scene/resources/environment.cpp at the revision above), so a trace ends
@@ -342,7 +345,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 		reprojection = reflected_depth(receiver_pos, select(0.0, length(cur_pos - receiver_pos), validity > 0.0));
 
 		if (validity > 0.0) {
-			color = vec4<f32>(textureSampleLevel(source_last_frame, linear_sampler, reprojected_pos.xy, 0.0).xyz, 1.0) * validity;
+			color = vec4<f32>(min(textureSampleLevel(source_last_frame, linear_sampler, reprojected_pos.xy, 0.0).xyz, vec3<f32>(65504.0)), 1.0) * validity;
 
 			// Tone map the SSR color to have smoother roughness filtering across samples with varying luminance.
 			let rec709_luminance_weights = vec3<f32>(0.2126, 0.7152, 0.0722);

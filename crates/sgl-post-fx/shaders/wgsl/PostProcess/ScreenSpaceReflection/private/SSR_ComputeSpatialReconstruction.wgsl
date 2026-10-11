@@ -195,8 +195,9 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 
     var Output: PSOutput;
     Output.ResolvedRadiance = PixelAreaStat.ColorSum / max(PixelAreaStat.WeightSum, 1e-6f);
-    // DFX-16: undo the tone mapping.
-    Output.ResolvedRadiance = Output.ResolvedRadiance / (1.0 - Luminance(Output.ResolvedRadiance.rgb));
+    // DFX-16: undo the tone mapping. DFX-46: at most HALF_MAX, which rounding
+    // past it near luminance 1 would carry to +infinity in the RGBA16F target.
+    Output.ResolvedRadiance = min(Output.ResolvedRadiance / (1.0 - Luminance(Output.ResolvedRadiance.rgb)), vec4<f32>(HALF_MAX));
     Output.ResolvedVariance = PixelAreaStat.Variance / max(PixelAreaStat.WeightSum, 1e-6f);
     Output.ResolvedDepth = ComputeResolvedDepth(PositionWS, Depth, NearestSurfaceHitDistance);
     return Output;

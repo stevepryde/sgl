@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `TemporalAntiAliasing` and `ScreenSpaceReflection`, and
+  `sgl-3d` Velvet and world-space reflections: a colour texel of +infinity
+  (radiance past RGBA16F's range on backends that round overflow to
+  infinity) tone-mapped to NaN, which spread through the frame; it now reads
+  as 65504, binary16's largest finite value, and their outputs stay finite.
+  No game-code change needed.
 - `sgl-2d` `UiFrame::number_field`: pointer movement arriving in the same
   frame as the release was dropped, so a quick drag could open typing; it
   now scrubs the value before deciding between drag and click. No game-code

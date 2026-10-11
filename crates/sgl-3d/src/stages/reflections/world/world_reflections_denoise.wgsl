@@ -10,7 +10,9 @@
 // HLSL would read zero; a resolve neighbour floors its offset pixel where
 // Wicked's int2 truncates, so one off the grid is skipped rather than
 // read as the edge pixel; the temporal pass keeps its own reduced-grid depth
-// history.
+// history; the resolve reads radiance above binary16's range (+infinity) as
+// its largest finite value, as FSR2's PrepareRgb clamps its input, so its
+// tone map makes no inf / inf, and keeps its inverse within that range (#464).
 @group(0) @binding(8) var linear_sampler:sampler;
 
 // Walter et al. 2007; Heitz 2014 (Wicked brdf.hlsli, mediump-saturated).
@@ -100,7 +102,7 @@ fn world_hammersley(index:u32,count:u32,random:vec2<u32>)->vec2<f32> {
    continue;
   }
   let weight=world_resolve_weight(neighbor,v,n,receiver.roughness,nv);
-  var color=textureLoad(ray_indirect,neighbor,0);
+  var color=min(textureLoad(ray_indirect,neighbor,0),vec4(65504.));
   color=vec4(color.rgb/(1.+luminance(color.rgb)),color.a);
   result+=color*weight;
   weight_sum+=weight;
@@ -123,7 +125,7 @@ fn world_hammersley(index:u32,count:u32,random:vec2<u32>)->vec2<f32> {
  }
  // Post-projection depth of the reflected point, for hit reprojection.
  let reprojection=world_inverse_linear_depth(world_linear_depth(receiver.depth)+closest_length);
- textureStore(resolve_output,p,max(result,vec4(.00001)));
+ textureStore(resolve_output,p,clamp(result,vec4(.00001),vec4(65504.)));
  textureStore(resolve_variance_output,p,vec4(variance));
  textureStore(reprojection_output,p,vec4(reprojection));
 }

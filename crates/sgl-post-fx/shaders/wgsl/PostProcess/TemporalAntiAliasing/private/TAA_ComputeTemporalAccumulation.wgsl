@@ -113,14 +113,18 @@ fn HDRToSDR(Color: vec3<f32>) -> vec3<f32>
     return Color * (1.0 / (1.0 + Color));
 }
 
+// PROVENANCE.md DFX-46: at most HALF_MAX, which rounding past it near c = 1
+// would carry to +infinity in the RGBA16F history.
 fn SDRToHDR(Color: vec3<f32>) -> vec3<f32>
 {
-    return Color * (1.0 / (1.0 - Color + FLT_EPS));
+    return min(Color * (1.0 / (1.0 - Color + FLT_EPS)), vec3<f32>(HALF_MAX));
 }
 
+// PROVENANCE.md DFX-46: +infinity reads as HALF_MAX, as FSR2's PrepareRgb
+// clamps its input colour, so HDRToSDR makes no inf / inf.
 fn SampleCurrColor(PixelCoord: vec2<i32>) -> vec3<f32>
 {
-    return max(HlslLoad(g_TextureCurrColor, PixelCoord, 0).rgb, vec3<f32>(0.0));
+    return clamp(HlslLoad(g_TextureCurrColor, PixelCoord, 0).rgb, vec3<f32>(0.0), vec3<f32>(HALF_MAX));
 }
 
 fn SampleCurrDepth(PixelCoord: vec2<i32>) -> f32
@@ -239,6 +243,13 @@ fn ComputeDepthDisocclusion(Position: vec2<f32>, PrevPosition: vec2<f32>) -> f32
     return select(0.0, 1.0, Disocclusion > TAA_DEPTH_DISOCCLUSION_THRESHOLD);
 }
 
+// PROVENANCE.md DFX-46: a history tap is at most HALF_MAX, as the first frame's
+// placeholder (DFX-2) copies the input, +infinity included.
+fn SamplePrevColorTap(Texcoord: vec2<f32>) -> vec4<f32>
+{
+    return min(textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, Texcoord, 0.0), vec4<f32>(HALF_MAX));
+}
+
 fn SamplePrevColorCatmullRom(Position: vec2<f32>) -> vec4<f32>
 {
     // Source: https://advances.realtimerendering.com/s2016/Filmic%20SMAA%20v7.pptx Slide 77
@@ -267,18 +278,18 @@ fn SamplePrevColorCatmullRom(Position: vec2<f32>) -> vec4<f32>
     let P4 = W12.x * W3.y;
 
     var Result = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    Result += textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, vec2<f32>(TexPos12.x, TexPos0.y),  0.0) * P0;
-    Result += textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, vec2<f32>(TexPos0.x,  TexPos12.y), 0.0) * P1;
-    Result += textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, vec2<f32>(TexPos12.x, TexPos12.y), 0.0) * P2;
-    Result += textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, vec2<f32>(TexPos3.x,  TexPos12.y), 0.0) * P3;
-    Result += textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, vec2<f32>(TexPos12.x, TexPos3.y),  0.0) * P4;
+    Result += SamplePrevColorTap(vec2<f32>(TexPos12.x, TexPos0.y))  * P0;
+    Result += SamplePrevColorTap(vec2<f32>(TexPos0.x,  TexPos12.y)) * P1;
+    Result += SamplePrevColorTap(vec2<f32>(TexPos12.x, TexPos12.y)) * P2;
+    Result += SamplePrevColorTap(vec2<f32>(TexPos3.x,  TexPos12.y)) * P3;
+    Result += SamplePrevColorTap(vec2<f32>(TexPos12.x, TexPos3.y))  * P4;
 
     return max(Result * (1.0 / (P0 + P1 + P2 + P3 + P4)), vec4<f32>(0.0));
 }
 
 fn SamplePrevColorBilinear(Position: vec2<f32>) -> vec4<f32>
 {
-    return max(textureSampleLevel(g_TexturePrevColor, g_TexturePrevColor_sampler, Position * cbCameraAttribs.g_CurrCamera.f4ViewportSize.zw, 0.0), vec4<f32>(0.0));
+    return max(SamplePrevColorTap(Position * cbCameraAttribs.g_CurrCamera.f4ViewportSize.zw), vec4<f32>(0.0));
 }
 
 fn SamplePrevColor(Position: vec2<f32>) -> vec4<f32>

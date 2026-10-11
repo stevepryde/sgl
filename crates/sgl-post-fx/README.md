@@ -56,6 +56,9 @@ licences, source revisions and the blue-noise table source it reads.
   longer history within the same box and is not rejected by depth, as Bevy's
   TAA treats still pixels (DFX-19). Its closest-motion search clamps
   neighbours to the screen, as Godot's and Bevy's do (DFX-42).
+- Both effects read colour at most 65504, binary16's largest finite value,
+  as FSR2 clamps its input, so a texel of +infinity leaves their outputs
+  finite (DFX-46).
 - Host: derived from `ScreenSpaceReflection.cpp`, `TemporalAntiAliasing.cpp`,
   `PostFXContext.cpp` and `PostFXRenderTechnique.cpp`, recording into a
   caller's `wgpu::CommandEncoder` where
