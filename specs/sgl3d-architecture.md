@@ -1273,10 +1273,16 @@ last, after everything it may use, and refuses a directive in it.
 - **Fog.** One participating medium per frame (`FrameInput::fog`), with the
   scene's fog volumes added where they lie (Godot's box `FogVolume`s), fills
   a froxel volume over the camera's frustum, as Godot's volumetric fog does
-  (after Hillaire 2015). The fog stage lights each froxel through the shared
-  lighting: the directional lights with the shared cascade sampling, the
-  camera's clustered lights (baked ones too) through their records and the
-  shared local-shadow sampling, each froxel a shadow receiver with no side,
+  (after Hillaire 2015). The volume holds the fog quality's side across
+  the geometric mean of the render size's sides, so its froxels are square
+  and as many as Godot's, each side within 1 and the device's 3D texture
+  limit (`stages::fog::froxels`); Godot's split (side × r and side / r,
+  r = width / mean side) leaves its froxels about 8% wider than tall at
+  16:9 and its height unbounded as the frame narrows, an RD-2 departure.
+  The fog stage lights each froxel through the shared lighting: the
+  directional lights with the shared cascade sampling, the camera's
+  clustered lights (baked ones too) through their records and the shared
+  local-shadow sampling, each froxel a shadow receiver with no side,
   each light scaled by its fog energy and skipped at or below 0.001
   (Godot's `volumetric_fog_energy` and cutoff) and its shadow taken at the
   light's shadow opacity, as surfaces take it (`shading::shadow_sampling`'s

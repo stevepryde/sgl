@@ -324,7 +324,7 @@ light's shadow map through, the medium lights, and forward scattering
 without a medium (no density and no fog volumes) runs no fog and pays
 nothing for it.
 `Settings::fog_quality` picks the volume's resolution: 64 slices, and Low
-is Godot's default of 64 froxels across the frame's mean side, High 128. Timing groups `fog injection` (the lights and shadows, which scale
+is Godot's default of 64 froxels across the geometric mean of the frame's sides, High 128, in square froxels and no side past the device's 3D texture limit. Timing groups `fog injection` (the lights and shadows, which scale
 with froxels and the lights reaching them), `fog filter` (with the filter)
 and `fog integration`.
 
