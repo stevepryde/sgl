@@ -147,10 +147,13 @@ pub struct Ui {
     clock: f32,
     /// The open dropdown/popover, if any (retained across frames).
     open_popup: Option<u64>,
-    /// Overlay regions drawn **last** frame (popovers + modal backdrops):
-    /// ordinary widgets ignore the mouse inside them this frame, so a click
-    /// on an open popover never falls through to the widget underneath.
+    /// Overlay panel regions drawn **last** frame: ordinary widgets ignore
+    /// the mouse inside them this frame, so a click on a panel never falls
+    /// through to the widget underneath.
     blocked: Vec<Rect>,
+    /// The open dropdown's visible popover from last frame, blocking like
+    /// `blocked` until that dropdown closes.
+    popover_blocked: Option<Rect>,
     /// A modal was drawn last frame: ordinary widgets ignore ALL input.
     modal_blocking: bool,
     modal_scope: Option<u64>,
@@ -183,6 +186,7 @@ impl Ui {
             clock: 0.0,
             open_popup: None,
             blocked: Vec::new(),
+            popover_blocked: None,
             modal_blocking: false,
             modal_scope: None,
             thumb_drag: None,
@@ -283,7 +287,9 @@ impl Ui {
     /// Whether the mouse at `pos` is over overlay content from last frame
     /// (ordinary widgets there must not react — the popover owns the spot).
     fn blocked_at(&self, pos: Vec2) -> bool {
-        self.modal_blocking || self.blocked.iter().any(|r| contains(r, pos))
+        self.modal_blocking
+            || self.blocked.iter().any(|r| contains(r, pos))
+            || self.popover_blocked.is_some_and(|r| contains(&r, pos))
     }
 
     /// Start a frame: widgets are drawn through the returned [`UiFrame`]
@@ -341,6 +347,11 @@ impl Ui {
         if popup_dismissed {
             self.focus = self.open_popup.take();
         }
+        // A popover closed by Escape, `close_popups` or `cancel_interactions`
+        // is not drawn this frame, so it no longer blocks.
+        if self.open_popup.is_none() {
+            self.popover_blocked = None;
+        }
         UiFrame {
             ui: self,
             text,
@@ -351,6 +362,7 @@ impl Ui {
             overlay: false,
             clip: None,
             new_blocked: Vec::new(),
+            new_popover_blocked: None,
             new_modal: None,
             modal_scope: None,
             edit_clicked: false,
@@ -386,6 +398,8 @@ pub struct UiFrame<'a> {
     clip: Option<Rect>,
     /// Overlay rects drawn this frame → `Ui::blocked` next frame.
     new_blocked: Vec<Rect>,
+    /// The open popover's visible rect → `Ui::popover_blocked` next frame.
+    new_popover_blocked: Option<Rect>,
     /// A modal was drawn this frame → `Ui::modal_blocking` next frame.
     new_modal: Option<u64>,
     modal_scope: Option<u64>,
@@ -566,6 +580,7 @@ impl UiFrame<'_> {
         }
         self.ui.focus_order = self.focus_order;
         self.ui.blocked = self.new_blocked;
+        self.ui.popover_blocked = self.new_popover_blocked;
         self.ui.modal_blocking = self.new_modal.is_some();
         self.ui.modal_scope = self.new_modal;
     }
