@@ -215,11 +215,8 @@ impl UiFrame<'_> {
             .is_none_or(|clip| clip.intersection(&rect).is_some());
         self.popup_seen |= self.ui.open_popup == Some(id) && (button_visible || visible.is_some());
         if !was_open || fired {
-            // The popover first draws next frame; shield what lies under it
-            // then, as `new_blocked` becomes next frame's blockers.
-            if fired && !was_open {
-                self.new_blocked.extend(visible);
-            }
+            // The popover first draws next frame; shield what lies under it.
+            self.shield_open_popover(id, visible);
             return false;
         }
 
@@ -227,7 +224,6 @@ impl UiFrame<'_> {
         let overlay_was = self.overlay;
         self.overlay = true;
         self.popup_scope = Some(id);
-        self.new_blocked.extend(visible);
         self.rect(pop, self.ui.theme.popup);
         self.border(pop, 1.0, self.ui.theme.accent);
         let mut changed = false;
@@ -272,7 +268,17 @@ impl UiFrame<'_> {
         {
             self.ui.open_popup = None;
         }
+        self.shield_open_popover(id, visible);
         changed
+    }
+
+    /// `new_blocked` becomes next frame's blockers: shield what lies under
+    /// dropdown `id`'s visible popover then only if it is still open, so a
+    /// selection or click-away frees that spot at once.
+    fn shield_open_popover(&mut self, id: u64, visible: Option<Rect>) {
+        if self.ui.open_popup == Some(id) {
+            self.new_blocked.extend(visible);
+        }
     }
 
     /// A modal confirmation dialog in the overlay band: dims `screen`,
@@ -492,6 +498,35 @@ mod tests {
         assert!(!f.dropdown("zoom", dd, &options, &mut selected, 16.0));
         f.end();
         assert!(!ui.any_popup_open(), "click-away closes");
+        assert_eq!(selected, 1);
+    }
+
+    /// #575: the frame after a selection or click-away closes the popover,
+    /// a press on a widget that lay under it fires.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn closed_dropdown_frees_widgets_under_its_popover() {
+        let (mut ui, mut text, _assets) = fixture();
+        let dd = Rect::new(10.0, 10.0, 160.0, 30.0);
+        let options = ["25%", "50%", "100%"];
+        let mut selected = 0usize;
+        // Rows occupy y ∈ [42, 132), over this button.
+        let under = Rect::new(10.0, 42.0, 160.0, 90.0);
+        let mut fired = Vec::new();
+        for input in [
+            press_at(50.0, 25.0),   // open
+            press_at(50.0, 85.0),   // select option 1
+            press_at(50.0, 85.0),   // under
+            press_at(50.0, 25.0),   // open
+            press_at(800.0, 500.0), // click away
+            press_at(50.0, 85.0),   // under
+        ] {
+            let mut list = DrawList::new();
+            let mut f = ui.begin(&mut text, &mut list, input);
+            fired.push(f.button("under", under, "U", 16.0));
+            f.dropdown("zoom", dd, &options, &mut selected, 16.0);
+            f.end();
+        }
+        assert_eq!(fired, [false, false, true, false, false, true]);
         assert_eq!(selected, 1);
     }
 
