@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `AutoExposure::speed_brighten`/`speed_darken`: a NaN speed made
+  the adapted exposure NaN until a history reset, a negative one moved it
+  away from its target, and a speed of 0 over an infinite
+  `FrameInput::frame_time_ms` moved it; a nonfinite or negative speed now
+  takes the default (3 and 1), and 0 holds. No game-code change needed.
 - `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
   controller callback, including those a newer owner had installed, so the
   newer one stopped receiving input; it now clears only callbacks it still
