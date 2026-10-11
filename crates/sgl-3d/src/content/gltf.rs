@@ -362,7 +362,9 @@ fn decode(
         .default_scene()
         .or_else(|| document.scenes().next())
         .ok_or("GLB contains no scene")?;
-    let mut rigging = Rigging::new(&document, buffers)?;
+    let parents = rig::parents(&document)?;
+    check_scene(&document, &scene, &parents)?;
+    let mut rigging = Rigging::new(&document, &parents, buffers)?;
     let include_node = options.nodes.unwrap_or(&|_| true);
     let mut meshes = Vec::new();
     for node in scene.nodes() {
@@ -386,6 +388,104 @@ fn decode(
         rig: rigging.rig,
         ignored,
     })
+}
+
+/// The most elements one load may read and build: 2^28, well above the
+/// largest public scenes' (Power Plant's 10.6 million vertices and 12.8
+/// million triangles come to about 81 million with four attributes a
+/// vertex, Lucy's 14 million vertices and 28 million triangles to 112
+/// million with two).
+const MAX_LOAD_ELEMENTS: usize = 1 << 28;
+
+/// Refuses a scene the load would read too much of, before reading any of
+/// it: one that lists a node among its roots more than once or a node with
+/// a parent, which glTF 2.0 forbids (3.5.1, and the scene schema's
+/// `uniqueItems`: a scene's `nodes` are distinct root nodes) and which
+/// would read a subtree's meshes again each time it is listed, and one
+/// whose reads, counted by `load_elements`, exceed `MAX_LOAD_ELEMENTS`.
+/// `parents` holds each node's parent, its hierarchy a set of trees.
+fn check_scene(
+    document: &gltf::Document,
+    scene: &gltf::Scene<'_>,
+    parents: &[Option<usize>],
+) -> Result<()> {
+    let mut listed = vec![false; parents.len()];
+    for node in scene.nodes().map(|node| node.index()) {
+        if std::mem::replace(&mut listed[node], true) {
+            return Err(format!(
+                "scene {} lists root node {node} more than once; re-export valid glTF",
+                scene.index()
+            )
+            .into());
+        }
+        if let Some(parent) = parents[node] {
+            return Err(format!("scene {} lists node {node} as a root, but node {parent} is its parent; re-export valid glTF", scene.index()).into());
+        }
+    }
+    match load_elements(document, scene) {
+        Some(elements) if elements <= MAX_LOAD_ELEMENTS => Ok(()),
+        elements => Err(format!(
+            "the load would read {} accessor elements and morph target deltas, more than the {MAX_LOAD_ELEMENTS} one load may; split the asset or re-export valid glTF",
+            elements.map_or("more".into(), |elements| elements.to_string())
+        )
+        .into()),
+    }
+}
+
+/// The elements a load of `scene` may read and build, as each accessor
+/// declares them, or None beyond `usize`: for each of the scene's mesh
+/// nodes, selected or not, the elements of every accessor its mesh's
+/// primitives name and a morph target delta a vertex and target; each
+/// skin's inverse bind matrices; and each animation channel's keyframe
+/// times and values. A mesh counts once a node that uses it, and a sampler
+/// once a channel, as the load reads them. No read allocates more elements
+/// than its accessor declares, so what the load allocates stays in
+/// proportion to this count.
+fn load_elements(document: &gltf::Document, scene: &gltf::Scene<'_>) -> Option<usize> {
+    let mut meshes = Vec::new();
+    let mut nodes: Vec<gltf::Node<'_>> = scene.nodes().collect();
+    while let Some(node) = nodes.pop() {
+        meshes.extend(node.mesh());
+        nodes.extend(node.children());
+    }
+    let primitives = meshes.iter().flat_map(|mesh| mesh.primitives());
+    let primitives = primitives.flat_map(|primitive| {
+        let vertices = primitive
+            .get(&gltf::Semantic::Positions)
+            .map_or(0, |positions| positions.count());
+        let deltas = vertices.checked_mul(primitive.morph_targets().count());
+        let targets = primitive.morph_targets().flat_map(|target| {
+            [target.positions(), target.normals(), target.tangents()]
+                .into_iter()
+                .flatten()
+        });
+        let accessors = primitive
+            .attributes()
+            .map(|(_, accessor)| accessor)
+            .chain(primitive.indices())
+            .chain(targets);
+        accessors
+            .map(|accessor| Some(accessor.count()))
+            .chain([deltas])
+    });
+    let skins = document
+        .skins()
+        .flat_map(|skin| skin.inverse_bind_matrices())
+        .map(|matrices| Some(matrices.count()));
+    let keyframes = document
+        .animations()
+        .flat_map(|animation| animation.channels())
+        .flat_map(|channel| {
+            let sampler = channel.sampler();
+            [
+                Some(sampler.input().count()),
+                Some(sampler.output().count()),
+            ]
+        });
+    primitives
+        .chain(skins)
+        .chain(keyframes)
+        .try_fold(0usize, |total, elements| total.checked_add(elements?))
 }
 
 /// Refuses an accessor the gltf crate's readers cannot read, which its
