@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Scene::set_baked_specular_probes`: when the probes' influence
+  boxes together spanned more than about 7e12 m on each axis, probe captures
+  and world-space ray hits found none of them; they now do. A box whose `max - min` overflows f32
+  (e.g. `-f32::MAX..f32::MAX`) is now refused with
+  `ProbeError::InvalidProbe`; give such a box a smaller, finite extent.
 - `sgl-post-fx` `ScreenSpaceReflection` and
   `ScreenSpaceReflectionAttribs::most_detailed_mip`: a zero world normal
   gave its ray a NaN direction, a non-unit one a skewed ray, and a

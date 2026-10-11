@@ -965,7 +965,9 @@ scene.set_baked_specular_probes(&device, &queue, &[])?;
   face (Godot's blend distance); zero blend is a hard edge. Influences may and
   should overlap: a receiver's probes are normalised by their total weight, so
   neighbours whose blends meet partition it exactly, and where the total is
-  below one, as at the collection's edge, the sky fills the rest.
+  below one, as at the collection's edge, the sky fills the rest. Each box
+  (influence and proxy) needs `min < max` and a finite `max - min` on every
+  axis.
 - `proxy`: the geometry the capture sees, for box projection. Keep it separate
   from the influence and as large as the space: a corridor's proxy spans the
   whole corridor, and an opening's proxy extends well past it. `None` treats
