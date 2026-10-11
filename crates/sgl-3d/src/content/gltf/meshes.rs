@@ -13,6 +13,16 @@ use super::super::deformation::{MeshDeformation, MorphTarget};
 use super::check_accessor;
 use super::rig::{Rigging, mesh_morph_target_count, read_influences, read_morph_targets};
 
+/// Whether SGL3D leaves out a vertex attribute (`Ignored::Attribute`):
+/// nothing it draws reads a third UV set, a second colour set or an
+/// application-specific attribute.
+pub(super) fn ignored_attribute(semantic: &Semantic) -> bool {
+    matches!(
+        semantic,
+        Semantic::TexCoords(2..) | Semantic::Colors(1..) | Semantic::Extras(_)
+    )
+}
+
 /// What primitives must share to be drawn as one mesh: a material, and
 /// whether a skin and which node's morph weights deform them.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -148,6 +158,10 @@ pub(super) fn read_node(
             // POSITION (glTF 2.0 3.7.2.1 and 3.7.2.2).
             let vertices = primitive.get(&Semantic::Positions).map(|p| p.count());
             for (semantic, accessor) in primitive.attributes() {
+                // Neither checked nor read.
+                if ignored_attribute(&semantic) {
+                    continue;
+                }
                 let (types, shapes): (&[DataType], &[Dimensions]) = match semantic {
                     Semantic::Joints(1..) | Semantic::Weights(1..) => {
                         return Err(format!("{label}: more than four joint influences per vertex; limit influences to four in the export").into());
@@ -267,12 +281,22 @@ pub(super) fn read_node(
                         let direction = Vec3::new(authored[0], authored[1], authored[2]);
                         let transformed = transform.transform_vector3(direction);
                         let projected = transformed - normal * normal.dot(transformed);
+                        let invalid = || format!("{label}: vertex {i} has invalid TANGENT; export finite nonzero tangents perpendicular to NORMAL with handedness +1 or -1").into();
                         if !direction.is_finite() || direction == Vec3::ZERO
-                            || Vec3::from_array(normals[i]).cross(direction).try_normalize().is_none()
                             || !matches!(authored[3], -1.0 | 1.0)
+                        {
+                            return Err(invalid());
+                        }
+                        // Valid glTF, but along the normal it spans no
+                        // frame: absent, unless anisotropy needs it.
+                        if Vec3::from_array(normals[i]).cross(direction).try_normalize().is_none()
                             || projected.try_normalize().is_none()
                         {
-                            return Err(format!("{label}: vertex {i} has invalid TANGENT; export finite nonzero tangents perpendicular to NORMAL with handedness +1 or -1").into());
+                            return if material.anisotropy_strength > 0.0 {
+                                Err(invalid())
+                            } else {
+                                Ok([0.0; 4])
+                            };
                         }
                         let tangent = projected.normalize();
                         // Winding correction changes indices only: this determinant sign
