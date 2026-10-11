@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-input` `Gamepads::poll`: a button pressed while the macOS handler was
+  being installed could yield two `ButtonPressed` events and one release; a
+  press of a button already held is now dropped on every target. No
+  game-code change needed.
 - `sgl-2d` `UiFrame::scroll_area_begin`: content was clipped to the whole
   area, so a press on the scrollbar thumb also pressed the row under it; while
   the scrollbar shows, content is now clipped `Ui::SCROLLBAR_WIDTH` (new, 8 px)
