@@ -32,6 +32,7 @@ use crate::shading::RayQueryForm;
 use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
 use crate::view::frame::{FrameContext, ShadowMask};
+use crate::view::history::StageHistory;
 use crate::view::trace_paths::{TracePath, TracePaths};
 use std::collections::HashMap;
 
@@ -197,24 +198,6 @@ impl Pass {
     }
 }
 
-/// The traced history's frame count since it last restarted (0 restarts
-/// it), and the half of each history pair the frame writes, the other
-/// holding the last frame's. The half alternates every frame the stage
-/// runs, apart from the count, so the count skipping 0 as it wraps never
-/// writes one half twice in a row.
-#[derive(Clone, Copy, Default)]
-struct HistoryFrame {
-    count: u32,
-    current: usize,
-}
-
-impl HistoryFrame {
-    fn advance(&mut self) {
-        self.count = self.count.wrapping_add(1).max(1);
-        self.current = 1 - self.current;
-    }
-}
-
 /// The ray-traced shadow stage. Owns its pipelines, targets (reallocated
 /// when the render size changes), slot table and history, which continues
 /// across consecutive frames it runs in.
@@ -239,7 +222,7 @@ pub(crate) struct TracedShadows {
     targets: Option<Targets>,
     /// Frames since the history last restarted, and the half of each
     /// history pair the frame writes.
-    history: HistoryFrame,
+    history: StageHistory,
     /// Turns the rays' draws on the lights each frame the stage runs.
     seed: u32,
     /// The camera history's frame count of the last frame the stage ran.
@@ -321,7 +304,7 @@ impl TracedShadows {
             ),
             ran: false,
             targets: None,
-            history: HistoryFrame::default(),
+            history: StageHistory::default(),
             seed: 0,
             previous_frame: None,
         }

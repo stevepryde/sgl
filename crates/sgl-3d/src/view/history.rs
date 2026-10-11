@@ -68,6 +68,24 @@ pub(crate) struct HistoryFrame {
     pub previous_elapsed_seconds: f64,
 }
 
+/// A stage's temporal history: its frame count since it last restarted (0
+/// restarts it), and the half of each history pair the frame writes, the
+/// other holding the last frame's. The half alternates every frame the
+/// stage runs, apart from the count, so the count skipping 0 as it wraps
+/// never writes one half twice in a row.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct StageHistory {
+    pub count: u32,
+    pub current: usize,
+}
+
+impl StageHistory {
+    pub fn advance(&mut self) {
+        self.count = self.count.wrapping_add(1).max(1);
+        self.current = 1 - self.current;
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct CameraHistory {
     previous: Option<CameraFrame>,
@@ -119,7 +137,7 @@ impl CameraHistory {
     /// Commits `frame`, which the caller submitted.
     pub fn finish(&mut self, frame: HistoryFrame) {
         self.previous = Some(frame.camera);
-        self.frames = frame.frames.saturating_add(1);
+        self.frames = frame.frames.wrapping_add(1);
         self.origin = frame.origin;
         self.elapsed_seconds = frame.elapsed_seconds;
     }
@@ -172,5 +190,53 @@ mod tests {
         }
         let reset = history.begin(camera(eye - moved), true, moved.as_dvec3(), 0.);
         assert!(reset.previous_camera.is_none() && !reset.valid);
+    }
+
+    // Plausible defect: the frame count stops at its cap, so every later
+    // frame looks like a gap and TAA, SSR, fog and the traced stages restart
+    // their history each frame. The oracle is the stages' continuity rule:
+    // a frame continues the last when its count is the last's plus one,
+    // wrapping, and fog's ping-pong half (the count's parity) alternates.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn consecutive_frames_continue_across_the_frame_count_s_wrap() {
+        let camera = CameraFrame {
+            view: Mat4::IDENTITY,
+            projection: crate::perspective(1.1, 1.5, 0.1),
+            jitter: [0.; 2],
+        };
+        let mut history = CameraHistory {
+            frames: u32::MAX - 1,
+            ..CameraHistory::default()
+        };
+        let mut last = None;
+        for _ in 0..4 {
+            let frame = history.begin(camera, false, DVec3::ZERO, 0.);
+            if let Some(last) = last {
+                assert_eq!(frame.frames, u32::wrapping_add(last, 1));
+                assert_ne!(frame.frames % 2, last % 2);
+            }
+            last = Some(frame.frames);
+            history.finish(frame);
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn the_history_halves_alternate_across_the_frame_count_s_wrap() {
+        let mut frame = StageHistory {
+            count: u32::MAX - 2,
+            current: 1,
+        };
+        let mut written = vec![frame.current];
+        for _ in 0..6 {
+            frame.advance();
+            assert_ne!(frame.count, 0, "only a restart sets the count to 0");
+            written.push(frame.current);
+        }
+        for pair in written.windows(2) {
+            assert_ne!(
+                pair[0], pair[1],
+                "consecutive frames wrote one half: {written:?}"
+            );
+        }
     }
 }
