@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s SSR): a ray that left
+  past the far plane, such as a floor reflecting the sky under infinite
+  reversed-Z, stored a length beyond RGBA16F's range, becoming infinity and
+  NaN in the denoiser or a wrong direction where the backend saturates, or a
+  short meaningless one where its last step overshot the plane; it is now
+  stored 65504 long along its direction. No game-code change needed.
 - `sgl-3d` anisotropic materials: a tangent that skinning or morphing
   cancelled or turned along its normal, or a ray hit whose vertex tangents
   all vanished, shaded NaN; it now takes an arbitrary tangent in the
