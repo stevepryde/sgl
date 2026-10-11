@@ -981,7 +981,7 @@ scene.set_baked_specular_probes(&device, &queue, &[])?;
   what the probe sees as distant, as for open outdoor spaces.
 - `radiance`: a cube with perceptual roughness level/6 at mip `level`, seven
   levels from a power-of-two `face_size` of at least 64 (Filament and Bevy use
-  the same roughness-to-mip mapping). Up to 64 probes of one face size and
+  the same roughness-to-mip mapping). Up to 256 probes of one face size and
   texel encoding, and six array layers each within the device's
   `max_texture_array_layers` (`graphics_device::limits` requests the
   adapter's). Captures return `SpecularProbeTexels::Rgba16Float`; ship
