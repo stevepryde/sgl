@@ -35,22 +35,16 @@ use sgl_core::math::Vec2;
 /// Pixel size of one (square) glyph atlas page. Comfortably holds the 84 px
 /// title alphabet; more pages open as needed. A glyph too large for it (a
 /// large size at a high pixel scale) gets a square page of its own, sized to
-/// it and holding nothing else, which uploads like any texture: one wider
-/// than the device's `max_texture_dimension_2d` is refused by the upload
-/// with `TextureError::TooLarge`. A glyph whose page would exceed
+/// it and holding nothing else, which uploads like any texture (a device
+/// with lower limits refuses one wider than its `max_texture_dimension_2d`
+/// with `TextureError::TooLarge`). A glyph whose page would exceed
 /// [`MAX_GLYPH_PAGE_SIZE`] is not drawn (its advance still applies).
 pub const GLYPH_PAGE_SIZE: u32 = 512;
 
-/// Largest glyph page side, in pixels: 16384 natively, the widest texture
-/// any common GPU accepts (its page is 1 GiB of RGBA), and 8192 on wasm32,
-/// WebGPU's default `max_texture_dimension_2d`, past which a page could
-/// never upload. A larger glyph is neither rasterized nor packed.
-#[cfg(not(target_arch = "wasm32"))]
-pub const MAX_GLYPH_PAGE_SIZE: u32 = 16384;
-/// Largest glyph page side, in pixels: 8192 on wasm32, WebGPU's default
-/// `max_texture_dimension_2d`, past which a page could never upload (16384
-/// natively). A larger glyph is neither rasterized nor packed.
-#[cfg(target_arch = "wasm32")]
+/// Largest glyph page side, in pixels: 8192, the `max_texture_dimension_2d`
+/// of the default limits [`Gpu`](crate::canvas::gpu::Gpu) requests (and
+/// WebGPU's default), past which a page could never upload. A larger glyph
+/// is neither rasterized nor packed.
 pub const MAX_GLYPH_PAGE_SIZE: u32 = 8192;
 
 /// Which [`DrawList`] channel text lands in.
@@ -176,12 +170,13 @@ impl std::fmt::Display for TextError {
 
 impl std::error::Error for TextError {}
 
-/// Cache key: character + quantized pixel size (quarter-pixel buckets — the
-/// game's sizes are discrete integers, PR-8/PR-9).
+/// Cache key: character + the exact raster size's bits. A glyph's bitmap,
+/// bearings and advance all depend on the size, so sizes never share a slot:
+/// a shared slot would lay out text by whichever size filled it first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct GlyphKey {
     c: char,
-    px_q: u32,
+    px_bits: u32,
 }
 
 /// A rasterized glyph's page placement + the metrics needed to position it.
@@ -199,8 +194,9 @@ struct GlyphBitmap {
     ymin: f32,
 }
 
-/// A cached glyph: advance always; bitmap only when it has ink (space etc.
-/// advance without a quad).
+/// A glyph's layout: advance always; bitmap only when it has ink (space etc.
+/// advance without a quad). Only slots with a bitmap are cached, so page
+/// recycling bounds the cache whatever sizes a game animates through.
 #[derive(Debug, Clone, Copy)]
 struct GlyphSlot {
     bitmap: Option<GlyphBitmap>,
@@ -368,7 +364,9 @@ impl TextRenderer {
 
     /// Single-line size of `text` at `px`: width = advances + kerning,
     /// height = [`line_height`](Self::line_height). Pure metrics — no
-    /// rasterization.
+    /// rasterization. A size whose raster size (`px × pixel_scale`) is not
+    /// positive and finite measures zero, matching [`draw`](Self::draw),
+    /// which draws nothing at it.
     ///
     /// **Coupling with [`draw`](Self::draw)**: `draw` advances the pen with
     /// metrics fetched at `px × pixel_scale` and divided back by the scale,
@@ -378,6 +376,9 @@ impl TextRenderer {
     /// `draw`'s advance math ever stops being a pure rescale of the `px`
     /// metrics, route this through the same `raster_px / s` computation.
     pub fn measure(&self, text: &str, px: f32) -> Vec2 {
+        if !drawable_px(px * self.pixel_scale) {
+            return Vec2::ZERO;
+        }
         let mut width = 0.0;
         let mut prev: Option<char> = None;
         for c in text.chars() {
@@ -410,7 +411,8 @@ impl TextRenderer {
     /// Queue one line of text with its top-left at `top_left` (logical
     /// pixels). Pass order per glyph run: shadow, outline rings, fill — all
     /// at `z`, relying on the `DrawList`'s stable sort (PR-2 push order).
-    /// Quads reach the list at [`end_frame`](Self::end_frame).
+    /// Quads reach the list at [`end_frame`](Self::end_frame). A size that
+    /// is not positive and finite draws nothing.
     pub fn draw(
         &mut self,
         text: &str,
@@ -427,6 +429,9 @@ impl TextRenderer {
         // pre-scale layout (multiplying/dividing by 1.0 is exact).
         let s = self.pixel_scale;
         let raster_px = style.px * s;
+        if !drawable_px(raster_px) {
+            return;
+        }
         let snap = |v: f32| (v * s).round() / s;
         let baseline = top_left.y + self.ascent(raster_px) / s;
         let mut placed: Vec<(GlyphBitmap, Vec2)> = Vec::new();
@@ -576,17 +581,23 @@ impl TextRenderer {
     fn glyph(&mut self, c: char, px: f32) -> GlyphSlot {
         let key = GlyphKey {
             c,
-            px_q: (px * 4.0).round() as u32,
+            px_bits: px.to_bits(),
         };
         if let Some(slot) = self.glyphs.get(&key) {
             return *slot;
         }
         let metrics = self.font.metrics(c, px);
-        let side = u64::try_from(metrics.width.max(metrics.height)).unwrap_or(u64::MAX);
-        let bitmap = if metrics.width == 0
-            || metrics.height == 0
-            || side + u64::from(PADDING) > u64::from(MAX_GLYPH_PAGE_SIZE)
-        {
+        // A size fontdue reports past `u32` (a negative size wraps its
+        // dimensions near `usize::MAX`) is not drawn, like one past the cap.
+        let dims = u32::try_from(metrics.width)
+            .ok()
+            .zip(u32::try_from(metrics.height).ok())
+            .filter(|&(w, h)| {
+                w != 0
+                    && h != 0
+                    && u64::from(w.max(h)) + u64::from(PADDING) <= u64::from(MAX_GLYPH_PAGE_SIZE)
+            });
+        let bitmap = if dims.is_none() {
             None
         } else {
             let (metrics, coverage) = self.font.rasterize(c, px);
@@ -618,7 +629,10 @@ impl TextRenderer {
             bitmap,
             advance: metrics.advance_width,
         };
-        self.glyphs.insert(key, slot);
+        // A bitmap-less slot is cheap to recompute and nothing would evict it.
+        if slot.bitmap.is_some() {
+            self.glyphs.insert(key, slot);
+        }
         slot
     }
 
@@ -699,6 +713,12 @@ fn ring_offsets(width: f32) -> Vec<Vec2> {
         r -= 2.0;
     }
     out
+}
+
+/// Whether text at `px` is drawn: a size that is not positive and finite is
+/// not (fontdue's metrics for a negative size are meaningless).
+fn drawable_px(px: f32) -> bool {
+    px > 0.0 && px.is_finite()
 }
 
 #[cfg(test)]
@@ -1154,6 +1174,79 @@ mod tests {
         assert_eq!(tr.page_count(), 0);
     }
 
+    /// #430: a glyph whose page would exceed the default-limits device's
+    /// `max_texture_dimension_2d` (which `Gpu` requests) could never upload,
+    /// so it is neither rasterized nor packed.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_glyph_past_the_default_texture_limit_is_skipped() {
+        let mut tr = renderer();
+        let limit = wgpu::Limits::default().max_texture_dimension_2d;
+        let px = 10_400.0;
+        let m = tr.font.metrics('W', px);
+        assert!(m.width.max(m.height) as u32 + PADDING > limit);
+        let slot = tr.glyph('W', px);
+        assert!(slot.bitmap.is_none());
+        assert!(slot.advance > 0.0);
+        assert_eq!(tr.page_count(), 0);
+    }
+
+    /// #435: a size sharing a cache bucket with one drawn earlier lays out
+    /// exactly as on a cold cache, and its glyphs sit where `measure` puts
+    /// them.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn warm_cache_layout_matches_cold_and_measure() {
+        let text = "W".repeat(40);
+        let style = TextStyle::new(16.1, [1.0; 4]);
+        let centers = |tr: &mut TextRenderer| {
+            let mut assets: Assets<Texture> = Assets::new();
+            let mut list = DrawList::new();
+            tr.draw(&text, Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+            tr.end_frame(&mut assets, &mut list);
+            list.screen.iter().map(|q| q.pos.x).collect::<Vec<_>>()
+        };
+        let mut cold = renderer();
+        let cold_x = centers(&mut cold);
+        let mut warm = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        warm.draw(
+            &text,
+            Vec2::ZERO,
+            &TextStyle::new(16.0, [1.0; 4]),
+            0.0,
+            TextChannel::Screen,
+        );
+        warm.end_frame(&mut assets, &mut DrawList::new());
+        assert_eq!(centers(&mut warm), cold_x);
+
+        // Every "W" is identical, so the last one's centre is the first's
+        // shifted by the measured width of the 39 before it (each centre is
+        // snapped to the pixel grid, hence the 1 px tolerance).
+        let expected = cold_x[0] + cold.measure(&text[..39], 16.1).x;
+        let last = cold_x[39];
+        assert!((last - expected).abs() <= 1.0, "{last} vs {expected}");
+    }
+
+    /// #429: a negative or non-finite size draws nothing, measures zero and
+    /// does not panic.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn negative_and_non_finite_sizes_draw_nothing() {
+        let mut tr = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        for px in [-16.0, f32::NEG_INFINITY, f32::INFINITY, f32::NAN] {
+            let mut list = DrawList::new();
+            let style = TextStyle::new(px, [1.0; 4]);
+            tr.draw("Hello", Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+            tr.end_frame(&mut assets, &mut list);
+            assert!(list.screen.is_empty(), "{px} drew glyphs");
+            assert_eq!(tr.measure("Hello", px), Vec2::ZERO, "{px}");
+        }
+        // A finite size whose raster size overflows measures zero, as
+        // `draw` draws nothing at it.
+        tr.set_pixel_scale(2.0);
+        assert_eq!(tr.measure("Hello", f32::MAX), Vec2::ZERO);
+        assert_eq!(tr.page_count(), 0);
+    }
+
     /// The glyph pixels each queued quad samples, in push order.
     fn sampled_glyphs(assets: &Assets<Texture>, list: &DrawList) -> Vec<Vec<u8>> {
         list.screen
@@ -1205,6 +1298,22 @@ mod tests {
             sampled_glyphs(&assets, &list),
             sampled_glyphs(&fresh_assets, &fresh_list)
         );
+    }
+
+    /// #435: text without ink (a space) drawn at a new size every frame does
+    /// not grow the glyph cache.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn animated_inkless_glyphs_keep_a_bounded_cache() {
+        let mut tr = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        let mut list = DrawList::new();
+        for frame in 0..1000u16 {
+            let style = TextStyle::new(16.0 + f32::from(frame) * 0.001, [1.0; 4]);
+            tr.draw("  ", Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+            tr.end_frame(&mut assets, &mut list);
+            list.clear();
+        }
+        assert!(tr.glyphs.len() <= 1, "{} cached slots", tr.glyphs.len());
     }
 
     /// #327: an infinite or NaN outline or shadow width draws no ring (and

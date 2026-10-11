@@ -1628,3 +1628,104 @@ fn ssr_roughness_zero_reflection_rays_are_finite() {
         "roughness 0 traced {ray:?}, its mirror direction is {mirror:?}"
     );
 }
+
+/// A device that renders to R16Unorm, as `HALF_PRECISION_DEPTH` requires,
+/// or `None` when the adapter cannot (or, as `device`, when none exists).
+fn half_precision_depth_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let required = std::env::var("SGL_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0");
+    let adapter =
+        match pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default())) {
+            Ok(adapter) => adapter,
+            Err(error) => {
+                assert!(
+                    !required,
+                    "SGL_REQUIRE_GPU is set but no adapter exists: {error}"
+                );
+                return None;
+            }
+        };
+    let features = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
+        | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    let renders = adapter
+        .get_texture_format_features(wgpu::TextureFormat::R16Unorm)
+        .allowed_usages
+        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT);
+    if !adapter.features().contains(features) || !renders {
+        eprintln!("skipped: the adapter cannot render to R16Unorm");
+        return None;
+    }
+    Some(
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: features,
+            ..Default::default()
+        }))
+        .unwrap(),
+    )
+}
+
+#[test]
+fn toggling_half_precision_depth_recreates_the_depths() {
+    let Some((device, queue)) = half_precision_depth_device() else {
+        return;
+    };
+    let mut context = PostFXContext::new(&device, &queue, Default::default());
+    let reversed = post_fx_context::FeatureFlags::REVERSED_DEPTH;
+    let half = reversed | post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH;
+    // The flag turns on at a constant size, the frame resizes, then the flag
+    // turns off at the new size.
+    for (index, (flags, width, height)) in [
+        (reversed, SIZE[0], SIZE[1]),
+        (half, SIZE[0], SIZE[1]),
+        (half, 80, 60),
+        (reversed, 80, 60),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let index = index as u32;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let current_depth = depth(&device, &mut encoder, 0.05);
+        let previous_depth = depth(&device, &mut encoder, 0.05);
+        context.prepare_resources(
+            &device,
+            &FrameDesc {
+                index,
+                width,
+                height,
+                output_width: width,
+                output_height: height,
+            },
+            flags,
+        );
+        let expected = if flags.contains(post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH) {
+            wgpu::TextureFormat::R16Unorm
+        } else {
+            wgpu::TextureFormat::R32Float
+        };
+        for (name, view) in [
+            ("reprojected", context.get_reprojected_depth()),
+            ("previous", context.get_previous_depth()),
+        ] {
+            assert_eq!(
+                view.texture().format(),
+                expected,
+                "frame {index}: {name} depth"
+            );
+        }
+        let curr = camera(true, index);
+        let prev = camera(true, index.saturating_sub(1));
+        // wgpu's validation panics if a pipeline targets another format.
+        context.execute(&mut RenderAttributes {
+            device: &device,
+            queue: &queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &current_depth,
+            prev_depth_buffer_srv: &previous_depth,
+            curr_camera: Some(&curr),
+            prev_camera: Some(&prev),
+            camera_attribs_cb: None,
+            pass_timestamps: None,
+        });
+        queue.submit([encoder.finish()]);
+    }
+}

@@ -83,9 +83,11 @@ pub struct Material {
     /// Whether this material casts directional shadows when its visibility group is enabled.
     /// Imported materials cast by default; games may opt out decorative inlays explicitly.
     pub casts_directional_shadow: bool,
-    /// Linear base color multiplier, including alpha.
+    /// Linear base color multiplier, each channel finite and nonnegative,
+    /// and alpha in `0..=1`.
     pub base: [f32; 4],
-    /// Linear emissive color with emissive strength already applied.
+    /// Linear emissive color with emissive strength already applied, each
+    /// channel finite and nonnegative.
     pub emissive: [f32; 3],
     /// Metallic factor in `0..=1`.
     pub metallic: f32,
@@ -105,9 +107,11 @@ pub struct Material {
     /// nonnegative (`KHR_materials_specular`'s `specularColorFactor`): the
     /// F0 is the IOR's times this, at most 1, times `specular`.
     pub specular_color: [f32; 3],
-    /// Clearcoat intensity (`KHR_materials_clearcoat`'s `clearcoatFactor`).
+    /// Clearcoat intensity in `0..=1` (`KHR_materials_clearcoat`'s
+    /// `clearcoatFactor`).
     pub clearcoat: f32,
-    /// Clearcoat perceptual roughness (`clearcoatRoughnessFactor`).
+    /// Clearcoat perceptual roughness in `0..=1`
+    /// (`clearcoatRoughnessFactor`).
     pub coat_roughness: f32,
     /// Clearcoat image index, sampled as linear data: its red channel
     /// multiplies `clearcoat` (`clearcoatTexture`).
@@ -418,7 +422,8 @@ pub struct Asset {
     /// Materials addressed by [`CpuMesh::material`].
     pub materials: Vec<Material>,
     /// Images addressed by the materials' texture indices; colour-space
-    /// interpretation belongs to each channel.
+    /// interpretation belongs to each channel. A glTF image no sampled map
+    /// uses is a placeholder ([`Ignored::Image`]).
     pub images: Vec<Image>,
     /// What poses its deforming meshes, and its animation clips; empty when
     /// nothing deforms.
