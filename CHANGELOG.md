@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d`, `sgl-3d`, `sgl-post-fx`, `sgl-input`: required `bytemuck`
+  `=1.25.2`, `winit` `=0.30.13` and (native `sgl-2d`) `pollster` `=0.4.0`
+  exactly, so Cargo could not resolve beside a crate needing a newer patch;
+  now caret ranges (`^1.25.2`, `^0.30.13`, `^0.4.0`). No game-code change
+  needed; `cargo update` may pick newer compatible releases.
 - `sgl-3d` `Scene::add_shader`: a declaration of a built-in's or SGL3D's
   name after a line comment ended by `\r` or another non-`\n` line break,
   or separated by U+200E/U+200F, was accepted; it is now refused with
