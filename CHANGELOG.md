@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Settings::world_space_reflections`: a receiver in the
+  screen-space method's roughness fade that the method saw with full
+  confidence traced no world ray, leaving its faded share to probes and sky;
+  it now traces one, as composition gives that share to world rays. No
+  game-code changes needed.
 - `sgl-2d` `UiFrame::dropdown`: an open dropdown scrolled fully out of its
   clip stayed open and kept the keyboard captured; it now closes at
   `UiFrame::end`. No game-code changes needed.
