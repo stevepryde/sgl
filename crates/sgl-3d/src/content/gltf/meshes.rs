@@ -1,7 +1,7 @@
 //! A glTF scene's mesh nodes read into meshes, rigid nodes' transforms baked
 //! into their vertices and skinned ones' kept in bind space, and batched by
 //! what primitives must share to be drawn as one mesh.
-use glam::{Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 use gltf::Semantic;
 use gltf::accessor::DataType::{self, F32, U8, U16, U32};
 use gltf::accessor::Dimensions::{self, Scalar, Vec2, Vec4};
@@ -111,14 +111,22 @@ pub(super) fn read_node(
         } else {
             global
         };
-        if !transform.is_finite() || transform.determinant().abs() < 1e-10 {
+        // Singular relative to the axes' own lengths, so a uniformly tiny
+        // scale (determinant s³) loads and only a collapsed axis is refused.
+        let axes = Mat3::from_mat4(transform);
+        let volume = axes.x_axis.length() * axes.y_axis.length() * axes.z_axis.length();
+        // Normals use only the 3x3, so an inverted translation cannot overflow it.
+        let normal_transform = Mat4::from_mat3(axes.inverse().transpose());
+        if !transform.is_finite()
+            || axes.determinant().abs() <= 1e-6 * volume
+            || !normal_transform.is_finite()
+        {
             return Err(format!(
                 "node {} has a singular/nonfinite transform; apply a nonzero scale in Blender",
                 node.index()
             )
             .into());
         }
-        let normal_transform = transform.inverse().transpose();
         // Every primitive with morph targets has the mesh's, which the
         // node's one set of weights drives; one without is unmorphed.
         let mesh_targets = mesh_morph_target_count(&mesh);

@@ -322,6 +322,46 @@ fn hierarchical_reflection_preserves_surface_orientation() {
 }
 
 #[test]
+fn a_tiny_uniform_scale_loads_and_a_collapsed_axis_is_refused() {
+    // A uniform scale of 3e-4 (determinant 2.7e-11) is invertible and must
+    // load at its scaled positions; a zero scale on one axis is singular.
+    let fixture_scaled = |scale: [f32; 3]| {
+        let source = serde_json::json!({
+            "asset": {"version": "2.0"},
+            "buffers": [{"uri": "fixture.bin", "byteLength": 72}],
+            "bufferViews": [{"buffer": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 36}],
+            "accessors": [
+                {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0]},
+                {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"}
+            ],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1}}]}],
+            "nodes": [{"scale": scale, "mesh": 0}],
+            "scenes": [{"nodes": [0]}], "scene": 0
+        });
+        let values: [f32; 18] = [
+            0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 1., 0., 0., 1.,
+        ];
+        Fixture::new(&serde_json::to_vec(&source).unwrap(), &values)
+    };
+    let tiny = fixture_scaled([3e-4; 3]);
+    let asset = load(&tiny.path()).unwrap();
+    let mesh = &asset.meshes[0];
+    for (vertex, expected) in
+        mesh.vertices
+            .iter()
+            .zip([[0., 0., 0.], [3e-4, 0., 0.], [0., 3e-4, 0.]])
+    {
+        assert!((Vec3::from_array(vertex.position) - Vec3::from_array(expected)).length() < 1e-9);
+        assert!((Vec3::from_array(vertex.normal) - Vec3::Z).length() < 1e-5);
+    }
+    let collapsed = fixture_scaled([1., 1., 0.]);
+    let Err(error) = load(&collapsed.path()) else {
+        panic!("a zero-scale axis loaded");
+    };
+    assert!(error.to_string().contains("singular"), "{error}");
+}
+
+#[test]
 fn emitted_strength_is_preserved_unless_the_caller_caps_it() {
     // KHR_materials_emissive_strength multiplies the authored color. The
     // application option limits strength, not the resulting color channels.
@@ -896,6 +936,29 @@ fn read_textured_material(material: serde_json::Value) -> Result<Material> {
     )
 }
 
+// Defects: a bump map without bumpFactor read as factor 0, so it changed
+// nothing, or a factor above 1 refused. The oracle is EXT_materials_bump's
+// schema (KhronosGroup/glTF#2339) and three.js's GLTFMaterialsBumpExtension:
+// bumpFactor defaults to 1, in 0..100.
+#[test]
+fn a_bump_factor_defaults_to_one_and_may_exceed_one() {
+    let bump = |extension: serde_json::Value| {
+        read_textured_material(serde_json::json!({
+            "extensions": {"EXT_materials_bump": extension}
+        }))
+    };
+    let plain = bump(serde_json::json!({"bumpTexture": {"index": 0}})).unwrap();
+    assert_eq!((plain.bump_texture, plain.bump_scale), (Some(2), 1.));
+    let strong = bump(serde_json::json!({"bumpTexture": {"index": 0}, "bumpFactor": 2.0})).unwrap();
+    assert_eq!(strong.bump_scale, 2.);
+    for refused in [-1.0, 101.0] {
+        assert!(
+            bump(serde_json::json!({"bumpTexture": {"index": 0}, "bumpFactor": refused})).is_err(),
+            "bumpFactor {refused} loaded"
+        );
+    }
+}
+
 // Defects: a clearcoat or iridescence texture's index taken for its image
 // (glTF's texture -> image indirection lost), or one map's texture read for
 // another's; a KHR default misread; the clearcoat normal map's scale lost;
@@ -1121,6 +1184,48 @@ fn sheen_and_diffuse_transmission_load_with_their_defaults() {
             "{unlit} loaded"
         );
     }
+}
+
+// Defects: a material extension object carrying its own `extensions` (or
+// `extras`) is refused, or its authored values are lost. The oracle is
+// glTF 2.0's glTFProperty schema, from which every KHR material extension's
+// schema derives, so each may hold both; and the authored values.
+#[test]
+fn material_extensions_with_their_own_extensions_load() {
+    let nested = |mut lobe: serde_json::Value| {
+        lobe["extensions"] = serde_json::json!({"EXT_vendor_note": {"note": 1}});
+        lobe["extras"] = serde_json::json!({"author": "fixture"});
+        lobe
+    };
+    let material = read_textured_material(serde_json::json!({"extensions": {
+        "KHR_materials_anisotropy": nested(serde_json::json!({"anisotropyStrength": 0.5})),
+        "KHR_materials_clearcoat": nested(serde_json::json!({"clearcoatFactor": 0.25})),
+        "KHR_materials_iridescence": nested(serde_json::json!({"iridescenceFactor": 0.75})),
+        "KHR_materials_sheen": nested(serde_json::json!({"sheenRoughnessFactor": 0.5})),
+        "KHR_materials_diffuse_transmission": nested(serde_json::json!({"diffuseTransmissionFactor": 0.25})),
+        "KHR_materials_transmission": nested(serde_json::json!({"transmissionFactor": 0.75})),
+        "KHR_materials_volume": nested(serde_json::json!({"thicknessFactor": 0.5})),
+        "KHR_materials_dispersion": nested(serde_json::json!({"dispersion": 0.25}))
+    }}))
+    .unwrap();
+    assert_eq!(
+        (
+            material.anisotropy_strength,
+            material.clearcoat,
+            material.iridescence,
+            material.sheen_roughness,
+        ),
+        (0.5, 0.25, 0.75, 0.5)
+    );
+    assert_eq!(
+        (
+            material.diffuse_transmission,
+            material.transmission,
+            material.thickness,
+            material.dispersion,
+        ),
+        (0.25, 0.75, 0.5, 0.25)
+    );
 }
 
 // Defects: a primitive without TEXCOORD_0 loads though its material samples

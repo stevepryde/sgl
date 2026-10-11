@@ -1,6 +1,6 @@
 //! A material's `KHR_materials_sheen`: the sheen layer cloth takes.
 use super::super::super::asset::Result;
-use super::{color_factor, extension_texture, unit_factor};
+use super::{GLTF_PROPERTY_KEYS, color_factor, extension_texture, unit_factor};
 
 /// A material's sheen (KHR_materials_sheen).
 pub(super) struct Sheen<'a> {
@@ -39,8 +39,8 @@ pub(super) fn read_sheen<'a>(
                 | "sheenColorTexture"
                 | "sheenRoughnessFactor"
                 | "sheenRoughnessTexture"
-                | "extras"
-        ) {
+        ) && !GLTF_PROPERTY_KEYS.contains(&key.as_str())
+        {
             return Err(error(&format!("unsupported property {key}")).into());
         }
     }
