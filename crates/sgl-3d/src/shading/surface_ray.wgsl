@@ -132,10 +132,6 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
   coat_roughness=material_coat_roughness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_COAT_ROUGHNESS],hit.uv,material.wrap,false));
   s.coat_normal=ray_coat_normal(hit,material);
  }
- // A coatless surface's coat normal is its base normal (Surface).
- if s.coat<=0. {
-  s.coat_normal=n;
- }
  s.coat_roughness=clamp(coat_roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
  // The sheen's and the diffuse transmission's maps likewise, their colours
  // sRGB.

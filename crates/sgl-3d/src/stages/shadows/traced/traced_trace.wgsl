@@ -74,8 +74,10 @@ fn traced_directional_light()->u32 {
 
 // Whether slot `key`'s light is unoccluded from the surface at `position`
 // with base normal `normal` and coat normal `coat_normal` (G-buffer
-// normal.BA: the coat's mapped normal, else the geometry normal, the base
-// normal without a coat), along a
+// normal.BA: the coat's mapped normal, else the geometry normal, which a
+// coatless pixel keeps here although its lighting reaches by its base normal
+// alone, since a tracing texel stands for the 2×2 footprint the upsample
+// and denoiser share), along a
 // ray toward the point of the light `random` draws (light_surface.wgsl);
 // false where the light does not reach the surface. The reach test covers
 // the normals the lighting uses, base and coat, and the light's sphere or

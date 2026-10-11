@@ -28,10 +28,7 @@ struct Surface {
  // (normal or bump map, the coat's normal map, decals, scrolling layers),
  // so none of them moves a shadow map's lookup; and the coat normal, which
  // the coat follows: its clearcoat normal map's on the base map's frame,
- // else the geometry normal (KHR_materials_clearcoat); without a coat, the
- // base normal, which no lobe then reads, so that a light's reach
- // (light_faces), in shading and in the ray-traced shadow trace, which
- // reads it from the G-buffer, is the base normal's alone.
+ // else the geometry normal (KHR_materials_clearcoat).
  // Filament ef1a133 offsets its spot and cascade shadows along this normal,
  // flipped to the side shaded (getWorldGeometricNormalVector(),
  // shading_geometricNormal in shaders/src/surface_shading_parameters.fs and
@@ -686,7 +683,10 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let base=s.base;
  let metallic=s.metallic;
  let n=s.normal;
- let coat_n=s.coat_normal;
+ // Without a coat no lobe reads the coat normal, so the base normal stands
+ // in for it and a light reaches this pixel by its base normal alone
+ // (light_faces), skipping lights whose every lobe would clamp to 0.
+ let coat_n=select(n,s.coat_normal,s.coat>0.);
  let rough=s.roughness;
  let coat=s.coat;
  let coat_rough=s.coat_roughness;

@@ -2,9 +2,8 @@
 // encodings (shading::gbuffer names the target formats).
 //
 // normal: RG the mapped base normal, BA the coat normal (its clearcoat normal
-//  map's, else the geometry normal; the base normal without a coat,
-//  Surface.coat_normal), both signed [-1, 1] world-space octahedral
-//  coordinates.
+//  map's, else the geometry normal), both signed [-1, 1] world-space
+//  octahedral coordinates.
 // material: coat perceptual roughness, base perceptual roughness, coat
 //  strength, and the base lobe's reflectance at grazing incidence (F90,
 //  surface_f90) as its environment lights it at the camera's view, beneath

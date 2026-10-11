@@ -2826,8 +2826,7 @@ RGBA16F target (8 bytes/pixel); fused rendering needs eight color attachments an
 The procedural example supports `--anisotropy 0.5` to exercise this path.
 
 Stable normal RGBA16F stores signed octahedral world-space base normals in RG and coat
-normals (the clearcoat normal map's, else the geometry normal; the base normal
-without a coat) in BA. Each pair uses Bevy's signed `[-1, 1]` octahedral
+normals (the clearcoat normal map's, else the geometry normal) in BA. Each pair uses Bevy's signed `[-1, 1]` octahedral
 coordinates and `gbuffer_octahedral_decode` (see `src/shading/gbuffer.wgsl`);
 there is no unsigned remapping, preserving binary16 precision around zero.
 Stable material RGBA16F stores coat roughness, base
