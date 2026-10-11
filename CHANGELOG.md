@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s SSR): pixels that
+  left the reflection mask kept their last radiance history, which the next
+  frames' bilinear reprojection blended back in as faint ghosting at mask
+  edges; they now hold no history (zero radiance, variance 1). No game-code
+  change needed.
 - `sgl-2d` `fetch_runtime_bundle` (wasm): listed assets were fetched from
   `assets/{path}` relative to the page, whatever the manifest URL; they are
   now fetched relative to the manifest's directory. Serve the manifest from
