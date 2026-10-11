@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` local-light shadows: a shadowed light with a large range at or
+  behind the camera overflowed its atlas slot size, panicking with overflow
+  checks or else taking the smallest slot; it now takes the largest slot.
+  No game-code change needed.
 - `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
   light again on top of the background, so even a black glow brightened the
   fog; glow now adds only its own light dimmed by the fog in front of it, so
