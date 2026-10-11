@@ -4,6 +4,7 @@
 
 use sgl_core::collision::{Aabb, sweep_aabb};
 use sgl_core::math::Vec2;
+use sgl_core::random::Rng;
 use sgl_core::time::FixedClock;
 use sgl_core::{SplitMix64, StateHasher};
 use std::time::Duration;
@@ -85,4 +86,14 @@ fn swept_aabb_hit_is_target_independent() {
     let hit = sweep_aabb(&body, Vec2::new(7.3, 1.1), &target).expect("the sweep hits");
     assert_eq!(hit.t.to_bits(), 1_052_827_760);
     assert_eq!(hit.normal, Vec2::NEG_X);
+}
+
+/// `Rng::usize` must not reduce a different word width on wasm32 (#518).
+#[wasm_bindgen_test(unsupported = test)]
+fn seeded_rng_usize_is_target_independent() {
+    let mut rng = Rng::from_seed(42);
+    let draws: Vec<usize> = (0..8).map(|_| rng.usize(0..6)).collect();
+    let wide = rng.usize(1_000..4_000_000_000);
+    assert_eq!(draws, [4, 2, 4, 0, 3, 2, 5, 2]);
+    assert_eq!(wide, 2_882_412_457);
 }
