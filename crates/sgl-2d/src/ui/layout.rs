@@ -1,13 +1,19 @@
 //! Layout widgets: splitters that resize caller-owned extents, and clipped
 //! scroll areas.
 
-use super::{UiFrame, widget_id};
+use super::{Ui, UiFrame, widget_id};
 use crate::canvas::draw::Rect;
 
 /// Scroll-wheel lines → content pixels (one "line" of a list).
 const SCROLL_LINE_PX: f32 = 40.0;
-/// Scrollbar track width in logical pixels.
-const SCROLLBAR_W: f32 = 8.0;
+const SCROLLBAR_W: f32 = Ui::SCROLLBAR_WIDTH;
+
+impl Ui {
+    /// Width in logical pixels of a scroll area's scrollbar track, at the
+    /// right edge of its `rect` while content overflows. Content is clipped
+    /// short of it then, so lay rows out within `rect` minus this width.
+    pub const SCROLLBAR_WIDTH: f32 = 8.0;
+}
 
 /// Axis along which a splitter changes its caller-owned extent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +123,9 @@ impl UiFrame<'_> {
     /// total content height laid out from `rect.min.y - *offset`. A draggable
     /// scrollbar appears when content overflows; `*offset` is clamped to the
     /// valid range. Draws after this clip to `rect` within the enclosing clip
-    /// (including text) until [`scroll_area_end`](Self::scroll_area_end);
+    /// (including text) until [`scroll_area_end`](Self::scroll_area_end),
+    /// stopping [`Ui::SCROLLBAR_WIDTH`] short of the right edge while the
+    /// scrollbar shows, so presses on the scrollbar never reach content;
     /// scroll areas nest. The wheel scrolls the innermost hovered area with
     /// content to scroll, applied at its end, so the content shows it from the
     /// next frame.
@@ -173,7 +181,19 @@ impl UiFrame<'_> {
             max_off,
             wheel,
         });
-        self.set_clip(Some(self.clip_within(rect)));
+        // Content stops short of a shown scrollbar, so a press on the track
+        // or thumb never reaches a widget underneath.
+        let content = if max_off > 0.0 {
+            Rect::new(
+                rect.min.x,
+                rect.min.y,
+                (rect.size().x - SCROLLBAR_W).max(0.0),
+                view_h,
+            )
+        } else {
+            rect
+        };
+        self.set_clip(Some(self.clip_within(content)));
     }
 
     /// End the innermost scroll area, restoring the clip in effect at its
@@ -512,8 +532,8 @@ mod tests {
         let n = list.screen.len();
         assert_eq!(
             list.screen[n - 2].clip,
-            Some(area),
-            "content carries the clip"
+            Some(Rect::new(700.0, 60.0, 200.0 - Ui::SCROLLBAR_WIDTH, 300.0)),
+            "content carries the clip, short of the scrollbar"
         );
         assert_eq!(list.screen[n - 1].clip, None, "clip resets after end");
 
@@ -577,5 +597,36 @@ mod tests {
         f.scroll_area_end(&mut offset);
         f.end();
         assert!(fired, "visible part still fires");
+    }
+
+    /// A press on the scrollbar thumb grabs the thumb only: a full-width row
+    /// under the track does not fire, and the held drag scrolls.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_thumb_press_does_not_press_the_row_under_the_track() {
+        let (mut ui, mut text, _assets) = fixture();
+        let mut list = DrawList::new();
+        let area = Rect::new(0.0, 0.0, 200.0, 100.0);
+        let row = Rect::new(0.0, 0.0, 200.0, 30.0);
+        let mut offset = 0.0_f32;
+        // The track is the area's right 8 px; the thumb is 100·100/400 =
+        // 25 px tall at the top, so (196, 10) is on the thumb and the row.
+        let mut fired = Vec::new();
+        for input in [press_at(196.0, 10.0), hover_at(196.0, 40.0, true)] {
+            let mut f = ui.begin(&mut text, &mut list, input);
+            f.scroll_area_begin("list", area, 400.0, &mut offset);
+            fired.push(f.button("row", row, "Row", 16.0));
+            f.scroll_area_end(&mut offset);
+            f.end();
+        }
+        assert_eq!(fired, [false, false], "the row under the thumb never fires");
+        assert!(offset > 0.0, "the thumb drag scrolls: {offset}");
+
+        // Left of the track the same row still fires.
+        let mut f = ui.begin(&mut text, &mut list, press_at(180.0, 10.0));
+        f.scroll_area_begin("list", area, 400.0, &mut offset);
+        let fired = f.button("row", row, "Row", 16.0);
+        f.scroll_area_end(&mut offset);
+        f.end();
+        assert!(fired);
     }
 }
