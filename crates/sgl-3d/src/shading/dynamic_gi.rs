@@ -22,12 +22,6 @@ pub(crate) const MOST_RAYS: u32 = 256;
 /// The fixed rays each probe traces a frame beside its others, which
 /// classify it and are not blended (`DDGI_FIXED_RAYS_PER_FRAME`).
 pub(crate) const FIXED_RAYS_PER_FRAME: u32 = 4;
-/// The fixed rays each probe traces on its second turn, all at once,
-/// beside a bucket of its others (`DDGI_FIXED_RAYS`).
-pub(crate) const FIXED_RAYS: u32 = 32;
-/// A probe traces its other rays in buckets of this many
-/// (`DDGI_RAY_BUCKET_COUNT`).
-pub(crate) const RAY_BUCKET_COUNT: u32 = 4;
 /// Texels to a row of the ray list and ray results (`DDGI_RAY_ROW`). The
 /// list holds the frame's rays one after another; in the results a probe's
 /// rays, `max_rays` and its fixed rays, follow one another from texel
@@ -41,10 +35,9 @@ pub(crate) const HISTORY_BYTES: u64 = 4
     * (6 * (COLOR_RESOLUTION * COLOR_RESOLUTION) + DEPTH_RESOLUTION * DEPTH_RESOLUTION + 4) as u64;
 
 /// The ray texels each probe takes at `max_rays` (`ddgi_ray_slot`): its
-/// rays and its fixed rays. Its turn that traces all `FIXED_RAYS` writes
-/// them and a bucket of its other rays here too (`ddgi_turn_rays`), so
-/// every tier's `max_rays` leaves room for them (asserted beside
-/// `DynamicGiQuality::rays`).
+/// rays and its fixed rays. Every tier's `max_rays` leaves room for the
+/// turn that traces all of a probe's fixed rays (asserted in the dynamic GI
+/// stage's buffers).
 pub(crate) const fn ray_stride(max_rays: u32) -> u32 {
     max_rays + FIXED_RAYS_PER_FRAME
 }
@@ -102,12 +95,5 @@ pub(crate) fn constants() -> Vec<super::layout_tests::Constant> {
     ]
     .into_iter()
     .map(|(name, value)| Constant::new("geometry", name, naga::Literal::U32(value)))
-    .chain(
-        [
-            ("DDGI_FIXED_RAYS", FIXED_RAYS),
-            ("DDGI_RAY_BUCKET_COUNT", RAY_BUCKET_COUNT),
-        ]
-        .map(|(name, value)| Constant::new("dynamic_gi_allocate", name, naga::Literal::U32(value))),
-    )
     .collect()
 }
