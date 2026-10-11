@@ -667,7 +667,11 @@ impl PeerState {
             self.released_latest.clear();
             // Received messages stay for `poll` to deliver before the end,
             // whatever the reason; a frame refused as `ProtocolViolation`
-            // or `InboundOverflow` never joined them (netcode.md 15).
+            // or `InboundOverflow` never joined them. Partial messages go
+            // with the connection (netcode.md 15).
+            for lane in &mut self.inbound {
+                lane.reassembly = Reassembly::default();
+            }
         }
     }
 

@@ -59,8 +59,9 @@ a browser game sizes each lane's inbound bounds for what arrives between
 two polls, and a peer that sends more is disconnected with
 `DisconnectReason::InboundOverflow`. On every transport, a peer
 disconnected with `InboundOverflow` or `ProtocolViolation` still delivers
-the messages it sent before the offending frame or datagram, then its
-`Disconnected`; nothing from that frame or datagram is delivered.
+the messages queued for `poll` before the offending frame or datagram, then
+its `Disconnected`; nothing from that frame or datagram is delivered (on
+UDP, nor is a reliable message still held for lane room).
 `Delivery::Unreliable(lane)` sends independent best-effort messages of at
 most `MAX_UNRELIABLE_BYTES`: each is sent once, never retransmitted or
 fragmented, delivered at most once, in no promised order. The sender never

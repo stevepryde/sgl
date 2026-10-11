@@ -273,10 +273,13 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     that reaches the total, and a last fragment that misses it are
     `ProtocolViolation`. On every transport, a connection that ends with
     `ProtocolViolation` or `InboundOverflow` delivers nothing from the
-    offending datagram or frame, but still delivers the messages it
-    received before it, then its `Disconnected` (requirement 2). The
-    receiver's cap governs, so both ends configure the same one. The total is checked before anything is buffered, and the buffer
-    grows geometrically with what arrives, reserving at most twice what has
+    offending datagram or frame, but still delivers the messages it had
+    queued for `poll` before it, then its `Disconnected` (requirement 2).
+    On UDP a reliable message still held for lane room, or completed in the
+    same step that finds the violation, goes with the connection. The
+    receiver's cap governs, so both ends configure the same one. The total
+    is checked before anything is buffered, and the buffer grows
+    geometrically with what arrives, reserving at most twice what has
     arrived and never past the total, so a lane holds at most one partial
     message of the cap (plus, on UDP, its window of buffered fragments);
     the UDP endpoint's `global_reliable_inbound_bytes` caps the received
