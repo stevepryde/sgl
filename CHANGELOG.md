@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `BrowserWebSocketClient`: a reconnect attempt whose `WebSocket`
+  constructor threw (a `SecurityError`, say) reported no `Disconnected`, so
+  a game waiting after `Reconnecting` waited forever; each such attempt now
+  reports `Disconnected { Transport }` like any other failed attempt. No
+  game-code change needed.
 - `sgl-2d` `SpritePass::prepare`: a frame with more instances than the
   device's `max_buffer_size` holds (about 3.3 million at the 256 MiB
   default) grew the instance buffer past it, a wgpu validation error; it now
