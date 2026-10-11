@@ -13,10 +13,16 @@ use objc2_game_controller::{
     GCController, GCControllerAxisInput, GCControllerButtonInput, GCDevice, GCExtendedGamepad,
 };
 
+type ButtonHandler = RcBlock<dyn Fn(NonNull<GCControllerButtonInput>, f32, Bool)>;
+type AxisHandler = RcBlock<dyn Fn(NonNull<GCControllerAxisInput>, f32)>;
+
+/// A connected controller's elements, each with the handler this pad
+/// installed on it. Holding the handler keeps its address from being reused
+/// while the pad lives, so drop can tell whether an element still holds it.
 struct Pad {
     controller: Retained<GCController>,
-    buttons: Vec<(Button, Retained<GCControllerButtonInput>)>,
-    axes: Vec<(Axis, Retained<GCControllerAxisInput>)>,
+    buttons: Vec<(Retained<GCControllerButtonInput>, ButtonHandler)>,
+    axes: Vec<(Retained<GCControllerAxisInput>, AxisHandler)>,
 }
 impl Pad {
     fn new(
@@ -67,10 +73,10 @@ impl Pad {
                 ],
             )
         };
-        for (button, input) in &buttons {
-            let button = *button;
+        let mut button_handlers = Vec::with_capacity(buttons.len());
+        for (button, input) in buttons {
             let events = sender.clone();
-            let handler = RcBlock::new(
+            let handler: ButtonHandler = RcBlock::new(
                 move |_: NonNull<GCControllerButtonInput>, _: f32, pressed: Bool| {
                     let event = if pressed.as_bool() {
                         EventType::ButtonPressed(button)
@@ -92,15 +98,18 @@ impl Pad {
                     event: EventType::ButtonPressed(button),
                 }));
             }
+            button_handlers.push((input, handler));
         }
-        for &(axis, ref input) in &axes {
+        let mut axis_handlers = Vec::with_capacity(axes.len());
+        for (axis, input) in axes {
             let events = sender.clone();
-            let handler = RcBlock::new(move |_: NonNull<GCControllerAxisInput>, value: f32| {
-                let _ = events.send(Update::Input(Event {
-                    id,
-                    event: EventType::AxisChanged(axis, value),
-                }));
-            });
+            let handler: AxisHandler =
+                RcBlock::new(move |_: NonNull<GCControllerAxisInput>, value: f32| {
+                    let _ = events.send(Update::Input(Event {
+                        id,
+                        event: EventType::AxisChanged(axis, value),
+                    }));
+                });
             // SAFETY: Same copied-block ownership as buttons. Apple's stick Y
             // already points up, matching the public API; do not invert it.
             unsafe {
@@ -110,24 +119,32 @@ impl Pad {
                     event: EventType::AxisChanged(axis, input.value()),
                 }));
             }
+            axis_handlers.push((input, handler));
         }
         Self {
             controller,
-            buttons,
-            axes,
+            buttons: button_handlers,
+            axes: axis_handlers,
         }
     }
 }
 impl Drop for Pad {
     fn drop(&mut self) {
         // SAFETY: Backend is main-thread-bound and retains each element. Clear
-        // our copied blocks before releasing objects on disconnect or shutdown.
+        // our copied blocks before releasing objects on disconnect or shutdown,
+        // but only where the element still holds ours: a heap block's copy is
+        // the block itself, so a different pointer is a newer owner's handler,
+        // which stays. The getters' pointers are only compared.
         unsafe {
-            for (_, input) in &self.buttons {
-                input.setPressedChangedHandler(std::ptr::null_mut());
+            for (input, handler) in &self.buttons {
+                if std::ptr::eq(input.pressedChangedHandler(), RcBlock::as_ptr(handler)) {
+                    input.setPressedChangedHandler(std::ptr::null_mut());
+                }
             }
-            for (_, input) in &self.axes {
-                input.setValueChangedHandler(std::ptr::null_mut());
+            for (input, handler) in &self.axes {
+                if std::ptr::eq(input.valueChangedHandler(), RcBlock::as_ptr(handler)) {
+                    input.setValueChangedHandler(std::ptr::null_mut());
+                }
             }
         }
     }
