@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `PreparedModel::new` (and `Scene::add_asset`): a vertex with a
+  non-finite `uv` or `lightmap_uv`, or a mesh whose UVs span more than `f32`
+  holds, loaded, an infinite UV collapsing its whole mesh's UVs onto one
+  texel; the mesh is now refused with `SceneError::NonFiniteGeometry`. No
+  game-code change needed.
 - `sgl-net` UDP client: a deny that overtook the accept of a retried confirm
   (or whose accept was lost) left the server holding that connection until
   `timeout_ms`; the client now answers the deny with a disconnect, so the

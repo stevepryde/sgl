@@ -13,8 +13,9 @@ use crate::content::identity::MaterialId;
 use crate::content::model::ModelMesh;
 use crate::counters::{BuildStep, step};
 use crate::shading::culling::MAX_MESH_SECTIONS;
+use crate::shading::packed_vertex::UvRect;
 use crate::shading::vertex::CasterVertex;
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
 /// A model's geometry, prepared for `Scene::add_model` or `Scene::set_model`
 /// by `PreparedModel::new`, which needs no device and no scene: build it on
@@ -41,10 +42,12 @@ pub(super) struct PreparedMesh {
     pub clusters: Option<ClusteredIndices>,
 }
 
-/// `vertices` and `indices` as a mesh: indices name vertices, positions are
-/// finite and normals finite and not zero, as a packed vertex's frame needs
-/// (`shading::packed_vertex`). Returns whether every vertex has an authored
-/// tangent frame.
+/// `vertices` and `indices` as a mesh: indices name vertices, positions,
+/// UVs and lightmap UVs are finite, the UVs' rectangle has a finite extent,
+/// and normals are finite and not zero, as a packed vertex needs
+/// (`shading::packed_vertex`): its frame a normal, and its UVs fractions of
+/// their mesh's rectangle, which an infinite extent collapses onto its
+/// corner. Returns whether every vertex has an authored tangent frame.
 pub(super) fn validate_geometry(vertices: &[Vertex], indices: &[u32]) -> Result<bool, SceneError> {
     if indices
         .iter()
@@ -53,12 +56,16 @@ pub(super) fn validate_geometry(vertices: &[Vertex], indices: &[u32]) -> Result<
         return Err(SceneError::IndexOutOfRange);
     }
     if !vertices.iter().all(|vertex| {
-        vertex.position.iter().all(|x| x.is_finite())
+        (vertex.position.iter())
+            .chain(&vertex.uv)
+            .chain(&vertex.lightmap_uv)
+            .all(|x| x.is_finite())
             && Vec3::from_array(vertex.normal)
                 .as_dvec3()
                 .try_normalize()
                 .is_some()
-    }) {
+    }) || !Vec2::from_array(UvRect::of(vertices).extent).is_finite()
+    {
         return Err(SceneError::NonFiniteGeometry);
     }
     Ok(asset::tangent_frames(vertices))
@@ -73,13 +80,14 @@ pub(crate) fn fits_sections(triangles: usize) -> bool {
 impl PreparedModel {
     /// `meshes`, an ordered list each drawn with a material of the scene
     /// that will take them, prepared: validated (indices name vertices,
-    /// positions are finite, a deformation fits its vertices, a mesh holds
-    /// at most 65,536 sections of 128 triangles), with each mesh's culling
-    /// hierarchy, whose leaves are its sections, and shadow-caster clusters,
-    /// the model's BVH, and its ray-source words (its section tables among
-    /// them) and shadow-caster geometry packed. What
-    /// needs the scene or the device (its materials, the device's limits)
-    /// is checked when it is added.
+    /// positions, UVs and normals are as `Vertex` requires, a deformation
+    /// fits its vertices, a mesh
+    /// holds at most 65,536 sections of 128 triangles), with each mesh's
+    /// culling hierarchy, whose leaves are its sections, and shadow-caster
+    /// clusters, the model's BVH, and its ray-source words (its section
+    /// tables among them) and shadow-caster geometry packed. What needs the
+    /// scene or the device (its materials, the device's limits) is checked
+    /// when it is added.
     pub fn new(meshes: Vec<ModelMesh>) -> Result<Self, SceneError> {
         let streams = vec![Vec::new(); meshes.len()];
         Self::prepare(meshes, streams)
@@ -226,14 +234,17 @@ mod tests {
     }
 
     // Plausible defects: a vertex whose normal has no frame reaching the
-    // encoder, which cannot pack it; a mesh past what a packed vertex's
-    // 16-bit chart index can name accepted, aliasing charts, or one at the
-    // limit refused (an off-by-one); the limit counted across a model's
-    // meshes rather than within each, which refused Hyperdrive's courses
-    // (#182); or the refusal naming another mesh. The oracle is the Vertex
-    // encoding's contract: a zero or non-finite normal refuses the mesh as a
-    // non-finite position does, and each mesh may name up to 65,536
-    // distinct chart bounds, a refusal naming the mesh's index. CPU only.
+    // encoder, which cannot pack it; a non-finite UV or lightmap UV
+    // accepted, where one infinite UV collapses its whole mesh's packed UVs
+    // onto one texel (#584); a mesh past what a packed vertex's 16-bit chart
+    // index can name accepted, aliasing charts, or one at the limit refused
+    // (an off-by-one); the limit counted across a model's meshes rather than
+    // within each, which refused Hyperdrive's courses (#182); or the refusal
+    // naming another mesh. The oracle is the Vertex encoding's contract: a
+    // zero or non-finite normal, or a non-finite UV or lightmap UV, refuses
+    // the mesh as a non-finite position does, and each mesh may name up to
+    // 65,536 distinct chart bounds, a refusal naming the mesh's index. CPU
+    // only.
     #[wasm_bindgen_test(unsupported = test)]
     fn unpackable_vertices_are_refused() {
         let unit = [0., 0., 1.];
@@ -245,6 +256,33 @@ mod tests {
                     vertex(normal, [0.; 4]),
                     vertex(unit, [0.; 4])
                 ]),
+                Err(SceneError::NonFiniteGeometry)
+            ));
+        }
+        let with = |uv: [f32; 2], lightmap_uv: [f32; 2]| {
+            let mut vertices = vec![vertex(unit, [0.; 4]); 3];
+            vertices[1].uv = uv;
+            vertices[1].lightmap_uv = lightmap_uv;
+            model(vertices)
+        };
+        assert!(with([-1e30, 1e30], [-1., 2.]).is_ok());
+        // Finite UVs whose rectangle's extent overflows f32 collapse as an
+        // infinite one does.
+        let mut spanning = vec![vertex(unit, [0.; 4]); 3];
+        spanning[0].uv = [-3e38, 0.];
+        spanning[1].uv = [3e38, 0.];
+        assert!(matches!(
+            model(spanning),
+            Err(SceneError::NonFiniteGeometry)
+        ));
+        for (uv, lightmap_uv) in [
+            ([f32::INFINITY, 0.], [0.; 2]),
+            ([0., f32::NAN], [0.; 2]),
+            ([0.; 2], [f32::NEG_INFINITY, 0.]),
+            ([0.; 2], [0., f32::NAN]),
+        ] {
+            assert!(matches!(
+                with(uv, lightmap_uv),
                 Err(SceneError::NonFiniteGeometry)
             ));
         }
