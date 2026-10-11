@@ -113,7 +113,8 @@ struct SourceCamera {
 const SOURCE_FOG: u32 = 1;
 /// `SourceCamera::flags`: the projection is orthographic, keeping clip w at
 /// 1, so every receiver's view vector is the camera's backward axis
-/// (`pbr_view`).
+/// (`pbr_view`); the Rust twin of uniforms.wgsl's `projection_perspective`
+/// test.
 const SOURCE_ORTHOGRAPHIC: u32 = 2;
 
 /// The frame's fog as completion and composition apply it.
