@@ -1671,11 +1671,13 @@ fn toggling_half_precision_depth_recreates_the_depths() {
     let mut context = PostFXContext::new(&device, &queue, Default::default());
     let reversed = post_fx_context::FeatureFlags::REVERSED_DEPTH;
     let half = reversed | post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH;
-    // The flag turns on at a constant size, then the frame resizes.
+    // The flag turns on at a constant size, the frame resizes, then the flag
+    // turns off at the new size.
     for (index, (flags, width, height)) in [
         (reversed, SIZE[0], SIZE[1]),
         (half, SIZE[0], SIZE[1]),
         (half, 80, 60),
+        (reversed, 80, 60),
     ]
     .into_iter()
     .enumerate()
