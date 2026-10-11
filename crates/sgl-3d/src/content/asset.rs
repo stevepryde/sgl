@@ -39,7 +39,7 @@ pub struct Vertex {
     /// Finite and not zero, or the mesh is refused; kept within 0.01°.
     pub normal: [f32; 3],
     /// First texture coordinate set (`TEXCOORD_0`), kept as 16-bit fractions
-    /// of the rectangle its mesh's UVs span.
+    /// of the rectangle its mesh's UVs span. Finite, or the mesh is refused.
     pub uv: [f32; 2],
     /// Linear vertex color multiplier, including alpha. Clamped to 0..=1 and
     /// kept as 8-bit sRGB with 8-bit linear alpha.
@@ -47,6 +47,7 @@ pub struct Vertex {
     /// TEXCOORD_1: secondary normalized UV into the caller-baked static irradiance atlas.
     /// (0, 0) or a negative UV marks a surface without an atlas chart: it has no
     /// baked lighting, so baked scene lights light it. Kept as 16-bit fractions.
+    /// Finite, or the mesh is refused.
     pub lightmap_uv: [f32; 2],
     /// Normalized atlas min/max for a conservatively cropped triangle chart.
     /// Supply the same bounds on all triangle vertices; outside is black.

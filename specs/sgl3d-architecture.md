@@ -170,8 +170,8 @@ and a triangle across all its meshes. `PreparedModel::new(meshes)` is a pure ste
 no device and no scene and returns a `Send` value, so the game runs it on
 whichever thread it chooses (S3D-1); SGL3D starts no thread. It does every
 part of building a model that depends only on its meshes: it validates them
-(indices name vertices, positions are finite, normals are finite and not
-zero, a deformation fits its vertices), records whether each has authored
+(indices name vertices, positions, UVs and lightmap UVs are finite, normals
+are finite and not zero, a deformation fits its vertices), records whether each has authored
 tangent frames, builds each mesh's culling hierarchy and local-light caster
 clusters and the model's BVH, and packs the model's ray-source words (its
 mesh records, each mesh's chart table, vertices ([Vertex encoding](#shared-contracts)),

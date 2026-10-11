@@ -2734,8 +2734,9 @@ fractions of its mesh's UV rectangle, within the rectangle's extent over
 proportion; the colour as 8-bit sRGB with linear alpha, clamped to 0..1 as
 glTF's `COLOR_0` is; the lightmap UV as 16-bit fractions (a negative one is
 unassigned, as before); and the lightmap chart bounds once per distinct
-chart in a table of its mesh's. A vertex normal must be finite and not
-zero (`SceneError::NonFiniteGeometry`), and a mesh's vertices may name at
+chart in a table of its mesh's. A vertex position, UV and lightmap UV
+must be finite and its normal finite and not zero
+(`SceneError::NonFiniteGeometry`), and a mesh's vertices may name at
 most 65,536 distinct `lightmap_bounds` (`SceneError::TooManyLightmapCharts`,
 which names the mesh's index); a model's meshes together may name any
 number.

@@ -42,8 +42,8 @@ pub enum SceneError {
     CompressedImageViews,
     /// A mesh index names no vertex of its mesh.
     IndexOutOfRange,
-    /// A vertex position is not finite, or a vertex normal is zero or not
-    /// finite.
+    /// A vertex position, UV or lightmap UV is not finite, or a vertex
+    /// normal is zero or not finite.
     NonFiniteGeometry,
     /// A mesh's vertices name more than 65,536 distinct lightmap chart
     /// bounds (`Vertex::lightmap_bounds`). `mesh` is its index among the
@@ -207,7 +207,7 @@ impl std::fmt::Display for SceneError {
             }
             Self::IndexOutOfRange => "a mesh index names no vertex",
             Self::NonFiniteGeometry => {
-                "vertex positions must be finite and normals finite and not zero"
+                "vertex positions, UVs and lightmap UVs must be finite and normals finite and not zero"
             }
             Self::TooManyLightmapCharts { mesh } => {
                 return write!(
