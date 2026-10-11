@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `fetch_runtime_bundle` (wasm): listed assets were fetched from
+  `assets/{path}` relative to the page, whatever the manifest URL; they are
+  now fetched relative to the manifest's directory. Serve the manifest from
+  the asset root, e.g. `fetch_runtime_bundle("assets/manifest.txt")`.
 - `sgl-3d` `Scene::set_baked_specular_probes` and `Scene::move_origin`: a
   tiny probe influence box far from the render origin overflowed the probe
   grid's cell count, panicking with overflow checks or else building a
