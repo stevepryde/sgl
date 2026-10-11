@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` WebSocket transports (`NativeWebSocketServer`,
+  `NativeWebSocketClient`, `BrowserWebSocketClient`): a peer closed for
+  `ProtocolViolation` or `InboundOverflow` discarded the messages received
+  before the offending frame; they are now delivered before its
+  `Disconnected`, as on UDP. No game-code change needed.
 - `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
   controller callback, including those a newer owner had installed, so the
   newer one stopped receiving input; it now clears only callbacks it still

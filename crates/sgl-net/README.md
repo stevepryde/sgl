@@ -57,7 +57,10 @@ WebSocket receiver that polls slowly stops reading instead of overflowing,
 which makes the sender's `send` return `WouldBlock`; the browser cannot, so
 a browser game sizes each lane's inbound bounds for what arrives between
 two polls, and a peer that sends more is disconnected with
-`DisconnectReason::InboundOverflow`.
+`DisconnectReason::InboundOverflow`. On every transport, a peer
+disconnected with `InboundOverflow` or `ProtocolViolation` still delivers
+the messages it sent before the offending frame or datagram, then its
+`Disconnected`; nothing from that frame or datagram is delivered.
 `Delivery::Unreliable(lane)` sends independent best-effort messages of at
 most `MAX_UNRELIABLE_BYTES`: each is sent once, never retransmitted or
 fragmented, delivered at most once, in no promised order. The sender never

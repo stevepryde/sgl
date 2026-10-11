@@ -665,13 +665,9 @@ impl PeerState {
             self.outbound = Default::default();
             self.staged_latest = None;
             self.released_latest.clear();
-            if matches!(
-                reason,
-                DisconnectReason::ProtocolViolation | DisconnectReason::InboundOverflow
-            ) {
-                self.inbound = Default::default();
-                self.inbound_latest = None;
-            }
+            // Received messages stay for `poll` to deliver before the end,
+            // whatever the reason; a frame refused as `ProtocolViolation`
+            // or `InboundOverflow` never joined them (netcode.md 15).
         }
     }
 
@@ -742,13 +738,17 @@ mod tests {
         state.begin_graceful_close(100);
         state.close(DisconnectReason::Peer);
         assert_eq!(state.terminal(), Some(DisconnectReason::Local));
-        // A framing violation then still discards what the peer sent.
+        // So does a framing violation, which keeps what the peer sent
+        // before it.
         let mut state = new_peer();
-        state.inbound_latest = Some(b"from a violating peer".to_vec());
+        state.inbound_latest = Some(b"before the violation".to_vec());
         state.begin_graceful_close(100);
         state.close(DisconnectReason::ProtocolViolation);
         assert_eq!(state.terminal(), Some(DisconnectReason::Local));
-        assert_eq!(state.inbound_latest, None);
+        assert_eq!(
+            state.pop_inbound(),
+            Some((Delivery::LatestState, b"before the violation".to_vec()))
+        );
 
         let mut state = new_peer();
         for _ in 0..DEFAULT_LANE_OUTBOUND_MESSAGES {
@@ -1082,47 +1082,56 @@ mod tests {
 
     /// A stale latest state and a fragment that breaks the reassembly
     /// table are protocol violations; a lane's completed messages past its
-    /// inbound bound are an overflow. Each closes the peer and delivers
-    /// nothing more.
+    /// inbound bound are an overflow. Each closes the peer; what arrived
+    /// before the offending frame is still delivered, nothing from it is
+    /// (netcode.md 15).
     #[wasm_bindgen_test(unsupported = test)]
     fn inbound_violations_close_the_peer_with_their_reason() {
-        let latest = |sequence| Envelope {
+        let latest = |sequence, payload| Envelope {
             delivery: Delivery::LatestState,
             sequence,
             fragment: Fragment::Whole,
-            payload: b"",
+            payload,
         };
-        let reliable = |fragment| Envelope {
+        let reliable = |fragment, payload| Envelope {
             delivery: Delivery::Reliable(lane(2)),
             sequence: 0,
             fragment,
-            payload: b"x",
+            payload,
         };
         let mut peer = new_peer();
-        peer.receive(latest(2)).unwrap();
+        peer.receive(latest(2, b"new")).unwrap();
         assert_eq!(
-            peer.receive(latest(1)),
+            peer.receive(latest(1, b"stale")),
             Err(DisconnectReason::ProtocolViolation)
+        );
+        assert_eq!(
+            peer.pop_inbound(),
+            Some((Delivery::LatestState, b"new".to_vec()))
         );
         assert!(peer.pop_inbound().is_none());
 
         let mut peer = PeerState::new(&ReliableConfig::DEFAULT);
         assert_eq!(
-            peer.receive(reliable(Fragment::Last)),
+            peer.receive(reliable(Fragment::Last, b"x")),
             Err(DisconnectReason::ProtocolViolation)
         );
 
         let mut config = ReliableConfig::DEFAULT;
         config.lanes[2].inbound_messages = 1;
         let mut peer = PeerState::new(&config);
-        peer.receive(reliable(Fragment::Whole)).unwrap();
+        peer.receive(reliable(Fragment::Whole, b"within")).unwrap();
         assert_eq!(
-            peer.receive(reliable(Fragment::Whole)),
+            peer.receive(reliable(Fragment::Whole, b"past")),
             Err(DisconnectReason::InboundOverflow)
+        );
+        assert_eq!(
+            peer.pop_inbound(),
+            Some((Delivery::Reliable(lane(2)), b"within".to_vec()))
         );
         assert!(
             peer.pop_inbound().is_none(),
-            "nothing is delivered after it"
+            "nothing from the overflowing frame is delivered"
         );
     }
 }
@@ -1253,17 +1262,14 @@ mod properties {
             let mut inbound: Inbound = Default::default();
             let mut inbound_latest: Option<Vec<u8>> = None;
             let mut last_inbound_latest = 0u64;
+            // A close keeps what was received for `poll`.
             let close = |reason,
                          terminal: &mut Option<DisconnectReason>,
                          outbound: &mut Outbound,
-                         latest: &mut Vec<(u64, Vec<u8>, u64)>,
-                         inbound: &mut Inbound,
-                         inbound_latest: &mut Option<Vec<u8>>| {
+                         latest: &mut Vec<(u64, Vec<u8>, u64)>| {
                 *terminal = Some(reason);
                 *outbound = Default::default();
                 latest.clear();
-                *inbound = Default::default();
-                *inbound_latest = None;
             };
 
             for op in ops {
@@ -1471,14 +1477,7 @@ mod properties {
                         };
                         if let Some(reason) = failure {
                             prop_assert_eq!(result, Err(reason));
-                            close(
-                                reason,
-                                &mut terminal,
-                                &mut outbound,
-                                &mut latest,
-                                &mut inbound,
-                                &mut inbound_latest,
-                            );
+                            close(reason, &mut terminal, &mut outbound, &mut latest);
                         } else if terminal.is_none() {
                             prop_assert_eq!(result, Ok(()));
                             inbound[slot(index, unreliable)].push_back(payload);
@@ -1503,8 +1502,6 @@ mod properties {
                                 &mut terminal,
                                 &mut outbound,
                                 &mut latest,
-                                &mut inbound,
-                                &mut inbound_latest,
                             );
                         } else {
                             prop_assert_eq!(result, Ok(()));
