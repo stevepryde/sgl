@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` native WebSocket `Disconnected` reason: a peer that dropped
+  the TCP stream without a Close, or sent a frame breaking WebSocket
+  framing (reserved bits, an unmasked client frame), was reported as
+  `Transport`; now `Peer` and `ProtocolViolation` respectively. No
+  game-code change needed unless the game branches on `Transport`.
 - `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
   quarter-pixel size range, so text laid out by whichever size drew first
   and drifted from `measure`; glyphs are now cached per exact size and

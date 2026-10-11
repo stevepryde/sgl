@@ -200,7 +200,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     it, and of states whose turn comes together only the newest leaves. Text frames, wrong magic or version, the reserved kind, reserved
     flags, an invalid lane, latest state or an unreliable message with
     fragment flags, a total not above its fragment, and frames over
-    `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`. Every
+    `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`, as are
+    frames that break WebSocket framing (reserved bits, an unmasked client
+    frame, an unknown opcode); a peer that ends the stream without a Close
+    is `Peer`, as in the browser and memory transports. Every
     lane shares the one TCP stream: a lost segment stalls every lane until TCP
     retransmits it, and a frame already written precedes everything after it;
     UDP is the transport for loss-isolated lanes. WebSocket may be slower

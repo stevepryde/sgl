@@ -1,5 +1,6 @@
 #![cfg(not(target_arch = "wasm32"))]
 
+use std::io::Write;
 use std::net::TcpStream;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -515,6 +516,53 @@ fn text_malformed_oversize_wrong_class_and_stale_frames_fail_closed() {
         Message::Binary(frame(Delivery::RELIABLE_ORDERED, 0, b"must be purged").into()),
         Message::Binary(orphan.into()),
     ]);
+}
+
+type RawSocket = tungstenite::WebSocket<MaybeTlsStream<TcpStream>>;
+
+/// Connects a raw client, hands its open socket to `act`, and returns the
+/// reason the server reports for that connection's end. A socket `act`
+/// returns stays open until then.
+fn server_disconnect_reason(act: impl FnOnce(RawSocket) -> Option<RawSocket>) -> DisconnectReason {
+    let mut server = server(2);
+    let (socket, _) = connect(raw_request(&url(&server), &[ORIGIN_VALUE])).unwrap();
+    let conn = connected_id(&wait_server_events(&mut server));
+    let _held = act(socket);
+    wait_until(Duration::from_secs(2), || {
+        server.poll(0).into_iter().find_map(|event| match event {
+            ServerEvent::Disconnected { conn: id, reason } if id == conn => Some(reason),
+            _ => None,
+        })
+    })
+}
+
+#[test]
+fn a_peer_that_drops_its_socket_without_a_close_is_reported_as_peer() {
+    assert_eq!(
+        server_disconnect_reason(|socket| {
+            drop(socket);
+            None
+        }),
+        DisconnectReason::Peer
+    );
+}
+
+#[test]
+fn frames_that_break_websocket_framing_are_protocol_violations() {
+    // A masked binary frame with RSV1 set (no extension negotiated it), and
+    // an unmasked client frame: both invalid under RFC 6455 section 5.
+    for raw in [&[0xC2, 0x81, 1, 2, 3, 4, 0][..], &[0x82, 0x01, 0][..]] {
+        let reason = server_disconnect_reason(|mut socket| {
+            let MaybeTlsStream::Plain(stream) = socket.get_mut() else {
+                unreachable!("ws:// is plain TCP");
+            };
+            stream.write_all(raw).unwrap();
+            stream.flush().unwrap();
+            // Held open so the server sees the frame, not the end of stream.
+            Some(socket)
+        });
+        assert_eq!(reason, DisconnectReason::ProtocolViolation, "{raw:?}");
+    }
 }
 
 #[test]
