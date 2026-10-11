@@ -42,7 +42,9 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    centered rect of the logical size inside the window.
 5. **Text.** `TextRenderer` rasterizes TTF glyphs on demand into CPU atlas
    pages and emits sprite quads on either channel; `measure` agrees with the
-   quads `draw` emits for the same text and size. Each page is one texture
+   quads `draw` emits for the same text and size. Glyphs are cached per
+   exact raster size, so layout never depends on which sizes drew before.
+   Each page is one texture
    asset under a stable handle; `end_frame` republishes changed pages in
    place and returns their handles for the game to upload, which replaces
    their pixels in the existing renderer or sprite pass. A new standard page

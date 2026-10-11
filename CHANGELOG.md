@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
+  quarter-pixel size range, so text laid out by whichever size drew first
+  and drifted from `measure`; glyphs are now cached per exact size and
+  layout matches a cold cache and `measure`. No game-code change needed.
 - `sgl-2d` `Overlay::circle`: a negative radius drew a full circle; a
   radius that is not positive (including NaN) now emits nothing. No
   game-code change needed.

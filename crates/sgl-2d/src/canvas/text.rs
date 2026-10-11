@@ -176,12 +176,13 @@ impl std::fmt::Display for TextError {
 
 impl std::error::Error for TextError {}
 
-/// Cache key: character + quantized pixel size (quarter-pixel buckets — the
-/// game's sizes are discrete integers, PR-8/PR-9).
+/// Cache key: character + the exact raster size's bits. A glyph's bitmap,
+/// bearings and advance all depend on the size, so sizes never share a slot:
+/// a shared slot would lay out text by whichever size filled it first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct GlyphKey {
     c: char,
-    px_q: u32,
+    px_bits: u32,
 }
 
 /// A rasterized glyph's page placement + the metrics needed to position it.
@@ -585,7 +586,7 @@ impl TextRenderer {
     fn glyph(&mut self, c: char, px: f32) -> GlyphSlot {
         let key = GlyphKey {
             c,
-            px_q: (px * 4.0).round() as u32,
+            px_bits: px.to_bits(),
         };
         if let Some(slot) = self.glyphs.get(&key) {
             return *slot;
@@ -1173,6 +1174,42 @@ mod tests {
         assert!(slot.bitmap.is_none());
         assert!(slot.advance > 0.0);
         assert_eq!(tr.page_count(), 0);
+    }
+
+    /// #435: a size sharing a cache bucket with one drawn earlier lays out
+    /// exactly as on a cold cache, and its glyphs sit where `measure` puts
+    /// them.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn warm_cache_layout_matches_cold_and_measure() {
+        let text = "W".repeat(40);
+        let style = TextStyle::new(16.1, [1.0; 4]);
+        let centers = |tr: &mut TextRenderer| {
+            let mut assets: Assets<Texture> = Assets::new();
+            let mut list = DrawList::new();
+            tr.draw(&text, Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+            tr.end_frame(&mut assets, &mut list);
+            list.screen.iter().map(|q| q.pos.x).collect::<Vec<_>>()
+        };
+        let mut cold = renderer();
+        let cold_x = centers(&mut cold);
+        let mut warm = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        warm.draw(
+            &text,
+            Vec2::ZERO,
+            &TextStyle::new(16.0, [1.0; 4]),
+            0.0,
+            TextChannel::Screen,
+        );
+        warm.end_frame(&mut assets, &mut DrawList::new());
+        assert_eq!(centers(&mut warm), cold_x);
+
+        // Every "W" is identical, so the last one's centre is the first's
+        // shifted by the measured width of the 39 before it (each centre is
+        // snapped to the pixel grid, hence the 1 px tolerance).
+        let expected = cold_x[0] + cold.measure(&text[..39], 16.1).x;
+        let last = cold_x[39];
+        assert!((last - expected).abs() <= 1.0, "{last} vs {expected}");
     }
 
     /// #429: a negative or non-finite size draws nothing, measures zero and
