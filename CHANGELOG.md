@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `TemporalAntiAliasing::execute`: the first frame for a
+  feature set sampled the colour through a filterable binding, failing
+  validation for an unfilterable colour such as `Rgba32Float` on WebGPU, and
+  copied +infinity to the output; it now loads the colour as later frames do,
+  clamped to [0, 65504], so negative colour and alpha become 0 on that frame.
+  No game-code change needed.
 - `sgl-3d` local-light shadows: a shadowed light with a large range at or
   behind the camera overflowed its atlas slot size, panicking with overflow
   checks or else taking the smallest slot; it now takes the largest slot.
