@@ -45,6 +45,16 @@ pub struct SplitterResponse {
     pub cursor: Option<UiCursor>,
 }
 
+/// An open scroll area, from its `scroll_area_begin` to its `scroll_area_end`.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ScrollScope {
+    /// The clip its end restores.
+    outer_clip: Option<Rect>,
+    max_off: f32,
+    /// Hovered with content to scroll: may take this frame's wheel at its end.
+    wheel: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SplitterDrag {
     id: u64,
@@ -104,20 +114,19 @@ impl UiFrame<'_> {
     }
 
     /// Begin a vertically scrollable, clipped region: `content_h` is the
-    /// total content height laid out from `rect.min.y - *offset`. The wheel
-    /// scrolls while hovered; a draggable scrollbar appears when content
-    /// overflows; `*offset` is clamped to the valid range. Draws after this
-    /// clip to `rect` within the enclosing clip (including text) until
-    /// [`scroll_area_end`](Self::scroll_area_end); scroll areas nest.
+    /// total content height laid out from `rect.min.y - *offset`. A draggable
+    /// scrollbar appears when content overflows; `*offset` is clamped to the
+    /// valid range. Draws after this clip to `rect` within the enclosing clip
+    /// (including text) until [`scroll_area_end`](Self::scroll_area_end);
+    /// scroll areas nest. The wheel scrolls the innermost hovered area with
+    /// content to scroll, applied at its end, so the content shows it from the
+    /// next frame.
     pub fn scroll_area_begin(&mut self, name: &str, rect: Rect, content_h: f32, offset: &mut f32) {
         let id = widget_id(name);
         let view_h = rect.size().y;
         let max_off = (content_h - view_h).max(0.0);
-
-        if self.hit(&rect) {
-            *offset -= self.input.scroll.y * SCROLL_LINE_PX;
-        }
         *offset = offset.clamp(0.0, max_off);
+        let wheel = max_off > 0.0 && self.hit(&rect);
 
         if max_off > 0.0 {
             let track = Rect::new(rect.max.x - SCROLLBAR_W, rect.min.y, SCROLLBAR_W, view_h);
@@ -159,15 +168,28 @@ impl UiFrame<'_> {
             self.rect(thumb, color);
         }
 
-        self.scroll_clips.push(self.clip);
+        self.scroll_scopes.push(ScrollScope {
+            outer_clip: self.clip,
+            max_off,
+            wheel,
+        });
         self.set_clip(Some(self.clip_within(rect)));
     }
 
     /// End the innermost scroll area, restoring the clip in effect at its
-    /// [`scroll_area_begin`](Self::scroll_area_begin).
-    pub fn scroll_area_end(&mut self) {
-        let outer = self.scroll_clips.pop().flatten();
-        self.set_clip(outer);
+    /// [`scroll_area_begin`](Self::scroll_area_begin). Pass the same `offset`:
+    /// inner areas end first, so the innermost hovered area with content to
+    /// scroll takes this frame's wheel and enclosing areas leave it alone.
+    pub fn scroll_area_end(&mut self, offset: &mut f32) {
+        let Some(scope) = self.scroll_scopes.pop() else {
+            self.set_clip(None);
+            return;
+        };
+        if scope.wheel && !self.wheel_consumed {
+            self.wheel_consumed = true;
+            *offset = (*offset - self.input.scroll.y * SCROLL_LINE_PX).clamp(0.0, scope.max_off);
+        }
+        self.set_clip(scope.outer_clip);
     }
 }
 
@@ -317,7 +339,7 @@ mod tests {
         let mut list = DrawList::new();
         let mut f = ui.begin(&mut text, &mut list, hover_at(0.0, 0.0, false));
         f.scroll_area_begin("s", area, content_h, &mut offset);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut offset);
         f.end();
         let rects: Vec<(Vec2, Vec2)> = list.screen.iter().map(|q| (q.pos, q.scale)).collect();
         let track = (Vec2::new(296.0, 150.0), Vec2::new(8.0, 100.0));
@@ -330,12 +352,12 @@ mod tests {
         let mut list = DrawList::new();
         let mut f = ui.begin(&mut text, &mut list, press_at(296.0, 150.0));
         f.scroll_area_begin("s", area, content_h, &mut offset);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut offset);
         f.end();
         let mut list = DrawList::new();
         let mut f = ui.begin(&mut text, &mut list, hover_at(296.0, 300.0, true));
         f.scroll_area_begin("s", area, content_h, &mut offset);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut offset);
         f.end();
         assert_eq!(
             offset, 300.0,
@@ -387,9 +409,9 @@ mod tests {
         );
         f.scroll_area_begin("inner", inner, 100.0, &mut inner_offset);
         f.rect(Rect::new(150.0, 50.0, 10.0, 10.0), [1.0; 4]);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut inner_offset);
         f.rect(Rect::new(100.0, 100.0, 10.0, 10.0), [1.0; 4]);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut outer_offset);
         f.rect(Rect::new(0.0, 0.0, 10.0, 10.0), [1.0; 4]);
         f.end();
         let clips: Vec<_> = list.screen.iter().rev().take(3).map(|q| q.clip).collect();
@@ -401,6 +423,42 @@ mod tests {
                 Some(Rect::new(150.0, 100.0, 100.0, 50.0)),
             ]
         );
+    }
+
+    /// #431: one wheel tick scrolls only the innermost hovered area that has
+    /// content to scroll; an inner area with nothing to scroll passes it out.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn wheel_scrolls_only_the_innermost_hovered_scroll_area() {
+        let outer = Rect::new(0.0, 0.0, 200.0, 200.0);
+        let inner = Rect::new(10.0, 10.0, 100.0, 100.0);
+        for (pointer, inner_content, expected) in [
+            (Vec2::new(50.0, 50.0), 1000.0, (0.0, 40.0)),
+            (Vec2::new(150.0, 150.0), 1000.0, (40.0, 0.0)),
+            (Vec2::new(50.0, 50.0), 50.0, (40.0, 0.0)),
+        ] {
+            let (mut ui, mut text, _assets) = fixture();
+            let mut list = DrawList::new();
+            let (mut outer_offset, mut inner_offset) = (0.0, 0.0);
+            let mut f = ui.begin(
+                &mut text,
+                &mut list,
+                UiInput {
+                    mouse_pos: pointer,
+                    scroll: Vec2::new(0.0, -1.0),
+                    ..UiInput::default()
+                },
+            );
+            f.scroll_area_begin("outer", outer, 1000.0, &mut outer_offset);
+            f.scroll_area_begin("inner", inner, inner_content, &mut inner_offset);
+            f.scroll_area_end(&mut inner_offset);
+            f.scroll_area_end(&mut outer_offset);
+            f.end();
+            assert_eq!(
+                (outer_offset, inner_offset),
+                expected,
+                "pointer {pointer:?}, inner content {inner_content}"
+            );
+        }
     }
 
     /// A scroll area entirely outside its enclosing clip clips to a zero
@@ -423,7 +481,7 @@ mod tests {
             f.set_clip(Some(Rect::new(0.0, 0.0, 100.0, 100.0)));
             f.scroll_area_begin("s", Rect::new(200.0, 200.0, 50.0, 50.0), 50.0, &mut offset);
             f.button("hidden", Rect::new(-5.0, -5.0, 10.0, 10.0), "X", 12.0);
-            f.scroll_area_end();
+            f.scroll_area_end(&mut offset);
             f.end();
         }
         assert!(!ui.is_focused_name("hidden"));
@@ -447,7 +505,7 @@ mod tests {
         let mut f = ui.begin(&mut text, &mut list, input);
         f.scroll_area_begin("palette", area, 900.0, &mut offset);
         f.rect(Rect::new(710.0, 70.0, 100.0, 40.0), [1.0; 4]);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut offset);
         f.rect(Rect::new(0.0, 0.0, 10.0, 10.0), [1.0; 4]);
         f.end();
         assert!(offset > 0.0, "wheel-down scrolled: {offset}");
@@ -468,7 +526,7 @@ mod tests {
         };
         let mut f = ui.begin(&mut text, &mut list, input);
         f.scroll_area_begin("palette", area, 900.0, &mut offset);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut offset);
         f.end();
         assert_eq!(offset, before, "unhovered wheel must not scroll");
 
@@ -476,13 +534,13 @@ mod tests {
         offset = 1e6;
         let mut f = ui.begin(&mut text, &mut list, UiInput::default());
         f.scroll_area_begin("palette", area, 900.0, &mut offset);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut offset);
         f.end();
         assert_eq!(offset, 600.0, "clamped to content_h - view_h");
         offset = -50.0;
         let mut f = ui.begin(&mut text, &mut list, UiInput::default());
         f.scroll_area_begin("palette", area, 900.0, &mut offset);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut offset);
         f.end();
         assert_eq!(offset, 0.0);
 
@@ -490,7 +548,7 @@ mod tests {
         offset = 10.0;
         let mut f = ui.begin(&mut text, &mut list, UiInput::default());
         f.scroll_area_begin("palette", area, 100.0, &mut offset);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut offset);
         f.end();
         assert_eq!(offset, 0.0, "short content pins to the top");
     }
@@ -508,7 +566,7 @@ mod tests {
         let mut f = ui.begin(&mut text, &mut list, press_at(50.0, 120.0));
         f.scroll_area_begin("list", area, 400.0, &mut offset);
         let fired = f.button("item", Rect::new(10.0, 80.0, 150.0, 80.0), "I", 16.0);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut offset);
         f.end();
         assert!(!fired, "press outside the clip must not fire");
 
@@ -516,7 +574,7 @@ mod tests {
         let mut f = ui.begin(&mut text, &mut list, press_at(50.0, 90.0));
         f.scroll_area_begin("list", area, 400.0, &mut offset);
         let fired = f.button("item", Rect::new(10.0, 80.0, 150.0, 80.0), "I", 16.0);
-        f.scroll_area_end();
+        f.scroll_area_end(&mut offset);
         f.end();
         assert!(fired, "visible part still fires");
     }

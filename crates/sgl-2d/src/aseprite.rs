@@ -8,7 +8,9 @@
 //!   after its extension is stripped (`"player 12.aseprite"` → `12`). The
 //!   recovered indices must be exactly `0..frames.len()`; a key without
 //!   trailing digits, a duplicate index, or a gap is a parse error rather than
-//!   a silently mis-ordered sheet.
+//!   a silently mis-ordered sheet. Aseprite appends the frame number only
+//!   when the sheet has more than one frame, so a single-entry Hash is frame
+//!   0 whatever its key (`"player.aseprite"`).
 //! - Array: the frame index is the position in the array; `filename` is
 //!   ignored.
 //!
@@ -307,6 +309,14 @@ fn decode_frames(raw: serde_json::Value) -> Result<Vec<AseFrame>, AsepriteError>
 fn decode_hash_frames(
     map: serde_json::Map<String, serde_json::Value>,
 ) -> Result<Vec<AseFrame>, AsepriteError> {
+    // Aseprite appends ` {frame}` to the key only when the sheet has more than
+    // one frame, so a lone entry's key carries no index: it is frame 0.
+    if map.len() == 1 {
+        return map
+            .into_iter()
+            .map(|(_key, value)| decode_frame(value))
+            .collect();
+    }
     // `serde_json::Map` iterates in key order, so sort by the recovered index.
     let mut by_index: BTreeMap<usize, AseFrame> = BTreeMap::new();
     for (key, value) in map {
@@ -607,6 +617,32 @@ mod tests {
             }
         );
         assert_eq!(from_array.frames[1].duration_ms, 200);
+    }
+
+    /// Aseprite omits the frame number from a one-frame sheet's key, so the
+    /// lone entry is frame 0 whatever its key says; a key that does carry
+    /// ` 0` is accepted too.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_one_frame_hash_export_is_frame_zero() {
+        for key in ["player.aseprite", "coin2.aseprite", "player 0.aseprite"] {
+            let json = format!(
+                r#"{{"frames":{{
+                    "{key}":{{"frame":{{"x":0,"y":0,"w":8,"h":8}},"duration":100}}
+                }},"meta":{{"size":{{"w":8,"h":8}}}}}}"#
+            );
+            let sheet = parse(&json).unwrap_or_else(|err| panic!("{key}: {err:?}"));
+            assert_eq!(
+                sheet.frames,
+                vec![AseFrame {
+                    x: 0,
+                    y: 0,
+                    w: 8,
+                    h: 8,
+                    duration_ms: 100
+                }],
+                "{key}"
+            );
+        }
     }
 
     /// A key with no trailing digits cannot yield a frame order; the reference

@@ -6,7 +6,8 @@
 //! time from real item metadata instead of special-casing the in-memory
 //! transport. Messages cross whole: there is no loss to isolate lanes from,
 //! and a poll returns every lane's messages, interleaved by the lanes'
-//! weights.
+//! weights. A peer that is not polled drops its oldest flushed unreliable
+//! messages past a lane's unreliable bounds, as the network transports do.
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -61,6 +62,20 @@ impl<T> LaneQueue<T> {
         let (bytes, item) = self.items.pop_front()?;
         self.bytes -= bytes;
         Some((bytes, item))
+    }
+
+    /// Pushes `item`, first dropping the oldest items until it fits within
+    /// `messages` and `max_bytes` (netcode.md 11: an unpolled receiver
+    /// sheds its oldest unreliable messages). Validation keeps `max_bytes`
+    /// at least `MAX_UNRELIABLE_BYTES`, so an admitted item fits an empty
+    /// queue.
+    fn push_dropping_oldest(&mut self, item: T, bytes: usize, messages: usize, max_bytes: usize) {
+        while self.items.len() >= messages || self.bytes + bytes > max_bytes {
+            if self.pop().is_none() {
+                break;
+            }
+        }
+        self.push(item, bytes);
     }
 }
 
@@ -144,19 +159,9 @@ impl DuplexEnd {
 
     /// Reliable messages and bytes `lane` still holds in this direction:
     /// staged here plus flushed but not yet polled by the peer.
-    fn lane_usage(&self, delivery: Delivery) -> (usize, usize) {
-        let outbound = self.outbound.borrow();
-        let (staged, flushed) = match delivery {
-            Delivery::Unreliable(lane) => (
-                &self.pending.unreliable[lane.index()],
-                &outbound.unreliable[lane.index()],
-            ),
-            Delivery::Reliable(lane) => (
-                &self.pending.lanes[lane.index()],
-                &outbound.lanes[lane.index()],
-            ),
-            Delivery::LatestState => return (0, 0),
-        };
+    fn lane_usage(&self, lane: Lane) -> (usize, usize) {
+        let staged = &self.pending.lanes[lane.index()];
+        let flushed = &self.outbound.borrow().lanes[lane.index()];
         (
             staged.items.len() + flushed.items.len(),
             staged.bytes + flushed.bytes,
@@ -167,10 +172,8 @@ impl DuplexEnd {
         if !self.connected() {
             return ReliableCapacity::default();
         }
-        self.reliable.lanes[lane.index()].outbound_capacity(
-            self.lane_usage(Delivery::Reliable(lane)),
-            self.reliable.max_message_bytes,
-        )
+        self.reliable.lanes[lane.index()]
+            .outbound_capacity(self.lane_usage(lane), self.reliable.max_message_bytes)
     }
 
     fn send(&mut self, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
@@ -188,7 +191,7 @@ impl DuplexEnd {
         match delivery {
             Delivery::Reliable(lane) => {
                 if !self.reliable.lanes[lane.index()]
-                    .outbound_admits(self.lane_usage(delivery), payload.len())
+                    .outbound_admits(self.lane_usage(lane), payload.len())
                 {
                     return Err(SendError::WouldBlock);
                 }
@@ -198,11 +201,13 @@ impl DuplexEnd {
                 };
                 self.pending.lanes[lane.index()].push(item, payload.len());
             }
+            // Only staged unreliable messages count: once flushed they
+            // are sent, and the peer sheds its oldest past the bounds.
             Delivery::Unreliable(lane) => {
-                let (messages, bytes) = self.lane_usage(delivery);
+                let staged = &self.pending.unreliable[lane.index()];
                 let bounds = &self.reliable.lanes[lane.index()];
-                if messages >= bounds.unreliable_messages
-                    || bytes + payload.len() > bounds.unreliable_bytes
+                if staged.items.len() >= bounds.unreliable_messages
+                    || staged.bytes + payload.len() > bounds.unreliable_bytes
                 {
                     return Err(SendError::WouldBlock);
                 }
@@ -229,31 +234,35 @@ impl DuplexEnd {
         }
         let mut outbound = self.outbound.borrow_mut();
         let outbound = &mut *outbound;
-        let staged = self
-            .pending
-            .lanes
-            .iter_mut()
-            .chain(&mut self.pending.unreliable);
-        for (staged, flushed) in
-            staged.zip(outbound.lanes.iter_mut().chain(&mut outbound.unreliable))
-        {
-            // `send` admission counted staged items against the lane's
-            // bounds, so moving them keeps it within them.
+        let sent = |item: PendingItem| SentItem {
+            delivery: item.delivery,
+            sent_at_ms: now_ms,
+            payload: item.payload,
+        };
+        // `send` admission counted staged and flushed reliable items against
+        // the lane's bounds, so moving them keeps it within them.
+        for (staged, flushed) in self.pending.lanes.iter_mut().zip(&mut outbound.lanes) {
             while let Some((bytes, item)) = staged.pop() {
-                let sent = SentItem {
-                    delivery: item.delivery,
-                    sent_at_ms: now_ms,
-                    payload: item.payload,
-                };
-                flushed.push(sent, bytes);
+                flushed.push(sent(item), bytes);
+            }
+        }
+        let unreliable = self
+            .pending
+            .unreliable
+            .iter_mut()
+            .zip(&mut outbound.unreliable);
+        for ((staged, flushed), bounds) in unreliable.zip(&self.reliable.lanes) {
+            while let Some((bytes, item)) = staged.pop() {
+                flushed.push_dropping_oldest(
+                    sent(item),
+                    bytes,
+                    bounds.unreliable_messages,
+                    bounds.unreliable_bytes,
+                );
             }
         }
         if let Some(item) = self.pending.latest.take() {
-            outbound.latest = Some(SentItem {
-                delivery: item.delivery,
-                sent_at_ms: now_ms,
-                payload: item.payload,
-            });
+            outbound.latest = Some(sent(item));
         }
     }
 
@@ -870,6 +879,9 @@ mod properties {
     /// One direction of the model: staged until flushed, then visible to
     /// the peer's next poll; each lane's reliable and unreliable messages
     /// whole, once and in order within their own bounds, latest newest-wins.
+    /// Reliable bounds cover staged and visible messages; unreliable bounds
+    /// refuse only staged ones, and the visible queue keeps its newest
+    /// messages that fit them (netcode.md 10, 11).
     #[derive(Default)]
     struct Direction {
         staged: [VecDeque<Vec<u8>>; 2 * RELIABLE_LANES],
@@ -914,7 +926,11 @@ mod properties {
                 self.staged_latest = Some(payload);
                 return Ok(());
             };
-            let held = self.staged[slot].iter().chain(&self.visible[slot]);
+            let visible = match delivery {
+                Delivery::Reliable(_) => &self.visible[slot],
+                _ => &VecDeque::new(),
+            };
+            let held = self.staged[slot].iter().chain(visible);
             let held_bytes: usize = held.clone().map(Vec::len).sum();
             // A reliable lane holding no bytes takes one message of any
             // admitted size (netcode.md 11).
@@ -926,9 +942,16 @@ mod properties {
             Ok(())
         }
 
-        fn flush(&mut self) {
+        fn flush(&mut self, config: &ReliableConfig) {
             for (staged, visible) in self.staged.iter_mut().zip(&mut self.visible) {
                 visible.append(staged);
+            }
+            for (visible, bounds) in self.visible[RELIABLE_LANES..].iter_mut().zip(&config.lanes) {
+                while visible.len() > bounds.unreliable_messages
+                    || visible.iter().map(Vec::len).sum::<usize>() > bounds.unreliable_bytes
+                {
+                    visible.pop_front();
+                }
             }
             if let Some(latest) = self.staged_latest.take() {
                 self.visible_latest = Some(latest);
@@ -958,12 +981,14 @@ mod properties {
 
     /// Defect: a lane that reorders, drops or duplicates reliable or
     /// unreliable messages, one lane's bounds refusing another lane or
-    /// class, a stale latest state, staged data leaking before `flush`, a
-    /// lane that keeps refusing after a drain, or a capacity that disagrees
-    /// with admission. Oracle: a model with a stage/flush step, a reliable
-    /// and an unreliable FIFO per lane bounded by that lane's configuration,
-    /// and one slot; a reliable send succeeds exactly when the capacity
-    /// reported just before it says the payload fits.
+    /// class, an unpolled receiver refusing its sender's unreliable messages
+    /// or keeping the oldest instead of the newest (#443), a stale latest
+    /// state, staged data leaking before `flush`, a lane that keeps refusing
+    /// after a drain, or a capacity that disagrees with admission. Oracle: a
+    /// model with a stage/flush step, a reliable and an unreliable FIFO per
+    /// lane bounded by that lane's configuration, and one slot; a reliable
+    /// send succeeds exactly when the capacity reported just before it says
+    /// the payload fits.
     #[test]
     fn memory_duplex_matches_the_staged_lane_model_in_both_directions() {
         check(
@@ -1020,11 +1045,11 @@ mod properties {
                         }
                         Op::ClientFlush => {
                             client.flush(1);
-                            to_server.flush();
+                            to_server.flush(&config);
                         }
                         Op::ServerFlush => {
                             server.flush(1);
-                            to_client.flush();
+                            to_client.flush(&config);
                         }
                         Op::ClientPoll => {
                             let got = client

@@ -11,16 +11,17 @@ use std::time::{Duration, Instant};
 
 use sgl_net::udp::simulated::{SimulatedConfig, SimulatedNetwork};
 use sgl_net::udp::{
-    ClientEndpoint, EndpointConfig, MAX_DATAGRAM_BYTES, ServerEndpoint, UdpClient, UdpServer,
+    ClientEndpoint, EndpointConfig, MAX_DATAGRAM_BYTES, ServerEndpoint, ThreadedUdpConfig,
+    ThreadedUdpServer, UdpClient, UdpServer,
 };
 use sgl_net::websocket::{
     GAME_PATH, NativeWebSocketClient, NativeWebSocketClientConfig, NativeWebSocketServer,
     NativeWebSocketServerConfig, OriginPolicy, WebSocketIdentity,
 };
 use sgl_net::{
-    ClientEvent, ClientIo, ConnectionId, DEFAULT_RELIABLE_MESSAGE_BYTES, Delivery,
-    DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, RELIABLE_LANES, SendError, ServerEvent,
-    ServerIo, memory_duplex,
+    ClientEvent, ClientIo, ConnectionId, DEFAULT_LANE_UNRELIABLE_MESSAGES,
+    DEFAULT_RELIABLE_MESSAGE_BYTES, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES,
+    RELIABLE_LANES, SendError, ServerEvent, ServerIo, memory_duplex,
 };
 
 const MAGIC: [u8; 3] = *b"XPT";
@@ -563,6 +564,24 @@ fn loopback_udp() -> Pair {
     }
 }
 
+fn threaded_udp() -> Pair {
+    let config = EndpointConfig::new(MAGIC);
+    let server = ThreadedUdpServer::bind_addr(
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        config.clone(),
+        ThreadedUdpConfig::default(),
+    )
+    .unwrap();
+    let client = UdpClient::connect_with_nonce(server.local_addr(), config, 0, 5).unwrap();
+    Pair {
+        name: "threaded udp",
+        client: Box::new(client),
+        server: Box::new(server),
+        real_time: true,
+        now: 0,
+    }
+}
+
 fn websocket() -> Pair {
     let identity = WebSocketIdentity::new(MAGIC, GAME_PATH, "xpt.v1");
     let origin = "http://localhost";
@@ -653,5 +672,85 @@ fn the_same_payloads_produce_the_same_trace_on_every_transport() {
                 );
             }
         }
+    }
+}
+
+/// Unreliable messages the client floods an unpolled server with: more than
+/// a lane's default `unreliable_messages`, so the server must shed some.
+const FLOOD: u32 = 200;
+
+/// Floods the server, which does not poll, with indexed unreliable messages
+/// on lane 0, flushing after each; then returns the indices its polls get.
+fn unreliable_survivors(mut pair: Pair) -> Vec<u32> {
+    let name = pair.name;
+    let (mut server_up, mut client_up) = (false, false);
+    pair.settle(&mut |s, c| {
+        server_up |= s.iter().any(|e| matches!(e, ServerEvent::Connected { .. }));
+        client_up |= c.contains(&ClientEvent::Connected);
+        server_up && client_up
+    });
+
+    let lane = Delivery::Unreliable(Lane::DEFAULT);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    for index in 0..FLOOD {
+        loop {
+            match pair.client.send(lane, &index.to_le_bytes()) {
+                Ok(()) => break,
+                // A real transport's own worker may not have sent its queue
+                // yet (netcode.md 11); memory has no worker to wait for.
+                Err(SendError::WouldBlock) if pair.real_time && Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(error) => panic!("{name}: unreliable send {index} refused: {error:?}"),
+            }
+        }
+        pair.now += 1;
+        let _ = pair.client.poll(pair.now);
+        pair.client.flush(pair.now);
+    }
+    pair.client
+        .send(Delivery::RELIABLE_ORDERED, b"end")
+        .unwrap();
+    pair.client.flush(pair.now);
+    if pair.real_time {
+        // Let the flood reach the server's unpolled ingress.
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    let (mut survivors, mut ended) = (Vec::new(), false);
+    pair.settle(&mut |s, _| {
+        let mut unreliable = false;
+        for event in s {
+            match event {
+                ServerEvent::Message {
+                    delivery, payload, ..
+                } if *delivery == lane => {
+                    unreliable = true;
+                    survivors.push(u32::from_le_bytes(payload[..].try_into().unwrap()));
+                }
+                ServerEvent::Message { payload, .. } if payload == b"end" => ended = true,
+                other => panic!("{name}: unexpected {other:?}"),
+            }
+        }
+        // A poll returns some of whatever waits, so the first poll after
+        // the marker without unreliable messages finds none left.
+        ended && !unreliable
+    });
+    survivors
+}
+
+/// Defect (#443): an unpolled receiver refusing its sender's unreliable
+/// messages, or keeping the oldest instead of the newest, on one transport.
+/// Oracle: netcode.md 10 and 11 — the sender is not refused for what it has
+/// flushed, and a receiver that is not polled drops its oldest unpolled
+/// unreliable messages, so the newest `DEFAULT_LANE_UNRELIABLE_MESSAGES`
+/// survive, in order, on memory, WebSocket and threaded UDP alike.
+#[test]
+fn an_unpolled_receiver_keeps_the_newest_unreliable_messages_on_every_transport() {
+    let shed = FLOOD - u32::try_from(DEFAULT_LANE_UNRELIABLE_MESSAGES).unwrap();
+    let want: Vec<u32> = (shed..FLOOD).collect();
+    for pair in [memory(), websocket(), threaded_udp()] {
+        let name = pair.name;
+        assert_eq!(unreliable_survivors(pair), want, "{name}");
     }
 }

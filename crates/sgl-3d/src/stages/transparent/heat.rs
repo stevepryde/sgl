@@ -19,10 +19,19 @@ pub(crate) const FS_ENTRY: &str = "fs";
 pub(crate) const HEAT_LAYOUT: VertexLayout =
     vertex_layout!(HeatDistortion, [position, displacement, weight]);
 
+/// `heat.wgsl`'s `View`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct View {
+    camera: [[f32; 4]; 4],
+    render_per_scene: [f32; 2],
+    _pad: [f32; 2],
+}
+
 pub(crate) struct Heat {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
-    matrix: wgpu::Buffer,
+    view: wgpu::Buffer,
     source: Option<wgpu::TextureView>,
 }
 impl Heat {
@@ -99,17 +108,23 @@ impl Heat {
         Self {
             pipeline,
             layout,
-            matrix: crate::counters::buffer_init(
+            view: crate::counters::buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("heat stable camera"),
-                    contents: bytemuck::cast_slice(&glam::Mat4::IDENTITY.to_cols_array()),
+                    contents: bytemuck::bytes_of(&View {
+                        camera: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                        render_per_scene: [1.; 2],
+                        _pad: [0.; 2],
+                    }),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 },
             ),
             source: None,
         }
     }
+    /// Heat distortion of `color`, at the render size, in place, its
+    /// displacement authored in pixels of a `scene`-sized frame.
     #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
@@ -118,6 +133,7 @@ impl Heat {
         encoder: &mut wgpu::CommandEncoder,
         transient: &Transient,
         matrix: &[[f32; 4]; 4],
+        scene: [u32; 2],
         color: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         timing: Option<&crate::timing::GpuTiming>,
@@ -132,7 +148,12 @@ impl Heat {
             color.texture().size(),
             || target(device, "immutable heat source", size, HDR),
         );
-        crate::counters::write_buffer(queue, &self.matrix, 0, bytemuck::bytes_of(matrix));
+        let view = View {
+            camera: *matrix,
+            render_per_scene: [0, 1].map(|axis| size[axis] as f32 / scene[axis] as f32),
+            _pad: [0.; 2],
+        };
+        crate::counters::write_buffer(queue, &self.view, 0, bytemuck::bytes_of(&view));
         encoder.copy_texture_to_texture(
             color.texture().as_image_copy(),
             source.texture().as_image_copy(),
@@ -144,7 +165,7 @@ impl Heat {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.matrix.as_entire_binding(),
+                    resource: self.view.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -292,6 +313,7 @@ mod tests {
                         &mut encoder,
                         &transient,
                         &glam::Mat4::IDENTITY.to_cols_array_2d(),
+                        size,
                         &color,
                         &depth,
                         None,
@@ -339,23 +361,46 @@ mod tests {
         });
     }
 
-    // Defect: heat distorting anything but the complete composed frame: run
+    // Defects: heat distorting anything but the complete composed frame: run
     // before a transparent draw (glow or mist would land on the composite
     // unwarped) or on another target than the composite that exposure and
-    // antialiasing read (the frame would not warp). Oracle: the same frame
-    // without heat, its composite shifted by the authored two pixels wherever
-    // the heat covers it and its footprint stays on screen.
+    // antialiasing read (the frame would not warp); and displacing in render
+    // pixels rather than the scene pixels it is authored in, which FSR2's
+    // render size, below the scene size, magnifies. Oracle: the same frame
+    // without heat, its composite shifted by the authored two scene pixels
+    // (two render pixels without FSR2, one under FSR2 Performance's 2x)
+    // wherever the heat covers it and its footprint stays on screen.
     #[test]
     fn heat_warps_the_composite_after_its_transparent_draws() {
-        use crate::effects::Glow;
-        use crate::settings::{Antialiasing, Bloom, SceneResolution, Settings};
-        use crate::{Camera, FrameInput, Mist, Renderer, Scene};
-        use glam::{Mat4, Vec3};
-        let Some((device, queue)) = crate::test_support::device() else {
+        use crate::settings::Antialiasing;
+        let Some((device, queue)) = crate::test_support::fsr2_device() else {
             return;
         };
-        let size = [32, 24];
-        let mut scene = Scene::new(&device, &queue);
+        let render = [32, 24];
+        warps_by(&device, &queue, render, Antialiasing::Off, 2);
+        warps_by(
+            &device,
+            &queue,
+            render.map(|x| x * 2),
+            Antialiasing::Fsr2,
+            1,
+        );
+    }
+
+    /// Asserts that heat of two scene pixels shifts the composite of a
+    /// `size` frame under `antialiasing` by `shift` render pixels.
+    fn warps_by(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        size: [u32; 2],
+        antialiasing: crate::settings::Antialiasing,
+        shift: u32,
+    ) {
+        use crate::effects::Glow;
+        use crate::settings::{Bloom, Fsr2Quality, SceneResolution, Settings};
+        use crate::{Camera, FrameInput, Mist, Renderer, Scene};
+        use glam::{Mat4, Vec3};
+        let mut scene = Scene::new(device, queue);
         // Glow over the whole frame, its red growing to the right.
         let glow = [
             ([-20., -20., -2.], 0.),
@@ -367,10 +412,10 @@ mod tests {
             color: [red, 0., 0., 1.],
             ..Glow::default()
         });
-        scene.update_effects(&device, &queue, &glow);
+        scene.update_effects(device, queue, &glow);
         // One mist billboard across the middle of the frame.
-        scene.update_mist(&device, &queue, &[[0., 0., -2.]]);
-        // Heat over the whole frame, shifting it two pixels.
+        scene.update_mist(device, queue, &[[0., 0., -2.]]);
+        // Heat over the whole frame, shifting it two scene pixels.
         let heat = [[-10., -10., -1.], [30., -10., -1.], [-10., 30., -1.]].map(|position| {
             HeatDistortion {
                 position,
@@ -378,7 +423,7 @@ mod tests {
                 weight: 1.,
             }
         });
-        scene.update_heat_distortion(&queue, &heat).unwrap();
+        scene.update_heat_distortion(queue, &heat).unwrap();
         let mut input = FrameInput::new(Camera {
             view: Mat4::IDENTITY,
             projection: crate::perspective(
@@ -400,26 +445,35 @@ mod tests {
         };
         let settings = Settings {
             scene_resolution: SceneResolution::Full,
-            antialiasing: Antialiasing::Off,
+            antialiasing,
+            fsr2_quality: Fsr2Quality::Performance,
             bloom: Bloom::Off,
             ..Settings::default()
         };
-        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
         let output = crate::view::targets::target(
-            &device,
+            device,
             "caller output",
             size,
             crate::shading::gbuffer::COLOR,
         );
+        // A fresh renderer per frame, so both frames take FSR2's first jitter.
         let mut composite = |heat_distortion| {
             let settings = Settings {
                 heat_distortion,
                 ..settings
             };
+            let mut renderer = Renderer::for_test(device, queue, size, &settings);
+            if renderer.antialiasing_in_effect(&settings) != antialiasing {
+                eprintln!(
+                    "skipping {antialiasing:?}: it does not run here: {:?}",
+                    renderer.fsr2_error()
+                );
+                return None;
+            }
             let mut encoder = device.create_command_encoder(&Default::default());
             renderer.render(
-                &device,
-                &queue,
+                device,
+                queue,
                 &mut encoder,
                 &mut scene,
                 &input,
@@ -429,30 +483,37 @@ mod tests {
             );
             queue.submit([encoder.finish()]);
             renderer.finish_frame(&mut scene);
-            crate::test_support::read(&device, &queue, renderer.targets().composite.texture(), 8)
+            let composite = renderer.targets().composite.texture();
+            Some((
+                [composite.width(), composite.height()],
+                crate::test_support::read(device, queue, composite, 8),
+            ))
         };
-        let unwarped = composite(false);
-        let warped = composite(true);
+        let Some((render, unwarped)) = composite(false) else {
+            return;
+        };
+        let (_, warped) = composite(true).unwrap();
+        assert_eq!(render, [32, 24], "the composite is at the render size");
         let texel = |frame: &[u8], x: u32, y: u32| {
-            let i = ((y * size[0] + x) * 8) as usize;
+            let i = ((y * render[0] + x) * 8) as usize;
             frame[i..i + 8].to_vec()
         };
         // A misplaced heat shows only where the frame varies across it.
         let channel = |x, channel: usize| {
-            crate::test_support::half(&texel(&unwarped, x, size[1] / 2)[channel * 2..])
+            crate::test_support::half(&texel(&unwarped, x, render[1] / 2)[channel * 2..])
         };
         assert!(
             channel(4, 0) < channel(28, 0),
             "the glow must brighten to the right"
         );
         assert!(channel(16, 1) > 0., "the mist must show");
-        for y in 0..size[1] {
-            for x in 0..size[0] {
-                let source = if x + 2 < size[0] { x + 2 } else { x };
+        for y in 0..render[1] {
+            for x in 0..render[0] {
+                let source = if x + shift < render[0] { x + shift } else { x };
                 assert_eq!(
                     texel(&warped, x, y),
                     texel(&unwarped, source, y),
-                    "({x},{y}) is not the unwarped frame's ({source},{y})"
+                    "{antialiasing:?}: ({x},{y}) is not the unwarped frame's ({source},{y})"
                 );
             }
         }

@@ -147,6 +147,38 @@ fn view_ray(input: &FrameInput, ndc: Vec2) -> Vec3 {
     )
 }
 
+// Defect: the volume's split leaves its froxels far from square, or a side
+// past the device's 3D texture limit as the frame narrows (at 60×1900 High
+// asked for 2090 froxels tall, past WebGPU's default 2048), so creating the
+// volume fails. The oracle is the documented sizing: a frame and its
+// transpose take transposed volumes, each froxel covers as many pixels
+// across as down up to truncating its counts, and no side leaves
+// 1..=limit.
+#[test]
+fn froxels_stay_square_and_within_the_texture_limit_however_thin_the_frame() {
+    const LIMIT: u32 = 2048;
+    for quality in [FogQuality::Low, FogQuality::High] {
+        for render in [[60, 1900], [1900, 60], [40, 1300], [1920, 1080], [7, 7]] {
+            let [x, y, _] = froxels(quality, render, LIMIT);
+            let [across, down, _] = froxels(quality, [render[1], render[0]], LIMIT);
+            assert_eq!([x, y], [down, across], "{quality:?} {render:?} transposed");
+            let aspect = (render[0] as f32 / x as f32) / (render[1] as f32 / y as f32);
+            let truncation = (x + 1) as f32 / x as f32 * (y + 1) as f32 / y as f32;
+            assert!(
+                aspect.max(aspect.recip()) <= truncation,
+                "{quality:?} {render:?}: {x}×{y} froxels, aspect {aspect}"
+            );
+        }
+        for render in [[1, 1 << 20], [1 << 20, 1]] {
+            let [x, y, _] = froxels(quality, render, LIMIT);
+            assert!(
+                (1..=LIMIT).contains(&x) && (1..=LIMIT).contains(&y),
+                "{quality:?} {render:?}: {x}×{y} froxels"
+            );
+        }
+    }
+}
+
 // Defect: the fog adds light or dims where the medium has no density, or
 // the composition is not color * transmittance + scattering, so the frame
 // with an empty medium, skipped or run, differs from the frame with no fog.
@@ -296,7 +328,7 @@ fn point_light_scattering_matches_a_single_scattering_integral() {
     };
     let frame = input(fog);
     let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
-    let size = froxels(QUALITY, SIZE);
+    let size = froxels(QUALITY, SIZE, device.limits().max_texture_dimension_3d);
     let integrated = texels(&read(&device, &queue, renderer.fog_volumes()[2]));
     let mut checked = 0;
     for column in [
@@ -387,7 +419,7 @@ fn a_still_point_light_holds_its_froxel_steady_over_the_jitter_cycle() {
         ..Fog::default()
     };
     let frame = input(fog);
-    let size = froxels(QUALITY, SIZE);
+    let size = froxels(QUALITY, SIZE, device.limits().max_texture_dimension_3d);
     // A froxel's corner at unit coordinates `unit` of the volume, in view
     // space (the camera's view is the identity), from the frame's geometry.
     let corner = |unit: Vec3| {
@@ -496,7 +528,7 @@ fn a_light_holds_the_same_fog_on_either_side_of_the_screen() {
         ..Fog::default()
     };
     let frame = input(fog);
-    let size = froxels(QUALITY, SIZE);
+    let size = froxels(QUALITY, SIZE, device.limits().max_texture_dimension_3d);
     // The light a centimetre toward the camera from the centre of froxel
     // `index`, alone (a light exactly at a sample has no direction and
     // lights nothing there); the froxel's light on the first frame, which
@@ -564,7 +596,7 @@ fn froxels_far_smaller_than_their_distance_to_a_light_keep_its_falloff() {
         ..Fog::default()
     };
     let frame = input(fog);
-    let size = froxels(QUALITY, SIZE);
+    let size = froxels(QUALITY, SIZE, device.limits().max_texture_dimension_3d);
     // Far ahead of and beside the near froxels below: 4 m and more away from
     // froxels at most about 3 cm across.
     let light_position = Vec3::new(1.5, 0.5, -5.5);
@@ -710,7 +742,7 @@ fn the_filter_blurs_each_slice_by_godots_gaussian_and_leaves_the_history_unfilte
         integrated != unfiltered_integrated,
         "the integration ignored the filter"
     );
-    let size = froxels(QUALITY, SIZE);
+    let size = froxels(QUALITY, SIZE, device.limits().max_texture_dimension_3d);
     let expected = godot_gaussian(&godot_gaussian(&written, size, 0), size, 1);
     // Two half-float roundings of non-negative sums, one per pass.
     let tolerance = |expected: f32| 2e-3 * expected + 1e-6;
@@ -821,7 +853,7 @@ fn shadowed_lights_scatter_almost_nothing_behind_their_occluder() {
             });
         }
         let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
-        let size = froxels(QUALITY, SIZE);
+        let size = froxels(QUALITY, SIZE, device.limits().max_texture_dimension_3d);
         let froxels = texels(&read(&device, &queue, renderer.fog_volumes()[0]));
         let (mut below, mut above) = (Vec::new(), Vec::new());
         for z in 0..size[2] {
@@ -1099,7 +1131,7 @@ fn fog_volumes_add_their_medium_to_every_froxel_they_reach() {
         ..Default::default()
     });
     let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
-    let size = froxels(QUALITY, SIZE);
+    let size = froxels(QUALITY, SIZE, device.limits().max_texture_dimension_3d);
     let froxels = texels(&read(&device, &queue, renderer.fog_volumes()[0]));
     let local_from_world = volumes
         .map(|volume| Mat4::from_rotation_translation(volume.rotation, volume.center).inverse());

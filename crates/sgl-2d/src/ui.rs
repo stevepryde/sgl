@@ -37,8 +37,9 @@
 //! Bound pane sizes against the viewport; [`UiFrame::splitter`] only changes a
 //! caller-owned extent. Measure labels with [`TextRenderer::measure`], reserve
 //! trailing row actions first, then clip or wrap the remaining label/help area.
-//! Give each overflowing region one [`UiFrame::scroll_area_begin`] and its own offset;
-//! restore enclosing clips and keep fixed toolbars outside scrolling content.
+//! Give each overflowing region one [`UiFrame::scroll_area_begin`] and its own offset,
+//! passed again to [`UiFrame::scroll_area_end`]; nested areas take the wheel innermost
+//! first. Restore enclosing clips and keep fixed toolbars outside scrolling content.
 //!
 //! Use text for unfamiliar/consequential commands and compact icons for repeated
 //! familiar actions. Pair icons with [`UiFrame::tooltip_for`] using the same
@@ -349,7 +350,8 @@ impl Ui {
             focus_requested: false,
             splitter_seen: false,
             popup_seen: false,
-            scroll_clips: Vec::new(),
+            scroll_scopes: Vec::new(),
+            wheel_consumed: false,
         }
     }
 }
@@ -386,8 +388,10 @@ pub struct UiFrame<'a> {
     splitter_seen: bool,
     /// The open popup's dropdown was submitted this frame.
     popup_seen: bool,
-    /// The clip each open scroll area restores at its `scroll_area_end`.
-    scroll_clips: Vec<Option<Rect>>,
+    /// Open scroll areas, innermost last.
+    scroll_scopes: Vec<layout::ScrollScope>,
+    /// A scroll area took this frame's wheel.
+    wheel_consumed: bool,
 }
 
 impl UiFrame<'_> {

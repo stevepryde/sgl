@@ -2077,3 +2077,23 @@ fn a_baked_light_casts_no_ray_at_a_receiver_with_baked_lighting() {
         }
     }
 }
+
+#[test]
+fn the_history_halves_alternate_across_the_frame_count_s_wrap() {
+    let mut frame = super::HistoryFrame {
+        count: u32::MAX - 2,
+        current: 1,
+    };
+    let mut written = vec![frame.current];
+    for _ in 0..6 {
+        frame.advance();
+        assert_ne!(frame.count, 0, "only a restart sets the count to 0");
+        written.push(frame.current);
+    }
+    for pair in written.windows(2) {
+        assert_ne!(
+            pair[0], pair[1],
+            "consecutive frames wrote one half: {written:?}"
+        );
+    }
+}
