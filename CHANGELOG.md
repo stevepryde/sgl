@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import: a sparse accessor without a buffer view declaring a
+  huge count aborted the process; the load now fails with an error naming
+  it when an accessor's count differs from what glTF requires (POSITION's
+  for attributes and morph targets, the joints' for inverse binds, the
+  keyframes' for values) or when a sparse accessor without a buffer view
+  that nothing else counts declares more elements than the file's buffers
+  would hold. No game-code change needed.
 - `sgl-3d` point and spot lights: a light was dropped wherever the mapped
   base normal faced away from its centre, so a clearcoat over normal-mapped
   flakes lost the coat's highlight and a sphere light's highlight popped off
