@@ -200,8 +200,9 @@ struct GlyphBitmap {
     ymin: f32,
 }
 
-/// A cached glyph: advance always; bitmap only when it has ink (space etc.
-/// advance without a quad).
+/// A glyph's layout: advance always; bitmap only when it has ink (space etc.
+/// advance without a quad). Only slots with a bitmap are cached, so page
+/// recycling bounds the cache whatever sizes a game animates through.
 #[derive(Debug, Clone, Copy)]
 struct GlyphSlot {
     bitmap: Option<GlyphBitmap>,
@@ -634,7 +635,10 @@ impl TextRenderer {
             bitmap,
             advance: metrics.advance_width,
         };
-        self.glyphs.insert(key, slot);
+        // A bitmap-less slot is cheap to recompute and nothing would evict it.
+        if slot.bitmap.is_some() {
+            self.glyphs.insert(key, slot);
+        }
         slot
     }
 
@@ -1284,6 +1288,22 @@ mod tests {
             sampled_glyphs(&assets, &list),
             sampled_glyphs(&fresh_assets, &fresh_list)
         );
+    }
+
+    /// #435: text without ink (a space) drawn at a new size every frame does
+    /// not grow the glyph cache.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn animated_inkless_glyphs_keep_a_bounded_cache() {
+        let mut tr = renderer();
+        let mut assets: Assets<Texture> = Assets::new();
+        let mut list = DrawList::new();
+        for frame in 0..1000u16 {
+            let style = TextStyle::new(16.0 + f32::from(frame) * 0.001, [1.0; 4]);
+            tr.draw("  ", Vec2::ZERO, &style, 0.0, TextChannel::Screen);
+            tr.end_frame(&mut assets, &mut list);
+            list.clear();
+        }
+        assert!(tr.glyphs.len() <= 1, "{} cached slots", tr.glyphs.len());
     }
 
     /// #327: an infinite or NaN outline or shadow width draws no ring (and

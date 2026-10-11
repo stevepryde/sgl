@@ -42,23 +42,21 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    centered rect of the logical size inside the window.
 5. **Text.** `TextRenderer` rasterizes TTF glyphs on demand into CPU atlas
    pages and emits sprite quads on either channel; `measure` agrees with the
-   quads `draw` emits for the same text and size. Glyphs are cached per
-   exact raster size, so layout never depends on which sizes drew before.
-   Each page is one texture
-   asset under a stable handle; `end_frame` republishes changed pages in
-   place and returns their handles for the game to upload, which replaces
-   their pixels in the existing renderer or sprite pass. A new standard page
-   opens only when every standard page is full and drawn from in the current
-   frame; otherwise the least recently used one is emptied and reused under
-   its handle, so text whose size changes every frame keeps a bounded page
-   count. A glyph too large for a standard page gets a dedicated page sized
-   to it, holding nothing else (the least recently used stale one is rebuilt
-   at the new glyph's size); an upload wider than the device allows fails
-   with `TextureError::TooLarge`, which the game logs. A glyph whose page
-   would exceed `MAX_GLYPH_PAGE_SIZE` (16384; 8192 on wasm32, WebGPU's
-   default limit) is not drawn; its advance applies. Text whose raster size
-   (`px × pixel_scale`) is not positive and finite draws nothing and
-   measures zero.
+   quads `draw` emits for the same text and size. Glyphs are cached per exact
+   raster size, so layout never depends on which sizes drew before. Each page
+   is one texture asset under a stable handle; `end_frame` republishes changed
+   pages in place and returns their handles for the game to upload, which
+   replaces their pixels in the existing renderer or sprite pass. A new
+   standard page opens only when every standard page is full and drawn from in
+   the current frame; otherwise the least recently used one is emptied and
+   reused under its handle, so text whose size changes every frame keeps a
+   bounded page count. A glyph too large for a standard page gets a dedicated
+   page sized to it, holding nothing else (the least recently used stale one is
+   rebuilt at the new glyph's size); an upload wider than the device allows
+   fails with `TextureError::TooLarge`, which the game logs. A glyph whose page
+   would exceed `MAX_GLYPH_PAGE_SIZE` (16384; 8192 on wasm32, WebGPU's default
+   limit) is not drawn; its advance applies. Text whose raster size (`px ×
+   pixel_scale`) is not positive and finite draws nothing and measures zero.
    Outline and shadow are offset copies of the glyph quads, at most
    `MAX_RING_WIDTH` wide; a non-finite width draws no ring. `pixel_scale = 1`
    is bit-identical to unscaled rendering.
