@@ -43,7 +43,7 @@
 //! fall by a fifth a level; and a solid cell takes the mean of its air
 //! neighbours', so the volume's filter blends no darkness from rock into
 //! the faces about it.
-// Native-only: it blocks on GPU readback (`diagnostics::read`).
+// Native-only: it blocks on GPU readback.
 #![cfg_attr(target_arch = "wasm32", no_main)]
 #![cfg(not(target_arch = "wasm32"))]
 

@@ -7,8 +7,8 @@
 //!
 //! The instanced sprite pipeline ([`sprite`]) consumes the
 //! [`DrawList`] seam ([`draw`]), shelf-packed texture atlasing ([`atlas`]),
-//! the world/screen [`Camera`] ([`camera`]), and PNG scene capture for the
-//! visual-parity harness ([`Renderer::capture_scene`]).
+//! the world/screen [`Camera`] ([`camera`]), and native PNG scene capture
+//! for the visual-parity harness ([`Renderer::capture_scene`]).
 //!
 //! Flat-quad overlay primitives — lines, rect outlines, fills and circles on
 //! the shared 1×1 white texture ([`crate::assets::white_texture`], uploaded by

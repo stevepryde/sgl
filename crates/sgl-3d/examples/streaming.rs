@@ -65,7 +65,7 @@
 //! static shadow layers and the one after redraws none. An abandoned frame
 //! precedes each submitted one. `--hardware-ray-tracing` and
 //! `--ray-traced-shadows` apply to it too.
-// Native-only: it blocks on GPU readback (`diagnostics::read`).
+// Native-only: it blocks on GPU readback.
 #![cfg_attr(target_arch = "wasm32", no_main)]
 #![cfg(not(target_arch = "wasm32"))]
 
