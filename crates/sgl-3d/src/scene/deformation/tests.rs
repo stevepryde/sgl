@@ -188,7 +188,9 @@ fn fixture() -> (Vec<CpuMesh>, [Mat4; 5]) {
 
 /// `mesh`'s vertices under `joints` and `weights` by glTF 2.0's definition:
 /// each displaced by its targets at their weights, then transformed by the
-/// weighted sum of its joint matrices (normals by its inverse transpose);
+/// weighted sum of its joint matrices (normals by its inverse transpose,
+/// whose direction the deform stage's cofactor shares while the sum does
+/// not mirror, as no fixture's does);
 /// and for each, a bound on how much that transform can magnify an error in
 /// its rest normal or tangent (the Frobenius condition number of its linear
 /// part, 1 unskinned).
