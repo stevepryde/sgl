@@ -1114,7 +1114,10 @@ last, after everything it may use, and refuses a directive in it.
 - **Deformation.** Skinned and morphed positions reach every geometry pass the
   same way, with the previous frame's positions for motion. Prepare's deform
   stage morphs and skins each deforming instance whose deformation changed
-  since the last submitted frame once, in one compute pass, from its packed
+  since the last submitted frame once, in one compute pass, one vertex an
+  invocation (a dispatch past 65,535 workgroups remapped to two dimensions
+  by the cull's `dispatch_side`, linearised by `num_workgroups.x`, which a
+  direct dispatch reports on every backend), from its packed
   rest pose into its own `f32` vertices in the ray source (Bevy's skinning
   and morph math, run once per frame as Wicked Engine's `skinningCS` runs
   it, chosen over skinning in every pass's vertex shader by measurement,

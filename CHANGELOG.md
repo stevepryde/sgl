@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` deformation (`Scene::set_instance_deformation`): a deforming mesh
+  above 4,194,240 vertices failed device validation every frame it deformed;
+  it now deforms. No game-code changes needed.
 - `sgl-3d` `Scene::set_instance_deformation`: a joint matrix scaling an axis
   to zero gave its skinned vertices NaN normals, and a mirrored skin turned
   them against its deformed faces; skinned normals now face the deformed
