@@ -268,7 +268,7 @@ mod native {
                     &mut self.visible[index],
                 );
             }
-            frame.scroll_area_end();
+            frame.scroll_area_end(&mut self.offset);
             let content_x = self.pane + 20.0;
             let columns = ((view.x - content_x - 12.0) / 128.0).floor().max(1.0) as usize;
             frame.scroll_area_begin(
@@ -298,7 +298,7 @@ mod native {
                     VAlign::Center,
                 );
             }
-            frame.scroll_area_end();
+            frame.scroll_area_end(&mut self.prefab_offset);
             frame.end();
             self.window.set_cursor(match resize.cursor {
                 Some(UiCursor::ResizeHorizontal) => CursorIcon::EwResize,

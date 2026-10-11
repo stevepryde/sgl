@@ -512,7 +512,7 @@ mod tests {
             fired.push(f.button("below", below, "B", 16.0));
             f.scroll_area_begin("list", area, 100.0, &mut offset);
             f.dropdown("zoom", dd, &options, &mut selected, 16.0);
-            f.scroll_area_end();
+            f.scroll_area_end(&mut offset);
             f.end();
         }
         assert_eq!(fired, [false, false, true]);
