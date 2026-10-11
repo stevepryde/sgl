@@ -12,7 +12,7 @@ fn rays_that_run_out_of_lookups_miss() {
             Ok(adapter) => adapter,
             Err(error) => {
                 assert!(
-                    std::env::var("SGL_REQUIRE_GPU").is_err(),
+                    !std::env::var("SGL_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0"),
                     "GPU required: {error}"
                 );
                 eprintln!("skipping GPU test: {error}");

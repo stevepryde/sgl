@@ -324,7 +324,7 @@ light's shadow map through, the medium lights, and forward scattering
 without a medium (no density and no fog volumes) runs no fog and pays
 nothing for it.
 `Settings::fog_quality` picks the volume's resolution: 64 slices, and Low
-is Godot's default of 64 froxels across the frame's mean side, High 128. Timing groups `fog injection` (the lights and shadows, which scale
+is Godot's default of 64 froxels across the geometric mean of the frame's sides, High 128, in square froxels and no side past the device's 3D texture limit. Timing groups `fog injection` (the lights and shadows, which scale
 with froxels and the lights reaching them), `fog filter` (with the filter)
 and `fog integration`.
 
@@ -1639,7 +1639,9 @@ loop is the `for` loop a counter of `i32` or `u32` makes, from a literal or
 `const` start, tested with `<` or `<=` against a literal or `const` limit,
 and changed only by its update, adding a positive literal or `const` step
 (or `loop { … continuing { i += step; break if i >= limit; } }`, `>=` or
-`>`), whose limit plus step fits the counter's type, so it cannot wrap.
+`>`), whose limit plus step and start plus step fit the counter's type, so
+it cannot wrap (a `break if` loop runs once even from a start past its
+limit).
 The test and the step must read the counter in the loop's own test and
 update statements (where a `for` loop puts them; `break if` after the
 step); a value computed anywhere else is refused. A `break if` loop inside
@@ -1782,8 +1784,8 @@ authored look and per-frame state in a `FrameInput`.
    explicitly; `LoadOptions` can bound emissive strength when the game requests
    that behavior, supply any of the glTF's images (`images`) so the loader
    never reads or decodes them, and select mesh nodes (`nodes`). Default
-   loading preserves authored strength, decodes every image and loads every
-   node.
+   loading preserves authored strength, decodes each image a sampled map uses
+   and loads every node.
 3. `Scene::new(&device, &queue)` starts empty. Add content between frames;
    each addition returns its identity (`MaterialId`, `ModelId`, `InstanceId`,
    `LightId`, `DecalImageId`, `DecalId`, `EnvironmentId`), and every operation
@@ -2655,7 +2657,10 @@ set, which the load leaves out (`occlusion_texture` `None`). It names each
 material whose specular textures SGL3D does not sample
 (`Ignored::SpecularMap`). To have occlusion drawn, pack it
 into the metallic-roughness image's red channel on `TEXCOORD_0` in the
-export step. Other unsupported visible features return asset-path errors.
+export step. The load reads and decodes only the images a map it samples
+uses; each other image, such as a texture extension's source or an
+ignored map's image, is a one-texel placeholder that is never bound, and
+the list names it (`Ignored::Image`). Other unsupported visible features return asset-path errors.
 
 A dielectric's reflectance at normal incidence (F0) follows its index of
 refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for water
@@ -2741,10 +2746,11 @@ let sources = |image: GltfImage<'_>| -> asset::Result<ImageSource> {
 let asset = asset::load_with_options(&path, LoadOptions { images: Some(&sources), ..Default::default() })?;
 ```
 
-The loader asks once per image, in image order, as Bevy's glTF loader
-resolves each image's source; a supplied image takes the glTF image's index,
+The loader asks once per image a sampled map uses, in image order, as
+Bevy's glTF loader resolves each image's source; a supplied image takes the glTF image's index,
 which its materials address. An embedded glTF (`load_slice_with_options`)
-may refer to external image files when every one is supplied.
+may refer to external image files when each one a sampled map uses is
+supplied.
 `CompressedImage::from_ktx2(bytes)` reads a KTX2
 file of one 2D BC7 image (`VK_FORMAT_BC7_UNORM_BLOCK` or `_SRGB_BLOCK`) with
 its stored levels, uncompressed or Zstandard-supercompressed, as Bevy reads
@@ -3006,7 +3012,8 @@ Composition snapshots the complete camera HDR source after reflections, fog,
 blended surfaces, additive effects and mist, then overwrites
 only submitted triangle coverage before bloom, antialiasing, tone mapping and
 the game's HUD. Medium transport and additive attenuation are not applied again.
-Each displacement samples the immutable snapshot; overlapping triangles use
+Displacement is scaled to render pixels, so it keeps its scene-pixel size
+under FSR2. Each displacement samples the immutable snapshot; overlapping triangles use
 submission order, without repeated refraction. Off/empty skips the copy and draw.
 One full-size HDR snapshot is retained and replaced on resize; geometry storage
 is retained. Thus Off avoids a full-frame copy plus bounded raster work.

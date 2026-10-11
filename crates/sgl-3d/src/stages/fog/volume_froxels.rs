@@ -185,7 +185,7 @@ mod tests {
     // farthest point; in view, it reaches the froxel of its centre.
     #[test]
     fn only_boxes_that_may_reach_a_froxel_are_bounded() {
-        let size = crate::stages::fog::froxels(crate::settings::FogQuality::High, [160, 90]);
+        let size = crate::stages::fog::froxels(crate::settings::FogQuality::High, [160, 90], 2048);
         let projection = crate::perspective(1., 160. / 90., 0.1);
         let (length, detail_spread) = (20., 2.);
         let froxel_volume = FroxelVolumeUniform {
