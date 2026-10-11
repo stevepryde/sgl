@@ -24,7 +24,8 @@ const wasmNodeTestEnv = {
 // The sgl-2d GPU tests skip when no wgpu adapter exists. On macOS Metal is
 // always present, so a skip there would hide a real failure: require the GPU.
 // Elsewhere, set SGL_REQUIRE_GPU=1 on hosts known to have an adapter.
-const requireGpu = process.platform === "darwin" || process.env.SGL_REQUIRE_GPU === "1";
+const requireGpuEnv = process.env.SGL_REQUIRE_GPU;
+const requireGpu = process.platform === "darwin" || (!!requireGpuEnv && requireGpuEnv !== "0");
 console.log(
   requireGpu
     ? "GPU tests: required (SGL_REQUIRE_GPU=1)"
