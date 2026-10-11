@@ -20,6 +20,15 @@ docs and specs the entry links.
   surface normal for their rays, offsetting and bouncing them; edge pixels now
   take the same normal as the interior on every backend. No game-code change
   needed.
+- `sgl-2d` `UiFrame::dropdown`: an open dropdown scrolled fully out of its
+  clip stayed open and kept the keyboard captured; it now closes at
+  `UiFrame::end`. No game-code changes needed.
+- `sgl-3d` `Scene::add_materials`, `add_asset` and `set_material`: a
+  metallic, roughness, clearcoat, clearcoat roughness or base alpha outside
+  0..=1, or a base colour, emission or `environment_scale` that is negative
+  or not finite, was accepted and reached the GPU; it is now refused with
+  new `SceneError::InvalidMaterialFactors`. Migration: keep those values in
+  range; exhaustive matches on `SceneError` add the variant.
 - `sgl-3d` `asset::load*`: a KHR material extension object (anisotropy,
   clearcoat, iridescence, sheen, diffuse transmission, transmission, volume,
   dispersion) carrying its own `extensions` property was refused as
