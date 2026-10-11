@@ -1933,6 +1933,53 @@ mod tests {
         assert_eq!(ingress.drain(), []);
     }
 
+    /// Defect (#438): a caller disconnect that lands after the worker has
+    /// recorded a peer's end, but before the caller polls, discarding the
+    /// messages the peer delivered and reporting `Local`. Oracle: netcode.md
+    /// 2: a connection already ended, its end queued though not yet polled,
+    /// reports that end, after the messages it delivered before ending. A
+    /// peer delivers a message and ends; the caller disconnects before
+    /// polling; the poll returns the message, then `Disconnected { Peer }`.
+    #[test]
+    fn a_callers_disconnect_after_an_unpolled_peer_end_keeps_that_end() {
+        let conn = cid(6);
+        let commands = CommandQueue::new(&ReliableConfig::DEFAULT, CLOSE_GRACE_MS);
+        let ingress = IngressHub::new(&ReliableConfig::DEFAULT);
+        let mut endpoint = Scripted {
+            turns: VecDeque::from([vec![
+                ServerEvent::Connected { conn },
+                ServerEvent::Message {
+                    conn,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: b"last".to_vec(),
+                },
+                ServerEvent::Disconnected {
+                    conn,
+                    reason: DisconnectReason::Peer,
+                },
+            ]]),
+        };
+        worker_tick(&mut endpoint, &commands, &ingress, 0);
+        disconnect_by_caller(&commands, &ingress, conn);
+        worker_tick(&mut endpoint, &commands, &ingress, 1);
+        assert_eq!(
+            ingress.drain(),
+            [
+                ServerEvent::Connected { conn },
+                ServerEvent::Message {
+                    conn,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: b"last".to_vec(),
+                },
+                ServerEvent::Disconnected {
+                    conn,
+                    reason: DisconnectReason::Peer,
+                },
+            ]
+        );
+        assert_eq!(ingress.drain(), []);
+    }
+
     #[test]
     fn ingress_coalesces_latest_state_per_peer() {
         let hub = IngressHub::new(&ReliableConfig::DEFAULT);
