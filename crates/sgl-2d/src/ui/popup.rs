@@ -581,6 +581,7 @@ mod tests {
             press_at(50.0, 225.0),
             wheel,
             UiInput::default(),
+            UiInput::default(),
             key(UiKey::Tab),
             key(UiKey::Enter),
         ]
@@ -593,18 +594,23 @@ mod tests {
             f.scroll_area_begin("list", area, 1000.0, &mut offset);
             let dd = Rect::new(10.0, 210.0 - offset, 160.0, 30.0);
             f.dropdown("menu", dd, &options, &mut selected, 16.0);
-            f.scroll_area_end();
+            f.scroll_area_end(&mut offset);
             f.end();
             if i == 0 {
                 assert!(ui.any_popup_open());
             }
+            // The wheel moves the content at the end of its frame, so the
+            // dropdown leaves the clip the frame after and closes at its end;
+            // that frame began with the popup open and still reports capture.
             if i == 2 {
                 assert!(!ui.any_popup_open());
+            }
+            if i == 3 {
                 assert!(!ui.keyboard_captured());
             }
         }
         assert!(offset > 100.0, "the wheel scrolled the dropdown away");
-        assert_eq!(fired, [false, false, false, false, true]);
+        assert_eq!(fired, [false, false, false, false, false, true]);
     }
 
     /// A modal blocks every ordinary widget anywhere on screen the frame
