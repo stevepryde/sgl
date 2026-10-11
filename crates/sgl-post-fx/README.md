@@ -100,7 +100,8 @@ taa.execute(&mut temporal_anti_aliasing::RenderAttributes { /* color, depth, mot
 
 The caller supplies Diligent's conventions: a left-handed camera (view space
 +z forward) with a finite far plane, the depth buffer as a depth texture,
-world normals in [-1, 1], NDC motion vectors (current − previous) and the
+unit world normals (SSR traces a normal that is not unit length as a miss,
+DFX-52), NDC motion vectors (current − previous) and the
 previous frame's depth. Set each `CameraAttribs`' clip planes with
 `set_clip_planes(near, far)`, passing far before near for reversed-Z: SSR's
 and TAA's temporal passes read the near and far planes' depths (DFX-32), and
