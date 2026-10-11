@@ -25,12 +25,13 @@ pub(super) struct Rigging {
 }
 
 impl Rigging {
-    /// The document's nodes, skins and clips; empty when it has no skin,
-    /// morph target or animation. Refuses a node hierarchy that is not a
-    /// set of trees, which the loader's and `Rig`'s walks of it assume,
-    /// whether or not the document deforms.
-    pub fn new(document: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Result<Self> {
-        let parents = parents(document)?;
+    /// The document's nodes, each with its parent (`parents`), skins and
+    /// clips; empty when it has no skin, morph target or animation.
+    pub fn new(
+        document: &gltf::Document,
+        parents: &[Option<usize>],
+        buffers: &[gltf::buffer::Data],
+    ) -> Result<Self> {
         let mut rigging = Self {
             rig: Rig::default(),
             skins: Vec::new(),
@@ -149,8 +150,9 @@ impl Rigging {
 /// Each node's parent, the hierarchy glTF 2.0 requires (3.5.3: disjoint
 /// strict trees, each node with at most one parent and none its own
 /// ancestor), which gltf's validation leaves unchecked: a node with two
-/// parents, or under a cycle, is refused.
-fn parents(document: &gltf::Document) -> Result<Vec<Option<usize>>> {
+/// parents, or under a cycle, is refused, whether or not the document
+/// deforms, since the loader's and `Rig`'s walks of it assume trees.
+pub(super) fn parents(document: &gltf::Document) -> Result<Vec<Option<usize>>> {
     let nodes: Vec<gltf::Node<'_>> = document.nodes().collect();
     let mut parents = vec![None; nodes.len()];
     for node in &nodes {

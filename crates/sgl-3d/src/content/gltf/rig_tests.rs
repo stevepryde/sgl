@@ -502,36 +502,17 @@ fn malformed_accessors_are_rejected() {
             .as_u64()
             .unwrap() as usize
     }
-    // Makes `accessor` sparse without a buffer view, one substitution of
-    // zero bytes (enough for any element) for element 0, and declares
-    // `isize::MAX` elements, whose bytes at four or more an element exceed
-    // what a `Vec` may allocate on any target: gltf's readers, which
-    // allocate them up front, fail at once on capacity overflow.
+    // Makes `accessor` sparse without a buffer view and declares 2^20
+    // elements: more than the file's buffers hold or its use's count
+    // allows, but within the load limit, which a load checks first.
     fn viewless(buffer: &mut Buffer, accessor: usize) {
-        let indices = buffer.accessor(bytemuck::cast_slice(&[0u16]), 5123, "SCALAR", 1);
-        let values = buffer.accessor(&[0; 64], 5121, "SCALAR", 64);
-        let indices = buffer.accessors[indices]["bufferView"].clone();
-        let values = buffer.accessors[values]["bufferView"].clone();
-        let accessor = buffer.accessors[accessor].as_object_mut().unwrap();
-        accessor.remove("bufferView");
-        accessor.insert("count".into(), json!(isize::MAX as u64));
-        accessor.insert(
-            "sparse".into(),
-            json!({
-                "count": 1,
-                "indices": {"bufferView": indices, "componentType": 5123},
-                "values": {"bufferView": values}
-            }),
-        );
+        sparse_without_view(buffer, accessor, 1 << 20);
     }
     // A 32-bit target's gltf refuses a size beyond its `usize` itself.
-    let (past_view, overflowing_view) = if cfg!(target_pointer_width = "64") {
-        (
-            "mesh 0 primitive 0: POSITION accessor",
-            "mesh 0 primitive 0: indices accessor",
-        )
+    let overflowing_view = if cfg!(target_pointer_width = "64") {
+        "mesh 0 primitive 0: indices accessor"
     } else {
-        ("exceeds system limits", "exceeds system limits")
+        "exceeds system limits"
     };
     type Edit = fn(&mut Value, &mut Buffer);
     let cases: [(&str, Edit, &str); 20] = [
@@ -595,9 +576,9 @@ fn malformed_accessors_are_rejected() {
             "POSITION past its view",
             |document, buffer| {
                 let positions = attribute(document, "POSITION");
-                buffer.accessors[positions]["count"] = json!(1u64 << 62);
+                buffer.accessors[positions]["count"] = json!(4);
             },
-            past_view,
+            "mesh 0 primitive 0: POSITION accessor",
         ),
         (
             // No data, but gltf's readers allocate every element up front.
@@ -842,4 +823,93 @@ fn an_image_view_past_its_buffer_is_rejected() {
         error.contains("image 0") && error.contains("buffer"),
         "{error}"
     );
+}
+
+/// Makes `accessor` sparse without a buffer view, of `count` elements, one
+/// substitution for element 0 (64 zero bytes, enough for any element).
+fn sparse_without_view(buffer: &mut Buffer, accessor: usize, count: usize) {
+    let indices = buffer.accessor(bytemuck::cast_slice(&[0u16]), 5123, "SCALAR", 1);
+    let values = buffer.accessor(&[0; 64], 5121, "SCALAR", 64);
+    let indices = buffer.accessors[indices]["bufferView"].clone();
+    let values = buffer.accessors[values]["bufferView"].clone();
+    let accessor = buffer.accessors[accessor].as_object_mut().unwrap();
+    accessor.remove("bufferView");
+    accessor.insert("count".into(), json!(count));
+    accessor.insert(
+        "sparse".into(),
+        json!({
+            "count": 1,
+            "indices": {"bufferView": indices, "componentType": 5123},
+            "values": {"bufferView": values}
+        }),
+    );
+}
+
+// Plausible defects: a scene listing a root twice, or a node that has a
+// parent among its roots, loaded, reading the subtree's meshes once each
+// time it is listed, which glTF forbids so that a scene is a set of trees.
+#[wasm_bindgen_test(unsupported = test)]
+fn scene_roots_that_repeat_or_have_a_parent_are_rejected() {
+    for (label, roots) in [
+        ("a root listed twice", json!([0, 4, 4])),
+        ("a child listed as a root", json!([0, 4, 3])),
+    ] {
+        let error = load_slice(&rigged(|document, _| {
+            document["scenes"][0]["nodes"] = roots;
+        }))
+        .err()
+        .unwrap_or_else(|| panic!("{label} was accepted"))
+        .to_string();
+        assert!(error.contains("scene 0"), "{label}: {error}");
+    }
+}
+
+// Plausible defect: morph-weight keyframe values, which glTF requires a
+// key and target each (three a key for a cubic spline), read without a
+// bound on their count: 65536 cubic keys for 8192 targets need 1.6 billion
+// values (6.4 GB), declared by a sparse accessor without a buffer view in
+// a file of under 1 MB.
+#[wasm_bindgen_test(unsupported = test)]
+fn morph_weight_keyframes_beyond_the_load_limit_are_rejected() {
+    const TARGETS: usize = 8192;
+    const KEYS: usize = 65536;
+    let bytes = rigged(|document, buffer| {
+        let primitive = &mut document["meshes"][1]["primitives"][0];
+        primitive["targets"] = json!(vec![primitive["targets"][0].clone(); TARGETS]);
+        document["meshes"][1]["weights"] = json!(vec![0.5; TARGETS]);
+        document["nodes"][4]["weights"] = json!(vec![0.25; TARGETS]);
+        let times: Vec<f32> = (0..KEYS).map(|key| key as f32).collect();
+        let times = buffer.floats(&times, "SCALAR", 1);
+        let values = buffer.floats(&[0.], "SCALAR", 1);
+        sparse_without_view(buffer, values, KEYS * 3 * TARGETS);
+        document["animations"][0]["samplers"][1] =
+            json!({"input": times, "output": values, "interpolation": "CUBICSPLINE"});
+    });
+    let error = load_slice(&bytes)
+        .err()
+        .expect("6.4 GB of keyframe values were read")
+        .to_string();
+    assert!(error.contains("bytes one load may"), "{error}");
+}
+
+// Plausible defect: a mesh read once for each node that uses it without a
+// bound on the total: 1024 nodes using a mesh of 65535 vertices produce 67
+// million vertices (6.2 GB as `Vertex`es and their indices) from a file of
+// under 1 MB, though only 134 million accessor elements.
+#[wasm_bindgen_test(unsupported = test)]
+fn instancing_beyond_the_load_limit_is_rejected() {
+    const NODES: usize = 1024;
+    let mut buffer = Buffer::default();
+    let positions = buffer.floats(&[1.; 3 * 65535], "VEC3", 3);
+    let document = json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": positions, "NORMAL": positions}}]}],
+        "nodes": vec![json!({"mesh": 0}); NODES],
+        "scenes": [{"nodes": (0..NODES).collect::<Vec<_>>()}], "scene": 0
+    });
+    let error = load_slice(&buffer.glb(document))
+        .err()
+        .expect("67 million vertices were read")
+        .to_string();
+    assert!(error.contains("bytes one load may"), "{error}");
 }

@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` glTF import: a small file whose morph-weight keyframes or
+  instanced meshes declared gigabytes of data could abort the process; a
+  scene listing a root twice or a child as a root now fails the load, as
+  does one whose meshes (each instance counted), skins and clips would
+  take more than 4 GiB natively or 1 GiB in the browser. No game-code
+  change needed.
 - `sgl-2d` `Renderer::read_scene`, `Renderer::capture_scene` and
   `CaptureError`, and `sgl-3d` `diagnostics::read`: a browser build compiled
   them and hung the tab when called; they are now native-only, a compile
