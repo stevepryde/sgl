@@ -7,6 +7,28 @@ use crate::shading::bind::group2::MaterialMap;
 use crate::shading::material::{MAX_LAYER_CYCLES, MaterialMaps, layer_cycles};
 use gltf::texture::WrappingMode;
 
+/// The core values `values` may take, as glTF 2.0 and KHR_materials_
+/// clearcoat bound them: a metallic, roughness, clearcoat and clearcoat
+/// roughness in `0..=1`; a finite nonnegative base colour and emission,
+/// which may exceed 1 (an unlit HDR surface, an emissive strength applied);
+/// and a finite nonnegative environment scale.
+pub(super) fn validate_core(values: &SurfaceMaterial) -> Result<(), SceneError> {
+    let unit = |value: f32| (0.0..=1.0).contains(&value);
+    let nonnegative = |value: &f32| value.is_finite() && *value >= 0.;
+    if unit(values.metallic)
+        && unit(values.roughness)
+        && unit(values.clearcoat)
+        && unit(values.coat_roughness)
+        && values.base.iter().all(nonnegative)
+        && values.emission.iter().all(nonnegative)
+        && nonnegative(&values.environment_scale)
+    {
+        Ok(())
+    } else {
+        Err(SceneError::InvalidMaterialFactors)
+    }
+}
+
 /// Anisotropy `values` may take on meshes of which `untangented` lack
 /// authored tangent frames.
 pub(super) fn validate_anisotropy(
