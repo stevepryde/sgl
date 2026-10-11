@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `Renderer::set_target_size`: a size wider or taller than the
+  device's maximum texture dimension clamped only that axis, distorting the
+  aspect, letterboxing the frame and shrinking `ui_size()`; both axes now
+  scale together, so the frame fills the window and `ui_size()` stays the
+  window's logical size. No game-code change needed.
 - `sgl-net` `BrowserWebSocketClient`: a reconnect attempt whose `WebSocket`
   constructor threw (a `SecurityError`, say) reported no `Disconnected`, so
   a game waiting after `Reconnecting` waited forever; each such attempt now
