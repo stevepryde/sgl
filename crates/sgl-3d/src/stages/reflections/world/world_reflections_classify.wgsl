@@ -11,8 +11,10 @@
 // ray a tracing pixel (the trace already runs at a reduced resolution), so
 // no samples per quad, no variance-guided tracing and no environment
 // fallback, which composition supplies; a pixel needs a ray where
-// world_trace_ray would trace one (its jittered receiver traced, the
-// screen-space method not confident, not under a blended receiver); every
+// world_trace_ray would trace one (its jittered receiver traced, its
+// fallback taking a share of it, as composition gives the fallback what
+// the screen-space method's confidence times the roughness fade leaves,
+// not under a blended receiver); every
 // pixel's trace targets start as a miss, which the trace overwrites where
 // it traces, as ClassifyTiles stores every pixel's result; the ray list is
 // a texture and its count reaches the trace through WorldParams (world.rs),
@@ -22,9 +24,9 @@
 // whole grid (the architecture's Reflections says why); and the indirect
 // dispatch runs in rows of WORLD_GROUP_ROW workgroups.
 // The screen-space method's result and the surface depth (the Surface
-// contract, specs/sgl3d-architecture.md): a receiver the method resolved,
-// or an opaque one under a blended receiver, which composes its own, traces
-// nothing.
+// contract, specs/sgl3d-architecture.md): a receiver whose lobe composition
+// takes whole from the method, or an opaque one under a blended receiver,
+// which composes its own, traces nothing.
 @group(3) @binding(5) var world_screen_space:texture_2d<f32>;
 @group(3) @binding(7) var world_surface_depth:texture_depth_2d;
 @group(0) @binding(10) var classify_indirect:texture_storage_2d<rgba16float,write>;
@@ -42,7 +44,7 @@ struct WorldRayCount {
 // Whether tracing pixel `tracing` traces a ray this frame.
 fn world_needs_ray(tracing:vec2<u32>)->bool {
  let pixel=world_traced_pixel(tracing);
- if !world_receives(pixel) || textureLoad(world_screen_space,pixel,0).a>=0.999 {
+ if world_fallback_share(pixel,textureLoad(world_screen_space,pixel,0).a)<=0.001 {
   return false;
  }
  let clamped=world_clamped(pixel);
