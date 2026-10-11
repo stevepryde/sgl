@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` orthographic `Camera` shading and `SurfaceContext::view`: the
+  view vector pointed from each surface toward `Camera::eye`, so highlights
+  and Fresnel varied across a flat surface and vanished on one between the
+  eye and a near plane behind it; it is now the camera's backward axis at
+  every surface. No game-code changes.
 - `sgl-3d` deformation (`Scene::set_instance_deformation`): a deforming mesh
   above 4,194,240 vertices failed device validation every frame it deformed;
   it now deforms. No game-code changes needed.
