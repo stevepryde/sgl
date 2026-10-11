@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` dynamic GI (`DynamicGiVolume::spacing`): past a spacing of about
+  170 m the probes' depth moments overflowed half precision, breaking the
+  sample's visibility test (NaN irradiance on some backends); they are now
+  stored in units of the longest spacing, so any spacing works. No game-code
+  change needed.
 - `sgl-3d` orthographic cameras: with the near plane behind the camera
   (a negative near), lights behind the camera were dropped from the
   clusters and surfaces between the near plane and the camera got no
