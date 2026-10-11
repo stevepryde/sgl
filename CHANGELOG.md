@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` orthographic cameras: with the near plane behind the camera
+  (a negative near), lights behind the camera were dropped from the
+  clusters and surfaces between the near plane and the camera got no
+  directional shadow; both now reach the near plane. No game-code change
+  needed.
 - `sgl-net` native WebSocket `Disconnected` reason: a peer that dropped
   the TCP stream without a Close, or sent a frame breaking WebSocket
   framing (reserved bits, an unmasked client frame), was reported as
