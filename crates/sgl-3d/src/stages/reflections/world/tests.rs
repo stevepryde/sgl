@@ -926,3 +926,61 @@ fn every_traced_pixel_lies_in_its_block_and_the_frame() {
         }
     }
 }
+
+// All reach variants of a lighting specialisation share its retention slot.
+// Exercise real trace pipelines so dropped/recompiled resources are observable.
+#[test]
+fn world_trace_pipelines_retain_current_and_previous() {
+    use super::WorldReflections;
+    use crate::view::pipelines::LitConstants;
+    let Some((device, _queue)) = test_support::device() else {
+        return;
+    };
+    let lit = crate::shading::bind::lit(&device, crate::shading::bind::BindingTier::Basic);
+    let scene = crate::shading::bind::scene(&device);
+    let mut stage = WorldReflections::new(&device, &lit, &scene, SIZE);
+    let a = LitConstants::default();
+    let b = LitConstants {
+        rect_lights: true,
+        ..a
+    };
+    let c = LitConstants {
+        rect_lights: true,
+        films: true,
+        ..a
+    };
+    for all in [false, true] {
+        stage.trace(&device, a, None, all);
+    }
+    let originals = [false, true].map(|all| stage.trace[&((a, all), None)].clone());
+    stage.trace(&device, b, None, false);
+    stage.trace(&device, b, None, true);
+    stage.trace(&device, a, None, false);
+    for (all, original) in [false, true].into_iter().zip(originals) {
+        assert_eq!(
+            stage.trace[&((a, all), None)],
+            original,
+            "returning to A reuses each reach's pipeline"
+        );
+    }
+    for all in [false, true] {
+        stage.trace(&device, b, None, all);
+    }
+    let previous = [false, true].map(|all| stage.trace[&((b, all), None)].clone());
+    stage.trace(&device, c, None, false);
+    assert!(
+        !stage.trace.keys().any(|&((lit, _), _)| lit == a),
+        "C drops every A reach"
+    );
+    for (all, pipeline) in [false, true].into_iter().zip(previous) {
+        assert_eq!(
+            stage.trace[&((b, all), None)],
+            pipeline,
+            "C keeps every B reach"
+        );
+    }
+    assert!(
+        stage.trace.contains_key(&((c, false), None)),
+        "C is compiled"
+    );
+}

@@ -3,7 +3,7 @@
 use super::volume::Layouts;
 use crate::shading::{self, RayQueryForm};
 use crate::view::frame::HardwareRays;
-use crate::view::pipelines::LitConstants;
+use crate::view::pipelines::{LitConstants, PipelineSpecialisations};
 use crate::view::trace_paths::{TracePath, TracePaths};
 use std::collections::HashMap;
 
@@ -72,6 +72,7 @@ pub(super) struct Pipelines {
     /// created when a frame first needs it, as the geometry pipelines
     /// specialise on the scene's rectangle lights and decals.
     pub trace: HashMap<(LitConstants, Option<RayQueryForm>), wgpu::ComputePipeline>,
+    specialisations: PipelineSpecialisations<LitConstants>,
 }
 
 impl Pipelines {
@@ -157,6 +158,7 @@ impl Pipelines {
         Self {
             paths: TracePaths::new("dynamic GI rays", &TRACE, &layouts.trace, lit, scene),
             trace: HashMap::new(),
+            specialisations: PipelineSpecialisations::default(),
             rank,
             threshold,
             allocate,
@@ -176,6 +178,8 @@ impl Pipelines {
         lit: LitConstants,
         hardware: Option<HardwareRays<'_>>,
     ) -> Option<RayQueryForm> {
+        self.specialisations
+            .retain(&mut self.trace, lit, |&(lit, _)| lit);
         self.paths.pipeline(
             device,
             hardware,
@@ -194,5 +198,56 @@ impl Pipelines {
                 })
             },
         )
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod specialisation_tests {
+    use super::*;
+
+    // Exercise the real trace pipeline builder. A, B, A must reuse A's
+    // compiled pipeline; B, C must then drop A and retain B's pipeline.
+    #[test]
+    fn dynamic_gi_trace_pipelines_retain_current_and_previous() {
+        let Some((device, _queue)) = crate::test_support::device() else {
+            return;
+        };
+        if device.limits().max_sampled_textures_per_shader_stage < 48 {
+            eprintln!("unsupported: dynamic GI needs Extended bindings");
+            return;
+        }
+        let lit = shading::bind::lit(&device, shading::bind::BindingTier::Extended);
+        let scene = shading::bind::scene(&device);
+        let mut pipelines = Pipelines::new(&device, &Layouts::new(&device), &lit, &scene);
+        let a = LitConstants::default();
+        let b = LitConstants {
+            rect_lights: true,
+            ..a
+        };
+        let c = LitConstants {
+            rect_lights: true,
+            films: true,
+            ..a
+        };
+        pipelines.trace_pipeline(&device, a, None);
+        let original = pipelines.trace[&(a, None)].clone();
+        pipelines.trace_pipeline(&device, b, None);
+        pipelines.trace_pipeline(&device, b, None);
+        pipelines.trace_pipeline(&device, a, None);
+        assert_eq!(
+            pipelines.trace[&(a, None)],
+            original,
+            "returning to A reuses its pipeline"
+        );
+        pipelines.trace_pipeline(&device, b, None);
+        let previous = pipelines.trace[&(b, None)].clone();
+        pipelines.trace_pipeline(&device, c, None);
+        assert!(!pipelines.trace.contains_key(&(a, None)), "C drops A");
+        assert_eq!(
+            pipelines.trace[&(b, None)],
+            previous,
+            "C keeps B's pipeline"
+        );
+        assert!(pipelines.trace.contains_key(&(c, None)), "C is compiled");
     }
 }
