@@ -41,6 +41,11 @@ the game's replay or persistence requirements.
 `anim::SequenceStep::RandomPause` holds for a duration in the inclusive
 `[min, max]` range; floating-point rounding can reach `max`.
 
+`FrameAnimation::tick` and `AnimationSequence::tick` advance only for positive,
+finite elapsed seconds. Zero, negative, and non-finite deltas are ignored;
+they do not create time debt or trigger sequence steps or random draws.
+Each sequence tick still clears the previous completion edge and action queue.
+
 Collision units and the up axis belong to the game. Supply them through
 `CollisionConfig`; SGL does not choose a world scale or entity layout.
 Contacts leave the configured `skin` gap along the surface normal by stopping

@@ -112,8 +112,10 @@ impl AnimationSequence {
     /// once).
     ///
     /// Large `dt` steps through as many frames and steps as it covers and
-    /// carries the remainder, so long-run timing never drifts. A non-finite
-    /// `dt` is ignored. In the repeating modes, a cycle that consumes no time
+    /// carries the remainder, so long-run timing never drifts. A nonpositive
+    /// or non-finite `dt` is ignored without advancing steps or drawing from
+    /// `rng`; as on every tick, the prior completion edge and action queue
+    /// are cleared. In the repeating modes, a cycle that consumes no time
     /// cannot spin: a tick stops after as many consecutive zero-time advances
     /// (zero-duration frames and steps, or durations too small to lower the
     /// accumulated time in `f32`) as the sequence has playback positions —
@@ -124,7 +126,7 @@ impl AnimationSequence {
     pub fn tick(&mut self, dt: f32, rng: &mut Rng) -> bool {
         self.just_completed = false;
         self.actions.clear();
-        if self.finished || !dt.is_finite() {
+        if self.finished || !dt.is_finite() || dt <= 0.0 {
             return false;
         }
         self.timer += dt;
@@ -767,7 +769,7 @@ mod tests {
             .action(5)
             .build()
             .unwrap();
-        assert!(sequence.tick(0.0, &mut rng()));
+        assert!(sequence.tick(0.1, &mut rng()));
         assert_eq!(sequence.take_action(), Some(5));
         assert_eq!(sequence.take_action(), None);
     }
@@ -1196,6 +1198,57 @@ mod tests {
         }
         seq.tick(0.1, &mut rng);
         assert_eq!(seq.current_frame(), Some(1));
+    }
+
+    /// Backward clock steps do not defer frames or completion and do not
+    /// discard the elapsed fraction of the current frame.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn nonpositive_dt_does_not_build_time_debt() {
+        for loop_mode in [SequenceLoop::Once, SequenceLoop::Repeat] {
+            let mut seq = single([3, 4, 5], loop_mode);
+            let mut rng = rng();
+            assert!(!seq.tick(-1.0, &mut rng));
+            assert!(!seq.tick(0.1, &mut rng));
+            assert_eq!(seq.current_frame(), Some(4));
+            assert!(!seq.tick(0.05, &mut rng));
+            for dt in [-1.0, 0.0, -0.0] {
+                assert!(!seq.tick(dt, &mut rng));
+            }
+            assert!(!seq.tick(0.05, &mut rng));
+            assert_eq!(seq.current_frame(), Some(5));
+            assert_eq!(seq.tick(0.1, &mut rng), loop_mode == SequenceLoop::Once);
+            assert_eq!(seq.is_finished(), loop_mode == SequenceLoop::Once);
+            assert_eq!(seq.just_completed(), loop_mode == SequenceLoop::Once);
+            assert!(!seq.tick(-1.0, &mut rng));
+            assert!(!seq.just_completed(), "the previous edge is cleared");
+        }
+    }
+
+    /// Ignored time must not enter zero-duration steps or consume random
+    /// values reserved for the caller's other systems.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ignored_dt_does_not_fire_actions_or_draw_randomness() {
+        let mut seq = AnimationSequence::builder()
+            .action(7)
+            .random_pause(0.0, 0.0)
+            .play_frames([4, 5], 0.1)
+            .build()
+            .expect("valid sequence");
+        let mut used = Rng::from_seed(5);
+        for dt in [-1.0, 0.0, -0.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(!seq.tick(dt, &mut used));
+            assert_eq!(seq.take_action(), None);
+            assert_eq!(seq.current_frame(), None);
+        }
+        let mut untouched = Rng::from_seed(5);
+        assert_eq!(used.u32(0..u32::MAX), untouched.u32(0..u32::MAX));
+        assert!(!seq.tick(0.1, &mut used));
+        assert_eq!(seq.current_frame(), Some(5));
+        assert_eq!(
+            seq.take_action(),
+            Some(7),
+            "the action waits for elapsed time"
+        );
     }
 
     /// #313: a play-once sequence whose frame durations are too small to
