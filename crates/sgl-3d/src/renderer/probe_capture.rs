@@ -172,9 +172,10 @@ impl Renderer {
             );
             queue.submit([face.finish()]);
         }
+        // Commit the submitted capture's shadow layers before fallible readback.
+        self.shadows.local.finish_capture();
         prefilter.encode(device, &mut encoder);
         let rgba16 = prefilter.read(device, queue, encoder)?;
-        self.shadows.local.finish_capture();
         Ok(SpecularProbeRadiance {
             face_size,
             texels: SpecularProbeTexels::Rgba16Float(rgba16),
