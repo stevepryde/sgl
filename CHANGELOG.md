@@ -57,6 +57,9 @@ docs and specs the entry links.
 - `sgl-post-fx` `ScreenSpaceReflection`: conventional depth now keeps its
   resolved depth at 32 bits instead of 16, preserving distant reflection
   reprojection; reversed depth is unchanged. No game-code changes.
+- `sgl-3d` `AlphaMode::Blend` with `keeps_specular: true`: alpha left
+  diffuse transmission at full strength; it now fades that light with
+  coverage, as it fades reflected diffuse light. No game-code changes.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;

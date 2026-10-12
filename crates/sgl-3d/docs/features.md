@@ -123,7 +123,8 @@ them through unrefracted. A probe captured on an
   fogged and drawn back to front over the frame, writing no depth or motion
   unless marked to receive screen-space reflections, and casting no shadow.
   Alpha fades all of a blended surface's light, or with `keeps_specular`
-  only its diffuse and emitted light, its reflections staying full (glass).
+  only its reflected and transmitted diffuse light and emission, its
+  reflections staying full (glass).
   [Alpha-masked and blended
   materials](../README.md#alpha-masked-and-blended-materials).
 - **Transmissive glass and water** (`SurfaceMaterial::transmission`,

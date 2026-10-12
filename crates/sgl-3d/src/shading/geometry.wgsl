@@ -314,6 +314,9 @@ fn blended_color(i:Fragment,raster_front:bool)->BlendedColor {
  if keeps_specular {
   s.base=vec4(s.base.rgb*coverage,s.base.a);
   s.emission*=coverage;
+  // KHR_materials_diffuse_transmission is diffuse light too: its BTDF
+  // fades with coverage as the front BRDF does.
+  s.diffuse_transmission_color*=coverage;
   // A metal's iridescent F0, which raster_surface refit from its base
   // before the coverage, takes it as the base does: its F0 mixes the two by
   // the film's strength, linearly (surface_f0s).

@@ -231,16 +231,6 @@ type Edit<'a> = &'a dyn Fn(&mut crate::SurfaceMaterial);
 /// directional light, over nothing (no environment: black), with its
 /// material's values `edit` makes of the square's.
 fn centre_colours(device: &wgpu::Device, queue: &wgpu::Queue, edits: &[Edit<'_>]) -> Vec<[f32; 3]> {
-    let settings = Settings {
-        antialiasing: settings::Antialiasing::Off,
-        bloom: settings::Bloom::Off,
-        atmosphere: false,
-        ..Settings::default()
-    };
-    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
-    let mut scene = Scene::new(device, queue);
-    let (glass, _) = test_support::add_static(device, queue, &mut scene, square(-3., 0.5));
-    let authored = scene.material(glass.materials[0]).unwrap();
     let mut input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
         projection: crate::perspective(1., 1., 0.1),
@@ -253,6 +243,26 @@ fn centre_colours(device: &wgpu::Device, queue: &wgpu::Queue, edits: &[Edit<'_>]
         shadow: None,
         ..Default::default()
     });
+    centre_colours_under(device, queue, edits, &input)
+}
+
+/// The same square under the supplied lighting, observed before post-processing.
+fn centre_colours_under(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    edits: &[Edit<'_>],
+    input: &FrameInput,
+) -> Vec<[f32; 3]> {
+    let settings = Settings {
+        antialiasing: settings::Antialiasing::Off,
+        bloom: settings::Bloom::Off,
+        atmosphere: false,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut scene = Scene::new(device, queue);
+    let (glass, _) = test_support::add_static(device, queue, &mut scene, square(-3., 0.5));
+    let authored = scene.material(glass.materials[0]).unwrap();
     let output = crate::view::targets::target(device, "blended colours", SIZE, gbuffer::COLOR);
     let centre = ((SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) * 8) as usize;
     edits
@@ -271,7 +281,7 @@ fn centre_colours(device: &wgpu::Device, queue: &wgpu::Queue, edits: &[Edit<'_>]
                 queue,
                 &mut encoder,
                 &mut scene,
-                &input,
+                input,
                 &settings,
                 &output,
                 None,
@@ -369,6 +379,77 @@ fn keeps_specular_fades_all_but_dielectric_specular() {
                 assert!(
                     (actual[channel] - expected).abs() <= expected * tolerance + 1e-4,
                     "{name}, {mode}: channel {channel} is {}, expected {expected}",
+                    actual[channel]
+                );
+            }
+        }
+    }
+}
+
+// Defect: keeps_specular premultiplies the front diffuse colour but leaves
+// the diffuse BTDF at full strength. Filament's transparent mode fades
+// diffuse lighting; KHR_materials_diffuse_transmission defines this as a
+// diffuse lobe. Over black, 10% coverage therefore contributes 10% of the
+// whole surface's radiance, for direct backlighting and ambient light.
+// The black base and absent specular/emission isolate transmitted light.
+// This exercises the material edit, blended shader and premultiplied draw;
+// existing lobe tests cannot catch an omitted premultiplication in geometry.
+#[test]
+fn keeps_specular_fades_diffusely_transmitted_light() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut backlit = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: crate::perspective(1., 1., 0.1),
+        eye: Vec3::ZERO,
+    });
+    backlit.directional_lights[0] = Some(DirectionalLight {
+        direction: Vec3::Z,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: None,
+        ..Default::default()
+    });
+    let mut ambient = FrameInput::new(backlit.camera);
+    ambient.hemisphere_light = crate::HemisphereLight {
+        sky_color: [1.; 3],
+        ground_color: [1.; 3],
+        intensity: 1.,
+    };
+    for (name, input) in [("direct backlight", backlit), ("ambient", ambient)] {
+        let at = |alpha, keeps_specular| {
+            move |values: &mut crate::SurfaceMaterial| {
+                values.base = [0., 0., 0., alpha];
+                values.specular = 0.;
+                values.emission = [0.; 3];
+                values.diffuse_transmission = 0.5;
+                values.diffuse_transmission_color = [0.3, 0.6, 0.9];
+                values.alpha = AlphaMode::Blend {
+                    receives_screen_space_reflections: false,
+                    keeps_specular,
+                };
+            }
+        };
+        let (whole, keeps, fades, absent) =
+            (at(1., true), at(0.1, true), at(0.1, false), at(0., true));
+        let colours =
+            centre_colours_under(&device, &queue, &[&whole, &keeps, &fades, &absent], &input);
+        assert!(
+            colours[0].iter().all(|&value| value > 0.01),
+            "{name}: no transmitted light to compare: {:?}",
+            colours[0]
+        );
+        for (mode, actual, coverage) in [
+            ("keeps specular", colours[1], 0.1),
+            ("fades", colours[2], 0.1),
+            ("absent", colours[3], 0.),
+        ] {
+            for channel in 0..3 {
+                let expected = colours[0][channel] * coverage;
+                assert!(
+                    (actual[channel] - expected).abs() <= expected * 0.005 + 1e-4,
+                    "{name}, {mode}: channel {channel} is {}, coverage requires {expected}",
                     actual[channel]
                 );
             }
