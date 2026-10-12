@@ -11,6 +11,7 @@ use gltf::animation::Property;
 use super::asset::{Asset, Material, Result, Vertex};
 use super::deformation;
 use super::images::Image;
+use super::load_budget::{Budget, MAX_LOAD_BYTES};
 use material::read_material;
 use meshes::{batch, ignored_attribute, read_node};
 use rig::Rigging;
@@ -86,7 +87,9 @@ pub fn load(path: &Path) -> Result<Asset> {
 
 /// Load a file with explicit application adaptations. External buffers and
 /// images resolve beneath its directory, without parent segments, schemes
-/// or symlinks; buffers must match `byteLength`. Source reads are bounded.
+/// or symlinks; buffers must match `byteLength`. Source reads are bounded,
+/// and decoded RGBA images share the scene-data budget (4 GiB native,
+/// 1 GiB browser); image sides are at most 16384, checked before decoding.
 /// A browser has no file system: it fetches the
 /// bytes and calls [`load_slice_with_options`].
 pub fn load_with_options(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
@@ -95,7 +98,7 @@ pub fn load_with_options(path: &Path, options: LoadOptions<'_>) -> Result<Asset>
 
 fn load_inner(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
     check(options)?;
-    let mut budget = sources::Budget::new();
+    let mut budget = Budget::new();
     let bytes = budget.read_file(path, None)?;
     let (document, buffers) = import(&bytes, path.parent(), &mut budget).map_err(|error| {
         format!("glTF import failed: {error}; check referenced files and re-export valid glTF from the Blender source")
@@ -115,7 +118,7 @@ pub fn load_slice(bytes: &[u8]) -> Result<Asset> {
 /// may be an external file the bytes cannot resolve.
 pub fn load_slice_with_options(bytes: &[u8], options: LoadOptions<'_>) -> Result<Asset> {
     check(options)?;
-    let mut budget = sources::Budget::new();
+    let mut budget = Budget::new();
     budget.charge(bytes.len() as u64)?;
     let (document, buffers) = import(bytes, None, &mut budget)
         .map_err(|error| format!("embedded glTF import failed: {error}"))?;
@@ -194,7 +197,7 @@ pub enum Ignored {
 fn import(
     bytes: &[u8],
     base: Option<&Path>,
-    budget: &mut sources::Budget,
+    budget: &mut Budget,
 ) -> Result<(gltf::Document, Vec<gltf::buffer::Data>)> {
     // Keep the BIN chunk borrowed until its size has passed the source budget.
     let glb = bytes
@@ -236,8 +239,9 @@ fn read_images(
     options: LoadOptions<'_>,
     materials: &[Material],
     ignored: &mut Vec<Ignored>,
-    budget: &mut sources::Budget,
+    budgets: (&mut Budget, &mut Budget),
 ) -> Result<Vec<Image>> {
+    let (budget, decoded_budget) = budgets;
     let mut sampled = vec![false; document.images().len()];
     for image in materials.iter().flat_map(sampled_images) {
         sampled[image] = true;
@@ -271,9 +275,9 @@ fn read_images(
                     {
                         return Err(format!("image {index}'s buffer view does not fit its buffer; re-export valid glTF").into());
                     }
-                    let data = sources::image(image.source(), base, buffers, budget)
+                    let data = sources::image(image.source(), base, buffers, budget, decoded_budget)
                         .map_err(|error| format!("image {index} import failed: {error}; check referenced files and re-export valid glTF from the Blender source"))?;
-                    rgba(index, data)
+                    Ok(Image::Rgba8(data.into_rgba8()))
                 }
             }
         })
@@ -294,48 +298,20 @@ fn sampled_images(material: &Material) -> Vec<usize> {
     images
 }
 
-/// A decoded 8-bit image as RGBA8.
-fn rgba(index: usize, data: image::DynamicImage) -> Result<Image> {
-    let channels = match data.color() {
-        image::ColorType::L8 => 1,
-        image::ColorType::La8 => 2,
-        image::ColorType::Rgb8 => 3,
-        image::ColorType::Rgba8 => 4,
-        other => {
-            return Err(format!(
-                "image {index} has unsupported {other:?} pixels; export an 8-bit PNG or JPEG"
-            )
-            .into());
-        }
-    };
-    let rgba = data
-        .as_bytes()
-        .chunks_exact(channels)
-        .flat_map(|p| match channels {
-            1 => [p[0], p[0], p[0], 255],
-            2 => [p[0], p[0], p[0], p[1]],
-            3 => [p[0], p[1], p[2], 255],
-            _ => [p[0], p[1], p[2], p[3]],
-        })
-        .collect();
-    image::RgbaImage::from_raw(data.width(), data.height(), rgba)
-        .map(Image::Rgba8)
-        .ok_or_else(|| format!("image {index} has inconsistent pixel dimensions").into())
-}
-
 fn decode(
     document: gltf::Document,
     buffers: &[gltf::buffer::Data],
     base: Option<&Path>,
     options: LoadOptions<'_>,
-    budget: &mut sources::Budget,
+    budget: &mut Budget,
 ) -> Result<Asset> {
     let scene = document
         .default_scene()
         .or_else(|| document.scenes().next())
         .ok_or("GLB contains no scene")?;
     let parents = rig::parents(&document)?;
-    check_scene(&document, &scene, &parents)?;
+    let mut decoded_budget = Budget::new();
+    decoded_budget.charge(check_scene(&document, &scene, &parents)?)?;
     // What the file uses but does not require (import refused the rest).
     let mut ignored: Vec<Ignored> = document
         .extensions_used()
@@ -363,7 +339,7 @@ fn decode(
         options,
         &materials,
         &mut ignored,
-        budget,
+        (budget, &mut decoded_budget),
     )?;
     for mesh in document.meshes() {
         for primitive in mesh.primitives() {
@@ -409,25 +385,6 @@ fn decode(
     })
 }
 
-/// The most bytes one load's meshes, rig and clips may hold, which
-/// `load_bytes` counts before an accessor or image is read. Natively,
-/// 4 GiB: the largest public scenes need a quarter to about a third of it
-/// (Power Plant's 10.6 million vertices and 12.8 million triangles 1.01
-/// GiB, Lucy's 14 million vertices and 28 million triangles 1.46 GiB, at
-/// 88 bytes a vertex and 4 an index).
-#[cfg(not(target_arch = "wasm32"))]
-const MAX_LOAD_BYTES: u64 = 4 << 30;
-/// In the browser, 1 GiB: a quarter of the 4 GiB a wasm32 module
-/// addresses, since batching holds up to about three times the meshes'
-/// bytes at once while the file's bytes and its decoded buffers stay
-/// resident, so a load at the cap nears 4 GiB; the game's other content
-/// shares that space too. It holds
-/// the Bistro exterior (2.9 million vertices and 2.8 million triangles,
-/// 0.27 GiB); Power Plant and Lucy, which that address space cannot import
-/// with their working copies, are refused.
-#[cfg(target_arch = "wasm32")]
-const MAX_LOAD_BYTES: u64 = 1 << 30;
-
 /// Refuses a scene the load would read too much of, before reading any of
 /// it: one that lists a node among its roots more than once or a node with
 /// a parent, which glTF 2.0 forbids (3.5.1, and the scene schema's
@@ -440,7 +397,7 @@ fn check_scene(
     document: &gltf::Document,
     scene: &gltf::Scene<'_>,
     parents: &[Option<usize>],
-) -> Result<()> {
+) -> Result<u64> {
     let mut listed = vec![false; parents.len()];
     for node in scene.nodes().map(|node| node.index()) {
         if std::mem::replace(&mut listed[node], true) {
@@ -454,10 +411,7 @@ fn check_scene(
             return Err(format!("scene {} lists node {node} as a root, but node {parent} is its parent; re-export valid glTF", scene.index()).into());
         }
     }
-    if load_bytes(document, scene).is_none() {
-        return Err(format!("scene {}'s meshes (once for each node that uses them), skins and animation clips would take more than the {MAX_LOAD_BYTES} bytes one load may; split the asset", scene.index()).into());
-    }
-    Ok(())
+    load_bytes(document, scene).ok_or_else(|| format!("scene {}'s meshes (once for each node that uses them), skins and animation clips would take more than the {MAX_LOAD_BYTES} bytes one load may; split the asset", scene.index()).into())
 }
 
 /// The bytes a load of `scene` produces, from the counts its accessors

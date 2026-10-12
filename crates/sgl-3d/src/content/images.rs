@@ -5,9 +5,9 @@
 //! or linear by the channel that uses it). MIT OR Apache-2.0
 //! (src/LICENSE-bevy.txt).
 use std::borrow::Cow;
-use std::io::Read;
 
 use super::asset::Result;
+use super::load_budget::{Budget, MAX_IMAGE_SIDE};
 
 /// An image materials sample. Its colour space belongs to each channel that
 /// samples it: base and emissive maps read it as sRGB, the others as linear
@@ -75,7 +75,15 @@ impl CompressedImage {
     /// `VK_FORMAT_BC7_UNORM_BLOCK` or `VK_FORMAT_BC7_SRGB_BLOCK` (the channel
     /// that samples it picks sRGB or linear, as Bevy's loader does), with
     /// its stored levels, uncompressed or supercompressed with Zstandard.
+    /// Refuses sides above 16384, invalid block dimensions or mip counts,
+    /// and levels whose declared or decoded size differs from their BC7
+    /// size. The total decoded chain is budgeted before level allocation;
+    /// the decoder bounds regenerated blocks before buffer growth.
     pub fn from_ktx2(bytes: &[u8]) -> Result<Self> {
+        Self::read_ktx2(bytes, &mut Budget::new())
+    }
+
+    fn read_ktx2(bytes: &[u8], budget: &mut Budget) -> Result<Self> {
         let reader =
             ktx2::Reader::new(bytes).map_err(|error| format!("invalid KTX2 file: {error}"))?;
         let header = reader.header();
@@ -93,35 +101,80 @@ impl CompressedImage {
         if header.level_count == 0 {
             return Err("the KTX2 file asks for generated mips; store its mip chain".into());
         }
-        let levels = reader
-            .levels()
-            .enumerate()
-            .map(|(index, level)| match header.supercompression_scheme {
-                None => Ok(level.data.to_vec()),
-                Some(ktx2::SupercompressionScheme::Zstandard) => {
-                    let mut decoded = Vec::new();
-                    ruzstd::decoding::StreamingDecoder::new(level.data)
-                        .map_err(|error| error.to_string())
-                        .and_then(|mut decoder| {
-                            decoder
-                                .read_to_end(&mut decoded)
-                                .map_err(|error| error.to_string())
-                        })
-                        .map_err(|error| format!("KTX2 level {index}: {error}"))?;
-                    Ok(decoded)
-                }
-                Some(other) => Err(format!(
-                    "KTX2 supercompression {other:?} is not supported; use Zstandard or none"
-                )
-                .into()),
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Self {
+        let mut image = Self {
             format,
             width: header.pixel_width,
             height: header.pixel_height.max(1),
-            levels,
-        })
+            levels: Vec::new(),
+        };
+        let full = 32 - image.width.max(image.height).leading_zeros();
+        if image.width == 0
+            || image.width > MAX_IMAGE_SIDE
+            || image.height > MAX_IMAGE_SIDE
+            || !image.width.is_multiple_of(BLOCK)
+            || !image.height.is_multiple_of(BLOCK)
+            || header.level_count > full
+        {
+            return Err(format!("invalid KTX2 dimensions or mip count; store block-aligned sides no larger than {MAX_IMAGE_SIDE} and at most a full mip chain").into());
+        }
+        // Validate every declared level and the whole chain before allocating
+        // any decoded level. Header bounds above also make level_bytes safe.
+        for (index, level) in reader.levels().enumerate() {
+            let expected = image.level_bytes(index);
+            if level.uncompressed_byte_length != expected as u64 {
+                return Err(format!(
+                    "KTX2 level {index} declares {} decoded bytes; expected {expected}",
+                    level.uncompressed_byte_length
+                )
+                .into());
+            }
+            budget.charge(expected as u64)?;
+        }
+        image.levels = reader
+            .levels()
+            .enumerate()
+            .map(|(index, level)| {
+                let expected = image.level_bytes(index);
+                let decoded = match header.supercompression_scheme {
+                    None => {
+                        if level.data.len() != expected {
+                            return Err(format!(
+                                "KTX2 level {index} has {} bytes; expected {expected}",
+                                level.data.len()
+                            )
+                            .into());
+                        }
+                        level.data.to_vec()
+                    }
+                    Some(ktx2::SupercompressionScheme::Zstandard) => {
+                        // Unlike a streaming history buffer, this one-shot
+                        // decoder bounds growth before literals/sequences are
+                        // written and never allocates the advertised window.
+                        let mut decoded = Vec::new();
+                        crate::content::zstandard::decompress(
+                            level.data,
+                            expected + 1,
+                            &mut decoded,
+                        )
+                        .map_err(|error| format!("KTX2 level {index}: {error}"))?;
+                        decoded
+                    }
+                    Some(other) => return Err(format!(
+                        "KTX2 supercompression {other:?} is not supported; use Zstandard or none"
+                    )
+                    .into()),
+                };
+                if decoded.len() != expected {
+                    return Err(format!(
+                        "KTX2 level {index} decoded to {} bytes; expected {expected}",
+                        decoded.len()
+                    )
+                    .into());
+                }
+                Ok(decoded)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(image)
     }
 
     /// The bytes level `level` holds: its blocks, a partial edge block whole.
@@ -164,5 +217,166 @@ impl CompressedImage {
             }
         }
         texels
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+#[allow(dead_code)]
+#[path = "../../examples/support/ktx2_writer.rs"]
+mod ktx2_writer;
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_arch = "wasm32")]
+    use super::ktx2_writer::ktx2;
+    use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::test_support::ktx2;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // The BC7 format independently requires one 16-byte block for 4x4.
+    // A 64 KiB Zstandard payload lies about its decoded size. Its own frame
+    // header declares that expansion, so it must fail at the decoder cap
+    // before any oversized block or output is allocated.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ktx2_zstandard_output_is_bounded_by_the_expected_size() {
+        let mut file = ktx2(
+            ktx2::Format::BC7_UNORM_BLOCK,
+            [4; 2],
+            &[vec![0; 65536]],
+            true,
+        );
+        // KTX2 level index uncompressedByteLength, independently laid out
+        // in KTX 2.0 section 3.9: 80-byte header, then three u64 fields.
+        file[96..104].copy_from_slice(&16u64.to_le_bytes());
+        let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+        assert!(error.contains("level 0: output limit exceeded"), "{error}");
+        let short = ktx2(ktx2::Format::BC7_UNORM_BLOCK, [4; 2], &[vec![0; 15]], true);
+        let mut short = short;
+        short[96..104].copy_from_slice(&16u64.to_le_bytes());
+        let error = CompressedImage::from_ktx2(&short).unwrap_err().to_string();
+        assert!(
+            error.contains("decoded to 15 bytes; expected 16"),
+            "{error}"
+        );
+    }
+
+    // A 1 GiB advertised window must not force a history allocation before
+    // a 16-byte level can refuse a 128 KiB RLE block. The whole source is
+    // ten bytes; RFC 8878's window/block headers independently define it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ktx2_large_zstandard_window_does_not_allocate_before_output_refusal() {
+        let frame = [0x28, 0xb5, 0x2f, 0xfd, 0x00, 0xa0, 0x03, 0x00, 0x10, 42];
+        let file = with_frame([4; 2], 16, &frame);
+        let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+        assert!(
+            error.contains("level 0") && error.contains("output limit exceeded"),
+            "{error}"
+        );
+        // Observe the API's actual output allocation as well as its error:
+        // rejecting after regenerating then truncating this block would keep
+        // the oversized capacity and fail this assertion.
+        let mut output = Vec::new();
+        assert_eq!(
+            crate::content::zstandard::decompress(&frame, 17, &mut output),
+            Err(crate::content::zstandard::Error::OutputLimit)
+        );
+        assert_eq!(output.capacity(), 0);
+    }
+
+    // A compressed block encodes two one-byte literals and two matches of
+    // 131074 bytes each (ML code52 +16 extra bits). Its 262150 regenerated
+    // bytes exceed RFC 8878's 128 KiB block maximum even though the level's
+    // own 262144-byte budget is large enough for either first sequence.
+    // Checking only the frame window or collecting output cannot enforce it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ktx2_malformed_sequence_expansion_is_refused_before_output() {
+        let frame = [
+            0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x38, // 128 KiB window, no size
+            0x6d, 0x00, 0x00, // Last compressed block: 13 stored bytes
+            0x10, b'A', b'A', // Two raw literals
+            2, 0x54, 1, 0, 52, // Two sequences; RLE LL=1, OF=0, ML=52
+            0xff, 0xff, 0xff, 0xff, 1, // Two 16-bit extras + end marker
+        ];
+        let file = with_frame([512; 2], 262144, &frame);
+        let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+        assert!(error.contains("Block_Maximum_Size"), "{error}");
+        let mut output = Vec::new();
+        assert!(matches!(
+            crate::content::zstandard::decompress(&frame, 262144, &mut output),
+            Err(crate::content::zstandard::Error::Corrupt(
+                "block regenerates more than Block_Maximum_Size"
+            ))
+        ));
+        assert_eq!(output.capacity(), 0);
+    }
+
+    // RLE literals have their own scratch buffer: their regenerated header
+    // must be checked against the block bound before allocating that buffer.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ktx2_malformed_literal_expansion_is_refused_before_scratch_growth() {
+        let frame = [
+            0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x38, 0x2d, 0,
+            0, // Last compressed block: 5 stored bytes
+            0xfd, 0xff, 0x3f, b'A', 0, // RLE literals: 262143 bytes; no sequences
+        ];
+        let file = with_frame([512; 2], 262144, &frame);
+        let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+        assert!(error.contains("literals larger than a block"), "{error}");
+    }
+
+    fn with_frame(size: [u32; 2], expected: u64, frame: &[u8]) -> Vec<u8> {
+        let mut file = ktx2(ktx2::Format::BC7_UNORM_BLOCK, size, &[vec![0; 16]], true);
+        let at = u64::from_le_bytes(file[80..88].try_into().unwrap()) as usize;
+        file[88..96].copy_from_slice(&(frame.len() as u64).to_le_bytes());
+        file[96..104].copy_from_slice(&expected.to_le_bytes());
+        file.truncate(at);
+        file.extend_from_slice(frame);
+        file
+    }
+
+    // A 4x4 BC7 chain with two levels holds 32 bytes. A budget of 24 must
+    // reject the whole chain before it notices deliberately broken level 0.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ktx2_charges_the_whole_chain_before_decompressing() {
+        let mut file = ktx2(
+            ktx2::Format::BC7_UNORM_BLOCK,
+            [4; 2],
+            &[vec![0; 16], vec![0; 16]],
+            true,
+        );
+        let at = u64::from_le_bytes(file[80..88].try_into().unwrap()) as usize;
+        file[at] = 0; // Break the Zstandard magic.
+        let error = CompressedImage::read_ktx2(&file, &mut Budget { remaining: 24 })
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("budget"), "{error}");
+    }
+
+    // The loader must reject dimensions/mips before it decodes bad payloads,
+    // including oversized sides whose expected sizes could overflow wasm32.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ktx2_rejects_invalid_shapes_and_level_sizes_during_load() {
+        for size in [[3, 4], [20000, 20000], [u32::MAX; 2]] {
+            let file = ktx2(ktx2::Format::BC7_UNORM_BLOCK, size, &[vec![0; 16]], true);
+            let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+            assert!(error.contains("dimensions"), "{error}");
+        }
+        let file = ktx2(
+            ktx2::Format::BC7_UNORM_BLOCK,
+            [4; 2],
+            &vec![vec![0; 16]; 4],
+            false,
+        );
+        let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+        assert!(error.contains("mip count"), "{error}");
+        for zstd in [false, true] {
+            let file = ktx2(ktx2::Format::BC7_UNORM_BLOCK, [4; 2], &[vec![0; 15]], zstd);
+            let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+            assert!(
+                error.contains("declares 15 decoded bytes; expected 16"),
+                "{error}"
+            );
+        }
     }
 }

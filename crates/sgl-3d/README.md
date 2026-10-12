@@ -2710,7 +2710,12 @@ plus 32 for skin influences on a skinned node), indices (4 bytes) and
 morph target deltas (36 bytes a vertex and target); each skin's joints;
 and each animation channel's keyframe times and values. A mesh counts
 again for each node that uses it, so each instance counts. Split a file
-beyond it.
+beyond it. Decoded PNG/JPEG images share that scene-data budget: the loader
+checks their headers before decoding pixels, refuses a side above 16384,
+and charges width × height × 4 for the retained RGBA8 image before decoding
+or converting it. Decoder allocation limits use the available budget.
+16-bit pixels remain unsupported. The scene also checks the actual device
+texture limit when adding an image.
 
 A clearcoat normal map tilts the coat alone, on the base normal map's
 frame; without one the coat follows the geometry normal. An iridescent
@@ -2835,7 +2840,19 @@ supplied.
 `CompressedImage::from_ktx2(bytes)` reads a KTX2
 file of one 2D BC7 image (`VK_FORMAT_BC7_UNORM_BLOCK` or `_SRGB_BLOCK`) with
 its stored levels, uncompressed or Zstandard-supercompressed, as Bevy reads
-them. As for RGBA8, the channel picks the colour space: base and emissive
+them. It refuses zero or non-block-aligned dimensions, sides above 16384,
+more than a full mip chain, and declared or decoded level sizes that differ
+from their BC7 block size. The whole decoded chain shares a 4 GiB native
+or 1 GiB browser budget, checked before allocating levels; Zstandard
+decoded output length is capped at the expected level size plus one sentinel byte.
+The decoder never allocates its advertised history window; regenerated
+literals and sequences are checked against the format's 128 KiB block
+maximum before growing buffers. The private decoder is vendored from `zstd-rs` under MIT OR Apache-2.0;
+[provenance and local adaptations](src/content/zstandard/README.md) identify
+the reviewed source. Its notices ship with SGL3D’s bundled-code notices.
+The budget counts decoded bytes; bounded decoder working buffers and
+allocator capacity are additional, so it is not a peak-memory limit.
+As for RGBA8, the channel picks the colour space: base and emissive
 maps sample it as sRGB, the others as linear data. Filter a colour image's
 levels in linear light. Its stored levels serve every channel that samples
 it, so a data channel sampling an image also used as colour reads the
