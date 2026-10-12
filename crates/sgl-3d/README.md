@@ -2427,8 +2427,9 @@ hardware.
   masked mesh under the baseline form, of one whose BLAS is pending, or
   that the device cannot hold
   (a model past `max_blas_primitive_count` or `max_blas_geometry_count` or
-  whose indices start 4 GiB or more into the ray source, instances past `max_tlas_instance_count`, the farthest left out, or a
-  structure its memory cannot hold) stays on the portable BVHs, which then
+  whose indices start 4 GiB or more into the ray source, instances past
+  `max_tlas_instance_count`, the farthest left out, or a structure its
+  memory cannot hold) stays on the portable BVHs, which then
   cover those instances alone; a deforming instance the device cannot
   hold is seen by no ray, since the portable BVHs never hold deforming
   instances. Turning the setting off frees the

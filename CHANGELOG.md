@@ -15,7 +15,7 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d` `Renderer` geometry pipelines: each change of rect lights, decals, films, sheens, diffuse transmission, transmissive materials or diagnostics layers formerly kept every earlier pipeline set for the renderer's lifetime; only the current set is now kept. No game-code changes are needed.
+- `sgl-3d` `Renderer` geometry pipelines: each change of rect lights, decals, films, sheens, diffuse transmission, transmissive materials or diagnostics layers formerly kept every earlier pipeline set for the renderer's lifetime; only the current and previous sets are now kept. No game-code changes are needed.
 - `sgl-3d` hardware ray tracing: a model whose indices start 4 GiB or more into the ray source formerly failed wgpu's BLAS build validation and panicked; it is now left out of the TLAS as a model past the device's BLAS limits is. No game-code changes are needed.
 
 - `sgl-net` UDP server challenge limiter: IPv4 clients of a dual-stack (`[::]`) socket formerly shared one challenge rate-limit bucket; IPv4-mapped sources are now bucketed by their IPv4 /24. No game-code changes are needed.
