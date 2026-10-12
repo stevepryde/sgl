@@ -419,6 +419,11 @@ Environment and probe specular always apply. On top of them:
   (`Scene::update_heat_distortion`).
   [Heat shimmer](../README.md#bounded-heat-shimmer).
 
+Fog volume, mist and glow updates return `Result<(), SceneError>`; handle or
+propagate the result (`?`). A submission above the device's buffer limits
+(`DeviceLimit`) keeps the previous content. Fog also obeys the storage binding
+size, and record counts must fit `u32`.
+
 ## Tools
 
 - **GPU timing** per pass: `timing::GpuTiming`.

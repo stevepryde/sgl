@@ -159,11 +159,13 @@ fn content(device: &wgpu::Device, queue: &wgpu::Queue, shift: Vec3) -> Scene {
             }],
         )
         .unwrap();
-    scene.update_mist(
-        device,
-        queue,
-        &[(Vec3::new(4097.1, 0.2, -8195.7) - shift).to_array()],
-    );
+    scene
+        .update_mist(
+            device,
+            queue,
+            &[(Vec3::new(4097.1, 0.2, -8195.7) - shift).to_array()],
+        )
+        .unwrap();
     let at = |position: Vec3| (position - shift).to_array();
     let glow = |position: Vec3, kind: GlowKind| Glow {
         position: at(position),
@@ -175,27 +177,29 @@ fn content(device: &wgpu::Device, queue: &wgpu::Queue, shift: Vec3) -> Scene {
         other: at(other),
         offset,
     };
-    scene.update_effects(
-        device,
-        queue,
-        &[
-            glow(Vec3::new(4094.3, 1.1, -8199.7), GlowKind::Uniform),
-            glow(Vec3::new(4095.3, 2.1, -8198.7), GlowKind::Uniform),
-            glow(Vec3::new(4094.8, 3.1, -8199.2), GlowKind::Uniform),
-            glow(
-                Vec3::new(4090.6, 1.5, -8196.1),
-                line(Vec3::new(4093.9, 4.2, -8191.3), -0.5),
-            ),
-            glow(
-                Vec3::new(4093.9, 4.2, -8191.3),
-                line(Vec3::new(4090.6, 1.5, -8196.1), 0.5),
-            ),
-            glow(
-                Vec3::new(4090.6, 1.5, -8196.1),
-                line(Vec3::new(4093.9, 4.2, -8191.3), 0.5),
-            ),
-        ],
-    );
+    scene
+        .update_effects(
+            device,
+            queue,
+            &[
+                glow(Vec3::new(4094.3, 1.1, -8199.7), GlowKind::Uniform),
+                glow(Vec3::new(4095.3, 2.1, -8198.7), GlowKind::Uniform),
+                glow(Vec3::new(4094.8, 3.1, -8199.2), GlowKind::Uniform),
+                glow(
+                    Vec3::new(4090.6, 1.5, -8196.1),
+                    line(Vec3::new(4093.9, 4.2, -8191.3), -0.5),
+                ),
+                glow(
+                    Vec3::new(4093.9, 4.2, -8191.3),
+                    line(Vec3::new(4090.6, 1.5, -8196.1), 0.5),
+                ),
+                glow(
+                    Vec3::new(4090.6, 1.5, -8196.1),
+                    line(Vec3::new(4093.9, 4.2, -8191.3), 0.5),
+                ),
+            ],
+        )
+        .unwrap();
     let heat = |position: Vec3| HeatDistortion {
         position: at(position),
         displacement: [2., -1.],

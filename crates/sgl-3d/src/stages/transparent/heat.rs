@@ -412,9 +412,9 @@ mod tests {
             color: [red, 0., 0., 1.],
             ..Glow::default()
         });
-        scene.update_effects(device, queue, &glow);
+        scene.update_effects(device, queue, &glow).unwrap();
         // One mist billboard across the middle of the frame.
-        scene.update_mist(device, queue, &[[0., 0., -2.]]);
+        scene.update_mist(device, queue, &[[0., 0., -2.]]).unwrap();
         // Heat over the whole frame, shifting it two scene pixels.
         let heat = [[-10., -10., -1.], [30., -10., -1.], [-10., 30., -1.]].map(|position| {
             HeatDistortion {

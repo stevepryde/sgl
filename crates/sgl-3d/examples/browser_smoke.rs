@@ -639,15 +639,17 @@ fn add_content(
         soft_distance: 0.2,
         ..Default::default()
     };
-    scene.update_effects(
-        device,
-        queue,
-        &[
-            glow([-3., 0.5, -1.]),
-            glow([-2.5, 1.2, -1.]),
-            glow([-2., 0.5, -1.]),
-        ],
-    );
+    scene
+        .update_effects(
+            device,
+            queue,
+            &[
+                glow([-3., 0.5, -1.]),
+                glow([-2.5, 1.2, -1.]),
+                glow([-2., 0.5, -1.]),
+            ],
+        )
+        .map_err(|e| format!("update_effects: {e}"))?;
     let heat = |position: [f32; 3], weight: f32| HeatDistortion {
         position,
         displacement: [4., -2.],
@@ -663,7 +665,9 @@ fn add_content(
             ],
         )
         .map_err(|e| format!("update_heat_distortion: {e}"))?;
-    scene.update_mist(device, queue, &[[-3., 0.3, 1.], [-2.5, 0.3, 1.5]]);
+    scene
+        .update_mist(device, queue, &[[-3., 0.3, 1.], [-2.5, 0.3, 1.5]])
+        .map_err(|e| format!("update_mist: {e}"))?;
     scene
         .update_fog_volumes(
             device,

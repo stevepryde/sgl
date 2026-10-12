@@ -80,7 +80,13 @@ that would exceed a device limit is refused with the typed error.
 | Environment | An environment map. The frame input names the one that lights the frame; with none, or an ended identity, no environment does. | Nothing. |
 
 Transient geometry (glow, heat, mist) and fog volumes have no identity: each
-kind is replaced whole by its own operation. Baked lighting and probes are installed whole and
+kind is replaced whole by its own operation. `Scene::update_fog_volumes`,
+`Scene::update_mist` and `Scene::update_effects` return `SceneError::DeviceLimit`
+without changing retained content when the records exceed `max_buffer_size`,
+the fog records exceed `max_storage_buffer_binding_size`, or a record count
+cannot fit a u32 draw/index. Glow grows geometrically only up to the device's
+buffer limit; mist and fog grow to the requested record count.
+Baked lighting and probes are installed whole and
 stay the game's to bake again when its static content changes. The dynamic
 GI volume's placement (`DynamicGiVolume`: its origin, the first probe's
 position; its probe spacing on each axis, in metres; and its probe counts,
