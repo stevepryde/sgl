@@ -443,7 +443,8 @@ impl SequenceBuilder {
         self
     }
 
-    /// Hold for a duration drawn from `[min, max)` when the step is entered.
+    /// Hold for a duration in `[min, max]` when the step is entered;
+    /// floating-point rounding can reach `max`.
     #[must_use]
     pub fn random_pause(mut self, min: f32, max: f32) -> Self {
         self.steps.push(SequenceStep::RandomPause { min, max });
@@ -1080,7 +1081,7 @@ mod tests {
                 .build()
                 .expect("valid sequence")
         };
-        // Ticks of 0.05 s to cross a hold in [0.4, 0.8) → 8..=16 ticks.
+        // Ticks of 0.05 s to cross a hold in [0.4, 0.8] → 8..=16 ticks.
         let ticks_to_finish = |seed: u64| {
             let mut seq = build();
             let mut rng = Rng::from_seed(seed);
