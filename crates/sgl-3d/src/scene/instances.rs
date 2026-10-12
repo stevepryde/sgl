@@ -510,6 +510,8 @@ impl Scene {
     /// A state naming another model clears it. A static instance takes baked
     /// diffuse light from lightmap charts and the irradiance atlas instead,
     /// and is refused.
+    /// Returns `SceneError::InvalidIrradiance` for any channel outside the
+    /// finite `0..=65504` range, retaining the instance's previous cube.
     pub fn set_instance_baked_irradiance(
         &mut self,
         queue: &wgpu::Queue,
@@ -524,6 +526,9 @@ impl Scene {
             .ok_or(SceneError::UnknownInstance)?;
         if instance.mobility == Mobility::Static {
             return Err(SceneError::StaticInstance);
+        }
+        if !crate::static_lighting::valid_irradiance(&cube.irradiance) {
+            return Err(SceneError::InvalidIrradiance);
         }
         instance.baked_irradiance = cube;
         self.instances

@@ -28,6 +28,13 @@ docs and specs the entry links.
   could exhaust a graceful close's resend budget; each unacknowledged
   fragment now gets up to this many more sends after disconnect, within
   `close_grace_ms`, regardless of its earlier sends. No game-code changes.
+- `sgl-3d` `Scene::set_instance_baked_irradiance`, material
+  `normal_scale`/`coat_normal_scale`/`bump_scale` and
+  `Scene::set_lightmap`'s `uv_scale_offset` previously accepted invalid values;
+  they now reject non-finite scales/offsets and irradiance outside finite
+  `0..=65504` with the existing typed errors. Supply finite material and chart
+  values and in-range irradiance; valid games need no game-code changes.
+
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they

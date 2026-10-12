@@ -1825,3 +1825,200 @@ fn anisotropic_filtering_keeps_a_receding_textures_detail() {
         "turning anisotropy off again changed the frame"
     );
 }
+
+// The setter must reject every invalid irradiance channel before replacing
+// either the retained cube or the GPU object record. The irradiance contract
+// supplies the bounds; counters expose writes even if CPU state is restored.
+#[test]
+fn baked_irradiance_rejects_invalid_channels_without_replacing_the_cube() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let model = scene
+        .add_asset(&device, &queue, test_support::cube())
+        .unwrap()
+        .model;
+    let id = scene
+        .add_instance(
+            &device,
+            &queue,
+            state(model, Mat4::IDENTITY),
+            Mobility::Moving,
+        )
+        .unwrap();
+    let cube = static_lighting::AmbientCube {
+        irradiance: [[0., 0.25, 65504.]; 6],
+    };
+    scene
+        .set_instance_baked_irradiance(&queue, id, cube)
+        .unwrap();
+    for face in 0..6 {
+        for channel in 0..3 {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.01, 65505.] {
+                let mut invalid = cube;
+                invalid.irradiance[face][channel] = value;
+                let uploads = crate::counters::snapshot();
+                assert!(
+                    matches!(
+                        scene.set_instance_baked_irradiance(&queue, id, invalid),
+                        Err(SceneError::InvalidIrradiance)
+                    ),
+                    "face {face}, channel {channel}, {value}"
+                );
+                assert_eq!(
+                    scene
+                        .instances
+                        .slots
+                        .get(id)
+                        .unwrap()
+                        .baked_irradiance
+                        .irradiance,
+                    cube.irradiance
+                );
+                assert_eq!(
+                    crate::counters::snapshot().since(&uploads).uploaded_bytes(),
+                    0,
+                    "a rejected cube reached the GPU"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        uploaded_record(&device, &queue, &scene, id).cube,
+        cube.irradiance[0]
+    );
+}
+
+// The same core validator serves authored uploads and edits. Non-finite
+// normal/bump scales must fail both routes without overwriting a material or
+// uploading shading records, while finite signed scales remain usable.
+#[test]
+fn material_normal_scales_reject_nonfinite_values_without_replacing_the_material() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let material = scene
+        .add_asset(&device, &queue, test_support::cube())
+        .unwrap()
+        .materials[0];
+    let before = scene.material(material).unwrap();
+    for scale in 0..3 {
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut authored = asset::Material::default();
+            match scale {
+                0 => authored.normal_scale = value,
+                1 => authored.coat_normal_scale = value,
+                _ => authored.bump_scale = value,
+            }
+            assert!(matches!(
+                scene.add_materials(&device, &queue, &[authored], &[]),
+                Err(SceneError::InvalidMaterialFactors)
+            ));
+            let mut values = before;
+            match scale {
+                0 => values.normal_scale = value,
+                1 => values.coat_normal_scale = value,
+                _ => values.bump_scale = value,
+            }
+            let uploads = crate::counters::snapshot();
+            assert!(
+                matches!(
+                    scene.set_material(&queue, material, values),
+                    Err(SceneError::InvalidMaterialFactors)
+                ),
+                "scale {scale}, {value}"
+            );
+            assert_eq!(scene.material(material).unwrap(), before);
+            assert_eq!(
+                crate::counters::snapshot().since(&uploads).uploaded_bytes(),
+                0,
+                "a rejected material reached the GPU"
+            );
+        }
+    }
+    for value in [-2., 0., 3.] {
+        scene
+            .set_material(
+                &queue,
+                material,
+                SurfaceMaterial {
+                    normal_scale: value,
+                    coat_normal_scale: value,
+                    bump_scale: value,
+                    ..before
+                },
+            )
+            .unwrap();
+    }
+}
+
+// A rejected chart must preserve the texture, chart and eligibility of the
+// previous lightmap. Real ray hits read material eligibility from GPU records,
+// so accidentally changing the selected materials cannot hide in CPU state.
+#[test]
+fn lightmap_rejects_nonfinite_charts_without_replacing_the_bake() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let first = scene
+        .add_asset(&device, &queue, asset_of(plane(0., [0.; 2], 1., false)))
+        .unwrap();
+    let second = scene
+        .add_asset(&device, &queue, asset_of(plane(0., [0.; 2], 1., false)))
+        .unwrap();
+    for (asset, x) in [(&first, 0.), (&second, 4.)] {
+        scene
+            .add_instance(
+                &device,
+                &queue,
+                state(asset.model, Mat4::from_translation(Vec3::X * x)),
+                Mobility::Static,
+            )
+            .unwrap();
+    }
+    let map = static_lighting::Lightmap {
+        size: [1, 1],
+        uv_scale_offset: [-2., 0., 0.25, -0.5],
+        irradiance: vec![[0.5, 1., 2.]],
+        directionality: vec![],
+    };
+    scene
+        .set_lightmap(&device, &queue, &map, &first.materials)
+        .unwrap();
+    let texture = scene.static_lighting.lightmap.irradiance.clone();
+    for coordinate in 0..4 {
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut invalid = map.clone();
+            invalid.uv_scale_offset[coordinate] = value;
+            invalid.irradiance = vec![[10.; 3]];
+            let uploads = crate::counters::snapshot();
+            assert!(
+                matches!(
+                    scene.set_lightmap(&device, &queue, &invalid, &second.materials),
+                    Err(SceneError::InvalidLightmap)
+                ),
+                "coordinate {coordinate}, {value}"
+            );
+            assert_eq!(scene.static_lighting.lightmap_chart, map.uv_scale_offset);
+            assert_eq!(scene.static_lighting.lightmap.irradiance, texture);
+            assert_eq!(
+                crate::counters::snapshot().since(&uploads).uploaded_bytes(),
+                0,
+                "a rejected lightmap reached the GPU"
+            );
+        }
+    }
+    assert_eq!(
+        trace(&device, &queue, &mut scene, Vec3::new(0., 0., 2.))[2],
+        1.,
+        "the previous material lost lightmap eligibility"
+    );
+    assert_eq!(
+        trace(&device, &queue, &mut scene, Vec3::new(4., 0., 2.))[2],
+        0.,
+        "the rejected map changed material eligibility"
+    );
+}

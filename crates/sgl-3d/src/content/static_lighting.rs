@@ -37,6 +37,7 @@ pub struct CompressedIrradianceAtlas {
 /// Squared-normal interpolation is a six-lobe approximation, not specular radiance.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AmbientCube {
+    /// Each channel is finite, nonnegative and within RGBA16F range.
     pub irradiance: [[f32; 3]; 6],
 }
 impl AmbientCube {
@@ -51,7 +52,8 @@ impl AmbientCube {
 #[derive(Clone, Debug)]
 pub struct Lightmap {
     pub size: [u32; 2],
-    /// `normalized_chart_uv = material_uv * xy + zw`. X clamps and Y repeats.
+    /// Finite `normalized_chart_uv = material_uv * xy + zw` scale and offset.
+    /// X clamps and Y repeats; negative and zero scales are allowed.
     pub uv_scale_offset: [f32; 4],
     /// Row-major linear RGB irradiance / PI, including source radiance;
     /// finite, nonnegative and within RGBA16F range.
@@ -60,6 +62,14 @@ pub struct Lightmap {
     /// texel by max(a + dot(w, n), 0) with xyz = w / 8 + .5 and w = a / 2.
     /// Empty preserves nondirectional light. See the package README.
     pub directionality: Vec<[f32; 4]>,
+}
+
+/// Whether every irradiance channel is finite and within RGBA16F range.
+pub(crate) fn valid_irradiance(values: &[[f32; 3]]) -> bool {
+    values
+        .iter()
+        .flatten()
+        .all(|&value| value.is_finite() && (0. ..=65504.).contains(&value))
 }
 
 /// Whether `values` is empty or holds `count` finite [0, 1] lobes, none of

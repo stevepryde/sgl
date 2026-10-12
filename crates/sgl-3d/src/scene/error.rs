@@ -54,6 +54,7 @@ pub enum SceneError {
     /// A material's metallic, roughness, clearcoat, clearcoat roughness or
     /// base alpha is outside 0..=1, or a channel of its base colour or
     /// emission or its environment scale is negative or not finite.
+    /// Also returned for a non-finite normal, coat-normal or bump scale.
     InvalidMaterialFactors,
     /// Anisotropy strength is outside 0..=1 or its rotation is not finite.
     InvalidAnisotropy,
@@ -108,7 +109,8 @@ pub enum SceneError {
     InvalidDecal,
     /// A PMREM atlas's texels do not match its dimensions.
     InvalidEnvironmentMap,
-    /// A lightmap's texels do not match its size.
+    /// A lightmap's texels do not match its size, or its UV scale/offset is
+    /// not finite.
     InvalidLightmap,
     /// Directionality neither is empty nor matches its chart with finite
     /// [0, 1] lobes, or it holds a lobe that rounds to the reserved all-zero
@@ -217,7 +219,7 @@ impl std::fmt::Display for SceneError {
             }
             Self::InvalidPose => "a pose must be finite and invertible",
             Self::InvalidMaterialFactors => {
-                "metallic, roughness, clearcoat, clearcoat roughness and base alpha must be in 0..1, and base colour, emission and environment scale finite and nonnegative"
+                "metallic, roughness, clearcoat, clearcoat roughness and base alpha must be in 0..1, base colour, emission and environment scale finite and nonnegative, and normal, coat-normal and bump scales finite"
             }
             Self::InvalidAnisotropy => {
                 "anisotropy strength must be finite in 0..1 and rotation finite"
@@ -259,7 +261,7 @@ impl std::fmt::Display for SceneError {
             Self::InvalidEnvironmentMap => {
                 "PMREM atlas dimensions do not match its RGBA16F data"
             }
-            Self::InvalidLightmap => "static lightmap dimensions do not match its texels",
+            Self::InvalidLightmap => "static lightmap dimensions do not match its texels or its UV scale/offset is not finite",
             Self::InvalidDirectionality => {
                 "directionality must be empty or match the chart with finite [0,1] lobes; a lobe that rounds to all-zero RGBA8 is reserved"
             }
