@@ -191,8 +191,12 @@ frame.color_grading = ColorGrading {
   antialiasing: a 64-bin histogram of log2 luminance (after `stops`) from -8
   to 8, weighted by `metering_mask` (a 16×16 grid), averaged without the
   darkest and brightest 10% of samples (Bevy's default range and filter,
-  which SGL3D keeps). The target correction brings that average to 2 raised
-  to the compensation curve's stops (-2.5 is about middle grey); `stops`
+  which SGL3D keeps). Samples below 2^-8 position that percentile window but
+  do not enter the average; with no remaining samples it takes -8. This
+  departs from the pinned Bevy port, following Wicked Engine's exclusion of
+  its near-black bin ([D-46](../../specs/decisions.md)). The target correction
+  brings that average to 2 raised to the compensation curve's stops (-2.5 is
+  about middle grey); `stops`
   shifts the frame into the range. The correction follows it at
   `speed_brighten` stops per second when the scene got brighter and
   `speed_darken` when it got darker, by `FrameInput::frame_time_ms`, slowing

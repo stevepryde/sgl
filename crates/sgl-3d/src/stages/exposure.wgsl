@@ -4,6 +4,8 @@
 // (color_to_bin, metering_weight, compute_histogram, compute_average), MIT OR
 // Apache-2.0 (src/LICENSE-bevy.txt). Changes: luminance is the shared Rec. 709
 // `luminance` of the frame after the authored stops (Bevy's camera exposure);
+// the near-black bin positions the percentile window but is excluded from
+// the average (Wicked Engine's luminancePass2CS.hlsl; D-46);
 // only the first 64 invocations add a workgroup's bins to the histogram (Bevy
 // indexes its 64 bins with all 256); the compensation curve is linear between
 // authored points instead of a 256-texel lookup; a history reset sets the
@@ -13,6 +15,8 @@
 // tone map and FSR2 read.
 // The most points a compensation curve has (CompensationCurve::MAX_POINTS).
 const EXPOSURE_COMPENSATION_POINTS:u32=8u;
+// Exactly the histogram's 64 bins; no data can extend either histogram walk.
+const EXPOSURE_HISTOGRAM_BINS:u32=64u;
 struct AutoExposure {
  min_log_lum:f32,
  inv_log_lum_range:f32,
@@ -112,7 +116,7 @@ fn compensation(log_lum:f32)->f32 {
 fn compute_average() {
  // The cumulative histogram, clearing the bins for the next frame.
  var histogram_sum=0u;
- for(var i=0u;i<64u;i+=1u) {
+ for(var i=0u;i<EXPOSURE_HISTOGRAM_BINS;i+=1u) {
   histogram_sum+=atomicLoad(&histogram[i]);
   atomicStore(&histogram_shared[i],histogram_sum);
   atomicStore(&histogram[i],0u);
@@ -121,9 +125,9 @@ fn compute_average() {
  let last_index=u32(f32(histogram_sum)*settings.high_percent);
  var count=0u;
  var sum=0.;
- // The lowest bin counts at the minimum luminance.
- var previous=first_index;
- for(var i=0u;i<64u;i+=1u) {
+ // Near-black samples position the window but never enter its average.
+ var previous=clamp(atomicLoad(&histogram_shared[0]),first_index,last_index);
+ for(var i=1u;i<EXPOSURE_HISTOGRAM_BINS;i+=1u) {
   // The bin's samples between the filtered ends.
   let cumulative=clamp(atomicLoad(&histogram_shared[i]),first_index,last_index);
   let bin_count=cumulative-previous;

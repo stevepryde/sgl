@@ -708,3 +708,15 @@ Use the [current specs](README.md) for implementation and the
   no bump maps to follow, and a per-metre raster would depart from
   three.js, the port. A ray footprint, which hit mip selection would take
   too, is the foundation that would let the two agree.
+- **D-46** Decision, 2026-10-12 (#654): auto exposure's near-black bin
+  positions the percentile window but does not enter the average. The
+  pinned [Bevy 9d12036 port](https://github.com/bevyengine/bevy/blob/9d120361303727a66b62f31f0d053793af62417a/crates/bevy_post_process/src/auto_exposure/auto_exposure.wesl#L147-L177)
+  includes it at minimum luminance; SGL3D departs from it because a frame
+  half black and half luminance 1 should meter the lit half, rather than
+  boost it by about four stops. [Wicked Engine cee348b](https://github.com/turanszkij/WickedEngine/blob/cee348b7135d4b6369f85a99ed5e9ed222b71bc7/WickedEngine/shaders/luminancePass2CS.hlsl#L26-L29)
+  likewise subtracts the near-black bin from its average's denominator.
+  SGL3D keeps Bevy's weighted percentile positions and its minimum-luminance
+  fallback when no samples remain, so black still rejects bright outliers
+  and an all-black or sub-sample window stays finite. This changes only the
+  averaging walk, from 64 bins to 63; metering and its GPU pass stay in the
+  exposure stage, with no additional resources or passes.
