@@ -15,6 +15,8 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` `udp::Endpoint`: a confirm carrying a newer cookie formerly changed an admitted connection's cookie and could stop both directions; the server now keeps its admitted cookie. No game-code changes are needed.
+
 - `sgl-net` UDP `Endpoint::disconnect`: closing peers previously stopped
   sending acknowledgements and keepalives; they now continue through the
   existing grace so a remote holding data does not time out just because

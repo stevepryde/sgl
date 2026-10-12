@@ -96,6 +96,10 @@ budgets, and refused acknowledgements remain owed. Custom
 and report local buffer exhaustion as `WouldBlock`; other per-datagram
 errors retain the network-loss behavior.
 
+A UDP server keeps a connection's admitted cookie for its whole lifetime.
+Later valid confirmations receive an accept naming that cookie, so delayed
+handshake responses cannot change an established session's wire identity.
+
 UDP gives each lane its own retransmission, so a lost bulk fragment never
 delays another lane. A UDP lane keeps at most 32 fragments in flight, so it
 carries at most 32 reliable messages per round trip: spread a higher rate
