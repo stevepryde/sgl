@@ -123,11 +123,14 @@ fn contains(rect: &Rect, p: Vec2) -> bool {
 const SCROLLBAR_TRACK: [f32; 4] = [0.0, 0.0, 0.0, 0.35];
 const SCROLLBAR_THUMB: [f32; 4] = [0.5, 0.5, 0.5, 0.8];
 const SCROLLBAR_THUMB_HOVER: [f32; 4] = [0.65, 0.65, 0.65, 0.9];
-/// Separate draw bands keep panels below popovers and modals even when
-/// their controls are submitted later in the frame.
-const OVERLAY_Z: f32 = 5_000.0;
-const POPOVER_Z: f32 = 10_000.0;
-const MODAL_Z: f32 = 15_000.0;
+/// Millions of exactly representable integer z steps per band keep panels
+/// below popovers and modals even when submitted later. Cursors saturate
+/// within their band; the draw list's stable sort keeps equal-z push order.
+const OVERLAY_Z: f32 = 2_097_152.0;
+const POPOVER_Z: f32 = 4_194_304.0;
+const MODAL_Z: f32 = 8_388_608.0;
+/// f32 represents every integer through 2^24 exactly.
+const MAX_UI_Z: f32 = 16_777_216.0;
 /// Popover/modal backdrop colors.
 const POPOVER_BG: [f32; 4] = [0.08, 0.08, 0.08, 0.98];
 const MODAL_DIM: [f32; 4] = [0.0, 0.0, 0.0, 0.55];
@@ -376,7 +379,8 @@ impl Ui {
 }
 
 /// One frame's widget builder — all draws go to the screen channel with
-/// increasing z within each band, so later widgets in that band cover earlier ones.
+/// increasing z within each band. Each cursor saturates before the next band;
+/// equal-z draws retain their screen-list push order.
 /// Panels, dropdown popovers and modals draw in successively higher z
 /// bands and block the widgets underneath (see [`UiFrame::dropdown`] and
 /// [`UiFrame::confirm_modal`]).
@@ -419,16 +423,16 @@ pub struct UiFrame<'a> {
 
 impl UiFrame<'_> {
     fn next_z(&mut self) -> f32 {
-        let z = if self.modal_scope.is_some() {
-            &mut self.z_modal
+        let (z, cap) = if self.modal_scope.is_some() {
+            (&mut self.z_modal, MAX_UI_Z)
         } else if self.popup_scope.is_some() {
-            &mut self.z_popover
+            (&mut self.z_popover, MODAL_Z - 1.0)
         } else if self.overlay {
-            &mut self.z_overlay
+            (&mut self.z_overlay, POPOVER_Z - 1.0)
         } else {
-            &mut self.z
+            (&mut self.z, OVERLAY_Z - 1.0)
         };
-        *z += 1.0;
+        *z = (*z + 1.0).min(cap);
         *z
     }
 

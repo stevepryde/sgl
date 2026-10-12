@@ -542,6 +542,152 @@ mod tests {
         f.end();
     }
 
+    /// Classify emitted rects and flushed glyphs by the clips supplied to
+    /// each scope, and by the dropdown geometry (its button is ordinary).
+    fn assert_draw_hierarchy(list: &mut DrawList, clips: [Rect; 4], dropdown: Rect) {
+        list.sort();
+        let bands: Vec<_> = list
+            .screen
+            .iter()
+            .map(|draw| {
+                let scope = clips
+                    .iter()
+                    .position(|clip| draw.clip == Some(*clip))
+                    .unwrap();
+                if scope == 2 && draw.pos.y <= dropdown.max.y {
+                    0
+                } else {
+                    scope
+                }
+            })
+            .collect();
+        for band in 0..4 {
+            assert!(bands.contains(&band), "scope {band} must emit draws");
+        }
+        assert!(
+            bands.windows(2).all(|pair| pair[0] <= pair[1]),
+            "ordinary draws, panels, popovers and modals must sort in that order"
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn long_widget_lists_stay_below_open_popover_and_modal() {
+        let (mut ui, mut text, mut assets) = fixture();
+        let dropdown = Rect::new(10.0, 10.0, 160.0, 30.0);
+        let options = ["First", "Second"];
+        let mut selected = 0;
+        let mut opening = DrawList::new();
+        let mut f = ui.begin(&mut text, &mut opening, press_at(50.0, 25.0));
+        f.dropdown("menu", dropdown, &options, &mut selected, 16.0);
+        f.end();
+        text.end_frame(&mut assets, &mut opening);
+        assert!(
+            ui.any_popup_open(),
+            "the pointer press must open the dropdown"
+        );
+
+        let clips = [
+            Rect::new(0.0, 0.0, 960.0, 540.0),
+            Rect::new(0.0, 0.0, 961.0, 540.0),
+            Rect::new(0.0, 0.0, 962.0, 540.0),
+            Rect::new(0.0, 0.0, 963.0, 540.0),
+        ];
+        let mut list = DrawList::new();
+        let mut f = ui.begin(&mut text, &mut list, UiInput::default());
+        f.set_clip(Some(clips[2]));
+        f.dropdown("menu", dropdown, &options, &mut selected, 16.0);
+        f.set_clip(Some(clips[3]));
+        f.confirm_modal(
+            "exit", clips[0], "Exit?", "Discard?", "Exit", "Cancel", 16.0,
+        );
+        // Submit the lower layers later: sorting must put them underneath.
+        f.set_clip(Some(clips[1]));
+        f.overlay_panel_begin(Rect::new(400.0, 100.0, 160.0, 200.0));
+        for _ in 0..6_001 {
+            f.rect(Rect::new(420.0, 120.0, 20.0, 20.0), [1.0, 0.0, 0.0, 1.0]);
+        }
+        f.overlay_panel_end();
+        f.set_clip(Some(clips[0]));
+        // This also exceeds the former modal band, catching ordinary widgets
+        // covering its dim layer as well as its dialog.
+        for _ in 0..18_001 {
+            f.rect(Rect::new(420.0, 120.0, 20.0, 20.0), [0.0, 1.0, 0.0, 1.0]);
+        }
+        f.end();
+        text.end_frame(&mut assets, &mut list);
+        assert_draw_hierarchy(&mut list, clips, dropdown);
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn exhausted_draw_bands_keep_hierarchy_and_stable_push_order() {
+        let (mut ui, mut text, mut assets) = fixture();
+        let dropdown = Rect::new(10.0, 10.0, 160.0, 30.0);
+        let options = ["First", "Second", "Third", "Fourth"];
+        let mut selected = 0;
+        let mut opening = DrawList::new();
+        let mut f = ui.begin(&mut text, &mut opening, press_at(50.0, 25.0));
+        f.dropdown("menu", dropdown, &options, &mut selected, 16.0);
+        f.end();
+        text.end_frame(&mut assets, &mut opening);
+
+        let clips = [
+            Rect::new(0.0, 0.0, 960.0, 540.0),
+            Rect::new(0.0, 0.0, 961.0, 540.0),
+            Rect::new(0.0, 0.0, 962.0, 540.0),
+            Rect::new(0.0, 0.0, 963.0, 540.0),
+        ];
+        let mut list = DrawList::new();
+        let mut f = ui.begin(&mut text, &mut list, UiInput::default());
+        // Set up the end of a huge frame without allocating millions of
+        // earlier draws. The oracle is the resulting draw order, not cursor values.
+        f.z = crate::ui::OVERLAY_Z - 2.0;
+        // Keep a draw at the start of every higher band, so crossing even
+        // its first draw is observable despite the higher band's later draws.
+        f.set_clip(Some(clips[1]));
+        f.overlay_panel_begin(Rect::new(400.0, 100.0, 160.0, 200.0));
+        f.overlay_panel_end();
+        f.set_clip(Some(clips[2]));
+        f.dropdown("menu", dropdown, &options, &mut selected, 16.0);
+        f.z_popover = crate::ui::MODAL_Z - 2.0;
+        f.dropdown("menu", dropdown, &options, &mut selected, 16.0);
+        f.set_clip(Some(clips[3]));
+        f.confirm_modal(
+            "exit", clips[0], "Exit?", "Discard?", "Exit", "Cancel", 16.0,
+        );
+        f.z_modal = 16_777_214.0;
+        f.confirm_modal(
+            "exit", clips[0], "Exit?", "Discard?", "Exit", "Cancel", 16.0,
+        );
+        f.z_overlay = crate::ui::POPOVER_Z - 2.0;
+        f.set_clip(Some(clips[1]));
+        f.overlay_panel_begin(Rect::new(400.0, 100.0, 160.0, 200.0));
+        let marker = [0.2, 0.4, 0.6, 1.0];
+        for x in [430.0, 410.0, 450.0] {
+            f.rect(Rect::new(x, 120.0, 10.0, 10.0), marker);
+        }
+        f.overlay_panel_end();
+        f.set_clip(Some(clips[0]));
+        for x in [430.0, 410.0, 450.0] {
+            f.rect(Rect::new(x, 120.0, 10.0, 10.0), marker);
+        }
+        f.end();
+        text.end_frame(&mut assets, &mut list);
+        assert_draw_hierarchy(&mut list, clips, dropdown);
+        for clip in &clips[..2] {
+            let positions: Vec<_> = list
+                .screen
+                .iter()
+                .filter(|draw| draw.clip == Some(*clip) && draw.color == marker)
+                .map(|draw| draw.pos.x)
+                .collect();
+            assert_eq!(
+                positions,
+                [435.0, 415.0, 455.0],
+                "saturated rects retain push order"
+            );
+        }
+    }
+
     #[wasm_bindgen_test(unsupported = test)]
     fn modal_keyboard_scope_excludes_custom_overlay() {
         let (mut ui, mut text, _assets) = fixture();

@@ -23,6 +23,10 @@ docs and specs the entry links.
 - `sgl-core` `CollisionConfig::new`: an `up` with finite components but an
   overflowing length normalized to zero; it now panics as for other unusable
   directions. Supply a normalizable direction; valid games need no game-code changes.
+- `sgl-2d` `UiFrame` draw ordering: long ordinary, panel and popover lists
+  could cover higher UI layers; draws now stay within their own band, so
+  panels, popovers and modals stay above lower layers at any widget count.
+  No game-code changes.
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;
   diagonal slides stop earlier along the surface by the backed-off motion's

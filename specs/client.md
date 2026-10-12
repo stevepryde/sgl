@@ -99,9 +99,11 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    release and press in one frame with the button held count as release then
    press: the release ends any drag or held widget, and the press re-arms only
    what it hits. An open
-   modal blocks widgets behind it, including custom overlay panels. Overlay
-   panels draw below dropdown popovers, which draw below modals regardless
-   of submission order; panel controls cannot receive a press consumed by
+   modal blocks widgets behind it, including custom overlay panels. Ordinary
+   widgets draw below overlay panels, then dropdown popovers, then modals regardless
+   of submission order and widget count. Each draw band has millions of
+   exact integer z steps and saturates within its band; equal-z draws retain
+   screen-list push order. Panel controls cannot receive a press consumed by
    a popover option above them. Line edits respect `max_len` and keep the
    buffer valid UTF-8; `password_edit_clear` zeroizes the cleared text in
    place and keeps the buffer's allocation. Scroll areas clip their content
