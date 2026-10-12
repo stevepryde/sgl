@@ -2847,8 +2847,9 @@ or 1 GiB browser budget, checked before allocating levels; Zstandard
 decoded output length is capped at the expected level size plus one sentinel byte.
 The decoder never allocates its advertised history window; regenerated
 literals and sequences are checked against the format's 128 KiB block
-maximum before growing buffers. It uses the MIT OR Apache-2.0 `zstd-rs`
-crate; ship its licence notices with the game's dependency notices.
+maximum before growing buffers. The private decoder is vendored from `zstd-rs` under MIT OR Apache-2.0;
+[provenance and local adaptations](src/content/zstandard/README.md) identify
+the reviewed source. Its notices ship with SGL3D’s bundled-code notices.
 The budget counts decoded bytes; bounded decoder working buffers and
 allocator capacity are additional, so it is not a peak-memory limit.
 As for RGBA8, the channel picks the colour space: base and emissive

@@ -151,9 +151,12 @@ impl CompressedImage {
                         // decoder bounds growth before literals/sequences are
                         // written and never allocates the advertised window.
                         let mut decoded = Vec::new();
-                        zstd_rs::Decompressor::new()
-                            .decompress(level.data, None, expected + 1, &mut decoded)
-                            .map_err(|error| format!("KTX2 level {index}: {error}"))?;
+                        crate::content::zstandard::decompress(
+                            level.data,
+                            expected + 1,
+                            &mut decoded,
+                        )
+                        .map_err(|error| format!("KTX2 level {index}: {error}"))?;
                         decoded
                     }
                     Some(other) => return Err(format!(
@@ -275,8 +278,8 @@ mod tests {
         // the oversized capacity and fail this assertion.
         let mut output = Vec::new();
         assert_eq!(
-            zstd_rs::Decompressor::new().decompress(&frame, None, 17, &mut output),
-            Err(zstd_rs::Error::OutputLimit)
+            crate::content::zstandard::decompress(&frame, 17, &mut output),
+            Err(crate::content::zstandard::Error::OutputLimit)
         );
         assert_eq!(output.capacity(), 0);
     }
@@ -300,8 +303,8 @@ mod tests {
         assert!(error.contains("Block_Maximum_Size"), "{error}");
         let mut output = Vec::new();
         assert!(matches!(
-            zstd_rs::Decompressor::new().decompress(&frame, None, 262144, &mut output),
-            Err(zstd_rs::Error::Corrupt(
+            crate::content::zstandard::decompress(&frame, 262144, &mut output),
+            Err(crate::content::zstandard::Error::Corrupt(
                 "block regenerates more than Block_Maximum_Size"
             ))
         ));

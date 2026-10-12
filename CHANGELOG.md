@@ -73,7 +73,7 @@ docs and specs the entry links.
   KTX2 chains with invalid dimensions, mip counts or decoded level sizes,
   now fail before oversized allocation. Split oversized assets or re-export
   malformed textures; no game-code changes are needed. Refresh distribution
-  notices for the new MIT OR Apache-2.0 `zstd-rs` decoder dependency.
+  notices for the vendored MIT OR Apache-2.0 Zstandard decoder.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;

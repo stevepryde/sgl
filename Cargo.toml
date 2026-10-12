@@ -49,8 +49,6 @@ objc2 = "0.6.4"
 objc2-game-controller = { version = "0.3.2", default-features = false }
 rustc-hash = "1.1"
 ruzstd = { version = "0.8", default-features = false }
-# KTX2 decoder with bounds at literal/sequence output allocations.
-zstd-rs = "0.1.0"
 image = { version = "0.25", default-features = false, features = ["png"] }
 js-sys = "0.3.104"
 console_error_panic_hook = "0.1.7"

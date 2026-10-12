@@ -94,17 +94,17 @@
     "prefix": "Wicked Engine, https://github.com/turanszkij/WickedEngine\nRevision 4323a33c94d021d45404adaf863e9b01673ab365, LICENSE.txt. SGL3D ports the\nprobe culling of WickedEngine/shaders/lightCullingCS.hlsl in probe_culling.wgsl,\nand from revision 2ff1d9e7b36091d6edf9f823af77e6bc9af20e3b the RT reflection\ntrace and denoiser (rtreflectionCS.hlsl, ssr_resolveCS.hlsl, ssr_temporalCS.hlsl,\nssr_upsampleCS.hlsl, stochasticSSRHF.hlsli and brdf.hlsli in\nWickedEngine/shaders/) in world_reflections*.wgsl and temporal_reprojection.wgsl,\nthrough which Godot's screen-space reflections (godot_reflections_temporal.wgsl)\nalso accumulate; from revision df44c3db4c4927492bc9c791eac715d98d7ed091 its\ndynamic diffuse GI (ddgi_rayallocationCS.hlsl, ddgi_indirectprepareCS.hlsl,\nddgi_raytraceCS.hlsl, ddgi_updateCS.hlsl, ShaderInterop_DDGI.h and the RNG\nand octahedral helpers of globals.hlsli in WickedEngine/shaders/, and\nwiRenderer.cpp's DDGI) in shading/dynamic_gi*.wgsl, shading/surface_ray.wgsl\nand stages/dynamic_gi/, with the irradiance map of revision\n95e357f73f28d24e70ce7a1ab8f9fb954de457e4 (ShaderInterop_DDGI.h and\nddgi_updateCS.hlsl).\n\n"
   },
   {
-    "component": "DiligentFX/DiligentCore — Copyright Diligent Graphics LLC",
+    "component": "DiligentFX/DiligentCore \u2014 Copyright Diligent Graphics LLC",
     "path": "crates/sgl-post-fx/LICENSE.txt",
     "url": "https://raw.githubusercontent.com/DiligentGraphics/DiligentFX/f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b/License.txt"
   },
   {
-    "component": "DiligentFX/DiligentCore — Copyright Diligent Graphics LLC",
+    "component": "DiligentFX/DiligentCore \u2014 Copyright Diligent Graphics LLC",
     "path": "crates/sgl-post-fx/vendor/DiligentFX/License.txt",
     "url": "https://raw.githubusercontent.com/DiligentGraphics/DiligentFX/f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b/License.txt"
   },
   {
-    "component": "DiligentFX/DiligentCore — Copyright Diligent Graphics LLC",
+    "component": "DiligentFX/DiligentCore \u2014 Copyright Diligent Graphics LLC",
     "path": "crates/sgl-post-fx/vendor/DiligentCore/License.txt",
     "url": "https://raw.githubusercontent.com/DiligentGraphics/DiligentCore/18bfa7b7563a0ef5b5fe074d37c2e8304100e965/License.txt"
   },
@@ -113,5 +113,23 @@
     "path": "crates/sgl-2d/tests/fixtures/OFL-IBMPlexSans.txt",
     "url": "https://raw.githubusercontent.com/IBM/plex/2d89ed6610c5e67b148f7bce6768e65c4abef979/LICENSE.txt",
     "note": "Licence source only; the original font import did not record its upstream revision. Preserve the bundled font and its existing notice."
+  },
+  {
+    "component": "zstd-rs decoder",
+    "path": "crates/sgl-3d/src/content/zstandard/LICENSE-MIT",
+    "url": "https://raw.githubusercontent.com/Avarok-Cybersecurity/zstd-rs/bac4c37d86e5307537c145823a106f7ed8f386d7/LICENSE-MIT",
+    "prefix": "zstd-rs, https://github.com/Avarok-Cybersecurity/zstd-rs\nPublished 0.1.0, revision bac4c37d86e5307537c145823a106f7ed8f386d7.\nSGL3D vendors the decoding source under content/zstandard, with private\nmodule paths, standard-library allocation imports and a decode-only API.\nThe upstream is MIT OR Apache-2.0; its original licence text follows.\n\n"
+  },
+  {
+    "component": "zstd-rs decoder",
+    "path": "crates/sgl-3d/src/content/zstandard/LICENSE-APACHE",
+    "url": "https://raw.githubusercontent.com/Avarok-Cybersecurity/zstd-rs/bac4c37d86e5307537c145823a106f7ed8f386d7/LICENSE-APACHE",
+    "prefix": "zstd-rs, https://github.com/Avarok-Cybersecurity/zstd-rs\nPublished 0.1.0, revision bac4c37d86e5307537c145823a106f7ed8f386d7.\nSGL3D vendors the decoding source under content/zstandard, with private\nmodule paths, standard-library allocation imports and a decode-only API.\nThe upstream is MIT OR Apache-2.0; its original licence text follows.\n\n"
+  },
+  {
+    "component": "Zstandard reference fixture",
+    "path": "crates/sgl-3d/src/content/zstandard/fixtures/LICENSE-zstd-BSD-3-Clause",
+    "url": "https://raw.githubusercontent.com/facebook/zstd/f8745da6ff1ad1e7bab384bd1f9d742439278e99/LICENSE",
+    "prefix": "Zstandard reference fixture, https://github.com/facebook/zstd\nRevision f8745da6ff1ad1e7bab384bd1f9d742439278e99 (v1.5.7),\ntests/golden-compression/http. SGL3D uses the reference plaintext and an\noffline C-zstd 1.5.7 compressed frame as decoder interoperability fixtures.\nZstandard is dual BSD-3-Clause OR GPL-2.0; these fixtures are retained under\nthe BSD-3-Clause terms below.\n\n"
   }
 ]

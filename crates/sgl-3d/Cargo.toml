@@ -48,8 +48,6 @@ naga = { workspace = true, features = ["wgsl-in"] }
 ktx2.workspace = true
 # Draw lists bin their draws by small keys each frame (view::draw_list).
 rustc-hash.workspace = true
-# KTX2 Zstandard decoding with a caller-owned output cap.
-zstd-rs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sp-fidelity.workspace = true

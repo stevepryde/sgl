@@ -27,3 +27,5 @@ pub(crate) mod model;
 pub mod shader;
 pub mod static_lighting;
 pub(crate) mod transient;
+
+mod zstandard;
