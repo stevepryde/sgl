@@ -289,18 +289,15 @@ fn embedded_hit(body: &Aabb, delta: Vec2, target: &Aabb) -> Option<Hit> {
 
 /// The contact for a body that already overlaps a one-way platform. A body
 /// no deeper than `skin` (plus float rounding) below the platform's floor face
-/// is resting on it, so falling lands it there, as Godot's one-way collision
-/// margin does; deeper, it is passing through (part-way through a jump) and
-/// the platform never blocks.
+/// is resting on it, so moving into that face lands it there, as Godot's
+/// one-way collision margin does; deeper, it is passing through (part-way
+/// through a jump) and the platform never blocks.
 fn one_way_landing(
     body: &Aabb,
     delta: Vec2,
     target: &Aabb,
     config: &CollisionConfig,
 ) -> Option<Hit> {
-    if delta.dot(config.up) >= 0.0 {
-        return None;
-    }
     let offset = body.center - target.center;
     let depth = body.half + target.half - offset.abs();
     let face = (target.center.abs() + target.half).max_element();
@@ -310,14 +307,15 @@ fn one_way_landing(
         (depth.y, Vec2::new(0.0, offset.y.signum())),
     ]
     .into_iter()
-    .find(|&(depth, normal)| depth <= margin && config.is_floor(normal))
+    .find(|&(depth, normal)| depth <= margin && one_way_blocks(normal, delta, config))
     .map(|(_, normal)| Hit { t: 0.0, normal })
 }
 
 /// Whether a one-way platform blocks this motion: only when the body is coming
-/// down onto the face that points along `up`.
+/// into a floor-classified face. Motion into the face, not against `up`,
+/// decides: the two differ when `up` is not axis-aligned.
 fn one_way_blocks(normal: Vec2, motion: Vec2, config: &CollisionConfig) -> bool {
-    config.is_floor(normal) && motion.dot(config.up) < 0.0
+    config.is_floor(normal) && motion.dot(normal) < 0.0
 }
 
 /// Records a contact normal as floor, ceiling, or wall.
@@ -645,6 +643,30 @@ mod tests {
         let falling = aabb(0.0, 2.0, 0.5, 0.5);
         let (_, contacts) = move_and_collide(falling, Vec2::new(0.0, -3.0), &set, &config(Vec2::Y));
         assert!(contacts.floor && contacts.down_blocked);
+    }
+
+    /// A one-way platform blocks motion into its floor face, not motion
+    /// against a tilted `up`. Here `(1, -0.1)` descends onto the top face
+    /// while rising along `up`, and `(-1, 0)` from within the landing margin
+    /// runs along the face while descending along `up`.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn one_way_platforms_with_a_tilted_up_block_motion_into_the_top_face() {
+        let platform = aabb(0.0, 0.0, 5.0, 0.25);
+        let set = set_with(&[(platform, ColliderFlags::ONE_WAY)]);
+        let config = config(Vec2::new(0.2, 1.0));
+
+        let above = aabb(0.0, 0.8, 0.5, 0.5);
+        let (effective, contacts) = move_and_collide(above, Vec2::new(1.0, -0.1), &set, &config);
+        assert!(
+            !above.translated(effective).overlaps(&platform),
+            "fell into the platform: {effective:?}"
+        );
+        assert!(contacts.floor);
+
+        // Within the skin of the top face, as a resolved landing leaves it.
+        let resting = aabb(0.0, 0.745, 0.5, 0.5);
+        let (effective, _) = move_and_collide(resting, Vec2::new(-1.0, 0.0), &set, &config);
+        assert_eq!(effective, Vec2::new(-1.0, 0.0));
     }
 
     /// A non-finite delta must resolve to no motion at all. Passing it through

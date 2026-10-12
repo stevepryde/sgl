@@ -15,6 +15,7 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `move_and_collide` one-way platforms with a tilted `up`: blocking tested motion against `up`, so a body could fall through the top face or stick walking along it; it now tests motion into the floor face. No game-code changes are needed.
 - `sgl-net` `udp::Endpoint`: a confirm carrying a newer cookie formerly changed an admitted connection's cookie and could stop both directions; the server now keeps its admitted cookie. No game-code changes are needed.
 
 - `sgl-net` UDP `Endpoint::disconnect`: closing peers previously stopped
