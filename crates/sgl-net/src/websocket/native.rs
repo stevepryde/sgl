@@ -468,6 +468,8 @@ pub struct NativeWebSocketServerConfig {
     /// Maximum accepted TCP connections in any rolling one-second window.
     pub max_accepts_per_second: usize,
     /// Maximum lifecycle and message events surfaced by one [`ServerIo::poll`].
+    /// Peers take turns; each peer's first message turn takes its newest
+    /// pending latest state, ahead of its lane backlog, at most once per poll.
     pub max_events_per_poll: usize,
     /// Maximum wall-clock time spent completing an HTTP upgrade.
     pub handshake_timeout: Duration,
@@ -619,7 +621,7 @@ impl NativeWebSocketServer {
 impl ServerIo for NativeWebSocketServer {
     fn poll(&mut self, now_ms: u64) -> Vec<ServerEvent> {
         let mut registry = lock(&self.registry);
-        let mut connections: Vec<_> = registry.keys().copied().collect();
+        let mut connections: Vec<_> = registry.keys().map(|&conn| (conn, false)).collect();
         if connections.is_empty() {
             self.poll_cursor = 0;
             return Vec::new();
@@ -630,7 +632,7 @@ impl ServerIo for NativeWebSocketServer {
         let mut events = Vec::with_capacity(self.max_events_per_poll);
         let mut remove = Vec::new();
         let mut wake = false;
-        for conn in &connections {
+        for (conn, _) in &connections {
             registry
                 .get(conn)
                 .expect("connection key came from registry")
@@ -640,10 +642,13 @@ impl ServerIo for NativeWebSocketServer {
 
         // Drain in rounds so every active peer gets one turn before any peer
         // gets a second. Rotate the starting peer between polls as well.
+        // Sample latest state on the first message turn, regardless of lane
+        // backlog. A state arriving after that sample waits for the next poll.
         let mut progressed = true;
         while events.len() < self.max_events_per_poll && progressed {
             progressed = false;
-            for &conn in &connections {
+            for (conn, latest_polled) in &mut connections {
+                let conn = *conn;
                 if events.len() >= self.max_events_per_poll {
                     break;
                 }
@@ -652,7 +657,13 @@ impl ServerIo for NativeWebSocketServer {
                     .expect("connection key came from registry");
                 let event = if peer.connected_announced {
                     let mut state = lock(&peer.shared.state);
-                    if let Some((delivery, payload)) = state.pop_inbound() {
+                    let latest = if *latest_polled {
+                        None
+                    } else {
+                        *latest_polled = true;
+                        state.pop_inbound_latest()
+                    };
+                    if let Some((delivery, payload)) = latest.or_else(|| state.pop_inbound_lane()) {
                         Some(ServerEvent::Message {
                             conn,
                             delivery,
@@ -660,6 +671,7 @@ impl ServerIo for NativeWebSocketServer {
                         })
                     } else if let Some(reason) = state.terminal()
                         && !peer.disconnected_announced
+                        && state.inbound_is_empty()
                     {
                         // Under the same lock as the empty queue: a closed
                         // peer takes no more messages, so none follows this.
@@ -682,7 +694,7 @@ impl ServerIo for NativeWebSocketServer {
         }
         // After the drain, so a peer whose held frame now fits resumes
         // reading.
-        for conn in &connections {
+        for (conn, _) in &connections {
             let peer = registry
                 .get(conn)
                 .expect("connection key came from registry");
@@ -2108,6 +2120,104 @@ mod tests {
                 && *first_conn == first
                 && first_payload == b"a2"
         ));
+    }
+
+    #[test]
+    fn server_polls_latest_state_despite_replenished_lane_backlogs() {
+        // Exercise both the single-peer starvation case and shared-budget
+        // peer fairness. Every lane remains backlogged after every poll.
+        for peer_count in [1, 3] {
+            let mut connections = vec![ConnectionId::MIN];
+            for _ in 1..peer_count {
+                connections.push(connections.last().unwrap().checked_next().unwrap());
+            }
+            let registry = Arc::new(Mutex::new(
+                connections
+                    .iter()
+                    .map(|&conn| {
+                        (
+                            conn,
+                            ServerPeer {
+                                shared: shared(0, 0),
+                                connected_announced: true,
+                                disconnected_announced: false,
+                            },
+                        )
+                    })
+                    .collect(),
+            ));
+            let mut server = NativeWebSocketServer {
+                local_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+                registry,
+                accepting: Arc::new(AtomicBool::new(true)),
+                occupancy: Arc::new(AtomicUsize::new(peer_count)),
+                worker: None,
+                max_events_per_poll: peer_count * 4,
+                poll_cursor: 0,
+            };
+            let mut next_lane_payload = vec![[0u8; 2]; peer_count];
+            for tick in 0u8..4 {
+                for peer in lock(&server.registry).values() {
+                    let mut state = lock(&peer.shared.state);
+                    for number in tick * 8..(tick + 1) * 8 {
+                        for delivery in [
+                            Delivery::RELIABLE_ORDERED,
+                            Delivery::Unreliable(crate::Lane::DEFAULT),
+                        ] {
+                            state
+                                .receive(crate::websocket::Envelope {
+                                    delivery,
+                                    sequence: 0,
+                                    fragment: crate::websocket::Fragment::Whole,
+                                    payload: &[number],
+                                })
+                                .unwrap();
+                        }
+                    }
+                    for sequence in u64::from(tick) * 2 + 1..=u64::from(tick) * 2 + 2 {
+                        state
+                            .receive(crate::websocket::Envelope {
+                                delivery: Delivery::LatestState,
+                                sequence,
+                                fragment: crate::websocket::Fragment::Whole,
+                                payload: &[u8::try_from(sequence).unwrap()],
+                            })
+                            .unwrap();
+                    }
+                }
+
+                let events = server.poll(u64::from(tick));
+                assert_eq!(events.len(), peer_count * 4, "the global event budget");
+                let mut counts = vec![[0; 3]; peer_count];
+                for (turn, event) in events.into_iter().enumerate() {
+                    let ServerEvent::Message {
+                        conn,
+                        delivery,
+                        payload,
+                    } = event
+                    else {
+                        panic!("a live backlogged peer delivers only messages");
+                    };
+                    let peer = connections.iter().position(|&id| id == conn).unwrap();
+                    assert_eq!(peer, (turn + usize::from(tick)) % peer_count);
+                    if delivery == Delivery::LatestState {
+                        counts[peer][2] += 1;
+                        assert_eq!(payload, [tick * 2 + 2], "only the newest state lands");
+                        assert!(turn < peer_count, "latest precedes the lane backlog");
+                    } else {
+                        let class = usize::from(matches!(delivery, Delivery::Unreliable(_)));
+                        counts[peer][class] += 1;
+                        assert_eq!(payload, [next_lane_payload[peer][class]]);
+                        next_lane_payload[peer][class] += 1;
+                    }
+                }
+                for [reliable, unreliable, latest] in counts {
+                    assert_eq!(latest, 1, "one latest state per peer per poll");
+                    assert!(reliable > 0 && unreliable > 0, "both lane classes progress");
+                    assert_eq!(reliable + unreliable, 3);
+                }
+            }
+        }
     }
 
     #[test]

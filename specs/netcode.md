@@ -57,7 +57,13 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    after `Disconnected`. Reconnecting yields a new id and a new epoch; late
    datagrams from an old epoch never surface on the new connection.
 10. Latest-state delivery coalesces: a poll observes the newest payload and
-    never a stale one. Reliable delivery is exact, in order, and unduplicated
+    never a stale one. A native WebSocket server polls peers in rounds,
+    rotating the first peer between polls, within `max_events_per_poll`
+    lifecycle and message events overall. On a peer's first message turn
+    it takes the newest pending latest state ahead of any lane backlog,
+    at most once per poll; a state arriving after that turn waits for the
+    next poll. If the budget runs out before a peer's turn, that peer's
+    messages wait too. Reliable delivery is exact, in order, and unduplicated
     within each lane; there is no order across lanes. On UDP each lane has its
     own sequence space, window and retransmission, so a lost fragment of one
     lane never delays another lane's delivery. "Unreliable" means never

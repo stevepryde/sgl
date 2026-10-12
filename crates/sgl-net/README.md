@@ -77,6 +77,11 @@ of `max_packets_per_peer_flush` datagrams carries hundreds of small
 messages. `Delivery::LatestState` coalesces snapshots so the newest state
 wins; however busy the lanes, it goes out in every UDP flush, and on
 WebSocket behind only the lane frames flushed before it.
+On the native WebSocket server, each peer's first message turn in a poll
+returns its newest pending latest state ahead of any lane backlog, at most
+once per poll. Peers take turns within `max_events_per_poll`; size that
+budget for the peers and lane messages the game needs each tick. A state
+received after its peer's first message turn waits for the next poll.
 The same encoded payload can cross UDP, WebSocket, or memory. Payload caps
 are public constants and lane bounds `ReliableConfig` values in the
 [transport API](src/lib.rs). Connection IDs identify a connection inside a
