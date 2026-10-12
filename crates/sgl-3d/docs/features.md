@@ -54,8 +54,12 @@ them through unrefracted. A probe captured on an
   emissive strength cap, images the game supplies, which are never decoded,
   and a selection of mesh nodes for named rigid parts), or a
   procedural `asset::Asset` (`asset::Material::default()` is glTF's default
-  material). A file that requires an extension SGL3D does not support fails
-  to load; one it only uses is left out and listed in `Asset::ignored`,
+  material). File references are percent-decoded relative regular files
+  beneath the glTF's directory, without parent segments or symlinks;
+  base64 data URIs and GLB are supported. External buffers must match
+  `byteLength`; encoded sources share a 4 GiB native / 1 GiB browser cap.
+  [Loading details](../README.md#asset-and-environment-limits). A file that
+  requires an extension SGL3D does not support fails to load; one it only uses is left out and listed in `Asset::ignored`,
   with occlusion maps in an image of their own and specular textures, which
   SGL3D does not sample yet, the images no sampled map uses, which are
   neither read nor decoded, and vertex attributes nothing reads
