@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::aabb::Aabb;
-use crate::math::IVec2;
+use crate::math::{IVec2, Vec2};
 
 /// How a collider behaves during a sweep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,7 +145,12 @@ impl ColliderSet {
     /// many cells as the set holds colliders, plus the oversized colliders.
     #[must_use]
     pub fn query(&self, region: &Aabb) -> Vec<usize> {
-        let Some(cells) = CellRange::of(region, self.cell_size) else {
+        self.query_corners(region.min(), region.max())
+    }
+
+    /// Broadphase query without rounding corners through center/half-extents.
+    pub(super) fn query_corners(&self, min: Vec2, max: Vec2) -> Vec<usize> {
+        let Some(cells) = CellRange::of_corners(min, max, self.cell_size) else {
             return Vec::new();
         };
         let meets = |index: &usize| {
@@ -216,7 +221,11 @@ impl CellRange {
     /// casts saturate, so an infinite bound would address the whole `i32`
     /// grid.
     fn of(aabb: &Aabb, cell_size: f32) -> Option<Self> {
-        let (min, max) = (aabb.min(), aabb.max());
+        Self::of_corners(aabb.min(), aabb.max(), cell_size)
+    }
+
+    /// Keeps supplied bounds intact, including a sweep ending on a cell edge.
+    fn of_corners(min: Vec2, max: Vec2, cell_size: f32) -> Option<Self> {
         if !(min.is_finite() && max.is_finite()) {
             return None;
         }

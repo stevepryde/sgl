@@ -238,7 +238,8 @@ fn earliest_hit(
     accept: impl Fn(Vec2) -> bool,
 ) -> Option<Hit> {
     let mut best: Option<Hit> = None;
-    for index in set.query(&swept_region(body, delta)) {
+    let (min, max) = swept_region(body, delta);
+    for index in set.query_corners(min, max) {
         let Some(collider) = set.get(index) else {
             continue;
         };
@@ -343,10 +344,12 @@ fn back_off(delta: Vec2, hit: Hit, skin: f32) -> Vec2 {
 }
 
 /// The region covering `body` from the start to the end of `delta`.
-fn swept_region(body: &Aabb, delta: Vec2) -> Aabb {
+fn swept_region(body: &Aabb, delta: Vec2) -> (Vec2, Vec2) {
     let start_min = body.min();
     let start_max = body.max();
-    Aabb::from_min_max(
+    // Do not round these corners through Aabb's center/half representation:
+    // an inward-rounded end corner can omit the cell containing a t=1 hit.
+    (
         start_min.min(start_min + delta),
         start_max.max(start_max + delta),
     )
@@ -357,6 +360,25 @@ mod tests {
     use super::super::collider_set::ColliderFlags;
     use super::*;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    /// #706: rounding a swept region through center/half must not omit the
+    /// floor cell touched exactly at the end, in either axis convention.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn end_contact_on_a_cell_boundary_keeps_the_skin_gap() {
+        for sign in [-1.0, 1.0] {
+            let body = Aabb::new(Vec2::new(0.0, sign * 76.701_805), Vec2::splat(0.5));
+            let floor = Aabb::new(Vec2::new(0.0, sign * 56.5), Vec2::new(50.0, 0.5));
+            let delta = Vec2::new(0.0, -sign * 19.201_805);
+            let config = CollisionConfig::new(Vec2::new(0.0, sign), 0.01, 0.1, 0.7, 0.0);
+            let mut set = ColliderSet::new(1.0);
+            set.insert(floor, ColliderFlags::SOLID);
+
+            let (moved, contacts) = move_and_collide(body, delta, &set, &config);
+            assert!(contacts.floor, "missed end contact with up={sign}");
+            let gap = (body.translated(moved).center.y - floor.center.y).abs() - 1.0;
+            assert!((gap - 0.01).abs() < 1e-5, "skin gap was {gap}");
+        }
+    }
 
     /// #249: `Contacts::desired` records the requested motion for both
     /// entry points, and the floor/ceiling classification is strict at the

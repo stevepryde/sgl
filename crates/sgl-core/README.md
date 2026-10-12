@@ -54,6 +54,9 @@ Contacts leave the configured `skin` gap along the surface normal by stopping
 earlier on the swept path. A diagonal slide keeps the tangential motion left
 after the contact time; the backed-off motion is discarded, so it also stops
 earlier along the surface. Ground snapping backs off along its probe too.
+Contacts at the exact end of a sweep are included, even on a broadphase
+cell boundary. `Aabb::from_min_max` computes center/half-extents, so its
+reconstructed corners may differ from the supplied corners by float rounding.
 `collision` is 2D arcade physics: it moves bodies the game drives, with no
 forces, mass or rotation. See [Physics](../../docs/README.md#physics) to
 choose a game's physics.
