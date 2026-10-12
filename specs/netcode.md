@@ -221,9 +221,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     rather than waiting out `timeout_ms`. A server also ends a connection on
     a disconnect from its route carrying any cookie it issued that is still
     valid, as a client that asked again may close holding a newer cookie
-    before the accept naming the admitted one arrives. Every disconnect a UDP endpoint
-    sends (a close, a deny's answer, or a peer closed for a violation,
-    overflow or stalled send) goes out three times, so one lost datagram
+    before the accept naming the admitted one arrives; a later confirm for
+    that cookie admits nothing. Every disconnect a UDP endpoint sends (a
+    close, a deny's answer, or a peer closed for a violation, overflow or
+    stalled send) goes out three times, so one lost datagram
     does not leave the remote holding the connection until `timeout_ms`. Dropping an endpoint
     or shutting down its threaded worker sends that same best-effort redundant
     disconnect to every remaining peer before the socket closes, abandoning

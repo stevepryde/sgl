@@ -29,6 +29,8 @@ mod codec;
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_write;
+#[cfg(any(target_arch = "wasm32", test))]
+mod pacing;
 mod queue;
 
 pub use crate::lanes::Fragment;

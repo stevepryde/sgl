@@ -1082,10 +1082,11 @@ impl<T: DatagramTransport> Endpoint<T> {
                 });
             }
             Kind::Disconnect => {
-                let Some(id) = self
-                    .match_peer(source, nonces)
-                    .or_else(|| self.match_issued_cookie(source, nonces, now_ms))
-                else {
+                let (id, issued_epoch) = if let Some(id) = self.match_peer(source, nonces) {
+                    (id, None)
+                } else if let Some((id, epoch)) = self.match_issued_cookie(source, nonces, now_ms) {
+                    (id, Some(epoch))
+                } else {
                     return;
                 };
                 // One the caller closed was reported `Local` already.
@@ -1094,6 +1095,18 @@ impl<T: DatagramTransport> Endpoint<T> {
                         peer: id,
                         reason: DisconnectReason::Peer,
                     });
+                }
+                // Removing the peer remembered its admitted cookie; a late
+                // confirm for the cookie the client closed with must not
+                // admit it again either.
+                if let Some(epoch) = issued_epoch {
+                    self.confirm_replays.remember(
+                        source,
+                        nonces.client,
+                        nonces.server,
+                        epoch,
+                        now_ms,
+                    );
                 }
             }
             _ => {}
@@ -1311,13 +1324,20 @@ impl<T: DatagramTransport> Endpoint<T> {
     /// A client that asked again may hold a newer challenge's cookie than
     /// the one this server admitted, and close before the accept naming the
     /// admitted one arrives. The route and a valid cookie this server issued
-    /// to it still identify that connection.
-    fn match_issued_cookie(&self, source: SocketAddr, nonces: Nonces, now_ms: u64) -> Option<u64> {
+    /// to it still identify that connection; returns it with the cookie's
+    /// epoch.
+    fn match_issued_cookie(
+        &self,
+        source: SocketAddr,
+        nonces: Nonces,
+        now_ms: u64,
+    ) -> Option<(u64, u64)> {
         let id = *self.routes.get(&(source, nonces.client))?;
-        self.cookie_key
-            .as_ref()?
-            .validate(source, nonces.client, nonces.server, now_ms)?;
-        Some(id)
+        let epoch =
+            self.cookie_key
+                .as_ref()?
+                .validate(source, nonces.client, nonces.server, now_ms)?;
+        Some((id, epoch))
     }
 
     fn send_control(&mut self, addr: SocketAddr, kind: Kind, nonces: Nonces, now_ms: u64) -> bool {
@@ -3289,6 +3309,7 @@ mod tests {
             mut client,
             client_peer,
             server_peer,
+            delayed_confirm,
             ..
         } = newer_challenge_after_admission();
         client.disconnect(client_peer, 6_175);
@@ -3309,6 +3330,15 @@ mod tests {
                 reason: DisconnectReason::Peer,
             }]
         );
+        assert!(server.peers.is_empty());
+
+        // The confirm for the newer cookie arrives after the disconnect and
+        // must not admit a connection nobody holds.
+        client.transport.sent = delayed_confirm;
+        ferry(&mut client, CLIENT_ADDR, &mut server, SERVER_ADDR, |_| {
+            false
+        });
+        assert!(server.poll(6_190).is_empty());
         assert!(server.peers.is_empty());
     }
 

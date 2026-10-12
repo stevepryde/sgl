@@ -17,6 +17,9 @@ docs and specs the entry links.
 
 - `sgl-net` UDP server challenge limiter: IPv4 clients of a dual-stack (`[::]`) socket formerly shared one challenge rate-limit bucket; IPv4-mapped sources are now bucketed by their IPv4 /24. No game-code changes are needed.
 - `sgl-net` UDP server `Disconnect` handling: a client that closed while holding a newer challenge's cookie than the admitted one formerly left the server's connection open until `timeout_ms`; the server now ends it on that disconnect. No game-code changes are needed.
+- `sgl-net` `ThreadedUdpServer`: if the worker panicked while holding the command queue, `send`, `capacity`, `disconnect` and `stop_admission` formerly panicked until `poll` joined it, and `poll` could panic on a poisoned ingress queue; none panics now, and until that `poll` `send` returns `UnknownConnection` and `capacity` zero. No game-code changes are needed.
+- `sgl-net` `BrowserWebSocketClient` flush: a latest state over `latest_buffered_bytes` formerly held lane frames to that watermark; lane frames now continue up to `reliable_buffered_bytes` while the state stays coalesced, and the state leaves once the bytes buffered ahead of it have drained, never past `reliable_buffered_bytes`. No game-code changes are needed.
+
 - `sgl-net` `ThreadedUdpServer`: after a worker panic, `send`, `capacity`, `disconnect` and `poll` could panic on its poisoned queues; they no longer do, and until `poll` reports the ends `send` returns `UnknownConnection` and `capacity` zero. No game-code changes are needed.
 - `sgl-net` `BrowserWebSocketClient` flush: a latest state over `latest_buffered_bytes` formerly held lane frames to that watermark; lane frames now continue up to `reliable_buffered_bytes` while the state stays coalesced. No game-code changes are needed.
 
