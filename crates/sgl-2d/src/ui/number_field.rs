@@ -101,6 +101,17 @@ impl NumberField {
     fn display(&self, value: f32) -> String {
         format!("{value:.*}", self.decimals)
     }
+
+    /// Keep the opening draft editable, even when fixed-point display exceeds
+    /// the insertion limit. Scientific notation preserves the value compactly.
+    fn draft(&self, value: f32) -> String {
+        let display = self.display(value);
+        if display.len() > NUMBER_EDIT_MAX_LEN {
+            format!("{value:e}")
+        } else {
+            display
+        }
+    }
 }
 
 impl UiFrame<'_> {
@@ -147,7 +158,7 @@ impl UiFrame<'_> {
         self.register_focus(id, &middle);
         if self.ui.focus == Some(id) {
             if self.ui.edit.id != Some(id) {
-                self.ui.number_edit = opts.display(*value);
+                self.ui.number_edit = opts.draft(*value);
             }
             // Typing: the middle is a line edit over the retained buffer.
             let mut buf = std::mem::take(&mut self.ui.number_edit);
@@ -207,7 +218,7 @@ impl UiFrame<'_> {
                     // A press and release in one frame: this click opened
                     // the field, so frame-end click-away must not drop it.
                     self.edit_clicked = true;
-                    self.ui.number_edit = opts.display(*value);
+                    self.ui.number_edit = opts.draft(*value);
                     self.ui.edit = EditState {
                         id: Some(id),
                         caret: self.ui.number_edit.chars().count(),
@@ -422,6 +433,46 @@ mod tests {
             }
             assert_eq!(value, 2.5, "vertical travel does not scrub the value");
             assert!(!ui.has_focus(), "vertical drag is not a click-to-type");
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn number_field_large_opening_draft_accepts_typing() {
+        for clicked in [false, true] {
+            let (mut ui, mut text, _assets) = fixture();
+            let mut list = DrawList::new();
+            let mut value = 1e22;
+            let opts = NumberField::default().decimals(2);
+            if clicked {
+                for input in [press_at(100.0, 116.0), release_at(100.0, 116.0)] {
+                    let mut f = ui.begin(&mut text, &mut list, input);
+                    f.number_field("n", ROW, &mut value, opts, 20.0);
+                    f.end();
+                }
+            } else {
+                let mut f = ui.begin(&mut text, &mut list, UiInput::default());
+                f.focus("n");
+                f.number_field("n", ROW, &mut value, opts, 20.0);
+                f.end();
+            }
+            let opening = ui.number_edit.clone();
+            let mut f = ui.begin(
+                &mut text,
+                &mut list,
+                UiInput {
+                    keys: vec![UiKey::Home],
+                    chars: vec!['5'],
+                    ..UiInput::default()
+                },
+            );
+            assert!(f.number_field("n", ROW, &mut value, opts, 20.0));
+            f.end();
+            assert_ne!(
+                ui.number_edit, opening,
+                "opening draft accepts an insertion"
+            );
+            assert!(ui.number_edit.starts_with('5'), "Home inserts at the start");
+            assert!(value > 1e22, "the inserted digit updates the parsed value");
         }
     }
 
