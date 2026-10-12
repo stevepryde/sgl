@@ -40,6 +40,8 @@ docs and specs the entry links.
 
 - `sgl-2d` `Context`: windows larger than the device texture limit formerly panicked during startup or resize; swapchain dimensions are now capped per axis to that limit. No game-code changes are needed.
 - `sgl-3d` `Exposure`: abandoning the first automatic frame after fixed exposure formerly lost its snap to target; the next submitted automatic frame now snaps. No game-code changes are needed.
+- `sgl-3d` dynamic GI: sparse probe turns formerly blended unobserved depth and irradiance texels toward zero; those texels now keep their history, and fresh unobserved depth starts at the maximum ray distance. No game-code changes are needed.
+
 - `sgl-post-fx` SSR: glossy grazing sample PDFs formerly relied on backend half-float overflow behavior; stored PDFs now clamp to the finite range so reconstruction keeps their weight. No game-code changes are needed.
 
 - `sgl-3d` `Renderer` geometry pipelines: each change of rect lights, decals, films, sheens, diffuse transmission, transmissive materials or diagnostics layers formerly kept every earlier pipeline set for the renderer's lifetime; only the current and previous sets are now kept. No game-code changes are needed.

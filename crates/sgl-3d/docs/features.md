@@ -308,7 +308,9 @@ them through unrefracted. A probe captured on an
   starts its probes over a few frames, nearest the camera first; one moved
   by whole spacings scrolls, keeping the probes that stay. Probes inside
   geometry or behind walls light nothing and cost little; those with no
-  surface near them light moving instances alone. A converged volume pauses
+  surface near them light moving instances alone. A sparse turn keeps
+  unobserved texels' light and depth history; fresh depth texels start open.
+  A converged volume pauses
   until something it sees changes. A glowing fixture that a scene light
   stands for keeps its own light out of the probes
   (`asset::Material::emits_into_gi`, `SurfaceMaterial::emits_into_gi`

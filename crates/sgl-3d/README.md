@@ -2287,6 +2287,10 @@ scales the environment, not the volume. Beyond its extent the volume's share
 fades out over one spacing; ambient cubes stay the moving instances'
 fallback there, with `Settings::dynamic_gi` at `Off`, and without a volume.
 
+Sparse turns keep a probe texel's light and depth history when no ray
+contributes to it. A fresh unobserved depth texel starts at the maximum
+ray distance; its irradiance starts at zero until observed.
+
 Placement:
 
 - Cover every surface the volume should light: one to a few metres apart
