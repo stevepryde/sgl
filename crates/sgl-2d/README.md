@@ -43,6 +43,9 @@ game. [Tool composition](../../specs/client.md#tool-composition) documents
 pane layout, themes, input ordering, clipping, and keyboard behavior.
 Custom `overlay_panel_begin` controls remain below and pointer-blocked by
 open dropdown popovers and confirmation modals, even when submitted later.
+Ordinary widgets stay below these layers regardless of list length. Draw
+cursors saturate within their bands after millions of steps; equal-z draws
+retain screen-list push order.
 
 For HUDs over SGL3D, share the game-owned wgpu device and queue and draw UI
 after the 3D scene. A HUD that drives `canvas::sprite::SpritePass` itself
