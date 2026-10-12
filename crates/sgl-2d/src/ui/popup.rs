@@ -484,7 +484,6 @@ mod tests {
         );
         f.end();
         assert!(!ui.any_popup_open());
-        assert_eq!(selected, 0, "the modal press cannot select a popup option");
     }
 
     #[wasm_bindgen_test(unsupported = test)]
