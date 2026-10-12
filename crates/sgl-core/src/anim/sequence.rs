@@ -37,12 +37,13 @@ pub enum SequenceStep {
     },
     /// Hold the previous frame for a fixed number of seconds.
     Pause(f32),
-    /// Hold the previous frame for a duration drawn from `[min, max)` when the
-    /// step is entered (exactly `min` when `min == max`).
+    /// Hold the previous frame for a duration in `[min, max]` when the step
+    /// is entered (exactly `min` when `min == max`). Floating-point rounding
+    /// can reach `max` even though the random draw is below one.
     RandomPause {
         /// Shortest possible hold, in seconds.
         min: f32,
-        /// Exclusive upper bound of the hold, in seconds.
+        /// Inclusive upper bound of the hold, in seconds.
         max: f32,
     },
     /// Queue a caller-defined action id and continue immediately. The caller
