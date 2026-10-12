@@ -2,7 +2,7 @@
 //! This catches reversed neighborhood directions and broken search/area sampling
 //! that shader validation alone cannot detect. No application startup gate.
 use super::*;
-use crate::test_support::{half, read};
+use crate::test_support::{half, hdr_texture, read};
 
 /// The fixture's format, the RGBA16F SMAA reads and writes in post.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -33,6 +33,67 @@ const QUALITIES: [SmaaQuality; 4] = [
     SmaaQuality::High,
     SmaaQuality::Ultra,
 ];
+
+// Defect: replacing the colour detector's centre-to-second-neighbour contrast
+// with the luma detector's adjacent-pixel contrast reverses these decisions.
+// The oracle is hand arithmetic from SMAAColorEdgeDetectionPS (iryoku/smaa
+// 27fad0b, SMAA.hlsl lines 791-805), not a CPU copy of the shader:
+//
+// second neighbour / neighbour / centre, in sRGB:
+// 0.125 / 0.5  / 0.75: edge 0.25, largest contrast 0.625 > 2*0.25 => suppress.
+// 0.125 / 0.75 / 0.5:  edge 0.25, largest contrast 0.375 < 2*0.25 => retain.
+// Adjacent-pixel second contrasts would be 0.375 and 0.625 respectively,
+// giving the opposite answers. Both edges exceed every preset's threshold;
+// the inequalities have enough margin for RGBA16F quantization.
+// Shader compilation cannot establish these sampled-pixel decisions.
+#[test]
+fn color_local_contrast_matches_reference_pixel_pairs() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let size = [8, 8];
+    let mut smaa = Smaa::new(&device, &queue, size[0], size[1], FORMAT, QUALITIES[0]).unwrap();
+    let output = image_target(&device, size).create_view(&Default::default());
+    for quality in QUALITIES {
+        smaa.set_quality(&device, quality);
+        for axis in 0..2 {
+            // A contrast in any RGB channel is an edge in colour detection;
+            // luma detection would lose especially the blue-only contrast.
+            for channel in 0..3 {
+                for (neighbour, centre, retained) in [(0.5, 0.75, false), (0.75, 0.5, true)] {
+                    let mut texels = Vec::new();
+                    for y in 0..size[1] {
+                        for x in 0..size[0] {
+                            let level = match [x, y][axis] {
+                                2 => 0.125,
+                                3 => neighbour,
+                                _ => centre,
+                            };
+                            let mut pixel = [0., 0., 0., 1.];
+                            pixel[channel] = crate::shading::srgb::to_linear(level);
+                            texels.push(pixel);
+                        }
+                    }
+                    let input = hdr_texture(&device, &queue, size, &texels);
+                    let mut encoder = device.create_command_encoder(&Default::default());
+                    smaa.encode(&device, &mut encoder, &input, &output, None);
+                    queue.submit([encoder.finish()]);
+                    let edges = read(&device, &queue, smaa.edges.texture(), 8);
+                    // Probe (4,4): immediate neighbours in the other axis,
+                    // and right/bottom, have the centre's colour.
+                    let offset = ((4 * size[0] + 4) * 8) as usize;
+                    let observed = [half(&edges[offset..]), half(&edges[offset + 2..])];
+                    let mut expected = [0., 0.];
+                    expected[axis] = if retained { 1. } else { 0. };
+                    assert_eq!(
+                        observed, expected,
+                        "{quality:?}, axis {axis}, RGB channel {channel}, neighbour {neighbour}, centre {centre}: colour-reference local contrast"
+                    );
+                }
+            }
+        }
+    }
+}
 
 /// The triangle's level on black for an edge of contrast 32/255, about
 /// 0.125, in the sRGB encoding SMAA detects edges on: between Medium's

@@ -419,7 +419,11 @@ Stages run in one order, written in one place in `renderer`:
    grading, dithered to the output. Where SMAA runs, tone mapping writes the
    scene size, SMAA antialiases that display colour, and it is resampled to
    the output and dithered, as Godot and Bevy run SMAA after tone mapping
-   and before upscaling, so its thresholds see what is displayed.
+   and before upscaling, so its thresholds see what is displayed. Its colour
+   detector follows `SMAAColorEdgeDetectionPS`, including centre-to-left-left
+   and centre-to-top-top local contrasts; the luma detector's neighbour-to-
+   next-neighbour pairs are a different algorithm (see the
+   [SMAA provenance](../crates/sgl-3d/src/stages/post/smaa/README.md)).
 
 A new feature takes a place in this list by editing it here. A probe capture
 is a `Renderer` operation that runs prepare, shadows and opaque over its own
