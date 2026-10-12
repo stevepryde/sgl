@@ -21,13 +21,19 @@
 // - spatial reconstruction reads rays within SpatialReconstructionRadius
 //   times a Poisson offset shorter than 1, rounded, a pixel. At half
 //   resolution DFX-55 selects the containing 2x2 block, whose traced pixel
-//   is at most one pixel beyond ceil(radius);
+//   is at most one pixel beyond ceil(radius) in complete blocks. An odd
+//   trailing row/column clamps to the preceding ray block, requiring the
+//   existing two-pixel allowance;
 // - temporal accumulation's 3×3 neighbourhood statistic, a pixel;
 // - bilateral cleanup's kernel, i32(min(2 sigma, Radius)) pixels, its Radius
 //   at most 2.
 fn DenoiserReach() -> i32
 {
+#if SSR_OPTION_HALF_RESOLUTION
+    let Rounding = 2;
+#else
     let Rounding = 1;
+#endif
     // DFX-30: each at most its kernel's largest, so the dilation's loops end whatever the attributes hold.
     let Spatial = clamp(i32(ceil(g_SSRAttribs.SpatialReconstructionRadius)), 0, SSR_SPATIAL_RECONSTRUCTION_MAX_RADIUS) + Rounding;
     let Bilateral = clamp(i32(2.0 * g_SSRAttribs.BilateralCleanupSpatialSigmaFactor), 0, SSR_BILATERAL_MAX_RADIUS);

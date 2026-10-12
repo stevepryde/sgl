@@ -31,7 +31,8 @@ licences, source revisions and the blue-noise table source it reads.
   hierarchical SSR traces (DFX-18). A ray stops at the viewport edge (DFX-22)
   and at the far plane (DFX-26), as AMD's hybrid traversal stops it. At half
   resolution each displaced pixel centre reads the ray of its containing
-  2×2 block, so a mirror reads only its own block (DFX-55). A block whose
+  2×2 block, so a mirror in a complete block reads its own ray (DFX-55).
+  An unpaired final row or column clamps to the existing ray grid. A block whose
   traced pixel is background reports a miss, as AMD traces no ray there;
   its other mirror and near-mirror pixels take the environment, rough ones
   neighbouring blocks' rays (DFX-41). At full

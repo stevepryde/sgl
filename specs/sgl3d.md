@@ -210,7 +210,8 @@ The code's structure follows the
      an exhaustive difference catalogue is not required. Scene and frame
      integration belongs in SGL3D. Its half-resolution SSR reconstructs from
      the ray of the 2×2 block containing each displaced pixel centre; at
-     roughness zero every pixel reads only its own block's ray. Full-resolution
+     roughness zero each complete block reads only its own ray. An unpaired
+     final row or column clamps to the existing ray grid. Full-resolution
      reconstruction keeps its per-pixel ray grid.
    - Exception: the external `sp-fidelity` (FSR2) is a 1:1 port. It diverges
      from upstream only
