@@ -193,6 +193,8 @@ pub(crate) struct Exposure {
     exposure_view: wgpu::TextureView,
     /// The fixed exposure last written, while exposure is fixed.
     fixed: Option<f32>,
+    /// A switch to automatic exposure, retained until its frame finishes.
+    pending_reset: bool,
     /// One bind group per frame view metered, until the views are replaced.
     groups: Vec<(wgpu::TextureView, wgpu::BindGroup)>,
 }
@@ -319,6 +321,7 @@ impl Exposure {
             exposure_view: exposure.create_view(&Default::default()),
             exposure,
             fixed: None,
+            pending_reset: false,
             layout,
             groups: Vec::new(),
         }
@@ -358,7 +361,8 @@ impl Exposure {
         };
         // Automatic exposure restarts at its target with history, and when
         // it follows a fixed exposure.
-        let reset = !ctx.history.valid || self.fixed.take().is_some();
+        self.pending_reset |= self.fixed.take().is_some();
+        let reset = !ctx.history.valid || self.pending_reset;
         self.meter(
             ctx.device,
             ctx.queue,
@@ -372,6 +376,14 @@ impl Exposure {
             },
             ctx.timing,
         );
+    }
+
+    /// Confirms the last encoded frame's mode. An abandoned automatic frame
+    /// leaves its switch from fixed pending until a frame is submitted.
+    pub fn finish_frame(&mut self) {
+        if self.fixed.is_none() {
+            self.pending_reset = false;
+        }
     }
 
     /// Auto exposure of `frame` as `metering` asks.

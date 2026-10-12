@@ -204,6 +204,7 @@ frame.color_grading = ColorGrading {
   long the frame, and stays within
   `correction_min..=correction_max`. A camera cut, a target-changing resize,
   another scene or a switch from a fixed exposure sets it to its target.
+  An abandoned encoder retains that switch for the next submitted frame.
   Timing group `exposure`.
 - Bloom is Bevy's energy-conserving bloom: a mip chain 512 texels high (a
   scene too wide for that, such as a window one pixel tall, takes the

@@ -328,6 +328,7 @@ impl Renderer {
                 dynamic_gi.finish_frame();
             }
             self.cull.finish_frame();
+            self.exposure.finish_frame();
             self.statistics.submitted();
             #[cfg(feature = "diagnostics")]
             if let Some(probe) = &mut self.probe {
