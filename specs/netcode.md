@@ -23,6 +23,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    after a short back-off. A native WebSocket client tries each address its
    host resolves to, in order, until one accepts; one `handshake_timeout`
    bounds host resolution, those attempts and the HTTP upgrade together.
+   Each TCP attempt gets an equal share of the remaining time among the
+   untried addresses, so a silent address leaves time for later addresses;
+   the final attempt gets all the remaining time.
    Native WebSocket accepted and connecting sockets disable Nagle's algorithm
    before the HTTP upgrade, best effort: failure to set `TCP_NODELAY` does
    not reject the connection.
