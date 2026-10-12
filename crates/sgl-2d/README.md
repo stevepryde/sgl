@@ -43,7 +43,8 @@ respect keyboard and pointer capture before dispatching world actions.
 Keep focus-loss handling, clipboard access, layout, and persistence in the
 game. Clearable line and password edits keep text and the caret left of their
 visible clear button. Numeric fields scrub from horizontal travel; a drag on
-either axis prevents the click from opening typing. [Tool composition](../../specs/client.md#tool-composition) documents
+either axis prevents the click from opening typing. Oversized numeric typing
+drafts use scientific notation to leave room for edits. [Tool composition](../../specs/client.md#tool-composition) documents
 pane layout, themes, input ordering, clipping, and keyboard behavior.
 Custom `overlay_panel_begin` controls remain below and pointer-blocked by
 open dropdown popovers and confirmation modals, even when submitted later.

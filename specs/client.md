@@ -116,7 +116,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    middle past a small threshold scrubs the value by its speed per pixel from
    the press point; travel past the threshold on either axis prevents click-to-type.
    A press released inside the threshold opens the middle for
-   typing, and the typed text is re-parsed whenever it changes — a parse that succeeds
+   typing. Opening drafts use scientific notation when fixed-point text exceeds
+   the 24-character editing limit. The typed text is re-parsed whenever it changes — a parse that succeeds
    stores the number and one that fails leaves the value. Every stored value
    is clamped into the field's range. Widgets emit only to the screen channel.
    A splitter captures pointer travel along its configured axis, changes a
