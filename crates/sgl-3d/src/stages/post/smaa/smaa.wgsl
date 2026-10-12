@@ -11,7 +11,10 @@
 // distances, rounded as SMAA.hlsl rounds its own; the input is tone-mapped,
 // display-linear colour, whose sRGB encoding edges are detected on
 // (`encoded`) and which blending mixes linearly, as SMAA.hlsl asks of its
-// colour input.
+// colour input. Local contrast keeps SMAAColorEdgeDetectionPS's centre-to-
+// left-left/top-top pairs (iryoku/smaa 27fad0b, SMAA.hlsl), as Three does.
+// SMAALumaEdgeDetectionPS instead compares each neighbour with its next one;
+// that luma-specific arithmetic does not belong in this colour detector.
 // Copyright and permission notices: LICENSE-three.txt and LICENSE-smaa.txt.
 
 // SMAA_THRESHOLD and SMAA_MAX_SEARCH_STEPS; diagonal and corner detection

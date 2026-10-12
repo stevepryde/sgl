@@ -21,6 +21,14 @@ where the line's end was not found; this port keeps `SMAA.hlsl`'s `d.z`.
 The corners take Three's search ends and distances, rounded as `SMAA.hlsl`
 rounds its own.
 
+Local contrast follows the reference's **colour** detector:
+[`SMAAColorEdgeDetectionPS`](https://github.com/iryoku/smaa/blob/27fad0bf7313765b0472bef46b280734e558a26b/SMAA.hlsl#L791-L805)
+compares the centre with the left-left and top-top pixels, as Three's
+[`SMAANode.js`](https://github.com/mrdoob/three.js/blob/r185/examples/jsm/tsl/display/SMAANode.js#L346-L358)
+does. The reference's luma detector and Bevy's luma port instead compare
+the left with left-left and top with top-top. Substituting those pairs in
+the colour detector changes which edges survive.
+
 The port retains Three's fullscreen triangle, CPU-computed inverse dimensions,
 vertex-interpolated UV/offset/pixel coordinates and sequential search corrections.
 The final atlas correction uses explicit `fma` to prevent Metal reassociation of
@@ -109,3 +117,13 @@ cargo test -p sgl-3d --lib smaa_antialiases_the_displayed_image_whatever_the_exp
 
 The diagonal test compares against supersampled mathematical coverage; it does
 not depend on AI image recognition.
+
+The local-contrast GPU test reads the actual edge texture for a rising gradient
+and a reversed step, horizontally and vertically, in each RGB channel and at
+every preset. Hand-computed colour-reference contrasts require the former to
+be suppressed and the latter retained; the luma detector's pixel pairs give
+the opposite answers. It checks edge decisions, not captured-image digests.
+
+```sh
+cargo test -p sgl-3d --lib color_local_contrast_matches_reference_pixel_pairs
+```
