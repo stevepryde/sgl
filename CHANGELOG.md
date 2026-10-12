@@ -34,6 +34,7 @@ docs and specs the entry links.
 - `sgl-3d` `LightShape::Spot`: a closed or unrepresentably narrow casting cone formerly built a non-finite shadow view; it now releases its shadow slots until its projection is finite. No game-code changes are needed.
 - `sgl-2d` `Context`: windows larger than the device texture limit formerly panicked during startup or resize; swapchain dimensions are now capped per axis to that limit. No game-code changes are needed.
 - `sgl-3d` `Exposure`: abandoning the first automatic frame after fixed exposure formerly lost its snap to target; the next submitted automatic frame now snaps. No game-code changes are needed.
+- `sgl-post-fx` SSR: glossy grazing sample PDFs formerly relied on backend half-float overflow behavior; stored PDFs now clamp to the finite range so reconstruction keeps their weight. No game-code changes are needed.
 
 - `sgl-3d` `Renderer` geometry pipelines: each change of rect lights, decals, films, sheens, diffuse transmission, transmissive materials or diagnostics layers formerly kept every earlier pipeline set for the renderer's lifetime; only the current and previous sets are now kept. No game-code changes are needed.
 - `sgl-3d` hardware ray tracing: a model whose indices start 4 GiB or more into the ray source formerly failed wgpu's BLAS build validation and panicked; it is now left out of the TLAS as a model past the device's BLAS limits is. No game-code changes are needed.

@@ -453,6 +453,8 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     // as RGBA16F holds, along its direction; a longer ray before the plane is clamped to that.
     let RayLength = distance(SurfaceHitVS, RayOriginVS);
     let StoredLength = select(min(RayLength, HALF_MAX), HALF_MAX, IsBackground(SurfaceHitSS.z));
-    Output.DirectionPDF = vec4<f32>(RayDirectionWS * StoredLength, RayDirectionVS.w);
+    // DFX-60: a sharp GGX lobe at grazing incidence exceeds RGBA16F's finite range.
+    // Clamp before conversion so reconstruction never divides by an infinite PDF.
+    Output.DirectionPDF = vec4<f32>(RayDirectionWS * StoredLength, min(RayDirectionVS.w, HALF_MAX));
     return Output;
 }
