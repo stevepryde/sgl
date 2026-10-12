@@ -16,7 +16,8 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use super::packet::{self, Item, Parsed};
 use super::simulated::{SimulatedConfig, SimulatedNetwork, SimulatedTransport};
 use super::{DatagramTransport, Endpoint, EndpointConfig, EndpointEvent, MAX_DATAGRAM_BYTES};
-use crate::{Delivery, Lane, RELIABLE_LANES};
+use crate::lanes::InboundUsage;
+use crate::{Delivery, DisconnectReason, Lane, RELIABLE_LANES, SendError};
 
 const TICK_MS: u64 = 16;
 const MAGIC: [u8; 3] = *b"LNS";
@@ -545,6 +546,120 @@ fn unreliable_over_a_lossy_network_is_at_most_once() {
         "an unreliable message delivered twice"
     );
     assert!(delivered.iter().all(|&index| index < sent));
+}
+
+/// #637: a closing sender must keep a held final message alive beyond the
+/// receiver's timeout. Observe delivery after two seconds of backpressure,
+/// followed by `Peer`, with a three-second grace and one-second timeout.
+/// If the receiver never makes room, repeated disconnects and keepalives
+/// must still end the connection at the original grace deadline.
+#[wasm_bindgen_test(unsupported = test)]
+#[allow(clippy::too_many_lines)]
+fn graceful_close_keeps_held_lane_alive_until_release_or_deadline() {
+    for release_after_ms in [Some(2_000), None] {
+        let network = SimulatedNetwork::new(
+            SimulatedConfig {
+                one_way_latency_ms: 0,
+                jitter_ms: 0,
+                loss_per_10k: 0,
+                duplicate_per_10k: 0,
+                reorder_per_10k: 0,
+                ..SimulatedConfig::default()
+            },
+            637,
+        )
+        .unwrap();
+        let mut config = EndpointConfig {
+            timeout_ms: 1_000,
+            close_grace_ms: 3_000,
+            ..EndpointConfig::new(MAGIC)
+        };
+        config.reliable.lanes[realtime().index()].inbound_messages = 1;
+        let bounds = config.reliable.lanes[realtime().index()];
+        let mut server =
+            Endpoint::server(network.transport(SERVER), config.clone(), [63; 32]).unwrap();
+        let mut client = Endpoint::client(network.transport(CLIENT), config).unwrap();
+        let peer = client.start_connect(SERVER, 0, 7).unwrap();
+        assert!(server.poll(0).is_empty());
+        assert!(client.poll(0).is_empty());
+        assert_eq!(server.poll(0), [EndpointEvent::Connected { peer: 1 }]);
+        assert_eq!(client.poll(0), [EndpointEvent::Connected { peer }]);
+
+        client
+            .send(peer, Delivery::RELIABLE_ORDERED, b"before")
+            .unwrap();
+        client
+            .send(peer, Delivery::RELIABLE_ORDERED, b"final")
+            .unwrap();
+        client.disconnect(peer, 10);
+        assert_eq!(
+            server.poll(10),
+            [EndpointEvent::Message {
+                peer: 1,
+                delivery: Delivery::RELIABLE_ORDERED,
+                payload: b"before".to_vec(),
+            }]
+        );
+        server.flush(10);
+        assert_eq!(
+            client.poll(10),
+            [EndpointEvent::Disconnected {
+                peer,
+                reason: DisconnectReason::Local
+            }]
+        );
+
+        // Model the receiver's ingress still holding the first message.
+        let mut ingress = InboundUsage::default();
+        ingress.add(b"before".len(), &bounds);
+        let holding = |_, lane| {
+            if lane == realtime() {
+                ingress
+            } else {
+                InboundUsage::default()
+            }
+        };
+        let wait_ms = release_after_ms.unwrap_or(3_000);
+        for elapsed_ms in (100..wait_ms).step_by(100) {
+            let now_ms = 10 + elapsed_ms;
+            if elapsed_ms == 1_000 {
+                client.disconnect(peer, now_ms);
+            }
+            client.flush(now_ms);
+            let events = server.poll_within(now_ms, holding);
+            assert!(events.is_empty(), "after {elapsed_ms} ms: {events:?}");
+            server.flush(now_ms);
+            assert!(client.poll(now_ms).is_empty());
+        }
+        assert_eq!(
+            client.send(peer, Delivery::RELIABLE_ORDERED, b"late"),
+            Err(SendError::Disconnected)
+        );
+
+        let now_ms = 10 + wait_ms;
+        client.flush(now_ms);
+        if release_after_ms.is_some() {
+            assert_eq!(
+                server.poll(now_ms),
+                [EndpointEvent::Message {
+                    peer: 1,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: b"final".to_vec(),
+                }]
+            );
+            server.flush(now_ms);
+            assert!(client.poll(now_ms).is_empty());
+        }
+        assert_eq!(
+            server.poll_within(now_ms, holding),
+            [EndpointEvent::Disconnected {
+                peer: 1,
+                reason: DisconnectReason::Peer
+            }]
+        );
+        assert!(server.poll(now_ms + 1).is_empty());
+        assert!(client.poll(now_ms + 1).is_empty());
+    }
 }
 
 /// Every datagram a transport sent, with when.
