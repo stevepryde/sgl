@@ -2544,3 +2544,156 @@ fn toggling_half_precision_depth_recreates_the_depths() {
         queue.submit([encoder.finish()]);
     }
 }
+
+// Camera source changes must bind that frame's cameras without ever writing
+// inline cameras into a caller's allocation. Validation exposes a write into
+// a read-only caller buffer; readback exposes silent writes into a writable one.
+fn context_alternates_camera_sources(caller_usage: wgpu::BufferUsages) {
+    use wgpu::util::DeviceExt;
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let identity = [
+        1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+    ];
+    let curr = CameraAttribs {
+        m_view_proj_inv: identity,
+        m_view_proj: identity,
+        ..camera(false, 0)
+    };
+    let original = [curr, curr];
+    let caller = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("caller camera buffer"),
+        contents: bytemuck::cast_slice(&original),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_SRC | caller_usage,
+    });
+    let bytes = size_of_val(&original) as u64;
+    let caller_readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: bytes,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let depth_readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 4,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let sampled_depth = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 4,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(
+            r#"
+            @group(0) @binding(0) var depth: texture_2d<f32>;
+            @group(0) @binding(1) var<storage, read_write> output: f32;
+            @compute @workgroup_size(1)
+            fn main() { output = textureLoad(depth, vec2<i32>(32, 24), 0).r; }
+        "#
+            .into(),
+        ),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let mut context = PostFXContext::new(&device, &queue, Default::default());
+    // Orthographic identity reconstruction makes a surface at z=.25. The
+    // inline previous camera translates it by +.5 or -.125; the caller's
+    // camera does not move it. These are geometric depths, not buffer contents.
+    for (index, offset) in [None, Some(0.5), None, Some(-0.125)]
+        .into_iter()
+        .enumerate()
+    {
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let depth = depth(&device, &mut encoder, 0.25);
+        let mut prev = curr;
+        prev.m_view_proj[14] = offset.unwrap_or(0.0);
+        context.prepare_resources(
+            &device,
+            &FrameDesc {
+                index: index as u32,
+                width: SIZE[0],
+                height: SIZE[1],
+                output_width: SIZE[0],
+                output_height: SIZE[1],
+            },
+            post_fx_context::FeatureFlags::NONE,
+        );
+        context.execute(&mut RenderAttributes {
+            device: &device,
+            queue: &queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &depth,
+            prev_depth_buffer_srv: &depth,
+            curr_camera: Some(&curr),
+            prev_camera: Some(&prev),
+            camera_attribs_cb: offset.is_none().then_some(&caller),
+            pass_timestamps: None,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(context.get_reprojected_depth()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: sampled_depth.as_entire_binding(),
+                },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&sampled_depth, 0, &depth_readback, 0, 4);
+        encoder.copy_buffer_to_buffer(&caller, 0, &caller_readback, 0, bytes);
+        queue.submit([encoder.finish()]);
+        if let Some(error) = pollster::block_on(validation.pop()) {
+            panic!("camera source frame {index}: {error}");
+        }
+        depth_readback.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
+        caller_readback.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        {
+            let read = depth_readback.get_mapped_range(..).unwrap();
+            let z = f32::from_le_bytes(read[..4].try_into().unwrap());
+            assert!(
+                (z - [0.25, 0.75, 0.25, 0.125][index]).abs() < 1e-5,
+                "frame {index} reprojected depth is {z}"
+            );
+            let read = caller_readback.get_mapped_range(..).unwrap();
+            assert!(
+                &*read == bytemuck::cast_slice(&original),
+                "frame {index} changed caller cameras"
+            );
+        }
+        depth_readback.unmap();
+        caller_readback.unmap();
+    }
+}
+
+#[test]
+fn context_alternates_read_only_caller_and_inline_cameras() {
+    context_alternates_camera_sources(wgpu::BufferUsages::empty());
+}
+
+#[test]
+fn context_alternates_writable_caller_and_inline_cameras() {
+    context_alternates_camera_sources(wgpu::BufferUsages::COPY_DST);
+}
