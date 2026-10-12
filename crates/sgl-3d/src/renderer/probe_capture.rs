@@ -172,9 +172,11 @@ impl Renderer {
             );
             queue.submit([face.finish()]);
         }
+        // The submitted capture already overwrote the frame's shadow atlas.
+        // Invalidate its cache even if prefilter readback subsequently fails.
+        self.shadows.local.finish_capture();
         prefilter.encode(device, &mut encoder);
         let rgba16 = prefilter.read(device, queue, encoder)?;
-        self.shadows.local.finish_capture();
         Ok(SpecularProbeRadiance {
             face_size,
             texels: SpecularProbeTexels::Rgba16Float(rgba16),
