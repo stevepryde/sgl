@@ -20,6 +20,10 @@ docs and specs the entry links.
   diagonal slides stop earlier along the surface by the backed-off motion's
   tangential component. No game-code changes unless a game depended on the
   exact stop position.
+- `sgl-2d` `confirm_modal` and dropdown popovers: controls inside
+  `overlay_panel_begin` could act and draw over them; they now stay below
+  and are blocked by the dialog or popover. No game-code changes.
+
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they

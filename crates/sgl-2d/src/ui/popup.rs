@@ -123,7 +123,8 @@ impl UiFrame<'_> {
     /// ordinary widgets underneath on the following frames — the same
     /// semantics as an open dropdown popover, for panels the caller lays
     /// out itself. Draws the panel backdrop + accent border. Like a popover,
-    /// only the part inside the current clip blocks.
+    /// only the part inside the current clip blocks. Open popovers and
+    /// modals still draw above and block this panel's controls.
     pub fn overlay_panel_begin(&mut self, panel: Rect) {
         self.overlay = true;
         self.new_blocked.extend(
@@ -277,15 +278,15 @@ impl UiFrame<'_> {
     /// spot at once.
     fn shield_open_popover(&mut self, id: u64, visible: Option<Rect>) {
         if self.ui.open_popup == Some(id) {
-            self.new_popover_blocked = visible;
+            self.new_popover_blocked = visible.map(|rect| (id, rect));
         }
     }
 
     /// A modal confirmation dialog in the overlay band: dims `screen`,
     /// draws `panel` with a title, a body line, and CONFIRM/CANCEL buttons.
-    /// While shown it blocks every ordinary widget (input never reaches
-    /// them). Returns `Some(true)` on confirm, `Some(false)` on cancel,
-    /// `None` otherwise — the **caller** owns the open/closed state.
+    /// While shown it draws above and blocks all widgets outside the dialog,
+    /// including custom overlay panels. Returns `Some(true)` on confirm,
+    /// `Some(false)` on cancel, `None` otherwise — the **caller** owns the open/closed state.
     #[allow(clippy::too_many_arguments)]
     pub fn confirm_modal(
         &mut self,
@@ -301,6 +302,7 @@ impl UiFrame<'_> {
         self.overlay = true;
         self.ui.keyboard_captured = true;
         self.ui.open_popup = None;
+        self.ui.popover_blocked = None;
         let modal_was = self.modal_scope;
         self.modal_scope = Some(widget_id(name));
 
@@ -375,6 +377,170 @@ mod tests {
     use crate::ui::UiInput;
     use crate::ui::test_ui::{BTN, ROW, fixture, hover_at, press_at};
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn modal_pointer_scope_excludes_custom_overlay() {
+        let (mut ui, mut text, _assets) = fixture();
+        let screen = Rect::new(0.0, 0.0, 960.0, 540.0);
+        let mut modal_open = true;
+        let mut fired = Vec::new();
+        for (index, input) in [
+            UiInput::default(),
+            press_at(50.0, 30.0),   // Under the dim layer, outside the dialog.
+            press_at(575.0, 312.0), // The modal's Cancel button.
+            press_at(50.0, 30.0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut list = DrawList::new();
+            let mut f = ui.begin(&mut text, &mut list, input);
+            f.overlay_panel_begin(BTN);
+            fired.push(f.button("panel.delete", BTN, "Delete", 20.0));
+            f.overlay_panel_end();
+            if modal_open {
+                let result = f.confirm_modal(
+                    "modal",
+                    screen,
+                    "Delete room",
+                    "Discard changes?",
+                    "Delete",
+                    "Cancel",
+                    20.0,
+                );
+                assert_eq!(result, if index == 2 { Some(false) } else { None });
+                modal_open = result.is_none();
+            }
+            f.end();
+        }
+        assert_eq!(fired, [false, false, false, true]);
+        assert!(
+            !modal_open,
+            "the modal's own Cancel button remains interactive"
+        );
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn overlay_dropdown_selection_blocks_buttons_in_either_submission_order() {
+        for under_first in [false, true] {
+            let (mut ui, mut text, _assets) = fixture();
+            let dd = Rect::new(10.0, 10.0, 160.0, 30.0);
+            let under = Rect::new(10.0, 72.0, 160.0, 30.0);
+            let mut selected = 0;
+            let mut fired = Vec::new();
+            let mut changed = Vec::new();
+            for input in [
+                press_at(50.0, 25.0),
+                hover_at(50.0, 85.0, false),
+                press_at(50.0, 85.0),
+                press_at(50.0, 85.0),
+            ] {
+                let mut list = DrawList::new();
+                let mut f = ui.begin(&mut text, &mut list, input);
+                f.overlay_panel_begin(Rect::new(0.0, 0.0, 200.0, 160.0));
+                if under_first {
+                    fired.push(f.button("under", under, "Delete", 20.0));
+                }
+                changed.push(f.dropdown("menu", dd, &["a", "b", "c"], &mut selected, 20.0));
+                if !under_first {
+                    fired.push(f.button("under", under, "Delete", 20.0));
+                }
+                f.overlay_panel_end();
+                f.end();
+            }
+            assert_eq!(fired, [false, false, false, true]);
+            assert_eq!(changed, [false, false, true, false]);
+            assert_eq!(selected, 1);
+            assert!(!ui.any_popup_open());
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn modal_dismisses_overlapping_popover_without_blocking_own_buttons() {
+        let (mut ui, mut text, _assets) = fixture();
+        let mut selected = 0;
+        // The popover occupies y=282..372 over the modal's Cancel button.
+        let dd = Rect::new(500.0, 250.0, 160.0, 30.0);
+        for input in [press_at(550.0, 265.0), UiInput::default()] {
+            let mut list = DrawList::new();
+            let mut f = ui.begin(&mut text, &mut list, input);
+            f.dropdown("menu", dd, &["a", "b", "c"], &mut selected, 20.0);
+            f.end();
+        }
+        assert!(ui.any_popup_open());
+        let mut list = DrawList::new();
+        let mut f = ui.begin(&mut text, &mut list, press_at(575.0, 312.0));
+        assert_eq!(
+            f.confirm_modal(
+                "modal",
+                Rect::new(0.0, 0.0, 960.0, 540.0),
+                "Delete",
+                "Sure?",
+                "Delete",
+                "Cancel",
+                20.0,
+            ),
+            Some(false),
+        );
+        f.end();
+        assert!(!ui.any_popup_open());
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn popover_and_modal_draw_above_later_overlay_controls() {
+        let (mut ui, mut text, _assets) = fixture();
+        let dd = Rect::new(10.0, 10.0, 160.0, 30.0);
+        let under = Rect::new(10.0, 72.0, 160.0, 30.0);
+        let mut selected = 0;
+        let mut list = DrawList::new();
+        let mut f = ui.begin(&mut text, &mut list, press_at(50.0, 25.0));
+        f.overlay_panel_begin(Rect::new(0.0, 0.0, 200.0, 160.0));
+        f.dropdown("menu", dd, &["a", "b", "c"], &mut selected, 20.0);
+        f.overlay_panel_end();
+        f.end();
+
+        let mut list = DrawList::new();
+        let mut f = ui.begin(&mut text, &mut list, UiInput::default());
+        f.overlay_panel_begin(Rect::new(0.0, 0.0, 200.0, 160.0));
+        let popup_start = f.list.screen.len();
+        f.dropdown("menu", dd, &["a", "b", "c"], &mut selected, 20.0);
+        let popup_draws = f.list.screen[popup_start..].to_vec();
+        let button_start = f.list.screen.len();
+        f.button("under", under, "Delete", 20.0);
+        let button_draws = f.list.screen[button_start..].to_vec();
+        f.overlay_panel_end();
+        f.end();
+        // The dropdown button is part of the panel; its popover's backdrop
+        // covers y=42..132, including the later control at y=72..102.
+        let popover = popup_draws
+            .iter()
+            .find(|draw| draw.scale == Vec2::new(160.0, 90.0))
+            .unwrap();
+        assert!(button_draws.iter().all(|draw| draw.z < popover.z));
+
+        let mut list = DrawList::new();
+        let mut f = ui.begin(&mut text, &mut list, UiInput::default());
+        f.confirm_modal(
+            "modal",
+            Rect::new(0.0, 0.0, 960.0, 540.0),
+            "Delete",
+            "Sure?",
+            "Delete",
+            "Cancel",
+            20.0,
+        );
+        let dim = f.list.screen[0];
+        let panel_start = f.list.screen.len();
+        f.overlay_panel_begin(BTN);
+        f.button("later", BTN, "Background", 20.0);
+        f.overlay_panel_end();
+        assert!(
+            f.list.screen[panel_start..]
+                .iter()
+                .all(|draw| draw.z < dim.z)
+        );
+        f.end();
+    }
 
     #[wasm_bindgen_test(unsupported = test)]
     fn modal_keyboard_scope_excludes_custom_overlay() {
