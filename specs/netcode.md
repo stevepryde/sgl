@@ -217,7 +217,12 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     rather than waiting out `timeout_ms`. Every disconnect a UDP endpoint
     sends (a close, a deny's answer, or a peer closed for a violation,
     overflow or stalled send) goes out three times, so one lost datagram
-    does not leave the remote holding the connection until `timeout_ms`.
+    does not leave the remote holding the connection until `timeout_ms`. Dropping an endpoint
+    or shutting down its threaded worker sends that same best-effort redundant
+    disconnect to every remaining peer before the socket closes, abandoning
+    queued outbound messages. A threaded worker that stops or panics ends
+    every still-live connection locally, after messages already delivered to
+    ingress, on subsequent caller polls; it admits no further sends.
 13. WebSocket frames use the 18-byte version-2 envelope: magic, version, flags
     (kind 0 reliable, 1 latest, 2 unreliable; FIRST; MORE), lane, big-endian
     sequence (0 for reliable and unreliable, strictly increasing for latest),

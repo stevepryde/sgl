@@ -33,6 +33,11 @@ docs and specs the entry links.
 - `sgl-post-fx` SSR: missed rays no longer set the reflection's reprojection
   depth; only confirmed hits supply the virtual-point distance. No game-code
   changes.
+- `sgl-net` UDP `Endpoint`, `UdpServer`, `UdpClient` and
+  `ThreadedUdpServer`: dropping an endpoint or shutting down its worker now
+  notifies peers instead of leaving them to time out; a stopped or panicked
+  worker reports each live connection `Local` after its queued messages.
+  No game-code changes.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;

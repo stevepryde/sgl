@@ -266,6 +266,76 @@ mod tests {
         assert!(delivered);
     }
 
+    fn connected_pair() -> (UdpServer, UdpClient, ConnectionId) {
+        let mut server = UdpServer::bind_with_key(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            EndpointConfig::default(),
+            [51; 32],
+        )
+        .unwrap();
+        let mut client = UdpClient::connect_with_nonce(
+            server.local_addr().unwrap(),
+            EndpointConfig::default(),
+            0,
+            61,
+        )
+        .unwrap();
+        let mut connection = None;
+        let mut client_connected = false;
+        for now in 0..1_000 {
+            for event in server.poll(now) {
+                if let ServerEvent::Connected { conn } = event {
+                    connection = Some(conn);
+                }
+            }
+            client_connected |= client.poll(now).contains(&ClientEvent::Connected);
+            server.flush(now);
+            client.flush(now);
+            if let Some(conn) = connection
+                && client_connected
+            {
+                return (server, client, conn);
+            }
+        }
+        panic!("loopback handshake did not complete");
+    }
+
+    // A real socket reports Peer before the 10 s timeout and a quitting client
+    // releases its server slot. Socket close alone cannot provide this signal.
+    #[test]
+    fn dropping_a_caller_polled_server_notifies_its_client() {
+        let (server, mut client, _) = connected_pair();
+        drop(server);
+        let mut events = Vec::new();
+        for now in 1_000..1_100 {
+            events.extend(client.poll(now));
+        }
+        assert_eq!(
+            events,
+            [ClientEvent::Disconnected {
+                reason: DisconnectReason::Peer
+            }]
+        );
+    }
+
+    #[test]
+    fn dropping_a_caller_polled_client_notifies_its_server() {
+        let (mut server, client, conn) = connected_pair();
+        drop(client);
+        let mut events = Vec::new();
+        for now in 1_000..1_100 {
+            events.extend(server.poll(now));
+        }
+        assert_eq!(
+            events,
+            [ServerEvent::Disconnected {
+                conn,
+                reason: DisconnectReason::Peer
+            }]
+        );
+        assert_eq!(server.endpoint.peer_count(), 0);
+    }
+
     #[test]
     fn initial_timeout_disconnects_the_client() {
         let config = EndpointConfig {

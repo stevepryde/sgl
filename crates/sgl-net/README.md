@@ -113,6 +113,13 @@ Retransmission timing still applies, and disconnecting again restarts
 neither the resend budget nor the deadline. Acknowledgements and keepalives
 continue during close within the usual datagram budget, keeping a receiver
 that is holding data alive even when the grace exceeds `timeout_ms`.
+Dropping a UDP endpoint, server
+or client, or calling `ThreadedUdpServer::shutdown`, immediately abandons
+queued sends and sends redundant best-effort disconnects before closing its
+socket; reachable peers report `Peer` without waiting for the timeout. Polling
+a threaded server after shutdown or a worker panic returns its queued
+messages followed by one `Disconnected { reason: Local }` for each live
+connection; it accepts no more sends.
 
 The [browser probe](examples/browser_probe.rs) and its
 [native fixture server](examples/ws_fixture_server.rs) demonstrate browser
