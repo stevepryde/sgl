@@ -43,7 +43,8 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 // (9d12036 `bevy_post_process/src/auto_exposure/settings.rs`). Metering
 // follows `Exposure::stops`, so one fixed range serves every scene.
 // The log2 luminance the histogram spans (Bevy's `range`). Luminance below
-// it is metered at the least; above it counts in the highest bin.
+// it positions the percentile window without entering the average; above
+// it counts in the highest bin. An empty average takes the minimum.
 const MIN_LOG_LUMINANCE: f32 = -8.;
 const MAX_LOG_LUMINANCE: f32 = 8.;
 // The share of samples, from the darkest, metering ignores, and the share

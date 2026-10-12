@@ -372,7 +372,8 @@ Environment and probe specular always apply. On top of them:
   full size.
 - **Exposure** (`FrameInput::exposure`): fixed stops, or automatic exposure
   from a log-luminance histogram with a metering mask, a compensation curve,
-  separate brightening and darkening speeds and limits. FSR2 and the tone map
+  separate brightening and darkening speeds and limits. Near-black pixels
+  position the outlier filter but do not lower the average. FSR2 and the tone map
   take the same exposure.
   [Exposure, bloom and colour grading](../README.md#exposure-bloom-and-colour-grading).
 - **Bloom** (`FrameInput::bloom`): energy-conserving, through a mip chain;

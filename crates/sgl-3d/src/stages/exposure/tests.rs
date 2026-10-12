@@ -66,6 +66,132 @@ fn grey(device: &wgpu::Device, queue: &wgpu::Queue, luminance: f32) -> wgpu::Tex
     )
 }
 
+// Defect: counting near-black pixels at the histogram minimum pulls the
+// average down and overexposes the lit half by about four stops. The oracle
+// is the remaining half's physical luminance, 1 (log2 0), within a bin.
+#[test]
+fn near_black_pixels_do_not_pull_down_the_lit_average() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let mut exposure = Exposure::new(&device);
+    let automatic = AutoExposure::default();
+    for dark in [0., 1. / 1024.] {
+        let texels: Vec<_> = (0..64 * 64)
+            .map(|i| {
+                let luminance = if i < 64 * 32 { dark } else { 1. };
+                [luminance, luminance, luminance, 1.]
+            })
+            .collect();
+        let frame = hdr_texture(&device, &queue, [64, 64], &texels);
+        let correction = adapt(
+            &device,
+            &queue,
+            &mut exposure,
+            &frame,
+            Metering {
+                automatic: &automatic,
+                stops: 0.,
+                delta_time: 0.,
+                reset: true,
+            },
+        );
+        assert!(
+            correction.abs() <= 16. / 62.,
+            "half luminance {dark}, half luminance 1 should meter near 0 stops: {correction}"
+        );
+    }
+}
+
+// Defect: removing black samples before computing the percentile window
+// admits bright outliers. Half this frame is black, 40% is luminance 1,
+// and the brightest 10% is luminance 16: the 10-90% window keeps only the
+// luminance-1 samples after black is excluded from its average.
+#[test]
+fn black_pixels_still_position_the_percentile_window() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let mut exposure = Exposure::new(&device);
+    let automatic = AutoExposure::default();
+    let texels: Vec<_> = (0..100)
+        .map(|i| {
+            let luminance = match i {
+                0..50 => 0.,
+                50..90 => 1.,
+                _ => 16.,
+            };
+            [luminance, luminance, luminance, 1.]
+        })
+        .collect();
+    let frame = hdr_texture(&device, &queue, [10, 10], &texels);
+    let correction = adapt(
+        &device,
+        &queue,
+        &mut exposure,
+        &frame,
+        Metering {
+            automatic: &automatic,
+            stops: 0.,
+            delta_time: 0.,
+            reset: true,
+        },
+    );
+    assert!(
+        correction.abs() <= 16. / 62.,
+        "black positions the window so the bright 10% is excluded: {correction}"
+    );
+}
+
+// Defect: excluding bin 0 can leave no samples and divide by zero. The
+// documented fallback is log2 luminance -8 (correction +8): all black,
+// an empty mask, or a percentile window smaller than one weighted sample.
+#[test]
+fn empty_averages_use_the_finite_minimum_luminance() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let mut exposure = Exposure::new(&device);
+    let defaults = AutoExposure::default();
+    let masked_out = AutoExposure {
+        metering_mask: MeteringMask {
+            weights: [[0; 16]; 16],
+        },
+        ..defaults
+    };
+    let single_sample = AutoExposure {
+        metering_mask: MeteringMask {
+            weights: [[16; 16]; 16],
+        },
+        ..defaults
+    };
+    for (frame, automatic) in [
+        (grey(&device, &queue, 0.), &defaults),
+        (grey(&device, &queue, 1.), &masked_out),
+        (
+            hdr_texture(&device, &queue, [1, 1], &[[1., 1., 1., 1.]]),
+            &single_sample,
+        ),
+    ] {
+        let correction = adapt(
+            &device,
+            &queue,
+            &mut exposure,
+            &frame,
+            Metering {
+                automatic,
+                stops: 0.,
+                delta_time: 0.,
+                reset: true,
+            },
+        );
+        assert!(
+            (correction - 8.).abs() < 1e-4,
+            "an empty average uses the minimum luminance: {correction}"
+        );
+    }
+}
+
 // Defects: workgroups that add bins they do not own (Bevy adds 256
 // invocations' worth into 64 bins), lost atomics or barriers, partial
 // workgroups at the frame's edges counted or dropped wrongly, a mask read

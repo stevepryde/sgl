@@ -1330,7 +1330,10 @@ last, after everything it may use, and refuses a directive in it.
   a 1×1 texture the exposure stage writes and the renderer passes on, feeds
   FSR2 and the tone map. Automatic exposure keeps its adapted correction as
   history, which takes its target when history restarts and when automatic
-  exposure follows a fixed one.
+  exposure follows a fixed one. Its weighted log-luminance histogram counts
+  near-black samples (below 2^-8 after authored stops) in the 10-90%
+  percentile positions, but excludes their bin from the average. An empty
+  average takes the minimum log2 luminance, -8 ([D-46](decisions.md)).
 - **Irradiance volume.** Diffuse light the game computes over a lattice of
   cells and keeps up by region (a voxel world's propagated sky and block
   light at a metre, a level's bake), which every receiver within the lattice
