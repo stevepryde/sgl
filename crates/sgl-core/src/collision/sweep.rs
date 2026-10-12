@@ -14,26 +14,30 @@ const MAX_SLIDE_PASSES: u32 = 2;
 /// There is deliberately no `Default`: `skin` and `snap_distance` are lengths
 /// in the game's own units and `up` is the game's axis convention, so a default
 /// would silently bake one game's world into every other.
+///
+/// Construct it with [`Self::new`], which validates lengths and thresholds and
+/// normalizes `up`. Read-only accessors preserve these invariants.
+///
+/// A struct literal cannot bypass validation:
+///
+/// ```compile_fail
+/// use sgl_core::{collision::CollisionConfig, math::Vec2};
+///
+/// let config = CollisionConfig {
+///     up: Vec2::new(0.0, 2.0),
+///     skin: -1.0,
+///     snap_distance: 0.1,
+///     normal_threshold: 0.7,
+///     block_epsilon: 0.0,
+/// };
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CollisionConfig {
-    /// Unit vector naming the world's up axis. `Vec2::Y` for a y-up world,
-    /// `Vec2::NEG_Y` for a y-down one. Every floor, ceiling, one-way, and
-    /// ground-snap decision is made against this axis and nothing else.
-    pub up: Vec2,
-    /// Gap left between the body and a surface after a contact resolves, so
-    /// the next frame's sweep starts clear of the surface instead of touching
-    /// it. Small relative to the body. Finite and non-negative.
-    pub skin: f32,
-    /// How far [`snap_to_ground`] probes along `-up`. Finite and
-    /// non-negative.
-    pub snap_distance: f32,
-    /// `normal · up` above which a face counts as a floor, and below whose
-    /// negation it counts as a ceiling. `0.7` is roughly 45 degrees.
-    pub normal_threshold: f32,
-    /// Tolerance when comparing requested against achieved motion along `up`
-    /// for the blocked flags. Must be well under `skin`, or a resolved contact
-    /// reads as unblocked. Finite and non-negative.
-    pub block_epsilon: f32,
+    up: Vec2,
+    skin: f32,
+    snap_distance: f32,
+    normal_threshold: f32,
+    block_epsilon: f32,
 }
 
 impl CollisionConfig {
@@ -79,6 +83,44 @@ impl CollisionConfig {
             normal_threshold,
             block_epsilon,
         }
+    }
+
+    /// Unit vector naming the world's up axis. `Vec2::Y` for a y-up world,
+    /// `Vec2::NEG_Y` for a y-down one. Every floor, ceiling, one-way, and
+    /// ground-snap decision is made against this axis and nothing else.
+    #[must_use]
+    pub fn up(&self) -> Vec2 {
+        self.up
+    }
+
+    /// Gap left between the body and a surface after a contact resolves, so
+    /// the next frame's sweep starts clear of the surface instead of touching
+    /// it. Small relative to the body. Finite and non-negative.
+    #[must_use]
+    pub fn skin(&self) -> f32 {
+        self.skin
+    }
+
+    /// How far [`snap_to_ground`] probes along `-up`. Finite and
+    /// non-negative.
+    #[must_use]
+    pub fn snap_distance(&self) -> f32 {
+        self.snap_distance
+    }
+
+    /// `normal · up` above which a face counts as a floor, and below whose
+    /// negation it counts as a ceiling. `0.7` is roughly 45 degrees.
+    #[must_use]
+    pub fn normal_threshold(&self) -> f32 {
+        self.normal_threshold
+    }
+
+    /// Tolerance when comparing requested against achieved motion along `up`
+    /// for the blocked flags. Must be well under `skin`, or a resolved contact
+    /// reads as unblocked. Finite and non-negative.
+    #[must_use]
+    pub fn block_epsilon(&self) -> f32 {
+        self.block_epsilon
     }
 
     /// Whether `normal` belongs to a face the body can stand on.

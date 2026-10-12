@@ -47,7 +47,10 @@ they do not create time debt or trigger sequence steps or random draws.
 Each sequence tick still clears the previous completion edge and action queue.
 
 Collision units and the up axis belong to the game. Supply them through
-`CollisionConfig`; SGL does not choose a world scale or entity layout.
+`CollisionConfig::new`; SGL does not choose a world scale or entity layout.
+Its fields are private: read the validated values with `up()`, `skin()`,
+`snap_distance()`, `normal_threshold()`, and `block_epsilon()`. To change a
+value, construct a new config so validation and up-axis normalization run again.
 Its `up` direction must have a finite, nonzero normalizable length;
 `CollisionConfig::new` panics if the length overflows even when its components are finite.
 Contacts leave the configured `skin` gap along the surface normal by stopping

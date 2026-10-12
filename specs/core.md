@@ -68,7 +68,10 @@ browser client must get identical results from it.
    consumes no time, after as many zero-time advances as it has playback
    positions (frames plus other steps, doubled for ping-pong), by when every
    position has played at least once.
-7. **Collision.** `CollisionConfig::new` refuses an `up` whose length is not finite and
+7. **Collision.** `CollisionConfig` is constructed only through `new`;
+   its fields are private with read-only accessors, so callers cannot bypass
+   validation or mutate the normalized up axis. `CollisionConfig::new`
+   refuses an `up` whose length is not finite and
    normalizable, including finite components with an overflowing length.
    `sweep_aabb` is a closed-form swept AABB test returning
    `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the surface
