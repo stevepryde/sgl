@@ -57,7 +57,10 @@ WebSocket receiver that polls slowly stops reading instead of overflowing,
 which makes the sender's `send` return `WouldBlock`; the browser cannot, so
 a browser game sizes each lane's inbound bounds for what arrives between
 two polls, and a peer that sends more is disconnected with
-`DisconnectReason::InboundOverflow`. On every transport, a peer
+`DisconnectReason::InboundOverflow`. WebSocket messages above
+`max_message_bytes` (including a first fragment's declared total) instead
+close with `ProtocolViolation`, even when the inbound lane is full.
+On every transport, a peer
 disconnected with `InboundOverflow` or `ProtocolViolation` still delivers
 the messages queued for `poll` before the offending frame or datagram, then
 its `Disconnected`; nothing from that frame or datagram is delivered (on
