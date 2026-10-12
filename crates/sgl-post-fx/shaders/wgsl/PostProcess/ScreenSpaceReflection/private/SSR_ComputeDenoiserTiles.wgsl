@@ -19,9 +19,11 @@
 // How far a confident hit reaches through the denoiser passes, in pixels
 // along each axis, conservatively:
 // - spatial reconstruction reads rays within SpatialReconstructionRadius
-//   times a Poisson offset shorter than 1, rounded, a pixel; at half
-//   resolution a ray covers two pixels and the rounding goes towards +x/+y,
-//   a pixel more;
+//   times a Poisson offset shorter than 1, rounded, a pixel. At half
+//   resolution DFX-55 selects the containing 2x2 block, whose traced pixel
+//   is at most one pixel beyond ceil(radius) in complete blocks. An odd
+//   trailing row/column clamps to the preceding ray block, requiring the
+//   existing two-pixel allowance;
 // - temporal accumulation's 3×3 neighbourhood statistic, a pixel;
 // - bilateral cleanup's kernel, i32(min(2 sigma, Radius)) pixels, its Radius
 //   at most 2.

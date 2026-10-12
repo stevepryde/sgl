@@ -208,7 +208,11 @@ The code's structure follows the
      SGL3D, without an upstream feature-set or 1:1 conformance obligation.
      Its `PROVENANCE.md` retains source references and useful algorithm notes;
      an exhaustive difference catalogue is not required. Scene and frame
-     integration belongs in SGL3D.
+     integration belongs in SGL3D. Its half-resolution SSR reconstructs from
+     the ray of the 2×2 block containing each displaced pixel centre; at
+     roughness zero each complete block reads only its own ray. An unpaired
+     final row or column clamps to the existing ray grid. Full-resolution
+     reconstruction keeps its per-pixel ray grid.
    - Exception: the external `sp-fidelity` (FSR2) is a 1:1 port. It diverges
      from upstream only
      where wgpu or WGSL force it, to fix a known upstream bug, or by owner

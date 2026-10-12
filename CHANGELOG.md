@@ -39,6 +39,11 @@ docs and specs the entry links.
   highlights with midtones; it now blends shadows with midtones. Games with
   distinct shadows and highlights grading see their dark tones change.
   No game-code changes needed.
+- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR):
+  half-resolution mirror pixels read a neighbouring block's ray on odd
+  rows and columns; they now read their own 2×2 block, removing the
+  one-pixel reflection shift. No game-code changes needed.
+
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they
