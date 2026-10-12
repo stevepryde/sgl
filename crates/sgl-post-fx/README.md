@@ -116,7 +116,11 @@ The caller supplies Diligent's conventions: a left-handed camera (view space
 +z forward) with a finite far plane, the depth buffer as a depth texture,
 unit world normals (SSR traces a normal that is not unit length as a miss,
 DFX-52), NDC motion vectors (current − previous) and the
-previous frame's depth. Set each `CameraAttribs`' clip planes with
+previous frame's depth. Both conventional and reversed depth are supported.
+SSR stores its resolved reprojection depth in `R32Float` for conventional
+depth, and `R16Float` for reversed depth (DFX-59); neither needs optional
+float filtering features. Changing depth convention recreates SSR's
+resources and resets its history. Set each `CameraAttribs`' clip planes with
 `set_clip_planes(near, far)`, passing far before near for reversed-Z: SSR's
 and TAA's temporal passes read the near and far planes' depths (DFX-32), and
 left at `Default`'s 0 they keep no history; SSR's intersection clips rays
