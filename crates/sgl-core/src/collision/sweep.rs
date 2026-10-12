@@ -1,6 +1,6 @@
 //! Move-and-slide resolution of a kinematic body against a [`ColliderSet`].
 
-use super::aabb::{Aabb, Hit, sweep_aabb};
+use super::aabb::{sweep_aabb, Aabb, Hit};
 use super::collider_set::ColliderSet;
 use crate::math::Vec2;
 
@@ -40,7 +40,8 @@ impl CollisionConfig {
     /// Builds a config, normalizing `up`.
     ///
     /// # Panics
-    /// If `up` is not a usable direction; if `normal_threshold` is outside
+    /// If `up` is not a usable direction, including an overflowing length;
+    /// if `normal_threshold` is outside
     /// `(0, 1)` — outside that range every face classifies the same way and
     /// floors, ceilings, and walls stop being distinguishable; or if `skin`,
     /// `snap_distance` or `block_epsilon` is negative or not finite — a
@@ -54,10 +55,9 @@ impl CollisionConfig {
         normal_threshold: f32,
         block_epsilon: f32,
     ) -> Self {
-        assert!(
-            up.is_finite() && up.length_squared() > 0.0,
-            "CollisionConfig: up must be a finite non-zero direction, got {up}"
-        );
+        let up = up
+            .try_normalize()
+            .expect("CollisionConfig: up must be a finite non-zero direction");
         assert!(
             normal_threshold > 0.0 && normal_threshold < 1.0,
             "CollisionConfig: normal threshold must be in (0, 1), got {normal_threshold}"
@@ -73,7 +73,7 @@ impl CollisionConfig {
             );
         }
         Self {
-            up: up.normalize(),
+            up,
             skin,
             snap_distance,
             normal_threshold,
@@ -830,5 +830,13 @@ mod tests {
                 assert!(built.is_err(), "accepted {skin}, {snap}, {epsilon}");
             }
         }
+    }
+
+    /// Finite components alone do not make a usable direction: the old
+    /// squared-length check accepted this vector and normalized it to zero.
+    #[wasm_bindgen_test(unsupported = test)]
+    #[should_panic(expected = "CollisionConfig: up must be a finite non-zero direction")]
+    fn the_config_rejects_an_up_direction_whose_length_overflows() {
+        let _ = CollisionConfig::new(Vec2::new(1e20, 0.0), SKIN, SNAP, 0.7, 1e-4);
     }
 }
