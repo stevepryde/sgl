@@ -110,9 +110,12 @@ fn fs_light(in: LightVsOut) -> @location(0) vec4<f32> {
     // The normal target is screen-space y-down: bring the world delta into
     // that frame (y negated under a y-up camera). `height` is in world units.
     let lv = vec3<f32>((light.pos_half.xy - in.world) * vec2<f32>(1.0, u.screen.z), light.params.x);
+    // A zero-height light on the pixel has no direction: full strength, as
+    // `normal_factor` (normalize would yield NaN).
+    let llen = length(lv);
     var dotf = 1.0;
-    if (nlen > 0.001) {
-        dotf = max(dot(nv / nlen, normalize(lv)), 0.0);
+    if (nlen > 0.001 && llen >= 1e-6) {
+        dotf = max(dot(nv / nlen, lv / llen), 0.0);
     }
     let factor = mix(1.0, dotf, msk.a);
 

@@ -15,7 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-2d` `UiFrame::confirm_modal`: the pointer press or Escape that opened a modal could also confirm or cancel it on that frame; the modal now ignores both until it has been shown for a frame. No game-code changes are needed for a modal submitted every frame while open.
+- `sgl-2d` 2D lights: a zero-height light exactly on a normal-mapped pixel wrote NaN into the light accumulation; it now lights that pixel at full strength, matching `normal_factor`. No game-code changes are needed.
+
 - `sgl-core` `move_and_collide` one-way platforms with a tilted `up`: blocking tested motion against `up`, so a body could fall through the top face or stick walking along it; it now tests motion into the floor face. No game-code changes are needed.
+
 - `sgl-net` `udp::Endpoint`: a confirm carrying a newer cookie formerly changed an admitted connection's cookie and could stop both directions; the server now keeps its admitted cookie. No game-code changes are needed.
 
 - `sgl-net` UDP `Endpoint::disconnect`: closing peers previously stopped

@@ -285,7 +285,9 @@ impl UiFrame<'_> {
     /// A modal confirmation dialog in the overlay band: dims `screen`,
     /// draws `panel` with a title, a body line, and CONFIRM/CANCEL buttons.
     /// While shown it draws above and blocks all widgets outside the dialog,
-    /// including custom overlay panels. Returns `Some(true)` on confirm,
+    /// including custom overlay panels. Like a dropdown's popover, it ignores
+    /// the pointer press and Escape of the frame that first shows it, so the
+    /// input that opened it cannot also resolve it. Returns `Some(true)` on confirm,
     /// `Some(false)` on cancel, `None` otherwise — the **caller** owns the open/closed state.
     #[allow(clippy::too_many_arguments)]
     pub fn confirm_modal(
@@ -298,6 +300,8 @@ impl UiFrame<'_> {
         cancel_label: &str,
         px: f32,
     ) -> Option<bool> {
+        // Shown and left unresolved last frame (see `hit` for the pointer).
+        let shown = self.ui.modal_scope == Some(widget_id(name));
         let overlay_was = self.overlay;
         self.overlay = true;
         self.ui.keyboard_captured = true;
@@ -354,7 +358,9 @@ impl UiFrame<'_> {
         self.modal_scope = modal_was;
         let result = if confirm {
             Some(true)
-        } else if cancel || (self.input.keys.contains(&UiKey::Escape) && !self.popup_dismissed) {
+        } else if cancel
+            || (shown && self.input.keys.contains(&UiKey::Escape) && !self.popup_dismissed)
+        {
             Some(false)
         } else {
             None
@@ -420,6 +426,42 @@ mod tests {
         );
     }
 
+    /// The press or Escape that opens a modal must not also resolve it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn modal_ignores_input_on_its_opening_frame() {
+        let (mut ui, mut text, _assets) = fixture();
+        let screen = Rect::new(0.0, 0.0, 960.0, 540.0);
+        // The opener covers the modal's Confirm button (x=310..460, y=290..334).
+        let opener = Rect::new(300.0, 280.0, 200.0, 60.0);
+        let escape = || UiInput {
+            keys: vec![UiKey::Escape],
+            ..UiInput::default()
+        };
+        for (input, expected) in [
+            (press_at(385.0, 312.0), Some(true)),
+            (escape(), Some(false)),
+        ] {
+            let mut open = expected == Some(false);
+            let mut results = Vec::new();
+            for _ in 0..2 {
+                let mut list = DrawList::new();
+                let mut f = ui.begin(&mut text, &mut list, input.clone());
+                if f.button("delete", opener, "Delete", 20.0) {
+                    open = true;
+                }
+                if open {
+                    let result = f.confirm_modal(
+                        "modal", screen, "Delete", "Sure?", "Delete", "Cancel", 20.0,
+                    );
+                    open = result.is_none();
+                    results.push(result);
+                }
+                f.end();
+            }
+            assert_eq!(results, [None, expected]);
+        }
+    }
+
     #[wasm_bindgen_test(unsupported = test)]
     fn overlay_dropdown_selection_blocks_buttons_in_either_submission_order() {
         for under_first in [false, true] {
@@ -468,22 +510,30 @@ mod tests {
             f.end();
         }
         assert!(ui.any_popup_open());
-        let mut list = DrawList::new();
-        let mut f = ui.begin(&mut text, &mut list, press_at(575.0, 312.0));
-        assert_eq!(
-            f.confirm_modal(
-                "modal",
-                Rect::new(0.0, 0.0, 960.0, 540.0),
-                "Delete",
-                "Sure?",
-                "Delete",
-                "Cancel",
-                20.0,
-            ),
-            Some(false),
-        );
-        f.end();
-        assert!(!ui.any_popup_open());
+        // The modal opens while the popover is still submitted, then its
+        // Cancel takes a press inside the popover's former shield.
+        for (input, expected) in [
+            (UiInput::default(), None),
+            (press_at(575.0, 312.0), Some(false)),
+        ] {
+            let mut list = DrawList::new();
+            let mut f = ui.begin(&mut text, &mut list, input);
+            f.dropdown("menu", dd, &["a", "b", "c"], &mut selected, 20.0);
+            assert_eq!(
+                f.confirm_modal(
+                    "modal",
+                    Rect::new(0.0, 0.0, 960.0, 540.0),
+                    "Delete",
+                    "Sure?",
+                    "Delete",
+                    "Cancel",
+                    20.0,
+                ),
+                expected,
+            );
+            f.end();
+            assert!(!ui.any_popup_open());
+        }
     }
 
     #[wasm_bindgen_test(unsupported = test)]
@@ -1012,6 +1062,10 @@ mod tests {
         // resolves Some(true).
         let mut f = ui.begin(&mut text, &mut list, press_at(50.0, 30.0));
         assert!(!f.button("b", BTN, "OK", 24.0), "modal must block widgets");
+        assert_eq!(
+            f.confirm_modal("exit", screen, "Exit?", "Sure?", "EXIT", "CANCEL", 24.0),
+            None
+        );
         f.end();
         let confirm_center = Vec2::new(480.0 - 75.0 - 20.0, 480.0 * 0.0 + 332.0);
         let mut f = ui.begin(
