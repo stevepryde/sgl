@@ -48,6 +48,8 @@ Each sequence tick still clears the previous completion edge and action queue.
 
 Collision units and the up axis belong to the game. Supply them through
 `CollisionConfig`; SGL does not choose a world scale or entity layout.
+Its `up` direction must have a finite, nonzero normalizable length;
+`CollisionConfig::new` panics if the length overflows even when its components are finite.
 Contacts leave the configured `skin` gap along the surface normal by stopping
 earlier on the swept path. A diagonal slide keeps the tangential motion left
 after the contact time; the backed-off motion is discarded, so it also stops

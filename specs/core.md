@@ -68,7 +68,9 @@ browser client must get identical results from it.
    consumes no time, after as many zero-time advances as it has playback
    positions (frames plus other steps, doubled for ping-pong), by when every
    position has played at least once.
-7. **Collision.** `sweep_aabb` is a closed-form swept AABB test returning
+7. **Collision.** `CollisionConfig::new` refuses an `up` whose length is not finite and
+   normalizable, including finite components with an overflowing length.
+   `sweep_aabb` is a closed-form swept AABB test returning
    `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the surface
    toward the body. `move_and_collide` slides a kinematic body against a
    `ColliderSet` and never moves it more than a rounding step into a solid
