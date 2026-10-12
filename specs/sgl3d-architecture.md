@@ -1506,7 +1506,14 @@ last, after everything it may use, and refuses a directive in it.
   the bordered sixteen-by-sixteen map of mean and squared distance both
   revisions keep, each bilinearly filtered through `baked_sampler`; Wicked's
   per-texel multiscale mean estimator, depth blend and probe relocation keep
-  them up. Not taken, each for a reason: the later L1 spherical-harmonic
+  them up. A texel with no contributing ray keeps its moments or irradiance
+  estimator unchanged; on a probe's first turn an unobserved depth texel
+  starts at the maximum distance and its square, an irradiance texel at zero.
+  This departs from Wicked's zero blend (RD-2, #713): its denser rays and
+  RTXGI's normally cover the texels, whereas four rays on a dormant probe
+  leave most depth directions unobserved. Preserving them keeps visibility
+  from eroding without raising the minimum ray cost. Not taken, each for
+  a reason: the later L1 spherical-harmonic
   storage and its dominant-light specular (the specular would count the sky
   a second time beside the environment specular, S3D-5); the colour map's
   BC6H compression (the sample reads what the blend writes); the direct

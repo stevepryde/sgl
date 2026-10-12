@@ -16,7 +16,13 @@
 // blend writes. Changed: a probe not yet blended starts its estimator,
 // depth and offset afresh, where Wicked starts every probe on its first
 // frame; each map's history is the stage's buffers, which the blend writes
-// on into the probe texture. Added: the scroll pass, which clears the planes
+// on into the probe texture. Changed (#713, RD-2): with only four rays a
+// dormant probe can leave most depth texels unobserved. Such a texel keeps
+// its depth and irradiance history without advancing its estimator; a fresh
+// unobserved texel starts with max-distance moments and zero irradiance.
+// Wicked and RTXGI blend zero when no ray contributes, appropriate for their
+// denser ray sets, but that erodes the sparse probe's visibility here.
+// Added: the scroll pass, which clears the planes
 // of probes that enter a scrolled volume, as NVIDIA RTXGI's probe blending
 // clears the planes its scroll offsets bring in (DDGIClearScrolledPlane;
 // practice only, its code not copied): each starts again as a probe not yet
@@ -258,7 +264,9 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
    data=DdgiVariance(result,result,0.,vec3(0.),1.);
   }
   let previous_mean=data.mean;
-  multiscale_mean_estimator(result,&data,DDGI_BLEND_SPEED);
+  if total_weight>DDGI_WEIGHT_EPSILON {
+   multiscale_mean_estimator(result,&data,DDGI_BLEND_SPEED);
+  }
   ddgi_store_variance(index,data);
   // RTXGI's coefficient of variation of the texel (ProbeBlendingCS.hlsl
   // 552-562): the sample's spread about the means before and after it, over
@@ -266,7 +274,7 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
   let spread=dot(ddgi_luminance_weights(),(result-previous_mean)*(result-data.mean));
   let luminance=dot(ddgi_luminance_weights(),data.mean);
   var variation=0.;
-  if luminance>1./1024. {
+  if total_weight>DDGI_WEIGHT_EPSILON && luminance>1./1024. {
    variation=sqrt(max(spread,0.))/luminance;
   }
   atomicAdd(&probe_variability,u32(min(variation,DDGI_MOST_VARIABILITY)*DDGI_VARIABILITY_UNIT));
@@ -397,8 +405,15 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
   result/=total_weight;
  }
  let history=probe_index*DDGI_DEPTH_RESOLUTION*DDGI_DEPTH_RESOLUTION+thread.x+thread.y*DDGI_DEPTH_RESOLUTION;
- if probe.blended {
-  result=mix(unpack2x16float(depth_history[history]),result,DDGI_DEPTH_BLEND);
+ if total_weight>DDGI_WEIGHT_EPSILON {
+  if probe.blended {
+   result=mix(unpack2x16float(depth_history[history]),result,DDGI_DEPTH_BLEND);
+  }
+ } else if probe.blended {
+  result=unpack2x16float(depth_history[history]);
+ } else {
+  let moment=max_distance/depth_unit;
+  result=vec2(moment,moment*moment);
  }
  depth_history[history]=pack2x16float(result);
  shared_depths[group_index]=result;

@@ -529,3 +529,6 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
 mod allocation_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod update_tests;
