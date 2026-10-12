@@ -46,6 +46,10 @@ impl BufferedPacing {
                     .is_some_and(|sent| buffered <= sent);
                 if fits(reliable_buffered_bytes) && (fits(latest_buffered_bytes) || ahead_drained) {
                     Pace::Send
+                } else if ahead_drained {
+                    // Its turn has come: lanes refilling the room it waits
+                    // for would starve it on a slow link.
+                    Pace::Wait
                 } else {
                     self.sent_since_latest_waited.get_or_insert(0);
                     Pace::SkipLatest
@@ -77,6 +81,88 @@ mod tests {
     use super::*;
     use wasm_bindgen_test::wasm_bindgen_test;
 
+    /// A socket that holds `ahead` bytes when a latest state of
+    /// `state_frame` bytes falls due, drains `drain_per_tick` bytes a tick,
+    /// and has a lane frame of `lane_frame` bytes always ready, under
+    /// 256 KiB reliable and 64 KiB latest watermarks.
+    struct SlowSocket {
+        ahead: usize,
+        drain_per_tick: usize,
+        lane_frame: usize,
+        state_frame: usize,
+    }
+
+    /// What happened, by tick.
+    struct Run {
+        /// The tick the socket had drained every byte ahead of the state.
+        ahead_drained_at: Option<usize>,
+        /// The tick the state was sent.
+        state_left: Option<usize>,
+        /// Lane frames sent each tick.
+        lane_frames: Vec<usize>,
+    }
+
+    impl SlowSocket {
+        fn run(&self, ticks: usize) -> Run {
+            const RELIABLE: usize = 256 * 1024;
+            const LATEST: usize = 64 * 1024;
+            let mut pacing = BufferedPacing::default();
+            let mut socket = VecDeque::from([self.ahead]);
+            let mut drained = 0;
+            let mut run = Run {
+                ahead_drained_at: None,
+                state_left: None,
+                lane_frames: Vec::new(),
+            };
+            for tick in 0..ticks {
+                let mut budget = if tick == 0 { 0 } else { self.drain_per_tick };
+                while budget > 0
+                    && let Some(front) = socket.front_mut()
+                {
+                    let taken = budget.min(*front);
+                    *front -= taken;
+                    budget -= taken;
+                    drained += taken;
+                    if *front == 0 {
+                        socket.pop_front();
+                    }
+                }
+                if drained >= self.ahead {
+                    run.ahead_drained_at.get_or_insert(tick);
+                }
+                let mut lane_frames = 0;
+                let mut latest_waits = run.state_left.is_some();
+                loop {
+                    let buffered: usize = socket.iter().sum();
+                    let (delivery, frame_bytes) = if latest_waits {
+                        (Delivery::RELIABLE_ORDERED, self.lane_frame)
+                    } else {
+                        (Delivery::LatestState, self.state_frame)
+                    };
+                    match pacing.next(buffered, delivery, frame_bytes, RELIABLE, LATEST) {
+                        Pace::Send => {
+                            socket.push_back(frame_bytes);
+                            pacing.sent(delivery, frame_bytes);
+                            if delivery == Delivery::LatestState {
+                                run.state_left = Some(tick);
+                                latest_waits = true;
+                            } else {
+                                lane_frames += 1;
+                            }
+                        }
+                        Pace::SkipLatest => latest_waits = true,
+                        Pace::Wait => break,
+                    }
+                }
+                run.lane_frames.push(lane_frames);
+                if run.state_left.is_some() {
+                    break;
+                }
+            }
+            run
+        }
+    }
+
     /// Defect: a due latest state over its watermark either held every lane
     /// behind it, or let saturated lanes keep `bufferedAmount` above that
     /// watermark for as long as their backlog lasted. Oracle: netcode.md 13
@@ -87,71 +173,46 @@ mod tests {
     /// at the first flush after the socket has drained those 200 KiB.
     #[wasm_bindgen_test(unsupported = test)]
     fn a_waiting_latest_state_leaves_once_the_bytes_ahead_of_it_drain() {
-        const KIB: usize = 1024;
-        const RELIABLE: usize = 256 * KIB;
-        const LATEST: usize = 64 * KIB;
-        const LANE_FRAME: usize = 16 * KIB;
-        const STATE_FRAME: usize = KIB;
-        const AHEAD: usize = 200 * KIB;
-        const DRAIN_PER_TICK: usize = 32 * KIB;
-
-        let mut pacing = BufferedPacing::default();
-        let mut socket: VecDeque<usize> = std::iter::repeat_n(LANE_FRAME, AHEAD / LANE_FRAME)
-            .chain([AHEAD % LANE_FRAME])
-            .collect();
-        let mut drained = 0;
-        let mut state_left = None;
-        let mut ahead_drained_at = None;
-        for tick in 0..32 {
-            let mut budget = if tick == 0 { 0 } else { DRAIN_PER_TICK };
-            while budget > 0
-                && let Some(front) = socket.front_mut()
-            {
-                let taken = budget.min(*front);
-                *front -= taken;
-                budget -= taken;
-                drained += taken;
-                if *front == 0 {
-                    socket.pop_front();
-                }
-            }
-            if drained >= AHEAD {
-                ahead_drained_at.get_or_insert(tick);
-            }
-
-            let mut lane_frames_sent = 0;
-            let mut latest_waits = state_left.is_some();
-            loop {
-                let buffered: usize = socket.iter().sum();
-                let (delivery, frame_bytes) = if latest_waits {
-                    (Delivery::RELIABLE_ORDERED, LANE_FRAME)
-                } else {
-                    (Delivery::LatestState, STATE_FRAME)
-                };
-                match pacing.next(buffered, delivery, frame_bytes, RELIABLE, LATEST) {
-                    Pace::Send => {
-                        socket.push_back(frame_bytes);
-                        pacing.sent(delivery, frame_bytes);
-                        if delivery == Delivery::LatestState {
-                            state_left = Some(tick);
-                            latest_waits = true;
-                        } else {
-                            lane_frames_sent += 1;
-                        }
-                    }
-                    Pace::SkipLatest => latest_waits = true,
-                    Pace::Wait => break,
-                }
-            }
-            assert!(lane_frames_sent > 0, "lanes held at tick {tick}");
-            if state_left.is_some() {
-                break;
-            }
+        let run = SlowSocket {
+            ahead: 200 * 1024,
+            drain_per_tick: 32 * 1024,
+            lane_frame: 16 * 1024,
+            state_frame: 1024,
         }
+        .run(32);
         assert!(
-            ahead_drained_at.is_some(),
+            run.ahead_drained_at.is_some(),
             "the scenario drains what was ahead"
         );
-        assert_eq!(state_left, ahead_drained_at);
+        assert_eq!(run.state_left, run.ahead_drained_at);
+        assert!(
+            run.lane_frames.iter().all(|&frames| frames > 0),
+            "lanes held: {:?}",
+            run.lane_frames
+        );
+    }
+
+    /// Defect: on a link slower than one state frame per tick, lanes that
+    /// keep going after the bytes ahead of the state have drained take every
+    /// bit of room it waits for, so it never leaves. Oracle: netcode.md 13 —
+    /// once those bytes have gone the state leaves before any further lane
+    /// frame, so it waits at most for room for itself.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_latest_state_whose_turn_has_come_is_not_starved_on_a_slow_link() {
+        let socket = SlowSocket {
+            ahead: 250 * 1024,
+            drain_per_tick: 256,
+            lane_frame: 512,
+            state_frame: 8 * 1024,
+        };
+        let run = socket.run(4_000);
+        let ahead_drained_at = run
+            .ahead_drained_at
+            .expect("the scenario drains what was ahead");
+        let left = run.state_left.expect("the state never left");
+        assert!(
+            left <= ahead_drained_at + socket.state_frame / socket.drain_per_tick + 1,
+            "left at tick {left}, {ahead_drained_at} drained what was ahead"
+        );
     }
 }

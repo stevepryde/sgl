@@ -244,9 +244,12 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     before it: a flush releases the state last sent before it, which leaves
     as soon as those frames have gone, ahead of every frame still queued; it
     is not a barrier, so meanwhile lane frames flushed later may leave first
-    (holding them would let one lane's long message hold every lane back); a
-    newer state sent after that flush waits for its own without withholding
-    it, and of states whose turn comes together only the newest leaves. Text frames, wrong magic or version, the reserved kind, reserved
+    (holding them would let one lane's long message hold every lane back);
+    in the browser they do while the state waits for `bufferedAmount` to
+    fall under `latest_buffered_bytes` or for the bytes ahead of it to
+    drain, after which it leaves before any further lane frame; a newer
+    state sent after that flush waits for its own without withholding it,
+    and of states whose turn comes together only the newest leaves. Text frames, wrong magic or version, the reserved kind, reserved
     flags, an invalid lane, latest state or an unreliable message with
     fragment flags, a total not above its fragment, and frames over
     `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`, as are
