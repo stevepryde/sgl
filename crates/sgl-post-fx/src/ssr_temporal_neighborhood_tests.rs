@@ -772,6 +772,207 @@ fn resolved_depth_is_the_virtual_point_along_the_view_ray() {
     );
 }
 
+// #645: a miss stores its traced endpoint, including HALF_MAX past the far
+// plane. That endpoint must not move a real reflection's virtual point.
+// Inputs are supplied at the intersection/reconstruction boundary, then the
+// production stencil and reconstruction passes execute on the GPU. The
+// oracle projects a geometric point, without reproducing the shader's depth
+// formula or Poisson sampling/BRDF weights.
+#[test]
+fn missed_rays_do_not_move_the_reflections_virtual_point() {
+    use wgpu::util::DeviceExt;
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let camera = camera(true, 0);
+    let project = |point: [f32; 3]| {
+        let clip = |row: usize| {
+            camera.m_proj[row] * point[0]
+                + camera.m_proj[4 + row] * point[1]
+                + camera.m_proj[8 + row] * point[2]
+                + camera.m_proj[12 + row]
+        };
+        clip(2) / clip(3)
+    };
+    let normal = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[0., 0., -1., 0.]),
+    );
+    let material = texture(&device, &queue, wgpu::TextureFormat::R8Unorm, &[50]);
+    let motion = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rg16Float,
+        &half(&[0., 0.]),
+    );
+    let reconstruct = |flags: FeatureFlags, confidence: f32, miss_distance: f32| {
+        let mut ssr = ScreenSpaceReflection::new(&device);
+        let mut context = PostFXContext::new(&device, &queue, Default::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let scene_depth = depth(&device, &mut encoder, project([0., 0., 2.]));
+        context.prepare_resources(
+            &device,
+            &FrameDesc {
+                index: 0,
+                width: SIZE[0],
+                height: SIZE[1],
+                output_width: SIZE[0],
+                output_height: SIZE[1],
+            },
+            post_fx_context::FeatureFlags::REVERSED_DEPTH,
+        );
+        ssr.prepare_resources(&device, &mut encoder, &mut context, flags);
+        ssr.prepare_shaders_and_pso(&device);
+        context.execute(&mut post_fx_context::RenderAttributes {
+            device: &device,
+            queue: &queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &scene_depth,
+            prev_depth_buffer_srv: &scene_depth,
+            curr_camera: Some(&camera),
+            prev_camera: Some(&camera),
+            camera_attribs_cb: None,
+            pass_timestamps: None,
+        });
+        let [width, height] = if flags.contains(FeatureFlags::HALF_RESOLUTION) {
+            [SIZE[0] / 2, SIZE[1] / 2]
+        } else {
+            SIZE
+        };
+        let rays = |radiance: bool| {
+            let data: Vec<u8> = (0..height)
+                .flat_map(|_| {
+                    (0..width).flat_map(|x| {
+                        // Alternating ray columns provide mixed neighbourhoods at
+                        // both resolutions. Every hit reflected the same white
+                        // surface 3 m away, with premultiplied confidence (DFX-17).
+                        let hit = x % 2 == 0 && confidence > 0.;
+                        let value = if radiance {
+                            if hit { [confidence; 4] } else { [0.; 4] }
+                        } else {
+                            [0., 0., -if hit { 3. } else { miss_distance }, 1.]
+                        };
+                        half(&value)
+                    })
+                })
+                .collect();
+            device
+                .create_texture_with_data(
+                    &queue,
+                    &wgpu::TextureDescriptor {
+                        label: None,
+                        size: wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    },
+                    wgpu::util::TextureDataOrder::LayerMajor,
+                    &data,
+                )
+                .create_view(&Default::default())
+        };
+        ssr.resources.as_mut().unwrap().ray_direction_pdf = rays(false);
+        ssr.resources.as_mut().unwrap().radiance = rays(true);
+        let attribs = ScreenSpaceReflectionAttribs::default();
+        let mut render = RenderAttributes {
+            device: &device,
+            queue: &queue,
+            device_context: &mut encoder,
+            post_fx_context: &mut context,
+            color_buffer_srv: &normal,
+            depth_buffer_srv: &scene_depth,
+            normal_buffer_srv: &normal,
+            material_buffer_srv: &material,
+            motion_vectors_srv: &motion,
+            ssr_attribs: &attribs,
+            pass_timestamps: None,
+            reset_accumulation: false,
+            frame_time: 1. / 60.,
+        };
+        ssr.update_constant_buffer(&render, false);
+        ssr.compute_stencil_mask_and_extract_roughness(&mut render);
+        ssr.compute_downsampled_stencil_mask(&mut render);
+        // An active tile can contain a pixel whose complete sample kernel
+        // missed. Exercise its fallback independently of tile skipping.
+        ssr.resources.as_mut().unwrap().denoiser_tiles =
+            texture(&device, &queue, wgpu::TextureFormat::R8Unorm, &[255]);
+        ssr.compute_spatial_reconstruction(&mut render);
+        queue.submit([encoder.finish()]);
+        (
+            read_r16f(&device, &queue, &ssr.resources().resolved_depth),
+            read_rgba16f(&device, &queue, &ssr.resources().resolved_radiance),
+        )
+    };
+    for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        for confidence in [1., 0.25] {
+            let (short_depth, short_radiance) = reconstruct(flags, confidence, 8.);
+            let (far_depth, far_radiance) = reconstruct(flags, confidence, 65504.);
+            let mut mixed = 0;
+            for y in 8..SIZE[1] - 8 {
+                for x in 8..SIZE[0] - 8 {
+                    let at = (y * SIZE[0] + x) as usize;
+                    let alpha = far_radiance[at][3];
+                    if alpha <= 0.001 || alpha >= confidence - 0.001 {
+                        continue;
+                    }
+                    mixed += 1;
+                    let surface = [
+                        (2. * (x as f32 + 0.5) / SIZE[0] as f32 - 1.) * 2. / camera.m_proj[0],
+                        (1. - 2. * (y as f32 + 0.5) / SIZE[1] as f32) * 2. / camera.m_proj[5],
+                        2.,
+                    ];
+                    let distance = surface.iter().map(|c| c * c).sum::<f32>().sqrt();
+                    let expected = project(surface.map(|c| c + 3. * c / distance));
+                    for actual in [short_depth[at], far_depth[at]] {
+                        assert!(
+                            (actual - expected).abs() < 0.01 * expected,
+                            "{flags:?}, confidence {confidence}, ({x}, {y}): depth {actual}, hit virtual point {expected}"
+                        );
+                    }
+                    for channel in 0..4 {
+                        assert!(
+                            (short_radiance[at][channel] - far_radiance[at][channel]).abs() < 0.001,
+                            "{flags:?}: changing a miss endpoint changed reflected radiance at ({x}, {y})"
+                        );
+                    }
+                    // All hits are white; varying miss share may lower
+                    // confidence but cannot change radiance/confidence.
+                    for color in &far_radiance[at][..3] {
+                        assert!(
+                            (*color - alpha).abs() < 0.001,
+                            "{flags:?}: reflected white light lost premultiplied confidence"
+                        );
+                    }
+                }
+            }
+            assert!(
+                mixed > 500,
+                "{flags:?}: only {mixed} mixed hit/miss pixels exercised"
+            );
+        }
+        let (no_hit_depth, no_hit_radiance) = reconstruct(flags, 0., 65504.);
+        for (depth, radiance) in no_hit_depth.iter().zip(no_hit_radiance) {
+            assert!(
+                (*depth - project([0., 0., 2.])).abs() < 0.001,
+                "{flags:?}: an all-miss kernel must reproject the surface, got {depth}"
+            );
+            assert!(
+                radiance.iter().all(|c| c.abs() < 0.001),
+                "{flags:?}: a miss supplied radiance"
+            );
+        }
+    }
+}
+
 /// The SSR textures one denoised frame leaves, row-major at full size.
 struct Denoised {
     output: Vec<[f32; 4]>,

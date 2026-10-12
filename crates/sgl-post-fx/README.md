@@ -40,7 +40,9 @@ licences, source revisions and the blue-noise table source it reads.
   traces (DFX-20), and at roughness 0 at any bias; the resolve clamps N·V
   above 0 as Filament does (DFX-40). Its temporal
   pass reprojects by the reflection's virtual point as AMD's reflection
-  denoiser places it, rejects a surface history far from the current
+  denoiser places it. Only confirmed hits with non-negligible BRDF weight
+  set that distance; an all-miss sample kernel reprojects the surface
+  (DFX-56). It rejects a surface history far from the current
   neighbourhood as AMD's does, and clamps to Wicked Engine's 2-deviation box
   (DFX-25); a virtual point behind the previous camera finds no history
   (DFX-31), nor does a surface that was behind it, in SSR and TAA alike
