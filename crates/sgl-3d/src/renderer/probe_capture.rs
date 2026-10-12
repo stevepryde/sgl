@@ -6,7 +6,7 @@ use super::Renderer;
 use crate::baked_specular_probe::{ProbeError, SpecularProbeRadiance, SpecularProbeTexels};
 use crate::scene::probes::validate_face_size;
 use crate::settings::Settings;
-use crate::stages::probe_prefilter::{ProbePrefilter, capture_size};
+use crate::stages::probe_prefilter::{ProbePrefilter, capture_size, validate_readback_size};
 use crate::view::pipelines::LayerConstants;
 use crate::{FrameInput, Scene};
 use glam::Vec3;
@@ -56,6 +56,7 @@ impl Renderer {
             return Err(ProbeError::InvalidProbe("coordinates must be finite"));
         }
         validate_face_size(face_size, &device.limits())?;
+        validate_readback_size(face_size, &device.limits())?;
         // Decals added since the last frame take their atlas first.
         scene.upload_decals(device, queue);
         // Materials sample as the settings filter them, as a frame does.

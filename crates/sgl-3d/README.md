@@ -1004,6 +1004,11 @@ scene.set_baked_specular_probes(&device, &queue, &[])?;
   compresses its captures). Installing BC6H needs the device feature
   `wgpu::Features::TEXTURE_COMPRESSION_BC`.
 
+Capture faces must also fit their padded RGBA16F readback, all six faces and
+roughness levels, within the device's `max_buffer_size`; oversized captures
+return `ProbeError::InvalidDimensions` before rendering. Installed probes
+have no readback-buffer requirement.
+
 For offline authoring, install the static instances' fixed-light atlases, then
 `renderer.capture_specular_probe(&device, &queue, &mut scene, &input, &settings,
 center, face_size)?` renders six faces of the static capture-visible instances

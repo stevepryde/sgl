@@ -948,3 +948,39 @@ fn a_capture_stores_a_sub_texel_emitter_at_its_solid_angle() {
         );
     }
 }
+
+// A texture-sized face may still exceed the device's padded readback limit.
+// The real capture must return its typed error before wgpu allocates targets.
+#[test]
+fn capture_rejects_faces_past_the_readback_buffer_limit() {
+    let Some(adapter) = crate::test_support::adapter() else {
+        return;
+    };
+    let mut limits = crate::graphics_device::limits(&adapter);
+    limits.max_buffer_size = 256 * 1024 * 1024;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_limits: limits,
+        ..Default::default()
+    }))
+    .unwrap();
+    let settings = Settings::default();
+    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let mut scene = Scene::new(&device, &queue);
+    let input = FrameInput::new(crate::Camera {
+        view: glam::Mat4::IDENTITY,
+        projection: glam::Mat4::IDENTITY,
+        eye: Vec3::ZERO,
+    });
+    assert!(matches!(
+        renderer.capture_specular_probe(
+            &device,
+            &queue,
+            &mut scene,
+            &input,
+            &settings,
+            Vec3::ZERO,
+            4096,
+        ),
+        Err(ProbeError::InvalidDimensions)
+    ));
+}

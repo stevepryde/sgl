@@ -39,6 +39,40 @@ pub(crate) fn capture_size(face_size: u32) -> u32 {
     face_size.max(CAPTURE_SIZE)
 }
 
+/// The padded RGBA16F rows of all six faces and roughness levels. Buffer
+/// addressing is u64, as WebGPU requires; only the copy row pitch is u32.
+struct ReadbackLayout {
+    rows: [(u32, u32); LEVELS as usize],
+    bytes: u64,
+}
+
+impl ReadbackLayout {
+    fn new(face_size: u32) -> Self {
+        let rows = std::array::from_fn(|level| {
+            let size = face_size >> level;
+            let row = (size * 8).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+            (size, row)
+        });
+        let bytes = rows
+            .iter()
+            .map(|&(size, row)| u64::from(row) * u64::from(size) * 6)
+            .sum();
+        Self { rows, bytes }
+    }
+}
+
+/// Refuse captures whose padded readback cannot fit before allocating any
+/// capture resources. Installing probes has no readback-buffer requirement.
+pub(crate) fn validate_readback_size(
+    face_size: u32,
+    limits: &wgpu::Limits,
+) -> Result<(), ProbeError> {
+    if ReadbackLayout::new(face_size).bytes > limits.max_buffer_size {
+        return Err(ProbeError::InvalidDimensions);
+    }
+    Ok(())
+}
+
 /// The GGX prefilter of a captured cube.
 pub(crate) static PREFILTER: crate::shading::Module = crate::shading::Module {
     name: "probe_prefilter",
@@ -337,17 +371,7 @@ impl ProbePrefilter {
         mut encoder: wgpu::CommandEncoder,
     ) -> Result<Vec<u16>, ProbeError> {
         let face_size = self.face_size;
-        let rows: Vec<_> = (0..LEVELS)
-            .map(|level| {
-                let size = face_size >> level;
-                let row = (size * 8).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-                (size, row)
-            })
-            .collect();
-        let bytes: u64 = rows
-            .iter()
-            .map(|&(size, row)| u64::from(row) * u64::from(size) * 6)
-            .sum();
+        let ReadbackLayout { rows, bytes } = ReadbackLayout::new(face_size);
         let readback = crate::counters::buffer(
             device,
             &wgpu::BufferDescriptor {
@@ -401,18 +425,17 @@ impl ProbePrefilter {
             let mapped = readback
                 .get_mapped_range(..)
                 .expect("mapped prefilter readback");
-            let mut offset = 0;
+            let mut offset = 0u64;
             for &(size, row) in &rows {
-                for line in
-                    mapped[offset..offset + (row * size * 6) as usize].chunks_exact(row as usize)
-                {
+                let end = offset + u64::from(row) * u64::from(size) * 6;
+                for line in mapped[offset as usize..end as usize].chunks_exact(row as usize) {
                     rgba16.extend(
                         line[..size as usize * 8]
                             .chunks_exact(2)
                             .map(|value| u16::from_le_bytes([value[0], value[1]])),
                     );
                 }
-                offset += (row * size * 6) as usize;
+                offset = end;
             }
         }
         readback.unmap();
