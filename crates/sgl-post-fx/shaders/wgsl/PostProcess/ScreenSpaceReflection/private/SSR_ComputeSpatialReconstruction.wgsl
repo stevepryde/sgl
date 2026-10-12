@@ -190,7 +190,10 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
         SampleColor = SampleColor / (1.0 + Luminance(SampleColor.rgb));
         ComputeWeightedVariance(&PixelAreaStat, SampleColor, WeightLength.x);
 
-        if (WeightLength.x > 1.0e-6) {
+        // DFX-56: misses retain their endpoint length, including HALF_MAX
+        // beyond the far plane. Only a confirmed hit supplies the virtual
+        // point distance; an all-miss kernel keeps 0 and the surface depth.
+        if (SampleColor.a > 0.0 && WeightLength.x > 1.0e-6) {
             NearestSurfaceHitDistance = max(WeightLength.y, NearestSurfaceHitDistance);
         }
     }

@@ -228,7 +228,10 @@ The code's structure follows the
      the ray of the 2×2 block containing each displaced pixel centre; at
      roughness zero each complete block reads only its own ray. An unpaired
      final row or column clamps to the existing ray grid. Full-resolution
-     reconstruction keeps its per-pixel ray grid.
+     reconstruction keeps its per-pixel ray grid. SSR's virtual-point distance
+     is the maximum distance among confirmed hits with non-negligible BRDF
+     weight; missed ray endpoints cannot supply it. With no such hit the
+     distance is zero and the resolved depth is the reflecting surface's.
    - Exception: the external `sp-fidelity` (FSR2) is a 1:1 port. It diverges
      from upstream only
      where wgpu or WGSL force it, to fix a known upstream bug, or by owner

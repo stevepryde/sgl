@@ -30,6 +30,10 @@ docs and specs the entry links.
 - `sgl-net` native WebSocket server and client sockets previously left Nagle's
   algorithm enabled; they now disable it before the handshake where the
   platform supports `TCP_NODELAY`. No game-code changes needed.
+- `sgl-post-fx` SSR: missed rays no longer set the reflection's reprojection
+  depth; only confirmed hits supply the virtual-point distance. No game-code
+  changes.
+
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;
   diagonal slides stop earlier along the surface by the backed-off motion's
