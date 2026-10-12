@@ -891,7 +891,12 @@ fn connect_first_reachable(
             break;
         }
         match TcpStream::connect_timeout(&addr, remaining) {
-            Ok(stream) => return Ok(stream),
+            Ok(stream) => {
+                // Small game updates should not wait for earlier TCP ACKs.
+                // An unsupported socket option must not reject a connection.
+                let _ = stream.set_nodelay(true);
+                return Ok(stream);
+            }
             Err(error) => {
                 last_kind = error.kind();
                 failures.push(format!("{addr}: {error}"));
@@ -1290,6 +1295,21 @@ mod tests {
     use super::*;
     use crate::websocket::{Fragment, WEBSOCKET_FRAGMENT_BYTES};
     use tungstenite::protocol::Role;
+
+    #[test]
+    fn connecting_socket_disables_nagle_before_upgrade() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let stream = connect_first_reachable(
+            [listener.local_addr().expect("listener addr")],
+            Instant::now() + MAX_WEBSOCKET_HANDSHAKE_TIMEOUT,
+        )
+        .expect("connect loopback");
+        assert!(
+            stream
+                .nodelay()
+                .expect("read connecting socket TCP_NODELAY")
+        );
+    }
 
     #[test]
     fn connect_falls_back_past_an_unreachable_resolved_address() {

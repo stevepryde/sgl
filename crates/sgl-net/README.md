@@ -95,6 +95,10 @@ there interleave in 16 KiB fragments and keep their own admission, but a lost
 TCP segment stalls every lane until it is retransmitted. Use UDP where
 loss-isolated lanes matter.
 
+Native WebSocket server and client sockets disable Nagle's algorithm before
+the handshake to avoid delayed-ACK stalls for small updates. This is best
+effort: a platform that refuses `TCP_NODELAY` still keeps the connection.
+
 Use `memory_duplex` for a local session and the simulated UDP network for
 repeatable loss/reordering scenarios. Native UDP may run on the caller's
 thread or a bounded worker. Native WebSocket uses an I/O worker; browser

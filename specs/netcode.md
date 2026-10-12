@@ -23,6 +23,9 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    after a short back-off. A native WebSocket client tries each address its
    host resolves to, in order, until one accepts; one `handshake_timeout`
    bounds host resolution, those attempts and the HTTP upgrade together.
+   Native WebSocket accepted and connecting sockets disable Nagle's algorithm
+   before the HTTP upgrade, best effort: failure to set `TCP_NODELAY` does
+   not reject the connection.
    On every transport, a connection still open when the caller disconnects
    reports exactly one `Disconnected`, with reason `Local`, at a later poll,
    whatever the peer does afterwards (its own close included). One that had
