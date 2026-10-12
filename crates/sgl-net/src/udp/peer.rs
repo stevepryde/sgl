@@ -181,10 +181,10 @@ impl Peer {
         lane: usize,
         now_ms: u64,
         rto_ms: u64,
-        max_transmissions: Option<u8>,
+        max_retransmits: Option<u8>,
     ) -> Option<(Next, usize)> {
         let reliable = &self.reliable[lane];
-        if let Some(sequence) = reliable.first_due(now_ms, rto_ms, max_transmissions) {
+        if let Some(sequence) = reliable.first_due(now_ms, rto_ms, max_retransmits) {
             let (fragment, bytes) = reliable
                 .fragment(sequence)
                 .expect("a due fragment is in flight");

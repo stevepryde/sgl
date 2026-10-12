@@ -56,7 +56,11 @@ pub struct EndpointConfig {
     pub challenge_responses_per_poll: usize,
     pub challenge_prefix_burst: u16,
     pub challenge_prefix_refill_ms: u64,
+    /// Maximum duration of graceful close, from the first disconnect.
     pub close_grace_ms: u64,
+    /// Additional sends of each unacknowledged reliable fragment after
+    /// disconnect, independent of its earlier sends. A fragment first sent
+    /// during close also gets this many resends, within `close_grace_ms`.
     pub close_retransmits: u8,
     /// Every peer's reliable message cap, lane weights and per-lane bounds.
     pub reliable: ReliableConfig,
@@ -726,7 +730,12 @@ impl<T: DatagramTransport> Endpoint<T> {
         }
         if let Some(state) = self.peers.get_mut(&peer) {
             state.latest.clear();
-            state.close_grace.get_or_insert(CloseGrace { deadline_ms });
+            if !state.is_closing() {
+                for lane in &mut state.reliable {
+                    lane.begin_close();
+                }
+                state.close_grace = Some(CloseGrace { deadline_ms });
+            }
         }
         self.flush_peer(peer, now_ms);
         self.finish_closing(now_ms);
@@ -811,9 +820,7 @@ impl<T: DatagramTransport> Endpoint<T> {
     fn flush_payloads(&mut self, id: u64, now_ms: u64, budget: usize) -> usize {
         let peer = self.peers.get_mut(&id).expect("peer exists");
         // A live peer's fragments are resent until acknowledged.
-        let max_transmissions = peer
-            .is_closing()
-            .then(|| self.config.close_retransmits.saturating_add(1));
+        let max_retransmits = peer.is_closing().then_some(self.config.close_retransmits);
         let rto_ms = peer.rto_ms();
         // Every lane that has received anything acknowledges in every
         // datagram, so the room beside them is the same all flush.
@@ -830,12 +837,12 @@ impl<T: DatagramTransport> Endpoint<T> {
             loop {
                 let mut scheduler = peer.scheduler.clone();
                 let Some(index) = scheduler
-                    .next(|lane| peer.peek(lane, now_ms, rto_ms, max_transmissions).is_some())
+                    .next(|lane| peer.peek(lane, now_ms, rto_ms, max_retransmits).is_some())
                 else {
                     break;
                 };
                 let (next, len) = peer
-                    .peek(index, now_ms, rto_ms, max_transmissions)
+                    .peek(index, now_ms, rto_ms, max_retransmits)
                     .expect("the scheduler picked a sendable lane");
                 if used > 0 && used + len > room {
                     break;
@@ -1984,10 +1991,117 @@ mod tests {
         );
     }
 
+    /// #636: three losses before disconnect must not consume the graceful
+    /// close's resend budget. Observe remote in-order delivery and its
+    /// subsequent disconnect through both endpoint adapters.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn graceful_close_delivers_after_three_transmissions_were_lost() {
+        let (server_addr, client_addr) =
+            (address(192, 0, 2, 1, 7_000), address(192, 0, 2, 2, 40_000));
+        let mut server = Endpoint::server(
+            RecordingTransport::default(),
+            EndpointConfig::default(),
+            [19; 32],
+        )
+        .unwrap();
+        let mut client =
+            Endpoint::client(RecordingTransport::default(), EndpointConfig::default()).unwrap();
+        let peer = client.start_connect(server_addr, 0, 91).unwrap();
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(0).is_empty());
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert!(client.poll(0).is_empty());
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert_eq!(server.poll(0), [EndpointEvent::Connected { peer: 1 }]);
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert_eq!(client.poll(0), [EndpointEvent::Connected { peer }]);
+
+        client
+            .send(peer, Delivery::RELIABLE_ORDERED, b"before")
+            .unwrap();
+        for now_ms in [10, 210, 610] {
+            client.flush(now_ms);
+            assert_eq!(
+                client
+                    .transport
+                    .sent
+                    .iter()
+                    .filter_map(reliable_payload)
+                    .collect::<Vec<_>>(),
+                [b"before".to_vec()],
+            );
+            ferry(&mut client, client_addr, &mut server, server_addr, |_| true);
+            assert!(server.poll(now_ms).is_empty());
+        }
+
+        // This accepted message arrives out of order during the close and
+        // must wait for the lost fragment ahead of it on the same lane.
+        client
+            .send(peer, Delivery::RELIABLE_ORDERED, b"after")
+            .unwrap();
+        client.disconnect(peer, 610);
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(610).is_empty());
+        assert_eq!(
+            client.poll(610),
+            [EndpointEvent::Disconnected {
+                peer,
+                reason: DisconnectReason::Local
+            }],
+        );
+
+        // The original fragment's backed-off RTO is 800 ms; its next send
+        // still fits within the 1,000 ms grace from the disconnect.
+        client.flush(1_410);
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert_eq!(
+            server.poll(1_410),
+            [
+                EndpointEvent::Message {
+                    peer: 1,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: b"before".to_vec()
+                },
+                EndpointEvent::Message {
+                    peer: 1,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: b"after".to_vec()
+                },
+            ],
+        );
+        server.flush(1_410);
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert!(client.poll(1_410).is_empty());
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert_eq!(
+            server.poll(1_410),
+            [EndpointEvent::Disconnected {
+                peer: 1,
+                reason: DisconnectReason::Peer
+            }],
+        );
+    }
+
     #[wasm_bindgen_test(unsupported = test)]
     fn graceful_close_retransmits_twice_then_expires_at_fixed_deadline() {
         let config = EndpointConfig {
-            close_grace_ms: 1_000,
+            close_grace_ms: 2_000,
             close_retransmits: 2,
             ..EndpointConfig::default()
         };
@@ -2005,6 +2119,10 @@ mod tests {
         server.flush(210);
         server.flush(410);
         server.flush(610);
+        // Repeated disconnect must not restore the exhausted resend budget
+        // or postpone the original close deadline.
+        server.disconnect(1, 700);
+        server.flush(1_410);
         assert_eq!(
             server
                 .transport
@@ -2019,7 +2137,7 @@ mod tests {
         );
         assert!(server.peers.contains_key(&1));
         assert_eq!(
-            server.poll(1_009),
+            server.poll(2_009),
             vec![EndpointEvent::Disconnected {
                 peer: 1,
                 reason: DisconnectReason::Local,
@@ -2027,7 +2145,7 @@ mod tests {
         );
         assert!(server.peers.contains_key(&1));
 
-        assert!(server.poll(1_010).is_empty());
+        assert!(server.poll(2_010).is_empty());
         assert!(!server.peers.contains_key(&1));
         assert_eq!(
             server

@@ -95,6 +95,14 @@ repeatable loss/reordering scenarios. Native UDP may run on the caller's
 thread or a bounded worker. Native WebSocket uses an I/O worker; browser
 WebSocket uses the browser API. The caller still owns gameplay timing.
 
+UDP disconnect stops admitting messages and drains those already accepted
+until acknowledged or `EndpointConfig::close_grace_ms` after the first
+disconnect. Each unacknowledged reliable fragment gets up to
+`close_retransmits` more sends during that grace, regardless of earlier
+sends; a fragment first sent during close gets that many resends too.
+Retransmission timing still applies, and disconnecting again restarts
+neither the resend budget nor the deadline.
+
 The [browser probe](examples/browser_probe.rs) and its
 [native fixture server](examples/ws_fixture_server.rs) demonstrate browser
 transport integration. They are check fixtures, not a production game server.
