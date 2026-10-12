@@ -99,6 +99,8 @@ errors retain the network-loss behavior.
 A UDP server keeps a connection's admitted cookie for its whole lifetime.
 Later valid confirmations receive an accept naming that cookie, so delayed
 handshake responses cannot change an established session's wire identity.
+A valid disconnect before admission retires its cookie too, so a reordered
+confirmation cannot admit a connection the client already closed.
 
 UDP gives each lane its own retransmission, so a lost bulk fragment never
 delays another lane. A UDP lane keeps at most 32 fragments in flight, so it
