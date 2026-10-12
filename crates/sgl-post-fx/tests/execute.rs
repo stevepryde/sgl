@@ -1135,6 +1135,29 @@ fn ssr_radiance(
     roughness: &[u8],
     color: &[u8],
 ) -> Vec<[f32; 4]> {
+    ssr_radiance_with_flags(
+        device,
+        queue,
+        camera,
+        depths,
+        normals,
+        roughness,
+        color,
+        FeatureFlags::NONE,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ssr_radiance_with_flags(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    camera: &CameraAttribs,
+    depths: &[f32],
+    normals: &[u8],
+    roughness: &[u8],
+    color: &[u8],
+    flags: FeatureFlags,
+) -> Vec<[f32; 4]> {
     let mut encoder = device.create_command_encoder(&Default::default());
     let current_depth = depth_values(device, queue, &mut encoder, depths);
     let previous_depth = depth(device, &mut encoder, 1.0);
@@ -1172,7 +1195,7 @@ fn ssr_radiance(
             post_fx_context::FeatureFlags::NONE
         },
     );
-    ssr.prepare_resources(device, &mut encoder, &mut context, FeatureFlags::NONE);
+    ssr.prepare_resources(device, &mut encoder, &mut context, flags);
     context.execute(&mut RenderAttributes {
         device,
         queue,
@@ -1292,6 +1315,83 @@ fn ssr_hits_the_mirror_image_under_a_jittered_projection() {
         checked > 200,
         "only {checked} floor pixels reflected the wall"
     );
+}
+
+// #644: a mirror floor at y=-1 reflects a wall split at world x=0 in red
+// and y=2/3 in green. Reflection leaves x/z unchanged, so red's edge is at
+// the viewport centre, column 32. The wall distance makes green's mirror
+// image project to row 40. Both edges lie on 2x2 block boundaries; upstream
+// advances them to odd column 31 and row 39. This exercises actual tracing,
+// reconstruction and denoising, with expected edges derived from geometry.
+#[test]
+fn half_resolution_mirror_keeps_the_reflected_edge_in_its_block() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let camera = camera(false, 0);
+    let [width, height] = SIZE.map(f64::from);
+    let p = camera.m_proj.map(f64::from);
+    // The mirror image of y=2/3 is y=-8/3. At this wall distance it
+    // projects to NDC y=-2/3, exactly row 40.
+    let wall_z = p[5] * height / 12.0;
+    let mut depths = Vec::new();
+    let mut normals = Vec::new();
+    let mut roughness = Vec::new();
+    let mut color = Vec::new();
+    for y in 0..SIZE[1] {
+        for x in 0..SIZE[0] {
+            let ray_y = (1.0 - (f64::from(y) + 0.5) / height * 2.0) / p[5];
+            let floor_z = if ray_y < 0.0 {
+                -1.0 / ray_y
+            } else {
+                f64::INFINITY
+            };
+            let floor = floor_z < wall_z;
+            let z = floor_z.min(wall_z);
+            depths.push((p[10] + p[14] / z) as f32);
+            normals.extend(half(if floor {
+                &[0.0, 1.0, 0.0, 0.0]
+            } else {
+                &[0.0, 0.0, -1.0, 0.0]
+            }));
+            roughness.push(if floor { 0 } else { 255 });
+            let world_x_sign = (f64::from(x) + 0.5) / width * 2.0 - 1.0;
+            let value = f32::from(u8::from(world_x_sign >= 0.0));
+            let green = f32::from(u8::from(ray_y * z >= 2.0 / 3.0));
+            color.extend(half(&[value, green, 0.0, 1.0]));
+        }
+    }
+    for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        let radiance = ssr_radiance_with_flags(
+            &device, &queue, &camera, &depths, &normals, &roughness, &color, flags,
+        );
+        // These rows are well inside the floor; the reflected wall is visible
+        // and far from the confidence fade at the viewport boundary.
+        for y in 34..42 {
+            let row = &radiance[(y * SIZE[0]) as usize..((y + 1) * SIZE[0]) as usize];
+            assert!(
+                row[30..34].iter().all(|v| v[3] > 0.1),
+                "{flags:?} row {y}: reflected wall has insufficient confidence"
+            );
+            let edge = row.iter().position(|v| v[3] > 0.1 && v[0] / v[3] > 0.5);
+            assert_eq!(
+                edge,
+                Some(32),
+                "{flags:?} row {y}: mirror edge left its geometric column"
+            );
+        }
+        for x in 28..36 {
+            let edge = (32..44).find(|&y| {
+                let v = radiance[(y * SIZE[0] + x) as usize];
+                v[3] > 0.1 && v[1] / v[3] > 0.5
+            });
+            assert_eq!(
+                edge,
+                Some(40),
+                "{flags:?} column {x}: mirror edge left its geometric row"
+            );
+        }
+    }
 }
 
 // PROVENANCE.md DFX-39: a wall mirror half a metre in front of a camera that

@@ -30,9 +30,11 @@ licences, source revisions and the blue-noise table source it reads.
   depth-buffer thickness behind a surface passes behind it, as Godot's
   hierarchical SSR traces (DFX-18). A ray stops at the viewport edge (DFX-22)
   and at the far plane (DFX-26), as AMD's hybrid traversal stops it. At half
-  resolution a block whose traced pixel is background reports a miss, as AMD
-  traces no ray there; its other mirror and near-mirror pixels take the
-  environment, rough ones neighbouring blocks' rays (DFX-41). At full
+  resolution each displaced pixel centre reads the ray of its containing
+  2×2 block, so a mirror reads only its own block (DFX-55). A block whose
+  traced pixel is background reports a miss, as AMD traces no ray there;
+  its other mirror and near-mirror pixels take the environment, rough ones
+  neighbouring blocks' rays (DFX-41). At full
   importance-sample bias a ray follows the mirror direction, as Godot's SSR
   traces (DFX-20), and at roughness 0 at any bias; the resolve clamps N·V
   above 0 as Filament does (DFX-40). Its temporal

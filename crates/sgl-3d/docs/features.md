@@ -314,7 +314,8 @@ Environment and probe specular always apply. On top of them:
 - **Screen-space reflections** with two methods, Crystal and Velvet, which
   combine passes from DiligentFX, AMD FidelityFX, Godot, Wicked Engine and
   Bevy, over opaque surfaces and blended receivers. Crystal runs in SGL's
-  `sgl-post-fx` effects library.
+  `sgl-post-fx` effects library. At half resolution a Crystal mirror pixel
+  reads its own 2×2 block's ray; roughness widens the reconstruction.
   [Reflections](../README.md#reflections) credits each source.
 - **World-space reflections**: rays up to 1000 m from the reflecting
   surface where screen-space reflections miss, through a software BVH or,
