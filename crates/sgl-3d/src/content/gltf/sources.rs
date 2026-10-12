@@ -1,5 +1,5 @@
-//! URI confinement and bounded source reads. The gltf crate validates the
-//! document, but its file importer permits absolute paths and unbounded reads.
+//! URI confinement and bounded source reads. Import validates the document
+//! before using these readers; gltf's file importer allows unbounded reads.
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 

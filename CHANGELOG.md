@@ -22,6 +22,7 @@ docs and specs the entry links.
 - `sgl-net` UDP `Disconnect` handling: a valid disconnect arriving before its confirm formerly admitted a ghost connection on that confirm; the server now retires the cookie before admission. No game-code changes are needed.
 
 - `sgl-net` UDP `Endpoint::disconnect`: closing peers formerly ignored newly received reliable fragments; they now buffer and acknowledge them under the existing limits without returning new messages. No game-code changes are needed.
+- `sgl-3d` `asset::load`/`load_slice`: malformed glTF accessor references, animation targets and image sources formerly panicked; they now return `Err` naming the element. No game-code changes are needed.
 
 - `sgl-3d` `Renderer` geometry pipelines: each change of rect lights, decals, films, sheens, diffuse transmission, transmissive materials or diagnostics layers formerly kept every earlier pipeline set for the renderer's lifetime; only the current and previous sets are now kept. No game-code changes are needed.
 - `sgl-3d` hardware ray tracing: a model whose indices start 4 GiB or more into the ray source formerly failed wgpu's BLAS build validation and panicked; it is now left out of the TLAS as a model past the device's BLAS limits is. No game-code changes are needed.

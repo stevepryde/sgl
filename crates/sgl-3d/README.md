@@ -2678,6 +2678,9 @@ way. `TEXCOORD_1` is the mesh's static irradiance atlas chart: on a static
 instance while an atlas is installed, a vertex it charts samples the atlas
 and takes no baked lights, so set `lightmap_uv` to `[0, 0]` on models the
 bake does not chart (one exported with a second UV map for AO, say).
+Malformed primitive or morph accessor references, animation target nodes or
+paths, and image sources return an error naming the element. Each image must
+have exactly one `uri` or `bufferView`, with `mimeType` for a buffer view.
 Every accessor the load reads must hold at least one
 element, within its buffer view and buffer, of a component type and shape
 glTF 2.0 allows for its use (an attribute, indices, a morph target, inverse
