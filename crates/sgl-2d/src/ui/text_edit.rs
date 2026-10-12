@@ -29,7 +29,7 @@ impl UiFrame<'_> {
         max_len: usize,
         px: f32,
     ) -> bool {
-        self.line_edit_impl(name, rect, buf, max_len, px, false)
+        self.line_edit_impl(name, rect, buf, max_len, px, false, false)
     }
 
     /// A secret field with ASCII append/backspace editing and paste. Navigation,
@@ -56,7 +56,7 @@ impl UiFrame<'_> {
             buf.zeroize();
             cleared = true;
         }
-        let edited = self.line_edit_impl(name, rect, buf, max_len, px, true);
+        let edited = self.line_edit_impl(name, rect, buf, max_len, px, true, true);
         if !buf.is_empty() {
             let hover = self.hit(&btn);
             let fg = if hover {
@@ -70,7 +70,7 @@ impl UiFrame<'_> {
         cleared || edited
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     pub(super) fn line_edit_impl(
         &mut self,
         name: &str,
@@ -79,6 +79,7 @@ impl UiFrame<'_> {
         max_len: usize,
         px: f32,
         masked: bool,
+        clearable: bool,
     ) -> bool {
         let id = widget_id(name);
         let eligible = self.register_focus(id, &rect);
@@ -140,7 +141,11 @@ impl UiFrame<'_> {
 
         // Text, left-aligned with padding, vertically centered.
         let pad = 5.0;
-        let trailing = if masked { rect.size().y } else { 0.0 };
+        let trailing = if clearable && !buf.is_empty() {
+            rect.size().y
+        } else {
+            0.0
+        };
         let inner = Rect::new(
             rect.min.x + pad,
             rect.min.y,
@@ -226,7 +231,7 @@ impl UiFrame<'_> {
             buf.clear();
             cleared = true;
         }
-        let edited = self.line_edit(name, rect, buf, max_len, px);
+        let edited = self.line_edit_impl(name, rect, buf, max_len, px, false, true);
         if !buf.is_empty() {
             let hover = self.hit(&btn);
             let fg = if hover {
@@ -717,6 +722,35 @@ mod tests {
         assert!(!f.line_edit_clear("name", field, &mut buf, 50, 24.0));
         f.end();
         assert_eq!(buf, "");
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn clearable_edit_content_stays_left_of_clear_button() {
+        for masked in [false, true] {
+            let (mut ui, mut text, _assets) = fixture();
+            let field = Rect::new(20.0, 20.0, 160.0, 30.0);
+            let clear_left = 150.0;
+            let mut buf = "a long filename for an editor room".to_owned();
+            let mut list = DrawList::new();
+            let mut f = ui.begin(&mut text, &mut list, UiInput::default());
+            f.focus("draft");
+            if masked {
+                f.password_edit_clear("draft", field, &mut buf, 80, 20.0);
+            } else {
+                f.line_edit_clear("draft", field, &mut buf, 80, 20.0);
+            }
+            f.end();
+            let caret = list
+                .screen
+                .iter()
+                .find(|quad| quad.color == ui.theme().caret && quad.scale.x == 2.0)
+                .expect("focused edit draws a caret");
+            assert!(caret.pos.x + caret.scale.x * 0.5 <= clear_left);
+            assert!(caret.pos.x - caret.scale.x * 0.5 >= field.min.x + 5.0);
+            let clipped: Vec<_> = list.screen.iter().filter_map(|quad| quad.clip).collect();
+            assert!(!clipped.is_empty(), "text and caret carry a clip");
+            assert!(clipped.iter().all(|clip| clip.max.x <= clear_left));
+        }
     }
 
     #[wasm_bindgen_test(unsupported = test)]

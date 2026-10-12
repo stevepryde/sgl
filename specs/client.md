@@ -93,7 +93,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    Normal line edits support Left/Right, Home/End, Shift selection, select-all,
    Delete/Backspace, copy/cut, and replacement by typing/paste. Caret and draft
    survive unrelated redraws under stable widget names. Edits scroll to keep
-   the caret visible and clip content to the field and enclosing clip. Secret
+   the caret visible and clip content to the field and enclosing clip, reserving
+   trailing space whenever a clear button is visible. Secret
    fields retain ASCII append/backspace/paste editing and never copy or cut;
    they avoid temporary copies of the secret while editing, provided the
    game preallocates `buf` with at least `max_len` bytes.

@@ -32,6 +32,8 @@ docs and specs the entry links.
 
 - `sgl-3d` `asset::load`/`load_slice`: malformed glTF accessor references, animation targets and image sources formerly panicked; they now return `Err` naming the element. No game-code changes are needed.
 - `sgl-3d` `LightShape::Spot`: a closed or unrepresentably narrow casting cone formerly built a non-finite shadow view; it now releases its shadow slots until its projection is finite. No game-code changes are needed.
+- `sgl-2d` `UiFrame::line_edit_clear`: long drafts formerly drew text and the caret beneath the clear button; both now stay within the space to its left. No game-code changes are needed.
+
 - `sgl-2d` `Context`: windows larger than the device texture limit formerly panicked during startup or resize; swapchain dimensions are now capped per axis to that limit. No game-code changes are needed.
 - `sgl-3d` `Exposure`: abandoning the first automatic frame after fixed exposure formerly lost its snap to target; the next submitted automatic frame now snaps. No game-code changes are needed.
 - `sgl-post-fx` SSR: glossy grazing sample PDFs formerly relied on backend half-float overflow behavior; stored PDFs now clamp to the finite range so reconstruction keeps their weight. No game-code changes are needed.

@@ -116,6 +116,7 @@ impl UiFrame<'_> {
     /// value is clamped into `opts.min..=opts.max`. Clicking elsewhere ends
     /// typing (the ordinary click-away unfocus). Returns whether `value`
     /// changed this frame.
+    #[allow(clippy::too_many_lines)]
     pub fn number_field(
         &mut self,
         name: &str,
@@ -150,8 +151,15 @@ impl UiFrame<'_> {
             }
             // Typing: the middle is a line edit over the retained buffer.
             let mut buf = std::mem::take(&mut self.ui.number_edit);
-            let edited =
-                self.line_edit_impl(name, middle, &mut buf, NUMBER_EDIT_MAX_LEN, px, false);
+            let edited = self.line_edit_impl(
+                name,
+                middle,
+                &mut buf,
+                NUMBER_EDIT_MAX_LEN,
+                px,
+                false,
+                false,
+            );
             if edited
                 && let Ok(typed) = buf.trim().parse::<f32>()
                 && typed.is_finite()
