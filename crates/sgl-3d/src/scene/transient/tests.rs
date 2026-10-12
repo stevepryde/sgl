@@ -29,7 +29,7 @@ fn oversized_transient_updates_keep_accepted_content() {
         .update_fog_volumes(&device, &queue, &[volume])
         .unwrap();
     let fog = scene.transient.fog_volumes.clone();
-    let refused_fog = vec![FogVolume::default(); 33];
+    let refused_fog = vec![FogVolume::default(); 37];
     assert!(matches!(
         scene.update_fog_volumes(&device, &queue, &refused_fog),
         Err(SceneError::DeviceLimit)
