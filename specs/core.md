@@ -80,9 +80,10 @@ browser client must get identical results from it.
    the configured gap along the contact normal, never reversing it or moving
    off the tested segment. Sliding projects the motion left after the contact
    time, excluding the backed-off portion. `snap_to_ground` uses the same
-   back-off along its probe. Sensors never block; one-way platforms block only a
-   landing on the face along the configured up axis, including a body within
-   `skin` (plus rounding) below that face, never a body deeper inside them.
+   back-off along its probe. Sensors never block; one-way platforms block only
+   motion into a floor-classified face (one within `normal_threshold` of the
+   configured up axis), including a body within `skin` (plus rounding) below
+   that face, never a body deeper inside them.
    `CollisionConfig` names the up axis, skin, snap distance, and
    thresholds in the caller's units, rejecting negative or non-finite
    lengths; results mirror exactly between y-up and y-down worlds.

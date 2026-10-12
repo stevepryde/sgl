@@ -11,8 +11,8 @@ pub struct ColliderFlags {
     /// Participates in solid collision response. A collider that is not solid
     /// is skipped entirely by the sweep.
     pub solid: bool,
-    /// One-way platform: passable except when landing on the face that points
-    /// along the world's up axis.
+    /// One-way platform: passable except for motion into a floor face (one
+    /// within `normal_threshold` of the world's up axis).
     pub one_way: bool,
     /// Sensor: never blocks, whatever `solid` says. Callers detect sensors by
     /// querying the set themselves.
