@@ -205,7 +205,7 @@ pub struct ColorGradingGlobal {
     /// Added to the white point's CIE 1931 y: positive is more magenta,
     /// negative greener.
     pub tint: f32,
-    /// Hue rotation in radians.
+    /// Hue rotation in radians, wrapping either direction every 2π.
     pub hue: f32,
     /// Saturation after tone mapping: 0 is greyscale, 1 unchanged.
     pub post_saturation: f32,

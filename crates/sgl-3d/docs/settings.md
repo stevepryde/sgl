@@ -76,7 +76,8 @@ is done (its algorithm and internal parameters) is SGL3D's.
   blurs (0.5 by default).
 - `color_grading`: white balance, hue, post-saturation, the midtone range,
   each section's saturation, contrast, gamma, gain and lift, and the AgX
-  look (`AgxLook::None` by default, `Punchy` or `Golden`).
+  look (`AgxLook::None` by default, `Punchy` or `Golden`). Hue is in radians,
+  wrapping either direction every 2π (0 by default).
 - `ambient_occlusion_radius`: occlusion reach in metres (0.5 by default),
   clamped to 0.01–10000; `Settings::ambient_occlusion` turns AO off.
 - `directional_lights`, `hemisphere_light`: the lights that are not scene

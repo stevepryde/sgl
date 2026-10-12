@@ -223,6 +223,8 @@ frame.color_grading = ColorGrading {
   is dithered with Bevy's deband dither, up to half an 8-bit step per
   channel, so smooth gradients do not band on an 8-bit surface; the
   tone-mapped diagnostics capture is not. Timing group `tone map`.
+- `ColorGrading::global.hue` rotates in radians, wrapping either direction
+  every 2π; negative angles and multiple turns need no game-side wrapping.
 
 ## Motion blur
 
