@@ -72,7 +72,13 @@ enum SourcePrefix {
 
 impl From<SocketAddr> for SourcePrefix {
     fn from(source: SocketAddr) -> Self {
-        match source.ip() {
+        // A dual-stack socket reports IPv4 clients as `::ffff:a.b.c.d`, whose
+        // /64 is the same for every one of them; bucket those by their /24.
+        let ip = match source.ip() {
+            IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(IpAddr::V6(ip), IpAddr::V4),
+            ip @ IpAddr::V4(_) => ip,
+        };
+        match ip {
             IpAddr::V4(ip) => {
                 let octets = ip.octets();
                 Self::V4([octets[0], octets[1], octets[2]])
@@ -340,6 +346,23 @@ mod tests {
         assert!(v6_prefix.allow(left, 0, 1, 1_000));
         assert!(!v6_prefix.allow(same, 0, 1, 1_000));
         assert!(v6_prefix.allow(other, 0, 1, 1_000));
+    }
+
+    /// IPv4 clients of a dual-stack socket arrive as IPv4-mapped IPv6
+    /// addresses and are bucketed by their IPv4 /24, not one shared /64.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn limiter_buckets_ipv4_mapped_sources_by_their_v4_24() {
+        let mapped = |a, b, c, d| -> SocketAddr {
+            SocketAddrV6::new(Ipv4Addr::new(a, b, c, d).to_ipv6_mapped(), 40_000, 0, 0).into()
+        };
+        assert_ne!(
+            SourcePrefix::from(mapped(10, 0, 0, 1)),
+            SourcePrefix::from(mapped(10, 0, 1, 1))
+        );
+        assert_eq!(
+            SourcePrefix::from(mapped(10, 0, 0, 1)),
+            SourcePrefix::from(v4(10, 0, 0, 1, 40_000))
+        );
     }
 
     /// #440: every confirm stays while its cookie can validate (its epoch

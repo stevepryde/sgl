@@ -200,7 +200,8 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     flags, latest state with a lane, a first fragment declaring no more than
     it carries, or mask bits on a control kind is rejected; from a connected
     peer that is `ProtocolViolation`. Handshakes use a keyed cookie
-    challenge with a per-prefix challenge budget and a confirm replay cache
+    challenge with a per-prefix challenge budget (IPv4 /24, including
+    IPv4-mapped IPv6 sources; IPv6 /64) and a confirm replay cache
     that keeps every verified confirm until its cookie expires. A client
     confirms the first challenge it receives and ignores others, so
     challenges to its retried requests, reordered across a cookie epoch,
@@ -217,9 +218,13 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     accept. A client honours a deny only before it connects and only for the
     cookie it holds, and answers it with a disconnect for that cookie, so a
     server that already admitted a retried confirm frees the connection
-    rather than waiting out `timeout_ms`. Every disconnect a UDP endpoint
-    sends (a close, a deny's answer, or a peer closed for a violation,
-    overflow or stalled send) goes out three times, so one lost datagram
+    rather than waiting out `timeout_ms`. A server also ends a connection on
+    a disconnect from its route carrying any cookie it issued that is still
+    valid, as a client that asked again may close holding a newer cookie
+    before the accept naming the admitted one arrives; a later confirm for
+    that cookie admits nothing. Every disconnect a UDP endpoint sends (a
+    close, a deny's answer, or a peer closed for a violation, overflow or
+    stalled send) goes out three times, so one lost datagram
     does not leave the remote holding the connection until `timeout_ms`. Dropping an endpoint
     or shutting down its threaded worker sends that same best-effort redundant
     disconnect to every remaining peer before the socket closes, abandoning
@@ -239,9 +244,12 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     before it: a flush releases the state last sent before it, which leaves
     as soon as those frames have gone, ahead of every frame still queued; it
     is not a barrier, so meanwhile lane frames flushed later may leave first
-    (holding them would let one lane's long message hold every lane back); a
-    newer state sent after that flush waits for its own without withholding
-    it, and of states whose turn comes together only the newest leaves. Text frames, wrong magic or version, the reserved kind, reserved
+    (holding them would let one lane's long message hold every lane back);
+    in the browser they do while the state waits for `bufferedAmount` to
+    fall under `latest_buffered_bytes` or for the bytes ahead of it to
+    drain, after which it leaves before any further lane frame; a newer
+    state sent after that flush waits for its own without withholding it,
+    and of states whose turn comes together only the newest leaves. Text frames, wrong magic or version, the reserved kind, reserved
     flags, an invalid lane, latest state or an unreliable message with
     fragment flags, a total not above its fragment, and frames over
     `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`, as are

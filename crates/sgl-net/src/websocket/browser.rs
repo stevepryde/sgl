@@ -8,6 +8,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{BinaryType, CloseEvent, Event, MessageEvent, WebSocket};
 
+use super::pacing::{BufferedPacing, Pace};
 use super::queue::PeerState;
 use super::{
     ENVELOPE_HEADER_LEN, MAX_BROWSER_BUFFERED_BYTES, MAX_BROWSER_RECONNECT_ATTEMPTS,
@@ -40,7 +41,9 @@ pub struct BrowserWebSocketConfig {
     pub reliable_buffered_bytes: usize,
     /// Browser buffered-byte watermark above which latest state stays
     /// coalesced: a released state waits while it would take
-    /// `bufferedAmount` past this. At least [`ENVELOPE_HEADER_LEN`] +
+    /// `bufferedAmount` past this, unless the bytes buffered ahead of it
+    /// when it began waiting have drained, and never past
+    /// `reliable_buffered_bytes`. At least [`ENVELOPE_HEADER_LEN`] +
     /// [`MAX_LATEST_STATE_BYTES`] so the largest state can go out.
     pub latest_buffered_bytes: usize,
     /// The connection's reliable message cap, lane weights and per-lane
@@ -89,6 +92,7 @@ impl BrowserWebSocketConfig {
 
 struct BrowserState {
     peer: PeerState,
+    pacing: BufferedPacing,
     opened: bool,
     connected_pending: bool,
     needs_reconnect: bool,
@@ -99,6 +103,7 @@ impl BrowserState {
     fn new(reliable: &ReliableConfig) -> Self {
         Self {
             peer: PeerState::new(reliable),
+            pacing: BufferedPacing::default(),
             opened: false,
             connected_pending: false,
             needs_reconnect: false,
@@ -115,6 +120,7 @@ impl BrowserState {
 
     fn reset_for_reconnect(&mut self, reliable: &ReliableConfig) {
         self.peer = PeerState::new(reliable);
+        self.pacing = BufferedPacing::default();
         self.opened = false;
         self.connected_pending = false;
         self.needs_reconnect = false;
@@ -293,32 +299,54 @@ impl BrowserWebSocketClient {
 
     fn flush_released(&mut self) {
         if self.socket.socket.ready_state() != WebSocket::OPEN {
+            // Nothing this socket buffered is ahead of a later state.
+            self.state.borrow_mut().pacing = BufferedPacing::default();
             return;
         }
+        // A latest state that has to wait stays coalesced without holding
+        // back lane frames; it cannot go later in this flush, as sends only
+        // fill the buffer.
+        let mut latest_waits = false;
         loop {
             let buffered = self.socket.socket.buffered_amount() as usize;
-            let next = self.state.borrow().peer.next_released_frame_len();
+            let next = {
+                let peer = &self.state.borrow().peer;
+                if latest_waits {
+                    peer.next_released_lane_frame_len()
+                } else {
+                    peer.next_released_frame_len()
+                }
+            };
             let Some((delivery, frame_bytes)) = next else {
                 break;
             };
-            // Unreliable frames wait for the reliable watermark like reliable
-            // ones: an accepted message is never dropped.
-            let limit = match delivery {
-                Delivery::Reliable(_) | Delivery::Unreliable(_) => {
-                    self.config.reliable_buffered_bytes
-                }
-                Delivery::LatestState => self.config.latest_buffered_bytes,
-            };
             // Paced, never fatal: the frame waits for the browser to drain.
-            if buffered.saturating_add(frame_bytes) > limit {
-                break;
+            // Unreliable frames wait like reliable ones: an accepted message
+            // is never dropped.
+            let pace = self.state.borrow_mut().pacing.next(
+                buffered,
+                delivery,
+                frame_bytes,
+                self.config.reliable_buffered_bytes,
+                self.config.latest_buffered_bytes,
+            );
+            match pace {
+                Pace::Send => {}
+                Pace::SkipLatest => {
+                    latest_waits = true;
+                    continue;
+                }
+                Pace::Wait => break,
             }
-            let next_frame = self
-                .state
-                .borrow_mut()
-                .peer
-                .pop_released_frame()
-                .expect("released outbound frame was observed above");
+            let next_frame = {
+                let peer = &mut self.state.borrow_mut().peer;
+                if latest_waits {
+                    peer.pop_released_lane_frame()
+                } else {
+                    peer.pop_released_frame()
+                }
+            }
+            .expect("released outbound frame was observed above");
             let Ok(encoded) = encode_envelope(self.config.identity.magic, &next_frame.envelope())
             else {
                 self.close_protocol();
@@ -329,6 +357,7 @@ impl BrowserWebSocketClient {
                 self.socket.detach_and_close();
                 break;
             }
+            self.state.borrow_mut().pacing.sent(delivery, frame_bytes);
         }
         let graceful_complete = {
             let mut state = self.state.borrow_mut();
