@@ -482,10 +482,9 @@ impl VolumetricFog {
                 pass.set_bind_group(1, group, &[]);
                 pass.dispatch_workgroups(groups(x, axis == 0), groups(y, axis == 1), z);
             }
-            // The other volume now holds this frame's filtered froxels. Its
-            // hold is kept: only a retry of this frame, abandoned before the
-            // GPU ran it, matches it, and then it still holds the last
-            // frame's unfiltered froxels.
+            // A submitted frame may be retried without finish_frame. The
+            // other volume then holds this frame, not its predecessor.
+            volumes.holds.filtered(index, history.frames);
             volumes.integrated_from = 1 - index;
         }
         let mut pass = ctx

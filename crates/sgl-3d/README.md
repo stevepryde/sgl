@@ -317,7 +317,9 @@ before opaque, the fog stage:
 - with `Settings::fog_filter` (on by default, as Godot's `use_filter`),
   blurs each slice with Godot's 7-tap Gaussian across x and then y, which
   smooths what one sample per froxel leaves; the next frame reprojects the
-  unfiltered volume, as Godot keeps its history before it filters;
+  unfiltered volume, as Godot keeps its history before it filters. A
+  submitted frame retried without `Renderer::finish_frame` resets history
+  when the filter overwrote the preceding frame's volume;
 - integrates each column front to back along its view ray into the light
   scattered toward the camera and the transmittance to each slice.
 

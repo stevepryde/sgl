@@ -1598,3 +1598,68 @@ fn shadow_opacity_blends_a_lights_shadow_on_surfaces_and_in_the_medium() {
         }
     }
 }
+
+// Defect: the filter overwrites the previous frame's volume but leaves its
+// old camera label. A submitted frame retried without finish_frame must
+// reject that volume. Black albedo scatters no light: any nonzero RGB in
+// the retry's froxels is illumination retained from the overwritten volume.
+#[test]
+fn a_submitted_filtered_frame_is_not_reprojected_as_previous_on_retry() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let settings = Settings {
+        fog_filter: true,
+        ..settings(true)
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut frame = input(Fog {
+        density: 0.05,
+        length: 10.,
+        albedo: [0.; 3],
+        ambient: 1.,
+        ..Default::default()
+    });
+    frame.hemisphere_light = HemisphereLight {
+        sky_color: [1.; 3],
+        ground_color: [1.; 3],
+        intensity: 1.,
+    };
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let output = crate::view::targets::target(&device, "fog retry", SIZE, gbuffer::COLOR);
+    for step in 0..3 {
+        frame.fog.albedo = if step == 1 { [1.; 3] } else { [0.; 3] };
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            &mut scene,
+            &frame,
+            &settings,
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        if step != 1 {
+            renderer.finish_frame(&mut scene);
+        }
+        let froxels = texels(&read(&device, &queue, renderer.fog_volumes()[1]));
+        let light = froxels
+            .iter()
+            .flat_map(|texel| &texel[..3])
+            .copied()
+            .fold(0f32, f32::max);
+        if step == 1 {
+            assert!(
+                light > 0.,
+                "the submitted volume must hold light to expose stale reprojection"
+            );
+        } else {
+            assert_eq!(
+                light, 0.,
+                "step {step}: black albedo cannot scatter prior illumination"
+            );
+        }
+    }
+}

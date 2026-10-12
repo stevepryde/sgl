@@ -70,7 +70,8 @@ its rendering `settings::Settings`.
    normal layers, their shaders and the mist); `Renderer::render`
    into the output view. Draw the game's UI (`sgl-2d` can, on the same
    device), submit, and call `Renderer::finish_frame`. An abandoned encoder
-   retains a pending fixed-to-automatic exposure reset.
+   retains a pending fixed-to-automatic exposure reset. Retrying submitted
+   filtered fog without finishing resets the overwritten volume history.
 4. Set `FrameInput::camera_cut` on a camera cut. History restarts itself then,
    after a resize that changes the targets and for a different scene.
 5. A large world: keep the game's own coordinates and call
