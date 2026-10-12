@@ -55,7 +55,9 @@ earlier on the swept path. A diagonal slide keeps the tangential motion left
 after the contact time; the backed-off motion is discarded, so it also stops
 earlier along the surface. Ground snapping backs off along its probe too.
 Contacts at the exact end of a sweep are included, even on a broadphase
-cell boundary. `Aabb::from_min_max` computes center/half-extents, so its
+cell boundary. Every finite nonzero motion is swept, including motion below
+`f32::EPSILON` in the game's units; unobstructed motion is applied in full.
+`Aabb::from_min_max` computes center/half-extents, so its
 reconstructed corners may differ from the supplied corners by float rounding.
 `collision` is 2D arcade physics: it moves bodies the game drives, with no
 forces, mass or rotation. See [Physics](../../docs/README.md#physics) to

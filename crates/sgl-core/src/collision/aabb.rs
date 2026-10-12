@@ -139,14 +139,14 @@ pub fn sweep_aabb(body: &Aabb, delta: Vec2, target: &Aabb) -> Option<Hit> {
 /// Entry and exit times of the interval `[b_lo, b_hi]` moving by `d` across
 /// the interval `[t_lo, t_hi]`, from the gaps between their edges.
 ///
-/// Motion smaller than `f32::EPSILON` counts as parallel: it cannot carry the
-/// body across a slab it is outside of, and dividing by it would manufacture
-/// enormous or infinite times. A parallel body already overlapping the slab
+/// Exactly zero motion counts as parallel. A nonzero motion, however small,
+/// can reach a nearby face; overflowed entry times are outside `[0, 1]` and
+/// rejected by the sweep. A parallel body already overlapping the slab
 /// (strictly, as [`Aabb::overlaps`] tests) is unconstrained on this axis
 /// (`-inf`..`inf`) and lets the other axis decide; one outside or only
 /// touching can never enter.
 fn slab(b_lo: f32, b_hi: f32, d: f32, t_lo: f32, t_hi: f32) -> Option<(f32, f32)> {
-    if d.abs() < f32::EPSILON {
+    if d == 0.0 {
         if b_hi > t_lo && b_lo < t_hi {
             Some((f32::NEG_INFINITY, f32::INFINITY))
         } else {
