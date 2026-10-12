@@ -1,7 +1,7 @@
 //! The irradiance volume's placement and cells, as the game describes them
 //! to `Scene::set_irradiance_volume` and `PreparedIrradianceRegion::new`.
 //! Metres; light is irradiance / PI on the directional lights' scale.
-use super::static_lighting::AmbientCube;
+use super::static_lighting::{AmbientCube, valid_irradiance};
 use glam::Vec3;
 
 /// Where a scene's irradiance volume lies: a lattice of cells the game
@@ -80,11 +80,7 @@ impl IrradianceCell {
     /// Whether its light is finite, nonnegative and within RGBA16F range,
     /// and its sky visibility within 0..=1.
     pub(crate) fn valid(&self) -> bool {
-        self.irradiance
-            .irradiance
-            .iter()
-            .flatten()
-            .all(|&value| value.is_finite() && (0. ..=65504.).contains(&value))
+        valid_irradiance(&self.irradiance.irradiance)
             && self
                 .sky_visibility
                 .iter()

@@ -99,7 +99,7 @@ pub struct SurfaceMaterial {
     /// Clearcoat perceptual roughness in `0..=1`, which a clearcoat
     /// roughness map's green channel multiplies.
     pub coat_roughness: f32,
-    /// Scale applied to the clearcoat normal map's tangent-space X and Y
+    /// Finite scale applied to the clearcoat normal map's tangent-space X and Y
     /// components ([`Material::coat_normal_scale`]).
     pub coat_normal_scale: f32,
     /// A thin film's strength in `0..=1`, which an iridescence map's red
@@ -124,7 +124,7 @@ pub struct SurfaceMaterial {
     /// and nonnegative, which a diffuse transmission colour map's RGB multiplies
     /// ([`Material::diffuse_transmission_color`]).
     pub diffuse_transmission_color: [f32; 3],
-    /// Scale of the normal map's tangent-space X and Y.
+    /// Finite scale of the normal map's tangent-space X and Y.
     pub normal_scale: f32,
     /// Scrolling normals: the normal map drawn as two layers that move
     /// across the surface, their slopes added as superposed waves' are, at
@@ -132,7 +132,7 @@ pub struct SurfaceMaterial {
     /// no geometry uploaded per frame. Needs a normal map that repeats on
     /// both axes. `None` draws the map once at the material's UVs.
     pub normal_layers: Option<[NormalLayer; 2]>,
-    /// Bump height multiplier: the height change over one pixel times this
+    /// Finite bump height multiplier: the height change over one pixel times this
     /// tilts a rasterised surface (the camera's and probe captures'), as
     /// three.js's `bumpScale`, and over one metre at a world-space
     /// reflection or dynamic GI ray's hit, which therefore usually shows the

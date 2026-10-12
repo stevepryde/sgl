@@ -646,6 +646,8 @@ impl Scene {
     /// Replaces a material's values, its alpha mode among them. Anisotropy
     /// needs authored tangent frames on every mesh drawn with the material.
     /// Textures stay as added.
+    /// Non-finite `normal_scale`, `coat_normal_scale` or `bump_scale`
+    /// returns `SceneError::InvalidMaterialFactors` without changing the material.
     pub fn set_material(
         &mut self,
         queue: &wgpu::Queue,

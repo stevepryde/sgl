@@ -1106,6 +1106,11 @@ in one eight-target pass, with ambient occlusion on or off. Only devices without
 them draw a geometry pass before lighting. Use `graphics_device::limits` when
 requesting the caller-owned device.
 
+Material `normal_scale`, `coat_normal_scale` and `bump_scale` must be finite;
+negative and zero scales are allowed. `add_materials`, `add_asset` and
+`set_material` return `SceneError::InvalidMaterialFactors` for non-finite
+scales; a rejected edit retains the previous material.
+
 ## Scrolling normal layers
 
 `asset::Material::normal_layers` and `SurfaceMaterial::normal_layers` draw a
@@ -2037,8 +2042,9 @@ irradiance divided by PI, before albedo, finite, nonnegative and within RGBA16F
 range. The library uploads it as the uncompressed atlas below: an RGBA16F
 texture, with an RGBA8Unorm one for its directionality, filtered bilinearly by
 the hardware as Bevy, Godot and Wicked sample their lightmaps. Material UVs map
-through the supplied scale/offset; X clamps and Y repeats (the sampler's
-address modes), so a chart can wrap around a closed loop. A wrapping chart
+through the supplied finite scale/offset (`SceneError::InvalidLightmap`
+otherwise); negative and zero scales are allowed. X clamps and Y repeats
+(the sampler's address modes), so a chart can wrap around a closed loop. A wrapping chart
 cannot be split, so each side must fit the device's `max_texture_dimension_2d`:
 `graphics_device::limits` requests the adapter's value rather than wgpu's
 default of 8192, and a larger chart is refused with `SceneError::DeviceLimit`.
@@ -2100,7 +2106,9 @@ For moving instances, interpolate a game-authored precomputed field and call
 `set_instance_baked_irradiance(queue, instance, AmbientCube { irradiance })`;
 a static instance, which takes the charts above, refuses it with
 `SceneError::StaticInstance`.
-The six RGB E/PI entries are +X,-X,+Y,-Y,+Z,-Z in world axes.
+The six RGB E/PI entries are +X,-X,+Y,-Y,+Z,-Z in world axes, each channel
+finite in `0..=65504` (`SceneError::InvalidIrradiance` otherwise). Invalid
+cubes and lightmap charts retain the previous content.
 The shader weights them with squared shading-normal components. This diffuse
 approximation preserves world orientation but cannot represent sharp angular
 variation, fine spatial shadow boundaries or fixed-source offscreen specular.

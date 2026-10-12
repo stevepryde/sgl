@@ -67,6 +67,12 @@ settings SGL3D has today.
    one decoder, which decodes each image a sampled map uses that the game
    does not supply, and never reads one it does or one no sampled map uses. Explicit node selection preserves ancestor transforms and rejects
    an empty selection. Games keep authored sources, export recipes and gameplay RON.
+   Scene input validation rejects non-finite material `normal_scale`,
+   `coat_normal_scale` and `bump_scale` with `InvalidMaterialFactors`,
+   non-finite lightmap `uv_scale_offset` with `InvalidLightmap`, and baked
+   ambient-cube channels outside finite `0..=65504` with `InvalidIrradiance`.
+   Rejected setters retain the previous content; finite signed scales and
+   chart offsets remain valid.
    A game's material shaders (`Scene::add_shader`: WGSL vertex and surface
    functions SGL3D composes into its own programs) are its content, never
    SGL3D's built-in look: SGL3D ships no water, wind or glass equations,

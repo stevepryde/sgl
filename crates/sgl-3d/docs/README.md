@@ -124,6 +124,9 @@ and an asynchronous readback.
 
 - Keep game policy in the game: presets, settings UI, save format, content,
   lighting design, cameras and the frame budget.
+- Supply finite material normal/bump scales and lightmap chart scales/offsets,
+  and ambient-cube channels in finite `0..=65504`; scene setters reject
+  invalid values and retain the previous content (see the package README).
 - Give SGL3D final presentation poses after the game's own interpolation;
   it keeps motion history itself.
 - Treat lightmaps, irradiance atlases and specular probes as content. The

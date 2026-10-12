@@ -128,7 +128,7 @@ pub struct Material {
     /// map's tangent frame. Without it the coat follows the geometry
     /// normal, whatever the base's normal map does.
     pub coat_normal_texture: Option<usize>,
-    /// Scale applied to the clearcoat normal map's tangent-space X and Y
+    /// Finite scale applied to the clearcoat normal map's tangent-space X and Y
     /// components (`clearcoatNormalTexture.scale`).
     pub coat_normal_scale: f32,
     /// Strength of a thin film over the surface in `0..=1`
@@ -203,7 +203,7 @@ pub struct Material {
     pub emissive_texture: Option<usize>,
     /// Tangent-space normal image index, sampled as linear data.
     pub normal_texture: Option<usize>,
-    /// Scale applied to the normal map's tangent-space X and Y components.
+    /// Finite scale applied to the normal map's tangent-space X and Y components.
     pub normal_scale: f32,
     /// The normal map drawn as two scrolling layers
     /// ([`SurfaceMaterial::normal_layers`](crate::SurfaceMaterial::normal_layers));
@@ -212,7 +212,7 @@ pub struct Material {
     pub normal_layers: Option<[NormalLayer; 2]>,
     /// Bump image index, sampled as linear height data.
     pub bump_texture: Option<usize>,
-    /// Bump height multiplier
+    /// Finite bump height multiplier
     /// ([`SurfaceMaterial::bump_scale`](crate::SurfaceMaterial::bump_scale)).
     pub bump_scale: f32,
     /// The share of the light behind the surface that passes through it,

@@ -7,7 +7,7 @@ use crate::content::identity::MaterialId;
 use crate::shading::bind::{BindingTier, group0};
 use crate::static_lighting::{
     CompressedIrradianceAtlas, IrradianceAtlas, Lightmap, irradiance_half, lobe_rgba8,
-    valid_directionality,
+    valid_directionality, valid_irradiance,
 };
 
 /// A baked map's textures: irradiance / PI and its directionality, in layers
@@ -110,12 +110,15 @@ impl BakedMap {
         if size[0].max(size[1]) > device.limits().max_texture_dimension_2d {
             return Err(SceneError::DeviceLimit);
         }
+        if maps
+            .iter()
+            .any(|(irradiance, _)| !valid_irradiance(irradiance))
+        {
+            return Err(SceneError::InvalidIrradiance);
+        }
         let mut bytes = Vec::with_capacity(count * maps.len() * 8);
         for pixel in maps.iter().flat_map(|(irradiance, _)| irradiance.iter()) {
             for value in pixel.iter().copied().chain(std::iter::once(0.)) {
-                if !value.is_finite() || !(0. ..=65504.).contains(&value) {
-                    return Err(SceneError::InvalidIrradiance);
-                }
                 bytes.extend(irradiance_half(value).to_le_bytes());
             }
         }
@@ -245,7 +248,11 @@ impl BakedMap {
         map: &Lightmap,
     ) -> Result<Self, SceneError> {
         let [width, height] = map.size;
-        if width == 0 || height == 0 || map.irradiance.len() != width as usize * height as usize {
+        if width == 0
+            || height == 0
+            || map.irradiance.len() != width as usize * height as usize
+            || !map.uv_scale_offset.iter().all(|value| value.is_finite())
+        {
             return Err(SceneError::InvalidLightmap);
         }
         Self::linear(
@@ -344,6 +351,8 @@ impl Scene {
     /// Install a bake that lights `materials` where static instances use
     /// them, replacing any previous bake and its materials. The caller owns
     /// geometry, chart resolution and source values.
+    /// A non-finite `uv_scale_offset` returns `SceneError::InvalidLightmap`
+    /// and retains the previous bake and its materials.
     pub fn set_lightmap(
         &mut self,
         device: &wgpu::Device,

@@ -11,7 +11,8 @@ use gltf::texture::WrappingMode;
 /// clearcoat bound them: a metallic, roughness, clearcoat and clearcoat
 /// roughness and base alpha in `0..=1`; a finite nonnegative base colour
 /// and emission, which may exceed 1 (an unlit HDR surface, an emissive
-/// strength applied); and a finite nonnegative environment scale.
+/// strength applied); a finite nonnegative environment scale; and finite
+/// normal, coat-normal and bump scales (signed scales are allowed).
 pub(super) fn validate_core(values: &SurfaceMaterial) -> Result<(), SceneError> {
     let unit = |value: f32| (0.0..=1.0).contains(&value);
     let nonnegative = |value: &f32| value.is_finite() && *value >= 0.;
@@ -23,6 +24,9 @@ pub(super) fn validate_core(values: &SurfaceMaterial) -> Result<(), SceneError> 
         && unit(values.base[3])
         && values.emission.iter().all(nonnegative)
         && nonnegative(&values.environment_scale)
+        && values.normal_scale.is_finite()
+        && values.coat_normal_scale.is_finite()
+        && values.bump_scale.is_finite()
     {
         Ok(())
     } else {
