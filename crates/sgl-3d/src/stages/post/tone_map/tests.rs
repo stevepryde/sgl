@@ -398,3 +398,80 @@ fn dithers_into(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::Textur
         );
     }
 }
+
+// Defects: a negative remainder passed to HSV-to-RGB, limiting the public
+// angle to one turn, or silently skipping hue rotation. The oracle is the
+// HSV colour wheel: rotating red by -4 radians gives (0, 1, 0.180281366),
+// with cyclic channel permutations for green and blue; grey stays grey.
+// Values independently evaluated with Python's standard-library colorsys
+// (rgb_to_hsv, then hsv_to_rgb at (h - 4 / math.tau) % 1).
+// Rendering these known colours with zero hue retains the actual tone-map
+// curve without copying its formula or pinning its implementation's output.
+#[test]
+fn negative_hue_rotations_wrap_like_positive_and_multiple_turns() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let original = [
+        [1., 0., 0., 1.],
+        [0., 1., 0., 1.],
+        [0., 0., 1., 1.],
+        [0.5, 0.5, 0.5, 1.],
+    ];
+    let rotated = [
+        [0., 1., 0.18028137, 1.],
+        [0.18028137, 0., 1., 1.],
+        [1., 0.18028137, 0., 1.],
+        [0.5, 0.5, 0.5, 1.],
+    ];
+    let size = [original.len() as u32, 1];
+    let inputs = Inputs::new(&device);
+    let mut tone_map = ToneMap::new(&device, &inputs, HDR, size);
+    let output = target(&device, "hue fixture output", size, HDR);
+    let unread_bloom = target(&device, "hue fixture bloom", [1, 1], HDR);
+    let exposure = exposure_texture(&device, &queue, 1.);
+    let mut observe = |texels: &[[f32; 4]], hue| {
+        let hdr = hdr_texture(&device, &queue, size, texels);
+        let mut grading = ColorGrading::default();
+        grading.global.hue = hue;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        tone_map.encode(
+            &device,
+            &queue,
+            &mut encoder,
+            &inputs,
+            &hdr,
+            &unread_bloom,
+            &exposure,
+            &grading,
+            Destination::Output {
+                capture: true,
+                output: &output,
+            },
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        read(&device, &queue, tone_map.tone_mapped().texture(), 8)
+    };
+    let expected = observe(&rotated, 0.);
+    let tau = std::f32::consts::TAU;
+    let positive = observe(&original, tau - 4.);
+    let assert_matches = |hue, actual: &[u8], reference: &[u8]| {
+        for (pixel, input) in original.iter().enumerate() {
+            for channel in 0..3 {
+                let offset = pixel * 8 + channel * 2;
+                let value = half(&actual[offset..]);
+                let reference = half(&reference[offset..]);
+                // Binary16 input/output rounding and f32 angle evaluation.
+                assert!(
+                    (value - reference).abs() <= 1.5e-3,
+                    "hue {hue}, {input:?}, channel {channel}: {value}, expected {reference}"
+                );
+            }
+        }
+    };
+    assert_matches(tau - 4., &positive, &expected);
+    for hue in [-4., -4. - 4. * tau, -4. + 4. * tau] {
+        assert_matches(hue, &observe(&original, hue), &positive);
+    }
+}

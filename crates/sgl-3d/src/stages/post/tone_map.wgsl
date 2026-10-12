@@ -13,8 +13,10 @@
 // Apache-2.0 (src/LICENSE-bevy.txt). Changes: the frame's one exposure
 // multiplies the scene first and grading has none of its own; the white
 // balance always runs; rgb_to_hsv gives grey a hue of 0 instead of dividing
-// by its zero chroma; the dark crossfade's residual weights shadows, fixing
-// Bevy 9d12036's highlights residual (sectional_color_grading, line 306).
+// by its zero chroma; a negative hue remainder is shifted into [0, 2π),
+// hsv_to_rgb's input range, instead of retaining Bevy's signed remainder;
+// the dark crossfade's residual weights shadows, fixing Bevy 9d12036's
+// highlights residual (sectional_color_grading, line 306).
 //
 // AgX ports Filament ef1a133 filament/src/ToneMapper.cpp (AgxToneMapper with
 // its looks, agxLook) as filament/src/details/ColorGrading.cpp applies a
@@ -201,6 +203,10 @@ fn tone_map(hdr:vec3<f32>)->vec3<f32> {
  if grading.hue!=0. {
   var hsv=rgb_to_hsv(color);
   hsv.r=(hsv.r+grading.hue)%PI_2;
+  // WGSL's remainder keeps the dividend's sign; HSV needs a positive angle.
+  if hsv.r<0. {
+   hsv.r+=PI_2;
+  }
   color=hsv_to_rgb(hsv);
  }
  color=max(grading.balance*color,vec3(0.));

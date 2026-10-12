@@ -285,6 +285,8 @@ current capabilities and limits.
   Sectional grading blends shadows with midtones around `midtones_start`
   and midtones with highlights around `midtones_end`, over 0.1 either side
   in the exposed RGB mean; highlights never contribute to the dark transition.
+  Colour grading's hue is a rotation in radians, periodic every 2π in either
+  direction, including angles beyond one turn.
   See [image controls](../crates/sgl-3d/README.md#exposure-bloom-and-colour-grading).
 - **Content:** alpha-masked and blended materials (17), transmissive glass
   and water (refraction, volume attenuation and dispersion,
