@@ -628,7 +628,9 @@ Wicked Engine lays them out; a spot light has one face covering its cone, or
 the cube faces its cone reaches when it is wider than 45°; a rectangle has a
 point shadow from its centre, as Godot shadows its area lights, in the cube
 faces that see the half-space in front of it (five for a face along an
-axis). Faces reach the light's range.
+axis). Faces reach the light's range. A closed spot, or one so narrow
+that its projection is non-finite, remains valid content but releases its
+shadow slots until its projection is finite.
 
 Each face keeps a static layer in a second atlas: its static instances,
 drawn once. A frame draws only what changed. When a moving instance enters,

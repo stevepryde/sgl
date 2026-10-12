@@ -1781,3 +1781,35 @@ fn casters_whose_shaders_ignore_the_time_keep_their_shadows_as_it_passes() {
         }
     }
 }
+
+// A closed animated cone must take no slot and draw no NaN shadow view;
+// opening and closing it exercises placement and removal of an existing record.
+#[test]
+fn a_closed_spot_cone_has_no_shadow_slot() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let mut scene = Scene::new(&device, &queue);
+    let spot = |outer_angle| Light {
+        shape: LightShape::Spot {
+            direction: Vec3::NEG_Z,
+            inner_angle: 0.,
+            outer_angle,
+            radius: LightShape::DEFAULT_RADIUS,
+        },
+        ..point(Vec3::Z * 0.5, 9.)
+    };
+    let light = scene.add_light(&device, &queue, spot(0.)).unwrap();
+    assert_eq!(
+        harness.frame(&mut scene, &input()),
+        LocalShadowStats::default()
+    );
+    scene.set_light(&queue, light, spot(0.4)).unwrap();
+    assert_eq!(harness.frame(&mut scene, &input()).shadowed, 1);
+    scene.set_light(&queue, light, spot(0.)).unwrap();
+    assert_eq!(
+        harness.frame(&mut scene, &input()),
+        LocalShadowStats::default()
+    );
+}

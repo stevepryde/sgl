@@ -221,6 +221,11 @@ impl Atlas {
         self.seen.retain(|&light, _| live(light));
     }
 
+    #[cfg(test)]
+    pub(super) fn holds(&self, light: LightId) -> bool {
+        self.owners.contains_key(&light)
+    }
+
     fn placement(&self, allocation: Allocation) -> Placement {
         Placement {
             quadrant: allocation.quadrant,

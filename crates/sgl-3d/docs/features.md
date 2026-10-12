@@ -256,7 +256,9 @@ them through unrefracted. A probe captured on an
   [Point, spot and rectangle lights](../README.md#point-spot-and-rectangle-lights).
 - **Local-light shadows**: lights with `casts_shadow` share one shadow atlas,
   sized and chosen by screen coverage; lights beyond its room are lit without
-  a shadow (`Renderer::local_shadow_stats` counts them). Static casters are
+  a shadow (`Renderer::local_shadow_stats` counts them). A closed or unrepresentably
+  narrow spot cone remains valid scene content and releases its shadow slots
+  until its projection is finite. Static casters are
   cached per face, so a frame redraws a light's shadow only where something
   moved or changed in its range, including where a casting shader's
   parameters change or, for a shader that reads the time, every frame the

@@ -43,7 +43,7 @@ pub(super) struct LightView {
 }
 
 impl LightView {
-    pub fn new(light: &Light) -> Self {
+    pub fn new(light: &Light) -> Option<Self> {
         let shape = match light.shape {
             LightShape::Point { .. } => Shape::Cube { faces: 0b11_1111 },
             LightShape::Spot {
@@ -70,11 +70,18 @@ impl LightView {
                 faces: half_space_faces(direction.normalize()),
             },
         };
-        Self {
+        let shadow = Self {
             position: light.position,
             range: light.range,
             shape,
+        };
+        // Closed and subnormal cones are valid animation content but can
+        // have no representable perspective face. Use its actual matrix,
+        // rather than guessing a minimum cone angle.
+        if matches!(shape, Shape::Spot { .. }) && !shadow.face(0).view_projection().is_finite() {
+            return None;
         }
+        Some(shadow)
     }
 
     /// The slots it takes: one per face, drawn or not.

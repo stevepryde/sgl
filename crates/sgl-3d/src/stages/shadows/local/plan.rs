@@ -250,8 +250,12 @@ impl Plan {
             edits.finished(),
             scene.origin(),
         );
-        self.allocation
-            .retain(|light| scene.lights.get(light).is_ok());
+        self.allocation.retain(|id| {
+            scene
+                .lights
+                .get(id)
+                .is_ok_and(|light| LightView::new(light).is_some())
+        });
         self.mark_static_edits(scene);
         self.records.clear();
         self.records
@@ -508,7 +512,7 @@ fn candidates(
         .on()
         .filter(|(_, light)| enabled && light.casts_shadow && light.range > LOCAL_SHADOW_NEAR)
         .filter_map(|(id, light)| {
-            let shadow = LightView::new(light);
+            let shadow = LightView::new(light)?;
             coverage(light, &shadow).map(|coverage| (id, shadow, coverage))
         })
         .collect();
@@ -545,4 +549,52 @@ fn record(shadow: LightView, placement: Placement, layered: bool) -> LocalShadow
             .copy_from_slice(&[x as f32 * texel, y as f32 * texel]);
     }
     record
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod dimension_tests {
+    use super::*;
+
+    // An existing allocation must be released when its cone closes, before
+    // the atlas's normal grace period; stats alone do not expose ownership.
+    #[test]
+    fn unrepresentable_spot_faces_release_existing_atlas_slots() {
+        let Some((device, queue)) = crate::test_support::device() else {
+            return;
+        };
+        let mut scene = Scene::new(&device, &queue);
+        let spot = |outer_angle| crate::Light {
+            position: Vec3::Z,
+            shape: crate::LightShape::Spot {
+                direction: Vec3::NEG_Z,
+                inner_angle: 0.,
+                outer_angle,
+                radius: crate::LightShape::DEFAULT_RADIUS,
+            },
+            casts_shadow: true,
+            ..Default::default()
+        };
+        let light = scene.add_light(&device, &queue, spot(0.4)).unwrap();
+        let mut plan = Plan::new(2048);
+        for angle in [0., f32::from_bits(1), 1e-40] {
+            scene.set_light(&queue, light, spot(0.4)).unwrap();
+            plan.allocation.update(light, 1., 1, plan.frame).unwrap();
+            assert!(plan.allocation.holds(light));
+            scene.set_light(&queue, light, spot(angle)).unwrap();
+            plan.begin(&scene);
+            assert!(
+                !plan.allocation.holds(light),
+                "angle {angle} kept its atlas slot"
+            );
+            assert!(candidates(&scene, true, |_, _| Some(1.)).is_empty());
+        }
+        scene.set_light(&queue, light, spot(0.4)).unwrap();
+        let candidates = candidates(&scene, true, |_, _| Some(1.));
+        assert_eq!(
+            candidates.len(),
+            1,
+            "opening the cone restores shadow placement"
+        );
+        assert!(candidates[0].1.face(0).view_projection().is_finite());
+    }
 }
