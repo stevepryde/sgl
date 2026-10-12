@@ -119,7 +119,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     sends the reliable and unreliable messages accepted before it, closing
     once they are acknowledged or `close_grace_ms` after the disconnect,
     whichever is first. Acknowledgements and keepalives continue while
-    closing, within the usual per-flush datagram budget, so a grace longer
+    closing: incoming reliable fragments are buffered and acknowledged under
+    the usual inbound limits, with held fragments consumed on later polls,
+    but no newly received message of any class is returned while closing.
+    Traffic stays within the usual per-flush datagram budget, so a grace longer
     than `timeout_ms` does not itself time out a remote holding data. The
     grace deadline is unchanged by that traffic. Each unacknowledged
     reliable fragment gets up to `close_retransmits` additional sends after

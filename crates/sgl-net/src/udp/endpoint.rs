@@ -635,7 +635,7 @@ impl<T: DatagramTransport> Endpoint<T> {
         let held: Vec<_> = self
             .peers
             .iter()
-            .filter(|(_, peer)| peer.handshake == Handshake::Connected && !peer.is_closing())
+            .filter(|(_, peer)| peer.handshake == Handshake::Connected)
             .flat_map(|(&id, peer)| {
                 (0..RELIABLE_LANES)
                     .filter(|&index| peer.reliable[index].holding())
@@ -681,7 +681,9 @@ impl<T: DatagramTransport> Endpoint<T> {
             if consumed.is_err() {
                 violators.insert(id);
             }
-            released.extend(messages.into_iter().map(|payload| (id, lane, payload)));
+            if !peer.is_closing() {
+                released.extend(messages.into_iter().map(|payload| (id, lane, payload)));
+            }
         }
         events.extend(
             released
@@ -1261,9 +1263,6 @@ impl<T: DatagramTransport> Endpoint<T> {
             self.outbound.1 - (held.1 - still_held.1),
         );
         peer.update_rtt(&samples);
-        if peer.is_closing() {
-            return;
-        }
         let limits = InboundLimits {
             reliable: &self.config.reliable,
             global_messages: self.config.global_reliable_inbound_messages,
@@ -1285,6 +1284,11 @@ impl<T: DatagramTransport> Endpoint<T> {
         };
         peer.delivered = staged.peer_delivered;
         self.poll_delivered = staged.delivered;
+        // Closing keeps the receive window and acknowledgements moving,
+        // but nothing newly received is returned to the caller.
+        if peer.is_closing() {
+            return;
+        }
         events.extend(staged.messages.into_iter().map(|(delivery, payload)| {
             EndpointEvent::Message {
                 peer: id,
@@ -2190,6 +2194,61 @@ mod tests {
         assert_eq!(server.poll(1), vec![EndpointEvent::Connected { peer: 1 }]);
         server.transport.sent.clear();
         (server, source, nonces)
+    }
+
+    /// #708: incoming reliable fragments after disconnect must still be
+    /// acknowledged during a long grace. Observe the wire ack advancing
+    /// through reassembly and a held message, without any Message event.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn closing_receives_and_releases_reliable_items_without_delivering_them() {
+        let mut config = EndpointConfig {
+            timeout_ms: 1_000,
+            close_grace_ms: 10_000,
+            ..EndpointConfig::default()
+        };
+        config.reliable.lanes[1].inbound_messages = 1;
+        let (mut server, source, nonces) = connected_server(config);
+        server
+            .send(1, Delivery::RELIABLE_ORDERED, b"closing")
+            .unwrap();
+        server.flush(2);
+        server.disconnect(1, 2);
+        assert_eq!(
+            server.poll(2),
+            [EndpointEvent::Disconnected {
+                peer: 1,
+                reason: DisconnectReason::Local,
+            }]
+        );
+
+        let mut bytes = Vec::new();
+        packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+        packet::push_reliable(&mut bytes, lane(1), 0, Fragment::First { total: 6 }, b"abc");
+        packet::push_reliable(&mut bytes, lane(1), 1, Fragment::Last, b"def");
+        packet::push_reliable(&mut bytes, lane(1), 2, Fragment::Whole, b"held");
+        packet::push_unreliable(&mut bytes, lane(1), 0, b"unreliable");
+        packet::push_latest(&mut bytes, 0, b"latest");
+        server.transport.received.push_back(ReceivedDatagram {
+            source,
+            bytes,
+            fail: false,
+        });
+
+        for (now, next, held) in [(3, 2, true), (4, 3, false), (6_000, 3, false)] {
+            assert!(server.poll(now).is_empty(), "closing never surfaces items");
+            server.transport.sent.clear();
+            server.flush(now);
+            let ack = server
+                .transport
+                .sent
+                .iter()
+                .find_map(|datagram| match packet::parse(&datagram.bytes, MAGIC) {
+                    Some(Parsed::Payload { acks, .. }) => acks[1],
+                    _ => None,
+                })
+                .expect("closing peer sends an acknowledgement");
+            assert_eq!((ack.next, ack.held), (next, held));
+        }
     }
 
     #[wasm_bindgen_test(unsupported = test)]
