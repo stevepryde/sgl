@@ -1179,3 +1179,78 @@ fn many_morph_weight_channels_on_a_mesh_of_many_primitives_import_without_quadra
         bytes.len()
     );
 }
+
+// gltf-json leaves these document references/source variants unchecked; the
+// public loader must return an error rather than panic on malformed content.
+#[wasm_bindgen_test(unsupported = test)]
+fn malformed_primitive_accessor_references_are_rejected() {
+    for morph in [false, true] {
+        let bytes = rigged(|document, buffer| {
+            let missing = json!(buffer.accessors.len());
+            if morph {
+                document["meshes"][1]["primitives"][0]["targets"][0]["POSITION"] = missing;
+            } else {
+                document["meshes"][0]["primitives"][0]["attributes"]["POSITION"] = missing;
+            }
+        });
+        let error = load_slice(&bytes)
+            .err()
+            .expect("missing accessor loaded")
+            .to_string();
+        assert!(
+            error.contains("mesh") && error.contains("accessor"),
+            "{error}"
+        );
+    }
+}
+
+#[wasm_bindgen_test(unsupported = test)]
+fn malformed_animation_target_nodes_are_rejected() {
+    let bytes = rigged(|document, _| {
+        document["animations"][0]["channels"][0]["target"]["node"] = json!(9);
+    });
+    let error = load_slice(&bytes)
+        .err()
+        .expect("missing target node loaded")
+        .to_string();
+    assert!(
+        error.contains("animation 0 channel 0") && error.contains("node"),
+        "{error}"
+    );
+}
+
+#[wasm_bindgen_test(unsupported = test)]
+fn malformed_image_sources_are_rejected() {
+    for image in [
+        json!({"bufferView": 0}),
+        json!({}),
+        json!({"bufferView": 0, "mimeType": "image/png", "uri": "image.png"}),
+    ] {
+        let bytes = rigged(|document, _| {
+            document["images"] = json!([image]);
+            document["textures"] = json!([{"source": 0}]);
+            document["materials"] =
+                json!([{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}]);
+        });
+        let error = load_slice(&bytes)
+            .err()
+            .expect("invalid image source loaded")
+            .to_string();
+        assert!(error.contains("image 0"), "{error}");
+    }
+}
+
+#[wasm_bindgen_test(unsupported = test)]
+fn malformed_animation_target_paths_are_rejected() {
+    let bytes = rigged(|document, _| {
+        document["animations"][0]["channels"][0]["target"]["path"] = json!("pointer");
+    });
+    let error = load_slice(&bytes)
+        .err()
+        .expect("unknown target path loaded")
+        .to_string();
+    assert!(
+        error.contains("animation 0 channel 0") && error.contains("path"),
+        "{error}"
+    );
+}

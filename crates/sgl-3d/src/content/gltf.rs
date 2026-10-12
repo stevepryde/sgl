@@ -224,11 +224,68 @@ fn import(
     {
         return Err(format!("the file requires glTF extension {extension}, which SGL3D does not support; bake it into the export or add renderer support").into());
     }
+    check_root(&root)?;
     root.extensions_required.clear();
     let document = gltf::Document::from_json(root)?;
     let blob = glb.as_ref().and_then(|glb| glb.bin.as_deref());
     let buffers = sources::buffers(&document, base, blob, budget)?;
     Ok((document, buffers))
+}
+
+/// Check the references and source variants gltf-json 1.4.1 leaves unchecked
+/// before its own validation indexes POSITION or its readers unwrap them.
+fn check_root(root: &gltf::json::Root) -> Result<()> {
+    use gltf::json::validation::Checked;
+    for (mesh, data) in root.meshes.iter().enumerate() {
+        for (primitive, data) in data.primitives.iter().enumerate() {
+            for (attribute, accessor) in &data.attributes {
+                if accessor.value() >= root.accessors.len() {
+                    return Err(format!("mesh {mesh} primitive {primitive} attribute {attribute:?}: accessor {} is out of range", accessor.value()).into());
+                }
+            }
+            for (target, data) in data.targets.iter().flatten().enumerate() {
+                for (attribute, accessor) in [
+                    ("POSITION", data.positions),
+                    ("NORMAL", data.normals),
+                    ("TANGENT", data.tangents),
+                ] {
+                    if let Some(accessor) = accessor
+                        && accessor.value() >= root.accessors.len()
+                    {
+                        return Err(format!("mesh {mesh} primitive {primitive} morph target {target} {attribute}: accessor {} is out of range", accessor.value()).into());
+                    }
+                }
+            }
+        }
+    }
+    for (animation, data) in root.animations.iter().enumerate() {
+        for (channel, data) in data.channels.iter().enumerate() {
+            if data.target.node.value() >= root.nodes.len() {
+                return Err(format!(
+                    "animation {animation} channel {channel}: target node {} is out of range",
+                    data.target.node.value()
+                )
+                .into());
+            }
+            if !matches!(data.target.path, Checked::Valid(_)) {
+                return Err(format!(
+                    "animation {animation} channel {channel}: invalid target path"
+                )
+                .into());
+            }
+        }
+    }
+    for (image, data) in root.images.iter().enumerate() {
+        if data.uri.is_some() == data.buffer_view.is_some() {
+            return Err(
+                format!("image {image}: exactly one of uri and bufferView is required").into(),
+            );
+        }
+        if data.buffer_view.is_some() && data.mime_type.is_none() {
+            return Err(format!("image {image}: bufferView requires mimeType").into());
+        }
+    }
+    Ok(())
 }
 
 /// `document`'s images, each one `materials` sample from where

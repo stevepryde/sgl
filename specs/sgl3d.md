@@ -66,6 +66,10 @@ settings SGL3D has today.
    loader do, and listed with the asset (`Asset::ignored`); file and embedded-byte imports share
    one decoder, which decodes each image a sampled map uses that the game
    does not supply, and never reads one it does or one no sampled map uses.
+   Invalid primitive/morph accessor references, animation target nodes or
+   paths, and image source variants fail the load with an error naming the
+   element before document readers run. Each image has exactly one URI or
+   buffer view; a buffer-view image requires a MIME type.
    Referenced buffers and decoded images accept base64 data URIs or
    percent-decoded relative regular files beneath the glTF's directory,
    never schemes, absolute paths, parent segments or symlinks. External
