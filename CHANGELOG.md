@@ -44,6 +44,9 @@ docs and specs the entry links.
 - `sgl-post-fx` SSR temporal accumulation could select an off-screen
   reflection hit and discard valid surface history; it now compares only
   candidates in the previous viewport. No game-code changes.
+- `sgl-post-fx` `ScreenSpaceReflection` at half resolution previously dropped
+  reflective blocks beside rough surfaces; each block now traces an eligible
+  surface when one is present. No game-code changes are needed.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;

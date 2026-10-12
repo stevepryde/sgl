@@ -206,8 +206,8 @@ fn current_materials_control_full_and_half_resolution_masks() {
         ssr.prepare_resources(&device, &mut encoder, &mut context, flags);
         ssr.prepare_shaders_and_pso(&device);
         queue.submit([encoder.finish()]);
-        // Independent scene expectations: rough blocks reject; mixed blocks
-        // reject at half resolution; background never becomes a full-res ray.
+        // Independent scene expectations: rough-only blocks reject; mixed blocks
+        // remain eligible at half resolution; background never becomes a full-res ray.
         for (name, pattern, full_expected, half_expected, full_row, half_row) in [
             ("initially rough", [230; 8], 0, 0, [0; 8], [0; 4]),
             (
@@ -222,17 +222,17 @@ fn current_materials_control_full_and_half_resolution_masks() {
                 "mixed after glossy",
                 [25, 25, 230, 230, 25, 230, 25, 230],
                 1024,
-                128,
+                384,
                 [1, 1, 0, 0, 1, 0, 1, 0],
-                [1, 0, 0, 0],
+                [1, 0, 1, 1],
             ),
             (
                 "boundary moved",
                 [230, 230, 25, 25, 230, 25, 25, 230],
                 1024,
-                128,
+                384,
                 [0, 0, 1, 1, 0, 1, 1, 0],
-                [0, 1, 0, 0],
+                [0, 1, 1, 1],
             ),
             ("rough after motion", [230; 8], 0, 0, [0; 8], [0; 4]),
         ] {
