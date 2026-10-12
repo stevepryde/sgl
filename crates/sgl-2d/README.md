@@ -38,6 +38,8 @@ respect keyboard and pointer capture before dispatching world actions.
 Keep focus-loss handling, clipboard access, layout, and persistence in the
 game. [Tool composition](../../specs/client.md#tool-composition) documents
 pane layout, themes, input ordering, clipping, and keyboard behavior.
+Custom `overlay_panel_begin` controls remain below and pointer-blocked by
+open dropdown popovers and confirmation modals, even when submitted later.
 
 For HUDs over SGL3D, share the game-owned wgpu device and queue and draw UI
 after the 3D scene. A HUD that drives `canvas::sprite::SpritePass` itself

@@ -123,9 +123,11 @@ fn contains(rect: &Rect, p: Vec2) -> bool {
 const SCROLLBAR_TRACK: [f32; 4] = [0.0, 0.0, 0.0, 0.35];
 const SCROLLBAR_THUMB: [f32; 4] = [0.5, 0.5, 0.5, 0.8];
 const SCROLLBAR_THUMB_HOVER: [f32; 4] = [0.65, 0.65, 0.65, 0.9];
-/// The z band overlay content (popovers, modals) draws in — above every
-/// ordinary widget of the frame.
+/// Separate draw bands keep panels below popovers and modals even when
+/// their controls are submitted later in the frame.
 const OVERLAY_Z: f32 = 5_000.0;
+const POPOVER_Z: f32 = 10_000.0;
+const MODAL_Z: f32 = 15_000.0;
 /// Popover/modal backdrop colors.
 const POPOVER_BG: [f32; 4] = [0.08, 0.08, 0.08, 0.98];
 const MODAL_DIM: [f32; 4] = [0.0, 0.0, 0.0, 0.55];
@@ -151,10 +153,10 @@ pub struct Ui {
     /// the mouse inside them this frame, so a click on a panel never falls
     /// through to the widget underneath.
     blocked: Vec<Rect>,
-    /// The open dropdown's visible popover from last frame, blocking like
-    /// `blocked` until that dropdown closes.
-    popover_blocked: Option<Rect>,
-    /// A modal was drawn last frame: ordinary widgets ignore ALL input.
+    /// The previous frame's popover owner and visible rect. Its shield
+    /// lasts through the selection frame so the press cannot fall through.
+    popover_blocked: Option<(u64, Rect)>,
+    /// A modal was drawn last frame: widgets outside its scope ignore input.
     modal_blocking: bool,
     modal_scope: Option<u64>,
     /// Scrollbar-thumb drag: `(widget id, grab offset within the thumb)`.
@@ -284,14 +286,6 @@ impl Ui {
         self.focus = None;
     }
 
-    /// Whether the mouse at `pos` is over overlay content from last frame
-    /// (ordinary widgets there must not react — the popover owns the spot).
-    fn blocked_at(&self, pos: Vec2) -> bool {
-        self.modal_blocking
-            || self.blocked.iter().any(|r| contains(r, pos))
-            || self.popover_blocked.is_some_and(|r| contains(&r, pos))
-    }
-
     /// Start a frame: widgets are drawn through the returned [`UiFrame`]
     /// into `list`'s screen channel (rects immediately, text via `text`'s
     /// queue). Call [`UiFrame::end`] when done, then `text.end_frame(..)`.
@@ -359,6 +353,8 @@ impl Ui {
             input,
             z: 0.0,
             z_overlay: OVERLAY_Z,
+            z_popover: POPOVER_Z,
+            z_modal: MODAL_Z,
             overlay: false,
             clip: None,
             new_blocked: Vec::new(),
@@ -380,9 +376,9 @@ impl Ui {
 }
 
 /// One frame's widget builder — all draws go to the screen channel with
-/// monotonically increasing z, so later widgets cover earlier ones.
-/// Overlay content (dropdown popovers, modals) draws in a separate high-z
-/// band and blocks the widgets underneath (see [`UiFrame::dropdown`] and
+/// increasing z within each band, so later widgets in that band cover earlier ones.
+/// Panels, dropdown popovers and modals draw in successively higher z
+/// bands and block the widgets underneath (see [`UiFrame::dropdown`] and
 /// [`UiFrame::confirm_modal`]).
 pub struct UiFrame<'a> {
     ui: &'a mut Ui,
@@ -390,16 +386,18 @@ pub struct UiFrame<'a> {
     list: &'a mut DrawList,
     input: UiInput,
     z: f32,
-    /// z cursor for the overlay band (popovers/modals above everything).
+    /// Draw cursors for panels, popovers and modals, respectively.
     z_overlay: f32,
-    /// Currently emitting overlay content (input bypasses blocking).
+    z_popover: f32,
+    z_modal: f32,
+    /// Currently emitting overlay content (bypasses panel blockers only).
     overlay: bool,
     /// Current clip rect applied to widget draws + hit tests.
     clip: Option<Rect>,
     /// Overlay rects drawn this frame → `Ui::blocked` next frame.
     new_blocked: Vec<Rect>,
     /// The open popover's visible rect → `Ui::popover_blocked` next frame.
-    new_popover_blocked: Option<Rect>,
+    new_popover_blocked: Option<(u64, Rect)>,
     /// A modal was drawn this frame → `Ui::modal_blocking` next frame.
     new_modal: Option<u64>,
     modal_scope: Option<u64>,
@@ -421,24 +419,31 @@ pub struct UiFrame<'a> {
 
 impl UiFrame<'_> {
     fn next_z(&mut self) -> f32 {
-        if self.overlay {
-            self.z_overlay += 1.0;
-            self.z_overlay
+        let z = if self.modal_scope.is_some() {
+            &mut self.z_modal
+        } else if self.popup_scope.is_some() {
+            &mut self.z_popover
+        } else if self.overlay {
+            &mut self.z_overlay
         } else {
-            self.z += 1.0;
-            self.z
-        }
+            &mut self.z
+        };
+        *z += 1.0;
+        *z
     }
 
-    /// Whether the mouse can interact with an ordinary widget at `rect`:
-    /// inside the rect and the current clip, and not underneath overlay
-    /// content (unless this widget IS overlay content).
+    /// Pointer blockers follow ownership: panel content bypasses panel
+    /// regions, while only the open modal/popover's contents bypass its gate.
     fn hit(&self, rect: &Rect) -> bool {
         let p = self.input.mouse_pos;
         self.ui.splitter_drag.is_none()
             && contains(rect, p)
             && self.clip.is_none_or(|c| contains(&c, p))
-            && (self.overlay || !self.ui.blocked_at(p))
+            && (!self.ui.modal_blocking || self.modal_scope == self.ui.modal_scope)
+            && self.ui.popover_blocked.is_none_or(|(owner, blocked)| {
+                !contains(&blocked, p) || self.popup_scope == Some(owner)
+            })
+            && (self.overlay || !self.ui.blocked.iter().any(|r| contains(r, p)))
     }
 
     /// Whether the mouse hovers `rect` (same gating as widget interaction —
