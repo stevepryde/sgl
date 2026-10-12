@@ -54,6 +54,9 @@ docs and specs the entry links.
 - `sgl-post-fx` `PostFXContext::execute`: switching from a caller camera buffer
   to inline cameras now writes only the context’s own buffer instead of
   overwriting the caller’s data or failing validation. No game-code changes.
+- `sgl-post-fx` `ScreenSpaceReflection`: conventional depth now keeps its
+  resolved depth at 32 bits instead of 16, preserving distant reflection
+  reprojection; reversed depth is unchanged. No game-code changes.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;

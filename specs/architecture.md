@@ -34,7 +34,11 @@ library; their rules, content, and process layouts stay with the games.
      browser (WebGPU) devices
    - `sgl-post-fx` — SGL's wgpu post-processing effects, including screen-space
      reflections and temporal anti-aliasing derived from DiligentFX; SGL3D
-     owns scene and frame integration
+     owns scene and frame integration. Direct `sgl-post-fx` consumers may use
+     conventional or reversed depth. SSR retains 32-bit resolved device depth
+     for conventional projection and 16-bit for reversed projection, read
+     without filtering; changing convention recreates its resources and
+     resets history.
    - `sgl-2d` — assets, immediate UI, and a caller-driven logical-canvas wgpu
      renderer
    - `sgl-input` — controller discovery and normalized events/state, independent

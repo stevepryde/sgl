@@ -594,10 +594,15 @@ fn departed_reflections_cannot_support_current_dark_history() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// Texels of an R16Float view (normal and zero halves only).
-fn read_r16f(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) -> Vec<f32> {
+/// Texels of an R16Float or R32Float view (normal and zero halves only).
+fn read_scalar(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) -> Vec<f32> {
     let texture = view.texture();
-    let stride = (SIZE[0] * 2).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let texel_bytes = if texture.format() == wgpu::TextureFormat::R32Float {
+        4
+    } else {
+        2
+    };
+    let stride = (SIZE[0] * texel_bytes).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: u64::from(stride * SIZE[1]),
@@ -622,8 +627,11 @@ fn read_r16f(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureVie
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let bytes = buffer.get_mapped_range(..).unwrap();
     (0..SIZE[1])
-        .flat_map(|y| (0..SIZE[0]).map(move |x| (y * stride + x * 2) as usize))
+        .flat_map(|y| (0..SIZE[0]).map(move |x| (y * stride + x * texel_bytes) as usize))
         .map(|at| {
+            if texel_bytes == 4 {
+                return f32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+            }
             let h = u16::from_le_bytes([bytes[at], bytes[at + 1]]);
             let exponent = i32::from((h >> 10) & 0x1f);
             let mantissa = f32::from(h & 0x3ff);
@@ -648,128 +656,139 @@ fn resolved_depth_is_the_virtual_point_along_the_view_ray() {
     let Some((device, queue)) = device() else {
         return;
     };
-    // A plane facing the camera 2 m away, reversed depth (R16Float keeps its
-    // precision near 0), perceptual roughness 0.1, and every ray 3 m long.
-    let (plane_z, hit_distance) = (2.0f32, 3.0f32);
-    let camera = camera(true, 0);
-    let proj = camera.m_proj;
-    // Column-vector convention, columns listed: clip = proj * (v, 1).
-    let project = |v: [f32; 3]| -> f32 {
-        let clip = |row: usize| {
-            proj[row] * v[0] + proj[4 + row] * v[1] + proj[8 + row] * v[2] + proj[12 + row]
-        };
-        clip(2) / clip(3)
-    };
-    let pixel = [62u32, 46u32];
-    // The pixel centre's view ray, through UV (x + 0.5) / size, NDC y up.
-    let ndc = [
-        2.0 * (pixel[0] as f32 + 0.5) / SIZE[0] as f32 - 1.0,
-        1.0 - 2.0 * (pixel[1] as f32 + 0.5) / SIZE[1] as f32,
-    ];
-    let surface = [
-        ndc[0] * plane_z / proj[0],
-        ndc[1] * plane_z / proj[5],
-        plane_z,
-    ];
-    let distance = surface.iter().map(|c| c * c).sum::<f32>().sqrt();
-    let virtual_point = surface.map(|c| c + hit_distance * c / distance);
-    let expected = project(virtual_point);
-    assert!(
-        (plane_z / distance).acos().to_degrees() > 38.0,
-        "the checked pixel must be well off the view axis"
-    );
-    // The mirror direction at that pixel off the plane (normal -z), so the
-    // reconstruction's BRDF weight is well above its 1e-6 floor.
-    let mirror = [surface[0], surface[1], -surface[2]].map(|c| c / distance);
-    let normal = texture(
-        &device,
-        &queue,
-        wgpu::TextureFormat::Rgba16Float,
-        &half(&[0.0, 0.0, -1.0, 0.0]),
-    );
-    let motion = texture(
-        &device,
-        &queue,
-        wgpu::TextureFormat::Rg16Float,
-        &half(&[0.0, 0.0]),
-    );
-    let material = texture(&device, &queue, wgpu::TextureFormat::R8Unorm, &[26]);
+    // Reuse the effect across convention changes at unchanged dimensions.
+    // At 50 m, conventional binary16 device depth loses metres. The expected
+    // virtual point comes from the plane/ray geometry, independent of the
+    // format and the production shader's depth conversion.
     let mut ssr = ScreenSpaceReflection::new(&device);
     let mut context = PostFXContext::new(&device, &queue, Default::default());
-    let mut encoder = device.create_command_encoder(&Default::default());
-    let scene_depth = depth(&device, &mut encoder, project(surface));
-    context.prepare_resources(
-        &device,
-        &FrameDesc {
-            index: 0,
-            width: SIZE[0],
-            height: SIZE[1],
-            output_width: SIZE[0],
-            output_height: SIZE[1],
-        },
-        post_fx_context::FeatureFlags::REVERSED_DEPTH,
-    );
-    ssr.prepare_resources(&device, &mut encoder, &mut context, FeatureFlags::NONE);
-    ssr.prepare_shaders_and_pso(&device);
-    context.execute(&mut post_fx_context::RenderAttributes {
-        device: &device,
-        queue: &queue,
-        device_context: &mut encoder,
-        curr_depth_buffer_srv: &scene_depth,
-        prev_depth_buffer_srv: &scene_depth,
-        curr_camera: Some(&camera),
-        prev_camera: Some(&camera),
-        camera_attribs_cb: None,
-        pass_timestamps: None,
-    });
-    // The rays' direction scaled by their length, PDF 1, at the
-    // reconstruction boundary.
-    ssr.resources.as_mut().unwrap().ray_direction_pdf = texture(
-        &device,
-        &queue,
-        wgpu::TextureFormat::Rgba16Float,
-        &half(&[
-            mirror[0] * hit_distance,
-            mirror[1] * hit_distance,
-            mirror[2] * hit_distance,
-            1.0,
-        ]),
-    );
-    // Confident hits: DFX-29 reconstructs only tiles with one.
-    ssr.resources.as_mut().unwrap().radiance = texture(
-        &device,
-        &queue,
-        wgpu::TextureFormat::Rgba16Float,
-        &half(&[1.0, 1.0, 1.0, 1.0]),
-    );
-    let attribs = ScreenSpaceReflectionAttribs::default();
-    let mut render = RenderAttributes {
-        device: &device,
-        queue: &queue,
-        device_context: &mut encoder,
-        post_fx_context: &mut context,
-        color_buffer_srv: &normal,
-        depth_buffer_srv: &scene_depth,
-        normal_buffer_srv: &normal,
-        material_buffer_srv: &material,
-        motion_vectors_srv: &motion,
-        ssr_attribs: &attribs,
-        pass_timestamps: None,
-        reset_accumulation: false,
-        frame_time: 1.0 / 60.0,
-    };
-    ssr.update_constant_buffer(&render, false);
-    ssr.compute_stencil_mask_and_extract_roughness(&mut render);
-    ssr.compute_downsampled_stencil_mask(&mut render);
-    ssr.classify_denoiser_tiles(&mut render);
-    ssr.compute_spatial_reconstruction(&mut render);
-    queue.submit([encoder.finish()]);
-    let resolved = read_r16f(&device, &queue, &ssr.resources().resolved_depth)
-        [(pixel[1] * SIZE[0] + pixel[0]) as usize];
-    assert!(
-        (resolved - expected).abs() <= 0.01 * expected,
-        "resolved depth {resolved}, the virtual point's {expected}"
-    );
+    for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        for (index, reversed) in [false, true, false].into_iter().enumerate() {
+            let (plane_z, hit_distance) = (50.0f32, 4.0f32);
+            let camera = camera(reversed, index as u32);
+            let proj = camera.m_proj;
+            // Column-vector convention, columns listed: clip = proj * (v, 1).
+            let project = |v: [f32; 3]| -> f32 {
+                let clip = |row: usize| {
+                    proj[row] * v[0] + proj[4 + row] * v[1] + proj[8 + row] * v[2] + proj[12 + row]
+                };
+                clip(2) / clip(3)
+            };
+            let pixel = [62u32, 46u32];
+            // The pixel centre's view ray, through UV (x + 0.5) / size, NDC y up.
+            let ndc = [
+                2.0 * (pixel[0] as f32 + 0.5) / SIZE[0] as f32 - 1.0,
+                1.0 - 2.0 * (pixel[1] as f32 + 0.5) / SIZE[1] as f32,
+            ];
+            let surface = [
+                ndc[0] * plane_z / proj[0],
+                ndc[1] * plane_z / proj[5],
+                plane_z,
+            ];
+            let distance = surface.iter().map(|c| c * c).sum::<f32>().sqrt();
+            let virtual_point = surface.map(|c| c + hit_distance * c / distance);
+            let expected_z = virtual_point[2];
+            // The mirror direction at that pixel off the plane (normal -z), so the
+            // reconstruction's BRDF weight is well above its 1e-6 floor.
+            let mirror = [surface[0], surface[1], -surface[2]].map(|c| c / distance);
+            let normal = texture(
+                &device,
+                &queue,
+                wgpu::TextureFormat::Rgba16Float,
+                &half(&[0.0, 0.0, -1.0, 0.0]),
+            );
+            let motion = texture(
+                &device,
+                &queue,
+                wgpu::TextureFormat::Rg16Float,
+                &half(&[0.0, 0.0]),
+            );
+            let material = texture(&device, &queue, wgpu::TextureFormat::R8Unorm, &[26]);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let scene_depth = depth(&device, &mut encoder, project(surface));
+            context.prepare_resources(
+                &device,
+                &FrameDesc {
+                    index: index as u32,
+                    width: SIZE[0],
+                    height: SIZE[1],
+                    output_width: SIZE[0],
+                    output_height: SIZE[1],
+                },
+                if reversed {
+                    post_fx_context::FeatureFlags::REVERSED_DEPTH
+                } else {
+                    post_fx_context::FeatureFlags::NONE
+                },
+            );
+            ssr.prepare_resources(&device, &mut encoder, &mut context, flags);
+            ssr.prepare_shaders_and_pso(&device);
+            context.execute(&mut post_fx_context::RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                curr_depth_buffer_srv: &scene_depth,
+                prev_depth_buffer_srv: &scene_depth,
+                curr_camera: Some(&camera),
+                prev_camera: Some(&camera),
+                camera_attribs_cb: None,
+                pass_timestamps: None,
+            });
+            // The rays' direction scaled by their length, PDF 1, at the
+            // reconstruction boundary.
+            ssr.resources.as_mut().unwrap().ray_direction_pdf = texture(
+                &device,
+                &queue,
+                wgpu::TextureFormat::Rgba16Float,
+                &half(&[
+                    mirror[0] * hit_distance,
+                    mirror[1] * hit_distance,
+                    mirror[2] * hit_distance,
+                    1.0,
+                ]),
+            );
+            // Confident hits: DFX-29 reconstructs only tiles with one.
+            ssr.resources.as_mut().unwrap().radiance = texture(
+                &device,
+                &queue,
+                wgpu::TextureFormat::Rgba16Float,
+                &half(&[1.0, 1.0, 1.0, 1.0]),
+            );
+            let attribs = ScreenSpaceReflectionAttribs::default();
+            let mut render = RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                post_fx_context: &mut context,
+                color_buffer_srv: &normal,
+                depth_buffer_srv: &scene_depth,
+                normal_buffer_srv: &normal,
+                material_buffer_srv: &material,
+                motion_vectors_srv: &motion,
+                ssr_attribs: &attribs,
+                pass_timestamps: None,
+                reset_accumulation: false,
+                frame_time: 1.0 / 60.0,
+            };
+            ssr.update_constant_buffer(&render, false);
+            ssr.compute_stencil_mask_and_extract_roughness(&mut render);
+            ssr.compute_downsampled_stencil_mask(&mut render);
+            ssr.classify_denoiser_tiles(&mut render);
+            ssr.compute_spatial_reconstruction(&mut render);
+            ssr.compute_temporal_accumulation(&mut render);
+            queue.submit([encoder.finish()]);
+            let resolved = read_scalar(&device, &queue, &ssr.resources().resolved_depth)
+                [(pixel[1] * SIZE[0] + pixel[0]) as usize];
+            // Unproject the readback using double precision so the oracle does not
+            // repeat the shader's f32 cancellation. Both finite depth conventions use
+            // the same perspective relationship z = m32 / (device_depth - m22).
+            let resolved_z = f64::from(proj[14]) / (f64::from(resolved) - f64::from(proj[10]));
+            assert!(
+                (resolved_z - f64::from(expected_z)).abs() <= 0.1,
+                "{flags:?}, reversed={reversed}: resolved {resolved_z} m, virtual point {expected_z} m"
+            );
+        }
+    }
 }
 
 // #645: a miss stores its traced endpoint, including HALF_MAX past the far
@@ -908,7 +927,7 @@ fn missed_rays_do_not_move_the_reflections_virtual_point() {
         ssr.compute_spatial_reconstruction(&mut render);
         queue.submit([encoder.finish()]);
         (
-            read_r16f(&device, &queue, &ssr.resources().resolved_depth),
+            read_scalar(&device, &queue, &ssr.resources().resolved_depth),
             read_rgba16f(&device, &queue, &ssr.resources().resolved_radiance),
         )
     };
@@ -1166,7 +1185,7 @@ fn denoise_frame_over(
         output: read_rgba16f(device, queue, &r.output),
         resolved_radiance: read_rgba16f(device, queue, &r.resolved_radiance),
         radiance_history: read_rgba16f(device, queue, &r.radiance_history[current]),
-        variance_history: read_r16f(device, queue, &r.variance_history[current]),
+        variance_history: read_scalar(device, queue, &r.variance_history[current]),
     }
 }
 
@@ -1806,7 +1825,8 @@ fn offscreen_candidates_cannot_discard_valid_reflection_history() {
                 if index == 1 {
                     let radiance =
                         read_rgba16f(&device, &queue, &ssr.resources().radiance_history[1]);
-                    let variance = read_r16f(&device, &queue, &ssr.resources().variance_history[1]);
+                    let variance =
+                        read_scalar(&device, &queue, &ssr.resources().variance_history[1]);
                     for y in 23..25 {
                         for x in 31..33 {
                             let pixel = (y * SIZE[0] + x) as usize;

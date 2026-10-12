@@ -115,7 +115,6 @@ const DENOISER_TILE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 const RADIANCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const VARIANCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
-const RESOLVED_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
 /// `RESOURCE_IDENTIFIER_*` internal resources, created by `prepare_resources`.
 struct Resources {
@@ -332,6 +331,7 @@ impl ScreenSpaceReflection {
         if self.feature_flags != feature_flags || self.use_reverse_depth != use_reverse_depth {
             if self.feature_flags.contains(FeatureFlags::HALF_RESOLUTION)
                 != feature_flags.contains(FeatureFlags::HALF_RESOLUTION)
+                || self.use_reverse_depth != use_reverse_depth
             {
                 self.back_buffer_width = 0;
                 self.back_buffer_height = 0;
@@ -524,7 +524,7 @@ impl ScreenSpaceReflection {
                 "ScreenSpaceReflection::ResolvedDepth",
                 width,
                 height,
-                RESOLVED_DEPTH_FORMAT,
+                self.resolved_depth_format(),
                 1,
             )),
             radiance_history,
@@ -571,6 +571,17 @@ impl ScreenSpaceReflection {
         self.resources
             .as_ref()
             .expect("ScreenSpaceReflection::PrepareResources")
+    }
+
+    // DFX-59: conventional device depths cluster near 1, where binary16
+    // loses metres of precision. The temporal pass loads this texture without
+    // filtering, so R32Float needs no optional WebGPU features.
+    fn resolved_depth_format(&self) -> wgpu::TextureFormat {
+        if self.use_reverse_depth {
+            wgpu::TextureFormat::R16Float
+        } else {
+            wgpu::TextureFormat::R32Float
+        }
     }
 
     fn render_technique(&mut self, render_tech: RenderTech) -> &mut PostFXRenderTechnique {
@@ -750,6 +761,7 @@ impl ScreenSpaceReflection {
             }
         }
         {
+            let resolved_depth_format = self.resolved_depth_format();
             let tech = self.render_technique(RenderTech::ComputeSpatialReconstruction);
             if !tech.is_initialized_pso() {
                 tech.initialize_pso(
@@ -770,7 +782,7 @@ impl ScreenSpaceReflection {
                         (6, Resource::Texture),
                         (7, Resource::Texture),
                     ],
-                    &[RADIANCE_FORMAT, VARIANCE_FORMAT, RESOLVED_DEPTH_FORMAT],
+                    &[RADIANCE_FORMAT, VARIANCE_FORMAT, resolved_depth_format],
                     Some(DEPTH_STENCIL_FORMAT),
                     DepthStencilStateDesc::EnableDepthNoWrites,
                 );
