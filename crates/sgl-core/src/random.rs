@@ -26,16 +26,25 @@ impl Rng {
     }
 
     /// A `u32` uniformly distributed in `range`.
+    ///
+    /// # Panics
+    /// If `range` is empty (`range.start >= range.end`), an authoring error.
     pub fn u32(&mut self, range: std::ops::Range<u32>) -> u32 {
         self.inner.u32(range)
     }
 
     /// An `i32` uniformly distributed in `range`.
+    ///
+    /// # Panics
+    /// If `range` is empty (`range.start >= range.end`), an authoring error.
     pub fn i32(&mut self, range: std::ops::Range<i32>) -> i32 {
         self.inner.i32(range)
     }
 
     /// A `usize` uniformly distributed in `range` (e.g. an index).
+    ///
+    /// # Panics
+    /// If `range` is empty (`range.start >= range.end`), an authoring error.
     #[allow(clippy::cast_possible_truncation)] // The draw is below `range.end`, a `usize`.
     pub fn usize(&mut self, range: std::ops::Range<usize>) -> usize {
         // One 64-bit draw on every target: `fastrand::Rng::usize` reduces only
