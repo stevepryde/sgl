@@ -68,6 +68,8 @@ them through unrefracted. A probe captured on an
   refuses it. Other
   unsupported features return errors rather
   than partial models. [Limits](../README.md#asset-and-environment-limits).
+  Valid node trees have no depth limit within the asset load budget; roots
+  and children load depth-first in declared order, preserved within each batch.
 - **Compressed material textures**: a material image is decoded RGBA8, whose
   mips SGL3D filters when it is added, or a BC7 mip chain uploaded as stored
   (`asset::Image::Compressed`, read from KTX2 with

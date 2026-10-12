@@ -109,7 +109,36 @@ pub(super) fn read_node(
     meshes: &mut Vec<(BatchKey, CpuMesh)>,
     include_node: &dyn Fn(Option<&str>) -> bool,
 ) -> Result<()> {
-    let global = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
+    let mut pending = vec![(node, parent)];
+    while let Some((node, parent)) = pending.pop() {
+        let global = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
+        read_mesh_node(
+            &node,
+            global,
+            (buffers, buffer_bytes),
+            (default_material, materials),
+            rigging,
+            meshes,
+            include_node,
+        )?;
+        // Reverse just the appended children: the stack then visits them
+        // depth-first in declared order, preserving batching and selection order.
+        let first_child = pending.len();
+        pending.extend(node.children().map(|child| (child, global)));
+        pending[first_child..].reverse();
+    }
+    Ok(())
+}
+
+fn read_mesh_node(
+    node: &gltf::Node<'_>,
+    global: Mat4,
+    (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
+    (default_material, materials): (usize, &[Material]),
+    rigging: &mut Rigging,
+    meshes: &mut Vec<(BatchKey, CpuMesh)>,
+    include_node: &dyn Fn(Option<&str>) -> bool,
+) -> Result<()> {
     if let Some(mesh) = node.mesh()
         && include_node(node.name())
     {
@@ -335,7 +364,7 @@ pub(super) fn read_node(
             let morph_targets = if target_count == 0 {
                 Vec::new()
             } else {
-                let first = rigging.morph_weights(&node, target_count)?;
+                let first = rigging.morph_weights(node, target_count)?;
                 read_morph_targets(
                     &reader,
                     first,
@@ -363,17 +392,6 @@ pub(super) fn read_node(
                 },
             ));
         }
-    }
-    for child in node.children() {
-        read_node(
-            child,
-            global,
-            (buffers, buffer_bytes),
-            (default_material, materials),
-            rigging,
-            meshes,
-            include_node,
-        )?;
     }
     Ok(())
 }

@@ -74,7 +74,11 @@ settings SGL3D has today.
    share a bounded source-read budget (4 GiB native, 1 GiB browser), checked
    before allocation; decoded scene data retains its separate budget.
    Explicit node selection preserves ancestor transforms and rejects an
-   empty selection. Games keep authored sources, export recipes and gameplay RON.
+   empty selection. Node traversal must not grow the call stack with
+   hierarchy depth: valid trees within the asset load budget have no depth
+   limit. Mesh nodes are visited depth-first, with scene roots and children
+   in declared order; batching preserves that order within each batch.
+   Games keep authored sources, export recipes and gameplay RON.
    Scene input validation rejects non-finite material `normal_scale`,
    `coat_normal_scale` and `bump_scale` with `InvalidMaterialFactors`,
    non-finite lightmap `uv_scale_offset` with `InvalidLightmap`, and baked
