@@ -1732,7 +1732,10 @@ stay in the game (S3D-1).
   vertices stay in bind space, as glTF ignores its node's transform; a rigid
   node's transform is baked into its vertices and morph displacements, as
   before. Primitives batch by material, skin and morphed node. A node
-  hierarchy that is not a set of trees (a node with two parents, or its own
+  hierarchy loads without a depth limit within the asset load budget:
+  traversal uses a heap stack, visiting roots and children depth-first in
+  declared order, retained within each batch. A hierarchy that is not a
+  set of trees (a node with two parents, or its own
   ancestor) fails the load, as do keyframe times that are not finite and
   strictly increasing.
 - **Procedural.** `ModelMesh::deformation` takes the same data; a model with

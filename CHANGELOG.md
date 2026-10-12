@@ -66,6 +66,9 @@ docs and specs the entry links.
   buffer `byteLength`, and bound source reads. Move referenced files beside
   the glTF (or into its subdirectories), replace symlinks with files, and
   re-export buffers whose lengths differ; otherwise no game-code changes.
+- `sgl-3d` glTF import: deep node hierarchies could overflow the stack
+  and abort; they now load at any depth within the asset load budget.
+  No game-code changes needed.
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they

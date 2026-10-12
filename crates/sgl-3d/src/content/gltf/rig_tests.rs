@@ -79,6 +79,92 @@ impl Buffer {
     }
 }
 
+/// One rigid triangle instanced by the supplied scene nodes, fully in memory.
+fn mesh_nodes(nodes: Value, roots: Value) -> Vec<u8> {
+    let mut buffer = Buffer::default();
+    let positions = buffer.floats(&[0., 0., 0., 1., 0., 0., 0., 1., 0.], "VEC3", 3);
+    let normals = buffer.floats(&[0., 0., 1., 0., 0., 1., 0., 0., 1.], "VEC3", 3);
+    buffer.glb(json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": positions, "NORMAL": normals}}]}],
+        "nodes": nodes,
+        "scenes": [{"nodes": roots}], "scene": 0
+    }))
+}
+
+// Regression: recursive import aborts on this valid hierarchy. The terminal
+// triangle's translated coordinates independently expose lost ancestor transforms.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_twenty_thousand_node_chain_loads_on_a_small_stack() {
+    let mut nodes: Vec<Value> = (0..20_000)
+        .map(|index| json!({"translation": [1, 0, 0], "children": [index + 1]}))
+        .collect();
+    nodes[19_999] = json!({"translation": [1, 0, 0], "mesh": 0});
+    let bytes = mesh_nodes(json!(nodes), json!([0]));
+    std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(move || {
+            let asset = load_slice(&bytes).unwrap();
+            let triangle: Vec<_> = asset.meshes[0]
+                .indices
+                .iter()
+                .map(|&index| asset.meshes[0].vertices[index as usize].position)
+                .collect();
+            assert_eq!(
+                triangle,
+                [[20_000., 0., 0.], [20_001., 0., 0.], [20_000., 1., 0.]]
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+// Regression: a LIFO walk reverses siblings or visits them before descendants;
+// filtering an ancestor must not discard its children or its transform.
+#[wasm_bindgen_test(unsupported = test)]
+fn mesh_nodes_keep_declared_depth_first_order_and_unselected_ancestor_transforms() {
+    let bytes = mesh_nodes(
+        json!([
+            {"name": "root", "mesh": 0, "translation": [10, 0, 0], "scale": [2, 1, 1], "children": [2, 1]},
+            {"name": "second", "mesh": 0, "translation": [1, 0, 0]},
+            {"name": "first", "mesh": 0, "translation": [3, 0, 0], "children": [3]},
+            {"name": "grandchild", "mesh": 0, "translation": [4, 0, 0]},
+            {"name": "other_root", "mesh": 0, "translation": [50, 0, 0]}
+        ]),
+        json!([0, 4]),
+    );
+    let visited = std::sync::Mutex::new(Vec::new());
+    let select = |name: Option<&str>| {
+        visited.lock().unwrap().push(name.unwrap().to_owned());
+        name != Some("root")
+    };
+    let asset = load_slice_with_options(
+        &bytes,
+        LoadOptions {
+            nodes: Some(&select),
+            ..LoadOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        visited.into_inner().unwrap(),
+        ["root", "first", "grandchild", "second", "other_root"]
+    );
+    let origins: Vec<_> = asset.meshes[0]
+        .indices
+        .chunks_exact(3)
+        .map(|triangle| asset.meshes[0].vertices[triangle[0] as usize].position)
+        .collect();
+    // Root x=10, scale x=2: first x=16, its child x=24, second x=12.
+    // The independent scene root keeps x=50 instead of inheriting x=10.
+    assert_eq!(
+        origins,
+        [[16., 0., 0.], [24., 0., 0.], [12., 0., 0.], [50., 0., 0.]]
+    );
+}
+
 /// A rig: a root with two bones, a mesh skinned to the second of two skins
 /// under a node whose transform glTF ignores, and a rigid, scaled mesh with a
 /// morph target; with a clip turning the second bone and stepping the
