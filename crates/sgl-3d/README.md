@@ -2843,7 +2843,8 @@ Bevy's glTF loader resolves each image's source; a supplied image takes the glTF
 which its materials address. An embedded glTF (`load_slice_with_options`)
 may refer to external image files when each one a sampled map uses is
 supplied.
-`CompressedImage::from_ktx2(bytes)` reads a KTX2
+`CompressedImage::from_ktx2(bytes)` rejects malformed data format descriptors
+with an error, then reads a KTX2
 file of one 2D BC7 image (`VK_FORMAT_BC7_UNORM_BLOCK` or `_SRGB_BLOCK`) with
 its stored levels, uncompressed or Zstandard-supercompressed, as Bevy reads
 them. It refuses zero or non-block-aligned dimensions, sides above 16384,
