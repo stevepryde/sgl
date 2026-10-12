@@ -44,10 +44,12 @@ licences, source revisions and the blue-noise table source it reads.
   set that distance; an all-miss sample kernel reprojects the surface
   (DFX-56). It rejects a surface history far from the current
   neighbourhood as AMD's does, and clamps to Wicked Engine's 2-deviation box
-  (DFX-25); a virtual point behind the previous camera finds no history
-  (DFX-31), nor does a surface that was behind it, in SSR and TAA alike
-  (DFX-32). Both linearise a surface's reprojected depth with the previous
-  camera's projection, so a changed near plane keeps history (DFX-43). Its
+  (DFX-25). Only candidates inside the previous viewport enter its luminance
+  comparison (DFX-57): an off-screen virtual point, including one behind the
+  previous camera (DFX-31), leaves a valid surface candidate available. A
+  surface that was behind the previous camera finds no history, in SSR and
+  TAA alike (DFX-32). Both linearise a surface's reprojected depth with the
+  previous camera's projection, so a changed near plane keeps history (DFX-43). Its
   denoiser passes run only on the 8×8 tiles with a confident
   hit within their reach, as AMD's denoiser runs only over its tile list; a
   skipped tile's histories hold zero radiance and DiligentFX's no-history
