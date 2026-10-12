@@ -1183,9 +1183,9 @@ map's.
   (glass, screens, holograms, water) is blended with its alpha over what
   lies behind it. With `keeps_specular: false`, as glTF `BLEND` loads, alpha
   is coverage and fades all of the surface's light, Filament's `fade`; with
-  `true`, Filament's `transparent`, alpha fades only its diffuse and emitted
-  light, so its reflections and highlights keep their full strength, as
-  glass's do: a windscreen at alpha 0.1 reflects as brightly as at 1. The
+  `true`, Filament's `transparent`, alpha fades its reflected and transmitted
+  diffuse light and its emission, so its reflections and highlights keep
+  their full strength, as glass's do: a windscreen at alpha 0.1 reflects as brightly as at 1. The
   transparent stage draws blended surfaces back to front, sorted by the view
   depth of each mesh's bounds centre as Bevy's `Transparent3d` phase is, onto
   the composed frame and, while a screen-space reflection method traces it,

@@ -882,10 +882,11 @@ last, after everything it may use, and refuses a directive in it.
   mask (alpha, as AMD's sample writes for translucency). They blend
   premultiplied (one, one minus source alpha), in both of Filament
   ef1a133's modes (`Filament.md.html`, Transparency): a material that
-  `keeps_specular` is Filament's `transparent`, its base colour and
-  emission premultiplied by its alpha before it is shaded, so alpha fades
-  its diffuse and emitted light alone and its specular, coat and traced
-  reflection keep their strength; any other is `fade`, glTF's coverage,
+  `keeps_specular` is Filament's `transparent`, its base colour, diffuse
+  transmission colour and emission premultiplied by its alpha before it is
+  shaded, so alpha fades its reflected and transmitted diffuse light and
+  emitted light alone and its specular, coat and traced reflection keep
+  their strength; any other is `fade`, glTF's coverage,
   which glTF `BLEND` loads (gltfio's mapping), all its light premultiplied
   after shading; both fog the covered share alone (`frame_fog_premultiplied`),
   which in `fade` departs from Filament, whose fade adds its in-scatter

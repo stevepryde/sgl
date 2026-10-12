@@ -23,8 +23,9 @@ pub enum AlphaMode {
     /// water or glass that reflects the scene in front of it.
     Blend {
         receives_screen_space_reflections: bool,
-        /// Whether alpha fades only its diffuse and emitted light, its
-        /// reflections and highlights keeping their full strength, as glass
+        /// Whether alpha fades its reflected and transmitted diffuse light
+        /// and its emission, its reflections and highlights keeping their full
+        /// strength, as glass
         /// does (Filament's `transparent` blending). False fades all of its
         /// light, glTF's alpha as coverage (Filament's `fade`).
         keeps_specular: bool,
