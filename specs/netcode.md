@@ -247,7 +247,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     is `Peer`, as in the browser and memory transports. Every
     lane shares the one TCP stream: a lost segment stalls every lane until TCP
     retransmits it, and a frame already written precedes everything after it;
-    UDP is the transport for loss-isolated lanes. WebSocket may be slower
+    UDP is the transport for loss-isolated lanes. Native worker turns bound
+    both completed messages and raw stream bytes, including while closing:
+    unfinished fragment floods yield to outbound work and rejoin the queue
+    behind the other runnable peers. WebSocket may be slower
     than UDP, never weaker: a native receiver whose lane cannot take a
     completed message holds that frame and stops reading the connection
     until the caller's `poll` makes room, so its kernel buffer fills, TCP

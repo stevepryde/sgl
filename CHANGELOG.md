@@ -38,6 +38,9 @@ docs and specs the entry links.
   notifies peers instead of leaving them to time out; a stopped or panicked
   worker reports each live connection `Local` after its queued messages.
   No game-code changes.
+- `sgl-net` native WebSocket: unfinished frame fragments could stall the
+  shared worker; each socket turn now bounds raw bytes read and yields to
+  other peers and outbound messages. No game-code changes.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;

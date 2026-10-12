@@ -102,7 +102,9 @@ effort: a platform that refuses `TCP_NODELAY` still keeps the connection.
 Use `memory_duplex` for a local session and the simulated UDP network for
 repeatable loss/reordering scenarios. Native UDP may run on the caller's
 thread or a bounded worker. Native WebSocket uses an I/O worker; browser
-WebSocket uses the browser API. The caller still owns gameplay timing.
+WebSocket uses the browser API. Native socket turns bound completed messages
+and raw bytes read, so unfinished fragment floods yield to outbound work and
+other peers, including during graceful close. The caller still owns gameplay timing.
 
 UDP disconnect stops admitting messages and drains those already accepted
 until acknowledged or `EndpointConfig::close_grace_ms` after the first

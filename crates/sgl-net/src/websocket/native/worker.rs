@@ -16,7 +16,7 @@
 //! after [`ACCEPT_RETRY`]. The listener closes only when admission stops.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::io;
+use std::io::{self, Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -33,8 +33,8 @@ use tungstenite::protocol::Message;
 use tungstenite::{WebSocket, accept_hdr_with_config};
 
 use super::{
-    AcceptRateLimiter, Admission, ListenerContext, ServerPeer, SharedPeer, SocketTick, lock,
-    socket_tick, websocket_config,
+    AcceptRateLimiter, Admission, BudgetedStream, ListenerContext, ServerPeer, SharedPeer,
+    SocketTick, lock, socket_tick, websocket_config,
 };
 use crate::{ConnectionId, DisconnectReason};
 
@@ -46,8 +46,10 @@ const EVENT_CAPACITY: usize = 1_024;
 /// connection in the backlog.
 const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
-type ServerUpgrade =
-    Result<WebSocket<TcpStream>, HandshakeError<ServerHandshake<TcpStream, Admission>>>;
+type ServerUpgrade = Result<
+    WebSocket<BudgetedStream<TcpStream>>,
+    HandshakeError<ServerHandshake<BudgetedStream<TcpStream>, Admission>>,
+>;
 
 /// What an owner and its worker share besides each peer's state.
 #[derive(Default)]
@@ -85,8 +87,8 @@ impl Drop for WorkerHandle {
     }
 }
 
-struct Connection {
-    socket: WebSocket<TcpStream>,
+struct Connection<Stream = TcpStream> {
+    socket: WebSocket<BudgetedStream<Stream>>,
     shared: Arc<SharedPeer>,
     /// A message the socket could not take yet (see `drain_outbound`).
     pending: Option<Message>,
@@ -97,8 +99,8 @@ struct Connection {
     queued: bool,
 }
 
-impl Connection {
-    fn new(socket: WebSocket<TcpStream>, shared: Arc<SharedPeer>) -> Self {
+impl<Stream: Read + Write> Connection<Stream> {
+    fn new(socket: WebSocket<BudgetedStream<Stream>>, shared: Arc<SharedPeer>) -> Self {
         Self {
             socket,
             shared,
@@ -118,11 +120,40 @@ impl Connection {
     }
 }
 
+/// One scheduler turn; a saturated socket rejoins the tail behind its peers.
+fn run_next<Stream: Read + Write>(
+    connections: &mut BTreeMap<Token, Connection<Stream>>,
+    runnable: &mut VecDeque<Token>,
+) -> Option<Token> {
+    let token = runnable.pop_front()?;
+    let connection = connections.get_mut(&token)?;
+    connection.queued = false;
+    match connection.tick() {
+        SocketTick::Stop => return Some(token),
+        SocketTick::Continue { idle: false } => queue_connection(connections, runnable, token),
+        SocketTick::Continue { idle: true } => {}
+    }
+    None
+}
+
+fn queue_connection<Stream>(
+    connections: &mut BTreeMap<Token, Connection<Stream>>,
+    runnable: &mut VecDeque<Token>,
+    token: Token,
+) {
+    if let Some(connection) = connections.get_mut(&token)
+        && !connection.queued
+    {
+        connection.queued = true;
+        runnable.push_back(token);
+    }
+}
+
 /// A server-side upgrade in progress.
 struct Handshake {
     conn: ConnectionId,
     deadline: Instant,
-    mid: MidHandshake<ServerHandshake<TcpStream, Admission>>,
+    mid: MidHandshake<ServerHandshake<BudgetedStream<TcpStream>, Admission>>,
 }
 
 /// A server's listener and what its upgrades need.
@@ -208,7 +239,11 @@ impl IoWorker {
             token,
             Interest::READABLE | Interest::WRITABLE,
         )?;
-        let mut attempt = client_with_config(request, stream, Some(websocket_config()));
+        let mut attempt = client_with_config(
+            request,
+            BudgetedStream::new(stream),
+            Some(websocket_config()),
+        );
         loop {
             match attempt {
                 Ok((socket, response)) => {
@@ -319,12 +354,7 @@ impl IoWorker {
     }
 
     fn queue(&mut self, token: Token) {
-        if let Some(connection) = self.connections.get_mut(&token)
-            && !connection.queued
-        {
-            connection.queued = true;
-            self.runnable.push_back(token);
-        }
+        queue_connection(&mut self.connections, &mut self.runnable, token);
     }
 
     /// Gives each runnable connection one turn. A turn that stopped short
@@ -333,17 +363,8 @@ impl IoWorker {
     /// can wait for the next event.
     fn run_round(&mut self) {
         for _ in 0..self.runnable.len() {
-            let Some(token) = self.runnable.pop_front() else {
-                break;
-            };
-            let Some(connection) = self.connections.get_mut(&token) else {
-                continue;
-            };
-            connection.queued = false;
-            match connection.tick() {
-                SocketTick::Stop => self.release(token),
-                SocketTick::Continue { idle: false } => self.queue(token),
-                SocketTick::Continue { idle: true } => {}
+            if let Some(closed) = run_next(&mut self.connections, &mut self.runnable) {
+                self.release(closed);
             }
         }
     }
@@ -351,7 +372,10 @@ impl IoWorker {
     /// Lets a finished connection go; its socket closes here.
     fn release(&mut self, token: Token) {
         if let Some(mut connection) = self.connections.remove(&token) {
-            let _ = self.poll.registry().deregister(connection.socket.get_mut());
+            let _ = self
+                .poll
+                .registry()
+                .deregister(&mut connection.socket.get_mut().inner);
             // Nothing serves it any more, so later requests wake nobody.
             connection
                 .shared
@@ -454,7 +478,11 @@ impl IoWorker {
         };
         let deadline = Instant::now() + acceptor.context.handshake_timeout;
         let admission = acceptor.context.admission.clone();
-        let upgrade = accept_hdr_with_config(stream, admission, Some(websocket_config()));
+        let upgrade = accept_hdr_with_config(
+            BudgetedStream::new(stream),
+            admission,
+            Some(websocket_config()),
+        );
         self.step_handshake(token, conn, deadline, upgrade);
     }
 
@@ -497,7 +525,7 @@ impl IoWorker {
         token: Token,
         conn: ConnectionId,
         deadline: Instant,
-        mut socket: WebSocket<TcpStream>,
+        mut socket: WebSocket<BudgetedStream<TcpStream>>,
     ) {
         let Some(acceptor) = &self.acceptor else {
             return;
@@ -683,9 +711,88 @@ mod tests {
                 .mid
                 .get_ref()
                 .get_ref()
+                .inner
                 .nodelay()
                 .expect("read accepted socket TCP_NODELAY")
         );
+    }
+
+    /// Defect #643: one Tungstenite read can consume all unfinished
+    /// fragments. The production scheduler must yield, send outbound data,
+    /// then serve the next peer before completing the flooded message.
+    #[test]
+    fn empty_continuation_flood_yields_to_the_next_peer() {
+        use super::super::tests::{
+            client_frames, envelope, fragment_flood, server_frames, server_socket, shared,
+        };
+        use crate::Delivery;
+
+        let flooded = shared(0, 0);
+        {
+            let mut state = lock(&flooded.state);
+            state.send(Delivery::RELIABLE_ORDERED, b"outbound").unwrap();
+            state.release_outbound().unwrap();
+        }
+        let other = shared(0, 0);
+        let inbound = fragment_flood();
+        let before = inbound.len();
+        let mut connections = BTreeMap::from([
+            (
+                Token(2),
+                Connection::new(server_socket(inbound), Arc::clone(&flooded)),
+            ),
+            (
+                Token(3),
+                Connection::new(
+                    server_socket(client_frames(vec![envelope(
+                        Delivery::RELIABLE_ORDERED,
+                        0,
+                        b"other peer",
+                    )])),
+                    Arc::clone(&other),
+                ),
+            ),
+        ]);
+        let mut runnable = VecDeque::new();
+        queue_connection(&mut connections, &mut runnable, Token(2));
+        queue_connection(&mut connections, &mut runnable, Token(3));
+        assert_eq!(run_next(&mut connections, &mut runnable), None);
+        let socket = &mut connections.get_mut(&Token(2)).unwrap().socket;
+        assert_eq!(
+            before - socket.get_ref().inner.inbound.len(),
+            super::super::MAX_READ_BYTES_PER_WAKE
+        );
+        assert_eq!(
+            lock(&flooded.state).pop_inbound(),
+            None,
+            "message is still fragmented"
+        );
+        assert_eq!(runnable, VecDeque::from([Token(3), Token(2)]));
+        let written = server_frames(std::mem::take(&mut socket.get_mut().inner.outbound));
+        let [Message::Binary(payload)] = written.as_slice() else {
+            panic!("{written:?}")
+        };
+        assert_eq!(
+            crate::websocket::decode_envelope(*b"TST", payload)
+                .unwrap()
+                .payload,
+            b"outbound"
+        );
+        assert_eq!(run_next(&mut connections, &mut runnable), None);
+        assert_eq!(
+            lock(&other.state).pop_inbound(),
+            Some((Delivery::RELIABLE_ORDERED, b"other peer".to_vec()))
+        );
+        // Partial frame headers and the unfinished message survive yields.
+        for _ in 0..4 {
+            run_next(&mut connections, &mut runnable);
+        }
+        assert_eq!(
+            lock(&flooded.state).pop_inbound(),
+            Some((Delivery::RELIABLE_ORDERED, b"finished".to_vec()))
+        );
+        assert_eq!(lock(&flooded.state).terminal(), None);
+        assert!(runnable.is_empty());
     }
 
     #[test]

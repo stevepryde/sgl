@@ -1093,6 +1093,62 @@ impl Drop for NativeWebSocketClient {
     }
 }
 
+/// Raw bytes read in one established socket turn. This bounds work even
+/// when Tungstenite consumes fragments without returning a complete message.
+/// Roughly four 16 KiB application fragments fit per turn, balancing bulk
+/// throughput with turns for the other peers.
+const MAX_READ_BYTES_PER_WAKE: usize = 64 * 1024;
+
+/// Wrap before the handshake so Tungstenite keeps its parser and buffered
+/// bytes when established turns start. Handshakes retain their existing
+/// size/deadline limits; only socket turns reset this raw-read allowance.
+struct BudgetedStream<Stream> {
+    inner: Stream,
+    remaining: usize,
+}
+
+impl<Stream> BudgetedStream<Stream> {
+    fn new(inner: Stream) -> Self {
+        Self {
+            inner,
+            remaining: usize::MAX,
+        }
+    }
+
+    fn begin_turn(&mut self) {
+        self.remaining = MAX_READ_BYTES_PER_WAKE;
+    }
+
+    fn exhausted(&self) -> bool {
+        self.remaining == 0
+    }
+}
+
+impl<Stream: Read> Read for BudgetedStream<Stream> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if self.exhausted() {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        let available = buf.len().min(self.remaining);
+        let read = self.inner.read(&mut buf[..available])?;
+        self.remaining -= read;
+        Ok(read)
+    }
+}
+
+impl<Stream: Write> Write for BudgetedStream<Stream> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// Maximum messages one socket turn drains before yielding to outbound work.
 const MAX_READS_PER_WAKE: usize = 128;
 
@@ -1145,7 +1201,7 @@ fn read_failure_reason(error: &tungstenite::Error) -> DisconnectReason {
 /// liveness is advanced by the caller's clock through
 /// [`SharedPeer::advance`].
 fn socket_tick<Stream>(
-    socket: &mut WebSocket<Stream>,
+    socket: &mut WebSocket<BudgetedStream<Stream>>,
     shared: &SharedPeer,
     pending: &mut Option<Message>,
     held: &mut Option<tungstenite::Bytes>,
@@ -1153,6 +1209,7 @@ fn socket_tick<Stream>(
 where
     Stream: Read + Write,
 {
+    socket.get_mut().begin_turn();
     if shared.shutdown.load(Ordering::Acquire) || lock(&shared.state).terminal().is_some() {
         let _ = socket.close(None);
         return SocketTick::Stop;
@@ -1216,7 +1273,7 @@ where
         return SocketTick::Continue { idle: false };
     }
     // A held frame waits for the caller's request, not for readiness.
-    let saturated = reads >= MAX_READS_PER_WAKE && held.is_none();
+    let saturated = (reads >= MAX_READS_PER_WAKE || socket.get_ref().exhausted()) && held.is_none();
 
     if let Some(payload) = shared.take_ping()
         && send_ping(socket, payload).is_err()
@@ -1254,7 +1311,10 @@ where
 /// discard them, and reading keeps two sides closing at once from stalling
 /// each other. The close finishes as `Local`; the graceful-close deadline
 /// ends a peer that never takes it or never answers.
-fn flush_graceful_close<Stream>(socket: &mut WebSocket<Stream>, shared: &SharedPeer) -> SocketTick
+fn flush_graceful_close<Stream>(
+    socket: &mut WebSocket<BudgetedStream<Stream>>,
+    shared: &SharedPeer,
+) -> SocketTick
 where
     Stream: Read + Write,
 {
@@ -1277,7 +1337,9 @@ where
             Ok(Message::Close(_)) => return finish(),
             Ok(_) => {}
             Err(tungstenite::Error::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
-                return SocketTick::Continue { idle: true };
+                return SocketTick::Continue {
+                    idle: !socket.get_ref().exhausted(),
+                };
             }
             // The peer ended the stream after taking everything we sent.
             Err(_) if flushed => return finish(),
@@ -1358,9 +1420,9 @@ mod tests {
     /// `writes_blocked` is set, like a peer that has stopped reading. A
     /// `write_budget` takes that many more bytes before blocking.
     #[derive(Default)]
-    struct Scripted {
-        inbound: VecDeque<u8>,
-        outbound: Vec<u8>,
+    pub(super) struct Scripted {
+        pub(super) inbound: VecDeque<u8>,
+        pub(super) outbound: Vec<u8>,
         writes_blocked: bool,
         write_budget: Option<usize>,
     }
@@ -1401,7 +1463,7 @@ mod tests {
     const MAGIC: [u8; 3] = *b"TST";
 
     /// Bytes a client would put on the wire for `messages` (masked frames).
-    fn client_frames(messages: Vec<Message>) -> Vec<u8> {
+    pub(super) fn client_frames(messages: Vec<Message>) -> Vec<u8> {
         let mut client = WebSocket::from_raw_socket(Scripted::default(), Role::Client, None);
         for message in messages {
             client.send(message).expect("client frame");
@@ -1410,7 +1472,7 @@ mod tests {
     }
 
     /// Decode every frame the server wrote, as a client would read them.
-    fn server_frames(bytes: Vec<u8>) -> Vec<Message> {
+    pub(super) fn server_frames(bytes: Vec<u8>) -> Vec<Message> {
         let stream = Scripted {
             inbound: bytes.into(),
             ..Scripted::default()
@@ -1425,7 +1487,7 @@ mod tests {
         }
     }
 
-    fn envelope(delivery: Delivery, sequence: u64, payload: &[u8]) -> Message {
+    pub(super) fn envelope(delivery: Delivery, sequence: u64, payload: &[u8]) -> Message {
         let envelope = crate::websocket::Envelope {
             delivery,
             sequence,
@@ -1435,7 +1497,7 @@ mod tests {
         Message::Binary(encode_envelope(MAGIC, &envelope).expect("envelope").into())
     }
 
-    fn shared(ping_interval_ms: u64, timeout_ms: u64) -> Arc<SharedPeer> {
+    pub(super) fn shared(ping_interval_ms: u64, timeout_ms: u64) -> Arc<SharedPeer> {
         SharedPeer::new(
             MAGIC,
             ping_interval_ms,
@@ -1444,15 +1506,19 @@ mod tests {
         )
     }
 
-    fn server_socket(inbound: Vec<u8>) -> WebSocket<Scripted> {
+    pub(super) fn server_socket(inbound: Vec<u8>) -> WebSocket<BudgetedStream<Scripted>> {
         let stream = Scripted {
             inbound: inbound.into(),
             ..Scripted::default()
         };
-        WebSocket::from_raw_socket(stream, Role::Server, Some(websocket_config()))
+        WebSocket::from_raw_socket(
+            BudgetedStream::new(stream),
+            Role::Server,
+            Some(websocket_config()),
+        )
     }
 
-    fn tick(socket: &mut WebSocket<Scripted>, shared: &SharedPeer) -> SocketTick {
+    fn tick(socket: &mut WebSocket<BudgetedStream<Scripted>>, shared: &SharedPeer) -> SocketTick {
         let (mut pending, mut held) = (None, None);
         let tick = socket_tick(socket, shared, &mut pending, &mut held);
         assert!(held.is_none(), "these tests never fill a lane");
@@ -1630,7 +1696,7 @@ mod tests {
             );
             assert_eq!(lock(&shared.state).terminal(), Some(reason));
             assert_eq!(tick(&mut socket, &shared), SocketTick::Stop);
-            let written = server_frames(std::mem::take(&mut socket.get_mut().outbound));
+            let written = server_frames(std::mem::take(&mut socket.get_mut().inner.outbound));
             assert!(
                 written.iter().any(|m| matches!(m, Message::Close(_))),
                 "{reason:?}: {written:?}"
@@ -1658,7 +1724,7 @@ mod tests {
             SocketTick::Continue { idle: true }
         );
         let frames: Vec<(Delivery, u64, Vec<u8>)> =
-            server_frames(std::mem::take(&mut socket.get_mut().outbound))
+            server_frames(std::mem::take(&mut socket.get_mut().inner.outbound))
                 .into_iter()
                 .map(|m| match m {
                     Message::Binary(bytes) => {
@@ -1699,12 +1765,12 @@ mod tests {
         let mut socket = server_socket(Vec::new());
         tick(&mut socket, &shared);
         assert!(
-            socket.get_ref().outbound.is_empty(),
+            socket.get_ref().inner.outbound.is_empty(),
             "no ping before the interval"
         );
         shared.advance(10);
         tick(&mut socket, &shared);
-        let frames = server_frames(std::mem::take(&mut socket.get_mut().outbound));
+        let frames = server_frames(std::mem::take(&mut socket.get_mut().inner.outbound));
         let payload = match &frames[..] {
             [Message::Ping(payload)] => payload.clone(),
             other => panic!("expected one ping, got {other:?}"),
@@ -1712,6 +1778,7 @@ mod tests {
         assert_eq!(&payload[..], 10u64.to_be_bytes());
         socket
             .get_mut()
+            .inner
             .inbound
             .extend(client_frames(vec![Message::Pong(payload)]));
         tick(&mut socket, &shared);
@@ -1728,19 +1795,19 @@ mod tests {
         shared.advance(0);
         shared.advance(10);
         let mut socket = server_socket(client_frames(vec![Message::Ping(b"hi".to_vec().into())]));
-        socket.get_mut().writes_blocked = true;
+        socket.get_mut().inner.writes_blocked = true;
         assert_eq!(
             tick(&mut socket, &shared),
             SocketTick::Continue { idle: true }
         );
         assert_eq!(lock(&shared.state).terminal(), None);
 
-        socket.get_mut().writes_blocked = false;
+        socket.get_mut().inner.writes_blocked = false;
         assert_eq!(
             tick(&mut socket, &shared),
             SocketTick::Continue { idle: true }
         );
-        let frames = server_frames(std::mem::take(&mut socket.get_mut().outbound));
+        let frames = server_frames(std::mem::take(&mut socket.get_mut().inner.outbound));
         assert_eq!(
             frames,
             vec![
@@ -1779,6 +1846,64 @@ mod tests {
         assert_eq!(queued, 2);
     }
 
+    /// RFC 6455 section 5.4: a non-final binary frame, empty masked
+    /// continuations, and a final continuation carrying a valid envelope.
+    /// These frames consume parser work without growing message size.
+    pub(super) fn fragment_flood() -> Vec<u8> {
+        use tungstenite::protocol::frame::{
+            Frame,
+            coding::{Data, OpCode},
+        };
+        let mut bytes = vec![0x02, 0x80, 0, 0, 0, 0];
+        for _ in 0..30_000 {
+            bytes.extend_from_slice(&[0x00, 0x80, 0, 0, 0, 0]);
+        }
+        let Message::Binary(payload) = envelope(Delivery::RELIABLE_ORDERED, 0, b"finished") else {
+            unreachable!();
+        };
+        bytes.extend(client_frames(vec![Message::Frame(Frame::message(
+            payload,
+            OpCode::Data(Data::Continue),
+            true,
+        ))]));
+        bytes
+    }
+
+    /// The close-drain read path must share the turn's raw-byte budget;
+    /// otherwise unfinished fragments can monopolize the worker on close.
+    #[test]
+    fn graceful_close_yields_during_a_fragment_flood_and_resumes() {
+        let shared = shared(0, 0);
+        lock(&shared.state).begin_graceful_close(0);
+        let mut inbound = fragment_flood();
+        inbound.extend(client_frames(vec![Message::Close(None)]));
+        let mut socket = server_socket(inbound);
+        assert_eq!(
+            tick(&mut socket, &shared),
+            SocketTick::Continue { idle: false }
+        );
+        assert!(!socket.get_ref().inner.inbound.is_empty());
+        assert_eq!(lock(&shared.state).terminal(), None);
+        let frames = server_frames(std::mem::take(&mut socket.get_mut().inner.outbound));
+        assert!(
+            frames
+                .iter()
+                .any(|message| matches!(message, Message::Close(_)))
+        );
+        let mut result = SocketTick::Continue { idle: false };
+        for _ in 0..4 {
+            result = tick(&mut socket, &shared);
+            if result == SocketTick::Stop {
+                break;
+            }
+        }
+        assert_eq!(result, SocketTick::Stop);
+        assert_eq!(
+            lock(&shared.state).terminal(),
+            Some(DisconnectReason::Local)
+        );
+    }
+
     /// A graceful close drains the released reliable frames first, then
     /// writes the Close frame and stops the worker as `Local` once the peer
     /// answers it.
@@ -1796,7 +1921,7 @@ mod tests {
             tick(&mut socket, &shared),
             SocketTick::Continue { idle: true }
         );
-        let frames = server_frames(std::mem::take(&mut socket.get_mut().outbound));
+        let frames = server_frames(std::mem::take(&mut socket.get_mut().inner.outbound));
         assert!(
             matches!(&frames[..], [Message::Binary(bytes), Message::Close(_)]
                 if decode_envelope(MAGIC, bytes).map(|e| e.payload) == Ok(&b"bye"[..])),
@@ -1804,6 +1929,7 @@ mod tests {
         );
         socket
             .get_mut()
+            .inner
             .inbound
             .extend(client_frames(vec![Message::Close(None)]));
         assert_eq!(tick(&mut socket, &shared), SocketTick::Stop);
@@ -1841,7 +1967,7 @@ mod tests {
         let (mut pending, mut held) = (None, None);
         // Nothing is writable, then only the data frame is.
         for budget in [0, bye_frame_len] {
-            socket.get_mut().write_budget = Some(budget);
+            socket.get_mut().inner.write_budget = Some(budget);
             assert_eq!(
                 socket_tick(&mut socket, &shared, &mut pending, &mut held),
                 SocketTick::Continue { idle: true },
@@ -1851,28 +1977,33 @@ mod tests {
         }
         // A ping comes due and the peer sends data before it reads our Close.
         shared.advance(10);
-        socket.get_mut().write_budget = None;
-        socket.get_mut().inbound.extend(client_frames(vec![envelope(
-            Delivery::RELIABLE_ORDERED,
-            0,
-            b"late",
-        )]));
+        socket.get_mut().inner.write_budget = None;
+        socket
+            .get_mut()
+            .inner
+            .inbound
+            .extend(client_frames(vec![envelope(
+                Delivery::RELIABLE_ORDERED,
+                0,
+                b"late",
+            )]));
         assert_eq!(
             socket_tick(&mut socket, &shared, &mut pending, &mut held),
             SocketTick::Continue { idle: true }
         );
         assert_eq!(lock(&shared.state).terminal(), None);
         assert!(
-            socket.get_ref().inbound.is_empty(),
+            socket.get_ref().inner.inbound.is_empty(),
             "the peer's data was left unread"
         );
-        let frames = server_frames(std::mem::take(&mut socket.get_mut().outbound));
+        let frames = server_frames(std::mem::take(&mut socket.get_mut().inner.outbound));
         assert!(
             matches!(&frames[..], [Message::Binary(bytes), Message::Close(_)] if *bytes == bye),
             "{frames:?}"
         );
         socket
             .get_mut()
+            .inner
             .inbound
             .extend(client_frames(vec![Message::Close(None)]));
         assert_eq!(
@@ -1893,13 +2024,14 @@ mod tests {
             state.release_outbound().unwrap();
         }
         let mut socket = server_socket(Vec::new());
-        socket.get_mut().write_budget = Some(bye_frame_len);
+        socket.get_mut().inner.write_budget = Some(bye_frame_len);
         assert_eq!(
             tick(&mut socket, &crossing),
             SocketTick::Continue { idle: true }
         );
         socket
             .get_mut()
+            .inner
             .inbound
             .extend(client_frames(vec![Message::Close(None)]));
         assert_eq!(tick(&mut socket, &crossing), SocketTick::Stop);
@@ -1917,7 +2049,7 @@ mod tests {
             state.release_outbound().unwrap();
         }
         let mut socket = server_socket(Vec::new());
-        socket.get_mut().writes_blocked = true;
+        socket.get_mut().inner.writes_blocked = true;
         assert_eq!(
             tick(&mut socket, &stuck),
             SocketTick::Continue { idle: true }
