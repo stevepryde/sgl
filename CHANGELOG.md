@@ -15,7 +15,7 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d` `asset::load`/`load_slice`: a GLB header declaring a length below 12 bytes panicked, and a node matrix with a zero-scale axis in a rigged file, a non-integer `EXT_materials_bump` `texCoord`, a `baseColorFactor` the scene rejects, or a negative or non-finite `emissiveFactor` or `emissiveStrength` loaded; each now fails the load, naming the node or material. Re-export affected assets; no game-code changes are needed.
+- `sgl-3d` `asset::load`/`load_slice`: a GLB header declaring a length below 12 bytes panicked, and a zero-scale matrix on a joint or a joint's ancestor, a non-integer `EXT_materials_bump` `texCoord`, a `baseColorFactor` the scene rejects, or a negative or non-finite `emissiveFactor` or `emissiveStrength` loaded; each now fails the load, naming the node or material. Re-export affected assets; no game-code changes are needed.
 
 - `sgl-3d` `CompressedImage`: a side above 16384 passed scene validation (overflowing on wasm32); scenes now refuse it with `SceneError::InvalidCompressedImage`, as `from_ktx2` does. Store sides no larger than 16384; no game-code changes are needed otherwise.
 

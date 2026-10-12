@@ -50,20 +50,31 @@ impl Rigging {
         if document.skins().next().is_none() && document.animations().next().is_none() && !morphed {
             return Ok(rigging);
         }
+        // The nodes whose rest pose feeds a joint matrix: each skin's joints
+        // and their ancestors.
+        let mut posed = vec![false; parents.len()];
+        for joint in document.skins().flat_map(|skin| skin.joints()) {
+            let mut node = Some(joint.index());
+            while let Some(index) = node.filter(|&index| !posed[index]) {
+                posed[index] = true;
+                node = parents[index];
+            }
+        }
         rigging.rig.nodes = document
             .nodes()
             .map(|node| {
                 // A matrix with a zero-scale axis decomposes to a NaN
-                // rotation, which posing would spread to every descendant.
+                // rotation, which posing spreads to every joint beneath it.
                 let (translation, rotation, scale) = node.transform().decomposed();
-                if !translation
-                    .iter()
-                    .chain(&rotation)
-                    .chain(&scale)
-                    .all(|value| value.is_finite())
+                if posed[node.index()]
+                    && !translation
+                        .iter()
+                        .chain(&rotation)
+                        .chain(&scale)
+                        .all(|value| value.is_finite())
                 {
                     return Err(format!(
-                        "node {} ({}) has a transform that does not decompose to a finite translation, rotation and scale; re-export it without a zero-scale axis",
+                        "node {} ({}), a joint or a joint's ancestor, has a transform that does not decompose to a finite translation, rotation and scale; re-export it without a zero-scale axis",
                         node.index(),
                         node.name().unwrap_or("unnamed")
                     )

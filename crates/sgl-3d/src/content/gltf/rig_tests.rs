@@ -417,17 +417,25 @@ fn node_hierarchies_that_are_not_trees_are_rejected() {
 // Plausible defect: a joint whose matrix has a zero-scale axis loaded with
 // the NaN rotation its decomposition divides out, which posing spreads to
 // every joint beneath it. Mesh nodes refuse such a singular transform; a
-// joint, which no mesh node's check sees, must be refused too.
+// joint, which no mesh node's check sees, must be refused too; a helper
+// node no joint descends from, which poses nothing, must still load.
 #[wasm_bindgen_test(unsupported = test)]
 fn a_joint_with_a_zero_scale_matrix_is_rejected() {
+    let collapsed = json!([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1]);
     let error = load_slice(&rigged(|document, _| {
-        document["nodes"][1] = json!({"name": "upper", "children": [2],
-            "matrix": [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1]});
+        document["nodes"][1] =
+            json!({"name": "upper", "children": [2], "matrix": collapsed.clone()});
     }))
     .err()
     .expect("a zero-scale joint loaded")
     .to_string();
     assert!(error.contains("node 1 (upper)"), "{error}");
+    let helper = load_slice(&rigged(|document, _| {
+        document["nodes"][0]["children"] = json!([1, 3, 5]);
+        let nodes = document["nodes"].as_array_mut().unwrap();
+        nodes.push(json!({"name": "helper", "matrix": collapsed.clone()}));
+    }));
+    assert!(helper.is_ok(), "a zero-scale leaf helper was refused");
 }
 
 // Plausible defect: a game-built rig whose parents form a cycle evaluated

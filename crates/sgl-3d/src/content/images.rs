@@ -30,9 +30,9 @@ pub enum CompressedFormat {
 }
 
 /// A block-compressed mip chain. A scene adds it when its sides are
-/// multiples of the block size no larger than 16384 and it holds one to a
-/// full chain of levels,
-/// each of the size its level needs; otherwise it refuses it with
+/// multiples of the block size and no larger than 16384, and it holds one
+/// to a full chain of levels, each of the size its level needs; otherwise
+/// it refuses it with
 /// `SceneError::InvalidCompressedImage`.
 #[derive(Clone, Debug)]
 pub struct CompressedImage {
