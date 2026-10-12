@@ -267,7 +267,14 @@ impl Prepare {
         let camera_view = views.camera.view;
         let cull = effective.culling;
         let started = crate::counters::Moment::now();
-        let camera_cull = camera_cull(&camera_view, render_size, mask, cull);
+        let mut camera_cull = camera_cull(&camera_view, render_size, mask, cull);
+        // Ray receivers must draw the triangles the BVH/BLAS traces. A
+        // displacement error bound cannot bound a grazing ray's self-hit
+        // distance, so keep base primary geometry on both builders while
+        // world-space reflections run (NVIDIA's matching raster/ray LOD).
+        if world_space {
+            camera_cull.flags &= !crate::shading::culling::CULL_LOD;
+        }
         views.camera.list.prepare(
             device,
             queue,
@@ -276,7 +283,11 @@ impl Prepare {
             effective.occlusion_culling,
         );
         views.camera.built(started);
-        let lod = LodSelector::new(camera.view, camera.projection, render_size);
+        let lod = if world_space {
+            None
+        } else {
+            LodSelector::new(camera.view, camera.projection, render_size)
+        };
         views.blended.build(
             &mut views.instances,
             scene,

@@ -94,6 +94,10 @@ docs and specs the entry links.
 - `sgl-3d` `AutoExposure`: near-black pixels previously lowered the average;
   they now only position its percentile window, so scenes with large dark
   areas expose darker. No game-code changes needed.
+- `sgl-3d` world-space reflections: primary LOD surfaces could reflect or
+  block themselves against full-detail ray geometry; primary raster now retains
+  full detail while effective world-space reflections run. Turning them off
+  restores primary LOD selection. No game-code changes are needed.
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they

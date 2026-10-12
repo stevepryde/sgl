@@ -393,3 +393,6 @@ mod secondary_normal_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod instance_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod lod_receiver_tests;

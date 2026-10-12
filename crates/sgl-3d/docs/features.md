@@ -195,7 +195,9 @@ them through unrefracted. A probe captured on an
   material's sections whose triangles pair as quads a second, indexed
   way. A mesh holds at most 65,536 sections.
   `Scene::set_mesh_lods` registers up to 8 authored coarser chunks a mesh
-  ([spatial mesh LOD](../README.md#spatial-mesh-lod)). Coplanar surfaces of
+  ([spatial mesh LOD](../README.md#spatial-mesh-lod)). While world-space
+  reflections run, primary draws retain full detail to match their ray geometry;
+  turning them off restores primary LOD selection. Coplanar surfaces of
   different draws have no defined winner at equal depth: give an overlay a
   depth offset or make it a decal. Two-phase occlusion culling of the
   camera's opaque and masked geometry is opt-in
