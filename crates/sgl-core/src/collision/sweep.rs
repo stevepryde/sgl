@@ -147,6 +147,9 @@ pub struct Contacts {
 /// Ties between colliders contacted at the same instant go to the lowest
 /// collider index, which [`ColliderSet::query`] makes deterministic.
 ///
+/// Every finite nonzero remainder is swept, including motion smaller than
+/// `f32::EPSILON` in the caller's world units. There is no absolute motion cutoff.
+///
 /// A non-finite `delta` is refused outright — it has no meaningful destination,
 /// and letting it through would ask the broadphase for an unbounded region.
 #[must_use]
@@ -169,7 +172,7 @@ pub fn move_and_collide(
     let mut total = Vec2::ZERO;
 
     for _ in 0..MAX_SLIDE_PASSES {
-        if remaining.abs_diff_eq(Vec2::ZERO, f32::EPSILON) {
+        if remaining == Vec2::ZERO {
             break;
         }
 
@@ -285,7 +288,10 @@ fn embedded_hit(body: &Aabb, delta: Vec2, target: &Aabb) -> Option<Hit> {
     } else {
         (offset.y, delta.y, Vec2::new(0.0, offset.y.signum()))
     };
-    (along * motion < 0.0).then_some(Hit { t: 0.0, normal })
+    // Compare signs directly: multiplying tiny offset and motion can underflow
+    // to signed zero and incorrectly permit motion deeper into the collider.
+    let inward = (along < 0.0 && motion > 0.0) || (along > 0.0 && motion < 0.0);
+    inward.then_some(Hit { t: 0.0, normal })
 }
 
 /// The contact for a body that already overlaps a one-way platform. A body
@@ -360,6 +366,55 @@ mod tests {
     use super::super::collider_set::ColliderFlags;
     use super::*;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    /// Tiny inward motion from an overlap must not escape the embedded-body
+    /// response when multiplying the offset and motion would underflow.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn tiny_embedded_motion_does_not_deepen_the_overlap() {
+        for sign in [-1.0, 1.0] {
+            let body = Aabb::new(Vec2::ZERO, Vec2::splat(1e-24));
+            let target = Aabb::new(Vec2::new(sign * 1e-24, 0.0), Vec2::splat(1e-24));
+            assert!(body.overlaps(&target));
+            let mut set = ColliderSet::new(1e-24);
+            set.insert(target, ColliderFlags::SOLID);
+            let config = CollisionConfig::new(Vec2::Y, 0.0, 0.0, 0.7, 0.0);
+            let (moved, contacts) =
+                move_and_collide(body, Vec2::new(sign * 5e-25, 0.0), &set, &config);
+            assert_eq!(moved, Vec2::ZERO, "inward motion deepened the overlap");
+            assert!(contacts.wall);
+        }
+    }
+
+    /// #707: sub-epsilon motion in empty space still reaches its destination,
+    /// including at a jump apex with zero blocked-motion tolerance.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn tiny_unobstructed_motion_is_not_reported_blocked() {
+        let body = Aabb::new(Vec2::ZERO, Vec2::splat(0.5));
+        let set = ColliderSet::new(1.0);
+        let config = CollisionConfig::new(Vec2::Y, 0.0, 0.1, 0.7, 0.0);
+        for delta in [Vec2::new(0.0, -1e-8), Vec2::new(5e-8, 1e-8)] {
+            let (moved, contacts) = move_and_collide(body, delta, &set, &config);
+            assert_eq!(moved, delta, "empty space must allow the entire motion");
+            assert!(!contacts.down_blocked);
+            assert!(!contacts.up_blocked);
+        }
+    }
+
+    /// Tiny motion still sweeps against geometry rather than tunneling through
+    /// it merely because it is below `f32::EPSILON` in world units.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn tiny_motion_still_contacts_a_nearby_surface() {
+        let body = Aabb::new(Vec2::ZERO, Vec2::splat(1e-9));
+        let floor = Aabb::new(Vec2::new(0.0, -5e-9), Vec2::splat(1e-9));
+        let mut set = ColliderSet::new(1e-8);
+        set.insert(floor, ColliderFlags::SOLID);
+        let config = CollisionConfig::new(Vec2::Y, 0.0, 0.0, 0.7, 0.0);
+        let (moved, contacts) = move_and_collide(body, Vec2::new(0.0, -1e-8), &set, &config);
+        assert!(contacts.floor);
+        assert!(contacts.down_blocked);
+        assert!((moved.y + 3e-9).abs() < 1e-15, "moved {moved:?}");
+        assert!(!body.translated(moved).overlaps(&floor));
+    }
 
     /// #706: rounding a swept region through center/half must not omit the
     /// floor cell touched exactly at the end, in either axis convention.

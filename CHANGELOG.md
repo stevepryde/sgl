@@ -15,6 +15,8 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `move_and_collide`/`sweep_aabb`: motion below `f32::EPSILON` was dropped or treated as parallel and could be reported blocked in empty space; every finite nonzero remainder is now swept and applied when clear. No game-code changes are needed.
+
 - `sgl-core` `move_and_collide` and `snap_to_ground`: contacts ending exactly on a broadphase grid-cell boundary could be missed; swept queries now preserve that end boundary. No game-code changes are needed.
 - `sgl-net` `NativeWebSocketClient::connect`: a silent first resolved address formerly exhausted the connection deadline; TCP attempts now share the remaining budget so later addresses can connect. No game-code changes are needed.
 - `sgl-net` UDP `Disconnect` handling: a valid disconnect arriving before its confirm formerly admitted a ghost connection on that confirm; the server now retires the cookie before admission. No game-code changes are needed.

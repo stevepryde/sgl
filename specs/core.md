@@ -73,7 +73,8 @@ browser client must get identical results from it.
    `sweep_aabb` is a closed-form swept AABB test returning
    `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the surface
    toward the body. `move_and_collide` slides a kinematic body against a
-   `ColliderSet` and never moves it more than a rounding step into a solid
+   `ColliderSet`, sweeps every finite nonzero remainder without an absolute
+   motion cutoff, and never moves it more than a rounding step into a solid
    collider; a body that starts inside one may move out or along it, and its
    least penetration depth never grows. It does not push bodies out: the game
    keeps them clear. Skin back-off shortens the whole swept motion to leave
