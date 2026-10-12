@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-net` UDP `Endpoint::disconnect`: closing peers previously stopped
+  sending acknowledgements and keepalives; they now continue through the
+  existing grace so a remote holding data does not time out just because
+  `close_grace_ms` exceeds `timeout_ms`. No game-code changes needed.
+
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;
   diagonal slides stop earlier along the surface by the backed-off motion's

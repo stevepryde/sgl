@@ -57,6 +57,8 @@ pub struct EndpointConfig {
     pub challenge_prefix_burst: u16,
     pub challenge_prefix_refill_ms: u64,
     /// Maximum duration of graceful close, from the first disconnect.
+    /// Acknowledgements and keepalives continue during close, so the grace
+    /// may exceed `timeout_ms` while the remote is making room for data.
     pub close_grace_ms: u64,
     /// Additional sends of each unacknowledged reliable fragment after
     /// disconnect, independent of its earlier sends. A fragment first sent
@@ -771,9 +773,7 @@ impl<T: DatagramTransport> Endpoint<T> {
 
         let max_packets = self.config.max_packets_per_peer_flush;
         let packet_count = self.flush_payloads(id, now_ms, max_packets);
-        if !self.peers[&id].is_closing() {
-            self.flush_acks_and_keepalive(id, now_ms, packet_count, max_packets);
-        }
+        self.flush_acks_and_keepalive(id, now_ms, packet_count, max_packets);
         self.peers.get_mut(&id).expect("peer exists").end_flush();
     }
 

@@ -106,7 +106,9 @@ disconnect. Each unacknowledged reliable fragment gets up to
 `close_retransmits` more sends during that grace, regardless of earlier
 sends; a fragment first sent during close gets that many resends too.
 Retransmission timing still applies, and disconnecting again restarts
-neither the resend budget nor the deadline.
+neither the resend budget nor the deadline. Acknowledgements and keepalives
+continue during close within the usual datagram budget, keeping a receiver
+that is holding data alive even when the grace exceeds `timeout_ms`.
 
 The [browser probe](examples/browser_probe.rs) and its
 [native fixture server](examples/ws_fixture_server.rs) demonstrate browser
