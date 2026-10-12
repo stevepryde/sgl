@@ -475,4 +475,3 @@ fn negative_hue_rotations_wrap_like_positive_and_multiple_turns() {
         assert_matches(hue, &observe(&original, hue), &positive);
     }
 }
-
