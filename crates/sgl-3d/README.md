@@ -216,7 +216,10 @@ frame.color_grading = ColorGrading {
   midtones and highlights), then Filament's AgX in Rec. 2020 with the
   grading's `agx_look` (`None`, AgX's base contrast; `Punchy`, more contrast
   and saturation; `Golden`, a golden, slightly washed-out tint), then the
-  grading's post-saturation. The default grading changes nothing. The output
+  grading's post-saturation. Sections crossfade over 0.1 either side of
+  `midtones_start` (shadows with midtones) and `midtones_end` (midtones with
+  highlights), using the exposed RGB mean. Highlights do not affect the
+  shadows-to-midtones transition. The default grading changes nothing. The output
   is dithered with Bevy's deband dither, up to half an 8-bit step per
   channel, so smooth gradients do not band on an 8-bit surface; the
   tone-mapped diagnostics capture is not. Timing group `tone map`.

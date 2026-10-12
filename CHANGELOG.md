@@ -35,6 +35,10 @@ docs and specs the entry links.
   `0..=65504` with the existing typed errors. Supply finite material and chart
   values and in-range irradiance; valid games need no game-code changes.
 
+- `sgl-3d` `ColorGrading`: the shadows-to-midtones transition blended
+  highlights with midtones; it now blends shadows with midtones. Games with
+  distinct shadows and highlights grading see their dark tones change.
+  No game-code changes needed.
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they

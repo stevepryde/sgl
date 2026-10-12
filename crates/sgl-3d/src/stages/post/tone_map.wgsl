@@ -13,7 +13,8 @@
 // Apache-2.0 (src/LICENSE-bevy.txt). Changes: the frame's one exposure
 // multiplies the scene first and grading has none of its own; the white
 // balance always runs; rgb_to_hsv gives grey a hue of 0 instead of dividing
-// by its zero chroma.
+// by its zero chroma; the dark crossfade's residual weights shadows, fixing
+// Bevy 9d12036's highlights residual (sectional_color_grading, line 306).
 //
 // AgX ports Filament ef1a133 filament/src/ToneMapper.cpp (AgxToneMapper with
 // its looks, agxLook) as filament/src/details/ColorGrading.cpp applies a
@@ -89,7 +90,11 @@ fn saturation(color:vec3<f32>,saturation_amount:f32)->vec3<f32> {
  return mix(vec3(luma),color,vec3(saturation_amount));
 }
 // Bevy's grading of shadows, midtones and highlights, blended near the
-// midtone range's ends (Blender's compositor formulas).
+// midtone range's ends. Bevy 9d12036 assigns the dark crossfade's residual
+// to highlights; corrected here to blend the adjacent shadows and midtones.
+// Reference consulted (no code copied): Blender c31386f6's
+// source/blender/compositor/shaders/library/gpu_shader_compositor_color_correction.glsl,
+// node_composite_color_correction, whose dark crossfade weights shadows.
 fn sectional_color_grading(in:vec3<f32>)->vec3<f32> {
  var color=in;
  let level=(color.r+color.g+color.b)/3.;
@@ -99,7 +104,7 @@ fn sectional_color_grading(in:vec3<f32>)->vec3<f32> {
   levels.x=1.;
  } else if level<midtone_range.x+LEVEL_MARGIN {
   levels.y=((level-midtone_range.x)*LEVEL_MARGIN_DIV)+.5;
-  levels.z=1.-levels.y;
+  levels.x=1.-levels.y;
  } else if level<midtone_range.y-LEVEL_MARGIN {
   levels.y=1.;
  } else if level<midtone_range.y+LEVEL_MARGIN {
