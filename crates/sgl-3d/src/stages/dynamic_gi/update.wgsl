@@ -95,7 +95,9 @@ fn traced_probe(group:vec3<u32>)->u32 {
  }
  return traced_probes[slot];
 }
-const DDGI_COLOR_BORDER_OFFSETS=array<vec4<u32>,28>(
+// A 6×6 interior needs 4×6 edge copies and four corner copies (AR-12).
+const DDGI_COLOR_BORDER_COPIES:u32=28u;
+const DDGI_COLOR_BORDER_OFFSETS=array<vec4<u32>,DDGI_COLOR_BORDER_COPIES>(
  vec4(6u,1u,1u,0u),
  vec4(5u,1u,2u,0u),
  vec4(4u,1u,3u,0u),
@@ -125,7 +127,9 @@ const DDGI_COLOR_BORDER_OFFSETS=array<vec4<u32>,28>(
  vec4(1u,6u,7u,0u),
  vec4(6u,6u,0u,0u),
 );
-const DDGI_DEPTH_BORDER_OFFSETS=array<vec4<u32>,68>(
+// A 16×16 interior needs 4×16 edge copies and four corner copies (AR-12).
+const DDGI_DEPTH_BORDER_COPIES:u32=68u;
+const DDGI_DEPTH_BORDER_OFFSETS=array<vec4<u32>,DDGI_DEPTH_BORDER_COPIES>(
  vec4(16u,1u,1u,0u),
  vec4(15u,1u,2u,0u),
  vec4(14u,1u,3u,0u),
@@ -282,7 +286,7 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
  }
  workgroupBarrier();
  // Copy the colour borders.
- for (var index=group_index;index<28u;index+=IRRADIANCE_CACHE) {
+ for (var index=group_index;index<DDGI_COLOR_BORDER_COPIES;index+=IRRADIANCE_CACHE) {
   let border=DDGI_COLOR_BORDER_OFFSETS[index];
   shared_texels[border.z+border.w*DDGI_COLOR_TEXELS]=shared_texels[border.x+border.y*DDGI_COLOR_TEXELS];
  }
@@ -422,7 +426,7 @@ fn update_depth(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation
  workgroupBarrier();
  // Copy the depth borders.
  let copy_coord=pixel_topleft-vec2(1u);
- for (var index=group_index;index<68u;index+=DEPTH_CACHE) {
+ for (var index=group_index;index<DDGI_DEPTH_BORDER_COPIES;index+=DEPTH_CACHE) {
   let border=DDGI_DEPTH_BORDER_OFFSETS[index];
   let source=(border.x-1u)+(border.y-1u)*DDGI_DEPTH_RESOLUTION;
   textureStore(probes_out,copy_coord+border.zw,vec4(shared_depths[source],0.,1.));

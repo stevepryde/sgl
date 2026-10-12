@@ -18,8 +18,10 @@ struct Params {
 
 var<workgroup> cache: array<array<vec4<f32>, 16>, 16>;
 
+// Godot's separable seven-tap Gaussian kernel, each tap visited once (AR-12).
+const GAUSSIAN_TAPS: i32 = 7;
 // WGSL: private so the loops can index it at run time.
-var<private> WEIGHTS: array<f32, 7> = array<f32, 7>(
+var<private> WEIGHTS: array<f32, GAUSSIAN_TAPS> = array<f32, GAUSSIAN_TAPS>(
 		0.07130343198685299,
 		0.1315141208431224,
 		0.18987923288883812,
@@ -35,7 +37,7 @@ fn get_weight(c: vec4<f32>) -> f32 {
 fn apply_gaus_horz(local: vec2<i32>) -> vec4<f32> {
 	var c = vec4<f32>(0.0);
 	var w = 0.0;
-	for (var i = 0; i < 7; i++) {
+	for (var i = 0; i < GAUSSIAN_TAPS; i++) {
 		let ci = cache[local.x - 3 + i][local.y];
 		let wi = WEIGHTS[i] * get_weight(ci);
 		c += ci * wi;
@@ -56,7 +58,7 @@ var<workgroup> temp_cache: array<array<vec4<f32>, 16>, 8>;
 fn apply_gaus_vert(local: vec2<i32>) -> vec4<f32> {
 	var c = vec4<f32>(0.0);
 	var w = 0.0;
-	for (var i = 0; i < 7; i++) {
+	for (var i = 0; i < GAUSSIAN_TAPS; i++) {
 		let ci = temp_cache[local.x][local.y - 3 + i];
 		let wi = WEIGHTS[i] * get_weight(ci);
 		c += ci * wi;

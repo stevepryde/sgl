@@ -161,7 +161,7 @@ var<workgroup> shared_ray_allocation:u32;
 var<workgroup> shared_cycle:u32;
 // Whether a sphere about `center` of `radius` reaches the camera's frustum.
 fn camera_frustum_intersects(center:vec3<f32>,radius:f32)->bool {
- for (var plane=0u;plane<6u;plane++) {
+ for (var plane=0u;plane<DDGI_FRUSTUM_PLANES;plane++) {
   if dot(volume.frustum[plane].xyz,center)+volume.frustum[plane].w<-radius {
    return false;
   }

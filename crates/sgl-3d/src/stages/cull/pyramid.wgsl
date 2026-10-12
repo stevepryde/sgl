@@ -42,6 +42,8 @@ struct PyramidConstants {
  max_mip_level:u32,
 }
 
+// SPD reduces the four quadrants held in v, each exactly once (AR-12).
+const PYRAMID_QUADRANTS:u32=4u;
 var<workgroup> intermediate_memory:array<array<f32,16>,16>;
 
 @compute @workgroup_size(256,1,1)
@@ -83,7 +85,7 @@ fn downsample_mips_0_and_1(x:u32,y:u32,workgroup_id:vec2<u32>,local_invocation_i
  if constants.max_mip_level<=1u {
   return;
  }
- for(var i=0u;i<4u;i++) {
+ for(var i=0u;i<PYRAMID_QUADRANTS;i++) {
   intermediate_memory[x][y]=v[i];
   workgroupBarrier();
   if local_invocation_index<64u {
