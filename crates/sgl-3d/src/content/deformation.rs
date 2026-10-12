@@ -19,7 +19,7 @@ pub(crate) const MAX_MORPH_TARGETS: usize = 256;
 pub struct Influence {
     /// Indices into the instance's joint matrices, at most 65535.
     pub joints: [u32; 4],
-    /// Finite and nonnegative, with a positive sum.
+    /// Finite and nonnegative, with a finite positive f32 sum.
     pub weights: [f32; 4],
 }
 

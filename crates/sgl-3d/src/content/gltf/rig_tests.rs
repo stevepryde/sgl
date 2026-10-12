@@ -1254,3 +1254,23 @@ fn malformed_animation_target_paths_are_rejected() {
         "{error}"
     );
 }
+
+#[wasm_bindgen_test(unsupported = test)]
+fn overflowing_imported_skin_weight_sums_are_rejected() {
+    let bytes = rigged(|document, buffer| {
+        let weights = buffer.floats(
+            &[f32::MAX, f32::MAX, 0., 0., 1., 0., 0., 0., 0.5, 0.5, 0., 0.],
+            "VEC4",
+            4,
+        );
+        document["meshes"][0]["primitives"][0]["attributes"]["WEIGHTS_0"] = json!(weights);
+    });
+    let error = load_slice(&bytes)
+        .err()
+        .expect("overflowing weights loaded")
+        .to_string();
+    assert!(
+        error.contains("mesh 0 primitive 0") && error.contains("finite positive sum"),
+        "{error}"
+    );
+}

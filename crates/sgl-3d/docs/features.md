@@ -82,8 +82,9 @@ them through unrefracted. A probe captured on an
   [Compressed material images](../README.md#compressed-material-images).
 - **Skinned meshes and morph targets**: the loader imports skins (four
   influences per vertex), morph targets (up to 256 a mesh), the node
-  hierarchy and animation clips as plain data (`deformation`, `Asset::rig`);
-  the game samples and blends clips and gives each instance its joint
+  hierarchy and animation clips as plain data (`deformation`, `Asset::rig`).
+  Each skin influence needs finite nonnegative weights with a finite positive
+  f32 sum. The game samples and blends clips and gives each instance its joint
   matrices and morph weights every frame
   (`Scene::set_instance_deformation`, `Rig::joint_matrices`). SGL3D morphs
   and skins each changed instance once per frame in compute, and every pass

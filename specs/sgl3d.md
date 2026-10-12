@@ -97,6 +97,8 @@ settings SGL3D has today.
    strictly increasing indices below its element count, as
    [glTF 2.0 3.6.2.3](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#sparse-accessors)
    requires; invalid indices fail with an error naming the accessor.
+   Imported and procedural skin influences must have finite nonnegative
+   weights whose f32 sum is finite and positive before normalization.
    Games keep authored sources, export recipes and gameplay RON.
    Scene input validation rejects non-finite material `normal_scale`,
    `coat_normal_scale` and `bump_scale` with `InvalidMaterialFactors`,

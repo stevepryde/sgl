@@ -135,7 +135,7 @@ pub(crate) struct ModelDeformation {
 }
 
 /// Whether `meshes`' deformations fit their vertices: as many influences as
-/// vertices or none, each with finite nonnegative weights of positive sum,
+/// vertices or none, each with finite nonnegative weights of finite positive sum,
 /// and each morph target a finite displacement of every vertex, with
 /// indices of at most `MAX_INDEX` and at most `MAX_MORPH_TARGETS` of them.
 pub(crate) fn validate(meshes: &[ModelMesh]) -> Result<(), SceneError> {
@@ -146,9 +146,11 @@ pub(crate) fn validate(meshes: &[ModelMesh]) -> Result<(), SceneError> {
             return Err(SceneError::InvalidDeformation);
         }
         if deformation.influences.iter().any(|influence| {
+            let sum = influence.weights.iter().sum::<f32>();
             influence.joints.iter().any(|&joint| joint > MAX_INDEX)
                 || influence.weights.iter().any(|w| !w.is_finite() || *w < 0.)
-                || influence.weights.iter().sum::<f32>() <= 0.
+                || !sum.is_finite()
+                || sum <= 0.
         }) {
             return Err(SceneError::InvalidDeformation);
         }
