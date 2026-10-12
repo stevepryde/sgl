@@ -65,6 +65,211 @@ impl Drop for Fixture {
     }
 }
 
+fn change_document(fixture: &Fixture, change: impl FnOnce(&mut serde_json::Value)) {
+    let mut document = serde_json::from_slice(&std::fs::read(fixture.path()).unwrap()).unwrap();
+    change(&mut document);
+    std::fs::write(fixture.path(), serde_json::to_vec(&document).unwrap()).unwrap();
+}
+
+// Defect: a URI reads a real file outside its asset directory, including
+// escaped parent segments and absolute/scheme forms. Independent oracle:
+// the same outside files contain a valid mesh/PNG that loads beside the glTF,
+// but S3D-2 forbids resolving them through an escaping URI.
+#[test]
+fn buffer_and_image_uris_are_confined_to_the_asset_directory() {
+    let outside = extension_fixture(serde_json::json!({}), &[], &[]);
+    image::RgbaImage::from_pixel(1, 1, image::Rgba([10, 20, 30, 255]))
+        .save(outside.directory.join("outside.png"))
+        .unwrap();
+    let outside_name = outside.directory.file_name().unwrap().to_str().unwrap();
+    for is_image in [false, true] {
+        let file = if is_image {
+            "outside.png"
+        } else {
+            "fixture.bin"
+        };
+        let absolute = outside.directory.join(file).to_str().unwrap().to_owned();
+        let uris = [
+            format!("../{outside_name}/{file}"),
+            format!("%2e%2e%2f{outside_name}/{file}"),
+            absolute.clone(),
+            format!("file://{absolute}"),
+            format!("file%3a{absolute}"),
+            format!("C:\\{file}"),
+            format!("%5c%5cserver%5c{file}"),
+        ];
+        for uri in uris {
+            let fixture = if is_image {
+                textured_triangle(
+                    serde_json::json!({"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}),
+                    serde_json::json!([{"uri": uri}]),
+                    serde_json::json!([{"source":0}]),
+                    &[],
+                )
+            } else {
+                let fixture = extension_fixture(serde_json::json!({}), &[], &[]);
+                change_document(&fixture, |document| {
+                    document["buffers"][0]["uri"] = uri.clone().into()
+                });
+                fixture
+            };
+            let error = load(&fixture.path()).err().unwrap().to_string();
+            assert!(
+                error.contains("URI") && error.contains("relative path"),
+                "{error}"
+            );
+            // Errors identify the authored URI; JSON-style escapes in the
+            // diagnostic preserve Windows separators unambiguously.
+            assert!(error.contains(&format!("{uri:?}")), "{error}");
+        }
+    }
+}
+
+#[test]
+fn external_sources_refuse_oversized_files_before_reading() {
+    let fixture = extension_fixture(serde_json::json!({}), &[], &[]);
+    // A sparse file exceeds the production cap without allocating gigabytes.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(fixture.directory.join("fixture.bin"))
+        .unwrap()
+        .set_len(MAX_LOAD_BYTES + 1)
+        .unwrap();
+    let error = load(&fixture.path()).err().unwrap().to_string();
+    assert!(
+        error.contains("fixture.bin") && error.contains("remaining") && error.contains("budget"),
+        "{error}"
+    );
+
+    let fixture = textured_triangle(
+        serde_json::json!({"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}),
+        serde_json::json!([{"uri":"huge.png"}]),
+        serde_json::json!([{"source":0}]),
+        &[],
+    );
+    // This image fits the cap on its own, but not after the document and
+    // mesh buffer: removing either source's charge must fail this regression.
+    let already_read = std::fs::metadata(fixture.path()).unwrap().len()
+        + std::fs::metadata(fixture.directory.join("fixture.bin"))
+            .unwrap()
+            .len();
+    std::fs::File::create(fixture.directory.join("huge.png"))
+        .unwrap()
+        .set_len(MAX_LOAD_BYTES - already_read + 1)
+        .unwrap();
+    let error = load(&fixture.path()).err().unwrap().to_string();
+    assert!(
+        error.contains("huge.png") && error.contains("remaining") && error.contains("budget"),
+        "{error}"
+    );
+}
+
+#[test]
+fn buffer_file_length_must_match_its_declaration() {
+    for length in [71, 73] {
+        let fixture = extension_fixture(serde_json::json!({}), &[], &[]);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(fixture.directory.join("fixture.bin"))
+            .unwrap()
+            .set_len(length)
+            .unwrap();
+        let error = load(&fixture.path()).err().unwrap().to_string();
+        assert!(
+            error.contains("fixture.bin") && error.contains("byteLength"),
+            "{error}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn external_sources_refuse_symlink_files_and_directories() {
+    use std::os::unix::fs::symlink;
+    let outside = extension_fixture(serde_json::json!({}), &[], &[]);
+    let fixture = extension_fixture(serde_json::json!({}), &[], &[]);
+    symlink(
+        outside.directory.join("fixture.bin"),
+        fixture.directory.join("linked.bin"),
+    )
+    .unwrap();
+    symlink(&outside.directory, fixture.directory.join("linked")).unwrap();
+    for uri in ["linked.bin", "linked/fixture.bin"] {
+        change_document(&fixture, |document| {
+            document["buffers"][0]["uri"] = uri.into()
+        });
+        let error = load(&fixture.path()).err().unwrap().to_string();
+        assert!(error.contains(uri) && error.contains("symlink"), "{error}");
+    }
+}
+
+// Defects: URI confinement also refuses legitimate percent-encoded nested
+// files, or moving ownership of reads loses GLB/data-URI buffer bytes.
+// Oracle: the authored triangle's three positions and a PNG's known texel.
+#[test]
+fn nested_percent_encoded_files_glb_and_data_uris_still_load() {
+    let fixture = textured_triangle(
+        serde_json::json!({"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}),
+        serde_json::json!([{"uri":"nested/pixel%20image.png"}]),
+        serde_json::json!([{"source":0}]),
+        &[],
+    );
+    std::fs::create_dir(fixture.directory.join("nested")).unwrap();
+    std::fs::copy(
+        fixture.directory.join("fixture.bin"),
+        fixture.directory.join("nested/mesh data.bin"),
+    )
+    .unwrap();
+    image::RgbaImage::from_pixel(1, 1, image::Rgba([10, 20, 30, 255]))
+        .save(fixture.directory.join("nested/pixel image.png"))
+        .unwrap();
+    change_document(&fixture, |document| {
+        document["buffers"][0]["uri"] = "nested/mesh%20data.bin".into()
+    });
+    let asset = load(&fixture.path()).unwrap();
+    assert_eq!(
+        asset.meshes[0]
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position)
+            .collect::<Vec<_>>(),
+        [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]]
+    );
+    let Image::Rgba8(image) = &asset.images[0] else {
+        panic!("expected decoded PNG")
+    };
+    assert_eq!(image.get_pixel(0, 0).0, [10, 20, 30, 255]);
+
+    let fixture = extension_fixture(serde_json::json!({}), &[], &[]);
+    let glb = load_slice(&fixture.embedded()).unwrap();
+    assert_eq!(glb.meshes[0].vertices[1].position, [1., 0., 0.]);
+    // An unused extra byte in the declared BIN data needs three bytes of
+    // alignment padding in its chunk; glTF permits those padding bytes.
+    change_document(&fixture, |document| {
+        document["buffers"][0]["byteLength"] = 73.into()
+    });
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(fixture.directory.join("fixture.bin"))
+        .unwrap()
+        .set_len(76)
+        .unwrap();
+    let padded = load_slice(&fixture.embedded()).unwrap();
+    assert_eq!(padded.meshes[0].vertices[2].position, [0., 1., 0.]);
+    change_document(&fixture, |document| {
+        document["buffers"][0]["byteLength"] = 72.into()
+    });
+    // Three positions and three +Z normals, little-endian f32, encoded as
+    // glTF's standard base64 buffer. This exercises actual accessor reads.
+    change_document(&fixture, |document| {
+        document["buffers"][0]["uri"] =
+        "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/".into()
+    });
+    let data = load_slice(&std::fs::read(fixture.path()).unwrap()).unwrap();
+    assert_eq!(data.meshes[0].vertices[2].position, [0., 1., 0.]);
+    assert_eq!(data.meshes[0].vertices[1].normal, [0., 0., 1.]);
+}
+
 fn anisotropy_fixture(
     extension: serde_json::Value,
     tangent: Option<[f32; 4]>,

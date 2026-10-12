@@ -2675,6 +2675,18 @@ need. A sparse accessor without a buffer view that nothing else counts
 the file's buffers would hold in a buffer view. An embedded image's buffer view must lie within its
 buffer. Any other fails the load with an error naming it.
 
+External buffer and image URIs are percent-decoded relative paths beneath
+the glTF's directory (including subdirectories), or embedded base64 `data:`
+URIs. Schemes such as `file:`, absolute paths, every `..` segment, symlinks
+and non-regular files are refused with the authored URI in the error.
+External buffers must contain exactly their declared `byteLength`; GLB BIN
+chunks may include the format's alignment padding. The input document,
+imported buffers and encoded images share a source-byte budget of 4 GiB
+natively or 1 GiB in the browser. File sizes and data-URI decoded sizes are
+checked before reading or decoding, and file reads are bounded even if a
+file grows. Supplied and unused images are still never read. Move formerly
+escaping references beside the glTF and replace symlinks with regular files.
+
 A scene must list each root node once, and only nodes without a parent, as
 glTF requires. Before it decodes an image or reads an accessor, a load
 counts the bytes its scene produces from the counts its accessors declare,

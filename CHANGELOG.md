@@ -55,6 +55,12 @@ docs and specs the entry links.
   limit or u32 draw range now drops surplus whole occluder edges instead of
   ending the frame with a validation error. No game-code changes needed.
 
+- `sgl-3d` glTF import: buffer and image URIs could read any file and
+  allocate without a source-byte cap; they now accept embedded data or
+  relative regular files without parent segments or symlinks, enforce
+  buffer `byteLength`, and bound source reads. Move referenced files beside
+  the glTF (or into its subdirectories), replace symlinks with files, and
+  re-export buffers whose lengths differ; otherwise no game-code changes.
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they

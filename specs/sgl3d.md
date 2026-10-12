@@ -65,8 +65,16 @@ settings SGL3D has today.
    requiring it and SGL3D does not render is left out, as glTF lets a
    loader do, and listed with the asset (`Asset::ignored`); file and embedded-byte imports share
    one decoder, which decodes each image a sampled map uses that the game
-   does not supply, and never reads one it does or one no sampled map uses. Explicit node selection preserves ancestor transforms and rejects
-   an empty selection. Games keep authored sources, export recipes and gameplay RON.
+   does not supply, and never reads one it does or one no sampled map uses.
+   Referenced buffers and decoded images accept base64 data URIs or
+   percent-decoded relative regular files beneath the glTF's directory,
+   never schemes, absolute paths, parent segments or symlinks. External
+   buffers must match their declared `byteLength`; GLB BIN alignment padding
+   remains valid. The document, imported buffers and encoded image bytes
+   share a bounded source-read budget (4 GiB native, 1 GiB browser), checked
+   before allocation; decoded scene data retains its separate budget.
+   Explicit node selection preserves ancestor transforms and rejects an
+   empty selection. Games keep authored sources, export recipes and gameplay RON.
    Scene input validation rejects non-finite material `normal_scale`,
    `coat_normal_scale` and `bump_scale` with `InvalidMaterialFactors`,
    non-finite lightmap `uv_scale_offset` with `InvalidLightmap`, and baked
