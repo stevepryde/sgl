@@ -1311,6 +1311,17 @@ impl<T: DatagramTransport> Endpoint<T> {
     }
 }
 
+// The endpoint owns the connection routes and their socket. Dropping any
+// adapter (including a stopped or unwinding worker) ends them before that
+// socket disappears; a close already completed removed its route earlier.
+impl<T: DatagramTransport> Drop for Endpoint<T> {
+    fn drop(&mut self) {
+        while let Some((&id, _)) = self.peers.first_key_value() {
+            self.remove_and_notify(id, self.now_ms);
+        }
+    }
+}
+
 fn lane_at(index: usize) -> Lane {
     Lane::new(u8::try_from(index).expect("lane index fits")).expect("index below RELIABLE_LANES")
 }
@@ -1320,6 +1331,88 @@ fn lane_at(index: usize) -> Lane {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddrV4};
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    // The first two disconnect datagrams are lost. The surviving copy must
+    // still end the real protocol session, once, before its inactivity timer.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn dropping_an_endpoint_notifies_the_peer_despite_two_lost_disconnects() {
+        use crate::udp::simulated::{SimulatedConfig, SimulatedNetwork, SimulatedTransport};
+        struct LoseDisconnects {
+            inner: SimulatedTransport,
+            remaining: usize,
+        }
+        impl DatagramTransport for LoseDisconnects {
+            fn send(&mut self, destination: SocketAddr, payload: &[u8], now_ms: u64) {
+                if matches!(
+                    packet::parse(payload, *b"TST"),
+                    Some(Parsed::Control {
+                        kind: Kind::Disconnect,
+                        ..
+                    })
+                ) && self.remaining > 0
+                {
+                    self.remaining -= 1;
+                } else {
+                    self.inner.send(destination, payload, now_ms);
+                }
+            }
+            fn receive(
+                &mut self,
+                output: &mut [u8],
+                now_ms: u64,
+            ) -> std::io::Result<Option<(usize, SocketAddr)>> {
+                self.inner.receive(output, now_ms)
+            }
+        }
+        let network = SimulatedNetwork::new(
+            SimulatedConfig {
+                one_way_latency_ms: 0,
+                jitter_ms: 0,
+                loss_per_10k: 0,
+                duplicate_per_10k: 0,
+                reorder_per_10k: 0,
+                ..SimulatedConfig::default()
+            },
+            1,
+        )
+        .unwrap();
+        let server_addr = address(127, 0, 0, 1, 7000);
+        let client_addr = address(127, 0, 0, 1, 7001);
+        let mut server = Endpoint::server(
+            LoseDisconnects {
+                inner: network.transport(server_addr),
+                remaining: 2,
+            },
+            EndpointConfig::default(),
+            [51; 32],
+        )
+        .unwrap();
+        let mut client =
+            Endpoint::client(network.transport(client_addr), EndpointConfig::default()).unwrap();
+        let peer = client.start_connect(server_addr, 0, 61).unwrap();
+        let mut connected = false;
+        for now in 0..100 {
+            server.poll(now);
+            connected |= client
+                .poll(now)
+                .contains(&EndpointEvent::Connected { peer });
+            server.flush(now);
+            client.flush(now);
+            if connected {
+                break;
+            }
+        }
+        assert!(connected, "session did not connect");
+        drop(server);
+        assert_eq!(
+            client.poll(100),
+            [EndpointEvent::Disconnected {
+                peer,
+                reason: DisconnectReason::Peer
+            }]
+        );
+        assert!(client.poll(101).is_empty());
+    }
 
     /// #523: a server deny answers one confirm. Oracle: `ClientEvent::Denied`
     /// means admission was refused, so a connection already admitted cannot

@@ -278,6 +278,21 @@ impl IngressHub {
         }
     }
 
+    /// The worker has stopped and cannot deliver more. Preserve messages and
+    /// ends already queued, and end every connection still active locally.
+    fn worker_stopped(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for conn in std::mem::take(&mut state.active) {
+            if let Some(peer) = state.peers.get_mut(&conn) {
+                peer.ended = Some(DisconnectReason::Local);
+            }
+        }
+        self.state.clear_poison();
+    }
+
     /// Each live peer's reliable messages waiting for the caller, per lane:
     /// what the worker's next endpoint poll delivers beside.
     fn holding(&self) -> BTreeMap<ConnectionId, [InboundUsage; RELIABLE_LANES]> {
@@ -415,6 +430,18 @@ impl CommandQueue {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, CommandState> {
         self.state.lock().expect("UDP command queue poisoned")
+    }
+
+    fn worker_stopped(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.live.clear();
+        state.peers.clear();
+        state.disconnects.clear();
+        state.closing.clear();
+        self.state.clear_poison();
     }
 
     fn send(&self, id: ConnectionId, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
@@ -707,16 +734,27 @@ impl ThreadedUdpServer {
         self.local_addr
     }
 
+    /// Stops the worker, abandons queued sends and notifies its peers. Poll
+    /// afterwards to receive the remaining messages and local ends.
     pub fn shutdown(&mut self) {
         self.shutdown.store(true, Ordering::Release);
+        self.join_worker();
+    }
+
+    fn join_worker(&mut self) {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
+            self.commands.worker_stopped();
+            self.ingress.worker_stopped();
         }
     }
 }
 
 impl ServerIo for ThreadedUdpServer {
     fn poll(&mut self, _now_ms: u64) -> Vec<ServerEvent> {
+        if self.worker.as_ref().is_some_and(JoinHandle::is_finished) {
+            self.join_worker();
+        }
         self.ingress.drain()
     }
 
@@ -833,6 +871,195 @@ mod tests {
     use crate::{ClientEvent, ClientIo};
 
     const CLOSE_GRACE_MS: u64 = 1_000;
+
+    fn threaded_pair() -> (
+        ThreadedUdpServer,
+        super::super::UdpClient,
+        ConnectionId,
+        Instant,
+    ) {
+        let mut server = ThreadedUdpServer::bind_addr(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            EndpointConfig::default(),
+            ThreadedUdpConfig {
+                poll_interval: Duration::from_millis(1),
+            },
+        )
+        .unwrap();
+        let mut client = super::super::UdpClient::connect_with_nonce(
+            server.local_addr(),
+            EndpointConfig::default(),
+            0,
+            71,
+        )
+        .unwrap();
+        let started = Instant::now();
+        let mut connection = None;
+        let mut client_connected = false;
+        while started.elapsed() < Duration::from_secs(1) {
+            let now = u64::try_from(started.elapsed().as_millis()).unwrap();
+            for event in server.poll(now) {
+                if let ServerEvent::Connected { conn } = event {
+                    connection = Some(conn);
+                }
+            }
+            client_connected |= client.poll(now).contains(&ClientEvent::Connected);
+            client.flush(now);
+            if let Some(conn) = connection
+                && client_connected
+            {
+                return (server, client, conn, started);
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("threaded loopback handshake did not complete");
+    }
+
+    fn assert_remote_peer_end(mut client: super::super::UdpClient, started: Instant) {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < deadline {
+            let now = u64::try_from(started.elapsed().as_millis()).unwrap();
+            let events = client.poll(now);
+            if !events.is_empty() {
+                assert_eq!(
+                    events,
+                    [ClientEvent::Disconnected {
+                        reason: DisconnectReason::Peer
+                    }]
+                );
+                assert!(client.poll(now).is_empty(), "duplicate end");
+                return;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("peer received no disconnect before the 10 s timeout");
+    }
+
+    #[test]
+    fn dropping_a_threaded_server_notifies_its_client() {
+        let (server, client, _, started) = threaded_pair();
+        drop(server);
+        assert_remote_peer_end(client, started);
+    }
+
+    #[test]
+    fn shutting_down_a_threaded_server_notifies_peers_and_ends_local_admission_once() {
+        let (mut server, client, conn, started) = threaded_pair();
+        server.shutdown();
+        server.shutdown();
+        assert_eq!(
+            server.poll(0),
+            [ServerEvent::Disconnected {
+                conn,
+                reason: DisconnectReason::Local
+            }]
+        );
+        assert!(server.poll(0).is_empty());
+        assert_eq!(
+            server.send(conn, Delivery::RELIABLE_ORDERED, b"after shutdown"),
+            Err(SendError::UnknownConnection)
+        );
+        assert_remote_peer_end(client, started);
+    }
+
+    // Kill the real I/O worker at its command lock. Its endpoint unwinds and
+    // drops; poll must recover the poisoned shared state, surface the local
+    // failure exactly once and retain a message received before it failed.
+    #[test]
+    fn a_panicked_worker_ends_live_connections_and_preserves_received_messages() {
+        let (mut server, mut client, conn, started) = threaded_pair();
+        let mut second = super::super::UdpClient::connect_with_nonce(
+            server.local_addr(),
+            EndpointConfig::default(),
+            0,
+            72,
+        )
+        .unwrap();
+        let second_conn = {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            let mut connection = None;
+            let mut connected = false;
+            loop {
+                let now = u64::try_from(started.elapsed().as_millis()).unwrap();
+                for event in server.poll(now) {
+                    if let ServerEvent::Connected { conn } = event {
+                        connection = Some(conn);
+                    }
+                }
+                connected |= second.poll(now).contains(&ClientEvent::Connected);
+                client.poll(now);
+                client.flush(now);
+                second.flush(now);
+                if let Some(conn) = connection
+                    && connected
+                {
+                    break conn;
+                }
+                assert!(Instant::now() < deadline, "second client never connected");
+                thread::sleep(Duration::from_millis(1));
+            }
+        };
+        client
+            .send(Delivery::RELIABLE_ORDERED, b"before panic")
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let now = u64::try_from(started.elapsed().as_millis()).unwrap();
+            client.flush(now);
+            client.poll(now);
+            if server
+                .ingress
+                .state
+                .lock()
+                .unwrap()
+                .peers
+                .get(&conn)
+                .is_some_and(|peer| !peer.reliable[0].messages.is_empty())
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "worker did not receive message");
+            thread::sleep(Duration::from_millis(1));
+        }
+        let commands = Arc::clone(&server.commands);
+        assert!(
+            thread::spawn(move || {
+                let _guard = commands.state.lock().unwrap();
+                panic!("injected command-state panic");
+            })
+            .join()
+            .is_err()
+        );
+        while !server.worker.as_ref().unwrap().is_finished() {
+            assert!(Instant::now() < deadline, "worker did not fail");
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            server.poll(0),
+            [
+                ServerEvent::Message {
+                    conn,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: b"before panic".to_vec()
+                },
+                ServerEvent::Disconnected {
+                    conn,
+                    reason: DisconnectReason::Local
+                },
+                ServerEvent::Disconnected {
+                    conn: second_conn,
+                    reason: DisconnectReason::Local
+                },
+            ]
+        );
+        assert!(server.poll(0).is_empty());
+        assert_eq!(
+            server.send(conn, Delivery::RELIABLE_ORDERED, b"after panic"),
+            Err(SendError::UnknownConnection)
+        );
+        assert_remote_peer_end(client, started);
+        assert_remote_peer_end(second, started);
+    }
 
     fn payloads(events: &[ClientEvent], wanted: Delivery) -> Vec<Vec<u8>> {
         events
