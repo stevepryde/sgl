@@ -18,6 +18,8 @@ docs and specs the entry links.
 - `sgl-core` `move_and_collide`/`sweep_aabb`: motion below `f32::EPSILON` was dropped or treated as parallel and could be reported blocked in empty space; every finite nonzero remainder is now swept and applied when clear. No game-code changes are needed.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: contacts ending exactly on a broadphase grid-cell boundary could be missed; swept queries now preserve that end boundary. No game-code changes are needed.
+- `sgl-net` WebSocket bind/connect: invalid subprotocol names formerly bound or attempted a handshake; they now fail configuration unless they are one non-empty HTTP token. Rename names containing commas, whitespace, delimiters or non-ASCII characters on both peers.
+
 - `sgl-net` WebSocket inbound admission: an over-cap message on a full lane formerly waited on native or closed with `InboundOverflow` in the browser; it now immediately closes with `ProtocolViolation`. No game-code changes are needed.
 
 - `sgl-net` `NativeWebSocketClient::connect`: a silent first resolved address formerly exhausted the connection deadline; TCP attempts now share the remaining budget so later addresses can connect. No game-code changes are needed.

@@ -113,6 +113,12 @@ there interleave in 16 KiB fragments and keep their own admission, but a lost
 TCP segment stalls every lane until it is retransmitted. Use UDP where
 loss-isolated lanes matter.
 
+WebSocket identities need a non-empty path and a subprotocol that is one
+non-empty HTTP token ([RFC 6455 §4.1](https://www.rfc-editor.org/rfc/rfc6455#section-4.1),
+[RFC 7230 §3.2.6](https://www.rfc-editor.org/rfc/rfc7230#section-3.2.6)), such as
+`game.v1`. Commas, whitespace, delimiters such as `/` and `:`, and non-ASCII
+characters are rejected when binding or connecting.
+
 A native WebSocket client tries resolved addresses in order within its
 `handshake_timeout`. Each TCP attempt shares the remaining time with the
 untried addresses, so a silent first address does not exhaust the whole budget.

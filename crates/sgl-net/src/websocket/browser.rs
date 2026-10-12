@@ -69,6 +69,7 @@ impl BrowserWebSocketConfig {
     }
 
     fn validate(&self) -> Result<(), wasm_bindgen::JsValue> {
+        self.identity.validate().map_err(js_sys::Error::new)?;
         let reconnect = self.reconnect;
         if self.reliable_buffered_bytes < MAX_WEBSOCKET_FRAME_BYTES
             || self.reliable_buffered_bytes > MAX_BROWSER_BUFFERED_BYTES

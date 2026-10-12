@@ -58,12 +58,13 @@ pub struct WebSocketIdentity {
     pub magic: [u8; 3],
     /// HTTP path the native listener accepts.
     pub path: String,
-    /// RFC 6455 subprotocol.
+    /// RFC 6455 subprotocol: a non-empty HTTP token (RFC 7230 §3.2.6).
     pub subprotocol: String,
 }
 
 impl WebSocketIdentity {
-    /// Constructs an identity. Path and subprotocol must be non-empty.
+    /// Constructs an identity, validated when binding or connecting.
+    /// Path must be non-empty and subprotocol must be a non-empty HTTP token.
     #[must_use]
     pub fn new(magic: [u8; 3], path: impl Into<String>, subprotocol: impl Into<String>) -> Self {
         Self {
@@ -71,6 +72,41 @@ impl WebSocketIdentity {
             path: path.into(),
             subprotocol: subprotocol.into(),
         }
+    }
+
+    pub(super) fn validate(&self) -> Result<(), &'static str> {
+        if self.path.is_empty() {
+            return Err("WebSocket path must be non-empty");
+        }
+        // RFC 6455 §4.1 requires a token, defined by RFC 7230 §3.2.6.
+        // Commas, whitespace, delimiters and non-ASCII bytes are excluded.
+        if self.subprotocol.is_empty()
+            || !self.subprotocol.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(
+                        byte,
+                        b'!' | b'#'
+                            | b'$'
+                            | b'%'
+                            | b'&'
+                            | b'\''
+                            | b'*'
+                            | b'+'
+                            | b'-'
+                            | b'.'
+                            | b'^'
+                            | b'_'
+                            | b'`'
+                            | b'|'
+                            | b'~'
+                    )
+            })
+        {
+            return Err(
+                "WebSocket subprotocol must be a non-empty HTTP token (no whitespace, commas or delimiters)",
+            );
+        }
+        Ok(())
     }
 }
 
