@@ -2230,13 +2230,6 @@ last, after everything it may use, and refuses a directive in it.
   to the base surface. It costs primary raster sections and vertices, not
   additional ray geometry, storage or stages; no identity flag, whole-instance
   exclusion, larger ray epsilon or alternate traversal is introduced.
-  On Apple M5/Metal, 100 double-sided spheres at 128×128 with portable
-  `All` reflections submitted 22,400 primary triangles before the fix and
-  396,800 after. Median GPU pass times over 33 warm frames were 0.420→0.916 ms
-  for fused opaque geometry/lighting, 0.053→0.017 ms for culling, and
-  0.007→0.002 ms for world rays. These small-scene timings include GPU
-  scheduling/clock effects (unchanged compute groups also became faster);
-  they establish the primary-raster cost in this fixture, not universal ratios.
   Whether an instance is `visible`, `capture_visible`, static or deforming
   are bits of its object record; a material's visibility group and whether
   it casts the directional shadow are its sets' records: an instance edit
