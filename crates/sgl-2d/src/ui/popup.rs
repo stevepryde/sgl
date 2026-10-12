@@ -306,7 +306,6 @@ impl UiFrame<'_> {
         self.overlay = true;
         self.ui.keyboard_captured = true;
         self.ui.open_popup = None;
-        self.ui.popover_blocked = None;
         let modal_was = self.modal_scope;
         self.modal_scope = Some(widget_id(name));
 
@@ -497,8 +496,10 @@ mod tests {
         }
     }
 
+    /// A modal opened over an open popover closes it, and the next frame its
+    /// Cancel takes a press where the popover was.
     #[wasm_bindgen_test(unsupported = test)]
-    fn modal_dismisses_overlapping_popover_without_blocking_own_buttons() {
+    fn modal_closes_open_popover_and_takes_presses_beneath_it() {
         let (mut ui, mut text, _assets) = fixture();
         let mut selected = 0;
         // The popover occupies y=282..372 over the modal's Cancel button.
