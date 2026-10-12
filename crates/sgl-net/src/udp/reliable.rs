@@ -56,6 +56,9 @@ struct InFlight {
     first_sent_at: Option<u64>,
     sent_at: Option<u64>,
     transmissions: u8,
+    /// Resends since admission, reset when graceful close begins so sends
+    /// during the live connection do not consume the close's budget.
+    retransmits: u8,
     /// Resends since the peer last acknowledged anything new: the
     /// doublings of this fragment's retransmission timeout.
     backoff: u8,
@@ -151,9 +154,9 @@ impl Reliable {
         &mut self,
         now_ms: u64,
         rto_ms: u64,
-        max_transmissions: Option<u8>,
+        max_retransmits: Option<u8>,
     ) -> Option<u16> {
-        self.first_due(now_ms, rto_ms, max_transmissions)
+        self.first_due(now_ms, rto_ms, max_retransmits)
             .or_else(|| self.admit())
     }
 
@@ -199,6 +202,7 @@ impl Reliable {
             first_sent_at: None,
             sent_at: None,
             transmissions: 0,
+            retransmits: 0,
             backoff: 0,
             acknowledged: false,
             peer_holds: false,
@@ -209,26 +213,31 @@ impl Reliable {
     /// The oldest in-flight fragment due for (re)transmission: `rto_ms`
     /// after its last transmission, doubled for each resend since the peer
     /// last acknowledged anything new, up to [`MAX_RTO_MS`], and, given a
-    /// `max_transmissions`, only while it has gone out fewer times. A
+    /// `max_retransmits`, only while it has been resent fewer times since
+    /// admission or [`Self::begin_close`]. A
     /// fragment the peer holds is not: it has arrived.
-    pub fn first_due(
-        &self,
-        now_ms: u64,
-        rto_ms: u64,
-        max_transmissions: Option<u8>,
-    ) -> Option<u16> {
+    pub fn first_due(&self, now_ms: u64, rto_ms: u64, max_retransmits: Option<u8>) -> Option<u16> {
         self.in_flight.iter().find_map(|item| {
             let interval = rto_ms
                 .saturating_mul(1 << item.backoff.min(16))
                 .min(MAX_RTO_MS.max(rto_ms));
             (!item.acknowledged
                 && !item.peer_holds
-                && max_transmissions.is_none_or(|maximum| item.transmissions < maximum)
+                && max_retransmits.is_none_or(|maximum| item.retransmits < maximum)
                 && item
                     .sent_at
                     .is_none_or(|sent| now_ms.saturating_sub(sent) >= interval))
             .then_some(item.sequence)
         })
+    }
+
+    /// Starts the graceful close's resend budget without changing the
+    /// fragment's timing, backoff or lifetime transmission history used
+    /// for round-trip sampling. Call only when the peer starts closing.
+    pub fn begin_close(&mut self) {
+        for item in &mut self.in_flight {
+            item.retransmits = 0;
+        }
     }
 
     /// The in-flight fragment `sequence` and its bytes.
@@ -251,6 +260,7 @@ impl Reliable {
         {
             if item.sent_at.is_some() {
                 item.backoff = item.backoff.saturating_add(1);
+                item.retransmits = item.retransmits.saturating_add(1);
             }
             item.transmissions = item.transmissions.saturating_add(1);
             item.first_sent_at.get_or_insert(now_ms);

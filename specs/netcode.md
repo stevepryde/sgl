@@ -106,7 +106,12 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     `disconnect` (caller-polled or threaded) admits nothing more but still
     sends the reliable and unreliable messages accepted before it, closing
     once they are acknowledged or `close_grace_ms` after the disconnect,
-    whichever is first. A lane's
+    whichever is first. Each unacknowledged reliable fragment gets up to
+    `close_retransmits` additional sends after the disconnect, regardless
+    of its earlier sends; a fragment first sent during close also gets that
+    many resends. The retransmission timeout and grace deadline still
+    apply, and another disconnect restarts neither the budget nor deadline.
+    A lane's
     completed reliable messages not yet returned by `poll` are bounded by
     its `inbound_messages`, and by its `inbound_bytes` beside at most one
     larger message, so a message of any admitted size followed by smaller
