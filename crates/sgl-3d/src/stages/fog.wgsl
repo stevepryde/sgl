@@ -325,7 +325,7 @@ var<workgroup> fog_ambient_light:vec3<f32>;
  }
  var light=vec3(0.);
  if density>.00005 {
-  for(var index=0u;index<2u;index++) {
+  for(var index=0u;index<FRAME_DIRECTIONAL_LIGHTS;index++) {
    let directional=frame.directional_lights[index];
    if directional.illuminance<=0. || directional.fog_energy<=FOG_ENERGY_CUTOFF {
     continue;

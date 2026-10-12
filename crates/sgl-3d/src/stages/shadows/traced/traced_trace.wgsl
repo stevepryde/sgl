@@ -63,14 +63,14 @@ const TRACED_T_MIN:f32=.01;
 const TRACED_FAR:f32=3.402823466e+38;
 
 // The index of the directional light with the frame's cascades, which
-// slot 0 holds; 2 for none.
+// slot 0 holds; FRAME_DIRECTIONAL_LIGHTS for none.
 fn traced_directional_light()->u32 {
- for (var index=0u;index<2u;index++) {
+ for (var index=0u;index<FRAME_DIRECTIONAL_LIGHTS;index++) {
   if (frame.directional_lights[index].flags&DIRECTIONAL_LIGHT_SHADOW)!=0u {
    return index;
   }
  }
- return 2u;
+ return FRAME_DIRECTIONAL_LIGHTS;
 }
 
 // Whether slot `key`'s light is unoccluded from the surface at `position`

@@ -210,6 +210,8 @@ fn unpack_edges(word:u32)->vec4<f32> {
     return vec4<f32>((vec4(packed)>>vec4(6u,4u,2u,0u))&vec4(3u))/3.0;
 }
 fn unpack_visibility(words:vec4<u32>)->vec4<f32> { return vec4<f32>(words&vec4((1u<<WORKING_EDGES_SHIFT)-1u))/255.0; }
+// Four cardinal neighbors and four diagonal neighbors, each summed once (AR-12).
+const DENOISE_NEIGHBORS: u32 = 4u;
 // One pixel of XeGTAO_Denoise's final pass from its edges (centre, left,
 // right, top, bottom) and visibility (centre, then the cardinal neighbours
 // left, right, top, bottom, then the corners top-left, top-right,
@@ -222,8 +224,8 @@ fn denoise_pixel(center:vec4<f32>,left:vec4<f32>,right:vec4<f32>,top:vec4<f32>,b
     var sum=ao*1.2;
     var weight=1.2;
     // Keep upstream accumulation order.
-    for(var i=0u;i<4u;i++) { sum+=edges[i]*cardinal[i]; weight+=edges[i]; }
-    for(var i=0u;i<4u;i++) { sum+=diagonal[i]*corners[i]; weight+=diagonal[i]; }
+    for(var i=0u;i<DENOISE_NEIGHBORS;i++) { sum+=edges[i]*cardinal[i]; weight+=edges[i]; }
+    for(var i=0u;i<DENOISE_NEIGHBORS;i++) { sum+=diagonal[i]*corners[i]; weight+=diagonal[i]; }
     // R8_UINT typed UAV conversion saturates. R32_UINT needs that conversion explicitly.
     return min(255u,u32((sum/weight)*1.5*255.0+0.5));
 }

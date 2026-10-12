@@ -1,5 +1,7 @@
 // Sousa, GPU Gems 2 §19.1 snapshot/offset; §19.2 rejection with opaque depth
 // replacing the alpha mask. Every contributing bilinear tap is checked.
+// Bilinear interpolation has two taps per axis, four total across these nested loops (AR-12).
+const HEAT_TAPS_PER_AXIS:i32=2;
 struct View {
  camera:mat4x4<f32>,
  // Render pixels per scene pixel on each axis: displacement is authored in
@@ -28,8 +30,8 @@ struct Vertex {
  let f=fract(sample_pixel);
  let size=vec2<i32>(textureDimensions(source));
  var color=vec4(0.);
- for(var y=0;y<2;y++) {
-  for(var x=0;x<2;x++) {
+ for(var y=0;y<HEAT_TAPS_PER_AXIS;y++) {
+  for(var x=0;x<HEAT_TAPS_PER_AXIS;x++) {
    let weight=select(1.-f.x,f.x,x==1)*select(1.-f.y,f.y,y==1);
    if weight>0. {
     let tap=base+vec2(x,y);

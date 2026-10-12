@@ -26,6 +26,8 @@ const BLOCKSIZE:u32=PROBE_TILE_SIZE;
 const THREADSIZE:u32=8u;
 const GRANULARITY:u32=4u;
 const BUCKETS:u32=PROBE_BUCKETS;
+// The eight corners of a box or bounded frustum, visited exactly once (AR-12).
+const PROBE_CULLING_CORNERS:u32=8u;
 const FLT_EPSILON:f32=1.192092896e-07;
 var<workgroup> min_depth:atomic<u32>;
 var<workgroup> max_depth:atomic<u32>;
@@ -85,7 +87,7 @@ fn aabb_transform(aabb:Aabb,m:mat4x4<f32>)->Aabb {
  let hi=aabb.c+aabb.e;
  var a=vec3(1000000.);
  var b=vec3(-1000000.);
- for(var i=0u;i<8u;i++) {
+ for(var i=0u;i<PROBE_CULLING_CORNERS;i++) {
   let corner=select(lo,hi,vec3((i&1u)!=0u,(i&2u)!=0u,(i&4u)!=0u));
   let p=(m*vec4(corner,1.)).xyz;
   a=min(a,p);
@@ -130,8 +132,8 @@ fn main(@builtin(workgroup_id) gid:vec3<u32>,@builtin(global_invocation_id) dtid
 
  // View space frustum corners, near then far: top left, top right, bottom
  // left, bottom right.
- var view_space:array<vec3<f32>,8>;
- for(var i=0u;i<8u;i++) {
+ var view_space:array<vec3<f32>,PROBE_CULLING_CORNERS>;
+ for(var i=0u;i<PROBE_CULLING_CORNERS;i++) {
   let corner=vec2<f32>(gid.xy+vec2(i&1u,(i>>1u)&1u))*f32(BLOCKSIZE);
   view_space[i]=screen_to_view(vec4(corner,select(f_min_depth,f_max_depth,i>=4u),1.),dim_rcp);
  }
@@ -146,7 +148,7 @@ fn main(@builtin(workgroup_id) gid:vec3<u32>,@builtin(global_invocation_id) dtid
  // is asymmetric, so it takes every corner.
  var min_aabb=vec3(10000000.);
  var max_aabb=vec3(-10000000.);
- for(var i=0u;i<8u;i++) {
+ for(var i=0u;i<PROBE_CULLING_CORNERS;i++) {
   min_aabb=min(min_aabb,view_space[i]);
   max_aabb=max(max_aabb,view_space[i]);
  }

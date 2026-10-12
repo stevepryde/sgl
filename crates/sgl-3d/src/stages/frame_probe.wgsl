@@ -1,4 +1,6 @@
 // Diagnostic only: classify raw IEEE values, never modify the rendered image.
+// RGB has three channels; every classification and save visits each once (AR-12).
+const FRAME_PROBE_CHANNELS:u32=3u;
 @group(0) @binding(0) var current:texture_2d<f32>;
 @group(0) @binding(1) var source:texture_2d<f32>;
 struct Params {
@@ -13,7 +15,7 @@ fn finite(v:vec3<u32>)->bool {
 fn save(base:u32,p:vec2<u32>,v:vec3<u32>,s:vec3<u32>) {
  atomicStore(&stats[base],p.x);
  atomicStore(&stats[base+1u],p.y);
- for(var i=0u;i<3u;i++) {
+ for(var i=0u;i<FRAME_PROBE_CHANNELS;i++) {
   atomicStore(&stats[base+2u+i],v[i]);
   atomicStore(&stats[base+5u+i],s[i]);
  }
@@ -53,7 +55,7 @@ fn save(base:u32,p:vec2<u32>,v:vec3<u32>,s:vec3<u32>) {
    save(base+16u,id.xy,v,s);
   }
  }
- for(var i=0u;i<3u;i++) {
+ for(var i=0u;i<FRAME_PROBE_CHANNELS;i++) {
   if v[i]<0x7f800000u {
    atomicMax(&stats[base+4u],v[i]);
   }

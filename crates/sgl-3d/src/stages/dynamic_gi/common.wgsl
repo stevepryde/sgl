@@ -38,6 +38,8 @@ const DDGI_COST_QUERIED:u32=0x20000u;
 const DDGI_COST_EXHAUSTED:u32=0x40000u;
 const DDGI_COST_HIT:u32=0x80000u;
 const DDGI_COST_FIXED:u32=0x100000u;
+// A perspective frustum has six bounding planes; each is tested once (AR-12).
+const DDGI_FRUSTUM_PLANES:u32=6u;
 // The frame's volume.
 struct DdgiVolume {
  origin:vec3<f32>,
@@ -54,7 +56,7 @@ struct DdgiVolume {
  rotation:mat3x3<f32>,
  // The camera's frustum, each plane normalised with the inside where
  // dot(xyz, p) + w >= 0, for Wicked's tenth of the rays outside it.
- frustum:array<vec4<f32>,6>,
+ frustum:array<vec4<f32>,DDGI_FRUSTUM_PLANES>,
  eye:vec3<f32>,
  // Frames since the volume restarted: the rays' random numbers.
  frame:u32,
