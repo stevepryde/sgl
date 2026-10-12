@@ -224,7 +224,10 @@ The code's structure follows the
      SGL3D, without an upstream feature-set or 1:1 conformance obligation.
      Its `PROVENANCE.md` retains source references and useful algorithm notes;
      an exhaustive difference catalogue is not required. Scene and frame
-     integration belongs in SGL3D. Its half-resolution SSR reconstructs from
+     integration belongs in SGL3D. TAA's placeholder for a new feature set
+     starts history confidence as a reset sample, independently of the input
+     colour's alpha; the following resolve ramps up the history weight.
+     Its half-resolution SSR reconstructs from
      the ray of the 2×2 block containing each displaced pixel centre; at
      roughness zero each complete block reads only its own ray. An unpaired
      final row or column clamps to the existing ray grid. Full-resolution

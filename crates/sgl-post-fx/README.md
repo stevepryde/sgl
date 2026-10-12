@@ -133,6 +133,10 @@ SSR and TAA discard their history:
 - when SSR's `RenderAttributes::reset_accumulation` or
   `TemporalAntiAliasingAttribs::reset_accumulation` asks.
 
+TAA's first frame for a new feature set writes the current RGB with reset
+history confidence, independent of input alpha (DFX-47). Its following
+resolve ramps up history weight as after an explicit reset.
+
 TAA finds the closest motion vectors in its resolve, from the depth buffer
 and motion vectors it is given (DFX-13). Both are listed in PROVENANCE.md.
 

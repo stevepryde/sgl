@@ -47,6 +47,10 @@ docs and specs the entry links.
 - `sgl-post-fx` `ScreenSpaceReflection` at half resolution previously dropped
   reflective blocks beside rough surfaces; each block now traces an eligible
   surface when one is present. No game-code changes are needed.
+- `sgl-post-fx` `TemporalAntiAliasing`: the placeholder for a new feature
+  set copied input alpha as history confidence; it now starts at reset
+  confidence, so the next frame ramps up history weight. No game-code
+  changes needed.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;
