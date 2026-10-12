@@ -342,7 +342,7 @@ pub(super) fn render(
             4,
             post.tone_mapped(),
             completed_view,
-            sizes.output == sizes.scene,
+            post.tone_mapped().texture().size() == completed_view.texture().size(),
         );
         probe.finish(ctx.encoder);
     }

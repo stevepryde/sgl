@@ -2987,7 +2987,9 @@ results. Run relevant cases explicitly when changing their boundary. The
 `diagnostics` feature adds `Settings::diagnostics` (`settings::Diagnostics`,
 not serialized: switches that turn a layer off, the numerical frame probe
 and the tone-target capture), `Renderer::diagnostic_target`,
-`Renderer::take_frame_probe_reports`,
+`Renderer::take_frame_probe_reports` (source-to-black comparisons run only
+when the actual observed textures have equal dimensions, including FSR2
+fallbacks),
 `Renderer::geometry_stats_for_model` (the camera's sections of one model's
 instances, read back with `geometry_stats`), `diagnostics::read`,
 `diagnostics::source_id`, the value the source-identity target holds for an

@@ -163,3 +163,89 @@ fn an_abandoned_probed_frame_reports_nothing() {
     let reports = renderer.take_frame_probe_reports(&device);
     assert!(reports.is_empty(), "{reports:?}");
 }
+
+// With FSR2 disabled by diagnostics, the completed source stays at render
+// size. Observe the comparison flag passed to stage 4 during a real frame.
+#[test]
+fn a_fsr2_fallback_does_not_compare_different_sized_frame_targets() {
+    let Some((device, queue)) = test_support::fsr2_device() else {
+        return;
+    };
+    let mut emitter = test_support::cube();
+    emitter.materials[0].emissive = [4.; 3];
+    let mut scene = Scene::new(&device, &queue);
+    let emitter = scene.add_asset(&device, &queue, emitter).unwrap();
+    scene
+        .add_instance(
+            &device,
+            &queue,
+            InstanceState {
+                model: emitter.model,
+                pose: Mat4::from_translation(Vec3::new(0., 0., -3.)),
+                visible: true,
+                capture_visible: true,
+            },
+            Mobility::Moving,
+        )
+        .unwrap();
+    let mut input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: perspective(1., 1., 0.1),
+        eye: Vec3::ZERO,
+    });
+    input.diffuse_environment.intensity = 0.;
+    input.backdrop = Backdrop::Color([0.; 3]);
+    let mut settings = Settings {
+        antialiasing: Antialiasing::Fsr2,
+        fsr2_quality: crate::settings::Fsr2Quality::Quality,
+        bloom: Bloom::Off,
+        atmosphere: false,
+        ..Settings::default()
+    };
+    settings.diagnostics.disable.fsr2 = true;
+    settings.diagnostics.frame_probe = true;
+    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    if renderer.antialiasing_in_effect(&settings) != Antialiasing::Fsr2 {
+        return;
+    }
+    let output = crate::view::targets::target(
+        &device,
+        "FSR2 fallback output",
+        SIZE,
+        crate::shading::gbuffer::COLOR,
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.render(
+        &device,
+        &queue,
+        &mut encoder,
+        &mut scene,
+        &input,
+        &settings,
+        &output,
+        None,
+    );
+    queue.submit([encoder.finish()]);
+    renderer.finish_frame(&mut scene);
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let reports = renderer.take_frame_probe_reports(&device);
+    assert_eq!(reports.len(), 1, "{reports:?}");
+    let report = &reports[0];
+    assert_ne!(
+        report["size"], report["output_size"],
+        "the fallback has a smaller source: {report}"
+    );
+    assert_eq!(report["tone_mapped"]["observed"], true);
+    assert!(
+        report["lit_scene"]["maximum_finite_component"]
+            .as_f64()
+            .unwrap()
+            > 1.,
+        "the emitter was rendered: {report}"
+    );
+    assert_eq!(
+        renderer.probe.as_ref().unwrap().last_params.get()[..2],
+        [4, 0],
+        "different-sized textures must not be compared",
+    );
+}

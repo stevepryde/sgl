@@ -70,6 +70,8 @@ pub(crate) struct FrameProbe {
     /// Reports read back and not yet taken.
     reports: Vec<serde_json::Value>,
     frame: u64,
+    #[cfg(test)]
+    pub(crate) last_params: std::cell::Cell<[u32; 4]>,
 }
 impl FrameProbe {
     /// The probe in `slot` when `observe` is set, created on first use.
@@ -133,6 +135,8 @@ impl FrameProbe {
             next: None,
             reports: Vec::new(),
             frame: 0,
+            #[cfg(test)]
+            last_params: std::cell::Cell::new([0; 4]),
         }
     }
     pub fn begin(
@@ -177,11 +181,14 @@ impl FrameProbe {
         if self.next.is_none() {
             return;
         }
+        let params_words = [stage, u32::from(compare), 0, 0];
+        #[cfg(test)]
+        self.last_params.set(params_words);
         let params = crate::counters::buffer_init(
             device,
             &wgpu::util::BufferInitDescriptor {
                 label: Some("frame probe stage"),
-                contents: bytemuck::cast_slice(&[stage, u32::from(compare), 0, 0]),
+                contents: bytemuck::cast_slice(&params_words),
                 usage: wgpu::BufferUsages::UNIFORM,
             },
         );
