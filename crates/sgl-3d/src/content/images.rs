@@ -5,7 +5,6 @@
 //! or linear by the channel that uses it). MIT OR Apache-2.0
 //! (src/LICENSE-bevy.txt).
 use std::borrow::Cow;
-use std::io::Read;
 
 use super::asset::Result;
 use super::load_budget::{Budget, MAX_IMAGE_SIDE};
@@ -78,7 +77,8 @@ impl CompressedImage {
     /// its stored levels, uncompressed or supercompressed with Zstandard.
     /// Refuses sides above 16384, invalid block dimensions or mip counts,
     /// and levels whose declared or decoded size differs from their BC7
-    /// size. The total decoded chain is budgeted before level allocation.
+    /// size. The total decoded chain is budgeted before level allocation;
+    /// the decoder bounds regenerated blocks before buffer growth.
     pub fn from_ktx2(bytes: &[u8]) -> Result<Self> {
         Self::read_ktx2(bytes, &mut Budget::new())
     }
@@ -147,17 +147,12 @@ impl CompressedImage {
                         level.data.to_vec()
                     }
                     Some(ktx2::SupercompressionScheme::Zstandard) => {
-                        // A single sentinel detects excess output without
-                        // collecting it or doubling the vector's capacity.
-                        let mut decoded = Vec::with_capacity(expected + 1);
-                        ruzstd::decoding::StreamingDecoder::new(level.data)
-                            .map_err(|error| error.to_string())
-                            .and_then(|decoder| {
-                                decoder
-                                    .take(expected as u64 + 1)
-                                    .read_to_end(&mut decoded)
-                                    .map_err(|error| error.to_string())
-                            })
+                        // Unlike a streaming history buffer, this one-shot
+                        // decoder bounds growth before literals/sequences are
+                        // written and never allocates the advertised window.
+                        let mut decoded = Vec::new();
+                        zstd_rs::Decompressor::new()
+                            .decompress(level.data, None, expected + 1, &mut decoded)
                             .map_err(|error| format!("KTX2 level {index}: {error}"))?;
                         decoded
                     }
@@ -237,10 +232,11 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     // The BC7 format independently requires one 16-byte block for 4x4.
-    // A 64 KiB Zstandard payload lies about its decoded size. The error's
-    // byte count exposes an unbounded read even if rejection happens later.
+    // A 64 KiB Zstandard payload lies about its decoded size. Its own frame
+    // header declares that expansion, so it must fail at the decoder cap
+    // before any oversized block or output is allocated.
     #[wasm_bindgen_test(unsupported = test)]
-    fn ktx2_zstandard_output_stops_after_the_expected_size_and_sentinel() {
+    fn ktx2_zstandard_output_is_bounded_by_the_expected_size() {
         let mut file = ktx2(
             ktx2::Format::BC7_UNORM_BLOCK,
             [4; 2],
@@ -251,10 +247,7 @@ mod tests {
         // in KTX 2.0 section 3.9: 80-byte header, then three u64 fields.
         file[96..104].copy_from_slice(&16u64.to_le_bytes());
         let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
-        assert!(
-            error.contains("level 0 decoded to 17 bytes; expected 16"),
-            "{error}"
-        );
+        assert!(error.contains("level 0: output limit exceeded"), "{error}");
         let short = ktx2(ktx2::Format::BC7_UNORM_BLOCK, [4; 2], &[vec![0; 15]], true);
         let mut short = short;
         short[96..104].copy_from_slice(&16u64.to_le_bytes());
@@ -263,6 +256,80 @@ mod tests {
             error.contains("decoded to 15 bytes; expected 16"),
             "{error}"
         );
+    }
+
+    // A 1 GiB advertised window must not force a history allocation before
+    // a 16-byte level can refuse a 128 KiB RLE block. The whole source is
+    // ten bytes; RFC 8878's window/block headers independently define it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ktx2_large_zstandard_window_does_not_allocate_before_output_refusal() {
+        let frame = [0x28, 0xb5, 0x2f, 0xfd, 0x00, 0xa0, 0x03, 0x00, 0x10, 42];
+        let file = with_frame([4; 2], 16, &frame);
+        let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+        assert!(
+            error.contains("level 0") && error.contains("output limit exceeded"),
+            "{error}"
+        );
+        // Observe the API's actual output allocation as well as its error:
+        // rejecting after regenerating then truncating this block would keep
+        // the oversized capacity and fail this assertion.
+        let mut output = Vec::new();
+        assert_eq!(
+            zstd_rs::Decompressor::new().decompress(&frame, None, 17, &mut output),
+            Err(zstd_rs::Error::OutputLimit)
+        );
+        assert_eq!(output.capacity(), 0);
+    }
+
+    // A compressed block encodes two one-byte literals and two matches of
+    // 131074 bytes each (ML code52 +16 extra bits). Its 262150 regenerated
+    // bytes exceed RFC 8878's 128 KiB block maximum even though the level's
+    // own 262144-byte budget is large enough for either first sequence.
+    // Checking only the frame window or collecting output cannot enforce it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ktx2_malformed_sequence_expansion_is_refused_before_output() {
+        let frame = [
+            0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x38, // 128 KiB window, no size
+            0x6d, 0x00, 0x00, // Last compressed block: 13 stored bytes
+            0x10, b'A', b'A', // Two raw literals
+            2, 0x54, 1, 0, 52, // Two sequences; RLE LL=1, OF=0, ML=52
+            0xff, 0xff, 0xff, 0xff, 1, // Two 16-bit extras + end marker
+        ];
+        let file = with_frame([512; 2], 262144, &frame);
+        let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+        assert!(error.contains("Block_Maximum_Size"), "{error}");
+        let mut output = Vec::new();
+        assert!(matches!(
+            zstd_rs::Decompressor::new().decompress(&frame, None, 262144, &mut output),
+            Err(zstd_rs::Error::Corrupt(
+                "block regenerates more than Block_Maximum_Size"
+            ))
+        ));
+        assert_eq!(output.capacity(), 0);
+    }
+
+    // RLE literals have their own scratch buffer: their regenerated header
+    // must be checked against the block bound before allocating that buffer.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ktx2_malformed_literal_expansion_is_refused_before_scratch_growth() {
+        let frame = [
+            0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x38, 0x2d, 0,
+            0, // Last compressed block: 5 stored bytes
+            0xfd, 0xff, 0x3f, b'A', 0, // RLE literals: 262143 bytes; no sequences
+        ];
+        let file = with_frame([512; 2], 262144, &frame);
+        let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+        assert!(error.contains("literals larger than a block"), "{error}");
+    }
+
+    fn with_frame(size: [u32; 2], expected: u64, frame: &[u8]) -> Vec<u8> {
+        let mut file = ktx2(ktx2::Format::BC7_UNORM_BLOCK, size, &[vec![0; 16]], true);
+        let at = u64::from_le_bytes(file[80..88].try_into().unwrap()) as usize;
+        file[88..96].copy_from_slice(&(frame.len() as u64).to_le_bytes());
+        file[96..104].copy_from_slice(&expected.to_le_bytes());
+        file.truncate(at);
+        file.extend_from_slice(frame);
+        file
     }
 
     // A 4x4 BC7 chain with two levels holds 32 bytes. A budget of 24 must

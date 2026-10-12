@@ -2844,7 +2844,13 @@ them. It refuses zero or non-block-aligned dimensions, sides above 16384,
 more than a full mip chain, and declared or decoded level sizes that differ
 from their BC7 block size. The whole decoded chain shares a 4 GiB native
 or 1 GiB browser budget, checked before allocating levels; Zstandard
-output is read only up to the expected level size plus one sentinel byte.
+decoded output length is capped at the expected level size plus one sentinel byte.
+The decoder never allocates its advertised history window; regenerated
+literals and sequences are checked against the format's 128 KiB block
+maximum before growing buffers. It uses the MIT OR Apache-2.0 `zstd-rs`
+crate; ship its licence notices with the game's dependency notices.
+The budget counts decoded bytes; bounded decoder working buffers and
+allocator capacity are additional, so it is not a peak-memory limit.
 As for RGBA8, the channel picks the colour space: base and emissive
 maps sample it as sRGB, the others as linear data. Filter a colour image's
 levels in linear light. Its stored levels serve every channel that samples

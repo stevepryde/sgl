@@ -48,8 +48,8 @@ naga = { workspace = true, features = ["wgsl-in"] }
 ktx2.workspace = true
 # Draw lists bin their draws by small keys each frame (view::draw_list).
 rustc-hash.workspace = true
-# KTX2's Zstandard supercompression, as Bevy's `zstd_rust` feature reads it.
-ruzstd = { workspace = true, features = ["std"] }
+# KTX2 Zstandard decoding with a caller-owned output cap.
+zstd-rs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sp-fidelity.workspace = true
@@ -61,6 +61,8 @@ wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan",
 js-sys = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Existing encoder for the KTX2 export example and independent fixtures.
+ruzstd = { workspace = true, features = ["std"] }
 # The layout tests parse and validate the composed WGSL, and write the
 # hardware path's programs as Vulkan's SPIR-V and DX12's HLSL.
 naga = { workspace = true, features = ["wgsl-in", "spv-out", "hlsl-out"] }
