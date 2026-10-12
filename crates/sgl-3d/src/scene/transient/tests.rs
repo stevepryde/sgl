@@ -18,7 +18,7 @@ fn oversized_transient_updates_keep_accepted_content() {
         ..Default::default()
     }))
     .unwrap();
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut scene = Scene::new(&device, &queue);
     let volume = FogVolume {
         center: Vec3::new(1., 2., 3.),
@@ -53,7 +53,7 @@ fn oversized_transient_updates_keep_accepted_content() {
             count: None,
         }],
     });
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let _binding = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &layout,
         entries: &[wgpu::BindGroupEntry {
@@ -118,7 +118,7 @@ fn oversized_transient_updates_keep_accepted_content() {
     assert_eq!(scene.transient.glow_count as usize, vertices.len());
     assert_eq!(scene.transient.fog_volume_list[0].center, Vec3::ZERO);
     assert_eq!(scene.transient.mist_positions, vec![[0.25, 0.5, 0.75]]);
-    assert!(pollster::block_on(device.pop_error_scope()).is_none());
+    assert!(pollster::block_on(validation.pop()).is_none());
 }
 
 // Wider native slice lengths must not truncate into the u32 draw/index range.
