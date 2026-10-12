@@ -60,6 +60,9 @@ docs and specs the entry links.
 - `sgl-3d` `AlphaMode::Blend` with `keeps_specular: true`: alpha left
   diffuse transmission at full strength; it now fades that light with
   coverage, as it fades reflected diffuse light. No game-code changes.
+- `sgl-3d` `SurfaceMaterial::transmission` with a sheen: refracted light
+  bypassed the sheen layer; it now dims beneath that layer with the rest
+  of the base light. No game-code changes.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;

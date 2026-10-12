@@ -141,7 +141,8 @@ pub struct SurfaceMaterial {
     pub bump_scale: f32,
     /// The share of the light behind the surface that passes through it,
     /// refracted, in `0..=1` (`KHR_materials_transmission`), in place of
-    /// that share of its diffuse light: glass, water, clear plastic. A
+    /// that share of its diffuse light: glass, water, clear plastic. The
+    /// sheen and coat dim it with the rest of the base light. A
     /// material with any transmission is drawn with the blended surfaces
     /// whatever its alpha mode (its alpha still covers as the mode says): it
     /// writes no depth, G-buffer or motion unless it is a `Blend` receiver
