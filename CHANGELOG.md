@@ -32,6 +32,8 @@ docs and specs the entry links.
 
 - `sgl-3d` `asset::load`/`load_slice`: malformed glTF accessor references, animation targets and image sources formerly panicked; they now return `Err` naming the element. No game-code changes are needed.
 - `sgl-3d` `LightShape::Spot`: a closed or unrepresentably narrow casting cone formerly built a non-finite shadow view; it now releases its shadow slots until its projection is finite. No game-code changes are needed.
+- `sgl-2d` `AsepriteSheet::parse`: extensionless frame keys with dotted titles formerly failed or recovered the title’s digits; trailing frame digits now take precedence over extension stripping. No game-code changes are needed for exports that already load.
+
 - `sgl-2d` `UiFrame::number_field`: large values formerly opened drafts beyond the typing limit and rejected insertions; oversized opening drafts now use scientific notation. No game-code changes are needed.
 
 - `sgl-2d` `UiFrame::number_field`: vertical drags formerly opened typing as clicks; movement past the click threshold on either axis now prevents typing while only horizontal travel changes the value. No game-code changes are needed.

@@ -135,7 +135,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    viewport width and clips excess height. Games own tooltip text and placement
    bounds, layout, icons and platform cursor mapping.
 8. **Aseprite.** `AseSheet::parse` accepts Hash and Array exports; Hash frame
-   indices are recovered from trailing digits and must be exactly
+   indices are recovered from trailing ASCII digits (before a final extension
+   when the key does not end in digits) and must be exactly
    `0..len` (gap, duplicate, or missing digits is an error); a single-entry
    Hash is frame 0 whatever its key, as Aseprite omits the number. Tags are
    inclusive ranges validated against the frame count; `direction` defaults
