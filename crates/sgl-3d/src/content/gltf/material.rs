@@ -84,24 +84,14 @@ pub(super) fn read_material(
         })
         .transpose()?;
     let bump = material.extension_value("EXT_materials_bump");
-    let bump_info = bump.and_then(|b| b.get("bumpTexture"));
-    let bump_texture = if let Some(info) = bump_info {
-        if info.get("texCoord").and_then(|v| v.as_u64()).unwrap_or(0) != 0 {
-            return Err(format!("material {name}: bump map requires UV0").into());
-        }
-        let index = info
-            .get("index")
-            .and_then(|v| v.as_u64())
-            .ok_or("bump texture index missing")?;
-        Some(
-            document
-                .textures()
-                .nth(index as usize)
-                .ok_or("bump texture index out of range")?,
-        )
-    } else {
-        None
-    };
+    let bump_texture = bump
+        .map(|bump| {
+            extension_texture(bump, "bumpTexture", document, &|message| {
+                format!("material {name}: bump {message}")
+            })
+        })
+        .transpose()?
+        .flatten();
     let textures = [
         pbr.base_color_texture().map(|t| t.texture()),
         pbr.metallic_roughness_texture().map(|t| t.texture()),
@@ -146,13 +136,45 @@ pub(super) fn read_material(
         }
         wrap = Some(modes);
     }
+    // glTF 2.0's material schema bounds baseColorFactor to 0..1 and
+    // emissiveFactor to nonnegative values (not to its upper bound of 1,
+    // which some exporters exceed for HDR emission), and KHR_materials_emissive_strength's
+    // emissiveStrength to finite nonnegative values; the gltf crate checks
+    // none of them.
+    let nonnegative = |value: &f32| value.is_finite() && *value >= 0.;
+    let base = pbr.base_color_factor();
+    if !base.iter().all(|value| (0.0..=1.0).contains(value)) {
+        return Err(
+            format!("material {name}: baseColorFactor must be four numbers in 0..1").into(),
+        );
+    }
     let strength = material.emissive_strength().unwrap_or(1.0);
+    if !nonnegative(&strength) {
+        return Err(format!(
+            "material {name}: emissiveStrength must be a finite nonnegative number"
+        )
+        .into());
+    }
+    let emissive = material.emissive_factor();
+    if !emissive.iter().all(nonnegative) {
+        return Err(format!(
+            "material {name}: emissiveFactor must be three finite nonnegative numbers"
+        )
+        .into());
+    }
+    let emissive = emissive.map(|value| value * strength);
+    if !emissive.iter().all(nonnegative) {
+        return Err(format!(
+            "material {name}: emissiveFactor times emissiveStrength must be finite"
+        )
+        .into());
+    }
     Ok(Material {
         name: name.to_owned(),
         visibility_group: 0,
         casts_directional_shadow: true,
-        base: pbr.base_color_factor(),
-        emissive: material.emissive_factor().map(|v| v * strength),
+        base,
+        emissive,
         metallic: pbr.metallic_factor(),
         roughness: pbr.roughness_factor(),
         ior,

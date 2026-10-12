@@ -414,6 +414,22 @@ fn node_hierarchies_that_are_not_trees_are_rejected() {
     }
 }
 
+// Plausible defect: a joint whose matrix has a zero-scale axis loaded with
+// the NaN rotation its decomposition divides out, which posing spreads to
+// every joint beneath it. Mesh nodes refuse such a singular transform; a
+// joint, which no mesh node's check sees, must be refused too.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_joint_with_a_zero_scale_matrix_is_rejected() {
+    let error = load_slice(&rigged(|document, _| {
+        document["nodes"][1] = json!({"name": "upper", "children": [2],
+            "matrix": [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1]});
+    }))
+    .err()
+    .expect("a zero-scale joint loaded")
+    .to_string();
+    assert!(error.contains("node 1 (upper)"), "{error}");
+}
+
 // Plausible defect: a game-built rig whose parents form a cycle evaluated
 // by recursing up the parents forever, overflowing the stack, or a cycle
 // corrupting another joint's matrix. The oracle for the tree's joint is

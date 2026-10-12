@@ -2863,7 +2863,7 @@ which needs `DownlevelFlags::VIEW_FORMATS` (wgpu's GL backend lacks it:
 adds the asset's path to its errors. Adding one needs
 `wgpu::Features::TEXTURE_COMPRESSION_BC` (`SceneError::CompressionUnsupported`
 otherwise); its sides must be multiples of 4, as wgpu requires of a
-block-compressed level 0, and it holds one to a full chain of levels, each of
+block-compressed level 0, and at most 16384, as KTX2 loading allows, and it holds one to a full chain of levels, each of
 its size (`SceneError::InvalidCompressedImage`). Rays read level 0's stored
 blocks, decoding each texel they sample as raster's level 0 decodes it: one
 byte a texel in the ray source beside the texture's one. Basis Universal

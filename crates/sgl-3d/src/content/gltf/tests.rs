@@ -872,6 +872,15 @@ fn supplied_images_are_never_read_and_the_rest_decode() {
     assert!(load_slice(&fixture.embedded()).is_err());
 }
 
+// Defect: a GLB header declaring a total length below its own 12 bytes
+// underflowed the gltf crate's unchecked subtraction, a panic under
+// overflow checks, instead of failing the load. The oracle is the GLB
+// layout (glTF 2.0 4.4.2): magic "glTF", version 2, then that length.
+#[test]
+fn a_glb_header_shorter_than_itself_fails_the_load() {
+    assert!(load_slice(b"glTF\x02\0\0\0\0\0\0\0").is_err());
+}
+
 /// A triangle drawn with a material of `extensions`, in a document that
 /// lists `used` and `required` and holds a light, as `KHR_lights_punctual`
 /// adds one where a file uses it.
@@ -1250,6 +1259,29 @@ fn a_bump_factor_defaults_to_one_and_may_exceed_one() {
             bump(serde_json::json!({"bumpTexture": {"index": 0}, "bumpFactor": refused})).is_err(),
             "bumpFactor {refused} loaded"
         );
+    }
+    // glTF textureInfo's texCoord is an integer; one that is not cannot
+    // stand for TEXCOORD_0.
+    assert!(
+        bump(serde_json::json!({"bumpTexture": {"index": 0, "texCoord": "1"}})).is_err(),
+        "a non-integer bump texCoord loaded"
+    );
+}
+
+// Defect: a core factor outside glTF's bounds loaded, to fail later in
+// `Scene::add_materials` with an error naming neither file nor material.
+// The oracle is glTF 2.0's material schema (baseColorFactor in 0..1,
+// emissiveFactor at least 0) and KHR_materials_emissive_strength's
+// (emissiveStrength at least 0).
+#[test]
+fn core_factors_outside_gltfs_bounds_fail_the_load() {
+    for material in [
+        serde_json::json!({"extensions": {"KHR_materials_emissive_strength": {"emissiveStrength": -2}}}),
+        serde_json::json!({"emissiveFactor": [-1, 0, 0]}),
+        serde_json::json!({"pbrMetallicRoughness": {"baseColorFactor": [2, 1, 1, 1]}}),
+    ] {
+        let label = material.to_string();
+        assert!(read_textured_material(material).is_err(), "{label} loaded");
     }
 }
 

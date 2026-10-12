@@ -53,16 +53,31 @@ impl Rigging {
         rigging.rig.nodes = document
             .nodes()
             .map(|node| {
+                // A matrix with a zero-scale axis decomposes to a NaN
+                // rotation, which posing would spread to every descendant.
                 let (translation, rotation, scale) = node.transform().decomposed();
-                Node {
+                if !translation
+                    .iter()
+                    .chain(&rotation)
+                    .chain(&scale)
+                    .all(|value| value.is_finite())
+                {
+                    return Err(format!(
+                        "node {} ({}) has a transform that does not decompose to a finite translation, rotation and scale; re-export it without a zero-scale axis",
+                        node.index(),
+                        node.name().unwrap_or("unnamed")
+                    )
+                    .into());
+                }
+                Ok(Node {
                     name: node.name().map(str::to_owned),
                     parent: parents[node.index()],
                     translation: Vec3::from_array(translation),
                     rotation: Quat::from_array(rotation),
                     scale: Vec3::from_array(scale),
-                }
+                })
             })
-            .collect();
+            .collect::<Result<_>>()?;
         for skin in document.skins() {
             rigging.skins.push(rigging.rig.joints.len() as u32);
             if let Some(accessor) = skin.inverse_bind_matrices() {
