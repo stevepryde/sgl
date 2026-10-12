@@ -42,7 +42,13 @@ struct Tap {
 }
 
 impl DatagramTransport for Tap {
-    fn send(&mut self, destination: SocketAddr, payload: &[u8], now_ms: u64) {
+    fn send(
+        &mut self,
+        destination: SocketAddr,
+        payload: &[u8],
+        now_ms: u64,
+    ) -> std::io::Result<()> {
+        self.inner.send(destination, payload, now_ms)?;
         if let Some(Parsed::Payload { items, .. }) = packet::parse(payload, MAGIC) {
             for item in items {
                 if let Item::Reliable { lane, payload, .. } | Item::Unreliable { lane, payload, .. } =
@@ -58,7 +64,7 @@ impl DatagramTransport for Tap {
                 }
             }
         }
-        self.inner.send(destination, payload, now_ms);
+        Ok(())
     }
 
     fn receive(
@@ -672,9 +678,15 @@ struct Recorder {
 }
 
 impl DatagramTransport for Recorder {
-    fn send(&mut self, destination: SocketAddr, payload: &[u8], now_ms: u64) {
+    fn send(
+        &mut self,
+        destination: SocketAddr,
+        payload: &[u8],
+        now_ms: u64,
+    ) -> std::io::Result<()> {
+        self.inner.send(destination, payload, now_ms)?;
         self.sent.borrow_mut().push((now_ms, payload.to_vec()));
-        self.inner.send(destination, payload, now_ms);
+        Ok(())
     }
 
     fn receive(

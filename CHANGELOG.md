@@ -33,6 +33,8 @@ docs and specs the entry links.
 - `sgl-post-fx` SSR: missed rays no longer set the reflection's reprojection
   depth; only confirmed hits supply the virtual-point distance. No game-code
   changes.
+- `sgl-net` `udp::DatagramTransport::send`: temporarily refused datagrams now keep their queued work instead of dropping messages or advancing reliable retries, and return `io::Result<()>`. Standard adapters need no game-code changes; custom transports must return their send result and classify temporary local buffer exhaustion as `WouldBlock`.
+
 - `sgl-net` UDP `Endpoint`, `UdpServer`, `UdpClient` and
   `ThreadedUdpServer`: dropping an endpoint or shutting down its worker now
   notifies peers instead of leaving them to time out; a stopped or panicked

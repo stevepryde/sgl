@@ -53,6 +53,13 @@ impl Unreliable {
         Some((sequence, payload))
     }
 
+    /// Restores a staged item; callers restore in reverse take order.
+    pub fn restore(&mut self, sequence: u16, payload: Vec<u8>) {
+        self.bytes += payload.len();
+        self.queue.push_front(payload);
+        self.next_sequence = sequence;
+    }
+
     fn bit(sequence: u16) -> (usize, u64) {
         let index = usize::from(sequence % RECEIVE_WINDOW);
         (index / 64, 1 << (index % 64))

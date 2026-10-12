@@ -267,11 +267,12 @@ impl SimulatedNetwork {
 }
 
 impl DatagramTransport for SimulatedTransport {
-    fn send(&mut self, destination: SocketAddr, payload: &[u8], now_ms: u64) {
+    fn send(&mut self, destination: SocketAddr, payload: &[u8], now_ms: u64) -> io::Result<()> {
         self.network
             .lock()
             .expect("simulated network poisoned")
             .schedule(self.local, destination, payload, now_ms);
+        Ok(())
     }
 
     /// A datagram larger than `output` fails its receive, as on Windows,
@@ -712,7 +713,7 @@ mod tests {
             2,
         )
         .unwrap();
-        transport.send(second, b"bounded duplicate", 0);
+        transport.send(second, b"bounded duplicate", 0).unwrap();
         assert_eq!(transport.network.lock().unwrap().datagrams.len(), 1);
     }
 
@@ -758,8 +759,8 @@ mod tests {
         let mut alone = Vec::new();
         packet::begin_payload(&mut alone, magic, nonces, &[None; RELIABLE_LANES]);
         packet::push_reliable(&mut alone, lane(1), 1, whole, b"lost");
-        sender.send(second, &mixed, 0);
-        sender.send(second, &alone, 0);
+        sender.send(second, &mixed, 0).unwrap();
+        sender.send(second, &alone, 0).unwrap();
 
         let mut buffer = [0; super::super::MAX_DATAGRAM_BYTES + 1];
         let (length, _) = receiver

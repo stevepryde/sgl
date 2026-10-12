@@ -87,10 +87,16 @@ mod bench {
     }
 
     impl<T: DatagramTransport> DatagramTransport for Counted<T> {
-        fn send(&mut self, destination: SocketAddr, payload: &[u8], now_ms: u64) {
+        fn send(
+            &mut self,
+            destination: SocketAddr,
+            payload: &[u8],
+            now_ms: u64,
+        ) -> std::io::Result<()> {
+            self.inner.send(destination, payload, now_ms)?;
             self.datagrams.set(self.datagrams.get() + 1);
             self.bytes.set(self.bytes.get() + payload.len() as u64);
-            self.inner.send(destination, payload, now_ms);
+            Ok(())
         }
 
         fn receive(
