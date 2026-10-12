@@ -29,7 +29,12 @@ lights with no retained shadow geometry render unshadowed.
 
 [`assets`](src/assets.rs) owns texture handles and CPU texture loading;
 [`aseprite`](src/aseprite.rs) reads exported sheet metadata. Games own paths,
-content schemas, and animation policy. The canvas text renderer rasterizes
+content schemas, and animation policy. Hash-export frame keys accept trailing
+ASCII indices with or without an extension, such as `hero 0.aseprite`,
+`hero_0.png`, `hero.v2_0`, and `v1.2 0`; dotted titles are preserved. The
+loader reads trailing digits first, stripping a final extension only when
+the key does not end in digits. Indices must cover `0..len` exactly; a
+single-frame export may omit the index. The canvas text renderer rasterizes
 TTF glyphs into atlas pages; upload pages it marks changed after `end_frame`
 to the same renderer or sprite pass, which updates them in place.
 See the [client contract](../../specs/client.md) for handle identity, loader

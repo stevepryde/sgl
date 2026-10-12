@@ -4,8 +4,9 @@
 //! object keyed by the exported frame name) or as **Array** (`frames` is a JSON
 //! array in export order). Both are accepted:
 //!
-//! - Hash: the frame index is the trailing run of ASCII digits in each key
-//!   after its extension is stripped (`"player 12.aseprite"` → `12`). The
+//! - Hash: trailing ASCII digits take precedence (`"hero.v2_0"` → `0`);
+//!   otherwise the final extension is stripped before reading those digits
+//!   (`"player 12.aseprite"` → `12`). The
 //!   recovered indices must be exactly `0..frames.len()`; a key without
 //!   trailing digits, a duplicate index, or a gap is a parse error rather than
 //!   a silently mis-ordered sheet. Aseprite appends the frame number only
@@ -283,10 +284,14 @@ fn sibling_png(rel: &str) -> String {
     }
 }
 
-/// Recover a frame index from a Hash-export key: strip a trailing extension,
-/// then read the trailing ASCII digits.
+/// Recover a frame index from trailing ASCII digits. When none end the key,
+/// strip the final extension first; dots in an extensionless title survive.
 fn key_index(key: &str) -> Option<usize> {
-    let stem = key.rsplit_once('.').map_or(key, |(stem, _ext)| stem);
+    let stem = if key.ends_with(|c: char| c.is_ascii_digit()) {
+        key
+    } else {
+        key.rsplit_once('.').map_or(key, |(stem, _ext)| stem)
+    };
     let digits = stem.len() - stem.trim_end_matches(|c: char| c.is_ascii_digit()).len();
     stem[stem.len() - digits..].parse().ok()
 }
@@ -617,6 +622,24 @@ mod tests {
             }
         );
         assert_eq!(from_array.frames[1].duration_ms, 200);
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn dotted_titles_keep_extensionless_frame_indices() {
+        assert_eq!(key_index("hero.v2_0"), Some(0));
+        assert_eq!(key_index("v1.2 0"), Some(0));
+        assert_eq!(key_index("v1.2 1"), Some(1));
+        for keys in [
+            ["hero.v2_0", "hero.v2_1"],
+            ["v1.2 0", "v1.2 1"],
+            ["z.v2_0.png", "a.v2_1.png"],
+        ] {
+            let sheet = parse(&hash_json(keys)).expect("dotted title export parses");
+            assert_eq!(sheet.frames[0].x, 0);
+            assert_eq!(sheet.frames[0].duration_ms, 100);
+            assert_eq!(sheet.frames[1].x, 8);
+            assert_eq!(sheet.frames[1].duration_ms, 200);
+        }
     }
 
     /// Aseprite omits the frame number from a one-frame sheet's key, so the
