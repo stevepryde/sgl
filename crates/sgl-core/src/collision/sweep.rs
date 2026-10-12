@@ -127,8 +127,10 @@ pub struct Contacts {
 /// Sweeps `body` by `delta` through `set`, sliding along the surfaces it meets,
 /// and returns the translation to apply to `body.center` plus what it hit.
 ///
-/// Up to two passes: stop a `skin` short of the earliest contact, project the
-/// unspent motion onto that surface's tangent, and sweep again. Colliders
+/// Up to two passes: stop along the swept path a `skin` short of the earliest
+/// contact along its normal, project the motion left after the contact time
+/// onto that surface's tangent, and sweep again. The backed-off portion is
+/// discarded, including its tangential component. Colliders
 /// that are sensors, or not solid, are skipped; a one-way
 /// platform blocks only a landing on its up-facing side (see
 /// [`ColliderFlags::one_way`](super::ColliderFlags::one_way)).
@@ -178,7 +180,7 @@ pub fn move_and_collide(
         };
 
         let move_to = remaining * hit.t;
-        let safe = back_off(move_to, hit.normal, config.skin);
+        let safe = back_off(remaining, hit, config.skin);
         total += safe;
         body = body.translated(safe);
         classify(&mut contacts, hit.normal, config);
@@ -220,7 +222,7 @@ pub fn snap_to_ground(body: Aabb, set: &ColliderSet, config: &CollisionConfig) -
         return (Vec2::ZERO, contacts);
     };
 
-    let safe = back_off(probe * hit.t, hit.normal, config.skin);
+    let safe = back_off(probe, hit, config.skin);
     contacts.effective = safe;
     classify(&mut contacts, hit.normal, config);
     (safe, contacts)
@@ -331,27 +333,15 @@ fn classify(contacts: &mut Contacts, normal: Vec2, config: &CollisionConfig) {
     }
 }
 
-/// Shortens a move-to-contact by `skin` along the contact's entry axis, leaving
-/// the body a hair clear of the surface.
-fn back_off(move_to: Vec2, normal: Vec2, skin: f32) -> Vec2 {
-    // Contact normals are axis-aligned, so the larger component names the axis
-    // the body entered on.
-    if normal.x.abs() > normal.y.abs() {
-        Vec2::new(reduce_toward_zero(move_to.x, skin), move_to.y)
-    } else {
-        Vec2::new(move_to.x, reduce_toward_zero(move_to.y, skin))
-    }
-}
-
-/// Moves `value` `amount` closer to zero, stopping at zero. Backing off is
-/// never allowed to reverse the move: a contact within `skin` of the start
-/// yields no motion rather than motion the caller never asked for.
-fn reduce_toward_zero(value: f32, amount: f32) -> f32 {
-    if value >= 0.0 {
-        (value - amount).max(0.0)
-    } else {
-        (value + amount).min(0.0)
-    }
+/// Stops on the swept segment with a `skin` gap along the contact normal.
+/// Shortening the whole motion keeps the body on the path the sweep cleared.
+/// A contact within `skin` of the start yields zero, never reversed motion.
+fn back_off(delta: Vec2, hit: Hit, skin: f32) -> Vec2 {
+    // Every blocking hit has nonzero motion into its axis-aligned normal,
+    // including embedded hits (which only block inward motion).
+    let normal_motion = delta.dot(hit.normal).abs();
+    let safe_t = (hit.t - skin / normal_motion).max(0.0);
+    delta * safe_t
 }
 
 /// The region covering `body` from the start to the end of `delta`.
@@ -482,7 +472,7 @@ mod tests {
     }
 
     /// Walking diagonally into a wall must stop the horizontal motion a skin
-    /// short and still spend the whole vertical motion on the slide pass.
+    /// short and spend the vertical motion remaining after the contact time.
     /// Without the second pass the vertical motion is thrown away.
     #[wasm_bindgen_test(unsupported = test)]
     fn wall_blocks_one_axis_and_the_slide_keeps_the_other() {
@@ -493,22 +483,75 @@ mod tests {
 
         // Body right edge 0.5 to wall left edge 1.5, less the skin.
         assert!((effective.x - 0.99).abs() < 1e-4, "x was {}", effective.x);
-        assert!((effective.y - 1.0).abs() < 1e-4, "y was {}", effective.y);
+        // Contact at (1, 1/3); backing off 0.01 in x also removes 1/300 in y.
+        assert!(
+            (effective.y - 299.0 / 300.0).abs() < 1e-4,
+            "y was {}",
+            effective.y
+        );
         assert!(contacts.wall);
         assert!(!contacts.floor && !contacts.ceiling);
     }
 
-    /// Running down onto a floor must keep the full horizontal travel: the
-    /// leftover motion is projected onto the floor rather than dropped.
+    /// #632: backing off a wall contact must stay on the tested diagonal.
+    /// The ledge is cleared at x = 0.453125 before its top is reached at
+    /// y = -0.46875. Backing off x alone instead embeds the body in it.
     #[wasm_bindgen_test(unsupported = test)]
-    fn landing_while_running_keeps_the_horizontal_travel() {
+    fn diagonal_skin_back_off_does_not_enter_a_ledge_the_sweep_cleared() {
+        let body = aabb(0.0, 0.0, 0.5, 0.5);
+        let wall = Aabb::from_min_max(Vec2::new(1.0, -2.0), Vec2::new(2.0, 2.0));
+        let ledge = Aabb::from_min_max(Vec2::new(-2.0, -2.0), Vec2::new(-0.046_875, -0.96875));
+        let set = set_with(&[(wall, ColliderFlags::SOLID), (ledge, ColliderFlags::SOLID)]);
+        let config = CollisionConfig::new(Vec2::Y, 0.125, 0.0, 0.7, 1e-4);
+
+        let (effective, contacts) = move_and_collide(body, Vec2::new(1.0, -1.0), &set, &config);
+        let moved = body.translated(effective);
+        assert!(!moved.overlaps(&ledge), "ended inside ledge: {moved:?}");
+        assert!(!moved.overlaps(&wall), "ended inside wall: {moved:?}");
+        // Contact is at (0.5, -0.5), so leaving a 0.125 x-gap along the
+        // diagonal stops at (0.375, -0.375). The slide then finds the ledge
+        // only 0.09375 below the body's bottom, inside the skin: no advance.
+        assert_eq!(effective, Vec2::new(0.375, -0.375));
+        assert!(contacts.wall && contacts.floor);
+    }
+
+    /// #632: a diagonal ground probe must also remain on the swept segment.
+    /// With diagonal `up`, the wall is floor-classified; backing off only x
+    /// places the body below the ledge's top and inside its right edge.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn diagonal_ground_snap_stays_clear_of_a_ledge_beside_its_probe() {
+        let body = aabb(0.0, 0.0, 0.5, 0.5);
+        let surface = Aabb::from_min_max(Vec2::new(1.0, -2.0), Vec2::new(2.0, 2.0));
+        let ledge = Aabb::from_min_max(Vec2::new(-2.0, -2.0), Vec2::new(-0.046_875, -0.96875));
+        let set = set_with(&[
+            (surface, ColliderFlags::SOLID),
+            (ledge, ColliderFlags::SOLID),
+        ]);
+        let config = CollisionConfig::new(Vec2::new(-1.0, 1.0), 0.125, 2.0f32.sqrt(), 0.7, 1e-4);
+
+        let (snap, contacts) = snap_to_ground(body, &set, &config);
+        let moved = body.translated(snap);
+        assert!(!moved.overlaps(&ledge), "snapped inside ledge: {moved:?}");
+        assert!(snap.abs_diff_eq(Vec2::new(0.375, -0.375), f32::EPSILON));
+        assert!(contacts.floor);
+    }
+
+    /// Running down onto a floor keeps the horizontal travel after contact,
+    /// discarding only the portion removed by skin back-off.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn landing_while_running_keeps_the_horizontal_travel_after_contact() {
         let set = set_with(&[(aabb(0.0, 0.0, 10.0, 0.5), ColliderFlags::SOLID)]);
         let body = aabb(0.0, 2.0, 0.5, 0.5);
         let (effective, contacts) =
             move_and_collide(body, Vec2::new(2.0, -3.0), &set, &config(Vec2::Y));
 
         assert!(contacts.floor);
-        assert!((effective.x - 2.0).abs() < 1e-4, "x was {}", effective.x);
+        // Contact at (2/3, -1); back-off removes 0.01 * 2/3 in x as well.
+        assert!(
+            (effective.x - 299.0 / 150.0).abs() < 1e-4,
+            "x was {}",
+            effective.x
+        );
     }
 
     /// Among several colliders the *earliest* contact wins, not the first one

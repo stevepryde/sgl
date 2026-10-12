@@ -538,8 +538,17 @@ fn move_and_collide_never_ends_inside_a_solid_and_mirrors_with_up() {
         let (effective, contacts) = move_and_collide(body, delta, &set, &config(Vec2::Y));
         let moved = body.translated(effective);
         for b in &boxes {
-            let sep = separation(&moved, b);
-            prop_assert!(sep.x > -1e-3 || sep.y > -1e-3, "ended inside {b:?}: {sep}");
+            // Permit only one representable step past a collider edge, rather
+            // than a world-unit tolerance that hides skin-induced overlap.
+            let (min, max) = (moved.min(), moved.max());
+            let (b_min, b_max) = (b.min(), b.max());
+            prop_assert!(
+                min.x >= b_max.x.next_down()
+                    || max.x <= b_min.x.next_up()
+                    || min.y >= b_max.y.next_down()
+                    || max.y <= b_min.y.next_up(),
+                "ended inside {b:?}: {moved:?}"
+            );
         }
         prop_assert!(
             effective.length() <= delta.length() + 1e-4,

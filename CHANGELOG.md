@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
+  stays on the swept path instead of moving along only the contact axis;
+  diagonal slides stop earlier along the surface by the backed-off motion's
+  tangential component. No game-code changes unless a game depended on the
+  exact stop position.
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they
