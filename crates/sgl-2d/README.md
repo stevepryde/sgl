@@ -16,8 +16,10 @@ adds text and widgets: `cargo run -p sgl-2d --example tool_ui`.
 
 The game keeps composition; do not wrap the canvas in another engine layer.
 For resource lifetimes, color spaces, and presentation behavior, read the
-[2D rendering contract](../../specs/rendering.md). `Renderer::read_scene` and
-`capture_scene` block for their readback and are native-only; a browser build
+[2D rendering contract](../../specs/rendering.md).
+`Context` caps initial and resized swapchain dimensions per axis to the device's
+maximum 2D texture dimension; `Context::size` reports the configured dimensions.
+`Renderer::read_scene` and `capture_scene` block for their readback and are native-only; a browser build
 does not have them. Shadow geometry shares one buffer across shadowed
 lights, bounded by the device's `max_buffer_size` and u32 draw range. When
 an entire occluder edge does not fit, it and subsequent edges are dropped;

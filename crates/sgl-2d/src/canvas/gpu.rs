@@ -210,12 +210,13 @@ impl Context {
             .first()
             .ok_or(RendererInitError::UnsupportedSurface)?;
         let size = window.inner_size();
+        let max_dim = device.limits().max_texture_dimension_2d;
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             color_space: wgpu::SurfaceColorSpace::Auto,
-            width: size.width.max(1),
-            height: size.height.max(1),
+            width: size.width.clamp(1, max_dim),
+            height: size.height.clamp(1, max_dim),
             present_mode: if vsync {
                 wgpu::PresentMode::AutoVsync
             } else {
@@ -234,19 +235,22 @@ impl Context {
         })
     }
 
-    /// Current surface size in physical pixels.
+    /// Configured surface size in physical pixels, capped to the device's
+    /// maximum 2D texture dimension on each axis.
     pub fn size(&self) -> (u32, u32) {
         (self.config.width, self.config.height)
     }
 
     /// Reconfigure the surface to a new size (call on window resize). Ignores
-    /// zero-area sizes (minimized window).
+    /// zero-area sizes (minimized window). Each axis is capped to the device's
+    /// maximum 2D texture dimension.
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
-        self.config.width = width;
-        self.config.height = height;
+        let max_dim = self.gpu.device.limits().max_texture_dimension_2d;
+        self.config.width = width.min(max_dim);
+        self.config.height = height.min(max_dim);
         self.surface.configure(&self.gpu.device, &self.config);
     }
 
