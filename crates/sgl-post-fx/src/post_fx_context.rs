@@ -284,13 +284,14 @@ impl PostFXContext {
         }
     }
 
+    /// Records the latest frame description, rebuilding render-size depths
+    /// only when their dimensions or format change.
     pub fn prepare_resources(
         &mut self,
         device: &wgpu::Device,
         desc: &FrameDesc,
         feature_flags: FeatureFlags,
     ) {
-        self.frame_desc.index = desc.index;
         self.feature_flags = feature_flags;
 
         let depth_format = if feature_flags.contains(FeatureFlags::HALF_PRECISION_DEPTH) {
@@ -301,17 +302,18 @@ impl PostFXContext {
         // Upstream compares only the size; a toggled HALF_PRECISION_DEPTH
         // must recreate the depths too, or the pipelines keyed by the new
         // flags target the old format (PROVENANCE.md DFX-1).
-        if self.frame_desc.width == desc.width
+        let resources_match = self.frame_desc.width == desc.width
             && self.frame_desc.height == desc.height
             && self
                 .reprojected_depth
                 .as_ref()
-                .is_some_and(|depth| depth.texture().format() == depth_format)
-        {
+                .is_some_and(|depth| depth.texture().format() == depth_format);
+        // Output-only changes describe this frame without changing the
+        // render-size resources (unlike upstream's early return).
+        self.frame_desc = *desc;
+        if resources_match {
             return;
         }
-
-        self.frame_desc = *desc;
 
         let (width, height) = (self.frame_desc.width, self.frame_desc.height);
         self.reprojected_depth = Some(view(&texture_2d(
@@ -402,6 +404,8 @@ impl PostFXContext {
         self.feature_flags
     }
 
+    /// The description from the latest `prepare_resources` call, including
+    /// output dimensions when the render dimensions have not changed.
     pub fn get_frame_desc(&self) -> &FrameDesc {
         &self.frame_desc
     }
