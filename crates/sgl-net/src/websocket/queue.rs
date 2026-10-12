@@ -483,6 +483,26 @@ impl PeerState {
     /// reliable and unreliable messages taking turns, then the newest latest
     /// state.
     pub(super) fn pop_inbound(&mut self) -> Option<(Delivery, Vec<u8>)> {
+        self.pop_inbound_lane()
+            .or_else(|| self.pop_inbound_latest())
+    }
+
+    /// Takes the newest state independently of the lane backlog.
+    pub(super) fn pop_inbound_latest(&mut self) -> Option<(Delivery, Vec<u8>)> {
+        self.inbound_latest
+            .take()
+            .map(|payload| (Delivery::LatestState, payload))
+    }
+
+    /// Whether no completed message remains, including a state received
+    /// after the server sampled latest state for this poll.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn inbound_is_empty(&self) -> bool {
+        self.inbound_latest.is_none() && self.inbound.iter().all(InboundLane::is_empty)
+    }
+
+    /// Takes one lane message, leaving latest state for a separate poll turn.
+    pub(super) fn pop_inbound_lane(&mut self) -> Option<(Delivery, Vec<u8>)> {
         let inbound = &self.inbound;
         if let Some(index) = self
             .inbound_scheduler
@@ -498,9 +518,7 @@ impl PeerState {
             };
             return Some((delivery, message));
         }
-        self.inbound_latest
-            .take()
-            .map(|payload| (Delivery::LatestState, payload))
+        None
     }
 
     pub(super) fn release_outbound(&mut self) -> Result<(), DisconnectReason> {

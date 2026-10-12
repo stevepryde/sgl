@@ -118,21 +118,23 @@ fn native_client_and_server_are_trait_transparent_on_both_lanes() {
     client.flush(10);
 
     let received = collect_server_events(&mut server, 2);
-    assert_eq!(
-        received,
-        vec![
-            ServerEvent::Message {
-                conn,
-                delivery: Delivery::RELIABLE_ORDERED,
-                payload: b"client event".to_vec(),
-            },
-            ServerEvent::Message {
-                conn,
-                delivery: Delivery::LatestState,
-                payload: b"new".to_vec(),
-            },
-        ]
-    );
+    // The worker can receive the latest frame before or after the first
+    // poll; no ordering is promised between delivery classes.
+    assert_eq!(received.len(), 2);
+    for expected in [
+        ServerEvent::Message {
+            conn,
+            delivery: Delivery::RELIABLE_ORDERED,
+            payload: b"client event".to_vec(),
+        },
+        ServerEvent::Message {
+            conn,
+            delivery: Delivery::LatestState,
+            payload: b"new".to_vec(),
+        },
+    ] {
+        assert!(received.contains(&expected), "{received:?}");
+    }
 
     server
         .send(conn, Delivery::RELIABLE_ORDERED, b"server event")
