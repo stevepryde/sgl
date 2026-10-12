@@ -2697,3 +2697,43 @@ fn context_alternates_read_only_caller_and_inline_cameras() {
 fn context_alternates_writable_caller_and_inline_cameras() {
     context_alternates_camera_sources(wgpu::BufferUsages::COPY_DST);
 }
+
+// Defect: the unchanged render-size fast path leaves the previous output
+// dimensions visible to callers. An output-only resize must be reported
+// immediately while preserving the render-size depth resources.
+#[test]
+fn context_tracks_output_only_resizes_without_rebuilding_depths() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let mut context = PostFXContext::new(&device, &queue, Default::default());
+    let first = FrameDesc {
+        index: 7,
+        width: SIZE[0],
+        height: SIZE[1],
+        output_width: 128,
+        output_height: 96,
+    };
+    let flags = post_fx_context::FeatureFlags::TEMPORAL_UPSCALING;
+    context.prepare_resources(&device, &first, flags);
+    let depth = context.get_reprojected_depth().clone();
+    let previous = context.get_previous_depth().clone();
+    let resized = FrameDesc {
+        index: 8,
+        output_width: 192,
+        output_height: 108,
+        ..first
+    };
+    context.prepare_resources(&device, &resized, flags);
+    assert_eq!(*context.get_frame_desc(), resized);
+    assert_eq!(
+        context.get_reprojected_depth(),
+        &depth,
+        "output resize keeps the render-size depth resource"
+    );
+    assert_eq!(
+        context.get_previous_depth(),
+        &previous,
+        "output resize keeps the render-size previous depth resource"
+    );
+}

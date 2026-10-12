@@ -70,6 +70,9 @@ licences, source revisions and the blue-noise table source it reads.
 - Both effects read colour at most 65504, binary16's largest finite value,
   as FSR2 clamps its input, so a texel of +infinity leaves their outputs
   finite (DFX-46).
+- `PostFXContext::prepare_resources` records the latest `FrameDesc`, including
+  output-only resizes. Its depth resources rebuild only when the render size
+  or depth format changes. `get_frame_desc` reports that latest description.
 - Host: derived from `ScreenSpaceReflection.cpp`, `TemporalAntiAliasing.cpp`,
   `PostFXContext.cpp` and `PostFXRenderTechnique.cpp`, recording into a
   caller's `wgpu::CommandEncoder` where

@@ -11,6 +11,12 @@ feature parity are not requirements. Keep source attribution and licences,
 and maintain notes when they explain an algorithm or implementation decision;
 new changes do not require an exhaustive difference catalogue.
 
+`PostFXContext::prepare_resources` records the complete latest frame
+description before returning when its render resources still match (#731).
+The pinned `PostFXContext.cpp:241–249` records only the index before that
+return, leaving an output-only resize stale. Depth allocation remains gated
+on render dimensions and format; no shader or GPU pass changes.
+
 The notes below preserve the original port's adaptations and subsequent fixes.
 The DFX identifiers remain stable because code and tests refer to them. They
 are historical references, not an approval process or a claim that unlisted

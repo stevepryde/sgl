@@ -38,7 +38,9 @@ library; their rules, content, and process layouts stay with the games.
      conventional or reversed depth. SSR retains 32-bit resolved device depth
      for conventional projection and 16-bit for reversed projection, read
      without filtering; changing convention recreates its resources and
-     resets history.
+     resets history. Its post-effect context reports the latest frame
+     description, including output-only size changes, without reallocating
+     unchanged render-size depth resources.
    - `sgl-2d` — assets, immediate UI, and a caller-driven logical-canvas wgpu
      renderer
    - `sgl-input` — controller discovery and normalized events/state, independent
