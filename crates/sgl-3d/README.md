@@ -3009,8 +3009,14 @@ can remove a tiny feature only when its error bounds the entire feature.
 base model's geometry clears its alternatives. A model named as an alternative
 cannot be replaced or removed while it is.
 
-All primary raster passes choose the last alternative whose conservative projected
-error is at most 0.5 pixels, using the `FrameInput` camera and the render size.
+While world-space reflections are inactive, all primary raster passes choose the
+last alternative whose conservative projected error is at most 0.5 pixels, using
+the `FrameInput` camera and the render size. With effective world-space reflections
+(`Moving` or `All`), the opaque/masked GPU list and blended CPU list retain full
+detail so raster receiver identities match the geometry scene rays trace, including
+at grazing angles. This increases primary raster work for registered LOD meshes;
+it adds no ray geometry or storage. Asking for world-space reflections while their
+screen-space prerequisite is off keeps LOD selection active.
 The bound includes scale, perspective division and
 distance to the nearest chunk corner; chunks crossing the near plane retain full
 detail. The camera's opaque and masked surfaces choose on the GPU, by the

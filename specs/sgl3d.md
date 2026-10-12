@@ -342,7 +342,10 @@ current capabilities and limits.
   backend and a candidate specialisation where the shader backend lowers
   it, one predicate and one hit for every form, ray-traced shadows between
   the opaque stage's two passes, and world-space reflections that may
-  reach everything.
+  reach everything. While world-space reflections run, prepare keeps both
+  primary raster builders at full detail so their receiver triangles match
+  the base geometry rays trace; inactive world-space reflections retain
+  primary authored LOD selection.
 - **GPU-driven culling and occlusion culling (22,
   [#24](https://github.com/stevepryde/sgl/issues/24)):** the camera's
   opaque and masked surfaces and the directional cascades draw from lists

@@ -14,10 +14,11 @@ impl Scene {
     /// Alternatives use the base mesh's transform and material binding, so
     /// lightmapped materials stay lightmapped. Their vertices must share its space.
     /// Primary beauty, depth and reflection source raster use the same selection.
+    /// While effective world-space reflections run, primary raster retains full
+    /// detail too, so receiver identities match the exact ray triangles. With
+    /// world-space reflections inactive, primary raster selects alternatives.
     /// Probes, shadows and scene rays retain full-detail geometry, independently
-    /// of the primary camera. Sampled/hardware reflection selections retain full
-    /// primary geometry too, because their receiver/source ownership uses exact
-    /// ray triangle identities. Alternatives are meshes of other models,
+    /// of the primary camera. Alternatives are meshes of other models,
     /// since a model draws all its meshes; a model named here cannot be
     /// replaced or removed while it is, and replacing `model` clears its
     /// alternatives.

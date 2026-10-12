@@ -2218,6 +2218,18 @@ last, after everything it may use, and refuses a directive in it.
   bounded (AR-12) and `set_mesh_lods` refuses more with the typed error;
   the cull tests the chosen level's bounds, the candidate's own where there
   is no chain.
+  **Primary ray receivers.** Prepare owns one primary-geometry decision:
+  while effective world-space reflections run (`Moving` or `All`), both
+  the GPU camera cull and CPU blended list retain base geometry. Their
+  source identities then name exactly the triangles the portable BVH and
+  hardware BLAS trace; the shared predicate keeps exact-triangle exclusion,
+  including grazing reflection and static visibility rays. With world-space
+  reflections inactive, both builders select authored primary LODs as before.
+  This follows [NVIDIA's matching raster/ray LOD recommendation](https://developer.nvidia.com/blog/best-practices-for-using-nvidia-rtx-ray-tracing-updated/):
+  a geometric LOD displacement bound does not bound a grazing ray's travel
+  to the base surface. It costs primary raster sections and vertices, not
+  additional ray geometry, storage or stages; no identity flag, whole-instance
+  exclusion, larger ray epsilon or alternate traversal is introduced.
   Whether an instance is `visible`, `capture_visible`, static or deforming
   are bits of its object record; a material's visibility group and whether
   it casts the directional shadow are its sets' records: an instance edit

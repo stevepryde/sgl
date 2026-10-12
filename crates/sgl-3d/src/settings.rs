@@ -120,7 +120,9 @@ pub enum ReflectionMethod {
 
 /// What world-space rays reach where the screen-space method misses, at
 /// half resolution up to 1000 m from the reflecting surface. Off reflects
-/// what the method and the probes and sky give.
+/// what the method and the probes and sky give. While Moving or All is
+/// effective, primary raster retains full detail to match ray geometry;
+/// switching it off restores authored primary LOD selection.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorldSpaceReflections {
     #[default]
