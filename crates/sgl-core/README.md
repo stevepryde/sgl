@@ -36,7 +36,8 @@ separate from rendering.
 `random::Rng` is deterministic for a seed, the same on every target, within
 its dependency version;
 its stream is not promised across dependency upgrades. Choose according to
-the game's replay or persistence requirements.
+the game's replay or persistence requirements. `Rng::u32`, `i32`, and `usize`
+panic on an empty range; check that a slice is nonempty before drawing an index.
 
 `anim::SequenceStep::RandomPause` holds for a duration in the inclusive
 `[min, max]` range; floating-point rounding can reach `max`.
