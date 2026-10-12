@@ -529,12 +529,10 @@ impl NativeWebSocketServer {
                 "WebSocket Origin policy must be explicitly configured",
             )
         })?;
-        if config.identity.path.is_empty() || config.identity.subprotocol.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "WebSocket path and subprotocol must be non-empty",
-            ));
-        }
+        config
+            .identity
+            .validate()
+            .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
         if config.max_connections == 0 || config.max_connections > MAX_NATIVE_WEBSOCKET_CONNECTIONS
         {
             return Err(io::Error::new(
@@ -942,12 +940,10 @@ impl NativeWebSocketClient {
     /// not `ws` fails with `InvalidInput` before anything is resolved or
     /// connected.
     pub fn connect(config: NativeWebSocketClientConfig) -> io::Result<Self> {
-        if config.identity.path.is_empty() || config.identity.subprotocol.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "WebSocket path and subprotocol must be non-empty",
-            ));
-        }
+        config
+            .identity
+            .validate()
+            .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
         if config.handshake_timeout.is_zero()
             || config.handshake_timeout > MAX_WEBSOCKET_HANDSHAKE_TIMEOUT
             || config.ping_interval_ms > MAX_WEBSOCKET_LIVENESS_MS

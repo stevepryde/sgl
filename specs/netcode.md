@@ -43,7 +43,12 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
    newest-wins latest-state. What each lane carries is the game's choice.
 4. Transports own framing, sequencing, acknowledgement, retransmission, queue
    bounds, connection identity, and socket or browser I/O. The game supplies
-   UDP magic, WebSocket magic, path, and subprotocol.
+   UDP magic, WebSocket magic, path, and subprotocol. A WebSocket path must
+   be non-empty and its subprotocol one non-empty HTTP token, as required by
+   [RFC 6455 §4.1](https://www.rfc-editor.org/rfc/rfc6455#section-4.1) and
+   defined by [RFC 7230 §3.2.6](https://www.rfc-editor.org/rfc/rfc7230#section-3.2.6):
+   ASCII letters, digits and `!#$%&'*+-.^_` plus backtick, `|` and `~`.
+   Native bind and all client connects reject an invalid identity before I/O.
 5. The caller supplies time to transport operations. Polling does not sleep,
    render, or step gameplay.
 6. The same encoded payload crosses UDP, WebSocket, and the memory adapter.

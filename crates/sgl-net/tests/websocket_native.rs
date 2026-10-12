@@ -711,6 +711,61 @@ fn native_client_handshake_timeout_is_bounded() {
     let _ = stalled.join();
 }
 
+/// RFC 6455 requires one HTTP token for the selected subprotocol. Invalid
+/// names must fail configuration before binding or attempting a handshake.
+#[test]
+fn invalid_subprotocols_fail_bind_and_connect() {
+    for name in [
+        "",
+        "game,v1",
+        " game",
+        "game ",
+        "game v1",
+        "game\tv1",
+        "game/v1",
+        "game:v1",
+        "game\r\nv1",
+        "gämé",
+    ] {
+        let identity = WebSocketIdentity::new(*b"TST", GAME_PATH, name);
+        let config = NativeWebSocketServerConfig::new(([127, 0, 0, 1], 0).into(), identity.clone())
+            .with_origin_policy(OriginPolicy::allow_any());
+        match NativeWebSocketServer::bind(config) {
+            Ok(_) => panic!("invalid subprotocol {name:?} bound"),
+            Err(error) => assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "{name:?}: {error}"
+            ),
+        }
+        let config =
+            NativeWebSocketClientConfig::new("ws://127.0.0.1:9/game/ws", ORIGIN_VALUE, identity);
+        match NativeWebSocketClient::connect(config) {
+            Ok(_) => panic!("invalid subprotocol {name:?} connected"),
+            Err(error) => assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::InvalidInput,
+                "{name:?}: {error}"
+            ),
+        }
+    }
+}
+
+#[test]
+fn subprotocol_token_punctuation_completes_the_handshake() {
+    let identity = WebSocketIdentity::new(*b"TST", GAME_PATH, "game.v1-!#$%&'*+^_`|~");
+    let config = NativeWebSocketServerConfig::new(([127, 0, 0, 1], 0).into(), identity.clone())
+        .with_origin_policy(OriginPolicy::allow_any());
+    let server = NativeWebSocketServer::bind(config).expect("valid HTTP token binds");
+    let client = NativeWebSocketClient::connect(NativeWebSocketClientConfig::new(
+        url(&server),
+        ORIGIN_VALUE,
+        identity,
+    ))
+    .expect("valid HTTP token connects");
+    drop(client);
+}
+
 /// Defect: the native client has no TLS, yet it accepted `wss://` and ran
 /// the handshake over plain TCP. Oracle: a listener that is never accepted
 /// still queues any TCP connection, so a nonblocking accept after `connect`
