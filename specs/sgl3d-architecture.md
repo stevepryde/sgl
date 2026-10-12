@@ -433,7 +433,10 @@ Stages run in one order, written in one place in `renderer`:
 
 A new feature takes a place in this list by editing it here. A probe capture
 is a `Renderer` operation that runs prepare, shadows and opaque over its own
-views. Each face renders at 2048 texels a side, or the probe's face size if
+views. A capture is refused with `ProbeError::InvalidDimensions` before
+allocation when its padded RGBA16F readback exceeds `max_buffer_size`; this
+is separate from installed probes' texture and payload validation. Each face
+renders at 2048 texels a side, or the probe's face size if
 larger, in its own submission, and the probe prefilter averages it to the
 face size with a uniform box before the solid-angle mips and the GGX levels,
 so the probe's mip 0 holds each texel's area-averaged radiance (#263). This

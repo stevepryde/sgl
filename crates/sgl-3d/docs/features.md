@@ -269,7 +269,8 @@ them through unrefracted. A probe captured on an
   `reflection_environment` (`EnvironmentLight`, unturned at intensity 1 by
   default) turn and scale its diffuse and specular light,
   and `backdrop` (`Backdrop`) shows its panorama or a colour behind
-  everything.
+  everything. Probe captures whose padded readback exceeds `max_buffer_size`
+  return `ProbeError::InvalidDimensions` before rendering.
 - **Baked diffuse**, authored and baked by the game: a lightmap for chosen
   materials of static instances (`Scene::set_lightmap`) and a static
   irradiance atlas, BC6H/BC7-compressed for shipping
