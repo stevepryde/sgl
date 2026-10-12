@@ -82,6 +82,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    popover stays in the current clip, and only its visible part blocks
    widgets beneath it. Buttons, toggles, checkboxes and dropdowns show an
    accent focus border and activate with Enter/Space. Escape dismisses the topmost dropdown or cancels the modal.
+   A modal ignores the pointer press and Escape of the frame that first
+   shows it, so the input that opened it cannot also resolve it.
    The app translates platform shortcuts, supplies clipboard paste, drains
    `take_clipboard_text` for copy/cut, and checks `keyboard_captured` after the
    frame before dispatching world shortcuts (including the dismissal frame).

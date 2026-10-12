@@ -530,31 +530,34 @@ mod tests {
         assert_eq!(list.screen.last().unwrap().pos.x, 27.0);
 
         ui.clear_focus();
-        let mut f = ui.begin(
-            &mut text,
-            &mut list,
-            UiInput {
-                keys: vec![UiKey::Escape],
-                ..UiInput::default()
-            },
-        );
-        assert_eq!(
-            f.confirm_modal(
-                "confirm",
-                Rect::new(0.0, 0.0, 960.0, 540.0),
-                "Title",
-                "Body",
-                "OK",
-                "Cancel",
-                20.0
-            ),
-            Some(false)
-        );
-        f.end();
-        assert!(
-            ui.keyboard_captured(),
-            "Escape never reaches a world action"
-        );
+        // The opening frame ignores Escape; the next one cancels.
+        for expected in [None, Some(false)] {
+            let mut f = ui.begin(
+                &mut text,
+                &mut list,
+                UiInput {
+                    keys: vec![UiKey::Escape],
+                    ..UiInput::default()
+                },
+            );
+            assert_eq!(
+                f.confirm_modal(
+                    "confirm",
+                    Rect::new(0.0, 0.0, 960.0, 540.0),
+                    "Title",
+                    "Body",
+                    "OK",
+                    "Cancel",
+                    20.0
+                ),
+                expected
+            );
+            f.end();
+            assert!(
+                ui.keyboard_captured(),
+                "Escape never reaches a world action"
+            );
+        }
     }
 
     #[wasm_bindgen_test(unsupported = test)]

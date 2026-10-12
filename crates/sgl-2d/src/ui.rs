@@ -438,12 +438,18 @@ impl UiFrame<'_> {
 
     /// Pointer blockers follow ownership: panel content bypasses panel
     /// regions, while only the open modal/popover's contents bypass its gate.
+    /// A modal's contents take the pointer only once it was shown last
+    /// frame, so the press that opens it cannot also resolve it.
     fn hit(&self, rect: &Rect) -> bool {
         let p = self.input.mouse_pos;
         self.ui.splitter_drag.is_none()
             && contains(rect, p)
             && self.clip.is_none_or(|c| contains(&c, p))
-            && (!self.ui.modal_blocking || self.modal_scope == self.ui.modal_scope)
+            && if self.modal_scope.is_some() {
+                self.modal_scope == self.ui.modal_scope
+            } else {
+                !self.ui.modal_blocking
+            }
             && self.ui.popover_blocked.is_none_or(|(owner, blocked)| {
                 !contains(&blocked, p) || self.popup_scope == Some(owner)
             })
