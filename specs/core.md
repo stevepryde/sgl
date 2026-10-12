@@ -71,7 +71,11 @@ browser client must get identical results from it.
    `ColliderSet` and never moves it more than a rounding step into a solid
    collider; a body that starts inside one may move out or along it, and its
    least penetration depth never grows. It does not push bodies out: the game
-   keeps them clear. Sensors never block; one-way platforms block only a
+   keeps them clear. Skin back-off shortens the whole swept motion to leave
+   the configured gap along the contact normal, never reversing it or moving
+   off the tested segment. Sliding projects the motion left after the contact
+   time, excluding the backed-off portion. `snap_to_ground` uses the same
+   back-off along its probe. Sensors never block; one-way platforms block only a
    landing on the face along the configured up axis, including a body within
    `skin` (plus rounding) below that face, never a body deeper inside them.
    `CollisionConfig` names the up axis, skin, snap distance, and

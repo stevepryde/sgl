@@ -40,6 +40,10 @@ the game's replay or persistence requirements.
 
 Collision units and the up axis belong to the game. Supply them through
 `CollisionConfig`; SGL does not choose a world scale or entity layout.
+Contacts leave the configured `skin` gap along the surface normal by stopping
+earlier on the swept path. A diagonal slide keeps the tangential motion left
+after the contact time; the backed-off motion is discarded, so it also stops
+earlier along the surface. Ground snapping backs off along its probe too.
 `collision` is 2D arcade physics: it moves bodies the game drives, with no
 forces, mass or rotation. See [Physics](../../docs/README.md#physics) to
 choose a game's physics.
