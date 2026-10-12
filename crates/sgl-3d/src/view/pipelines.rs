@@ -25,8 +25,8 @@ mod key;
 mod pass;
 mod programs;
 mod variant;
-use key::PipelineKey;
 pub(crate) use key::{LayerConstants, LitConstants};
+use key::{PipelineKey, Specialisation};
 pub(crate) use pass::{GeometryPass, depth};
 use pass::{attachments_fit, targets};
 use programs::{Program, ProgramSet};
@@ -138,6 +138,10 @@ pub(crate) struct GeometryPipelines {
     /// The content `get` returns pipelines for beyond opaque, rigid
     /// geometry.
     content: Content,
+    /// The specialisation before the current one, whose pipelines stay, so
+    /// a constant that flips back (a decal expiring, a rectangle light
+    /// switched off) finds its pipelines cached.
+    previous: Option<Specialisation>,
     /// The shaders `get` returns pipelines for, with what their materials
     /// need.
     shaders: Vec<(ShaderId, ShaderContent)>,
@@ -198,6 +202,7 @@ impl GeometryPipelines {
             layers,
             lit_constants: LitConstants::default(),
             content: Content::default(),
+            previous: None,
             shaders: Vec::new(),
             shadow_mask: false,
             anisotropy_inline: attachments_fit(&limits, &targets(GeometryPass::GBuffer, true)),
@@ -217,8 +222,11 @@ impl GeometryPipelines {
     /// and for each shader its materials name, created here on first use,
     /// with the lighting pipelines that take the shadow mask once
     /// `shadow_mask` (ray-traced shadows run). A shader no material names
-    /// any longer loses its programs and pipelines. Without diagnostics
-    /// every frame uses `ALL`.
+    /// any longer loses its programs and pipelines. The pipelines of the
+    /// current and the previous specialisation (layers, lit constants and
+    /// transmission) stay, each with the alpha modes, deformed variants,
+    /// receivers and shadow-mask pipelines it was prepared with; an older
+    /// one's are dropped. Without diagnostics every frame uses `ALL`.
     pub fn specialise(
         &mut self,
         device: &wgpu::Device,
@@ -242,15 +250,22 @@ impl GeometryPipelines {
             &self.shaders,
         ) != (layers, lit_constants, content, shadow_mask, &shaders)
         {
+            let current = self.specialisation();
             self.layers = layers;
             self.lit_constants = lit_constants;
             self.content = content;
             self.shadow_mask = shadow_mask;
+            if self.specialisation() != current {
+                self.previous = Some(current);
+            }
             self.shader_programs
                 .retain(|id, _| shaders.iter().any(|(shader, _)| shader == id));
+            let kept = [Some(self.specialisation()), self.previous];
             self.cache.retain(|key, _| {
-                key.shader
-                    .is_none_or(|id| shaders.iter().any(|(shader, _)| *shader == id))
+                kept.iter().flatten().any(|&kept| key.specialised(kept))
+                    && key
+                        .shader
+                        .is_none_or(|id| shaders.iter().any(|(shader, _)| *shader == id))
             });
             for &(id, _) in &shaders {
                 self.shader_programs
@@ -350,6 +365,11 @@ impl GeometryPipelines {
         }
     }
 
+    /// The current specialisation.
+    fn specialisation(&self) -> Specialisation {
+        (self.layers, self.lit_constants, self.content.transmissive)
+    }
+
     /// The key of `pass`'s pipeline for `variant` and `shader` in the
     /// current specialisation.
     fn key(&self, pass: GeometryPass, variant: Variant, shader: Option<ShaderId>) -> PipelineKey {
@@ -381,6 +401,18 @@ impl GeometryPipelines {
         self.cache
             .get(&key)
             .unwrap_or_else(|| panic!("geometry pipeline {key:?} was not prepared"))
+    }
+
+    /// The pipelines it holds that take `specialisation`'s constants:
+    /// neither casters nor the volume layers, which take none.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn specialised_pipelines(&self, specialisation: Specialisation) -> usize {
+        self.cache
+            .keys()
+            .filter(|key| {
+                !key.pass.caster() && !key.pass.volume() && key.specialised(specialisation)
+            })
+            .count()
     }
 
     /// The shader modules and pipelines it holds for game shaders.
@@ -597,3 +629,5 @@ impl GeometryPipelines {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod primary_depth_precision_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod specialisation_tests;

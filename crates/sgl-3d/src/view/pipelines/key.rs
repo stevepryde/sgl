@@ -108,6 +108,11 @@ impl LitConstants {
     }
 }
 
+/// What a geometry pipeline's constants specialise on: the diagnostics
+/// layers, the lit constants and whether the blended passes compile
+/// transmission in.
+pub(super) type Specialisation = (LayerConstants, LitConstants, bool);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PipelineKey {
     pub(super) pass: GeometryPass,
@@ -162,6 +167,19 @@ impl PipelineKey {
             },
             transmission: transmission && matches!(pass, GeometryPass::Blended { .. }),
         }
+    }
+
+    /// Whether the key is one `new` makes under `specialisation`: casters
+    /// and the volume layers, which take none of its constants, belong to
+    /// every specialisation.
+    pub(super) fn specialised(self, (layers, lit, transmission): Specialisation) -> bool {
+        self == Self::new(
+            self.pass,
+            self.variant,
+            self.shader,
+            (layers, lit),
+            transmission,
+        )
     }
 
     /// The pipeline constants: a masked material's discard (`alpha_mask`,

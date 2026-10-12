@@ -222,6 +222,8 @@ struct RawSceneHit {
  intersection:vec4<u32>,
  coords:vec4<f32>,
 }
+// A triangle's vertices, whose tangents a hit interpolates.
+const SCENE_TRIANGLE_VERTICES:u32=3u;
 // The one hit decode of every trace, portable or hardware: the raw hit's
 // instance, mesh and triangle read through its entry, its positions,
 // normals and tangents as the instance shows them (scene_shown_position).
@@ -255,7 +257,7 @@ fn scene_decode_hit(raw:RawSceneHit,origin:vec3<f32>,direction:vec3<f32>)->Scene
  // Match raster: transform and orthogonalize each authored vertex frame before
  // interpolation, then reorthogonalize the interpolated tangent at shading.
  var tangent=vec4(0.);
- for(var k=0u;k<3u;k++) {
+ for(var k=0u;k<SCENE_TRIANGLE_VERTICES;k++) {
   let authored=frames[k].tangent;
   let vertex_n=normalize((normal_matrix*vec4(frames[k].normal,0.)).xyz);
   let transformed=(world*vec4(authored.xyz,0.)).xyz;

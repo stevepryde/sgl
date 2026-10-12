@@ -92,6 +92,8 @@ struct DrawSet {
  flags:u32,
  displacement_bound:f32,
 }
+// A clip volume's planes, the near plane last.
+const CULL_PLANES:u32=6u;
 // One GPU-built view's cull: its clip volume's planes in world space, each
 // plane's tolerance row, the level of detail's transforms and render size,
 // the early instance cull's candidates and its dispatch's workgroups along
@@ -100,8 +102,8 @@ struct DrawSet {
 // late section queue's capacity, and the index of its first paired command
 // and where its paired regions start in its cluster list.
 struct CullView {
- planes:array<vec4<f32>,6>,
- plane_errors:array<vec4<f32>,6>,
+ planes:array<vec4<f32>,CULL_PLANES>,
+ plane_errors:array<vec4<f32>,CULL_PLANES>,
  lod_clip_from_world:mat4x4<f32>,
  lod_magnitude:mat4x4<f32>,
  lod_size:vec2<f32>,
@@ -176,8 +178,8 @@ fn cull_reaches(model:mat4x4<f32>,lo:vec3<f32>,hi:vec3<f32>)->bool {
  let extent=vec4((hi-lo)*0.5,0.);
  let largest=vec4(max(abs(lo),abs(hi)),1.);
  let absolute=matrix_absolute(model);
- let planes=select(5u,6u,(cull_view.flags&CULL_NEAR)!=0u);
- for(var plane=0u;plane<6u;plane++) {
+ let planes=select(CULL_PLANES-1u,CULL_PLANES,(cull_view.flags&CULL_NEAR)!=0u);
+ for(var plane=0u;plane<CULL_PLANES;plane++) {
   if plane>=planes {
    break;
   }
@@ -189,6 +191,9 @@ fn cull_reaches(model:mat4x4<f32>,lo:vec3<f32>,hi:vec3<f32>)->bool {
  }
  return true;
 }
+// The side in texels of the pyramid block an occlusion test reads: the
+// finest level's whose block holds the box's rectangle.
+const CULL_OCCLUSION_BLOCK:u32=4u;
 // Whether the bounds `lo`..`hi` of a model at pose `model`, seen through
 // `clip_from_world`, lie wholly behind the depth pyramid: Bevy 9d12036's
 // meshlet occlusion test (crates/bevy_pbr/src/meshlet/cull_shared.wesl,
@@ -226,7 +231,7 @@ fn cull_occluded(clip_from_world:mat4x4<f32>,model:mat4x4<f32>,lo:vec3<f32>,hi:v
  let corners=array(p0,p1,p2,p3,p4,p5,p6,p7);
  var lo_ndc=vec3(3.4e38);
  var hi_ndc=vec3(-3.4e38);
- for(var corner=0u;corner<8u;corner++) {
+ for(var corner=0u;corner<LOD_BOX_CORNERS;corner++) {
   let p=corners[corner];
   if p.w<=0. || p.z>p.w {
    return false;
@@ -245,7 +250,7 @@ fn cull_occluded(clip_from_world:mat4x4<f32>,model:mat4x4<f32>,lo:vec3<f32>,hi:v
  let texels=max_texel-min_texel;
  // firstLeadingBit(0) is ~0u, which the + 1 wraps to 0.
  var level=max(firstLeadingBit(max(texels.x,texels.y))+1u,2u)-2u;
- if any((max_texel>>vec2(level))>(min_texel>>vec2(level))+3u) {
+ if any((max_texel>>vec2(level))>(min_texel>>vec2(level))+CULL_OCCLUSION_BLOCK-1u) {
   level+=1u;
  }
  if level>=cull_occlusion.levels {
@@ -254,8 +259,8 @@ fn cull_occluded(clip_from_world:mat4x4<f32>,model:mat4x4<f32>,lo:vec3<f32>,hi:v
  let first=min_texel>>vec2(level);
  let last=max_texel>>vec2(level);
  var farthest=3.4e38;
- for(var row=0u;row<4u;row++) {
-  for(var column=0u;column<4u;column++) {
+ for(var row=0u;row<CULL_OCCLUSION_BLOCK;row++) {
+  for(var column=0u;column<CULL_OCCLUSION_BLOCK;column++) {
    let texel=min(first+vec2(column,row),last);
    farthest=min(farthest,textureLoad(cull_pyramid,texel,level).x);
   }

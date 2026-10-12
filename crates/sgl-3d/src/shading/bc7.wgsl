@@ -89,6 +89,8 @@ fn bc7_unquantize(endpoint:vec4<u32>,bits:vec4<u32>)->vec4<u32> {
  let shifted=endpoint<<(vec4(8u)-bits);
  return shifted|(shifted>>bits);
 }
+// The colour channels whose endpoints a block stores before alpha's.
+const BC7_COLOR_CHANNELS:u32=3u;
 fn bc7_texel(block:vec4<u32>,texel:u32)->vec4<f32> {
  let mode=countTrailingZeros(block.x&0xffu);
  // unexpected mode, clear the block (transparent black)
@@ -129,12 +131,12 @@ fn bc7_texel(block:vec4<u32>,texel:u32)->vec4<f32> {
  let alpha_bits=BC7_ALPHA_BITS[mode];
  var endpoint_0=vec4(0u);
  var endpoint_1=vec4(0u);
- for(var channel=0u;channel<3u;channel++) {
+ for(var channel=0u;channel<BC7_COLOR_CHANNELS;channel++) {
   let channel_at=at+(channel*num_endpoints+subset*2u)*color_bits;
   endpoint_0[channel]=bc7_read_bits(block,channel_at,color_bits);
   endpoint_1[channel]=bc7_read_bits(block,channel_at+color_bits,color_bits);
  }
- at+=3u*num_endpoints*color_bits;
+ at+=BC7_COLOR_CHANNELS*num_endpoints*color_bits;
  endpoint_0.a=bc7_read_bits(block,at+subset*2u*alpha_bits,alpha_bits);
  endpoint_1.a=bc7_read_bits(block,at+(subset*2u+1u)*alpha_bits,alpha_bits);
  at+=num_endpoints*alpha_bits;

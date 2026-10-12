@@ -55,6 +55,8 @@
 // Majercik et al. 2021's TunableShadowBias (G3D's selfShadowBias), at its
 // default.
 const DDGI_SELF_SHADOW_BIAS:f32=.3;
+// The probes at the corners of a receiver's cell, which it blends.
+const DDGI_CELL_PROBES:u32=8u;
 // The volume's irradiance / PI at `position` along `normal`, seen from
 // `view` (toward the viewer), in rgb, and in a its share of the receiver's
 // indirect diffuse: 1 within the volume's extent, fading to 0 over the one
@@ -89,7 +91,7 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,prob
  let bias=(normal*.2+view*.8)*(.75*min(spacing.x,min(spacing.y,spacing.z)))*DDGI_SELF_SHADOW_BIAS;
  var sum_irradiance=vec3(0.);
  var sum_weight=0.;
- for (var i=0u;i<8u;i++) {
+ for (var i=0u;i<DDGI_CELL_PROBES;i++) {
   let offset=vec3(i,i>>1u,i>>2u)&vec3(1u);
   let probe_grid_coord=min(base_grid_coord+offset,probes-vec3(1u));
   // Its texels, where the volume's scroll stores them.

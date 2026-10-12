@@ -61,9 +61,11 @@ struct ShadowCascade {
 }
 // The most shadow cascades a frame holds (view::cascades::MAX_SHADOW_CASCADES).
 const FRAME_SHADOW_CASCADES:u32=4u;
+// The directional lights a frame holds (FrameInput::directional_lights).
+const FRAME_DIRECTIONAL_LIGHTS:u32=2u;
 // What every view of one frame shares.
 struct Frame {
- directional_lights:array<DirectionalLight,2>,
+ directional_lights:array<DirectionalLight,FRAME_DIRECTIONAL_LIGHTS>,
  // The shadowed light's cascades, nearest first: the first
  // shadow_cascade_count are in use.
  shadow_cascades:array<ShadowCascade,FRAME_SHADOW_CASCADES>,
