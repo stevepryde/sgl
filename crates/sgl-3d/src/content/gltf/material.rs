@@ -136,17 +136,18 @@ pub(super) fn read_material(
         }
         wrap = Some(modes);
     }
-    // glTF 2.0's material schema bounds baseColorFactor to 0..1 and
-    // emissiveFactor to nonnegative values (not to its upper bound of 1,
-    // which some exporters exceed for HDR emission), and KHR_materials_emissive_strength's
-    // emissiveStrength to finite nonnegative values; the gltf crate checks
-    // none of them.
+    // The core factors the scene refuses (`validate_core`), which the gltf
+    // crate does not check: base colour RGB and emission finite and
+    // nonnegative (either may exceed glTF's 1 for HDR), base alpha in 0..1,
+    // and KHR_materials_emissive_strength's emissiveStrength finite and
+    // nonnegative.
     let nonnegative = |value: &f32| value.is_finite() && *value >= 0.;
     let base = pbr.base_color_factor();
-    if !base.iter().all(|value| (0.0..=1.0).contains(value)) {
-        return Err(
-            format!("material {name}: baseColorFactor must be four numbers in 0..1").into(),
-        );
+    if !(base[..3].iter().all(nonnegative) && (0.0..=1.0).contains(&base[3])) {
+        return Err(format!(
+            "material {name}: baseColorFactor must have finite nonnegative RGB and an alpha in 0..1"
+        )
+        .into());
     }
     let strength = material.emissive_strength().unwrap_or(1.0);
     if !nonnegative(&strength) {

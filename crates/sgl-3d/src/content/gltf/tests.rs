@@ -1268,21 +1268,28 @@ fn a_bump_factor_defaults_to_one_and_may_exceed_one() {
     );
 }
 
-// Defect: a core factor outside glTF's bounds loaded, to fail later in
-// `Scene::add_materials` with an error naming neither file nor material.
-// The oracle is glTF 2.0's material schema (baseColorFactor in 0..1,
-// emissiveFactor at least 0) and KHR_materials_emissive_strength's
-// (emissiveStrength at least 0).
+// Defects: a core factor the scene refuses loaded, to fail later in
+// `Scene::add_materials` with an error naming neither file nor material;
+// or the load refusing an HDR base colour the scene accepts. The oracle is
+// `SceneError::InvalidMaterialFactors`' contract: base colour RGB and
+// emission finite and nonnegative, base alpha in 0..1; and
+// KHR_materials_emissive_strength's schema (emissiveStrength at least 0).
 #[test]
-fn core_factors_outside_gltfs_bounds_fail_the_load() {
+fn core_factors_the_scene_refuses_fail_the_load() {
     for material in [
         serde_json::json!({"extensions": {"KHR_materials_emissive_strength": {"emissiveStrength": -2}}}),
         serde_json::json!({"emissiveFactor": [-1, 0, 0]}),
-        serde_json::json!({"pbrMetallicRoughness": {"baseColorFactor": [2, 1, 1, 1]}}),
+        serde_json::json!({"pbrMetallicRoughness": {"baseColorFactor": [-0.5, 1, 1, 1]}}),
+        serde_json::json!({"pbrMetallicRoughness": {"baseColorFactor": [1, 1, 1, 2]}}),
     ] {
         let label = material.to_string();
         assert!(read_textured_material(material).is_err(), "{label} loaded");
     }
+    let hdr = read_textured_material(
+        serde_json::json!({"pbrMetallicRoughness": {"baseColorFactor": [2, 1, 1, 1]}}),
+    )
+    .unwrap();
+    assert_eq!(hdr.base, [2., 1., 1., 1.]);
 }
 
 // Defects: a clearcoat or iridescence texture's index taken for its image
