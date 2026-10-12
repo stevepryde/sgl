@@ -29,6 +29,9 @@
 // pixel coordinate.
 
 const MAX_LIGHTS: u32 = 32u;
+// A 3×3 box filter: the nested loops make nine taps in total (AR-12).
+const SHADOW_TAP_RADIUS: i32 = 1;
+const SHADOW_TAP_COUNT: i32 = (2 * SHADOW_TAP_RADIUS + 1) * (2 * SHADOW_TAP_RADIUS + 1);
 
 struct Light {
     // Light position xy, half footprint zw (the world camera's units).
@@ -115,13 +118,13 @@ fn fs_light(in: LightVsOut) -> @location(0) vec4<f32> {
 
     // Occluder shadow: 3×3 box tap for a soft, PCF-ish edge.
     var lit = 0.0;
-    for (var dy = -1; dy <= 1; dy = dy + 1) {
-        for (var dx = -1; dx <= 1; dx = dx + 1) {
+    for (var dy = -SHADOW_TAP_RADIUS; dy <= SHADOW_TAP_RADIUS; dy = dy + 1) {
+        for (var dx = -SHADOW_TAP_RADIUS; dx <= SHADOW_TAP_RADIUS; dx = dx + 1) {
             let p = clamp(pix + vec2<i32>(dx, dy), vec2<i32>(0, 0), bounds);
             lit = lit + textureLoad(shadow_tex, p, 0).r;
         }
     }
-    let shadow = mix(1.0, lit / 9.0, light.params.y);
+    let shadow = mix(1.0, lit / f32(SHADOW_TAP_COUNT), light.params.y);
 
     // Intensity: the cookie (the shipped cookies carry the falloff in alpha
     // over a constant color) or, for analytic lights, the radial falloff.
