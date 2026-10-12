@@ -387,6 +387,9 @@ impl IoWorker {
                     }
                 },
             };
+            // Avoid delayed-ACK stalls for small game updates. Keep the
+            // connection even if the platform refuses the socket option.
+            let _ = stream.set_nodelay(true);
             if !acceptor.rate.allow(Instant::now()) {
                 continue;
             }
@@ -634,7 +637,56 @@ fn handshake_timed_out() -> io::Error {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{AdmissionRules, OriginPolicy};
     use super::*;
+    use std::sync::Mutex;
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn accepted_socket_disables_nagle_before_upgrade() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let context = ListenerContext {
+            admission: Admission(Arc::new(AdmissionRules {
+                path: "/game/ws".into(),
+                origin_policy: OriginPolicy::allow_any(),
+                subprotocol: "test.v1".into(),
+            })),
+            magic: *b"TST",
+            reliable: crate::ReliableConfig::DEFAULT,
+            handshake_timeout: Duration::from_secs(2),
+            ping_interval_ms: 0,
+            timeout_ms: 0,
+            registry: Arc::new(Mutex::new(BTreeMap::new())),
+            accepting: Arc::new(AtomicBool::new(true)),
+            occupancy: Arc::new(AtomicUsize::new(0)),
+            max_connections: 1,
+            max_accepts_per_second: 1,
+        };
+        let (mut worker, _waker) = IoWorker::new().expect("worker");
+        worker.listen(listener, context).expect("listen");
+        let _client = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(2))
+            .expect("connect loopback");
+        worker
+            .poll
+            .poll(&mut worker.events, Some(Duration::from_secs(2)))
+            .expect("listener readiness");
+        worker.accept();
+        // With no HTTP request sent, inspect the production accept path's
+        // real socket while its upgrade is still waiting for bytes.
+        let handshake = worker.handshakes.values().next().expect("pending upgrade");
+        assert!(
+            handshake
+                .mid
+                .get_ref()
+                .get_ref()
+                .nodelay()
+                .expect("read accepted socket TCP_NODELAY")
+        );
+    }
 
     #[test]
     fn only_interrupted_or_reset_accepts_retry_at_once() {

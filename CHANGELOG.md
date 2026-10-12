@@ -27,6 +27,9 @@ docs and specs the entry links.
   could cover higher UI layers; draws now stay within their own band, so
   panels, popovers and modals stay above lower layers at any widget count.
   No game-code changes.
+- `sgl-net` native WebSocket server and client sockets previously left Nagle's
+  algorithm enabled; they now disable it before the handshake where the
+  platform supports `TCP_NODELAY`. No game-code changes needed.
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;
   diagonal slides stop earlier along the surface by the backed-off motion's
