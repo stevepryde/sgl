@@ -80,7 +80,8 @@ settings SGL3D has today.
    a separate budget of the same size. Image headers are checked before pixel
    decoding: each side is at most 16384 and the retained RGBA8 bytes are
    charged, with decoder allocation limits set to the available budget. KTX2
-   BC7 chains validate dimensions, mip count and total decoded level bytes
+   BC7 chains reject malformed data format descriptor blocks with an error
+   before parsing, and validate dimensions, mip count and total decoded level bytes
    before expansion. Decoded output length is capped at each expected level
    size plus one sentinel; advertised windows never allocate history, and
    regenerated literals and sequences are bounded by the format's 128 KiB

@@ -52,6 +52,56 @@ const BLOCK: u32 = 4;
 /// Bytes of a BC7 block.
 const BLOCK_BYTES: usize = 16;
 
+/// ktx2 0.5.0 eagerly parses the DFD, incrementing dimension bytes in u8.
+/// Check its block bounds and unsupported 256-texel dimensions before that
+/// parser. KTX 2.0 section 3.10 / Khronos Data Format 1.4 define this layout.
+fn check_ktx2_dfd(bytes: &[u8]) -> Result<()> {
+    let raw = bytes
+        .get(..ktx2::Header::LENGTH)
+        .ok_or("invalid KTX2 file: truncated header")?;
+    let header = ktx2::Header::from_bytes(raw.try_into()?)
+        .map_err(|error| format!("invalid KTX2 file: {error}"))?;
+    let index = header.index;
+    let end = index
+        .dfd_byte_offset
+        .checked_add(index.dfd_byte_length)
+        .ok_or("invalid KTX2 data format descriptor: range overflow")?;
+    let descriptor = bytes
+        .get(index.dfd_byte_offset as usize..end as usize)
+        .ok_or("invalid KTX2 data format descriptor: truncated section")?;
+    let mut blocks = descriptor
+        .get(4..)
+        .ok_or("invalid KTX2 data format descriptor: truncated size")?;
+    while !blocks.is_empty() {
+        let header = blocks
+            .get(..ktx2::dfd::BlockHeader::LENGTH)
+            .ok_or("invalid KTX2 data format descriptor: truncated block header")?;
+        let size = u16::from_le_bytes(header[6..8].try_into()?) as usize;
+        if size < ktx2::dfd::BlockHeader::LENGTH {
+            return Err(
+                "invalid KTX2 data format descriptor: block shorter than its header".into(),
+            );
+        }
+        let block = blocks
+            .get(..size)
+            .ok_or("invalid KTX2 data format descriptor: truncated block")?;
+        // Match the same vendor/type/version as ktx2's basic-block parser;
+        // other descriptor blocks have different layouts.
+        if header[..6] == ktx2::dfd::BlockHeader::BASIC.as_bytes(0)[..6] {
+            let dimensions = block
+                .get(12..16)
+                .ok_or("invalid KTX2 data format descriptor: truncated dimensions")?;
+            if dimensions.contains(&0xff) {
+                return Err(
+                    "invalid KTX2 data format descriptor: unsupported texel-block dimension".into(),
+                );
+            }
+        }
+        blocks = &blocks[size..];
+    }
+    Ok(())
+}
+
 impl Image {
     /// Level 0's width and height in texels.
     pub(crate) fn size(&self) -> [u32; 2] {
@@ -76,7 +126,8 @@ impl CompressedImage {
     /// `VK_FORMAT_BC7_UNORM_BLOCK` or `VK_FORMAT_BC7_SRGB_BLOCK` (the channel
     /// that samples it picks sRGB or linear, as Bevy's loader does), with
     /// its stored levels, uncompressed or supercompressed with Zstandard.
-    /// Refuses sides above 16384, invalid block dimensions or mip counts,
+    /// Refuses malformed data format descriptors, sides above 16384,
+    /// invalid block dimensions or mip counts,
     /// and levels whose declared or decoded size differs from their BC7
     /// size. The total decoded chain is budgeted before level allocation;
     /// the decoder bounds regenerated blocks before buffer growth.
@@ -85,6 +136,7 @@ impl CompressedImage {
     }
 
     fn read_ktx2(bytes: &[u8], budget: &mut Budget) -> Result<Self> {
+        check_ktx2_dfd(bytes)?;
         let reader =
             ktx2::Reader::new(bytes).map_err(|error| format!("invalid KTX2 file: {error}"))?;
         let header = reader.header();
@@ -237,6 +289,21 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     use crate::test_support::ktx2;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    // A DFD stores each block dimension minus one. 0xff makes ktx2's
+    // u8 increment overflow; malformed bytes must fail the public loader.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn ktx2_invalid_descriptor_dimensions_return_an_error() {
+        let valid = ktx2(ktx2::Format::BC7_UNORM_BLOCK, [4; 2], &[vec![0; 16]], false);
+        assert!(CompressedImage::from_ktx2(&valid).is_ok());
+        let dfd = u32::from_le_bytes(valid[48..52].try_into().unwrap()) as usize;
+        for axis in 0..4 {
+            let mut file = valid.clone();
+            file[dfd + 16 + axis] = 0xff;
+            let error = CompressedImage::from_ktx2(&file).unwrap_err().to_string();
+            assert!(error.contains("data format descriptor"), "{error}");
+        }
+    }
 
     // The BC7 format independently requires one 16-byte block for 4x4.
     // A 64 KiB Zstandard payload lies about its decoded size. Its own frame

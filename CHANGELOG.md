@@ -28,6 +28,8 @@ docs and specs the entry links.
 - `sgl-net` UDP `Disconnect` handling: a valid disconnect arriving before its confirm formerly admitted a ghost connection on that confirm; the server now retires the cookie before admission. No game-code changes are needed.
 
 - `sgl-net` UDP `Endpoint::disconnect`: closing peers formerly ignored newly received reliable fragments; they now buffer and acknowledge them under the existing limits without returning new messages. No game-code changes are needed.
+- `sgl-3d` `CompressedImage::from_ktx2`: a corrupt KTX2 data format descriptor formerly panicked; it now returns `Err`. No game-code changes are needed.
+
 - `sgl-3d` `asset::load`/`load_slice`: malformed glTF accessor references, animation targets and image sources formerly panicked; they now return `Err` naming the element. No game-code changes are needed.
 - `sgl-3d` `LightShape::Spot`: a closed or unrepresentably narrow casting cone formerly built a non-finite shadow view; it now releases its shadow slots until its projection is finite. No game-code changes are needed.
 - `sgl-2d` `Context`: windows larger than the device texture limit formerly panicked during startup or resize; swapchain dimensions are now capped per axis to that limit. No game-code changes are needed.
