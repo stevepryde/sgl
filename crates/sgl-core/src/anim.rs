@@ -80,11 +80,11 @@ impl FrameAnimation {
     /// [`LoopMode::Once`] animation finishes (a completion edge, once).
     ///
     /// Large `dt` steps multiple frames; the leftover carries into the new
-    /// frame so long-run timing never drifts. A non-finite `dt` is ignored. A
-    /// [`LoopMode::Repeat`] tick whose frame duration is too small for `f32`
-    /// to subtract from the accumulated time drops the remainder.
+    /// frame so long-run timing never drifts. A nonpositive or non-finite `dt`
+    /// is ignored. A [`LoopMode::Repeat`] tick whose frame duration is too
+    /// small for `f32` to subtract from the accumulated time drops the remainder.
     pub fn tick(&mut self, dt: f32) -> bool {
-        if self.finished || !dt.is_finite() {
+        if self.finished || !dt.is_finite() || dt <= 0.0 {
             return false;
         }
         self.timer += dt;
@@ -236,6 +236,26 @@ mod tests {
         }
         a.tick(0.1);
         assert_eq!(a.current_frame(), 1);
+    }
+
+    /// A backward clock step must neither delay the next frame nor erase
+    /// time already accumulated toward it.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn nonpositive_dt_does_not_build_time_debt() {
+        for loop_mode in [LoopMode::Once, LoopMode::Repeat] {
+            let mut anim = FrameAnimation::new([3, 4, 5], 10.0, loop_mode);
+            assert!(!anim.tick(-1.0));
+            assert!(!anim.tick(0.1));
+            assert_eq!(anim.current_frame(), 4);
+            assert!(!anim.tick(0.05));
+            for dt in [-1.0, 0.0, -0.0] {
+                assert!(!anim.tick(dt));
+            }
+            assert!(!anim.tick(0.05));
+            assert_eq!(anim.current_frame(), 5);
+            assert_eq!(anim.tick(0.1), loop_mode == LoopMode::Once);
+            assert_eq!(anim.is_finished(), loop_mode == LoopMode::Once);
+        }
     }
 
     /// #313: a frame duration below the timer's `f32` precision (2^-30 s

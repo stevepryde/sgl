@@ -60,9 +60,11 @@ browser client must get identical results from it.
    construction or reset. Ping-pong turns on the first and last frame steps
    and never plays either end frame twice; steps outside them play once per
    turnaround.
-   Every tick returns: a non-finite `dt` is ignored, and in a repeating loop
-   a tick whose duration is too small for `f32` to subtract from the
-   accumulated time drops the remainder. So does a repeating cycle that
+   Every tick returns: a nonpositive or non-finite `dt` is ignored without
+   accumulating time, advancing steps, or drawing from `Rng`. Each sequence
+   tick still clears the prior completion edge and action queue. In a
+   repeating loop a tick whose duration is too small for `f32` to subtract
+   from the accumulated time drops the remainder. So does a repeating cycle that
    consumes no time, after as many zero-time advances as it has playback
    positions (frames plus other steps, doubled for ping-pong), by when every
    position has played at least once.

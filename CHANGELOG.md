@@ -73,6 +73,10 @@ docs and specs the entry links.
   out-of-range indices previously loaded with missing substitutions; they
   now fail the load. Re-export valid glTF; no game-code changes needed.
 
+
+- `sgl-core` `FrameAnimation::tick` and `AnimationSequence::tick`: negative
+  `dt` accumulated hidden time debt and zero `dt` could advance sequence
+  steps; both now ignore nonpositive `dt`. No game-code changes needed.
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they
