@@ -72,7 +72,7 @@ impl Rigging {
                     &[DataType::F32],
                     &[Dimensions::Mat4],
                     Some(skin.joints().count()),
-                    buffer_bytes,
+                    (buffers, buffer_bytes),
                 )?;
             }
             let reader = skin.reader(|buffer| Some(&buffers[buffer.index()].0));
@@ -226,7 +226,7 @@ fn read_clip(
                 &[F32],
                 &[Dimensions::Scalar],
                 None,
-                buffer_bytes,
+                (buffers, buffer_bytes),
             )?;
             let interpolation = match sampler.interpolation() {
                 GltfInterpolation::Step => Interpolation::Step,
@@ -270,7 +270,7 @@ fn read_clip(
                 types,
                 &[shape],
                 Some(values),
-                buffer_bytes,
+                (buffers, buffer_bytes),
             )?;
             let reader = channel.reader(|buffer| Some(&buffers[buffer.index()].0));
             let times: Vec<f32> = reader

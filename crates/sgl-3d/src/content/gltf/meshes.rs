@@ -212,7 +212,7 @@ fn read_mesh_node(
                     types,
                     shapes,
                     vertices.filter(|_| semantic != Semantic::Positions),
-                    buffer_bytes,
+                    (buffers, buffer_bytes),
                 )?;
             }
             if let Some(indices) = primitive.indices() {
@@ -222,7 +222,7 @@ fn read_mesh_node(
                     &[U8, U16, U32],
                     &[Scalar],
                     None,
-                    buffer_bytes,
+                    (buffers, buffer_bytes),
                 )?;
             }
             for (target, displacements) in primitive.morph_targets().enumerate() {
@@ -240,7 +240,7 @@ fn read_mesh_node(
                         &[F32],
                         &[Dimensions::Vec3],
                         vertices,
-                        buffer_bytes,
+                        (buffers, buffer_bytes),
                     )?;
                 }
             }

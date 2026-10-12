@@ -78,6 +78,10 @@ settings SGL3D has today.
    hierarchy depth: valid trees within the asset load budget have no depth
    limit. Mesh nodes are visited depth-first, with scene roots and children
    in declared order; batching preserves that order within each batch.
+   Every sparse accessor read by a load must have
+   strictly increasing indices below its element count, as
+   [glTF 2.0 3.6.2.3](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#sparse-accessors)
+   requires; invalid indices fail with an error naming the accessor.
    Games keep authored sources, export recipes and gameplay RON.
    Scene input validation rejects non-finite material `normal_scale`,
    `coat_normal_scale` and `bump_scale` with `InvalidMaterialFactors`,

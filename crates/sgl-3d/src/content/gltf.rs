@@ -535,8 +535,9 @@ fn load_bytes(document: &gltf::Document, scene: &gltf::Scene<'_>) -> Option<u64>
 /// type or shape glTF 2.0 does not allow for its use (`types`, `shapes`),
 /// one of no elements, and one whose elements or sparse substitutions do
 /// not lie within their buffer views at a stride no narrower than an
-/// element, or whose views do not lie within their buffers. `what` names
-/// its use.
+/// element, whose views do not lie within their buffers, or whose sparse
+/// indices are not strictly increasing and below its count (glTF 2.0
+/// 3.6.2.3). `what` names its use.
 ///
 /// It also refuses one whose element count its use does not allow, before
 /// gltf's readers allocate that many, so what each use reads stays in
@@ -553,7 +554,7 @@ fn check_accessor(
     types: &[DataType],
     shapes: &[Dimensions],
     count: Option<usize>,
-    buffer_bytes: usize,
+    (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
 ) -> Result<()> {
     let index = accessor.index();
     let (data_type, shape) = (accessor.data_type(), accessor.dimensions());
@@ -584,7 +585,7 @@ fn check_accessor(
     let within = accessor
         .view()
         .is_none_or(|view| fits(&view, accessor.offset(), accessor.count(), size))
-        && sparse.is_none_or(|sparse| {
+        && sparse.as_ref().is_none_or(|sparse| {
             let (indices, values) = (sparse.indices(), sparse.values());
             fits(
                 &indices.view(),
@@ -598,6 +599,33 @@ fn check_accessor(
             "{what} accessor {index} does not fit its buffer view and buffer; re-export valid glTF"
         )
         .into());
+    }
+    if let Some(sparse) = sparse {
+        use gltf::accessor::sparse::IndexType;
+        use gltf::accessor::util::{ItemIter, SparseIndicesIter};
+
+        let indices = sparse.indices();
+        let view = indices.view();
+        let stride = view.stride().unwrap_or(indices.index_type().size());
+        // `fits` proved these offsets and every index are inside the
+        // imported buffer. Use the same typed iterator and stride as gltf's
+        // sparse reader, which otherwise silently drops invalid indices.
+        let bytes = &buffers[view.buffer().index()].0
+            [view.offset() + indices.offset()..view.offset() + view.length()];
+        let indices = match indices.index_type() {
+            IndexType::U8 => SparseIndicesIter::U8(ItemIter::new(bytes, stride)),
+            IndexType::U16 => SparseIndicesIter::U16(ItemIter::new(bytes, stride)),
+            IndexType::U32 => SparseIndicesIter::U32(ItemIter::new(bytes, stride)),
+        };
+        let mut previous = None;
+        for sparse_index in indices.take(sparse.count()) {
+            if sparse_index as usize >= elements
+                || previous.is_some_and(|previous| sparse_index <= previous)
+            {
+                return Err(format!("{what} accessor {index} has sparse indices that are not strictly increasing and below its {elements} elements; re-export valid glTF").into());
+            }
+            previous = Some(sparse_index);
+        }
     }
     Ok(())
 }

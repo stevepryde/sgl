@@ -67,7 +67,9 @@ them through unrefracted. A probe captured on an
   (within 0.02°) is absent except on an anisotropic material, which
   refuses it. Other
   unsupported features return errors rather
-  than partial models. [Limits](../README.md#asset-and-environment-limits).
+  than partial models. Sparse accessor indices must strictly increase and
+  stay below the accessor's count; invalid ones fail the load.
+  [Limits](../README.md#asset-and-environment-limits).
   Valid node trees have no depth limit within the asset load budget; roots
   and children load depth-first in declared order, preserved within each batch.
 - **Compressed material textures**: a material image is decoded RGBA8, whose
