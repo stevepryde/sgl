@@ -114,7 +114,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
    collapsing header flip their caller-owned flag on press-down over the whole
    rect. A numeric field's `-`/`+` ends add its step; a horizontal drag on the
    middle past a small threshold scrubs the value by its speed per pixel from
-   the press point; a press released inside the threshold opens the middle for
+   the press point; travel past the threshold on either axis prevents click-to-type.
+   A press released inside the threshold opens the middle for
    typing, and the typed text is re-parsed whenever it changes — a parse that succeeds
    stores the number and one that fails leaves the value. Every stored value
    is clamped into the field's range. Widgets emit only to the screen channel.
