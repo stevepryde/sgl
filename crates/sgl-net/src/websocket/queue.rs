@@ -443,6 +443,15 @@ impl PeerState {
                     return Ok(Received::Accepted);
                 }
             }
+            // The message cap is a protocol rule, independent of queue room.
+            // Reject it before either native holding or browser admission.
+            Delivery::Reliable(_)
+                if envelope.payload.len() > self.reliable.max_message_bytes
+                    || matches!(envelope.fragment, Fragment::First { total }
+                        if total as usize > self.reliable.max_message_bytes) =>
+            {
+                DisconnectReason::ProtocolViolation
+            }
             Delivery::Reliable(lane) => {
                 let bounds = &self.reliable.lanes[lane.index()];
                 let inbound = &mut self.inbound[lane.index()];
@@ -1145,6 +1154,57 @@ mod tests {
             Err(SendError::Disconnected)
         );
         assert_eq!(peer.terminal(), Some(DisconnectReason::ProtocolViolation));
+    }
+
+    /// A full lane must not mask an over-cap whole message or declaration
+    /// as native backpressure or browser overflow (netcode.md 13, 15).
+    #[wasm_bindgen_test(unsupported = test)]
+    fn message_caps_are_rejected_before_inbound_admission() {
+        let mut config = ReliableConfig::DEFAULT;
+        config.max_message_bytes = 100;
+        config.lanes[2].inbound_messages = 1;
+        let within = Envelope {
+            delivery: Delivery::Reliable(lane(2)),
+            sequence: 0,
+            fragment: Fragment::Whole,
+            payload: b"within",
+        };
+        for hold in [false, true] {
+            for full in [false, true] {
+                for (fragment, payload) in [
+                    (Fragment::Whole, &[0; 200][..]),
+                    (Fragment::First { total: 200 }, &b"first"[..]),
+                ] {
+                    let mut peer = PeerState::new(&config);
+                    if full {
+                        peer.apply(within, hold).unwrap();
+                    }
+                    assert_eq!(
+                        peer.apply(
+                            Envelope {
+                                fragment,
+                                payload,
+                                ..within
+                            },
+                            hold
+                        ),
+                        Err(DisconnectReason::ProtocolViolation),
+                        "hold={hold}, full={full}, fragment={fragment:?}"
+                    );
+                    assert_eq!(peer.terminal(), Some(DisconnectReason::ProtocolViolation));
+                    if full {
+                        assert_eq!(
+                            peer.pop_inbound(),
+                            Some((within.delivery, b"within".to_vec()))
+                        );
+                    }
+                    assert!(
+                        peer.pop_inbound().is_none(),
+                        "over-cap data is never delivered"
+                    );
+                }
+            }
+        }
     }
 
     /// A stale latest state and a fragment that breaks the reassembly

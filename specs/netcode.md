@@ -261,6 +261,8 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     flags, an invalid lane, latest state or an unreliable message with
     fragment flags, a total not above its fragment, and frames over
     `MAX_WEBSOCKET_FRAME_BYTES` are rejected as `ProtocolViolation`, as are
+    reliable whole messages or first-fragment declared totals above
+    `max_message_bytes`, even when the lane is full, and
     frames that break WebSocket framing (reserved bits, an unmasked client
     frame, an unknown opcode); a peer that ends the stream without a Close
     is `Peer`, as in the browser and memory transports. Every
