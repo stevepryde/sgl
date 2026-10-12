@@ -295,9 +295,20 @@ impl BrowserWebSocketClient {
         if self.socket.socket.ready_state() != WebSocket::OPEN {
             return;
         }
+        // A latest state over its watermark stays coalesced without holding
+        // back lane frames, which wait only for their own watermark; it
+        // cannot fit again this flush, as sends only fill the buffer.
+        let mut latest_waits = false;
         loop {
             let buffered = self.socket.socket.buffered_amount() as usize;
-            let next = self.state.borrow().peer.next_released_frame_len();
+            let next = {
+                let peer = &self.state.borrow().peer;
+                if latest_waits {
+                    peer.next_released_lane_frame_len()
+                } else {
+                    peer.next_released_frame_len()
+                }
+            };
             let Some((delivery, frame_bytes)) = next else {
                 break;
             };
@@ -311,14 +322,21 @@ impl BrowserWebSocketClient {
             };
             // Paced, never fatal: the frame waits for the browser to drain.
             if buffered.saturating_add(frame_bytes) > limit {
+                if delivery == Delivery::LatestState {
+                    latest_waits = true;
+                    continue;
+                }
                 break;
             }
-            let next_frame = self
-                .state
-                .borrow_mut()
-                .peer
-                .pop_released_frame()
-                .expect("released outbound frame was observed above");
+            let next_frame = {
+                let peer = &mut self.state.borrow_mut().peer;
+                if latest_waits {
+                    peer.pop_released_lane_frame()
+                } else {
+                    peer.pop_released_frame()
+                }
+            }
+            .expect("released outbound frame was observed above");
             let Ok(encoded) = encode_envelope(self.config.identity.magic, &next_frame.envelope())
             else {
                 self.close_protocol();

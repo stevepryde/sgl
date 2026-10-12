@@ -1082,7 +1082,10 @@ impl<T: DatagramTransport> Endpoint<T> {
                 });
             }
             Kind::Disconnect => {
-                let Some(id) = self.match_peer(source, nonces) else {
+                let Some(id) = self
+                    .match_peer(source, nonces)
+                    .or_else(|| self.match_issued_cookie(source, nonces, now_ms))
+                else {
                     return;
                 };
                 // One the caller closed was reported `Local` already.
@@ -1303,6 +1306,18 @@ impl<T: DatagramTransport> Endpoint<T> {
     fn match_peer(&self, source: SocketAddr, nonces: Nonces) -> Option<u64> {
         let id = *self.routes.get(&(source, nonces.client))?;
         (self.peers.get(&id)?.nonces == nonces).then_some(id)
+    }
+
+    /// A client that asked again may hold a newer challenge's cookie than
+    /// the one this server admitted, and close before the accept naming the
+    /// admitted one arrives. The route and a valid cookie this server issued
+    /// to it still identify that connection.
+    fn match_issued_cookie(&self, source: SocketAddr, nonces: Nonces, now_ms: u64) -> Option<u64> {
+        let id = *self.routes.get(&(source, nonces.client))?;
+        self.cookie_key
+            .as_ref()?
+            .validate(source, nonces.client, nonces.server, now_ms)?;
+        Some(id)
     }
 
     fn send_control(&mut self, addr: SocketAddr, kind: Kind, nonces: Nonces, now_ms: u64) -> bool {
@@ -3088,16 +3103,26 @@ mod tests {
         assert!(server.routes.is_empty());
     }
 
-    /// A delayed newer challenge crosses the accept for an already admitted
-    /// cookie. The client adopts that accept first; its newer confirmation
-    /// must not change the live session's cookie or reset either lane's ARQ.
-    /// Oracle: reliable messages keep flowing in both directions, in order,
-    /// before and after the confirmation, with one connection event per end.
-    #[wasm_bindgen_test(unsupported = test)]
-    #[allow(clippy::too_many_lines)] // Keep the reordered handshake in one chronological fixture.
-    fn a_late_newer_confirm_keeps_the_admitted_session_live_in_both_directions() {
-        let (server_addr, client_addr) =
-            (address(192, 0, 2, 1, 7_000), address(192, 0, 2, 2, 40_000));
+    /// The #697 sequence up to the client adopting a newer challenge: the
+    /// server has admitted the first cookie, every accept for it so far was
+    /// lost, the client asked again and confirms the delayed newer cookie
+    /// (held back in `delayed_confirm`), and `admitted_accept` is in flight.
+    struct NewerChallengeAfterAdmission {
+        server: Endpoint<RecordingTransport>,
+        client: Endpoint<RecordingTransport>,
+        client_peer: u64,
+        server_peer: u64,
+        delayed_confirm: Vec<SentDatagram>,
+        admitted_accept: Vec<SentDatagram>,
+    }
+
+    const SERVER_ADDR: SocketAddr =
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 7_000));
+    const CLIENT_ADDR: SocketAddr =
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 2), 40_000));
+
+    fn newer_challenge_after_admission() -> NewerChallengeAfterAdmission {
+        let (server_addr, client_addr) = (SERVER_ADDR, CLIENT_ADDR);
         let mut server = Endpoint::server(
             RecordingTransport::default(),
             EndpointConfig::default(),
@@ -3159,7 +3184,34 @@ mod tests {
             false
         });
         assert!(client.poll(6_170).is_empty());
-        let mut delayed_confirm = std::mem::take(&mut client.transport.sent);
+        let delayed_confirm = std::mem::take(&mut client.transport.sent);
+        NewerChallengeAfterAdmission {
+            server,
+            client,
+            client_peer,
+            server_peer,
+            delayed_confirm,
+            admitted_accept,
+        }
+    }
+
+    /// A delayed newer challenge crosses the accept for an already admitted
+    /// cookie. The client adopts that accept first; its newer confirmation
+    /// must not change the live session's cookie or reset either lane's ARQ.
+    /// Oracle: reliable messages keep flowing in both directions, in order,
+    /// before and after the confirmation, with one connection event per end.
+    #[wasm_bindgen_test(unsupported = test)]
+    #[allow(clippy::too_many_lines)] // Keep the reordered handshake in one chronological fixture.
+    fn a_late_newer_confirm_keeps_the_admitted_session_live_in_both_directions() {
+        let NewerChallengeAfterAdmission {
+            mut server,
+            mut client,
+            client_peer,
+            server_peer,
+            mut delayed_confirm,
+            admitted_accept,
+        } = newer_challenge_after_admission();
+        let (server_addr, client_addr) = (SERVER_ADDR, CLIENT_ADDR);
         server.transport.sent = admitted_accept;
         ferry(&mut server, server_addr, &mut client, client_addr, |_| {
             false
@@ -3224,6 +3276,40 @@ mod tests {
             assert!(server.poll(now + 1).is_empty());
             assert!(client.poll(now + 1).is_empty());
         }
+    }
+
+    /// The client closes after adopting the newer challenge but before the
+    /// accept naming the admitted cookie arrives, so its disconnect carries
+    /// the newer cookie. Oracle: the server ends its connection with `Peer`
+    /// on that disconnect rather than holding it until `timeout_ms`.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_disconnect_with_a_newer_issued_cookie_ends_the_admitted_connection() {
+        let NewerChallengeAfterAdmission {
+            mut server,
+            mut client,
+            client_peer,
+            server_peer,
+            ..
+        } = newer_challenge_after_admission();
+        client.disconnect(client_peer, 6_175);
+        assert_eq!(
+            client.poll(6_175),
+            [EndpointEvent::Disconnected {
+                peer: client_peer,
+                reason: DisconnectReason::Local,
+            }]
+        );
+        ferry(&mut client, CLIENT_ADDR, &mut server, SERVER_ADDR, |_| {
+            false
+        });
+        assert_eq!(
+            server.poll(6_180),
+            [EndpointEvent::Disconnected {
+                peer: server_peer,
+                reason: DisconnectReason::Peer,
+            }]
+        );
+        assert!(server.peers.is_empty());
     }
 
     #[wasm_bindgen_test(unsupported = test)]

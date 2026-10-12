@@ -200,7 +200,8 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     flags, latest state with a lane, a first fragment declaring no more than
     it carries, or mask bits on a control kind is rejected; from a connected
     peer that is `ProtocolViolation`. Handshakes use a keyed cookie
-    challenge with a per-prefix challenge budget and a confirm replay cache
+    challenge with a per-prefix challenge budget (IPv4 /24, including
+    IPv4-mapped IPv6 sources; IPv6 /64) and a confirm replay cache
     that keeps every verified confirm until its cookie expires. A client
     confirms the first challenge it receives and ignores others, so
     challenges to its retried requests, reordered across a cookie epoch,
@@ -217,7 +218,10 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     accept. A client honours a deny only before it connects and only for the
     cookie it holds, and answers it with a disconnect for that cookie, so a
     server that already admitted a retried confirm frees the connection
-    rather than waiting out `timeout_ms`. Every disconnect a UDP endpoint
+    rather than waiting out `timeout_ms`. A server also ends a connection on
+    a disconnect from its route carrying any cookie it issued that is still
+    valid, as a client that asked again may close holding a newer cookie
+    before the accept naming the admitted one arrives. Every disconnect a UDP endpoint
     sends (a close, a deny's answer, or a peer closed for a violation,
     overflow or stalled send) goes out three times, so one lost datagram
     does not leave the remote holding the connection until `timeout_ms`. Dropping an endpoint

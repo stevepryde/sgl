@@ -41,7 +41,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -268,7 +268,7 @@ impl IngressHub {
     /// messages go and the next drain reports it `Local`. One that already
     /// ended keeps its queued end.
     fn disconnected_by_caller(&self, conn: ConnectionId) {
-        let mut state = self.state.lock().expect("UDP ingress hub poisoned");
+        let mut state = self.caller_lock();
         if state.active.remove(&conn) {
             state.peers.remove(&conn);
             state.lifecycle.push_back(ServerEvent::Disconnected {
@@ -278,13 +278,17 @@ impl IngressHub {
         }
     }
 
+    /// The caller's access. A worker that panicked holding the lock left
+    /// what it had queued; the caller keeps draining it until its next poll
+    /// joins the worker.
+    fn caller_lock(&self) -> MutexGuard<'_, IngressState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// The worker has stopped and cannot deliver more. Preserve messages and
     /// ends already queued, and end every connection still active locally.
     fn worker_stopped(&self) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = self.caller_lock();
         for conn in std::mem::take(&mut state.active) {
             if let Some(peer) = state.peers.get_mut(&conn) {
                 peer.ended = Some(DisconnectReason::Local);
@@ -357,7 +361,7 @@ impl IngressHub {
     /// and unreliable messages per peer taken from its lanes in turn, then
     /// its latest state, then its end once nothing it delivered is left.
     fn drain(&self) -> Vec<ServerEvent> {
-        let mut state = self.state.lock().expect("UDP ingress hub poisoned");
+        let mut state = self.caller_lock();
         let mut output: Vec<_> = state.lifecycle.drain(..).collect();
         let mut ended = Vec::new();
         for (&conn, peer) in &mut state.peers {
@@ -428,15 +432,23 @@ impl CommandQueue {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, CommandState> {
+    fn lock(&self) -> MutexGuard<'_, CommandState> {
         self.state.lock().expect("UDP command queue poisoned")
     }
 
+    /// The caller's access. A poisoned lock means the worker panicked, so no
+    /// connection is live any more: sends are refused and capacity is zero,
+    /// and the caller's next poll joins the worker and reports the ends.
+    fn caller_lock(&self) -> MutexGuard<'_, CommandState> {
+        self.state.lock().unwrap_or_else(|poisoned| {
+            let mut state = poisoned.into_inner();
+            state.live.clear();
+            state
+        })
+    }
+
     fn worker_stopped(&self) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.live.clear();
         state.peers.clear();
         state.disconnects.clear();
@@ -445,7 +457,7 @@ impl CommandQueue {
     }
 
     fn send(&self, id: ConnectionId, delivery: Delivery, payload: &[u8]) -> Result<(), SendError> {
-        let mut state = self.lock();
+        let mut state = self.caller_lock();
         if !state.live.contains(&id) {
             return Err(SendError::UnknownConnection);
         }
@@ -487,7 +499,7 @@ impl CommandQueue {
     }
 
     fn capacity(&self, id: ConnectionId, lane: Lane) -> ReliableCapacity {
-        let state = self.lock();
+        let state = self.caller_lock();
         if !state.live.contains(&id) {
             return ReliableCapacity::default();
         }
@@ -515,7 +527,7 @@ impl CommandQueue {
     /// The caller ended the connection: it admits nothing more, and what it
     /// accepted, except its latest state, still drains.
     fn disconnect(&self, id: ConnectionId) {
-        let mut state = self.lock();
+        let mut state = self.caller_lock();
         if state.live.remove(&id) {
             if let Some(peer) = state.peers.get_mut(&id) {
                 peer.latest = None;
@@ -536,7 +548,7 @@ impl CommandQueue {
     }
 
     fn stop_admission(&self) {
-        self.lock().stop_admission = true;
+        self.caller_lock().stop_admission = true;
     }
 
     /// Moves queued commands to `endpoint` and returns the disconnected
@@ -1034,6 +1046,16 @@ mod tests {
             assert!(Instant::now() < deadline, "worker did not fail");
             thread::sleep(Duration::from_millis(1));
         }
+        // Before the poll that joins the worker, the caller sees no live
+        // connection rather than a panic.
+        assert_eq!(
+            server.send(conn, Delivery::RELIABLE_ORDERED, b"before poll"),
+            Err(SendError::UnknownConnection)
+        );
+        assert_eq!(
+            server.capacity(conn, Lane::DEFAULT),
+            ReliableCapacity::default()
+        );
         assert_eq!(
             server.poll(0),
             [
@@ -1059,6 +1081,45 @@ mod tests {
         );
         assert_remote_peer_end(client, started);
         assert_remote_peer_end(second, started);
+    }
+
+    /// A worker that panics holding the ingress lock (its message
+    /// assertion, say) may still be unwinding at the caller's next poll,
+    /// which drains before joining it. Oracle: that drain returns what the
+    /// worker queued instead of panicking.
+    #[test]
+    fn a_poisoned_ingress_still_drains_what_the_worker_queued() {
+        let ingress = Arc::new(IngressHub::new(&ReliableConfig::DEFAULT));
+        ingress.connected(SOLO_CONNECTION);
+        ingress
+            .message(
+                SOLO_CONNECTION,
+                Delivery::RELIABLE_ORDERED,
+                b"queued".to_vec(),
+            )
+            .unwrap();
+        let worker = Arc::clone(&ingress);
+        assert!(
+            thread::spawn(move || {
+                let _guard = worker.state.lock().unwrap();
+                panic!("injected ingress panic");
+            })
+            .join()
+            .is_err()
+        );
+        assert_eq!(
+            ingress.drain(),
+            [
+                ServerEvent::Connected {
+                    conn: SOLO_CONNECTION
+                },
+                ServerEvent::Message {
+                    conn: SOLO_CONNECTION,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: b"queued".to_vec(),
+                },
+            ]
+        );
     }
 
     fn payloads(events: &[ClientEvent], wanted: Delivery) -> Vec<Vec<u8>> {

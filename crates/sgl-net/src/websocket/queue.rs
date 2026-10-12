@@ -580,23 +580,27 @@ impl PeerState {
             let frame = &self.released_latest[index].1;
             return Some((frame.delivery, ENVELOPE_HEADER_LEN + frame.payload.len()));
         }
-        if let Some(index) = self.released_lane() {
-            let (unreliable, fragment, len) = self.outbound[index]
-                .peek(self.released_generation)
-                .expect("a released lane has a frame");
-            let total = if fragment.total().is_some() {
-                ENVELOPE_TOTAL_LEN
-            } else {
-                0
-            };
-            let delivery = if unreliable {
-                Delivery::Unreliable(lane(index))
-            } else {
-                Delivery::Reliable(lane(index))
-            };
-            return Some((delivery, ENVELOPE_HEADER_LEN + total + len));
-        }
-        None
+        self.next_released_lane_frame_len()
+    }
+
+    /// The delivery and encoded length of the frame
+    /// [`Self::pop_released_lane_frame`] would return.
+    pub(super) fn next_released_lane_frame_len(&self) -> Option<(Delivery, usize)> {
+        let index = self.released_lane()?;
+        let (unreliable, fragment, len) = self.outbound[index]
+            .peek(self.released_generation)
+            .expect("a released lane has a frame");
+        let total = if fragment.total().is_some() {
+            ENVELOPE_TOTAL_LEN
+        } else {
+            0
+        };
+        let delivery = if unreliable {
+            Delivery::Unreliable(lane(index))
+        } else {
+            Delivery::Reliable(lane(index))
+        };
+        Some((delivery, ENVELOPE_HEADER_LEN + total + len))
     }
 
     /// The next released frame: the latest state whose turn has come, once
@@ -609,26 +613,30 @@ impl PeerState {
             self.released_latest.drain(..index);
             return self.released_latest.pop_front().map(|(_, frame)| frame);
         }
+        self.pop_released_lane_frame()
+    }
+
+    /// The next released lane frame, leaving any due latest state queued:
+    /// latest state is not a barrier, so a state waiting for room lets lane
+    /// frames go first.
+    pub(super) fn pop_released_lane_frame(&mut self) -> Option<OutboundFrame> {
         let (outbound, released) = (&self.outbound, self.released_generation);
-        if let Some(index) = self
+        let index = self
             .outbound_scheduler
-            .next(|lane| outbound[lane].released(released))
-        {
-            let (unreliable, fragment, payload) = self.outbound[index]
-                .take(released)
-                .expect("a released lane has a frame");
-            return Some(OutboundFrame {
-                delivery: if unreliable {
-                    Delivery::Unreliable(lane(index))
-                } else {
-                    Delivery::Reliable(lane(index))
-                },
-                sequence: 0,
-                fragment,
-                payload,
-            });
-        }
-        None
+            .next(|lane| outbound[lane].released(released))?;
+        let (unreliable, fragment, payload) = self.outbound[index]
+            .take(released)
+            .expect("a released lane has a frame");
+        Some(OutboundFrame {
+            delivery: if unreliable {
+                Delivery::Unreliable(lane(index))
+            } else {
+                Delivery::Reliable(lane(index))
+            },
+            sequence: 0,
+            fragment,
+            payload,
+        })
     }
 
     pub(super) fn begin_graceful_close(&mut self, now_ms: u64) {
@@ -783,6 +791,43 @@ mod tests {
         state
             .send(Delivery::Reliable(lane(1)), b"x")
             .expect("another lane still admits");
+    }
+
+    /// A due latest state that does not fit the browser's watermark lets
+    /// lane frames go first. Oracle: netcode.md 13 — latest state is not a
+    /// barrier: lane frames leave in their order while the state stays
+    /// queued, and it leaves once they have, or is replaced by a newer one.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn lane_frames_pass_a_waiting_latest_state_in_order() {
+        let mut peer = new_peer();
+        peer.send(Delivery::LatestState, b"state").unwrap();
+        peer.release_outbound().unwrap();
+        peer.send(Delivery::RELIABLE_ORDERED, b"r1").unwrap();
+        peer.send(Delivery::RELIABLE_ORDERED, b"r2").unwrap();
+        peer.release_outbound().unwrap();
+        assert_eq!(
+            peer.next_released_frame_len(),
+            Some((Delivery::LatestState, ENVELOPE_HEADER_LEN + 5))
+        );
+        assert_eq!(
+            peer.next_released_lane_frame_len(),
+            Some((Delivery::RELIABLE_ORDERED, ENVELOPE_HEADER_LEN + 2))
+        );
+        let lane_frames: Vec<_> = std::iter::from_fn(|| peer.pop_released_lane_frame())
+            .map(|frame| (frame.delivery, frame.payload))
+            .collect();
+        assert_eq!(
+            lane_frames,
+            [
+                (Delivery::RELIABLE_ORDERED, b"r1".to_vec()),
+                (Delivery::RELIABLE_ORDERED, b"r2".to_vec()),
+            ]
+        );
+        let rest: Vec<_> = frames(&mut peer)
+            .into_iter()
+            .map(|frame| (frame.delivery, frame.payload))
+            .collect();
+        assert_eq!(rest, [(Delivery::LatestState, b"state".to_vec())]);
     }
 
     #[wasm_bindgen_test(unsupported = test)]
