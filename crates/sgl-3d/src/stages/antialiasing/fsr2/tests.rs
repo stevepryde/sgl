@@ -177,7 +177,7 @@ fn additive_effects_mark_fsr2_reactivity_for_their_frame_only() {
     ]
     .map(|(x, y)| corner(x, y));
     let mut frame = |index: u32, glow: &[effects::Glow]| {
-        scene.update_effects(&device, &queue, glow);
+        scene.update_effects(&device, &queue, glow).unwrap();
         let mut input = FrameInput::new(Camera {
             eye,
             view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),

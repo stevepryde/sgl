@@ -73,14 +73,21 @@ impl Transient {
         }
     }
 
-    /// Replaces the fog volumes, growing the retained buffer as needed. An
-    /// invalid volume fails and keeps the previous ones.
+    /// Replaces the fog volumes, growing the retained buffer as needed. Invalid volumes or
+    /// content exceeding the device limits fail and keep the previous ones.
     pub fn update_fog_volumes(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         volumes: &[FogVolume],
     ) -> Result<(), SceneError> {
+        let limits = device.limits();
+        let bytes = record_bytes::<FogVolumeRecord>(
+            volumes.len(),
+            limits
+                .max_storage_buffer_binding_size
+                .min(limits.max_buffer_size),
+        )?;
         let valid = |volume: &FogVolume| {
             let rotation = volume.rotation;
             volume.center.is_finite()
@@ -96,22 +103,17 @@ impl Transient {
         if !volumes.iter().all(valid) {
             return Err(SceneError::InvalidFogVolume);
         }
-        self.write_fog_volumes(device, queue, volumes);
+        if bytes > self.fog_volumes.size() {
+            self.fog_volumes = fog_volume_buffer(device, volumes.len() as u64);
+        }
+        self.write_fog_volumes(queue, volumes);
         Ok(())
     }
 
-    /// Writes `volumes`' records, growing the retained buffer as needed.
-    fn write_fog_volumes(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        volumes: &[FogVolume],
-    ) {
+    /// Writes accepted volumes into their reserved buffer.
+    fn write_fog_volumes(&mut self, queue: &wgpu::Queue, volumes: &[FogVolume]) {
         let records: Vec<_> = volumes.iter().map(FogVolumeRecord::new).collect();
         let bytes: &[u8] = bytemuck::cast_slice(&records);
-        if bytes.len() as u64 > self.fog_volumes.size() {
-            self.fog_volumes = fog_volume_buffer(device, volumes.len() as u64);
-        }
         if !bytes.is_empty() {
             crate::counters::write_buffer(queue, &self.fog_volumes, 0, bytes);
         }
@@ -125,7 +127,8 @@ impl Transient {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         positions: &[[f32; 3]],
-    ) {
+    ) -> Result<(), SceneError> {
+        record_bytes::<[f32; 3]>(positions.len(), device.limits().max_buffer_size)?;
         let bytes = bytemuck::cast_slice(positions);
         if bytes.len() as u64 > self.mist.size() {
             self.mist = mist_buffer(device, positions.len() as u64);
@@ -134,27 +137,40 @@ impl Transient {
             crate::counters::write_buffer(queue, &self.mist, 0, bytes);
         }
         self.mist_positions = positions.to_vec();
+        Ok(())
     }
 
     /// Replaces the glow drawn this frame, growing the retained buffer as needed.
     /// An empty slice clears the draw without discarding the buffer reservation.
-    pub fn update_glow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, vertices: &[Glow]) {
-        let records: Vec<_> = vertices.iter().map(GlowVertex::new).collect();
-        let bytes: &[u8] = bytemuck::cast_slice(&records);
-        if bytes.len() as u64 > self.glow.size() {
+    pub fn update_glow(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        vertices: &[Glow],
+    ) -> Result<(), SceneError> {
+        let limit = device.limits().max_buffer_size;
+        let bytes = record_bytes::<GlowVertex>(vertices.len(), limit)?;
+        if bytes > self.glow.size() {
             self.glow = crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
                     label: Some("transient glow"),
-                    size: (bytes.len() as u64).max(self.glow.size() * 2),
+                    size: bytes.max(self.glow.size().saturating_mul(2)).min(limit),
                     usage: GLOW_USAGE,
                     mapped_at_creation: false,
                 },
             );
         }
         self.glow_count = vertices.len() as u32;
-        if !bytes.is_empty() {
-            crate::counters::write_buffer(queue, &self.glow, 0, bytes);
+        self.write_glow(queue, vertices);
+        Ok(())
+    }
+
+    /// Writes accepted vertices into their reserved buffer.
+    fn write_glow(&mut self, queue: &wgpu::Queue, vertices: &[Glow]) {
+        let records: Vec<_> = vertices.iter().map(GlowVertex::new).collect();
+        if !records.is_empty() {
+            crate::counters::write_buffer(queue, &self.glow, 0, bytemuck::cast_slice(&records));
         }
         self.glow_vertices = vertices.to_vec();
     }
@@ -188,7 +204,7 @@ impl Transient {
     /// Moves the render origin by `by` (`Scene::move_origin`): the glow,
     /// heat and mist positions and the fog volumes' centres, rewritten as
     /// their updates write them.
-    pub fn move_origin(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, by: Vec3) {
+    pub fn move_origin(&mut self, queue: &wgpu::Queue, by: Vec3) {
         let moved = |position: [f32; 3]| (Vec3::from_array(position) - by).to_array();
         let mut glow = std::mem::take(&mut self.glow_vertices);
         for vertex in &mut glow {
@@ -197,7 +213,7 @@ impl Transient {
                 *other = moved(*other);
             }
         }
-        self.update_glow(device, queue, &glow);
+        self.write_glow(queue, &glow);
         for vertex in &mut self.heat_vertices {
             vertex.position = moved(vertex.position);
         }
@@ -216,7 +232,7 @@ impl Transient {
         for volume in &mut volumes {
             volume.center -= by;
         }
-        self.write_fog_volumes(device, queue, &volumes);
+        self.write_fog_volumes(queue, &volumes);
     }
 
     /// Orders the mist back to front from `eye`, as Three.js orders
@@ -261,3 +277,19 @@ fn fog_volume_buffer(device: &wgpu::Device, volumes: u64) -> wgpu::Buffer {
         },
     )
 }
+
+/// Bound counts before allocating CPU records or mutating retained content.
+/// Draw and record indices are u32, even on hosts with wider slice lengths.
+fn record_bytes<T>(count: usize, limit: u64) -> Result<u64, SceneError> {
+    let count = u32::try_from(count).map_err(|_| SceneError::DeviceLimit)?;
+    let bytes = u64::from(count)
+        .checked_mul(std::mem::size_of::<T>() as u64)
+        .ok_or(SceneError::DeviceLimit)?;
+    if bytes > limit {
+        return Err(SceneError::DeviceLimit);
+    }
+    Ok(bytes)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;

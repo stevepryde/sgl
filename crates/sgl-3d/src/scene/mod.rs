@@ -447,13 +447,14 @@ impl Scene {
     }
 
     /// Upload caller-generated additive geometry, growing the retained buffer when necessary.
+    /// Returns `DeviceLimit` without replacing the geometry if it cannot fit.
     pub fn update_effects(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         vertices: &[crate::effects::Glow],
-    ) {
-        self.transient.update_glow(device, queue, vertices);
+    ) -> Result<(), SceneError> {
+        self.transient.update_glow(device, queue, vertices)
     }
     /// Replace the bounded heat triangle list; empty clears it. Invalid submissions
     /// return an error and retain the previous list. Camera-path only, before bloom/HUD.
@@ -466,7 +467,7 @@ impl Scene {
     }
     /// Replace the fog volumes (`FogVolume`), which add medium to the
     /// frame's fog where they lie; empty clears them. An invalid volume
-    /// fails and keeps the previous ones.
+    /// fails and keeps the previous ones, as does content exceeding device limits.
     pub fn update_fog_volumes(
         &mut self,
         device: &wgpu::Device,
@@ -476,13 +477,14 @@ impl Scene {
         self.transient.update_fog_volumes(device, queue, volumes)
     }
     /// Replace the ground mist's world positions; empty clears it.
+    /// Returns `DeviceLimit` without replacing the positions if they cannot fit.
     pub fn update_mist(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         positions: &[[f32; 3]],
-    ) {
-        self.transient.update_mist(device, queue, positions);
+    ) -> Result<(), SceneError> {
+        self.transient.update_mist(device, queue, positions)
     }
     /// The installed specular probe collection.
     pub(crate) fn specular_probes(&self) -> Option<&probes::UploadedProbes> {

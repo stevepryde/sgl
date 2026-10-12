@@ -72,7 +72,7 @@ fn soft_intersection_metric_depth_and_clear_background() {
                                 kind: crate::effects::GlowKind::Uniform,
                                 soft_distance: width,
                             });
-                        scene.update_effects(&device, &queue, &vertices);
+                        scene.update_effects(&device, &queue, &vertices).unwrap();
                         let mut encoder = device.create_command_encoder(&Default::default());
                         {
                             let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

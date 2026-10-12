@@ -1381,7 +1381,7 @@ fn glow_adds_its_light_through_the_fog_and_none_of_its_in_scatter() {
             .to_vec(),
             None => Vec::new(),
         };
-        scene.update_effects(&device, &queue, &vertices);
+        scene.update_effects(&device, &queue, &vertices).unwrap();
         let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
         let composite = texels(&read(&device, &queue, &renderer.targets().composite));
         composite[(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize]

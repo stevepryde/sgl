@@ -1877,7 +1877,11 @@ authored look and per-frame state in a `FrameInput`.
      detail's model cannot be replaced; replacing a model clears the levels of
      detail registered on it.
    - `update_mist`, `update_fog_volumes`, `update_effects` and
-     `update_heat_distortion` replace transient geometry whole.
+     `update_heat_distortion` replace transient geometry whole and return
+     `Result<(), SceneError>`. Oversized fog, mist and glow submissions return
+     `DeviceLimit` and keep the previous content: fog is limited by both the
+     device's storage binding and buffer size; mist and glow by its buffer
+     size. Counts must fit a `u32`. Handle or propagate the result (`?`).
    - `move_origin(&device, &queue, to)` moves the render origin to `to`, a
      finite position in the current render frame. Every position SGL3D
      takes is `f32` in that frame; a game whose world is larger than `f32`
