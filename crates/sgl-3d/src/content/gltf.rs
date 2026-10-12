@@ -199,6 +199,17 @@ fn import(
     base: Option<&Path>,
     budget: &mut Budget,
 ) -> Result<(gltf::Document, Vec<gltf::buffer::Data>)> {
+    // The gltf crate subtracts the 12-byte header from the length the GLB
+    // header declares unchecked, so a header declaring less is refused here.
+    if bytes.starts_with(b"glTF") {
+        let length = bytes
+            .get(8..12)
+            .and_then(|length| <[u8; 4]>::try_from(length).ok())
+            .map(u32::from_le_bytes);
+        if length.is_none_or(|length| length < 12) {
+            return Err("the GLB header is truncated or declares a length below its own 12 bytes; re-export valid glTF".into());
+        }
+    }
     // Keep the BIN chunk borrowed until its size has passed the source budget.
     let glb = bytes
         .starts_with(b"glTF")

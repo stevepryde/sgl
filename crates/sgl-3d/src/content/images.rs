@@ -30,8 +30,9 @@ pub enum CompressedFormat {
 }
 
 /// A block-compressed mip chain. A scene adds it when its sides are
-/// multiples of the block size and it holds one to a full chain of levels,
-/// each of the size its level needs; otherwise it refuses it with
+/// multiples of the block size and no larger than 16384, and it holds one
+/// to a full chain of levels, each of the size its level needs; otherwise
+/// it refuses it with
 /// `SceneError::InvalidCompressedImage`.
 #[derive(Clone, Debug)]
 pub struct CompressedImage {
@@ -184,12 +185,15 @@ impl CompressedImage {
     }
 
     /// Whether the scene can upload it: sides that are multiples of the
-    /// block size (wgpu's rule for a block-compressed level 0), and one to a
-    /// full chain of levels, each of its size.
+    /// block size (wgpu's rule for a block-compressed level 0) no larger
+    /// than KTX2 loading allows, which also keeps `level_bytes` within a
+    /// 32-bit `usize`, and one to a full chain of levels, each of its size.
     pub(crate) fn is_valid(&self) -> bool {
         let full = (32 - self.width.max(self.height).leading_zeros()) as usize;
         self.width.is_multiple_of(BLOCK)
             && self.height.is_multiple_of(BLOCK)
+            && self.width <= MAX_IMAGE_SIDE
+            && self.height <= MAX_IMAGE_SIDE
             && (1..=full).contains(&self.levels.len())
             && self
                 .levels
@@ -378,5 +382,19 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    // A game-built image skips `from_ktx2`'s side bound. On wasm32 the 4 GiB
+    // level 0 of a 65536-texel square passes `usize`, so sizing it to check
+    // its level overflowed (a panic) instead of refusing the image.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_game_built_image_past_the_side_bound_is_invalid() {
+        let image = CompressedImage {
+            format: CompressedFormat::Bc7,
+            width: 65536,
+            height: 65536,
+            levels: vec![vec![0; 16]],
+        };
+        assert!(!image.is_valid());
     }
 }

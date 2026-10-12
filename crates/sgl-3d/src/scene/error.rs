@@ -33,8 +33,9 @@ pub enum SceneError {
     MissingMesh,
     /// An image has no texels.
     EmptyImage,
-    /// A compressed image's sides are not multiples of its block size, or it
-    /// holds no level, more than a full chain, or a level of the wrong size.
+    /// A compressed image's sides are not multiples of its block size or
+    /// exceed 16384, or it holds no level, more than a full chain, or a level
+    /// of the wrong size.
     InvalidCompressedImage,
     /// A compressed image that materials sample as both sRGB colour and
     /// linear data needs `DownlevelFlags::VIEW_FORMATS`, which wgpu's GL
@@ -205,7 +206,7 @@ impl std::fmt::Display for SceneError {
                 "a compressed image sampled as both colour and data needs DownlevelFlags::VIEW_FORMATS"
             }
             Self::InvalidCompressedImage => {
-                "a compressed image needs sides that are multiples of its block size and one to a full chain of levels, each of its size"
+                "a compressed image needs sides that are multiples of its block size, at most 16384, and one to a full chain of levels, each of its size"
             }
             Self::IndexOutOfRange => "a mesh index names no vertex",
             Self::NonFiniteGeometry => {
