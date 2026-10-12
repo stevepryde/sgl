@@ -711,6 +711,7 @@ mod tests {
                 .mid
                 .get_ref()
                 .get_ref()
+                .inner
                 .nodelay()
                 .expect("read accepted socket TCP_NODELAY")
         );
