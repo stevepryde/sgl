@@ -41,7 +41,8 @@ limits, text, and coordinate conventions.
 names and game-owned values. Translate platform events into `UiInput`, then
 respect keyboard and pointer capture before dispatching world actions.
 Keep focus-loss handling, clipboard access, layout, and persistence in the
-game. [Tool composition](../../specs/client.md#tool-composition) documents
+game. Clearable line and password edits keep text and the caret left of their
+visible clear button. [Tool composition](../../specs/client.md#tool-composition) documents
 pane layout, themes, input ordering, clipping, and keyboard behavior.
 Custom `overlay_panel_begin` controls remain below and pointer-blocked by
 open dropdown popovers and confirmation modals, even when submitted later.
