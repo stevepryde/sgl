@@ -55,12 +55,18 @@
 //!
 //! **Budget**: up to [`MAX_LIGHTS`] lights per frame after view culling;
 //! shadows on the first [`MAX_SHADOW_LIGHTS`] shadow-casting lights (extras
-//! render unshadowed).
+//! render unshadowed). Shadow vertices across those lights share one buffer,
+//! capped by the device's `max_buffer_size` and u32 draw ranges; surplus
+//! occluder edges are dropped whole in light/occluder order.
 
 use std::collections::HashMap;
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
+
+mod shadows;
+pub use shadows::shadow_triangles;
+use shadows::{ShadowVertex, grown_shadow_capacity, max_shadow_vertices, shadow_triangles_limited};
 
 use crate::assets::{Handle, Texture};
 use crate::canvas::camera::WorldUnits;
@@ -288,103 +294,6 @@ pub fn coverage(mask_rgb: [f32; 3], item_mask: u32) -> f32 {
     (mask_rgb[0] * bits[0] + mask_rgb[1] * bits[1] + mask_rgb[2] * bits[2]).clamp(0.0, 1.0)
 }
 
-/// Extrude shadow geometry for one light: for **every** edge `(a, b)` of every
-/// occluder polygon near the light, append the quad
-/// `[a, b, b + dir(b)·far, a + dir(a)·far]` (as two triangles, 6 vertices)
-/// where `dir(v) = normalize(v - light_pos)`.
-///
-/// When the edge subtends more than 90° at the light (a long wall close to
-/// it), the straight far edge of that quad would pass close to the light and
-/// leave the shadow behind the wall lit. Such an edge gets a third far
-/// vertex along its normal, away from the light (a convex pentagon, 9
-/// vertices), so every far edge stays at least `far·cos 45°` from the light.
-/// Pass `far ≥ 2 × half_extent.max_element()` (so `far·cos 45°` reaches the
-/// footprint's corners) and the shadow covers everything behind the edge
-/// inside the footprint.
-///
-/// The union over all edges is exactly "everything behind the first surface
-/// seen from the light" (Godot's occlusion shape): front-edge quads cover the
-/// polygon interior and beyond; back-edge quads are subsets of that union —
-/// so the result is winding-independent. Polygons whose AABB misses the
-/// light's footprint AABB (`pos ± half_extent`) are culled.
-pub fn shadow_triangles(
-    light_pos: Vec2,
-    half_extent: Vec2,
-    occluders: &[Vec<Vec2>],
-    far: f32,
-    out: &mut Vec<[f32; 2]>,
-) {
-    let range_min = light_pos - half_extent;
-    let range_max = light_pos + half_extent;
-    for poly in occluders {
-        if poly.len() < 2 {
-            continue;
-        }
-        // AABB cull against the light footprint.
-        let mut min = poly[0];
-        let mut max = poly[0];
-        for p in &poly[1..] {
-            min = min.min(*p);
-            max = max.max(*p);
-        }
-        if min.x > range_max.x || max.x < range_min.x || min.y > range_max.y || max.y < range_min.y
-        {
-            continue;
-        }
-        let extrude = |v: Vec2| -> Option<Vec2> {
-            let d = v - light_pos;
-            let len = d.length();
-            if len < 1e-4 {
-                return None; // Vertex on the light: degenerate, skip the edge.
-            }
-            Some(v + d / len * far)
-        };
-        let mut j = poly.len() - 1;
-        for i in 0..poly.len() {
-            let (a, b) = (poly[j], poly[i]);
-            j = i;
-            let (Some(ea), Some(eb)) = (extrude(a), extrude(b)) else {
-                continue;
-            };
-            let (da, db) = ((ea - a).normalize(), (eb - b).normalize());
-            let edge = b - a;
-            let side = edge.perp_dot(a - light_pos);
-            // Past 90°, cap the far side with a vertex along the edge's
-            // normal away from the light, as far from it as the farther
-            // extruded end. The span is over 90° only when the light's foot
-            // on the edge's line lies between `a` and `b`, so the normal
-            // splits it into two parts under 90° each, and the vertex lies
-            // beyond the straight far edge, keeping the pentagon convex. A
-            // light exactly on the edge's line has no area behind it.
-            if da.dot(db) < 0.0 && side != 0.0 {
-                let reach = (ea - light_pos).length().max((eb - light_pos).length());
-                let normal = (edge.perp() * side.signum()).normalize();
-                let em = light_pos + normal * reach;
-                out.extend_from_slice(&[
-                    a.to_array(),
-                    b.to_array(),
-                    eb.to_array(),
-                    a.to_array(),
-                    eb.to_array(),
-                    em.to_array(),
-                    a.to_array(),
-                    em.to_array(),
-                    ea.to_array(),
-                ]);
-                continue;
-            }
-            out.extend_from_slice(&[
-                a.to_array(),
-                b.to_array(),
-                eb.to_array(),
-                a.to_array(),
-                eb.to_array(),
-                ea.to_array(),
-            ]);
-        }
-    }
-}
-
 // --- GPU light pass ----------------------------------------------------------
 
 /// Per-light GPU record (matches `Light` in `light.wgsl`).
@@ -468,7 +377,7 @@ pub struct LightPass {
     shadow_capacity: u64,
 
     // Per-frame scratch (allocations persist).
-    verts: Vec<[f32; 2]>,
+    verts: Vec<ShadowVertex>,
     plan: Vec<LightDraw>,
 }
 
@@ -760,7 +669,7 @@ impl LightPass {
                 module: &shader,
                 entry_point: Some("vs_shadow"),
                 buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<[f32; 2]>() as u64,
+                    array_stride: size_of::<ShadowVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![0 => Float32x2],
                 })],
@@ -786,9 +695,11 @@ impl LightPass {
             cache: None,
         });
 
+        let shadow_capacity =
+            INITIAL_SHADOW_VERTS.min(max_shadow_vertices(device.limits().max_buffer_size));
         let shadow_vb = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("shadow vertex buffer"),
-            size: INITIAL_SHADOW_VERTS * size_of::<[f32; 2]>() as u64,
+            size: shadow_capacity * size_of::<ShadowVertex>() as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -808,7 +719,7 @@ impl LightPass {
             cookies: HashMap::new(),
             analytic_bind_group,
             shadow_vb,
-            shadow_capacity: INITIAL_SHADOW_VERTS,
+            shadow_capacity,
             verts: Vec::new(),
             plan: Vec::new(),
         }
@@ -917,7 +828,9 @@ impl LightPass {
     /// Plan this frame's lights: cull to the view, cap counts, fill the
     /// uniform, and build the shadow geometry buffer. Positions, footprints,
     /// heights and occluders are in the world camera's `units`. Call once
-    /// per frame before [`run`](Self::run).
+    /// per frame before [`run`](Self::run). Shadow geometry shares the device's
+    /// `max_buffer_size` / u32 draw-range budget across lights. Whole edge
+    /// extrusions that do not fit, and subsequent edges, are dropped.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -929,6 +842,7 @@ impl LightPass {
     ) {
         self.plan.clear();
         self.verts.clear();
+        let max_vertices = max_shadow_vertices(device.limits().max_buffer_size);
 
         // The world rectangle the camera shows (ortho: unproject the corners
         // — already in the camera's units, whatever its convention).
@@ -943,6 +857,7 @@ impl LightPass {
 
         let mut raw = [LightRaw::ZERO; MAX_LIGHTS];
         let mut shadow_count = 0usize;
+        let mut shadow_full = false;
         // Two passes over the lights: unshadowed first so `run` can batch
         // them into the single clearing pass (order is irrelevant: additive).
         for want_shadow in [false, true] {
@@ -980,9 +895,9 @@ impl LightPass {
                     continue; // Off-screen.
                 }
 
-                let shadow = if light.shadows && shadow_count < MAX_SHADOW_LIGHTS {
+                let shadow = if light.shadows && shadow_count < MAX_SHADOW_LIGHTS && !shadow_full {
                     let start = self.verts.len() as u32;
-                    shadow_triangles(
+                    shadow_full = shadow_triangles_limited(
                         light.pos,
                         half,
                         &frame.occluders,
@@ -991,6 +906,7 @@ impl LightPass {
                         // (in the camera's units).
                         (SHADOW_FAR / units.pixels_per_unit).max(2.0 * half.max_element()),
                         &mut self.verts,
+                        max_vertices,
                     );
                     let end = self.verts.len() as u32;
                     if end > start {
@@ -1041,10 +957,10 @@ impl LightPass {
         if !self.verts.is_empty() {
             let needed = self.verts.len() as u64;
             if needed > self.shadow_capacity {
-                let new_cap = needed.next_power_of_two();
+                let new_cap = grown_shadow_capacity(needed, max_vertices);
                 self.shadow_vb = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("shadow vertex buffer"),
-                    size: new_cap * size_of::<[f32; 2]>() as u64,
+                    size: new_cap * size_of::<ShadowVertex>() as u64,
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 });
@@ -1286,150 +1202,6 @@ mod tests {
         assert_eq!(coverage([0.5, 0.5, 0.0], 3), 1.0);
     }
 
-    // --- shadow extrusion -----------------------------------------------------
-
-    fn square() -> Vec<Vec2> {
-        vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(32.0, 0.0),
-            Vec2::new(32.0, 32.0),
-            Vec2::new(0.0, 32.0),
-        ]
-    }
-
-    fn point_in_tri(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
-        let sign = |p1: Vec2, p2: Vec2, p3: Vec2| (p1 - p3).perp_dot(p2 - p3);
-        let d1 = sign(p, a, b);
-        let d2 = sign(p, b, c);
-        let d3 = sign(p, c, a);
-        let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-        let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
-        !(has_neg && has_pos)
-    }
-
-    fn in_shadow(verts: &[[f32; 2]], p: Vec2) -> bool {
-        verts.chunks_exact(3).any(|t| {
-            point_in_tri(
-                p,
-                Vec2::from_array(t[0]),
-                Vec2::from_array(t[1]),
-                Vec2::from_array(t[2]),
-            )
-        })
-    }
-
-    /// A square occluder with the light to its left: points behind (right of)
-    /// the square are shadowed, points beside or in front are lit, and the
-    /// square's own interior is shadowed past the front face (Godot's "behind
-    /// the first surface" shape).
-    #[wasm_bindgen_test(unsupported = test)]
-    fn shadow_covers_behind_the_occluder() {
-        let light = Vec2::new(-50.0, 16.0);
-        let mut verts = Vec::new();
-        shadow_triangles(light, Vec2::splat(500.0), &[square()], 4096.0, &mut verts);
-        assert!(!verts.is_empty());
-        assert_eq!(verts.len() % 3, 0);
-
-        assert!(in_shadow(&verts, Vec2::new(100.0, 16.0)), "behind the wall");
-        assert!(in_shadow(&verts, Vec2::new(16.0, 16.0)), "wall interior");
-        assert!(!in_shadow(&verts, Vec2::new(-20.0, 16.0)), "light side");
-        assert!(!in_shadow(&verts, Vec2::new(16.0, -60.0)), "beside/above");
-        assert!(!in_shadow(&verts, Vec2::new(16.0, 90.0)), "beside/below");
-    }
-
-    /// #319: a light 2 px from a long wall (the edge subtends nearly 180°),
-    /// or 0.05 px from a 2000 px one, still shadows everything behind the
-    /// wall inside its footprint: with a straight far edge, `(0, 200)` and
-    /// `(0, 290)` were lit.
-    #[wasm_bindgen_test(unsupported = test)]
-    fn shadow_behind_a_long_wall_close_to_the_light_reaches_the_footprint() {
-        let walls = [
-            vec![Vec2::new(-500.0, 2.0), Vec2::new(500.0, 10.0)],
-            vec![Vec2::new(-1000.0, 0.05), Vec2::new(1000.0, 0.05)],
-        ];
-        let half = Vec2::splat(300.0);
-        let windings = walls
-            .iter()
-            .flat_map(|wall| [wall.clone(), wall.iter().rev().copied().collect()]);
-        for winding in windings {
-            let mut verts = Vec::new();
-            shadow_triangles(
-                Vec2::ZERO,
-                half,
-                &[winding],
-                2.0 * half.max_element(),
-                &mut verts,
-            );
-            for p in [
-                Vec2::new(0.0, 200.0),
-                Vec2::new(0.0, 290.0),
-                Vec2::new(290.0, 290.0),
-            ] {
-                assert!(in_shadow(&verts, p), "{p:?} behind the wall is lit");
-            }
-            for p in [
-                Vec2::new(0.0, -200.0),
-                Vec2::new(290.0, -290.0),
-                Vec2::new(0.0, -0.5),
-            ] {
-                assert!(
-                    !in_shadow(&verts, p),
-                    "{p:?} on the light's side is shadowed"
-                );
-            }
-        }
-    }
-
-    /// The result is winding-independent (all edges extrude; the union is the
-    /// same region).
-    #[wasm_bindgen_test(unsupported = test)]
-    fn shadow_is_winding_independent() {
-        let light = Vec2::new(-50.0, 16.0);
-        let mut reversed = square();
-        reversed.reverse();
-        let mut a = Vec::new();
-        let mut b = Vec::new();
-        shadow_triangles(light, Vec2::splat(500.0), &[square()], 4096.0, &mut a);
-        shadow_triangles(light, Vec2::splat(500.0), &[reversed], 4096.0, &mut b);
-        for p in [
-            Vec2::new(100.0, 16.0),
-            Vec2::new(16.0, 16.0),
-            Vec2::new(-20.0, 16.0),
-            Vec2::new(16.0, -60.0),
-        ] {
-            assert_eq!(in_shadow(&a, p), in_shadow(&b, p), "{p:?}");
-        }
-    }
-
-    /// Occluders outside the light's footprint AABB are culled entirely.
-    #[wasm_bindgen_test(unsupported = test)]
-    fn shadow_culls_far_occluders() {
-        let mut verts = Vec::new();
-        shadow_triangles(
-            Vec2::new(1000.0, 1000.0),
-            Vec2::splat(100.0), // footprint (900..1100)² — square at origin is far away
-            &[square()],
-            4096.0,
-            &mut verts,
-        );
-        assert!(verts.is_empty());
-    }
-
-    /// Degenerate case: a vertex exactly on the light produces no NaN
-    /// geometry (its edges are skipped).
-    #[wasm_bindgen_test(unsupported = test)]
-    fn shadow_skips_vertex_on_light() {
-        let mut verts = Vec::new();
-        shadow_triangles(
-            Vec2::ZERO,
-            Vec2::splat(500.0),
-            &[square()],
-            4096.0,
-            &mut verts,
-        );
-        assert!(verts.iter().flatten().all(|c| c.is_finite()));
-    }
-
     /// `LightFrame::default` is the identity: white modulate, nothing else.
     #[wasm_bindgen_test(unsupported = test)]
     fn default_light_frame_is_identity() {
@@ -1463,6 +1235,10 @@ mod gpu_tests {
 
     fn rig() -> Option<Rig> {
         let (device, queue) = device()?;
+        Some(rig_on(device, queue))
+    }
+
+    fn rig_on(device: wgpu::Device, queue: wgpu::Queue) -> Rig {
         let filled = |label: &str, format: wgpu::TextureFormat, texel: [u8; 4]| {
             device
                 .create_texture_with_data(
@@ -1490,11 +1266,11 @@ mod gpu_tests {
         let normal = filled("test normal target", NORMAL_FORMAT, [128, 128, 255, 0]);
         let mask = filled("test mask target", MASK_FORMAT, [255, 0, 0, 0]);
         let pass = LightPass::new(&device, &queue, &normal, &mask, SIZE, SIZE);
-        Some(Rig {
+        Rig {
             device,
             queue,
             pass,
-        })
+        }
     }
 
     impl Rig {
@@ -1530,6 +1306,70 @@ mod gpu_tests {
     fn rgb(px: &[f32], x: u32, y: u32) -> [f32; 3] {
         let i = ((y * SIZE + x) * 4) as usize;
         [px[i], px[i + 1], px[i + 2]]
+    }
+
+    /// #630: exercise the real allocation, upload and draw at an injected
+    /// device limit. Validation catches power-of-two growth past the limit;
+    /// sampled pixels distinguish retained walls from dropped walls.
+    #[test]
+    fn shadow_geometry_past_the_device_buffer_limit_is_dropped() {
+        if device().is_none() {
+            return;
+        }
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+                .expect("an adapter, as device() found one");
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_limits: wgpu::Limits {
+                // Enough for readback, but 4098 vertices round up past this.
+                max_buffer_size: 4099 * 8,
+                ..wgpu::Limits::default()
+            },
+            ..Default::default()
+        }))
+        .unwrap();
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut rig = rig_on(device, queue);
+        let right_wall = vec![Vec2::new(20.5, 31.0), Vec2::new(20.5, 34.0)];
+        let upper_wall = vec![Vec2::new(9.0, 20.5), Vec2::new(12.0, 20.5)];
+        let mut occluders = vec![right_wall; 400];
+        occluders.push(upper_wall.clone());
+        let mut frame = LightFrame {
+            lights: vec![PointLight {
+                shadows: true,
+                ..PointLight::analytic(Vec2::new(10.5, 32.5), 100.0, 0.0)
+            }],
+            occluders,
+            ..LightFrame::default()
+        };
+        let pixels = rig.render(&frame);
+        assert!(
+            rgb(&pixels, 40, 32)[0] < 1e-3,
+            "retained right wall lost its shadow"
+        );
+        assert!(
+            rgb(&pixels, 10, 10)[0] > 0.5,
+            "surplus upper wall cast a shadow"
+        );
+        // A later frame can use the same buffer for the previously dropped
+        // wall, with the old frame's geometry cleared.
+        frame.occluders = vec![upper_wall];
+        let pixels = rig.render(&frame);
+        assert!(
+            rgb(&pixels, 10, 10)[0] < 1e-3,
+            "upper wall should fit the next frame"
+        );
+        assert!(
+            rgb(&pixels, 40, 32)[0] > 0.5,
+            "old right wall survived prepare"
+        );
+        rig.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
+        if let Some(error) = pollster::block_on(validation.pop()) {
+            panic!("{error}");
+        }
     }
 
     /// #319: an analytic light 2 px above a long wall leaves the pixel

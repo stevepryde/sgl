@@ -44,7 +44,11 @@ Their CPU-side contracts are in [client](client.md).
    persist across frames. The instance buffer grows only when required, and
    never past the device's `max_buffer_size`: a frame with more instances
    than that holds draws the first that many in draw order (world, then
-   screen) and drops the rest.
+   screen) and drops the rest. The shadow vertex buffer is also capped by
+   `max_buffer_size` and the u32 draw range. Shadow-casting lights share that
+   vertex budget in light/occluder order; once a complete edge extrusion does
+   not fit, it and subsequent edges are dropped. Retained edges still emit
+   complete quads or pentagons, and remaining lights render unshadowed.
 5. Adjacent sprites on the same texture page (atlas page or standalone
    texture) and clip share a draw call. `SpritePass::draw_stats` reports
    each channel's draw calls and instances as encoded for the latest

@@ -51,6 +51,10 @@ docs and specs the entry links.
   hide a peer's latest state; each peer's first message turn now returns its
   newest pending state, at most once per poll, within the global event budget.
   No game-code changes needed.
+- `sgl-2d` `LightPass::prepare`: shadow geometry beyond the device's buffer
+  limit or u32 draw range now drops surplus whole occluder edges instead of
+  ending the frame with a validation error. No game-code changes needed.
+
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they
