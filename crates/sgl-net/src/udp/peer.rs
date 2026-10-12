@@ -22,7 +22,7 @@ pub enum Next {
 /// A lane item taken for the datagram being packed.
 pub enum Outgoing {
     /// The in-flight reliable fragment with this sequence.
-    Reliable(u16),
+    Reliable { sequence: u16, admitted: bool },
     /// An unreliable message, sent once, with its unreliable sequence.
     Unreliable(u16, Vec<u8>),
 }
@@ -50,7 +50,7 @@ pub struct Peer {
     pub unreliable: [Unreliable; RELIABLE_LANES],
     /// Per lane: whether its next fresh item is an unreliable message rather
     /// than a new reliable fragment, when it has both.
-    unreliable_turn: [bool; RELIABLE_LANES],
+    pub unreliable_turn: [bool; RELIABLE_LANES],
     /// Lanes whose acknowledgement went out in the current flush.
     acked: [bool; RELIABLE_LANES],
     /// Shares this peer's items between its lanes.
@@ -66,6 +66,7 @@ pub struct Peer {
     /// Confirms a client sent for the cookie it holds since it last asked
     /// for one.
     pub confirms_sent: u32,
+    pub handshake_send_blocked: bool,
     pub rtt: RttEstimator,
     pub verified_cookie_epoch: Option<u64>,
     pub close_grace: Option<CloseGrace>,
@@ -96,6 +97,7 @@ impl Peer {
             last_send_ms: now_ms,
             last_handshake_send_ms: now_ms,
             confirms_sent: 0,
+            handshake_send_blocked: false,
             rtt: RttEstimator::new(),
             verified_cookie_epoch: None,
             close_grace: None,
@@ -182,9 +184,10 @@ impl Peer {
         now_ms: u64,
         rto_ms: u64,
         max_retransmits: Option<u8>,
+        staged: &[u16],
     ) -> Option<(Next, usize)> {
         let reliable = &self.reliable[lane];
-        if let Some(sequence) = reliable.first_due(now_ms, rto_ms, max_retransmits) {
+        if let Some(sequence) = reliable.first_due_except(now_ms, rto_ms, max_retransmits, staged) {
             let (fragment, bytes) = reliable
                 .fragment(sequence)
                 .expect("a due fragment is in flight");
@@ -204,14 +207,14 @@ impl Peer {
         ))
     }
 
-    /// Takes the item [`Self::peek`] chose for `lane`; a reliable fragment
-    /// counts as transmitted at `now_ms`.
-    pub fn take(&mut self, lane: usize, next: Next, now_ms: u64) -> Outgoing {
+    /// Stages the item [`Self::peek`] chose. Temporary transport refusals
+    /// roll this work back before any transmission is recorded.
+    pub fn take(&mut self, lane: usize, next: Next) -> Outgoing {
         match next {
-            Next::Retransmit(sequence) => {
-                self.reliable[lane].mark_sent(sequence, now_ms);
-                Outgoing::Reliable(sequence)
-            }
+            Next::Retransmit(sequence) => Outgoing::Reliable {
+                sequence,
+                admitted: false,
+            },
             Next::Unreliable => {
                 self.unreliable_turn[lane] = false;
                 let (sequence, payload) = self.unreliable[lane]
@@ -223,9 +226,11 @@ impl Peer {
                 let sequence = self.reliable[lane]
                     .admit()
                     .expect("peeked a fragment the window admits");
-                self.reliable[lane].mark_sent(sequence, now_ms);
                 self.unreliable_turn[lane] = !self.unreliable[lane].is_empty();
-                Outgoing::Reliable(sequence)
+                Outgoing::Reliable {
+                    sequence,
+                    admitted: true,
+                }
             }
         }
     }

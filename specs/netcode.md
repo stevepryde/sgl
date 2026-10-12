@@ -292,8 +292,18 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     datagrams and packing keeps the schedule and its bound. A peer sends at
     most `max_packets_per_peer_flush` datagrams per flush; an item left over
     is neither taken nor charged and waits, unsent unreliable messages
-    included, for a later flush. The memory transport, whose messages cross
-    whole, returns lanes interleaved by the same weights.
+    included, for a later flush. Local temporary send refusals (`WouldBlock`,
+    native `ENOBUFS`, and `Interrupted`) likewise leave the datagram's work
+    queued without charging scheduling, transmission, backoff, close resend,
+    or acknowledgement state. That peer stops its flush; other peers can
+    send. Temporary refusal does not charge a handshake attempt, and a
+    refused request/confirm retries on the next flush. Other per-datagram
+    send errors retain the existing network-loss behavior. Refused
+    Disconnect copies retry even after removing their peer, in a best-effort
+    queue bounded to `max_peers` identities, expiring after `timeout_ms` and
+    replacing the oldest notification on overflow. Endpoint destruction
+    makes one final attempt and leaves no later retry. The memory transport,
+    whose messages cross whole, returns lanes interleaved by the same weights.
 15. A reliable message longer than one UDP item or WebSocket frame is
     fragmented as it is sent, each fragment a range of the queued message,
     so the sender holds every message once; the first fragment declares the

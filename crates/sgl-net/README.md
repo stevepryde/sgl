@@ -87,6 +87,15 @@ are public constants and lane bounds `ReliableConfig` values in the
 [transport API](src/lib.rs). Connection IDs identify a connection inside a
 server process; they are not persistent player identities or wire-format IDs.
 
+When a UDP socket temporarily refuses a datagram (`WouldBlock`, native
+`ENOBUFS`, or interruption), its messages stay queued until a later flush.
+That peer stops sending for this flush; other peers still progress. Refused
+reliable fragments do not consume transmission, backoff, or close resend
+budgets, and refused acknowledgements remain owed. Custom
+`udp::DatagramTransport` implementations return `io::Result<()>` from `send`
+and report local buffer exhaustion as `WouldBlock`; other per-datagram
+errors retain the network-loss behavior.
+
 UDP gives each lane its own retransmission, so a lost bulk fragment never
 delays another lane. A UDP lane keeps at most 32 fragments in flight, so it
 carries at most 32 reliable messages per round trip: spread a higher rate
@@ -115,6 +124,11 @@ Retransmission timing still applies, and disconnecting again restarts
 neither the resend budget nor the deadline. Acknowledgements and keepalives
 continue during close within the usual datagram budget, keeping a receiver
 that is holding data alive even when the grace exceeds `timeout_ms`.
+Locally refused Disconnect copies retry on later flushes even after the
+peer is removed. This best-effort notification queue holds at most
+`max_peers` identities, expires them after `timeout_ms`, and replaces its
+oldest entry if connection churn fills it. Dropping an endpoint makes a
+final best-effort attempt; it cannot retry after its socket is destroyed.
 Dropping a UDP endpoint, server
 or client, or calling `ThreadedUdpServer::shutdown`, immediately abandons
 queued sends and sends redundant best-effort disconnects before closing its

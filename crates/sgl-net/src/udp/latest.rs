@@ -21,6 +21,11 @@ impl Latest {
         Some((sequence, payload))
     }
 
+    pub fn restore(&mut self, sequence: u16, payload: Vec<u8>) {
+        self.next_sequence = sequence;
+        self.queued = Some(payload);
+    }
+
     pub fn clear(&mut self) {
         self.queued = None;
     }

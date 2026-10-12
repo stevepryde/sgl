@@ -216,12 +216,26 @@ impl Reliable {
     /// `max_retransmits`, only while it has been resent fewer times since
     /// admission or [`Self::begin_close`]. A
     /// fragment the peer holds is not: it has arrived.
+    #[cfg(test)]
     pub fn first_due(&self, now_ms: u64, rto_ms: u64, max_retransmits: Option<u8>) -> Option<u16> {
+        self.first_due_except(now_ms, rto_ms, max_retransmits, &[])
+    }
+
+    /// Staged fragments have not been marked sent yet; do not select them
+    /// again while packing the same datagram.
+    pub fn first_due_except(
+        &self,
+        now_ms: u64,
+        rto_ms: u64,
+        max_retransmits: Option<u8>,
+        staged: &[u16],
+    ) -> Option<u16> {
         self.in_flight.iter().find_map(|item| {
             let interval = rto_ms
                 .saturating_mul(1 << item.backoff.min(16))
                 .min(MAX_RTO_MS.max(rto_ms));
-            (!item.acknowledged
+            (!staged.contains(&item.sequence)
+                && !item.acknowledged
                 && !item.peer_holds
                 && max_retransmits.is_none_or(|maximum| item.retransmits < maximum)
                 && item
@@ -229,6 +243,14 @@ impl Reliable {
                     .is_none_or(|sent| now_ms.saturating_sub(sent) >= interval))
             .then_some(item.sequence)
         })
+    }
+
+    /// Reverses a newly staged admission, newest first. No receive or
+    /// acknowledgement can interleave the endpoint's synchronous send.
+    pub fn undo_admit(&mut self) {
+        let item = self.in_flight.pop_back().expect("staged fragment exists");
+        self.next_sequence = item.sequence;
+        self.next_fragment = (item.message, item.start);
     }
 
     /// Starts the graceful close's resend budget without changing the

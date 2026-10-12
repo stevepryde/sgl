@@ -5,7 +5,7 @@ use super::cookie::{ChallengeLimiter, ConfirmReplayCache, CookieKey};
 use super::packet::{self, Acks, Item, Kind, Nonces, Parsed};
 use super::peer::{CloseGrace, Handshake, Outgoing, Peer};
 use super::reliable::MAX_RTO_MS;
-use super::transport::DatagramTransport;
+use super::transport::{DatagramTransport, retryable};
 use crate::lanes::InboundUsage;
 use crate::{
     DEFAULT_LANE_INBOUND_BYTES, DEFAULT_LANE_INBOUND_MESSAGES, DEFAULT_LANE_OUTBOUND_BYTES,
@@ -289,6 +289,14 @@ fn receive_payload_items(
     })
 }
 
+/// Only the remaining redundant copies are retained, never payload bytes.
+struct PendingDisconnect {
+    addr: SocketAddr,
+    nonces: Nonces,
+    copies: usize,
+    expires_ms: u64,
+}
+
 pub struct Endpoint<T: DatagramTransport> {
     transport: T,
     config: EndpointConfig,
@@ -299,6 +307,7 @@ pub struct Endpoint<T: DatagramTransport> {
     receive_buffer: Vec<u8>,
     scratch: Vec<u8>,
     pending_events: VecDeque<EndpointEvent>,
+    pending_disconnects: VecDeque<PendingDisconnect>,
     cookie_key: Option<CookieKey>,
     challenge_limiter: ChallengeLimiter,
     confirm_replays: ConfirmReplayCache,
@@ -387,6 +396,7 @@ impl<T: DatagramTransport> Endpoint<T> {
             receive_buffer: vec![0; packet::DATAGRAM_BYTES + 1],
             scratch: Vec::with_capacity(packet::DATAGRAM_BYTES),
             pending_events: VecDeque::new(),
+            pending_disconnects: VecDeque::new(),
             cookie_key,
             challenge_limiter: ChallengeLimiter::default(),
             confirm_replays: ConfirmReplayCache::default(),
@@ -453,8 +463,8 @@ impl<T: DatagramTransport> Endpoint<T> {
         );
         self.routes.insert((server, client_nonce), id);
         self.peers.insert(id, peer);
-        self.send_control(
-            server,
+        self.send_handshake(
+            id,
             Kind::ConnectRequest,
             Nonces {
                 client: client_nonce,
@@ -691,6 +701,7 @@ impl<T: DatagramTransport> Endpoint<T> {
     pub fn flush(&mut self, now_ms: u64) {
         self.now_ms = self.now_ms.max(now_ms);
         let now_ms = self.now_ms;
+        self.flush_disconnects(now_ms);
         let ids: Vec<_> = self.peers.keys().copied().collect();
         for id in ids {
             self.flush_peer(id, now_ms);
@@ -772,21 +783,20 @@ impl<T: DatagramTransport> Endpoint<T> {
         }
 
         let max_packets = self.config.max_packets_per_peer_flush;
-        let packet_count = self.flush_payloads(id, now_ms, max_packets);
-        self.flush_acks_and_keepalive(id, now_ms, packet_count, max_packets);
+        let (packet_count, blocked) = self.flush_payloads(id, now_ms, max_packets);
+        if !blocked {
+            self.flush_acks_and_keepalive(id, now_ms, packet_count, max_packets);
+        }
         self.peers.get_mut(&id).expect("peer exists").end_flush();
     }
 
     fn flush_handshake_peer(&mut self, id: u64, now_ms: u64) {
-        let retry = self.peers.get(&id).is_some_and(|peer| {
-            now_ms.saturating_sub(peer.last_handshake_send_ms) >= self.config.handshake_retry_ms
-        });
-        if !retry {
+        let peer = self.peers.get(&id).expect("peer exists");
+        if !peer.handshake_send_blocked
+            && now_ms.saturating_sub(peer.last_handshake_send_ms) < self.config.handshake_retry_ms
+        {
             return;
         }
-        let peer = self.peers.get_mut(&id).expect("peer exists");
-        // A client asking again keeps the cookie it holds, so a late accept
-        // or payload for it still completes the handshake.
         let request = Nonces {
             client: peer.nonces.client,
             server: 0,
@@ -794,19 +804,29 @@ impl<T: DatagramTransport> Endpoint<T> {
         let (kind, nonces) = match peer.handshake {
             Handshake::ClientRequest => (Kind::ConnectRequest, request),
             Handshake::ClientConfirm if peer.confirms_sent >= CONFIRMS_PER_COOKIE => {
-                peer.handshake = Handshake::ClientRequest;
                 (Kind::ConnectRequest, request)
             }
-            Handshake::ClientConfirm => {
-                peer.confirms_sent += 1;
-                (Kind::ConnectConfirm, peer.nonces)
-            }
+            Handshake::ClientConfirm => (Kind::ConnectConfirm, peer.nonces),
             Handshake::Connected => return,
         };
-        peer.last_handshake_send_ms = now_ms;
-        peer.last_send_ms = now_ms;
-        let addr = peer.addr;
-        self.send_control(addr, kind, nonces, now_ms);
+        self.send_handshake(id, kind, nonces, now_ms);
+    }
+
+    fn send_handshake(&mut self, id: u64, kind: Kind, nonces: Nonces, now_ms: u64) {
+        let addr = self.peers[&id].addr;
+        let accepted = self.send_control(addr, kind, nonces, now_ms);
+        let peer = self.peers.get_mut(&id).expect("peer exists");
+        peer.handshake_send_blocked = !accepted;
+        if accepted {
+            if kind == Kind::ConnectRequest {
+                // Asking again keeps the cookie for a late accept/payload.
+                peer.handshake = Handshake::ClientRequest;
+            } else {
+                peer.confirms_sent += 1;
+            }
+            peer.last_handshake_send_ms = now_ms;
+            peer.last_send_ms = now_ms;
+        }
     }
 
     /// Sends up to `budget` payload datagrams, packing items into each in
@@ -817,38 +837,43 @@ impl<T: DatagramTransport> Endpoint<T> {
     /// starts the next datagram, beside the acknowledgements that fit when
     /// it is too large for all of them; one left when the budget is spent
     /// is neither taken nor charged and waits for a later flush.
-    fn flush_payloads(&mut self, id: u64, now_ms: u64, budget: usize) -> usize {
+    fn flush_payloads(&mut self, id: u64, now_ms: u64, budget: usize) -> (usize, bool) {
         let peer = self.peers.get_mut(&id).expect("peer exists");
-        // A live peer's fragments are resent until acknowledged.
         let max_retransmits = peer.is_closing().then_some(self.config.close_retransmits);
         let rto_ms = peer.rto_ms();
-        // Every lane that has received anything acknowledges in every
-        // datagram, so the room beside them is the same all flush.
         let room = packet::DATAGRAM_BYTES
             - packet::BASE_HEADER_LEN
             - packet::acks_len(&peer.acks(packet::ALL_ACKS_LEN));
         let mut latest = peer.latest.take();
-        let mut items = Vec::new();
         let mut packet_count = 0;
+        let mut items = Vec::new();
+        let mut staged: [Vec<u16>; RELIABLE_LANES] = Default::default();
         while packet_count < budget {
+            let before_scheduler = peer.scheduler.clone();
+            let before_turn = peer.unreliable_turn;
             let mut used = latest
                 .as_ref()
                 .map_or(0, |(_, payload)| packet::item_len(payload.len()));
             loop {
                 let mut scheduler = peer.scheduler.clone();
-                let Some(index) = scheduler
-                    .next(|lane| peer.peek(lane, now_ms, rto_ms, max_retransmits).is_some())
-                else {
+                let Some(index) = scheduler.next(|lane| {
+                    peer.peek(lane, now_ms, rto_ms, max_retransmits, &staged[lane])
+                        .is_some()
+                }) else {
                     break;
                 };
                 let (next, len) = peer
-                    .peek(index, now_ms, rto_ms, max_retransmits)
+                    .peek(index, now_ms, rto_ms, max_retransmits, &staged[index])
                     .expect("the scheduler picked a sendable lane");
                 if used > 0 && used + len > room {
                     break;
                 }
                 peer.scheduler = scheduler;
-                items.push((index, peer.take(index, next, now_ms)));
+                let item = peer.take(index, next);
+                if let Outgoing::Reliable { sequence, .. } = &item {
+                    staged[index].push(*sequence);
+                }
+                items.push((index, item));
                 used += len;
             }
             if used == 0 {
@@ -856,29 +881,63 @@ impl<T: DatagramTransport> Endpoint<T> {
             }
             let acks = peer.acks(packet::DATAGRAM_BYTES - packet::BASE_HEADER_LEN - used);
             packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
-            if let Some((sequence, payload)) = latest.take() {
-                packet::push_latest(&mut self.scratch, sequence, &payload);
+            if let Some((sequence, payload)) = &latest {
+                packet::push_latest(&mut self.scratch, *sequence, payload);
             }
-            for (index, outgoing) in items.drain(..) {
-                let lane = lane_at(index);
+            for (index, outgoing) in &items {
+                let lane = lane_at(*index);
                 match outgoing {
-                    Outgoing::Reliable(sequence) => {
-                        let (fragment, bytes) = peer.reliable[index]
-                            .fragment(sequence)
-                            .expect("a sent fragment is in flight");
-                        packet::push_reliable(&mut self.scratch, lane, sequence, fragment, bytes);
+                    Outgoing::Reliable { sequence, .. } => {
+                        let (fragment, bytes) = peer.reliable[*index]
+                            .fragment(*sequence)
+                            .expect("a staged fragment is in flight");
+                        packet::push_reliable(&mut self.scratch, lane, *sequence, fragment, bytes);
                     }
                     Outgoing::Unreliable(sequence, payload) => {
-                        packet::push_unreliable(&mut self.scratch, lane, sequence, &payload);
+                        packet::push_unreliable(&mut self.scratch, lane, *sequence, payload);
                     }
                 }
             }
-            self.transport.send(peer.addr, &self.scratch, now_ms);
+            if self
+                .transport
+                .send(peer.addr, &self.scratch, now_ms)
+                .is_err_and(|error| retryable(&error))
+            {
+                // Roll back only this datagram; earlier accepted datagrams
+                // keep their scheduling, sequence, and transmission history.
+                for (index, outgoing) in items.into_iter().rev() {
+                    match outgoing {
+                        Outgoing::Reliable { admitted: true, .. } => {
+                            peer.reliable[index].undo_admit();
+                        }
+                        Outgoing::Reliable {
+                            admitted: false, ..
+                        } => {}
+                        Outgoing::Unreliable(sequence, payload) => {
+                            peer.unreliable[index].restore(sequence, payload);
+                        }
+                    }
+                }
+                if let Some((sequence, payload)) = latest {
+                    peer.latest.restore(sequence, payload);
+                }
+                peer.scheduler = before_scheduler;
+                peer.unreliable_turn = before_turn;
+                return (packet_count, true);
+            }
+            for (index, outgoing) in &items {
+                if let Outgoing::Reliable { sequence, .. } = outgoing {
+                    peer.reliable[*index].mark_sent(*sequence, now_ms);
+                }
+            }
+            items.clear();
+            staged.iter_mut().for_each(Vec::clear);
+            latest = None;
             peer.sent_acks(&acks);
             peer.last_send_ms = now_ms;
             packet_count += 1;
         }
-        packet_count
+        (packet_count, false)
     }
 
     /// Sends the acknowledgements no payload datagram had room for, or a
@@ -897,7 +956,13 @@ impl<T: DatagramTransport> Endpoint<T> {
         if keepalive && packet_count < max_packets {
             let acks = peer.acks(packet::ALL_ACKS_LEN);
             packet::begin_payload(&mut self.scratch, self.config.magic, peer.nonces, &acks);
-            self.transport.send(peer.addr, &self.scratch, now_ms);
+            if self
+                .transport
+                .send(peer.addr, &self.scratch, now_ms)
+                .is_err_and(|error| retryable(&error))
+            {
+                return;
+            }
             peer.sent_acks(&acks);
             peer.last_send_ms = now_ms;
         }
@@ -970,9 +1035,8 @@ impl<T: DatagramTransport> Endpoint<T> {
                 }
                 peer.nonces = nonces;
                 peer.handshake = Handshake::ClientConfirm;
-                peer.confirms_sent += 1;
                 peer.last_receive_ms = now_ms;
-                self.send_control(source, Kind::ConnectConfirm, nonces, now_ms);
+                self.send_handshake(id, Kind::ConnectConfirm, nonces, now_ms);
             }
             // A stopped server still answers a connection it already has,
             // whose accept may have been lost.
@@ -1245,9 +1309,12 @@ impl<T: DatagramTransport> Endpoint<T> {
         (self.peers.get(&id)?.nonces == nonces).then_some(id)
     }
 
-    fn send_control(&mut self, addr: SocketAddr, kind: Kind, nonces: Nonces, now_ms: u64) {
+    fn send_control(&mut self, addr: SocketAddr, kind: Kind, nonces: Nonces, now_ms: u64) -> bool {
         packet::control(&mut self.scratch, self.config.magic, kind, nonces);
-        self.transport.send(addr, &self.scratch, now_ms);
+        !self
+            .transport
+            .send(addr, &self.scratch, now_ms)
+            .is_err_and(|error| retryable(&error))
     }
 
     fn drop_peer(&mut self, id: u64, reason: DisconnectReason, notify_remote: bool) {
@@ -1285,8 +1352,45 @@ impl<T: DatagramTransport> Endpoint<T> {
     }
 
     fn send_disconnect(&mut self, addr: SocketAddr, nonces: Nonces, now_ms: u64) {
-        for _ in 0..DISCONNECT_SENDS {
-            self.send_control(addr, Kind::Disconnect, nonces, now_ms);
+        for copy in 0..DISCONNECT_SENDS {
+            if !self.send_control(addr, Kind::Disconnect, nonces, now_ms) {
+                self.pending_disconnects
+                    .retain(|pending| pending.addr != addr || pending.nonces != nonces);
+                // Notifications are best effort and bounded under repeated
+                // connection churn while a socket remains unable to send.
+                if self.pending_disconnects.len() == self.config.max_peers {
+                    self.pending_disconnects.pop_front();
+                }
+                self.pending_disconnects.push_back(PendingDisconnect {
+                    addr,
+                    nonces,
+                    copies: DISCONNECT_SENDS - copy,
+                    expires_ms: now_ms.saturating_add(self.config.timeout_ms),
+                });
+                break;
+            }
+        }
+    }
+
+    fn flush_disconnects(&mut self, now_ms: u64) {
+        let count = self.pending_disconnects.len();
+        for _ in 0..count {
+            let mut pending = self
+                .pending_disconnects
+                .pop_front()
+                .expect("counted pending control");
+            if now_ms >= pending.expires_ms {
+                continue;
+            }
+            while pending.copies > 0 {
+                if !self.send_control(pending.addr, Kind::Disconnect, pending.nonces, now_ms) {
+                    break;
+                }
+                pending.copies -= 1;
+            }
+            if pending.copies > 0 {
+                self.pending_disconnects.push_back(pending);
+            }
         }
     }
 
@@ -1316,6 +1420,7 @@ impl<T: DatagramTransport> Endpoint<T> {
 // socket disappears; a close already completed removed its route earlier.
 impl<T: DatagramTransport> Drop for Endpoint<T> {
     fn drop(&mut self) {
+        self.flush_disconnects(self.now_ms);
         while let Some((&id, _)) = self.peers.first_key_value() {
             self.remove_and_notify(id, self.now_ms);
         }
@@ -1342,7 +1447,12 @@ mod tests {
             remaining: usize,
         }
         impl DatagramTransport for LoseDisconnects {
-            fn send(&mut self, destination: SocketAddr, payload: &[u8], now_ms: u64) {
+            fn send(
+                &mut self,
+                destination: SocketAddr,
+                payload: &[u8],
+                now_ms: u64,
+            ) -> std::io::Result<()> {
                 if matches!(
                     packet::parse(payload, *b"TST"),
                     Some(Parsed::Control {
@@ -1353,8 +1463,9 @@ mod tests {
                 {
                     self.remaining -= 1;
                 } else {
-                    self.inner.send(destination, payload, now_ms);
+                    self.inner.send(destination, payload, now_ms)?;
                 }
+                Ok(())
             }
             fn receive(
                 &mut self,
@@ -1924,12 +2035,18 @@ mod tests {
     }
 
     impl DatagramTransport for RecordingTransport {
-        fn send(&mut self, destination: SocketAddr, payload: &[u8], now_ms: u64) {
+        fn send(
+            &mut self,
+            destination: SocketAddr,
+            payload: &[u8],
+            now_ms: u64,
+        ) -> std::io::Result<()> {
             self.sent.push(SentDatagram {
                 destination,
                 bytes: payload.to_vec(),
                 now_ms,
             });
+            Ok(())
         }
 
         fn receive(
@@ -4409,3 +4526,6 @@ mod tests {
         assert_eq!(acknowledged, [1, 1, 0, 0]);
     }
 }
+
+#[cfg(test)]
+mod send_tests;

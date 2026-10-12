@@ -29,8 +29,11 @@ impl UdpSocketTransport {
 }
 
 impl DatagramTransport for UdpSocketTransport {
-    fn send(&mut self, destination: SocketAddr, payload: &[u8], _now_ms: u64) {
-        let _ = self.socket.send_to(payload, destination);
+    fn send(&mut self, destination: SocketAddr, payload: &[u8], _now_ms: u64) -> io::Result<()> {
+        self.socket
+            .send_to(payload, destination)
+            .map(|_| ())
+            .map_err(normalize_send_error)
     }
 
     /// Only `WouldBlock` means the socket is empty. Any other error (on
@@ -47,6 +50,45 @@ impl DatagramTransport for UdpSocketTransport {
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(None),
             Err(error) => Err(error),
         }
+    }
+}
+
+// ENOBUFS is not classified by std::io::ErrorKind. Keep these ABI values
+// local to the native transport, so custom transports report WouldBlock.
+// Darwin/BSD errno.h, Linux asm errno headers, and Winsock WSAENOBUFS.
+pub(super) fn normalize_send_error(error: io::Error) -> io::Error {
+    let code = error.raw_os_error();
+    let no_buffers = if cfg!(windows) {
+        code == Some(10_055)
+    } else if cfg!(any(
+        target_vendor = "apple",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    )) {
+        code == Some(55)
+    } else if cfg!(any(target_os = "linux", target_os = "android")) {
+        let errno = if cfg!(any(
+            target_arch = "mips",
+            target_arch = "mips64",
+            target_arch = "mips32r6",
+            target_arch = "mips64r6"
+        )) {
+            132
+        } else if cfg!(any(target_arch = "sparc", target_arch = "sparc64")) {
+            55
+        } else {
+            105
+        };
+        code == Some(errno)
+    } else {
+        false
+    };
+    if no_buffers {
+        io::Error::new(io::ErrorKind::WouldBlock, error)
+    } else {
+        error
     }
 }
 
