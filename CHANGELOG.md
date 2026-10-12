@@ -16,6 +16,7 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: contacts ending exactly on a broadphase grid-cell boundary could be missed; swept queries now preserve that end boundary. No game-code changes are needed.
+- `sgl-net` `NativeWebSocketClient::connect`: a silent first resolved address formerly exhausted the connection deadline; TCP attempts now share the remaining budget so later addresses can connect. No game-code changes are needed.
 
 - `sgl-3d` `Renderer` geometry pipelines: each change of rect lights, decals, films, sheens, diffuse transmission, transmissive materials or diagnostics layers formerly kept every earlier pipeline set for the renderer's lifetime; only the current and previous sets are now kept. No game-code changes are needed.
 - `sgl-3d` hardware ray tracing: a model whose indices start 4 GiB or more into the ray source formerly failed wgpu's BLAS build validation and panicked; it is now left out of the TLAS as a model past the device's BLAS limits is. No game-code changes are needed.

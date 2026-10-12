@@ -108,6 +108,11 @@ there interleave in 16 KiB fragments and keep their own admission, but a lost
 TCP segment stalls every lane until it is retransmitted. Use UDP where
 loss-isolated lanes matter.
 
+A native WebSocket client tries resolved addresses in order within its
+`handshake_timeout`. Each TCP attempt shares the remaining time with the
+untried addresses, so a silent first address does not exhaust the whole budget.
+The last address gets all remaining time; the HTTP upgrade uses that same deadline.
+
 Native WebSocket server and client sockets disable Nagle's algorithm before
 the handshake to avoid delayed-ACK stalls for small updates. This is best
 effort: a platform that refuses `TCP_NODELAY` still keeps the connection.

@@ -881,16 +881,30 @@ fn connect_first_reachable(
     addrs: impl IntoIterator<Item = SocketAddr>,
     deadline: Instant,
 ) -> io::Result<TcpStream> {
+    connect_first_reachable_with(addrs, deadline, TcpStream::connect_timeout)
+}
+
+fn connect_first_reachable_with(
+    addrs: impl IntoIterator<Item = SocketAddr>,
+    deadline: Instant,
+    mut connect: impl FnMut(&SocketAddr, Duration) -> io::Result<TcpStream>,
+) -> io::Result<TcpStream> {
+    let addrs: Vec<_> = addrs.into_iter().collect();
     let mut failures = Vec::new();
     let mut last_kind = io::ErrorKind::NotFound;
-    for addr in addrs {
+    for (index, addr) in addrs.iter().enumerate() {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             last_kind = io::ErrorKind::TimedOut;
             failures.push(format!("{addr}: connection budget exhausted"));
             break;
         }
-        match TcpStream::connect_timeout(&addr, remaining) {
+        // A silent address must leave time for the remaining candidates.
+        // Recompute after each failure so an immediate refusal costs no share;
+        // the final address gets the entire remaining budget.
+        let addresses_left = u32::try_from(addrs.len() - index).unwrap_or(u32::MAX);
+        let attempt_timeout = remaining / addresses_left;
+        match connect(addr, attempt_timeout) {
             Ok(stream) => {
                 // Small game updates should not wait for earlier TCP ACKs.
                 // An unsupported socket option must not reject a connection.
@@ -1386,6 +1400,30 @@ mod tests {
             Instant::now() + MAX_WEBSOCKET_HANDSHAKE_TIMEOUT,
         )
         .expect("fallback reaches the live address");
+        let (_, peer) = live.accept().expect("live listener accepts");
+        assert_eq!(peer, stream.local_addr().expect("client addr"));
+    }
+
+    #[test]
+    fn connect_falls_back_after_a_silent_address_times_out() {
+        let live = TcpListener::bind("127.0.0.1:0").expect("bind live port");
+        let silent = "10.255.255.1:9".parse().expect("silent address");
+        let stream = connect_first_reachable_with(
+            [silent, live.local_addr().expect("live addr")],
+            Instant::now() + Duration::from_millis(800),
+            |addr, timeout| {
+                if *addr == silent {
+                    // Model a black-holed TCP attempt consuming its timeout:
+                    // real external addresses may refuse immediately depending
+                    // on the host's routing and firewall configuration.
+                    thread::sleep(timeout);
+                    Err(io::Error::new(io::ErrorKind::TimedOut, "silent peer"))
+                } else {
+                    TcpStream::connect_timeout(addr, timeout)
+                }
+            },
+        )
+        .expect("the silent address leaves time to connect to the live one");
         let (_, peer) = live.accept().expect("live listener accepts");
         assert_eq!(peer, stream.local_addr().expect("client addr"));
     }
