@@ -1313,7 +1313,9 @@ last, after everything it may use, and refuses a directive in it.
   falloff;
   blends it with its reprojection into the stage's last volume; filters
   each slice across x and y (`Settings::fog_filter`), leaving the volume the
-  next frame reprojects unfiltered; and integrates each column along its
+  next frame reprojects unfiltered; a retry after submission without
+  `finish_frame` rejects the overwritten filtered volume as history; and
+  integrates each column along its
   view ray. The
   integrated volume is the frame's one fog: group 0 lends it, with its
   slicing in `Frame`, to the draws that fog themselves (blended surfaces,

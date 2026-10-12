@@ -123,7 +123,12 @@ impl Volumes {
 
 /// The history frame count each of a pair of froxel volumes holds.
 #[derive(Clone, Copy, Default)]
-pub(super) struct Holds([Option<u32>; 2]);
+pub(super) struct Holds {
+    frames: [Option<u32>; 2],
+    /// The injection destination, distinct from the filtered destination.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    last_injected: usize,
+}
 
 impl Holds {
     /// Follows a frame of `history`, which the fog `runs` in or not. A reset
@@ -133,21 +138,32 @@ impl Holds {
     /// reprojects the other, which then holds its predecessor's froxels.
     pub fn frame(&mut self, history: &HistoryFrame, runs: bool) -> Option<(usize, bool)> {
         if !history.valid {
-            self.0 = [None; 2];
+            self.frames = [None; 2];
         }
         if !runs {
             return None;
         }
         let index = (history.frames % 2) as usize;
-        let reprojects = self.0[1 - index] == Some(history.frames.wrapping_sub(1));
-        self.0[index] = Some(history.frames);
+        let reprojects = self.frames[1 - index] == Some(history.frames.wrapping_sub(1));
+        self.frames[index] = Some(history.frames);
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        {
+            self.last_injected = index;
+        }
         Some((index, reprojects))
+    }
+
+    /// The filter overwrites the other volume too. A retry may follow a
+    /// submission without finish_frame, so it cannot assume that volume
+    /// still contains the preceding camera's history.
+    pub fn filtered(&mut self, index: usize, frame: u32) {
+        self.frames[1 - index] = Some(frame);
     }
 
     /// The volume the last frame the fog ran in wrote.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn last(&self) -> usize {
-        usize::from(self.0[1] > self.0[0])
+        self.last_injected
     }
 }
 
