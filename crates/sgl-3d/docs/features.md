@@ -374,7 +374,9 @@ Environment and probe specular always apply. On top of them:
   the camera follows, stay sharp. [Motion blur](../README.md#motion-blur).
 - **Colour grading** (`FrameInput::color_grading`): white balance, hue, and
   saturation, contrast, gamma, gain and lift for shadows, midtones and
-  highlights, then AgX tone mapping with Filament's look (`AgxLook`: none,
+  highlights; adjacent sections crossfade at each end of the midtone range,
+  so highlights do not affect the shadows-to-midtones transition. Then AgX
+  tone mapping with Filament's look (`AgxLook`: none,
   punchy or golden) and a post-saturation. The output is always dithered
   against 8-bit banding.
 - **Volumetric fog** (`FrameInput::fog`, `Fog`): Godot's froxel fog, while

@@ -191,6 +191,98 @@ fn tone_maps_as_filaments_agx_with_each_look_after_the_exposure() {
     }
 }
 
+// Defect: the shadows-to-midtones crossfade uses highlights instead of
+// shadows, producing a bright band when shadows have zero gain. The oracle
+// is the section contract: a dark transition lies between black and neutral,
+// and highlights cannot affect it. The same highlight change must brighten
+// a highlight pixel, so the fixture also detects an ignored highlights gain.
+// These comparisons exercise the real GPU pass without duplicating its
+// weight formula or tone curve.
+#[test]
+fn dark_transition_blends_shadows_with_midtones_without_highlights() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    // Binary16-exact greys around both ends of the default dark crossfade,
+    // plus a midtone and a highlight outside either crossfade.
+    let greys = [
+        0.,
+        0.0625,
+        0.099609375,
+        0.10058594,
+        0.15,
+        0.2,
+        0.2998047,
+        0.30078125,
+        0.5,
+        0.875,
+    ];
+    let size = [greys.len() as u32, 1];
+    let texels: Vec<_> = greys.iter().map(|&grey| [grey, grey, grey, 1.]).collect();
+    let hdr = hdr_texture(&device, &queue, size, &texels);
+    let inputs = Inputs::new(&device);
+    let mut tone_map = ToneMap::new(&device, &inputs, HDR, size);
+    let output = target(&device, "sectional grading output", size, HDR);
+    let unread_bloom = target(&device, "sectional grading bloom", [1, 1], HDR);
+    let exposure = exposure_texture(&device, &queue, 1.);
+    let mut render = |grading: &ColorGrading| {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        tone_map.encode(
+            &device,
+            &queue,
+            &mut encoder,
+            &inputs,
+            &hdr,
+            &unread_bloom,
+            &exposure,
+            grading,
+            Destination::Output {
+                capture: true,
+                output: &output,
+            },
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        read(&device, &queue, tone_map.tone_mapped().texture(), 8)
+    };
+    let neutral = render(&ColorGrading::default());
+    let mut grading = ColorGrading::default();
+    grading.shadows.gain = 0.;
+    let darkened = render(&grading);
+    grading.highlights.gain = 2.;
+    let boosted_highlights = render(&grading);
+    for channel in 0..3 {
+        let value = |pixels: &[u8], index: usize| half(&pixels[index * 8 + channel * 2..]);
+        let black = value(&neutral, 0);
+        let transition = value(&darkened, 4);
+        let midtones_only = value(&neutral, 4);
+        assert!(
+            transition > black + 0.01 && transition < midtones_only - 0.01,
+            "channel {channel}: grey 0.15 must lie between shadow output {black} and midtone output {midtones_only}, got {transition}"
+        );
+        for (index, grey) in greys.iter().enumerate().take(9) {
+            assert!(
+                (value(&darkened, index) - value(&boosted_highlights, index)).abs() < 1.5e-3,
+                "channel {channel}: highlights changed dark/midtone grey {grey}"
+            );
+        }
+        // A sub-0.001 input change across a boundary must not cause the
+        // visible output jump a wrong section introduces.
+        for (below, above) in [(2, 3), (6, 7)] {
+            assert!(
+                (value(&darkened, above) - value(&darkened, below)).abs() < 0.005,
+                "channel {channel}: grading jumps across greys {} and {}",
+                greys[below],
+                greys[above]
+            );
+        }
+        assert!(
+            value(&boosted_highlights, 9) > value(&darkened, 9) + 0.05,
+            "channel {channel}: highlight gain must brighten the highlight pixel"
+        );
+    }
+}
+
 /// The 8-bit sRGB code value, unrounded, of linear `value`, by the sRGB
 /// transfer function.
 fn srgb_code(value: f64) -> f64 {

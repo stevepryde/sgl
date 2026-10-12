@@ -262,6 +262,9 @@ current capabilities and limits.
   rectangular area lights (16). See [lights](../crates/sgl-3d/README.md#point-spot-and-rectangle-lights)
   and [shadows](../crates/sgl-3d/README.md#local-light-shadows).
 - **Image (6):** tone mapping, exposure, colour grading, and bloom.
+  Sectional grading blends shadows with midtones around `midtones_start`
+  and midtones with highlights around `midtones_end`, over 0.1 either side
+  in the exposed RGB mean; highlights never contribute to the dark transition.
   See [image controls](../crates/sgl-3d/README.md#exposure-bloom-and-colour-grading).
 - **Content:** alpha-masked and blended materials (17), transmissive glass
   and water (refraction, volume attenuation and dispersion,
