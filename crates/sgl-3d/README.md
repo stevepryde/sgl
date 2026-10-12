@@ -2952,7 +2952,9 @@ complete environment asset pipeline.
 
 [SGL3D architecture](../../specs/sgl3d-architecture.md) is the shape this code
 follows: its layers, the stage order, the shared contracts and the rules for
-changing them. `src/lib.rs` declares the layers and re-exports the public
+changing them. World-space reflection and dynamic GI rendering trace pipelines retain
+only the current and previous lighting specialisations, including their reach
+variants and ray forms. `src/lib.rs` declares the layers and re-exports the public
 surface. The layers, in order: `src/content/` (CPU data and loading: `asset`
 and its glTF import, `lighting`, `light`, `decal`, `static_lighting`, `environment`,
 probe descriptions, ...; no wgpu), `src/shading/` (the WGSL library composed by

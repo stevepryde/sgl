@@ -10,7 +10,7 @@ use crate::shading::RayQueryForm;
 use crate::view::cached_group::CachedGroup;
 use crate::view::frame::HardwareRays;
 use crate::view::history::{HistoryFrame, StageHistory};
-use crate::view::pipelines::LitConstants;
+use crate::view::pipelines::{LitConstants, PipelineSpecialisations};
 use crate::view::reflection_camera;
 use crate::view::trace_paths::{TracePath, TracePaths};
 use glam::Mat4;
@@ -167,6 +167,7 @@ pub(crate) struct WorldReflections {
     /// created when a frame first needs it, as the geometry pipelines
     /// specialise on the scene's rectangle lights and decals.
     trace: HashMap<((LitConstants, bool), Option<RayQueryForm>), wgpu::ComputePipeline>,
+    specialisations: PipelineSpecialisations<LitConstants>,
     classify: classify::Classify,
     resolve: Denoise,
     temporal: Denoise,
@@ -282,6 +283,7 @@ impl WorldReflections {
                 scene,
             ),
             trace: HashMap::new(),
+            specialisations: PipelineSpecialisations::default(),
             classify: classify::Classify::new(device),
             resolve: compute(WORLD_RESOLVE_ENTRY),
             temporal: compute(WORLD_TEMPORAL_ENTRY),
@@ -322,6 +324,8 @@ impl WorldReflections {
         hardware: Option<HardwareRays<'_>>,
         all: bool,
     ) -> Option<RayQueryForm> {
+        self.specialisations
+            .retain(&mut self.trace, lit, |&((lit, _), _)| lit);
         self.paths.pipeline(
             device,
             hardware,

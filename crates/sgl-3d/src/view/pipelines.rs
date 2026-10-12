@@ -24,12 +24,14 @@ use std::collections::HashMap;
 mod key;
 mod pass;
 mod programs;
+mod retention;
 mod variant;
 pub(crate) use key::{LayerConstants, LitConstants};
 use key::{PipelineKey, Specialisation};
 pub(crate) use pass::{GeometryPass, depth};
 use pass::{attachments_fit, targets};
 use programs::{Program, ProgramSet};
+pub(crate) use retention::PipelineSpecialisations;
 pub(crate) use variant::{Alpha, Cull, Variant};
 
 /// Which alpha modes the scene's materials use beyond opaque, whether one
