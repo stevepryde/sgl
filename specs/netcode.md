@@ -208,8 +208,11 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
     unanswered confirms it requests again, keeping its cookie until a new
     challenge replaces it. The cookie gates only a new connection: a server,
     stopped or not, answers a request or confirm carrying a connection it
-    holds with an accept naming the cookie it kept, at any cookie age. A
-    client that has not connected takes that cookie from the accept, and a
+    holds with an accept naming the cookie it kept, at any cookie age.
+    An admitted route never changes its cookie: a valid later confirm for
+    another cookie receives an accept naming the admitted one, even when
+    that later cookie is from a newer epoch. A client that has not connected
+    takes that cookie from the accept, and a
     client that has confirmed takes a payload carrying its nonces as the
     accept. A client honours a deny only before it connects and only for the
     cookie it holds, and answers it with a disconnect for that cookie, so a

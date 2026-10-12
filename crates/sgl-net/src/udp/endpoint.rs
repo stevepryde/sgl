@@ -1167,13 +1167,9 @@ impl<T: DatagramTransport> Endpoint<T> {
         if let Some(&id) = self.routes.get(&(source, nonces.client)) {
             let response = {
                 let peer = self.peers.get_mut(&id).expect("route points to peer");
-                if peer
-                    .verified_cookie_epoch
-                    .is_none_or(|verified| cookie_epoch >= verified)
-                {
-                    peer.nonces = nonces;
-                    peer.verified_cookie_epoch = Some(cookie_epoch);
-                }
+                // A late confirm may cross the accept the client already
+                // adopted. Keep the admitted session's cookie; switching
+                // it would make both ends reject each other's payloads.
                 peer.last_receive_ms = now_ms;
                 peer.nonces
             };
@@ -3092,6 +3088,144 @@ mod tests {
         assert!(server.routes.is_empty());
     }
 
+    /// A delayed newer challenge crosses the accept for an already admitted
+    /// cookie. The client adopts that accept first; its newer confirmation
+    /// must not change the live session's cookie or reset either lane's ARQ.
+    /// Oracle: reliable messages keep flowing in both directions, in order,
+    /// before and after the confirmation, with one connection event per end.
+    #[wasm_bindgen_test(unsupported = test)]
+    #[allow(clippy::too_many_lines)] // Keep the reordered handshake in one chronological fixture.
+    fn a_late_newer_confirm_keeps_the_admitted_session_live_in_both_directions() {
+        let (server_addr, client_addr) =
+            (address(192, 0, 2, 1, 7_000), address(192, 0, 2, 2, 40_000));
+        let mut server = Endpoint::server(
+            RecordingTransport::default(),
+            EndpointConfig::default(),
+            [64; 32],
+        )
+        .unwrap();
+        let mut client =
+            Endpoint::client(RecordingTransport::default(), EndpointConfig::default()).unwrap();
+        let client_peer = client.start_connect(server_addr, 4_900, 77).unwrap();
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(4_900).is_empty());
+        let first_challenge = std::mem::take(&mut server.transport.sent);
+
+        // This second request crosses an epoch before either challenge is
+        // confirmed. Keep the newer challenge delayed in the network.
+        client.flush(5_150);
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(5_150).is_empty());
+        let delayed_challenge = std::mem::take(&mut server.transport.sent);
+        server.transport.sent = first_challenge;
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert!(client.poll(5_160).is_empty());
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        let server_peer = match server.poll(5_170).as_slice() {
+            [EndpointEvent::Connected { peer }] => *peer,
+            events => panic!("server did not admit first cookie: {events:?}"),
+        };
+        server.transport.sent.clear(); // The first accept is lost.
+
+        // Lose the accepts for three more confirmations. The client asks
+        // again, and the server's response still names its admitted cookie.
+        for now in [5_410, 5_660, 5_910] {
+            client.flush(now);
+            ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+                false
+            });
+            assert!(server.poll(now).is_empty());
+            server.transport.sent.clear();
+        }
+        client.flush(6_160);
+        ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+            false
+        });
+        assert!(server.poll(6_160).is_empty());
+        let admitted_accept = std::mem::take(&mut server.transport.sent);
+
+        // The delayed newer challenge arrives while the client requests.
+        // Its confirmation stays delayed until after Accept(first cookie).
+        server.transport.sent = delayed_challenge;
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert!(client.poll(6_170).is_empty());
+        let mut delayed_confirm = std::mem::take(&mut client.transport.sent);
+        server.transport.sent = admitted_accept;
+        ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+            false
+        });
+        assert_eq!(
+            client.poll(6_180),
+            [EndpointEvent::Connected { peer: client_peer }]
+        );
+
+        for (index, now) in [(0_u8, 6_181), (1, 6_200)] {
+            if index == 1 {
+                client.transport.sent = std::mem::take(&mut delayed_confirm);
+                ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+                    false
+                });
+                assert!(server.poll(6_190).is_empty(), "no second server connection");
+                ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+                    false
+                });
+                assert!(client.poll(6_191).is_empty(), "no second client connection");
+            }
+            client
+                .send(client_peer, Delivery::RELIABLE_ORDERED, &[b'C', index])
+                .unwrap();
+            server
+                .send(server_peer, Delivery::RELIABLE_ORDERED, &[b'S', index])
+                .unwrap();
+            client.flush(now);
+            server.flush(now);
+            ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+                false
+            });
+            ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+                false
+            });
+            assert_eq!(
+                server.poll(now),
+                [EndpointEvent::Message {
+                    peer: server_peer,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: vec![b'C', index],
+                }]
+            );
+            assert_eq!(
+                client.poll(now),
+                [EndpointEvent::Message {
+                    peer: client_peer,
+                    delivery: Delivery::RELIABLE_ORDERED,
+                    payload: vec![b'S', index],
+                }]
+            );
+            // Complete the acknowledgements, so the next pair exercises
+            // the continuing sequence rather than retransmitting the first.
+            client.flush(now + 1);
+            server.flush(now + 1);
+            ferry(&mut client, client_addr, &mut server, server_addr, |_| {
+                false
+            });
+            ferry(&mut server, server_addr, &mut client, client_addr, |_| {
+                false
+            });
+            assert!(server.poll(now + 1).is_empty());
+            assert!(client.poll(now + 1).is_empty());
+        }
+    }
+
     #[wasm_bindgen_test(unsupported = test)]
     fn reordered_epoch_confirm_and_replays_emit_connected_once() {
         let source = address(192, 0, 2, 20, 40_000);
@@ -3117,13 +3251,11 @@ mod tests {
         assert_eq!(events, vec![EndpointEvent::Connected { peer: 1 }]);
         assert_eq!(server.peers.len(), 1);
         assert_eq!(server.routes.len(), 1);
-        assert_eq!(server.peers[&1].nonces, current);
 
         request(&mut server, source, 77);
         assert!(server.poll(boundary + 2).is_empty());
         assert_eq!(server.peers.len(), 1);
         assert_eq!(server.routes.len(), 1);
-        assert_eq!(server.peers[&1].nonces, current);
 
         server.disconnect(1, boundary + 3);
         server.transport.sent.clear();
