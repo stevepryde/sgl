@@ -408,3 +408,76 @@ impl Renderer {
         );
     }
 }
+
+// Defect: recording an automatic frame consumes the fixed-to-automatic
+// reset even if its encoder is abandoned. Read the GPU exposure: a retry
+// must snap to the bright frame's target, then resume authored adaptation
+// after finish_frame rather than resetting every later frame.
+#[test]
+fn abandoned_automatic_exposure_still_snaps_then_adapts_after_finish() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let settings = Settings {
+        antialiasing: crate::settings::Antialiasing::Off,
+        bloom: crate::settings::Bloom::Off,
+        ..Default::default()
+    };
+    let size = [16, 16];
+    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut scene = Scene::new(&device, &queue);
+    let output = crate::view::targets::target(
+        &device,
+        "exposure lifecycle",
+        size,
+        crate::shading::gbuffer::COLOR,
+    );
+    let mut input = FrameInput::new(crate::Camera {
+        view: glam::Mat4::IDENTITY,
+        projection: crate::perspective(1., 1., 0.1),
+        eye: glam::Vec3::ZERO,
+    });
+    input.backdrop = crate::Backdrop::Color([16.; 3]);
+    input.frame_time_ms = 0.;
+    for frame in 0..4 {
+        if frame == 1 {
+            input.exposure.automatic = Some(crate::AutoExposure {
+                speed_brighten: 0.,
+                speed_darken: 0.,
+                ..Default::default()
+            });
+        }
+        if frame == 3 {
+            input.backdrop = crate::Backdrop::Color([1.; 3]);
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            &mut scene,
+            &input,
+            &settings,
+            &output,
+            None,
+        );
+        if frame == 1 {
+            drop(encoder);
+            continue;
+        }
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(&mut scene);
+        if frame >= 2 {
+            let multiplier: f32 = bytemuck::pod_read_unaligned(&crate::test_support::read(
+                &device,
+                &queue,
+                renderer.exposure.texture(),
+                4,
+            ));
+            assert!(
+                (multiplier.log2() + 4.).abs() < 0.3,
+                "frame {frame}: snap to luminance 16 then hold at zero speed: {multiplier}"
+            );
+        }
+    }
+}
