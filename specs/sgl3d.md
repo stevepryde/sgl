@@ -124,7 +124,9 @@ settings SGL3D has today.
    Point, spot and rectangle
    light intensity is per steradian (candela; a rectangle's along its normal)
    and directional illuminance per square metre (lux), on one scale; a
-   light's direction points where it shines.
+   light's direction points where it shines. A closed or unrepresentably narrow
+   spot cone is valid content and releases its shadow slots until its projection
+   is finite.
    Colour inputs state their linear/sRGB interpretation; HDR lighting stays linear
    until presentation.
    Games supply final presentation poses and decide when an instance exists; the
