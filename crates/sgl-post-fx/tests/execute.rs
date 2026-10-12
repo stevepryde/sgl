@@ -693,8 +693,9 @@ fn taa_still_frames(
 /// distance 1 (DiligentFX's `ComputeClosestMotion.fx`). One near texel whose
 /// motion reprojects off screen therefore resets exactly the 3×3 block
 /// around it (alpha 0.5, the off-screen reset), while pixels two or more
-/// away keep the history of still pixels (alpha 0.985, DFX-19), under
-/// reversed and conventional depth alike.
+/// away keep the same confidence as an unaffected still pixel, under
+/// reversed and conventional depth alike. The three frames do not fully
+/// converge: the placeholder starts at reset confidence (DFX-47).
 #[test]
 fn taa_closest_motion_is_the_nearest_depth_in_3x3() {
     let Some((device, queue)) = device() else {
@@ -710,6 +711,8 @@ fn taa_closest_motion_is_the_nearest_depth_in_3x3() {
         let mut motion = vec![0.0f32; 2 * (SIZE[0] * SIZE[1]) as usize];
         motion[2 * at(near_texel[0], near_texel[1])] = 4.0;
         let texels = taa_still_frames(&device, &queue, reversed, &depths, &motion);
+        let still_confidence = texels[at(0, 0)][3];
+        assert!(still_confidence > 0.5, "a still pixel must retain history");
         for y in near_texel[1] - 3..=near_texel[1] + 3 {
             for x in near_texel[0] - 3..=near_texel[0] + 3 {
                 let within = x.abs_diff(near_texel[0]) <= 1 && y.abs_diff(near_texel[1]) <= 1;
@@ -721,9 +724,9 @@ fn taa_closest_motion_is_the_nearest_depth_in_3x3() {
                     );
                 } else {
                     assert!(
-                        (alpha - 0.985).abs() < 1e-3,
+                        (alpha - still_confidence).abs() < 1e-3,
                         "reversed {reversed}: ({x}, {y}), two or more from the near texel, \
-                         has history weight {alpha}, not a still pixel's 0.985"
+                         has history weight {alpha}, not the still pixel's {still_confidence}"
                     );
                 }
             }
@@ -2119,6 +2122,155 @@ fn taa_first_frame_takes_an_unfilterable_colour() {
         .finish()]);
         if let Some(error) = pollster::block_on(validation.pop()) {
             panic!("frame {index}: {error}");
+        }
+    }
+}
+
+// The placeholder is a new history sample, independent of input colour alpha.
+// Compare a feature change against the existing explicit-reset lifecycle, then
+// change the colour so the next resolve must actually blend that sample.
+#[test]
+fn taa_feature_change_restarts_confidence_and_convergence() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let motion = texture(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rg16Float,
+        &half(&[0.0, 0.0]),
+    );
+    let checker: Vec<[f32; 4]> = (0..SIZE[1])
+        .flat_map(|y| {
+            (0..SIZE[0]).map(move |x| {
+                let value = if (x + y) % 2 == 0 { 0.25 } else { 0.75 };
+                [value, value, value, 1.0]
+            })
+        })
+        .collect();
+    let changed_colour = texels(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba16Float,
+        &half(checker.as_flattened()),
+    );
+    for input_alpha in [0.125, 1.0] {
+        let initial_colour = texture(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba16Float,
+            &half(&[0.5, 0.5, 0.5, input_alpha]),
+        );
+        let mut effects = [
+            TemporalAntiAliasing::new(&device),
+            TemporalAntiAliasing::new(&device),
+        ];
+        let mut context = PostFXContext::new(&device, &queue, Default::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let current_depth = depth(&device, &mut encoder, 0.95);
+        let previous_depth = depth(&device, &mut encoder, 0.95);
+        for index in 0..6 {
+            context.prepare_resources(
+                &device,
+                &FrameDesc {
+                    index,
+                    width: SIZE[0],
+                    height: SIZE[1],
+                    output_width: SIZE[0],
+                    output_height: SIZE[1],
+                },
+                post_fx_context::FeatureFlags::NONE,
+            );
+            let curr = camera(false, index);
+            let prev = camera(false, index.saturating_sub(1));
+            context.execute(&mut RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                curr_depth_buffer_srv: &current_depth,
+                prev_depth_buffer_srv: &previous_depth,
+                curr_camera: Some(&curr),
+                prev_camera: Some(&prev),
+                camera_attribs_cb: None,
+                pass_timestamps: None,
+            });
+            for (track, taa) in effects.iter_mut().enumerate() {
+                // Control creates this pipeline during warm-up; the other
+                // track first creates it at the feature change on frame 4.
+                let flags = if track == 0 || index >= 4 {
+                    temporal_anti_aliasing::FeatureFlags::BICUBIC_FILTER
+                } else {
+                    temporal_anti_aliasing::FeatureFlags::NONE
+                };
+                taa.prepare_resources(&device, &mut encoder, &context, flags, 0);
+                let attribs = TemporalAntiAliasingAttribs {
+                    reset_accumulation: u32::from(track == 0 && index == 4),
+                    ..Default::default()
+                };
+                let status = taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+                    device: &device,
+                    queue: &queue,
+                    device_context: &mut encoder,
+                    post_fx_context: &mut context,
+                    color_buffer_srv: if index == 5 {
+                        &changed_colour
+                    } else {
+                        &initial_colour
+                    },
+                    depth_buffer_srv: &current_depth,
+                    motion_vectors_srv: &motion,
+                    taa_attribs: &attribs,
+                    accumulation_buffer_idx: 0,
+                    pass_timestamps: None,
+                });
+                if index == 4 {
+                    assert_eq!(
+                        status,
+                        if track == 0 {
+                            screen_space_reflection::PostFxExecutionStatus::Ready
+                        } else {
+                            screen_space_reflection::PostFxExecutionStatus::Pending
+                        },
+                        "the changed feature must exercise the placeholder"
+                    );
+                }
+                // Queue writes update each effect's uniforms separately;
+                // submit before the shared context is updated next frame.
+                queue.submit([std::mem::replace(
+                    &mut encoder,
+                    device.create_command_encoder(&Default::default()),
+                )
+                .finish()]);
+            }
+            if index >= 4 {
+                let reset = read_rgba16f(
+                    &device,
+                    &queue,
+                    effects[0].get_accumulated_frame_srv(false, 0),
+                );
+                let changed = read_rgba16f(
+                    &device,
+                    &queue,
+                    effects[1].get_accumulated_frame_srv(false, 0),
+                );
+                for (pixel, (expected, actual)) in reset.iter().zip(&changed).enumerate() {
+                    for component in 0..4 {
+                        assert!(
+                            (expected[component] - actual[component]).abs() < 0.001,
+                            "frame {index}, input alpha {input_alpha}, pixel {pixel}: explicit reset {expected:?}, feature change {actual:?}"
+                        );
+                    }
+                    if index == 4 {
+                        assert_eq!(&actual[..3], &[0.5; 3], "placeholder keeps RGB");
+                    } else {
+                        assert!(
+                            actual[0] > 0.25 && actual[0] < 0.75 && (actual[0] - 0.5).abs() > 0.01,
+                            "the resumed resolve must blend old and new colour: {actual:?}"
+                        );
+                        assert!(actual[3] > 0.5 && actual[3] < 0.9);
+                    }
+                }
+            }
         }
     }
 }

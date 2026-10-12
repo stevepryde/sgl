@@ -353,12 +353,13 @@ fn ComputeCorrectedAlpha(Alpha: f32, IsStill: bool) -> f32
 
 // PROVENANCE.md DFX-47: the placeholder (DFX-2) of a feature set's first frame is the
 // input, as upstream's CopyTextureColor copies it, loaded and clamped as the resolve
-// loads it (DFX-46), alpha included.
+// loads it (DFX-46). Alpha is history confidence, initialized as a reset sample
+// rather than copied from the input colour.
 @fragment
 fn ComputePlaceholderPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) vec4<f32>
 {
     let PixelCoord = vec2<i32>(VSOut.f4PixelPos.xy);
-    return vec4<f32>(SampleCurrColor(PixelCoord), clamp(HlslLoad(g_TextureCurrColor, PixelCoord, 0).a, 0.0, HALF_MAX));
+    return vec4<f32>(SampleCurrColor(PixelCoord), 0.5);
 }
 
 // PROVENANCE.md DFX-13: the accumulated frame, and the closest motion vector the next frame
