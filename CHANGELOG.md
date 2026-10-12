@@ -51,6 +51,9 @@ docs and specs the entry links.
   set copied input alpha as history confidence; it now starts at reset
   confidence, so the next frame ramps up history weight. No game-code
   changes needed.
+- `sgl-post-fx` `PostFXContext::execute`: switching from a caller camera buffer
+  to inline cameras now writes only the context’s own buffer instead of
+  overwriting the caller’s data or failing validation. No game-code changes.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;

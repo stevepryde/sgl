@@ -107,6 +107,11 @@ taa.execute(&mut temporal_anti_aliasing::RenderAttributes { /* color, depth, mot
 // taa.get_accumulated_frame_srv(false, 0): the anti-aliased frame
 ```
 
+`post_fx_context::RenderAttributes::camera_attribs_cb` supplies a read-only
+current/previous camera pair instead of inline `curr_camera` and `prev_camera`.
+A context may alternate between these sources each frame; it uploads inline
+cameras only into its own buffer and never changes the caller’s buffer.
+
 The caller supplies Diligent's conventions: a left-handed camera (view space
 +z forward) with a finite far plane, the depth buffer as a depth texture,
 unit world normals (SSR traces a normal that is not unit length as a miss,

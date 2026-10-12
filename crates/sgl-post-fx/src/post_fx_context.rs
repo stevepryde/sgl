@@ -67,7 +67,8 @@ pub struct RenderAttributes<'a, 'p> {
     pub curr_camera: Option<&'a CameraAttribs>,
     pub prev_camera: Option<&'a CameraAttribs>,
     /// Two `CameraAttribs`, current then previous, used instead of
-    /// `curr_camera` and `prev_camera`.
+    /// `curr_camera` and `prev_camera`. The context only reads this buffer;
+    /// subsequent frames may switch back to inline cameras.
     pub camera_attribs_cb: Option<&'a wgpu::Buffer>,
     /// Per-pass timestamps (the upstream debug groups), when profiling.
     pub pass_timestamps: Option<&'a PassTimestamps<'p>>,
@@ -164,7 +165,8 @@ pub struct PostFXContext {
     sobol_buffer: wgpu::TextureView,
     scrambling_tile_buffer: wgpu::TextureView,
     blue_noise_textures: [wgpu::TextureView; 2],
-    constant_buffer: Option<wgpu::Buffer>,
+    owned_constant_buffer: Option<wgpu::Buffer>,
+    caller_constant_buffer: Option<wgpu::Buffer>,
     reprojected_depth: Option<wgpu::TextureView>,
     previous_depth: Option<wgpu::TextureView>,
     point_clamp: wgpu::Sampler,
@@ -265,7 +267,8 @@ impl PostFXContext {
                 &scrambling,
             ),
             blue_noise_textures: [blue_noise(), blue_noise()],
-            constant_buffer: None,
+            owned_constant_buffer: None,
+            caller_constant_buffer: None,
             reprojected_depth: None,
             previous_depth: None,
             point_clamp: sampler(
@@ -328,16 +331,15 @@ impl PostFXContext {
     }
 
     pub fn execute(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {
-        if let Some(buffer) = render_attribs.camera_attribs_cb {
-            self.constant_buffer = Some(buffer.clone());
-        } else {
+        self.caller_constant_buffer = render_attribs.camera_attribs_cb.cloned();
+        if self.caller_constant_buffer.is_none() {
             let curr = render_attribs
                 .curr_camera
                 .expect("RenderAttribs.pCurrCamera must not be null");
             let prev = render_attribs
                 .prev_camera
                 .expect("RenderAttribs.pPrevCamera must not be null");
-            let buffer = self.constant_buffer.get_or_insert_with(|| {
+            let buffer = self.owned_constant_buffer.get_or_insert_with(|| {
                 render_attribs
                     .device
                     .create_buffer(&wgpu::BufferDescriptor {
@@ -386,7 +388,10 @@ impl PostFXContext {
     }
 
     pub fn get_camera_attribs_cb(&self) -> &wgpu::Buffer {
-        self.constant_buffer.as_ref().expect("executed context")
+        self.caller_constant_buffer
+            .as_ref()
+            .or(self.owned_constant_buffer.as_ref())
+            .expect("executed context")
     }
 
     pub fn get_supported_features(&self) -> &SupportedDeviceFeatures {

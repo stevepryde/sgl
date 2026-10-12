@@ -227,6 +227,9 @@ The code's structure follows the
      integration belongs in SGL3D. TAA's placeholder for a new feature set
      starts history confidence as a reset sample, independently of the input
      colour's alpha; the following resolve ramps up the history weight.
+     The shared context reads a caller-supplied
+     camera buffer or uploads inline cameras into its own allocation; switching
+     sources between frames must never write into the caller’s buffer.
      Its half-resolution SSR reconstructs from
      the ray of the 2×2 block containing each displaced pixel centre; at
      roughness zero each complete block reads only its own ray. An unpaired
