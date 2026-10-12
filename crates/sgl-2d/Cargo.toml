@@ -17,6 +17,11 @@ publish.workspace = true
 [lints]
 workspace = true
 
+# winit requires the native surface test's event loop on the main thread.
+[[test]]
+name = "surface"
+harness = false
+
 [dependencies]
 bytemuck.workspace = true
 fontdue.workspace = true

@@ -99,9 +99,6 @@ mod native {
             if size.width == 0 || size.height == 0 {
                 return;
             }
-            if self.context.size() != (size.width, size.height) {
-                self.context.resize(size.width, size.height);
-            }
             self.renderer
                 .set_target_size(&self.context, size.width, size.height);
             // Derive layout and input from the same physical-to-point transform.
@@ -358,6 +355,9 @@ mod native {
             match event {
                 WindowEvent::CloseRequested => event_loop.exit(),
                 WindowEvent::RedrawRequested => demo.redraw(),
+                WindowEvent::Resized(size) => {
+                    demo.context.resize(size.width, size.height);
+                }
                 WindowEvent::CursorMoved { position, .. } => {
                     let point = position.to_logical::<f32>(demo.window.scale_factor());
                     demo.input.mouse_pos = Vec2::new(point.x, point.y);
