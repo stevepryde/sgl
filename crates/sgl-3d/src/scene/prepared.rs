@@ -224,6 +224,31 @@ mod tests {
         )
     }
 
+    // Individually finite weights can still overflow their f32 sum. The
+    // validator must reject that before normalization loses every influence.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn overflowing_skin_weight_sums_are_rejected() {
+        use crate::deformation::{Influence, MeshDeformation};
+        let mut mesh = ModelMesh {
+            material: MaterialId::issue(0, 0),
+            vertices: vec![vertex([0., 0., 1.], [0., 0., 1., 1.])],
+            indices: Vec::new(),
+            deformation: MeshDeformation {
+                influences: vec![Influence {
+                    joints: [0; 4],
+                    weights: [f32::MAX, f32::MAX, 0., 0.],
+                }],
+                morph_targets: Vec::new(),
+            },
+        };
+        assert!(matches!(
+            deformation::validate(std::slice::from_ref(&mesh)),
+            Err(SceneError::InvalidDeformation)
+        ));
+        mesh.deformation.influences[0].weights = [f32::MAX, 0., 0., 0.];
+        assert!(deformation::validate(&[mesh]).is_ok());
+    }
+
     fn vertex(normal: [f32; 3], lightmap_bounds: [f32; 4]) -> Vertex {
         Vertex {
             position: [0.; 3],

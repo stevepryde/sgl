@@ -345,7 +345,7 @@ fn read_clip(
 
 /// A skinned primitive's influences on the joints of its skin, which starts
 /// at joint `first` of the asset's rig and has `count` joints: each with
-/// finite, nonnegative weights of positive sum, naming joints of its skin
+/// finite, nonnegative weights of finite positive sum, naming joints of its skin
 /// among the 65536 an asset may have.
 pub(super) fn read_influences<'a, 's, F>(
     reader: &gltf::mesh::Reader<'a, 's, F>,
@@ -382,11 +382,13 @@ where
                         .into(),
                 );
             }
+            let sum = weights.iter().sum::<f32>();
             if weights.iter().any(|w| !w.is_finite() || *w < 0.)
-                || weights.iter().sum::<f32>() <= 0.
+                || !sum.is_finite()
+                || sum <= 0.
             {
                 return Err(format!(
-                    "{label}: a vertex's joint weights must be finite and nonnegative with a positive sum"
+                    "{label}: a vertex's joint weights must be finite and nonnegative with a finite positive sum"
                 )
                 .into());
             }

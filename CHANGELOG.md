@@ -28,6 +28,8 @@ docs and specs the entry links.
 - `sgl-net` UDP `Disconnect` handling: a valid disconnect arriving before its confirm formerly admitted a ghost connection on that confirm; the server now retires the cookie before admission. No game-code changes are needed.
 
 - `sgl-net` UDP `Endpoint::disconnect`: closing peers formerly ignored newly received reliable fragments; they now buffer and acknowledge them under the existing limits without returning new messages. No game-code changes are needed.
+- `sgl-3d` `deformation::Influence`: finite weights whose f32 sum overflows formerly normalized to zero; model preparation and glTF import now reject them. No game-code changes are needed for valid content.
+
 - `sgl-3d` `CompressedImage::from_ktx2`: a corrupt KTX2 data format descriptor formerly panicked; it now returns `Err`. No game-code changes are needed.
 
 - `sgl-3d` `asset::load`/`load_slice`: malformed glTF accessor references, animation targets and image sources formerly panicked; they now return `Err` naming the element. No game-code changes are needed.
