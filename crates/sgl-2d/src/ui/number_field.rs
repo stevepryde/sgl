@@ -11,7 +11,7 @@ use crate::canvas::text::{HAlign, TextStyle, VAlign};
 #[derive(Debug, Clone, Copy)]
 pub(super) struct NumberDrag {
     id: u64,
-    start_x: f32,
+    start_pos: glam::Vec2,
     start_value: f32,
     moved: bool,
 }
@@ -178,7 +178,7 @@ impl UiFrame<'_> {
             self.ui.active = Some(id);
             self.ui.number_drag = Some(NumberDrag {
                 id,
-                start_x: self.input.mouse_pos.x,
+                start_pos: self.input.mouse_pos,
                 start_value: *value,
                 moved: false,
             });
@@ -190,12 +190,12 @@ impl UiFrame<'_> {
             // The pointer's position this frame counts even when the release
             // arrives in the same frame, so the final movement is applied
             // before deciding between a scrub and a click.
-            let dx = self.input.mouse_pos.x - drag.start_x;
-            if dx.abs() >= NUMBER_DRAG_THRESHOLD {
+            let delta = self.input.mouse_pos - drag.start_pos;
+            if delta.x.abs() >= NUMBER_DRAG_THRESHOLD || delta.y.abs() >= NUMBER_DRAG_THRESHOLD {
                 drag.moved = true;
             }
             if drag.moved {
-                *value = opts.clamp(drag.start_value + dx * opts.speed);
+                *value = opts.clamp(drag.start_value + delta.x * opts.speed);
             }
             if self.input.mouse_down {
                 self.ui.number_drag = Some(drag);
@@ -396,6 +396,33 @@ mod tests {
         f.end();
         assert_eq!(value, 51.0, "the release frame's movement is applied");
         assert!(!ui.has_focus());
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn number_field_vertical_drag_does_not_open_typing() {
+        // Check movement first delivered at release, and movement observed
+        // while held followed by a return to the press point before release.
+        for positions in [vec![(100.0, 500.0)], vec![(100.0, 500.0), (100.0, 116.0)]] {
+            let (mut ui, mut text, _assets) = fixture();
+            let mut list = DrawList::new();
+            let mut value = 2.5;
+            let opts = NumberField::default();
+            let mut f = ui.begin(&mut text, &mut list, press_at(100.0, 116.0));
+            f.number_field("n", ROW, &mut value, opts, 20.0);
+            f.end();
+            for (index, &(x, y)) in positions.iter().enumerate() {
+                let input = if index + 1 == positions.len() {
+                    release_at(x, y)
+                } else {
+                    hover_at(x, y, true)
+                };
+                let mut f = ui.begin(&mut text, &mut list, input);
+                assert!(!f.number_field("n", ROW, &mut value, opts, 20.0));
+                f.end();
+            }
+            assert_eq!(value, 2.5, "vertical travel does not scrub the value");
+            assert!(!ui.has_focus(), "vertical drag is not a click-to-type");
+        }
     }
 
     /// A click on the middle (press + release without travel) opens the

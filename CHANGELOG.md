@@ -32,6 +32,8 @@ docs and specs the entry links.
 
 - `sgl-3d` `asset::load`/`load_slice`: malformed glTF accessor references, animation targets and image sources formerly panicked; they now return `Err` naming the element. No game-code changes are needed.
 - `sgl-3d` `LightShape::Spot`: a closed or unrepresentably narrow casting cone formerly built a non-finite shadow view; it now releases its shadow slots until its projection is finite. No game-code changes are needed.
+- `sgl-2d` `UiFrame::number_field`: vertical drags formerly opened typing as clicks; movement past the click threshold on either axis now prevents typing while only horizontal travel changes the value. No game-code changes are needed.
+
 - `sgl-2d` `UiFrame::line_edit_clear`: long drafts formerly drew text and the caret beneath the clear button; both now stay within the space to its left. No game-code changes are needed.
 
 - `sgl-2d` `Context`: windows larger than the device texture limit formerly panicked during startup or resize; swapchain dimensions are now capped per axis to that limit. No game-code changes are needed.
