@@ -131,7 +131,10 @@ disconnect. Each unacknowledged reliable fragment gets up to
 sends; a fragment first sent during close gets that many resends too.
 Retransmission timing still applies, and disconnecting again restarts
 neither the resend budget nor the deadline. Acknowledgements and keepalives
-continue during close within the usual datagram budget, keeping a receiver
+continue during close within the usual datagram budget. Incoming reliable
+fragments are buffered and acknowledged under the usual inbound limits,
+including releasing held fragments on later polls; newly received messages
+of every class are discarded during close. This keeps a receiver
 that is holding data alive even when the grace exceeds `timeout_ms`.
 Locally refused Disconnect copies retry on later flushes even after the
 peer is removed. This best-effort notification queue holds at most
