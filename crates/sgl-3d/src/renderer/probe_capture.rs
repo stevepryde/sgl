@@ -172,8 +172,7 @@ impl Renderer {
             );
             queue.submit([face.finish()]);
         }
-        // The submitted capture already overwrote the frame's shadow atlas.
-        // Invalidate its cache even if prefilter readback subsequently fails.
+        // Commit the submitted capture's shadow layers before fallible readback.
         self.shadows.local.finish_capture();
         prefilter.encode(device, &mut encoder);
         let rgba16 = prefilter.read(device, queue, encoder)?;
