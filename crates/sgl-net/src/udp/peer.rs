@@ -60,6 +60,8 @@ pub struct Peer {
     /// ones), against the lane's inbound bounds.
     pub delivered: [InboundUsage; RELIABLE_LANES],
     pub latest: Latest,
+    /// Index of this peer's latest-state event in the current poll only.
+    pub latest_event_index: Option<usize>,
     pub last_receive_ms: u64,
     pub last_send_ms: u64,
     pub last_handshake_send_ms: u64,
@@ -93,6 +95,7 @@ impl Peer {
             scheduler: LaneScheduler::new(reliable),
             delivered: [InboundUsage::default(); RELIABLE_LANES],
             latest: Latest::default(),
+            latest_event_index: None,
             last_receive_ms: now_ms,
             last_send_ms: now_ms,
             last_handshake_send_ms: now_ms,

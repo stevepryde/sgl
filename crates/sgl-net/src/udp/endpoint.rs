@@ -587,6 +587,7 @@ impl<T: DatagramTransport> Endpoint<T> {
         self.remaining_challenges = self.config.challenge_responses_per_poll;
         self.poll_delivered = (0, 0);
         for (&id, peer) in &mut self.peers {
+            peer.latest_event_index = None;
             peer.delivered = std::array::from_fn(|index| holding(id, lane_at(index)));
         }
         let mut events: Vec<_> = self.pending_events.drain(..).collect();
@@ -1297,25 +1298,16 @@ impl<T: DatagramTransport> Endpoint<T> {
             }
         }));
         if let Some(payload) = staged.latest {
-            if let Some(EndpointEvent::Message {
-                payload: existing, ..
-            }) = events.iter_mut().rev().find(|event| {
-                matches!(
-                    event,
-                    EndpointEvent::Message {
-                        peer,
-                        delivery: Delivery::LatestState,
-                        ..
-                    } if *peer == id
-                )
-            }) {
-                *existing = payload;
+            let event = EndpointEvent::Message {
+                peer: id,
+                delivery: Delivery::LatestState,
+                payload,
+            };
+            if let Some(index) = peer.latest_event_index {
+                events[index] = event;
             } else {
-                events.push(EndpointEvent::Message {
-                    peer: id,
-                    delivery: Delivery::LatestState,
-                    payload,
-                });
+                peer.latest_event_index = Some(events.len());
+                events.push(event);
             }
         }
     }
@@ -3695,25 +3687,92 @@ mod tests {
     #[wasm_bindgen_test(unsupported = test)]
     fn inbound_latest_coalesces_to_one_newest_event_per_peer_per_poll() {
         let (mut server, source, nonces) = connected_server(EndpointConfig::default());
-        for sequence in 0..100_u16 {
-            let mut bytes = Vec::new();
-            packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
-            packet::push_latest(&mut bytes, sequence, &sequence.to_le_bytes());
-            server.transport.received.push_back(ReceivedDatagram {
-                source,
-                bytes,
-                fail: false,
-            });
+        for (now, first) in [(2, 0), (3, 100_u16)] {
+            for sequence in first..first + 100 {
+                let mut bytes = Vec::new();
+                packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+                packet::push_latest(&mut bytes, sequence, &sequence.to_le_bytes());
+                server.transport.received.push_back(ReceivedDatagram {
+                    source,
+                    bytes,
+                    fail: false,
+                });
+            }
+            assert_eq!(
+                server.poll(now),
+                vec![EndpointEvent::Message {
+                    peer: 1,
+                    delivery: Delivery::LatestState,
+                    payload: (first + 99).to_le_bytes().to_vec(),
+                }]
+            );
         }
+    }
 
-        assert_eq!(
-            server.poll(2),
-            vec![EndpointEvent::Message {
-                peer: 1,
-                delivery: Delivery::LatestState,
-                payload: 99_u16.to_le_bytes().to_vec(),
-            }]
-        );
+    /// #711: release-mode benchmark for event-count-dependent coalescing.
+    /// Each datagram carries 234 zero-byte unreliable items and optionally
+    /// one latest item. Setup and event inspection are outside the timing.
+    /// Run with `cargo test -p sgl-net --release latest_coalescing_poll_cost
+    /// -- --ignored --nocapture`; compare the scaling with/without latest.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "manual release-mode performance benchmark"]
+    fn latest_coalescing_poll_cost() {
+        for count in [256_u16, 1_024, 4_096] {
+            for with_latest in [false, true] {
+                let mut samples = Vec::new();
+                for _ in 0..3 {
+                    let (mut server, source, nonces) = connected_server(EndpointConfig {
+                        max_datagrams_per_poll: usize::from(count),
+                        ..EndpointConfig::default()
+                    });
+                    let mut unreliable_sequence = 0_u16;
+                    for sequence in 0..count {
+                        let mut bytes = Vec::new();
+                        packet::begin_payload(&mut bytes, MAGIC, nonces, &[None; RELIABLE_LANES]);
+                        if with_latest {
+                            packet::push_latest(&mut bytes, sequence, &sequence.to_le_bytes());
+                        }
+                        for _ in 0..234 {
+                            packet::push_unreliable(&mut bytes, lane(1), unreliable_sequence, &[]);
+                            unreliable_sequence = unreliable_sequence.wrapping_add(1);
+                        }
+                        server.transport.received.push_back(ReceivedDatagram {
+                            source,
+                            bytes,
+                            fail: false,
+                        });
+                    }
+                    let start = std::time::Instant::now();
+                    let events = server.poll(2);
+                    samples.push(start.elapsed());
+                    assert_eq!(
+                        events.len(),
+                        usize::from(count) * 234 + usize::from(with_latest)
+                    );
+                    if with_latest {
+                        let latest = events
+                            .iter()
+                            .filter_map(|event| match event {
+                                EndpointEvent::Message {
+                                    delivery: Delivery::LatestState,
+                                    payload,
+                                    ..
+                                } => Some(payload),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        assert_eq!(latest, [&(count - 1).to_le_bytes().to_vec()]);
+                    }
+                }
+                samples.sort_unstable();
+                println!(
+                    "datagrams={count} latest={with_latest} events={} median_ms={:.3}",
+                    usize::from(count) * 234 + usize::from(with_latest),
+                    samples[1].as_secs_f64() * 1_000.0
+                );
+            }
+        }
     }
 
     /// Defect (#269): a receiver that holds a large message back, or closes
