@@ -520,7 +520,8 @@ fn surface_rect_light(surface:Surface,reflectance:SurfaceReflectance,rect:Light,
   var inverse=mat3x3(vec3(1.,0.,0.),vec3(0.,1.,0.),vec3(0.,0.,1.));
   var weight=diffuse;
   if lobe>0 {
-   let fit=rect_light_fit(select(surface.roughness,surface.coat_roughness,coat_lobe),max(dot(n,surface.view),0.));
+   // Three.js LTC_Uv saturates N.V before sqrt(1-N.V); unit vectors can round above 1.
+   let fit=rect_light_fit(select(surface.roughness,surface.coat_roughness,coat_lobe),saturate(dot(n,surface.view)));
    inverse=fit.inverse;
    let scattering=select(reflectance.multiscatter,vec3(1.),coat_lobe);
    weight=rect_light_specular_weight(fit,select(reflectance.f0,vec3(.04),coat_lobe),select(reflectance.f90,1.,coat_lobe))*scattering*specular;
