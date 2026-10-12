@@ -239,6 +239,9 @@ The code's structure follows the
    - `sgl-post-fx` is SGL's wgpu effects library, initially derived from
      DiligentFX's SSR, TAA and shared context. It follows RD-2 and evolves for
      SGL3D, without an upstream feature-set or 1:1 conformance obligation.
+     SSR caps its stored GGX sample PDF at binary16's largest finite value,
+     so glossy grazing rays cannot lose their reconstruction weight through
+     an infinite PDF on a backend that does not saturate conversion.
      Its `PROVENANCE.md` retains source references and useful algorithm notes;
      an exhaustive difference catalogue is not required. Scene and frame
      integration belongs in SGL3D. TAA's placeholder for a new feature set

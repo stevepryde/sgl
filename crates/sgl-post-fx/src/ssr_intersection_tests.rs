@@ -99,6 +99,7 @@ fn trace_mirror_floor(
     queue: &wgpu::Queue,
     floor_normal: [f64; 3],
     feature_flags: FeatureFlags,
+    roughness: u8,
     zero_normal: fn(u32, u32) -> bool,
 ) -> ScreenSpaceReflection {
     let camera = infinite_reversed_camera();
@@ -118,8 +119,8 @@ fn trace_mirror_floor(
         })
         .collect();
     let normal = texels(device, queue, wgpu::TextureFormat::Rgba16Float, &normals);
-    // A mirror everywhere, the sky included.
-    let material = texture(device, queue, wgpu::TextureFormat::R8Unorm, &[0]);
+    // The same material everywhere, the sky included.
+    let material = texture(device, queue, wgpu::TextureFormat::R8Unorm, &[roughness]);
     let color = texture(
         device,
         queue,
@@ -210,6 +211,7 @@ fn half_resolution_rays_at_an_infinite_horizon_are_finite() {
         &queue,
         [0.0, c, -s],
         FeatureFlags::HALF_RESOLUTION,
+        0,
         |_, _| false,
     );
     for (name, view) in [
@@ -245,9 +247,14 @@ fn rays_past_the_far_plane_keep_their_direction() {
     let (s, c) = (horizon / f64::from(b)).atan().sin_cos();
     let floor_normal = [0.0, c, -s];
     let depths = floor_depths(floor_normal);
-    let ssr = trace_mirror_floor(&device, &queue, floor_normal, FeatureFlags::NONE, |_, _| {
-        false
-    });
+    let ssr = trace_mirror_floor(
+        &device,
+        &queue,
+        floor_normal,
+        FeatureFlags::NONE,
+        0,
+        |_, _| false,
+    );
     let rays = read_rgba16f(&device, &queue, &ssr.resources().ray_direction_pdf);
     let mut wrong = Vec::new();
     let mut row_24_past_far_plane = 0;
@@ -323,7 +330,7 @@ fn zero_normals_report_a_miss() {
     let zero_normal = |x: u32, y: u32| (x + y).is_multiple_of(5);
     let depths = floor_depths(floor_normal);
     for feature_flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
-        let ssr = trace_mirror_floor(&device, &queue, floor_normal, feature_flags, zero_normal);
+        let ssr = trace_mirror_floor(&device, &queue, floor_normal, feature_flags, 0, zero_normal);
         let radiance = read_rgba16f(&device, &queue, &ssr.resources().radiance);
         let rays = read_rgba16f(&device, &queue, &ssr.resources().ray_direction_pdf);
         for (name, texels) in [("radiance", &radiance), ("direction and PDF", &rays)] {
@@ -362,4 +369,118 @@ fn zero_normals_report_a_miss() {
             wrong.join("\n")
         );
     }
+}
+
+// #712: a sharp GGX lobe viewed at grazing incidence exceeds binary16's
+// finite range. Execute the production intersection, then evaluate its stored
+// rays with the production reconstruction weight; +infinity discards the
+// lobe's strongest rays by dropping their weight to the fallback floor.
+#[test]
+fn glossy_grazing_rays_keep_finite_pdf_and_reconstruction_weight() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let normal = [0.0, 1.0, 0.0];
+    let ssr = trace_mirror_floor(&device, &queue, normal, FeatureFlags::NONE, 17, |_, _| {
+        false
+    });
+    let rays = read_rgba16f(&device, &queue, &ssr.resources().ray_direction_pdf);
+    assert!(
+        rays.iter()
+            .all(|ray| ray[3].is_finite() && ray[3] <= 65504.0)
+    );
+    // Use the actual reconstruction function, without copying its BRDF or PDF
+    // calculation into the test. The camera rays come from this fixture's
+    // analytic perspective projection and the receiver's plane normal.
+    let mut source = crate::shaders::shader_source(
+        "SSR_ComputeSpatialReconstruction.fx",
+        &[
+            ("SUPPORTED_SHADER_SRV", "1"),
+            ("SSR_OPTION_INVERTED_DEPTH", "1"),
+            ("SSR_OPTION_PREVIOUS_FRAME", "0"),
+            ("SSR_OPTION_HALF_RESOLUTION", "0"),
+            ("SSR_DENOISER_TILE_SIZE", "8"),
+        ],
+    );
+    let (a, b) = projection_scales();
+    source.push_str(&format!(
+        r#"
+@group(0) @binding(8) var<storage, read_write> measured_weights: array<f32>;
+@compute @workgroup_size(8, 8)
+fn measure_weight(@builtin(global_invocation_id) id: vec3<u32>) {{
+    if (id.x >= {width}u || id.y >= {height}u) {{ return; }}
+    let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>({width}.0, {height}.0);
+    let V = -normalize(vec3<f32>((2.0 * uv.x - 1.0) / {a}, (1.0 - 2.0 * uv.y) / {b}, 1.0));
+    let N = vec3<f32>(0.0, 1.0, 0.0);
+    measured_weights[id.y * {width}u + id.x] = ComputeWeightRayLength(vec2<i32>(id.xy), V, N, 17.0 / 255.0, max(dot(N, V), 1e-6), 1.0).x;
+}}
+"#,
+        width = SIZE[0], height = SIZE[1],
+    ));
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("glossy-floor reconstruction weights"),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &shader,
+        entry_point: Some("measure_weight"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let size = u64::from(SIZE[0] * SIZE[1]) * 4;
+    let weights = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(&ssr.resources().ray_direction_pdf),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: weights.as_entire_binding(),
+            },
+        ],
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind, &[]);
+        pass.dispatch_workgroups(SIZE[0].div_ceil(8), SIZE[1].div_ceil(8), 1);
+    }
+    encoder.copy_buffer_to_buffer(&weights, 0, &readback, 0, size);
+    queue.submit([encoder.finish()]);
+    readback.map_async(wgpu::MapMode::Read, .., |r| r.unwrap());
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let bytes = readback.get_mapped_range(..).unwrap();
+    let weights: &[f32] = bytemuck::cast_slice(&bytes);
+    let mut saturated = 0;
+    for (ray, weight) in rays.iter().zip(weights) {
+        if ray[3] == 65504.0 {
+            saturated += 1;
+            assert!(
+                *weight > 1e-6,
+                "saturated grazing ray {ray:?} discarded at weight {weight}"
+            );
+        }
+    }
+    assert!(
+        saturated > 0,
+        "fixture did not reach the half-float PDF limit"
+    );
 }

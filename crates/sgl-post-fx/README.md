@@ -40,7 +40,9 @@ licences, source revisions and the blue-noise table source it reads.
   mirror strip. A quad with no eligible surface reports a miss. At full
   importance-sample bias a ray follows the mirror direction, as Godot's SSR
   traces (DFX-20), and at roughness 0 at any bias; the resolve clamps N·V
-  above 0 as Filament does (DFX-40). Its temporal
+  above 0 as Filament does (DFX-40). The stored sample PDF is capped at
+  binary16's largest finite value so glossy grazing rays retain finite
+  reconstruction weights on every backend (DFX-60). Its temporal
   pass reprojects by the reflection's virtual point as AMD's reflection
   denoiser places it. Only confirmed hits with non-negligible BRDF weight
   set that distance; an all-miss sample kernel reprojects the surface
