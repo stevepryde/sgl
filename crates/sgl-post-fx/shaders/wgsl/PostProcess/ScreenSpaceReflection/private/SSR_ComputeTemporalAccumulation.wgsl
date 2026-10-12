@@ -281,7 +281,12 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let PrevDistanceIncidentPoint = abs(Luminance(PrevColorIncidentPoint.rgb) - Luminance(PixelStat.Mean.rgb));
     let PrevDistanceReflectionHit = abs(Luminance(PrevColorReflectionHit.rgb) - Luminance(PixelStat.Mean.rgb));
 
-    let UseIncidentPoint = PrevDistanceIncidentPoint < PrevDistanceReflectionHit;
+    // PROVENANCE.md DFX-57: a clamp-to-edge sample outside the previous
+    // viewport is not a candidate, even when its luminance fits better.
+    // This also excludes DFX-31's behind-camera sentinel.
+    let IncidentInside = IsInsideScreen_f2(PrevIncidentPoint, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
+    let HitInside = IsInsideScreen_f2(PrevReflectionHit, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
+    let UseIncidentPoint = !HitInside || (IncidentInside && PrevDistanceIncidentPoint < PrevDistanceReflectionHit);
     let PrevCoord = select(PrevReflectionHit, PrevIncidentPoint, UseIncidentPoint);
     let Reprojection = ComputeReprojection(PrevCoord, Depth);
 

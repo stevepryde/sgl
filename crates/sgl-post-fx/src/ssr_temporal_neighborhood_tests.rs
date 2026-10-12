@@ -1617,3 +1617,213 @@ fn a_changed_near_plane_keeps_history() {
         "{differ} pixels' history changed with the near plane"
     );
 }
+
+// DFX-57: the production temporal pass sees two frames at its reconstruction
+// boundary. Interior history is 0.75, while the border is 0.5: a clamp-to-edge
+// sample is closer to the new checkerboard's mean and used to win even when
+// its projected coordinate was outside the previous camera's viewport.
+#[test]
+fn offscreen_candidates_cannot_discard_valid_reflection_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for candidate in ["behind-camera hit", "offscreen hit", "offscreen surface"] {
+        let behind = candidate == "behind-camera hit";
+        let offscreen_surface = candidate == "offscreen surface";
+        for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+            let mut ssr = ScreenSpaceReflection::new(&device);
+            let mut context = PostFXContext::new(&device, &queue, Default::default());
+            let current = camera(false, 0);
+            let surface_z = current.m_proj[14] / (0.95 - current.m_proj[10]);
+            let previous = Previous {
+                eye: if behind {
+                    [0., 0., 2.5]
+                } else if offscreen_surface {
+                    [0.; 3]
+                } else {
+                    [10., 0., 0.]
+                },
+                yaw: if behind {
+                    std::f32::consts::PI
+                } else if offscreen_surface {
+                    0.
+                } else {
+                    -(10. / surface_z).atan()
+                },
+                near: 0.1,
+                depth: 0.95,
+                motion: 0.,
+            };
+            let previous_camera = moved(current, previous);
+            // The previous camera faces the surface at the centre. Its depth
+            // is the projection of that same point, independently of the hit.
+            let previous_surface_z = if behind {
+                2.5 - surface_z
+            } else if offscreen_surface {
+                surface_z
+            } else {
+                (100. + surface_z * surface_z).sqrt()
+            };
+            let previous_depth_value = current.m_proj[10] + current.m_proj[14] / previous_surface_z;
+            // Behind: the virtual point at z=4 is behind the turned camera.
+            // Otherwise it is at z=20, far to the right of that camera's view.
+            let virtual_z = if behind {
+                4.
+            } else if offscreen_surface {
+                surface_z
+            } else {
+                20.
+            };
+            let virtual_depth = current.m_proj[10] + current.m_proj[14] / virtual_z;
+            for index in 0..2 {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                let scene_depth = depth(&device, &mut encoder, 0.95);
+                let previous_depth = depth(&device, &mut encoder, previous_depth_value);
+                let normal = texture(
+                    &device,
+                    &queue,
+                    wgpu::TextureFormat::Rgba16Float,
+                    &half(&[0., 0., -1., 0.]),
+                );
+                let material = texture(&device, &queue, wgpu::TextureFormat::R8Unorm, &[0]);
+                // Project the still plane into the previous camera to supply
+                // its actual NDC motion. The third case deliberately supplies
+                // a surface that moved two screens, leaving the hit valid.
+                let motion_data: Vec<u8> = (0..SIZE[1])
+                    .flat_map(|y| {
+                        (0..SIZE[0]).flat_map(move |x| {
+                            if offscreen_surface {
+                                return half(&[4., 0.]);
+                            }
+                            let ndc = [
+                                2. * (x as f32 + 0.5) / SIZE[0] as f32 - 1.,
+                                1. - 2. * (y as f32 + 0.5) / SIZE[1] as f32,
+                            ];
+                            let point = [
+                                ndc[0] * surface_z / current.m_proj[0],
+                                ndc[1] * surface_z / current.m_proj[5],
+                                surface_z,
+                                1.,
+                            ];
+                            let clip: [f32; 4] = std::array::from_fn(|row| {
+                                (0..4)
+                                    .map(|column| {
+                                        previous_camera.m_view_proj[column * 4 + row]
+                                            * point[column]
+                                    })
+                                    .sum()
+                            });
+                            half(&[ndc[0] - clip[0] / clip[3], ndc[1] - clip[1] / clip[3]])
+                        })
+                    })
+                    .collect();
+                let motion = texels(
+                    &device,
+                    &queue,
+                    wgpu::TextureFormat::Rg16Float,
+                    &motion_data,
+                );
+                context.prepare_resources(
+                    &device,
+                    &FrameDesc {
+                        index,
+                        width: SIZE[0],
+                        height: SIZE[1],
+                        output_width: SIZE[0],
+                        output_height: SIZE[1],
+                    },
+                    post_fx_context::FeatureFlags::NONE,
+                );
+                ssr.prepare_resources(&device, &mut encoder, &mut context, flags);
+                ssr.prepare_shaders_and_pso(&device);
+                context.execute(&mut post_fx_context::RenderAttributes {
+                    device: &device,
+                    queue: &queue,
+                    device_context: &mut encoder,
+                    curr_depth_buffer_srv: &scene_depth,
+                    prev_depth_buffer_srv: &previous_depth,
+                    curr_camera: Some(&current),
+                    prev_camera: Some(&previous_camera),
+                    camera_attribs_cb: None,
+                    pass_timestamps: None,
+                });
+                let input: Vec<u8> = (0..SIZE[1])
+                    .flat_map(|y| {
+                        (0..SIZE[0]).flat_map(move |x| {
+                            let value = if index == 0 {
+                                if x == 0 || y == 0 || x + 1 == SIZE[0] || y + 1 == SIZE[1] {
+                                    0.5
+                                } else {
+                                    0.75
+                                }
+                            } else if checkerboard(x, y) {
+                                1.
+                            } else {
+                                0.
+                            };
+                            half(&[value, value, value, 1.])
+                        })
+                    })
+                    .collect();
+                let resources = ssr.resources.as_mut().unwrap();
+                resources.resolved_radiance =
+                    texels(&device, &queue, wgpu::TextureFormat::Rgba16Float, &input);
+                resources.resolved_variance = texture(
+                    &device,
+                    &queue,
+                    wgpu::TextureFormat::R16Float,
+                    &half(&[0.25]),
+                );
+                resources.resolved_depth = texture(
+                    &device,
+                    &queue,
+                    wgpu::TextureFormat::R16Float,
+                    &half(&[virtual_depth]),
+                );
+                resources.denoiser_tiles =
+                    texture(&device, &queue, wgpu::TextureFormat::R8Unorm, &[255]);
+                let attribs = ScreenSpaceReflectionAttribs::default();
+                let mut render = RenderAttributes {
+                    device: &device,
+                    queue: &queue,
+                    device_context: &mut encoder,
+                    post_fx_context: &mut context,
+                    color_buffer_srv: &normal,
+                    depth_buffer_srv: &scene_depth,
+                    normal_buffer_srv: &normal,
+                    material_buffer_srv: &material,
+                    motion_vectors_srv: &motion,
+                    ssr_attribs: &attribs,
+                    pass_timestamps: None,
+                    reset_accumulation: false,
+                    frame_time: 1. / 60.,
+                };
+                ssr.update_constant_buffer(&render, false);
+                ssr.reset_history(&mut render);
+                ssr.compute_stencil_mask_and_extract_roughness(&mut render);
+                ssr.compute_temporal_accumulation(&mut render);
+                queue.submit([encoder.finish()]);
+                if index == 1 {
+                    let radiance =
+                        read_rgba16f(&device, &queue, &ssr.resources().radiance_history[1]);
+                    let variance = read_r16f(&device, &queue, &ssr.resources().variance_history[1]);
+                    for y in 23..25 {
+                        for x in 31..33 {
+                            let pixel = (y * SIZE[0] + x) as usize;
+                            assert!(
+                                variance[pixel] < 0.99,
+                                "candidate={candidate}, flags={flags:?}, ({x},{y}) discarded valid surface history: {}",
+                                variance[pixel]
+                            );
+                            assert!(
+                                (0.5..0.9).contains(&radiance[pixel][0]),
+                                "candidate={candidate}, flags={flags:?}, ({x},{y}) did not blend the interior history: {:?}",
+                                radiance[pixel]
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

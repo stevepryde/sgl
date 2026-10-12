@@ -41,6 +41,9 @@ docs and specs the entry links.
 - `sgl-net` native WebSocket: unfinished frame fragments could stall the
   shared worker; each socket turn now bounds raw bytes read and yields to
   other peers and outbound messages. No game-code changes.
+- `sgl-post-fx` SSR temporal accumulation could select an off-screen
+  reflection hit and discard valid surface history; it now compares only
+  candidates in the previous viewport. No game-code changes.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;

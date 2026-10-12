@@ -232,6 +232,10 @@ The code's structure follows the
      is the maximum distance among confirmed hits with non-negligible BRDF
      weight; missed ray endpoints cannot supply it. With no such hit the
      distance is zero and the resolved depth is the reflecting surface's.
+     SSR temporal accumulation
+     compares only candidates inside the previous viewport: an off-screen or
+     behind-camera virtual point cannot discard a valid surface reprojection.
+     Existing depth disocclusion and surface-signal rejection still apply.
    - Exception: the external `sp-fidelity` (FSR2) is a 1:1 port. It diverges
      from upstream only
      where wgpu or WGSL force it, to fix a known upstream bug, or by owner
