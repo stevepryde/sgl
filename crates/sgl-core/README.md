@@ -38,6 +38,9 @@ its dependency version;
 its stream is not promised across dependency upgrades. Choose according to
 the game's replay or persistence requirements.
 
+`anim::SequenceStep::RandomPause` holds for a duration in the inclusive
+`[min, max]` range; floating-point rounding can reach `max`.
+
 Collision units and the up axis belong to the game. Supply them through
 `CollisionConfig`; SGL does not choose a world scale or entity layout.
 Contacts leave the configured `skin` gap along the surface normal by stopping

@@ -53,7 +53,8 @@ browser client must get identical results from it.
    duration. `AnimationSequence` plays scripted steps (frame runs, pauses,
    random pauses, action hooks) with once, repeat, and ping-pong loops; only
    random-pause steps draw from the caller's `Rng`, so a seeded run replays
-   exactly. Pauses, action steps, and completion hold the last frame reached
+   exactly. A random pause lies in the inclusive `[min, max]` range;
+   floating-point rounding can reach `max`. Pauses, action steps, and completion hold the last frame reached
    during playback, even when a tick crosses that frame without stopping on
    it. `current_frame()` is `None` only before the first frame is reached after
    construction or reset. Ping-pong turns on the first and last frame steps

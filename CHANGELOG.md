@@ -44,6 +44,9 @@ docs and specs the entry links.
   rows and columns; they now read their own 2×2 block, removing the
   one-pixel reflection shift. No game-code changes needed.
 
+- `sgl-core` `SequenceStep::RandomPause`: the documented range changes from
+  `[min, max)` to `[min, max]` to include the existing rounding behavior.
+  Playback and seeded sequences are unchanged. No game-code changes.
 - `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
   near the bottom or right edge of a viewport whose size is not a multiple
   of 64 skipped surfaces there (SGL3D showed probes or sky instead); they
