@@ -1,6 +1,6 @@
 //! Move-and-slide resolution of a kinematic body against a [`ColliderSet`].
 
-use super::aabb::{sweep_aabb, Aabb, Hit};
+use super::aabb::{Aabb, Hit, sweep_aabb};
 use super::collider_set::ColliderSet;
 use crate::math::Vec2;
 
