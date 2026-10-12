@@ -87,6 +87,9 @@ browser client must get identical results from it.
    `CollisionConfig` names the up axis, skin, snap distance, and
    thresholds in the caller's units, rejecting negative or non-finite
    lengths; results mirror exactly between y-up and y-down worlds.
+   Swept broadphase queries preserve their min/max corners without a
+   center/half-extents round trip, including contacts exactly at the end
+   of the motion on a grid-cell boundary.
    `ColliderSet::query` returns every collider overlapping the region (it may
    return more). Neither `insert` nor `query` walks an unbounded cell range:
    an insert buckets at most a fixed number of cells, and a query visits at

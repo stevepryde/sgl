@@ -18,7 +18,10 @@ impl Aabb {
         Self { center, half }
     }
 
-    /// A box spanning the `min`..`max` corner pair.
+    /// A box computed from the `min`..`max` corner pair.
+    ///
+    /// Its center/half-extents representation may round the reconstructed
+    /// [`min`](Self::min) and [`max`](Self::max) corners inward or outward.
     #[must_use]
     pub fn from_min_max(min: Vec2, max: Vec2) -> Self {
         Self {
