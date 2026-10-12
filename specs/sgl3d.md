@@ -236,6 +236,11 @@ The code's structure follows the
      compares only candidates inside the previous viewport: an off-screen or
      behind-camera virtual point cannot discard a valid surface reprojection.
      Existing depth disocclusion and surface-signal rejection still apply.
+     A half-resolution block is
+     eligible when any sampled pixel meets the full-resolution reflection
+     predicate. Its ray starts at an eligible pixel in that quad, preserving
+     the preferred stochastic offset when it qualifies; rough or background
+     neighbors cannot veto a reflective surface.
    - Exception: the external `sp-fidelity` (FSR2) is a 1:1 port. It diverges
      from upstream only
      where wgpu or WGSL force it, to fix a known upstream bug, or by owner

@@ -369,16 +369,38 @@ fn Miss() -> PSOutput
     return Output;
 }
 
+#if SSR_OPTION_HALF_RESOLUTION
+fn HalfResolutionPosition(Block: vec2<f32>, SampleIdx: u32) -> vec2<f32>
+{
+    // DFX-45: a one-pixel side traces its pixel inside the frame.
+    return min(2.0 * floor(Block) + vec2<f32>(f32(SampleIdx & 1u), f32(SampleIdx >> 1u)) + 0.5, g_Camera.f4ViewportSize.xy - 0.5);
+}
+
+fn SelectReflectiveHalfResolutionPixel(Block: vec2<f32>) -> vec2<f32>
+{
+    let Preferred = ComputeHalfResolutionOffset(vec2<u32>(Block));
+    // DFX-58: at most the quad's four pixels are considered, once each.
+    const SSR_HALF_RESOLUTION_QUAD_PIXELS: u32 = 4u;
+    for (var Offset = 0u; Offset < SSR_HALF_RESOLUTION_QUAD_PIXELS; Offset++) {
+        let Position = HalfResolutionPosition(Block, (Preferred + Offset) & 3u);
+        let Pixel = vec2<i32>(Position);
+        if (IsReflectionSample(LoadRoughness(Pixel), LoadDepthHierarchy(Pixel, 0), g_SSRAttribs.RoughnessThreshold)) {
+            return Position;
+        }
+    }
+    // The odd-size conservative mask can include a neighboring partial block.
+    // If this quad has no eligible pixel, the intersection reports a miss.
+    return HalfResolutionPosition(Block, Preferred);
+}
+#endif
+
 @fragment
 fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 {
 #if SSR_OPTION_HALF_RESOLUTION
-    let SampleIdx = ComputeHalfResolutionOffset(vec2<u32>(VSOut.f4PixelPos.xy));
-    // DFX-45: a block on a one-pixel side reaches past the frame; it traces its pixel inside.
-    let Position = min(2.0 * floor(VSOut.f4PixelPos.xy) + vec2<f32>(f32(SampleIdx & 0x01u), f32(SampleIdx >> 1u)) + 0.5, g_Camera.f4ViewportSize.xy - 0.5);
-    // DFX-41: the block passed the mask on its closest depth, but the pixel traced may be
-    // background, which has no surface to reflect from; it reports a miss.
-    if (IsBackground(LoadDepthHierarchy(vec2<i32>(Position), 0))) {
+    let Position = SelectReflectiveHalfResolutionPixel(VSOut.f4PixelPos.xy);
+    let Pixel = vec2<i32>(Position);
+    if (!IsReflectionSample(LoadRoughness(Pixel), LoadDepthHierarchy(Pixel, 0), g_SSRAttribs.RoughnessThreshold)) {
         return Miss();
     }
 #else

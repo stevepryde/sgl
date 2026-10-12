@@ -1394,6 +1394,114 @@ fn half_resolution_mirror_keeps_the_reflected_edge_in_its_block() {
     }
 }
 
+// #647: one-pixel mirrors beside rough surfaces must retain their reflected
+// wall at half resolution. Constant wall radiance makes the analytic reflected
+// color independent of which row/column in an eligible quad supplies the ray.
+// This exercises the real mask, intersection, reconstruction and denoiser.
+#[test]
+fn half_resolution_keeps_one_pixel_mirror_strips_beside_rough_surfaces() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let camera = camera(false, 0);
+    let p = camera.m_proj.map(f64::from);
+    let height = f64::from(SIZE[1]);
+    const WALL_Z: f64 = 8.0;
+    let mut depths = Vec::new();
+    let mut normals = Vec::new();
+    let mut color = Vec::new();
+    for y in 0..SIZE[1] {
+        for _ in 0..SIZE[0] {
+            let ray_y = (1.0 - (f64::from(y) + 0.5) / height * 2.0) / p[5];
+            let floor_z = if ray_y < 0.0 {
+                -1.0 / ray_y
+            } else {
+                f64::INFINITY
+            };
+            let floor = floor_z < WALL_Z;
+            depths.push((p[10] + p[14] / floor_z.min(WALL_Z)) as f32);
+            normals.extend(half(if floor {
+                &[0.0, 1.0, 0.0, 0.0]
+            } else {
+                &[0.0, 0.0, -1.0, 0.0]
+            }));
+            color.extend(half(&[1.0, 0.5, 0.25, 1.0]));
+        }
+    }
+    // Both parities and both axes exercise choosing an eligible pixel instead
+    // of the stochastic choice when it lands on the rough neighbor.
+    for (vertical, strip) in [(true, 31), (true, 32), (false, 36), (false, 37)] {
+        let roughness: Vec<_> = (0..SIZE[1])
+            .flat_map(|y| (0..SIZE[0]).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                if (if vertical { x } else { y }) == strip {
+                    0
+                } else {
+                    255
+                }
+            })
+            .collect();
+        let full = ssr_radiance_with_flags(
+            &device,
+            &queue,
+            &camera,
+            &depths,
+            &normals,
+            &roughness,
+            &color,
+            FeatureFlags::NONE,
+        );
+        let half = ssr_radiance_with_flags(
+            &device,
+            &queue,
+            &camera,
+            &depths,
+            &normals,
+            &roughness,
+            &color,
+            FeatureFlags::HALF_RESOLUTION,
+        );
+        let pixels: Vec<_> = if vertical {
+            (34..42).map(|y| (strip, y)).collect()
+        } else {
+            (26..38).map(|x| (x, strip)).collect()
+        };
+        for (x, y) in pixels {
+            let i = (y * SIZE[0] + x) as usize;
+            for (name, sample) in [("full", full[i]), ("half", half[i])] {
+                assert!(
+                    sample[3] > 0.1,
+                    "{name} strip ({x}, {y}) lost the reflected wall: {sample:?}"
+                );
+                for (channel, expected) in [1.0, 0.5, 0.25].into_iter().enumerate() {
+                    assert!(
+                        (sample[channel] / sample[3] - expected).abs() < 0.01,
+                        "{name} strip ({x}, {y}) does not reflect the constant wall: {sample:?}"
+                    );
+                }
+            }
+            // Near the viewport center confidence is stable across the quad;
+            // tolerate the half-texel origin shift and binary16 stores.
+            for channel in 0..4 {
+                assert!(
+                    (half[i][channel] - full[i][channel]).abs() < 0.03,
+                    "strip ({x}, {y}) differs between full {:?} and half {:?}",
+                    full[i],
+                    half[i]
+                );
+            }
+        }
+        // Rough surfaces themselves remain outside the full-resolution mask.
+        let rough_pixel = (36 * SIZE[0] + if vertical { strip + 1 } else { 10 }) as usize;
+        if vertical {
+            assert_eq!(
+                half[rough_pixel], [0.0; 4],
+                "rough neighbor gained a reflection"
+            );
+        }
+    }
+}
+
 // PROVENANCE.md DFX-39: a wall mirror half a metre in front of a camera that
 // looks slightly down reflects the floor between them. Its rays head back
 // towards the camera, so a unit ray ends behind it, and each mirror pixel
