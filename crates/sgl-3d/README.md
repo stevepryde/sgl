@@ -2759,7 +2759,8 @@ specular, as Filament and Bevy do, while a bake keeps its own.
 
 A sheen (`sheen_color`, `sheen_roughness`; `KHR_materials_sheen`) is a soft
 layer for cloth and fabric, brightest toward grazing views: it dims the base
-beneath it by the light it takes itself and lies beneath any clearcoat;
+beneath it, including refracted transmission, by the light it takes itself
+and lies beneath any clearcoat;
 rectangle lights do not light it. Diffuse transmission
 (`diffuse_transmission`, `diffuse_transmission_color`;
 `KHR_materials_diffuse_transmission`) passes that share of the light the base

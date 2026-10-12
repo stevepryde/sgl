@@ -130,8 +130,9 @@ them through unrefracted. A probe captured on an
 - **Transmissive glass and water** (`SurfaceMaterial::transmission`,
   `thickness`, `attenuation_distance`, `attenuation_color`, `dispersion`;
   the IOR refracts): the light behind the surface passes through it,
-  refracted, blurred by its roughness, tinted by its colour and by
-  Beer-Lambert's attenuation across its thickness, each colour refracted
+  refracted, blurred by its roughness, dimmed beneath its sheen and coat,
+  tinted by its colour and Beer-Lambert's attenuation across its thickness,
+  each colour refracted
   apart by its dispersion; its reflections stay full. Drawn with the
   blended surfaces whatever its alpha mode, so it casts no shadow, takes no
   ambient occlusion, rays pass through it and probe captures leave it out;

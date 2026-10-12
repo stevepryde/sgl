@@ -100,6 +100,21 @@ fn composed(
     queue: &wgpu::Queue,
     content: Vec<(Asset, Mat4)>,
 ) -> (BindingTier, Vec<[f32; 4]>) {
+    let input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: projection(),
+        eye: Vec3::ZERO,
+    });
+    composed_under(device, queue, content, &input)
+}
+
+/// The same production frame under supplied lighting.
+fn composed_under(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    content: Vec<(Asset, Mat4)>,
+    input: &FrameInput,
+) -> (BindingTier, Vec<[f32; 4]>) {
     let settings = settings();
     let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
@@ -113,11 +128,6 @@ fn composed(
             .add_instance(device, queue, state, Mobility::Static)
             .unwrap();
     }
-    let input = FrameInput::new(Camera {
-        view: Mat4::IDENTITY,
-        projection: projection(),
-        eye: Vec3::ZERO,
-    });
     let output = crate::view::targets::target(device, "transmission", SIZE, gbuffer::COLOR);
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.render(
@@ -125,7 +135,7 @@ fn composed(
         queue,
         &mut encoder,
         &mut scene,
-        &input,
+        input,
         &settings,
         &output,
         None,
@@ -560,5 +570,80 @@ fn a_masked_transmissive_surface_cuts_out_its_texels() {
             (value - expected).abs() <= 5e-3,
             "column {column}: {value} passes, expected {expected}"
         );
+    }
+}
+
+// Defect: the sheen dims reflected base light but refracted base light
+// bypasses it. KHR_materials_sheen layers over the whole base. A white
+// furnace must therefore stay white when a white sheen covers a lossless
+// transmissive base: the sheen reflects what the base no longer transmits.
+// Uniform hemisphere irradiance PI gives unit incident radiance in front;
+// an unlit white backdrop supplies unit light behind. No specular, coat,
+// attenuation or emission contributes. This tests the real blended shader
+// and its coverage on Extended's sampled copy and Basic's destination blend.
+// Lobe tests cannot catch the separate refraction term bypassing the layer.
+#[test]
+fn a_sheen_keeps_refracted_light_within_a_white_furnace() {
+    let mut input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: projection(),
+        eye: Vec3::ZERO,
+    });
+    input.hemisphere_light = crate::HemisphereLight {
+        sky_color: [1.; 3],
+        ground_color: [1.; 3],
+        intensity: std::f32::consts::PI,
+    };
+    let content = |nv: f32, sheen: f32, behind: f32, transmission: f32| {
+        let mut pane = glass(1., 0., 0.);
+        pane.transmission = transmission;
+        pane.sheen_color = [sheen; 3];
+        pane.sheen_roughness = 0.5;
+        let pose = Mat4::from_rotation_translation(Quat::from_rotation_y(nv.acos()), -3. * Vec3::Z);
+        vec![
+            (rectangle([-2., -2.], [2., 2.], pane), pose),
+            (
+                rectangle([-40., -40.], [40., 40.], unlit(behind)),
+                Mat4::from_translation(-8. * Vec3::Z),
+            ),
+        ]
+    };
+    for (device, queue) in [test_support::device(), floor_device()]
+        .into_iter()
+        .flatten()
+    {
+        for nv in [0.2, 0.5, 1.] {
+            let observe = |sheen, behind, transmission| {
+                let (tier, texels) = composed_under(
+                    &device,
+                    &queue,
+                    content(nv, sheen, behind, transmission),
+                    &input,
+                );
+                (tier, texels[(SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize])
+            };
+            let (tier, bare) = observe(0., 1., 1.);
+            let (_, reflected) = observe(1., 0., 1.);
+            let (_, layered) = observe(1., 1., 1.);
+            let (_, opaque) = observe(0., 0., 0.);
+            assert!(
+                reflected[..3].iter().all(|&value| value > 0.01),
+                "{tier:?}, N.V {nv}: no sheen light: {reflected:?}"
+            );
+            for channel in 0..3 {
+                assert!(
+                    (opaque[channel] - 1.).abs() <= 0.005,
+                    "{tier:?}, N.V {nv}: diffuse furnace control is not white: {opaque:?}"
+                );
+                assert!(
+                    (bare[channel] - 1.).abs() <= 0.005,
+                    "{tier:?}, N.V {nv}: bare pane loses furnace light: {bare:?}"
+                );
+                assert!(
+                    (layered[channel] - 1.).abs() <= 0.005,
+                    "{tier:?}, N.V {nv}: sheen and refraction gain or lose furnace light: {layered:?}, sheen alone {reflected:?}"
+                );
+            }
+        }
     }
 }

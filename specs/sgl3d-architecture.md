@@ -927,9 +927,10 @@ last, after everything it may use, and refuses a directive in it.
   traces each channel at its own IOR, (ior - 1) × 0.025 × dispersion either
   side of the green's, red clamped to at least 1 (KHR_materials_dispersion
   README 135), a loop of exactly three. The transmitted light takes the
-  share of the diffuse lobes its transmission sets, under the coat, and
-  joins after the surface's fog, the copy already fogged to its depth as
-  the blend's destination is. The frame behind is the transmission copy:
+  share of the diffuse lobes its transmission sets, under the sheen by
+  `surface_sheen_scaling` and under the coat, and joins after the surface's
+  fog, the copy already fogged to its depth as the blend's destination is.
+  The frame behind is the transmission copy:
   on a device of the Extended binding tier, in a frame whose blended list
   holds a transmissive material, the draw onto the composed frame first
   copies it, in its format (Rgba16Float) at the render size, and builds its
