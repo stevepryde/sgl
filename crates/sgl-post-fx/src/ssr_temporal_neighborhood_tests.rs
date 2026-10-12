@@ -927,7 +927,7 @@ fn missed_rays_do_not_move_the_reflections_virtual_point() {
         ssr.compute_spatial_reconstruction(&mut render);
         queue.submit([encoder.finish()]);
         (
-            read_r16f(&device, &queue, &ssr.resources().resolved_depth),
+            read_scalar(&device, &queue, &ssr.resources().resolved_depth),
             read_rgba16f(&device, &queue, &ssr.resources().resolved_radiance),
         )
     };
@@ -1825,7 +1825,8 @@ fn offscreen_candidates_cannot_discard_valid_reflection_history() {
                 if index == 1 {
                     let radiance =
                         read_rgba16f(&device, &queue, &ssr.resources().radiance_history[1]);
-                    let variance = read_r16f(&device, &queue, &ssr.resources().variance_history[1]);
+                    let variance =
+                        read_scalar(&device, &queue, &ssr.resources().variance_history[1]);
                     for y in 23..25 {
                         for x in 31..33 {
                             let pixel = (y * SIZE[0] + x) as usize;
