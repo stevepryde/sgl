@@ -72,7 +72,13 @@ settings SGL3D has today.
    buffers must match their declared `byteLength`; GLB BIN alignment padding
    remains valid. The document, imported buffers and encoded image bytes
    share a bounded source-read budget (4 GiB native, 1 GiB browser), checked
-   before allocation; decoded scene data retains its separate budget.
+   before allocation; decoded scene data and sampled PNG/JPEG images share
+   a separate budget of the same size. Image headers are checked before pixel
+   decoding: each side is at most 16384 and the retained RGBA8 bytes are
+   charged, with decoder allocation limits set to the available budget. KTX2
+   BC7 chains validate dimensions, mip count and total decoded level bytes
+   before expansion, bounded to each expected level size plus one sentinel;
+   a decoded level must match its expected size.
    Explicit node selection preserves ancestor transforms and rejects an
    empty selection. Node traversal must not grow the call stack with
    hierarchy depth: valid trees within the asset load budget have no depth

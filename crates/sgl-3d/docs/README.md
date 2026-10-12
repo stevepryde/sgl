@@ -124,6 +124,12 @@ and an asynchronous readback.
 
 - Keep game policy in the game: presets, settings UI, save format, content,
   lighting design, cameras and the frame budget.
+- Export PNG/JPEG images at most 16384 texels on a side. Their decoded
+  RGBA8 bytes share the asset's 4 GiB native or 1 GiB browser decoded-data
+  budget. KTX2 BC7 mip chains must have valid dimensions and exact level
+  sizes; malformed or oversized content fails at load
+  ([loading](../README.md#asset-and-environment-limits),
+  [compressed images](../README.md#compressed-material-images)).
 - Supply finite material normal/bump scales and lightmap chart scales/offsets,
   and ambient-cube channels in finite `0..=65504`; scene setters reject
   invalid values and retain the previous content (see the package README).

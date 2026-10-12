@@ -20,6 +20,7 @@ pub(crate) mod instance;
 pub(crate) mod irradiance_volume;
 pub(crate) mod light;
 pub(crate) mod lighting;
+mod load_budget;
 pub mod lod;
 pub(crate) mod material;
 pub(crate) mod model;

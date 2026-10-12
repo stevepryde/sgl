@@ -1715,5 +1715,88 @@ fn an_image_only_ignored_maps_use_is_not_decoded() {
         .err()
         .expect("a sampled 16-bit image loaded")
         .to_string();
-    assert!(error.contains("image 1 has unsupported"), "{error}");
+    assert!(
+        error.contains("image 1") && error.contains("unsupported Rgb16"),
+        "{error}"
+    );
+}
+
+// Defect: a compressed image header reaches pixel decoding before the fixed
+// texture-side limit is checked. These headers are valid but the 1x1 payload
+// cannot supply their declared pixels: the limit diagnostic must win over a
+// truncated-pixels diagnostic, without constructing a giant decoded fixture.
+#[test]
+fn oversized_png_and_jpeg_headers_fail_before_pixels_with_image_index() {
+    use image::ImageEncoder;
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(&[0], 1, 1, image::ExtendedColorType::L8)
+        .unwrap();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+        .encode(&[0, 0, 0], 1, 1, image::ExtendedColorType::Rgb8)
+        .unwrap();
+    // Baseline JPEG SOF0: precision, big-endian height and width.
+    let sof = jpeg
+        .windows(2)
+        .position(|bytes| bytes == [0xff, 0xc0])
+        .unwrap();
+    for [width, height] in [[20000u32, 1], [1, 20000], [20000, 20000]] {
+        let mut png = png.clone();
+        // PNG IHDR dimensions, followed by its IEEE CRC32 (PNG section 5.5).
+        png[16..20].copy_from_slice(&width.to_be_bytes());
+        png[20..24].copy_from_slice(&height.to_be_bytes());
+        let mut crc = !0u32;
+        for &byte in &png[12..29] {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb88320 & 0u32.wrapping_sub(crc & 1));
+            }
+        }
+        png[29..33].copy_from_slice(&(!crc).to_be_bytes());
+        let mut jpeg = jpeg.clone();
+        jpeg[sof + 5..sof + 7].copy_from_slice(&(height as u16).to_be_bytes());
+        jpeg[sof + 7..sof + 9].copy_from_slice(&(width as u16).to_be_bytes());
+        for (name, bytes) in [("large.png", png), ("large.jpg", jpeg)] {
+            let fixture = textured_triangle(
+                serde_json::json!({"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}),
+                serde_json::json!([{"uri":name}]),
+                serde_json::json!([{"source":0}]),
+                &[],
+            );
+            std::fs::write(fixture.directory.join(name), bytes).unwrap();
+            let error = load(&fixture.path()).err().unwrap().to_string();
+            assert!(
+                error.contains("image 0") && error.contains("16384"),
+                "{error}"
+            );
+        }
+    }
+}
+
+// Defect: image bytes receive a fresh budget instead of sharing the scene's
+// budget. Published layout: 46,684,425 unskinned vertices and implicit indices
+// take 4,294,967,100 bytes, leaving 196 bytes of the native 4 GiB cap; this
+// 64x1 image requires another 256 RGBA bytes. Its tiny mesh buffer cannot
+// satisfy the accessor: the combined-budget error must occur before that
+// accessor is read, so the fixture never needs a multi-gigabyte allocation.
+#[test]
+fn decoded_images_and_scene_data_share_the_load_budget() {
+    let fixture = textured_triangle(
+        serde_json::json!({"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}),
+        serde_json::json!([{"uri":"budget.png"}]),
+        serde_json::json!([{"source":0}]),
+        &[],
+    );
+    image::GrayImage::new(64, 1)
+        .save(fixture.directory.join("budget.png"))
+        .unwrap();
+    change_document(&fixture, |document| {
+        document["accessors"][0]["count"] = 46_684_425.into();
+    });
+    let error = load(&fixture.path()).err().unwrap().to_string();
+    assert!(
+        error.contains("image 0") && error.contains("budget"),
+        "{error}"
+    );
 }

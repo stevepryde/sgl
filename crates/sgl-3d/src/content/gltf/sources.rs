@@ -4,26 +4,10 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use super::super::asset::Result;
-use super::MAX_LOAD_BYTES;
-
-pub(super) struct Budget {
-    remaining: u64,
-}
+use super::super::load_budget::{Budget, MAX_IMAGE_SIDE};
+use image::ImageDecoder;
 
 impl Budget {
-    pub(super) fn new() -> Self {
-        Self {
-            remaining: MAX_LOAD_BYTES,
-        }
-    }
-
-    pub(super) fn charge(&mut self, bytes: u64) -> Result<()> {
-        self.remaining = self.remaining.checked_sub(bytes).ok_or_else(|| {
-            format!("encoded sources exceed the {MAX_LOAD_BYTES} byte load budget; split the asset")
-        })?;
-        Ok(())
-    }
-
     pub(super) fn read_file(&mut self, path: &Path, declared: Option<usize>) -> Result<Vec<u8>> {
         // Check before opening: opening a named pipe could block even without
         // reading. Referenced paths have also rejected every symlink component.
@@ -190,13 +174,14 @@ pub(super) fn image(
     base: Option<&Path>,
     buffers: &[gltf::buffer::Data],
     budget: &mut Budget,
+    decoded_budget: &mut Budget,
 ) -> Result<image::DynamicImage> {
     let (uri, mime_type) = match source {
         gltf::image::Source::View { view, mime_type } => {
             // Its buffer view has already been bounds-checked and charged once.
             let bytes =
                 &buffers[view.buffer().index()].0[view.offset()..view.offset() + view.length()];
-            return decode_image(bytes, Some(mime_type));
+            return decode_image(bytes, Some(mime_type), decoded_budget);
         }
         gltf::image::Source::Uri { uri, mime_type } => (uri, mime_type),
     };
@@ -213,10 +198,14 @@ pub(super) fn image(
             .split_once(';')
             .map(|(mime, _)| mime)
     });
-    decode_image(&bytes, mime_type)
+    decode_image(&bytes, mime_type, decoded_budget)
 }
 
-fn decode_image(bytes: &[u8], mime_type: Option<&str>) -> Result<image::DynamicImage> {
+fn decode_image(
+    bytes: &[u8],
+    mime_type: Option<&str>,
+    budget: &mut Budget,
+) -> Result<image::DynamicImage> {
     let format = match mime_type {
         Some("image/png") => image::ImageFormat::Png,
         Some("image/jpeg") => image::ImageFormat::Jpeg,
@@ -226,7 +215,39 @@ fn decode_image(bytes: &[u8], mime_type: Option<&str>) -> Result<image::DynamicI
     if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
         return Err("unsupported image encoding; export PNG or JPEG".into());
     }
-    Ok(image::load_from_memory_with_format(bytes, format)?)
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_SIDE);
+    limits.max_image_height = Some(MAX_IMAGE_SIDE);
+    limits.max_alloc = Some(budget.remaining());
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    reader.limits(limits.clone());
+    // into_decoder reads the header and enforces strict dimension limits;
+    // it does not decode the pixels (image's PNG/JPEG decoders).
+    let mut decoder = reader
+        .into_decoder()
+        .map_err(|error| format!("PNG/JPEG header (maximum side {MAX_IMAGE_SIDE}): {error}"))?;
+    let (width, height) = decoder.dimensions();
+    if !matches!(
+        decoder.color_type(),
+        image::ColorType::L8
+            | image::ColorType::La8
+            | image::ColorType::Rgb8
+            | image::ColorType::Rgba8
+    ) {
+        return Err(format!(
+            "unsupported {:?} pixels; export an 8-bit PNG or JPEG",
+            decoder.color_type()
+        )
+        .into());
+    }
+    // Account for the retained RGBA result, including greyscale's fourfold
+    // expansion, before any pixel decoding or conversion allocates it.
+    budget.charge(u64::from(width) * u64::from(height) * 4)?;
+    // ImageReader::decode reserves its output separately from the decoder's
+    // working memory; do the same when using its header decoder directly.
+    limits.reserve(decoder.total_bytes())?;
+    decoder.set_limits(limits)?;
+    Ok(image::DynamicImage::from_decoder(decoder)?)
 }
 
 #[cfg(test)]
@@ -261,5 +282,55 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("budget"), "{error}");
+    }
+    // Defect: RGBA expansion is charged per image or not charged at all.
+    // Oracle: two 4x2 grey images retain 64 RGBA bytes, exceeding a 48-byte
+    // shared budget even though their grey pixels need only 16 bytes total.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn decoded_images_share_the_rgba_budget_and_preserve_grey_alpha() {
+        use image::ImageEncoder;
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(
+                &[10, 20, 30, 40, 50, 60, 70, 80],
+                4,
+                2,
+                image::ExtendedColorType::L8,
+            )
+            .unwrap();
+        let mut budget = Budget { remaining: 48 };
+        let image = decode_image(&bytes, Some("image/png"), &mut budget)
+            .unwrap()
+            .into_rgba8();
+        assert_eq!(image.get_pixel(0, 0).0, [10, 10, 10, 255]);
+        assert_eq!(image.get_pixel(3, 1).0, [80, 80, 80, 255]);
+        let error = decode_image(&bytes, Some("image/png"), &mut budget)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("budget"), "{error}");
+
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(&[45, 70], 1, 1, image::ExtendedColorType::La8)
+            .unwrap();
+        let image = decode_image(&bytes, Some("image/png"), &mut Budget::new())
+            .unwrap()
+            .into_rgba8();
+        assert_eq!(image.get_pixel(0, 0).0, [45, 45, 45, 70]);
+    }
+
+    // Converting to RGBA8 must not silently down-convert previously refused
+    // 16-bit content. The PNG's authored pixel type supplies the oracle.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn sixteen_bit_png_pixels_remain_unsupported() {
+        use image::ImageEncoder;
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(&[1, 2], 1, 1, image::ExtendedColorType::L16)
+            .unwrap();
+        let error = decode_image(&bytes, Some("image/png"), &mut Budget::new())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unsupported L16"), "{error}");
     }
 }

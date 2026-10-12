@@ -67,6 +67,12 @@ docs and specs the entry links.
 - `sgl-3d` `SurfaceMaterial::transmission` with a sheen: refracted light
   bypassed the sheen layer; it now dims beneath that layer with the rest
   of the base light. No game-code changes.
+- `sgl-3d` `asset::load`, `load_slice` and `CompressedImage::from_ktx2`:
+  decoded images were not budgeted and KTX2 level expansion was unbounded;
+  PNG/JPEG sides above 16384 or decoded assets beyond the load budget, and
+  KTX2 chains with invalid dimensions, mip counts or decoded level sizes,
+  now fail before oversized allocation. Split oversized assets or re-export
+  malformed textures; no game-code changes are needed.
 
 - `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
   stays on the swept path instead of moving along only the contact axis;
