@@ -1085,22 +1085,27 @@ impl<T: DatagramTransport> Endpoint<T> {
             }
             Kind::Disconnect => {
                 let (id, issued_epoch) = if let Some(id) = self.match_peer(source, nonces) {
-                    (id, None)
-                } else if let Some((id, epoch)) = self.match_issued_cookie(source, nonces, now_ms) {
-                    (id, Some(epoch))
+                    (Some(id), None)
+                } else if let Some(epoch) = self.issued_cookie_epoch(source, nonces, now_ms) {
+                    (
+                        self.routes.get(&(source, nonces.client)).copied(),
+                        Some(epoch),
+                    )
                 } else {
                     return;
                 };
                 // One the caller closed was reported `Local` already.
-                if self.remove_peer(id).is_some_and(|peer| !peer.is_closing()) {
+                if let Some(id) = id
+                    && self.remove_peer(id).is_some_and(|peer| !peer.is_closing())
+                {
                     events.push(EndpointEvent::Disconnected {
                         peer: id,
                         reason: DisconnectReason::Peer,
                     });
                 }
-                // Removing the peer remembered its admitted cookie; a late
-                // confirm for the cookie the client closed with must not
-                // admit it again either.
+                // Remember a valid closed cookie even before its confirm
+                // creates a route: the disconnect may overtake that confirm.
+                // Removing a peer also remembers its admitted cookie.
                 if let Some(epoch) = issued_epoch {
                     self.confirm_replays.remember(
                         source,
@@ -1173,12 +1178,7 @@ impl<T: DatagramTransport> Endpoint<T> {
             self.send_control(source, Kind::ConnectAccept, nonces, now_ms);
             return;
         }
-        let Some(cookie_epoch) = self
-            .cookie_key
-            .as_ref()
-            .expect("server endpoints own a cookie key")
-            .validate(source, nonces.client, nonces.server, now_ms)
-        else {
+        let Some(cookie_epoch) = self.issued_cookie_epoch(source, nonces, now_ms) else {
             return;
         };
 
@@ -1325,23 +1325,12 @@ impl<T: DatagramTransport> Endpoint<T> {
         (self.peers.get(&id)?.nonces == nonces).then_some(id)
     }
 
-    /// A client that asked again may hold a newer challenge's cookie than
-    /// the one this server admitted, and close before the accept naming the
-    /// admitted one arrives. The route and a valid cookie this server issued
-    /// to it still identify that connection; returns it with the cookie's
-    /// epoch.
-    fn match_issued_cookie(
-        &self,
-        source: SocketAddr,
-        nonces: Nonces,
-        now_ms: u64,
-    ) -> Option<(u64, u64)> {
-        let id = *self.routes.get(&(source, nonces.client))?;
-        let epoch =
-            self.cookie_key
-                .as_ref()?
-                .validate(source, nonces.client, nonces.server, now_ms)?;
-        Some((id, epoch))
+    /// The current or previous epoch of a cookie this server issued to the
+    /// source and client nonce. Validation does not require an admitted route.
+    fn issued_cookie_epoch(&self, source: SocketAddr, nonces: Nonces, now_ms: u64) -> Option<u64> {
+        self.cookie_key
+            .as_ref()?
+            .validate(source, nonces.client, nonces.server, now_ms)
     }
 
     fn send_control(&mut self, addr: SocketAddr, kind: Kind, nonces: Nonces, now_ms: u64) -> bool {
@@ -3399,6 +3388,50 @@ mod tests {
         });
         assert!(server.poll(6_190).is_empty());
         assert!(server.peers.is_empty());
+    }
+
+    /// #709: a mid-handshake disconnect can overtake the confirm. The
+    /// server must never admit that closed cookie, in either valid epoch;
+    /// a forged disconnect must not prevent a legitimate confirmation.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_disconnect_before_confirm_prevents_a_ghost_connection() {
+        let source = address(192, 0, 2, 20, 40_000);
+        for (elapsed, forged) in [
+            (0, false),
+            (super::super::cookie::COOKIE_EPOCH_MS, false),
+            (0, true),
+        ] {
+            let mut server = Endpoint::server(
+                RecordingTransport::default(),
+                EndpointConfig::default(),
+                [6; 32],
+            )
+            .unwrap();
+            request(&mut server, source, 77);
+            assert!(server.poll(0).is_empty());
+            let cookie = challenge_for(&server, source, 77);
+            let disconnect = if forged {
+                Nonces {
+                    server: cookie.server ^ 1,
+                    ..cookie
+                }
+            } else {
+                cookie
+            };
+            server
+                .transport
+                .receive_control(source, Kind::Disconnect, disconnect);
+            confirm(&mut server, source, cookie);
+            let events = server.poll(elapsed + 1);
+            if forged {
+                assert_eq!(events, [EndpointEvent::Connected { peer: 1 }]);
+            } else {
+                assert!(events.is_empty(), "closed cookie must never connect");
+                assert_eq!(server.peer_count(), 0, "no ghost occupies a slot");
+                confirm(&mut server, source, cookie);
+                assert!(server.poll(elapsed + 2).is_empty());
+            }
+        }
     }
 
     #[wasm_bindgen_test(unsupported = test)]
