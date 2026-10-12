@@ -217,8 +217,9 @@ impl GeometryPipelines {
     /// and for each shader its materials name, created here on first use,
     /// with the lighting pipelines that take the shadow mask once
     /// `shadow_mask` (ray-traced shadows run). A shader no material names
-    /// any longer loses its programs and pipelines. Without diagnostics
-    /// every frame uses `ALL`.
+    /// any longer loses its programs and pipelines, and a pipeline of
+    /// earlier layers, lit constants or transmission is dropped. Without
+    /// diagnostics every frame uses `ALL`.
     pub fn specialise(
         &mut self,
         device: &wgpu::Device,
@@ -249,8 +250,10 @@ impl GeometryPipelines {
             self.shader_programs
                 .retain(|id, _| shaders.iter().any(|(shader, _)| shader == id));
             self.cache.retain(|key, _| {
-                key.shader
-                    .is_none_or(|id| shaders.iter().any(|(shader, _)| *shader == id))
+                key.specialised((layers, lit_constants), content.transmissive)
+                    && key
+                        .shader
+                        .is_none_or(|id| shaders.iter().any(|(shader, _)| *shader == id))
             });
             for &(id, _) in &shaders {
                 self.shader_programs

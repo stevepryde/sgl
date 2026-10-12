@@ -76,6 +76,8 @@ struct TransmittedLight {
  light:vec3<f32>,
  share:f32,
 }
+// Dispersion refracts each colour channel apart: one ray per channel.
+const TRANSMISSION_DISPERSION_CHANNELS:i32=3;
 fn getIBLVolumeRefraction(n:vec3<f32>,v:vec3<f32>,roughness:f32,diffuseColor:vec3<f32>,specularColor:vec3<f32>,specularF90:f32,position:vec3<f32>,modelMatrix:mat4x4<f32>,ior:f32,thickness:f32,attenuation:vec3<f32>,dispersion:f32)->TransmittedLight {
  let held=transmission_frame_held();
  var transmittedLight=vec3(0.);
@@ -83,8 +85,8 @@ fn getIBLVolumeRefraction(n:vec3<f32>,v:vec3<f32>,roughness:f32,diffuseColor:vec
  if dispersion>0. && ior>0. {
   let halfSpread=(ior-1.)*.025*dispersion;
   let iors=max(vec3(ior-halfSpread,ior,ior+halfSpread),vec3(1.));
-  // A ray, sample and transmittance for each channel: a constant three.
-  for (var i=0;i<3;i++) {
+  // A ray, sample and transmittance for each channel.
+  for (var i=0;i<TRANSMISSION_DISPERSION_CHANNELS;i++) {
    let transmissionRay=getVolumeTransmissionRay(n,v,thickness,iors[i],modelMatrix);
    let refractedRayExit=position+transmissionRay;
    if held {

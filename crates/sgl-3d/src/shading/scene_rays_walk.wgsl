@@ -117,13 +117,14 @@ fn scene_slab_endpoint(difference:f32,direction:f32)->f32 {
  }
  return select(-3.402823466e+38,3.402823466e+38,(difference<0.)==(direction<0.));
 }
-
+// A box's slabs, one per axis.
+const SCENE_SLAB_AXES:u32=3u;
 fn scene_portable_bounds(node:u32,origin:vec3<f32>,direction:vec3<f32>,minimum:f32,maximum:f32)->bool {
  let lo=scene_v3(node+SCENE_BVH_NODE_MIN);
  let hi=scene_v3(node+SCENE_BVH_NODE_MAX);
  var near=minimum;
  var far=maximum;
- for(var axis=0u;axis<3u;axis++) {
+ for(var axis=0u;axis<SCENE_SLAB_AXES;axis++) {
   if direction[axis]==0. {
    if origin[axis]<lo[axis] || origin[axis]>hi[axis] {
     return false;

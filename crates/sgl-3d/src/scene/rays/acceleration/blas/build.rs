@@ -83,11 +83,19 @@ impl BlasBuild {
     }
 }
 
+/// The most words a BLAS geometry's first index and index count may each
+/// be: wgpu 30 takes both in `u32` bytes and refuses either at 4 GiB or
+/// beyond (`OffsetLimitedTo4GB`, `wgpu-core` `command/ray_tracing.rs`
+/// 777–797); its vertex offset is a `u64`.
+const INDEX_WORD_LIMIT: u32 = u32::MAX / 4;
+
 /// Whether the device holds a BLAS over `meshes`: no more geometries than
 /// `max_blas_geometry_count`, no more triangles than
-/// `max_blas_primitive_count`, and, as wgpu 30 also checks each geometry's
+/// `max_blas_primitive_count`, as wgpu 30 also checks each geometry's
 /// vertex count against that limit (`wgpu-core` `device/ray_tracing.rs`
-/// 93–98), no mesh of more vertices than it.
+/// 93–98), no mesh of more vertices than it, and no mesh whose first index
+/// or index count exceeds `INDEX_WORD_LIMIT`, as a model placed past 4 GiB
+/// in the ray source would.
 pub(super) fn fits(meshes: &[RayMeshWords], limits: &wgpu::Limits) -> bool {
     let triangles: u64 = meshes
         .iter()
@@ -95,9 +103,11 @@ pub(super) fn fits(meshes: &[RayMeshWords], limits: &wgpu::Limits) -> bool {
         .sum();
     meshes.len() as u64 <= u64::from(limits.max_blas_geometry_count)
         && triangles <= u64::from(limits.max_blas_primitive_count)
-        && meshes
-            .iter()
-            .all(|mesh| mesh.vertex_count <= limits.max_blas_primitive_count)
+        && meshes.iter().all(|mesh| {
+            mesh.vertex_count <= limits.max_blas_primitive_count
+                && mesh.indices <= INDEX_WORD_LIMIT
+                && mesh.index_count <= INDEX_WORD_LIMIT
+        })
 }
 
 /// Each geometry's sizes over `meshes`: `Float32x3` positions, which need no
@@ -207,7 +217,7 @@ pub(super) fn model_build(
 
 #[cfg(test)]
 mod tests {
-    use super::sizes;
+    use super::{fits, sizes};
     use crate::scene::rays::RayMeshWords;
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -234,5 +244,26 @@ mod tests {
         .map(|size| size.index_count)
         .collect();
         assert_eq!(counts, [Some(6), Some(6), Some(0), Some(0)]);
+    }
+
+    // Plausible defect: a model placed in the ray source past 4 GiB (Metal
+    // binds a source that large) handed to the BLAS build, whose index
+    // offset wgpu 30 takes in `u32` bytes: it refuses the frame's build
+    // (`OffsetLimitedTo4GB`), an uncaptured error that panics the game. The
+    // oracle is wgpu's rule: a geometry's index offset in bytes below 4 GiB.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn indices_past_four_gibibytes_are_left_out() {
+        let limits =
+            wgpu::Limits::default().using_minimum_supported_acceleration_structure_values();
+        let mesh = |indices| RayMeshWords {
+            vertices: 0,
+            vertex_count: 3,
+            indices,
+            index_count: 3,
+        };
+        assert!(fits(&[mesh(0)], &limits));
+        assert!(fits(&[mesh((1 << 30) - 1)], &limits));
+        assert!(!fits(&[mesh(1 << 30)], &limits));
+        assert!(!fits(&[mesh(0), mesh(1 << 31)], &limits));
     }
 }

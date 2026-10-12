@@ -63,6 +63,9 @@ fn iridescence_sensitivity(opd:f32,shift:vec3<f32>)->vec3<f32> {
   -0.4985314,0.0415560,1.0572252);
  return xyz_to_rec709*xyz;
 }
+// The series' terms past its first reflection, m = 1 and 2: the second
+// order the extension expands it to.
+const IRIDESCENCE_ORDERS:i32=2;
 // The Fresnel of a base of reflectance `base_f0` under a film of IOR
 // `film_ior` and thickness `thickness` in nanometres, seen from a medium of
 // IOR `outside_ior` at cosine `cos_theta1`. The film absorbs nothing, so
@@ -93,7 +96,7 @@ fn iridescence_fresnel(outside_ior:f32,film_ior:f32,base_f0:vec3<f32>,thickness:
  let rs=t121*t121*r23/(vec3(1.)-r123);
  var reflected=vec3(r12)+rs;
  var cm=rs-vec3(t121);
- for (var m=1;m<=2;m++) {
+ for (var m=1;m<=IRIDESCENCE_ORDERS;m++) {
   cm*=amplitude;
   reflected+=cm*2.*iridescence_sensitivity(f32(m)*opd,f32(m)*phi);
  }

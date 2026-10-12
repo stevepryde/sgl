@@ -164,6 +164,23 @@ impl PipelineKey {
         }
     }
 
+    /// Whether the key is one `new` makes under `layers`, `lit` and
+    /// `transmission`: casters and the volume layers, which take none of
+    /// them, belong to every specialisation.
+    pub(super) fn specialised(
+        self,
+        (layers, lit): (LayerConstants, LitConstants),
+        transmission: bool,
+    ) -> bool {
+        self == Self::new(
+            self.pass,
+            self.variant,
+            self.shader,
+            (layers, lit),
+            transmission,
+        )
+    }
+
     /// The pipeline constants: a masked material's discard (`alpha_mask`,
     /// material_raster.wgsl), for the pulled passes deformed vertices, and
     /// for the camera and probe passes the layers and the lit constants and

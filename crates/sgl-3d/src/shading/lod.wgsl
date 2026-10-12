@@ -15,6 +15,8 @@ const LOD_MARGIN:f32=1.0000153;
 // within f32, which a shader translator may print as decimal digits that
 // would round past f32::MAX.
 const LOD_UNBOUNDED:f32=1e30;
+// A box's corners, which bound its projection.
+const LOD_BOX_CORNERS:u32=8u;
 // The absolute value of each element of `m`.
 fn matrix_absolute(m:mat4x4<f32>)->mat4x4<f32> {
  return mat4x4(abs(m[0]),abs(m[1]),abs(m[2]),abs(m[3]));
@@ -37,7 +39,7 @@ fn lod_projected_error(clip_from_world:mat4x4<f32>,magnitude_from_world:mat4x4<f
  let delta=lengths*error*LOD_MARGIN+2.*rounding;
  var minimum_w=LOD_UNBOUNDED;
  var maximum_ndc=vec2(0.);
- for(var corner=0u;corner<8u;corner++) {
+ for(var corner=0u;corner<LOD_BOX_CORNERS;corner++) {
   let p=select(lo,hi,vec3((corner&1u)!=0u,(corner&2u)!=0u,(corner&4u)!=0u));
   let clip=matrix*vec4(p,1.);
   // Reversed-Z: the near plane is z = w.

@@ -484,6 +484,9 @@ fn surface_direct_brdf(surface:Surface,reflectance:SurfaceReflectance,light_dire
  }
  return base*surface_coat_dimming(reflectance,specular)+coat;
 }
+// The most lobes a rectangle light evaluates: the diffuse, the base
+// specular and a coat's.
+const RECT_LIGHT_LOBES:i32=3;
 // What rectangle `rect`'s face brings to a surface per unit of its luminance:
 // Bevy 9d12036's rect_light (crates/bevy_pbr/src/render/pbr_lighting.wesl,
 // MIT OR Apache-2.0, src/LICENSE-bevy.txt), its lobes layered as
@@ -511,7 +514,7 @@ fn surface_rect_light(surface:Surface,reflectance:SurfaceReflectance,rect:Light,
  var base=vec3(0.);
  var coat=vec3(0.);
  let diffuse=reflectance.diffuse*surface_diffuse_coupling(surface,reflectance,center_direction);
- for (var lobe=0;lobe<lobes;lobe++) {
+ for (var lobe=0;lobe<min(lobes,RECT_LIGHT_LOBES);lobe++) {
   let coat_lobe=lobe==2;
   let n=select(surface.normal,surface.coat_normal,coat_lobe);
   var inverse=mat3x3(vec3(1.,0.,0.),vec3(0.,1.,0.),vec3(0.,0.,1.));

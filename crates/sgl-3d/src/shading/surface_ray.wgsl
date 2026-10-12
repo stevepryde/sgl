@@ -215,9 +215,9 @@ const PROBE_HIT_T_MIN:f32=.001;
 // about 63 rays a frame at High after 250 frames with one light per hit and
 // 76 with every light, each hit casting a shadow ray per light.
 fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
- var directional=array<u32,2>(0u,0u);
+ var directional=array<u32,FRAME_DIRECTIONAL_LIGHTS>();
  var directional_count=0u;
- for (var index=0u;index<2u;index++) {
+ for (var index=0u;index<FRAME_DIRECTIONAL_LIGHTS;index++) {
   if frame.directional_lights[index].illuminance>0. {
    directional[directional_count]=index;
    directional_count++;

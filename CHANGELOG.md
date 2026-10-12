@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Renderer` geometry pipelines: each change of rect lights, decals, films, sheens, diffuse transmission, transmissive materials or diagnostics layers formerly kept every earlier pipeline set for the renderer's lifetime; only the current set is now kept. No game-code changes are needed.
+- `sgl-3d` hardware ray tracing: a model whose indices start 4 GiB or more into the ray source formerly failed wgpu's BLAS build validation and panicked; it is now left out of the TLAS as a model past the device's BLAS limits is. No game-code changes are needed.
+
 - `sgl-net` UDP server challenge limiter: IPv4 clients of a dual-stack (`[::]`) socket formerly shared one challenge rate-limit bucket; IPv4-mapped sources are now bucketed by their IPv4 /24. No game-code changes are needed.
 - `sgl-net` UDP server `Disconnect` handling: a client that closed while holding a newer challenge's cookie than the admitted one formerly left the server's connection open until `timeout_ms`; the server now ends it on that disconnect. No game-code changes are needed.
 - `sgl-net` `ThreadedUdpServer`: if the worker panicked while holding the command queue, `send`, `capacity`, `disconnect` and `stop_admission` formerly panicked until `poll` joined it, and `poll` could panic on a poisoned ingress queue; none panics now, and until that `poll` `send` returns `UnknownConnection` and `capacity` zero. No game-code changes are needed.
