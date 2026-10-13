@@ -2135,7 +2135,6 @@ dependencies = [
  "image",
  "js-sys",
  "pollster",
- "proptest",
  "serde",
  "serde_json",
  "sgl-core",
@@ -2149,13 +2148,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "sgl-2d-examples"
+version = "0.4.1"
+dependencies = [
+ "sgl-2d",
+ "sgl-core",
+ "winit",
+]
+
+[[package]]
+name = "sgl-2d-tests"
+version = "0.4.1"
+dependencies = [
+ "image",
+ "pollster",
+ "proptest",
+ "serde_json",
+ "sgl-2d",
+ "sgl-core",
+ "wasm-bindgen-test",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "sgl-3d"
 version = "0.4.1"
 dependencies = [
  "bcdec_rs",
  "bytemuck",
- "console_error_panic_hook",
- "futures",
  "glam",
  "gltf",
  "image",
@@ -2167,13 +2188,43 @@ dependencies = [
  "ruzstd",
  "serde",
  "serde_json",
- "sgl-3d",
  "sgl-post-fx",
  "sp-fidelity",
  "sp-fidelity-wgpu",
+ "wasm-bindgen-test",
+ "wgpu",
+]
+
+[[package]]
+name = "sgl-3d-examples"
+version = "0.4.1"
+dependencies = [
+ "bytemuck",
+ "console_error_panic_hook",
+ "futures",
+ "glam",
+ "image",
+ "js-sys",
+ "ktx2",
+ "pollster",
+ "ruzstd",
+ "serde_json",
+ "sgl-3d",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-bindgen-test",
+ "wgpu",
+]
+
+[[package]]
+name = "sgl-3d-tests"
+version = "0.4.1"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "gltf",
+ "image",
+ "pollster",
+ "sgl-3d",
  "wgpu",
 ]
 
@@ -2184,7 +2235,16 @@ dependencies = [
  "blake3",
  "fastrand",
  "glam",
+ "wasm-bindgen-test",
+]
+
+[[package]]
+name = "sgl-core-tests"
+version = "0.4.1"
+dependencies = [
+ "blake3",
  "proptest",
+ "sgl-core",
  "wasm-bindgen-test",
 ]
 
@@ -2208,6 +2268,13 @@ dependencies = [
  "objc2 0.6.4",
  "objc2-game-controller",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "sgl-input-examples"
+version = "0.4.1"
+dependencies = [
+ "sgl-input",
  "winit",
 ]
 
@@ -2222,9 +2289,27 @@ dependencies = [
  "proptest",
  "tungstenite",
  "wasm-bindgen",
- "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
+]
+
+[[package]]
+name = "sgl-net-examples"
+version = "0.4.1"
+dependencies = [
+ "js-sys",
+ "sgl-net",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "sgl-net-tests"
+version = "0.4.1"
+dependencies = [
+ "sgl-net",
+ "tungstenite",
 ]
 
 [[package]]
@@ -2233,6 +2318,16 @@ version = "0.4.1"
 dependencies = [
  "bytemuck",
  "pollster",
+ "wgpu",
+]
+
+[[package]]
+name = "sgl-post-fx-tests"
+version = "0.4.1"
+dependencies = [
+ "bytemuck",
+ "pollster",
+ "sgl-post-fx",
  "wgpu",
 ]
 

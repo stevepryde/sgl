@@ -7,7 +7,7 @@ categories = ["game-development"]
 keywords = ["gamedev", "input", "gamepad", "controller"]
 readme = "README.md"
 description = "Caller-polled controller discovery, events, and held state for SGL games"
-# Examples and tests stay in the repository.
+# Ship only the library, its README and licences.
 include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 version.workspace = true
 edition.workspace = true
@@ -38,4 +38,3 @@ gilrs.workspace = true
 
 [dev-dependencies]
 wasm-bindgen-test.workspace = true
-winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }

@@ -104,7 +104,7 @@ browser client must get identical results from it.
 
 ## Acceptance
 
-- The frozen fixtures in `crates/sgl-core/tests/parity.rs` produce identical
+- The frozen fixtures in `tests/sgl-core/tests/parity.rs` produce identical
   values on native and `wasm32`.
 - A seeded `AnimationSequence`, `FixedClock`, and `SplitMix64` replay
   identically from the same inputs.

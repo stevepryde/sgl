@@ -1,0 +1,19 @@
+[package]
+name = "sgl-3d-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Integration tests for sgl-3d, kept out of its published package. Like
+# sgl-3d, exempt from `[workspace.lints]`.
+
+[dev-dependencies]
+bytemuck.workspace = true
+glam.workspace = true
+gltf.workspace = true
+image.workspace = true
+pollster.workspace = true
+# The tests read the frame's targets through the diagnostics accessors.
+sgl-3d = { workspace = true, features = ["diagnostics"] }
+wgpu.workspace = true

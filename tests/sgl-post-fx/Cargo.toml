@@ -1,0 +1,15 @@
+[package]
+name = "sgl-post-fx-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Integration tests for sgl-post-fx, kept out of its published package. Like
+# sgl-post-fx, exempt from `[workspace.lints]`.
+
+[dev-dependencies]
+bytemuck.workspace = true
+pollster.workspace = true
+sgl-post-fx.workspace = true
+wgpu.workspace = true

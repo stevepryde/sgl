@@ -98,8 +98,9 @@ compatibility shims solely to avoid updating consumers.
   owning spec, package documentation, and affected examples in the same change.
 - Keep all dependency version requirements in the root `[workspace.dependencies]`;
   member crates inherit them with `workspace = true` and select their own features
-  and target conditions. Keep the diagnostics-only self dev-dependency path-only
-  so Cargo omits it when packaging. Require wgpu, naga and the wasm-bindgen
+  and target conditions. A library crate's integration tests and examples live
+  in unpublished companion packages (`tests/<crate>`, `examples/<crate>`), so
+  its published package holds only the library. Require wgpu, naga and the wasm-bindgen
   family (`wasm-bindgen*`, `js-sys`, `web-sys`) as caret ranges so a game can
   resolve their compatible fixes; `Cargo.lock` fixes what SGL itself builds
   and tests with. Do not duplicate current dependency versions

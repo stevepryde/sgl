@@ -7,7 +7,7 @@ categories = ["game-development", "network-programming"]
 keywords = ["gamedev", "networking", "udp", "websocket"]
 readme = "README.md"
 description = "Opaque-payload UDP, WebSocket, and in-memory game transports"
-# Examples and tests stay in the repository.
+# Ship only the library, its README and licences.
 include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 version.workspace = true
 edition.workspace = true
@@ -36,15 +36,3 @@ tungstenite = { workspace = true, features = ["handshake"] }
 
 [dev-dependencies]
 wasm-bindgen-test.workspace = true
-
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-futures.workspace = true
-
-# The browser test lane (`bun scripts/tasks.ts check-browser`): a native
-# fixture server and the wasm probe Playwright runs against it.
-[[example]]
-name = "ws_fixture_server"
-
-[[example]]
-name = "browser_probe"
-crate-type = ["cdylib"]

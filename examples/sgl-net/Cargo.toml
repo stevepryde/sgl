@@ -1,0 +1,30 @@
+[package]
+name = "sgl-net-examples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# sgl-net examples and the browser lane's fixtures, kept out of its published
+# package.
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+sgl-net.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys.workspace = true
+
+# The browser test lane (`bun scripts/tasks.ts check-browser`): a native
+# fixture server and the wasm probe Playwright runs against it.
+[[example]]
+name = "ws_fixture_server"
+
+[[example]]
+name = "browser_probe"
+crate-type = ["cdylib"]

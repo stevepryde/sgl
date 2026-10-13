@@ -80,28 +80,28 @@ its rendering `settings::Settings`.
    the new frame. Nothing restarts or redraws.
 
 The examples live in the repository, not the published crate:
-<https://github.com/stevepryde/sgl/tree/main/crates/sgl-3d/examples>.
-[`examples/offscreen.rs`](../examples/offscreen.rs) is the loop to copy
+<https://github.com/stevepryde/sgl/tree/main/examples/sgl-3d/examples>.
+[`examples/offscreen.rs`](../../../examples/sgl-3d/examples/offscreen.rs) is the loop to copy
 (`--decals` adds decals, `--motion-blur` motion blur, `--fog` volumetric
 fog);
-[`examples/skinned.rs`](../examples/skinned.rs) adds a skinned, morphed glTF
+[`examples/skinned.rs`](../../../examples/sgl-3d/examples/skinned.rs) adds a skinned, morphed glTF
 and the game's side of animating it,
-[`examples/instances.rs`](../examples/instances.rs) many instances of a few
-models, [`examples/water.rs`](../examples/water.rs) a lake of 16 m
+[`examples/instances.rs`](../../../examples/sgl-3d/examples/instances.rs) many instances of a few
+models, [`examples/water.rs`](../../../examples/sgl-3d/examples/water.rs) a lake of 16 m
 chunks whose waves its own shader moves and whose surface receives
 screen-space reflections,
-[`examples/shaders.rs`](../examples/shaders.rs) vegetation bent by a wind
+[`examples/shaders.rs`](../../../examples/sgl-3d/examples/shaders.rs) vegetation bent by a wind
 shader and glass whose thickness varies across it,
-[`examples/volumes.rs`](../examples/volumes.rs) closed glass that absorbs
+[`examples/volumes.rs`](../../../examples/sgl-3d/examples/volumes.rs) closed glass that absorbs
 over each view ray's path inside it, seen from outside and inside,
-[`examples/streaming.rs`](../examples/streaming.rs) a block world streamed
+[`examples/streaming.rs`](../../../examples/sgl-3d/examples/streaming.rs) a block world streamed
 in 16 m chunks about a moving camera, edited and remeshed, with the render
 origin following it, and what each scene operation costs, and
-[`examples/dynamic_gi.rs`](../examples/dynamic_gi.rs) a room lit by a dynamic
+[`examples/dynamic_gi.rs`](../../../examples/sgl-3d/examples/dynamic_gi.rs) a room lit by a dynamic
 GI volume, and
-[`examples/irradiance_volume.rs`](../examples/irradiance_volume.rs) a block
+[`examples/irradiance_volume.rs`](../../../examples/sgl-3d/examples/irradiance_volume.rs) a block
 world's cave lit by the game's own light field, relit by region.
-[`examples/browser_smoke.rs`](../examples/browser_smoke.rs) is the
+[`examples/browser_smoke.rs`](../../../examples/sgl-3d/examples/browser_smoke.rs) is the
 browser's version: a WebGPU device, procedural content with block-compressed
 bakes (a specular probe and an irradiance atlas), frames under several settings
 and an asynchronous readback.

@@ -1,0 +1,21 @@
+[package]
+name = "sgl-core-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Integration tests for sgl-core, kept out of its published package.
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+blake3.workspace = true
+sgl-core.workspace = true
+wasm-bindgen-test.workspace = true
+
+# proptest pulls getrandom, which does not build for wasm32-unknown-unknown
+# without a global cfg; property tests are native-only.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+proptest.workspace = true

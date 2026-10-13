@@ -13,7 +13,7 @@ const DIST = process.env.SGL_BROWSER_PROBE_DIR ?? "target/browser-probe";
 const SCENARIOS = 13;
 
 async function startFixture(): Promise<Bun.Subprocess> {
-  const fixture = Bun.spawn(["cargo", "run", "-q", "-p", "sgl-net", "--example", "ws_fixture_server"], {
+  const fixture = Bun.spawn(["cargo", "run", "-q", "-p", "sgl-net-examples", "--example", "ws_fixture_server"], {
     stdout: "pipe",
     stderr: "inherit",
   });

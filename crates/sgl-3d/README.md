@@ -1112,12 +1112,12 @@ Bevy batches its phases. Shadow and capture draws merge wherever they are;
 blended ones only where they follow one another back to front. In every
 list each instance keeps its own pose, motion, ambient cube and source
 identity: a draw reads every instance's record from the scene's object
-buffer. The [instances example](examples/instances.rs) places many props of
+buffer. The [instances example](../../examples/sgl-3d/examples/instances.rs) places many props of
 three models and prints the camera's sections and the CPU time each frame
 took to record:
 
 ```sh
-cargo run --release -p sgl-3d --example instances -- target/instances.png --count 10000
+cargo run --release -p sgl-3d-examples --example instances -- target/instances.png --count 10000
 ```
 
 Devices with the attachments for it write stable geometry and primary lighting
@@ -1169,7 +1169,7 @@ twice or more.
   mask its moving layers mark ([FSR2](#fsr2)), as AMD documents for
   animated textures: FSR2 then keeps no detail locked there.
 
-The [water example](examples/water.rs) scrolls a procedural wave map over
+The [water example](../../examples/sgl-3d/examples/water.rs) scrolls a procedural wave map over
 its shader's waves.
 
 ## Alpha-masked and blended materials
@@ -1321,14 +1321,14 @@ seen by rays, nor is a shader's displacement. The renderer allocates the
 surface's targets (a depth and an RGBA16F layer, 12 bytes per render pixel)
 in the first frame whose scene holds a receiver and keeps them from then
 on; a renderer that has never rendered a receiver pays nothing. The [water
-example](examples/water.rs) is a lake of shader water that receives
+example](../../examples/sgl-3d/examples/water.rs) is a lake of shader water that receives
 reflections; it prints the GPU time of the passes the water touches, what it
 holds and uploads, and, with `--morph`, the same waves as morph targets, or
 replaced every frame by `set_model` (`set-model`), with the CPU time
 preparing and replacing it take:
 
 ```sh
-cargo run --release -p sgl-3d --example water
+cargo run --release -p sgl-3d-examples --example water
 ```
 
 ## Programmable surfaces
@@ -1709,23 +1709,23 @@ live beside the object records rather than in them. Consumer textures,
 direct scene colour, ray-hit evaluation and a second `custom` are not part
 of the contract.
 
-The [water example](examples/water.rs) moves a lake of 16 m chunks with six
-Gerstner waves (`examples/support/gerstner.wgsl`), anchored on their
+The [water example](../../examples/sgl-3d/examples/water.rs) moves a lake of 16 m chunks with six
+Gerstner waves (`examples/sgl-3d/examples/support/gerstner.wgsl`), anchored on their
 period, with the column behind the water tinting and fading it, and
 compares the same waves as morph targets (`--morph`); the [shaders
-example](examples/shaders.rs) bends masked grass and tree cards in the wind
+example](../../examples/sgl-3d/examples/shaders.rs) bends masked grass and tree cards in the wind
 (`support/wind.wgsl`) under cascades and a spot light, and gives a glass pane
 a thickness that varies across it (`support/glass.wgsl`); the [volumes
-example](examples/volumes.rs) absorbs over the volume path in closed glass
+example](../../examples/sgl-3d/examples/volumes.rs) absorbs over the volume path in closed glass
 (`support/volume_glass.wgsl`): a thin slab before a near and a far wall, a
 block with an opaque object inside seen from outside and inside, a
 wobbling blob and two boxes one behind the other, with `--volume-paths
 off` for the authored thickness:
 
 ```sh
-cargo run --release -p sgl-3d --example water -- --chunks 100 --run velvet
-cargo run --release -p sgl-3d --example shaders
-cargo run --release -p sgl-3d --example volumes
+cargo run --release -p sgl-3d-examples --example water -- --chunks 100 --run velvet
+cargo run --release -p sgl-3d-examples --example shaders
+cargo run --release -p sgl-3d-examples --example volumes
 ```
 
 ## Skinned meshes and morph targets
@@ -1806,7 +1806,7 @@ The `skinned` example generates a skinned, morphed glTF with a clip, and
 samples, poses and renders it:
 
 ```sh
-cargo run -p sgl-3d --example skinned -- target/skinned.png
+cargo run -p sgl-3d-examples --example skinned -- target/skinned.png
 ```
 
 ## Retained scene and frame lifecycle
@@ -1963,14 +1963,14 @@ Recreate the scene and renderer after replacing the device. Dropping them
 releases the library's GPU handles; the game still owns its device, queue,
 surface, and asset sources.
 
-The [offscreen example](examples/offscreen.rs) is the loop to copy, with
+The [offscreen example](../../examples/sgl-3d/examples/offscreen.rs) is the loop to copy, with
 procedural geometry, caller-created environments, animation and PNG output:
 
 ```sh
-cargo run -p sgl-3d --example offscreen -- target/sgl3d.png
+cargo run -p sgl-3d-examples --example offscreen -- target/sgl3d.png
 ```
 
-The [streaming example](examples/streaming.rs) is a block world at a block
+The [streaming example](../../examples/sgl-3d/examples/streaming.rs) is a block world at a block
 game's scale: 16 m chunks, each one model placed as a static instance at its
 integer chunk origin, added under a per-frame budget as a camera walks or
 flies, replaced by block edits and remeshing waves, and removed behind it;
@@ -1991,8 +1991,8 @@ remeshes chunks holding shadowed torches and fails unless their static
 shadow layers are redrawn once:
 
 ```sh
-cargo run --release -p sgl-3d --example streaming -- walk fly
-cargo run --release -p sgl-3d --example streaming -- --check
+cargo run --release -p sgl-3d-examples --example streaming -- walk fly
+cargo run --release -p sgl-3d-examples --example streaming -- --check
 ```
 
 ### GPU pass timing
@@ -2221,7 +2221,7 @@ scene.write_irradiance_cells(&queue, &region)?;
   cells), else `SceneError::DeviceLimit`; a placement that is not a lattice
   is `SceneError::InvalidIrradianceVolume` and a region with invalid cells
   `SceneError::InvalidIrradianceRegion`. The browser runs the same volume.
-- **Example.** [`examples/irradiance_volume.rs`](examples/irradiance_volume.rs)
+- **Example.** [`examples/irradiance_volume.rs`](../../examples/sgl-3d/examples/irradiance_volume.rs)
   lights a block world's cave from a propagated sky and torch light field at
   a metre, relights a torch as a region write, scrolls the volume with the
   camera while the render origin follows it, and prints the per-pass GPU
@@ -2384,7 +2384,7 @@ still layers and unlit or blended materials' layers do not.
 Frames that run the volume trace the ray source, so its instance BVHs
 rebuild on them as for world-space reflections. Deforming instances are
 lit by the volume, and block its rays only with hardware ray tracing. Per-pass cost is reported in
-the `dynamic GI *` timing groups. The [dynamic GI example](examples/dynamic_gi.rs)
+the `dynamic GI *` timing groups. The [dynamic GI example](../../examples/sgl-3d/examples/dynamic_gi.rs)
 lights a room through a window and with a lamp, two boxes moving through
 it; `--timing` prints the stage's GPU time in each frame as its probes
 start and settle, `--counters` each frame's probes, rays, stride and BVH
@@ -2395,7 +2395,7 @@ again, `--quality off` renders the room without the volume, and
 scrolls to follow it:
 
 ```sh
-cargo run --release -p sgl-3d --example dynamic_gi -- target/dynamic_gi.png --timing
+cargo run --release -p sgl-3d-examples --example dynamic_gi -- target/dynamic_gi.png --timing
 ```
 
 ## Hardware ray tracing
@@ -2558,8 +2558,8 @@ hardware.
   its software BVHs they cost 3–5 times the hardware's with local lights
   ([D-30](../../specs/decisions.md)).
 
-The [streaming example](examples/streaming.rs) and the
-[dynamic GI example](examples/dynamic_gi.rs) opt in with
+The [streaming example](../../examples/sgl-3d/examples/streaming.rs) and the
+[dynamic GI example](../../examples/sgl-3d/examples/dynamic_gi.rs) opt in with
 `--hardware-ray-tracing`; the streaming example takes ray-traced shadows
 with `--ray-traced-shadows`.
 
@@ -2889,7 +2889,7 @@ blocks, decoding each texel they sample as raster's level 0 decodes it: one
 byte a texel in the ray source beside the texture's one. Basis Universal
 transcoding, for a device without BC, is not provided. The `offscreen`
 example's `--alpha` grate is a BC7 KTX2 chain, which
-`cargo run -p sgl-3d --example export_grate` writes.
+`cargo run -p sgl-3d-examples --example export_grate` writes.
 
 For anisotropic materials, supply `Vertex::tangent = [tx, ty, tz, handedness]`
 with handedness +1 or -1, plus authored normals. Legacy meshes may leave the

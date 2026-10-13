@@ -155,8 +155,8 @@ Aseprite loader. The GPU pipeline itself is in [rendering](rendering.md).
 ## Tool composition
 
 For games and coding agents building native editors, start with the runnable
-[`tool_ui` example](../crates/sgl-2d/examples/tool_ui.rs):
-`cargo run -p sgl-2d --example tool_ui`. SGL supplies widgets; the game owns
+[`tool_ui` example](../examples/sgl-2d/examples/tool_ui.rs):
+`cargo run -p sgl-2d-examples --example tool_ui`. SGL supplies widgets; the game owns
 composition and editor state. `Ui::set_theme(UiTheme::tools_dark())` or
 `tools_light()` gives opaque chrome over scene artwork. `Default` retains the
 original translucent game appearance. Copy `*ui.theme()` for custom labels and

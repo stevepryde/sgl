@@ -71,5 +71,5 @@ Their CPU-side contracts are in [client](client.md).
 - `examples/direct-game` implements `ApplicationHandler` itself on native and wasm.
 - Repeated frames do not recreate a pipeline, sampler, texture, or window.
 - Fixed headless scenes match the committed golden frames in
-  `crates/sgl-2d/tests/golden/` in both lighting spaces.
+  `tests/sgl-2d/tests/golden/` in both lighting spaces.
 - A renderer-only consumer does not link networking.

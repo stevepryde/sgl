@@ -11,8 +11,8 @@ canvas, event loop, simulation, input translation, and UI layout.
 screen draw channels, text, lighting, overlays, and letterbox presentation.
 Start with the [direct game](../../examples/direct-game/src/main.rs), which
 owns winit and draws sprites: `cargo run -p sgl-direct-game`. It also builds
-for `wasm32-unknown-unknown`, but the repository has no page that runs it. The [tool UI example](examples/tool_ui.rs)
-adds text and widgets: `cargo run -p sgl-2d --example tool_ui`.
+for `wasm32-unknown-unknown`, but the repository has no page that runs it. The [tool UI example](../../examples/sgl-2d/examples/tool_ui.rs)
+adds text and widgets: `cargo run -p sgl-2d-examples --example tool_ui`.
 
 The game keeps composition; do not wrap the canvas in another engine layer.
 For resource lifetimes, color spaces, and presentation behavior, read the

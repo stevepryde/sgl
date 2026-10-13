@@ -41,7 +41,7 @@ const commands: Array<{ argv: string[]; env?: Record<string, string> }> = [
     env: requireGpu ? { SGL_REQUIRE_GPU: "1" } : undefined,
   },
   // Release semantics differ (debug_assertions off); sgl-net must hold there.
-  { argv: ["cargo", "test", "-p", "sgl-net", "--release"] },
+  { argv: ["cargo", "test", "-p", "sgl-net", "-p", "sgl-net-tests", "--release"] },
   { argv: ["bun", "test", "scripts"] },
   // Every library builds for the browser, SGL3D and its ports included. Pure
   // tests also run there.
@@ -121,6 +121,11 @@ async function mutants(args: string[]): Promise<void> {
       "mutants",
       "--package",
       crate,
+      // Integration tests live in the crate's unpublished companion package.
+      "--test-package",
+      crate,
+      "--test-package",
+      `${crate}-tests`,
       "--output",
       `mutants.out/${crate}`,
       "--timeout-multiplier",
@@ -181,10 +186,10 @@ async function checkBrowser(): Promise<void> {
   requireWasmBindgenCli();
   const steps: string[][] = [
     ["bun", "install", "--frozen-lockfile"],
-    ["cargo", "build", "-p", "sgl-net", "--example", "browser_probe", "--target", "wasm32-unknown-unknown"],
-    ["cargo", "build", "-p", "sgl-3d", "--example", "browser_smoke", "--target", "wasm32-unknown-unknown"],
+    ["cargo", "build", "-p", "sgl-net-examples", "--example", "browser_probe", "--target", "wasm32-unknown-unknown"],
+    ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_smoke", "--target", "wasm32-unknown-unknown"],
     // Built, not run: `measure-browser` runs it.
-    ["cargo", "build", "-p", "sgl-3d", "--example", "browser_streaming", "--target", "wasm32-unknown-unknown"],
+    ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_streaming", "--target", "wasm32-unknown-unknown"],
     ...["browser_probe", "browser_smoke"].map((example) => [
       "wasm-bindgen",
       "--target",
@@ -232,7 +237,7 @@ async function measureBrowser(args: string[]): Promise<void> {
   const steps: string[][] = [
     ["bun", "install", "--frozen-lockfile"],
     [
-      "cargo", "build", "--release", "-p", "sgl-3d", "--example", "browser_streaming",
+      "cargo", "build", "--release", "-p", "sgl-3d-examples", "--example", "browser_streaming",
       "--target", "wasm32-unknown-unknown",
     ],
     [

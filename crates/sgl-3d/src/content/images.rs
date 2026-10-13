@@ -278,7 +278,7 @@ impl CompressedImage {
 
 #[cfg(all(test, target_arch = "wasm32"))]
 #[allow(dead_code)]
-#[path = "../../examples/support/ktx2_writer.rs"]
+#[path = "../../tests/fixtures/ktx2_writer.rs"]
 mod ktx2_writer;
 
 #[cfg(test)]

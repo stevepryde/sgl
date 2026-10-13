@@ -1,0 +1,21 @@
+[package]
+name = "sgl-2d-examples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# sgl-2d examples, kept out of its published package.
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+sgl-2d.workspace = true
+sgl-core.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+winit = { workspace = true, features = ["rwh_06"] }

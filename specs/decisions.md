@@ -553,7 +553,7 @@ Use the [current specs](README.md) for implementation and the
   the same tick counts from SGL's clock as from its own integer clock; `f32`
   rounding ran 0 ticks on a first 1/30 s frame at 30 Hz and dropped 141
   steps of a 5 s stall instead of 142. The cross-target clock fixture in
-  `crates/sgl-core/tests/parity.rs` was regenerated with whole-nanosecond
+  `tests/sgl-core/tests/parity.rs` was regenerated with whole-nanosecond
   inputs (its final `alpha` changed; the step count did not).
 - **D-38** Decision, 2026-10-09: UDP receivers pace a sender instead of
   closing it. A lane that cannot take its next completed message (its

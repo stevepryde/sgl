@@ -160,8 +160,8 @@ a threaded server after shutdown or a worker panic returns its queued
 messages followed by one `Disconnected { reason: Local }` for each live
 connection; it accepts no more sends.
 
-The [browser probe](examples/browser_probe.rs) and its
-[native fixture server](examples/ws_fixture_server.rs) demonstrate browser
+The [browser probe](../../examples/sgl-net/examples/browser_probe.rs) and its
+[native fixture server](../../examples/sgl-net/examples/ws_fixture_server.rs) demonstrate browser
 transport integration. They are check fixtures, not a production game server.
 
 Read the [netcode contract](../../specs/netcode.md) for admission, bounds,
