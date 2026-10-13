@@ -15,962 +15,244 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d` ray-traced shadows: a shadow ray started 1 cm past a position reconstructed from depth, whose rounding a kilometre from the origin exceeds that, so distant receivers could shadow themselves in flickering patches; the ray now starts at an origin lifted off the surface by an offset that scales with the position (Falcor's `computeRayOrigin`). No game-code changes are needed. Distributions that ship SGL3D's notices gain NVIDIA Falcor's BSD-3-Clause notice (`crates/sgl-3d/src/LICENSE-falcor.txt`).
+## 0.4.1 — 2026-10-13
 
-- `sgl-core` `CollisionConfig`: public fields allowed literals and mutations to bypass validation; fields are now private. Construct with `CollisionConfig::new` and read values through `up()`, `skin()`, `snap_distance()`, `normal_threshold()`, and `block_epsilon()`; reconstruct to change a value.
+- Move every SGL crate to `0.4.1` together. Fixes only, but some change a
+  signature, refuse input that loaded before, or change output; read every
+  entry below. Compile breaks include `CollisionConfig` literals,
+  `Grid2::filled`, custom `DatagramTransport`s, `EndpointConfig` literals,
+  `sgl-2d` texture uploads, `scroll_area_end` and `Overlay` literals,
+  `Scene::update_mist` and `update_effects`, newly native-only capture APIs
+  on wasm32, and exhaustive matches on `GridError`, `AseDirection`,
+  `AsepriteError`, `SceneError` and `Ignored`.
 
-- `sgl-core` `move_and_collide`/`sweep_aabb`: motion below `f32::EPSILON` was dropped or treated as parallel and could be reported blocked in empty space; every finite nonzero remainder is now swept and applied when clear. No game-code changes are needed.
+### sgl-core
 
-- `sgl-core` `move_and_collide` and `snap_to_ground`: contacts ending exactly on a broadphase grid-cell boundary could be missed; swept queries now preserve that end boundary. No game-code changes are needed.
-- `sgl-net` WebSocket bind/connect: invalid subprotocol names formerly bound or attempted a handshake; they now fail configuration unless they are one non-empty HTTP token. Rename names containing commas, whitespace, delimiters or non-ASCII characters on both peers.
+- `CollisionConfig`: public fields let literals and mutation bypass
+  validation; fields are now private, and `new` also panics on a negative or
+  non-finite `skin`, `snap_distance` or `block_epsilon`, or an `up` whose
+  length overflows. Migration: build with `CollisionConfig::new(up, skin,
+  snap_distance, normal_threshold, block_epsilon)`, read through `up()`,
+  `skin()`, `snap_distance()`, `normal_threshold()` and `block_epsilon()`,
+  and reconstruct to change a value.
+- `Grid2::filled`: panicked when the cells could not be allocated; now
+  returns `Result<Self, GridError>` with new `GridError::TooLarge`.
+  Migration: `Grid2::filled(w, h, 0u8)?`; exhaustive matches add the arm.
+- `derive_stream_seed` components no longer cancel, so every derived seed
+  changes, and `Rng::usize` on wasm32 now gives native's values. Content
+  regenerated from a persisted base seed (worlds, replays) changes:
+  regenerate it, or store the derived seeds before upgrading.
+- `FrameAnimation::new` now panics on an infinite `fps`, and
+  `FrameAnimation::tick`/`AnimationSequence::tick` ignore a nonpositive, NaN
+  or infinite `dt`. Pass a finite `fps` and positive elapsed time.
+- `StateHasher` promises distinct digests only within one schema; encoding
+  and digests are unchanged. Games hashing several kinds of state in one
+  stream add a leading tag or version.
+- Fixes: `move_and_collide`, `sweep_aabb` and `snap_to_ground` no longer
+  miss exact touches, grid-cell-boundary contacts or tiny motion, keep skin
+  back-off on the swept path (diagonal slides stop slightly earlier), never
+  push a body deeper into a solid it starts inside, and block one-way
+  platforms by motion into the face under a tilted `up`; huge `ColliderSet`
+  boxes no longer walk every cell; `AnimationSequence` ping-pong and
+  zero-duration steps play once; `SequenceStep::RandomPause` is documented as
+  `[min, max]`. No game-code changes.
 
-- `sgl-net` WebSocket inbound admission: an over-cap message on a full lane formerly waited on native or closed with `InboundOverflow` in the browser; it now immediately closes with `ProtocolViolation`. No game-code changes are needed.
+### sgl-net
 
-- `sgl-net` `NativeWebSocketClient::connect`: a silent first resolved address formerly exhausted the connection deadline; TCP attempts now share the remaining budget so later addresses can connect. No game-code changes are needed.
-- `sgl-net` UDP `Disconnect` handling: a valid disconnect arriving before its confirm formerly admitted a ghost connection on that confirm; the server now retires the cookie before admission. No game-code changes are needed.
-
-- `sgl-net` UDP `Endpoint::disconnect`: closing peers formerly ignored newly received reliable fragments; they now buffer and acknowledge them under the existing limits without returning new messages. No game-code changes are needed.
-- `sgl-3d` `deformation::Influence`: finite weights whose f32 sum overflows formerly normalized to zero; model preparation and glTF import now reject them. No game-code changes are needed for valid content.
-
-- `sgl-3d` `CompressedImage::from_ktx2`: a corrupt KTX2 data format descriptor formerly panicked; it now returns `Err`. No game-code changes are needed.
-
-- `sgl-3d` `asset::load`/`load_slice`: malformed glTF accessor references, animation targets and image sources formerly panicked; they now return `Err` naming the element. No game-code changes are needed.
-- `sgl-3d` `LightShape::Spot`: a closed or unrepresentably narrow casting cone formerly built a non-finite shadow view; it now releases its shadow slots until its projection is finite. No game-code changes are needed.
-- `sgl-2d` `AsepriteSheet::parse`: extensionless frame keys with dotted titles formerly failed or recovered the title’s digits; trailing frame digits now take precedence over extension stripping. No game-code changes are needed for exports that already load.
-
-- `sgl-2d` `UiFrame::number_field`: large values formerly opened drafts beyond the typing limit and rejected insertions; oversized opening drafts now use scientific notation. No game-code changes are needed.
-
-- `sgl-2d` `UiFrame::number_field`: vertical drags formerly opened typing as clicks; movement past the click threshold on either axis now prevents typing while only horizontal travel changes the value. No game-code changes are needed.
-
-- `sgl-2d` `UiFrame::line_edit_clear`: long drafts formerly drew text and the caret beneath the clear button; both now stay within the space to its left. No game-code changes are needed.
-
-- `sgl-2d` `Context`: windows larger than the device texture limit formerly panicked during startup or resize; swapchain dimensions are now capped per axis to that limit. No game-code changes are needed.
-- `sgl-post-fx` `PostFXContext::get_frame_desc`: an output-only resize formerly reported the previous output dimensions; it now reports the latest `prepare_resources` description. No game-code changes are needed.
-
-- `sgl-3d` `Settings::fog_filter`: retrying a submitted frame without `Renderer::finish_frame` formerly reprojected the current filtered volume as previous history; the retry now resets that history. No game-code changes are needed.
-
-- `sgl-3d` `Exposure`: abandoning the first automatic frame after fixed exposure formerly lost its snap to target; the next submitted automatic frame now snaps. No game-code changes are needed.
-- `sgl-3d` dynamic GI: sparse probe turns formerly blended unobserved depth and irradiance texels toward zero; those texels now keep their history, and fresh unobserved depth starts at the maximum ray distance. No game-code changes are needed.
-
-- `sgl-post-fx` SSR: glossy grazing sample PDFs formerly relied on backend half-float overflow behavior; stored PDFs now clamp to the finite range so reconstruction keeps their weight. No game-code changes are needed.
-- `sgl-3d` `Renderer::capture_specular_probe`: faces whose readback exceeded `max_buffer_size` formerly panicked; they now return `ProbeError::InvalidDimensions` before capture. No game-code changes are needed.
-
-
-- `sgl-3d` `Renderer` geometry pipelines: each change of rect lights, decals, films, sheens, diffuse transmission, transmissive materials or diagnostics layers formerly kept every earlier pipeline set for the renderer's lifetime; only the current and previous sets are now kept. No game-code changes are needed.
-- `sgl-3d` hardware ray tracing: a model whose indices start 4 GiB or more into the ray source formerly failed wgpu's BLAS build validation and panicked; it is now left out of the TLAS as a model past the device's BLAS limits is. No game-code changes are needed.
-
-- `sgl-net` UDP server challenge limiter: IPv4 clients of a dual-stack (`[::]`) socket formerly shared one challenge rate-limit bucket; IPv4-mapped sources are now bucketed by their IPv4 /24. No game-code changes are needed.
-- `sgl-net` UDP server `Disconnect` handling: a client that closed while holding a newer challenge's cookie than the admitted one formerly left the server's connection open until `timeout_ms`; the server now ends it on that disconnect. No game-code changes are needed.
-- `sgl-net` `ThreadedUdpServer`: if the worker panicked while holding the command queue, `send`, `capacity`, `disconnect` and `stop_admission` formerly panicked until `poll` joined it, and `poll` could panic on a poisoned ingress queue; none panics now, and until that `poll` `send` returns `UnknownConnection` and `capacity` zero. No game-code changes are needed.
-- `sgl-net` `BrowserWebSocketClient` flush: a latest state over `latest_buffered_bytes` formerly held lane frames to that watermark; lane frames now continue up to `reliable_buffered_bytes` while the state stays coalesced, and the state leaves once the bytes buffered ahead of it have drained, never past `reliable_buffered_bytes`. No game-code changes are needed.
-
-- `sgl-net` `ThreadedUdpServer`: after a worker panic, `send`, `capacity`, `disconnect` and `poll` could panic on its poisoned queues; they no longer do, and until `poll` reports the ends `send` returns `UnknownConnection` and `capacity` zero. No game-code changes are needed.
-- `sgl-net` `BrowserWebSocketClient` flush: a latest state over `latest_buffered_bytes` formerly held lane frames to that watermark; lane frames now continue up to `reliable_buffered_bytes` while the state stays coalesced. No game-code changes are needed.
-
-- `sgl-3d` `asset::load`/`load_slice`: a GLB header declaring a length below 12 bytes panicked, and a zero-scale matrix on a joint or a joint's ancestor, a non-integer `EXT_materials_bump` `texCoord`, a `baseColorFactor` the scene rejects, or a negative or non-finite `emissiveFactor` or `emissiveStrength` loaded; each now fails the load, naming the node or material. Re-export affected assets; no game-code changes are needed.
-
-- `sgl-3d` `CompressedImage`: a side above 16384 passed scene validation (overflowing on wasm32); scenes now refuse it with `SceneError::InvalidCompressedImage`, as `from_ktx2` does. Store sides no larger than 16384; no game-code changes are needed otherwise.
-
-- `sgl-2d` `UiFrame::confirm_modal`: the pointer press or Escape that opened a modal could also confirm or cancel it on that frame; the modal now ignores both until it has been shown for a frame. No game-code changes are needed for a modal submitted every frame while open.
-
-- `sgl-2d` 2D lights: a zero-height light exactly on a normal-mapped pixel wrote NaN into the light accumulation; it now lights that pixel at full strength, matching `normal_factor`. No game-code changes are needed.
-
-- `sgl-core` `move_and_collide` one-way platforms with a tilted `up`: blocking tested motion against `up`, so a body could fall through the top face or stick walking along it; it now tests motion into the floor face. No game-code changes are needed.
-
-- `sgl-net` `udp::Endpoint`: a confirm carrying a newer cookie formerly changed an admitted connection's cookie and could stop both directions; the server now keeps its admitted cookie. No game-code changes are needed.
-
-- `sgl-net` UDP `Endpoint::disconnect`: closing peers previously stopped
-  sending acknowledgements and keepalives; they now continue through the
-  existing grace so a remote holding data does not time out just because
-  `close_grace_ms` exceeds `timeout_ms`. No game-code changes needed.
-
-- `sgl-core` `CollisionConfig::new`: an `up` with finite components but an
-  overflowing length normalized to zero; it now panics as for other unusable
-  directions. Supply a normalizable direction; valid games need no game-code changes.
-- `sgl-2d` `UiFrame` draw ordering: long ordinary, panel and popover lists
-  could cover higher UI layers; draws now stay within their own band, so
-  panels, popovers and modals stay above lower layers at any widget count.
-  No game-code changes.
-- `sgl-net` native WebSocket server and client sockets previously left Nagle's
-  algorithm enabled; they now disable it before the handshake where the
-  platform supports `TCP_NODELAY`. No game-code changes needed.
-- `sgl-post-fx` SSR: missed rays no longer set the reflection's reprojection
-  depth; only confirmed hits supply the virtual-point distance. No game-code
-  changes.
-- `sgl-net` `udp::DatagramTransport::send`: temporarily refused datagrams now keep their queued work instead of dropping messages or advancing reliable retries, and return `io::Result<()>`. Standard adapters need no game-code changes; custom transports must return their send result and classify temporary local buffer exhaustion as `WouldBlock`.
-
-- `sgl-net` UDP `Endpoint`, `UdpServer`, `UdpClient` and
-  `ThreadedUdpServer`: dropping an endpoint or shutting down its worker now
-  notifies peers instead of leaving them to time out; a stopped or panicked
-  worker reports each live connection `Local` after its queued messages.
-  No game-code changes.
-- `sgl-net` native WebSocket: unfinished frame fragments could stall the
-  shared worker; each socket turn now bounds raw bytes read and yields to
-  other peers and outbound messages. No game-code changes.
-- `sgl-post-fx` SSR temporal accumulation could select an off-screen
-  reflection hit and discard valid surface history; it now compares only
-  candidates in the previous viewport. No game-code changes.
-- `sgl-post-fx` `ScreenSpaceReflection` at half resolution previously dropped
-  reflective blocks beside rough surfaces; each block now traces an eligible
-  surface when one is present. No game-code changes are needed.
-- `sgl-post-fx` `TemporalAntiAliasing`: the placeholder for a new feature
-  set copied input alpha as history confidence; it now starts at reset
-  confidence, so the next frame ramps up history weight. No game-code
-  changes needed.
-- `sgl-post-fx` `PostFXContext::execute`: switching from a caller camera buffer
-  to inline cameras now writes only the context’s own buffer instead of
-  overwriting the caller’s data or failing validation. No game-code changes.
-- `sgl-post-fx` `ScreenSpaceReflection`: conventional depth now keeps its
-  resolved depth at 32 bits instead of 16, preserving distant reflection
-  reprojection; reversed depth is unchanged. No game-code changes.
-- `sgl-3d` `AlphaMode::Blend` with `keeps_specular: true`: alpha left
-  diffuse transmission at full strength; it now fades that light with
-  coverage, as it fades reflected diffuse light. No game-code changes.
-- `sgl-3d` `SurfaceMaterial::transmission` with a sheen: refracted light
-  bypassed the sheen layer; it now dims beneath that layer with the rest
-  of the base light. No game-code changes.
-- `sgl-3d` `asset::load`, `load_slice` and `CompressedImage::from_ktx2`:
-  decoded images were not budgeted and KTX2 level expansion was unbounded;
-  PNG/JPEG sides above 16384 or decoded assets beyond the load budget, and
-  KTX2 chains with invalid dimensions, mip counts or decoded level sizes,
-  now fail before oversized allocation. Split oversized assets or re-export
-  malformed textures; no game-code changes are needed. Refresh distribution
-  notices for the vendored MIT OR Apache-2.0 Zstandard decoder.
-
-- `sgl-core` `move_and_collide` and `snap_to_ground`: skin back-off now
-  stays on the swept path instead of moving along only the contact axis;
-  diagonal slides stop earlier along the surface by the backed-off motion's
-  tangential component. No game-code changes unless a game depended on the
-  exact stop position.
-- `sgl-2d` `confirm_modal` and dropdown popovers: controls inside
-  `overlay_panel_begin` could act and draw over them; they now stay below
-  and are blocked by the dialog or popover. No game-code changes.
-
-- `sgl-net` UDP `EndpointConfig::close_retransmits`: earlier transmissions
-  could exhaust a graceful close's resend budget; each unacknowledged
-  fragment now gets up to this many more sends after disconnect, within
-  `close_grace_ms`, regardless of its earlier sends. No game-code changes.
-- `sgl-3d` `Scene::set_instance_baked_irradiance`, material
-  `normal_scale`/`coat_normal_scale`/`bump_scale` and
-  `Scene::set_lightmap`'s `uv_scale_offset` previously accepted invalid values;
-  they now reject non-finite scales/offsets and irradiance outside finite
-  `0..=65504` with the existing typed errors. Supply finite material and chart
-  values and in-range irradiance; valid games need no game-code changes.
-
-- `sgl-3d` `ColorGrading`: the shadows-to-midtones transition blended
-  highlights with midtones; it now blends shadows with midtones. Games with
-  distinct shadows and highlights grading see their dark tones change.
-  No game-code changes needed.
-- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR):
-  half-resolution mirror pixels read a neighbouring block's ray on odd
-  rows and columns; they now read their own 2×2 block, removing the
-  one-pixel reflection shift. No game-code changes needed.
-
-- `sgl-core` `SequenceStep::RandomPause`: the documented range changes from
-  `[min, max)` to `[min, max]` to include the existing rounding behavior.
-  Playback and seeded sequences are unchanged. No game-code changes.
-- `sgl-net` `NativeWebSocketServer::poll`: a lane backlog could indefinitely
-  hide a peer's latest state; each peer's first message turn now returns its
-  newest pending state, at most once per poll, within the global event budget.
-  No game-code changes needed.
-- `sgl-2d` `LightPass::prepare`: shadow geometry beyond the device's buffer
-  limit or u32 draw range now drops surplus whole occluder edges instead of
-  ending the frame with a validation error. No game-code changes needed.
-
-- `sgl-3d` glTF import: buffer and image URIs could read any file and
-  allocate without a source-byte cap; they now accept embedded data or
-  relative regular files without parent segments or symlinks, enforce
-  buffer `byteLength`, and bound source reads. Move referenced files beside
-  the glTF (or into its subdirectories), replace symlinks with files, and
-  re-export buffers whose lengths differ; otherwise no game-code changes.
-- `sgl-3d` glTF import: deep node hierarchies could overflow the stack
-  and abort; they now load at any depth within the asset load budget.
-  No game-code changes needed.
-- `sgl-3d` glTF import: sparse accessors with unordered, repeated or
-  out-of-range indices previously loaded with missing substitutions; they
-  now fail the load. Re-export valid glTF; no game-code changes needed.
-
-
-- `sgl-core` `FrameAnimation::tick` and `AnimationSequence::tick`: negative
-  `dt` accumulated hidden time debt and zero `dt` could advance sequence
-  steps; both now ignore nonpositive `dt`. Use positive elapsed time to enter
-  sequence steps; otherwise no game-code changes needed.
-- `sgl-3d` `ColorGrading::global.hue`: negative rotations could produce
-  incorrect colours; they now wrap correctly every 2π, including below −π.
-  No game-code changes needed.
-- `sgl-3d` `AutoExposure`: near-black pixels previously lowered the average;
-  they now only position its percentile window, so scenes with large dark
-  areas expose darker. No game-code changes needed.
-- `sgl-3d` world-space reflections: primary LOD surfaces could reflect or
-  block themselves against full-detail ray geometry; primary raster now retains
-  full detail while effective world-space reflections run. Turning them off
-  restores primary LOD selection. No game-code changes are needed.
-- `sgl-3d` `Scene::update_fog_volumes`, `Scene::update_mist` and
-  `Scene::update_effects`: oversized submissions now return
-  `SceneError::DeviceLimit` and retain the previous content instead of
-  failing GPU validation. `update_mist` and `update_effects` now return
-  `Result<(), SceneError>`; handle or propagate their result (`?`).
-
-- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s Crystal SSR): rays
-  near the bottom or right edge of a viewport whose size is not a multiple
-  of 64 skipped surfaces there (SGL3D showed probes or sky instead); they
-  now find them. No game-code change needed.
-- `sgl-3d` `BakedSpecularProbe::proxy`: a proxy box reaching more than
-  about 1e19 m from its capture centre made box projection sample an
-  arbitrary texel; it now samples toward the ray's hit on the proxy, which
-  acts as distant at that size. No game-code changes.
-- `sgl-3d` glTF import: a file with many morph-weight channels on a mesh
-  of many primitives took time quadratic in its size to load; it no
-  longer does. No game-code change needed.
-- `sgl-3d` glTF import: a small file whose morph-weight keyframes or
-  instanced meshes declared gigabytes of data could abort the process; a
-  scene listing a root twice or a child as a root now fails the load, as
-  does one whose meshes (each instance counted), skins and clips would
-  take more than 4 GiB natively or 1 GiB in the browser. No game-code
-  change needed.
-- `sgl-2d` `Renderer::read_scene`, `Renderer::capture_scene` and
-  `CaptureError`, and `sgl-3d` `diagnostics::read`: a browser build compiled
-  them and hung the tab when called; they are now native-only, a compile
-  error on `wasm32`. No game-code changes for native games; a browser game
-  drops those calls.
-- `sgl-3d` glTF import, `deformation::MorphDelta::tangent`: a morphed
-  vertex whose `TANGENT` lies along its normal (loaded as absent) got a
-  non-finite delta, so `Scene::add_asset` refused the file with
-  `SceneError::InvalidDeformation`, or, a few ulps off, a huge one; its
-  delta is now zero. No game-code change needed.
-- `sgl-3d` `PreparedModel::new` (and `Scene::add_asset`): a vertex with a
-  non-finite `uv` or `lightmap_uv`, or a mesh whose UVs span more than `f32`
-  holds, loaded, an infinite UV collapsing its whole mesh's UVs onto one
-  texel; the mesh is now refused with `SceneError::NonFiniteGeometry`. No
-  game-code change needed.
-- `sgl-net` UDP client: a deny that overtook the accept of a retried confirm
-  (or whose accept was lost) left the server holding that connection until
-  `timeout_ms`; the client now answers the deny with a disconnect, sent
-  three times as every UDP disconnect is, so the server reports
-  `Disconnected { reason: Peer }` right after `Connected`. No game-code
-  change needed.
-- `sgl-net` UDP endpoint: a peer closed for `ProtocolViolation`,
-  `InboundOverflow` or a stalled send (`TimedOut`) was sent one disconnect,
-  so losing it left the remote holding the connection until `timeout_ms`;
-  that disconnect is now sent three times, as a caller's is. No game-code
-  change needed.
-- `sgl-3d` `Scene::add_decal`/`set_decal`: a decal atlas too large for the
-  CPU to build (one 8192-square image in the browser) panicked when the
-  next frame packed it, and an image wider than the device's textures could
-  stall or overflow packing; both are now refused with `SceneError::DeviceLimit`
-  when the decal is added, at most 2 GiB of atlas in the browser and 8 GiB
-  natively. In the browser, keep the decal images in use within that
-  ([Decals](crates/sgl-3d/README.md#decals)); no other game-code changes.
-- `sgl-3d` orthographic `Camera` shading and `SurfaceContext::view`: the
-  view vector pointed from each surface toward `Camera::eye`, so highlights
-  and Fresnel varied across a flat surface and vanished on one between the
-  eye and a near plane behind it; it is now the camera's backward axis at
-  every surface. No game-code changes.
-- `sgl-3d` deformation (`Scene::set_instance_deformation`): a deforming mesh
-  above 4,194,240 vertices failed device validation every frame it deformed;
-  it now deforms. No game-code changes needed.
-- `sgl-net` native WebSocket keepalive: an unsolicited 8-byte pong arriving
-  after the reply to this side's ping, before the next `poll` or `flush`,
-  discarded the reply, so this side never pinged again and its `rtt` stopped
-  updating; the reply now counts. No game-code changes needed.
-- `sgl-2d` `UiFrame::dropdown`: for one frame after a selection,
-  click-away, Escape, `Ui::close_popups` or `Ui::cancel_interactions` closed
-  the popover, widgets under where it was could not hover or take a press;
-  they now respond at once. No game-code change needed.
-- `sgl-3d` volumetric fog (`FrameInput::fog`), ray-traced shadows
-  (`Settings::ray_traced_shadows`) and FSR2 (`Antialiasing::Fsr2`): a reset
-  (`FrameInput::camera_cut`, a resize or another scene) in a frame where the
-  feature did not run could leave its history from before the reset in use
-  when it resumed; any reset now ends it. No game-code change needed.
-- `sgl-net` WebSocket transports (`NativeWebSocketServer`,
-  `NativeWebSocketClient`, `BrowserWebSocketClient`): a peer closed for
-  `ProtocolViolation` or `InboundOverflow` discarded the messages received
-  before the offending frame; they are now delivered before its
-  `Disconnected`. No game-code change needed.
-- `sgl-3d` `Scene::set_instance_deformation`: a joint matrix scaling an axis
-  to zero gave its skinned vertices NaN normals, and a mirrored skin turned
-  them against its deformed faces; skinned normals now face the deformed
-  winding, a flattened surface takes its flattened normal, and a normal the
-  skin collapses keeps its unskinned direction. No game-code change needed.
-- `sgl-post-fx` `TemporalAntiAliasing::prepare_resources`: the frame after a
-  resize resolved against the zeroed, recreated history instead of resetting
-  accumulation, which shifted bright HDR texels; it now takes the current
-  colour, as after `reset_accumulation`. No game-code changes needed.
-- `sgl-3d` glTF import and `asset::Vertex::tangent`: a tangent a few f32
-  ulps off its normal counted as a frame, its rounding normalised into an
-  arbitrary tangent; a tangent within 0.02° of its normal is now along it:
-  absent on a material without anisotropy, refused on an anisotropic one
-  (import error, or `SceneError::MissingAnisotropyTangents`). No game-code
-  change needed.
-- `sgl-3d` `Scene::set_baked_specular_probes`: when the probes' influence
-  boxes together spanned more than about 7e12 m on each axis, probe captures
-  and world-space ray hits found none of them; they now do. A box whose `max - min` overflows f32
-  (e.g. `-f32::MAX..f32::MAX`) is now refused with
-  `ProbeError::InvalidProbe`; give such a box a smaller, finite extent.
-- `sgl-post-fx` `ScreenSpaceReflection` and
-  `ScreenSpaceReflectionAttribs::most_detailed_mip`: a zero world normal
-  gave its ray a NaN direction, a non-unit one a skewed ray, and a
-  `most_detailed_mip` past the depth hierarchy's top level started rays at
-  a level that does not exist; a normal whose squared length is more than
-  0.1 from 1 now reports a miss, and `most_detailed_mip` counts as the top
-  level at most. A game feeding SSR directly writes unit world normals;
-  SGL3D games need no change.
-- `sgl-3d` `AutoExposure::speed_brighten`/`speed_darken`: a NaN speed made
-  the adapted exposure NaN until a history reset, a negative one moved it
-  away from its target, an infinite one adapted instantly, and a speed of 0
-  over an infinite `FrameInput::frame_time_ms` moved it or made it NaN; a
-  nonfinite or negative speed now takes the default (3 and 1), and 0 holds.
-  For instant adaptation, use `f32::MAX` instead of `f32::INFINITY`.
-- `sgl-2d` `SpritePass::upload_normal` and `Renderer::upload_normal_map`: a
-  second normal map under a different handle for a diffuse was ignored
-  (returning `Ok`, even when mis-sized); it now replaces the first, and a
-  mis-sized one returns `TextureError::SizeMismatch`. A call before the
-  diffuse's upload, previously a debug panic or silent no-op, returns the
-  new `TextureError::DiffuseNotUploaded`. Upload the diffuse first; an
-  exhaustive `match` on `TextureError` adds the variant.
-- `sgl-input` `Gamepads` on macOS: dropping an owner cleared every
-  controller callback, including those a newer owner had installed, so the
-  newer one stopped receiving input; it now clears only callbacks it still
-  holds. No game-code change needed.
-- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s SSR): pixels that
-  left the reflection mask kept their last radiance history, which the next
-  frames' bilinear reprojection blended back in as faint ghosting at mask
-  edges; they now hold no history (zero radiance, variance 1). No game-code
-  change needed.
-- `sgl-post-fx` `ScreenSpaceReflectionAttribs::temporal_radiance_stability_factor`
-  and `ScreenSpaceReflection::execute`: the default was 1.0, and a frame
-  whose history was reset, or recreated by a resize or half-resolution
-  change, mixed in the zeroed history, so reflections stayed dark; the
-  default is now 0.95 and such a frame takes the current frame's radiance.
-  A game that relied on 1.0 sets it
-  explicitly; otherwise no game-code change needed (SGL3D already used 0.95).
-- `sgl-3d` `geometry::obstructed_distance`: its absolute determinant cutoff
-  missed every hit on a triangle with sub-millimetre edges and grazing hits
-  on centimetre ones; the cutoff now scales with the triangle's edges, so
-  small triangles are hit like large ones. No game-code change needed.
-- `sgl-3d` glTF import and `Ignored::Attribute` (new): a `TEXCOORD_2`+,
-  `COLOR_1`+ or `_NAME` attribute, or a `TANGENT` along its normal on a
-  material without anisotropy, failed the load; the attribute is now left
-  out and listed in `Asset::ignored`, and the tangent is absent (zero). A
-  game matching `Ignored` exhaustively adds an arm for `Attribute`;
-  otherwise no game-code change needed.
-- `sgl-3d` glTF import: a sparse accessor without a buffer view declaring a
-  huge count aborted the process; the load now fails with an error naming
-  it when an accessor's count differs from what glTF requires (POSITION's
-  for attributes and morph targets, the joints' for inverse binds, the
-  keyframes' for values) or when a sparse accessor without a buffer view
-  that nothing else counts declares more elements than the file's buffers
-  would hold. No game-code change needed.
-- `sgl-3d` point and spot lights: a light was dropped wherever the mapped
-  base normal faced away from its centre, so a clearcoat over normal-mapped
-  flakes lost the coat's highlight and a sphere light's highlight popped off
-  as its centre crossed the horizon; it now reaches a surface while the
-  base or the coat normal faces any of its sphere, as directional lights
-  already did, in lighting and ray-traced shadows alike; the directional
-  light's ray-traced shadow now traces its whole disc too. No game-code
-- `sgl-post-fx` `ScreenSpaceReflection` (and `sgl-3d`'s SSR): a ray that left
-  past the far plane, such as a floor reflecting the sky under infinite
-  reversed-Z, stored a length beyond RGBA16F's range, becoming infinity and
-  NaN in the denoiser or a wrong direction where the backend saturates, or a
-  short meaningless one where its last step overshot the plane; it is now
-  stored 65504 long along its direction. No game-code change needed.
-- `sgl-3d` anisotropic materials: a tangent that skinning or morphing
-  cancelled or turned along its normal, or a ray hit whose vertex tangents
-  all vanished, shaded NaN; it now takes an arbitrary tangent in the
-  normal's plane, keeping its handedness (+1 where it has none), as a vertex
-  without a tangent does. No game-code change needed.
-- `sgl-2d` `fetch_runtime_bundle` (wasm): listed assets were fetched from
-  `assets/{path}` relative to the page, whatever the manifest URL; they are
-  now fetched relative to the manifest's directory. Serve the manifest from
-  the asset root, e.g. `fetch_runtime_bundle("assets/manifest.txt")`.
-- `sgl-3d` `Scene::set_baked_specular_probes` and `Scene::move_origin`: a
-  tiny probe influence box far from the render origin overflowed the probe
-  grid's cell count, panicking with overflow checks or else building a
-  wrongly sized grid; it now builds within budget. No game-code change
-  needed.
-- `sgl-3d` `Scene::set_instance_deformation`: on a device created with a
-  uniform offset alignment of 32 bytes (an adapter's real limits), a frame with two or more deforming meshes failed
-  wgpu validation; the deform stage's records are now aligned. No game-code
-  change needed.
-- `sgl-input` `Gamepads` on macOS: replacing a live owner in place
-  (`pads = Gamepads::new()?`) turned background event delivery off, losing
-  releases while unfocused; it now stays on until the last owner drops. No
-- `sgl-2d` `Ui::begin` / `UiFrame::end`: a release and a new press in one
-  frame (button still down) dropped the press's held button, scrollbar,
-  number-field or splitter drag; they now count as release then press, so the
-  earlier drag ends and the second press holds, scrubs or resizes. No
-  game-code change needed.
-- `sgl-input` `Gamepads::poll`: a button pressed while the macOS handler was
-  being installed could yield two `ButtonPressed` events and one release; a
-  press of a button already held is now dropped on every target. No
-  game-code change needed.
-- `sgl-2d` `UiFrame::scroll_area_begin`: content was clipped to the whole
-  area, so a press on the scrollbar thumb also pressed the row under it; while
-  the scrollbar shows, content is now clipped `Ui::SCROLLBAR_WIDTH` (new, 8 px)
-  short of the right edge. Keep row hit areas, actions and nested scroll
-  areas within `rect.max.x - Ui::SCROLLBAR_WIDTH`.
-- `sgl-3d` glTF import: an animation sampler with two keyframes at the same
-  time loaded; it now fails the load, as glTF requires strictly increasing
-  times. Re-export the file with distinct keyframe times; no game-code
-  change needed.
-- `sgl-net` UDP client: a `ConnectDeny` arriving after the accept (reordered)
-  or naming a cookie the client was not confirming removed the connection and
-  reported `Denied` after `Connected`; it is now ignored, and only a deny for
-  the confirm the client sent refuses it. No game-code change needed.
-- `sgl-net` `MemoryServerIo::send`: after either end disconnected it returned
-  `SendError::Disconnected`; it now returns `UnknownConnection`, like every
-  other server transport. A game that matched `Disconnected` from a server
-  send should match `UnknownConnection`; otherwise no game-code change needed.
-- `sgl-post-fx` `TemporalAntiAliasing::execute`: the first frame for a
-  feature set sampled the colour through a filterable binding, failing
-  validation for an unfilterable colour such as `Rgba32Float` on WebGPU, and
-  copied +infinity to the output; it now loads the colour as later frames do,
-  clamped to [0, 65504], so negative colour and alpha become 0 on that frame.
-  No game-code change needed.
-- `sgl-3d` local-light shadows: a shadowed light with a large range at or
-  behind the camera overflowed its atlas slot size, panicking with overflow
-  checks or else taking the smallest slot; it now takes the largest slot.
-  No game-code change needed.
-- `sgl-2d` `UiFrame::dropdown`: on the first frame an opened popover was drawn,
-  nothing shielded the widgets under it, so they could hover or fire with a
-  row; the popover now blocks them from that frame. No game-code change
-  needed.
-- `sgl-core` `random::Rng::usize`: on wasm32 it reduced only 32 bits of the
-  draw, giving different values than native for the same seed; it now gives
-  native's values on every target. Browser builds that persisted values
-  derived from it see a different sequence; no game-code change needed.
-- `sgl-3d` `Scene::update_effects`: glow in fog added the fog's in-scattered
-  light again on top of the background, so even a black glow brightened the
-  fog; glow now adds only its own light dimmed by the fog in front of it, so
-  glow in fog looks dimmer. No game-code change needed.
-- `sgl-post-fx` `TemporalAntiAliasing` and `ScreenSpaceReflection`, and
-  `sgl-3d` Velvet and world-space reflections: a colour texel of +infinity
-  (radiance past RGBA16F's range on backends that round overflow to
-  infinity) tone-mapped to NaN, which spread through the frame; it now reads
-  as 65504, binary16's largest finite value, and their outputs stay finite.
-  No game-code change needed.
-- `sgl-2d` `UiFrame::number_field`: pointer movement arriving in the same
-  frame as the release was dropped, so a quick drag could open typing; it
-  now scrubs the value before deciding between drag and click. No game-code
-  changes needed.
-- `sgl-2d` `UiFrame::number_field`: a press and release arriving in one
-  frame dropped the typing focus the click had just opened; it now enters
-  typing like a two-frame click. No game-code changes needed.
-- `sgl-3d` `Settings::screen_space_reflections`: on Metal (and Vulkan without
-  robust access) the screen's edge columns and rows could reconstruct a wrong
-  surface normal for their rays, offsetting and bouncing them; edge pixels now
-  take the same normal as the interior on every backend. No game-code change
-  needed.
-- `sgl-net` `memory_duplex`: flushed unreliable messages the peer had not
-  polled counted against the sender's unreliable bounds, so `send` returned
-  `WouldBlock` and the peer later got the oldest; now only unflushed ones
-  count and an unpolled peer drops its oldest past the lane's bounds, as on
-  WebSocket and UDP. No game-code change needed.
-- `sgl-2d` `UiFrame::scroll_area_end`: one wheel tick scrolled every nested
-  scroll area under the pointer; it now scrolls only the innermost hovered area
-  with content to scroll, applied at its end (so it shows from the next frame,
-  not the same one), and `scroll_area_end` takes the area's offset. Pass the
-  offset given to its `scroll_area_begin`:
-  `frame.scroll_area_end(&mut offset);`.
-- `sgl-2d` `AsepriteSheet::parse`: a one-frame Hash export, whose key
-  Aseprite writes without a frame number (`"player.aseprite"`), failed with
-  `FrameKey` or `MissingFrameIndex`; a single-entry Hash now loads as frame
-  0. No game-code change needed.
-- `sgl-net` UDP transport: a first round trip measured as 0 ms (loopback,
-  sub-millisecond LAN) was treated as unmeasured, keeping the 200 ms
-  retransmission timeout; it now seeds the estimate, giving the 50 ms floor,
-  so retransmission timing changes on very fast links. No game-code change
-  needed.
-- `sgl-3d` dynamic GI (`DynamicGiVolume::spacing`): past a spacing of about
-  170 m the probes' depth moments overflowed half precision, breaking the
-  sample's visibility test (NaN irradiance on some backends); they are now
-  stored in units of the longest spacing, so any spacing works. No game-code
-  change needed.
-- `sgl-3d` orthographic cameras: with the near plane behind the camera
-  (a negative near), lights behind the camera were dropped from the
-  clusters and surfaces between the near plane and the camera got no
-  directional shadow; both now reach the near plane. No game-code change
-  needed.
-- `sgl-net` native WebSocket `Disconnected` reason: a peer that dropped
-  the TCP stream without a Close, or sent a frame breaking WebSocket
-  framing (reserved bits, an unmasked client frame), was reported as
-  `Transport`; now `Peer` and `ProtocolViolation` respectively. No
-  game-code change needed unless the game branches on `Transport`.
-- `sgl-3d` `Renderer::capture_specular_probe`: local-light shadows of static
-  casters whose shader reads the time were drawn at the last frame's time,
-  and the next frame at the capture's time reused that stale layer; they
-  are now drawn at the capture's `elapsed_seconds`. No game-code change
-  needed.
-- `sgl-2d`, `sgl-3d`, `sgl-post-fx`, `sgl-input`: required `bytemuck`
-  `=1.25.2`, `winit` `=0.30.13` and (native `sgl-2d`) `pollster` `=0.4.0`
-  exactly, so Cargo could not resolve beside a crate needing a newer patch;
-  now caret ranges (`^1.25.2`, `^0.30.13`, `^0.4.0`). No game-code change
-  needed; `cargo update` may pick newer compatible releases.
-- `sgl-3d` `Scene::add_shader`: a declaration of a built-in's or SGL3D's
-  name after a line comment ended by `\r` or another non-`\n` line break,
-  or separated by U+200E/U+200F, was accepted; it is now refused with
-  `ShaderError::NameTaken`, as the same declaration on a new line was. No
-  game-code changes needed unless a shader relied on it: rename the helper.
-- `sgl-3d` `Settings::fog_quality`: the fog's froxel volume grew without
-  bound as the frame narrowed, so a tall portrait frame (60×1900 at High)
-  panicked creating it, and its froxels were wider than tall; it now holds
-  the quality's side across the geometric mean of the frame's sides in
-  square froxels, each side within the device's 3D texture limit (at 16:9
-  High 170×96 where it was 163×100, Low 85×48 where it was 81×50). No
-- `sgl-3d` `Scene::add_shader`: a `break if` loop whose counter starts past
-  its limit, so its first step wraps (`var i=4294967295u; … i+=1u; break if
-  i>4294967000u;`), was accepted as one iteration; it is now refused with
-  `ShaderError::UnboundedLoop`, as start plus step must fit the counter's
-  type. Games with such a loop: start the counter at or below its limit.
-- `sgl-net` `NativeWebSocketClient::connect`: a `wss://` URL connected in
-  plaintext; now any scheme but `ws` fails with `InvalidInput` before
-  connecting. Games passing `wss://` to the native client: use `ws://` and
-  terminate TLS at the deployment edge.
-- `sgl-core` `sweep_aabb` (and `move_and_collide`, `snap_to_ground`): a body
-  exactly touching a collider at coordinates that round could miss it and
-  move straight through; now a body exactly touching a collider contacts it
-  at `t = 0` when moving toward it. No game-code change needed.
-- `sgl-3d` `HeatDistortion::displacement`: under FSR2 it shifted the frame
-  by render pixels, larger than documented; it now shifts by the scene
-  pixels it documents at every antialiasing setting, so heat under FSR2
-  looks smaller than before. No game-code change needed.
-- `sgl-net` UDP server endpoints: after 64 other joins within a departed
-  client's cookie lifetime, a late duplicate of its confirm reported
-  `Connected` for a client that was gone; each verified confirm is now kept
-  until its cookie expires, so the duplicate is dropped. No game-code change
-  needed.
-- `sgl-3d` `Settings::screen_space_reflections` (Velvet) and
-  `Settings::world_space_reflections`: within half a texel of the top or
-  left edge, the history fallback took colour and depth from one texel
-  inward, and the world-ray resolve reused an edge pixel for a neighbour off
-  the grid; the fallback now reads the edge texel and the resolve skips the
-  neighbour. No game-code changes needed.
-- `sgl-post-fx` `post_fx_context::FeatureFlags::HALF_PRECISION_DEPTH`:
-  toggling it at an unchanged size kept the old depth format and panicked at
-  the next resize; `PostFXContext::prepare_resources` now recreates the
-  depths when the flag changes. The flag needs a device with
-  `TEXTURE_FORMAT_16BIT_NORM` and `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`
-  whose adapter renders to R16Unorm. No game-code change needed.
-- `sgl-net` UDP endpoints: a handshake whose confirms or accept were lost
-  until the cookie expired (5 to 10 s) never completed; the server, even
-  after `stop_admission`, now accepts a request or confirm for a connection
-  it holds at any cookie age, and the client requests again after four
-  unanswered confirms, takes the cookie the accept names, and takes a
-  payload carrying its nonces as the accept. No game-code change needed.
-- `sgl-3d` `Settings::world_space_reflections`: on rare frames each world
-  ray traced the next 2×2 block's pixel (the last outside the screen), and
-  at a render 1 pixel wide or tall it read past the edge; each now traces a
-  pixel of its own block inside the screen. No game-code changes needed.
-- `sgl-net` `ThreadedUdpServer`: a connection that ended at the worker (peer
-  close, timeout, protocol violation) discarded the messages it had
-  delivered but the caller had not yet polled and reported `Disconnected`
-  first; polls now return those messages, then `Disconnected`. No game-code
-  change needed.
-- `sgl-3d` `Settings::world_space_reflections`: a receiver in the
-  screen-space method's roughness fade that the method saw with full
-  confidence traced no world ray, leaving its faded share to probes and sky;
-  it now traces one, as composition gives that share to world rays. No
-  game-code changes needed.
-- `sgl-2d` `UiFrame::dropdown`: an open dropdown scrolled fully out of its
-  clip stayed open and kept the keyboard captured; it now closes at
-  `UiFrame::end`. No game-code changes needed.
-- `sgl-3d` `Scene::add_materials`, `add_asset` and `set_material`: a
-  metallic, roughness, clearcoat, clearcoat roughness or base alpha outside
-  0..=1, or a base colour, emission or `environment_scale` that is negative
-  or not finite, was accepted and reached the GPU; it is now refused with
-  new `SceneError::InvalidMaterialFactors`. Migration: keep those values in
-  range; exhaustive matches on `SceneError` add the variant.
-- `sgl-3d` `asset::load*`: a KHR material extension object (anisotropy,
-  clearcoat, iridescence, sheen, diffuse transmission, transmission, volume,
-  dispersion) carrying its own `extensions` property was refused as
-  unsupported; it now loads, as glTF's `glTFProperty` allows. No game-code
-  change needed.
-- `sgl-2d` `Renderer::set_target_size`: a size wider or taller than the
-  device's maximum texture dimension clamped only that axis, distorting the
-  aspect, letterboxing the frame and shrinking `ui_size()`; both axes now
-  scale together, so the frame fills the window and `ui_size()` stays the
-  window's logical size. No game-code change needed.
-- `sgl-net` `BrowserWebSocketClient`: a reconnect attempt whose `WebSocket`
-  constructor threw (a `SecurityError`, say) reported no `Disconnected`, so
-  a game waiting after `Reconnecting` waited forever; each such attempt now
-  reports `Disconnected { Transport }` like any other failed attempt. No
-  game-code change needed.
-- `sgl-2d` `SpritePass::prepare`: a frame with more instances than the
-  device's `max_buffer_size` holds (about 3.3 million at the 256 MiB
-  default) grew the instance buffer past it, a wgpu validation error; it now
-  draws the first that many (world, then screen) and drops the rest, which
-  `draw_stats` reflects. No game-code change needed.
-- `sgl-3d` `asset::load*`: a node transform with an absolute determinant
-  below 1e-10 was refused as singular, so a uniform scale at or below about
-  4.6e-4 failed to load; singularity is now judged relative to the node's
-  axis lengths, so small scales load and only a collapsed axis is refused.
-  No game-code change needed.
-- `sgl-2d` `TextRenderer::draw`: glyphs shared a cache slot across a
-  quarter-pixel size range, so text laid out by whichever size drew first
-  and drifted from `measure`; glyphs are now cached per exact size and
-  layout matches a cold cache and `measure`. No game-code change needed.
-- `sgl-3d` `asset::load*`: an `EXT_materials_bump` map without
-  `bumpFactor` loaded with `bump_scale` 0 (no effect) and a factor above 1
-  was refused; now the factor defaults to 1 and loads in `0..=100`, as the
-  extension's schema sets. No game-code change needed; bump maps that had no
-  effect now show.
-- `sgl-3d` `asset::load*`: every glTF image was decoded (and asked of
-  `LoadOptions::images`), so one only an unsupported texture extension
-  (`KHR_texture_basisu`) or an ignored map used could fail the load; now
-  only images a sampled material map uses are asked for and decoded, and
-  each other is a one-texel placeholder listed as the new
-  `Ignored::Image { image }`. No game-code change needed; exhaustive
-  matches on `Ignored` add the arm.
-- `sgl-net` `NativeWebSocketClient::connect`: tried only the host's first
-  resolved address (so `localhost` could be refused when `::1` came first),
-  host resolution was unbounded, and the TCP connect and HTTP upgrade each
-  took a full `handshake_timeout`; now each resolved address is tried in
-  order within one `handshake_timeout` covering resolution and the upgrade
-  too. No game-code change needed.
-- `sgl-2d` `Overlay::circle`: a negative radius drew a full circle; a
-  radius that is not positive (including NaN) now emits nothing. No
-  game-code change needed.
-- `sgl-core` `Grid2::filled`: returned `Self` and panicked when the cells
-  could not be allocated (the largest byte grid on wasm32); now returns
-  `Result<Self, GridError>` with the new `GridError::TooLarge`. Add `?` or
-  `.expect("grid fits")`: `Grid2::filled(w, h, 0u8)?`; exhaustive matches
-  on `GridError` add the `TooLarge` arm.
-- `sgl-2d` `TextRenderer::draw` / `measure`: a negative size panicked in
-  `draw` and measured negative in `measure`; a size that is not positive
-  and finite now draws nothing and measures `Vec2::ZERO`. No game-code
-  change needed.
-- `sgl-net` `ClientIo::disconnect` / `ServerIo::disconnect`: caller-polled
-  UDP and memory reported nothing for a connection the caller closed (UDP
-  sometimes `Disconnected { Peer }`), threaded UDP reported `Local` or,
-  when its endpoint found the peer gone first, that end, and WebSocket
-  `Local` or `Peer` by timing; now a connection still open at `disconnect`
+- `udp::DatagramTransport`: `send` now returns `io::Result<()>` and
+  `receive` `io::Result<Option<(usize, SocketAddr)>>`, so refused sends keep
+  their work and socket errors no longer end the poll. Standard adapters
+  need no change; custom transports return their send result (temporary
+  buffer exhaustion as `WouldBlock`), `Ok(None)` when empty and `Err` for a
+  failed receive.
+- `EndpointConfig::max_reliable_transmissions` is removed: UDP resends back
+  off up to 1 s, and a peer closes `TimedOut` only after `timeout_ms` of
+  silence, or 2 × (`timeout_ms` + 1 s) without acknowledgement. Migration:
+  delete the field from literals; set `timeout_ms` for how long a stalled
+  peer may last.
+- `ClientIo::disconnect`/`ServerIo::disconnect`: an open connection now
   reports exactly one `Disconnected { reason: Local }` on every transport
-  (a UDP client in its handshake too, with no `Connected`), and one
-  already ended reports that end; `ServerIoMux` forwards either, where it
-  dropped them. Games that clean up when they call
-  `disconnect`: ignore that event, or move the cleanup to it.
-- `sgl-3d` `Light::specular`: a diffuse-only light (0) dimmed a clearcoated
-  base by the coat's Fresnel, and a weight above 1 dimmed a sheened base
-  further; the coat's and sheen's dimming now follow
-  `specular` up to 1, and dynamic GI probe hits take no coat. No game-code
-  changes needed.
-- `sgl-3d` local-light shadows: a material shader's parameters
-  (`Scene::set_shader_parameters`), the frame's time and a moving instance's
-  `Scene::set_instance_shader_data` left cached shadows stale; casters whose
-  shader moves or cuts them now redraw where those change, every frame the
-  time advances for a shader that reads `time` or `phase`. No game-code
-  changes needed.
-- `sgl-net` UDP client handshake: a client confirmed the last challenge it
-  received, so challenges to its retried request that arrived reversed
-  across a cookie epoch left the join failing at the timeout after a ghost
-  `Connected` on the server; it now confirms the first. No game-code
-  changes needed.
-- `sgl-net` `DatagramTransport::receive`: returned `Option`, so any socket
-  error ended the endpoint's poll as if the socket were empty (on Windows an
-  oversized datagram or ICMP error starved every other peer); it now
-  returns `io::Result<Option<(usize, SocketAddr)>>`, `Ok(None)` when empty
-  and `Err` for a failed receive the endpoint skips. Custom transports:
-  return `Ok(None)` for `WouldBlock`, `Err` for other errors, and wrap a
-  datagram in `Ok(Some(..))`.
-- `sgl-3d` `Scene::add_shader`: loops that could run for ever were accepted
-  as counted (a test or step read from a `let` computed before the loop, or
-  a `break if` loop re-entered by an outer loop without restarting its
-  counter); they are now refused with `ShaderError::UnboundedLoop`. The test
-  and the step must read the counter in the loop's own test and update
-  statements (where a `for` loop puts them); a value computed anywhere else
-  is refused, including a `break if` test read before the step (previously
-  accepted and miscounted). Set a nested `break if` loop's counter just
-  before it.
-- `sgl-3d` `Renderer::new` `output_format`: a non-sRGB 8-bit output (a
-  browser canvas's `Bgra8Unorm` or `Rgba8Unorm`) took linear colour and
-  looked dark; the tone map now writes it sRGB-encoded, a float output too
-  in the browser. sRGB outputs and native float outputs are unchanged. No
-  game-code changes needed.
-- `sgl-3d` `Scene::add_shader`: a module declaring a WGSL built-in's name
-  (`fn smoothstep`, `fn saturate`, a predeclared type or enumerant) was
-  accepted and replaced it in SGL3D's own calls; it is now refused with
-  `ShaderError::NameTaken`. Migration: rename such helpers (for example
-  `my_smoothstep`).
-- `sgl-2d` `TextRenderer::draw`: a glyph larger than a `GLYPH_PAGE_SIZE`
-  page (a large size at a high pixel scale) panicked; it now gets a page of
-  its own sized to it, published by `end_frame` like any page, and one past
-  `canvas::text::MAX_GLYPH_PAGE_SIZE` (8192) is not drawn.
-  A page past the device's texture limit fails its upload with
-  `TextureError::TooLarge`: log that error rather than unwrapping the
-  upload.
-- `sgl-3d` shader contract `MaterialVertex::tangent`: documented as all
-  zero where a mesh has no tangents, but such a vertex always received an
-  arbitrary unit tangent in the normal's plane with handedness +1; the
-  contract now says so. Behaviour is unchanged. A game shader that tested
-  `tangent.w == 0.` to fall back never took that branch: where it is used
-  on meshes without authored tangents, derive the frame in
-  `material_surface` (for example from screen derivatives), or flag those
-  meshes through `ShaderParams` or shader data.
-- `sgl-3d` `Scene`: the draw candidate, set and level-of-detail chain
-  buffers doubled past the device's storage binding limit once they held
-  over half of it, failing the frame's cull bind group; their growth now
-  stops at the limit. No game-code changes needed.
-- `sgl-2d` light shadows (`shadow_triangles`, `LightPass`): a light close to
-  a long occluder edge lit part of the area behind it inside its footprint
-  (the wall-torch case); such edges now get a far cap that covers the
-  footprint. No game-code changes needed.
-- `sgl-2d` `TextRenderer`: glyph pages were never reused, so text whose size
-  changed every frame opened pages without bound, and an infinite outline or
-  shadow width hung `draw`; a full atlas now empties and reuses its least
-  recently used page (same handle, republished by `end_frame`), and ring
-  widths are capped at `canvas::text::MAX_RING_WIDTH` (64 px), non-finite
-  ones drawing no ring. Glyph instances from `end_frame` are valid for that
-  frame only; call it once per presented frame. No game-code changes needed
-  for games that already do.
-- `sgl-input` `Gamepads::poll` on Windows, Linux and the web (Gilrs): a
-  repeated `Connected` for a pad reset its held state and is now ignored, and
-  a `ButtonReleased` with no reported press (a button held when the pad
-  connected) is now dropped on every target. Input already held at connection
-  is still not reported until it changes, a gilrs limitation. No game-code
-  changes needed.
-- `sgl-post-fx` half-resolution SSR (SGL3D's `ScreenSpaceReflections::Half`):
-  a one-pixel-wide or -tall frame created zero-sized textures, a wgpu
-  validation error; each half-resolution side is now at least one texel. No
-  game-code changes needed.
-- `sgl-2d` `Renderer` screen channel: when `set_target_size` scaled a very
-  large target down (over 4096² px), the UI laid out over the smaller
-  target, too large and misaligned with the pointer; it now keeps the
-  requested size over `ui_scale`. Lay out over the new `Renderer::ui_size()`
-  instead of `target_size() / ui_scale`, and set the text raster scale to the
-  new `Renderer::ui_pixel_scale()`.
-- `sgl-3d` Velvet and world-space reflections: a frame whose camera changed
-  its near plane read the reflection depth history with the new near plane
-  and discarded the history; it is now read with the near plane that wrote
-  it. No game-code changes needed.
-- `sgl-2d` `AseDirection`: `pingpong_reverse` tags parsed as `Other` and
-  played forward; they are now `AseDirection::PingpongReverse`, whose
-  `AseTag::frame_order` runs down and back up without repeating either end.
-  Add the variant to exhaustive matches.
-- `sgl-3d` `asset::load*`: a mesh with `TEXCOORD_1`, or a texture SGL3D does
-  not sample (such as an ignored occlusion map) with nearest or other
-  non-trilinear sampling, failed the load; `TEXCOORD_1` now loads as
-  `Vertex::lightmap_uv`, the mesh's static irradiance atlas chart, and only
-  sampled maps' sampling is checked. On a static instance while an atlas is
-  installed, a charted vertex samples the atlas and takes no baked lights:
-  set `lightmap_uv` to `[0, 0]` on models the bake does not chart (a second
-  UV map exported for AO, say). Otherwise no game-code changes needed.
-- `sgl-2d` `UiFrame::dropdown`: an open dropdown that stopped being
-  submitted kept its popup open and the keyboard captured, blocking Tab and
-  Enter elsewhere; it now closes at `UiFrame::end`. No game-code changes
-  needed.
-- `sgl-2d` `AsepriteSheet::parse` / `load`: a frame rect reaching past
-  `meta.size` was accepted and sampled neighbouring atlas pixels; it is now
-  `AsepriteError::FrameOutsideSheet { index, frame, sheet_size }`. Add the
-  variant to exhaustive matches; re-export sheets whose frames overrun.
-- `sgl-post-fx` `PostFXContext`: the blue-noise draw's vertex range wrapped
-  at frame indices 1,431,655,765 and 2,863,311,530 (a debug-build panic, a
-  skipped update in release), and its R2 noise lost precision from about
-  87,000 frames and was constant beyond about 11 million; the frame index now
-  cycles every 256 frames. No game-code changes needed.
-- `sgl-3d` SMAA (`Antialiasing::Smaa`, and where it stands in for TAA): it
-  ran on the unexposed HDR scene, so the exposure changed which edges it
-  found; it now runs after tone mapping, on display colour, before the
-  resample to the output. No game-code changes needed.
-- `sgl-net` UDP `stop_admission`: a stopped server ignored the handshake
-  confirm of a client it had already accepted, so a lost accept left that
-  client unconnected until both timed out; it now answers connections it
-  has and refuses only new ones. No game-code changes needed.
-- `sgl-net` UDP: an unacknowledged reliable fragment was resent every
-  round-trip timeout and closed the peer `TimedOut` after
-  `EndpointConfig::max_reliable_transmissions` sends (about 600 ms on a
-  LAN); resends now back off up to 1 s, and a peer is closed `TimedOut`
-  only after `timeout_ms` of silence, or 2 × (`timeout_ms` + 1 s) in which
-  a lane it keeps answering on acknowledges nothing. Migration: delete any
-  `max_reliable_transmissions` field from `EndpointConfig` literals; set
-  `timeout_ms` for how long a stalled peer may last.
-- `sgl-input` `Gamepads::poll` on macOS: input queued before a controller
-  was unplugged was dropped (a tap then unplug between polls lost the tap);
-  it is now reported before the `Disconnected` event. No game-code changes
-  needed.
-- `sgl-3d` Velvet reflections (`ReflectionMethod::Velvet`): a ray that ran out
-  of steps before confirming a hit was accepted by depth proximity and now
-  reports a miss, so streaks near surfaces at the step cap give way to the
-  fallback. No game-code changes needed.
-- `sgl-net` `BrowserWebSocketClient`: a close caused by a received frame
-  (`InboundOverflow`, or a `ProtocolViolation` found by the lane queues)
-  never reconnected; it now follows `ReconnectPolicy` like other non-local
-  closes, so expect `Reconnecting` after it. No game-code changes needed.
-- `sgl-net` `ReconnectPolicy::max_attempts` (browser): every `Connected`
-  restarted the count, so a connection that kept failing soon after it
-  opened reconnected forever at the first delay; the count now restarts only
-  after a connection stayed up at least `max_delay_ms`, so such a loop backs
-  off and stops after `max_attempts`. No game-code changes needed.
-- `sgl-core` `ColliderSet::insert` / `query`: a huge finite box walked every
-  grid cell it spanned (effectively hanging); a collider over 1024 cells is
-  now kept apart and a query over more cells than colliders scans the
-  colliders. No game-code changes needed.
-- `sgl-core` `AnimationSequence` ping-pong: a trailing step replayed the end
-  frame; a leading step skipped the reverse pass or replayed the start frame.
-  The bounce now turns on the first and last frame steps, playing outer
-  steps once per turnaround. No game-code changes needed.
-- `sgl-2d` `Overlay`: under a world-unit camera every fill, line and outline
-  on the world channel shrank by `pixels_per_unit`; the new `units:
-  WorldUnits` field (default logical pixels) makes positions, sizes and
-  widths world units. World gizmos set `units: camera.units()`; struct
-  literals without `..Overlay::new(white)` add `units`; pixel overlays need
-  no other change.
-- `sgl-3d` `asset::load*`: a glTF mesh whose morphed primitives have
-  different numbers of morph targets loaded, the extra targets driven by
-  another node's weights; it now fails the load naming the primitive.
-  Primitives without targets still load unmorphed, and a mesh whose first
-  primitive has none no longer refuses its morph-weight animation. No
-  game-code changes needed; give every morphed primitive of the mesh the
-  same shape keys.
-- `sgl-net` `BrowserWebSocketConfig::latest_buffered_bytes`: any nonzero
-  value was accepted, and one below the largest latest-state frame blocked
-  every lane once a large state was sent; `BrowserWebSocketClient::connect`
-  now rejects values below `ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES`
-  (1186). Raise a smaller watermark to at least that; the 64 KiB default is
-  unaffected.
-- `sgl-net` `udp::LANE_MESSAGES_PER_PEER_PER_POLL` (32, native) is now public:
-  the most lane messages a `ThreadedUdpServer` poll returns per peer, which
-  `specs/netcode.md` already named. No game-code changes needed.
-- `sgl-2d` `UiFrame::dropdown` / `overlay_panel_begin`: a popover's or
-  panel's clipped-away part still blocked widgets beneath it (and kept the
-  popover open when pressed); only the visible part now blocks and counts as
-  inside. No game-code changes needed.
-- `sgl-post-fx` TAA: under conventional (not reversed) depth the closest-
-  motion search took an out-of-screen neighbour as nearest, so the 1-pixel
-  border read zero motion and ghosted while the camera moved; neighbours now
-  clamp to the screen. No game-code changes needed.
-- `sgl-post-fx` SSR and TAA temporal passes: the reprojected depth was
-  linearised with the current projection, so a near or far plane that
-  changed between frames rejected history for a frame; it now uses the
-  previous camera's. No game-code changes needed.
-- `sgl-2d` `UiFrame::scroll_area_begin` / `scroll_area_end`: the area
-  replaced the enclosing clip and its end reset the clip to `None`; it now
-  clips within the enclosing clip, nests, and restores the enclosing clip at
-  its end. Drop any `set_clip` that only restored the outer clip after
-  `scroll_area_end`.
-- `sgl-3d` dynamic GI (`Settings::dynamic_gi`): a probe refused for want of
-  the frame's ray budget kept its rays counted, refusing later probes that
-  fit; it now gives them back, so the frame uses its budget. No game-code
-  changes needed.
-- `sgl-net` `BrowserWebSocketClient::disconnect`: during reconnect backoff
-  it left the scheduled retry armed, so a later `poll` reconnected; it now
-  cancels the retry. No game-code changes needed.
-- `sgl-net` native WebSocket `disconnect`: a graceful close no longer drops
-  frames still waiting on a blocked socket or its Close frame; it now ends,
-  as `Local`, once the peer answers the Close or ends the stream, or at
-  `GRACEFUL_CLOSE_TIMEOUT_MS`. No game-code changes needed.
-- `sgl-core` `move_and_collide` / `snap_to_ground`: a body that started
-  inside a solid collider could move through it; it may now move out or
-  along it but not deeper, and a body within `skin` below a one-way
-  platform's top lands on it. `CollisionConfig::new` now panics on a negative
-  or non-finite `skin`, `snap_distance` or `block_epsilon`. No game-code
-  changes needed unless a game passes such a value.
-- `sgl-core` `AnimationSequence::tick`: in `Repeat`/`PingPongRepeat`, a
-  zero-time pass stopped after as many advances as there are steps, so
-  zero-duration frames delayed a following action and dropped the tick's
-  time; it now stops after as many as it has frame and step positions. No
-  game-code changes needed.
-- `sgl-core` `AnimationSequence`: a ping-pong sequence of one step with one
-  frame (or one pause or action) played it twice per bounce; it now plays it
-  once, so a `PingPongOnce` completes after one frame duration. No game-code
-  changes needed.
-- `sgl-3d` `asset::load*`: a glTF node that is its own ancestor overflowed
-  the stack at load or in `Rig::joint_matrices`, and a node with two parents
-  loaded; both now fail the load with an error naming the node, and
-  `Rig::joint_matrices` on a game-built rig with a parent cycle returns
-  (wrong matrices for the cycle's joints) instead of overflowing. No
-  game-code changes needed; re-export a file that now fails.
-- `examples/direct-game` took `Renderer::white_texture`'s handle from a
-  throwaway `Assets`, so it aliased the first texture of the game's own cache;
-  it now keeps one `Assets<Texture>` and draws a second texture from it.
-  Games that copied it: pass the game's texture cache to `white_texture`.
-- `sgl-net` `Delivery::LatestState` on WebSocket: corrected the 0.4.0
-  promise that a flushed state leaves ahead of lane frames flushed after it;
-  it waits only for frames flushed with or before it, and lane frames
-  flushed later may leave first. Behaviour is unchanged. No game-code
-  changes needed.
-- `sgl-2d` `UiFrame::password_edit_clear`: the clear button released the
-  buffer's allocation; it now zeroizes in place and keeps the preallocated
-  capacity. No game-code changes needed.
-- All SGL crates: published packages no longer ship examples, tests, test
-  fixtures or unused vendored reference sources; read those in the repository.
-  Licences and notices still ship. No game-code changes needed.
-- `sgl-3d` `AutoExposure`: a long frame (`FrameInput::frame_time_ms`)
-  within a frame's step of the target stepped the correction past it, by
-  stops after a hitch; it now lands on the target. No game-code changes
-  needed.
-- `sgl-post-fx` half-resolution SSR (`FeatureFlags::HALF_RESOLUTION`): a 2×2
-  block on a silhouette could trace from its background pixel, a NaN ray
-  under an infinite reversed-Z projection; that pixel now reports a miss.
-  No game-code changes needed.
-- `sgl-3d` `asset::load*`: a glTF accessor of a component type or shape
-  glTF does not allow for its use, of no elements, or past its buffer view
-  or buffer, or an image view past its buffer, panicked or was misread; it
-  now fails the load with an error naming it.
-  No game-code changes needed; re-export a file that now fails.
-- `sgl-post-fx` SSR (SGL3D's `Crystal` reflections): a ray towards the camera
-  from a surface under one unit away was projected behind the camera and
-  traced mirrored, behind the surface; its end is now clipped to the near
-  plane (`CameraAttribs::set_clip_planes`, already required). The WGSL
-  `ProjectDirection` (`PostFX_Common`) takes the near plane's view Z as a
-  fifth argument: WGSL calling it adds it (`g_Camera.fNearPlaneZ`). No other
-  game-code changes needed.
-- `sgl-2d` `DrawList::sort`: a NaN `z` could panic or misorder the other
-  sprites; NaN now draws last and the rest stay ascending and stable. No
-  game-code changes needed.
-- `sgl-core` `derive_stream_seed`: components no longer cancel (chunk
-  `(65536, 0)` and `(0, 1)` shared a stream); every derived seed changes,
-  so content re-derived from a persisted base seed (generated worlds,
-  replays) changes on upgrade. Games that need the old output regenerate it,
-  or store the derived seeds before upgrading.
-- `sgl-input` `Gamepad::name`, `Gamepad::is_pressed`, `Gamepad::value` and
-  `Gamepads::gamepad` are now `#[must_use]`: discarding their result warns.
-  Use or remove such calls; no other game-code changes are needed.
-- `sgl-net` `ThreadedUdpServer::disconnect`: reliable and unreliable
-  messages accepted before it but not yet handed to the endpoint were
-  dropped; they are now sent before the graceful close, within the same
-  `close_grace_ms`. No game-code changes needed.
-- `sgl-net` `NativeWebSocketClient::connect`: an IPv6-literal URL such as
-  `ws://[::1]:9000/game/ws` failed host resolution; it now connects. No
-  game-code changes needed.
-- `sgl-net` `OriginPolicy` and `NativeWebSocketClientConfig::origin`: IPv6
-  literal origins such as `http://[::1]:3000` were rejected as
-  non-canonical; they are now accepted in the browser's compressed
-  lowercase form. No game-code changes needed.
-- `sgl-2d` texture uploads: an empty, oversized or short-`rgba` texture, or
-  a mis-sized normal map, panicked; `Renderer::upload_texture`,
-  `upload_normal_map`, `upload_light_cookie`, `SpritePass::upload`,
-  `upload_normal` and `LightPass::upload_cookie` now return
-  `Result<(), sgl_2d::canvas::TextureError>`, and `Renderer::replace_texture`
-  / `SpritePass::replace` `Result<bool, TextureError>`, changing nothing on
-  error. Handle or `.expect` each result.
-- `sgl-core` `StateHasher`: the contract promised distinct digests for any
-  different write sequences, but writes are untagged (`u16(0x1234)` equals
-  `u8(0x34); u8(0x12)`); it now promises them only within one schema.
-  Encoding and digests unchanged. Games that hash several kinds of state in
-  one stream, or change what they write, add a leading tag or version.
-- `sgl-core` `FrameAnimation::tick` / `AnimationSequence::tick`: a NaN or
-  infinite `dt` could hang a repeating animation or freeze a `Once` one, and
-  is now ignored. In `Repeat`/`PingPongRepeat`, a frame duration too small
-  for `f32` to subtract from the accumulated time hung the tick; it now drops
-  the remainder. `FrameAnimation::new` now panics on an infinite `fps` (a
-  `Once` animation completed on its first tick; `Repeat` hung): pass a
-  finite `fps`. No other game-code changes needed.
-- `sgl-3d` `Renderer::finish_frame`: a `Renderer::resize` that changed the
-  targets between `render` and `finish_frame` no longer loses its history
-  reset; the next frame restarts history. No game-code changes needed.
-- `sgl-post-fx` SSR: a roughness-0 surface seen from below its mapped
-  normal's horizon, or, at importance-sample bias 0, at the blue noise's
-  largest value, gave a NaN ray and PDF; it now traces the mirror direction,
-  the noise stays below 1, and the resolve clamps N·V above 0. No game-code
-  changes needed.
-- `sgl-post-fx` SSR (`HierarchicalRaymarch`, SGL3D's `Crystal` reflections):
-  a ray that runs out of `max_traversal_intersections` before confirming a
-  hit was accepted by proximity and now reports a miss, so streaks near
-  surfaces at the step cap give way to the fallback. No game-code changes
-  needed.
-- `sgl-2d` `UiFrame::splitter`: dragging with `max < min` or a NaN bound
-  panicked; now `max` wins and a NaN bound is ignored. No game-code changes
-  needed.
+  (was nothing, `Peer` or timing-dependent), a UDP client still in its
+  handshake too (without `Connected`), and `ServerIoMux` forwards it.
+  Games that clean up when they call `disconnect`: ignore that event, or
+  move the cleanup to it.
+- Configuration now refused: `NativeWebSocketClient::connect` with any
+  scheme but `ws` (`InvalidInput`; it connected `wss://` in plaintext),
+  WebSocket subprotocol names that are not one non-empty HTTP token, and
+  `BrowserWebSocketConfig::latest_buffered_bytes` below
+  `ENVELOPE_HEADER_LEN + MAX_LATEST_STATE_BYTES` (1186). Use `ws://` and
+  terminate TLS at the edge, rename subprotocols on both peers, and raise a
+  smaller watermark.
+- `MemoryServerIo::send` after a disconnect returns `UnknownConnection`
+  (was `Disconnected`), as every other server transport does. Match
+  `UnknownConnection`.
+- Changed behaviour, no game-code changes: native WebSocket reports a
+  dropped stream as `Peer` and bad framing as `ProtocolViolation`; an
+  over-cap inbound message on a full lane closes with `ProtocolViolation` at
+  once (it waited on native, and closed `InboundOverflow` in the browser); browser `InboundOverflow` and
+  `ProtocolViolation` closes reconnect under `ReconnectPolicy`, whose
+  `max_attempts` count restarts only after a connection stays up
+  `max_delay_ms`; native sockets set `TCP_NODELAY`; a 0 ms first round trip
+  seeds UDP retransmission timing; `Delivery::LatestState` docs now promise
+  it waits only for lane frames flushed with or before it.
+  `udp::LANE_MESSAGES_PER_PEER_PER_POLL` is public.
+- Fixes: UDP handshakes survive lost, reordered or late accepts, denies,
+  confirms and cookies, including after `stop_admission`; closing and dropped
+  endpoints notify peers and keep acknowledging through the grace;
+  `ThreadedUdpServer` delivers messages before `Disconnected`, sends what was
+  queued before `disconnect`, and no longer panics after a worker panic;
+  `NativeWebSocketClient::connect` tries every resolved address, IPv6
+  literals included, within one `handshake_timeout`; IPv6 literal origins are
+  accepted; WebSocket worker fairness, keepalive, graceful close, browser
+  flush pacing and `disconnect` during backoff; `memory_duplex` unreliable
+  bounds; dual-stack challenge buckets. No game-code changes.
+
+### sgl-2d
+
+- Texture uploads: `Renderer::upload_texture`, `upload_normal_map`,
+  `upload_light_cookie`, `SpritePass::upload`, `upload_normal` and
+  `LightPass::upload_cookie` return `Result<(), TextureError>`, and
+  `Renderer::replace_texture`/`SpritePass::replace`
+  `Result<bool, TextureError>` (new `sgl_2d::canvas::TextureError`), where
+  they panicked or ignored bad input; a normal map before its diffuse is
+  `TextureError::DiffuseNotUploaded`, and a second one replaces the first.
+  Handle or `.expect` each result and upload the diffuse first.
+- `UiFrame::scroll_area_end` now takes the area's offset; a wheel tick
+  scrolls only the innermost hovered area (from the next frame), areas nest
+  within and restore the enclosing clip, and while the scrollbar shows,
+  content is clipped `Ui::SCROLLBAR_WIDTH` (8 px) short. Migration:
+  `frame.scroll_area_end(&mut offset);`, keep rows within
+  `rect.max.x - Ui::SCROLLBAR_WIDTH`, and drop any `set_clip` that only
+  restored the outer clip.
+- `Overlay::units: WorldUnits` (new, default logical pixels): world-channel
+  overlays under a world-unit camera shrank by `pixels_per_unit`. World
+  gizmos set `units: camera.units()`; literals without
+  `..Overlay::new(white)` add `units`.
+- `Renderer::ui_size()` and `ui_pixel_scale()` (new): a target over 4096²
+  scaled down laid the UI out too large and off the pointer; it now keeps
+  the requested size. Lay out over `ui_size()` instead of
+  `target_size() / ui_scale` and raster text at `ui_pixel_scale()`.
+- Aseprite: `pingpong_reverse` tags parse as new
+  `AseDirection::PingpongReverse` (was `Other`), and a frame past
+  `meta.size` is new `AsepriteError::FrameOutsideSheet`; one-frame Hash
+  exports and dotted titles now load. Add the variants to exhaustive
+  matches; re-export sheets whose frames overrun.
+- `Renderer::read_scene`, `capture_scene` and `CaptureError` are now
+  native-only; in the browser they hung the tab. Browser games drop those
+  calls.
+- `fetch_runtime_bundle` (wasm) fetches assets relative to the manifest's
+  directory (was `assets/` beside the page). Serve the manifest from the
+  asset root, e.g. `fetch_runtime_bundle("assets/manifest.txt")`.
+- `TextRenderer`: glyph pages are reused least recently used first, a
+  glyph larger than a page gets its own (past the device limit, the upload
+  fails with `TextureError::TooLarge`), and ring widths cap at
+  `MAX_RING_WIDTH`. Call `end_frame` once per presented frame and log rather
+  than unwrap page uploads.
+- Fixes: UI layering of modals, popovers, panels and long draw lists;
+  dropdown opening, closing and blocking; number-field drag, click and
+  typing; line-edit clear layout; password clear zeroizes in place; splitter
+  bounds; same-frame release and press; text laid out per exact size and
+  nonpositive sizes; 2D light NaN and shadow caps; oversized swapchains,
+  targets and sprite and shadow buffers; `DrawList::sort` with NaN `z`;
+  `Overlay::circle` with a nonpositive radius. No game-code changes.
+
+### sgl-3d
+
+- `Scene::update_mist` and `update_effects` now return
+  `Result<(), SceneError>`; oversized submissions to them and
+  `update_fog_volumes` return `SceneError::DeviceLimit` and keep the
+  previous content. Handle or `?` the result.
+- Scene validation refuses invalid values that reached the GPU: material
+  factors out of range or non-finite (new
+  `SceneError::InvalidMaterialFactors`), non-finite normal, coat and bump
+  scales, lightmap offsets and baked irradiance outside finite `0..=65504`,
+  non-finite UVs, deformation weights whose sum overflows f32, anisotropic
+  meshes whose tangents lie along their normals
+  (`SceneError::MissingAnisotropyTangents`), `CompressedImage` sides above
+  16384, and decal atlases past the device or 2 GiB (browser) and 8 GiB
+  (native). Supply finite in-range values and non-parallel tangents;
+  exhaustive `SceneError` matches add the variant.
+  `Scene::set_baked_specular_probes` refuses a box whose extent overflows
+  f32 with `ProbeError::InvalidProbe`; give it a finite extent.
+- glTF import (`asset::load*`): malformed files panicked, aborted or loaded
+  wrongly; malformed GLB headers, accessors, sparse accessors, images and
+  KTX2 data, node cycles or multiple parents, singular joints, invalid
+  material factors, repeated keyframe times, mismatched morph target counts,
+  URIs outside the glTF's directory or through symlinks, and assets past the
+  load budget now fail the load naming the element. Images and attributes it
+  does not use (`TEXCOORD_2`+, `COLOR_1`+, `_NAME`) are skipped and listed as
+  new `Ignored::Image` and `Ignored::Attribute`; `TEXCOORD_1` loads as
+  `Vertex::lightmap_uv`; tiny uniform scales load; `EXT_materials_bump`
+  defaults to 1. Buffer and image URIs must be embedded or relative regular
+  files without `..` or symlinks, buffers must match `byteLength`, and
+  PNG/JPEG sides must be at most 16384. Move referenced files beside the
+  glTF or into its subdirectories, replace symlinks with files, split
+  oversized images or assets, and re-export other files that now fail; add
+  the arms to exhaustive `Ignored` matches; set `lightmap_uv` to `[0, 0]` on
+  static models the irradiance bake does not chart.
+- `Scene::add_shader` now refuses loops it cannot bound
+  (`ShaderError::UnboundedLoop`) and declarations of WGSL built-in or
+  SGL3D names (`ShaderError::NameTaken`). Rename such helpers (for example
+  `my_smoothstep`); keep each loop counter's test and step in the loop's
+  own test and update, start it at or below its limit, and set a nested
+  `break if` loop's counter just before it. `MaterialVertex::tangent` docs now match behaviour:
+  a vertex without tangents gets an arbitrary unit tangent, never zero.
+- `diagnostics::read` is now native-only. Browser games drop the call.
+- Changed look, no game-code changes: `ColorGrading` blends shadows (not
+  highlights) with midtones, and negative `hue` wraps; `AutoExposure`
+  ignores near-black pixels in its average and lands on target after long
+  frames, and a non-finite or negative speed takes the default (use
+  `f32::MAX`, not infinity, for instant); non-sRGB 8-bit outputs (and float
+  outputs in the browser) are sRGB-encoded, no longer dark; SMAA runs after
+  tone mapping; glow in fog looks dimmer; heat distortion under FSR2 is
+  smaller; orthographic views shade with the camera's axis; lights reach
+  surfaces facing them through the coat normal or any of their sphere;
+  `Light::specular` governs coat and sheen dimming; blended `keeps_specular`
+  materials fade diffuse transmission with coverage, and transmission dims
+  beneath a sheen; fog froxels stay square.
+- Fixes: ray-traced shadows lift ray origins off distant receivers;
+  reflection (Velvet, Crystal, world-space) edge, history and step-cap
+  fixes; dynamic GI history, ray budget and spacings past 170 m; fog, FSR2
+  and exposure history resets; skinning, morph, deformation and anisotropy
+  NaNs; local-light shadow slots and stale cached shadows; probe grids and
+  captures; cull buffer, BLAS and pipeline growth past device limits. No
+  game-code changes.
+
+### sgl-post-fx
+
+- WGSL `ProjectDirection` (`PostFX_Common`) takes the near plane's view Z as
+  a fifth argument, so rays toward the camera no longer trace mirrored.
+  WGSL calling it adds `g_Camera.fNearPlaneZ`.
+- `ScreenSpaceReflectionAttribs::temporal_radiance_stability_factor`
+  defaults to 0.95 (was 1.0, which left reflections dark after a reset).
+  Set 1.0 explicitly to keep it; SGL3D already used 0.95.
+- `ScreenSpaceReflection` reports a miss for a world normal whose squared
+  length is more than 0.1 from 1, and caps `most_detailed_mip` at the top
+  level. Games feeding SSR directly write unit world normals.
+- Fixes: SSR half-resolution blocks, viewport edges, far-plane and NaN rays,
+  off-screen history, mask-edge ghosting and step-cap streaks; TAA resize,
+  first-frame, border and infinite-colour handling; `PostFXContext` frame
+  description, camera buffer, half-precision depth toggle and frame index
+  wrap. No game-code changes.
+
+### sgl-input
+
+- `Gamepad::name`, `is_pressed`, `value` and `Gamepads::gamepad` are now
+  `#[must_use]`. Use or remove calls that discard them.
+- Fixes: repeated presses, orphan releases and repeated `Connected` are
+  dropped; macOS owner replacement keeps callbacks and background delivery,
+  and input before an unplug is reported. No game-code changes.
+
+### Packaging and examples
+
+- Published packages no longer ship examples, tests, fixtures or unused
+  vendored sources; `bytemuck`, `winit` and `pollster` are caret ranges, not
+  exact pins. Distribution notices add NVIDIA Falcor's BSD-3-Clause notice
+  and the vendored MIT OR Apache-2.0 Zstandard decoder; refresh the game's
+  notices.
+- `examples/direct-game` keeps one `Assets<Texture>` for
+  `Renderer::white_texture`. Games that copied it pass their own texture
+  cache.
 
 ## 0.4.0 — 2026-10-09
 

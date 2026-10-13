@@ -40,11 +40,12 @@ compatibility shims solely to avoid updating consumers.
   root's internal dependency version requirements alongside release bumps.
 - At release, move those entries into a dated version section, merging
   entries that changed the same symbol; retain older migration notes. Use
-  Cargo-compatible semantic versioning: during `0.x`, incompatible changes
-  advance the minor version, not just the patch version.
+  Cargo-compatible version numbers by kind of change: during `0.x`, new
+  features and reworked APIs advance the minor version; fixes are patch
+  releases even when callers must change, with the migration in the changelog.
 - Games depend on every SGL crate with the same version requirement (for
-  example, `"0.4.0"`) and commit `Cargo.lock`; Git consumers reference one full
-  commit `rev`. Upgrade to a new minor version deliberately, applying all
+  example, `"0.4.1"`) and commit `Cargo.lock`; Git consumers reference one full
+  commit `rev`. Upgrade to a new release deliberately, applying all
   intervening migration notes and validating the game's affected workflows and
   targets.
 
