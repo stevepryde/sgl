@@ -16,8 +16,8 @@
 // (screenspaceshadowCS.hlsl 227, RAY_FLAG_CULL_FRONT_FACING_TRIANGLES; MIT,
 // src/LICENSE-wicked.txt). A ray leaving a lit face whose origin lies a
 // rounding behind it meets that face from behind, which this policy
-// accepts: the ray's start past the surface (Wicked's TMin) keeps it from
-// its own receiver, as in Wicked.
+// accepts: the ray's start past the surface (Wicked's TMin, from an origin
+// lifted off it, traced_ray_origin) keeps it from its own receiver.
 // A double-sided material occludes from either side under every policy.
 const SCENE_SIDES_AS_RASTER:u32=0u;
 const SCENE_SIDES_BOTH:u32=1u;

@@ -15,6 +15,8 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` ray-traced shadows: a shadow ray started 1 cm past a position reconstructed from depth, whose rounding a kilometre from the origin exceeds that, so distant receivers could shadow themselves in flickering patches; the ray now starts at an origin lifted off the surface by an offset that scales with the position (Falcor's `computeRayOrigin`). No game-code changes are needed. Distributions that ship SGL3D's notices gain NVIDIA Falcor's BSD-3-Clause notice (`crates/sgl-3d/src/LICENSE-falcor.txt`).
+
 - `sgl-core` `CollisionConfig`: public fields allowed literals and mutations to bypass validation; fields are now private. Construct with `CollisionConfig::new` and read values through `up()`, `skin()`, `snap_distance()`, `normal_threshold()`, and `block_epsilon()`; reconstruct to change a value.
 
 - `sgl-core` `move_and_collide`/`sweep_aabb`: motion below `f32::EPSILON` was dropped or treated as parallel and could be reported blocked in empty space; every finite nonzero remainder is now swept and applied when clear. No game-code changes are needed.
