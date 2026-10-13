@@ -18,12 +18,13 @@ docs and specs the entry links.
 ## 0.4.1 — 2026-10-13
 
 - Move every SGL crate to `0.4.1` together. Fixes only, but some change a
-  signature or refuse input that loaded before; update as the entries below
-  say: `CollisionConfig` literals, `Grid2::filled`, custom
-  `DatagramTransport`s, `EndpointConfig` literals, `sgl-2d` texture uploads,
-  `scroll_area_end` and `Overlay` literals, `Scene::update_mist` and
-  `update_effects`, and exhaustive matches on `GridError`, `TextureError`,
-  `AseDirection`, `AsepriteError`, `SceneError` and `Ignored`.
+  signature, refuse input that loaded before, or change output; read every
+  entry below. Compile breaks include `CollisionConfig` literals,
+  `Grid2::filled`, custom `DatagramTransport`s, `EndpointConfig` literals,
+  `sgl-2d` texture uploads, `scroll_area_end` and `Overlay` literals,
+  `Scene::update_mist` and `update_effects`, newly native-only capture APIs
+  on wasm32, and exhaustive matches on `GridError`, `AseDirection`,
+  `AsepriteError`, `SceneError` and `Ignored`.
 
 ### sgl-core
 
@@ -71,7 +72,8 @@ docs and specs the entry links.
   peer may last.
 - `ClientIo::disconnect`/`ServerIo::disconnect`: an open connection now
   reports exactly one `Disconnected { reason: Local }` on every transport
-  (was nothing, `Peer` or timing-dependent), and `ServerIoMux` forwards it.
+  (was nothing, `Peer` or timing-dependent), a UDP client still in its
+  handshake too (without `Connected`), and `ServerIoMux` forwards it.
   Games that clean up when they call `disconnect`: ignore that event, or
   move the cleanup to it.
 - Configuration now refused: `NativeWebSocketClient::connect` with any
@@ -85,8 +87,9 @@ docs and specs the entry links.
   (was `Disconnected`), as every other server transport does. Match
   `UnknownConnection`.
 - Changed behaviour, no game-code changes: native WebSocket reports a
-  dropped stream as `Peer` and bad framing or an over-cap message on a full
-  lane as `ProtocolViolation`; browser `InboundOverflow` and
+  dropped stream as `Peer` and bad framing as `ProtocolViolation`; an
+  over-cap inbound message on a full lane closes with `ProtocolViolation` at
+  once (it waited on native, and closed `InboundOverflow` in the browser); browser `InboundOverflow` and
   `ProtocolViolation` closes reconnect under `ReconnectPolicy`, whose
   `max_attempts` count restarts only after a connection stays up
   `max_delay_ms`; native sockets set `TCP_NODELAY`; a 0 ms first round trip
@@ -110,10 +113,10 @@ docs and specs the entry links.
   `upload_light_cookie`, `SpritePass::upload`, `upload_normal` and
   `LightPass::upload_cookie` return `Result<(), TextureError>`, and
   `Renderer::replace_texture`/`SpritePass::replace`
-  `Result<bool, TextureError>`, where they panicked or ignored bad input; a
-  normal map before its diffuse is new `TextureError::DiffuseNotUploaded`,
-  and a second one replaces the first. Handle or `.expect` each result,
-  upload the diffuse first, and add the variant to exhaustive matches.
+  `Result<bool, TextureError>` (new `sgl_2d::canvas::TextureError`), where
+  they panicked or ignored bad input; a normal map before its diffuse is
+  `TextureError::DiffuseNotUploaded`, and a second one replaces the first.
+  Handle or `.expect` each result and upload the diffuse first.
 - `UiFrame::scroll_area_end` now takes the area's offset; a wheel tick
   scrolls only the innermost hovered area (from the next frame), areas nest
   within and restore the enclosing clip, and while the scrollbar shows,
@@ -163,10 +166,14 @@ docs and specs the entry links.
   factors out of range or non-finite (new
   `SceneError::InvalidMaterialFactors`), non-finite normal, coat and bump
   scales, lightmap offsets and baked irradiance outside finite `0..=65504`,
-  non-finite UVs, `CompressedImage` sides above 16384, decal atlases past
-  the device or 2 GiB (browser) and 8 GiB (native), and probe boxes whose
-  extent overflows f32. Supply finite in-range values; exhaustive
-  `SceneError` matches add the variant.
+  non-finite UVs, deformation weights whose sum overflows f32, anisotropic
+  meshes whose tangents lie along their normals
+  (`SceneError::MissingAnisotropyTangents`), `CompressedImage` sides above
+  16384, and decal atlases past the device or 2 GiB (browser) and 8 GiB
+  (native). Supply finite in-range values and non-parallel tangents;
+  exhaustive `SceneError` matches add the variant.
+  `Scene::set_baked_specular_probes` refuses a box whose extent overflows
+  f32 with `ProbeError::InvalidProbe`; give it a finite extent.
 - glTF import (`asset::load*`): malformed files panicked, aborted or loaded
   wrongly; malformed GLB headers, accessors, sparse accessors, images and
   KTX2 data, node cycles or multiple parents, singular joints, invalid
@@ -176,14 +183,19 @@ docs and specs the entry links.
   does not use (`TEXCOORD_2`+, `COLOR_1`+, `_NAME`) are skipped and listed as
   new `Ignored::Image` and `Ignored::Attribute`; `TEXCOORD_1` loads as
   `Vertex::lightmap_uv`; tiny uniform scales load; `EXT_materials_bump`
-  defaults to 1. Re-export files that now fail, add the arms to exhaustive
-  `Ignored` matches, and set `lightmap_uv` to `[0, 0]` on static models the
-  irradiance bake does not chart.
+  defaults to 1. Buffer and image URIs must be embedded or relative regular
+  files without `..` or symlinks, buffers must match `byteLength`, and
+  PNG/JPEG sides must be at most 16384. Move referenced files beside the
+  glTF or into its subdirectories, replace symlinks with files, split
+  oversized images or assets, and re-export other files that now fail; add
+  the arms to exhaustive `Ignored` matches; set `lightmap_uv` to `[0, 0]` on
+  static models the irradiance bake does not chart.
 - `Scene::add_shader` now refuses loops it cannot bound
   (`ShaderError::UnboundedLoop`) and declarations of WGSL built-in or
   SGL3D names (`ShaderError::NameTaken`). Rename such helpers (for example
-  `my_smoothstep`) and keep each loop counter's test and step in the loop's
-  own test and update. `MaterialVertex::tangent` docs now match behaviour:
+  `my_smoothstep`); keep each loop counter's test and step in the loop's
+  own test and update, start it at or below its limit, and set a nested
+  `break if` loop's counter just before it. `MaterialVertex::tangent` docs now match behaviour:
   a vertex without tangents gets an arbitrary unit tangent, never zero.
 - `diagnostics::read` is now native-only. Browser games drop the call.
 - Changed look, no game-code changes: `ColorGrading` blends shadows (not
