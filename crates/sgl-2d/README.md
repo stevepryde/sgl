@@ -68,7 +68,7 @@ and [3D integration conventions](../../docs/3d-development.md).
 `sgl_core::math` and SGL3D's `sgl_3d::glam` re-export the same workspace glam
 types, so matching vectors and matrices pass between them directly.
 
-Run `cargo test -p sgl-2d` for focused checks, including GPU tests when an
+Run `cargo test -p sgl-2d -p sgl-2d-tests` for focused checks, including GPU tests when an
 adapter is available. The [required check](../../CONTRIBUTING.md#validate)
 adds the repository's platform coverage.
 For dependency setup, see [Building games with SGL](../../docs/README.md).

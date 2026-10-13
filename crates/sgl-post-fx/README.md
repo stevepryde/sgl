@@ -174,7 +174,7 @@ changes; it is not an exhaustive conformance ledger.
 
 ## Tests
 
-`cargo test -p sgl-post-fx` builds, binds and executes every feature
+`cargo test -p sgl-post-fx -p sgl-post-fx-tests` builds, binds and executes every feature
 permutation of each effect (reversed depth; SSR's previous frame and half
 resolution; TAA's Gaussian weighting, bicubic filter and YCoCg colour space)
 on the device and checks the output stays finite. SGL3D's integration

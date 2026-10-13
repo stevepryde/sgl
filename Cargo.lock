@@ -2188,6 +2188,7 @@ dependencies = [
  "ruzstd",
  "serde",
  "serde_json",
+ "sgl-3d",
  "sgl-post-fx",
  "sp-fidelity",
  "sp-fidelity-wgpu",

@@ -165,7 +165,7 @@ The [browser probe](../../examples/sgl-net/examples/browser_probe.rs) and its
 transport integration. They are check fixtures, not a production game server.
 
 Read the [netcode contract](../../specs/netcode.md) for admission, bounds,
-reconnection, and delivery guarantees. Run `cargo test -p sgl-net` for focused
+reconnection, and delivery guarantees. Run `cargo test -p sgl-net -p sgl-net-tests` for focused
 native checks; the [required check](../../CONTRIBUTING.md#validate) also covers
 release mode, WASM, and real browser I/O.
 For dependency setup, see [Building games with SGL](../../docs/README.md).

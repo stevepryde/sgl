@@ -2650,7 +2650,7 @@ not supported, since SGL3D needs compute.
   baked probes. The `diagnostics` feature's `diagnostics::read` also blocks,
   so a browser build does not have it.
 
-`browser_smoke` (`examples/browser_smoke.rs`) is the browser lane's test and a
+`browser_smoke` ([`examples/sgl-3d/examples/browser_smoke.rs`](../../examples/sgl-3d/examples/browser_smoke.rs)) is the browser lane's test and a
 minimal page integration: device creation; procedural content (a textured
 ground, a shadow-casting box, a masked grate with a BC7 image, a blended
 pane that receives screen-space reflections, a skinned and morphed box with an ambient cube, a box lit by a BC6H/BC7
@@ -2976,7 +2976,7 @@ From the SGL root:
 
 ```sh
 cargo check --locked -p sgl-3d
-cargo test --locked -p sgl-3d
+cargo test --locked -p sgl-3d -p sgl-3d-tests
 cargo check --locked -p sgl-3d --features diagnostics
 ```
 
