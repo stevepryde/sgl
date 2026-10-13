@@ -41,7 +41,7 @@ most recently connected it, so an older owner still alive gets no input from
 it, even after the newer owner drops, until the controller reconnects. An owner's drop removes only callbacks it still holds, so replacing an
 owner keeps the new one's input even if the new one polled first.
 
-Try `cargo run -p sgl-input --example controllers` with a focused window. The
+Try `cargo run -p sgl-input-examples --example controllers` with a focused window. The
 example prints actual connection/button/stick events and updates its window title.
 Device enumeration alone is not evidence that inputs work. Steam Input's native
 action API is not implemented; emulated devices still depend on the OS backend.

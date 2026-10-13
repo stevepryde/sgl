@@ -7,7 +7,7 @@ categories = ["game-development", "algorithms"]
 keywords = ["gamedev", "deterministic", "collision", "animation"]
 readme = "README.md"
 description = "Deterministic timing, grids, hashing, animation, and collision for SGL games"
-# Examples and tests stay in the repository.
+# Ship only the library, its README and licences.
 include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 version.workspace = true
 edition.workspace = true
@@ -24,8 +24,3 @@ glam.workspace = true
 
 [dev-dependencies]
 wasm-bindgen-test.workspace = true
-
-# proptest pulls getrandom, which does not build for wasm32-unknown-unknown
-# without a global cfg; property tests are native-only.
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-proptest.workspace = true

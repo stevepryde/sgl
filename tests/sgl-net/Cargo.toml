@@ -1,0 +1,17 @@
+[package]
+name = "sgl-net-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Integration tests for sgl-net, kept out of its published package.
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+sgl-net.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tungstenite = { workspace = true, features = ["handshake"] }

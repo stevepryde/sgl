@@ -88,8 +88,8 @@ cargo run -p sgl-direct-game
 
 Rustup uses the repository's [pinned toolchain](rust-toolchain.toml).
 The example draws a sprite with a game-owned window and event loop.
-For a richer UI example, run `cargo run -p sgl-2d --example tool_ui`.
-For 3D, start with the [offscreen example](crates/sgl-3d/examples/offscreen.rs)
+For a richer UI example, run `cargo run -p sgl-2d-examples --example tool_ui`.
+For 3D, start with the [offscreen example](examples/sgl-3d/examples/offscreen.rs)
 and its [frame guide](crates/sgl-3d/docs/README.md#a-frame).
 
 Repository development also needs Bun, Node.js, the matching wasm-bindgen

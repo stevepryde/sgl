@@ -11,8 +11,8 @@ canvas, event loop, simulation, input translation, and UI layout.
 screen draw channels, text, lighting, overlays, and letterbox presentation.
 Start with the [direct game](../../examples/direct-game/src/main.rs), which
 owns winit and draws sprites: `cargo run -p sgl-direct-game`. It also builds
-for `wasm32-unknown-unknown`, but the repository has no page that runs it. The [tool UI example](examples/tool_ui.rs)
-adds text and widgets: `cargo run -p sgl-2d --example tool_ui`.
+for `wasm32-unknown-unknown`, but the repository has no page that runs it. The [tool UI example](../../examples/sgl-2d/examples/tool_ui.rs)
+adds text and widgets: `cargo run -p sgl-2d-examples --example tool_ui`.
 
 The game keeps composition; do not wrap the canvas in another engine layer.
 For resource lifetimes, color spaces, and presentation behavior, read the
@@ -68,7 +68,7 @@ and [3D integration conventions](../../docs/3d-development.md).
 `sgl_core::math` and SGL3D's `sgl_3d::glam` re-export the same workspace glam
 types, so matching vectors and matrices pass between them directly.
 
-Run `cargo test -p sgl-2d` for focused checks, including GPU tests when an
+Run `cargo test -p sgl-2d -p sgl-2d-tests` for focused checks, including GPU tests when an
 adapter is available. The [required check](../../CONTRIBUTING.md#validate)
 adds the repository's platform coverage.
 For dependency setup, see [Building games with SGL](../../docs/README.md).

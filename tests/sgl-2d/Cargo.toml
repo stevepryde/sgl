@@ -1,0 +1,35 @@
+[package]
+name = "sgl-2d-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Integration tests for sgl-2d, kept out of its published package.
+
+[lints]
+workspace = true
+
+# winit requires the native surface test's event loop on the main thread.
+[[test]]
+name = "surface"
+harness = false
+
+[dev-dependencies]
+image.workspace = true
+serde_json.workspace = true
+sgl-2d.workspace = true
+sgl-core.workspace = true
+wasm-bindgen-test.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+pollster.workspace = true
+# proptest pulls getrandom, which does not build for wasm32-unknown-unknown
+# without a global cfg; property tests are native-only.
+proptest.workspace = true
+wgpu.workspace = true
+winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wgpu.workspace = true
+winit = { workspace = true, features = ["rwh_06"] }

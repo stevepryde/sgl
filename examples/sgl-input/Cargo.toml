@@ -1,0 +1,15 @@
+[package]
+name = "sgl-input-examples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# sgl-input examples, kept out of its published package.
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+sgl-input.workspace = true
+winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }

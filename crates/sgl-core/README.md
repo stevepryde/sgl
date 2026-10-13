@@ -68,9 +68,9 @@ forces, mass or rotation. See [Physics](../../docs/README.md#physics) to
 choose a game's physics.
 
 Read the [core contract](../../specs/core.md) before changing deterministic
-behavior. [Parity fixtures](tests/parity.rs) and [property tests](tests/properties.rs)
+behavior. [Parity fixtures](../../tests/sgl-core/tests/parity.rs) and [property tests](../../tests/sgl-core/tests/properties.rs)
 exercise the cross-target and algorithm boundaries.
 
-Run `cargo test -p sgl-core` for focused native checks. The repository's
+Run `cargo test -p sgl-core -p sgl-core-tests` for focused native checks. The repository's
 [required check](../../CONTRIBUTING.md#validate) also runs the WASM lane.
 For dependency setup, see [Building games with SGL](../../docs/README.md).

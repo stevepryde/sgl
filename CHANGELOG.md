@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- Repository: each crate's examples and integration tests moved to the
+  unpublished `examples/<crate>` and `tests/<crate>` packages; run examples
+  with `cargo run -p <crate>-examples --example <name>` (was `-p <crate>`).
+  Published packages are unchanged; no game-code changes are needed.
+
 ## 0.4.1 — 2026-10-13
 
 - Move every SGL crate to `0.4.1` together. Fixes only, but some change a

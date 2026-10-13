@@ -10,9 +10,9 @@ version.workspace = true
 edition.workspace = true
 license = "Apache-2.0"
 description = "SGL wgpu post-processing effects: screen-space reflections and temporal anti-aliasing derived from DiligentFX"
-# Tests and the vendored DiligentFX/DiligentCore references stay in the
-# repository; the package keeps their licences, source revisions and the
-# blue-noise source `post_fx_context.rs` reads.
+# The vendored DiligentFX/DiligentCore references stay in the repository; the
+# package keeps their licences, source revisions and the blue-noise source
+# `post_fx_context.rs` reads.
 include = [
     "/src",
     "/shaders",

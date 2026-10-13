@@ -429,7 +429,7 @@ pub(crate) fn storage_words(
     read_words(device, queue, &copy)
 }
 
-#[path = "../examples/support/ktx2_writer.rs"]
+#[path = "../tests/fixtures/ktx2_writer.rs"]
 mod ktx2_writer;
 pub(crate) use ktx2_writer::{bc7_mode_6, ktx2};
 

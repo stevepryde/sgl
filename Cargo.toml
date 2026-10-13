@@ -8,6 +8,15 @@ members = [
     "crates/sgl-3d",
     "crates/sgl-post-fx",
     "examples/direct-game",
+    "tests/sgl-core",
+    "tests/sgl-net",
+    "tests/sgl-2d",
+    "tests/sgl-3d",
+    "tests/sgl-post-fx",
+    "examples/sgl-net",
+    "examples/sgl-2d",
+    "examples/sgl-input",
+    "examples/sgl-3d",
 ]
 default-members = [
     "crates/sgl-core",
@@ -17,6 +26,15 @@ default-members = [
     "crates/sgl-3d",
     "crates/sgl-post-fx",
     "examples/direct-game",
+    "tests/sgl-core",
+    "tests/sgl-net",
+    "tests/sgl-2d",
+    "tests/sgl-3d",
+    "tests/sgl-post-fx",
+    "examples/sgl-net",
+    "examples/sgl-2d",
+    "examples/sgl-input",
+    "examples/sgl-3d",
 ]
 
 [workspace.package]

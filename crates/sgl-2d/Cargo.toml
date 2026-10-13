@@ -7,7 +7,7 @@ categories = ["game-development", "rendering"]
 keywords = ["gamedev", "wgpu", "rendering", "sprites", "ui"]
 readme = "README.md"
 description = "Caller-driven 2D rendering, assets, text, lighting, and immediate UI for SGL games"
-# Examples and tests stay in the repository.
+# Test fixtures stay in the repository.
 include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 version.workspace = true
 edition.workspace = true
@@ -16,11 +16,6 @@ publish.workspace = true
 
 [lints]
 workspace = true
-
-# winit requires the native surface test's event loop on the main thread.
-[[test]]
-name = "surface"
-harness = false
 
 [dependencies]
 bytemuck.workspace = true
@@ -48,8 +43,3 @@ winit = { workspace = true, features = ["rwh_06"] }
 
 [dev-dependencies]
 wasm-bindgen-test.workspace = true
-
-# proptest pulls getrandom, which does not build for wasm32-unknown-unknown
-# without a global cfg; property tests are native-only.
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-proptest.workspace = true

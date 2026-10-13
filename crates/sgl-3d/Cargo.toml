@@ -11,7 +11,7 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "Caller-driven 3D rendering for SGL games, native and in the browser (WebGPU)"
-# Examples, tests and the XeGTAO reference sources stay in the repository; the
+# Test fixtures and the XeGTAO reference sources stay in the repository; the
 # package keeps the agent guide, the data blobs under src/ and every licence.
 include = [
     "/src",
@@ -59,30 +59,13 @@ wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan",
 js-sys = { workspace = true, optional = true }
 
 [dev-dependencies]
-# Existing encoder for the KTX2 export example and independent fixtures.
+# Existing encoder for the KTX2 fixtures.
 ruzstd = { workspace = true, features = ["std"] }
 # The layout tests parse and validate the composed WGSL, and write the
 # hardware path's programs as Vulkan's SPIR-V and DX12's HLSL.
 naga = { workspace = true, features = ["wgsl-in", "spv-out", "hlsl-out"] }
 pollster.workspace = true
 wasm-bindgen-test.workspace = true
-# Integration tests read the frame's targets through the diagnostics accessors.
+# Unit tests exercise the diagnostics accessors.
 # Keep this path-only: Cargo omits it when publishing, avoiding a registry self-dependency.
 sgl-3d = { path = ".", features = ["diagnostics"] }
-
-# The browser lane's smoke test (`bun scripts/tasks.ts check-browser`).
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-console_error_panic_hook.workspace = true
-futures.workspace = true
-js-sys.workspace = true
-wasm-bindgen.workspace = true
-wasm-bindgen-futures.workspace = true
-
-[[example]]
-name = "browser_smoke"
-crate-type = ["cdylib"]
-
-# The browser lane builds it; `bun scripts/tasks.ts measure-browser` runs it.
-[[example]]
-name = "browser_streaming"
-crate-type = ["cdylib"]
