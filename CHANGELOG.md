@@ -15,6 +15,18 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.4.2 — 2026-10-13
+
+- `sgl-3d::Settings::tone_mapping`: fixed AgX is now selectable Khronos PBR
+  Neutral (default), `AcesFilmic`, or `Agx`; grading stays neutral. Set
+  `tone_mapping: ToneMapping::Agx` to retain the former transform and
+  `ColorGrading::agx_look`; otherwise no game-code changes are needed.
+  Distribution notices now include Khronos's Apache-2.0 attribution.
+- `sgl-3d::Renderer::new`: browser float composition textures were incorrectly
+  sRGB-encoded; float textures now stay linear on both platforms. No game-code
+  changes are needed for composition. Direct surface callers use
+  `Renderer::new_surface(device, queue, &surface_config, &surface_caps, device_scale, settings)`
+  to select transfer from the actual format, colour space and capabilities.
 - Repository: each crate's examples and integration tests moved to the
   unpublished `examples/<crate>` and `tests/<crate>` packages; run examples
   with `cargo run -p <crate>-examples --example <name>` (was `-p <crate>`).

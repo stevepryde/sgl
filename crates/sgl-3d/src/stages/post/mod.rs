@@ -19,8 +19,10 @@
 //! group sums them.
 pub(crate) mod bloom;
 pub(crate) mod inputs;
+mod output;
 pub(crate) mod smaa;
 pub(crate) mod tone_map;
+pub(crate) use output::Output;
 
 use crate::settings::{Antialiasing, SmaaQuality};
 use crate::shading::gbuffer::COLOR as HDR;
@@ -47,6 +49,7 @@ struct Look<'a> {
     stops: f32,
     bloom: &'a crate::BloomParameters,
     grading: &'a crate::ColorGrading,
+    tone_mapping: crate::settings::ToneMapping,
 }
 
 /// SMAA's input and output at the scene size.
@@ -82,7 +85,7 @@ impl Post {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        format: wgpu::TextureFormat,
+        output: Output,
         sizes: Sizes,
         bloom_targets: bool,
         smaa_quality: SmaaQuality,
@@ -100,7 +103,7 @@ impl Post {
             )?,
             scene_size: sizes.scene,
             smaa_targets: None,
-            tone_map: tone_map::ToneMap::new(device, &inputs, format, sizes.output),
+            tone_map: tone_map::ToneMap::new(device, &inputs, output, sizes.output),
             inputs,
         })
     }
@@ -153,6 +156,7 @@ impl Post {
             stops: ctx.input.exposure.stops,
             bloom: &ctx.input.bloom,
             grading: &ctx.input.color_grading,
+            tone_mapping: ctx.effective.tone_mapping,
         };
         self.present(
             ctx.device,
@@ -211,6 +215,7 @@ impl Post {
                 self.bloom.halo(),
                 look.exposure,
                 look.grading,
+                look.tone_mapping,
                 tone_map::Destination::Output {
                     capture: presentation.capture,
                     output,
@@ -232,6 +237,7 @@ impl Post {
             self.bloom.halo(),
             look.exposure,
             look.grading,
+            look.tone_mapping,
             tone_map::Destination::Scene(&targets.tone_mapped),
             timing,
         );

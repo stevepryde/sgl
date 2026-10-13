@@ -89,9 +89,10 @@
     "prefix": "Spartan Engine, https://github.com/PanosK92/SpartanEngine\nRevision a8338d0609b85dc32f3732a5c27fb4463816a3b9, LICENSE.txt. Godot's\nservers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl (revision\nb13043816a0f234985030ec035363a005bc86c32) is based on Spartan Engine's TAA at\nthis revision and carries this notice; the DiligentFX port adds its\nmotion-difference rejection, speed-scaled variance box and history clip to\nTAA_ComputeTemporalAccumulation.wgsl (PROVENANCE.md DFX-14).\n\n"
   },
   {
-    "component": "Three.js (SMAA, mist noise and shading ports)",
+    "component": "Three.js (SMAA, mist noise, shading and ACES Filmic ports)",
     "path": "crates/sgl-3d/src/stages/post/smaa/LICENSE-three.txt",
-    "url": "https://raw.githubusercontent.com/mrdoob/three.js/2431a09f46f34c560bc8e44b33be0e567723d5b9/LICENSE"
+    "url": "https://raw.githubusercontent.com/mrdoob/three.js/2431a09f46f34c560bc8e44b33be0e567723d5b9/LICENSE",
+    "note": "r185 (2431a09) also supplies ACESFilmicToneMapping and RRTAndODTFit in stages/post/tone_map.wgsl."
   },
   {
     "component": "Wicked Engine",
@@ -137,5 +138,11 @@
     "path": "crates/sgl-3d/src/content/zstandard/fixtures/LICENSE-zstd-BSD-3-Clause",
     "url": "https://raw.githubusercontent.com/facebook/zstd/f8745da6ff1ad1e7bab384bd1f9d742439278e99/LICENSE",
     "prefix": "Zstandard reference fixture, https://github.com/facebook/zstd\nRevision f8745da6ff1ad1e7bab384bd1f9d742439278e99 (v1.5.7),\ntests/golden-compression/http. SGL3D uses the reference plaintext and an\noffline C-zstd 1.5.7 compressed frame as decoder interoperability fixtures.\nZstandard is dual BSD-3-Clause OR GPL-2.0; these fixtures are retained under\nthe BSD-3-Clause terms below.\n\n"
+  },
+  {
+    "component": "Khronos PBR Neutral tone mapping",
+    "path": "crates/sgl-3d/src/stages/post/LICENSE-khronos-tone-mapping.txt",
+    "url": "https://raw.githubusercontent.com/KhronosGroup/ToneMapping/180b1a7bddec33f73fe41712a2963cc3ad8e5547/LICENSE.md",
+    "prefix": "KhronosGroup/ToneMapping, revision 180b1a7bddec33f73fe41712a2963cc3ad8e5547.\nCopyright 2024 The Khronos Group, Inc. (upstream .reuse/dep5).\nPBR_Neutral/pbrNeutral.glsl, translated to WGSL in tone_map.wgsl.\n\n"
   }
 ]

@@ -100,12 +100,26 @@ pub struct Renderer {
 pub enum RendererError {
     /// SMAA's lookup textures did not decode.
     LookupTextures(image::ImageError),
+    /// The surface requires an unsupported transfer or format/colour-space pair.
+    UnsupportedSurfaceOutput {
+        format: wgpu::TextureFormat,
+        color_space: wgpu::SurfaceColorSpace,
+    },
 }
 
 impl std::fmt::Display for RendererError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LookupTextures(error) => write!(f, "SMAA lookup textures: {error}"),
+            Self::UnsupportedSurfaceOutput {
+                format,
+                color_space,
+            } => {
+                write!(
+                    f,
+                    "unsupported SGL3D surface output: {format:?} in {color_space:?}"
+                )
+            }
         }
     }
 }
@@ -114,23 +128,71 @@ impl std::error::Error for RendererError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::LookupTextures(error) => Some(error),
+            Self::UnsupportedSurfaceOutput { .. } => None,
         }
     }
 }
 
 impl Renderer {
-    /// A renderer presenting to `output_format` at `output_size` physical
-    /// pixels, for a window of `device_scale` physical pixels per logical
-    /// pixel, sized for `settings`. Any colour format shows the same
-    /// display colour: one that is not sRGB (a browser canvas's
-    /// `Bgra8Unorm`) takes it sRGB-encoded, but natively a float one, which
-    /// takes linear light. Reflection source completion
-    /// and SMAA are built for them, so a first frame from a `perspective`
-    /// camera does not rebuild them.
+    /// Renders into a composition texture at `output_size` physical pixels.
+    /// Float textures hold display-referred linear sRGB on both platforms.
+    /// An sRGB attachment performs its transfer; other unorm outputs receive
+    /// sRGB-encoded colour. Use [`Self::new_surface`] for direct presentation.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         output_format: wgpu::TextureFormat,
+        output_size: [u32; 2],
+        device_scale: f32,
+        settings: &Settings,
+    ) -> Result<Self, RendererError> {
+        Self::with_output(
+            device,
+            queue,
+            crate::stages::post::Output::texture(output_format),
+            output_size,
+            device_scale,
+            settings,
+        )
+    }
+
+    /// Renders directly to a surface configured with `config`. Its format and
+    /// colour space determine the display transfer, including browser float
+    /// canvases. Supports Auto, sRGB, extended sRGB and extended linear sRGB.
+    /// Pass `surface.get_capabilities(&adapter)` from the configured surface so
+    /// native Auto float output follows its actual linear/sRGB capability.
+    /// Recreate the renderer when the surface format or colour space changes.
+    pub fn new_surface(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        config: &wgpu::SurfaceConfiguration,
+        capabilities: &wgpu::SurfaceCapabilities,
+        device_scale: f32,
+        settings: &Settings,
+    ) -> Result<Self, RendererError> {
+        let output = crate::stages::post::Output::surface(
+            config,
+            capabilities,
+            device.adapter_info().backend,
+        )
+        .ok_or(RendererError::UnsupportedSurfaceOutput {
+            format: config.format,
+            color_space: config.color_space,
+        })?;
+        Self::with_output(
+            device,
+            queue,
+            output,
+            [config.width, config.height],
+            device_scale,
+            settings,
+        )
+    }
+
+    fn with_output(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        output: crate::stages::post::Output,
         output_size: [u32; 2],
         device_scale: f32,
         settings: &Settings,
@@ -213,7 +275,7 @@ impl Renderer {
             post: Post::new(
                 device,
                 queue,
-                output_format,
+                output,
                 sizes,
                 sizing.bloom_targets,
                 settings.smaa_quality,

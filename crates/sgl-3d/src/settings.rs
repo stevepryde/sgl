@@ -371,6 +371,8 @@ pub struct Settings {
     pub smaa_quality: SmaaQuality,
     pub anisotropic_filtering: AnisotropicFiltering,
     pub bloom: Bloom,
+    /// The display transform, independent of the quality preset.
+    pub tone_mapping: ToneMapping,
     /// The shadow maps' sizes and the camera's shadow filter.
     pub shadow_quality: ShadowQuality,
     /// Diffuse sky and fill visibility, and the specular occlusion of
@@ -464,6 +466,7 @@ impl Default for Settings {
             fsr2_sharpening: true,
             fsr2_sharpness: 0.8,
             smaa_quality: SmaaQuality::default(),
+            tone_mapping: ToneMapping::default(),
             anisotropic_filtering: AnisotropicFiltering::default(),
             bloom: Bloom::default(),
             shadow_quality: ShadowQuality::default(),
@@ -576,4 +579,16 @@ mod diagnostics {
         /// Additive effects (glow).
         pub effects: bool,
     }
+}
+
+/// The display transform applied after exposure and neutral-by-default grading.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ToneMapping {
+    /// Preserves material colours below highlight compression.
+    #[default]
+    KhronosPbrNeutral,
+    /// Three.js's ACES Filmic fit, with stronger cinematic contrast.
+    AcesFilmic,
+    /// Filament's AgX transform, with `ColorGrading::agx_look`.
+    Agx,
 }

@@ -167,7 +167,7 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
 ## Exposure, bloom and colour grading
 
 ```rust,ignore
-use sgl_3d::{AgxLook, AutoExposure, BloomParameters, ColorGrading, CompensationCurve, Exposure};
+use sgl_3d::{AgxLook, AutoExposure, BloomParameters, ColorGrading, CompensationCurve, Exposure, ToneMapping};
 frame.exposure = Exposure {
     stops: 0., // applied before tone mapping; +1 doubles the light
     automatic: Some(AutoExposure {
@@ -179,8 +179,9 @@ frame.exposure = Exposure {
     }),
 };
 frame.bloom = BloomParameters { intensity: 0.1 };
+settings.tone_mapping = ToneMapping::Agx; // default: KhronosPbrNeutral; also AcesFilmic
 frame.color_grading = ColorGrading {
-    agx_look: AgxLook::Punchy, // Filament's look; None (the default) adds none
+    agx_look: AgxLook::Punchy, // affects Agx only; default None
     ..Default::default() // Bevy's sections and white balance, unchanged
 };
 ```
@@ -218,10 +219,17 @@ frame.color_grading = ColorGrading {
   (`graphics_device::features`), else RGBA16F. Timing group `bloom`.
 - The tone map multiplies by the exposure, applies Bevy's `ColorGrading`
   (hue, white balance, and saturation, contrast and ASC CDL for shadows,
-  midtones and highlights), then Filament's AgX in Rec. 2020 with the
-  grading's `agx_look` (`None`, AgX's base contrast; `Punchy`, more contrast
-  and saturation; `Golden`, a golden, slightly washed-out tint), then the
-  grading's post-saturation. Sections crossfade over 0.1 either side of
+  midtones and highlights), then `Settings::tone_mapping`, followed by the
+  grading's post-saturation. `KhronosPbrNeutral` (default) preserves colour
+  below its highlight knee; `AcesFilmic` is Three.js's ACES fit, including its
+  standard viewing scale, with stronger contrast; `Agx` is Filament's AgX
+  in Rec. 2020, with `ColorGrading::agx_look` (`None`, base contrast;
+  `Punchy`, more contrast and saturation; `Golden`, a golden tint). These
+  are standard transforms, with no additional saturation or exposure boosts.
+  Their ports and reference-vector tests live in `src/stages/post/tone_map`
+  ([Khronos](https://github.com/KhronosGroup/ToneMapping/tree/180b1a7bddec33f73fe41712a2963cc3ad8e5547/PBR_Neutral),
+  [Three.js r185](https://github.com/mrdoob/three.js/blob/2431a09f46f34c560bc8e44b33be0e567723d5b9/src/renderers/shaders/ShaderChunk/tonemapping_pars_fragment.glsl.js),
+  [Filament](https://github.com/google/filament/blob/ef1a133d6777299ad971a0f9612adf4aad281f46/filament/src/ToneMapper.cpp)). Sections crossfade over 0.1 either side of
   `midtones_start` (shadows with midtones) and `midtones_end` (midtones with
   highlights), using the exposed RGB mean. Highlights do not affect the
   shadows-to-midtones transition. The default grading changes nothing. The output
@@ -1918,13 +1926,22 @@ authored look and per-frame state in a `FrameInput`.
    mesh. `Renderer::new(&device, &queue,
    output_format, output_size, device_scale, &settings)` creates the targets
    for an output of `output_size` physical pixels in a window of
-   `device_scale` physical pixels per logical pixel. Any colour format
-   presents the same display colour: an sRGB format's attachment encodes
-   it; natively a float format (`Rgba16Float`) holds linear light, as a
-   native float surface composites it; and any other (a browser canvas's
-   `Bgra8Unorm` or `Rgba8Unorm`), and in the browser a float one too, whose
-   canvas keeps its sRGB colour space, takes it sRGB-encoded by the tone
-   map.
+   `device_scale` physical pixels per logical pixel. It writes floating-point
+   composition textures (`Rgba16Float`, `Rgba32Float`,
+   `Rg11b10Ufloat`) in display-referred linear sRGB on both platforms. An sRGB
+   attachment encodes on write; other unorm textures receive encoded sRGB.
+   For direct window/canvas presentation use
+   `Renderer::new_surface(&device, &queue, &surface_config, &surface_caps, device_scale, &settings)`:
+   it reads both the format and colour space. Browser Auto float canvases take
+   encoded sRGB; native Auto RGBA16F surfaces take linear sRGB when supported,
+   otherwise encoded sRGB. Pass `surface.get_capabilities(&adapter)`
+   as `surface_caps` so SGL follows the actual surface. Explicit
+   `Srgb`/`ExtendedSrgb` take encoded sRGB, `ExtendedSrgbLinear` linear.
+   A linear colour space with an sRGB attachment, or an unsupported colour
+   space, returns `UnsupportedSurfaceOutput`.
+   Recreate the renderer when surface format or colour space changes.
+   Composition samples float outputs as linear and applies its final display
+   transfer once; no material or exposure gamma correction is needed.
 4. Each frame, `set_instance` each moving instance with its pose and
    visibility, and `set_instance_deformation` each deforming one
    ([Skinned meshes and morph targets](#skinned-meshes-and-morph-targets)).

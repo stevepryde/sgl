@@ -170,8 +170,8 @@ impl Default for MotionBlurParameters {
 }
 
 /// Bevy's colour grading, applied to the exposed scene before tone mapping,
-/// except `global.post_saturation`, after it, and Filament's AgX look,
-/// within the tone map. The default changes nothing.
+/// except `global.post_saturation`, after it. The default adjustments are
+/// neutral. `Settings::tone_mapping` selects the display transform.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ColorGrading {
     pub global: ColorGradingGlobal,
@@ -180,6 +180,7 @@ pub struct ColorGrading {
     pub midtones: ColorGradingSection,
     /// Applied to the lighter parts of the image.
     pub highlights: ColorGradingSection,
+    /// Applied only when `Settings::tone_mapping` selects AgX.
     pub agx_look: AgxLook,
 }
 

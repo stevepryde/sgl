@@ -143,6 +143,7 @@ pub(crate) struct Effective {
     pub smaa: bool,
     /// SMAA's preset, where it runs.
     pub smaa_quality: SmaaQuality,
+    pub tone_mapping: crate::settings::ToneMapping,
     /// Material samplers' `anisotropy_clamp`.
     pub anisotropy: u16,
     /// The geometry pipelines' constants (diagnostics layers).

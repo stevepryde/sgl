@@ -58,8 +58,10 @@ its rendering `settings::Settings`.
    (its cells written by region with `write_irradiance_cells`), and a
    dynamic GI volume with `set_dynamic_gi_volume`. `Renderer::new` takes the output
    format, the output size in physical pixels, the window's scale factor and
-   the settings; any colour format shows the same display colour (the
-   package README's frame workflow says how each is written).
+   the settings. Float composition textures stay linear on both platforms.
+   Use `Renderer::new_surface` with the actual surface configuration for direct
+   window/canvas presentation; it owns the display transfer. See the package
+   README's frame workflow.
 3. Each frame: `Scene::set_instance` per moving instance (pose, `visible`,
    `capture_visible`), `set_instance_deformation` per deforming one (its
    joint matrices and morph weights), `set_light` per changed light and

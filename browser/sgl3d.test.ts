@@ -13,8 +13,8 @@ import { chromium } from "playwright";
 const HOST = "127.0.0.1";
 const PORT = 8124;
 const DIST = process.env.SGL_BROWSER_PROBE_DIR ?? "target/browser-probe";
-/// The adapter line and the smoke test's four configurations.
-const REPORTS = 5;
+/// Adapter, colour-boundary regression, and four scene configurations.
+const REPORTS = 6;
 
 function servePage() {
   const types: Record<string, string> = {
@@ -46,7 +46,7 @@ test(
       browser = await chromium.launch({ channel: "chromium" });
       const page = await browser.newPage();
       const errors: string[] = [];
-      page.on("pageerror", (error) => errors.push(`page error: ${error}`));
+      page.on("pageerror", (error) => errors.push(`page error: ${error.stack ?? error}`));
       page.on("console", (message) => {
         if (message.type() === "warning") console.log(`console warning: ${message.text()}`);
         if (message.type() === "error") errors.push(`console error: ${message.text()}`);
@@ -55,7 +55,7 @@ test(
       const deadline = Date.now() + 150_000;
       let report: string | null = null;
       while (report === null) {
-        if (Date.now() > deadline) throw new Error("the smoke test never reported");
+        if (Date.now() > deadline) throw new Error(`the smoke test never reported${errors.length ? `:\n${errors.join("\n")}` : ""}`);
         report = await page.evaluate(() => (window as unknown as { __sglReport?: string }).__sglReport ?? null);
         if (report === null) await new Promise((resolve) => setTimeout(resolve, 500));
       }

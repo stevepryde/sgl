@@ -34,7 +34,12 @@ vectors and matrices can cross the UI/3D boundary directly. Use the wgpu
 dependency specified by the [workspace manifest](../Cargo.toml) when sharing
 the game-owned device and queue. All dependency versions live in that manifest;
 package manifests select features. Linear light values and HDR buffers must remain
-linear until final presentation conversion.
+linear until final presentation conversion. `Renderer::new` writes float
+composition textures in display-referred linear sRGB on either platform;
+`Renderer::new_surface` takes the actual surface configuration and capabilities for direct
+window/canvas presentation. Choose `Settings::tone_mapping` independently
+of the quality preset: Khronos PBR Neutral is the default, with ACES Filmic
+and AgX also available.
 
 Load geometry and textures once per scene through `asset::load` or
 `asset::load_slice`. Select named rigid parts with `LoadOptions::nodes`;

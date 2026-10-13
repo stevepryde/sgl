@@ -421,8 +421,15 @@ Stages run in one order, written in one place in `renderer`:
 11. **Motion blur**: the antialiased frame blurred along the surface's
    motion, at the scene size, before bloom, SMAA and tone mapping, as Bevy
    and Wicked Engine run it after TAA.
-12. **Post**: bloom, then tone mapping with the exposure and colour
-   grading, dithered to the output. Where SMAA runs, tone mapping writes the
+12. **Post**: bloom, then the selected tone mapping with exposure and colour
+   grading, dithered to the output. The post stage owns output encoding:
+   floating-point composition textures stay linear on every platform; actual
+   surfaces use their configured transfer and capability-dependent Auto
+   resolution (browser Auto is sRGB; native Auto RGBA16F is linear when
+   supported, else sRGB). Renderer constructors identify texture versus
+   surface once and pass that typed boundary to Post. Wide-gamut and PQ/HLG
+   spaces and linear transfer with an sRGB attachment are refused.
+   Where SMAA runs, tone mapping writes the
    scene size, SMAA antialiases that display colour, and it is resampled to
    the output and dithered, as Godot and Bevy run SMAA after tone mapping
    and before upscaling, so its thresholds see what is displayed. Its colour

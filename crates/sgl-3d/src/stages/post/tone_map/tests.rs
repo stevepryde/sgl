@@ -142,7 +142,7 @@ fn tone_maps_as_filaments_agx_with_each_look_after_the_exposure() {
     };
     let size = [FILAMENT_AGX.len() as u32, 1];
     let inputs = Inputs::new(&device);
-    let mut tone_map = ToneMap::new(&device, &inputs, HDR, size);
+    let mut tone_map = ToneMap::new(&device, &inputs, super::super::Output::texture(HDR), size);
     let output = target(&device, "tone map fixture output", size, HDR);
     let unread_bloom = target(&device, "tone map fixture bloom", [1, 1], HDR);
     for (look_index, look) in LOOKS.into_iter().enumerate() {
@@ -167,6 +167,7 @@ fn tone_maps_as_filaments_agx_with_each_look_after_the_exposure() {
                 &unread_bloom,
                 &exposure,
                 &grading,
+                ToneMapping::Agx,
                 Destination::Output {
                     capture: true,
                     output: &output,
@@ -221,7 +222,7 @@ fn dark_transition_blends_shadows_with_midtones_without_highlights() {
     let texels: Vec<_> = greys.iter().map(|&grey| [grey, grey, grey, 1.]).collect();
     let hdr = hdr_texture(&device, &queue, size, &texels);
     let inputs = Inputs::new(&device);
-    let mut tone_map = ToneMap::new(&device, &inputs, HDR, size);
+    let mut tone_map = ToneMap::new(&device, &inputs, super::super::Output::texture(HDR), size);
     let output = target(&device, "sectional grading output", size, HDR);
     let unread_bloom = target(&device, "sectional grading bloom", [1, 1], HDR);
     let exposure = exposure_texture(&device, &queue, 1.);
@@ -236,6 +237,7 @@ fn dark_transition_blends_shadows_with_midtones_without_highlights() {
             &unread_bloom,
             &exposure,
             grading,
+            ToneMapping::Agx,
             Destination::Output {
                 capture: true,
                 output: &output,
@@ -324,7 +326,12 @@ fn dithers_into(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::Textur
     let (device, queue) = (device.clone(), queue.clone());
     let size = [256, 64];
     let inputs = Inputs::new(&device);
-    let mut tone_map = ToneMap::new(&device, &inputs, format, size);
+    let mut tone_map = ToneMap::new(
+        &device,
+        &inputs,
+        super::super::Output::texture(format),
+        size,
+    );
     let unread_bloom = target(&device, "dither fixture bloom", [1, 1], HDR);
     let exposure = exposure_texture(&device, &queue, 1.);
     // Mid greys spanning about eight codes, so most columns fall between two.
@@ -349,6 +356,7 @@ fn dithers_into(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::Textur
             &unread_bloom,
             &exposure,
             &ColorGrading::default(),
+            ToneMapping::default(),
             Destination::Output {
                 capture,
                 output: &output,
@@ -426,7 +434,7 @@ fn negative_hue_rotations_wrap_like_positive_and_multiple_turns() {
     ];
     let size = [original.len() as u32, 1];
     let inputs = Inputs::new(&device);
-    let mut tone_map = ToneMap::new(&device, &inputs, HDR, size);
+    let mut tone_map = ToneMap::new(&device, &inputs, super::super::Output::texture(HDR), size);
     let output = target(&device, "hue fixture output", size, HDR);
     let unread_bloom = target(&device, "hue fixture bloom", [1, 1], HDR);
     let exposure = exposure_texture(&device, &queue, 1.);
@@ -444,6 +452,7 @@ fn negative_hue_rotations_wrap_like_positive_and_multiple_turns() {
             &unread_bloom,
             &exposure,
             &grading,
+            ToneMapping::default(),
             Destination::Output {
                 capture: true,
                 output: &output,
@@ -473,5 +482,323 @@ fn negative_hue_rotations_wrap_like_positive_and_multiple_turns() {
     assert_matches(tau - 4., &positive, &expected);
     for hue in [-4., -4. - 4. * tau, -4. + 4. * tau] {
         assert_matches(hue, &observe(&original, hue), &positive);
+    }
+}
+
+/// Three.js r185's GLSL ACESFilmicToneMapping and Khronos 180b1a7's original
+/// PBRNeutralToneMapping, compiled unchanged as C++ with vector/matrix
+/// arithmetic adapters (column-major matrices), exposure 1. Inputs are
+/// exactly representable in binary16. Outputs: ACES, then Khronos.
+const REFERENCE_TONE_MAPS: [([f32; 3], [[f32; 3]; 2]); 14] = [
+    ([0., 0., 0.], [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]),
+    (
+        [0.1875, 0.1875, 0.1875],
+        [[0.2241933, 0.2241933, 0.224191], [0.1475, 0.1475, 0.1475]],
+    ),
+    (
+        [1., 1., 1.],
+        [
+            [0.7633975, 0.7633975, 0.7633898],
+            [0.8690909, 0.8690909, 0.8690909],
+        ],
+    ),
+    (
+        [0.0078125, 0.0078125, 0.0078125],
+        [
+            [0.0016362, 0.0016362, 0.0016362],
+            [0.0003815, 0.0003815, 0.0003815],
+        ],
+    ),
+    (
+        [4., 4., 4.],
+        [
+            [0.9522368, 0.9522368, 0.9522272],
+            [0.9832557, 0.9832557, 0.9832557],
+        ],
+    ),
+    (
+        [16., 16., 16.],
+        [[1.0, 1.0, 1.0], [0.9962693, 0.9962693, 0.9962693]],
+    ),
+    (
+        [1., 0., 0.],
+        [
+            [0.9573335, 0.0053237, 0.0071577],
+            [0.88, 0.0155599, 0.0155599],
+        ],
+    ),
+    (
+        [0., 1., 0.],
+        [
+            [0.2933593, 0.7746073, 0.0994339],
+            [0.0155599, 0.88, 0.0155599],
+        ],
+    ),
+    (
+        [0., 0., 1.],
+        [[0.0, 0.0, 0.7728295], [0.0155599, 0.0155599, 0.88]],
+    ),
+    (
+        [0.5, 0.25, 0.0625],
+        [
+            [0.569051, 0.320237, 0.0755992],
+            [0.4619141, 0.2119141, 0.0244141],
+        ],
+    ),
+    (
+        [0.03125, 0.3125, 2.5],
+        [
+            [0.2203957, 0.4095683, 0.9335145],
+            [0.1806332, 0.270622, 0.9705349],
+        ],
+    ),
+    (
+        [8., 3., 0.5],
+        [
+            [1.0, 0.9370266, 0.7615185],
+            [0.9922581, 0.6875009, 0.5351223],
+        ],
+    ),
+    (
+        [0.0625, 0.0625, 0.375],
+        [
+            [0.0455845, 0.0476884, 0.4286713],
+            [0.0244141, 0.0244141, 0.3369141],
+        ],
+    ),
+    (
+        [96., 64., 16.],
+        [[1.0, 1.0, 1.0], [0.9993965, 0.9775342, 0.9447407]],
+    ),
+];
+
+// Defects: wrong default transform, transposed ACES matrix, missing ACES
+// viewing scale, incorrect Khronos highlight knee/desaturation, nonneutral
+// grading, and exposure applied twice or after mapping. Independent upstream
+// GLSL outputs expose those errors; Rust types cannot establish GPU colours.
+#[test]
+fn aces_and_default_khronos_match_original_upstream_glsl() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let size = [REFERENCE_TONE_MAPS.len() as u32, 1];
+    let inputs = Inputs::new(&device);
+    let mut mapper = ToneMap::new(&device, &inputs, super::super::Output::texture(HDR), size);
+    let output = target(&device, "reference tone-map output", size, HDR);
+    let bloom = target(&device, "unused reference bloom", [1, 1], HDR);
+    for (index, mapping) in [ToneMapping::AcesFilmic, ToneMapping::default()]
+        .into_iter()
+        .enumerate()
+    {
+        for (scale, multiplier) in [(1., 1.), (4., 0.25)] {
+            let texels: Vec<_> = REFERENCE_TONE_MAPS
+                .iter()
+                .map(|(v, _)| [v[0] * scale, v[1] * scale, v[2] * scale, 1.])
+                .collect();
+            let hdr = hdr_texture(&device, &queue, size, &texels);
+            let exposure = exposure_texture(&device, &queue, multiplier);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            mapper.encode(
+                &device,
+                &queue,
+                &mut encoder,
+                &inputs,
+                &hdr,
+                &bloom,
+                &exposure,
+                &ColorGrading::default(),
+                mapping,
+                Destination::Output {
+                    capture: true,
+                    output: &output,
+                },
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            let actual = read(&device, &queue, mapper.tone_mapped().texture(), 8);
+            for (pixel, (input, expected)) in REFERENCE_TONE_MAPS.iter().enumerate() {
+                for channel in 0..3 {
+                    let value = half(&actual[pixel * 8 + channel * 2..]);
+                    assert!(
+                        (value - expected[index][channel]).abs() <= 1.5e-3,
+                        "{mapping:?} {input:?} x{scale}, exposure {multiplier}: channel {channel} {value}, upstream {}",
+                        expected[index][channel]
+                    );
+                }
+            }
+        }
+    }
+}
+
+// Defects: browser offscreen floats encoded as canvas pixels (double transfer
+// during composition), float canvas outputs missing transfer, or explicit sRGB
+// versus linear surface spaces ignored. Independent IEC 61966-2-1 encoding of
+// known display-linear patches and the GPU sRGB attachment are the oracle.
+#[test]
+fn float_composition_and_surface_outputs_apply_one_display_transfer() {
+    use super::super::Output;
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let patches = [
+        [0., 0., 0., 1.],
+        [0.1875, 0.1875, 0.1875, 1.],
+        [1., 1., 1., 1.],
+        [0.5, 0.125, 0.03125, 1.],
+        [0.03125, 0.5, 0.125, 1.],
+        [0.125, 0.03125, 0.5, 1.],
+    ];
+    let size = [patches.len() as u32, 1];
+    let inputs = Inputs::new(&device);
+    let bloom = target(&device, "unused transfer bloom", [1, 1], HDR);
+    let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label:Some("composition samples unchanged"),
+        source:wgpu::ShaderSource::Wgsl((crate::shading::compose(&[&inputs::INPUTS])+
+            "\n@fragment fn composite(i:Output)->@location(0) vec4<f32> {return textureLoad(scene,vec2<i32>(i.position.xy),0);}").into()),
+    });
+    let surface = |space| wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: HDR,
+        color_space: space,
+        width: size[0],
+        height: size[1],
+        present_mode: wgpu::PresentMode::Fifo,
+        desired_maximum_frame_latency: 2,
+        alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+        view_formats: vec![],
+    };
+    let capabilities = |spaces| wgpu::SurfaceCapabilities {
+        formats: vec![HDR],
+        format_capabilities: vec![wgpu::SurfaceFormatCapabilities {
+            format: HDR,
+            color_spaces: spaces,
+        }],
+        present_modes: vec![wgpu::PresentMode::Fifo],
+        alpha_modes: vec![wgpu::CompositeAlphaMode::Opaque],
+        usages: wgpu::TextureUsages::RENDER_ATTACHMENT,
+    };
+    let linear_caps = capabilities(
+        wgpu::SurfaceColorSpaces::SRGB | wgpu::SurfaceColorSpaces::EXTENDED_SRGB_LINEAR,
+    );
+    let srgb_caps = capabilities(wgpu::SurfaceColorSpaces::SRGB);
+    // The sink's format follows the compositor's documented transfer, never
+    // the encoding flag returned by the implementation under test.
+    for (name, boundary, sink_format) in [
+        (
+            "float texture",
+            Output::texture(HDR),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        ),
+        (
+            "native Auto float",
+            Output::surface(
+                &surface(wgpu::SurfaceColorSpace::Auto),
+                &linear_caps,
+                wgpu::Backend::Metal,
+            )
+            .unwrap(),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        ),
+        (
+            "native Auto float sRGB fallback",
+            Output::surface(
+                &surface(wgpu::SurfaceColorSpace::Auto),
+                &srgb_caps,
+                wgpu::Backend::Vulkan,
+            )
+            .unwrap(),
+            wgpu::TextureFormat::Rgba8Unorm,
+        ),
+        (
+            "browser Auto float",
+            Output::surface(
+                &surface(wgpu::SurfaceColorSpace::Auto),
+                &linear_caps,
+                wgpu::Backend::BrowserWebGpu,
+            )
+            .unwrap(),
+            wgpu::TextureFormat::Rgba8Unorm,
+        ),
+        (
+            "explicit sRGB float",
+            Output::surface(
+                &surface(wgpu::SurfaceColorSpace::Srgb),
+                &linear_caps,
+                wgpu::Backend::Metal,
+            )
+            .unwrap(),
+            wgpu::TextureFormat::Rgba8Unorm,
+        ),
+        (
+            "explicit extended sRGB",
+            Output::surface(
+                &surface(wgpu::SurfaceColorSpace::ExtendedSrgb),
+                &linear_caps,
+                wgpu::Backend::BrowserWebGpu,
+            )
+            .unwrap(),
+            wgpu::TextureFormat::Rgba8Unorm,
+        ),
+        (
+            "explicit linear float",
+            Output::surface(
+                &surface(wgpu::SurfaceColorSpace::ExtendedSrgbLinear),
+                &linear_caps,
+                wgpu::Backend::Metal,
+            )
+            .unwrap(),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        ),
+    ] {
+        let mapper = ToneMap::new(&device, &inputs, boundary, size);
+        queue.write_texture(
+            mapper.tone_mapped().texture().as_image_copy(),
+            &patches
+                .iter()
+                .flat_map(|p| {
+                    p.iter()
+                        .flat_map(|v| crate::test_support::to_half(*v).to_le_bytes())
+                })
+                .collect::<Vec<_>>(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(size[0] * 8),
+                rows_per_image: Some(1),
+            },
+            mapper.tone_mapped().texture().size(),
+        );
+        let intermediate = target(&device, name, size, HDR);
+        let sink = target(&device, "composition surface sink", size, sink_format);
+        let composite = pipeline(
+            &device,
+            &[Some(inputs.layout())],
+            &shader,
+            "composite",
+            &[sink_format],
+            (None, &[]),
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        mapper.present_output(&device, &mut encoder, &inputs, &bloom, &intermediate, None);
+        let group = inputs.group(&device, &intermediate, &bloom);
+        draw(
+            &mut encoder,
+            &composite,
+            &group,
+            &sink,
+            "float composed to display",
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        let actual = read(&device, &queue, sink.texture(), 4);
+        for (pixel, patch) in patches.iter().enumerate() {
+            for channel in 0..3 {
+                let expected = srgb_code(f64::from(patch[channel]));
+                assert!(
+                    (f64::from(actual[pixel * 4 + channel]) - expected).abs() <= 1.5,
+                    "{name}: patch {patch:?} channel {channel}: code {}, IEC sRGB {expected}",
+                    actual[pixel * 4 + channel]
+                );
+            }
+        }
     }
 }

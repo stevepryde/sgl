@@ -42,6 +42,7 @@ pub(super) fn look(exposure: &wgpu::TextureView) -> Look<'_> {
         stops: 0.,
         bloom: &BLOOM,
         grading: &GRADING,
+        tone_mapping: crate::settings::ToneMapping::default(),
     }
 }
 
@@ -76,7 +77,7 @@ fn antialiasing_off_preserves_captured_pixels() {
             let mut post = Post::new(
                 &device,
                 &queue,
-                format,
+                Output::texture(format),
                 sizes([80, 64]),
                 true,
                 SmaaQuality::default(),
@@ -185,7 +186,7 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
         let mut post = Post::new(
             &device,
             &queue,
-            HDR,
+            Output::texture(HDR),
             sizes([64, 64]),
             true,
             SmaaQuality::default(),
@@ -333,7 +334,15 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
         scene: scene_size,
         output: [72, 60],
     };
-    let mut post = Post::new(&device, &queue, HDR, sizes, false, SmaaQuality::Medium).unwrap();
+    let mut post = Post::new(
+        &device,
+        &queue,
+        Output::texture(HDR),
+        sizes,
+        false,
+        SmaaQuality::Medium,
+    )
+    .unwrap();
     let output = target(&device, "SMAA exposure result", sizes.output, HDR);
     // A dark field and a bright one across a shallow diagonal: 0.05 and 0.8
     // differ by under SMAA's 0.1 threshold once divided by 16.

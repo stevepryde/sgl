@@ -986,6 +986,208 @@ async fn render(
     })
 }
 
+// Exercise the public constructors on real browser WebGPU. Defects: float
+// textures encoded as canvases, actual canvas transfer omitted, or changing
+// Settings::tone_mapping not reaching the GPU. The oracle is independently
+// evaluated upstream tone-map output plus the IEC sRGB transfer, observed
+// after the game samples the float target into its presentation attachment.
+async fn color_outputs(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), String> {
+    let size = [16, 16];
+    let output = |format| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("colour boundary fixture"),
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    };
+    let float = output(wgpu::TextureFormat::Rgba16Float);
+    let float_view = float.create_view(&Default::default());
+    let config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: float.format(),
+        color_space: wgpu::SurfaceColorSpace::Auto,
+        width: size[0],
+        height: size[1],
+        present_mode: wgpu::PresentMode::Fifo,
+        desired_maximum_frame_latency: 2,
+        alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+        view_formats: vec![],
+    };
+    // These fixture capabilities describe the browser's sRGB Auto contract.
+    // This exercises equivalent output configuration on WebGPU, not a DOM canvas.
+    let capabilities = wgpu::SurfaceCapabilities {
+        formats: vec![float.format()],
+        format_capabilities: vec![wgpu::SurfaceFormatCapabilities {
+            format: float.format(),
+            color_spaces: wgpu::SurfaceColorSpaces::SRGB,
+        }],
+        present_modes: vec![wgpu::PresentMode::Fifo],
+        alpha_modes: vec![wgpu::CompositeAlphaMode::Opaque],
+        usages: wgpu::TextureUsages::RENDER_ATTACHMENT,
+    };
+    let mut settings = Settings {
+        preset: RenderPreset::Low,
+        antialiasing: Antialiasing::Off,
+        ..Default::default()
+    };
+    // Keep retained GPU owners on the heap: this async fixture otherwise
+    // exhausts the debug WASM stack during the nested renderer constructor.
+    let mut texture_renderer = Box::new(
+        Renderer::new(device, queue, float.format(), size, 1., &settings)
+            .map_err(|e| e.to_string())?,
+    );
+    let mut surface_renderer = Box::new(
+        Renderer::new_surface(device, queue, &config, &capabilities, 1., &settings)
+            .map_err(|e| e.to_string())?,
+    );
+    let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor { label:Some("game composition fixture"),source:wgpu::ShaderSource::Wgsl("
+        @group(0) @binding(0) var source:texture_2d<f32>;
+        @vertex fn vs(@builtin(vertex_index) id:u32)->@builtin(position) vec4<f32> {
+          var p=vec2(-1.,-1.); if id==1u {p=vec2(3.,-1.);} if id==2u {p=vec2(-1.,3.);} return vec4(p,0.,1.);
+        }
+        @fragment fn fs(@builtin(position) p:vec4<f32>)->@location(0) vec4<f32> {return textureLoad(source,vec2<i32>(p.xy),0);}
+    ".into()) });
+    let mut scene = Box::new(Scene::new(device, queue));
+    let mut frame = FrameInput::new(camera());
+    // Original Three.js r185, Khronos 180b1a7 and Filament ef1a133 results
+    // respectively for exact binary16 grey 0.1875 and linear unit red.
+    for (mapper, expected) in [
+        (
+            sgl_3d::ToneMapping::default(),
+            [[0.1475; 3], [0.88, 0.0155599, 0.0155599]],
+        ),
+        (
+            sgl_3d::ToneMapping::AcesFilmic,
+            [
+                [0.2241933, 0.2241933, 0.2241910],
+                [0.9573335, 0.0053237, 0.0071577],
+            ],
+        ),
+        (
+            sgl_3d::ToneMapping::Agx,
+            [
+                [0.221852, 0.221866, 0.221870],
+                [0.716378, 0.107100, 0.067093],
+            ],
+        ),
+    ] {
+        settings.tone_mapping = mapper;
+        for (patch, expected) in [[0.1875; 3], [1., 0., 0.]].into_iter().zip(expected) {
+            frame.backdrop = sgl_3d::Backdrop::Color(patch);
+            for (name, renderer, format) in [
+                (
+                    "offscreen float",
+                    texture_renderer.as_mut(),
+                    wgpu::TextureFormat::Rgba8UnormSrgb,
+                ),
+                (
+                    "browser Auto float surface",
+                    surface_renderer.as_mut(),
+                    wgpu::TextureFormat::Rgba8Unorm,
+                ),
+            ] {
+                let sink = output(format);
+                let sink_view = sink.create_view(&Default::default());
+                let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("game composition fixture"),
+                    layout: None,
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: Default::default(),
+                    depth_stencil: None,
+                    multisample: Default::default(),
+                    multiview_mask: None,
+                    cache: None,
+                });
+                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("game float input"),
+                    layout: &pipeline.get_bind_group_layout(0),
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&float_view),
+                    }],
+                });
+                renderer.resize(device, size, 1., &settings);
+                let mut encoder = device.create_command_encoder(&Default::default());
+                renderer.render(
+                    device,
+                    queue,
+                    &mut encoder,
+                    &mut scene,
+                    &frame,
+                    &settings,
+                    &float_view,
+                    None,
+                );
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("game float composition"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &sink_view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        ..Default::default()
+                    });
+                    pass.set_pipeline(&pipeline);
+                    pass.set_bind_group(0, &group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
+                queue.submit([encoder.finish()]);
+                renderer.finish_frame(&mut scene);
+                let pixels = read_pixels(device, queue, &sink).await?;
+                for pixel in pixels.chunks_exact(4) {
+                    for channel in 0..3 {
+                        let linear: f64 = expected[channel];
+                        let encoded = if linear <= 0.0031308 {
+                            12.92 * linear
+                        } else {
+                            1.055 * linear.powf(1. / 2.4) - 0.055
+                        };
+                        if (f64::from(pixel[channel]) - 255. * encoded).abs() > 2. {
+                            return Err(format!(
+                                "{name} {mapper:?} {patch:?}: channel {channel}, code {}, expected {}",
+                                pixel[channel],
+                                255. * encoded
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[wasm_bindgen]
 pub async fn run() -> String {
     console_error_panic_hook::set_once();
@@ -1030,6 +1232,11 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         let uncaptured = uncaptured.clone();
         move |error| uncaptured.lock().unwrap().push(error.to_string())
     }));
+    color_outputs(&device, &queue).await?;
+    let _ = writeln!(
+        report,
+        "ok float composition and canvas output configuration: all tone mappers"
+    );
     let mut timing = GpuTiming::new(&device, &queue);
     let mut scene = Scene::new(&device, &queue);
     let content = add_content(&device, &queue, &mut scene)?;

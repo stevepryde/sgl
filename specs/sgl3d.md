@@ -131,7 +131,13 @@ settings SGL3D has today.
    spot cone is valid content and releases its shadow slots until its projection
    is finite.
    Colour inputs state their linear/sRGB interpretation; HDR lighting stays linear
-   until presentation.
+   until presentation. `Renderer::new` writes floating-point composition
+   textures in display-referred linear sRGB on both platforms.
+   `Renderer::new_surface` takes the actual surface configuration and
+   capabilities and owns its display transfer; games never compensate with gamma in materials.
+   The tone mapper is an explicit artistic choice in `Settings::tone_mapping`:
+   Khronos PBR Neutral by default, Three.js ACES Filmic, or Filament AgX with its look.
+   Grading adjustments remain neutral by default.
    Games supply final presentation poses and decide when an instance exists; the
    renderer never repeats gameplay interpolation or alters simulation state.
    Instance transforms, including nonuniform and mirrored scale, keep normals and
@@ -161,7 +167,8 @@ settings SGL3D has today.
    choices and report the effective result separately. A game controls what
    each image-changing feature does and how much: whether the feature is on,
    and its level: a quality tier, a choice between implementations with a real
-   trade-off (AR-3, RD-3) such as the antialiasing method, a strength such as
+   trade-off (AR-3, RD-3) such as the antialiasing method or the standard tone-mapping preset
+   (`KhronosPbrNeutral`, `AcesFilmic`, `Agx`), a strength such as
    bloom intensity or a light's share of the fog, or a reach in metres such as
    the shadow distance. The authored look and content (S3D-2, S3D-5) stay the
    game's. That is a `Settings` field when it selects which mode or

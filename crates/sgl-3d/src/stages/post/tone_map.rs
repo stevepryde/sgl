@@ -1,5 +1,5 @@
 //! Tone mapping and presentation (`tone_map.wgsl`): the frame's exposure,
-//! Bevy's colour grading and Filament's AgX with its look, from the HDR
+//! Bevy's colour grading and the selected tone mapper, from the HDR
 //! scene to the output, with Bevy's deband dither. Directly, or, when
 //! diagnostics capture it, into the tone-mapped target at the output size,
 //! undithered, which is then copied to the output texel for texel and
@@ -8,11 +8,12 @@
 //! then presents the same two ways.
 use super::inputs::{self, Inputs, draw, pipeline, sampled, uniform_entry};
 use crate::frame_input::{AgxLook, ColorGrading};
+use crate::settings::ToneMapping;
 use crate::shading::gbuffer::COLOR as HDR;
 use crate::view::targets::target;
 use glam::{Mat3, Vec2, Vec3, vec2, vec3};
 
-/// Exposure, grading, AgX and the tone-mapped target's copy.
+/// Exposure, grading, tone mapping and the tone-mapped target's copy.
 pub(crate) static TONE_MAP: crate::shading::Module = crate::shading::Module {
     name: "tone_map",
     source: include_str!("tone_map.wgsl"),
@@ -49,8 +50,8 @@ pub(crate) struct ColorGradingUniform {
     midtone_range: [f32; 2],
     hue: f32,
     post_saturation: f32,
-    /// Filament's `AgxLook` value.
-    agx_look: u32,
+    /// Khronos Neutral, ACES Filmic, or an AgX look.
+    tone_mapping: u32,
     _padding5: [u32; 3],
 }
 
@@ -72,8 +73,8 @@ const D65_LMS: Vec3 = vec3(0.975538, 1.01648, 1.08475);
 impl ColorGradingUniform {
     /// Bevy's `From<ColorGrading> for ColorGradingUniform`: the white
     /// balance as one matrix (sRGB to LMS, the white point scaled to D65's,
-    /// back to sRGB) and the sections' values by section; and the AgX look.
-    pub fn new(grading: &ColorGrading) -> Self {
+    /// back to sRGB) and the sections' values by section; and the tone mapper.
+    pub fn new(grading: &ColorGrading, tone_mapping: ToneMapping) -> Self {
         let global = &grading.global;
         let white_point_xy = D65_XY + vec2(-global.temperature, global.tint);
         // The white point from CIE 1931 xy (Y = 1) to LMS by CAM16.
@@ -96,11 +97,15 @@ impl ColorGradingUniform {
             midtone_range: [global.midtones_start, global.midtones_end],
             hue: global.hue,
             post_saturation: global.post_saturation,
-            // Filament's `AgxLook` values.
-            agx_look: match grading.agx_look {
-                AgxLook::None => 0,
-                AgxLook::Punchy => 1,
-                AgxLook::Golden => 2,
+            // Values shared with tone_map.wgsl.
+            tone_mapping: match tone_mapping {
+                ToneMapping::KhronosPbrNeutral => 0,
+                ToneMapping::AcesFilmic => 1,
+                ToneMapping::Agx => match grading.agx_look {
+                    AgxLook::None => 2,
+                    AgxLook::Punchy => 3,
+                    AgxLook::Golden => 4,
+                },
             },
             ..Default::default()
         }
@@ -125,26 +130,9 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
             midtone_range,
             hue,
             post_saturation,
-            agx_look,
+            tone_mapping,
         ]
     )]
-}
-
-/// Whether the output's colour is written sRGB-encoded: the attachment
-/// encodes an sRGB format, and natively a float format holds linear light,
-/// as a native float surface composites it (wgpu's `SurfaceColorSpace::Auto`
-/// resolves extended linear sRGB there); any other format, and a float one
-/// in the browser, whose canvas keeps its sRGB colour space for every
-/// format, stores what is written as sRGB-encoded, so tone mapping encodes
-/// it, as sgl-2d's blit does for a browser canvas's `Bgra8Unorm`.
-pub(crate) fn encodes_srgb(format: wgpu::TextureFormat) -> bool {
-    let float = matches!(
-        format,
-        wgpu::TextureFormat::Rgba16Float
-            | wgpu::TextureFormat::Rgba32Float
-            | wgpu::TextureFormat::Rg11b10Ufloat
-    );
-    !format.is_srgb() && (cfg!(target_arch = "wasm32") || !float)
 }
 
 /// Where tone mapping writes.
@@ -186,7 +174,7 @@ impl ToneMap {
     pub fn new(
         device: &wgpu::Device,
         inputs: &Inputs,
-        format: wgpu::TextureFormat,
+        destination: super::Output,
         output_size: [u32; 2],
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -199,9 +187,10 @@ impl ToneMap {
         });
         let layouts = [Some(inputs.layout()), Some(&look_layout)];
         let copy = [Some(inputs.layout())];
+        let format = destination.format;
         let output = [(
             "OUTPUT_ENCODES_SRGB",
-            f64::from(u8::from(encodes_srgb(format))),
+            f64::from(u8::from(destination.encodes_srgb)),
         )];
         Self {
             present: pipeline(
@@ -312,6 +301,7 @@ impl ToneMap {
         bloom: &wgpu::TextureView,
         exposure: &wgpu::TextureView,
         grading: &ColorGrading,
+        tone_mapping: ToneMapping,
         destination: Destination<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
@@ -319,7 +309,7 @@ impl ToneMap {
             queue,
             &self.grading,
             0,
-            bytemuck::bytes_of(&ColorGradingUniform::new(grading)),
+            bytemuck::bytes_of(&ColorGradingUniform::new(grading, tone_mapping)),
         );
         let look = self.look(device, exposure);
         let group = inputs.group(device, hdr, bloom);

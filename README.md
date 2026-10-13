@@ -31,8 +31,8 @@ library boundary to its governing contract.
   mesh LOD, decals, clustered lights, cascaded and local shadows, baked diffuse
   lighting, reflection probes, and screen-space and software-ray reflections.
 - **Image quality:** TAA, SMAA, native FSR2 upscaling, XeGTAO ambient occlusion,
-  volumetric fog, motion blur, bloom, automatic exposure, AgX tone mapping,
-  colour grading, and per-pass GPU timings.
+  volumetric fog, motion blur, bloom, automatic exposure, Khronos PBR Neutral,
+  ACES Filmic and AgX tone mapping, colour grading, and per-pass GPU timings.
 - **2D and UI:** sprite batches, logical canvases, texture atlases, Aseprite
   sheets, glyph rendering, lighting, overlays, and immediate-mode widgets for
   game HUDs, menus, and tools.

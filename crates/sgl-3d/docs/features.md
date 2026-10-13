@@ -400,9 +400,9 @@ Environment and probe specular always apply. On top of them:
 - **Colour grading** (`FrameInput::color_grading`): white balance, hue, and
   saturation, contrast, gamma, gain and lift for shadows, midtones and
   highlights; adjacent sections crossfade at each end of the midtone range,
-  so highlights do not affect the shadows-to-midtones transition. Then AgX
-  tone mapping with Filament's look (`AgxLook`: none,
-  punchy or golden) and a post-saturation. The output is always dithered
+  so highlights do not affect the shadows-to-midtones transition. Then
+  `Settings::tone_mapping`: Khronos PBR Neutral by default, ACES Filmic or
+  AgX (with `AgxLook`: none, punchy or golden), and post-saturation. The output is always dithered
   against 8-bit banding.
 - **Volumetric fog** (`FrameInput::fog`, `Fog`): Godot's froxel fog, while
   `FrameInput::atmosphere` is on (off by default, as Godot's fog). The

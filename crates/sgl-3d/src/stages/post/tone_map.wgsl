@@ -1,5 +1,5 @@
-// Tone mapping: the frame's exposure, Bevy's colour grading and Filament's
-// AgX, from the HDR scene to display-referred linear colour, dithered as it
+// Tone mapping: the frame's exposure, Bevy's colour grading and the selected
+// display transform, from the HDR scene to display-referred linear colour, dithered as it
 // is written to the output. Where SMAA runs, the scene is tone mapped at the
 // scene size first, SMAA antialiases that, and the result is resampled to
 // the output and dithered, as Godot and Bevy run SMAA after tone mapping
@@ -44,8 +44,8 @@ struct ColorGrading {
  midtone_range:vec2<f32>,
  hue:f32,
  post_saturation:f32,
- // AGX_LOOK_NONE, AGX_LOOK_PUNCHY or AGX_LOOK_GOLDEN.
- agx_look:u32,
+ // TONE_KHRONOS_NEUTRAL, TONE_ACES_FILMIC or an AGX_LOOK value.
+ tone_mapping:u32,
 }
 // The frame's exposure multiplier (`stages::exposure`).
 @group(1) @binding(0) var exposure:texture_2d<f32>;
@@ -156,13 +156,15 @@ fn agx_default_contrast_approx(x:vec3<f32>)->vec3<f32> {
  return -17.86*x6*x+78.01*x6-126.7*x4*x+92.06*x4-28.72*x2*x+4.361*x2-.1718*x+.002857;
 }
 // Filament's AgxLook values.
-const AGX_LOOK_NONE:u32=0u;
-const AGX_LOOK_PUNCHY:u32=1u;
-const AGX_LOOK_GOLDEN:u32=2u;
+const TONE_KHRONOS_NEUTRAL:u32=0u;
+const TONE_ACES_FILMIC:u32=1u;
+const AGX_LOOK_NONE:u32=2u;
+const AGX_LOOK_PUNCHY:u32=3u;
+const AGX_LOOK_GOLDEN:u32=4u;
 // Filament's agxLook of the sigmoid's output: an ASC CDL slope and power,
 // then saturation about Rec. 709 luminance.
 fn agx_look(in:vec3<f32>)->vec3<f32> {
- let look=grading.agx_look;
+ let look=grading.tone_mapping;
  if look==AGX_LOOK_NONE {
   return in;
  }
@@ -197,6 +199,43 @@ fn agx(color:vec3<f32>)->vec3<f32> {
  // Linearize.
  return pow(max(vec3(0.),v),vec3(2.2));
 }
+// KhronosGroup/ToneMapping 180b1a7, PBR_Neutral/pbrNeutral.glsl,
+// PBRNeutralToneMapping; Apache-2.0, LICENSE-khronos-tone-mapping.txt.
+// Translated to WGSL; exposure is applied once by tone_map before grading.
+fn khronos_pbr_neutral(input:vec3<f32>)->vec3<f32> {
+ const START_COMPRESSION:f32=.8-.04;
+ const DESATURATION:f32=.15;
+ let x=min(input.r,min(input.g,input.b));
+ var offset=.04;
+ if x<.08 { offset=x-6.25*x*x; }
+ var color=input-vec3(offset);
+ let peak=max(color.r,max(color.g,color.b));
+ if peak<START_COMPRESSION { return color; }
+ let d=1.-START_COMPRESSION;
+ let new_peak=1.-d*d/(peak+d-START_COMPRESSION);
+ color*=new_peak/peak;
+ let g=1.-1./(DESATURATION*(peak-new_peak)+1.);
+ return mix(color,vec3(new_peak),g);
+}
+// Three.js r185 (2431a09), ACESFilmicToneMapping / RRTAndODTFit,
+// src/renderers/shaders/ShaderChunk/tonemapping_pars_fragment.glsl.js;
+// MIT, smaa/LICENSE-three.txt. Stephen Hill's ACES fit follows
+// selfshadow/ltc_code; LICENSE-ltc.txt. Translated to WGSL; exposure remains
+// the frame's one multiplier. The intrinsic Three.js 1/0.6 scale is retained.
+fn aces_filmic(color:vec3<f32>)->vec3<f32> {
+ let input_matrix=mat3x3<f32>(
+  vec3(.59719,.07600,.02840),
+  vec3(.35458,.90834,.13383),
+  vec3(.04823,.01566,.83777));
+ let output_matrix=mat3x3<f32>(
+  vec3(1.60475,-.10208,-.00327),
+  vec3(-.53108,1.10813,-.07276),
+  vec3(-.07367,-.00605,1.07602));
+ let v=input_matrix*(color/.6);
+ let a=v*(v+.0245786)-.000090537;
+ let b=v*(.983729*v+.4329510)+.238081;
+ return clamp(output_matrix*(a/b),vec3(0.),vec3(1.));
+}
 // The exposed, graded and tone-mapped colour of linear HDR `hdr`.
 fn tone_map(hdr:vec3<f32>)->vec3<f32> {
  var color=max(hdr,vec3(0.))*textureLoad(exposure,vec2(0),0).r;
@@ -211,7 +250,13 @@ fn tone_map(hdr:vec3<f32>)->vec3<f32> {
  }
  color=max(grading.balance*color,vec3(0.));
  color=sectional_color_grading(color);
- color=REC2020_TO_SRGB*agx(SRGB_TO_REC2020*color);
+ if grading.tone_mapping==TONE_KHRONOS_NEUTRAL {
+  color=khronos_pbr_neutral(color);
+ } else if grading.tone_mapping==TONE_ACES_FILMIC {
+  color=aces_filmic(color);
+ } else {
+  color=REC2020_TO_SRGB*agx(SRGB_TO_REC2020*color);
+ }
  color=saturation(color,grading.post_saturation);
  return clamp(color,vec3(0.),vec3(1.));
 }
@@ -223,7 +268,7 @@ fn screen_space_dither(frag_coord:vec2<f32>)->vec3<f32> {
  return (dither-.5)/255.;
 }
 // Whether the output stores what is written, so its colour is written
-// sRGB-encoded (tone_map::encodes_srgb): a pipeline constant of the
+// sRGB-encoded (post::Output): a pipeline constant of the
 // pipelines that write the output.
 override OUTPUT_ENCODES_SRGB:bool=false;
 // Display-referred `color` as the output takes it, dithered at the output

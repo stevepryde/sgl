@@ -30,6 +30,7 @@ replace every choice with a complete bundle.
 | SMAA quality | `Settings::smaa_quality` | `Medium`, `Low`, `High`, `Ultra` | | SMAA 2.8's presets: Low and Medium search up to 4 and 8 steps of two pixels each way along an edge; High up to 16 and also smooths diagonal lines and keeps sharp corners; Ultra up to 32 and finds fainter edges. Higher costs more. |
 | Anisotropic filtering | `Settings::anisotropic_filtering` | `X8`, `Off`, `X2`, `X4`, `X16` | | The most samples material textures take where a surface is seen at a grazing angle: sharper floors and walls at a distance, at more texture bandwidth. Off filters trilinearly. |
 | Scene resolution | `Settings::scene_resolution` | `Preset`, `Hd`, `FullHd`, `Full`, `ThreeQuarter`, `Half` | Low: one pixel per logical pixel. High: up to 1.75, never above the output | `Hd` and `FullHd` fit within 1280×720 and 1920×1080. Pass the window's scale factor to `Renderer::new` and `resize`. The game's UI keeps the output size. |
+| Tone mapping | `Settings::tone_mapping` | `KhronosPbrNeutral` (default), `AcesFilmic`, `Agx` | Independent of quality preset | Standard display transforms; neutral grading by default. AgX alone uses `ColorGrading::agx_look`. |
 | Bloom | `Settings::bloom` | `Preset`, `Off`, `On` | Low: Off. High: On | |
 | Shadow quality | `Settings::shadow_quality` | `High`, `Low` | | The shadow maps' sizes and the camera's shadow filter, as Godot's desktop and mobile defaults. High: 2048-texel cascades, a 4096-texel local-light atlas, and soft filtering (turned each frame under TAA or FSR2). Low: 1024-texel cascades, a 2048-texel atlas, and one hard 2×2 tap. A change reallocates the maps on the next frame, which draws every shadow again. |
 | Ambient occlusion | `Settings::ambient_occlusion` | `Off`, `Low`, `Medium`, `High`, `Ultra` | | 4, 8, 18 and 54 samples per pixel at scene resolution. Needs a `perspective` camera. |
@@ -76,7 +77,8 @@ is done (its algorithm and internal parameters) is SGL3D's.
   blurs (0.5 by default).
 - `color_grading`: white balance, hue, post-saturation, the midtone range,
   each section's saturation, contrast, gamma, gain and lift, and the AgX
-  look (`AgxLook::None` by default, `Punchy` or `Golden`). Hue is in radians,
+  look (`AgxLook::None` by default, `Punchy` or `Golden`), applied only
+  when `Settings::tone_mapping` is `Agx`. Hue is in radians,
   wrapping either direction every 2π (0 by default).
 - `ambient_occlusion_radius`: occlusion reach in metres (0.5 by default),
   clamped to 0.01–10000; `Settings::ambient_occlusion` turns AO off.
