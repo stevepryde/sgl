@@ -69,9 +69,10 @@ changes to game code; we prioritize improving the library over preserving old
 APIs. Every consumer-facing update carries [changelog and migration notes](CHANGELOG.md)
 that agents can follow.
 
-Depend on SGL with ordinary semver requirements such as `sgl-3d = "0.4.0"`
-and commit `Cargo.lock` (or reference a full Git commit `rev`). A new minor
-version may break APIs during `0.x`, so move to one deliberately using the
+Depend on SGL with ordinary semver requirements such as `sgl-3d = "0.4.1"`
+and commit `Cargo.lock` (or reference a full Git commit `rev`). Any release
+may require game-code changes, including a patch release whose fixes change
+an API, so update deliberately using the
 [agent update workflow](docs/README.md#updating-a-game).
 
 ## Try it
