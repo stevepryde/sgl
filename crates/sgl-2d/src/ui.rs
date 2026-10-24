@@ -477,6 +477,14 @@ impl UiFrame<'_> {
         self.text.measure(text, px)
     }
 
+    /// The clip rect currently applied to widget draws and hit tests
+    /// (`None` = unclipped), so a widget that clips its own text can narrow
+    /// it further and restore it afterwards instead of discarding an
+    /// enclosing scroll area's clip.
+    pub fn clip(&self) -> Option<Rect> {
+        self.clip
+    }
+
     /// Set the clip rect applied to subsequent widget draws and hit tests
     /// (`None` = unclipped). Scroll areas manage this automatically.
     pub fn set_clip(&mut self, clip: Option<Rect>) {
