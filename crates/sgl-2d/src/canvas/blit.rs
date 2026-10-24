@@ -735,6 +735,14 @@ impl Renderer {
         self.ui_scale = scale.max(0.25);
     }
 
+    /// Sample sprite pages with linear filtering instead of the default
+    /// nearest. Painted art and UI drawn at a window-dependent scale look
+    /// smooth; pixel-art scenes keep the default. Takes effect immediately
+    /// for every uploaded page.
+    pub fn set_sprite_filter(&mut self, gpu: &Gpu, linear: bool) {
+        self.sprites.set_filter(&gpu.device, linear);
+    }
+
     /// The screen channel's layout size in UI points: the size requested of
     /// [`set_target_size`](Self::set_target_size) over the UI scale, so a
     /// window's logical size even when the target is scaled down. Lay the

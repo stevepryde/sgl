@@ -253,6 +253,25 @@ impl TextureError {
 }
 
 /// The instanced sprite pipelines + texture pages + instance buffer.
+fn sprite_sampler(device: &wgpu::Device, linear: bool) -> wgpu::Sampler {
+    let filter = if linear {
+        wgpu::FilterMode::Linear
+    } else {
+        wgpu::FilterMode::Nearest
+    };
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some(if linear {
+            "sprite sampler (linear)"
+        } else {
+            "sprite sampler (nearest)"
+        }),
+        mag_filter: filter,
+        min_filter: filter,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    })
+}
+
 pub struct SpritePass {
     /// World-channel MRT pipeline (albedo + normal + mask).
     scene_pipeline: wgpu::RenderPipeline,
@@ -378,14 +397,9 @@ impl SpritePass {
             ],
         });
 
-        // Nearest sampling for crisp pixel art (AR-6, PR: no mipmaps).
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("sprite sampler (nearest)"),
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
+        // Nearest sampling for crisp pixel art (AR-6, PR: no mipmaps);
+        // `set_filter` switches to linear for scaled, painted art.
+        let sampler = sprite_sampler(device, false);
 
         // Shared dummy normal (flat +Z) for pages without normal maps; only
         // ever sampled with a zero has-normal flag.
@@ -755,6 +769,27 @@ impl SpritePass {
             .expect("entry checked above")
             .normal = Some(normal_handle);
         Ok(())
+    }
+
+    /// Choose how pages are sampled when a sprite is drawn larger or smaller
+    /// than its texels: nearest (the default, crisp pixel art) or linear
+    /// (smooth, for painted art and UI that scales with the window). Rebuilds
+    /// every page's bind group; uploaded textures are untouched.
+    pub fn set_filter(&mut self, device: &wgpu::Device, linear: bool) {
+        self.sampler = sprite_sampler(device, linear);
+        for i in 0..self.pages.len() {
+            let normal_view = self.pages[i]
+                .normal
+                .as_ref()
+                .map(|n| n.create_view(&wgpu::TextureViewDescriptor::default()));
+            let bind_group = self.page_bind_group(
+                device,
+                &self.pages[i].view,
+                normal_view.as_ref().unwrap_or(&self.default_normal_view),
+                "sprite page (refiltered)",
+            );
+            self.pages[i].bind_group = bind_group;
+        }
     }
 
     /// Create the page's companion normal texture (zero-initialized) and
