@@ -13,7 +13,9 @@
 //! Flat-quad overlay primitives — lines, rect outlines, fills and circles on
 //! the shared 1×1 white texture ([`crate::assets::white_texture`], uploaded by
 //! [`Renderer::white_texture`]) — live in [`overlay`], for debug draws, editor
-//! gizmos and screen fades on either channel.
+//! gizmos and screen fades on either channel. Anti-aliased rounded
+//! rectangles (fills, borders, rings, pills) are ordinary sprite instances
+//! carrying a [`Shape`], so they sort and clip with sprites and text.
 //!
 //! The 2D lighting pipeline ([`light`]) uses an
 //! MRT scene pass (albedo + screen-space normals + light masks), per-light
@@ -55,7 +57,7 @@ pub mod text;
 pub use blit::CaptureError;
 pub use blit::Renderer;
 pub use camera::{Camera, WorldUnits};
-pub use draw::{DrawList, Rect, SpriteInstance};
+pub use draw::{DrawList, Rect, Shape, SpriteInstance};
 pub use gpu::{Context, Frame, Gpu, GpuError, RendererInitError};
 pub use letterbox::{Letterbox, fit_fractional};
 pub use light::{LightFrame, PointLight};

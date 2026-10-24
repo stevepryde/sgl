@@ -133,6 +133,35 @@ pub struct SpriteInstance {
     /// `None` = unclipped. Used by scrollable/clipped UI panels and by
     /// editor viewports to confine world rendering to a screen region.
     pub clip: Option<Rect>,
+    /// Draw an anti-aliased rounded rectangle instead of the texture — see
+    /// [`Shape`]. `None` (the default) is an ordinary textured sprite.
+    pub shape: Option<Shape>,
+}
+
+/// A signed-distance rounded rectangle drawn by a [`SpriteInstance`] in
+/// place of its texture.
+///
+/// The box is the instance's natural size — the `src` rect (or the full
+/// texture) times `scale`, so the 1×1 white texture with `scale = size` is
+/// the usual form — centered on `pos` and rotated by `rot`. `radius` and
+/// `border` are in that same local pixel space (logical pixels on the
+/// screen channel). The instance `color` is the fill (alpha 0 = border
+/// only); `border > 0` draws an inner band of that width in
+/// `border_color`. The edge is anti-aliased over one **target** pixel
+/// whatever the UI scale or camera zoom. The texture is not sampled, but
+/// the handle must be uploaded like any sprite's (unknown handles are
+/// skipped); a shape continues the current draw batch instead of switching
+/// to its texture's page. Flips have no effect. `clip`, `z` and both
+/// channels behave as for sprites; on the lit world channel a shape is
+/// unmapped (flat normal) albedo.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Shape {
+    /// Corner radius; clamped to half the shorter side (a pill).
+    pub radius: f32,
+    /// Inner border width; `0` = fill only.
+    pub border: f32,
+    /// Border RGBA (straight alpha), in the same space as `color`.
+    pub border_color: [f32; 4],
 }
 
 impl SpriteInstance {
@@ -153,6 +182,7 @@ impl SpriteInstance {
             normal: None,
             light_mask: 1,
             clip: None,
+            shape: None,
         }
     }
 }

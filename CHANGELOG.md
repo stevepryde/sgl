@@ -15,6 +15,28 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.5.0 — 2026-10-24
+
+New sgl-2d features; nothing changes for a game that does not opt in.
+
+- `sgl-2d::canvas::Renderer::set_sprite_filter(linear)`: sprite pages were
+  always sampled nearest; linear sampling is now selectable (nearest stays the
+  default). Under linear sampling every fragment's sample is clamped half a
+  texel inside its sprite's page rect, so atlas neighbours never bleed and
+  1:1 sprites and text stay texel-exact. Opt in with
+  `renderer.set_sprite_filter(true)`; otherwise no game-code changes are needed.
+- `sgl-2d::canvas::SpriteInstance::shape`, `sgl-2d::canvas::Shape`,
+  `sgl-2d::UiFrame::rounded_rect`: anti-aliased signed-distance rounded
+  rectangles (fill, inner border of a given width and colour, corner radius)
+  drawn through the sprite pipeline with the usual z order, clip and rotation,
+  one target pixel wide at any UI scale. `SpriteInstance::new` sets
+  `shape: None`; a `SpriteInstance` struct literal written without
+  `..SpriteInstance::new(..)` must add `shape: None`. Draw one with
+  `frame.rounded_rect(rect, radius, fill, border_width, border_color)`.
+- `sgl-2d::UiFrame::clip()`: returns the clip currently applied, so a widget
+  that clips its own text can narrow it and restore it instead of replacing an
+  enclosing scroll area's clip. No game-code changes are needed.
+
 ## 0.4.2 — 2026-10-13
 
 - `sgl-3d::Settings::tone_mapping`: fixed AgX is now selectable Khronos PBR

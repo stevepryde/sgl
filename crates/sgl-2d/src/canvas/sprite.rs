@@ -16,6 +16,11 @@
 //! game's renderer and glyph pages from `TextRenderer::end_frame` are
 //! re-uploaded under their stable handles.
 //!
+//! **Shapes**: an instance with a [`Shape`] is an anti-aliased rounded rect
+//! evaluated in the same shader (see `sprite.wgsl`), so it z-sorts, clips
+//! and batches with sprites; it never samples its page and so joins the
+//! current batch's page rather than opening a new draw.
+//!
 //! [`SpritePass::draw_stats`] reports the draws the last `prepare` set up
 //! per channel ([`SpriteDrawStats`]).
 //!
@@ -56,7 +61,7 @@ use crate::assets::{Handle, Texture};
 use crate::canvas::LightingSpace;
 use crate::canvas::atlas::ShelfPacker;
 use crate::canvas::camera::WorldUnits;
-use crate::canvas::draw::{DrawList, Rect, SpriteInstance};
+use crate::canvas::draw::{DrawList, Rect, Shape, SpriteInstance};
 use crate::canvas::light::mask_bits;
 
 /// Textures with both dimensions at or under this many pixels go into shared
@@ -93,6 +98,11 @@ struct InstanceRaw {
     color: [f32; 4],
     /// rgb = light-mask layer bits, w = has-normal-map flag (R-6).
     misc: [f32; 4],
+    /// Shape instances: half size, corner radius, border width in local
+    /// pixels; all zero for textured sprites (`x > 0` selects the shape).
+    shape: [f32; 4],
+    /// Shape border RGBA (straight alpha).
+    border_color: [f32; 4],
     // Pad the stride to 16-byte alignment.
     _pad: [f32; 2],
 }
@@ -253,6 +263,25 @@ impl TextureError {
 }
 
 /// The instanced sprite pipelines + texture pages + instance buffer.
+fn sprite_sampler(device: &wgpu::Device, linear: bool) -> wgpu::Sampler {
+    let filter = if linear {
+        wgpu::FilterMode::Linear
+    } else {
+        wgpu::FilterMode::Nearest
+    };
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some(if linear {
+            "sprite sampler (linear)"
+        } else {
+            "sprite sampler (nearest)"
+        }),
+        mag_filter: filter,
+        min_filter: filter,
+        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        ..Default::default()
+    })
+}
+
 pub struct SpritePass {
     /// World-channel MRT pipeline (albedo + normal + mask).
     scene_pipeline: wgpu::RenderPipeline,
@@ -378,14 +407,9 @@ impl SpritePass {
             ],
         });
 
-        // Nearest sampling for crisp pixel art (AR-6, PR: no mipmaps).
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("sprite sampler (nearest)"),
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
+        // Nearest sampling for crisp pixel art (AR-6, PR: no mipmaps);
+        // `set_filter` switches to linear for scaled, painted art.
+        let sampler = sprite_sampler(device, false);
 
         // Shared dummy normal (flat +Z) for pages without normal maps; only
         // ever sampled with a zero has-normal flag.
@@ -433,6 +457,8 @@ impl SpritePass {
                 5 => Float32x2, // uv_max
                 6 => Float32x4, // color
                 7 => Float32x4, // misc (mask bits + has_normal)
+                8 => Float32x4, // shape (half size, radius, border)
+                9 => Float32x4, // shape border color
             ],
         };
 
@@ -757,6 +783,27 @@ impl SpritePass {
         Ok(())
     }
 
+    /// Choose how pages are sampled when a sprite is drawn larger or smaller
+    /// than its texels: nearest (the default, crisp pixel art) or linear
+    /// (smooth, for painted art and UI that scales with the window). Rebuilds
+    /// every page's bind group; uploaded textures are untouched.
+    pub fn set_filter(&mut self, device: &wgpu::Device, linear: bool) {
+        self.sampler = sprite_sampler(device, linear);
+        for i in 0..self.pages.len() {
+            let normal_view = self.pages[i]
+                .normal
+                .as_ref()
+                .map(|n| n.create_view(&wgpu::TextureViewDescriptor::default()));
+            let bind_group = self.page_bind_group(
+                device,
+                &self.pages[i].view,
+                normal_view.as_ref().unwrap_or(&self.default_normal_view),
+                "sprite page (refiltered)",
+            );
+            self.pages[i].bind_group = bind_group;
+        }
+    }
+
     /// Create the page's companion normal texture (zero-initialized) and
     /// rebuild the page bind group to bind it. No-op if it already exists.
     fn ensure_page_normal(&mut self, device: &wgpu::Device, page: usize) {
@@ -937,8 +984,24 @@ impl SpritePass {
                     },
                     None => None,
                 };
-                let page = entry.page;
-                let raw = to_raw(inst, entry, self.pages[page].size, units);
+                let (page, raw) = match &inst.shape {
+                    None => (
+                        entry.page,
+                        to_raw(inst, entry, self.pages[entry.page].size, units),
+                    ),
+                    Some(shape) => {
+                        let Some(raw) = shape_raw(inst, shape, entry, units) else {
+                            continue; // empty box — nothing to draw
+                        };
+                        // A shape never samples its page: stay on the
+                        // current batch's page so it does not split a run.
+                        let page = match self.batches.last() {
+                            Some(b) if b.camera == camera && b.scissor == scissor => b.page,
+                            _ => entry.page,
+                        };
+                        (page, raw)
+                    }
+                };
                 let index = self.raw.len() as u32;
                 self.raw.push(raw);
                 match self.batches.last_mut() {
@@ -1150,7 +1213,9 @@ fn to_raw(inst: &SpriteInstance, entry: &Entry, page_size: Vec2, units: WorldUni
         .unwrap_or(Rect::new(0.0, 0.0, entry.size.x, entry.size.y));
     let affine = sprite_affine(inst.pos, inst.rot, src.size() * inst.scale, units);
 
-    // Page UVs; swapping an axis's endpoints flips it.
+    // Page UVs; swapping an axis's endpoints flips it. The fragment stage
+    // keeps samples half a texel inside this rect (`sprite.wgsl`), so linear
+    // sampling never blends in the neighbouring atlas entry.
     let mut uv_min = (entry.offset + src.min) / page_size;
     let mut uv_max = (entry.offset + src.max) / page_size;
     if inst.flip_x {
@@ -1180,8 +1245,47 @@ fn to_raw(inst: &SpriteInstance, entry: &Entry, page_size: Vec2, units: WorldUni
             bits[2],
             if has_normal { 1.0 } else { 0.0 },
         ],
+        shape: [0.0; 4],
+        border_color: [0.0; 4],
         _pad: [0.0; 2],
     }
+}
+
+/// How far, in local pixels, a shape's quad extends past its box so the
+/// outer half of the anti-aliasing ramp is rasterized (enough down to half
+/// a target pixel per local pixel; rotated edges need it most).
+const SHAPE_MARGIN: f32 = 1.0;
+
+/// Convert a [`Shape`] instance to GPU form: the box is the natural size
+/// times `scale` (as for [`to_raw`]); the quad grows by [`SHAPE_MARGIN`] on
+/// every side and its UV rect carries the local pixel extent instead of
+/// page coordinates. `None` for an empty (or NaN) box.
+fn shape_raw(
+    inst: &SpriteInstance,
+    shape: &Shape,
+    entry: &Entry,
+    units: WorldUnits,
+) -> Option<InstanceRaw> {
+    let natural = inst.src.map_or(entry.size, |src| src.size());
+    let half = (natural * inst.scale).abs() * 0.5;
+    if !(half.x > 0.0 && half.y > 0.0) {
+        return None;
+    }
+    let extent = half + Vec2::splat(SHAPE_MARGIN);
+    let affine = sprite_affine(inst.pos, inst.rot, extent * 2.0, units);
+    let bits = mask_bits(inst.light_mask);
+    Some(InstanceRaw {
+        model_x: affine.matrix2.x_axis.to_array(),
+        model_y: affine.matrix2.y_axis.to_array(),
+        translation: affine.translation.to_array(),
+        uv_min: (-extent).to_array(),
+        uv_max: extent.to_array(),
+        color: inst.color,
+        misc: [bits[0], bits[1], bits[2], 0.0],
+        shape: [half.x, half.y, shape.radius, shape.border.max(0.0)],
+        border_color: shape.border_color,
+        _pad: [0.0; 2],
+    })
 }
 
 #[cfg(test)]
@@ -1906,17 +2010,32 @@ mod gpu_tests {
         queue: &wgpu::Queue,
         pass: &mut SpritePass,
         list: &DrawList,
-        (width, height): (u32, u32),
+        size: (u32, u32),
     ) -> Vec<u8> {
+        draw_screen_scaled(device, queue, pass, list, size, 1)
+    }
+
+    /// Draw `list`'s screen channel laid out over a `logical` view into a
+    /// cleared `Rgba8Unorm` target `scale` times its size — the renderer's
+    /// scaled-UI path, one logical pixel per `scale × scale` target pixels.
+    fn draw_screen_scaled(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pass: &mut SpritePass,
+        list: &DrawList,
+        logical: (u32, u32),
+        scale: u32,
+    ) -> Vec<u8> {
+        let (width, height) = (logical.0 * scale, logical.1 * scale);
         pass.prepare(
             device,
             queue,
             list,
             Mat4::IDENTITY,
             WorldUnits::default(),
-            Camera::screen_view_proj(width, height),
+            Camera::screen_view_proj(logical.0, logical.1),
             (width, height),
-            1.0,
+            scale as f32,
         );
         let target = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("screen test target"),
@@ -2361,6 +2480,192 @@ mod gpu_tests {
         pass.draw_channel(&mut empty, &pass.screen_pipeline, 1);
         assert_eq!(pass.draw_stats(), SpriteDrawStats::default());
         assert!(empty.draws.is_empty());
+    }
+
+    /// A pass with a 1×1 white texture from `assets` uploaded, and its handle.
+    fn white_pass(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        assets: &mut Assets<Texture>,
+    ) -> (SpritePass, Handle<Texture>) {
+        let mut pass = SpritePass::new(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+            LightingSpace::Gamma,
+        );
+        let white = assets.insert("white.png".into(), flat(1, 1, [255; 4]));
+        pass.upload(device, queue, white, assets.get(white).unwrap())
+            .unwrap();
+        (pass, white)
+    }
+
+    /// A 24×24 logical rounded rect (radius 8, 2 px blue border, red fill)
+    /// centered in a 32×32 view drawn at UI scale 2: the fill and border
+    /// are their exact colors, the box corner outside the radius is
+    /// untouched, the curved edge is partially covered, and a straight
+    /// edge resolves within one *target* pixel (a ramp one logical pixel
+    /// wide would leave both pixels beside the edge partial). Drawn after
+    /// a sprite on another page, the shape joins that page's draw.
+    #[test]
+    fn rounded_rect_fills_borders_and_antialiases_per_target_pixel() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut assets = Assets::<Texture>::new();
+        let (mut pass, white) = white_pass(&device, &queue, &mut assets);
+        let big = assets.insert(
+            "big.png".into(),
+            flat(MAX_ATLAS_DIM + 1, 1, [0, 255, 0, 255]),
+        );
+        pass.upload(&device, &queue, big, assets.get(big).unwrap())
+            .unwrap();
+
+        let mut list = DrawList::new();
+        // A green 1×1-logical sprite in the far corner, on a standalone page.
+        list.push_screen(SpriteInstance {
+            scale: Vec2::new(1.0 / (MAX_ATLAS_DIM + 1) as f32, 1.0),
+            ..SpriteInstance::new(big, Vec2::new(31.5, 31.5))
+        });
+        list.push_screen(SpriteInstance {
+            scale: Vec2::splat(24.0),
+            color: [1.0, 0.0, 0.0, 1.0],
+            shape: Some(Shape {
+                radius: 8.0,
+                border: 2.0,
+                border_color: [0.0, 0.0, 1.0, 1.0],
+            }),
+            ..SpriteInstance::new(white, Vec2::splat(16.0))
+        });
+        let px = draw_screen_scaled(&device, &queue, &mut pass, &list, (32, 32), 2);
+        assert_eq!(pass.draw_stats().screen.draws, 1, "shape joined the batch");
+        let at = |x: usize, y: usize| -> [u8; 4] {
+            let i = (y * 64 + x) * 4;
+            px[i..i + 4].try_into().unwrap()
+        };
+        assert_eq!(at(63, 63), [0, 255, 0, 255], "the preceding sprite");
+        // Box spans logical 4..28 = target 8..56; border band target 8..12.
+        eprintln!("ROW {:?}", (0..20).map(|x| at(x, 32)).collect::<Vec<_>>());
+        assert_eq!(at(32, 32), [255, 0, 0, 255], "fill");
+        assert_eq!(at(10, 32), [0, 0, 255, 255], "border band");
+        assert_eq!(at(8, 32), [0, 0, 255, 255], "first pixel inside the edge");
+        assert_eq!(at(7, 32), [0; 4], "first pixel outside the edge");
+        // Corner arc centered at target (24, 24), radius 16 target px.
+        assert_eq!(at(10, 10), [0; 4], "box corner outside the radius");
+        let edge = at(12, 12);
+        assert!(
+            edge[3] > 0 && edge[3] < 255,
+            "curved edge is partial: {edge:?}"
+        );
+    }
+
+    /// Rotation turns the box about its center: a 24×8 bar rotated 90°
+    /// covers a pixel above its center that the unrotated bar misses, and
+    /// misses one to the side that the unrotated bar covers.
+    #[test]
+    fn rotated_rounded_rect_turns_about_its_center() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let (mut pass, white) = white_pass(&device, &queue, &mut Assets::new());
+        let bar = |rot: f32| SpriteInstance {
+            scale: Vec2::new(24.0, 8.0),
+            rot,
+            shape: Some(Shape {
+                radius: 2.0,
+                ..Shape::default()
+            }),
+            ..SpriteInstance::new(white, Vec2::splat(16.0))
+        };
+        let mut alpha_at = |rot: f32, x: usize, y: usize| {
+            let mut list = DrawList::new();
+            list.push_screen(bar(rot));
+            let px = draw_screen_target(&device, &queue, &mut pass, &list, (32, 32));
+            px[(y * 32 + x) * 4 + 3]
+        };
+        let quarter = std::f32::consts::FRAC_PI_2;
+        assert_eq!(alpha_at(0.0, 16, 7), 0);
+        assert_eq!(alpha_at(quarter, 16, 7), 255);
+        assert_eq!(alpha_at(0.0, 7, 16), 255);
+        assert_eq!(alpha_at(quarter, 7, 16), 0);
+    }
+
+    /// Under linear sampling a 4×4 texture drawn at native size reproduces
+    /// every texel, its edge rows and columns included — the UV rect is not
+    /// shrunk, so no column is compressed away.
+    #[test]
+    fn linear_native_size_sprite_is_texel_exact() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut assets = Assets::<Texture>::new();
+        let (mut pass, _) = white_pass(&device, &queue, &mut assets);
+        pass.set_filter(&device, true);
+        // Distinct edge ring (red), interior texels each their own grey.
+        let mut rgba = Vec::new();
+        for y in 0..4u8 {
+            for x in 0..4u8 {
+                let edge = x == 0 || y == 0 || x == 3 || y == 3;
+                rgba.extend(if edge {
+                    [255, 0, 0, 255]
+                } else {
+                    [60 * x, 60 * y, 100, 255]
+                });
+            }
+        }
+        let expected = rgba.clone();
+        let tex = Texture {
+            width: 4,
+            height: 4,
+            rgba,
+        };
+        let handle = assets.insert("ring.png".into(), tex);
+        pass.upload(&device, &queue, handle, assets.get(handle).unwrap())
+            .unwrap();
+        let mut list = DrawList::new();
+        list.push_screen(SpriteInstance::new(handle, Vec2::splat(2.0)));
+        assert_eq!(
+            draw_screen_target(&device, &queue, &mut pass, &list, (4, 4)),
+            expected
+        );
+    }
+
+    /// Under linear sampling a 2×2 sheet frame drawn 3× shows only its own
+    /// color on every covered pixel, edges included: no trace of the
+    /// saturated red frame beside it, nor of the transparent padding below.
+    #[test]
+    fn linear_scaled_sprite_never_bleeds_its_neighbour() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut assets = Assets::<Texture>::new();
+        let (mut pass, _) = white_pass(&device, &queue, &mut assets);
+        pass.set_filter(&device, true);
+        // A 4×2 sheet: red frame at x 0..2, blue frame at x 2..4.
+        let sheet = Texture {
+            width: 4,
+            height: 2,
+            rgba: [
+                [255, 0, 0, 255],
+                [255, 0, 0, 255],
+                [0, 0, 255, 255],
+                [0, 0, 255, 255],
+            ]
+            .repeat(2)
+            .concat(),
+        };
+        let handle = assets.insert("sheet.png".into(), sheet);
+        pass.upload(&device, &queue, handle, assets.get(handle).unwrap())
+            .unwrap();
+        let mut list = DrawList::new();
+        list.push_screen(SpriteInstance {
+            src: Some(Rect::new(2.0, 0.0, 2.0, 2.0)),
+            scale: Vec2::splat(3.0),
+            ..SpriteInstance::new(handle, Vec2::splat(3.0))
+        });
+        let px = draw_screen_target(&device, &queue, &mut pass, &list, (6, 6));
+        assert_eq!(px, [0, 0, 255, 255].repeat(36));
     }
 
     /// The linear scene pipeline decodes the page texel: an sRGB 128
