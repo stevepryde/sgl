@@ -61,7 +61,7 @@
 )]
 
 use crate::assets::{Assets, Handle, Texture};
-use crate::canvas::draw::{DrawList, Rect, SpriteInstance};
+use crate::canvas::draw::{DrawList, Rect, Shape, SpriteInstance};
 use crate::canvas::text::{HAlign, TextChannel, TextRenderer, TextStyle, VAlign};
 use sgl_core::math::Vec2;
 
@@ -502,6 +502,35 @@ impl UiFrame<'_> {
             color,
             z,
             clip: self.clip,
+            ..SpriteInstance::new(self.ui.white, rect.min + size * 0.5)
+        });
+    }
+
+    /// An anti-aliased rounded rectangle at this frame's z and clip: `fill`
+    /// inside (alpha 0 = a ring), an inner border `border_width` px wide in
+    /// `border_color` (0 = none), corners of `radius` px (clamped to a
+    /// pill). For a rotated one, pass a [`Shape`] sprite to
+    /// [`sprite`](Self::sprite).
+    pub fn rounded_rect(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        fill: [f32; 4],
+        border_width: f32,
+        border_color: [f32; 4],
+    ) {
+        let z = self.next_z();
+        let size = rect.size();
+        self.list.push_screen(SpriteInstance {
+            scale: size,
+            color: fill,
+            z,
+            clip: self.clip,
+            shape: Some(Shape {
+                radius,
+                border: border_width,
+                border_color,
+            }),
             ..SpriteInstance::new(self.ui.white, rect.min + size * 0.5)
         });
     }

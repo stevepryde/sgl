@@ -28,6 +28,17 @@
 //
 // Flips are folded into the per-instance UV rect on the CPU (uv_min/uv_max
 // may arrive swapped per axis), so there is no flip attribute here.
+//
+// Shapes: an instance with shape.x > 0 is a signed-distance rounded rect
+// instead of a textured quad (`shape_rgba`). Its UV rect carries the quad's
+// local pixel extent (-e..e, centered), so `uv` interpolates to the local
+// point; shape = (half width, half height, corner radius, border width) in
+// those pixels. The edge coverage ramp is one target pixel wide (screen
+// derivatives of the distance), the fill is `color`, the inner border band
+// `border_color`, both premultiplied like the textured path. Every entry
+// point samples and takes derivatives unconditionally (uniform control
+// flow) and only then selects, so textured instances are unchanged. On the
+// world channel a shape writes the flat normal and its light mask.
 
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -60,6 +71,10 @@ struct InstanceInput {
     @location(6) color: vec4<f32>,
     // rgb = light-mask layer bits (1/2/4), w = has-normal-map flag (R-6).
     @location(7) misc: vec4<f32>,
+    // Shape instances: half size, radius, border (zero for sprites).
+    @location(8) shape: vec4<f32>,
+    // Shape border RGBA (straight alpha).
+    @location(9) border_color: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -67,6 +82,8 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) misc: vec4<f32>,
+    @location(3) @interpolate(flat) shape: vec4<f32>,
+    @location(4) @interpolate(flat) border_color: vec4<f32>,
 };
 
 @vertex
@@ -82,12 +99,36 @@ fn vs_main(vert: VertexInput, inst: InstanceInput) -> VertexOutput {
     out.uv = mix(inst.uv_min, inst.uv_max, local);
     out.color = inst.color;
     out.misc = inst.misc;
+    out.shape = inst.shape;
+    out.border_color = inst.border_color;
     return out;
+}
+
+// Premultiplied color of a shape instance at its local point `in.uv`.
+// Called in uniform control flow (it takes derivatives) for every instance;
+// the result is only used when `in.shape.x > 0`.
+fn shape_rgba(in: VertexOutput) -> vec4<f32> {
+    let half = in.shape.xy;
+    let r = clamp(in.shape.z, 0.0, min(half.x, half.y));
+    let q = abs(in.uv) - half + vec2<f32>(r);
+    let d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    // Local pixels per target pixel along the distance gradient.
+    let aa = max(length(vec2<f32>(dpdx(d), dpdy(d))), 1e-6);
+    let outer = clamp(0.5 - d / aa, 0.0, 1.0);
+    let b = in.shape.w;
+    let inner = select(1.0, clamp(0.5 - (d + b) / aa, 0.0, 1.0), b > 0.0);
+    let fill = vec4<f32>(in.color.rgb * in.color.a, in.color.a);
+    let edge = vec4<f32>(in.border_color.rgb * in.border_color.a, in.border_color.a);
+    return mix(edge, fill, inner) * outer;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(page_tex, page_samp, in.uv);
+    let shape = shape_rgba(in);
+    if in.shape.x > 0.0 {
+        return shape;
+    }
     var rgba = texel * in.color;
     // Premultiply alpha for the (One, OneMinusSrcAlpha) blend.
     return vec4<f32>(rgba.rgb * rgba.a, rgba.a);
@@ -123,9 +164,25 @@ fn scene_output(in: VertexOutput, texel: vec4<f32>) -> SceneOutput {
     return out;
 }
 
+// The MRT outputs for a shape: its premultiplied color as albedo, the flat
+// normal and its light-mask layers, both weighted by coverage.
+fn shape_scene_output(in: VertexOutput, rgba: vec4<f32>) -> SceneOutput {
+    let a = rgba.a;
+    var out: SceneOutput;
+    out.albedo = rgba;
+    out.normal = vec4<f32>(vec3<f32>(0.5, 0.5, 1.0) * a, a);
+    out.mask = vec4<f32>(in.misc.rgb * a, 0.0);
+    return out;
+}
+
 @fragment
 fn fs_scene(in: VertexOutput) -> SceneOutput {
-    return scene_output(in, textureSample(page_tex, page_samp, in.uv));
+    let out = scene_output(in, textureSample(page_tex, page_samp, in.uv));
+    let shape = shape_rgba(in);
+    if in.shape.x > 0.0 {
+        return shape_scene_output(in, shape);
+    }
+    return out;
 }
 
 // IEC 61966-2-1 decode (the same function the letterbox blit uses).
@@ -140,5 +197,10 @@ fn srgb_to_linear3(c: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs_scene_linear(in: VertexOutput) -> SceneOutput {
     let texel = textureSample(page_tex, page_samp, in.uv);
-    return scene_output(in, vec4<f32>(srgb_to_linear3(texel.rgb), texel.a));
+    let out = scene_output(in, vec4<f32>(srgb_to_linear3(texel.rgb), texel.a));
+    let shape = shape_rgba(in);
+    if in.shape.x > 0.0 {
+        return shape_scene_output(in, shape);
+    }
+    return out;
 }
