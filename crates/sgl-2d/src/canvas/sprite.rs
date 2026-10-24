@@ -284,6 +284,8 @@ pub struct SpritePass {
     cameras: [CameraSlot; 2],
     texture_bgl: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    /// Whether pages are sampled linearly (see [`SpritePass::set_filter`]).
+    linear: bool,
     /// Shared 1×1 dummy normal view for pages without normal maps.
     default_normal_view: wgpu::TextureView,
     pages: Vec<Page>,
@@ -543,6 +545,7 @@ impl SpritePass {
             cameras,
             texture_bgl,
             sampler,
+            linear: false,
             default_normal_view,
             pages: Vec::new(),
             atlases: Vec::new(),
@@ -776,6 +779,7 @@ impl SpritePass {
     /// (smooth, for painted art and UI that scales with the window). Rebuilds
     /// every page's bind group; uploaded textures are untouched.
     pub fn set_filter(&mut self, device: &wgpu::Device, linear: bool) {
+        self.linear = linear;
         self.sampler = sprite_sampler(device, linear);
         for i in 0..self.pages.len() {
             let normal_view = self.pages[i]
@@ -973,7 +977,7 @@ impl SpritePass {
                     None => None,
                 };
                 let page = entry.page;
-                let raw = to_raw(inst, entry, self.pages[page].size, units);
+                let raw = to_raw(inst, entry, self.pages[page].size, units, self.linear);
                 let index = self.raw.len() as u32;
                 self.raw.push(raw);
                 match self.batches.last_mut() {
@@ -1179,15 +1183,26 @@ pub fn sprite_affine(pos: Vec2, rot: f32, size_px: Vec2, units: WorldUnits) -> A
 /// ([`sprite_affine`] in `units`), resolve the src rect against the page
 /// placement, fold flips into the UV endpoints, and pass the modulate color
 /// through.
-fn to_raw(inst: &SpriteInstance, entry: &Entry, page_size: Vec2, units: WorldUnits) -> InstanceRaw {
+fn to_raw(
+    inst: &SpriteInstance,
+    entry: &Entry,
+    page_size: Vec2,
+    units: WorldUnits,
+    linear: bool,
+) -> InstanceRaw {
     let src = inst
         .src
         .unwrap_or(Rect::new(0.0, 0.0, entry.size.x, entry.size.y));
     let affine = sprite_affine(inst.pos, inst.rot, src.size() * inst.scale, units);
 
-    // Page UVs; swapping an axis's endpoints flips it.
-    let mut uv_min = (entry.offset + src.min) / page_size;
-    let mut uv_max = (entry.offset + src.max) / page_size;
+    // Page UVs; swapping an axis's endpoints flips it. Linear sampling reads
+    // half a texel past each edge, which would blend in the neighbouring atlas
+    // entry (a 1×1 fill texel goes grey), so inset the rect to texel centres.
+    let inset = if linear { 0.5 } else { 0.0 };
+    let lo = entry.offset + src.min + Vec2::splat(inset);
+    let hi = (entry.offset + src.max - Vec2::splat(inset)).max(lo);
+    let mut uv_min = lo / page_size;
+    let mut uv_max = hi / page_size;
     if inst.flip_x {
         std::mem::swap(&mut uv_min.x, &mut uv_max.x);
     }
