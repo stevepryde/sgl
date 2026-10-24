@@ -294,8 +294,6 @@ pub struct SpritePass {
     cameras: [CameraSlot; 2],
     texture_bgl: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    /// Whether pages are sampled linearly (see [`SpritePass::set_filter`]).
-    linear: bool,
     /// Shared 1×1 dummy normal view for pages without normal maps.
     default_normal_view: wgpu::TextureView,
     pages: Vec<Page>,
@@ -557,7 +555,6 @@ impl SpritePass {
             cameras,
             texture_bgl,
             sampler,
-            linear: false,
             default_normal_view,
             pages: Vec::new(),
             atlases: Vec::new(),
@@ -791,7 +788,6 @@ impl SpritePass {
     /// (smooth, for painted art and UI that scales with the window). Rebuilds
     /// every page's bind group; uploaded textures are untouched.
     pub fn set_filter(&mut self, device: &wgpu::Device, linear: bool) {
-        self.linear = linear;
         self.sampler = sprite_sampler(device, linear);
         for i in 0..self.pages.len() {
             let normal_view = self.pages[i]
@@ -991,7 +987,7 @@ impl SpritePass {
                 let (page, raw) = match &inst.shape {
                     None => (
                         entry.page,
-                        to_raw(inst, entry, self.pages[entry.page].size, units, self.linear),
+                        to_raw(inst, entry, self.pages[entry.page].size, units),
                     ),
                     Some(shape) => {
                         let Some(raw) = shape_raw(inst, shape, entry, units) else {
@@ -1211,26 +1207,17 @@ pub fn sprite_affine(pos: Vec2, rot: f32, size_px: Vec2, units: WorldUnits) -> A
 /// ([`sprite_affine`] in `units`), resolve the src rect against the page
 /// placement, fold flips into the UV endpoints, and pass the modulate color
 /// through.
-fn to_raw(
-    inst: &SpriteInstance,
-    entry: &Entry,
-    page_size: Vec2,
-    units: WorldUnits,
-    linear: bool,
-) -> InstanceRaw {
+fn to_raw(inst: &SpriteInstance, entry: &Entry, page_size: Vec2, units: WorldUnits) -> InstanceRaw {
     let src = inst
         .src
         .unwrap_or(Rect::new(0.0, 0.0, entry.size.x, entry.size.y));
     let affine = sprite_affine(inst.pos, inst.rot, src.size() * inst.scale, units);
 
-    // Page UVs; swapping an axis's endpoints flips it. Linear sampling reads
-    // half a texel past each edge, which would blend in the neighbouring atlas
-    // entry (a 1×1 fill texel goes grey), so inset the rect to texel centres.
-    let inset = if linear { 0.5 } else { 0.0 };
-    let lo = entry.offset + src.min + Vec2::splat(inset);
-    let hi = (entry.offset + src.max - Vec2::splat(inset)).max(lo);
-    let mut uv_min = lo / page_size;
-    let mut uv_max = hi / page_size;
+    // Page UVs; swapping an axis's endpoints flips it. The fragment stage
+    // keeps samples half a texel inside this rect (`sprite.wgsl`), so linear
+    // sampling never blends in the neighbouring atlas entry.
+    let mut uv_min = (entry.offset + src.min) / page_size;
+    let mut uv_max = (entry.offset + src.max) / page_size;
     if inst.flip_x {
         std::mem::swap(&mut uv_min.x, &mut uv_max.x);
     }
@@ -2602,6 +2589,83 @@ mod gpu_tests {
         assert_eq!(alpha_at(quarter, 16, 7), 255);
         assert_eq!(alpha_at(0.0, 7, 16), 255);
         assert_eq!(alpha_at(quarter, 7, 16), 0);
+    }
+
+    /// Under linear sampling a 4×4 texture drawn at native size reproduces
+    /// every texel, its edge rows and columns included — the UV rect is not
+    /// shrunk, so no column is compressed away.
+    #[test]
+    fn linear_native_size_sprite_is_texel_exact() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut assets = Assets::<Texture>::new();
+        let (mut pass, _) = white_pass(&device, &queue, &mut assets);
+        pass.set_filter(&device, true);
+        // Distinct edge ring (red), interior texels each their own grey.
+        let mut rgba = Vec::new();
+        for y in 0..4u8 {
+            for x in 0..4u8 {
+                let edge = x == 0 || y == 0 || x == 3 || y == 3;
+                rgba.extend(if edge {
+                    [255, 0, 0, 255]
+                } else {
+                    [60 * x, 60 * y, 100, 255]
+                });
+            }
+        }
+        let expected = rgba.clone();
+        let tex = Texture {
+            width: 4,
+            height: 4,
+            rgba,
+        };
+        let handle = assets.insert("ring.png".into(), tex);
+        pass.upload(&device, &queue, handle, assets.get(handle).unwrap())
+            .unwrap();
+        let mut list = DrawList::new();
+        list.push_screen(SpriteInstance::new(handle, Vec2::splat(2.0)));
+        assert_eq!(
+            draw_screen_target(&device, &queue, &mut pass, &list, (4, 4)),
+            expected
+        );
+    }
+
+    /// Under linear sampling a 2×2 sheet frame drawn 3× shows only its own
+    /// color on every covered pixel, edges included: no trace of the
+    /// saturated red frame beside it, nor of the transparent padding below.
+    #[test]
+    fn linear_scaled_sprite_never_bleeds_its_neighbour() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut assets = Assets::<Texture>::new();
+        let (mut pass, _) = white_pass(&device, &queue, &mut assets);
+        pass.set_filter(&device, true);
+        // A 4×2 sheet: red frame at x 0..2, blue frame at x 2..4.
+        let sheet = Texture {
+            width: 4,
+            height: 2,
+            rgba: [
+                [255, 0, 0, 255],
+                [255, 0, 0, 255],
+                [0, 0, 255, 255],
+                [0, 0, 255, 255],
+            ]
+            .repeat(2)
+            .concat(),
+        };
+        let handle = assets.insert("sheet.png".into(), sheet);
+        pass.upload(&device, &queue, handle, assets.get(handle).unwrap())
+            .unwrap();
+        let mut list = DrawList::new();
+        list.push_screen(SpriteInstance {
+            src: Some(Rect::new(2.0, 0.0, 2.0, 2.0)),
+            scale: Vec2::splat(3.0),
+            ..SpriteInstance::new(handle, Vec2::splat(3.0))
+        });
+        let px = draw_screen_target(&device, &queue, &mut pass, &list, (6, 6));
+        assert_eq!(px, [0, 0, 255, 255].repeat(36));
     }
 
     /// The linear scene pipeline decodes the page texel: an sRGB 128

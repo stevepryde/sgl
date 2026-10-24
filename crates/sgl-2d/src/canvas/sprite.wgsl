@@ -2,9 +2,10 @@
 //
 // A static unit quad (0,0)..(1,1) is expanded per-instance into a world-space
 // textured quad by a 2x3 affine. The fragment stage samples the bound page
-// (nearest), applies the modulate color, and **premultiplies alpha in-shader**
-// (rgb *= a) so the pipeline's (src = One, dst = OneMinusSrcAlpha) blend is
-// correct for straight-alpha PNGs.
+// (nearest or linear, `SpritePass::set_filter`), applies the modulate color,
+// and **premultiplies alpha in-shader** (rgb *= a) so the pipeline's
+// (src = One, dst = OneMinusSrcAlpha) blend is correct for straight-alpha
+// PNGs.
 //
 // Three fragment entry points share the vertex stage:
 // - fs_main: single-target (the screen/UI channel — bypasses lighting).
@@ -28,6 +29,13 @@
 //
 // Flips are folded into the per-instance UV rect on the CPU (uv_min/uv_max
 // may arrive swapped per axis), so there is no flip attribute here.
+//
+// Every page sample goes through `page_uv`: the interpolated UV clamped to
+// half a texel inside the instance's UV rect. Interior fragments sample
+// exactly where they would unclamped (a 1:1 sprite stays texel-exact), while
+// an edge fragment under linear sampling can never blend in the
+// neighbouring atlas entry or padding. Under nearest sampling the clamp
+// never changes which texel is read.
 //
 // Shapes: an instance with shape.x > 0 is a signed-distance rounded rect
 // instead of a textured quad (`shape_rgba`). Its UV rect carries the quad's
@@ -84,6 +92,8 @@ struct VertexOutput {
     @location(2) misc: vec4<f32>,
     @location(3) @interpolate(flat) shape: vec4<f32>,
     @location(4) @interpolate(flat) border_color: vec4<f32>,
+    // The instance's UV rect (uv_min, uv_max), for `page_uv`.
+    @location(5) @interpolate(flat) uv_rect: vec4<f32>,
 };
 
 @vertex
@@ -101,7 +111,17 @@ fn vs_main(vert: VertexInput, inst: InstanceInput) -> VertexOutput {
     out.misc = inst.misc;
     out.shape = inst.shape;
     out.border_color = inst.border_color;
+    out.uv_rect = vec4<f32>(inst.uv_min, inst.uv_max);
     return out;
+}
+
+// The page UV to sample: `in.uv` kept half a texel inside the instance's UV
+// rect (whose ends may be swapped by flips).
+fn page_uv(in: VertexOutput) -> vec2<f32> {
+    let half = 0.5 / vec2<f32>(textureDimensions(page_tex));
+    let lo = min(in.uv_rect.xy, in.uv_rect.zw);
+    let hi = max(in.uv_rect.xy, in.uv_rect.zw);
+    return clamp(in.uv, lo + half, hi - half);
 }
 
 // Premultiplied color of a shape instance at its local point `in.uv`.
@@ -124,7 +144,7 @@ fn shape_rgba(in: VertexOutput) -> vec4<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel = textureSample(page_tex, page_samp, in.uv);
+    let texel = textureSample(page_tex, page_samp, page_uv(in));
     let shape = shape_rgba(in);
     if in.shape.x > 0.0 {
         return shape;
@@ -142,9 +162,10 @@ struct SceneOutput {
     @location(2) mask: vec4<f32>,
 };
 
-// The MRT outputs for a sampled page `texel` (already in the pipeline's
-// color space): premultiplied albedo, screen-space normal, light mask.
-fn scene_output(in: VertexOutput, texel: vec4<f32>) -> SceneOutput {
+// The MRT outputs for a page `texel` sampled at `uv` (already in the
+// pipeline's color space): premultiplied albedo, screen-space normal, light
+// mask.
+fn scene_output(in: VertexOutput, uv: vec2<f32>, texel: vec4<f32>) -> SceneOutput {
     var rgba = texel * in.color;
     let a = rgba.a;
 
@@ -154,7 +175,7 @@ fn scene_output(in: VertexOutput, texel: vec4<f32>) -> SceneOutput {
     // Screen-space normal: decode the map, flip G (+up → -y on screen),
     // re-encode; flat +Z where the instance has no normal map. Sampled
     // unconditionally (uniform control flow), selected by the flag.
-    let nm = textureSample(page_normal_tex, page_samp, in.uv).rgb * 2.0 - vec3<f32>(1.0);
+    let nm = textureSample(page_normal_tex, page_samp, uv).rgb * 2.0 - vec3<f32>(1.0);
     let mapped = vec3<f32>(nm.x, -nm.y, nm.z) * 0.5 + vec3<f32>(0.5);
     let enc = mix(vec3<f32>(0.5, 0.5, 1.0), mapped, in.misc.w);
     out.normal = vec4<f32>(enc * a, a);
@@ -177,7 +198,8 @@ fn shape_scene_output(in: VertexOutput, rgba: vec4<f32>) -> SceneOutput {
 
 @fragment
 fn fs_scene(in: VertexOutput) -> SceneOutput {
-    let out = scene_output(in, textureSample(page_tex, page_samp, in.uv));
+    let uv = page_uv(in);
+    let out = scene_output(in, uv, textureSample(page_tex, page_samp, uv));
     let shape = shape_rgba(in);
     if in.shape.x > 0.0 {
         return shape_scene_output(in, shape);
@@ -196,8 +218,9 @@ fn srgb_to_linear3(c: vec3<f32>) -> vec3<f32> {
 // Rgba8Unorm), so decode rgb before the modulate; alpha is coverage.
 @fragment
 fn fs_scene_linear(in: VertexOutput) -> SceneOutput {
-    let texel = textureSample(page_tex, page_samp, in.uv);
-    let out = scene_output(in, vec4<f32>(srgb_to_linear3(texel.rgb), texel.a));
+    let uv = page_uv(in);
+    let texel = textureSample(page_tex, page_samp, uv);
+    let out = scene_output(in, uv, vec4<f32>(srgb_to_linear3(texel.rgb), texel.a));
     let shape = shape_rgba(in);
     if in.shape.x > 0.0 {
         return shape_scene_output(in, shape);
