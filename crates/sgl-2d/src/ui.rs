@@ -481,6 +481,7 @@ impl UiFrame<'_> {
     /// (`None` = unclipped), so a widget that clips its own text can narrow
     /// it further and restore it afterwards instead of discarding an
     /// enclosing scroll area's clip.
+    #[must_use]
     pub fn clip(&self) -> Option<Rect> {
         self.clip
     }
