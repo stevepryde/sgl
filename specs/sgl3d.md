@@ -49,7 +49,13 @@ settings SGL3D has today.
    excluded: they take a tier by the same limit. There is no downlevel
    path, and anything a device may lack beyond that is
    optional under S3D-6 (`graphics_device::features` lists what SGL3D uses
-   where the adapter has it). What the browser cannot do is an input, not a
+   where the adapter has it). Portable spatial upscaling is an opt-in
+   post-stage feature on both native and WebGPU devices: scene resolution
+   controls its input size, and `Settings::upscaling` controls whether it
+   reconstructs and sharpens that scene to output size. It adds no temporal
+   history and does not replace native FSR2; the default remains linear
+   presentation. Its placement and transfer-space owner are defined by the
+   [post stage](sgl3d-architecture.md#frame). What the browser cannot do is an input, not a
    platform fork: the game passes bytes rather than paths and the frame
    time rather than a clock, and an operation that must block for readback
    fails with an error. SGL3D must not depend on a game crate,
@@ -80,12 +86,19 @@ settings SGL3D has today.
    a separate budget of the same size. Image headers are checked before pixel
    decoding: each side is at most 16384 and the retained RGBA8 bytes are
    charged, with decoder allocation limits set to the available budget. KTX2
-   BC7 chains reject malformed data format descriptor blocks with an error
+   BC7, ETC2 RGBA8 and ASTC 4×4 chains reject malformed data format descriptor blocks with an error
    before parsing, and validate dimensions, mip count and total decoded level bytes
    before expansion. Decoded output length is capped at each expected level
    size plus one sentinel; advertised windows never allocate history, and
    regenerated literals and sequences are bounded by the format's 128 KiB
    block maximum before growth. A decoded level must match its expected size.
+   ETC2/ASTC material images require a caller-prepared RGBA8 level-zero
+   companion of the same dimensions for ray sampling and decals. The caller
+   exports that companion from the decoded compressed image when matching
+   raster texels is required. SGL3D validates the structure and byte budget,
+   not semantic equality with compressed blocks; it performs no ASTC/ETC2
+   runtime decode. Native BC7 ray storage remains compressed. Chunk fetching,
+   export recipes and worker preparation remain game-owned.
    Budgets count decoded bytes, with bounded decoder working buffers and
    allocator capacity additional; they are not peak-memory limits.
    Explicit node selection preserves ancestor transforms and rejects an

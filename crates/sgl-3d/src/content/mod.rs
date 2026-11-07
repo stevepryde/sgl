@@ -15,7 +15,7 @@ pub mod environment;
 pub mod geometry;
 mod gltf;
 pub(crate) mod identity;
-mod images;
+pub(crate) mod images;
 pub(crate) mod instance;
 pub(crate) mod irradiance_volume;
 pub(crate) mod light;
@@ -25,6 +25,7 @@ pub mod lod;
 pub(crate) mod material;
 pub(crate) mod model;
 pub mod shader;
+pub(crate) mod srgb;
 pub mod static_lighting;
 pub(crate) mod transient;
 

@@ -96,9 +96,14 @@ fn fsr2_renders_each_quality_or_falls_back_to_taa() {
                 [size.width, size.height]
             };
             if renderer.antialiasing_in_effect(&settings) == Antialiasing::Fsr2 {
+                assert!(renderer.targets().fsr2_masks.is_some());
                 assert_eq!(extent(&renderer.targets().color), render, "{quality:?}");
                 assert_eq!(extent(renderer.test_fsr2().unwrap().output()), SIZE);
             } else {
+                assert!(
+                    renderer.targets().fsr2_masks.is_none(),
+                    "unsupported FSR2 must allocate no masks"
+                );
                 eprintln!(
                     "{quality:?} with {:?}: TAA, because {}",
                     device.features(),
@@ -201,6 +206,8 @@ fn additive_effects_mark_fsr2_reactivity_for_their_frame_only() {
         renderer
             .targets()
             .fsr2_masks
+            .as_ref()
+            .unwrap()
             .clone()
             .map(|mask| test_support::read(&device, &queue, mask.texture(), 1))
     };

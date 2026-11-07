@@ -259,7 +259,7 @@ fn denoising_an_image_moved_one_column_moves_the_result() {
         .flat_map(|y| (0..size[0]).map(move |x| (y, x.saturating_sub(1))))
         .map(|(y, x)| words[(y * size[0] + x) as usize])
         .collect();
-    let denoise = |words: &[u32]| -> Vec<u32> {
+    let mut denoise = |words: &[u32]| -> Vec<u32> {
         let texture = |usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("AO denoise fixture"),
@@ -289,7 +289,10 @@ fn denoising_an_image_moved_one_column_moves_the_result() {
         );
         let output = texture(wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC);
         let mut encoder = device.create_command_encoder(&Default::default());
-        ao.encode_denoise(
+        super::encode_denoise(
+            &ao.denoise,
+            &ao.params,
+            &mut ao.groups[3],
             &device,
             &mut encoder,
             &working.create_view(&Default::default()),
@@ -613,4 +616,100 @@ struct Output {{ @location(0) normal:vec4<f32>, @builtin(frag_depth) depth:f32 }
     }
     queue.submit([encoder.finish()]);
     (depth, normals)
+}
+
+// Retained resources must keep the actual GPU groups; new input identities must
+// replace only their users. A fresh stage is the roundtrip oracle for avoiding
+// stale bindings, including replacement views of the same size and texture.
+#[test]
+fn bind_groups_reuse_resources_and_follow_replaced_inputs() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let mut ao = super::AmbientOcclusion::new(&device, &queue);
+    let mut view: crate::shading::uniforms::ViewUniform = bytemuck::Zeroable::zeroed();
+    view.view = glam::Mat4::IDENTITY.to_cols_array_2d();
+    let size = [129, 113];
+    let projection = crate::perspective(1.0, size[0] as f32 / size[1] as f32, 0.1);
+    view.projection = projection.to_cols_array_2d();
+    let (depth, normals) = analytic_geometry(&device, &queue, size, projection, false, false, None);
+    let encode = |ao: &mut super::AmbientOcclusion,
+                  depth: &wgpu::TextureView,
+                  normals: &wgpu::TextureView,
+                  quality,
+                  radius| {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let output = ao.encode(
+            &device,
+            &queue,
+            &mut encoder,
+            depth,
+            normals,
+            &view,
+            quality,
+            radius,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        let pixels = crate::test_support::read(&device, &queue, output.texture(), 4);
+        let groups = std::array::from_fn::<_, 4, _>(|i| ao.groups[i].cached().unwrap().clone());
+        (groups, pixels)
+    };
+    let quality = crate::settings::AmbientOcclusionQuality::High;
+    let (first, initial) = encode(&mut ao, &depth, &normals, quality, 1.0);
+    let (same, repeated) = encode(&mut ao, &depth, &normals, quality, 1.0);
+    assert_eq!(first, same, "unchanged resources allocated new groups");
+    assert_eq!(initial, repeated);
+    let (changed_params, _) = encode(
+        &mut ao,
+        &depth,
+        &normals,
+        crate::settings::AmbientOcclusionQuality::Ultra,
+        0.5,
+    );
+    assert_eq!(
+        first, changed_params,
+        "uniform contents changed group identity"
+    );
+
+    let (wall_depth, wall_normals) =
+        analytic_geometry(&device, &queue, size, projection, true, false, None);
+    let (new_depth, wall) = encode(&mut ao, &wall_depth, &normals, quality, 1.0);
+    assert_ne!(
+        first[0], new_depth[0],
+        "same-size replacement depth was ignored"
+    );
+    assert_eq!(first[1..], new_depth[1..]);
+    assert_ne!(initial, wall, "fixture must expose stale depth bindings");
+    let (new_normals, result) = encode(&mut ao, &wall_depth, &wall_normals, quality, 1.0);
+    for i in [0, 1, 3] {
+        assert_eq!(new_depth[i], new_normals[i]);
+    }
+    assert_ne!(
+        new_depth[2], new_normals[2],
+        "replacement normals were ignored"
+    );
+    let mut fresh = super::AmbientOcclusion::new(&device, &queue);
+    let (_, expected) = encode(&mut fresh, &wall_depth, &wall_normals, quality, 1.0);
+    assert_eq!(result, expected, "replacement inputs used stale bindings");
+
+    let depth_view = wall_depth.texture().create_view(&Default::default());
+    let (new_view, result) = encode(&mut ao, &depth_view, &wall_normals, quality, 1.0);
+    assert_ne!(new_normals[0], new_view[0], "new view identity was ignored");
+    assert_eq!(new_normals[1..], new_view[1..]);
+    assert_eq!(result, expected);
+
+    let (small_depth, small_normals) =
+        analytic_geometry(&device, &queue, [17, 19], projection, false, false, None);
+    let (resized, result) = encode(&mut ao, &small_depth, &small_normals, quality, 1.0);
+    for i in 0..4 {
+        assert_ne!(new_view[i], resized[i], "resize retained stale group {i}");
+    }
+    let (_, expected) = encode(&mut fresh, &small_depth, &small_normals, quality, 1.0);
+    assert_eq!(result, expected, "resize used stale bindings");
+    let (same, _) = encode(&mut ao, &small_depth, &small_normals, quality, 1.0);
+    assert_eq!(resized, same);
+    println!(
+        "XeGTAO groups: first frame 4; retained frame 0; depth replacement 1; normals replacement 1; replacement depth view 1; resize 4"
+    );
 }

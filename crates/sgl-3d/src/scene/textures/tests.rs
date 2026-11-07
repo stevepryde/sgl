@@ -237,6 +237,7 @@ fn rays_decode_every_bc7_mode_and_partition_as_level_0_samples() {
         .collect();
     let image = CompressedImage {
         format: crate::asset::CompressedFormat::Bc7,
+        decoded_level_0: None,
         width,
         height,
         levels: vec![blocks],
@@ -428,6 +429,7 @@ fn a_compressed_chain_the_device_cannot_upload_is_refused() {
     let mut seed = 3;
     let mut chain = |[width, height]: [u32; 2], levels: usize| CompressedImage {
         format: crate::asset::CompressedFormat::Bc7,
+        decoded_level_0: None,
         width,
         height,
         levels: (0..levels)
@@ -559,4 +561,117 @@ fn rays_pass_the_cut_out_texels_of_a_compressed_masked_material() {
         .map(|i| opaque(i % SIDE, i / SIDE))
         .collect();
     assert_eq!(hit, expected);
+}
+
+/// Fixed blocks from the ETC2 and ASTC specifications, without a runtime
+/// software decoder oracle: ETC individual RGB mode adds table-0's +2 to
+/// expanded nibbles; ASTC's UNORM16 void-extent block is a constant colour.
+fn browser_block(format: crate::asset::CompressedFormat, alpha: u8) -> (Vec<u8>, [u8; 4]) {
+    match format {
+        crate::asset::CompressedFormat::Etc2Rgba8 => (
+            vec![alpha, 0, 0, 0, 0, 0, 0, 0, 0x22, 0x44, 0x66, 0, 0, 0, 0, 0],
+            [36, 70, 104, alpha],
+        ),
+        crate::asset::CompressedFormat::Astc4x4 => {
+            let pixel = [36, 70, 104, alpha];
+            let mut block = vec![0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+            for byte in pixel {
+                block.extend_from_slice(&(u16::from(byte) * 257).to_le_bytes());
+            }
+            (block, pixel)
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn browser_formats_sample_stored_mips_and_rgba_ray_companions() {
+    use crate::asset::CompressedFormat;
+    let Some((device, queue)) =
+        test_support::device_choosing(crate::graphics_device::texture_compression_features)
+    else {
+        return;
+    };
+    for format in [CompressedFormat::Etc2Rgba8, CompressedFormat::Astc4x4] {
+        if !device
+            .features()
+            .contains(crate::graphics_device::compressed_image_feature(format))
+        {
+            eprintln!("unsupported: adapter has no {format:?} texture compression");
+            continue;
+        }
+        let (block, pixel) = browser_block(format, 128);
+        let (lower, lower_pixel) = browser_block(format, 224);
+        let image = CompressedImage {
+            format,
+            width: 4,
+            height: 4,
+            levels: vec![block, lower.clone(), lower],
+            decoded_level_0: Some(image::RgbaImage::from_pixel(4, 4, image::Rgba(pixel))),
+        };
+        let mut material = test_support::cube().materials[0].clone();
+        material.base_texture = Some(0);
+        material.mr_texture = Some(0);
+        let mut scene = Scene::new(&device, &queue);
+        scene
+            .add_materials(&device, &queue, &[material], &[Image::Compressed(image)])
+            .unwrap();
+        let texture = scene.materials.texture(0);
+        // A 12-byte header and exactly four bytes per companion texel.
+        assert_eq!((texture.ray.end - texture.ray.start) * 4, 12 + 4 * 4 * 4);
+        let rays = ray_texels(&device, &queue, &scene, texture.ray.start, [4, 4]);
+        for ray in rays {
+            assert_eq!(
+                ray.map(|v| (v * 255.).round() as u8),
+                pixel,
+                "{format:?} ray"
+            );
+        }
+        for level in 0..3 {
+            let expected = if level == 0 { pixel } else { lower_pixel };
+            let side = 4 >> level;
+            for (view, srgb) in [
+                (texture.color.as_ref().unwrap(), true),
+                (texture.data.as_ref().unwrap(), false),
+            ] {
+                for sampled in gpu_texels(&device, &queue, view, level, [side; 2]) {
+                    for channel in 0..4 {
+                        let value = if srgb && channel < 3 {
+                            srgb_to_linear(expected[channel])
+                        } else {
+                            f32::from(expected[channel]) / 255.
+                        };
+                        assert!(
+                            (sampled[channel] - value).abs() < 1e-3,
+                            "{format:?} mip {level} channel {channel}: {} vs {value}",
+                            sampled[channel]
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn prepared_rgba_chains_upload_their_distinct_colour_and_data_levels() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let source =
+        image::RgbaImage::from_fn(2, 1, |x, _| image::Rgba([if x == 0 { 0 } else { 255 }; 4]));
+    let image = crate::asset::Rgba8MipChain::new(source).unwrap();
+    let mut material = test_support::cube().materials[0].clone();
+    material.base_texture = Some(0);
+    material.mr_texture = Some(0);
+    let mut scene = Scene::new(&device, &queue);
+    scene
+        .add_materials(&device, &queue, &[material], &[Image::Rgba8Mips(image)])
+        .unwrap();
+    let texture = scene.materials.texture(0);
+    let color = gpu_texels(&device, &queue, texture.color.as_ref().unwrap(), 1, [1; 2])[0];
+    let data = gpu_texels(&device, &queue, texture.data.as_ref().unwrap(), 1, [1; 2])[0];
+    assert!((color[0] - srgb_to_linear(188)).abs() < 1e-3);
+    assert!((data[0] - 128. / 255.).abs() < 1e-3);
+    assert!((color[3] - data[3]).abs() < 1e-6);
 }

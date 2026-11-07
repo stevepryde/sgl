@@ -86,6 +86,7 @@ fn antialiasing_off_preserves_captured_pixels() {
             for size in [[80, 64], [37, 29]] {
                 post.resize(&device, sizes(size), true);
                 let bytes = &capture[..(size[0] * size[1] * 8) as usize];
+                post.tone_map.hold_capture(&device);
                 queue.write_texture(
                     post.tone_map.tone_mapped().texture().as_image_copy(),
                     bytes,
@@ -220,6 +221,7 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
                     bloom: enabled,
                     smaa: None,
                     capture: true,
+                    spatial: false,
                 };
                 post.present(
                     &device,
@@ -303,11 +305,11 @@ fn scene_resolution_budgets_resize_targets_without_stretching_or_upscaling() {
                         "small windows and Full must retain every pixel"
                     );
                 }
-                let output = renderer.tone_mapped().texture().size();
-                assert_eq!(
-                    [output.width, output.height],
-                    display,
-                    "display/UI remains full resolution"
+                assert!(
+                    renderer
+                        .diagnostic_target(crate::diagnostics::DiagnosticTarget::ToneMapped)
+                        .is_none(),
+                    "resizing must not allocate a diagnostic-only output target"
                 );
                 eprintln!("{resolution:?}: {display:?} -> {scene:?}");
             }
@@ -371,6 +373,7 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
                 bloom: false,
                 smaa: Some(SmaaQuality::Medium),
                 capture: true,
+                spatial: false,
             },
             look(&exposure),
             &output,
@@ -379,7 +382,12 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
         queue.submit([encoder.finish()]);
         let targets = post.smaa_targets.as_ref().unwrap();
         let changed = read(&device, &queue, targets.tone_mapped.texture(), 8)
-            != read(&device, &queue, targets.antialiased.texture(), 8);
+            != read(
+                &device,
+                &queue,
+                targets.antialiased.as_ref().unwrap().texture(),
+                8,
+            );
         (
             read(&device, &queue, post.tone_mapped().texture(), 8),
             changed,
@@ -392,5 +400,241 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
             present(scale).0 == displayed,
             "the scene times {scale} under an exposure of 1/{scale} must antialias alike"
         );
+    }
+}
+
+#[test]
+fn spatial_upscaling_is_opt_in_and_does_not_replace_temporal_reconstruction() {
+    use crate::settings::Upscaling;
+    assert_eq!(
+        crate::settings::Settings::default().upscaling,
+        Upscaling::Off
+    );
+    let scaled = Sizes {
+        render: [8, 6],
+        scene: [8, 6],
+        output: [17, 13],
+    };
+    assert!(!spatial_resolves(
+        Upscaling::Off,
+        scaled,
+        Completed::Composite
+    ));
+    assert!(spatial_resolves(
+        Upscaling::On,
+        scaled,
+        Completed::Composite
+    ));
+    assert!(spatial_resolves(Upscaling::On, scaled, Completed::Taa));
+    assert!(!spatial_resolves(
+        Upscaling::On,
+        sizes([8, 6]),
+        Completed::Composite
+    ));
+    let temporal = Sizes {
+        render: [4, 3],
+        ..scaled
+    };
+    assert!(spatial_resolves(Upscaling::On, temporal, Completed::Fsr2));
+    assert!(!spatial_resolves(
+        Upscaling::On,
+        temporal,
+        Completed::Composite
+    ));
+    assert!(!spatial_resolves(
+        Upscaling::On,
+        Sizes {
+            output: [7, 5],
+            ..scaled
+        },
+        Completed::Taa
+    ));
+}
+
+// Independent invariants: constant colour and alpha survive at borders;
+// spatial reconstruction differs from linear sampling on a diagonal; no
+// optional feature is requested. Check target lifetime through On/Off and
+// output-only resize transitions, not source-code assertions.
+#[test]
+fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
+    let Some(adapter) = crate::test_support::adapter() else {
+        return;
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        ..Default::default()
+    }))
+    .unwrap();
+    assert!(device.features().is_empty());
+    let scene_size = [8, 6];
+    let mut sizes = Sizes {
+        render: scene_size,
+        scene: scene_size,
+        output: [17, 13],
+    };
+    let mut post = Post::new(
+        &device,
+        &queue,
+        Output::texture(HDR),
+        sizes,
+        false,
+        SmaaQuality::default(),
+    )
+    .unwrap();
+    assert!(!post.tone_map.holds_capture());
+    assert!(!post.fsr1.target_is_held());
+    let exposure = exposure_texture(&device, &queue, 1.);
+    for output_size in [[17, 13], [19, 15], [17, 13]] {
+        sizes.output = output_size;
+        post.resize(&device, sizes, false);
+        assert!(!post.fsr1.target_is_held());
+        assert!(!post.tone_map.holds_capture());
+        let output = target(&device, "spatial presentation", output_size, HDR);
+        // Both flat extremes catch undefined zero reciprocals in AMD's
+        // contrast limiters; coloured grey also catches double gamma.
+        for color in [[0., 0., 0., 1.], [1., 1., 1., 1.], [0.18, 0.5, 0.75, 1.]] {
+            let scene =
+                crate::test_support::hdr_texture(&device, &queue, scene_size, &vec![color; 48]);
+            let mut reference = device.create_command_encoder(&Default::default());
+            post.present(
+                &device,
+                &queue,
+                &mut reference,
+                &scene,
+                Presentation {
+                    bloom: false,
+                    smaa: None,
+                    capture: true,
+                    spatial: false,
+                },
+                look(&exposure),
+                &output,
+                None,
+            );
+            queue.submit([reference.finish()]);
+            let expected = read(&device, &queue, post.tone_map.tone_mapped().texture(), 8);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            post.present(
+                &device,
+                &queue,
+                &mut encoder,
+                &scene,
+                Presentation {
+                    bloom: false,
+                    smaa: None,
+                    capture: true,
+                    spatial: true,
+                },
+                look(&exposure),
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            let captured = post.tone_map.tone_mapped();
+            assert_eq!(
+                [captured.texture().width(), captured.texture().height()],
+                output_size
+            );
+            // Capture is before dither, independent of the output transfer.
+            let data = read(&device, &queue, captured.texture(), 8);
+            let expected = &expected[..8];
+            let flat = &data[..8];
+            for pixel in data.chunks_exact(8) {
+                for channel in 0..4 {
+                    let actual = half(&pixel[channel * 2..]);
+                    assert!(actual.is_finite());
+                    assert!(
+                        (actual - half(&flat[channel * 2..])).abs() < 0.003,
+                        "flat colour changed at border"
+                    );
+                    // AMD's medium reciprocal has up to 0.316% relative
+                    // error; converting gamma-2 back to linear doubles it.
+                    // Allow that 0.632% plus half-float roundoff, without
+                    // hiding a missing or doubled colour conversion.
+                    assert!(
+                        (actual - half(&expected[channel * 2..])).abs() < 0.008,
+                        "flat colour/gamma differs from linear presentation"
+                    );
+                }
+                assert_eq!(half(&pixel[6..]), 1.);
+            }
+        }
+        let texels: Vec<_> = (0..6)
+            .flat_map(|y| {
+                (0..8).map(move |x| {
+                    let c = if x + y > 6 { 0.8 } else { 0.1 };
+                    [c, c * 0.7, c * 0.3, 1.]
+                })
+            })
+            .collect();
+        let scene = crate::test_support::hdr_texture(&device, &queue, scene_size, &texels);
+        let mut capture_identity = None;
+        for smaa in [None, Some(SmaaQuality::Medium)] {
+            for _ in 0..2 {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                post.present(
+                    &device,
+                    &queue,
+                    &mut encoder,
+                    &scene,
+                    Presentation {
+                        bloom: false,
+                        smaa,
+                        capture: true,
+                        spatial: true,
+                    },
+                    look(&exposure),
+                    &output,
+                    None,
+                );
+                queue.submit([encoder.finish()]);
+                let view = post.captured_tone_mapped().unwrap().clone();
+                if let Some(previous) = capture_identity.as_ref() {
+                    assert_eq!(
+                        &view, previous,
+                        "consecutive captures must reuse the output target"
+                    );
+                }
+                capture_identity = Some(view);
+            }
+        }
+        let mut spatial_output = None;
+        for spatial in [true, false, true] {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            post.present(
+                &device,
+                &queue,
+                &mut encoder,
+                &scene,
+                Presentation {
+                    bloom: false,
+                    smaa: None,
+                    capture: false,
+                    spatial,
+                },
+                look(&exposure),
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            assert!(post.captured_tone_mapped().is_none());
+            assert!(!post.tone_map.holds_capture());
+            assert_eq!(post.fsr1.target_is_held(), spatial);
+            if spatial {
+                let data = read(&device, &queue, output.texture(), 8);
+                if let Some(before) = spatial_output.as_ref() {
+                    assert_eq!(&data, before);
+                }
+                spatial_output = Some(data);
+                assert!(post.smaa_targets.as_ref().unwrap().antialiased.is_none());
+            } else {
+                assert!(post.smaa_targets.is_none());
+                assert_ne!(
+                    spatial_output.as_ref().unwrap(),
+                    &read(&device, &queue, output.texture(), 8)
+                );
+            }
+        }
     }
 }

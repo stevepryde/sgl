@@ -1,5 +1,8 @@
 //! Current-frame FP32 XeGTAO scalar visibility. See ambient_occlusion/README.md.
-use crate::{settings::AmbientOcclusionQuality, shading::uniforms::ViewUniform};
+use crate::{
+    settings::AmbientOcclusionQuality, shading::uniforms::ViewUniform,
+    view::cached_group::CachedGroup,
+};
 
 /// XeGTAO's passes.
 pub(crate) static XE_GTAO: crate::shading::Module = crate::shading::Module {
@@ -57,6 +60,8 @@ pub(crate) struct AmbientOcclusion {
     prefilter_mip4: wgpu::ComputePipeline,
     main: wgpu::ComputePipeline,
     denoise: wgpu::ComputePipeline,
+    /// One group per pass, retaining its inferred layout and bound identities.
+    groups: [CachedGroup; 4],
     params: wgpu::Buffer,
     hilbert_lut: wgpu::TextureView,
     targets: Option<Targets>,
@@ -90,11 +95,18 @@ impl AmbientOcclusion {
                 cache: None,
             })
         };
+        let prefilter = pipeline(PREFILTER_ENTRY);
+        let prefilter_mip4 = pipeline(PREFILTER_MIP4_ENTRY);
+        let main = pipeline(MAIN_PASS_ENTRY);
+        let denoise = pipeline(DENOISE_ENTRY);
+        let groups = [&prefilter, &prefilter_mip4, &main, &denoise]
+            .map(|pipeline| CachedGroup::new(pipeline.get_bind_group_layout(0)));
         Self {
-            prefilter: pipeline(PREFILTER_ENTRY),
-            prefilter_mip4: pipeline(PREFILTER_MIP4_ENTRY),
-            main: pipeline(MAIN_PASS_ENTRY),
-            denoise: pipeline(DENOISE_ENTRY),
+            prefilter,
+            prefilter_mip4,
+            main,
+            denoise,
+            groups,
             params: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -161,65 +173,65 @@ impl AmbientOcclusion {
             padding: [0; 3],
         };
         crate::counters::write_buffer(queue, &self.params, 0, bytemuck::bytes_of(&params));
-        let params_entry = || wgpu::BindGroupEntry {
-            binding: 0,
-            resource: self.params.as_entire_binding(),
-        };
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("XeGTAO depth mips 0-3"),
-            layout: &self.prefilter.get_bind_group_layout(0),
-            entries: &[
-                params_entry(),
+        let group = self.groups[0].get(
+            device,
+            "XeGTAO depth mips 0-3",
+            &[
+                (0, self.params.as_entire_binding()),
                 texture_entry(1, depth),
                 texture_entry(3, &targets.mips[0]),
                 texture_entry(7, &targets.mips[1]),
                 texture_entry(8, &targets.mips[2]),
                 texture_entry(9, &targets.mips[3]),
             ],
-        });
+        );
         // An 8x8 group filters a 16x16 tile.
         dispatch(
             encoder,
             &self.prefilter,
-            &group,
+            group,
             [size[0].div_ceil(16), size[1].div_ceil(16)],
             timing,
         );
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("XeGTAO depth mip 4"),
-            layout: &self.prefilter_mip4.get_bind_group_layout(0),
-            entries: &[
-                params_entry(),
+        let group = self.groups[1].get(
+            device,
+            "XeGTAO depth mip 4",
+            &[
+                (0, self.params.as_entire_binding()),
                 texture_entry(2, &targets.mips[3]),
                 texture_entry(10, &targets.mips[4]),
             ],
-        });
+        );
         dispatch(
             encoder,
             &self.prefilter_mip4,
-            &group,
+            group,
             size.map(|extent| (extent >> (DEPTH_MIPS - 1)).max(1).div_ceil(8)),
             timing,
         );
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("XeGTAO horizon integration"),
-            layout: &self.main.get_bind_group_layout(0),
-            entries: &[
-                params_entry(),
+        let group = self.groups[2].get(
+            device,
+            "XeGTAO horizon integration",
+            &[
+                (0, self.params.as_entire_binding()),
                 texture_entry(2, &targets.depth),
                 texture_entry(4, normals),
                 texture_entry(5, &targets.working),
                 texture_entry(11, &self.hilbert_lut),
             ],
-        });
+        );
         dispatch(
             encoder,
             &self.main,
-            &group,
+            group,
             [size[0].div_ceil(8), size[1].div_ceil(8)],
             timing,
         );
-        self.encode_denoise(
+        // Split the stage fields so the denoiser can update only its own cache.
+        encode_denoise(
+            &self.denoise,
+            &self.params,
+            &mut self.groups[3],
             device,
             encoder,
             &targets.working,
@@ -229,38 +241,38 @@ impl AmbientOcclusion {
         );
         &targets.output
     }
-    /// XeGTAO_Denoise's final pass from `working` into `output`, both
-    /// `size`, with the parameters the frame's `encode` wrote.
-    fn encode_denoise(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        working: &wgpu::TextureView,
-        output: &wgpu::TextureView,
-        size: [u32; 2],
-        timing: Option<&crate::timing::GpuTiming>,
-    ) {
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("XeGTAO spatial denoise"),
-            layout: &self.denoise.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.params.as_entire_binding(),
-                },
-                texture_entry(5, output),
-                texture_entry(6, working),
-            ],
-        });
-        // Each invocation denoises two horizontally adjacent pixels.
-        dispatch(
-            encoder,
-            &self.denoise,
-            &group,
-            [size[0].div_ceil(16), size[1].div_ceil(8)],
-            timing,
-        );
-    }
+}
+/// XeGTAO_Denoise's final pass from `working` into `output`, both
+/// `size`, with the parameters the frame's `encode` wrote.
+#[allow(clippy::too_many_arguments)]
+fn encode_denoise(
+    pipeline: &wgpu::ComputePipeline,
+    params: &wgpu::Buffer,
+    group: &mut CachedGroup,
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    working: &wgpu::TextureView,
+    output: &wgpu::TextureView,
+    size: [u32; 2],
+    timing: Option<&crate::timing::GpuTiming>,
+) {
+    let group = group.get(
+        device,
+        "XeGTAO spatial denoise",
+        &[
+            (0, params.as_entire_binding()),
+            texture_entry(5, output),
+            texture_entry(6, working),
+        ],
+    );
+    // Each invocation denoises two horizontally adjacent pixels.
+    dispatch(
+        encoder,
+        pipeline,
+        group,
+        [size[0].div_ceil(16), size[1].div_ceil(8)],
+        timing,
+    );
 }
 /// `XeGTAO.h` `HilbertIndex`: the cell's place along the Hilbert curve
 /// through the tile.
@@ -311,11 +323,8 @@ fn hilbert_lut(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView 
     )
     .create_view(&Default::default())
 }
-fn texture_entry(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: wgpu::BindingResource::TextureView(view),
-    }
+fn texture_entry(binding: u32, view: &wgpu::TextureView) -> (u32, wgpu::BindingResource<'_>) {
+    (binding, wgpu::BindingResource::TextureView(view))
 }
 fn dispatch(
     encoder: &mut wgpu::CommandEncoder,

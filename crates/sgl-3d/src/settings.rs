@@ -353,6 +353,17 @@ pub enum SceneResolution {
     Half,
 }
 
+/// Spatial reconstruction when `SceneResolution` is below the output size.
+/// Independent of antialiasing and native FSR2's temporal reconstruction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Upscaling {
+    /// Existing linear presentation, with no spatial reconstruction pass.
+    #[default]
+    Off,
+    /// Edge-adaptive reconstruction and sharpening after tone mapping and SMAA.
+    On,
+}
+
 /// Every rendering setting the renderer resolves into its effective
 /// configuration each frame. Size-affecting choices (preset, scene
 /// resolution, FSR2 and its quality) take effect at `Renderer::resize`.
@@ -361,6 +372,7 @@ pub enum SceneResolution {
 pub struct Settings {
     pub preset: RenderPreset,
     pub scene_resolution: SceneResolution,
+    pub upscaling: Upscaling,
     pub antialiasing: Antialiasing,
     pub fsr2_quality: Fsr2Quality,
     /// FSR2's robust contrast-adaptive sharpening (RCAS) of its output.
@@ -461,6 +473,7 @@ impl Default for Settings {
         Self {
             preset: RenderPreset::High,
             scene_resolution: SceneResolution::default(),
+            upscaling: Upscaling::default(),
             antialiasing: Antialiasing::default(),
             fsr2_quality: Fsr2Quality::default(),
             fsr2_sharpening: true,

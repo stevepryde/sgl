@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--frames <count>] [--radius <across>,<up>] [--occlusion]";
+  "measure-browser [--baseline] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--capture <png>]";
 
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
@@ -188,9 +188,10 @@ async function checkBrowser(): Promise<void> {
     ["bun", "install", "--frozen-lockfile"],
     ["cargo", "build", "-p", "sgl-net-examples", "--example", "browser_probe", "--target", "wasm32-unknown-unknown"],
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_smoke", "--target", "wasm32-unknown-unknown"],
+    ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_baseline", "--target", "wasm32-unknown-unknown"],
     // Built, not run: `measure-browser` runs it.
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_streaming", "--target", "wasm32-unknown-unknown"],
-    ...["browser_probe", "browser_smoke"].map((example) => [
+    ...["browser_probe", "browser_smoke", "browser_baseline"].map((example) => [
       "wasm-bindgen",
       "--target",
       "web",
@@ -216,15 +217,26 @@ if (task === "check" || task === "check-browser") {
 // each view's draw list there. Not part of `check`; it needs the browser
 // lane's setup and a GPU.
 
-const MEASURE_DIR = "target/browser-measure";
-const MEASURE_PORT = 8125;
+const MEASURE_DIR = process.env.SGL_BROWSER_MEASURE_DIR ?? "target/browser-measure";
 
 async function measureBrowser(args: string[]): Promise<void> {
   let frames = 600;
+  let baseline = false;
+  let skipBuild = false;
+  let scaled = false;
+  let prepared = false;
+  let capturePath: string | undefined;
+  let output: string | undefined;
   let radius = [4, 2];
   let occlusion = false;
   for (let at = 0; at < args.length; at += 1) {
-    if (args[at] === "--occlusion") occlusion = true;
+    if (args[at] === "--baseline") baseline = true;
+    else if (args[at] === "--scaled") scaled = true;
+    else if (args[at] === "--capture" && at + 1 < args.length) capturePath = args[++at];
+    else if (args[at] === "--prepared") prepared = true;
+    else if (args[at] === "--skip-build") skipBuild = true;
+    else if (args[at] === "--output" && at + 1 < args.length) output = args[++at];
+    else if (args[at] === "--occlusion") occlusion = true;
     else if (args[at] === "--frames" && at + 1 < args.length) frames = Number(args[++at]);
     else if (args[at] === "--radius" && at + 1 < args.length) {
       radius = args[++at].split(",").map(Number);
@@ -234,74 +246,62 @@ async function measureBrowser(args: string[]): Promise<void> {
   if (radius.length !== 2 || !radius.every((r) => Number.isInteger(r) && r >= 0)) {
     throw new Error("--radius takes two whole numbers, across and up");
   }
+  if (baseline && frames > 3600) throw new Error("--baseline --frames must not exceed 3600");
+  if ((scaled || prepared || capturePath || output) && !baseline) throw new Error("--scaled, --prepared, --capture and --output require --baseline");
+  const example = baseline ? "browser_baseline" : "browser_streaming";
+  const buildMetadataPath = `${MEASURE_DIR}/${example}.build.json`;
+  // Capture provenance at the build boundary, not when a saved binary is rerun.
+  const buildSourceHash = skipBuild ? null : await measurementSourceHash();
   const steps: string[][] = [
     ["bun", "install", "--frozen-lockfile"],
     [
-      "cargo", "build", "--release", "-p", "sgl-3d-examples", "--example", "browser_streaming",
+      "cargo", "build", "--release", "-p", "sgl-3d-examples", "--example", example,
       "--target", "wasm32-unknown-unknown",
     ],
     [
       "wasm-bindgen", "--target", "web", "--out-dir", MEASURE_DIR,
-      "target/wasm32-unknown-unknown/release/examples/browser_streaming.wasm",
+      `${process.env.CARGO_TARGET_DIR ?? "target"}/wasm32-unknown-unknown/release/examples/${example}.wasm`,
     ],
   ];
-  for (const argv of steps) {
+  for (const argv of skipBuild ? [] : steps) {
     const result = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
     if (result.exitCode !== 0) process.exit(result.exitCode ?? 1);
   }
-  const { chromium } = await import("playwright");
-  const types: Record<string, string> = {
-    ".html": "text/html; charset=utf-8",
-    ".js": "text/javascript",
-    ".wasm": "application/wasm",
-  };
-  // Cross-origin isolation gives `performance.now()` its finest resolution.
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: MEASURE_PORT,
-    async fetch(request) {
-      const path = new URL(request.url).pathname;
-      const file = path === "/" ? "browser/streaming.html" : `${MEASURE_DIR}${path}`;
-      const body = Bun.file(file);
-      if (!(await body.exists())) return new Response("not found", { status: 404 });
-      const type = types[path.slice(path.lastIndexOf("."))] ?? types[".html"];
-      return new Response(body, {
-        headers: {
-          "content-type": type,
-          "cross-origin-opener-policy": "same-origin",
-          "cross-origin-embedder-policy": "require-corp",
-        },
-      });
-    },
-  });
-  const browser = await chromium.launch({ channel: "chromium" });
-  try {
-    const page = await browser.newPage();
-    page.on("console", (message) => {
-      if (message.type() === "error" || message.type() === "warning") {
-        console.log(`console ${message.type()}: ${message.text()}`);
-      }
-    });
-    const query =
-      `frames=${frames}&across=${radius[0]}&up=${radius[1]}&occlusion=${occlusion ? 1 : 0}`;
-    await page.goto(`http://127.0.0.1:${MEASURE_PORT}/?${query}`);
-    const deadline = Date.now() + 15 * 60_000;
-    let report: string | null = null;
-    while (report === null) {
-      if (Date.now() > deadline) throw new Error("the measurement never reported");
-      report = await page.evaluate(
-        () => (window as unknown as { __sglReport?: string }).__sglReport ?? null,
-      );
-      if (report === null) await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-    console.log(report.trimEnd());
-    if (report.startsWith("FAIL")) process.exitCode = 1;
-  } finally {
-    await browser.close();
-    server.stop(true);
+  const moduleHash = new Bun.CryptoHasher("sha256").update(await Bun.file(`${MEASURE_DIR}/${example}_bg.wasm`).arrayBuffer()).digest("hex");
+  if (!skipBuild) await Bun.write(buildMetadataPath, JSON.stringify({mode:"release",source_sha256:buildSourceHash,module_sha256:moduleHash}));
+  const { runMeasurement, validateBaseline } = await import("../browser/measurement");
+  const result = await runMeasurement({page: baseline ? "baseline" : "streaming", dist: MEASURE_DIR, capturePath,
+    query: `frames=${frames}&across=${radius[0]}&up=${radius[1]}&occlusion=${occlusion ? 1 : 0}&scaled=${scaled ? 1 : 0}&prepared=${prepared ? 1 : 0}&capture=${capturePath ? 1 : 0}`});
+  if (baseline) {
+    const report = JSON.parse(result.report);
+    report.browser ??= {};
+    report.browser.chromium_version = result.browserVersion;
+    report.browser.errors = result.errors;
+    const metadataFile = Bun.file(buildMetadataPath);
+    const metadata = await metadataFile.exists() ? await metadataFile.json() : null;
+    const matchingBuild = metadata?.module_sha256 === moduleHash ? metadata : null;
+    report.build = {mode:matchingBuild?.mode ?? null, source_sha256:matchingBuild?.source_sha256 ?? null,
+      module_sha256:moduleHash, current_checkout_sha256:await measurementSourceHash(),
+      missing_reason:matchingBuild ? null : "No matching saved build metadata; binary build mode and source revision unknown"};
+    if (output) await Bun.write(output, JSON.stringify(report, null, 2) + "\n");
+    console.log(JSON.stringify(report, null, 2));
+    validateBaseline(report);
+    if (result.errors.length) throw new Error(result.errors.join("\n"));
+  } else {
+    console.log(result.report.trimEnd());
+    if (result.report.startsWith("FAIL") || result.errors.length) process.exitCode = 1;
   }
 }
 
 if (task === "measure-browser") {
   await measureBrowser(options);
+}
+
+// Evidence provenance only; this does not reject content or trigger any bake.
+async function measurementSourceHash(): Promise<string> {
+  const paths = ["Cargo.toml", "Cargo.lock", "examples/sgl-3d/examples/browser_baseline.rs"];
+  for await (const path of new Bun.Glob("crates/**/*.{rs,wgsl,toml}").scan(".")) paths.push(path);
+  const hash = new Bun.CryptoHasher("sha256");
+  for (const path of paths.sort()) { hash.update(path); hash.update(await Bun.file(path).arrayBuffer()); }
+  return hash.digest("hex");
 }

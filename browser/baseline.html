@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SGL3D browser baseline</title>
+<link rel="icon" href="data:,">
+<pre id="report">measuring…</pre>
+<canvas id="capture" width="1280" height="720" style="display:none"></canvas>
+<script type="module">
+  import init, { measure, take_capture } from "./browser_baseline.js";
+  const out = document.getElementById("report");
+  try {
+    const started = performance.now();
+    await init();
+    const initialized = performance.now();
+    const query = new URLSearchParams(location.search);
+    const report = JSON.parse(await measure(Number(query.get("frames") ?? 180), query.get("scaled") === "1", query.get("prepared") === "1", query.get("capture") === "1"));
+    report.browser = { user_agent: navigator.userAgent, hardware_concurrency: navigator.hardwareConcurrency,
+      cross_origin_isolated: crossOriginIsolated, device_pixel_ratio: devicePixelRatio,
+      wasm_init_ms: initialized - started, page_to_report_ms: performance.now() - started,
+      presentation: "offscreen; display pacing unavailable" };
+    if (query.get("capture") === "1" && !report.error) {
+      const canvas = document.getElementById("capture");
+      canvas.style.display = "block";
+      canvas.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(take_capture()),1280,720),0,0);
+      report.capture = {width:1280,height:720,frame:"final streamed-upload frame",excluded_from_timing:true};
+    }
+    const adapter = await navigator.gpu?.requestAdapter();
+    report.browser.adapter_info = adapter ? {vendor:adapter.info.vendor, architecture:adapter.info.architecture,
+      device:adapter.info.device, description:adapter.info.description} : null;
+    report.browser.adapter_info_missing_reason = adapter ? null : "browser did not expose adapter metadata";
+    out.textContent = JSON.stringify(report, null, 2);
+    window.__sglReport = out.textContent;
+  } catch (error) {
+    out.textContent = JSON.stringify({ error: String(error) });
+    window.__sglReport = out.textContent;
+  }
+</script>

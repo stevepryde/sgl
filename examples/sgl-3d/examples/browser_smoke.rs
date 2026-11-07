@@ -1188,6 +1188,170 @@ async fn color_outputs(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(),
     Ok(())
 }
 
+/// Exercise compressed material upload through the real public scene path,
+/// comparing its unlit raster output against its known decoded RGBA8 map.
+/// Both levels and companion are prepared by the caller, as offline assets are.
+async fn compressed_materials(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> Result<String, String> {
+    use sgl_3d::asset::CompressedFormat;
+    let mut detail = String::new();
+    for format in [CompressedFormat::Etc2Rgba8, CompressedFormat::Astc4x4] {
+        if !device
+            .features()
+            .contains(sgl_3d::graphics_device::compressed_image_feature(format))
+        {
+            let _ = write!(detail, "{format:?} unsupported; ");
+            continue;
+        }
+        // ETC2 individual mode: table 0's +2 applied to RGB nibbles.
+        // ASTC UNORM16 void extent: constant colour, no software decoder.
+        let pixel = [36, 70, 104, 255];
+        let block = |pixel: [u8; 4]| match format {
+            CompressedFormat::Etc2Rgba8 => vec![
+                255,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                ((pixel[0] - 2) / 17) * 17,
+                ((pixel[1] - 2) / 17) * 17,
+                ((pixel[2] - 2) / 17) * 17,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ],
+            CompressedFormat::Astc4x4 => {
+                let mut block = vec![0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+                for byte in pixel {
+                    block.extend_from_slice(&(u16::from(byte) * 257).to_le_bytes());
+                }
+                block
+            }
+            _ => unreachable!(),
+        };
+        let lower_pixel = [104, 36, 70, 255];
+        let decoded = image::RgbaImage::from_pixel(4, 4, image::Rgba(pixel));
+        let compressed = Image::Compressed(CompressedImage {
+            format,
+            width: 4,
+            height: 4,
+            levels: vec![block(pixel), block(lower_pixel), block(lower_pixel)],
+            decoded_level_0: Some(decoded.clone()),
+        });
+        // High UV gradients force the last stored mip, whose RGB differs
+        // from level 0. A regenerated/omitted chain cannot pass both cases.
+        for (uv_scale, expected) in [(1., pixel), (128., lower_pixel)] {
+            let mut outputs = Vec::new();
+            let reference = image::RgbaImage::from_pixel(4, 4, image::Rgba(expected));
+            for image in [compressed.clone(), Image::Rgba8(reference)] {
+                let mut scene = Box::new(Scene::new(device, queue));
+                let mut mesh = panel(Vec3::ZERO, Vec3::X * 2., Vec3::Y * 2., 0);
+                for vertex in &mut mesh.vertices {
+                    vertex.uv = vertex.uv.map(|value| value * uv_scale);
+                }
+                let asset = Asset {
+                    meshes: vec![mesh],
+                    materials: vec![Material {
+                        base_texture: Some(0),
+                        unlit: true,
+                        double_sided: true,
+                        ..Default::default()
+                    }],
+                    images: vec![image],
+                    rig: Default::default(),
+                    ignored: Vec::new(),
+                };
+                let ids = scene
+                    .add_asset(device, queue, asset)
+                    .map_err(|e| e.to_string())?;
+                scene
+                    .add_instance(
+                        device,
+                        queue,
+                        InstanceState {
+                            model: ids.model,
+                            pose: Mat4::IDENTITY,
+                            visible: true,
+                            capture_visible: true,
+                        },
+                        Mobility::Static,
+                    )
+                    .map_err(|e| e.to_string())?;
+                let size = [32, 32];
+                let target = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("compressed material browser fixture"),
+                    size: wgpu::Extent3d {
+                        width: size[0],
+                        height: size[1],
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                });
+                let settings = Settings {
+                    preset: RenderPreset::Low,
+                    antialiasing: Antialiasing::Off,
+                    ..Default::default()
+                };
+                let mut renderer = Box::new(
+                    Renderer::new(device, queue, target.format(), size, 1., &settings)
+                        .map_err(|e| e.to_string())?,
+                );
+                let eye = Vec3::new(0., 0., 3.);
+                let frame = FrameInput::new(Camera {
+                    eye,
+                    view: camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
+                    projection: sgl_3d::perspective(50f32.to_radians(), 1., 0.1),
+                });
+                let mut encoder = device.create_command_encoder(&Default::default());
+                renderer.render(
+                    device,
+                    queue,
+                    &mut encoder,
+                    &mut scene,
+                    &frame,
+                    &settings,
+                    &target.create_view(&Default::default()),
+                    None,
+                );
+                queue.submit([encoder.finish()]);
+                renderer.finish_frame(&mut scene);
+                outputs.push(read_pixels(device, queue, &target).await?);
+            }
+            let reference = &outputs[1];
+            let center = (16 * 32 + 16) * 4;
+            if reference[center..center + 3].iter().all(|&v| v < 4) {
+                return Err(format!("{format:?}: reference panel did not render"));
+            }
+            if outputs[0]
+                .iter()
+                .zip(reference)
+                .any(|(&a, &b)| a.abs_diff(b) > 2)
+            {
+                return Err(format!(
+                    "{format:?}: compressed material differs from its known decoded map"
+                ));
+            }
+        }
+        let _ = write!(
+            detail,
+            "{format:?} stored mips and material sampling passed; "
+        );
+    }
+    Ok(detail)
+}
+
 #[wasm_bindgen]
 pub async fn run() -> String {
     console_error_panic_hook::set_once();
@@ -1220,8 +1384,8 @@ async fn smoke(report: &mut String) -> Result<(), String> {
             label: Some("SGL3D browser smoke"),
             required_features: sgl_3d::graphics_device::features(&adapter)
                 | sgl_3d::graphics_device::fsr2_features(&adapter)
-                | (adapter.features()
-                    & (wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::TIMESTAMP_QUERY)),
+                | sgl_3d::graphics_device::texture_compression_features(&adapter)
+                | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY),
             required_limits: sgl_3d::graphics_device::limits(&adapter),
             ..Default::default()
         })
@@ -1236,6 +1400,11 @@ async fn smoke(report: &mut String) -> Result<(), String> {
     let _ = writeln!(
         report,
         "ok float composition and canvas output configuration: all tone mappers"
+    );
+    let compressed = compressed_materials(&device, &queue).await?;
+    let _ = writeln!(
+        report,
+        "ok browser compressed material formats: {compressed}"
     );
     let mut timing = GpuTiming::new(&device, &queue);
     let mut scene = Scene::new(&device, &queue);

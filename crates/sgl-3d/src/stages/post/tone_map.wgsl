@@ -315,3 +315,11 @@ fn present_rounded(color:vec3<f32>,frag_coord:vec2<f32>)->vec4<f32> {
 @fragment fn resample_direct(i:Output)->@location(0) vec4<f32> {
  return present_rounded(textureSample(scene,linear_sampler,i.uv).rgb,i.position.xy);
 }
+
+// RCAS owns reconstruction; presentation alone owns output transfer/dither.
+@fragment fn fsr1_rcas_capture(i:Output)->@location(0) vec4<f32> {
+ return vec4(fsr1_rcas(vec2<i32>(i.position.xy)),1.);
+}
+@fragment fn fsr1_rcas_direct(i:Output)->@location(0) vec4<f32> {
+ return present_rounded(fsr1_rcas(vec2<i32>(i.position.xy)),i.position.xy);
+}

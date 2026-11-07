@@ -14,7 +14,18 @@ pub(crate) fn upload(
     image: &image::RgbaImage,
     srgb: bool,
 ) -> wgpu::TextureView {
-    let levels = 32 - image.width().max(image.height()).leading_zeros();
+    let levels = crate::content::images::rgba8_levels(image, srgb);
+    upload_rgba8_levels(device, queue, &levels, srgb)
+}
+
+/// Uploads already filtered levels without cloning or filtering them.
+fn upload_rgba8_levels(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    levels: &[image::RgbaImage],
+    srgb: bool,
+) -> wgpu::TextureView {
+    let image = &levels[0];
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("retained material map"),
         size: wgpu::Extent3d {
@@ -22,7 +33,7 @@ pub(crate) fn upload(
             height: image.height(),
             depth_or_array_layers: 1,
         },
-        mip_level_count: levels,
+        mip_level_count: levels.len() as u32,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: if srgb {
@@ -33,17 +44,16 @@ pub(crate) fn upload(
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    let mut mip = image.clone();
-    for level in 0..levels {
+    for (level, mip) in levels.iter().enumerate() {
         crate::counters::write_texture(
             queue,
             wgpu::TexelCopyTextureInfo {
                 texture: &tex,
-                mip_level: level,
+                mip_level: level as u32,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &mip,
+            mip.as_raw(),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(mip.width() * 4),
@@ -55,38 +65,6 @@ pub(crate) fn upload(
                 depth_or_array_layers: 1,
             },
         );
-        // Filter color mips in linear light; data maps stay linear.
-        if level + 1 < levels {
-            let mut linear = image::Rgba32FImage::new(mip.width(), mip.height());
-            for (to, from) in linear.pixels_mut().zip(mip.pixels()) {
-                for c in 0..4 {
-                    let x = from[c] as f32 / 255.0;
-                    to[c] = if srgb && c < 3 {
-                        crate::shading::srgb::to_linear(x)
-                    } else {
-                        x
-                    };
-                }
-            }
-            let small = image::imageops::resize(
-                &linear,
-                (mip.width() / 2).max(1),
-                (mip.height() / 2).max(1),
-                image::imageops::FilterType::Triangle,
-            );
-            mip = image::RgbaImage::new(small.width(), small.height());
-            for (to, from) in mip.pixels_mut().zip(small.pixels()) {
-                for c in 0..4 {
-                    let x = from[c];
-                    let x = if srgb && c < 3 {
-                        crate::shading::srgb::from_linear(x)
-                    } else {
-                        x
-                    };
-                    to[c] = (x.clamp(0.0, 1.0) * 255.0).round() as u8;
-                }
-            }
-        }
     }
     tex.create_view(&Default::default())
 }
@@ -107,6 +85,11 @@ fn upload_compressed(
 ) -> [Option<wgpu::TextureView>; 2] {
     let linear = match image.format {
         CompressedFormat::Bc7 => wgpu::TextureFormat::Bc7RgbaUnorm,
+        CompressedFormat::Etc2Rgba8 => wgpu::TextureFormat::Etc2Rgba8Unorm,
+        CompressedFormat::Astc4x4 => wgpu::TextureFormat::Astc {
+            block: wgpu::AstcBlock::B4x4,
+            channel: wgpu::AstcChannel::Unorm,
+        },
     };
     let srgb = linear.add_srgb_suffix();
     let srgb_view = [srgb];
@@ -185,7 +168,9 @@ pub(crate) fn validate(device: &wgpu::Device, image: &Image) -> Result<(), Scene
     if let Image::Compressed(image) = image {
         if !device
             .features()
-            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+            .contains(crate::graphics_device::compressed_image_feature(
+                image.format,
+            ))
         {
             return Err(SceneError::CompressionUnsupported);
         }
@@ -230,6 +215,10 @@ impl Textures {
             Image::Rgba8(image) => [
                 color.then(|| upload(device, queue, image, true)),
                 data.then(|| upload(device, queue, image, false)),
+            ],
+            Image::Rgba8Mips(image) => [
+                color.then(|| upload_rgba8_levels(device, queue, image.levels(true), true)),
+                data.then(|| upload_rgba8_levels(device, queue, image.levels(false), false)),
             ],
             Image::Compressed(image) => upload_compressed(device, queue, image, [color, data]),
         };

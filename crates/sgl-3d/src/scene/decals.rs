@@ -293,7 +293,6 @@ impl Scene {
     /// decoded. Decals sample it as sRGB colour or linear data by the map
     /// that names it.
     pub fn add_decal_image(&mut self, image: Image) -> Result<DecalImageId, SceneError> {
-        self.edited();
         if let Image::Compressed(compressed) = &image
             && !compressed.is_valid()
         {
@@ -307,6 +306,7 @@ impl Scene {
             Image::Rgba8(texels) => texels,
             compressed => compressed.texels().into_owned(),
         };
+        self.edited();
         Ok(self.decals.images.insert(DecalImage { texels, users: 0 }))
     }
 

@@ -1,13 +1,17 @@
 //! Post: bloom, then tone mapping with the frame's exposure and colour
 //! grading, dithered to the output; where SMAA runs (or stands in for TAA
 //! that did not run), tone mapping at the scene size, SMAA, then the
-//! antialiased scene resampled and dithered to the output.
+//! antialiased scene resampled and dithered to the output. Opt-in spatial
+//! upscaling reconstructs a smaller scene with AMD FSR1 EASU then RCAS;
+//! RCAS shares the final presentation/dither pass.
 //!
 //! Reads: the completed scene at the scene size, motion-blurred when motion
 //! blur ran (`stages::motion_blur`), which antialiasing completed it
 //! (`Completed`), and the frame's exposure (`stages::exposure`).
 //! Writes: its own bloom chain, combined HDR, SMAA, tone-mapped scene,
-//! antialiased and tone-mapped targets, and the output. The tone-mapped
+//! antialiased and tone-mapped targets, the optional spatial reconstruction
+//! target, and the output. The diagnostic output-size tone-mapped target
+//! exists only while capture is enabled. The tone-mapped
 //! scene and antialiased targets are made the first frame SMAA runs at the
 //! scene size.
 //! Honours: bloom (and the frame's authored bloom parameters, and the
@@ -16,8 +20,9 @@
 //! layers and the diagnostics tone-map capture.
 //! Timing groups: `bloom`, `SMAA`, `tone map`. While SMAA runs, `tone map`
 //! also times the resample after it, so its passes are not consecutive; the
-//! group sums them.
+//! group sums them. `spatial upscale` times EASU and RCAS/presentation.
 pub(crate) mod bloom;
+pub(crate) mod fsr1;
 pub(crate) mod inputs;
 mod output;
 pub(crate) mod smaa;
@@ -38,6 +43,7 @@ struct Presentation {
     smaa: Option<SmaaQuality>,
     /// Tone mapping writes the tone-mapped target, which is then presented.
     capture: bool,
+    spatial: bool,
 }
 
 /// The frame's authored look that post applies.
@@ -52,18 +58,19 @@ struct Look<'a> {
     tone_mapping: crate::settings::ToneMapping,
 }
 
-/// SMAA's input and output at the scene size.
+/// Tone mapping's scene-size output for SMAA or spatial upscaling, and
+/// SMAA's output only while it runs.
 struct SmaaTargets {
     /// The tone-mapped scene.
     tone_mapped: wgpu::TextureView,
-    antialiased: wgpu::TextureView,
+    antialiased: Option<wgpu::TextureView>,
 }
 
 impl SmaaTargets {
     fn new(device: &wgpu::Device, scene: [u32; 2]) -> Self {
         Self {
             tone_mapped: target(device, "tone-mapped scene", scene, HDR),
-            antialiased: target(device, "antialiased scene", scene, HDR),
+            antialiased: None,
         }
     }
 }
@@ -73,6 +80,8 @@ pub(crate) struct Post {
     bloom: bloom::Bloom,
     smaa: smaa::Smaa,
     scene_size: [u32; 2],
+    output_size: [u32; 2],
+    fsr1: fsr1::Fsr1,
     /// SMAA's targets, from the first frame SMAA runs at `scene_size`.
     smaa_targets: Option<SmaaTargets>,
     tone_map: tone_map::ToneMap,
@@ -102,6 +111,8 @@ impl Post {
                 smaa_quality,
             )?,
             scene_size: sizes.scene,
+            output_size: sizes.output,
+            fsr1: fsr1::Fsr1::new(device, &inputs),
             smaa_targets: None,
             tone_map: tone_map::ToneMap::new(device, &inputs, output, sizes.output),
             inputs,
@@ -113,7 +124,10 @@ impl Post {
         self.inputs.forget();
         self.bloom.resize(device, sizes.scene, bloom_targets);
         self.scene_size = sizes.scene;
+        self.output_size = sizes.output;
+        self.fsr1.release();
         self.smaa_targets = None;
+        self.smaa.forget_inputs();
         self.tone_map.resize(device, sizes.output);
         self.smaa.resize(device, sizes.scene[0], sizes.scene[1]);
     }
@@ -150,6 +164,7 @@ impl Post {
             smaa: smaa_resolves(ctx.effective, ctx.sizes, kind)
                 .then_some(ctx.effective.smaa_quality),
             capture: ctx.effective.capture_tone_target,
+            spatial: spatial_resolves(ctx.effective.upscaling, ctx.sizes, kind),
         };
         let look = Look {
             exposure,
@@ -205,7 +220,17 @@ impl Post {
         // SMAA after tone mapping and before the resample to the output, as
         // Godot (`_render_buffers_post_process_and_tonemap`) and Bevy order
         // them: its thresholds are for display colour.
-        let Some(quality) = presentation.smaa else {
+        if presentation.smaa.is_none() {
+            self.smaa.forget_inputs();
+        }
+        if !presentation.spatial && self.fsr1.target_is_held() {
+            self.inputs.forget();
+            self.fsr1.release();
+        }
+        if presentation.smaa.is_none() && !presentation.spatial {
+            if self.smaa_targets.take().is_some() {
+                self.inputs.forget();
+            }
             self.tone_map.encode(
                 device,
                 queue,
@@ -241,25 +266,63 @@ impl Post {
             tone_map::Destination::Scene(&targets.tone_mapped),
             timing,
         );
-        self.smaa.set_quality(device, quality);
-        self.smaa.encode(
-            device,
-            encoder,
-            &targets.tone_mapped,
-            &targets.antialiased,
-            timing,
-        );
+        if presentation.smaa.is_none() && targets.antialiased.take().is_some() {
+            self.inputs.forget();
+        }
+        let scene = if let Some(quality) = presentation.smaa {
+            let antialiased = targets
+                .antialiased
+                .get_or_insert_with(|| target(device, "antialiased scene", scene_size, HDR));
+            self.smaa.set_quality(device, quality);
+            self.smaa
+                .encode(device, encoder, &targets.tone_mapped, antialiased, timing);
+            &*antialiased
+        } else {
+            &targets.tone_mapped
+        };
+        let scene = if presentation.spatial {
+            self.fsr1.encode(
+                device,
+                encoder,
+                &self.inputs,
+                scene,
+                self.bloom.halo(),
+                self.output_size,
+                timing,
+            )
+        } else {
+            scene
+        };
         self.tone_map.resample(
             device,
             encoder,
             &self.inputs,
-            &targets.antialiased,
+            scene,
             self.bloom.halo(),
             presentation.capture,
+            if presentation.spatial {
+                tone_map::Reconstruction::Rcas
+            } else {
+                tone_map::Reconstruction::Linear
+            },
             output,
             timing,
         );
     }
+}
+
+/// Spatial upscaling fills only the scene-to-output gap, never FSR2's
+/// render-to-scene gap (including a failed FSR2 dispatch).
+fn spatial_resolves(
+    choice: crate::settings::Upscaling,
+    sizes: Sizes,
+    completed: Completed,
+) -> bool {
+    choice == crate::settings::Upscaling::On
+        && (sizes.render == sizes.scene || completed == Completed::Fsr2)
+        && sizes.scene[0] <= sizes.output[0]
+        && sizes.scene[1] <= sizes.output[1]
+        && sizes.scene != sizes.output
 }
 
 /// Whether SMAA antialiases the scene `completed` holds: SMAA is in effect,

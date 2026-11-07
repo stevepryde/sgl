@@ -924,6 +924,27 @@ its source. It antialiases like TAA while upscaling:
 - FSR2 needs `perspective`'s infinite reversed-Z projection; with any other
   camera the render-size frame is scaled to the scene size without FSR2.
 
+### Portable spatial upscaling
+
+`Settings::upscaling` (`settings::Upscaling::Off`, the default, or `On`)
+controls spatial enlargement from the scene size to the output size. With
+`On` and a smaller scene, SGL3D runs AMD FSR1 EASU and RCAS after tone mapping
+and SMAA, before final output encoding and dithering. It needs no optional
+WebGPU feature and adds no temporal history. Equal-size presentation bypasses
+it; `Off` retains the existing linear presentation filter.
+
+Choose the input size with `Settings::scene_resolution`, for example
+`SceneResolution::ThreeQuarter` or `Half`, and call `Renderer::resize` as
+usual. UI drawn after SGL3D stays at output resolution. The game chooses
+whether to upscale and the scene resolution; the filter and sharpening
+parameters remain SGL3D's. Measure the combined rendering and upscaling cost
+on the game's camera routes, including moving thin geometry and transparency.
+
+This does not make FSR2 available in WebGPU. Native FSR2 still reconstructs
+the HDR frame from render size to scene size; spatial upscaling, when chosen,
+only enlarges the final scene to output size. Existing settings retain their
+presentation behavior because spatial upscaling is opt-in.
+
 ## Ambient occlusion
 
 ```rust,ignore
@@ -2597,6 +2618,8 @@ bundles by explicitly replacing its settings fields when it applies one.
 physical pixels, preserving aspect ratio without upscaling. `Full` renders at
 the full output size; `ThreeQuarter`/`Half` scale it. UI output is unaffected.
 FSR2 upscales to that scene size from its quality's render size.
+`Settings::upscaling` optionally enlarges the tone-mapped scene to output
+size with the [portable spatial filter](#portable-spatial-upscaling).
 Preserve the highest implemented fidelity as a selectable choice.
 
 ### Binding tiers
@@ -2645,10 +2668,13 @@ not supported, since SGL3D needs compute.
 - **Optional features** degrade as on any device: without
   `DEPTH_CLIP_CONTROL` directional shadow casters emulate unclipped depth in
   their shader; without `RG11B10UFLOAT_RENDERABLE` bloom's chain is RGBA16F;
-  without `TEXTURE_COMPRESSION_BC` (typically mobile GPUs, which offer ETC2
-  and ASTC instead) BC7 material images, BC6H probes and baked
-  lightmaps are refused with `SceneError::CompressionUnsupported` or
-  `ProbeError::CompressionUnsupported`, so ship RGBA8 images there; without
+  request `graphics_device::texture_compression_features(&adapter)` for
+  the supported BC, ETC2 and ASTC material formats, then select exported
+  assets using `compressed_image_feature(format)`. BC7, ETC2 RGBA8 and
+  ASTC 4×4 each require their matching feature; ETC2/ASTC also carry the
+  [prepared ray/decal companion](#compressed-material-images). BC6H probes
+  and compressed baked lightmaps still require BC and are refused without
+  it. Ship the appropriate fallback assets for the device. Without
   `TIMESTAMP_QUERY` `GpuTiming::new` returns `None`. Chrome quantizes
   timestamps, so browser pass times are coarse.
 - **FSR2** needs native-only features (texture atomics, 16-bit normalized and
@@ -2656,7 +2682,8 @@ not supported, since SGL3D needs compute.
   `Renderer::antialiasing_in_effect` reports TAA and `fsr2_error()` names the
   missing features. TAA, both screen-space reflection methods, world-space
   reflections, dynamic GI, ambient occlusion, fog, motion blur, bloom and
-  SMAA run.
+  SMAA run. For reduced-resolution browser rendering, use an explicit
+  `SceneResolution` and opt into [spatial upscaling](#portable-spatial-upscaling).
 - **Inputs, not clocks or files.** Fetch asset bytes and load them with
   `asset::load_slice` or `load_slice_with_options`; `asset::load` reads a file
   and fails in the browser. The frame time comes from
@@ -2677,6 +2704,15 @@ glow, heat shimmer, mist, a fog volume, a glass pane through a game's shader,
 which naga validates in the browser, and an environment);
 frames under four settings configurations; an asynchronous readback; and
 error scopes. It loads no glTF and sets no lightmap or mesh LODs.
+
+For repeatable performance measurements, run
+`bun scripts/tasks.ts measure-browser --baseline --frames 180`.
+The [browser baseline guide](../../examples/sgl-3d/BROWSER_BASELINE.md) explains
+its generated textured scene, moving content, separate chunk-upload phase,
+prepared mip and spatial-upscaling variants, and JSON/capture output. Its
+completion timings are offscreen workload measurements, not displayed frame
+pacing or a browser Bistro result. The ordinary browser smoke lane verifies
+ETC2/ASTC material sampling where the browser exposes those features.
 
 ## Asset and environment limits
 
@@ -2845,11 +2881,14 @@ Godot's levels).
 
 ### Compressed material images
 
-`asset::Image` is either decoded RGBA8 texels (`Image::Rgba8`, what glTF
-loading yields), whose mip chain the scene filters when the image is added,
-in linear light where a material samples it as colour, or a block-compressed
-chain (`Image::Compressed`), uploaded as stored with no mip generation, at a
-quarter of RGBA8's memory. Games compress in their export step and supply
+`asset::Image` accepts decoded RGBA8 texels (`Image::Rgba8`, what glTF
+loading yields), whose mip chain the scene filters when the image is added;
+prepared RGBA8 chains (`Image::Rgba8Mips`); or a block-compressed chain
+(`Image::Compressed`), uploaded as stored with no mip generation. BC7,
+ETC2 RGBA8 and ASTC 4×4 each use 16 bytes per 4×4 raster block, one quarter
+of RGBA8's raster texel storage before allocation padding. Their ray and
+CPU storage have different costs, described below. Games compress in their
+export step and supply
 the chains as the glTF loads, so its own images are never decoded:
 
 ```rust,ignore
@@ -2874,11 +2913,15 @@ may refer to external image files when each one a sampled map uses is
 supplied.
 `CompressedImage::from_ktx2(bytes)` rejects malformed data format descriptors
 with an error, then reads a KTX2
-file of one 2D BC7 image (`VK_FORMAT_BC7_UNORM_BLOCK` or `_SRGB_BLOCK`) with
-its stored levels, uncompressed or Zstandard-supercompressed, as Bevy reads
+file of one 2D BC7 image (`VK_FORMAT_BC7_UNORM_BLOCK` or `_SRGB_BLOCK`).
+`from_ktx2_with_decoded_level_0(bytes, texels)` accepts ETC2 RGBA8
+(`VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK` or `_SRGB_BLOCK`) and ASTC 4×4
+(`VK_FORMAT_ASTC_4x4_UNORM_BLOCK` or `_SRGB_BLOCK`) with a matching RGBA8
+level-zero companion. All accept stored levels, uncompressed or
+Zstandard-supercompressed, as Bevy reads
 them. It refuses zero or non-block-aligned dimensions, sides above 16384,
 more than a full mip chain, and declared or decoded level sizes that differ
-from their BC7 block size. The whole decoded chain shares a 4 GiB native
+from their format's block size. The whole decoded chain shares a 4 GiB native
 or 1 GiB browser budget, checked before allocating levels; Zstandard
 decoded output length is capped at the expected level size plus one sentinel byte.
 The decoder never allocates its advertised history window; regenerated
@@ -2896,15 +2939,39 @@ colour-filtered levels: a data use that needs its own filtering needs its
 own image. An image sampled both ways is one texture with an sRGB view,
 which needs `DownlevelFlags::VIEW_FORMATS` (wgpu's GL backend lacks it:
 `SceneError::CompressedImageViews`). `from_ktx2` reads bytes, so its caller
-adds the asset's path to its errors. Adding one needs
-`wgpu::Features::TEXTURE_COMPRESSION_BC` (`SceneError::CompressionUnsupported`
-otherwise); its sides must be multiples of 4, as wgpu requires of a
-block-compressed level 0, and at most 16384, as KTX2 loading allows; it
-holds one to a full chain of levels, each of its size
-(`SceneError::InvalidCompressedImage`). Rays read level 0's stored
-blocks, decoding each texel they sample as raster's level 0 decodes it: one
-byte a texel in the ray source beside the texture's one. Basis Universal
-transcoding, for a device without BC, is not provided. The `offscreen`
+adds the asset's path to its errors. Request the adapter-supported
+features returned by `graphics_device::texture_compression_features` at
+device creation and select the export whose
+`graphics_device::compressed_image_feature(format)` is enabled. Adding a
+format without its feature returns `SceneError::CompressionUnsupported`.
+Sides must be multiples of 4 and at most 16384, with one to a full chain
+of exact-size levels (`SceneError::InvalidCompressedImage`).
+
+BC7 rays read level zero's stored blocks, preserving the native compressed
+path. ETC2/ASTC rays and decals use `CompressedImage::decoded_level_0`, a
+required RGBA8 image with matching dimensions. Export it from the decoded
+compressed image if ray and raster texels must match exactly; the runtime
+checks structure and byte budgets, not semantic agreement. It does not run
+an ETC2/ASTC CPU decoder or Basis Universal transcoder. A missing or
+mismatched companion is rejected before scene mutation. BC7 needs no
+companion. ETC2/ASTC retain one compressed raster chain plus a 4-byte-per-texel
+ray copy and the caller's companion/download costs, so their total saving is
+not the raster chain's fourfold reduction.
+
+For an uncompressed fallback prepared outside the render-critical thread,
+construct `Rgba8MipChain::new(image)` and pass `Image::Rgba8Mips(chain)`.
+This pure `Send` value owns immutable full chains filtered separately in
+linear-light colour and linear data, so one image can serve both roles.
+Scene upload uses those stored levels without filtering them again. Preparing
+both full chains retains roughly twice one RGBA8 mip chain; the constructor
+checks its platform byte budget before expansion, with filter scratch memory
+additional. The caller chooses the worker and when to prepare it; SGL3D
+starts no thread.
+Keep asset fetches and chunk selection game-owned: export independent bounded
+GLB/KTX2 groups, prepare geometry with `PreparedModel`, and add each group
+between frames rather than putting a whole large scene in one browser load.
+
+The `offscreen`
 example's `--alpha` grate is a BC7 KTX2 chain, which
 `cargo run -p sgl-3d-examples --example export_grate` writes.
 

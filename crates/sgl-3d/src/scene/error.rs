@@ -35,7 +35,8 @@ pub enum SceneError {
     EmptyImage,
     /// A compressed image's sides are not multiples of its block size or
     /// exceed 16384, or it holds no level, more than a full chain, or a level
-    /// of the wrong size.
+    /// of the wrong size; ETC2/ASTC require a matching decoded level 0,
+    /// whereas BC7 must not carry a companion.
     InvalidCompressedImage,
     /// A compressed image that materials sample as both sRGB colour and
     /// linear data needs `DownlevelFlags::VIEW_FORMATS`, which wgpu's GL
@@ -123,7 +124,7 @@ pub enum SceneError {
     /// Irradiance outside the finite nonnegative RGBA16F range, or a
     /// compressed atlas's scale that is not finite and nonnegative.
     InvalidIrradiance,
-    /// Block-compressed content needs `wgpu::Features::TEXTURE_COMPRESSION_BC`.
+    /// The device lacks the image format’s BC, ETC2 or ASTC compression feature.
     CompressionUnsupported,
     /// Heat geometry is not a triangle list of at most
     /// `heat_distortion::MAX_VERTICES` vertices.
@@ -206,7 +207,7 @@ impl std::fmt::Display for SceneError {
                 "a compressed image sampled as both colour and data needs DownlevelFlags::VIEW_FORMATS"
             }
             Self::InvalidCompressedImage => {
-                "a compressed image needs sides that are multiples of its block size, at most 16384, and one to a full chain of levels, each of its size"
+                "a compressed image needs sides that are multiples of its block size, at most 16384, and one to a full chain of levels, each of its size; ETC2/ASTC also need matching decoded level 0, BC7 needs none"
             }
             Self::IndexOutOfRange => "a mesh index names no vertex",
             Self::NonFiniteGeometry => {
@@ -273,7 +274,7 @@ impl std::fmt::Display for SceneError {
                 "irradiance and its scale must be finite, nonnegative and within RGBA16F range"
             }
             Self::CompressionUnsupported => {
-                "compressed content needs wgpu::Features::TEXTURE_COMPRESSION_BC"
+                "compressed content needs its matching BC, ETC2 or ASTC device feature"
             }
             Self::HeatVertexCount => {
                 "heat geometry must be a triangle list of at most 6144 vertices"

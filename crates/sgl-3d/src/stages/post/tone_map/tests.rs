@@ -344,6 +344,7 @@ fn dithers_into(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::Textur
         })
         .collect();
     let hdr = hdr_texture(&device, &queue, size, &texels);
+    let mut undithered = Vec::new();
     let mut present = |capture: bool| {
         let output = target(&device, "dither fixture output", size, format);
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -364,11 +365,16 @@ fn dithers_into(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::Textur
             None,
         );
         queue.submit([encoder.finish()]);
+        if capture {
+            undithered = read(&device, &queue, tone_map.tone_mapped().texture(), 8);
+        }
         read(&device, &queue, output.texture(), 4)
     };
     let outputs = [("captured", present(true)), ("direct", present(false))];
-    // The direct path leaves the capture in place.
-    let undithered = read(&device, &queue, tone_map.tone_mapped().texture(), 8);
+    assert!(
+        tone_map.tone_mapped.is_none(),
+        "direct presentation releases capture"
+    );
     let exact: Vec<f64> = undithered
         .chunks_exact(8)
         .flat_map(|texel| (0..3).map(|channel| srgb_code(f64::from(half(&texel[channel * 2..])))))
@@ -750,7 +756,8 @@ fn float_composition_and_surface_outputs_apply_one_display_transfer() {
             wgpu::TextureFormat::Rgba8UnormSrgb,
         ),
     ] {
-        let mapper = ToneMap::new(&device, &inputs, boundary, size);
+        let mut mapper = ToneMap::new(&device, &inputs, boundary, size);
+        mapper.hold_capture(&device);
         queue.write_texture(
             mapper.tone_mapped().texture().as_image_copy(),
             &patches

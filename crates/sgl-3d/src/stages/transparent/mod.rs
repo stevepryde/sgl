@@ -233,7 +233,7 @@ impl Transparent {
             Beauty::Incident(view) => (view, None, (0, None)),
             Beauty::Composite { reflections } => (
                 &targets.composite,
-                ctx.effective.fsr2.then_some(&targets.fsr2_masks),
+                targets.fsr2_masks.as_ref().filter(|_| ctx.effective.fsr2),
                 (1, reflections),
             ),
         };

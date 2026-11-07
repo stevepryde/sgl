@@ -62,8 +62,8 @@ impl Inputs {
     }
 
     /// Drops the cached groups, which may hold a replaced input's views.
-    pub fn forget(&mut self) {
-        self.groups.get_mut().clear();
+    pub fn forget(&self) {
+        self.groups.borrow_mut().clear();
     }
 
     /// The group binding `scene` and `bloom`, made once per pair.
