@@ -3,11 +3,11 @@
 //! device or a scene, so a game prepares its models on whichever threads
 //! it chooses and `Scene::add_model` and `set_model` only place and copy
 //! them (`models`).
-use super::SceneError;
 use super::deformation::{self, PreparedDeformation};
 use super::mesh_ranges::{INDICES_PER_LEAF, MeshRanges};
 use super::rays::{self, PreparedRayModel, RayMesh};
 use super::shadow_clusters::ClusteredIndices;
+use super::{RayData, SceneError};
 use crate::asset::{self, Vertex};
 use crate::content::identity::MaterialId;
 use crate::content::model::ModelMesh;
@@ -22,10 +22,18 @@ use glam::{Vec2, Vec3};
 /// any thread and give it to the scene on the one that edits it. The
 /// operation consumes it.
 pub struct PreparedModel {
+    ray_data: RayData,
     pub(super) bounds: [Vec3; 2],
     pub(super) meshes: Vec<PreparedMesh>,
     pub(super) rays: PreparedRayModel,
     pub(super) deformation: Option<PreparedDeformation>,
+}
+
+/// Capabilities of a prepared model. Its ray-data mode must match the scene
+/// that takes it; existing constructors retain ray data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PreparedModelOptions {
+    pub ray_data: RayData,
 }
 
 /// One mesh of a prepared model.
@@ -89,8 +97,22 @@ impl PreparedModel {
     /// scene or the device (its materials, the device's limits) is checked
     /// when it is added.
     pub fn new(meshes: Vec<ModelMesh>) -> Result<Self, SceneError> {
+        Self::with_options(meshes, PreparedModelOptions::default())
+    }
+
+    /// Prepares geometry for a scene with the same ray-data capability.
+    /// Disabled skips the model BVH, retaining the shared raster source.
+    pub fn with_options(
+        meshes: Vec<ModelMesh>,
+        options: PreparedModelOptions,
+    ) -> Result<Self, SceneError> {
         let streams = vec![Vec::new(); meshes.len()];
-        Self::prepare(meshes, streams)
+        Self::prepare(meshes, streams, options)
+    }
+
+    /// The ray-data capability this model was prepared for.
+    pub fn ray_data(&self) -> RayData {
+        self.ray_data
     }
 
     /// `meshes` prepared as `new` prepares them, each with the data its
@@ -103,6 +125,15 @@ impl PreparedModel {
         meshes: Vec<ModelMesh>,
         shader_data: Vec<Vec<[f32; 4]>>,
     ) -> Result<Self, SceneError> {
+        Self::with_shader_data_and_options(meshes, shader_data, PreparedModelOptions::default())
+    }
+
+    /// `with_shader_data` with an explicit capability matching its scene.
+    pub fn with_shader_data_and_options(
+        meshes: Vec<ModelMesh>,
+        shader_data: Vec<Vec<[f32; 4]>>,
+        options: PreparedModelOptions,
+    ) -> Result<Self, SceneError> {
         if let Some(mesh) = (0..meshes.len().max(shader_data.len())).find(|&index| {
             match (meshes.get(index), shader_data.get(index)) {
                 (Some(mesh), Some(data)) => !data.is_empty() && data.len() != mesh.vertices.len(),
@@ -111,12 +142,13 @@ impl PreparedModel {
         }) {
             return Err(SceneError::ShaderDataLength { mesh });
         }
-        Self::prepare(meshes, shader_data)
+        Self::prepare(meshes, shader_data, options)
     }
 
     fn prepare(
         meshes: Vec<ModelMesh>,
         shader_data: Vec<Vec<[f32; 4]>>,
+        options: PreparedModelOptions,
     ) -> Result<Self, SceneError> {
         let tangents = step(BuildStep::Validate, || {
             if !meshes
@@ -149,7 +181,7 @@ impl PreparedModel {
                 shader_data,
             })
             .collect();
-        let rays = rays::prepare_model(&ray_meshes)?;
+        let rays = rays::prepare_model(&ray_meshes, options.ray_data)?;
         let deformation = step(BuildStep::Pack, || PreparedDeformation::new(&meshes));
         let deforms = deformation.is_some();
         let bounds = meshes.iter().flat_map(|mesh| &mesh.vertices).fold(
@@ -189,6 +221,7 @@ impl PreparedModel {
             })
             .collect();
         Ok(Self {
+            ray_data: options.ray_data,
             bounds,
             meshes,
             rays,
@@ -202,6 +235,59 @@ mod tests {
     use super::*;
     use crate::content::identity::Identity;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    // A raster-only preparation must omit the actual BVH build and words,
+    // while preserving the one shared geometry/custom-data representation.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn disabled_ray_data_skips_bvh_and_preserves_shared_geometry() {
+        let vertices: Vec<_> = (0..768)
+            .map(|i| Vertex {
+                position: [
+                    (i / 3) as f32,
+                    (i % 3 == 1) as u8 as f32,
+                    (i % 3 == 2) as u8 as f32,
+                ],
+                normal: [0., 0., 1.],
+                lightmap_bounds: [0., 0., 1., 1.],
+                ..bytemuck::Zeroable::zeroed()
+            })
+            .collect();
+        let mesh = ModelMesh {
+            indices: (0..vertices.len() as u32).collect(),
+            vertices,
+            material: MaterialId::issue(0, 0),
+            deformation: Default::default(),
+        };
+        let shader_data = vec![[1., 2., 3., 4.]; mesh.vertices.len()];
+        let enabled =
+            PreparedModel::with_shader_data(vec![mesh.clone()], vec![shader_data.clone()]).unwrap();
+        assert_eq!(enabled.ray_data(), RayData::Enabled);
+        let before = crate::counters::snapshot();
+        let disabled = PreparedModel::with_shader_data_and_options(
+            vec![mesh],
+            vec![shader_data],
+            PreparedModelOptions {
+                ray_data: RayData::Disabled,
+            },
+        )
+        .unwrap();
+        let delta = crate::counters::snapshot().since(&before);
+        assert_eq!(delta.step(BuildStep::RayBvh).calls, 0);
+        assert!(delta.step(BuildStep::Ranges).calls > 0);
+        assert!(delta.step(BuildStep::Clusters).calls > 0);
+        assert_eq!(disabled.ray_data(), RayData::Disabled);
+        assert_eq!(
+            &enabled.rays.words()[..disabled.rays.words().len()],
+            disabled.rays.words()
+        );
+        assert!(enabled.rays.words().len() > disabled.rays.words().len() + 1024);
+        assert_eq!(
+            enabled.meshes[0].positions.len(),
+            disabled.meshes[0].positions.len()
+        );
+        assert_eq!(enabled.meshes[0].indices, disabled.meshes[0].indices);
+        assert!(disabled.meshes[0].clusters.is_some());
+    }
 
     /// One mesh of triangles at `vertices`, three to a triangle.
     fn model(vertices: Vec<Vertex>) -> Result<PreparedModel, SceneError> {

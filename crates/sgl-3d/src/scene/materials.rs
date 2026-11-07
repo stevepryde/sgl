@@ -402,6 +402,9 @@ impl Materials {
         }
         for (image, &use_as) in images.iter().zip(&uses) {
             textures::validate_uses(device, image, use_as)?;
+            if use_as != [false; 2] && rays.ray_data() == super::RayData::Enabled {
+                textures::validate_cpu_texels(image)?;
+            }
         }
         let mut uploaded = vec![None; images.len()];
         let mut added = Vec::new();
@@ -629,10 +632,12 @@ impl Scene {
         materials: &[AuthoredMaterial],
         images: &[Image],
     ) -> Result<Vec<MaterialId>, SceneError> {
-        self.edited();
         let ids = self
             .materials
             .add(device, queue, &mut self.rays, materials, images);
+        if ids.is_ok() {
+            self.edited();
+        }
         // A failure after the source grew still leaves it grown.
         self.refresh_scene_group(device);
         ids

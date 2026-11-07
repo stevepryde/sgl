@@ -175,7 +175,7 @@ fn reflected_wall(
         );
         queue.submit([encoder.finish()]);
         renderer.finish_frame(scene);
-        assert_eq!(renderer.ray_tracing_in_effect(settings), hardware);
+        assert_eq!(renderer.ray_tracing_in_effect(settings, scene), hardware);
         // A candidate program the device fails to compile falls back to
         // the baseline, which would pass these frames unseen.
         assert_eq!(renderer.ray_tracing_error(), None);

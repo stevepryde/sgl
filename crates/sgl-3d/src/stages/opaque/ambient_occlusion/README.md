@@ -8,10 +8,10 @@ Intel Corporation. The WGSL adaptation retains that license.
 
 Configuration is full-resolution FP32 (`XE_GTAO_FP32_DEPTHS`,
 `XE_GTAO_USE_HALF_FLOAT_PRECISION=0`), scalar visibility, supplied normals,
-NoiseIndex zero, the Hilbert lookup texture (`XE_GTAO_HILBERT_LUT_AVAILABLE`,
+the Hilbert lookup texture (`XE_GTAO_HILBERT_LUT_AVAILABLE`,
 vaGTAO's 64×64 R16Uint table of `HilbertIndex`), and the upstream default
 one final denoise pass (beta 1.2).
-There is no history or temporal accumulation. Low/Medium/High/Ultra use the
+There is no AO-owned history or temporal accumulation. Low/Medium/High/Ultra use the
 upstream 1×2, 2×2, 3×3, and 9×3 slice/step counts. The physical radius is
 clamped to 0.01–10000 m and multiplied by 1.457 internally.
 `GTAOImGuiSettings` clamps it to at most 10000 and expects at least 0.01 (its
@@ -33,8 +33,13 @@ The default small-radius fade, projected-normal 0.05 adjustment, pixel minimum
   RH-to-positive-depth Z reflection rather than loading R11G11B10 packed integers.
 - Depth is reversed-Z infinite device depth (1 at near, 0 at sky). Constants
   follow `GTAOUpdateConstants`, including its handedness correction. Sky texels
-  are excluded before unpack. Jitter-free depth and matching stable matrices are
-  the caller's responsibility.
+  are excluded before unpack. The reconstruction offset removes the frame's
+  raster jitter from each pixel's NDC position before the projection scale is
+  inverted, so the view-space ray matches the depth and normal texel. This is
+  the same inverse-projection correction used by SGL's DiligentFX adapter
+  ([DFX-15](../../../../../sgl-post-fx/PROVENANCE.md)); AMD FidelityFX SSSR's
+  `FFX_SSSR_ScreenSpaceToViewSpace` likewise uses the full inverse projection.
+  It changes no XeGTAO sampling or denoising constants.
 - `XeGTAO_PrefilterDepths16x16` writes mips 0–3 in one dispatch, an 8×8 group
   to a 16×16 tile through workgroup memory, as upstream. Mip 4 would be a fifth
   storage texture, past WebGPU's default four per stage, so a second, small
@@ -65,8 +70,14 @@ The default small-radius fade, projected-normal 0.05 adjustment, pixel minimum
   conversion ([Direct3D 11.3 §3.2.3.13](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#3.2.3.13)). Consumers divide the integer by 255.
 - `XeGTAO_ClampDepth` uses `#ifdef XE_GTAO_USE_HALF_FLOAT_PRECISION` even when the
   selected mode defines it as zero. Its resulting 65504 clamp is preserved.
-- Optional bent normals, generated normals, debug visualizations and TAA are
-  not enabled configurations; no replacement AO algorithm is introduced.
+- With effective TAA or FSR2, `NoiseIndex` follows the camera history frame
+  count and `noise` applies the exact `288 * (NoiseIndex % 64)` Hilbert/R2
+  offset from `vaGTAO.hlsl` `SpatioTemporalNoise`. As `vaGTAO::UpdateConstants`
+  does with its `usingTAA` argument, Off/SMAA retain phase zero. A camera cut
+  restarts the existing frame count, so its first sample is unchanged. The
+  final temporal AA resolves the lit image; this pass keeps no AO history.
+- Optional bent normals, generated normals and debug visualizations are not
+  enabled configurations; no replacement AO algorithm is introduced.
 
 ## Cost decisions
 
@@ -125,8 +136,9 @@ which stores through `pack_working`.
 `UnpackEdges` maps to `unpack_edges`; `AddSample` and final `Output` map to
 `denoise_pixel`, which `denoise` runs for each pixel of its pair.
 The signed arithmetic right shift in `FastSqrt` is retained exactly.
-No active-branch mathematical deviations are known after this audit; the
-intentional storage/dispatch/normal-coordinate differences are catalogued above.
+The raster-jitter reconstruction correction and intentional
+storage/dispatch/normal-coordinate differences are catalogued above. No other
+active-branch mathematical deviations are known after this audit.
 
 The numerical GPU fixture passed with fixed thresholds: open-plane mean error
 0.009444 at 129×113 and 0.005403 at 17×19; junction final mean/max error

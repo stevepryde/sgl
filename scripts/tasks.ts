@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--baseline] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--capture <png>]";
+  "measure-browser [--baseline | --bistro] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|off] [--cascades <1..4>] [--motion] [--rect-light] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
 
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
@@ -189,6 +189,8 @@ async function checkBrowser(): Promise<void> {
     ["cargo", "build", "-p", "sgl-net-examples", "--example", "browser_probe", "--target", "wasm32-unknown-unknown"],
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_smoke", "--target", "wasm32-unknown-unknown"],
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_baseline", "--target", "wasm32-unknown-unknown"],
+    // Built, not run: explicit prepared assets are needed by the Bistro benchmark.
+    ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_bistro", "--target", "wasm32-unknown-unknown"],
     // Built, not run: `measure-browser` runs it.
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_streaming", "--target", "wasm32-unknown-unknown"],
     ...["browser_probe", "browser_smoke", "browser_baseline"].map((example) => [
@@ -222,16 +224,43 @@ const MEASURE_DIR = process.env.SGL_BROWSER_MEASURE_DIR ?? "target/browser-measu
 async function measureBrowser(args: string[]): Promise<void> {
   let frames = 600;
   let baseline = false;
+  let bistro = false;
+  let assetDir = "target/bistro-browser-512";
+  let fixturePath: string | undefined;
+  let settingsPath: string | undefined;
+  const sceneOptions: Record<string, unknown> = {};
   let skipBuild = false;
   let scaled = false;
   let prepared = false;
   let capturePath: string | undefined;
+  let sequenceDir: string | undefined;
   let output: string | undefined;
   let radius = [4, 2];
   let occlusion = false;
   for (let at = 0; at < args.length; at += 1) {
     if (args[at] === "--baseline") baseline = true;
+    else if (args[at] === "--bistro") bistro = true;
+    else if (args[at] === "--asset-dir" && at+1<args.length) assetDir=args[++at];
+    else if (args[at] === "--fixture" && at+1<args.length) fixturePath=args[++at];
+    else if (args[at] === "--settings" && at+1<args.length) settingsPath=args[++at];
+    else if (args[at] === "--view" && at+1<args.length) sceneOptions.view=args[++at];
+    else if (args[at] === "--aa" && at+1<args.length) sceneOptions.aa=args[++at];
+    else if (args[at] === "--warmup" && at+1<args.length) sceneOptions.warmup=Number(args[++at]);
+    else if (args[at] === "--exposure" && at+1<args.length) sceneOptions.exposure=Number(args[++at]);
+    else if (args[at] === "--cascades" && at+1<args.length) sceneOptions.cascades=Number(args[++at]);
+    else if (args[at] === "--observe-gi") sceneOptions.observe_gi=true;
+    else if (args[at] === "--no-normal-maps") sceneOptions.normal_maps=false;
+    else if (args[at] === "--ray-data" && at+1<args.length) sceneOptions.ray_data=args[++at];
+    else if (args[at] === "--compressed-manifest" && at+1<args.length) sceneOptions.compressed_manifest=args[++at];
+    else if (args[at] === "--motion") sceneOptions.motion=true;
+    else if (args[at] === "--rect-light") sceneOptions.rect=true;
+    else if (args[at] === "--size" && at+1<args.length) {
+      const dimensions=args[++at].split("x").map(Number);
+      if (dimensions.length!==2||!dimensions.every(n=>Number.isInteger(n)&&n>0&&n<=4096)) throw new Error("--size needs WxH within 1..4096");
+      [sceneOptions.width,sceneOptions.height]=dimensions;
+    }
     else if (args[at] === "--scaled") scaled = true;
+    else if (args[at] === "--sequence" && at+1<args.length) {sequenceDir=args[++at];sceneOptions.sequence=true;sceneOptions.motion=true;}
     else if (args[at] === "--capture" && at + 1 < args.length) capturePath = args[++at];
     else if (args[at] === "--prepared") prepared = true;
     else if (args[at] === "--skip-build") skipBuild = true;
@@ -246,9 +275,19 @@ async function measureBrowser(args: string[]): Promise<void> {
   if (radius.length !== 2 || !radius.every((r) => Number.isInteger(r) && r >= 0)) {
     throw new Error("--radius takes two whole numbers, across and up");
   }
-  if (baseline && frames > 3600) throw new Error("--baseline --frames must not exceed 3600");
-  if ((scaled || prepared || capturePath || output) && !baseline) throw new Error("--scaled, --prepared, --capture and --output require --baseline");
-  const example = baseline ? "browser_baseline" : "browser_streaming";
+  // An explicit descriptor selects the same embedded-scene route without a scene-specific flag.
+  if (fixturePath) bistro=true;
+  if (sceneOptions.warmup !== undefined && (!Number.isInteger(sceneOptions.warmup) || Number(sceneOptions.warmup)<0 || Number(sceneOptions.warmup)>3600)) throw new Error("--warmup must be 0..3600");
+  if (sceneOptions.exposure !== undefined && !Number.isFinite(sceneOptions.exposure)) throw new Error("--exposure must be finite");
+  if (sceneOptions.cascades !== undefined && (!Number.isInteger(sceneOptions.cascades) || Number(sceneOptions.cascades)<1 || Number(sceneOptions.cascades)>4)) throw new Error("--cascades must be 1..4");
+  if (sceneOptions.aa !== undefined && !["taa","smaa","fsr2","off"].includes(String(sceneOptions.aa))) throw new Error("--aa needs taa|smaa|fsr2|off");
+  if (sceneOptions.ray_data !== undefined && !["enabled","disabled"].includes(String(sceneOptions.ray_data))) throw new Error("--ray-data needs enabled|disabled");
+  if (baseline && bistro) throw new Error("choose --baseline or --bistro");
+  if (!bistro && (Object.keys(sceneOptions).length || fixturePath || settingsPath || assetDir!=="target/bistro-browser-512")) throw new Error("scene options require --bistro or --fixture");
+  if (bistro && (scaled || prepared || occlusion)) throw new Error("--bistro uses explicit fixture/settings instead of --scaled, --prepared or --occlusion");
+  if ((baseline || bistro) && frames > 3600) throw new Error("--baseline --frames must not exceed 3600");
+  if ((scaled || prepared || capturePath || output) && !baseline && !bistro) throw new Error("--scaled, --prepared, --capture and --output require --baseline or --bistro");
+  const example = bistro ? "browser_bistro" : baseline ? "browser_baseline" : "browser_streaming";
   const buildMetadataPath = `${MEASURE_DIR}/${example}.build.json`;
   // Capture provenance at the build boundary, not when a saved binary is rerun.
   const buildSourceHash = skipBuild ? null : await measurementSourceHash();
@@ -269,11 +308,18 @@ async function measureBrowser(args: string[]): Promise<void> {
   }
   const moduleHash = new Bun.CryptoHasher("sha256").update(await Bun.file(`${MEASURE_DIR}/${example}_bg.wasm`).arrayBuffer()).digest("hex");
   if (!skipBuild) await Bun.write(buildMetadataPath, JSON.stringify({mode:"release",source_sha256:buildSourceHash,module_sha256:moduleHash}));
-  const { runMeasurement, validateBaseline } = await import("../browser/measurement");
-  const result = await runMeasurement({page: baseline ? "baseline" : "streaming", dist: MEASURE_DIR, capturePath,
+  const { runMeasurement, validateBaseline, validateScene } = await import("../browser/measurement");
+  if (fixturePath) sceneOptions.fixture=await Bun.file(fixturePath).json();
+  if (settingsPath) sceneOptions.settings=await Bun.file(settingsPath).json();
+  if (bistro) sceneOptions.frames=frames;
+  const result = await runMeasurement({page: bistro ? "bistro" : baseline ? "baseline" : "streaming", dist: MEASURE_DIR, capturePath, sequenceDir,
+    assetDir:bistro?assetDir:undefined,run:bistro?sceneOptions:undefined,
     query: `frames=${frames}&across=${radius[0]}&up=${radius[1]}&occlusion=${occlusion ? 1 : 0}&scaled=${scaled ? 1 : 0}&prepared=${prepared ? 1 : 0}&capture=${capturePath ? 1 : 0}`});
-  if (baseline) {
+  if (baseline || bistro) {
     const report = JSON.parse(result.report);
+    if (bistro) {
+      report.run_parameters={...sceneOptions,fixture:undefined,settings:undefined};
+    }
     report.browser ??= {};
     report.browser.chromium_version = result.browserVersion;
     report.browser.errors = result.errors;
@@ -285,7 +331,21 @@ async function measureBrowser(args: string[]): Promise<void> {
       missing_reason:matchingBuild ? null : "No matching saved build metadata; binary build mode and source revision unknown"};
     if (output) await Bun.write(output, JSON.stringify(report, null, 2) + "\n");
     console.log(JSON.stringify(report, null, 2));
-    validateBaseline(report);
+    (bistro ? validateScene : validateBaseline)(report);
+    if (bistro && (output || capturePath || sequenceDir)) {
+      const {dirname,join}=await import("node:path");
+      const artifactDirectories=new Set([
+        output ? dirname(output) : undefined,
+        capturePath ? dirname(capturePath) : undefined,
+        sequenceDir,
+      ].filter((directory): directory is string => typeof directory==="string"));
+      for (const name of report.fixture.notices ?? []) {
+        if (typeof name!=="string" || !/^[a-zA-Z0-9_.-]+$/.test(name)) throw new Error("notice must be an asset basename");
+        for (const directory of artifactDirectories) {
+          await Bun.write(join(directory,`${report.scene}-${name}`),Bun.file(join(assetDir,name)));
+        }
+      }
+    }
     if (result.errors.length) throw new Error(result.errors.join("\n"));
   } else {
     console.log(result.report.trimEnd());
@@ -299,7 +359,7 @@ if (task === "measure-browser") {
 
 // Evidence provenance only; this does not reject content or trigger any bake.
 async function measurementSourceHash(): Promise<string> {
-  const paths = ["Cargo.toml", "Cargo.lock", "examples/sgl-3d/examples/browser_baseline.rs"];
+  const paths = ["Cargo.toml", "Cargo.lock", "examples/sgl-3d/Cargo.toml", "examples/sgl-3d/examples/browser_baseline.rs", "examples/sgl-3d/examples/browser_bistro.rs", "examples/sgl-3d/examples/support/bistro_scene.rs", "browser/measurement.ts", "browser/bistro.html", "scripts/tasks.ts"];
   for await (const path of new Bun.Glob("crates/**/*.{rs,wgsl,toml}").scan(".")) paths.push(path);
   const hash = new Bun.CryptoHasher("sha256");
   for (const path of paths.sort()) { hash.update(path); hash.update(await Bun.file(path).arrayBuffer()); }

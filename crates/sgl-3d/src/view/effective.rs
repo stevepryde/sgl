@@ -37,6 +37,8 @@ pub(crate) struct Sizing {
 /// architecture's Hardware ray tracing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HardwareRayTracing {
+    /// Requested, but the scene permanently omitted ray-query data.
+    DisabledByScene,
     /// `Settings::hardware_ray_tracing` is off.
     Off,
     /// It is on, and the device has no ray queries

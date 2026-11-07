@@ -11,7 +11,7 @@ publish = false
 [dev-dependencies]
 bytemuck.workspace = true
 glam.workspace = true
-image.workspace = true
+image = { workspace = true, features = ["hdr"] }
 # Existing encoder for the KTX2 export example.
 ktx2.workspace = true
 pollster.workspace = true
@@ -39,4 +39,8 @@ crate-type = ["cdylib"]
 
 [[example]]
 name = "browser_baseline"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "browser_bistro"
 crate-type = ["cdylib"]

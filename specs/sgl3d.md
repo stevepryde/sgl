@@ -81,9 +81,15 @@ settings SGL3D has today.
    never schemes, absolute paths, parent segments or symlinks. External
    buffers must match their declared `byteLength`; GLB BIN alignment padding
    remains valid. The document, imported buffers and encoded image bytes
-   share a bounded source-read budget (4 GiB native, 1 GiB browser), checked
-   before allocation; decoded scene data and sampled PNG/JPEG images share
-   a separate budget of the same size. Image headers are checked before pixel
+   share a bounded source-read budget (default 4 GiB native, 1 GiB browser),
+   checked before allocation; decoded scene data and sampled or supplied
+   images share a separate decoded budget with the same default. Explicit
+   `LoadBudget` source/decoded caps must each be nonzero and at most the
+   target's `isize::MAX`; invalid policies fail rather than clamp. Charges
+   use checked arithmetic and reject expansion beyond the remaining cap.
+   KTX2 import accepts the same policy. Raising a cap does not change image
+   dimensions or device resource limits, or promise available memory.
+   Image headers are checked before pixel
    decoding: each side is at most 16384 and the retained RGBA8 bytes are
    charged, with decoder allocation limits set to the available budget. KTX2
    BC7, ETC2 RGBA8 and ASTC 4×4 chains reject malformed data format descriptor blocks with an error
@@ -92,8 +98,10 @@ settings SGL3D has today.
    size plus one sentinel; advertised windows never allocate history, and
    regenerated literals and sequences are bounded by the format's 128 KiB
    block maximum before growth. A decoded level must match its expected size.
-   ETC2/ASTC material images require a caller-prepared RGBA8 level-zero
-   companion of the same dimensions for ray sampling and decals. The caller
+   ETC2/ASTC images can omit their decoded companion for raster-only material
+   use. Material uploads into a ray-enabled scene and decal uploads require a
+   caller-prepared RGBA8 level-zero companion of matching dimensions and
+   reject a missing one before retained mutation. The caller
    exports that companion from the decoded compressed image when matching
    raster texels is required. SGL3D validates the structure and byte budget,
    not semantic equality with compressed blocks; it performs no ASTC/ETC2

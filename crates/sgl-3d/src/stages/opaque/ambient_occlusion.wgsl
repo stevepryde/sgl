@@ -10,6 +10,7 @@ struct Params {
     radius: f32,
     slices: u32,
     steps: u32,
+    noise_index: u32,
 }
 // The most slices and steps a pixel takes, XeGTAO's Ultra preset, so its
 // loops end whatever the parameters say.
@@ -126,7 +127,7 @@ fn fast_acos(v:f32)->f32 {
     return select(3.141593-result,result,v>=0.0);
 }
 fn noise(q:vec2<u32>)->vec2<f32> {
-    let index=textureLoad(hilbert_lut,q%vec2(HILBERT_WIDTH),0).x;
+    let index=textureLoad(hilbert_lut,q%vec2(HILBERT_WIDTH),0).x+288u*(p.noise_index%64u);
     return fract(vec2(0.5)+f32(index)*vec2(0.75487766624669276005,0.5698402909980532659114));
 }
 fn sample_depth(uv:vec2<f32>,level:f32)->f32 {

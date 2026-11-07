@@ -130,6 +130,7 @@ impl InstanceBvh {
 }
 
 pub(crate) struct RayInstances {
+    ray_data: crate::scene::RayData,
     /// Group 1's entries, at their instances' indices.
     buffer: wgpu::Buffer,
     /// The entries as last set, which `buffer` mirrors once uploaded.
@@ -156,9 +157,10 @@ pub(crate) struct RayInstances {
 }
 
 impl RayInstances {
-    /// No entries, room for one, and empty BVHs.
-    pub fn new(device: &wgpu::Device) -> Self {
+    /// No entries, room for one binding stand-in, and empty BVHs.
+    pub fn with_ray_data(device: &wgpu::Device, ray_data: crate::scene::RayData) -> Self {
         Self {
+            ray_data,
             buffer: entry_buffer(device, 1),
             entries: Vec::new(),
             dirty: Vec::new(),
@@ -197,6 +199,9 @@ impl RayInstances {
         kind: Mobility,
         instances: usize,
     ) -> Result<(), SceneError> {
+        if self.ray_data == crate::scene::RayData::Disabled {
+            return Ok(());
+        }
         let stride = std::mem::size_of::<InstanceEntry>() as u64;
         let capacity = self.buffer.size() / stride;
         if count as u64 > capacity {
@@ -229,6 +234,9 @@ impl RayInstances {
     /// Sets instance `index`'s entry to `model` at `pose`, which the next
     /// update uploads. Its index is below the reserved count.
     pub fn set(&mut self, index: usize, model: RayModel, pose: Mat4) {
+        if self.ray_data == crate::scene::RayData::Disabled {
+            return;
+        }
         if self.entries.len() <= index {
             self.entries.resize(index + 1, bytemuck::Zeroable::zeroed());
             self.dirty.resize(index + 1, false);
@@ -281,6 +289,9 @@ impl RayInstances {
         statics: Option<StaticBuild<'_>>,
         moving: &mut [Bounded],
     ) {
+        if self.ray_data == crate::scene::RayData::Disabled {
+            return;
+        }
         self.upload_entries(device, queue);
         if let Some(statics) = statics {
             step(BuildStep::StaticInstanceBvh, || {

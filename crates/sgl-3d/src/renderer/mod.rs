@@ -431,10 +431,26 @@ impl Renderer {
     }
 
     /// The dynamic GI quality that runs for `settings` where the scene holds
-    /// a volume: their choice on the Extended binding tier, `Off` on Basic.
+    /// a volume: their choice on the Extended binding tier with ray data,
+    /// `Off` on Basic or a scene created with `RayData::Disabled`.
     /// The saved choice is unchanged.
-    pub fn dynamic_gi_in_effect(&self, settings: &Settings) -> DynamicGiQuality {
-        effective::dynamic_gi(settings, self.binding_tier())
+    pub fn dynamic_gi_in_effect(&self, settings: &Settings, scene: &Scene) -> DynamicGiQuality {
+        effective::dynamic_gi(settings, self.binding_tier(), scene.ray_data())
+    }
+
+    /// The world-space reflection choice for this scene, while its camera
+    /// supports screen-space reflections. Off without ray data or SSR.
+    /// The saved choice is unchanged.
+    pub fn world_space_reflections_in_effect(
+        &self,
+        settings: &Settings,
+        scene: &Scene,
+    ) -> crate::settings::WorldSpaceReflections {
+        effective::world_space(
+            settings,
+            scene.ray_data(),
+            settings.screen_space_reflections != crate::settings::ScreenSpaceReflections::Off,
+        )
     }
 
     /// Whether volume paths are measured for `settings`
@@ -493,11 +509,13 @@ impl Renderer {
     /// Whether the hardware path traces the scene's rays for `settings`:
     /// `Settings::hardware_ray_tracing` is on, the device has ray queries
     /// (`graphics_device::ray_tracing_features`) and nothing stopped it
+    /// and this scene retains ray data. Nothing stopped it
     /// (`ray_tracing_error`, but for a fall back to the baseline form,
     /// which still traces). Otherwise the portable BVHs trace them. The
-    /// saved choice is unchanged.
-    pub fn ray_tracing_in_effect(&self, settings: &Settings) -> bool {
-        settings.hardware_ray_tracing
+    /// saved choice is unchanged. No ray path is available without ray data.
+    pub fn ray_tracing_in_effect(&self, settings: &Settings, scene: &Scene) -> bool {
+        scene.ray_data() == crate::RayData::Enabled
+            && settings.hardware_ray_tracing
             && self.ray_form.is_some()
             && self.prepare.ray_tracing_error().is_none()
     }
@@ -507,8 +525,8 @@ impl Renderer {
     /// effect (`ray_tracing_in_effect`). The camera's opaque surfaces then
     /// take them on the frames where a light holds a slot; otherwise the
     /// shadow maps shadow them. The saved choice is unchanged.
-    pub fn ray_traced_shadows_in_effect(&self, settings: &Settings) -> bool {
-        settings.ray_traced_shadows && self.ray_tracing_in_effect(settings)
+    pub fn ray_traced_shadows_in_effect(&self, settings: &Settings, scene: &Scene) -> bool {
+        settings.ray_traced_shadows && self.ray_tracing_in_effect(settings, scene)
     }
 
     /// Whether `Settings::occlusion_culling` runs for `settings`: it is on,
@@ -524,8 +542,9 @@ impl Renderer {
 
     /// Why the hardware path did not trace the last rendered frame's rays
     /// although `Settings::hardware_ray_tracing` was on: the device has no
-    /// ray queries, or its memory could not hold the scene's TLAS, and the
-    /// portable BVHs traced them instead; or why the device fell back from
+    /// ray queries, its memory could not hold the scene's TLAS, or the scene
+    /// permanently disabled ray data. Portable BVHs trace only when ray data
+    /// is enabled. Also reports why the device fell back from
     /// the candidate form to the baseline form, which traced them.
     pub fn ray_tracing_error(&self) -> Option<&str> {
         self.prepare.ray_tracing_error().or_else(|| {

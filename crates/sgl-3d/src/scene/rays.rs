@@ -15,8 +15,8 @@
 //! the device traces rays in hardware, are `acceleration`'s.
 use std::ops::Range;
 
-use super::SceneError;
 use super::ranges::Ranges;
+use super::{RayData, SceneError};
 use crate::asset::{CompressedFormat, Image};
 use crate::shading::material::MaterialUniform;
 use crate::shading::packed_vertex::PackedVertex;
@@ -152,6 +152,7 @@ fn words<T>() -> usize {
 }
 
 pub(crate) struct SceneRays {
+    ray_data: RayData,
     source: wgpu::Buffer,
     words: Ranges,
     /// The largest source the device binds, in words.
@@ -160,12 +161,13 @@ pub(crate) struct SceneRays {
 }
 
 impl SceneRays {
-    /// A source holding only its header.
-    pub fn new(device: &wgpu::Device) -> Self {
+    /// A shared source holding only its header, with immutable ray capability.
+    pub fn with_ray_data(device: &wgpu::Device, ray_data: RayData) -> Self {
         let limits = device.limits();
         let header = words::<SourceHeader>();
         Self {
-            source: source_buffer(device, header as u64),
+            ray_data,
+            source: source_buffer(device, header as u64, ray_data),
             words: Ranges::new(header as u32),
             word_limit: limits
                 .max_storage_buffer_binding_size
@@ -173,6 +175,10 @@ impl SceneRays {
                 / 4,
             visibility_mask: 0,
         }
+    }
+
+    pub fn ray_data(&self) -> RayData {
+        self.ray_data
     }
 
     /// The source buffer, which group 1 binds and the deform stage writes.
@@ -212,7 +218,11 @@ impl SceneRays {
         let capacity = self.source.size() / 4;
         if needed > capacity {
             crate::counters::ray_source_growth();
-            let grown = source_buffer(device, needed.max(capacity * 2).min(self.word_limit));
+            let grown = source_buffer(
+                device,
+                needed.max(capacity * 2).min(self.word_limit),
+                self.ray_data,
+            );
             // Through the queue, never a frame's encoder: an abandoned frame
             // loses no content.
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -257,6 +267,9 @@ impl SceneRays {
         queue: &wgpu::Queue,
         image: &Image,
     ) -> Result<Range<u32>, SceneError> {
+        if self.ray_data == RayData::Disabled {
+            return Ok(0..0);
+        }
         let [width, height] = image.size();
         let texels;
         let (format, bytes) = match image {
@@ -268,7 +281,7 @@ impl SceneRays {
                     texels = image
                         .decoded_level_0
                         .as_ref()
-                        .ok_or(SceneError::InvalidCompressedImage)?;
+                        .ok_or(SceneError::MissingDecodedImage)?;
                     (IMAGE_RGBA8, texels.as_raw().as_slice())
                 }
             },
@@ -370,8 +383,8 @@ impl SceneRays {
 
 /// A source of `words`. Where the device traces rays in hardware, BLASes
 /// read their positions and indices from it (`BLAS_INPUT`).
-fn source_buffer(device: &wgpu::Device, words: u64) -> wgpu::Buffer {
-    let blas_input = if acceleration::supported(device) {
+fn source_buffer(device: &wgpu::Device, words: u64, ray_data: RayData) -> wgpu::Buffer {
+    let blas_input = if ray_data == RayData::Enabled && acceleration::supported(device) {
         wgpu::BufferUsages::BLAS_INPUT
     } else {
         wgpu::BufferUsages::empty()

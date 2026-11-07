@@ -11,7 +11,7 @@ use gltf::animation::Property;
 use super::asset::{Asset, Material, Result, Vertex};
 use super::deformation;
 use super::images::Image;
-use super::load_budget::{Budget, MAX_LOAD_BYTES};
+use super::load_budget::{Budget, LoadBudget};
 use material::read_material;
 use meshes::{batch, ignored_attribute, read_node};
 use rig::Rigging;
@@ -28,6 +28,10 @@ mod tests;
 /// Optional application adaptations applied while loading an asset.
 #[derive(Clone, Copy, Default)]
 pub struct LoadOptions<'a> {
+    /// Independent source and decoded safety caps, checked before expansion.
+    /// Defaults to 4 GiB per cap natively and 1 GiB on wasm32. This does not
+    /// reserve memory or raise image dimensions or device limits.
+    pub budget: LoadBudget,
     /// Maximum authored emissive strength, applied before the emissive color.
     /// `None` preserves authored intensity. A cap must be finite and nonnegative.
     pub emissive_strength_cap: Option<f32>,
@@ -46,6 +50,7 @@ pub struct LoadOptions<'a> {
 impl std::fmt::Debug for LoadOptions<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LoadOptions")
+            .field("budget", &self.budget)
             .field("emissive_strength_cap", &self.emissive_strength_cap)
             .field("images", &self.images.map(|_| "Fn"))
             .field("nodes", &self.nodes.map(|_| "Fn"))
@@ -88,8 +93,9 @@ pub fn load(path: &Path) -> Result<Asset> {
 /// Load a file with explicit application adaptations. External buffers and
 /// images resolve beneath its directory, without parent segments, schemes
 /// or symlinks; buffers must match `byteLength`. Source reads are bounded,
-/// and decoded RGBA images share the scene-data budget (4 GiB native,
-/// 1 GiB browser); image sides are at most 16384, checked before decoding.
+/// and decoded scene data and images share a separate budget
+/// ([`LoadOptions::budget`]); defaults are 4 GiB per cap natively and
+/// 1 GiB on wasm32. Image sides are at most 16384, checked before decoding.
 /// A browser has no file system: it fetches the
 /// bytes and calls [`load_slice_with_options`].
 pub fn load_with_options(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
@@ -98,7 +104,7 @@ pub fn load_with_options(path: &Path, options: LoadOptions<'_>) -> Result<Asset>
 
 fn load_inner(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
     check(options)?;
-    let mut budget = Budget::new();
+    let mut budget = Budget::source(options.budget);
     let bytes = budget.read_file(path, None)?;
     let (document, buffers) = import(&bytes, path.parent(), &mut budget).map_err(|error| {
         format!("glTF import failed: {error}; check referenced files and re-export valid glTF from the Blender source")
@@ -118,7 +124,7 @@ pub fn load_slice(bytes: &[u8]) -> Result<Asset> {
 /// may be an external file the bytes cannot resolve.
 pub fn load_slice_with_options(bytes: &[u8], options: LoadOptions<'_>) -> Result<Asset> {
     check(options)?;
-    let mut budget = Budget::new();
+    let mut budget = Budget::source(options.budget);
     budget.charge(bytes.len() as u64)?;
     let (document, buffers) = import(bytes, None, &mut budget)
         .map_err(|error| format!("embedded glTF import failed: {error}"))?;
@@ -336,7 +342,11 @@ fn read_images(
                 .map_err(|error| format!("image {index}: {error}"))?,
             };
             match source {
-                ImageSource::Supplied(supplied) => Ok(supplied),
+                ImageSource::Supplied(supplied) => {
+                    supplied.charge_bytes(decoded_budget)
+                        .map_err(|error| format!("supplied image {index}: {error}"))?;
+                    Ok(supplied)
+                },
                 ImageSource::Decode => {
                     if let gltf::image::Source::View { view, .. } = image.source()
                         && !in_buffer(&view)
@@ -378,8 +388,8 @@ fn decode(
         .or_else(|| document.scenes().next())
         .ok_or("GLB contains no scene")?;
     let parents = rig::parents(&document)?;
-    let mut decoded_budget = Budget::new();
-    decoded_budget.charge(check_scene(&document, &scene, &parents)?)?;
+    let mut decoded_budget = Budget::decoded(options.budget);
+    check_scene(&document, &scene, &parents, &mut decoded_budget)?;
     // What the file uses but does not require (import refused the rest).
     let mut ignored: Vec<Ignored> = document
         .extensions_used()
@@ -458,14 +468,15 @@ fn decode(
 /// a parent, which glTF 2.0 forbids (3.5.1, and the scene schema's
 /// `uniqueItems`: a scene's `nodes` are distinct root nodes) and which
 /// would read a subtree's meshes again each time it is listed, and one
-/// whose load, as `load_bytes` counts it, would hold more than
-/// `MAX_LOAD_BYTES`. `parents` holds each node's parent, its hierarchy a
+/// whose load exceeds the chosen decoded budget. `parents` holds each
+/// node's parent, its hierarchy a
 /// set of trees.
 fn check_scene(
     document: &gltf::Document,
     scene: &gltf::Scene<'_>,
     parents: &[Option<usize>],
-) -> Result<u64> {
+    budget: &mut Budget,
+) -> Result<()> {
     let mut listed = vec![false; parents.len()];
     for node in scene.nodes().map(|node| node.index()) {
         if std::mem::replace(&mut listed[node], true) {
@@ -479,75 +490,72 @@ fn check_scene(
             return Err(format!("scene {} lists node {node} as a root, but node {parent} is its parent; re-export valid glTF", scene.index()).into());
         }
     }
-    load_bytes(document, scene).ok_or_else(|| format!("scene {}'s meshes (once for each node that uses them), skins and animation clips would take more than the {MAX_LOAD_BYTES} bytes one load may; split the asset", scene.index()).into())
+    charge_scene(document, scene, budget)
+        .map_err(|error| format!("scene {}: {error}", scene.index()).into())
 }
 
-/// The bytes a load of `scene` produces, from the counts its accessors
-/// declare, or None once they pass `MAX_LOAD_BYTES`: for each of the
-/// scene's mesh nodes, selected or not, each of its mesh's primitives'
-/// vertices (with their skin influences on a skinned node), indices and
-/// morph target deltas; each skin's joints; and each animation channel's
-/// keyframe times and values. A mesh counts once for each node that uses
-/// it, and a sampler once for each channel, as the load reads them. No
-/// read takes more elements than its accessor declares, so what the load
-/// allocates stays in proportion to this. Each primitive counts at least
-/// one vertex, each skin a joint and each channel a keyframe, so the
-/// count's own work stops within the cap too.
-fn load_bytes(document: &gltf::Document, scene: &gltf::Scene<'_>) -> Option<u64> {
+/// Charge the bytes a load produces before reading accessors: each scene
+/// node's primitive vertices, indices, skin influences and morph deltas;
+/// every skin's joints and every animation channel's keys. Selected and
+/// unselected nodes count, as before. Minimum one-element charges also bound
+/// the counting work for empty declarations. Byte products and accumulation
+/// are checked, and the vertex index boundary remains independent of budget.
+fn charge_scene(
+    document: &gltf::Document,
+    scene: &gltf::Scene<'_>,
+    budget: &mut Budget,
+) -> Result<()> {
     use std::mem::size_of;
-    let bytes = |count: usize, size: usize| (count.max(1) as u64).checked_mul(size as u64);
-    let mut mesh_nodes = Vec::new();
+    let mut vertices_total = 0u64;
     let mut nodes: Vec<gltf::Node<'_>> = scene.nodes().collect();
     while let Some(node) = nodes.pop() {
         nodes.extend(node.children());
-        if node.mesh().is_some() {
-            mesh_nodes.push(node);
-        }
-    }
-    let primitives = mesh_nodes.iter().flat_map(|node| {
-        let vertex = size_of::<Vertex>()
+        let vertex_size = size_of::<Vertex>()
             + node
                 .skin()
                 .map_or(0, |_| size_of::<deformation::Influence>());
-        let primitives = node.mesh().into_iter().flat_map(|mesh| mesh.primitives());
-        primitives.map(move |primitive| {
+        for primitive in node.mesh().into_iter().flat_map(|mesh| mesh.primitives()) {
             let vertices = primitive
                 .get(&gltf::Semantic::Positions)
-                .map_or(0, |positions| positions.count());
+                .map_or(0, |positions| positions.count()) as u64;
+            vertices_total = vertices_total
+                .checked_add(vertices)
+                .filter(|&count| count <= u64::from(u32::MAX))
+                .ok_or("scene vertices exceed the u32 index range; split the asset")?;
             let indices = primitive
                 .indices()
-                .map_or(vertices, |indices| indices.count());
-            let deltas = bytes(vertices, size_of::<deformation::MorphDelta>())?
-                .checked_mul(primitive.morph_targets().count() as u64)?;
-            bytes(vertices, vertex)?
-                .checked_add(bytes(indices, size_of::<u32>())?)?
-                .checked_add(deltas)
-        })
-    });
-    let skins = document
-        .skins()
-        .map(|skin| bytes(skin.joints().count(), size_of::<deformation::Joint>()));
-    let channels = document
+                .map_or(vertices, |indices| indices.count() as u64);
+            budget.charge_count(vertices.max(1), vertex_size as u64)?;
+            budget.charge_count(indices.max(1), size_of::<u32>() as u64)?;
+            let delta_size = (size_of::<deformation::MorphDelta>() as u64)
+                .checked_mul(primitive.morph_targets().count() as u64)
+                .ok_or("morph target byte count overflow")?;
+            budget.charge_count(vertices.max(1), delta_size)?;
+        }
+    }
+    for skin in document.skins() {
+        budget.charge_count(
+            skin.joints().count().max(1) as u64,
+            size_of::<deformation::Joint>() as u64,
+        )?;
+    }
+    for channel in document
         .animations()
         .flat_map(|animation| animation.channels())
-        .map(|channel| {
-            let value = match channel.target().property() {
-                Property::Translation | Property::Scale => size_of::<Vec3>(),
-                Property::Rotation => size_of::<Quat>(),
-                Property::MorphTargetWeights => size_of::<f32>(),
-            };
-            let sampler = channel.sampler();
-            bytes(sampler.input().count(), size_of::<f32>())?
-                .checked_add(bytes(sampler.output().count(), value)?)
-        });
-    primitives
-        .chain(skins)
-        .chain(channels)
-        .try_fold(0u64, |total, bytes| {
-            total
-                .checked_add(bytes?)
-                .filter(|&total| total <= MAX_LOAD_BYTES)
-        })
+    {
+        let value = match channel.target().property() {
+            Property::Translation | Property::Scale => size_of::<Vec3>(),
+            Property::Rotation => size_of::<Quat>(),
+            Property::MorphTargetWeights => size_of::<f32>(),
+        };
+        let sampler = channel.sampler();
+        budget.charge_count(
+            sampler.input().count().max(1) as u64,
+            size_of::<f32>() as u64,
+        )?;
+        budget.charge_count(sampler.output().count().max(1) as u64, value as u64)?;
+    }
+    Ok(())
 }
 
 /// Refuses an accessor the gltf crate's readers cannot read, which its

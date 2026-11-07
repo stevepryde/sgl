@@ -788,7 +788,10 @@ fn the_renderer_reports_whether_the_hardware_path_traces() {
             crate::shading::gbuffer::COLOR,
         );
         let stats = frame(gpu, (&mut renderer, &mut scene), &settings, &output, false);
-        assert_eq!(renderer.ray_tracing_in_effect(&settings), ray_queries);
+        assert_eq!(
+            renderer.ray_tracing_in_effect(&settings, &scene),
+            ray_queries
+        );
         assert_eq!(renderer.ray_tracing_error().is_none(), ray_queries);
         assert_eq!(stats.hardware, u32::from(ray_queries));
         let off = crate::settings::Settings {
@@ -796,7 +799,7 @@ fn the_renderer_reports_whether_the_hardware_path_traces() {
             ..settings
         };
         frame(gpu, (&mut renderer, &mut scene), &off, &output, false);
-        assert!(!renderer.ray_tracing_in_effect(&off));
+        assert!(!renderer.ray_tracing_in_effect(&off, &scene));
         assert!(
             renderer.ray_tracing_error().is_none(),
             "nothing asked for it"

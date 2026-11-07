@@ -36,7 +36,7 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, assets: &[&Asset]) -> Self {
-        let mut rays = SceneRays::new(device);
+        let mut rays = SceneRays::with_ray_data(device, crate::RayData::Enabled);
         let mut models = Vec::new();
         let mut materials = Vec::new();
         for asset in assets {
@@ -96,7 +96,7 @@ impl Fixture {
                     [min.min(p), max.max(p)]
                 },
             );
-            let mut prepared = super::prepare_model(&meshes).unwrap();
+            let mut prepared = super::prepare_model(&meshes, crate::RayData::Enabled).unwrap();
             let placed = rays
                 .place_model(device, queue, &mut prepared, &material_words)
                 .unwrap();
@@ -106,7 +106,7 @@ impl Fixture {
         }
         Self {
             rays,
-            instances: RayInstances::new(device),
+            instances: RayInstances::with_ray_data(device, crate::RayData::Enabled),
             models,
             materials,
             objects: Objects::new(device),

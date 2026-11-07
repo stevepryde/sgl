@@ -2,6 +2,7 @@
 //! configuration (`view::effective`): once per frame, and the size-affecting
 //! choices at `Renderer::resize`.
 use crate::FrameInput;
+use crate::scene::RayData;
 use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, FogQuality, ReflectionMethod,
     RenderPreset, SceneResolution, ScreenSpaceReflections, Settings, ShadowQuality,
@@ -165,7 +166,14 @@ pub(super) struct Device {
 
 /// `Settings::dynamic_gi` on a device of `tier`: the setting on the
 /// Extended binding tier, else `Off`. The saved choice is unchanged.
-pub(super) fn dynamic_gi(settings: &Settings, tier: BindingTier) -> DynamicGiQuality {
+pub(super) fn dynamic_gi(
+    settings: &Settings,
+    tier: BindingTier,
+    ray_data: RayData,
+) -> DynamicGiQuality {
+    if ray_data == RayData::Disabled {
+        return DynamicGiQuality::Off;
+    }
     match tier {
         BindingTier::Extended => settings.dynamic_gi,
         BindingTier::Basic => DynamicGiQuality::Off,
@@ -182,6 +190,7 @@ pub(super) fn volume_paths(settings: &Settings, tier: BindingTier) -> bool {
 /// What a frame's scene holds that its effective configuration follows.
 #[derive(Clone, Copy, Default)]
 pub(super) struct SceneContent {
+    pub ray_data: RayData,
     pub fog_volumes: bool,
     /// A blended receiver of screen-space reflections.
     pub receivers: bool,
@@ -192,6 +201,7 @@ pub(super) struct SceneContent {
 impl SceneContent {
     pub fn of(scene: &crate::Scene) -> Self {
         Self {
+            ray_data: scene.ray_data(),
             fog_volumes: !scene.transient.fog_volume_corners.is_empty(),
             receivers: scene.materials.holds_receivers(),
             dynamic_gi_volume: scene.dynamic_gi.is_some(),
@@ -278,10 +288,12 @@ pub(super) fn resolve(
         ShadowQuality::High => ShadowFilter::Gaussian,
     };
     let motion_blur = motion_blur(settings, input).filter(|_| post_fx_camera);
-    let hardware_ray_tracing = match (settings.hardware_ray_tracing, ray_queries) {
-        (false, _) => HardwareRayTracing::Off,
-        (true, None) => HardwareRayTracing::Unsupported,
-        (true, Some(form)) => HardwareRayTracing::On(form),
+    let hardware_ray_tracing = match (settings.hardware_ray_tracing, content.ray_data, ray_queries)
+    {
+        (false, _, _) => HardwareRayTracing::Off,
+        (true, RayData::Disabled, _) => HardwareRayTracing::DisabledByScene,
+        (true, _, None) => HardwareRayTracing::Unsupported,
+        (true, _, Some(form)) => HardwareRayTracing::On(form),
     };
     // Ray-traced shadows trace through the hardware path alone (the
     // architecture's Ray-traced shadows); elsewhere the maps shadow, their
@@ -300,11 +312,7 @@ pub(super) fn resolve(
         shadow_filter,
         ambient_occlusion,
         screen_space,
-        world_space: if screen_space.is_some() {
-            settings.world_space_reflections
-        } else {
-            WorldSpaceReflections::Off
-        },
+        world_space: world_space(settings, content.ray_data, screen_space.is_some()),
         hardware_ray_tracing,
         ray_traced_shadows,
         ray_traced_shadow_quality: settings.ray_traced_shadow_quality.resolve(low),
@@ -323,7 +331,7 @@ pub(super) fn resolve(
             p[3][3] == 0. && p[2][3] == -1.,
         ),
         fog_filter: settings.fog_filter,
-        dynamic_gi: dynamic_gi(settings, tier)
+        dynamic_gi: dynamic_gi(settings, tier, content.ray_data)
             .rays()
             .filter(|_| content.dynamic_gi_volume),
         volume_paths: volume_paths(settings, tier),
@@ -344,5 +352,154 @@ pub(super) fn resolve(
         #[cfg(feature = "diagnostics")]
         dynamic_gi_observation: diagnostics.dynamic_gi,
         capture_tone_target: diagnostics.frame_probe || diagnostics.capture_tone_target,
+    }
+}
+
+/// World-space reflections need both screen-space receivers and retained
+/// ray data; the requested choice itself is never rewritten.
+pub(super) fn world_space(
+    settings: &Settings,
+    ray_data: RayData,
+    screen_space: bool,
+) -> WorldSpaceReflections {
+    if ray_data == RayData::Enabled && screen_space {
+        settings.world_space_reflections
+    } else {
+        WorldSpaceReflections::Off
+    }
+}
+
+#[cfg(test)]
+mod ray_data_tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Scene policy must gate the actual effective stage configuration, even
+    // on a hypothetical device with every ray feature. SSR, volume layers,
+    // ambient and shadow maps remain independently available.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn disabled_scene_gates_rays_without_changing_requested_settings() {
+        let settings = Settings {
+            screen_space_reflections: ScreenSpaceReflections::Full,
+            world_space_reflections: WorldSpaceReflections::Moving,
+            hardware_ray_tracing: true,
+            ray_traced_shadows: true,
+            dynamic_gi: DynamicGiQuality::High,
+            volume_paths: true,
+            ..Settings::default()
+        };
+        let requested = settings;
+        let camera = crate::Camera {
+            view: glam::Mat4::IDENTITY,
+            projection: crate::perspective(1., 1., 0.1),
+            eye: glam::Vec3::ZERO,
+        };
+        let input = FrameInput::new(camera);
+        let device = Device {
+            fsr2_running: false,
+            fused_supported: true,
+            occlusion_supported: true,
+            ray_queries: Some(RayQueryForm::Baseline),
+            tier: BindingTier::Extended,
+        };
+        let content = SceneContent {
+            dynamic_gi_volume: true,
+            ..SceneContent::default()
+        };
+        let enabled = resolve(&settings, &input, content, device);
+        assert!(enabled.dynamic_gi.is_some());
+        assert_eq!(enabled.world_space, WorldSpaceReflections::Moving);
+        assert!(enabled.ray_traced_shadows);
+        let disabled = resolve(
+            &settings,
+            &input,
+            SceneContent {
+                ray_data: RayData::Disabled,
+                ..content
+            },
+            device,
+        );
+        assert!(disabled.dynamic_gi.is_none());
+        assert_eq!(disabled.world_space, WorldSpaceReflections::Off);
+        assert_eq!(
+            disabled.hardware_ray_tracing,
+            HardwareRayTracing::DisabledByScene
+        );
+        assert!(!disabled.ray_traced_shadows);
+        assert_eq!(enabled.screen_space, disabled.screen_space);
+        assert!(disabled.volume_paths);
+        assert_eq!(enabled.shadow_quality, disabled.shadow_quality);
+        assert_eq!(enabled.ambient_occlusion, disabled.ambient_occlusion);
+        assert_eq!(settings, requested);
+    }
+
+    // A preceding scene's error is not a capability of this one. Synthetic
+    // hardware support reaches the no-consumer On branch on Metal/WebGPU too;
+    // that branch must not attempt a hardware build or retain NO_RAY_DATA.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn enabled_scene_without_ray_consumers_clears_previous_disabled_reason() {
+        use crate::view::history::{CameraFrame, CameraHistory};
+        use crate::{Renderer, Scene, SceneOptions, test_support};
+        let Some((device, queue)) = test_support::device() else {
+            return;
+        };
+        let settings = Settings {
+            hardware_ray_tracing: true,
+            dynamic_gi: DynamicGiQuality::Off,
+            ..Settings::default()
+        };
+        let mut renderer = Renderer::for_test(&device, &queue, [16; 2], &settings);
+        let input = FrameInput::new(crate::Camera {
+            view: glam::Mat4::IDENTITY,
+            projection: crate::perspective(1., 1., 0.1),
+            eye: glam::Vec3::ZERO,
+        });
+        let synthetic = Device {
+            fsr2_running: false,
+            fused_supported: true,
+            occlusion_supported: true,
+            ray_queries: Some(RayQueryForm::Baseline),
+            tier: renderer.binding_tier(),
+        };
+        for mode in [RayData::Disabled, RayData::Enabled] {
+            let mut scene = Scene::with_options(&device, &queue, SceneOptions { ray_data: mode });
+            let effective = resolve(&settings, &input, SceneContent::of(&scene), synthetic);
+            let history = CameraHistory::default().begin(
+                CameraFrame {
+                    view: input.camera.view,
+                    projection: input.camera.projection,
+                    jitter: [0.; 2],
+                },
+                true,
+                glam::DVec3::ZERO,
+                0.,
+            );
+            let before = crate::counters::snapshot();
+            renderer.prepare.run(
+                &device,
+                &queue,
+                &mut scene,
+                &input,
+                history,
+                &effective,
+                None,
+                [16; 2],
+                &mut renderer.views,
+                &renderer.bindings.frame,
+            );
+            assert_eq!(
+                renderer.ray_tracing_error().is_some(),
+                mode == RayData::Disabled
+            );
+            if mode == RayData::Enabled {
+                assert_eq!(
+                    effective.hardware_ray_tracing,
+                    HardwareRayTracing::On(RayQueryForm::Baseline)
+                );
+                let delta = crate::counters::snapshot().since(&before);
+                assert_eq!(delta.blas_builds + delta.tlas_builds, 0);
+            }
+        }
     }
 }

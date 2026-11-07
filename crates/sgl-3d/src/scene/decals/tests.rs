@@ -483,7 +483,7 @@ fn browser_compressed_decals_use_validated_offline_companions() {
         let before = scene.decals.images.iter().count();
         assert!(matches!(
             scene.add_decal_image(Image::Compressed(compressed.clone())),
-            Err(SceneError::InvalidCompressedImage)
+            Err(SceneError::MissingDecodedImage)
         ));
         assert_eq!(scene.decals.images.iter().count(), before);
         compressed.decoded_level_0 = Some(image::RgbaImage::new(8, 4));

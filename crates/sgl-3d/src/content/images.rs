@@ -7,7 +7,7 @@
 use std::borrow::Cow;
 
 use super::asset::Result;
-use super::load_budget::{Budget, MAX_IMAGE_SIDE, MAX_LOAD_BYTES};
+use super::load_budget::{Budget, DEFAULT_LOAD_BYTES, LoadBudget, MAX_IMAGE_SIDE};
 
 /// An image materials sample. Its colour space belongs to each channel that
 /// samples it: base and emissive maps read it as sRGB, the others as linear
@@ -53,7 +53,8 @@ pub struct CompressedImage {
     pub levels: Vec<Vec<u8>>,
     /// ETC2/ASTC level 0 decoded by the game's offline export tool, in the
     /// same encoded-channel RGBA8 space as the compressed raster texture.
-    /// Required for rays and decals, and must match width/height. SGL checks
+    /// Optional for raster-only material images. Required for rays and decals,
+    /// and must match width/height when present. SGL checks
     /// shape, not pixel equivalence. Costs four additional bytes per texel.
     /// BC7 must leave this `None`: its rays continue to decode the blocks.
     pub decoded_level_0: Option<image::RgbaImage>,
@@ -96,7 +97,7 @@ pub struct Rgba8MipChain {
 impl Rgba8MipChain {
     /// Builds complete colour and data chains, with level 0 unchanged.
     pub fn new(image: image::RgbaImage) -> std::result::Result<Self, ImageError> {
-        check_mip_allocation(image.dimensions(), MAX_LOAD_BYTES, isize::MAX as u64)?;
+        check_mip_allocation(image.dimensions(), DEFAULT_LOAD_BYTES, isize::MAX as u64)?;
         Ok(Self {
             color: rgba8_levels(&image, true),
             data: rgba8_levels(&image, false),
@@ -242,6 +243,30 @@ fn check_ktx2_dfd(bytes: &[u8]) -> Result<()> {
 }
 
 impl Image {
+    /// Retained caller-supplied bytes count in the same decoded budget as
+    /// imported geometry and decoded images, including both prepared mip
+    /// chains and compressed images' offline-decoded companions.
+    pub(super) fn charge_bytes(&self, budget: &mut Budget) -> Result<()> {
+        match self {
+            Self::Rgba8(image) => budget.charge(image.as_raw().len() as u64),
+            Self::Rgba8Mips(image) => {
+                for level in image.color.iter().chain(&image.data) {
+                    budget.charge(level.as_raw().len() as u64)?;
+                }
+                Ok(())
+            }
+            Self::Compressed(image) => {
+                for level in &image.levels {
+                    budget.charge(level.len() as u64)?;
+                }
+                if let Some(decoded) = &image.decoded_level_0 {
+                    budget.charge(decoded.as_raw().len() as u64)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Level 0's width and height in texels.
     pub(crate) fn size(&self) -> [u32; 2] {
         match self {
@@ -254,33 +279,45 @@ impl Image {
         }
     }
 
-    /// Level 0's texels, decoded from its blocks when it is compressed: what
-    /// the decal atlas packs.
-    pub(crate) fn texels(&self) -> Cow<'_, image::RgbaImage> {
-        match self {
+    /// Level 0's texels for the decal atlas. BC7 decodes its own blocks;
+    /// ETC2/ASTC return none without their offline decoded companion.
+    pub(crate) fn texels(&self) -> Option<Cow<'_, image::RgbaImage>> {
+        Some(match self {
             Self::Rgba8(image) => Cow::Borrowed(image),
             Self::Rgba8Mips(image) => Cow::Borrowed(&image.levels(false)[0]),
             Self::Compressed(image) => match &image.decoded_level_0 {
                 Some(texels) => Cow::Borrowed(texels),
-                None => Cow::Owned(image.decode_level_0()),
+                None if image.format == CompressedFormat::Bc7 => Cow::Owned(image.decode_level_0()),
+                None => return None,
             },
-        }
+        })
     }
 }
 
 impl CompressedImage {
-    /// The image a KTX2 file holds: one 2D image of BC7 blocks, either
-    /// `VK_FORMAT_BC7_UNORM_BLOCK` or `VK_FORMAT_BC7_SRGB_BLOCK` (the channel
+    /// The image a KTX2 file holds: one 2D image of BC7, ETC2 RGBA8 or
+    /// ASTC 4x4 blocks (the channel
     /// that samples it picks sRGB or linear, as Bevy's loader does), with
     /// its stored levels, uncompressed or supercompressed with Zstandard.
-    /// ETC2/ASTC need `from_ktx2_with_decoded_level_0` instead.
+    /// ETC2/ASTC used by material rays or decals need an offline companion
+    /// supplied through `from_ktx2_with_decoded_level_0` instead.
     /// Refuses malformed data format descriptors, sides above 16384,
     /// invalid block dimensions or mip counts,
-    /// and levels whose declared or decoded size differs from their BC7
+    /// and levels whose declared or decoded size differs from their block
     /// size. The total decoded chain is budgeted before level allocation;
     /// the decoder bounds regenerated blocks before buffer growth.
     pub fn from_ktx2(bytes: &[u8]) -> Result<Self> {
-        Self::read_ktx2(bytes, &mut Budget::new())
+        Self::from_ktx2_with_budget(bytes, LoadBudget::default())
+    }
+
+    /// Read a supported block format with explicit source and decoded safety caps. The entire
+    /// KTX2 source slice is checked before parsing, and the decoded chain
+    /// before allocating levels. Caps do not raise dimension/device limits
+    /// or guarantee sufficient memory. Use the same budget in the enclosing
+    /// glTF's `LoadOptions` when supplying this image to an import.
+    pub fn from_ktx2_with_budget(bytes: &[u8], budget: LoadBudget) -> Result<Self> {
+        Budget::source(budget).charge(bytes.len() as u64)?;
+        Self::read_ktx2(bytes, &mut Budget::decoded(budget))
     }
 
     /// Reads ETC2 RGBA8 or ASTC LDR 4x4 with the game's offline-decoded
@@ -289,7 +326,19 @@ impl CompressedImage {
     /// Shape and combined decoded-byte budget are checked; pixel equivalence
     /// is the exporter's responsibility. Refuses a companion for BC7.
     pub fn from_ktx2_with_decoded_level_0(bytes: &[u8], decoded: image::RgbaImage) -> Result<Self> {
-        Self::read_ktx2_with_decoded(bytes, Some(decoded), &mut Budget::new())
+        Self::from_ktx2_with_decoded_level_0_and_budget(bytes, decoded, LoadBudget::default())
+    }
+
+    /// Read ETC2/ASTC with explicit source and decoded safety caps. The
+    /// decoded cap includes both stored block levels and the RGBA8 companion.
+    /// As with `from_ktx2_with_budget`, allocation working memory is additional.
+    pub fn from_ktx2_with_decoded_level_0_and_budget(
+        bytes: &[u8],
+        decoded: image::RgbaImage,
+        budget: LoadBudget,
+    ) -> Result<Self> {
+        Budget::source(budget).charge(bytes.len() as u64)?;
+        Self::read_ktx2_with_decoded(bytes, Some(decoded), &mut Budget::decoded(budget))
     }
 
     fn read_ktx2(bytes: &[u8], budget: &mut Budget) -> Result<Self> {
@@ -346,7 +395,7 @@ impl CompressedImage {
             return Err(format!("invalid KTX2 dimensions or mip count; store block-aligned sides no larger than {MAX_IMAGE_SIDE} and at most a full mip chain").into());
         }
         if !image.companion_is_valid() {
-            return Err("BC7 needs no decoded companion; ETC2/ASTC require a decoded level 0 matching the compressed dimensions".into());
+            return Err("BC7 must have no decoded companion; any ETC2/ASTC decoded level 0 must match the compressed dimensions".into());
         }
         if let Some(decoded) = &image.decoded_level_0 {
             budget.charge(decoded.as_raw().len() as u64)?;
@@ -441,7 +490,7 @@ impl CompressedImage {
     /// Companion shape is part of the image invariant, even for caller-built data.
     fn companion_is_valid(&self) -> bool {
         match (self.format, &self.decoded_level_0) {
-            (CompressedFormat::Bc7, None) => true,
+            (_, None) => true,
             (CompressedFormat::Etc2Rgba8 | CompressedFormat::Astc4x4, Some(decoded)) => {
                 decoded.dimensions() == (self.width, self.height)
             }
@@ -485,6 +534,89 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     use crate::test_support::ktx2;
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn explicit_ktx2_budgets_cover_source_chain_and_companion() {
+        for zstd in [false, true] {
+            let levels = vec![vec![11; 16], vec![22; 16]];
+            let file = ktx2(ktx2::Format::BC7_UNORM_BLOCK, [4; 2], &levels, zstd);
+            let bytes = file.len() as u64;
+            let error = CompressedImage::from_ktx2_with_budget(
+                &file,
+                LoadBudget::new(bytes - 1, 32).unwrap(),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(
+                error.contains("source load budget")
+                    && error.contains(&format!("requested {bytes} bytes")),
+                "{error}"
+            );
+            let error =
+                CompressedImage::from_ktx2_with_budget(&file, LoadBudget::new(bytes, 31).unwrap())
+                    .unwrap_err()
+                    .to_string();
+            assert!(
+                error.contains("decoded load budget") && error.contains("limit 31 bytes"),
+                "{error}"
+            );
+            let image =
+                CompressedImage::from_ktx2_with_budget(&file, LoadBudget::new(bytes, 32).unwrap())
+                    .unwrap();
+            assert_eq!(image.levels, levels);
+
+            let file = ktx2(
+                ktx2::Format::ASTC_4x4_UNORM_BLOCK,
+                [4; 2],
+                &[vec![7; 16]],
+                zstd,
+            );
+            let companion = image::RgbaImage::from_pixel(4, 4, image::Rgba([20, 30, 40, 255]));
+            let error = CompressedImage::from_ktx2_with_decoded_level_0_and_budget(
+                &file,
+                companion.clone(),
+                LoadBudget::new(file.len() as u64, 79).unwrap(),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(
+                error.contains("decoded load budget") && error.contains("limit 79 bytes"),
+                "{error}"
+            );
+            let image = CompressedImage::from_ktx2_with_decoded_level_0_and_budget(
+                &file,
+                companion.clone(),
+                LoadBudget::new(file.len() as u64, 80).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(image.decoded_level_0.as_ref(), Some(&companion));
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn raised_ktx2_budgets_never_relax_structure_validation() {
+        let budget = LoadBudget::new(isize::MAX as u64, isize::MAX as u64).unwrap();
+        let file = ktx2(
+            ktx2::Format::BC7_UNORM_BLOCK,
+            [16388, 4],
+            &[vec![0; 16]],
+            false,
+        );
+        let error = CompressedImage::from_ktx2_with_budget(&file, budget)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("dimensions"), "{error}");
+        let mut file = ktx2(ktx2::Format::BC7_UNORM_BLOCK, [4; 2], &[vec![0; 16]], false);
+        let decoded_at = ktx2::Header::LENGTH + 16;
+        file[decoded_at..decoded_at + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+        let error = CompressedImage::from_ktx2_with_budget(&file, budget)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("declares 18446744073709551615 decoded bytes; expected 16"),
+            "{error}"
+        );
+    }
 
     #[wasm_bindgen_test(unsupported = test)]
     fn mip_expansion_is_preflighted_without_allocating_images() {
@@ -539,7 +671,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test(unsupported = test)]
-    fn browser_compressed_levels_require_budgeted_matching_companions() {
+    fn browser_compressed_levels_allow_optional_budgeted_matching_companions() {
         for format in [
             ktx2::Format::ETC2_R8G8B8A8_UNORM_BLOCK,
             ktx2::Format::ASTC_4x4_SRGB_BLOCK,
@@ -547,26 +679,28 @@ mod tests {
             for zstd in [false, true] {
                 let levels = vec![vec![0xff; 16], vec![0; 16], vec![42; 16]];
                 let file = ktx2(format, [4; 2], &levels, zstd);
-                assert!(
-                    CompressedImage::from_ktx2(&file)
-                        .unwrap_err()
-                        .to_string()
-                        .contains("decoded level 0")
-                );
+                let raster = CompressedImage::from_ktx2(&file).unwrap();
+                assert_eq!(raster.levels, levels);
+                assert!(raster.decoded_level_0.is_none());
+                assert!(raster.is_valid());
+                assert!(Image::Compressed(raster).texels().is_none());
                 let decoded = image::RgbaImage::from_pixel(4, 4, image::Rgba([20, 60, 100, 128]));
                 let image = CompressedImage::from_ktx2_with_decoded_level_0(&file, decoded.clone())
                     .unwrap();
                 assert_eq!(image.levels, levels);
                 assert_eq!(image.decoded_level_0.as_ref(), Some(&decoded));
                 assert!(image.is_valid());
-                assert_eq!(Image::Compressed(image).texels().as_ref(), &decoded);
+                assert_eq!(
+                    Image::Compressed(image).texels().unwrap().as_ref(),
+                    &decoded
+                );
                 let wrong = image::RgbaImage::new(8, 4);
                 assert!(CompressedImage::from_ktx2_with_decoded_level_0(&file, wrong).is_err());
                 // 48 compressed bytes + 64 companion bytes, not just either part.
                 let error = CompressedImage::read_ktx2_with_decoded(
                     &file,
                     Some(decoded),
-                    &mut Budget { remaining: 111 },
+                    &mut Budget::new(111, "decoded"),
                 )
                 .unwrap_err();
                 assert!(error.to_string().contains("budget"));
@@ -600,7 +734,10 @@ mod tests {
             let loaded =
                 CompressedImage::from_ktx2_with_decoded_level_0(&file, decoded.clone()).unwrap();
             assert_eq!(loaded.levels[0], block);
-            assert_eq!(Image::Compressed(loaded).texels().as_ref(), &decoded);
+            assert_eq!(
+                Image::Compressed(loaded).texels().unwrap().as_ref(),
+                &decoded
+            );
         }
     }
 
@@ -732,7 +869,7 @@ mod tests {
         );
         let at = u64::from_le_bytes(file[80..88].try_into().unwrap()) as usize;
         file[at] = 0; // Break the Zstandard magic.
-        let error = CompressedImage::read_ktx2(&file, &mut Budget { remaining: 24 })
+        let error = CompressedImage::read_ktx2(&file, &mut Budget::new(24, "decoded"))
             .unwrap_err()
             .to_string();
         assert!(error.contains("budget"), "{error}");

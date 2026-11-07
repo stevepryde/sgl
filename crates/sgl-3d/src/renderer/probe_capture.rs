@@ -85,7 +85,7 @@ impl Renderer {
             .dynamic_gi
             .as_ref()
             .and_then(|dynamic_gi| dynamic_gi.lights(scene))
-            .filter(|_| self.dynamic_gi_in_effect(settings).rays().is_some());
+            .filter(|_| self.dynamic_gi_in_effect(settings, scene).rays().is_some());
         let mut views = self.prepare.capture(
             device,
             queue,

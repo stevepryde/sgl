@@ -62,6 +62,19 @@ its rendering `settings::Settings`.
    Use `Renderer::new_surface` with the actual surface configuration for direct
    window/canvas presentation; it owns the display transfer. See the package
    README's frame workflow.
+   Import caps remain conservative by default. For a measured larger workload,
+   use `asset::LoadOptions::budget` with checked `asset::LoadBudget::new` and
+   `load_slice_with_options` or `load_with_options`; source and decoded caps
+   are separate and never guarantee available heap or GPU memory. See
+   [asset limits](../README.md#asset-and-environment-limits).
+   If the scene needs no world-space ray effects, choose immutable
+   `SceneOptions { ray_data: RayData::Disabled }` through `Scene::with_options`.
+   It skips ray-only images/BVHs while keeping raster and shadow-map data;
+   manually prepared models need matching `PreparedModelOptions`.
+   Existing constructors remain enabled. GI, world-reflection and traced
+   shadow effective-state queries take both settings and scene, so requested
+   settings are not confused with this capability. See the
+   [scene lifecycle](../README.md#retained-scene-and-frame-lifecycle).
 3. Each frame: `Scene::set_instance` per moving instance (pose, `visible`,
    `capture_visible`), `set_instance_deformation` per deforming one (its
    joint matrices and morph weights), `set_light` per changed light and
@@ -167,7 +180,9 @@ and an asynchronous readback.
   The [browser baseline](../../../examples/sgl-3d/BROWSER_BASELINE.md) measures
   a repeatable textured scene and separate upload phases with the existing
   `measure-browser` runner; its completion timings are offscreen, not display
-  pacing.
+  pacing. The [Bistro workflow](../../../examples/sgl-3d/BISTRO.md) extends it
+  to prepared glTF scenes, matched native/browser cameras, explicit fixture
+  settings, exact output captures and deterministic motion sequences.
 - Need a rendering feature SGL3D lacks? An effect of your own surfaces
   (waves, wind, a glass's varying thickness) is a
   [shader](../README.md#programmable-surfaces): the game's WGSL, which every

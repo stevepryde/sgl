@@ -1,0 +1,2122 @@
+{
+  "asset": "BistroExterior.glb",
+  "cameras": [
+    {
+      "backdrop_brightness": 1,
+      "environment_intensity": 0.7,
+      "environment_yaw": 3.6258581590046384,
+      "eye": [
+        -10.8,
+        2.5,
+        6
+      ],
+      "fov_y_degrees": 55,
+      "id": "street",
+      "look_at": [
+        -2,
+        2.2,
+        -4
+      ],
+      "near": 0.1,
+      "sun": {
+        "color": [
+          1,
+          0.8172840707952714,
+          0.4924628342632676
+        ],
+        "direction": [
+          0.33858266790834657,
+          -0.9396926207859083,
+          0.048368951121327435
+        ],
+        "illuminance": 3.737757651222174,
+        "shadow_cascades": 4,
+        "shadow_distance": 60
+      },
+      "ambient_occlusion_radius": 0.5
+    },
+    {
+      "backdrop_brightness": 1,
+      "environment_intensity": 0.7,
+      "environment_yaw": 3.6258581590046384,
+      "eye": [
+        -10.2,
+        2.3,
+        3.8
+      ],
+      "fov_y_degrees": 55,
+      "id": "bike",
+      "look_at": [
+        -7.3,
+        1.35,
+        0.4
+      ],
+      "near": 0.1,
+      "sun": {
+        "color": [
+          1,
+          0.8172840707952714,
+          0.4924628342632676
+        ],
+        "direction": [
+          0.33858266790834657,
+          -0.9396926207859083,
+          0.048368951121327435
+        ],
+        "illuminance": 3.737757651222174,
+        "shadow_cascades": 4,
+        "shadow_distance": 60
+      },
+      "ambient_occlusion_radius": 0.5
+    },
+    {
+      "backdrop_brightness": 1,
+      "environment_intensity": 0.7,
+      "environment_yaw": 3.6258581590046384,
+      "eye": [
+        -16,
+        8,
+        15
+      ],
+      "fov_y_degrees": 55,
+      "id": "overview",
+      "look_at": [
+        0,
+        2,
+        -4
+      ],
+      "near": 0.1,
+      "sun": {
+        "color": [
+          1,
+          0.8172840707952714,
+          0.4924628342632676
+        ],
+        "direction": [
+          0.33858266790834657,
+          -0.9396926207859083,
+          0.048368951121327435
+        ],
+        "illuminance": 3.737757651222174,
+        "shadow_cascades": 4,
+        "shadow_distance": 60
+      },
+      "ambient_occlusion_radius": 0.5
+    },
+    {
+      "backdrop_brightness": 1,
+      "environment_intensity": 0.7,
+      "environment_yaw": 3.6258581590046384,
+      "eye": [
+        -20,
+        10,
+        -10
+      ],
+      "fov_y_degrees": 55,
+      "id": "bevy",
+      "look_at": [
+        -3,
+        4,
+        0
+      ],
+      "near": 0.1,
+      "sun": {
+        "color": [
+          1,
+          0.8172840707952714,
+          0.4924628342632676
+        ],
+        "direction": [
+          0.33858266790834657,
+          -0.9396926207859083,
+          0.048368951121327435
+        ],
+        "illuminance": 3.737757651222174,
+        "shadow_cascades": 4,
+        "shadow_distance": 60
+      },
+      "ambient_occlusion_radius": 0.5
+    }
+  ],
+  "default_camera": "bevy",
+  "environment": {
+    "metadata": "environment.json",
+    "panorama": "panorama.png",
+    "pmrem": "pmrem.rgba16",
+    "provenance_metadata": "ENVIRONMENT-PROCESSING.json"
+  },
+  "exposure_stops": 0.6,
+  "lighting": "Authored 70-degree analytical sun with azimuth matched to rotated sun-reduced San Giuseppe Bridge sky. Measured sun color/strength retained, elevation deliberately raised from the HDR capture. Geometry-positioned practical point lights are explicit authoring, not imported glTF lights.",
+  "notices": [
+    "LICENSE.txt",
+    "SGL-ATTRIBUTION.txt",
+    "THREE-LICENSE.txt",
+    "HDRI-ATTRIBUTION.txt",
+    "ENVIRONMENT-PROCESSING.json"
+  ],
+  "provenance": {
+    "conversion": "https://github.com/qian-o/GLTF-Assets/tree/816a1d6533c55787b3fabc9b75660c0d0c57ebc6/Bistro",
+    "creator": "Amazon Lumberyard",
+    "environment": "https://polyhaven.com/a/san_giuseppe_bridge",
+    "environment_creator": "Greg Zaal",
+    "environment_license": "CC0",
+    "license": "CC BY 4.0",
+    "source": "https://developer.nvidia.com/orca/amazon-lumberyard-bistro",
+    "title": "Amazon Lumberyard Bistro"
+  },
+  "scene": "amazon-bistro-exterior-v1",
+  "schema": 1,
+  "settings": {
+    "ambient_occlusion": "Medium",
+    "anisotropic_filtering": "X16",
+    "antialiasing": "Taa",
+    "atmosphere": false,
+    "bloom": "Preset",
+    "dynamic_gi": "Off",
+    "fog_filter": true,
+    "fog_quality": "High",
+    "fsr2_quality": "Quality",
+    "fsr2_sharpening": true,
+    "fsr2_sharpness": 0.800000011920929,
+    "hardware_ray_tracing": false,
+    "heat_distortion": false,
+    "motion_blur": "Off",
+    "occlusion_culling": false,
+    "preset": "High",
+    "ray_traced_shadow_quality": "Preset",
+    "ray_traced_shadows": false,
+    "reflection_method": "Crystal",
+    "scene_resolution": "Full",
+    "screen_space_reflections": "Off",
+    "shadow_quality": "High",
+    "smaa_quality": "Medium",
+    "tone_mapping": "AcesFilmic",
+    "upscaling": "Off",
+    "volume_paths": true,
+    "world_space_reflections": "Off"
+  },
+  "size": [
+    1280,
+    720
+  ],
+  "source_metadata": "asset-stats.json",
+  "warmup_frames": 60,
+  "compressed_images": "compressed-images.json",
+  "ray_data": "disabled",
+  "profile": "Authored desktop lean example: sunlit courtyard, bounded practical lights, full geometry. Not a universal game default or phone preset.",
+  "point_lights": [
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_0600d1f",
+      "position": [
+        5.78129,
+        6.62214,
+        4.47843
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_1cbefde",
+      "position": [
+        -2.86386,
+        4.30746,
+        -3.55693
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_220394a",
+      "position": [
+        2.10991,
+        6.62214,
+        3.03364
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_592ff99",
+      "position": [
+        -0.10583,
+        6.62213,
+        -10.10876
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_71fe44e",
+      "position": [
+        55.3901,
+        4.27259,
+        23.39267
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_7a01338",
+      "position": [
+        17.3138,
+        4.32184,
+        -34.06209
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_7b38291",
+      "position": [
+        -1.88081,
+        6.62212,
+        -6.81658
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_802b95e",
+      "position": [
+        19.53242,
+        4.26896,
+        -37.86463
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_9058caa",
+      "position": [
+        3.39502,
+        6.62213,
+        -16.60199
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_98689fa",
+      "position": [
+        -0.68187,
+        4.32941,
+        1.22855
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_afcc751",
+      "position": [
+        51.34055,
+        4.27259,
+        21.72003
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_b6c0a7c",
+      "position": [
+        12.44992,
+        6.62215,
+        7.11604
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_c5db280",
+      "position": [
+        1.52249,
+        6.62213,
+        -13.1289
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_f800b08",
+      "position": [
+        8.97193,
+        6.62215,
+        5.74041
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 0.8,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a_6313",
+      "position": [
+        -6.93154,
+        6.92068,
+        -6.70475
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a__6315",
+      "position": [
+        5.97652,
+        6.92872,
+        -34.01451
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a___10__6317",
+      "position": [
+        78.9244,
+        6.92872,
+        54.97252
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a___11__6319",
+      "position": [
+        56.16365,
+        6.92872,
+        29.31429
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a___2__6321",
+      "position": [
+        -33.30901,
+        6.92872,
+        -29.1837
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a___3__6323",
+      "position": [
+        -15.44381,
+        6.92872,
+        3.33937
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a___4__6325",
+      "position": [
+        -3.34126,
+        6.92872,
+        7.44059
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a___5__6327",
+      "position": [
+        -2.81082,
+        6.92872,
+        16.06388
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a___6__6329",
+      "position": [
+        12.50287,
+        6.92872,
+        13.85388
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a___7__6331",
+      "position": [
+        34.52725,
+        6.92872,
+        30.11158
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a___8__6333",
+      "position": [
+        53.28926,
+        6.92872,
+        38.55797
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_Streetlight_Glass_01a___9__6335",
+      "position": [
+        62.07656,
+        6.92872,
+        54.31416
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B_6337",
+      "position": [
+        -21.4375,
+        6.32826,
+        1.94065
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B__6339",
+      "position": [
+        -27.61126,
+        6.32826,
+        -6.0578
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___10__6341",
+      "position": [
+        28.83915,
+        7.03656,
+        -66.50669
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___11__6343",
+      "position": [
+        28.24975,
+        7.03656,
+        -55.04723
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___12__6345",
+      "position": [
+        14.37104,
+        7.15137,
+        -32.13308
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___13__6347",
+      "position": [
+        48.01217,
+        6.35398,
+        21.60476
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___14__6349",
+      "position": [
+        39.14144,
+        7.23721,
+        37.06641
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___15__6351",
+      "position": [
+        33.22157,
+        6.35398,
+        20.41136
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___2__6353",
+      "position": [
+        -32.27066,
+        6.32826,
+        -11.5009
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___3__6355",
+      "position": [
+        -39.33555,
+        6.30698,
+        -18.89468
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___4__6357",
+      "position": [
+        -45.62258,
+        5.13938,
+        -27.50926
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___5__6359",
+      "position": [
+        -43.02582,
+        5.13938,
+        -33.69524
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___6__6361",
+      "position": [
+        -28.37065,
+        6.33348,
+        -23.90674
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___7__6363",
+      "position": [
+        -19.1005,
+        6.32827,
+        -15.38986
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___8__6365",
+      "position": [
+        -13.49147,
+        6.371,
+        -18.26032
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Bistro_Research_Exterior_Paris_StreetLight_Glass_01B___9__6367",
+      "position": [
+        -3.39374,
+        6.63168,
+        -29.2504
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Lantern_Wind_21",
+      "position": [
+        7.36387,
+        3.88363,
+        5.28225
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Lantern_Wind_22",
+      "position": [
+        2.9507,
+        3.89262,
+        3.53648
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Lantern_Wind_23",
+      "position": [
+        -1.79646,
+        3.87459,
+        -7.52249
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Lantern_Wind_24",
+      "position": [
+        -0.08076,
+        3.83247,
+        -11.52291
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "Lantern_Wind_25",
+      "position": [
+        11.73395,
+        3.84302,
+        6.69978
+      ],
+      "color": [
+        1,
+        0.72,
+        0.45
+      ],
+      "intensity": 4,
+      "range": 5,
+      "radius": 0.07,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_14_47",
+      "position": [
+        8.943,
+        7.98688,
+        17.8549
+      ],
+      "color": [
+        1,
+        0.35,
+        0.06
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_14_48",
+      "position": [
+        12.88873,
+        6.92116,
+        8.21584
+      ],
+      "color": [
+        1,
+        0.06,
+        0.025
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_14_49",
+      "position": [
+        11.29903,
+        6.95716,
+        12.08874
+      ],
+      "color": [
+        1,
+        0.06,
+        0.025
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_14_50",
+      "position": [
+        7.43059,
+        9.31408,
+        21.57404
+      ],
+      "color": [
+        1,
+        0.06,
+        0.025
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_14_51",
+      "position": [
+        12.09401,
+        6.87427,
+        10.15019
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_14_52",
+      "position": [
+        8.16349,
+        8.60173,
+        19.76985
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_14_53",
+      "position": [
+        9.73336,
+        7.50635,
+        15.91705
+      ],
+      "color": [
+        1,
+        0.15,
+        0.4
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_14_54",
+      "position": [
+        10.5218,
+        7.16458,
+        13.98756
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_15_55",
+      "position": [
+        -5.89922,
+        7.71783,
+        12.77243
+      ],
+      "color": [
+        1,
+        0.35,
+        0.06
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_15_56",
+      "position": [
+        0.53238,
+        6.98841,
+        3.53753
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_15_57",
+      "position": [
+        -2.03944,
+        6.86082,
+        7.23924
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_15_58",
+      "position": [
+        -8.40974,
+        8.98177,
+        16.35614
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_15_59",
+      "position": [
+        -0.75011,
+        6.8551,
+        5.38492
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_15_60",
+      "position": [
+        -7.18973,
+        8.29513,
+        14.61611
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_15_61",
+      "position": [
+        -4.59777,
+        7.28558,
+        10.90987
+      ],
+      "color": [
+        1,
+        0.15,
+        0.4
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_15_62",
+      "position": [
+        -3.30626,
+        7.00181,
+        9.0584
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_18_63",
+      "position": [
+        -11.95312,
+        7.33764,
+        -12.87245
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_18_64",
+      "position": [
+        -2.65376,
+        7.18237,
+        -7.66453
+      ],
+      "color": [
+        1,
+        0.06,
+        0.025
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_18_65",
+      "position": [
+        -6.3692,
+        6.84714,
+        -9.72654
+      ],
+      "color": [
+        1,
+        0.06,
+        0.025
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_18_66",
+      "position": [
+        -15.59014,
+        8.32618,
+        -14.95319
+      ],
+      "color": [
+        1,
+        0.06,
+        0.025
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_18_67",
+      "position": [
+        -4.50599,
+        6.94917,
+        -8.68939
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_18_68",
+      "position": [
+        -13.82212,
+        7.77717,
+        -13.93851
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_18_69",
+      "position": [
+        -10.06933,
+        7.03647,
+        -11.80469
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_18_70",
+      "position": [
+        -8.20097,
+        6.87518,
+        -10.75219
+      ],
+      "color": [
+        1,
+        0.15,
+        0.4
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_19_71",
+      "position": [
+        -8.46024,
+        7.20322,
+        -17.12014
+      ],
+      "color": [
+        1,
+        0.35,
+        0.06
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_19_72",
+      "position": [
+        -0.54155,
+        7.11871,
+        -11.22709
+      ],
+      "color": [
+        1,
+        0.35,
+        0.06
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_19_73",
+      "position": [
+        -3.70806,
+        6.78483,
+        -13.56004
+      ],
+      "color": [
+        1,
+        0.35,
+        0.06
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_19_74",
+      "position": [
+        -11.55095,
+        8.09494,
+        -19.47535
+      ],
+      "color": [
+        1,
+        0.35,
+        0.06
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_19_75",
+      "position": [
+        -2.12058,
+        6.89111,
+        -12.38656
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_19_76",
+      "position": [
+        -10.04897,
+        7.5981,
+        -18.32675
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_19_77",
+      "position": [
+        -6.85797,
+        6.93649,
+        -15.9117
+      ],
+      "color": [
+        1,
+        0.15,
+        0.4
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_19_78",
+      "position": [
+        -5.2679,
+        6.79912,
+        -14.72063
+      ],
+      "color": [
+        1,
+        0.06,
+        0.025
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_20_79",
+      "position": [
+        -4.10832,
+        8.11831,
+        -22.7106
+      ],
+      "color": [
+        1,
+        0.35,
+        0.06
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_20_80",
+      "position": [
+        2.57378,
+        7.18123,
+        -16.71083
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_20_81",
+      "position": [
+        -0.12559,
+        7.22006,
+        -19.10833
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_20_82",
+      "position": [
+        -6.65252,
+        9.26855,
+        -25.05637
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_20_83",
+      "position": [
+        -1.44202,
+        7.40249,
+        -20.29009
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_20_84",
+      "position": [
+        1.22315,
+        7.14477,
+        -17.90612
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_20_85",
+      "position": [
+        -5.42084,
+        8.65157,
+        -23.91614
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_20_86",
+      "position": [
+        -2.77483,
+        7.70065,
+        -21.49542
+      ],
+      "color": [
+        1,
+        0.15,
+        0.4
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_21_87",
+      "position": [
+        -10.76063,
+        7.37911,
+        7.77775
+      ],
+      "color": [
+        1,
+        0.35,
+        0.06
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_21_88",
+      "position": [
+        -1.07167,
+        7.34833,
+        2.00679
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_21_89",
+      "position": [
+        -4.92223,
+        6.94196,
+        4.31791
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_21_90",
+      "position": [
+        -14.59811,
+        8.36896,
+        10.02211
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_21_91",
+      "position": [
+        -2.98787,
+        7.0761,
+        3.15983
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_21_92",
+      "position": [
+        -12.72913,
+        7.81562,
+        8.93201
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_21_93",
+      "position": [
+        -8.78393,
+        7.08863,
+        6.61241
+      ],
+      "color": [
+        1,
+        0.15,
+        0.4
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_21_94",
+      "position": [
+        -6.83054,
+        6.94534,
+        5.45474
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_22_95",
+      "position": [
+        -15.60708,
+        6.39419,
+        0.70634
+      ],
+      "color": [
+        1,
+        0.35,
+        0.06
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_22_96",
+      "position": [
+        -4.02494,
+        7.25703,
+        -3.12977
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_22_97",
+      "position": [
+        -8.61239,
+        6.47027,
+        -1.63498
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_22_98",
+      "position": [
+        -20.23052,
+        7.0891,
+        2.29504
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_22_99",
+      "position": [
+        -6.30525,
+        6.79129,
+        -2.39089
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_22_100",
+      "position": [
+        -17.97611,
+        6.67512,
+        1.5162
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_22_101",
+      "position": [
+        -13.23363,
+        6.26887,
+        -0.09643
+      ],
+      "color": [
+        1,
+        0.15,
+        0.4
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_22_102",
+      "position": [
+        -10.8935,
+        6.29747,
+        -0.87953
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_23_103",
+      "position": [
+        1.15039,
+        4.83319,
+        17.3283
+      ],
+      "color": [
+        1,
+        0.35,
+        0.06
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_23_104",
+      "position": [
+        5.49575,
+        5.27671,
+        6.93109
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_23_105",
+      "position": [
+        3.77366,
+        4.68157,
+        11.05582
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_23_106",
+      "position": [
+        -0.58202,
+        5.63585,
+        21.46324
+      ],
+      "color": [
+        0.08,
+        1,
+        0.12
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_23_107",
+      "position": [
+        4.63957,
+        4.91049,
+        8.98249
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_23_108",
+      "position": [
+        0.26253,
+        5.17363,
+        19.44812
+      ],
+      "color": [
+        1,
+        0.85,
+        0.65
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_23_109",
+      "position": [
+        2.04023,
+        4.63928,
+        15.20219
+      ],
+      "color": [
+        1,
+        0.15,
+        0.4
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    },
+    {
+      "name": "StringLight_Wind_23_110",
+      "position": [
+        2.91789,
+        4.59152,
+        13.10365
+      ],
+      "color": [
+        0.08,
+        0.22,
+        1
+      ],
+      "intensity": 0.08,
+      "range": 1.25,
+      "radius": 0.025,
+      "casts_shadow": false
+    }
+  ],
+  "lighting_authoring": {
+    "sun_elevation_degrees": 70,
+    "previous_sun_elevation_degrees": 55,
+    "environment_yaw_radians": 3.6258581590046384,
+    "sun_elevation_note": "Environment is yaw-rotated only; sun elevation is independently art directed, not a calibrated match to the display panorama. Exposure, sun color and normal-incidence illuminance are unchanged.",
+    "point_light_positions": "Centers of source bulb/lamp geometry transformed by glTF node and root transforms. String bulbs use individual connected-component bounds; other bulbs use primitive bounds. World-space metres.",
+    "point_light_groups": {
+      "street_and_hanging": {
+        "count": 33,
+        "candela": 4,
+        "range_m": 5
+      },
+      "building_and_wall": {
+        "count": 14,
+        "candela": 0.8,
+        "range_m": 5
+      },
+      "string_bulbs": {
+        "count": 64,
+        "candela": 0.08,
+        "range_m": 1.25
+      }
+    },
+    "point_light_shadows": "Unshadowed short-range approximation because opaque emissive enclosures self-occlude lights placed inside. Can leak through nearby surfaces; directional shadows and AO remain enabled.",
+    "tone_mapping_note": "Existing ACES filmic option selected after matched AgX, Khronos neutral, and ACES captures at unchanged exposure; no custom color grading."
+  }
+}

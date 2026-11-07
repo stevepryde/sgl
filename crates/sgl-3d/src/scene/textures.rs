@@ -181,6 +181,18 @@ pub(crate) fn validate(device: &wgpu::Device, image: &Image) -> Result<(), Scene
     Ok(())
 }
 
+/// ETC2/ASTC blocks have no CPU/ray decoder. Require the offline companion
+/// only at boundaries that actually sample decoded texels, before uploading.
+pub(crate) fn validate_cpu_texels(image: &Image) -> Result<(), SceneError> {
+    if let Image::Compressed(image) = image
+        && image.format != CompressedFormat::Bc7
+        && image.decoded_level_0.is_none()
+    {
+        return Err(SceneError::MissingDecodedImage);
+    }
+    Ok(())
+}
+
 /// One image as its materials sample it.
 pub(crate) struct Texture {
     /// Sampled as sRGB colour, when a material uses it for colour.
