@@ -6,8 +6,8 @@ use super::charts::{CHART_WORDS, ChartTables, chart_tables};
 use super::{RayMeshWords, RayModel, VERTEX_WORDS, bvh, words};
 use crate::asset::Vertex;
 use crate::counters::{BuildStep, step};
-use crate::scene::SceneError;
 use crate::scene::mesh_ranges::MeshRanges;
+use crate::scene::{RayData, SceneError};
 use crate::shading::packed_vertex::{self, PackedVertex, UvRect};
 use glam::Vec3;
 use std::ops::Range;
@@ -45,7 +45,13 @@ pub(crate) struct PreparedRayModel {
 /// validated: indices name vertices, positions, UVs and lightmap UVs are
 /// finite and normals are finite and not zero. Refuses a mesh whose vertices name more than 65,536
 /// distinct lightmap chart bounds.
-pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, SceneError> {
+/// Shared raster/ray geometry stays in one source, as NVIDIA recommends
+/// (Practical Tips for Optimizing Ray Tracing, developer.nvidia.com/blog/?p=58067).
+/// The immutable opt-out omits only the BVH appended after that geometry.
+pub(crate) fn prepare_model(
+    meshes: &[RayMesh<'_>],
+    ray_data: RayData,
+) -> Result<PreparedRayModel, SceneError> {
     let table_word = meshes.len() * MESH_WORDS;
     let vertex_block = |word: usize| word.next_multiple_of(VERTEX_WORDS as usize);
     let (mut words, mesh_words, len) = step(BuildStep::Pack, || {
@@ -128,7 +134,10 @@ pub(crate) fn prepare_model(meshes: &[RayMesh<'_>]) -> Result<PreparedRayModel, 
     debug_assert_eq!(words.len(), len, "a model's geometry fills its words");
     // Its BVH's size follows its splits, so it grows the words it follows.
     let bvh = words.len();
-    let root = step(BuildStep::RayBvh, || bvh::append(meshes, &mut words, 0));
+    let root = match ray_data {
+        RayData::Enabled => step(BuildStep::RayBvh, || bvh::append(meshes, &mut words, 0)),
+        RayData::Disabled => 0,
+    };
     Ok(PreparedRayModel {
         words,
         meshes: meshes.len(),
@@ -338,7 +347,7 @@ mod record_tests {
                 shader_data: &[],
             })
             .collect();
-        let mut prepared = prepare_model(&rays).unwrap();
+        let mut prepared = prepare_model(&rays, crate::RayData::Enabled).unwrap();
         // A model's range starts at a multiple of the stride.
         let (base, materials) = (8_750 * VERTEX_WORDS, [11, 22, 33, 44]);
         rebase_records(

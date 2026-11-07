@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "encoding": "rgba16f-le",
+  "levels": 7,
+  "face_size": 256,
+  "rgba16": "bistro-local-probe.rgba16",
+  "center": [
+    -7.4,
+    1.4,
+    0.5
+  ],
+  "influence": {
+    "min": [
+      -12,
+      0,
+      -5
+    ],
+    "max": [
+      -3,
+      5,
+      6
+    ]
+  },
+  "blend": [
+    2,
+    2,
+    2
+  ],
+  "proxy": null,
+  "exclude_materials": [
+    "Vespa_Headlight",
+    "Vespa_Odometer_Glass",
+    "Vespa",
+    "Vespa_Odometer"
+  ],
+  "purpose": "Explicit native-authored local specular reflection for this scene/lighting, excluding the scooter during capture; inspect blend boundaries. Not diffuse GI or dynamic visibility."
+}

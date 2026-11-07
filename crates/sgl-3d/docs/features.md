@@ -51,13 +51,16 @@ them through unrefracted. A probe captured on an
   irradiance atlas chart.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
   `load_with_options` and `load_slice_with_options` (`LoadOptions`: an
-  emissive strength cap, images the game supplies, which are never decoded,
+  independent checked source/decoded byte caps, an emissive strength cap,
+  images the game supplies, which are never decoded,
   and a selection of mesh nodes for named rigid parts), or a
   procedural `asset::Asset` (`asset::Material::default()` is glTF's default
   material). File references are percent-decoded relative regular files
   beneath the glTF's directory, without parent segments or symlinks;
   base64 data URIs and GLB are supported. External buffers must match
-  `byteLength`; encoded sources share a 4 GiB native / 1 GiB browser cap.
+  `byteLength`; encoded sources share a default 4 GiB native / 1 GiB browser
+  cap. `LoadBudget::new` can explicitly change the source and decoded caps
+  without weakening structural validation or changing GPU limits.
   [Loading details](../README.md#asset-and-environment-limits). A file that
   requires an extension SGL3D does not support fails to load; one it only uses is left out and listed in `Asset::ignored`,
   with occlusion maps in an image of their own and specular textures, which
@@ -73,12 +76,15 @@ them through unrefracted. A probe captured on an
   Valid node trees have no depth limit within the asset load budget; roots
   and children load depth-first in declared order, preserved within each batch.
 - **Compressed material textures**: a material image is decoded RGBA8, whose
-  mips SGL3D filters when it is added, or a BC7 mip chain uploaded as stored
+  mips SGL3D filters when it is added, caller-prepared colour/data RGBA mip
+  chains, or a BC7, ETC2 RGBA8 or ASTC 4×4 mip chain uploaded as stored
   (`asset::Image::Compressed`, read from KTX2 with
-  `CompressedImage::from_ktx2`; needs `TEXTURE_COMPRESSION_BC`). Games compress
+  `CompressedImage::from_ktx2`; request the corresponding adapter-supported
+  `graphics_device::texture_compression_features`). Games compress
   in their export step and supply the chains while a glTF loads
-  (`LoadOptions::images`). Rays decode a compressed image's level 0 from its
-  stored blocks.
+  (`LoadOptions::images`). BC7 rays decode level zero from stored blocks;
+  ETC2/ASTC ray sampling and decals need an explicit decoded companion.
+  A no-ray scene can omit that companion for ordinary material textures.
   [Compressed material images](../README.md#compressed-material-images).
 - **Skinned meshes and morph targets**: the loader imports skins (four
   influences per vertex), morph targets (up to 256 a mesh), the node

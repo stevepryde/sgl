@@ -523,7 +523,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     if options.hardware {
         println!(
             "hardware ray tracing in effect: {}{}",
-            renderer.ray_tracing_in_effect(&settings),
+            renderer.ray_tracing_in_effect(&settings, &scene),
             renderer
                 .ray_tracing_error()
                 .map_or(String::new(), |error| format!(" ({error})"))

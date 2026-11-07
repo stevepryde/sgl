@@ -92,6 +92,8 @@ const NO_RAY_QUERIES: &str = "the device has no hardware ray queries: the browse
     has none, and a native device has them where its adapter does and the game requested \
     graphics_device::ray_tracing_features";
 const NO_MEMORY: &str = "the device's memory could not hold the scene's TLAS";
+const NO_RAY_DATA: &str =
+    "the scene was created with RayData::Disabled; ray queries are unavailable";
 
 #[derive(Default)]
 pub(crate) struct Prepare {
@@ -189,7 +191,8 @@ impl Prepare {
         // set and static edits made since the last traced frame wait for
         // the next, so the frames that skip it leave it nothing stale.
         let world_space = effective.world_space != WorldSpaceReflections::Off;
-        let traced = world_space || volume.is_some() || effective.ray_traced_shadows;
+        let traced = scene.ray_data() == crate::RayData::Enabled
+            && (world_space || volume.is_some() || effective.ray_traced_shadows);
         // The acceleration structures are built on the frames that trace,
         // and freed by a frame with hardware ray tracing off. The portable
         // BVHs then cover what the TLAS does not hold.
@@ -198,11 +201,15 @@ impl Prepare {
         self.hardware_requested =
             matches!(effective.hardware_ray_tracing, HardwareRayTracing::On(_));
         match effective.hardware_ray_tracing {
-            HardwareRayTracing::Off | HardwareRayTracing::Unsupported => {
+            HardwareRayTracing::Off
+            | HardwareRayTracing::Unsupported
+            | HardwareRayTracing::DisabledByScene => {
                 scene.free_acceleration_structures();
-                self.ray_tracing_error = (effective.hardware_ray_tracing
-                    == HardwareRayTracing::Unsupported)
-                    .then_some(NO_RAY_QUERIES);
+                self.ray_tracing_error = match effective.hardware_ray_tracing {
+                    HardwareRayTracing::Unsupported => Some(NO_RAY_QUERIES),
+                    HardwareRayTracing::DisabledByScene => Some(NO_RAY_DATA),
+                    _ => None,
+                };
             }
             HardwareRayTracing::On(form) if traced => {
                 let prepared =
@@ -211,7 +218,10 @@ impl Prepare {
                 self.ray_tracing = prepared.unwrap_or_default();
                 self.ray_tracing_error = prepared.is_none().then_some(NO_MEMORY);
             }
-            HardwareRayTracing::On(_) => scene.skip_acceleration_structures(),
+            HardwareRayTracing::On(_) => {
+                scene.skip_acceleration_structures();
+                self.ray_tracing_error = None;
+            }
         }
         if traced {
             scene.update_rays(device, queue, frame.visibility_mask, self.hardware_rays);

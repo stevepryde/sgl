@@ -304,7 +304,10 @@ impl Scene {
         }
         let texels = match image {
             Image::Rgba8(texels) => texels,
-            compressed => compressed.texels().into_owned(),
+            compressed => compressed
+                .texels()
+                .ok_or(SceneError::MissingDecodedImage)?
+                .into_owned(),
         };
         self.edited();
         Ok(self.decals.images.insert(DecalImage { texels, users: 0 }))

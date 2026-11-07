@@ -63,15 +63,24 @@ under RD-2; DiligentFX is its provenance, not a conformance contract.
 ## Scene content
 
 A `Scene` starts empty. The game adds, edits and removes its content between
-frames; nothing is fixed when the scene is created, and no capacity is
-declared. Buffers grow as content is added, and removed content's records and
+frames; its ray-data capability is fixed at creation, but no content capacity
+is declared. Existing constructors retain ray data. Explicit
+`SceneOptions { ray_data: RayData::Disabled }` omits only ray-exclusive image
+payloads, model/instance BVHs and hardware acceleration for that scene's
+lifetime. Shared raster geometry, deformation, shadow-map geometry and
+material records retain their normal ownership. Prepared models carry the
+same capability; a mismatch is rejected before retained mutation. The frame
+boundary combines settings, device capabilities and this scene policy when
+reporting effective GI, world-space reflections and traced shadows. It does
+not silently rewrite saved settings or disable screen-space volume paths.
+Buffers grow as content is added, and removed content's records and
 buffer ranges are reused, so bounded content keeps bounded resources. Content
 that would exceed a device limit is refused with the typed error.
 
 | Kind | What it is | What `set_…` replaces |
 | --- | --- | --- |
 | Shader | A game's WGSL module (`ShaderSource`): `struct ShaderParams`, `material_vertex` and `material_surface` over the contract's structs, validated when it is added ([Shader contract](#shared-contracts)), which materials name (`SurfaceMaterial::shader`, with the farthest its vertex function moves a vertex), set through `Scene::set_material` once a material is added: an authored material (`asset::Material`) has none, so games that build one are unchanged. It cannot be removed while a material names it. | Nothing: a shader is replaced by removing it and adding another. |
-| Material | Surface values and the textures they sample. Materials added together share their textures; a texture lives as long as a material that uses it. An image is decoded RGBA8, whose mips the scene filters, an immutable caller-prepared RGBA8 colour/data mip pair, or a block-compressed BC7, ETC2 RGBA8 or ASTC 4×4 chain uploaded as stored; one texture serves a channel that samples it as sRGB colour and one that samples it as data. ETC2/ASTC images carry a caller-prepared RGBA8 level-zero companion for the existing ray-image and decal boundaries, while BC7 rays retain their compressed blocks. Content validates dimensions and byte budgets without depending on wgpu; the scene checks the matching compression feature before mutating content. | Its values. |
+| Material | Surface values and the textures they sample. Materials added together share their textures; a texture lives as long as a material that uses it. An image is decoded RGBA8, whose mips the scene filters, an immutable caller-prepared RGBA8 colour/data mip pair, or a block-compressed BC7, ETC2 RGBA8 or ASTC 4×4 chain uploaded as stored; one texture serves a channel that samples it as sRGB colour and one that samples it as data. ETC2/ASTC images need a caller-prepared RGBA8 level-zero companion only at ray-enabled material or decal uploads; raster-only material scenes may omit it. BC7 rays retain their compressed blocks. Missing required companions fail before retained mutation. Content validates dimensions and byte budgets without depending on wgpu; the scene checks the matching compression feature before mutating content. | Its values. |
 | Model | Geometry: an ordered list of meshes, each with vertices, indices, one material and what deforms it: a skin (each vertex's joint influences), morph targets, both or neither. A model with a deforming mesh deforms. Where the device traces rays in hardware, a model that does not deform also owns a BLAS over its meshes, built before the first hardware-traced frame that needs it, and a deforming instance one over its deformed positions, built again in every frame that deforms it ([Hardware ray tracing](#designs-that-span-stages)). | Its whole geometry, with any vertex and index counts, none included; its BLAS is built again. |
 | Instance | A model placed in the world: an `InstanceState`, and whether it is static or moving, chosen when it is added; an instance of a deforming model also has its deformation, its joint matrices and morph weights. | Its state; its deformation (`set_instance_deformation`). |
 | Light | A point, spot or rectangle light: position, shape (a spot's direction and cone, a rectangle's facing, width axis and size), colour, intensity, range, whether it is baked, its specular scale and whether it casts a shadow. | Its description. |

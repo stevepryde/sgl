@@ -156,6 +156,17 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   `IndirectLight` scale both lobes with one intensity; set both fields alike
   for that. `backdrop` is what the camera sees where there is no surface: the
   environment's panorama or one colour.
+  Keep its yaw consistent with authored directional lighting and the backdrop.
+  An HDR environment containing a bright sun contributes that sun through
+  image-based lighting too; a second analytic sun can duplicate energy or
+  place reflections and mapped shadows in different directions. Explicitly
+  separate sun and sky during content preparation when using a shadowed
+  directional sun, retaining the original source and the export recipe.
+  Global environment fill does not know which buildings occlude it. Nearby
+  camera-space AO, a dynamic GI volume, or authored baked diffuse data provide
+  different visibility approximations; increasing shadow-map opacity cannot
+  occlude an unrelated environment contribution. See the controlled
+  [Bistro lighting workflow](../../examples/sgl-3d/BISTRO.md).
 - `fog` (`Fog`) is the frame's participating medium
   ([Volumetric fog](#volumetric-fog)) and `mist` (`Mist`) the look of the
   scene's mist billboards: their colours, opacity, size and `drift`, how
@@ -980,6 +991,13 @@ other view its material's alone; baked diffuse takes the material's alone
 The radius is clamped to 0.01–10000 m (XeGTAO's expected minimum and its
 settings' maximum); `Settings::ambient_occlusion`
 alone turns AO off. AO works with centered reversed-Z perspective cameras.
+Its view-space reconstruction includes the actual raster jitter used by
+TAA or FSR2, so its camera rays match the frame's depth and normals.
+With either temporal AA path effective, XeGTAO's sample phase advances with
+submitted frames so accumulation can reduce persistent spatial grain.
+Without temporal AA the phase stays fixed. This changes the noise tradeoff:
+inspect moving and settled contacts, since less fixed grain can leave
+visible temporal crawl rather than making every frame more stable.
 Orthographic, off-axis and forward-depth cameras leave it ineffective while
 preserving the saved preference. Single-layer screen geometry cannot establish
 offscreen or thin-occluder visibility; [the pinned XeGTAO catalogue](src/stages/opaque/ambient_occlusion/README.md)
@@ -1869,6 +1887,25 @@ authored look and per-frame state in a `FrameInput`.
    `LightId`, `DecalImageId`, `DecalId`, `EnvironmentId`), and every operation
    that can fail returns `SceneError`,
    changing nothing:
+   - A game that will not use world-space rays can instead create
+     `Scene::with_options(&device, &queue, SceneOptions { ray_data: RayData::Disabled })`.
+     This immutable scene-lifetime policy skips ray-only image storage,
+     model/instance BVHs and hardware acceleration. It retains packed raster
+     geometry, deformation, culling and shadow maps; it does not remove the
+     scene-source buffer or raise its binding limit. `Scene::ray_data()`
+     reports the choice. Existing constructors use `RayData::Enabled`.
+     `add_asset` chooses matching model preparation automatically. For manual
+     preparation use `PreparedModel::with_options(meshes, PreparedModelOptions {
+     ray_data: scene.ray_data() })`, or
+     `with_shader_data_and_options(meshes, data, options)`. A prepared model
+     with a different mode fails with `SceneError::RayDataMismatch` before
+     content is retained. To add ray capability later, create and populate
+     an enabled scene explicitly; this is not lazy ray loading.
+     Disabled scenes keep screen-space reflections, probes, baked lighting
+     and screen-space volume paths. World-space reflections, dynamic GI,
+     hardware rays and traced shadows report off even if requested in saved
+     settings. Their `Renderer::*_in_effect(&settings, &scene)` queries include
+     scene policy as well as device support.
    - `add_asset` adds a loaded asset whole and returns its materials' and
      model's identities (`AssetIds`); its own indices do not outlive the call.
      `add_materials` (texture indices index the images passed with them) and
@@ -2535,13 +2572,16 @@ hardware.
   classification, about 0.07 ms, in place of the trace), and its ray-traced
   shadow rays about 40–57 % more. SGL3D cannot restore the hint; it is
   naga's.
-- **Reporting.** `Renderer::ray_tracing_in_effect(&settings)` says whether
+- **Reporting.** `Renderer::ray_tracing_in_effect(&settings, &scene)` says whether
   the hardware path traces the scene's rays, as
   `antialiasing_in_effect` does for antialiasing, and
   `Renderer::ray_tracing_error()` why it did not trace the last frame that
-  asked for it (the device has no ray queries, or its memory could not
-  hold the TLAS), the portable BVHs tracing it instead, or why the device
-  fell back from the candidate form to the baseline, which traced it.
+  asked for it (the device has no ray queries, its memory could not hold
+  the TLAS, or the scene permanently disabled ray data). Portable BVHs can
+  stand in for supported world-ray effects only when the scene retains ray
+  data; a disabled scene has no portable ray fallback. The error also
+  reports why the device fell back from the candidate form to the baseline,
+  which traced it.
   `Renderer::ray_tracing_stats()` returns the last rendered frame's
   `RayTracingStats`: the instances the TLAS held, those that do not deform
   it did not hold (on the portable BVHs), and those the device left out.
@@ -2589,7 +2629,7 @@ hardware.
   lighting pass), so the setting costs the second geometry pass besides
   the rays. The volumetric fog, blended surfaces, probe captures,
   reflections' ray hits and the lights beyond those sixteen keep the maps,
-  which are still drawn. `Renderer::ray_traced_shadows_in_effect(&settings)`
+  which are still drawn. `Renderer::ray_traced_shadows_in_effect(&settings, &scene)`
   says whether the setting is in effect; they then run on the frames where
   a light holds a slot. Without hardware ray tracing in effect the maps
   shadow everything: SGL3D has no software path for these rays, since on
@@ -2714,6 +2754,17 @@ completion timings are offscreen workload measurements, not displayed frame
 pacing or a browser Bistro result. The ordinary browser smoke lane verifies
 ETC2/ASTC material sampling where the browser exposes those features.
 
+For a real asset workload, follow the [Bistro guide](../../examples/sgl-3d/BISTRO.md)
+and run `measure-browser --bistro`, or use `--fixture FILE --asset-dir DIR`
+for another prepared embedded glTF. The same runner records fixed cameras,
+requested/effective settings, source provenance, errors, partial resource
+accounting and display-output PNGs. Motion sequences complement stills when
+judging temporal quality. Keep output size, lighting and warm-up fixed for
+controlled comparisons, distinguish partial allocation counts from total
+memory, and repeat timing runs without concurrent builds or GPU workloads.
+Assets and their licence notices are prepared explicitly, not bundled with
+SGL or regenerated by its runtime.
+
 ## Asset and environment limits
 
 `LoadOptions { nodes: Some(&|name| name == Some("head")), ..Default::default() }`
@@ -2766,22 +2817,43 @@ URIs. Schemes such as `file:`, absolute paths, every `..` segment, symlinks
 and non-regular files are refused with the authored URI in the error.
 External buffers must contain exactly their declared `byteLength`; GLB BIN
 chunks may include the format's alignment padding. The input document,
-imported buffers and encoded images share a source-byte budget of 4 GiB
-natively or 1 GiB in the browser. File sizes and data-URI decoded sizes are
+imported buffers and encoded images share a source-byte budget, defaulting to
+4 GiB natively or 1 GiB in the browser. File sizes and data-URI decoded sizes are
 checked before reading or decoding, and file reads are bounded even if a
 file grows. Supplied and unused images are still never read. Move formerly
 escaping references beside the glTF and replace symlinks with regular files.
 
+`LoadOptions::budget` accepts an explicit `asset::LoadBudget` with independent
+source and decoded caps. `LoadBudget::new(source_bytes, decoded_bytes)` rejects
+zero and values above `LoadBudget::maximum_bytes()` (`isize::MAX` on the target);
+it never clamps them or interprets zero as unlimited. For example, a browser
+consumer can opt into two 1536 MiB caps with
+`LoadBudget::new(1536 << 20, 1536 << 20)?`, retaining all other load validation.
+Use `load_slice_with_options` or `load_with_options` and a default tail for
+the remaining fields. These caps are independent, not a combined process
+budget. Raising one neither reserves memory nor raises image dimensions or
+GPU resource limits: fetch copies, source buffers, decoded assets, preparation
+scratch and GPU allocations can coexist. Choose caps from measurements of the
+actual consumer and device rather than setting them to the maximum.
+
+Supplied images count toward the same decoded cap: stored compressed mip
+bytes and any RGBA companion, or both prepared RGBA mip chains. The KTX2
+constructors `CompressedImage::from_ktx2_with_budget` and
+`from_ktx2_with_decoded_level_0_and_budget` accept the same policy. Their
+ordinary counterparts preserve the target's default caps. Budget rejections
+name the source/decoded budget, request, remaining bytes and configured limit.
+
 A scene must list each root node once, and only nodes without a parent, as
 glTF requires. Before it decodes an image or reads an accessor, a load
 counts the bytes its scene produces from the counts its accessors declare,
-and fails beyond 4 GiB natively or 1 GiB in the browser: for each of the
+and fails beyond its configured decoded cap: for each of the
 scene's mesh nodes, selected or not, its mesh's vertices (88 bytes each,
 plus 32 for skin influences on a skinned node), indices (4 bytes) and
 morph target deltas (36 bytes a vertex and target); each skin's joints;
 and each animation channel's keyframe times and values. A mesh counts
 again for each node that uses it, so each instance counts. Split a file
-beyond it. Decoded PNG/JPEG images share that scene-data budget: the loader
+beyond the chosen cap or explicitly raise the policy after measuring it.
+Decoded PNG/JPEG images share that scene-data budget: the loader
 checks their headers before decoding pixels, refuses a side above 16384,
 and charges width × height × 4 for the retained RGBA8 image before decoding
 or converting it. Decoder allocation limits use the available budget.
@@ -2913,16 +2985,20 @@ may refer to external image files when each one a sampled map uses is
 supplied.
 `CompressedImage::from_ktx2(bytes)` rejects malformed data format descriptors
 with an error, then reads a KTX2
-file of one 2D BC7 image (`VK_FORMAT_BC7_UNORM_BLOCK` or `_SRGB_BLOCK`).
+file of one supported 2D compressed image, including BC7
+(`VK_FORMAT_BC7_UNORM_BLOCK` or `_SRGB_BLOCK`).
 `from_ktx2_with_decoded_level_0(bytes, texels)` accepts ETC2 RGBA8
 (`VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK` or `_SRGB_BLOCK`) and ASTC 4×4
 (`VK_FORMAT_ASTC_4x4_UNORM_BLOCK` or `_SRGB_BLOCK`) with a matching RGBA8
-level-zero companion. All accept stored levels, uncompressed or
+level-zero companion. ETC2/ASTC can also be loaded without a companion for
+material use in a `RayData::Disabled` scene. All accept stored levels, uncompressed or
 Zstandard-supercompressed, as Bevy reads
 them. It refuses zero or non-block-aligned dimensions, sides above 16384,
 more than a full mip chain, and declared or decoded level sizes that differ
-from their format's block size. The whole decoded chain shares a 4 GiB native
-or 1 GiB browser budget, checked before allocating levels; Zstandard
+from their format's block size. The decoded chain and any companion share
+the chosen decoded budget (default 4 GiB native or 1 GiB browser), checked
+before allocating levels; the whole KTX2 source is checked against its
+source budget before parsing. Zstandard
 decoded output length is capped at the expected level size plus one sentinel byte.
 The decoder never allocates its advertised history window; regenerated
 literals and sequences are checked against the format's 128 KiB block
@@ -2948,15 +3024,19 @@ Sides must be multiples of 4 and at most 16384, with one to a full chain
 of exact-size levels (`SceneError::InvalidCompressedImage`).
 
 BC7 rays read level zero's stored blocks, preserving the native compressed
-path. ETC2/ASTC rays and decals use `CompressedImage::decoded_level_0`, a
-required RGBA8 image with matching dimensions. Export it from the decoded
+path. ETC2/ASTC rays and decals use `CompressedImage::decoded_level_0`, an
+RGBA8 image with matching dimensions, required by those consumers but not
+by raster-only material textures. Export it from the decoded
 compressed image if ray and raster texels must match exactly; the runtime
 checks structure and byte budgets, not semantic agreement. It does not run
-an ETC2/ASTC CPU decoder or Basis Universal transcoder. A missing or
-mismatched companion is rejected before scene mutation. BC7 needs no
-companion. ETC2/ASTC retain one compressed raster chain plus a 4-byte-per-texel
-ray copy and the caller's companion/download costs, so their total saving is
-not the raster chain's fourfold reduction.
+an ETC2/ASTC CPU decoder or Basis Universal transcoder. A malformed companion
+is always rejected; a missing one yields `SceneError::MissingDecodedImage`
+before ray-enabled material or decal mutation. BC7 needs no companion.
+Ray-enabled ETC2/ASTC retain one compressed raster chain plus a
+4-byte-per-texel ray copy and the caller's companion/download costs, so their
+total saving is not the raster chain's fourfold reduction. No-ray consumers
+should leave the companion out of their fetch/decode plan as well as GPU
+upload to avoid paying its CPU/WASM cost unnecessarily.
 
 For an uncompressed fallback prepared outside the render-critical thread,
 construct `Rgba8MipChain::new(image)` and pass `Image::Rgba8Mips(chain)`.

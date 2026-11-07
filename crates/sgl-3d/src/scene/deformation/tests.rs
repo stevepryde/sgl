@@ -255,43 +255,46 @@ fn deformed_vertices_match_the_cpu_morph_and_skin_blends() {
         return;
     };
     let (meshes, joints) = fixture();
-    let mut scene = Scene::new(&device, &queue);
-    let model = scene
-        .add_asset(&device, &queue, asset(meshes.clone()))
-        .unwrap()
-        .model;
-    let instance = moving(&mut scene, &device, &queue, model);
-    let weights = [0.5, -0.25];
-    scene
-        .set_instance_deformation(&queue, instance, &joints, &weights)
-        .unwrap();
-    let observed = deformed(&device, &queue, &mut scene, instance, 8);
-    for (mesh_index, mesh) in meshes.iter().enumerate() {
-        for (v, (expected, condition)) in cpu_blend(mesh, &joints, &weights).into_iter().enumerate()
-        {
-            let (p, n, t) = observed[mesh_index * 4 + v];
-            let packed = |a: Vec4, b: Vec4| {
-                (a - b).abs().max_element()
-                    <= 0.01f32.to_radians() * condition * b.abs().max_element().max(1.)
-            };
-            assert!(
-                close(p.extend(0.), expected.0.extend(0.))
-                    && packed(n.extend(0.), expected.1.extend(0.))
-                    && packed(t, expected.2),
-                "mesh {mesh_index} vertex {v}: deformed {:?}, expected {expected:?}",
-                (p, n, t)
-            );
+    for ray_data in [crate::RayData::Enabled, crate::RayData::Disabled] {
+        let mut scene = Scene::with_options(&device, &queue, crate::SceneOptions { ray_data });
+        let model = scene
+            .add_asset(&device, &queue, asset(meshes.clone()))
+            .unwrap()
+            .model;
+        let instance = moving(&mut scene, &device, &queue, model);
+        let weights = [0.5, -0.25];
+        scene
+            .set_instance_deformation(&queue, instance, &joints, &weights)
+            .unwrap();
+        let observed = deformed(&device, &queue, &mut scene, instance, 8);
+        for (mesh_index, mesh) in meshes.iter().enumerate() {
+            for (v, (expected, condition)) in
+                cpu_blend(mesh, &joints, &weights).into_iter().enumerate()
+            {
+                let (p, n, t) = observed[mesh_index * 4 + v];
+                let packed = |a: Vec4, b: Vec4| {
+                    (a - b).abs().max_element()
+                        <= 0.01f32.to_radians() * condition * b.abs().max_element().max(1.)
+                };
+                assert!(
+                    close(p.extend(0.), expected.0.extend(0.))
+                        && packed(n.extend(0.), expected.1.extend(0.))
+                        && packed(t, expected.2),
+                    "mesh {mesh_index} vertex {v}: deformed {:?}, expected {expected:?}",
+                    (p, n, t)
+                );
+            }
         }
+        // Fewer joints or weights than the model takes are refused, and change
+        // nothing.
+        for (joints, weights) in [(&joints[..3], &weights[..]), (&joints[..], &weights[..1])] {
+            assert!(matches!(
+                scene.set_instance_deformation(&queue, instance, joints, weights),
+                Err(SceneError::DeformationMismatch)
+            ));
+        }
+        assert_eq!(deformed(&device, &queue, &mut scene, instance, 8), observed);
     }
-    // Fewer joints or weights than the model takes are refused, and change
-    // nothing.
-    for (joints, weights) in [(&joints[..3], &weights[..]), (&joints[..], &weights[..1])] {
-        assert!(matches!(
-            scene.set_instance_deformation(&queue, instance, joints, weights),
-            Err(SceneError::DeformationMismatch)
-        ));
-    }
-    assert_eq!(deformed(&device, &queue, &mut scene, instance, 8), observed);
 }
 
 // Plausible defects: the skinned bounds leave out a joint's vertices, use a
@@ -539,58 +542,60 @@ fn deformed_casters_cast_at_their_deformed_depth() {
         shadow: None,
         ..Default::default()
     });
-    let mut scene = Scene::new(&device, &queue);
-    // A rigid mesh before the deforming one, so its positions start past
-    // the model's first vertex.
-    let skin = MeshDeformation {
-        influences: vec![
-            Influence {
-                joints: [0; 4],
-                weights: [1., 0., 0., 0.],
-            };
-            4
-        ],
-        morph_targets: Vec::new(),
-    };
-    let meshes = vec![
-        quad(5., 0.9, 0.1, MeshDeformation::default()),
-        quad(0., 0.9, 2., skin),
-    ];
-    let model = scene
-        .add_asset(&device, &queue, asset(meshes))
-        .unwrap()
-        .model;
-    let instance = moving(&mut scene, &device, &queue, model);
-    // Bind depth 0.9 in the cascade's clip space; posed to 0.4.
-    scene
-        .set_instance_deformation(
+    for ray_data in [crate::RayData::Enabled, crate::RayData::Disabled] {
+        let mut scene = Scene::with_options(&device, &queue, crate::SceneOptions { ray_data });
+        // A rigid mesh before the deforming one, so its positions start past
+        // the model's first vertex.
+        let skin = MeshDeformation {
+            influences: vec![
+                Influence {
+                    joints: [0; 4],
+                    weights: [1., 0., 0., 0.],
+                };
+                4
+            ],
+            morph_targets: Vec::new(),
+        };
+        let meshes = vec![
+            quad(5., 0.9, 0.1, MeshDeformation::default()),
+            quad(0., 0.9, 2., skin),
+        ];
+        let model = scene
+            .add_asset(&device, &queue, asset(meshes))
+            .unwrap()
+            .model;
+        let instance = moving(&mut scene, &device, &queue, model);
+        // Bind depth 0.9 in the cascade's clip space; posed to 0.4.
+        scene
+            .set_instance_deformation(
+                &queue,
+                instance,
+                &[Mat4::from_translation(Vec3::Z * -0.5)],
+                &[],
+            )
+            .unwrap();
+        let prepared =
+            renderer.prepare_test_frame(&device, &queue, &mut scene, &frame, &Settings::default());
+        renderer.set_test_cascade((&device, &queue), &scene, &prepared, Mat4::IDENTITY);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        Deform::new(&device).dispatch(&device, &queue, &mut encoder, &scene, None);
+        renderer.encode_test_shadows(
+            &device,
             &queue,
-            instance,
-            &[Mat4::from_translation(Vec3::Z * -0.5)],
-            &[],
-        )
-        .unwrap();
-    let prepared =
-        renderer.prepare_test_frame(&device, &queue, &mut scene, &frame, &Settings::default());
-    renderer.set_test_cascade((&device, &queue), &scene, &prepared, Mat4::IDENTITY);
-    let mut encoder = device.create_command_encoder(&Default::default());
-    Deform::new(&device).dispatch(&device, &queue, &mut encoder, &scene, None);
-    renderer.encode_test_shadows(
-        &device,
-        &queue,
-        &mut encoder,
-        &scene,
-        &prepared,
-        Some(&depth_view),
-    );
-    queue.submit([encoder.finish()]);
-    let bytes = test_support::read(&device, &queue, &depth, 4);
-    let observed: &[f32] = bytemuck::cast_slice(&bytes);
-    for (i, &depth) in observed.iter().enumerate() {
-        assert!(
-            (depth - 0.4).abs() < 1e-6,
-            "texel {i}: depth {depth}, expected the deformed plane's 0.4"
+            &mut encoder,
+            &scene,
+            &prepared,
+            Some(&depth_view),
         );
+        queue.submit([encoder.finish()]);
+        let bytes = test_support::read(&device, &queue, &depth, 4);
+        let observed: &[f32] = bytemuck::cast_slice(&bytes);
+        for (i, &depth) in observed.iter().enumerate() {
+            assert!(
+                (depth - 0.4).abs() < 1e-6,
+                "texel {i}: depth {depth}, expected the deformed plane's 0.4"
+            );
+        }
     }
 }
 

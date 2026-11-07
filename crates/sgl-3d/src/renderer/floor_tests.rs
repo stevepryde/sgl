@@ -177,7 +177,7 @@ fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality
     }
     Some((
         renderer.binding_tier(),
-        renderer.dynamic_gi_in_effect(&settings),
+        renderer.dynamic_gi_in_effect(&settings, &scene),
     ))
 }
 

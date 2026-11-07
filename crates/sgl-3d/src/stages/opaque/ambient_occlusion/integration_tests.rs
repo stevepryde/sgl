@@ -907,3 +907,146 @@ fn a_packed_occlusion_map_occludes_lightmapped_multiple_scattering() {
     };
     assert_specular_occlusion("lightmap", &composites);
 }
+
+// Defect: the real stage keeps XeGTAO's non-temporal sample pattern even
+// while TAA/FSR2 accumulates, or animates it with AA Off/SMAA. Observe a
+// static physical box/floor through the whole renderer, not phase constants.
+// Diligent TAA repeats its 16-sample raster jitter; FSR2 Native AA repeats
+// after eight. Matching depth/normals prove that frame 1 and 17 see the same
+// rasterized geometry, so a changed AO sample is independent of jitter.
+// A camera cut must reproduce the first sample, with no AO-owned history.
+#[test]
+fn gtao_temporal_samples_follow_effective_aa_and_camera_resets() {
+    use crate::diagnostics::DiagnosticTarget;
+    use settings::{Antialiasing, Fsr2Quality, RenderPreset};
+    for (request, aa, preset) in [
+        (
+            test_support::device as fn() -> _,
+            Antialiasing::Off,
+            RenderPreset::High,
+        ),
+        (test_support::device, Antialiasing::Smaa, RenderPreset::High),
+        (
+            test_support::device,
+            Antialiasing::Preset,
+            RenderPreset::Low,
+        ),
+        (
+            test_support::device,
+            Antialiasing::Preset,
+            RenderPreset::High,
+        ),
+        // Exercise both FSR2's TAA fallback on a regular device and its
+        // actual running path where the adapter offers the required features.
+        (test_support::device, Antialiasing::Fsr2, RenderPreset::High),
+        (
+            test_support::fsr2_device,
+            Antialiasing::Fsr2,
+            RenderPreset::High,
+        ),
+    ] {
+        let Some((device, queue)) = request() else {
+            return;
+        };
+        let (mut scene, _, mut input) = box_on_floor(&device, &queue, None);
+        let settings = Settings {
+            preset,
+            scene_resolution: settings::SceneResolution::Full,
+            antialiasing: aa,
+            fsr2_quality: Fsr2Quality::NativeAa,
+            screen_space_reflections: settings::ScreenSpaceReflections::Off,
+            atmosphere: false,
+            bloom: settings::Bloom::Off,
+            ..Settings::default()
+        };
+        let mut renderer = Renderer::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            SIZE,
+            1.,
+            &settings,
+        )
+        .unwrap();
+        let output = view::targets::target(
+            &device,
+            "AO temporal sampling output",
+            SIZE,
+            wgpu::TextureFormat::Rgba8Unorm,
+        );
+        let mut snapshots = Vec::new();
+        // Cut at frame 24: FSR2 preserves its jitter counter across cuts,
+        // so Native AA returns to the initial raster sample every eight frames.
+        for index in 0..24 {
+            input.camera_cut = index == 0;
+            let snapshot = render(
+                &device,
+                &queue,
+                &mut scene,
+                &mut renderer,
+                &settings,
+                &input,
+                &output,
+                Quality::Medium,
+            );
+            if [0, 1, 17].contains(&index) {
+                let ao = read(
+                    &device,
+                    &queue,
+                    renderer
+                        .diagnostic_target(DiagnosticTarget::AmbientOcclusion)
+                        .unwrap()
+                        .texture(),
+                    4,
+                );
+                snapshots.push((snapshot, ao));
+            }
+        }
+        let effective = renderer.antialiasing_in_effect(&settings);
+        let temporal = matches!(effective, Antialiasing::Taa | Antialiasing::Fsr2);
+        assert!(
+            snapshots[1].0.geometry == snapshots[2].0.geometry,
+            "raster repeat did not hold for {aa:?}/{preset:?}, effective {effective:?}",
+        );
+        if temporal {
+            assert!(
+                snapshots[1].1 != snapshots[2].1,
+                "AO reused its fixed pattern under effective {effective:?} ({aa:?}/{preset:?})",
+            );
+        } else {
+            assert!(snapshots[0].1 == snapshots[1].1, "non-temporal AO crawled");
+            assert!(snapshots[1].1 == snapshots[2].1, "non-temporal AO crawled");
+        }
+        input.camera_cut = true;
+        let reset = render(
+            &device,
+            &queue,
+            &mut scene,
+            &mut renderer,
+            &settings,
+            &input,
+            &output,
+            Quality::Medium,
+        );
+        let reset_ao = read(
+            &device,
+            &queue,
+            renderer
+                .diagnostic_target(DiagnosticTarget::AmbientOcclusion)
+                .unwrap()
+                .texture(),
+            4,
+        );
+        assert!(
+            snapshots[0].0.geometry == reset.geometry,
+            "cut did not reset the raster"
+        );
+        assert!(
+            snapshots[0].1 == reset_ao,
+            "cut did not reset AO's sample sequence"
+        );
+        println!(
+            "XeGTAO sampling: requested {aa:?}/{preset:?}, effective {effective:?}: temporal={temporal}; repeat and camera-cut checks passed"
+        );
+    }
+}

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "scene": "khronos-metal-rough-spheres-v1",
+  "asset": "MetalRoughSpheresNoTextures.glb",
+  "scale": 1000,
+  "source_metadata": "SOURCE.json",
+  "environment": {"metadata":"environment.json","panorama":"panorama.png","pmrem":"pmrem.rgba16"},
+  "default_camera": "materials",
+  "size": [1280,720],
+  "warmup_frames": 60,
+  "exposure_stops": 0,
+  "cameras": [{
+    "id":"materials","eye":[3,3,11],"look_at":[3,3,0],"fov_y_degrees":45,"near":0.1,
+    "sun":{"direction":[0.4,-1,-0.3],"color":[1,0.94,0.85],"illuminance":3,"shadow_distance":30,"shadow_cascades":3},
+    "environment_intensity":1,"environment_yaw":0,"backdrop_brightness":1
+  }],
+  "settings": {"antialiasing":"Taa","atmosphere":false,"dynamic_gi":"Off","scene_resolution":"Full"},
+  "lighting": "Authored sun and San Giuseppe Bridge HDRI; not reference-viewer calibration. Explicit 1000x instance scale makes the authored millimetre-sized grid inspectable.",
+  "provenance": {
+    "title":"MetalRoughSpheresNoTextures","creator":"Krill Gavrilov; Open CASCADE Draw Harness CAD model","license":"CC0-1.0",
+    "source":"https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/MetalRoughSpheresNoTextures",
+    "environment":"https://polyhaven.com/a/san_giuseppe_bridge","environment_creator":"Greg Zaal","environment_license":"CC0"
+  },
+  "notices": ["LICENSE.txt","README.md","metadata.json","SOURCE.json","THREE-LICENSE.txt"]
+}

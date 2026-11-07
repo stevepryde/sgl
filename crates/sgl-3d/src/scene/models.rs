@@ -7,7 +7,7 @@ use super::deformation::{InstanceDeformation, ModelDeformation};
 use super::geometry::{Elements, GeometryBuffers, GeometryRange};
 use super::materials::Materials;
 use super::mesh_ranges::MeshRanges;
-use super::prepared::{PreparedMesh, PreparedModel};
+use super::prepared::{PreparedMesh, PreparedModel, PreparedModelOptions};
 use super::ray_class::RayClass;
 use super::rays::{RayMeshWords, RayModel, SceneRays};
 use super::shadow_clusters::{MeshClusters, PosedClusters};
@@ -380,6 +380,9 @@ impl Scene {
         queue: &wgpu::Queue,
         model: PreparedModel,
     ) -> Result<ModelId, SceneError> {
+        if model.ray_data() != self.ray_data() {
+            return Err(SceneError::RayDataMismatch);
+        }
         self.edited();
         let model = Models::place(
             device,
@@ -411,6 +414,9 @@ impl Scene {
         id: ModelId,
         model: PreparedModel,
     ) -> Result<(), SceneError> {
+        if model.ray_data() != self.ray_data() {
+            return Err(SceneError::RayDataMismatch);
+        }
         self.edited();
         if self.models.get(id)?.in_use(true) {
             return Err(SceneError::ModelInUse);
@@ -544,7 +550,6 @@ impl Scene {
         queue: &wgpu::Queue,
         asset: Asset,
     ) -> Result<AssetIds, SceneError> {
-        self.edited();
         if asset
             .meshes
             .iter()
@@ -563,7 +568,12 @@ impl Scene {
                 deformation: mesh.deformation,
             })
             .collect();
-        match PreparedModel::new(meshes).and_then(|model| self.add_model(device, queue, model)) {
+        let options = PreparedModelOptions {
+            ray_data: self.ray_data(),
+        };
+        match PreparedModel::with_options(meshes, options)
+            .and_then(|model| self.add_model(device, queue, model))
+        {
             Ok(model) => Ok(AssetIds { materials, model }),
             Err(error) => {
                 for &material in &materials {

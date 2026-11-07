@@ -46,7 +46,8 @@ struct Params {
     radius: f32,
     slices: u32,
     steps: u32,
-    padding: [u32; 3],
+    noise_index: u32,
+    padding: [u32; 2],
 }
 struct Targets {
     size: [u32; 2],
@@ -131,6 +132,7 @@ impl AmbientOcclusion {
         view: &ViewUniform,
         quality: AmbientOcclusionQuality,
         radius: f32,
+        noise_index: u32,
         timing: Option<&crate::timing::GpuTiming>,
     ) -> &wgpu::TextureView {
         let size = [depth.texture().width(), depth.texture().height()];
@@ -166,11 +168,19 @@ impl AmbientOcclusion {
             pixel_size: [1.0 / size[0] as f32, 1.0 / size[1] as f32],
             depth_unpack: [mul, add],
             ndc_mul: [2.0 * tan_half[0], -2.0 * tan_half[1]],
-            ndc_add: [-tan_half[0], tan_half[1]],
+            // Depth and normals rasterize with the view's subpixel offset.
+            // Undo that offset before reconstructing their view-space rays,
+            // as a full inverse projection does (also post-fx's DFX-15).
+            // ViewUniform::jitter stores half the NDC translation.
+            ndc_add: [
+                -tan_half[0] * (1.0 + 2.0 * view.jitter[0]),
+                tan_half[1] * (1.0 - 2.0 * view.jitter[1]),
+            ],
             radius,
             slices,
             steps,
-            padding: [0; 3],
+            noise_index,
+            padding: [0; 2],
         };
         crate::counters::write_buffer(queue, &self.params, 0, bytemuck::bytes_of(&params));
         let group = self.groups[0].get(
@@ -424,6 +434,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
             radius,
             slices,
             steps,
+            noise_index,
         ]
     )]
 }

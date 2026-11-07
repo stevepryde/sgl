@@ -9,6 +9,14 @@ game decides which settings, if any, to show players, and owns the menu, the
 save file and its presets. A setting says which one or how much, never how:
 SGL3D chooses each feature's internals for the value.
 
+Settings express requests, not retained-scene capabilities. A scene created
+with `SceneOptions { ray_data: RayData::Disabled }` omits ray-only storage and
+preparation for its whole lifetime; this is not a quality preset or a runtime
+toggle. Dynamic GI, world-space reflections, hardware rays and traced shadows
+are off for that scene, while shadow maps, screen-space reflections and volume
+paths remain available. Scene-aware effective queries take `(&settings, &scene)`;
+saved settings are unchanged. Existing scene constructors retain ray data.
+
 ## Presets
 
 `Settings::preset` (`RenderPreset`: `High`, the default, or `Low`) is SGL3D's

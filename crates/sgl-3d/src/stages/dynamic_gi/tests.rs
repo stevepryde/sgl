@@ -1641,7 +1641,7 @@ fn a_deformation_wakes_a_converged_volume_while_the_hardware_path_traces() {
         let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
         let paused = render_until_paused(gpu, &mut renderer, &mut scene, &input, &settings, 400);
         assert!(paused.is_some(), "hardware {hardware}: never paused");
-        assert_eq!(renderer.ray_tracing_in_effect(&settings), hardware);
+        assert_eq!(renderer.ray_tracing_in_effect(&settings, &scene), hardware);
         // A candidate program the device fails to compile falls back to
         // the baseline, which would pass these frames unseen.
         assert_eq!(renderer.ray_tracing_error(), None);

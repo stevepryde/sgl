@@ -133,7 +133,7 @@ fn external_sources_refuse_oversized_files_before_reading() {
         .write(true)
         .open(fixture.directory.join("fixture.bin"))
         .unwrap()
-        .set_len(MAX_LOAD_BYTES + 1)
+        .set_len(super::super::load_budget::DEFAULT_LOAD_BYTES + 1)
         .unwrap();
     let error = load(&fixture.path()).err().unwrap().to_string();
     assert!(
@@ -155,13 +155,40 @@ fn external_sources_refuse_oversized_files_before_reading() {
             .len();
     std::fs::File::create(fixture.directory.join("huge.png"))
         .unwrap()
-        .set_len(MAX_LOAD_BYTES - already_read + 1)
+        .set_len(super::super::load_budget::DEFAULT_LOAD_BYTES - already_read + 1)
         .unwrap();
     let error = load(&fixture.path()).err().unwrap().to_string();
     assert!(
         error.contains("huge.png") && error.contains("remaining") && error.contains("budget"),
         "{error}"
     );
+}
+
+#[test]
+fn explicit_load_budgets_also_apply_to_file_sources() {
+    let fixture = extension_fixture(serde_json::json!({}), &[], &[]);
+    let source = std::fs::metadata(fixture.path()).unwrap().len() + 72;
+    let load = |source_bytes, decoded_bytes| {
+        load_with_options(
+            &fixture.path(),
+            LoadOptions {
+                budget: LoadBudget::new(source_bytes, decoded_bytes).unwrap(),
+                ..Default::default()
+            },
+        )
+    };
+    let error = load(source - 1, 276).err().unwrap().to_string();
+    assert!(
+        error.contains("source load budget") && error.contains("fixture.bin"),
+        "{error}"
+    );
+    let error = load(source, 275).err().unwrap().to_string();
+    assert!(
+        error.contains("decoded load budget") && error.contains("limit 275 bytes"),
+        "{error}"
+    );
+    let asset = load(source, 276).unwrap();
+    assert_eq!(asset.meshes[0].indices, [0, 1, 2]);
 }
 
 #[test]

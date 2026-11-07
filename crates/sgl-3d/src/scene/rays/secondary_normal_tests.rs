@@ -295,8 +295,13 @@ fn material_normal_oracle(
         });
         // Group 2's relief binding holds the normal map, else the bump map.
         let relief = usize::from(!has_normal_map);
-        let relief_map = texture(&device, &queue, &asset.images[relief].texels(), false);
-        let coat_normal_map = texture(&device, &queue, &asset.images[2].texels(), false);
+        let relief_map = texture(
+            &device,
+            &queue,
+            &asset.images[relief].texels().unwrap(),
+            false,
+        );
+        let coat_normal_map = texture(&device, &queue, &asset.images[2].texels().unwrap(), false);
         let constants = [
             ("normal_maps_enabled", f64::from(normal_maps_enabled)),
             ("fixture_observe", observe as u32 as f64),

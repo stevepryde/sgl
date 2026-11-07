@@ -92,6 +92,191 @@ fn mesh_nodes(nodes: Value, roots: Value) -> Vec<u8> {
     }))
 }
 
+// Oracle: the fixture's BIN is 72 bytes. Source accounting includes the
+// original GLB plus its imported BIN copy. A rigid triangle retains three
+// 88-byte vertices and three 4-byte implicit indices: 276 decoded bytes.
+#[wasm_bindgen_test(unsupported = test)]
+fn explicit_load_budgets_propagate_independently_to_embedded_sources_and_geometry() {
+    let bytes = mesh_nodes(json!([{"mesh": 0}]), json!([0]));
+    let options = |source, decoded| LoadOptions {
+        budget: LoadBudget::new(source, decoded).unwrap(),
+        ..LoadOptions::default()
+    };
+    let source = bytes.len() as u64 + 72;
+    for limit in [bytes.len() as u64 - 1, source - 1] {
+        let error = load_slice_with_options(&bytes, options(limit, 276))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            error.contains("source load budget") && error.contains(&format!("limit {limit} bytes")),
+            "{error}"
+        );
+    }
+    let error = load_slice_with_options(&bytes, options(source, 275))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("decoded load budget") && error.contains("limit 275 bytes"),
+        "{error}"
+    );
+    let asset = load_slice_with_options(&bytes, options(source, 276)).unwrap();
+    assert_eq!(asset.meshes[0].vertices.len(), 3);
+    assert_eq!(asset.meshes[0].indices, [0, 1, 2]);
+    let raised = LoadBudget::new(isize::MAX as u64, isize::MAX as u64).unwrap();
+    let asset = load_slice_with_options(
+        &bytes,
+        LoadOptions {
+            budget: raised,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(asset.meshes[0].vertices[1].position, [1., 0., 0.]);
+}
+
+#[wasm_bindgen_test(unsupported = test)]
+fn supplied_images_share_the_configured_decoded_budget() {
+    use crate::asset::{CompressedFormat, CompressedImage, Rgba8MipChain};
+    let mut buffer = Buffer::default();
+    let positions = buffer.floats(&[0., 0., 0., 1., 0., 0., 0., 1., 0.], "VEC3", 3);
+    let normals = buffer.floats(&[0., 0., 1., 0., 0., 1., 0., 0., 1.], "VEC3", 3);
+    let uvs = buffer.floats(&[0., 0., 1., 0., 0., 1.], "VEC2", 2);
+    let bytes = buffer.glb(json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": positions, "NORMAL": normals, "TEXCOORD_0": uvs}, "material": 0}]}],
+        "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+        "images": [{"uri": "not-read.png"}], "textures": [{"source": 0}],
+        "nodes": [{"mesh": 0}], "scenes": [{"nodes": [0]}], "scene": 0
+    }));
+    // The allocations are tiny; their exact retained bytes are the oracle.
+    // Prepared 2x1 levels: twice (8 + 4). ASTC: 16 blocks + 64 companion.
+    for (image, image_bytes) in [
+        (Image::Rgba8(image::RgbaImage::new(2, 2)), 16),
+        (
+            Image::Rgba8Mips(Rgba8MipChain::new(image::RgbaImage::new(2, 1)).unwrap()),
+            24,
+        ),
+        (
+            Image::Compressed(CompressedImage {
+                format: CompressedFormat::Astc4x4,
+                width: 4,
+                height: 4,
+                levels: vec![vec![0; 16]],
+                decoded_level_0: Some(image::RgbaImage::new(4, 4)),
+            }),
+            80,
+        ),
+    ] {
+        let supply = |_: GltfImage<'_>| Ok(ImageSource::Supplied(image.clone()));
+        let load = |limit| {
+            load_slice_with_options(
+                &bytes,
+                LoadOptions {
+                    budget: LoadBudget::new(bytes.len() as u64 + 96, limit).unwrap(),
+                    images: Some(&supply),
+                    ..Default::default()
+                },
+            )
+        };
+        let limit = 276 + image_bytes;
+        let error = load(limit - 1).err().unwrap().to_string();
+        assert!(
+            error.contains("supplied image 0") && error.contains("decoded load budget"),
+            "{error}"
+        );
+        let asset = load(limit).unwrap();
+        assert_eq!(asset.meshes[0].indices, [0, 1, 2]);
+        assert_eq!(asset.images.len(), 1);
+    }
+}
+
+#[wasm_bindgen_test(unsupported = test)]
+fn decoded_png_images_share_the_configured_geometry_budget() {
+    use image::ImageEncoder;
+    let mut buffer = Buffer::default();
+    let positions = buffer.floats(&[0., 0., 0., 1., 0., 0., 0., 1., 0.], "VEC3", 3);
+    let normals = buffer.floats(&[0., 0., 1., 0., 0., 1., 0., 0., 1.], "VEC3", 3);
+    let uvs = buffer.floats(&[0., 0., 1., 0., 0., 1.], "VEC2", 2);
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut png)
+        .write_image(
+            &[10, 20, 30, 40, 50, 60, 70, 80],
+            4,
+            2,
+            image::ExtendedColorType::L8,
+        )
+        .unwrap();
+    let image_view = buffer.views.len();
+    buffer
+        .views
+        .push(json!({"buffer": 0, "byteOffset": buffer.bytes.len(), "byteLength": png.len()}));
+    buffer.bytes.extend(png);
+    let bytes = buffer.glb(json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": positions, "NORMAL": normals, "TEXCOORD_0": uvs}, "material": 0}]}],
+        "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+        "images": [{"bufferView": image_view, "mimeType": "image/png"}], "textures": [{"source": 0}],
+        "nodes": [{"mesh": 0}], "scenes": [{"nodes": [0]}], "scene": 0
+    }));
+    let load = |limit| {
+        load_slice_with_options(
+            &bytes,
+            LoadOptions {
+                budget: LoadBudget::new(1 << 20, limit).unwrap(),
+                ..Default::default()
+            },
+        )
+    };
+    // 276 bytes of geometry plus 4x2x4 = 32 bytes of RGBA expansion.
+    let error = load(307).err().unwrap().to_string();
+    assert!(
+        error.contains("image 0") && error.contains("budget"),
+        "{error}"
+    );
+    let asset = load(308).unwrap();
+    match &asset.images[0] {
+        Image::Rgba8(image) => assert_eq!(image.get_pixel(3, 1).0, [80, 80, 80, 255]),
+        _ => panic!("PNG should decode to RGBA8"),
+    }
+}
+
+#[wasm_bindgen_test(unsupported = test)]
+fn raised_load_budget_does_not_allow_vertex_index_truncation() {
+    // Two mesh nodes instantiate one declaration whose total crosses the u32
+    // batching index boundary. No corresponding vertex storage is allocated.
+    let mut buffer = Buffer::default();
+    let positions = buffer.accessor(
+        bytemuck::cast_slice(&[0f32; 9]),
+        5126,
+        "VEC3",
+        2_147_483_648,
+    );
+    let normals = buffer.floats(&[0., 0., 1., 0., 0., 1., 0., 0., 1.], "VEC3", 3);
+    let bytes = buffer.glb(json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": positions, "NORMAL": normals}}]}],
+        "nodes": [{"mesh": 0}, {"mesh": 0}], "scenes": [{"nodes": [0, 1]}], "scene": 0
+    }));
+    let error = load_slice_with_options(
+        &bytes,
+        LoadOptions {
+            budget: LoadBudget::new(isize::MAX as u64, isize::MAX as u64).unwrap(),
+            ..Default::default()
+        },
+    )
+    .err()
+    .unwrap()
+    .to_string();
+    // wasm's stricter representability budget catches the first declaration;
+    // native can forecast it but must reject the second node's index range.
+    #[cfg(target_arch = "wasm32")]
+    assert!(error.contains("decoded load budget"), "{error}");
+    #[cfg(not(target_arch = "wasm32"))]
+    assert!(error.contains("u32 index range"), "{error}");
+}
+
 // Regression: recursive import aborts on this valid hierarchy. The terminal
 // triangle's translated coordinates independently expose lost ancestor transforms.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1105,7 +1290,7 @@ fn morph_weight_keyframes_beyond_the_load_limit_are_rejected() {
         .err()
         .expect("6.4 GB of keyframe values were read")
         .to_string();
-    assert!(error.contains("bytes one load may"), "{error}");
+    assert!(error.contains("decoded load budget exceeded"), "{error}");
 }
 
 // Plausible defect: a mesh read once for each node that uses it without a
@@ -1127,7 +1312,7 @@ fn instancing_beyond_the_load_limit_is_rejected() {
         .err()
         .expect("67 million vertices were read")
         .to_string();
-    assert!(error.contains("bytes one load may"), "{error}");
+    assert!(error.contains("decoded load budget exceeded"), "{error}");
 }
 
 // Plausible defect: work for each morph-weight channel that walks its

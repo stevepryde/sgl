@@ -22,6 +22,7 @@ pub use super::gltf::{
     load_with_options,
 };
 pub use super::images::{CompressedFormat, CompressedImage, Image, ImageError, Rgba8MipChain};
+pub use super::load_budget::LoadBudget;
 use super::material::{AlphaMode, NormalLayer};
 
 /// A loader failure, including the source asset path for file loads.

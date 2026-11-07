@@ -15,13 +15,7 @@ impl Budget {
         if !metadata.is_file() {
             return Err("source must be a regular file, not a symlink or device".into());
         }
-        if metadata.len() > self.remaining {
-            return Err(format!(
-                "source exceeds the remaining {} byte load budget",
-                self.remaining
-            )
-            .into());
-        }
+        self.check(metadata.len())?;
         let length = declared.map_or(metadata.len(), |length| length as u64);
         if metadata.len() != length {
             return Err(format!(
@@ -30,6 +24,10 @@ impl Budget {
             )
             .into());
         }
+        let read_limit = length
+            .checked_add(1)
+            .filter(|&length| length <= isize::MAX as u64)
+            .ok_or("source with length-change sentinel exceeds the target's allocation limit")?;
         let file = std::fs::File::open(path)?;
         if !file.metadata()?.is_file() {
             return Err("source must be a regular file".into());
@@ -37,7 +35,7 @@ impl Budget {
         // The sentinel detects a file changing size after metadata without
         // allowing its contents to determine an unbounded allocation.
         let mut bytes = Vec::new();
-        file.take(length + 1).read_to_end(&mut bytes)?;
+        file.take(read_limit).read_to_end(&mut bytes)?;
         if bytes.len() as u64 != length {
             return Err(
                 format!("source length changed while reading (expected {length} bytes)").into(),
@@ -104,14 +102,24 @@ fn data_uri(uri: &str, budget: &mut Budget) -> Result<Vec<u8>> {
         .rev()
         .take_while(|&byte| byte == b'=')
         .count();
-    let length = (encoded.len() as u64 / 4) * 3
-        + match encoded.len() % 4 {
-            2 => 1,
-            3 => 2,
-            _ => 0,
-        };
+    let tail = match encoded.len() % 4 {
+        2 => 1,
+        3 => 2,
+        _ => 0,
+    };
+    let length = (encoded.len() as u64 / 4)
+        .checked_mul(3)
+        .and_then(|length| length.checked_add(tail))
+        .ok_or("data URI decoded byte count overflow")?;
     let length = length.saturating_sub(padding.min(2) as u64);
     budget.charge(length)?;
+    // gltf pads buffers to four bytes internally. Even an explicit raised
+    // budget cannot permit a single Vec beyond Rust's byte-capacity limit.
+    length
+        .checked_add(3)
+        .map(|length| length & !3)
+        .filter(|&length| length <= isize::MAX as u64)
+        .ok_or("aligned data URI exceeds the target's allocation limit")?;
     // No base path is ever passed to the gltf importer: this call cannot read
     // a file. It adds alignment padding, which is not part of the URI bytes.
     let mut decoded = gltf::buffer::Data::from_source(gltf::buffer::Source::Uri(uri), None)?.0;
@@ -253,6 +261,7 @@ fn decode_image(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::asset::LoadBudget;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     // Defects: embedded sources reset rather than share the load budget,
@@ -269,11 +278,11 @@ mod tests {
             ("data:application/octet-stream;base64,AQI", &[1, 2][..]),
         ] {
             assert_eq!(
-                data_uri(uri, &mut Budget { remaining: 5 }).unwrap(),
+                data_uri(uri, &mut Budget::new(5, "source")).unwrap(),
                 expected
             );
         }
-        let mut budget = Budget { remaining: 5 };
+        let mut budget = Budget::new(5, "source");
         assert_eq!(
             data_uri("data:application/octet-stream;base64,AQID", &mut budget).unwrap(),
             [1, 2, 3]
@@ -298,7 +307,7 @@ mod tests {
                 image::ExtendedColorType::L8,
             )
             .unwrap();
-        let mut budget = Budget { remaining: 48 };
+        let mut budget = Budget::new(48, "decoded");
         let image = decode_image(&bytes, Some("image/png"), &mut budget)
             .unwrap()
             .into_rgba8();
@@ -313,9 +322,13 @@ mod tests {
         image::codecs::png::PngEncoder::new(&mut bytes)
             .write_image(&[45, 70], 1, 1, image::ExtendedColorType::La8)
             .unwrap();
-        let image = decode_image(&bytes, Some("image/png"), &mut Budget::new())
-            .unwrap()
-            .into_rgba8();
+        let image = decode_image(
+            &bytes,
+            Some("image/png"),
+            &mut Budget::decoded(LoadBudget::default()),
+        )
+        .unwrap()
+        .into_rgba8();
         assert_eq!(image.get_pixel(0, 0).0, [45, 45, 45, 70]);
     }
 
@@ -328,9 +341,13 @@ mod tests {
         image::codecs::png::PngEncoder::new(&mut bytes)
             .write_image(&[1, 2], 1, 1, image::ExtendedColorType::L16)
             .unwrap();
-        let error = decode_image(&bytes, Some("image/png"), &mut Budget::new())
-            .unwrap_err()
-            .to_string();
+        let error = decode_image(
+            &bytes,
+            Some("image/png"),
+            &mut Budget::decoded(LoadBudget::default()),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("unsupported L16"), "{error}");
     }
 }

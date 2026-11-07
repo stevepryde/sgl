@@ -24,3 +24,14 @@ test("lost samples, reversed percentiles, WebGPU errors and empty draws fail", (
     expect(() => validateBaseline(report)).toThrow();
   }
 });
+
+test("another embedded scene uses the same timing validator and final readback contract", async () => {
+  const {validateScene}=await import("../browser/measurement");
+  const report={...observation(),benchmark:"embedded-scene-v1",scene:"another-scene",fixture:{schema:1,scene:"another-scene"},
+    size:[640,360],capture:{width:640,height:360,excluded_from_timing:true},content:{triangles:12,glb_bytes:1000}};
+  expect(()=>validateScene(report)).not.toThrow();
+  for (const patch of [
+    {fixture:{schema:1,scene:"wrong-scene"}}, {capture:{width:640,height:360,excluded_from_timing:false}},
+    {content:{triangles:0,glb_bytes:1000}}, {schema:2}, {error:"scene binding limit exceeded"},
+  ]) expect(()=>validateScene({...report,...patch})).toThrow();
+});

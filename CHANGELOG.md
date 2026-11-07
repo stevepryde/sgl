@@ -15,6 +15,39 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` Bistro fixtures now use higher sunlight, façade-covering GI,
+  authored point lights and ACES filmic instead of broad building shadow
+  and emissive-only lamps. Rebuild the example and replay the fixtures;
+  no game-code changes or asset regeneration are needed.
+
+- `sgl-3d::Renderer` ambient occlusion now matches raster jitter and advances
+  XeGTAO's sample phase with effective TAA/FSR2, instead of using centred
+  camera rays and a frozen pattern. No game-code changes are needed;
+  Off/SMAA retain a fixed phase. Compare contact grain and motion noise.
+
+- `sgl-3d::{SceneOptions, PreparedModelOptions}`: scenes can now explicitly
+  omit ray-only data with `RayData::Disabled`; existing constructors retain
+  it. Use matching options for manually prepared models. Effective GI and
+  ray-tracing/shadow queries now take `&Scene` after `&Settings`, and
+  `world_space_reflections_in_effect` reports the same scene-aware fallback.
+  ETC2/ASTC material images can omit their RGBA companion only when ray data
+  is disabled; enabled rays and decal uploads reject a missing companion.
+  No rendering settings are silently rewritten.
+
+- `sgl-3d::asset::LoadOptions::budget`: import safety caps are now explicitly
+  configurable with checked `LoadBudget::new(source_bytes, decoded_bytes)`;
+  defaults remain 4 GiB per cap natively and 1 GiB on wasm32. Add `budget`
+  to exhaustive `LoadOptions` literals, or use `..Default::default()`.
+  Supplied images now count toward the decoded cap too; large callers must
+  raise it explicitly or split their load. KTX2 constructors have matching
+  `*_with_budget` variants; existing calls retain their defaults.
+
+- `sgl-3d-examples::browser_bistro`: real prepared glTF scenes can now be
+  measured and captured in WebGPU with shared native cameras, explicit
+  fixture settings and optional lossless image deduplication during export.
+  Run the [Bistro workflow](examples/sgl-3d/BISTRO.md); existing assets and
+  library defaults are unchanged, and no game-code changes are needed.
+
 - `sgl-3d-examples::browser_baseline`: `measure-browser --baseline` now
   measures a textured moving scene and bounded upload phases, with optional
   prepared mips, reduced-resolution spatial upscaling and frame capture.

@@ -485,7 +485,7 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
         let frame = if cut { "cut" } else { "still" };
         input.camera_cut = cut;
         let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
-        assert!(renderer.ray_traced_shadows_in_effect(&settings));
+        assert!(renderer.ray_traced_shadows_in_effect(&settings, &scene));
         let mut held: Vec<usize> = std::iter::once(SHADOW_MASK_DIRECTIONAL)
             .chain(ids.iter().map(|id| id.index() as u32))
             .map(|key| observed.slot(key))

@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SGL3D embedded scene benchmark</title>
+<link rel="icon" href="data:,">
+<style>body{margin:0;background:#111;color:#ddd;font:14px monospace}canvas{display:block}pre{white-space:pre-wrap;margin:16px}</style>
+<canvas id="capture" style="display:none"></canvas>
+<pre id="report">Loading the WebGPU scene…</pre>
+<script type="module">
+  import init, { fixture, measure, take_capture, take_sequence_capture } from "./browser_bistro.js";
+  const out = document.getElementById("report");
+  try {
+    const started = performance.now();
+    const options = await (await fetch("/run.json")).json();
+    const initStarted = performance.now();
+    const wasm = await init();
+    const initialized = performance.now();
+    const descriptor = options.fixture ?? JSON.parse(fixture());
+    const sourceMetadata = await (await fetch(`/assets/${descriptor.source_metadata}`)).json();
+    const report = JSON.parse(await measure(JSON.stringify(descriptor), JSON.stringify(options)));
+    report.source_metadata = sourceMetadata;
+    if (descriptor.environment.provenance_metadata) {
+      report.environment_processing = await (await fetch(`/assets/${descriptor.environment.provenance_metadata}`)).json();
+    }
+    report.browser = {user_agent:navigator.userAgent,hardware_concurrency:navigator.hardwareConcurrency,
+      cross_origin_isolated:crossOriginIsolated,device_pixel_ratio:devicePixelRatio,
+      wasm_init_ms:initialized-initStarted,page_to_report_ms:performance.now()-started,
+      presentation:"offscreen; display pacing unavailable",phase:window.__sglPhase,
+      wasm_linear_memory_capacity_bytes:wasm.memory?.buffer.byteLength ?? null,
+      resources:performance.getEntriesByType("resource").map(e=>({name:new URL(e.name).pathname,
+        duration_ms:e.duration,transfer_bytes:e.transferSize,encoded_body_bytes:e.encodedBodySize,decoded_body_bytes:e.decodedBodySize}))};
+    if (!report.error) {
+      const canvas = document.getElementById("capture");
+      canvas.width = report.size[0]; canvas.height = report.size[1];
+      canvas.style.display = "block";
+      const pixels = take_capture();
+      if (pixels.length !== canvas.width*canvas.height*4) throw new Error("capture byte count mismatch");
+      canvas.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(pixels),canvas.width,canvas.height),0,0);
+      // Preserve exact read-back pixels in a PNG, without browser chrome or CSS resampling.
+      window.__sglCapture = canvas.toDataURL("image/png");
+      window.__sglSequence = [];
+      for (let i=0;i<(report.temporal_capture?.frames ?? 0);i++) {
+        const pixels = take_sequence_capture(i);
+        if (pixels.length !== canvas.width*canvas.height*4) throw new Error("temporal capture byte count mismatch");
+        canvas.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(pixels),canvas.width,canvas.height),0,0);
+        window.__sglSequence.push(canvas.toDataURL("image/png"));
+      }
+      canvas.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(pixels),canvas.width,canvas.height),0,0);
+    }
+    const adapter = await navigator.gpu?.requestAdapter();
+    report.browser.adapter_info = adapter ? {vendor:adapter.info.vendor,architecture:adapter.info.architecture,
+      device:adapter.info.device,description:adapter.info.description} : null;
+    report.browser.adapter_info_missing_reason = adapter ? null : "browser did not expose adapter metadata";
+    report.browser.page_to_report_ms=performance.now()-started;
+    out.textContent = JSON.stringify(report,null,2);window.__sglReport=out.textContent;
+  } catch (error) {
+    out.textContent=JSON.stringify({schema:1,error:String(error),phase:window.__sglPhase});window.__sglReport=out.textContent;
+  }
+</script>

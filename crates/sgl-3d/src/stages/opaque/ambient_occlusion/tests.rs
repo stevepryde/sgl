@@ -53,6 +53,7 @@ fn ambient_occlusion_matches_independent_hemisphere_integral() {
                 &view,
                 crate::settings::AmbientOcclusionQuality::Ultra,
                 1.0,
+                0,
                 None,
             );
             queue.submit([encoder.finish()]);
@@ -165,6 +166,7 @@ fn an_unoccluded_plate_stays_unoccluded_up_to_its_silhouette() {
         &view,
         crate::settings::AmbientOcclusionQuality::Ultra,
         1.0,
+        0,
         None,
     );
     queue.submit([encoder.finish()]);
@@ -242,6 +244,7 @@ fn denoising_an_image_moved_one_column_moves_the_result() {
         &view,
         crate::settings::AmbientOcclusionQuality::Low,
         1.0,
+        0,
         None,
     );
     queue.submit([encoder.finish()]);
@@ -394,6 +397,7 @@ fn depth_mips_hold_the_linear_depth_at_their_childrens_centre() {
             &view,
             crate::settings::AmbientOcclusionQuality::Low,
             10000.0,
+            0,
             None,
         );
         queue.submit([encoder.finish()]);
@@ -648,6 +652,7 @@ fn bind_groups_reuse_resources_and_follow_replaced_inputs() {
             &view,
             quality,
             radius,
+            0,
             None,
         );
         queue.submit([encoder.finish()]);
@@ -712,4 +717,146 @@ fn bind_groups_reuse_resources_and_follow_replaced_inputs() {
     println!(
         "XeGTAO groups: first frame 4; retained frame 0; depth replacement 1; normals replacement 1; replacement depth view 1; resize 4"
     );
+}
+
+// A depth texel belongs to the ray that rasterized it, including TAA/FSR2's
+// subpixel offset. The oracle is an inverse homogeneous projection, not a
+// second copy of XeGTAO's reconstruction. A front-facing plane keeps its
+// depth under jitter while its view-space XY moves with the raster ray.
+#[test]
+fn jittered_depth_reconstructs_its_raster_ray() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let size = [17, 19];
+    for projection in [
+        crate::perspective(1.0, size[0] as f32 / size[1] as f32, 0.1),
+        // The renderer accepts finite reversed-Z perspective too. Forward-Z
+        // and orthographic cameras do not enable XeGTAO.
+        glam::camera::rh::proj::directx::perspective(
+            1.0,
+            size[0] as f32 / size[1] as f32,
+            100.,
+            0.1,
+        ),
+    ] {
+        for jitter_pixels in [[0., 0.], [0.3, -0.45], [-0.3, 0.45]] {
+            let mut view: crate::shading::uniforms::ViewUniform = bytemuck::Zeroable::zeroed();
+            view.view = glam::Mat4::IDENTITY.to_cols_array_2d();
+            view.projection = projection.to_cols_array_2d();
+            view.jitter = [
+                jitter_pixels[0] / size[0] as f32,
+                jitter_pixels[1] / size[1] as f32,
+            ];
+            let raster = glam::Mat4::from_translation(glam::Vec3::new(
+                2. * view.jitter[0],
+                2. * view.jitter[1],
+                0.,
+            )) * projection;
+            let (depth, normals) =
+                analytic_geometry(&device, &queue, size, raster, false, false, None);
+            let mut ao = super::AmbientOcclusion::new(&device, &queue);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            ao.encode(
+                &device,
+                &queue,
+                &mut encoder,
+                &depth,
+                &normals,
+                &view,
+                crate::settings::AmbientOcclusionQuality::High,
+                1.,
+                0,
+                None,
+            );
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("XeGTAO raster-ray observation"),
+                source: wgpu::ShaderSource::Wgsl(
+                    format!(
+                        "{}\n{}",
+                        crate::shading::compose(&[&super::XE_GTAO]),
+                        r#"
+@group(1) @binding(0) var<storage, read_write> rays:array<vec4<f32>>;
+@compute @workgroup_size(8,8)
+fn observe(@builtin(global_invocation_id) id:vec3<u32>) {
+    if any(id.xy>=p.size) { return; }
+    let uv=(vec2<f32>(id.xy)+0.5)*p.pixel_size;
+    rays[id.y*p.size.x+id.x]=vec4(position(uv,view_depth(id.xy)),1.);
+}
+"#,
+                    )
+                    .into(),
+                ),
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("XeGTAO raster-ray observation"),
+                layout: None,
+                module: &module,
+                entry_point: Some("observe"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            let output = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("XeGTAO reconstructed rays"),
+                size: u64::from(size[0] * size[1]) * 16,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let inputs = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("XeGTAO raster-ray inputs"),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: ao.params.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&depth),
+                    },
+                ],
+            });
+            let outputs = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("XeGTAO raster-ray outputs"),
+                layout: &pipeline.get_bind_group_layout(1),
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: output.as_entire_binding(),
+                }],
+            });
+            {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                pass.set_pipeline(&pipeline);
+                pass.set_bind_group(0, &inputs, &[]);
+                pass.set_bind_group(1, &outputs, &[]);
+                pass.dispatch_workgroups(size[0].div_ceil(8), size[1].div_ceil(8), 1);
+            }
+            queue.submit([encoder.finish()]);
+            let words = crate::test_support::read_words(&device, &queue, &output);
+            let inverse = raster.inverse();
+            let device_depth = (raster * glam::Vec4::new(0., 0., -3., 1.)).z / 3.;
+            for (pixel, words) in words.chunks_exact(4).enumerate() {
+                let x = (pixel % size[0] as usize) as f32 + 0.5;
+                let y = (pixel / size[0] as usize) as f32 + 0.5;
+                let h = inverse
+                    * glam::Vec4::new(
+                        2. * x / size[0] as f32 - 1.,
+                        1. - 2. * y / size[1] as f32,
+                        device_depth,
+                        1.,
+                    );
+                let expected = h.truncate() / h.w;
+                let expected = glam::Vec3::new(expected.x, expected.y, -expected.z);
+                let observed = glam::Vec3::new(
+                    f32::from_bits(words[0]),
+                    f32::from_bits(words[1]),
+                    f32::from_bits(words[2]),
+                );
+                assert!(
+                    observed.distance(expected) < 0.00001,
+                    "pixel {pixel}: AO reconstructed {observed:?}, raster ray was {expected:?}"
+                );
+            }
+        }
+    }
 }

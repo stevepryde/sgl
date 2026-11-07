@@ -33,9 +33,14 @@ pub enum SceneError {
     MissingMesh,
     /// An image has no texels.
     EmptyImage,
+    /// An ETC2/ASTC image needs decoded level 0 for material ray sampling
+    /// or the CPU decal atlas, but supplied none.
+    MissingDecodedImage,
+    /// A prepared model's ray-data capability differs from this scene's.
+    RayDataMismatch,
     /// A compressed image's sides are not multiples of its block size or
     /// exceed 16384, or it holds no level, more than a full chain, or a level
-    /// of the wrong size; ETC2/ASTC require a matching decoded level 0,
+    /// of the wrong size; an ETC2/ASTC decoded companion must match level 0,
     /// whereas BC7 must not carry a companion.
     InvalidCompressedImage,
     /// A compressed image that materials sample as both sRGB colour and
@@ -203,11 +208,13 @@ impl std::fmt::Display for SceneError {
             Self::MissingMaterial => "a mesh names a material the asset does not have",
             Self::MissingMesh => "the model has no mesh at that index",
             Self::EmptyImage => "an image has no texels",
+            Self::MissingDecodedImage => "ETC2/ASTC material rays and decals need a matching decoded level 0 companion",
+            Self::RayDataMismatch => "the prepared model and scene must use the same ray-data capability",
             Self::CompressedImageViews => {
                 "a compressed image sampled as both colour and data needs DownlevelFlags::VIEW_FORMATS"
             }
             Self::InvalidCompressedImage => {
-                "a compressed image needs sides that are multiples of its block size, at most 16384, and one to a full chain of levels, each of its size; ETC2/ASTC also need matching decoded level 0, BC7 needs none"
+                "a compressed image needs sides that are multiples of its block size, at most 16384, and one to a full chain of levels, each of its size; any ETC2/ASTC decoded companion must match level 0, BC7 needs none"
             }
             Self::IndexOutOfRange => "a mesh index names no vertex",
             Self::NonFiniteGeometry => {

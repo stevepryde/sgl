@@ -50,7 +50,24 @@ pub(crate) struct CasterShading {
     /// The latest of their materials' parameter revisions.
     pub parameters: u64,
 }
-pub use prepared::PreparedModel;
+pub use prepared::{PreparedModel, PreparedModelOptions};
+
+/// Whether a scene retains data used only by ray queries. Raster geometry,
+/// deformation and shadow maps are available in both modes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RayData {
+    /// Retain portable BVHs and ray images, and allow hardware acceleration.
+    #[default]
+    Enabled,
+    /// Omit ray-only data for this scene's whole lifetime.
+    Disabled,
+}
+
+/// Immutable retained-scene capabilities, chosen before adding content.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SceneOptions {
+    pub ray_data: RayData,
+}
 
 use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::content::instance::Mobility;
@@ -63,6 +80,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// `settings::Settings` and each frame's camera and look are a
 /// [`FrameInput`](crate::FrameInput). All dimensions are metres, Y-up.
 pub struct Scene {
+    ray_data: RayData,
     pub(crate) shaders: shaders::Shaders,
     pub(crate) materials: materials::Materials,
     pub(crate) models: models::Models,
@@ -159,12 +177,19 @@ fn scene_group(
 impl Scene {
     /// An empty scene.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        Self::with_options(device, queue, SceneOptions::default())
+    }
+
+    /// An empty scene with immutable capabilities. Disabling ray data skips
+    /// its preparation and retention, rather than deferring those costs.
+    pub fn with_options(device: &wgpu::Device, queue: &wgpu::Queue, options: SceneOptions) -> Self {
         let scene_layout = crate::shading::bind::scene(device);
         let instances = instances::Instances::new(device);
-        let rays = rays::SceneRays::new(device);
-        let ray_instances = rays::instances::RayInstances::new(device);
+        let rays = rays::SceneRays::with_ray_data(device, options.ray_data);
+        let ray_instances = rays::instances::RayInstances::with_ray_data(device, options.ray_data);
         let bound = Self::buffers(&instances, &rays, &ray_instances);
         Self {
+            ray_data: options.ray_data,
             shaders: shaders::Shaders::default(),
             materials: materials::Materials::new(device, queue),
             models: models::Models::default(),
@@ -194,6 +219,11 @@ impl Scene {
             deformations: Vec::new(),
             origin: glam::DVec3::ZERO,
         }
+    }
+
+    /// This scene's immutable ray-data capability.
+    pub fn ray_data(&self) -> RayData {
+        self.ray_data
     }
 
     /// Records an edit to content the dynamic GI volume sees (`edits`).
@@ -336,6 +366,9 @@ impl Scene {
         visibility_mask: u32,
         hardware: bool,
     ) {
+        if self.ray_data == RayData::Disabled {
+            return;
+        }
         self.rays.set_visibility_mask(queue, visibility_mask);
         let tlas = self.acceleration.as_ref().filter(|_| hardware);
         let mut covered = Vec::new();
@@ -404,6 +437,9 @@ impl Scene {
         eye: glam::Vec3,
         form: crate::shading::RayQueryForm,
     ) -> Option<rays::acceleration::RayTracingStats> {
+        if self.ray_data == RayData::Disabled {
+            return None;
+        }
         if self.acceleration.is_none() {
             self.acceleration = rays::acceleration::AccelerationStructures::new(device);
         }
@@ -617,3 +653,6 @@ mod origin_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod streaming_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod ray_data_tests;
