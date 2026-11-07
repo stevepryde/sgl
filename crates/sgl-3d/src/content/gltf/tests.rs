@@ -825,7 +825,7 @@ fn supplied_images_are_never_read_and_the_rest_decode() {
     };
     let texels = |image: &Image| match image {
         Image::Rgba8(image) => image.as_raw().clone(),
-        Image::Compressed(_) => panic!("expected RGBA8"),
+        _ => panic!("expected RGBA8"),
     };
     assert!(
         load(&fixture.path()).is_err(),

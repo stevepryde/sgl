@@ -130,10 +130,13 @@ and an asynchronous readback.
   lighting design, cameras and the frame budget.
 - Export PNG/JPEG images at most 16384 texels on a side. Their decoded
   RGBA8 bytes share the asset's 4 GiB native or 1 GiB browser decoded-data
-  budget. KTX2 BC7 mip chains must have valid dimensions and exact level
+  budget. KTX2 BC7, ETC2 RGBA8 and ASTC 4×4 mip chains must have valid dimensions and exact level
   sizes; malformed or oversized content fails at load
   ([loading](../README.md#asset-and-environment-limits),
-  [compressed images](../README.md#compressed-material-images)).
+  [compressed images](../README.md#compressed-material-images)). ETC2/ASTC
+  material chains also require an explicitly prepared decoded level-zero
+  companion for rays and decals; SGL3D does not transcode them in the browser.
+  Keep fetches, exports and bounded scene chunks game-owned.
 - Supply finite material normal/bump scales and lightmap chart scales/offsets,
   and ambient-cube channels in finite `0..=65504`; scene setters reject
   invalid values and retain the previous content (see the package README).
@@ -154,11 +157,17 @@ and an asynchronous readback.
   parameters). In a `const`, use `..DirectionalShadow::DEFAULT`.
 - Report the effective state honestly:
   `Renderer::antialiasing_in_effect(&settings)` and `fsr2_error()` say when
-  the device fell back (FSR2 always does in the browser).
+  the device fell back (FSR2 always does in the browser). To reduce browser
+  rendering resolution, choose `SceneResolution` explicitly and opt into
+  `Settings::upscaling` for portable spatial enlargement to the output.
 - In the browser, pass what a native game would read: asset bytes, and the
   frame time in `FrameInput::frame_time_ms`. Capture probes natively; the
   capture's blocking readback fails on WebGPU.
 - Measure cost per pass with `timing::GpuTiming` before and after a change.
+  The [browser baseline](../../../examples/sgl-3d/BROWSER_BASELINE.md) measures
+  a repeatable textured scene and separate upload phases with the existing
+  `measure-browser` runner; its completion timings are offscreen, not display
+  pacing.
 - Need a rendering feature SGL3D lacks? An effect of your own surfaces
   (waves, wind, a glass's varying thickness) is a
   [shader](../README.md#programmable-surfaces): the game's WGSL, which every

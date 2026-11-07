@@ -579,12 +579,6 @@ impl Renderer {
     pub(crate) fn motion_blurred(&self) -> Option<&wgpu::TextureView> {
         self.motion_blur.output()
     }
-
-    /// The tone-mapped scene before presentation, when diagnostics capture it.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn tone_mapped(&self) -> &wgpu::TextureView {
-        self.post.tone_mapped()
-    }
 }
 
 #[cfg(any(test, feature = "diagnostics"))]

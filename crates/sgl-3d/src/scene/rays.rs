@@ -258,10 +258,19 @@ impl SceneRays {
         image: &Image,
     ) -> Result<Range<u32>, SceneError> {
         let [width, height] = image.size();
+        let texels;
         let (format, bytes) = match image {
             Image::Rgba8(image) => (IMAGE_RGBA8, image.as_raw().as_slice()),
+            Image::Rgba8Mips(image) => (IMAGE_RGBA8, image.levels(false)[0].as_raw().as_slice()),
             Image::Compressed(image) => match image.format {
                 CompressedFormat::Bc7 => (IMAGE_BC7, image.levels[0].as_slice()),
+                CompressedFormat::Etc2Rgba8 | CompressedFormat::Astc4x4 => {
+                    texels = image
+                        .decoded_level_0
+                        .as_ref()
+                        .ok_or(SceneError::InvalidCompressedImage)?;
+                    (IMAGE_RGBA8, texels.as_raw().as_slice())
+                }
             },
         };
         let header = ImageHeader {

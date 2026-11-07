@@ -84,7 +84,7 @@ pub(crate) struct SharedTargets {
     pub composite: wgpu::TextureView,
     /// R8: FSR2's reactive mask and its transparency and composition mask,
     /// written by the composite's transparent draws while FSR2 runs.
-    pub fsr2_masks: [wgpu::TextureView; 2],
+    pub fsr2_masks: Option<[wgpu::TextureView; 2]>,
     /// The surface's own targets, from the first frame of a scene that
     /// holds a blended receiver of screen-space reflections.
     pub surface: Option<SurfaceTargets>,
@@ -154,12 +154,25 @@ impl SharedTargets {
                 gbuffer::COLOR,
                 wgpu::TextureUsages::STORAGE_BINDING,
             ),
-            fsr2_masks: [
-                "FSR2 reactive mask",
-                "FSR2 transparency and composition mask",
-            ]
-            .map(|label| target(device, label, size, MASK_FORMAT)),
+            fsr2_masks: None,
             surface: surface.then(|| SurfaceTargets::new(device, size)),
+        }
+    }
+
+    /// Masks exist only for frames whose temporal upscaler runs. Releasing
+    /// them also releases the two render-size R8 allocations.
+    pub fn set_fsr2_masks(&mut self, device: &wgpu::Device, enabled: bool) {
+        if enabled {
+            self.fsr2_masks.get_or_insert_with(|| {
+                let size = self.depth.texture().size();
+                [
+                    "FSR2 reactive mask",
+                    "FSR2 transparency and composition mask",
+                ]
+                .map(|label| target(device, label, [size.width, size.height], MASK_FORMAT))
+            });
+        } else {
+            self.fsr2_masks = None;
         }
     }
 
@@ -266,4 +279,42 @@ pub(crate) fn attachment(view: &wgpu::TextureView) -> Option<wgpu::RenderPassCol
             store: wgpu::StoreOp::Store,
         },
     })
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fsr2_masks_are_allocated_only_while_enabled() {
+        let Some((device, _queue)) = crate::test_support::device() else {
+            return;
+        };
+        for size in [[8, 6], [13, 9]] {
+            let mut targets = SharedTargets::new(&device, size, false);
+            assert!(targets.fsr2_masks.is_none());
+            targets.set_fsr2_masks(&device, false);
+            assert!(targets.fsr2_masks.is_none());
+            targets.set_fsr2_masks(&device, true);
+            let previous = targets.fsr2_masks.as_ref().unwrap().clone();
+            for mask in &previous {
+                assert_eq!(mask.texture().format(), wgpu::TextureFormat::R8Unorm);
+                assert_eq!([mask.texture().width(), mask.texture().height()], size);
+            }
+            targets.set_fsr2_masks(&device, true);
+            assert_eq!(
+                &previous,
+                targets.fsr2_masks.as_ref().unwrap(),
+                "enabled frames reuse masks"
+            );
+            targets.set_fsr2_masks(&device, false);
+            assert!(targets.fsr2_masks.is_none());
+            targets.set_fsr2_masks(&device, true);
+            assert_ne!(
+                &previous,
+                targets.fsr2_masks.as_ref().unwrap(),
+                "re-enable allocates fresh masks"
+            );
+        }
+    }
 }

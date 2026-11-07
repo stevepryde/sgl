@@ -21,6 +21,7 @@ pub(crate) static TONE_MAP: crate::shading::Module = crate::shading::Module {
         &inputs::INPUTS,
         &crate::shading::LUMINANCE,
         &crate::shading::SRGB,
+        &super::fsr1::FSR1,
     ],
 };
 /// The entry points tone mapping's pipelines are created with, beside
@@ -146,6 +147,13 @@ pub(super) enum Destination<'a> {
     Scene(&'a wgpu::TextureView),
 }
 
+/// Reconstruction before the final output transfer and dither.
+#[derive(Clone, Copy)]
+pub(super) enum Reconstruction {
+    Linear,
+    Rcas,
+}
+
 pub(super) struct ToneMap {
     /// Into the tone-mapped target.
     present: wgpu::RenderPipeline,
@@ -158,12 +166,15 @@ pub(super) struct ToneMap {
     /// The antialiased tone-mapped scene into the output, as the copy
     /// writes it.
     resample_direct: wgpu::RenderPipeline,
+    rcas: wgpu::RenderPipeline,
+    rcas_direct: wgpu::RenderPipeline,
     look_layout: wgpu::BindGroupLayout,
     /// `ColorGradingUniform`.
     grading: wgpu::Buffer,
     /// The exposure view and grading, made for the first exposure view.
     look: Option<(wgpu::TextureView, wgpu::BindGroup)>,
-    tone_mapped: wgpu::TextureView,
+    tone_mapped: Option<wgpu::TextureView>,
+    output_size: [u32; 2],
     /// The last frame wrote `tone_mapped`.
     #[cfg(any(test, feature = "diagnostics"))]
     captured: bool,
@@ -237,14 +248,32 @@ impl ToneMap {
             ),
             look_layout,
             look: None,
-            tone_mapped: target(device, "tone-mapped linear scene", output_size, HDR),
+            rcas: pipeline(
+                device,
+                &copy,
+                &shader,
+                "fsr1_rcas_capture",
+                &[HDR],
+                (None, &[]),
+            ),
+            rcas_direct: pipeline(
+                device,
+                &copy,
+                &shader,
+                "fsr1_rcas_direct",
+                &[format],
+                (None, &output),
+            ),
+            tone_mapped: None,
+            output_size,
             #[cfg(any(test, feature = "diagnostics"))]
             captured: false,
         }
     }
 
-    pub fn resize(&mut self, device: &wgpu::Device, output_size: [u32; 2]) {
-        self.tone_mapped = target(device, "tone-mapped linear scene", output_size, HDR);
+    pub fn resize(&mut self, _device: &wgpu::Device, output_size: [u32; 2]) {
+        self.tone_mapped = None;
+        self.output_size = output_size;
         #[cfg(any(test, feature = "diagnostics"))]
         {
             self.captured = false;
@@ -254,13 +283,38 @@ impl ToneMap {
     /// The tone-mapped scene of the last frame that captured it.
     #[cfg(any(test, feature = "diagnostics"))]
     pub fn tone_mapped(&self) -> &wgpu::TextureView {
-        &self.tone_mapped
+        self.tone_mapped
+            .as_ref()
+            .expect("tone-mapped capture allocated")
     }
 
     /// The tone-mapped scene, when the last frame captured it.
     #[cfg(any(test, feature = "diagnostics"))]
     pub fn captured(&self) -> Option<&wgpu::TextureView> {
-        self.captured.then_some(&self.tone_mapped)
+        self.tone_mapped.as_ref().filter(|_| self.captured)
+    }
+
+    #[cfg(test)]
+    pub(super) fn holds_capture(&self) -> bool {
+        self.tone_mapped.is_some()
+    }
+
+    /// Diagnostics alone need a full output-size floating-point target.
+    pub(super) fn hold_capture(&mut self, device: &wgpu::Device) {
+        self.tone_mapped.get_or_insert_with(|| {
+            target(device, "tone-mapped linear scene", self.output_size, HDR)
+        });
+    }
+
+    /// Release both the image and input groups retaining its view.
+    pub(super) fn release_capture(&mut self, inputs: &Inputs) {
+        if self.tone_mapped.take().is_some() {
+            inputs.forget();
+        }
+        #[cfg(any(test, feature = "diagnostics"))]
+        {
+            self.captured = false;
+        }
     }
 
     /// The group binding `exposure` and the grading, made once per view.
@@ -313,6 +367,12 @@ impl ToneMap {
         );
         let look = self.look(device, exposure);
         let group = inputs.group(device, hdr, bloom);
+        if matches!(destination, Destination::Output { capture: false, .. }) {
+            self.release_capture(inputs);
+        }
+        if matches!(destination, Destination::Output { capture: true, .. }) {
+            self.hold_capture(device);
+        }
         let (pipeline, target, label, presented) = match destination {
             Destination::Scene(scene) => {
                 (&self.present, scene, "tone map the scene for SMAA", None)
@@ -325,7 +385,7 @@ impl ToneMap {
                 if capture {
                     (
                         &self.present,
-                        &self.tone_mapped,
+                        self.tone_mapped.as_ref().unwrap(),
                         "tone map to the tone-mapped target",
                         Some(output),
                     )
@@ -361,6 +421,7 @@ impl ToneMap {
         scene: &wgpu::TextureView,
         bloom: &wgpu::TextureView,
         capture: bool,
+        reconstruction: Reconstruction,
         output: &wgpu::TextureView,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
@@ -368,19 +429,34 @@ impl ToneMap {
         {
             self.captured = capture;
         }
-        let group = inputs.group(device, scene, bloom);
-        let (pipeline, target) = if capture {
-            (&self.resample, &self.tone_mapped)
+        if capture {
+            self.hold_capture(device);
         } else {
-            (&self.resample_direct, output)
+            self.release_capture(inputs);
+        }
+        let group = inputs.group(device, scene, bloom);
+        let pipeline = match (reconstruction, capture) {
+            (Reconstruction::Rcas, true) => &self.rcas,
+            (Reconstruction::Rcas, false) => &self.rcas_direct,
+            (Reconstruction::Linear, true) => &self.resample,
+            (Reconstruction::Linear, false) => &self.resample_direct,
+        };
+        let target = if capture {
+            self.tone_mapped.as_ref().unwrap()
+        } else {
+            output
+        };
+        let (label, timing_group) = match reconstruction {
+            Reconstruction::Linear => ("resample the antialiased scene", "tone map"),
+            Reconstruction::Rcas => ("FSR1 RCAS and presentation", "spatial upscale"),
         };
         draw(
             encoder,
             pipeline,
             &group,
             target,
-            "resample the antialiased scene",
-            timing.and_then(|t| t.render_pass("tone map")),
+            label,
+            timing.and_then(|t| t.render_pass(timing_group)),
         );
         if capture {
             self.present_output(device, encoder, inputs, bloom, output, timing);
@@ -397,7 +473,7 @@ impl ToneMap {
         output: &wgpu::TextureView,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        let group = inputs.group(device, &self.tone_mapped, bloom);
+        let group = inputs.group(device, self.tone_mapped.as_ref().unwrap(), bloom);
         draw(
             encoder,
             &self.present_copy,

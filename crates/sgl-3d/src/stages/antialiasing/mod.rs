@@ -140,7 +140,7 @@ impl Antialiasing {
                 color,
                 depth: ctx.surface.depth,
                 motion: &ctx.targets.motion,
-                masks: &ctx.targets.fsr2_masks,
+                masks: ctx.targets.fsr2_masks.as_ref().expect("FSR2 frame masks"),
                 projection: glam::Mat4::from_cols_array_2d(&ctx.values.view.projection),
                 frame_time_ms: ctx.input.frame_time_ms,
                 exposure,

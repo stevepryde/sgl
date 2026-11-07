@@ -283,6 +283,11 @@ impl Smaa {
         }
     }
 
+    /// Drop groups retaining a presentation target that no longer runs.
+    pub(crate) fn forget_inputs(&mut self) {
+        self.bindings.get_mut().take();
+    }
+
     /// Replaces only size-dependent targets; pipelines and atlases stay resident.
     pub(crate) fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         let size = [width.max(1), height.max(1)];

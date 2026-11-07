@@ -64,6 +64,12 @@ impl CachedGroup {
         }
     }
 
+    /// The retained handle, for tests observing actual allocation and invalidation.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn cached(&self) -> Option<&wgpu::BindGroup> {
+        self.group.as_ref()
+    }
+
     /// Lets go of the group and what it binds, so that they live no longer
     /// than their owners keep them; the next `get` makes the group again.
     pub fn forget(&mut self) {

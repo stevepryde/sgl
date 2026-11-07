@@ -36,3 +36,7 @@ crate-type = ["cdylib"]
 [[example]]
 name = "browser_streaming"
 crate-type = ["cdylib"]
+
+[[example]]
+name = "browser_baseline"
+crate-type = ["cdylib"]

@@ -202,6 +202,8 @@ fn blended_surfaces_write_fsr2s_masks() {
     let [reactive, composition] = renderer
         .targets()
         .fsr2_masks
+        .as_ref()
+        .unwrap()
         .each_ref()
         .map(|mask| test_support::read(&device, &queue, mask.texture(), 1));
     // Behind the squares' centres and between them, on the middle row. At

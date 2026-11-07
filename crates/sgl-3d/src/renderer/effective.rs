@@ -335,6 +335,7 @@ pub(super) fn resolve(
         smaa: !disable.smaa,
         smaa_quality: settings.smaa_quality,
         tone_mapping: settings.tone_mapping,
+        upscaling: settings.upscaling,
         anisotropy: settings.anisotropic_filtering.clamp(),
         layers: LayerConstants::new(&disable),
         source_environment: !disable.source_environment,

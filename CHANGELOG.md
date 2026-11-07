@@ -15,6 +15,30 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d-examples::browser_baseline`: `measure-browser --baseline` now
+  measures a textured moving scene and bounded upload phases, with optional
+  prepared mips, reduced-resolution spatial upscaling and frame capture.
+  The existing streaming benchmark remains the default; no game-code changes
+  are needed.
+
+- `sgl-3d::asset::{CompressedFormat, CompressedImage, Image}`: material
+  images now support ETC2 RGBA8 and ASTC 4×4 stored mip chains with an explicit
+  decoded level-zero ray/decal companion, plus prepared `Rgba8MipChain`
+  uploads. Request the matching compression features; existing BC7 struct
+  literals must add `decoded_level_0: None`, and exhaustive image/format
+  matches must handle the new variants. Existing BC7 exports need no rebake.
+
+- `sgl-3d::Settings::upscaling`: reduced-resolution scenes can now opt into
+  portable spatial upscaling after tone mapping; the default remains `Off`
+  and native FSR2 is unchanged. Set `upscaling: Upscaling::On` with a smaller
+  `scene_resolution`; settings literals without a default tail must add the field.
+
+- `sgl-3d::Renderer`: unused FSR2 masks and post-processing targets are no
+  longer always allocated, and XeGTAO retains unchanged bind groups between
+  frames. No game-code changes are needed. Distribution notices now include
+  the additional AMD FSR1 source attribution; regenerate the game's notices
+  when adopting the port.
+
 ## 0.5.0 — 2026-10-24
 
 New sgl-2d features; nothing changes for a game that does not opt in.

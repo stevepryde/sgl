@@ -69,7 +69,6 @@ pub(super) fn render(
     if scene.materials.holds_receivers() {
         targets.hold_surface(device);
     }
-    let targets: &SharedTargets = targets;
     let effective = super::effective::resolve(
         settings,
         input,
@@ -82,6 +81,8 @@ pub(super) fn render(
             tier: pipelines.tier,
         },
     );
+    targets.set_fsr2_masks(device, effective.fsr2);
+    let targets: &SharedTargets = targets;
     pipelines.specialise(
         device,
         effective.layers,

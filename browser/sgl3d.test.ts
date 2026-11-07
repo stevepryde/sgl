@@ -13,8 +13,8 @@ import { chromium } from "playwright";
 const HOST = "127.0.0.1";
 const PORT = 8124;
 const DIST = process.env.SGL_BROWSER_PROBE_DIR ?? "target/browser-probe";
-/// Adapter, colour-boundary regression, and four scene configurations.
-const REPORTS = 6;
+/// Adapter, colour boundary, compressed materials, and four scene configurations.
+const REPORTS = 7;
 
 function servePage() {
   const types: Record<string, string> = {

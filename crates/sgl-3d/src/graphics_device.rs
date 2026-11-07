@@ -77,3 +77,23 @@ pub fn fsr2_features(adapter: &wgpu::Adapter) -> wgpu::Features {
 pub fn ray_tracing_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features() & wgpu::Features::EXPERIMENTAL_RAY_QUERY
 }
+
+/// The device feature needed by a compressed material format. Request it
+/// only when the adapter supports it, and supply matching exported assets.
+pub fn compressed_image_feature(format: crate::asset::CompressedFormat) -> wgpu::Features {
+    match format {
+        crate::asset::CompressedFormat::Bc7 => wgpu::Features::TEXTURE_COMPRESSION_BC,
+        crate::asset::CompressedFormat::Etc2Rgba8 => wgpu::Features::TEXTURE_COMPRESSION_ETC2,
+        crate::asset::CompressedFormat::Astc4x4 => wgpu::Features::TEXTURE_COMPRESSION_ASTC,
+    }
+}
+
+/// Compression features available on this adapter. Add these to the device
+/// request to support exported BC7, ETC2 RGBA8 and ASTC LDR 4x4 material chains.
+/// This does not select or transcode assets: that remains the game's choice.
+pub fn texture_compression_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    adapter.features()
+        & (wgpu::Features::TEXTURE_COMPRESSION_BC
+            | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+            | wgpu::Features::TEXTURE_COMPRESSION_ASTC)
+}

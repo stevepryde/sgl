@@ -153,12 +153,18 @@ fn masks(
     );
     queue.submit([encoder.finish()]);
     renderer.finish_frame(scene);
-    renderer.targets().fsr2_masks.each_ref().map(|mask| {
-        test_support::read(device, queue, mask.texture(), 1)
-            .into_iter()
-            .map(|byte| f32::from(byte) / 255.)
-            .collect()
-    })
+    renderer
+        .targets()
+        .fsr2_masks
+        .as_ref()
+        .unwrap()
+        .each_ref()
+        .map(|mask| {
+            test_support::read(device, queue, mask.texture(), 1)
+                .into_iter()
+                .map(|byte| f32::from(byte) / 255.)
+                .collect()
+        })
 }
 
 /// Asserts that `masks` hold `expected` (reactive, transparency and

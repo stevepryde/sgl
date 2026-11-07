@@ -461,3 +461,41 @@ fn decal_images_stay_while_a_decal_uses_them() {
     scene.remove_decal(second).unwrap();
     scene.remove_decal_image(other).unwrap();
 }
+
+#[test]
+fn browser_compressed_decals_use_validated_offline_companions() {
+    use crate::asset::{CompressedFormat, CompressedImage};
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let decoded = image::RgbaImage::from_fn(4, 4, |x, y| {
+        image::Rgba([x as u8 * 50, y as u8 * 50, 100, 128])
+    });
+    for format in [CompressedFormat::Etc2Rgba8, CompressedFormat::Astc4x4] {
+        let mut compressed = CompressedImage {
+            format,
+            width: 4,
+            height: 4,
+            levels: vec![vec![0xff; 16]],
+            decoded_level_0: None,
+        };
+        let before = scene.decals.images.iter().count();
+        assert!(matches!(
+            scene.add_decal_image(Image::Compressed(compressed.clone())),
+            Err(SceneError::InvalidCompressedImage)
+        ));
+        assert_eq!(scene.decals.images.iter().count(), before);
+        compressed.decoded_level_0 = Some(image::RgbaImage::new(8, 4));
+        assert!(matches!(
+            scene.add_decal_image(Image::Compressed(compressed.clone())),
+            Err(SceneError::InvalidCompressedImage)
+        ));
+        assert_eq!(scene.decals.images.iter().count(), before);
+        compressed.decoded_level_0 = Some(decoded.clone());
+        let id = scene
+            .add_decal_image(Image::Compressed(compressed))
+            .unwrap();
+        assert_eq!(scene.decals.images.get(id).unwrap().texels, decoded);
+    }
+}
