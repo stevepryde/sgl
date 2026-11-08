@@ -9,7 +9,7 @@ or bake payloads are distributed here.
 
 ## Bistro
 
-[bistro.png](bistro.png) is the 3840 × 2160 sunlit quality capture, using the
+[bistro-sunlit-4k.png](bistro-sunlit-4k.png) is the 3840 × 2160 sunlit quality capture, using the
 `bevy` camera in the [Bistro quality fixture](../../examples/sgl-3d/fixtures/bistro-quality.json).
 The sun is 70 degrees above the horizon, reaching the café terrace and most
 of the street. An expanded 2,592-probe GI volume covers the visible façades

@@ -18,7 +18,7 @@ to build your own game—and, if it inspires you, your own library.
 
 Actual SGL3D captures in the browser with WebGPU. Click a PNG for full resolution.
 
-[![Bistro: a sunlit cobblestone street, café terrace, and blue scooter rendered with SGL3D](assets/showcase/bistro.png)](assets/showcase/bistro.png)
+[![Bistro: a sunlit cobblestone street, café terrace, and blue scooter rendered with SGL3D](assets/showcase/bistro-sunlit-4k.png)](assets/showcase/bistro-sunlit-4k.png)
 
 **Bistro · 3840 × 2160**: detailed PBR materials, diffuse global illumination,
 ambient occlusion, and cascaded shadows.
