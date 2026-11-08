@@ -1813,3 +1813,69 @@ fn a_closed_spot_cone_has_no_shadow_slot() {
         LocalShadowStats::default()
     );
 }
+
+// An emitting lamp's dielectric shell must not occlude its source, while the
+// unrelated opaque wall must still block it. Observe both the camera atlas and
+// static ray-hit layers, then change the shell back to opaque to exercise cache
+// invalidation. Expectations follow the light/receiver segments, not image taste.
+#[test]
+fn transmissive_lamp_shell_preserves_unrelated_wall_shadows() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let mut scene = Scene::new(&device, &queue);
+    let wall = scene.add_asset(&device, &queue, blocker()).unwrap();
+    scene
+        .add_instance(
+            &device,
+            &queue,
+            at(wall.model, Vec3::ZERO),
+            Mobility::Static,
+        )
+        .unwrap();
+    // Both receiver segments cross this small shell near the source, but only
+    // the centre segment crosses the wider, more distant wall at z=0.
+    let shell = scene
+        .add_asset(
+            &device,
+            &queue,
+            asset(vec![plane(
+                Vec3::new(0., 0., 0.8),
+                Vec3::X * 0.2,
+                Vec3::Y * 0.2,
+            )]),
+        )
+        .unwrap();
+    scene
+        .add_instance(
+            &device,
+            &queue,
+            at(shell.model, Vec3::ZERO),
+            Mobility::Static,
+        )
+        .unwrap();
+    let light = scene
+        .add_light(&device, &queue, point(Vec3::new(0., 0., 1.), 4.))
+        .unwrap();
+    let material = shell.materials[0];
+    for transmission in [0., 1., 0., 1.] {
+        let mut values = scene.material(material).unwrap();
+        values.metallic = 0.;
+        values.transmission = transmission;
+        scene.set_material(&queue, material, values).unwrap();
+        harness.frame(&mut scene, &input());
+        let expected = [
+            (Vec3::new(0., 0., -1.), 0.),
+            (Vec3::new(0.8, 0., -1.), transmission),
+        ];
+        for seen in [Seen::Camera, Seen::RayHit] {
+            harness.expect_seen(
+                light,
+                &expected,
+                seen,
+                "shell passes light; wall still blocks",
+            );
+        }
+    }
+}

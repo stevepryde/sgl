@@ -182,7 +182,10 @@ and an asynchronous readback.
   `measure-browser` runner; its completion timings are offscreen, not display
   pacing. The [Bistro workflow](../../../examples/sgl-3d/BISTRO.md) extends it
   to prepared glTF scenes, matched native/browser cameras, explicit fixture
-  settings, exact output captures and deterministic motion sequences.
+  settings, exact output captures and deterministic motion sequences. Its
+  opt-in shadowed practical-light recipe explicitly authors dielectric bulb
+  shells while retaining opaque wall/fixture casters; original profiles remain
+  controls. See its material-authoring limitations before adapting it.
   The optional [Intel Sponza and curtains workflow](../../../examples/sgl-3d/SPONZA.md)
   uses that runner with a reproducible local-only asset cache, neutral baselines
   and a full-building source-HDR sunlit/GI recipe with optional native-authored

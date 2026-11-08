@@ -259,6 +259,52 @@ pub fn settings(max_quality: bool, no_ray_shadows: bool) -> Settings {
     settings
 }
 
+/// Explicit content authoring, not an automatic emissive-material heuristic.
+/// A named bulb shell becomes a dielectric transmitting surface. Its emission,
+/// textures and geometry stay intact; opaque fixtures and walls remain casters.
+/// Resolve the complete list before mutating anything, including name ambiguity.
+pub fn apply_transmissive_materials(
+    materials: &mut [asset::Material],
+    descriptor: &Value,
+) -> Result<Value, String> {
+    let Some(names) = descriptor.get("transmissive_materials") else {
+        return Ok(json!({"count":0,"names":[]}));
+    };
+    let names = names
+        .as_array()
+        .ok_or("transmissive_materials must be an array of unique material names")?;
+    let mut indices = Vec::new();
+    for value in names {
+        let name = value
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .ok_or("transmissive_materials entries must be nonempty names")?;
+        let matches: Vec<_> = materials
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.name == name)
+            .map(|(i, _)| i)
+            .collect();
+        if matches.len() != 1 {
+            return Err(format!(
+                "transmissive material {name:?} must match exactly once; found {}",
+                matches.len()
+            ));
+        }
+        if indices.contains(&matches[0]) {
+            return Err(format!("duplicate transmissive material {name:?}"));
+        }
+        indices.push(matches[0]);
+    }
+    for &index in &indices {
+        // KHR_materials_transmission: metals absorb refracted light, so changing
+        // transmission alone on the source's metallic bulbs is not glass.
+        materials[index].metallic = 0.;
+        materials[index].transmission = 1.;
+    }
+    Ok(json!({"count":indices.len(),"names":names,"metallic":0.,"transmission":1.}))
+}
+
 /// Example-owned authored point lights, in world-space metres and linear RGB.
 /// An absent list preserves fixtures without practical lighting. This is not an
 /// emissive-material conversion: the author chooses which geometry emits light.
@@ -645,6 +691,66 @@ mod ktx2_writer;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transmissive_authoring_changes_only_named_shells_and_is_atomic() {
+        let shell = asset::Material {
+            name: "Bulb".into(),
+            metallic: 1.,
+            transmission: 0.,
+            emissive: [3., 2., 1.],
+            ..Default::default()
+        };
+        let wall = asset::Material {
+            name: "Wall".into(),
+            ..Default::default()
+        };
+        let original = vec![shell.clone(), wall.clone()];
+        let mut materials = original.clone();
+        let report = apply_transmissive_materials(
+            &mut materials,
+            &json!({"transmissive_materials":["Bulb"]}),
+        )
+        .unwrap();
+        assert_eq!(report["count"], 1);
+        assert_eq!(report["names"], json!(["Bulb"]));
+        assert_eq!(materials[0].metallic, 0.);
+        assert_eq!(materials[0].transmission, 1.);
+        assert_eq!(materials[0].emissive, shell.emissive);
+        assert_eq!(materials[0].base, shell.base);
+        assert_eq!(materials[1].metallic, wall.metallic);
+        assert_eq!(materials[1].transmission, wall.transmission);
+        for names in [
+            json!(["Bulb", "Missing"]),
+            json!(["Bulb", "Bulb"]),
+            json!(null),
+            json!([""]),
+            json!([1]),
+        ] {
+            let mut materials = original.clone();
+            assert!(
+                apply_transmissive_materials(
+                    &mut materials,
+                    &json!({"transmissive_materials":names})
+                )
+                .is_err()
+            );
+            assert_eq!(materials[0].metallic, 1.);
+            assert_eq!(materials[0].transmission, 0.);
+        }
+        let mut duplicate = vec![shell.clone(), shell];
+        assert!(
+            apply_transmissive_materials(
+                &mut duplicate,
+                &json!({"transmissive_materials":["Bulb"]})
+            )
+            .is_err()
+        );
+        assert_eq!(
+            apply_transmissive_materials(&mut materials, &json!({})).unwrap()["count"],
+            0
+        );
+    }
 
     #[test]
     fn shadow_measurements_separate_population_from_measured_cache_work() {

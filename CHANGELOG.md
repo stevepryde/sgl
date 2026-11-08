@@ -15,6 +15,17 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d-examples::{bistro, browser_bistro}` and `measure-browser` now accept
+  `--split` to diagnose the existing two-pass opaque path and record
+  `split_opaque` in reports. Defaults are unchanged; rebuild the examples to
+  use the diagnostic, with no game-code or asset changes.
+
+- `sgl-3d-examples::{bistro, browser_bistro}` accept explicit
+  `transmissive_materials` fixture authoring for dielectric bulb shells; the
+  opt-in `prepare-bistro-practical-lights.ts` recipe enables practical shadows
+  instead of the baseline's unshadowed points. Existing fixtures are unchanged;
+  generate the separate recipe to try it, with no game-code or asset changes.
+
 - `sgl-3d-examples::{bistro, browser_bistro}` reports now include actual
   local-shadow atlas occupancy, overflow and draw work, with first-frame
   population separate from measured frames. Rebuild the examples to record

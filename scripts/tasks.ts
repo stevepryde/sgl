@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--baseline | --bistro] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|off] [--cascades <1..4>] [--motion] [--rect-light] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
+  "measure-browser [--baseline | --bistro] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|off] [--cascades <1..4>] [--motion] [--rect-light] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
 
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
@@ -253,6 +253,7 @@ async function measureBrowser(args: string[]): Promise<void> {
     else if (args[at] === "--exposure" && at+1<args.length) sceneOptions.exposure=Number(args[++at]);
     else if (args[at] === "--cascades" && at+1<args.length) sceneOptions.cascades=Number(args[++at]);
     else if (args[at] === "--observe-gi") sceneOptions.observe_gi=true;
+    else if (args[at] === "--split") sceneOptions.split=true;
     else if (args[at] === "--no-normal-maps") sceneOptions.normal_maps=false;
     else if (args[at] === "--ray-data" && at+1<args.length) sceneOptions.ray_data=args[++at];
     else if (args[at] === "--compressed-manifest" && at+1<args.length) sceneOptions.compressed_manifest=args[++at];

@@ -326,6 +326,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
     .map_err(|e| e.to_string())?;
     settings.diagnostics.dynamic_gi = options["observe_gi"].as_bool() == Some(true);
     settings.diagnostics.disable.normal_maps = options["normal_maps"].as_bool() == Some(false);
+    settings.diagnostics.disable.fused_opaque = options["split"].as_bool() == Some(true);
     let ray_data = match options["ray_data"]
         .as_str()
         .or_else(|| fixture["ray_data"].as_str())
@@ -432,7 +433,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
             .remove(&image.index)
             .map_or(asset::ImageSource::Decode, asset::ImageSource::Supplied))
     };
-    let loaded = asset::load_slice_with_options(
+    let mut loaded = asset::load_slice_with_options(
         &glb,
         asset::LoadOptions {
             budget,
@@ -449,6 +450,8 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
     let triangles: usize = loaded.meshes.iter().map(|m| m.indices.len() / 3).sum();
     let vertices: usize = loaded.meshes.iter().map(|m| m.vertices.len()).sum();
     let mesh_count = loaded.meshes.len();
+    let material_authoring =
+        bistro_scene::apply_transmissive_materials(&mut loaded.materials, &fixture)?;
     let materials = loaded.materials.len();
     let images = loaded.images.len();
     let image_bytes: usize = loaded
@@ -782,9 +785,9 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
         json!({"schema":1,"benchmark":"embedded-scene-v1","scene":fixture["scene"],"fixture":fixture,
         "view":camera_id,"camera":camera_spec,"final_eye":if motion {(eye+Vec3::new((((warmup+frames-1) as f32/60.)*0.7).sin()*0.35,0.,0.)).to_array()}else{eye.to_array()},"size":size,"frames":frames,"warmup_frames":warmup,
         "motion":{"enabled":motion,"route":"shared eye/target x += sin(t*0.7)*0.35 metres","fixed_step_seconds":1./60.,"capture_frame":warmup+frames-1},"exposure_stops":exposure,
-        "settings":settings,"diagnostics":{"normal_maps_disabled":settings.diagnostics.disable.normal_maps},"lighting":{"local_lights":bistro_scene::local_light_report(&scene, &local_light_ids)?,"local_shadows":local_shadows.report(),"sun":effective_sun,"environment_intensity":frame.diffuse_environment.intensity,"ambient_occlusion_radius_m":frame.ambient_occlusion_radius,"rect":options["rect"].as_bool().unwrap_or(false)},
+        "settings":settings,"diagnostics":{"normal_maps_disabled":settings.diagnostics.disable.normal_maps,"split_opaque":settings.diagnostics.disable.fused_opaque},"lighting":{"local_lights":bistro_scene::local_light_report(&scene, &local_light_ids)?,"local_shadows":local_shadows.report(),"sun":effective_sun,"environment_intensity":frame.diffuse_environment.intensity,"ambient_occlusion_radius_m":frame.ambient_occlusion_radius,"rect":options["rect"].as_bool().unwrap_or(false)},
         "adapter":{"name":info.name,"backend":format!("{:?}",info.backend),"device_type":format!("{:?}",info.device_type),"available_features":adapter_features,"requested_features":format!("{:?}",device.features()),"adapter_limits":adapter_limits,"device_limits":limits(&device.limits())},
-        "content":{"glb_bytes":glb_bytes,"triangles":triangles,"vertices":vertices,"material_batches":mesh_count,"model_scale":model_scale,"materials":materials,"images":images,"decoded_image_bytes":image_bytes,"compression":compression,"specular_probe_bytes":probe_bytes,"panorama_source_bytes":panorama_bytes,"pmrem_bytes":pmrem_bytes,"ignored":ignored},
+        "content":{"glb_bytes":glb_bytes,"triangles":triangles,"vertices":vertices,"material_batches":mesh_count,"model_scale":model_scale,"materials":materials,"material_authoring":material_authoring,"images":images,"decoded_image_bytes":image_bytes,"compression":compression,"specular_probe_bytes":probe_bytes,"panorama_source_bytes":panorama_bytes,"pmrem_bytes":pmrem_bytes,"ignored":ignored},
         "load_budget":{"source_bytes":budget.source_bytes(),"decoded_bytes":budget.decoded_bytes(),"target_maximum_bytes":asset::LoadBudget::maximum_bytes(),"explicit":fixture.get("load_budget").is_some(),"scope":"Same caps passed to KTX2 parsers and glTF import; not a total heap, network-transfer or GPU-memory limit"},
         "startup":{"device_ms":device_ms,"compressed_manifest_ms":compressed_manifest_ms,"compressed_image_fetch_parse_ms":compressed_image_fetch_parse_ms,"fetch_glb_ms":fetch_glb_ms,"decode_glb_ms":decode_ms,"prepare_upload_cpu_ms":upload_cpu_ms,"prepare_upload_complete_ms":upload_complete_ms,"environment_fetch_decode_ms":environment_fetch_decode_ms,"environment_upload_complete_ms":environment_upload_complete_ms,"specular_probe_fetch_upload_ms":specular_probe_fetch_upload_ms,"renderer_cpu_ms":renderer_cpu_ms,"first_frame_complete_ms":first_frame_ms},
         "effective":{"antialiasing":format!("{:?}",renderer.antialiasing_in_effect(&settings)),"render_size":renderer.render_size(),"scene_size":renderer.scene_size(),"binding_tier":format!("{:?}",renderer.binding_tier()),"fsr2_error":renderer.fsr2_error(),"ray_data":format!("{ray_data:?}"),"hardware_ray_tracing":renderer.ray_tracing_in_effect(&settings,&scene),"ray_tracing_error":renderer.ray_tracing_error(),"ray_tracing_stats":format!("{:?}",renderer.ray_tracing_stats()),"ray_traced_shadows":renderer.ray_traced_shadows_in_effect(&settings,&scene),"world_space_reflections":format!("{:?}",renderer.world_space_reflections_in_effect(&settings,&scene)),"dynamic_gi_quality":format!("{:?}",renderer.dynamic_gi_in_effect(&settings,&scene)),"dynamic_gi_volume":gi_volume.is_some(),"dynamic_gi_enabled":gi_volume.is_some() && renderer.dynamic_gi_in_effect(&settings,&scene)!=DynamicGiQuality::Off,"occlusion_culling":renderer.occlusion_culling_in_effect(&settings)},

@@ -213,6 +213,13 @@ an aesthetic pass/fail test. Compare the same view, settings, frame range,
 resolution and machine, without competing GPU work. GPU time and serialized
 frame-completion wall time mean different things.
 
+For opaque-pass diagnosis, both native `bistro` and `measure-browser` accept
+`--split`. It forces the existing depth/lighting two-pass path instead of the
+fused opaque path, and records `split_opaque` in reports. It is a diagnostic,
+not a changed default or a saved quality setting. Compare its combined depth
+and opaque timings, along with total GPU time, against the same camera, asset,
+warmup and settings without the flag.
+
 Fast preparation checks do not download the scene or require a GPU:
 
 ```sh

@@ -390,6 +390,58 @@ static view, and retain the first-frame counts with the warm timings.
 Remove `point_lights` for a matched lights-off
 comparison without changing emission, sun, exposure, or ambient settings.
 
+### Opt-in shadowed practical lights
+
+Keep the original quality/lean profiles as controls. To try physically
+transmitting bulb shells instead of opaque enclosures around point sources,
+explicitly generate a separate recipe (no assets are modified or downloaded):
+
+```sh
+bun scripts/prepare-bistro-practical-lights.ts
+bun scripts/tasks.ts measure-browser \
+  --fixture target/practical-lights/bistro-shadowed.json \
+  --asset-dir target/bistro-browser-1024-coherent-bc7 --view bike \
+  --size 1920x1080 --frames 60 --warmup 720 \
+  --capture target/practical-lights/bike.png \
+  --output target/practical-lights/bike.json
+```
+
+Use `--fixture examples/sgl-3d/fixtures/bistro-lean.json` and `--output FILE`
+on the preparation command to derive the lean variant. The native `bistro`
+example consumes the same generated fixture and existing asset. All point
+positions, intensities, ranges, source radii, camera and settings are retained;
+all 111 points request shadows, subject to visibility and atlas capacity.
+
+The fixture's explicit `transmissive_materials` list selects `MASTER_Light_Bulb`,
+`Emissive_StreetLight`, and the six named colored string-bulb materials. Both
+runners author these eight materials as dielectric glass (`metallic=0`,
+`transmission=1`) before upload, preserving emission, textures and geometry.
+No emissive heuristic, whole-instance capture exclusion or wall-caster
+exclusion is used. Metal housings, chains, supports, walls and other opaque
+materials remain casters. Reports include `material_authoring` with the applied
+names/count (under browser `content`); a missing or ambiguous name, duplicate
+entry or malformed list fails before any material changes are applied.
+
+This deliberately changes content and bulb appearance; it is not a claim that
+the imported asset was authored as glass. The source assigns these materials
+`metallicFactor=1` with no transmission. The
+[Khronos transmission specification](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_transmission/README.md#transparent-metals)
+explains that fully metallic surfaces absorb refracted light, so transmission
+alone does not make them glass. This uses the existing standard transmission
+path, also demonstrated by
+[Three's WebGPU glTF transmission example](https://threejs.org/examples/webgpu_loader_gltf_transmission.html),
+not a shadow-bias workaround.
+
+SGL's existing transmission limitations still apply: these surfaces cast no
+shadows, rays pass through and probe captures omit them; no colored glass
+shadow attenuation is added. This is suitable only for explicitly authored
+light-transmitting shells, never for opaque fixture frames. The generated
+recipe removes any existing static specular probe rather than silently reuse
+a bake of another light/material rig. Capture a new probe explicitly if needed.
+Compare matched controls without that probe and with the same GI choice;
+separate initial shadow population from warm-cache cost. Inspect lit pools,
+wall/fixture shadows and bulb appearance, not just the total GPU time.
+
 From the repository root, prepare one quality package explicitly:
 
 ```sh

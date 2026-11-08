@@ -34,6 +34,7 @@ mod native {
         exposure: Option<f32>,
         rect: bool,
         normal_maps: bool,
+        split: bool,
         max_quality: bool,
         aa: Option<Antialiasing>,
         no_gi: bool,
@@ -56,6 +57,7 @@ mod native {
                 exposure: None,
                 rect: false,
                 normal_maps: true,
+                split: false,
                 max_quality: false,
                 aa: None,
                 no_gi: false,
@@ -131,9 +133,10 @@ mod native {
                     "--no-ray-shadows" => options.no_ray_shadows = true,
                     "--rect-light" => options.rect = true,
                     "--no-normal-maps" => options.normal_maps = false,
+                    "--split" => options.split = true,
                     "--help" => {
                         println!(
-                            "bistro [--asset FILE] [--output DIR] [--view all|CAMERA_ID] [--size WxH] [--frames N] [--warmup N] [--exposure STOPS] [--rect-light] [--no-normal-maps] [--max-quality] [--aa taa|fsr2|smaa|off] [--no-gi] [--no-ray-shadows] [--settings FILE] [--gi-volume FILE] [--fixture FILE] [--cascades 1..4] [--capture-probe FILE]"
+                            "bistro [--asset FILE] [--output DIR] [--view all|CAMERA_ID] [--size WxH] [--frames N] [--warmup N] [--exposure STOPS] [--rect-light] [--no-normal-maps] [--split] [--max-quality] [--aa taa|fsr2|smaa|off] [--no-gi] [--no-ray-shadows] [--settings FILE] [--gi-volume FILE] [--fixture FILE] [--cascades 1..4] [--capture-probe FILE]"
                         );
                         std::process::exit(0);
                     }
@@ -220,6 +223,7 @@ mod native {
             options.aa,
         )?;
         settings.diagnostics.disable.normal_maps = !options.normal_maps;
+        settings.diagnostics.disable.fused_opaque = options.split;
         let cameras = bistro_scene::selected_cameras(fixture.as_ref(), &options.view)?;
         let model_scale =
             bistro_scene::model_scale(fixture.as_ref().unwrap_or(&serde_json::Value::Null))?;
@@ -315,7 +319,7 @@ mod native {
                 .remove(&image.index)
                 .map_or(asset::ImageSource::Decode, asset::ImageSource::Supplied))
         };
-        let loaded = asset::load_with_options(
+        let mut loaded = asset::load_with_options(
             &options.asset,
             asset::LoadOptions {
                 budget,
@@ -326,6 +330,10 @@ mod native {
         if !supplied.lock().unwrap().is_empty() {
             return Err("compressed manifest has indices absent from asset".into());
         }
+        let material_authoring = bistro_scene::apply_transmissive_materials(
+            &mut loaded.materials,
+            fixture.as_ref().unwrap_or(&serde_json::Value::Null),
+        )?;
         let material_names: Vec<_> = loaded.materials.iter().map(|m| m.name.clone()).collect();
         let triangles: usize = loaded.meshes.iter().map(|m| m.indices.len() / 3).sum();
         let vertices: usize = loaded.meshes.iter().map(|m| m.vertices.len()).sum();
@@ -647,7 +655,7 @@ mod native {
                     .ok_or("probe rgba16 must be a basename")?;
                 std::fs::write(options.output.join(basename), &payload)?;
                 spec["capture"] = serde_json::json!({"view":name,"after_frames":options.frames,"warmup_frames":warm_up,
-                    "settings":settings,"normal_maps":options.normal_maps,"rect_light":options.rect,"ray_data":format!("{ray_data:?}"),
+                    "settings":settings,"normal_maps":options.normal_maps,"split_opaque":options.split,"rect_light":options.rect,"ray_data":format!("{ray_data:?}"),
                     "applied_frame":applied_capture_frame,"camera_unused_for_capture":true,
                     "dynamic_gi_volume":gi_volume.map(|v|serde_json::json!({"origin":v.origin.to_array(),"spacing":v.spacing.to_array(),"probes":v.probes})),
                     "dynamic_gi_in_effect":format!("{:?}",renderer.dynamic_gi_in_effect(&settings,&scene)),
@@ -694,8 +702,8 @@ mod native {
         std::fs::write(
             options.output.join("measurements.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
-                "adapter":format!("{} / {:?}",info.name,info.backend),"device_features":format!("{:?}",device.features()),"asset":options.asset,"model_scale":model_scale,"triangles":triangles,"vertices":vertices,"material_batches":mesh_count,"materials":material_count,"decoded_image_bytes":image_bytes,"load_ms":load_ms,"prepare_upload_ms":upload_ms,"ignored":ignored,"ray_data":format!("{ray_data:?}"),"load_budget":{"source_bytes":budget.source_bytes(),"decoded_bytes":budget.decoded_bytes()},"owned_supplied_image_bytes":allowance.used,"compressed_manifest":manifest,
-                "size":options.size,"frames_per_view":options.frames,"local_lights":bistro_scene::local_light_report(&scene, &local_light_ids)?,"warm_up_frames":warm_up,"exposure_stops":exposure,"rect_light":options.rect,"normal_maps":options.normal_maps,"views":reports,"fixture":fixture,
+                "adapter":format!("{} / {:?}",info.name,info.backend),"device_features":format!("{:?}",device.features()),"asset":options.asset,"model_scale":model_scale,"triangles":triangles,"vertices":vertices,"material_batches":mesh_count,"materials":material_count,"material_authoring":material_authoring,"decoded_image_bytes":image_bytes,"load_ms":load_ms,"prepare_upload_ms":upload_ms,"ignored":ignored,"ray_data":format!("{ray_data:?}"),"load_budget":{"source_bytes":budget.source_bytes(),"decoded_bytes":budget.decoded_bytes()},"owned_supplied_image_bytes":allowance.used,"compressed_manifest":manifest,
+                "size":options.size,"frames_per_view":options.frames,"local_lights":bistro_scene::local_light_report(&scene, &local_light_ids)?,"warm_up_frames":warm_up,"exposure_stops":exposure,"rect_light":options.rect,"normal_maps":options.normal_maps,"split_opaque":options.split,"views":reports,"fixture":fixture,
                 "settings": settings, "max_quality": options.max_quality,
                 "gi_volume": gi_volume.map(|volume| serde_json::json!({"origin":volume.origin.to_array(),"spacing":volume.spacing.to_array(),"probes":volume.probes})),
                 "lighting":"Explicit supplied HDRI/PMREM and authored lights, recorded per view and in the optional fixture; optional LTC rectangle, dynamic GI and authored local specular probe; no reference-renderer parity claim"
