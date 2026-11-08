@@ -14,6 +14,24 @@ SGL grew out of AI-authored games that kept rebuilding the same internals.
 This is the shared library those games now use. The aim is to make it easier
 to build your own game—and, if it inspires you, your own library.
 
+## Rendered with SGL
+
+Actual SGL3D captures in the browser with WebGPU. Click a PNG for full resolution.
+
+[![Bistro: a sunlit cobblestone street, café terrace, and blue scooter rendered with SGL3D](assets/showcase/bistro.png)](assets/showcase/bistro.png)
+
+**Bistro · 3840 × 2160**: detailed PBR materials, diffuse global illumination,
+ambient occlusion, and cascaded shadows.
+
+[![Sponza: sunlight across the atrium floor beneath ornate stone arches and colourful curtains rendered with SGL3D](assets/showcase/sponza.png)](assets/showcase/sponza.png)
+
+**Sponza · 1920 × 1080**: diffuse global illumination, sunlight and shadows,
+and an authored local reflection probe for the covered gallery.
+
+Scenes: Amazon Lumberyard Bistro and Intel Sponza 2022 with the Curtains add-on.
+[Capture details and full credits](assets/showcase/README.md).
+Only rendered images are included, not the scene assets.
+
 ## Start here
 
 **Building a game with an AI agent?** Point it at
