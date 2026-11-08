@@ -368,7 +368,26 @@ They are unshadowed short-range approximations: the source's opaque emissive
 enclosures would otherwise self-occlude point lights inside them. Nearby
 surfaces can receive light through walls; they do not substitute for the
 sun's shadows. Both reports read registered/active/shadow-casting counts back
-from retained scene light state. Remove `point_lights` for a matched lights-off
+from retained scene light state. Native per-view `local_shadows` and browser
+`lighting.local_shadows` additionally report actual atlas occupancy, overflow,
+static-layer draws, face draws and total draw operations. The first frame is
+reported separately from measured-frame min/max/totals, so warm-cache timings
+do not hide cache population. Counts cover visible shadow-casting lights, not
+all authored lights; atlas overflow remains lit without shadows. They use the
+existing `Renderer::local_shadow_stats` accessor, without enabling GPU
+readbacks or changing the renderer.
+
+For a matched shadow-cost comparison, copy the descriptor and set each
+point light's `casts_shadow` to true, keeping positions, intensity, range and
+other settings unchanged. Inspect lamp self-occlusion as well as wall leakage:
+this is a diagnostic comparison, not a recommendation to change the maintained
+profiles. Use an unobstructed source or author its emitting enclosure correctly
+before relying on practical shadows. Static cache reuse and screen-coverage
+allocation already apply to all eligible lights; a small manual light cap is
+not required. Repeat camera motion and changing casters separately from a
+static view, and retain the first-frame counts with the warm timings.
+
+Remove `point_lights` for a matched lights-off
 comparison without changing emission, sun, exposure, or ambient settings.
 
 From the repository root, prepare one quality package explicitly:

@@ -1,0 +1,170 @@
+{
+  "schema": 1,
+  "scene": "intel-sponza-curtains-gi-v1",
+  "asset": "Sponza.glb",
+  "scale": 1,
+  "source_metadata": "SOURCE.json",
+  "environment": {
+    "metadata": "environment.json",
+    "panorama": "panorama.png",
+    "pmrem": "pmrem.rgba16"
+  },
+  "default_camera": "atrium",
+  "size": [
+    1280,
+    720
+  ],
+  "warmup_frames": 180,
+  "exposure_stops": 0,
+  "ray_data": "enabled",
+  "cameras": [
+    {
+      "id": "atrium",
+      "eye": [
+        -8.80743,
+        1.59221947,
+        -0.85825783
+      ],
+      "look_at": [
+        0.83167816,
+        3.53535688,
+        0.96158031
+      ],
+      "fov_y_degrees": 58.5119763983259,
+      "near": 0.1,
+      "ambient_occlusion_radius": 0.5,
+      "sun": {
+        "direction": [
+          0.550570108523192,
+          -0.8281202020680003,
+          0.10530663097647519
+        ],
+        "color": [
+          1,
+          0.96,
+          0.9
+        ],
+        "illuminance": 3,
+        "shadow_distance": 60,
+        "shadow_cascades": 3
+      },
+      "environment_intensity": 1,
+      "environment_yaw": 0,
+      "backdrop_brightness": 1,
+      "source_camera": "PhysCamera001"
+    },
+    {
+      "id": "balcony",
+      "eye": [
+        10.5311031,
+        7.352985,
+        1.52825129
+      ],
+      "look_at": [
+        0.61227289,
+        7.57761783,
+        0.27671326
+      ],
+      "fov_y_degrees": 58.626778232862875,
+      "near": 0.1,
+      "ambient_occlusion_radius": 0.5,
+      "sun": {
+        "direction": [
+          0.550570108523192,
+          -0.8281202020680003,
+          0.10530663097647519
+        ],
+        "color": [
+          1,
+          0.96,
+          0.9
+        ],
+        "illuminance": 3,
+        "shadow_distance": 60,
+        "shadow_cascades": 3
+      },
+      "environment_intensity": 1,
+      "environment_yaw": 0,
+      "backdrop_brightness": 1,
+      "source_camera": "PhysCamera002"
+    },
+    {
+      "id": "curtains",
+      "eye": [
+        -9.594356,
+        6.921101,
+        5.35278
+      ],
+      "look_at": [
+        -0.18087896,
+        6.71901218,
+        1.98445546
+      ],
+      "fov_y_degrees": 58.23932239939919,
+      "near": 0.1,
+      "ambient_occlusion_radius": 0.5,
+      "sun": {
+        "direction": [
+          0.550570108523192,
+          -0.8281202020680003,
+          0.10530663097647519
+        ],
+        "color": [
+          1,
+          0.96,
+          0.9
+        ],
+        "illuminance": 3,
+        "shadow_distance": 60,
+        "shadow_cascades": 3
+      },
+      "environment_intensity": 1,
+      "environment_yaw": 0,
+      "backdrop_brightness": 1,
+      "source_camera": "PhysCamera004"
+    }
+  ],
+  "settings": {
+    "antialiasing": "Taa",
+    "atmosphere": false,
+    "scene_resolution": "Full",
+    "ambient_occlusion": "High",
+    "shadow_quality": "High",
+    "bloom": "Off",
+    "dynamic_gi": "High",
+    "screen_space_reflections": "Off",
+    "world_space_reflections": "Off",
+    "hardware_ray_tracing": false,
+    "ray_traced_shadows": false
+  },
+  "lighting": "Intel camera positions/FOV and SUN orientation; explicitly authored 3-lux warm sun and uniform neutral 0.125 linear-radiance environment. Source punctual lights are all zero intensity and remain off. This is a controlled local lighting workload, not an Intel reference-image match. The optional GI fixture adds an authored 952-probe volume over the atrium and galleries; it excludes upper roof/exterior geometry. Its warm-up is not a convergence guarantee.",
+  "provenance": {
+    "title": "Intel Sponza 2022 with Colorful Curtains",
+    "source": "https://www.intel.com/content/www/us/en/developer/topic-technology/graphics-research/samples.html",
+    "creator": "Frank Meinl and Anton Kaplanyan; Sponza Addon Package Crew credited in local notices",
+    "license": "Archive includes CC BY 4.0 plus a restrictive personal/educational and limited-commercial-use preamble. Preserve both; this fixture is for local evaluation, not asset redistribution."
+  },
+  "notices": [
+    "BASE-LICENSE.txt",
+    "CURTAINS-LICENSE.txt",
+    "SGL-ATTRIBUTION.txt",
+    "SOURCE.json"
+  ],
+  "dynamic_gi_volume": {
+    "origin": [
+      -14,
+      0,
+      -7
+    ],
+    "spacing": [
+      2,
+      2,
+      2
+    ],
+    "probes": [
+      17,
+      7,
+      8
+    ]
+  }
+}

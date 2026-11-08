@@ -623,6 +623,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
     let mut draws = Vec::new();
     let mut first_frame_ms = 0.;
     let mut gi_reports = Vec::new();
+    let mut local_shadows = bistro_scene::LocalShadowMeasurements::default();
     let motion = options["motion"].as_bool() == Some(true);
     for index in 0..warmup + frames {
         phase(if index < warmup {
@@ -666,6 +667,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
             &view,
             timing.as_ref(),
         );
+        local_shadows.observe(renderer.local_shadow_stats(), index >= warmup);
         let commands = encoder.finish();
         let encode_ms = now() - encode;
         queue.submit([commands]);
@@ -780,7 +782,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
         json!({"schema":1,"benchmark":"embedded-scene-v1","scene":fixture["scene"],"fixture":fixture,
         "view":camera_id,"camera":camera_spec,"final_eye":if motion {(eye+Vec3::new((((warmup+frames-1) as f32/60.)*0.7).sin()*0.35,0.,0.)).to_array()}else{eye.to_array()},"size":size,"frames":frames,"warmup_frames":warmup,
         "motion":{"enabled":motion,"route":"shared eye/target x += sin(t*0.7)*0.35 metres","fixed_step_seconds":1./60.,"capture_frame":warmup+frames-1},"exposure_stops":exposure,
-        "settings":settings,"diagnostics":{"normal_maps_disabled":settings.diagnostics.disable.normal_maps},"lighting":{"local_lights":bistro_scene::local_light_report(&scene, &local_light_ids)?,"sun":effective_sun,"environment_intensity":frame.diffuse_environment.intensity,"ambient_occlusion_radius_m":frame.ambient_occlusion_radius,"rect":options["rect"].as_bool().unwrap_or(false)},
+        "settings":settings,"diagnostics":{"normal_maps_disabled":settings.diagnostics.disable.normal_maps},"lighting":{"local_lights":bistro_scene::local_light_report(&scene, &local_light_ids)?,"local_shadows":local_shadows.report(),"sun":effective_sun,"environment_intensity":frame.diffuse_environment.intensity,"ambient_occlusion_radius_m":frame.ambient_occlusion_radius,"rect":options["rect"].as_bool().unwrap_or(false)},
         "adapter":{"name":info.name,"backend":format!("{:?}",info.backend),"device_type":format!("{:?}",info.device_type),"available_features":adapter_features,"requested_features":format!("{:?}",device.features()),"adapter_limits":adapter_limits,"device_limits":limits(&device.limits())},
         "content":{"glb_bytes":glb_bytes,"triangles":triangles,"vertices":vertices,"material_batches":mesh_count,"model_scale":model_scale,"materials":materials,"images":images,"decoded_image_bytes":image_bytes,"compression":compression,"specular_probe_bytes":probe_bytes,"panorama_source_bytes":panorama_bytes,"pmrem_bytes":pmrem_bytes,"ignored":ignored},
         "load_budget":{"source_bytes":budget.source_bytes(),"decoded_bytes":budget.decoded_bytes(),"target_maximum_bytes":asset::LoadBudget::maximum_bytes(),"explicit":fixture.get("load_budget").is_some(),"scope":"Same caps passed to KTX2 parsers and glTF import; not a total heap, network-transfer or GPU-memory limit"},

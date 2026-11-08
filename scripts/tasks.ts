@@ -42,6 +42,10 @@ const commands: Array<{ argv: string[]; env?: Record<string, string> }> = [
   },
   // Release semantics differ (debug_assertions off); sgl-net must hold there.
   { argv: ["cargo", "test", "-p", "sgl-net", "-p", "sgl-net-tests", "--release"] },
+  // Example unit tests are not run by `cargo test --workspace` by default.
+  // Exercise the shared fixture reports and offline scene converter without
+  // downloading the optional multi-gigabyte source assets.
+  { argv: ["cargo", "test", "-p", "sgl-3d-examples", "--example", "bistro", "--example", "sponza_prepare", "--example", "sponza_environment"] },
   { argv: ["bun", "test", "scripts"] },
   // Every library builds for the browser, SGL3D and its ports included. Pure
   // tests also run there.

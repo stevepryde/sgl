@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "encoding": "rgba16f-le",
+  "levels": 7,
+  "face_size": 64,
+  "center": [
+    16.5,
+    2,
+    0
+  ],
+  "influence": {
+    "min": [
+      11.5,
+      -2,
+      -2.2
+    ],
+    "max": [
+      21.5,
+      4.7,
+      2.2
+    ]
+  },
+  "blend": [
+    1,
+    0.5,
+    0.5
+  ],
+  "proxy": {
+    "min": [
+      11.5,
+      -0.7,
+      -2.2
+    ],
+    "max": [
+      20,
+      4.8,
+      2.2
+    ]
+  },
+  "rgba16": "sponza-back-gallery-probe.rgba16",
+  "exclude_materials": [],
+  "purpose": "Local specular capture inside the covered back gallery. Full influence encloses the far door; proxy approximates the gallery enclosure. Re-export explicitly after scene or lighting edits."
+}

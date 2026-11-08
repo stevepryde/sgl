@@ -1,0 +1,177 @@
+{
+  "schema": 1,
+  "scene": "intel-sponza-curtains-sunlit-v1",
+  "asset": "Sponza.glb",
+  "scale": 1,
+  "source_metadata": "SOURCE.json",
+  "environment": {
+    "metadata": "sky-environment.json",
+    "panorama": "sky-panorama.png",
+    "pmrem": "sky-pmrem.rgba16"
+  },
+  "default_camera": "hero",
+  "size": [
+    1920,
+    1080
+  ],
+  "warmup_frames": 720,
+  "exposure_stops": 2.1,
+  "ray_data": "enabled",
+  "cameras": [
+    {
+      "id": "hero",
+      "eye": [
+        -10,
+        2,
+        -0.3
+      ],
+      "look_at": [
+        4.5,
+        3.8,
+        0
+      ],
+      "fov_y_degrees": 58,
+      "near": 0.1,
+      "ambient_occlusion_radius": 0.25,
+      "sun": {
+        "direction": [
+          0.26196233663975266,
+          -0.96378340509,
+          0.049972815193973605
+        ],
+        "color": [
+          1,
+          0.9353794,
+          0.8612314
+        ],
+        "illuminance": 7.0241211,
+        "shadow_distance": 60,
+        "shadow_cascades": 3
+      },
+      "environment_intensity": 1,
+      "environment_yaw": 3.58,
+      "backdrop_brightness": 1
+    },
+    {
+      "id": "balcony",
+      "eye": [
+        10.5311031,
+        7.352985,
+        1.52825129
+      ],
+      "look_at": [
+        0.61227289,
+        7.57761783,
+        0.27671326
+      ],
+      "fov_y_degrees": 58.626778232862875,
+      "near": 0.1,
+      "ambient_occlusion_radius": 0.25,
+      "sun": {
+        "direction": [
+          0.26196233663975266,
+          -0.96378340509,
+          0.049972815193973605
+        ],
+        "color": [
+          1,
+          0.9353794,
+          0.8612314
+        ],
+        "illuminance": 7.0241211,
+        "shadow_distance": 60,
+        "shadow_cascades": 3
+      },
+      "environment_intensity": 1,
+      "environment_yaw": 3.58,
+      "backdrop_brightness": 1,
+      "source_camera": "PhysCamera002"
+    },
+    {
+      "id": "curtains",
+      "eye": [
+        -9.594356,
+        6.921101,
+        5.35278
+      ],
+      "look_at": [
+        -0.18087896,
+        6.71901218,
+        1.98445546
+      ],
+      "fov_y_degrees": 58.23932239939919,
+      "near": 0.1,
+      "ambient_occlusion_radius": 0.25,
+      "sun": {
+        "direction": [
+          0.26196233663975266,
+          -0.96378340509,
+          0.049972815193973605
+        ],
+        "color": [
+          1,
+          0.9353794,
+          0.8612314
+        ],
+        "illuminance": 7.0241211,
+        "shadow_distance": 60,
+        "shadow_cascades": 3
+      },
+      "environment_intensity": 1,
+      "environment_yaw": 3.58,
+      "backdrop_brightness": 1,
+      "source_camera": "PhysCamera004"
+    }
+  ],
+  "settings": {
+    "antialiasing": "Taa",
+    "atmosphere": false,
+    "scene_resolution": "Full",
+    "ambient_occlusion": "High",
+    "shadow_quality": "High",
+    "bloom": "On",
+    "dynamic_gi": "High",
+    "screen_space_reflections": "Off",
+    "world_space_reflections": "Off",
+    "hardware_ray_tracing": false,
+    "ray_traced_shadows": false,
+    "tone_mapping": "AcesFilmic",
+    "anisotropic_filtering": "X16"
+  },
+  "lighting": "Kloppenheim 05 HDR sky with its measured sun lobe replaced by aligned directional shadows. Authored hero camera, +2.1 EV ACES exposure, 4095-probe full-building high dynamic GI, full geometry, no artificial fill or practical lights. Source balcony/curtains cameras remain available.",
+  "provenance": {
+    "title": "Intel Sponza 2022 with Colorful Curtains",
+    "source": "https://www.intel.com/content/www/us/en/developer/topic-technology/graphics-research/samples.html",
+    "creator": "Frank Meinl and Anton Kaplanyan; Sponza Addon Package Crew credited in local notices",
+    "license": "Archive includes CC BY 4.0 plus a restrictive personal/educational and limited-commercial-use preamble. Preserve both; this fixture is for local evaluation, not asset redistribution.",
+    "environment": "https://polyhaven.com/a/kloppenheim_05",
+    "environment_creator": "Greg Zaal",
+    "environment_license": "CC0"
+  },
+  "notices": [
+    "BASE-LICENSE.txt",
+    "CURTAINS-LICENSE.txt",
+    "SGL-ATTRIBUTION.txt",
+    "SOURCE.json",
+    "HDRI-ATTRIBUTION.txt",
+    "SKY-PROCESSING.json",
+    "THREE-LICENSE.txt"
+  ],
+  "dynamic_gi_volume": {
+    "origin": [
+      -18,
+      -2,
+      -11
+    ],
+    "spacing": [
+      2,
+      2,
+      2
+    ],
+    "probes": [
+      21,
+      13,
+      15
+    ]
+  }
+}

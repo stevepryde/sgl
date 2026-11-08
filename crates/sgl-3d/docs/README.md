@@ -183,6 +183,10 @@ and an asynchronous readback.
   pacing. The [Bistro workflow](../../../examples/sgl-3d/BISTRO.md) extends it
   to prepared glTF scenes, matched native/browser cameras, explicit fixture
   settings, exact output captures and deterministic motion sequences.
+  The optional [Intel Sponza and curtains workflow](../../../examples/sgl-3d/SPONZA.md)
+  uses that runner with a reproducible local-only asset cache, neutral baselines
+  and a full-building source-HDR sunlit/GI recipe with optional native-authored
+  gallery reflections; its downloaded assets are never bundled with SGL.
 - Need a rendering feature SGL3D lacks? An effect of your own surfaces
   (waves, wind, a glass's varying thickness) is a
   [shader](../README.md#programmable-surfaces): the game's WGSL, which every

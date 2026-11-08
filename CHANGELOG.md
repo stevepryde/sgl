@@ -15,6 +15,17 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d-examples::{bistro, browser_bistro}` reports now include actual
+  local-shadow atlas occupancy, overflow and draw work, with first-frame
+  population separate from measured frames. Rebuild the examples to record
+  these fields; no game-code changes or asset regeneration are needed.
+
+- `sgl-3d-examples` now includes an optional Intel Sponza/Colorful Curtains
+  lighting workload alongside Bistro, with neutral baselines and a source-HDR
+  sunlit/GI recipe covering the full building rather than only the atrium.
+  Run the [local-only bootstrap](examples/sgl-3d/SPONZA.md)
+  and explicit sky/gallery-reflection exports; no game-code changes are needed.
+
 - `sgl-3d` Bistro fixtures now use higher sunlight, façade-covering GI,
   authored point lights and ACES filmic instead of broad building shadow
   and emissive-only lamps. Rebuild the example and replay the fixtures;

@@ -528,6 +528,7 @@ mod native {
             frame.environment = Some(environment);
             let mut timing = GpuTiming::new(&device, &queue);
             let mut times: BTreeMap<&'static str, Vec<f64>> = BTreeMap::new();
+            let mut local_shadows = bistro_scene::LocalShadowMeasurements::default();
             for index in 0..options.frames {
                 frame.camera_cut = index == 0;
                 frame.elapsed_seconds = index as f64 / 60.;
@@ -552,6 +553,7 @@ mod native {
                     &view,
                     timing.as_ref(),
                 );
+                local_shadows.observe(renderer.local_shadow_stats(), u64::from(index) >= warm_up);
                 queue.submit([encoder.finish()]);
                 if let Some(timing) = &mut timing {
                     timing.submitted(&queue);
@@ -671,7 +673,7 @@ mod native {
                 serde_json::json!({"median_ms":at(0.5),"p95_ms":at(0.95),"frames":values.len()}),
             );
             }
-            reports.push(serde_json::json!({"view":name,"eye":frame.camera.eye.to_array(),"look_at":camera_spec.map_or(serde_json::json!(look_at.to_array()),|c| c["look_at"].clone()),"fov_y_degrees":camera_spec.and_then(|c|c["fov_y_degrees"].as_f64()).unwrap_or(55.),"camera_view":frame.camera.view.to_cols_array(),"camera_projection":frame.camera.projection.to_cols_array(),"gpu_timings":groups,
+            reports.push(serde_json::json!({"view":name,"eye":frame.camera.eye.to_array(),"look_at":camera_spec.map_or(serde_json::json!(look_at.to_array()),|c| c["look_at"].clone()),"fov_y_degrees":camera_spec.and_then(|c|c["fov_y_degrees"].as_f64()).unwrap_or(55.),"camera_view":frame.camera.view.to_cols_array(),"camera_projection":frame.camera.projection.to_cols_array(),"gpu_timings":groups,"local_shadows":local_shadows.report(),
                 "directional_light": {"direction":frame.directional_lights[0].unwrap().direction.to_array(),"color":frame.directional_lights[0].unwrap().color,"illuminance":frame.directional_lights[0].unwrap().illuminance,"shadow_cascades":frame.directional_lights[0].unwrap().shadow.map(|s|s.cascades),"shadow_distance":frame.directional_lights[0].unwrap().shadow.map(|s|s.distance)},
                 "environment_intensity": frame.diffuse_environment.intensity,
                 "environment_yaw":frame.diffuse_environment.yaw,

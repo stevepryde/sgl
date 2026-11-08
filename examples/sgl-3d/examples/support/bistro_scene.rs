@@ -335,6 +335,42 @@ pub fn local_light_report(scene: &sgl_3d::Scene, ids: &[sgl_3d::LightId]) -> Res
     Ok(json!({"registered":ids.len(),"active":active,"shadow_casting":shadow_casting}))
 }
 
+/// Actual atlas occupancy and work, kept separate from authored light counts.
+/// Warmup is deliberately excluded from measured totals, but the first frame
+/// remains visible so a static cache cannot hide its population cost.
+#[derive(Default)]
+pub struct LocalShadowMeasurements {
+    first: Option<sgl_3d::LocalShadowStats>,
+    measured: Vec<sgl_3d::LocalShadowStats>,
+}
+
+impl LocalShadowMeasurements {
+    pub fn observe(&mut self, stats: sgl_3d::LocalShadowStats, measured: bool) {
+        self.first.get_or_insert(stats);
+        if measured {
+            self.measured.push(stats);
+        }
+    }
+
+    pub fn report(&self) -> Value {
+        let frame = |s: sgl_3d::LocalShadowStats| {
+            json!({
+                "shadowed":s.shadowed,"atlas_overflow":s.unshadowed,
+                "layers_drawn":s.layers_drawn,"faces_drawn":s.faces_drawn,"draws":s.draws
+            })
+        };
+        let range = |get: fn(&sgl_3d::LocalShadowStats) -> usize| {
+            let values: Vec<_> = self.measured.iter().map(get).collect();
+            json!({"min":values.iter().min(),"max":values.iter().max(),"total":values.iter().sum::<usize>()})
+        };
+        json!({"first_frame":self.first.map(frame),"measured_frames":self.measured.len(),
+            "last_measured_frame":self.measured.last().copied().map(frame),
+            "shadowed":range(|s|s.shadowed),"atlas_overflow":range(|s|s.unshadowed),
+            "layers_drawn":range(|s|s.layers_drawn),"faces_drawn":range(|s|s.faces_drawn),"draws":range(|s|s.draws),
+            "scope":"Visible shadow-casting lights only; atlas overflow is lit without shadows. Warmup and capture frames excluded from measured totals."})
+    }
+}
+
 pub fn rect_light() -> Light {
     Light {
         position: Vec3::new(-7.2, 4.5, 3.),
@@ -611,6 +647,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shadow_measurements_separate_population_from_measured_cache_work() {
+        let mut observations = LocalShadowMeasurements::default();
+        observations.observe(
+            sgl_3d::LocalShadowStats {
+                shadowed: 111,
+                unshadowed: 2,
+                layers_drawn: 666,
+                faces_drawn: 666,
+                draws: 1400,
+            },
+            false,
+        );
+        observations.observe(
+            sgl_3d::LocalShadowStats {
+                shadowed: 110,
+                unshadowed: 3,
+                ..Default::default()
+            },
+            true,
+        );
+        observations.observe(
+            sgl_3d::LocalShadowStats {
+                shadowed: 109,
+                unshadowed: 4,
+                layers_drawn: 1,
+                faces_drawn: 2,
+                draws: 8,
+            },
+            true,
+        );
+        let report = observations.report();
+        assert_eq!(report["first_frame"]["faces_drawn"], 666);
+        assert_eq!(report["measured_frames"], 2);
+        assert_eq!(report["faces_drawn"], json!({"min":0,"max":2,"total":2}));
+        assert_eq!(report["atlas_overflow"], json!({"min":3,"max":4,"total":7}));
+        assert_eq!(report["last_measured_frame"]["shadowed"], 109);
+        let empty = LocalShadowMeasurements::default().report();
+        assert_eq!(empty["first_frame"], Value::Null);
+        assert_eq!(empty["shadowed"], json!({"min":null,"max":null,"total":0}));
+    }
+
+    #[test]
     fn authored_point_lights_keep_world_space_units_and_reject_invalid_inputs() {
         assert!(point_lights_from_json(&json!({})).unwrap().is_empty());
         let light = json!({"position":[-1.8,3.87,-7.52],"color":[1.,0.72,0.45],
@@ -681,6 +759,82 @@ mod tests {
         assert_eq!(fixture["cameras"][0]["sun"]["shadow_cascades"], 3);
         assert_eq!(applied["directional_lights"][0]["shadow"]["cascades"], 4);
         assert!((applied["exposure_stops"].as_f64().unwrap() - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sponza_recipes_resolve_in_the_shared_native_browser_harness() {
+        for source in [
+            include_str!("../../fixtures/sponza-daylight.json"),
+            include_str!("../../fixtures/sponza-gi.json"),
+            include_str!("../../fixtures/sponza-sunlit.json"),
+            include_str!("../../fixtures/sponza-lamps.json"),
+        ] {
+            let recipe: Value = serde_json::from_str(source).unwrap();
+            resolve_settings(settings(false, false), Some(&recipe), None, None).unwrap();
+            point_lights_from_json(&recipe).unwrap();
+            let cameras = selected_cameras(Some(&recipe), "all").unwrap();
+            assert!(!cameras.is_empty());
+            let default = recipe["default_camera"].as_str().unwrap();
+            assert_eq!(selected_cameras(Some(&recipe), default).unwrap().len(), 1);
+            for camera in cameras {
+                let frame = frame_from_json(
+                    &camera,
+                    [1920, 1080],
+                    recipe["exposure_stops"].as_f64().unwrap() as f32,
+                    None,
+                )
+                .unwrap();
+                assert!(frame.camera.view.is_finite());
+                assert!(frame.camera.projection.is_finite());
+            }
+            if let Some(volume) = recipe.get("dynamic_gi_volume") {
+                volume_from_json(volume).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn sponza_sunlit_recipes_cover_the_source_building_not_just_the_courtyard() {
+        // Independent geometry bounds from the pinned Intel base + curtains
+        // export, including the far wood door at x=19.37..19.62 and roof at
+        // y=18.76. Covered receivers must not sit in the volume's sky-fallback
+        // fade merely because the visible courtyard itself fits the lattice.
+        let source_min = Vec3::new(-16.2456, -1.1311, -9.4021);
+        let source_max = Vec3::new(20.0013, 18.7572, 14.3639);
+        for source in [
+            include_str!("../../fixtures/sponza-sunlit.json"),
+            include_str!("../../fixtures/sponza-lamps.json"),
+        ] {
+            let recipe: Value = serde_json::from_str(source).unwrap();
+            let volume = volume_from_json(&recipe["dynamic_gi_volume"]).unwrap();
+            let end = volume.origin
+                + volume.spacing * Vec3::from_array(volume.probes.map(|n| (n - 1) as f32));
+            assert!(
+                volume.origin.cmple(source_min).all(),
+                "first probe must enclose source minimum"
+            );
+            assert!(
+                end.cmpge(source_max).all(),
+                "last probe must enclose source maximum"
+            );
+        }
+    }
+
+    #[test]
+    fn sponza_gallery_reflection_keeps_the_far_door_inside_its_full_influence() {
+        let descriptor: Value =
+            serde_json::from_str(include_str!("../../fixtures/sponza-gallery-probe.json")).unwrap();
+        let (_, bytes) = probe_shape(&descriptor).unwrap();
+        let probe = probe_from_json(&descriptor, &vec![0; bytes]).unwrap();
+        // Source wood_door bounds, not the approximate gallery proxy box.
+        let door_min = Vec3::new(19.3685, -0.6519, -1.2158);
+        let door_max = Vec3::new(19.6152, 2.2091, 1.2791);
+        let blend = probe.blend;
+        assert!((probe.influence.min + blend).cmple(door_min).all());
+        assert!((probe.influence.max - blend).cmpge(door_max).all());
+        let proxy = probe.proxy.unwrap();
+        assert!(probe.center.cmpge(proxy.min).all());
+        assert!(probe.center.cmple(proxy.max).all());
     }
 
     #[test]

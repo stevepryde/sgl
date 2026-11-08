@@ -1,0 +1,22 @@
+{
+  "sourcePage": "https://www.intel.com/content/www/us/en/developer/topic-technology/graphics-research/samples.html",
+  "archives": [
+    {
+      "id": "base",
+      "url": "https://cdrdv2.intel.com/v1/dl/getContent/830833",
+      "bytes": 3987608266,
+      "sha256": "b8bb853884ab1566b3beb35666bd09882a4e0dc16661e4684e103792cf0229b9",
+      "gltf": "main_sponza/NewSponza_Main_glTF_003.gltf",
+      "license": "main_sponza/credits_license.txt"
+    },
+    {
+      "id": "curtains",
+      "url": "https://cdrdv2.intel.com/v1/dl/getContent/726650",
+      "bytes": 786898766,
+      "sha256": "3ba96e967c8f5ad0a133309cedb342e3563f9cccb42d04e188f55c0f2125bb65",
+      "gltf": "pkg_a_curtains/NewSponza_Curtains_glTF.gltf",
+      "license": "pkg_a_curtains/credits_license.txt"
+    }
+  ],
+  "license": "CC-BY-4.0; original credits_license.txt also contains a limited-commercial-use preamble. Preserve both; local evaluation only, clarify terms before redistribution."
+}
