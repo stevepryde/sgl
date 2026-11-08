@@ -9,13 +9,18 @@ or bake payloads are distributed here.
 
 ## Bistro
 
-[bistro.png](bistro.png) is the 3840 × 2160 quality capture, using the `bevy`
-camera in the [Bistro quality fixture](../../examples/sgl-3d/fixtures/bistro-quality.json).
+[bistro.png](bistro.png) is the 3840 × 2160 sunlit quality capture, using the
+`bevy` camera in the [Bistro quality fixture](../../examples/sgl-3d/fixtures/bistro-quality.json).
+The sun is 70 degrees above the horizon, reaching the café terrace and most
+of the street. An expanded 2,592-probe GI volume covers the visible façades
+and courtyard, retaining definition in the indirect lighting.
 The capture uses full geometry, 1024-pixel alpha-preserving BC7 textures, TAA,
 16× anisotropic filtering, Medium AO, four High shadow cascades, Low diffuse
-GI, and AgX at +0.6 EV. It was captured at frame 479 after 360 warm-up frames.
-This capture does not use hardware ray tracing, SSR, or world-space reflections.
-See the [Bistro example guide](../../examples/sgl-3d/BISTRO.md) to run the scene.
+GI, ACES at +0.6 EV, and 111 authored local lights. The local lights do not
+cast shadows in this capture. It was captured at frame 839 after 720 warm-up
+frames. This capture does not use hardware ray tracing, SSR, or world-space
+reflections. See the [Bistro example guide](../../examples/sgl-3d/BISTRO.md)
+to run the scene.
 
 Scene: **Amazon Lumberyard Bistro**, Amazon, distributed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
