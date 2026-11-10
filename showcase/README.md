@@ -28,9 +28,12 @@ wrangler dev --config showcase/wrangler.jsonc
 ```
 
 Use the installed Wrangler CLI. The build writes `target/showcase/site/` and
-copies only the media named in [catalog.json](catalog.json). It takes new media
+copies only the media named in [catalog.json](catalog.json). It takes media
 from `.cache/showcase/`, or downloads existing media from the published site
-when building a clean checkout. Both directories are ignored by Git. Keep a
+using `curl` when building a clean checkout. Each transfer prints its path and
+has a 15-second connection timeout and a two-minute total deadline. Completed
+downloads are cached atomically; rerunning after a failure reuses them and
+retries the unfinished file. Both directories are ignored by Git. Keep a
 backup of new captures until they have been published. Do not use the build
 output as the only copy of unpublished renders; each build replaces it.
 
@@ -87,7 +90,7 @@ storage explicitly; do not silently reduce the original download's quality.
 
 ## Publish
 
-Install `spdeploy`, Bun, and Wrangler on the publishing machine. From the
+Install `spdeploy`, Bun, curl, and Wrangler on the publishing machine. From the
 repository root, run:
 
 ```sh

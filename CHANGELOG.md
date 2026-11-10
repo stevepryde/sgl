@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` showcase builds now use bounded curl transfers with progress and a
+  reusable cache instead of silent, unbounded downloads that could hang.
+  Install curl on the publishing machine; no game-code changes are needed.
 - `sgl-3d` showcase publication now runs the build and Cloudflare upload through
   `spdeploy --operation deploy --no-ui` instead of two manual commands.
   No game-code changes are needed.
