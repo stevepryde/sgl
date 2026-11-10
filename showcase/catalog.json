@@ -3,21 +3,21 @@
     {
       "id": "bistro",
       "name": "Bistro",
-      "subtitle": "Amazon Lumberyard · Exterior",
-      "kind": "01 / ARCHITECTURAL SCENE",
+      "subtitle": "Café terrace",
+      "kind": "Exterior · Amazon Lumberyard",
       "hero": "/renders/bistro-sunlit-4k.png",
       "thumbnail": "/renders/bistro-thumb.webp",
       "info": "3840 × 2160 · WebGPU",
-      "description": "Sunlit café terrace with PBR materials, diffuse global illumination, ambient occlusion, and four cascaded shadows. Captured with TAA, 16× anisotropic filtering, and ACES at +0.6 EV. Original capture: 8 November 2026.",
+      "description": "A sunlit café terrace with detailed stonework, foliage and warm practical lighting. Rendered with SGL3D.",
       "comparisonInfo": "1920 × 1080 · WebGPU · Captured A/B",
-      "comparisonDescription": "Matched SGL3D captures at 1920 × 1080 with a fixed camera and 720 warm-up frames. Each comparison disables one feature from the quality fixture. These are rendered images; the controls switch captures rather than rendering the scene live.",
+      "comparisonDescription": "Matched captures from the same camera. Only the selected feature changes; all other settings stay the same.",
       "credits": "Amazon Lumberyard Bistro by Amazon, CC BY 4.0. Prepared glTF conversion with corrected materials and authored lighting. San Giuseppe Bridge environment by Greg Zaal / Poly Haven, CC0.",
       "license": "/credits/bistro.html",
       "features": [
         {
           "id": "ao",
           "name": "Ambient occlusion",
-          "description": "Contact shading around creases and nearby surfaces.",
+          "description": "Adds soft contact shadows where surfaces meet, grounding objects in the scene.",
           "off": "/renders/bistro/2026-11-10/ao-off.png",
           "on": "/renders/bistro/2026-11-10/on.png",
           "offReport": "/renders/bistro/2026-11-10/ao-off.json",
@@ -26,7 +26,7 @@
         {
           "id": "gi",
           "name": "Diffuse GI",
-          "description": "Indirect light bouncing through the scene.",
+          "description": "Bounces diffuse light between surfaces, bringing light and colour into shaded areas.",
           "off": "/renders/bistro/2026-11-10/gi-off.png",
           "on": "/renders/bistro/2026-11-10/on.png",
           "offReport": "/renders/bistro/2026-11-10/gi-off.json",
@@ -35,7 +35,7 @@
         {
           "id": "bloom",
           "name": "Bloom",
-          "description": "A soft glow around bright highlights.",
+          "description": "Spreads bright highlights into a soft glow around lights and reflective surfaces.",
           "off": "/renders/bistro/2026-11-10/bloom-off.png",
           "on": "/renders/bistro/2026-11-10/on.png",
           "offReport": "/renders/bistro/2026-11-10/bloom-off.json",
@@ -44,7 +44,7 @@
         {
           "id": "aa",
           "name": "Temporal anti-aliasing",
-          "description": "Temporal filtering of edges and fine surface detail.",
+          "description": "Combines successive frames to smooth jagged edges and reduce shimmering in fine detail.",
           "off": "/renders/bistro/2026-11-10/aa-off.png",
           "on": "/renders/bistro/2026-11-10/on.png",
           "offReport": "/renders/bistro/2026-11-10/aa-off.json",
@@ -53,23 +53,76 @@
       ]
     },
     {
+      "id": "bistro-motorcycle",
+      "name": "Bistro · Motorcycle",
+      "subtitle": "Street view",
+      "kind": "Exterior · Amazon Lumberyard",
+      "hero": "/renders/bistro-motorcycle/2026-11-11/on.png",
+      "thumbnail": "/renders/bistro-motorcycle-thumb.webp",
+      "info": "1920 × 1080 · WebGPU",
+      "description": "A street-level view of the Bistro motorcycle, with painted metal, chrome, cobblestones and café lighting. Rendered with SGL3D.",
+      "comparisonInfo": "1920 × 1080 · WebGPU · Captured A/B",
+      "comparisonDescription": "Matched captures from the same camera. Only the selected feature changes; all other settings stay the same.",
+      "credits": "Amazon Lumberyard Bistro by Amazon, CC BY 4.0. Prepared glTF conversion with corrected materials and authored lighting. San Giuseppe Bridge environment by Greg Zaal / Poly Haven, CC0.",
+      "license": "/credits/bistro.html",
+      "features": [
+        {
+          "id": "ao",
+          "name": "Ambient occlusion",
+          "description": "Adds soft contact shadows where surfaces meet, grounding objects in the scene.",
+          "off": "/renders/bistro-motorcycle/2026-11-11/ao-off.png",
+          "on": "/renders/bistro-motorcycle/2026-11-11/on.png",
+          "offReport": "/renders/bistro-motorcycle/2026-11-11/ao-off.json",
+          "onReport": "/renders/bistro-motorcycle/2026-11-11/on.json"
+        },
+        {
+          "id": "gi",
+          "name": "Diffuse GI",
+          "description": "Bounces diffuse light between surfaces, bringing light and colour into shaded areas.",
+          "off": "/renders/bistro-motorcycle/2026-11-11/gi-off.png",
+          "on": "/renders/bistro-motorcycle/2026-11-11/on.png",
+          "offReport": "/renders/bistro-motorcycle/2026-11-11/gi-off.json",
+          "onReport": "/renders/bistro-motorcycle/2026-11-11/on.json"
+        },
+        {
+          "id": "bloom",
+          "name": "Bloom",
+          "description": "Spreads bright highlights into a soft glow around lights and reflective surfaces.",
+          "off": "/renders/bistro-motorcycle/2026-11-11/bloom-off.png",
+          "on": "/renders/bistro-motorcycle/2026-11-11/on.png",
+          "offReport": "/renders/bistro-motorcycle/2026-11-11/bloom-off.json",
+          "onReport": "/renders/bistro-motorcycle/2026-11-11/on.json"
+        },
+        {
+          "id": "aa",
+          "name": "Temporal anti-aliasing",
+          "description": "Combines successive frames to smooth jagged edges and reduce shimmering in fine detail.",
+          "off": "/renders/bistro-motorcycle/2026-11-11/aa-off.png",
+          "on": "/renders/bistro-motorcycle/2026-11-11/on.png",
+          "offReport": "/renders/bistro-motorcycle/2026-11-11/aa-off.json",
+          "onReport": "/renders/bistro-motorcycle/2026-11-11/on.json"
+        }
+      ],
+      "report": "/renders/bistro-motorcycle/2026-11-11/on.json"
+    },
+    {
       "id": "sponza",
       "name": "Sponza",
-      "subtitle": "Intel Sample Library · Atrium",
-      "kind": "02 / ARCHITECTURAL SCENE",
+      "subtitle": "Curtained atrium",
+      "kind": "Interior · Intel Sample Library",
       "hero": "/renders/sponza.png",
       "thumbnail": "/renders/sponza-thumb.webp",
       "info": "1920 × 1080 · WebGPU",
-      "description": "Intel Sponza 2022 with the Curtains add-on, 4,095 diffuse GI probes, and an authored reflection probe for the covered gallery. Full-resolution rendering with ACES at +2.1 EV. Original capture: 8 November 2026.",
+      "description": "The Sponza atrium, where daylight filters through red curtains into covered stone galleries. Rendered with SGL3D.",
       "comparisonInfo": "1920 × 1080 · WebGPU · Captured A/B",
-      "comparisonDescription": "Matched SGL3D captures at 1920 × 1080 with a fixed camera and 720 warm-up frames. Each comparison disables one feature from the gallery fixture. These are rendered images; the controls switch captures rather than rendering the scene live.",
+      "comparisonDescription": "Matched captures from the same camera. Only the selected feature changes; all other settings stay the same.",
       "credits": "Frank Meinl and Anton Kaplanyan (2022), Intel Sample Library, with the Curtains add-on crew. Original licence and credits retained. Kloppenheim 05 environment by Greg Zaal / Poly Haven, CC0.",
       "license": "/credits/sponza.html",
       "features": [
         {
           "id": "ao",
           "name": "Ambient occlusion",
-          "description": "Contact shading around creases and nearby surfaces.",
+          "description": "Adds soft contact shadows where surfaces meet, grounding objects in the scene.",
           "off": "/renders/sponza/2026-11-10/ao-off.png",
           "on": "/renders/sponza/2026-11-10/on.png",
           "offReport": "/renders/sponza/2026-11-10/ao-off.json",
@@ -78,7 +131,7 @@
         {
           "id": "gi",
           "name": "Diffuse GI",
-          "description": "Indirect light bouncing through the scene.",
+          "description": "Bounces diffuse light between surfaces, bringing light and colour into shaded areas.",
           "off": "/renders/sponza/2026-11-10/gi-off.png",
           "on": "/renders/sponza/2026-11-10/on.png",
           "offReport": "/renders/sponza/2026-11-10/gi-off.json",
@@ -87,7 +140,7 @@
         {
           "id": "bloom",
           "name": "Bloom",
-          "description": "A soft glow around bright highlights.",
+          "description": "Spreads bright highlights into a soft glow around lights and reflective surfaces.",
           "off": "/renders/sponza/2026-11-10/bloom-off.png",
           "on": "/renders/sponza/2026-11-10/on.png",
           "offReport": "/renders/sponza/2026-11-10/bloom-off.json",
@@ -96,7 +149,7 @@
         {
           "id": "aa",
           "name": "Temporal anti-aliasing",
-          "description": "Temporal filtering of edges and fine surface detail.",
+          "description": "Combines successive frames to smooth jagged edges and reduce shimmering in fine detail.",
           "off": "/renders/sponza/2026-11-10/aa-off.png",
           "on": "/renders/sponza/2026-11-10/on.png",
           "offReport": "/renders/sponza/2026-11-10/aa-off.json",

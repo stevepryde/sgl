@@ -5,13 +5,16 @@ const catalog = await fetch('/catalog.json').then((response) => {
 }).catch((error) => { $('image-status').textContent = error.message; return null; });
 
 if (catalog) {
-  let scene, feature, mode, generation = 0;
+  let scene, feature, mode, generation = 0, position = 50, ready = false;
+  let dragPointer = null;
+  const stage = $('stage');
   const sceneButtons = new Map();
   for (const entry of catalog.scenes) {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'scene-card';
     const image = document.createElement('img');
     image.src = entry.thumbnail; image.alt = ''; image.width = 320; image.height = 180;
+    image.draggable = false;
     const text = document.createElement('span');
     const title = document.createElement('strong'); title.textContent = entry.name;
     const subtitle = document.createElement('small'); subtitle.textContent = entry.subtitle;
@@ -27,21 +30,42 @@ if (catalog) {
   }
 
   function setSplit(value) {
-    const position = Math.min(100, Math.max(0, Number(value)));
-    $('split').value = String(position);
-    $('split-value').textContent = `${Math.round(position)}%`;
+    position = Math.min(100, Math.max(0, Number(value)));
     $('image-off').style.clipPath = `inset(0 ${100 - position}% 0 0)`;
     $('divider').style.left = `${position}%`;
+    $('divider').setAttribute('aria-valuenow', String(Math.round(position)));
+    $('divider').setAttribute('aria-valuetext', `${Math.round(position)}% off, ${100 - Math.round(position)}% on`);
+  }
+
+  function endDrag() {
+    if (dragPointer !== null && stage.hasPointerCapture(dragPointer)) stage.releasePointerCapture(dragPointer);
+    dragPointer = null;
   }
 
   function showMode() {
-    const comparing = !!feature;
-    $('stage').dataset.mode = mode;
+    endDrag();
+    const comparing = !!feature && ready;
+    const sliding = comparing && mode === 'split';
+    const toggling = comparing && mode !== 'split';
+    stage.dataset.mode = comparing ? mode : 'overview';
+    stage.tabIndex = toggling ? 0 : -1;
+    if (toggling) {
+      stage.setAttribute('role', 'button');
+      stage.setAttribute('aria-label', `${feature.name}: ${mode}. Click to turn ${mode === 'on' ? 'off' : 'on'}.`);
+      stage.setAttribute('aria-pressed', String(mode === 'on'));
+    } else {
+      stage.removeAttribute('role'); stage.removeAttribute('aria-label'); stage.removeAttribute('aria-pressed');
+    }
     $('image-off').hidden = !comparing || mode === 'on';
-    $('divider').hidden = $('image-labels').hidden = $('split-control').hidden = !comparing || mode !== 'split';
+    $('divider').hidden = $('image-labels').hidden = !sliding;
+    $('current-state').hidden = !toggling;
+    $('current-state').textContent = toggling ? `${feature.name} ${mode === 'on' ? 'On' : 'Off'}` : '';
+    $('current-state').dataset.state = mode;
     if (mode === 'off') $('image-off').style.clipPath = 'none';
-    else setSplit($('split').value);
-    document.querySelectorAll('[data-mode]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.mode === mode)));
+    else setSplit(position);
+    document.querySelectorAll('[data-view]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.view === (mode === 'split' ? 'split' : 'toggle')));
+    });
     const capture = feature ? (mode === 'off' ? feature.off : feature.on) : scene.hero;
     $('original').href = capture;
     $('original').textContent = mode === 'split' ? 'Full resolution (on) ↗' : 'Full resolution ↗';
@@ -51,11 +75,14 @@ if (catalog) {
   }
 
   async function render() {
-    const token = ++generation;
     const params = new URLSearchParams(location.search);
-    scene = catalog.scenes.find((entry) => entry.id === params.get('scene')) ?? catalog.scenes[0];
-    feature = scene.features.find((entry) => entry.id === params.get('feature'));
-    mode = feature ? (['on', 'off', 'split'].includes(params.get('view')) ? params.get('view') : 'split') : 'on';
+    const nextScene = catalog.scenes.find((entry) => entry.id === params.get('scene')) ?? catalog.scenes[0];
+    const nextFeature = nextScene.features.find((entry) => entry.id === params.get('feature'));
+    mode = nextFeature ? (['on', 'off', 'split'].includes(params.get('view')) ? params.get('view') : 'split') : 'on';
+    // View changes reuse the decoded pair, so clicking the image never flashes a loading overlay.
+    if (scene === nextScene && feature === nextFeature) { showMode(); return; }
+    const token = ++generation;
+    scene = nextScene; feature = nextFeature; ready = false;
     document.title = `${scene.name}${feature ? ` · ${feature.name}` : ''} — SGL`;
     sceneButtons.forEach((button, id) => button.setAttribute('aria-pressed', String(id === scene.id)));
     $('scene-title').textContent = scene.name;
@@ -65,18 +92,20 @@ if (catalog) {
     $('license').href = scene.license;
     $('capture-info').textContent = feature ? scene.comparisonInfo : scene.info;
     $('comparison-controls').hidden = !feature;
-    $('feature-description').textContent = feature?.description ?? '';
     $('feature-list').replaceChildren();
-    for (const entry of [{ id: 'overview', name: 'Showcase render' }, ...scene.features]) {
+    for (const entry of [{ id: 'overview', name: 'Showcase render', description: 'The complete scene with all featured effects enabled.' }, ...scene.features]) {
       const button = document.createElement('button');
-      button.type = 'button'; button.textContent = entry.name;
+      button.type = 'button';
+      const title = document.createElement('strong'); title.textContent = entry.name;
+      const description = document.createElement('span'); description.textContent = entry.description;
+      button.append(title, description);
       button.setAttribute('aria-label', entry.name);
       button.setAttribute('aria-pressed', String(entry.id === (feature?.id ?? 'overview')));
-      button.addEventListener('click', () => navigate(scene.id, entry.id, entry.id === 'overview' ? 'on' : 'split'));
+      button.addEventListener('click', () => navigate(scene.id, entry.id, entry.id === 'overview' ? 'on' : (!feature || mode === 'split' ? 'split' : 'on')));
       $('feature-list').append(button);
     }
     $('image-status').hidden = false; $('image-status').textContent = 'Loading capture…';
-    $('stage').setAttribute('aria-busy', 'true');
+    stage.setAttribute('aria-busy', 'true');
     showMode();
     // Decode both before revealing a comparison: a slow or missing image must
     // never show a stale frame from the previously selected scene or feature.
@@ -93,31 +122,53 @@ if (catalog) {
         $('image-off').src = images[1].src;
         $('image-off').alt = `${scene.name}, ${selected.name} off`;
       }
-      showMode(); $('image-status').hidden = true;
+      ready = true; showMode(); $('image-status').hidden = true;
     } catch {
       if (token !== generation) return;
       $('image-status').textContent = 'This capture could not be loaded. Try another scene or reload the page.';
       $('image-on').removeAttribute('src');
-      $('image-off').hidden = $('divider').hidden = $('image-labels').hidden = $('split-control').hidden = true;
+      showMode();
     } finally {
-      if (token === generation) $('stage').setAttribute('aria-busy', 'false');
+      if (token === generation) stage.setAttribute('aria-busy', 'false');
     }
   }
 
-  document.querySelectorAll('[data-mode]').forEach((button) => button.addEventListener('click', () => {
-    if (feature) navigate(scene.id, feature.id, button.dataset.mode);
+  document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => {
+    if (feature) navigate(scene.id, feature.id, button.dataset.view === 'split' ? 'split' : (mode === 'off' ? 'off' : 'on'));
   }));
-  $('split').addEventListener('input', (event) => setSplit(event.target.value));
   function moveSplit(event) {
-    const bounds = $('stage').getBoundingClientRect();
+    const bounds = stage.getBoundingClientRect();
     setSplit((event.clientX - bounds.left) / bounds.width * 100);
   }
-  $('stage').addEventListener('pointerdown', (event) => {
-    if (mode !== 'split' || !feature || event.button !== 0) return;
-    $('stage').setPointerCapture(event.pointerId); moveSplit(event);
+  stage.addEventListener('dragstart', (event) => event.preventDefault());
+  stage.addEventListener('pointerdown', (event) => {
+    if (!ready || mode !== 'split' || !feature || event.button !== 0 || !event.isPrimary) return;
+    event.preventDefault();
+    dragPointer = event.pointerId;
+    stage.setPointerCapture(event.pointerId);
+    $('divider').focus({ preventScroll: true });
+    moveSplit(event);
   });
-  $('stage').addEventListener('pointermove', (event) => {
-    if ($('stage').hasPointerCapture(event.pointerId)) moveSplit(event);
+  stage.addEventListener('pointermove', (event) => {
+    if (event.pointerId === dragPointer) moveSplit(event);
+  });
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+  stage.addEventListener('lostpointercapture', () => { dragPointer = null; });
+  $('divider').addEventListener('keydown', (event) => {
+    const steps = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -10, PageUp: 10 };
+    if (event.key === 'Home') setSplit(0);
+    else if (event.key === 'End') setSplit(100);
+    else if (event.key in steps) setSplit(position + steps[event.key]);
+    else return;
+    event.preventDefault();
+  });
+  function toggle() {
+    if (ready && feature && mode !== 'split') navigate(scene.id, feature.id, mode === 'on' ? 'off' : 'on');
+  }
+  stage.addEventListener('click', toggle);
+  stage.addEventListener('keydown', (event) => {
+    if (event.target === stage && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); toggle(); }
   });
   $('share').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(location.href); $('share').textContent = 'Link copied'; }

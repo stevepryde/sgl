@@ -1,8 +1,13 @@
 # SGL render showcase
 
 [sgl.inspiredjourneys.dev](https://sgl.inspiredjourneys.dev) is a static gallery
-of genuine SGL3D captures. It supports scene selection, per-feature off/on and
-split views, keyboard/touch comparison controls, direct PNG links, and shareable
+of genuine SGL3D captures. A left sidebar lists scenes, including the Bistro
+terrace, Bistro motorcycle street view, and Sponza atrium. Each rendering feature
+has a brief explanation. Slide mode lets you click or drag directly on the image
+or divider; the focused divider also supports arrow keys, Page Up/Down and
+Home/End. Toggle mode switches On/Off when you click the image (or press Enter
+or Space), with the current state shown over the capture. There is no separate
+slider below the image. It supports direct PNG links and shareable
 scene/feature URLs. It switches captured images; it does not claim to run a
 live renderer. No WebGPU support or scene download is required to view it.
 
@@ -45,6 +50,7 @@ edits can reuse published images without downloading or preparing scene assets.
 
    ```sh
    bun scripts/showcase-capture.ts bistro /path/to/prepared-bistro examples/sgl-3d/fixtures/bistro-quality.json bevy 2026-11-10
+   bun scripts/showcase-capture.ts bistro-motorcycle /path/to/prepared-bistro examples/sgl-3d/fixtures/bistro-quality.json bike 2026-11-11
    bun scripts/showcase-capture.ts sponza /path/to/prepared-sponza /path/to/prepared-sponza/sponza-gallery.json hero 2026-11-10
    ```
 
@@ -70,9 +76,9 @@ edits can reuse published images without downloading or preparing scene assets.
    and retain the original licence text beside it (the existing scene licences
    remain in `assets/showcase/` and are copied during the build).
 5. Build, then run `bun test scripts/showcase.test.ts` and the repository's
-   required `bun scripts/tasks.ts check`. Tests exercise navigation, split
-   keyboard controls, load failures, stale image handling, and mobile layout;
-   they do not judge rendered appearance.
+   required `bun scripts/tasks.ts check`. Tests exercise navigation, mouse/touch dragging,
+   divider keyboard controls, image-click toggling, load failures, stale image
+   handling, and mobile layout; they do not judge rendered appearance.
 
 Cloudflare Static Assets has a per-file limit; keep each PNG below the
 [current upload limit](https://developers.cloudflare.com/workers/static-assets/platform/limits/).

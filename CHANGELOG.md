@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` showcase replaces separate Off/Split/On controls and the lower slider
+  with direct image Slide/Toggle controls, adds feature explanations and a scene
+  sidebar including a Bistro motorcycle view. No game-code changes are needed.
 - `sgl-3d` showcase renders move from repository PNGs to the Cloudflare-hosted
   gallery with feature off/on comparisons. Use the hosted README image URLs;
   no game-code changes are needed.

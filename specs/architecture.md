@@ -15,7 +15,10 @@ and runnable examples must be usable without access to the source games.
 introduces the project to people.
 
 The [render showcase](../showcase/README.md) is a static consumer-facing website
-with real SGL3D captures and matched feature comparisons. Source, scene metadata,
+with real SGL3D captures and matched feature comparisons. Scenes are selected
+from a sidebar; feature cards explain each effect. Slide compares captures with
+a directly draggable, keyboard-accessible divider. Toggle changes the feature
+on image click and displays its current On/Off state. Source, scene metadata,
 and attribution live in this repository; rendered media live on Cloudflare and
 in ignored local capture directories. The website switches captured images;
 it does not add a renderer or change the library's composition boundary.
