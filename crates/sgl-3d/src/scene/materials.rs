@@ -105,6 +105,12 @@ impl Material {
         self.uniform().surface_moves()
     }
 
+    /// Animated evaluated inputs that a masked shader may use for coverage,
+    /// even when the game's function never reads a time context field.
+    pub fn coverage_moves(&self) -> bool {
+        matches!(self.values.alpha, AlphaMode::Mask { .. }) && self.uniform().normal_layers_move()
+    }
+
     /// How far its shader moves a vertex, in its meshes' units; 0 without
     /// one.
     pub fn displacement_bound(&self) -> f32 {
@@ -567,7 +573,11 @@ impl Materials {
         validate_diffuse_transmission(&values)?;
         validate_normal_layers(&values, material.maps, material.bound.wrap)?;
         if material.values != values {
-            if material.values.caster_values() != values.caster_values() {
+            // A masked shader can derive coverage from any material input.
+            // Other casters retain the narrower key and cached layers.
+            if material.values.caster_values() != values.caster_values()
+                || (values.shader.is_some() && matches!(values.alpha, AlphaMode::Mask { .. }))
+            {
                 self.casters = super::next_generation();
             }
             let old = (material.values, material.record_moves());

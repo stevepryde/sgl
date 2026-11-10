@@ -107,6 +107,7 @@ impl Renderer {
             crate::stages::shadows::local::ShadowFrame {
                 mask: input.visibility_mask,
                 time: input.elapsed_seconds,
+                layers: LayerConstants::new(&settings.diagnostics_in_effect().disable),
             },
             !settings.diagnostics_in_effect().disable.local_lights,
         );

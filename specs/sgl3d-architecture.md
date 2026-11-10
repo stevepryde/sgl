@@ -571,7 +571,9 @@ last, after everything it may use, and refuses a directive in it.
   captures and blended surfaces) and ray hits see them the same way, and
   reflections read them from the G-buffer. Raster samples the atlas along
   the position's screen derivatives; a ray hit samples its first level, as
-  its material textures. Unlit materials take no decals.
+  its material textures. The anisotropic tangent is derived from the
+  decal-adjusted base normal in both inline and separate material passes.
+  Unlit materials take no decals.
 - **Shadows.** Local lights share one 2D depth atlas. The casting lights
   that reach the camera's view are placed by screen coverage, as Godot's
   quadrant atlas places them; lights without room are unshadowed and
@@ -588,7 +590,10 @@ last, after everything it may use, and refuses a directive in it.
   shader may change what it casts (`Material::shader_casts`): its
   parameters' revision, and the frame's time where the shader reads it
   (`time` or `phase`, found in its module at `Scene::add_shader`, as Godot
-  b130438's `is_animated()` reads its code). A moving instance's shader
+  b130438's `is_animated()` reads its code), or a masked shader's mapped
+  normal scrolls. Custom masked coverage depends on the complete material
+  record and the diagnostic normal/bump map switches too; changes invalidate
+  the cached faces. A moving instance's shader
   data, and the same reads, redraw its faces alike. It
   draws
   every caster of a light that moved. What a frame draws becomes reusable at
@@ -1060,7 +1065,16 @@ last, after everything it may use, and refuses a directive in it.
   roughness its surface function gives, and its motion from the vertex
   function's two evaluations
   ([Programmable surfaces](#designs-that-span-stages)).
-- **Reflections.** Environment and probe specular always apply: source
+- **Reflections.** Velvet and world rays share
+  `stages/reflections/temporal_reprojection.wgsl`: candidates must be in bounds
+  before luminance chooses between them, and disocclusion compares both depths
+  in the previous camera's space. `reflections/reprojection.wgsl` owns virtual
+  hit depth for both traces: extend the normalised view ray by the reflected
+  hit distance, as AMD FidelityFX Denoiser d7dfecb's
+  `FFX_DNSR_Reflections_GetHitPositionReprojection` does; Euclidean hit length
+  is not axial view depth. These corrections remain inside the reflection
+  stage and do not change its inputs or composition contract.
+  Environment and probe specular always apply: source
   completion adds them to the main view's opaque surfaces from probes culled
   per screen tile, and captures, ray hits and blended surfaces add them in
   shading from the probes a world grid, built when the probes are installed,
@@ -1227,7 +1241,10 @@ last, after everything it may use, and refuses a directive in it.
   filtering and the coat's normal, in every raster pass that builds a
   surface (an unlit material's base colour and emission among them), and
   for coverage alone in FSR2's composition pass and a masked material's
-  casters, as Filament runs `material()` in its masked depth variants
+  casters. `shading/material_surface_raster.wgsl` owns mapped material and
+  base-normal evaluation for camera geometry and custom masked casters,
+  with the same material provider for the device's tier, as Filament runs
+  `material()` in its masked depth variants
   (`surface_depth_main.fs` 21–69). Culling grows the bounds of a shader
   material's meshes and their sections, in their space before the pose, by
   its displacement bound: the GPU cull by its draw set's, the blended
@@ -1342,7 +1359,8 @@ last, after everything it may use, and refuses a directive in it.
   there takes the froxel's squared diagonal in its denominator, following
   Unreal's volumetric fog practice, while surfaces keep the physical
   falloff;
-  blends it with its reprojection into the stage's last volume; filters
+  blends it with its reprojection into the stage's last volume only when
+  `Fog::length` is unchanged, since history uses that range's depth grid; filters
   each slice across x and y (`Settings::fog_filter`), leaving the volume the
   next frame reprojects unfiltered; a retry after submission without
   `finish_frame` rejects the overwritten filtered volume as history; and
@@ -2728,9 +2746,10 @@ last, after everything it may use, and refuses a directive in it.
   (`TracePaths`, over the lit layout and its tier) among them, and the
   geometry program the material and transmission ones too
   (`shading::transmission_provider`). The dynamic GI trace binds the
-  probes itself and runs on `Extended` alone. A map beyond `Basic`'s is
-  sampled from `SURFACE_RASTER` alone, never `MATERIAL_RASTER`, which the
-  casters compose with `Basic`'s bindings. White is the neutral of a
+  probes itself and runs on `Extended` alone. `MATERIAL_SURFACE_RASTER`
+  owns raster material evaluation, composed by camera geometry and custom
+  masked casters with their tier's material provider. Plain casters retain
+  base-colour-only sampling. White is the neutral of a
   multiplicative map; a map whose white texel is not its neutral (a
   normal-type map, the anisotropy direction) is gated by its bit on both
   the raster and ray paths, which the factor-alone fallback depends on.

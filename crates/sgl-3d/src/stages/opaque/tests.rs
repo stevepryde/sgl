@@ -815,8 +815,47 @@ fn an_anisotropic_metal_completes_opaque_as_it_shades_blended() {
         // Single-sided: a blended closed mesh drawn from both sides would
         // show its back faces where they are drawn after its front.
         material.double_sided = false;
+        // A mapped normal followed by a normal-changing decal requires
+        // resolving the authored anisotropy axis against the final normal.
+        // Reprojecting the already-resolved pre-decal axis is different.
+        material.normal_texture = Some(0);
+        asset.images = vec![crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(
+            1,
+            1,
+            image::Rgba([204, 128, 230, 255]),
+        ))];
         let mut scene = Scene::new(&device, &queue);
         let (ids, _) = test_support::add_static(&device, &queue, &mut scene, asset);
+        let base = scene
+            .add_decal_image(crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(
+                1,
+                1,
+                image::Rgba([255; 4]),
+            )))
+            .unwrap();
+        let normal = scene
+            .add_decal_image(crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(
+                1,
+                1,
+                image::Rgba([128, 180, 255, 255]),
+            )))
+            .unwrap();
+        scene
+            .add_decal(
+                &device,
+                &queue,
+                crate::Decal {
+                    normal: Some(normal),
+                    size: Vec3::splat(4.),
+                    rotation: glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                    color: [1., 1., 1., 0.7],
+                    base_color_mix: 0.,
+                    upper_fade: 0.,
+                    lower_fade: 0.,
+                    ..crate::Decal::new(base)
+                },
+            )
+            .unwrap();
         let environment = scene
             .add_environment(
                 &device,

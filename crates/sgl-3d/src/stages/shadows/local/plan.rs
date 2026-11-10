@@ -25,6 +25,7 @@ use crate::shading::lights::{LOCAL_SHADOW_CUBE, LOCAL_SHADOW_SPOT, LocalShadowRe
 use crate::view::clusters::ViewVolume;
 use crate::view::culling::clip_intersects;
 use crate::view::draw_list::{DrawInstances, DrawList};
+use crate::view::pipelines::LayerConstants;
 use crate::view::population::{Casters, LightReach, Population, moving_caster_reaches, within};
 use crate::view::{LOCAL_SHADOW_NEAR, View};
 use crate::{Mobility, Scene};
@@ -46,6 +47,7 @@ type Shaded = ([Vec3; 2], Shading);
 pub(crate) struct ShadowFrame {
     pub mask: u32,
     pub time: f64,
+    pub layers: LayerConstants,
 }
 
 /// What a face draws this frame.
@@ -194,7 +196,7 @@ impl Plan {
                 scene,
                 (Some(&moving), &shaded),
                 (id, shadow, placement),
-                frame.mask,
+                frame,
             );
             self.records[id.index()] = record(shadow, placement, layered);
         }
@@ -229,7 +231,7 @@ impl Plan {
                     scene,
                     (None, &shaded),
                     (id, shadow, placement),
-                    frame.mask,
+                    frame,
                 );
                 self.records[id.index()] = record(shadow, placement, true);
             }
@@ -324,8 +326,9 @@ impl Plan {
         scene: &Scene,
         (moving, shaded): (Option<&[Moving]>, &[Shaded]),
         (id, shadow, placement): (LightId, LightView, Placement),
-        mask: u32,
+        frame: ShadowFrame,
     ) -> bool {
+        let mask = frame.mask;
         let capture = moving.is_none();
         // A light seen differently in the last finished frame moved.
         let moved = !capture
@@ -370,6 +373,11 @@ impl Plan {
                 mask,
                 casters: scene.materials.casters,
                 shading,
+                maps: if scene.materials.shader_casts() {
+                    frame.layers.material_maps()
+                } else {
+                    LayerConstants::ALL
+                },
             };
             // The face's moving casters: those whose bounds reach its view.
             let moving: Vec<_> = nearby

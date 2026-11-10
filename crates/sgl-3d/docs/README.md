@@ -88,7 +88,8 @@ its rendering `settings::Settings`.
    retains a pending fixed-to-automatic exposure reset. Retrying submitted
    filtered fog without finishing resets the overwritten volume history.
 4. Set `FrameInput::camera_cut` on a camera cut. History restarts itself then,
-   after a resize that changes the targets and for a different scene.
+   after a resize that changes the targets and for a different scene. Fog
+   history also restarts when `Fog::length` changes; no camera cut is needed.
 5. A large world: keep the game's own coordinates and call
    `Scene::move_origin` to keep what it renders near the render origin
    (chunk-aligned in a streamed world); then give the camera and edits in

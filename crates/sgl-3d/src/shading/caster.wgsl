@@ -196,6 +196,7 @@ struct ShadedMaskedCaster {
  @location(5) custom:vec4<f32>,
  @location(6) @interpolate(flat) object:u32,
  @location(7) @interpolate(flat) instance:vec4<f32>,
+ @location(8) tangent:vec4<f32>,
 }
 fn shaded_masked_caster_vertex(position:vec3<f32>,drawn:DrawInstance,vertex_index:u32)->ShadedMaskedCaster {
  let v=caster_vertex(position,drawn,vertex_index);
@@ -207,6 +208,7 @@ fn shaded_masked_caster_vertex(position:vec3<f32>,drawn:DrawInstance,vertex_inde
  out.unclipped_depth=out.position.z;
  out.world=(model*vec4(v.position,1.)).xyz;
  out.normal=object_normal(model,v.normal);
+ out.tangent=object_tangent(model,v.tangent,v.normal);
  out.custom=v.custom;
  out.object=drawn.object;
  out.instance=material_instance(drawn.object,false);
@@ -241,10 +243,19 @@ fn pulled_shaded_masked_caster(drawn:DrawInstance,vertex:u32)->ShadedMaskedCaste
 // `raster_front`.
 fn shaded_caster_coverage(in:ShadedMaskedCaster,raster_front:bool)->f32 {
  let front=object_front(in.object,raster_front);
- let geometry_normal=side_normal(in.normal,front);
- let recorded=material_texel_surface(material_base_texels(in.uv,in.color),geometry_normal);
- let context=material_context(in.object,in.world,geometry_normal,in.uv,in.color,in.custom,in.instance,front,in.position.xy);
- return material_surface(recorded,context,material_shader_params(false)).base_color.a;
+ // The same evaluated material inputs as camera geometry, including maps
+ // and mapped normals: a game's alpha may depend on any surface field.
+ var i:Fragment;
+ i.clip=in.position;
+ i.world=in.world;
+ i.normal=in.normal;
+ i.tangent=in.tangent;
+ i.uv=in.uv;
+ i.color=in.color;
+ i.custom=in.custom;
+ i.instance=in.instance;
+ i.source_id=vec2(in.object+1u,0u);
+ return raster_material(i,front).base_color.a;
 }
 @fragment fn shadow_shaded_masked_fs(in:ShadedMaskedCaster,@builtin(front_facing) front:bool) {
  material_alpha_discard(shaded_caster_coverage(in,front));

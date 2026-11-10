@@ -17,10 +17,6 @@ struct MaterialTexels {
  transmission:vec4<f32>,
  thickness:vec4<f32>,
 }
-// The texels of a view that samples the base map alone (a masked caster).
-fn material_base_texels(uv:vec2<f32>,color:vec4<f32>)->MaterialTexels {
- return MaterialTexels(material_base_color(uv,color),vec3(1.),vec4(1.),vec4(1.),vec4(1.),vec4(1.),vec4(1.));
-}
 // The material's surface (shader_contract.wgsl's MaterialSurface) at
 // texels `t` with the mapped normal `normal`: each value its record's
 // factor times its map's channel (material.wgsl), as a material's shader

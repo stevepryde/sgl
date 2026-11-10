@@ -52,7 +52,8 @@ mod sheen_tests;
 pub(crate) mod srgb;
 mod surface_modules;
 pub(crate) use surface_modules::{
-    LOOKUP_TABLES, OCCLUSION, SPECULAR_LOBES, SURFACE, SURFACE_RASTER, SURFACE_RAY, TRANSMISSION,
+    LOOKUP_TABLES, MATERIAL_SURFACE_RASTER, OCCLUSION, SPECULAR_LOBES, SURFACE, SURFACE_RASTER,
+    SURFACE_RAY, TRANSMISSION,
 };
 pub(crate) mod uniforms;
 pub(crate) mod vertex;

@@ -127,6 +127,3 @@ fn world_position(uv:vec2<f32>,z:f32)->vec3<f32> {
 fn world_linear_depth(z:f32)->f32 {
  return linear_depth(world.eye.w,z);
 }
-fn world_inverse_linear_depth(linear:f32)->f32 {
- return linear_depth(world.eye.w,linear);
-}

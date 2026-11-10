@@ -109,7 +109,8 @@ is done (its algorithm and internal parameters) is SGL3D's.
   default, as Godot's), the volume's length, and how much of it the sky
   takes (all by default, as Godot's)) and `mist` (its colours, opacity,
   billboard size and drift) shape them;
-  SGL3D spaces the volume's slices and weights its history. Fog volumes are
+  SGL3D spaces the volume's slices and weights its history; changing its
+  length restarts fog history automatically. Fog volumes are
   scene content (`Scene::update_fog_volumes`).
 - `environment`: the scene's environment that lights the frame and draws its
   sky; `None` is black. `diffuse_environment` turns and scales its diffuse

@@ -15,6 +15,20 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d::Fog::length` changes now restart fog history instead of reusing
+  density at the old range's positions. No game-code changes are needed.
+- `sgl-3d::MaterialShader` masked shadow casters now evaluate all material
+  maps and mapped normals before custom coverage, matching camera passes;
+  cached shadows follow material edits and scrolling normals too.
+  No game-code changes are needed.
+- `sgl-3d::ReflectionMethod::Velvet` and world reflections now reproject
+  hit depth along the view ray, reject offscreen history candidates before
+  choosing one, and compare depths in the previous camera's space. This
+  prevents misplaced or discarded history; no game-code changes are needed.
+- `sgl-3d::SurfaceMaterial::anisotropy_strength` now uses the decal-adjusted normal in the
+  separate material pass, matching devices with larger attachment budgets.
+  No game-code changes are needed.
+
 - `sgl-3d-examples::{bistro, browser_bistro}` and `measure-browser` now accept
   `--split` to diagnose the existing two-pass opaque path and record
   `split_opaque` in reports. Defaults are unchanged; rebuild the examples to

@@ -39,7 +39,7 @@ static HIZ: Module = Module {
 static TRACE: Module = Module {
     name: "godot_reflections_trace",
     source: include_str!("velvet/godot_reflections_trace.wgsl"),
-    deps: &[],
+    deps: &[&super::REPROJECTION],
 };
 static TEMPORAL: Module = Module {
     name: "godot_reflections_temporal",
@@ -132,10 +132,9 @@ struct TemporalParams {
     inverse_view_projection: [[f32; 4]; 4],
     previous_view_projection: [[f32; 4]; 4],
     size: [f32; 4],
-    near: f32,
     previous_near: f32,
     flags: u32,
-    padding: u32,
+    padding: [u32; 2],
 }
 /// `TemporalParams::flags`: history continues; clear, it resets.
 const TEMPORAL_CONTINUES: u32 = 1;
@@ -333,10 +332,9 @@ impl Velvet {
                 inverse_view_projection: input.camera.inverse_view_proj,
                 previous_view_projection: previous.to_cols_array_2d(),
                 size: [width, height, 1. / width, 1. / height],
-                near,
                 previous_near,
                 flags: if continues { TEMPORAL_CONTINUES } else { 0 },
-                padding: 0,
+                padding: [0; 2],
             }),
         );
         // Godot's projection with its depth correction flips y into
@@ -570,7 +568,6 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 4] {
                 inverse_view_projection,
                 previous_view_projection,
                 size,
-                near,
                 previous_near,
                 flags,
                 padding,

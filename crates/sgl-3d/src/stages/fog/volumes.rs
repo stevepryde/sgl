@@ -121,31 +121,32 @@ impl Volumes {
     }
 }
 
-/// The history frame count each of a pair of froxel volumes holds.
+/// The history frame count and covered length each froxel volume holds.
 #[derive(Clone, Copy, Default)]
 pub(super) struct Holds {
-    frames: [Option<u32>; 2],
+    frames: [Option<(u32, f32)>; 2],
     /// The injection destination, distinct from the filtered destination.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     last_injected: usize,
 }
 
 impl Holds {
-    /// Follows a frame of `history`, which the fog `runs` in or not. A reset
+    /// Follows a frame of `history`, with its fog's covered `length`, or
+    /// none when fog does not run. A reset
     /// forgets both volumes, even in a frame without fog, so no later frame
     /// takes one from before it for its predecessor's. A frame that runs
     /// writes the volume at its count's parity: its index, and whether it
-    /// reprojects the other, which then holds its predecessor's froxels.
-    pub fn frame(&mut self, history: &HistoryFrame, runs: bool) -> Option<(usize, bool)> {
+    /// reprojects the other, which then holds its predecessor's froxels
+    /// on the same depth grid. A changed length starts fresh, as a resized
+    /// volume does; the old texels represent different world positions.
+    pub fn frame(&mut self, history: &HistoryFrame, length: Option<f32>) -> Option<(usize, bool)> {
         if !history.valid {
             self.frames = [None; 2];
         }
-        if !runs {
-            return None;
-        }
+        let length = length?;
         let index = (history.frames % 2) as usize;
-        let reprojects = self.frames[1 - index] == Some(history.frames.wrapping_sub(1));
-        self.frames[index] = Some(history.frames);
+        let reprojects = self.frames[1 - index] == Some((history.frames.wrapping_sub(1), length));
+        self.frames[index] = Some((history.frames, length));
         #[cfg(all(test, not(target_arch = "wasm32")))]
         {
             self.last_injected = index;
@@ -156,8 +157,8 @@ impl Holds {
     /// The filter overwrites the other volume too. A retry may follow a
     /// submission without finish_frame, so it cannot assume that volume
     /// still contains the preceding camera's history.
-    pub fn filtered(&mut self, index: usize, frame: u32) {
-        self.frames[1 - index] = Some(frame);
+    pub fn filtered(&mut self, index: usize) {
+        self.frames[1 - index] = self.frames[index];
     }
 
     /// The volume the last frame the fog ran in wrote.
@@ -199,7 +200,9 @@ mod tests {
         ];
         for (frame, (reset, fog, expected)) in frames.into_iter().enumerate() {
             let begun = history.begin(camera, reset, DVec3::ZERO, 0.);
-            let reprojects = holds.frame(&begun, fog).map(|(_, reprojects)| reprojects);
+            let reprojects = holds
+                .frame(&begun, fog.then_some(64.))
+                .map(|(_, reprojects)| reprojects);
             assert_eq!(
                 reprojects, expected,
                 "frame {frame}, count {}",

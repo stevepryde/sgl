@@ -10,6 +10,175 @@ use glam::{Mat4, Vec3};
 
 const SIZE: [u32; 2] = [64, 64];
 
+// Plausible defect: the world resolve adds a Euclidean hit length to axial
+// view depth, so off-axis virtual points gain too much distance. Dispatch
+// the production resolve over a plane 10m away with confirmed 10m rays;
+// reconstruct its exported reprojection point and measure the extension in
+// world metres. This geometric oracle is independent of the depth formula.
+#[test]
+fn resolved_virtual_points_preserve_reflected_ray_length() {
+    use wgpu::util::DeviceExt;
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let size = [64, 64];
+    let targets = super::Targets::new(&device, size);
+    let reduced = targets.reduced;
+    let texels = (size[0] * size[1]) as usize;
+    let rays = (reduced[0] * reduced[1]) as usize;
+    let normal = test_support::hdr_texture(&device, &queue, size, &vec![[0.; 4]; texels]);
+    let material =
+        test_support::hdr_texture(&device, &queue, size, &vec![[0., 0.2, 0., 1.]; texels]);
+    let f0 = test_support::hdr_texture(&device, &queue, size, &vec![[1.; 4]; texels]);
+    let indirect = test_support::hdr_texture(
+        &device,
+        &queue,
+        reduced,
+        &vec![[0.25, 0.25, 0.25, 1.]; rays],
+    );
+    let direction =
+        test_support::hdr_texture(&device, &queue, reduced, &vec![[0., 0., 1., 1.]; rays]);
+    let r32 = |label, usage| {
+        super::texture(
+            &device,
+            label,
+            reduced,
+            wgpu::TextureFormat::R32Float,
+            usage,
+        )
+    };
+    let length = r32("reflection lengths", wgpu::TextureUsages::COPY_DST);
+    queue.write_texture(
+        length.texture().as_image_copy(),
+        bytemuck::cast_slice(&vec![10f32; rays]),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(reduced[0] * 4),
+            rows_per_image: Some(reduced[1]),
+        },
+        length.texture().size(),
+    );
+    let reprojection = r32(
+        "resolved virtual depths",
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+    );
+    let depth = crate::view::targets::target(
+        &device,
+        "receiver depth",
+        size,
+        crate::shading::gbuffer::DEPTH,
+    );
+    let projection = crate::perspective(std::f32::consts::FRAC_PI_2, 1., 0.1);
+    let [w, h] = size.map(|v| v as f32);
+    let [rw, rh] = reduced.map(|v| v as f32);
+    let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::bytes_of(&super::Params {
+            inverse_view_projection: projection.inverse().to_cols_array_2d(),
+            previous_view_projection: projection.to_cols_array_2d(),
+            eye: [0., 0., 0., 0.1],
+            full: [w, h, 1. / w, 1. / h],
+            reduced: [rw, rh, 1. / rw, 1. / rh],
+            frame: 0,
+            rays: rays as u32,
+            traced: 0.49,
+            range: super::RANGE,
+            previous_near: 0.1,
+            fade: 0.1,
+            padding: [0; 2],
+        }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("world reflection virtual points"),
+        source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&super::DENOISE]).into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("world reflection virtual points"),
+        layout: None,
+        module: &shader,
+        entry_point: Some(super::WORLD_RESOLVE_ENTRY),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let bind = |index, entries: &[(u32, wgpu::BindingResource)]| {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(index),
+            entries: &entries
+                .iter()
+                .map(|(binding, resource)| wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: resource.clone(),
+                })
+                .collect::<Vec<_>>(),
+        })
+    };
+    let texture = wgpu::BindingResource::TextureView;
+    let inputs = bind(
+        0,
+        &[
+            (10, texture(&indirect)),
+            (11, texture(&direction)),
+            (12, texture(&length)),
+            (20, texture(&targets.resolve)),
+            (21, texture(&targets.resolve_variance)),
+            (22, texture(&reprojection)),
+        ],
+    );
+    let receivers = bind(
+        3,
+        &[
+            (0, texture(&depth)),
+            (1, texture(&normal)),
+            (2, texture(&material)),
+            (3, texture(&f0)),
+            (4, params.as_entire_binding()),
+        ],
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: None,
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &depth,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(0.01),
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        ..Default::default()
+    });
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &inputs, &[]);
+        pass.set_bind_group(3, &receivers, &[]);
+        pass.dispatch_workgroups(reduced[0].div_ceil(8), reduced[1].div_ceil(8), 1);
+    }
+    queue.submit([encoder.finish()]);
+    let bytes = test_support::read(&device, &queue, reprojection.texture(), 4);
+    let depths: &[f32] = bytemuck::cast_slice(&bytes);
+    for (x, y) in [(8, 8), (16, 16), (24, 24)] {
+        let screen = Vec3::new(
+            (x as f32 + 0.5) / rw * 2. - 1.,
+            1. - (y as f32 + 0.5) / rh * 2.,
+            0.01,
+        );
+        let receiver = projection.inverse().project_point3(screen);
+        let virtual_point = projection.inverse().project_point3(Vec3::new(
+            screen.x,
+            screen.y,
+            depths[(y * reduced[0] + x) as usize],
+        ));
+        let extension = virtual_point.distance(receiver);
+        assert!(
+            (extension - 10.).abs() < 1e-4,
+            "({x},{y}): 10m ray resolved to {extension}m"
+        );
+    }
+}
+
 /// A mirror floor facing +Y at height 0, 50 m from the origin to each side.
 fn floor() -> crate::asset::Asset {
     let mut asset = test_support::cube();

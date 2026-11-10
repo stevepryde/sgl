@@ -107,7 +107,8 @@ fn programs() -> Vec<(&'static str, String)> {
                 "geometry_shadow_mask_basic",
                 geometry_program(ShadowMask, Basic, Default),
             ),
-            ("caster", caster_program(Default)),
+            ("caster", caster_program(Extended, Default)),
+            ("caster_basic", caster_program(Basic, Default)),
             ("geometry_shader", geometry_program(Plain, Extended, game)),
             (
                 "geometry_shader_basic",
@@ -121,7 +122,8 @@ fn programs() -> Vec<(&'static str, String)> {
                 "geometry_shader_blended",
                 geometry_program(Blended, Extended, game),
             ),
-            ("caster_shader", caster_program(game)),
+            ("caster_shader", caster_program(Extended, game)),
+            ("caster_shader_basic", caster_program(Basic, game)),
         ]);
     }
     // The tracing stages' programs on each path their rays take, with the
@@ -220,6 +222,8 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         ("geometry_shader_shadow_mask", geometry.clone()),
         ("geometry_shader_blended", geometry),
         ("caster_shader", caster.clone()),
+        ("caster_shader_basic", caster.clone()),
+        ("caster_basic", caster.clone()),
         (view::CASTER.name, caster),
         (sky::SKY.name, vec![sky::SKY_VS_ENTRY, sky::SKY_FS_ENTRY]),
         (

@@ -18,6 +18,12 @@ fn value(bits: u16) -> f32 {
     crate::test_support::half(&bits.to_le_bytes())
 }
 
+/// Motion can be signed; the shared HDR fixture encoder accepts only
+/// nonnegative values.
+fn motion_half(value: f32) -> u16 {
+    crate::test_support::to_half(value.abs()) | (u16::from(value.is_sign_negative()) << 15)
+}
+
 fn texture(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -208,10 +214,9 @@ fn still(continues: bool) -> TemporalParams {
         inverse_view_projection: Mat4::IDENTITY.to_cols_array_2d(),
         previous_view_projection: Mat4::IDENTITY.to_cols_array_2d(),
         size: [size, size, 1. / size, 1. / size],
-        near: 0.1,
         previous_near: 0.1,
         flags: if continues { TEMPORAL_CONTINUES } else { 0 },
-        padding: 0,
+        padding: [0; 2],
     }
 }
 
@@ -319,10 +324,9 @@ fn hits_behind_the_previous_camera_take_no_history() {
             inverse_view_projection: inverse_view_projection.to_cols_array_2d(),
             previous_view_projection: previous_view_projection.to_cols_array_2d(),
             size: [size, size, 1. / size, 1. / size],
-            near: 0.1,
             previous_near: 0.1,
             flags: TEMPORAL_CONTINUES,
-            padding: 0,
+            padding: [0; 2],
         },
         1,
     );
@@ -390,10 +394,9 @@ fn a_changed_near_plane_keeps_history() {
             inverse_view_projection: (projection * view).inverse().to_cols_array_2d(),
             previous_view_projection: (previous_projection * view).to_cols_array_2d(),
             size: [size, size, 1. / size, 1. / size],
-            near,
             previous_near,
             flags: TEMPORAL_CONTINUES,
-            padding: 0,
+            padding: [0; 2],
         },
         1,
     );
@@ -461,10 +464,9 @@ fn the_left_edge_fallback_reads_the_edge_texel() {
             inverse_view_projection: Mat4::IDENTITY.to_cols_array_2d(),
             previous_view_projection: previous_view_projection.to_cols_array_2d(),
             size: [size, size, 1. / size, 1. / size],
-            near: 0.1,
             previous_near: 0.1,
             flags: TEMPORAL_CONTINUES,
-            padding: 0,
+            padding: [0; 2],
         },
         1,
     );
@@ -476,5 +478,315 @@ fn the_left_edge_fallback_reads_the_edge_texel() {
             value(expected[i * 4]),
             "left-edge pixel {y} took history from the next column"
         );
+    }
+}
+
+// Plausible defect: a clamp-to-edge sample outside the old viewport wins
+// on colour, then the pass rejects it without trying the valid candidate.
+// The oracle is a valid 0.5 history at the receiver's previous position:
+// accumulation must pull a current hit/miss toward it. The viewport edge
+// holds the current neighbourhood's mean (~0.3), so the invalid candidate
+// wins the old unqualified luminance comparison in both directions.
+#[test]
+fn an_offscreen_candidate_cannot_discard_valid_history() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let pass = Pass::new(&device, &queue);
+    let texels = (SIZE * SIZE) as usize;
+    let projection = crate::perspective(std::f32::consts::FRAC_PI_2, 1., 0.1);
+    let size = SIZE as f32;
+    let target = (16 * SIZE + 24) as usize;
+    let mean = crate::test_support::to_half((value(BRIGHT) + 2. * value(DARK)) / 3.);
+    let history: Vec<u16> = (0..SIZE * SIZE)
+        .flat_map(|p| {
+            let x = p % SIZE;
+            let color = if x == 0 || x == SIZE - 1 { mean } else { HALF };
+            [color, color, color, ONE]
+        })
+        .collect();
+    upload(&queue, &pass.history[0], bytemuck::cast_slice(&history), 8);
+    for depth in [&pass.depth, &pass.depth_history[0]] {
+        upload(
+            &queue,
+            depth,
+            bytemuck::cast_slice(&vec![0.05f32; texels]),
+            4,
+        );
+    }
+    for offscreen_hit in [false, true] {
+        let (previous, motion, hit_depth) = if offscreen_hit {
+            // Receiver at z=-2 remains visible after a 1m lateral move and
+            // zoom: its old UV is (17.5/32, 16.5/32). The virtual point at
+            // z=-10 lies beyond the right edge (old UV x=1.146875).
+            let zoom = crate::perspective(2. * (1f32 / 3.).atan(), 1., 0.1);
+            let view = Mat4::from_translation(Vec3::new(-1., 0., 0.));
+            (zoom * view, 0.21875, 0.01)
+        } else {
+            // Virtual hit stays at this pixel; motion points two screens
+            // left, where the history sampler clamps to the left edge.
+            (projection, 2., 0.05)
+        };
+        upload(
+            &queue,
+            &pass.motion,
+            bytemuck::cast_slice(&[crate::test_support::to_half(motion), 0, 0, 0].repeat(texels)),
+            8,
+        );
+        upload(
+            &queue,
+            &pass.reprojection,
+            bytemuck::cast_slice(&vec![hit_depth; texels]),
+            4,
+        );
+        let output = pass.run(
+            (&device, &queue),
+            &hits(0),
+            TemporalParams {
+                inverse_view_projection: projection.inverse().to_cols_array_2d(),
+                previous_view_projection: previous.to_cols_array_2d(),
+                size: [size, size, 1. / size, 1. / size],
+                previous_near: 0.1,
+                flags: TEMPORAL_CONTINUES,
+                padding: [0; 2],
+            },
+            1,
+        );
+        assert!(
+            (output[target][0] - value(HALF)).abs() < 0.05,
+            "offscreen_hit={offscreen_hit}: valid history was discarded: {:?}",
+            output[target]
+        );
+    }
+    // Both candidates now lie a quarter texel beyond the right edge. At
+    // row16 the edge's depth disagrees, while row15 agrees; an unguarded
+    // vicinity search steps (-1,-1) back inside and incorrectly takes that
+    // edge history. Neither original candidate was visible, so the only
+    // valid result is the current sample, independent of that neighbour.
+    let mut old_depth = vec![0.05f32; texels];
+    old_depth[(16 * SIZE + SIZE - 1) as usize] = 0.025;
+    upload(
+        &queue,
+        &pass.depth_history[0],
+        bytemuck::cast_slice(&old_depth),
+        4,
+    );
+    upload(
+        &queue,
+        &pass.reprojection,
+        bytemuck::cast_slice(&vec![0.05f32; texels]),
+        4,
+    );
+    upload(
+        &queue,
+        &pass.motion,
+        bytemuck::cast_slice(&[motion_half(-0.2421875), 0, 0, 0].repeat(texels)),
+        8,
+    );
+    let previous = Mat4::from_translation(Vec3::new(0.484375, 0., 0.)) * projection;
+    let output = pass.run(
+        (&device, &queue),
+        &hits(0),
+        TemporalParams {
+            inverse_view_projection: projection.inverse().to_cols_array_2d(),
+            previous_view_projection: previous.to_cols_array_2d(),
+            size: [size, size, 1. / size, 1. / size],
+            previous_near: 0.1,
+            flags: TEMPORAL_CONTINUES,
+            padding: [0; 2],
+        },
+        1,
+    );
+    assert_eq!(
+        output[target][0],
+        value(hits(0)[target * 4]),
+        "two offscreen candidates admitted edge history"
+    );
+}
+
+// Plausible defect: disocclusion compares distances measured from different
+// camera positions. The independent scene is a stationary plane at world
+// z=-10, previously 10m away and now 8m after a 2m dolly. Its old depth is
+// 10m everywhere, so searching neighbours cannot repair comparison with
+// 8m (exp(-2/8) < 0.9). Correct reprojection preserves its uniform 0.5
+// history. Different near planes and jitter ensure the depth conversion
+// follows each camera's actual projection rather than an assumed matrix.
+#[test]
+fn a_camera_dolly_keeps_a_stationary_planes_history() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let pass = Pass::new(&device, &queue);
+    let texels = (SIZE * SIZE) as usize;
+    let size = SIZE as f32;
+    let projection = crate::perspective(1.2, 1., 0.1);
+    let old_projection = crate::perspective(1.2, 1., 0.3);
+    let view = Mat4::from_translation(Vec3::new(0., 0., 2.));
+    let current =
+        Mat4::from_translation(Vec3::new(0.25 / size, -0.5 / size, 0.)) * projection * view;
+    let previous = Mat4::from_translation(Vec3::new(-0.5 / size, 0.25 / size, 0.)) * old_projection;
+    let depth = current.project_point3(Vec3::new(0., 0., -10.)).z;
+    let old_depth = previous.project_point3(Vec3::new(0., 0., -10.)).z;
+    for texture in [&pass.depth, &pass.reprojection] {
+        upload(
+            &queue,
+            texture,
+            bytemuck::cast_slice(&vec![depth; texels]),
+            4,
+        );
+    }
+    upload(
+        &queue,
+        &pass.depth_history[0],
+        bytemuck::cast_slice(&vec![old_depth; texels]),
+        4,
+    );
+    upload(
+        &queue,
+        &pass.history[0],
+        bytemuck::cast_slice(&[HALF, HALF, HALF, ONE].repeat(texels)),
+        8,
+    );
+    // The public motion contract is unjittered current minus previous UV.
+    let motion: Vec<u16> = (0..SIZE * SIZE)
+        .flat_map(|i| {
+            let uv = glam::Vec2::new((i % SIZE) as f32 + 0.5, (i / SIZE) as f32 + 0.5) / size;
+            let point =
+                current
+                    .inverse()
+                    .project_point3(Vec3::new(uv.x * 2. - 1., 1. - uv.y * 2., depth));
+            let now = (projection * view).project_point3(point);
+            let old = old_projection.project_point3(point);
+            let delta = (now - old) * Vec3::new(0.5, -0.5, 0.);
+            [motion_half(delta.x), motion_half(delta.y), 0, 0]
+        })
+        .collect();
+    upload(&queue, &pass.motion, bytemuck::cast_slice(&motion), 8);
+    let output = pass.run(
+        (&device, &queue),
+        &hits(0),
+        TemporalParams {
+            inverse_view_projection: current.inverse().to_cols_array_2d(),
+            previous_view_projection: previous.to_cols_array_2d(),
+            size: [size, size, 1. / size, 1. / size],
+            previous_near: 0.3,
+            flags: TEMPORAL_CONTINUES,
+            padding: [0; 2],
+        },
+        1,
+    );
+    for y in 2..SIZE - 2 {
+        for x in 2..SIZE - 2 {
+            let texel = output[(y * SIZE + x) as usize];
+            assert!(
+                (texel[0] - value(HALF)).abs() < 0.05,
+                "stationary plane lost history at ({x},{y}): {texel:?}"
+            );
+        }
+    }
+}
+
+// Plausible defect: Velvet adds a world-space hit length directly to view
+// Z, placing off-axis virtual points too far away. Exercise the production
+// trace's reflected_depth; the independent oracle reconstructs its point
+// through the camera and measures the added distance in 3D. A 10m hit must
+// extend the view ray by 10m at the centre and edges alike, and a miss must
+// remain on its receiver. World resolve exercises the same contract in its
+// own production pass (world/tests.rs).
+#[test]
+fn virtual_points_extend_the_normalised_view_ray() {
+    use wgpu::util::DeviceExt;
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let reflection = Velvet::new(&device);
+    let points = [
+        [0f32, 0., -10., 10.],
+        [10., 0., -10., 10.],
+        [-12., 7., -8., 25.],
+    ];
+    let inputs = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("virtual point receivers"),
+        contents: bytemuck::cast_slice(&points),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let output = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("virtual point depths"),
+        size: (points.len() * 8) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    static OBSERVATION: Module = Module {
+        name: "velvet_virtual_points_test",
+        source: "@group(0) @binding(9) var<storage,read> points:array<vec4<f32>>;\n@group(0) @binding(10) var<storage,read_write> depths:array<vec2<f32>>;\n@compute @workgroup_size(1) fn observe(@builtin(global_invocation_id) id:vec3<u32>) {\n let p=points[id.x];\n depths[id.x]=vec2(reflected_depth(p.xyz,p.w),reflected_depth(p.xyz,0.));\n}\n",
+        deps: &[&TRACE],
+    };
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Velvet virtual points"),
+        source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&OBSERVATION]).into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("Velvet virtual points"),
+        layout: None,
+        module: &shader,
+        entry_point: Some("observe"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: reflection.scene_data.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: inputs.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 10,
+                resource: output.as_entire_binding(),
+            },
+        ],
+    });
+    for near in [0.1, 0.5] {
+        let projection = crate::perspective(1.2, 1., near);
+        queue.write_buffer(
+            &reflection.scene_data,
+            0,
+            bytemuck::bytes_of(&SceneData {
+                projection: projection.to_cols_array_2d(),
+                inv_projection: projection.inverse().to_cols_array_2d(),
+                reprojection: Mat4::IDENTITY.to_cols_array_2d(),
+                eye_offset: [0.; 4],
+            }),
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(points.len() as u32, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+        let depths = crate::test_support::read_words(&device, &queue, &output);
+        for (point, depth) in points.iter().zip(depths.chunks_exact(2)) {
+            let receiver = Vec3::new(point[0], point[1], point[2]);
+            let screen = projection.project_point3(receiver);
+            for (word, hit_distance) in depth.iter().zip([point[3], 0.]) {
+                let virtual_point = projection.inverse().project_point3(Vec3::new(
+                    screen.x,
+                    screen.y,
+                    f32::from_bits(*word),
+                ));
+                let measured = virtual_point.distance(receiver);
+                assert!(
+                    (measured - hit_distance).abs() < 1e-4,
+                    "near={near}, receiver={receiver:?}: virtual ray extends {measured}m, expected {hit_distance}m"
+                );
+            }
+        }
     }
 }

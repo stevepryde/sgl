@@ -15,6 +15,13 @@ use crate::view::pipelines::LitConstants;
 use crate::view::post_fx::PostFx;
 use crate::view::targets::SharedTargets;
 
+/// The virtual-point depth shared by the reflection methods.
+static REPROJECTION: crate::shading::Module = crate::shading::Module {
+    name: "reflection_reprojection",
+    source: include_str!("reprojection.wgsl"),
+    deps: &[],
+};
+
 /// Wicked Engine's SSR temporal reprojection, which Velvet and world-space
 /// rays accumulate through. Reads `temporal_current`, `temporal_history`,
 /// `temporal_depth_history` and `linear_sampler`.

@@ -124,7 +124,7 @@ fn world_hammersley(index:u32,count:u32,random:vec2<u32>)->vec2<f32> {
   variance=s/weight_sum;
  }
  // Post-projection depth of the reflected point, for hit reprojection.
- let reprojection=world_inverse_linear_depth(world_linear_depth(receiver.depth)+closest_length);
+ let reprojection=reflection_virtual_depth(receiver.depth,distance(world.eye.xyz,position),closest_length);
  textureStore(resolve_output,p,clamp(result,vec4(.00001),vec4(65504.)));
  textureStore(resolve_variance_output,p,vec4(variance));
  textureStore(reprojection_output,p,vec4(reprojection));
@@ -161,7 +161,7 @@ const VARIANCE_TEMPORAL_RESPONSE:f32=.9;
   textureStore(temporal_variance_output,p,vec4(0.));
   return;
  }
- let view=TemporalView(world.inverse_view_projection,world.previous_view_projection,world.reduced,world.eye.w,world.previous_near);
+ let view=TemporalView(world.inverse_view_projection,world.previous_view_projection,world.reduced,world.previous_near);
  // SGL3D motion (current minus previous), negated into Wicked's.
  let velocity=-textureLoad(world_motion,p*downscale,0).xy;
  let accumulated=temporal_accumulate(view,p,current,velocity,textureLoad(temporal_reprojection,p,0).x,receiver.depth);

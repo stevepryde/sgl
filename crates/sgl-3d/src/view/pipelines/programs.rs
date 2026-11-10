@@ -96,7 +96,7 @@ impl ProgramSet {
         slot.get_or_insert_with(|| {
             let source = match program {
                 Program::Geometry(form) => geometry_program(form, tier, shader),
-                Program::Caster => caster_program(shader),
+                Program::Caster => caster_program(tier, shader),
             };
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(&format!("{label} {name}")),

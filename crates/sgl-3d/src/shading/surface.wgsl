@@ -3,11 +3,6 @@
 // world-space ray hits (surface_ray.wgsl). The builders evaluate materials;
 // direct, baked, environment and emitted light are computed here. Reads the
 // lit bindings (bind_lit.wgsl).
-// Diagnostic layer switches of surface shading, set per pipeline; always true
-// outside diagnostics.
-override instance_emission_enabled:bool=true;
-override normal_maps_enabled:bool=true;
-override bump_maps_enabled:bool=true;
 // Whether the scene holds an iridescent film (LitConstants::films): where
 // it does not, surface_f0s compiles its evaluation out.
 override films_enabled:bool=true;

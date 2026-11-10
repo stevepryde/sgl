@@ -25,7 +25,13 @@ fn trace_numerical_boundaries() {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("production Godot trace"),
         source: wgpu::ShaderSource::Wgsl(
-            include_str!("../../../crates/sgl-3d/src/stages/reflections/velvet/godot_reflections_trace.wgsl")
+            concat!(
+                include_str!("../../../crates/sgl-3d/src/stages/reflections/reprojection.wgsl"),
+                "\n",
+                include_str!(
+                    "../../../crates/sgl-3d/src/stages/reflections/velvet/godot_reflections_trace.wgsl"
+                )
+            )
                 .replace("// Add a small bias towards", "if (params.num_steps == -1) { textureStore(output_color, pixel_pos, vec4<f32>(geom_normal, 1.0)); return; }\n// Add a small bias towards")
                 .replace("let facing_camera =", "if (params.num_steps == -2) { textureStore(output_color, pixel_pos, vec4<f32>(screen_ray_dir, screen_end_pos.z - screen_pos.z)); return; }\nlet facing_camera =")
                 .into(),

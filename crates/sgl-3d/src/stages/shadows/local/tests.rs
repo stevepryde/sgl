@@ -120,6 +120,10 @@ enum Seen {
 impl Harness {
     fn new() -> Option<Self> {
         let (device, queue) = test_support::device()?;
+        Some(Self::on(device, queue))
+    }
+
+    fn on(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let renderer = Renderer::for_test(&device, &queue, [64, 64], &Settings::default());
         let output = device
             .create_texture(&wgpu::TextureDescriptor {
@@ -221,14 +225,14 @@ override other_side:bool=false;
                 cache: None,
             })
         });
-        Some(Self {
+        Self {
             device,
             queue,
             renderer,
             settings: Settings::default(),
             output,
             observers,
-        })
+        }
     }
 
     fn encode(&mut self, scene: &mut Scene, input: &FrameInput) -> wgpu::CommandEncoder {
@@ -1494,6 +1498,159 @@ fn a_shaders_masked_casters_take_its_coverage() {
         (Vec3::new(0.15, 0., -1.), 0.),
     ];
     harness.expect(light, &expected, "the camera's view");
+}
+
+// A material shader may derive coverage from any evaluated surface field.
+// Observe visibility behind a blocker whose MR/normal maps make it wholly
+// cut out or wholly kept; the old base-only caster inputs invert these
+// outcomes. Both binding tiers exercise their real caster pipelines.
+#[test]
+fn masked_shader_coverage_reads_material_maps_and_mapped_normals() {
+    let Some(adapter) = test_support::adapter() else {
+        return;
+    };
+    for sampled in [16, 48] {
+        if adapter.limits().max_sampled_textures_per_shader_stage < sampled {
+            continue;
+        }
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            required_features: crate::graphics_device::features(&adapter),
+            required_limits: wgpu::Limits {
+                max_sampled_textures_per_shader_stage: sampled,
+                ..crate::graphics_device::limits(&adapter)
+            },
+            ..Default::default()
+        }))
+        .unwrap();
+        let mut harness = Harness::on(device, queue);
+        for (normal, texel, expression, visibility, animated) in [
+            (false, [255, 0, 255, 255], "s.roughness>=.5", 1., false),
+            (false, [255; 4], "s.roughness>=.5", 0., false),
+            (true, [204, 128, 230, 255], "s.normal.x>.25", 0., false),
+            (true, [128, 128, 255, 255], "s.normal.x>.25", 1., false),
+            (true, [204, 128, 230, 255], "s.normal.x>.25", 0., true),
+        ] {
+            let (device, queue) = (&harness.device, &harness.queue);
+            let mut scene = Scene::new(device, queue);
+            let shader = scene.add_shader(crate::ShaderSource {
+                label: "map-dependent coverage".into(),
+                wgsl: format!(r#"
+struct ShaderParams {{ value:vec4<f32>, }}
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,p:ShaderParams)->MaterialVertex {{ return v; }}
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,p:ShaderParams)->MaterialSurface {{
+ var out=s;
+ out.base_color.a=select(0.,1.,{expression});
+ return out;
+}}
+"#),
+            }).unwrap();
+            let mut asset = blocker();
+            asset.images = vec![asset::Image::Rgba8(image::RgbaImage::from_pixel(
+                1,
+                1,
+                image::Rgba(texel),
+            ))];
+            if animated {
+                asset.images[0] = asset::Image::Rgba8(image::RgbaImage::from_fn(2, 1, |x, _| {
+                    image::Rgba([if x == 0 { 204 } else { 51 }, 128, 230, 255])
+                }));
+                asset.materials[0].normal_layers = Some([
+                    crate::NormalLayer {
+                        velocity: [1., 0.],
+                        ..Default::default()
+                    },
+                    crate::NormalLayer {
+                        strength: 0.,
+                        ..Default::default()
+                    },
+                ]);
+                for vertex in &mut asset.meshes[0].vertices {
+                    vertex.uv = [0.25, 0.5];
+                }
+            }
+            asset.materials[0].alpha = crate::AlphaMode::Mask { cutoff: 0.5 };
+            asset.materials[0].roughness = 1.;
+            if normal {
+                asset.materials[0].normal_texture = Some(0);
+                for vertex in &mut asset.meshes[0].vertices {
+                    vertex.tangent = [1., 0., 0., 1.];
+                }
+                // Select the authored tangent frame, so +X has a known
+                // world direction under the shadow camera's projection.
+                asset.materials[0].anisotropy_strength = 0.1;
+            } else {
+                asset.materials[0].mr_texture = Some(0);
+            }
+            let ids = scene.add_asset(device, queue, asset).unwrap();
+            test_support::set_shader(&mut scene, queue, ids.materials[0], (shader, 0.));
+            scene
+                .add_instance(device, queue, at(ids.model, Vec3::ZERO), Mobility::Static)
+                .unwrap();
+            let light = scene
+                .add_light(device, queue, point(Vec3::new(0., 0., 1.), 4.))
+                .unwrap();
+            harness.frame(&mut scene, &input());
+            harness.expect(
+                light,
+                &[(Vec3::new(0., 0., -1.), visibility)],
+                &format!("sampled {sampled}, normal {normal}, map {texel:?}"),
+            );
+            if animated {
+                harness.frame(&mut scene, &at_time(0.5));
+                harness.expect(
+                    light,
+                    &[(Vec3::new(0., 0., -1.), 1.)],
+                    "normal layers changed coverage without a shader time read",
+                );
+                harness.frame(&mut scene, &at_time(0.));
+                harness.expect(
+                    light,
+                    &[(Vec3::new(0., 0., -1.), 0.)],
+                    "normal layers returned to their first texel",
+                );
+            }
+            // Reuse the finished frame's atlas; scalar edits must not keep
+            // a cached coverage result computed from the old full inputs.
+            if visibility == 0. {
+                let mut values = scene.material(ids.materials[0]).unwrap();
+                if normal {
+                    values.normal_scale = 0.;
+                } else {
+                    values.roughness = 0.;
+                }
+                scene
+                    .set_material(&harness.queue, ids.materials[0], values)
+                    .unwrap();
+                harness.frame(&mut scene, &input());
+                harness.expect(
+                    light,
+                    &[(Vec3::new(0., 0., -1.), 1.)],
+                    "cached coverage after scalar edit",
+                );
+                #[cfg(feature = "diagnostics")]
+                if normal {
+                    values.normal_scale = 1.;
+                    scene
+                        .set_material(&harness.queue, ids.materials[0], values)
+                        .unwrap();
+                    harness.frame(&mut scene, &input());
+                    harness.expect(
+                        light,
+                        &[(Vec3::new(0., 0., -1.), 0.)],
+                        "mapped coverage restored",
+                    );
+                    harness.settings.diagnostics.disable.normal_maps = true;
+                    harness.frame(&mut scene, &input());
+                    harness.expect(
+                        light,
+                        &[(Vec3::new(0., 0., -1.), 1.)],
+                        "cached coverage after disabling normal maps",
+                    );
+                    harness.settings.diagnostics.disable.normal_maps = false;
+                }
+            }
+        }
+    }
 }
 
 /// A scene whose `blocker()` material is drawn through the test shader

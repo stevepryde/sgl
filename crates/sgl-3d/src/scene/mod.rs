@@ -299,7 +299,8 @@ impl Scene {
                     reads_time: self
                         .shaders
                         .get(shader.shader)
-                        .is_ok_and(|shader| shader.reads_time),
+                        .is_ok_and(|shader| shader.reads_time)
+                        || material.coverage_moves(),
                     parameters: material.parameters,
                 }
             })

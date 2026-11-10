@@ -15,7 +15,10 @@
 // device depth, is linearised with the near plane it was written under; the
 // bilinear fallback floors its base texel where Wicked's uint2 truncates, so
 // within half a texel of the top or left edge the weights land on the edge
-// texel.
+// texel; only on-screen candidates may win the history selection; receiver
+// depth is reprojected to the previous camera before disocclusion, as
+// DiligentFX f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b's
+// Shaders/Common/private/ComputeReprojectedDepth.fx does (no code copied).
 // Reads `temporal_current`, `temporal_history`, `temporal_depth_history` and
 // `linear_sampler`.
 const TEMPORAL_RESPONSE:f32=.95;
@@ -28,9 +31,8 @@ struct TemporalView {
  previous_view_projection:mat4x4<f32>,
  // Traced width, height, 1/width, 1/height.
  size:vec4<f32>,
- // The reversed-Z infinite projection's near plane, this frame's and the
- // previous frame's, which wrote the depth history.
- near:f32,
+ // The previous reversed-Z infinite projection's near plane, which wrote
+ // the depth history.
  previous_near:f32,
 }
 fn temporal_saturated(uv:vec2<f32>)->bool {
@@ -52,16 +54,21 @@ fn temporal_saturated(uv:vec2<f32>)->bool {
 // (antiAliasing/taa/taa.mat) do; Wicked 4323a33's own velocity
 // (visibility_velocityCS.hlsl) keeps only a positive previous w, as
 // gbuffer_encode_motion does.
-fn temporal_reprojection_uv(view:TemporalView,uv:vec2<f32>,depth:f32)->vec2<f32> {
+fn temporal_previous_clip(view:TemporalView,uv:vec2<f32>,depth:f32)->vec4<f32> {
  let screen=vec2(uv.x*2.-1.,1.-uv.y*2.);
- let previous=view.previous_view_projection*(view.inverse_view_projection*vec4(screen,depth,1.));
+ return view.previous_view_projection*(view.inverse_view_projection*vec4(screen,depth,1.));
+}
+fn temporal_reprojection_uv(view:TemporalView,uv:vec2<f32>,depth:f32)->vec2<f32> {
+ let previous=temporal_previous_clip(view,uv,depth);
  if previous.w<=0. {
   return vec2(-1.);
  }
  return previous.xy/previous.w*vec2(.5,-.5)+vec2(.5);
 }
+// Both depths belong to the previous camera. Comparing current-camera
+// depth instead rejects a static plane when the camera moves toward it.
 fn temporal_disocclusion(view:TemporalView,depth:f32,history:f32)->f32 {
- let current=linear_depth(view.near,depth);
+ let current=linear_depth(view.previous_near,depth);
  let previous=linear_depth(view.previous_near,history);
  return exp(-abs(previous-current)/current*DISOCCLUSION_DEPTH_WEIGHT);
 }
@@ -138,13 +145,28 @@ fn temporal_accumulate(view:TemporalView,p:vec2<i32>,current:vec4<f32>,velocity:
  let stddev=sqrt(max(m2/9.-mean*mean,vec4(0.)));
  // Secondary reprojection based on ray lengths (SEED DD18, slide 45).
  let uv=(vec2<f32>(p)+.5)*view.size.zw;
+ let previous_surface=temporal_previous_clip(view,uv,depth);
+ // A surface on/behind the previous camera or nearer than its near plane
+ // supplied no history. Infinite reversed-Z has near=1 and far=0.
+ if previous_surface.w<=0. || previous_surface.z>=previous_surface.w || previous_surface.z<=0. {
+  return TemporalHistory(current,0.,vec2(-1.));
+ }
+ let previous_depth=previous_surface.z/previous_surface.w;
  let by_velocity=uv+velocity;
  let by_hit=temporal_reprojection_uv(view,uv,reprojection_depth);
+ let velocity_inside=temporal_saturated(by_velocity);
+ let hit_inside=temporal_saturated(by_hit);
+ if !velocity_inside && !hit_inside {
+  return TemporalHistory(current,0.,vec2(-1.));
+ }
  let color_velocity=textureSampleLevel(temporal_history,linear_sampler,by_velocity,0.);
  let color_hit=textureSampleLevel(temporal_history,linear_sampler,by_hit,0.);
  let distance_velocity=abs(luminance(color_velocity.rgb)-luminance(mean.rgb));
  let distance_hit=abs(luminance(color_hit.rgb)-luminance(mean.rgb));
- let previous=temporal_previous_color(view,select(by_hit,by_velocity,distance_velocity<distance_hit),depth);
+ // A clamp-to-edge colour outside the viewport is no history candidate,
+ // even when its luminance fits better (as Crystal's DFX-57 selection).
+ let use_velocity=!hit_inside || (velocity_inside && distance_velocity<distance_hit);
+ let previous=temporal_previous_color(view,select(by_hit,by_velocity,use_velocity),previous_depth);
  var result=current;
  if previous.disocclusion>DISOCCLUSION_THRESHOLD && temporal_saturated(previous.uv) {
   // Colour box clamp.

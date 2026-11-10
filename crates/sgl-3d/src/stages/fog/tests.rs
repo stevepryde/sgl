@@ -80,6 +80,87 @@ fn render(
     renderer
 }
 
+// Defect: reprojecting a volume written with a different Fog::length reads
+// density from another world position. The independent oracle is a fixed
+// box at 4..6 m: its interior keeps its authored density and empty space
+// stays empty when only the covered range grows or shrinks. Shader
+// validation cannot detect a valid lookup into the wrong historical grid.
+#[test]
+fn changing_fog_range_keeps_a_stationary_volume_in_place() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    for filter in [false, true] {
+        for (before, after) in [(10., 20.), (20., 10.)] {
+            let mut scene = Scene::new(&device, &queue);
+            scene
+                .update_fog_volumes(
+                    &device,
+                    &queue,
+                    &[crate::FogVolume {
+                        center: Vec3::new(0., 0., -5.),
+                        size: Vec3::new(20., 20., 2.),
+                        density: 0.1,
+                        edge_fade: 0.,
+                        ..Default::default()
+                    }],
+                )
+                .unwrap();
+            let mut choice = settings(true);
+            choice.fog_filter = filter;
+            let mut frame = input(Fog {
+                length: before,
+                ..Default::default()
+            });
+            let mut renderer = render(&device, &queue, &mut scene, &frame, &choice, 2);
+            let output =
+                crate::view::targets::target(&device, "fog range change", SIZE, gbuffer::COLOR);
+            frame.fog.length = after;
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &frame,
+                &choice,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+            let view = renderer.fog_volumes()[0];
+            let extent = view.texture().size();
+            let density = texels(&read(&device, &queue, view));
+            let size = [extent.width, extent.height, extent.depth_or_array_layers];
+            let mut interior = 0;
+            let mut empty = 0;
+            for z in 0..size[2] {
+                let depth = -froxel_center(&frame, size, [size[0] / 2, size[1] / 2, z]).z;
+                let index = (z * size[0] * size[1] + size[1] / 2 * size[0] + size[0] / 2) as usize;
+                let actual = density[index][3];
+                if (4.5..5.5).contains(&depth) {
+                    interior += 1;
+                    assert!(
+                        (actual - 0.1).abs() < 1e-4,
+                        "{before}->{after}, filter {filter}, depth {depth}: box density {actual}"
+                    );
+                } else if (2.0..3.0).contains(&depth) || (9.0..11.0).contains(&depth) {
+                    empty += 1;
+                    assert!(
+                        actual < 1e-4,
+                        "{before}->{after}, filter {filter}, depth {depth}: density {actual} outside the box"
+                    );
+                }
+            }
+            assert!(
+                interior > 0 && empty > 0,
+                "fixture must sample the box and empty space"
+            );
+        }
+    }
+}
+
 fn texels(bytes: &[u8]) -> Vec<[f32; 4]> {
     bytes
         .chunks_exact(8)

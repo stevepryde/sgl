@@ -21,7 +21,7 @@
     "component": "AMD FidelityFX Denoiser",
     "path": "crates/sgl-3d/src/LICENSE-amd-fidelityfx-denoiser.txt",
     "url": "https://raw.githubusercontent.com/GPUOpen-Effects/FidelityFX-Denoiser/d7dfecbabe7b9523b14e7b067216e06b86e8d189/LICENSE.txt",
-    "prefix": "AMD FidelityFX Denoiser, https://github.com/GPUOpen-Effects/FidelityFX-Denoiser\nRevision d7dfecbabe7b9523b14e7b067216e06b86e8d189, LICENSE.txt. SGL3D ports\nffx-shadows-dnsr/ffx_denoiser_shadows_util.h, ffx_denoiser_shadows_tileclassification.h\nand ffx_denoiser_shadows_filter.h to the ray-traced shadow stage\n(stages/shadows/traced/ffx_denoiser_shadows_*.wgsl), as Wicked Engine runs them.\n\n"
+    "prefix": "AMD FidelityFX Denoiser, https://github.com/GPUOpen-Effects/FidelityFX-Denoiser\nRevision d7dfecbabe7b9523b14e7b067216e06b86e8d189, LICENSE.txt. SGL3D ports\nffx-shadows-dnsr/ffx_denoiser_shadows_util.h, ffx_denoiser_shadows_tileclassification.h\nand ffx_denoiser_shadows_filter.h to the ray-traced shadow stage\n(stages/shadows/traced/ffx_denoiser_shadows_*.wgsl), as Wicked Engine runs them.\nReflection virtual-point depth in stages/reflections/reprojection.wgsl follows\nffx-reflection-dnsr/ffx_denoiser_reflections_reproject.h's\nFFX_DNSR_Reflections_GetHitPositionReprojection.\n\n"
   },
   {
     "component": "bcdec",

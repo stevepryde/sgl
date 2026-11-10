@@ -358,7 +358,9 @@ impl VolumetricFog {
     pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
         let history = ctx.history;
         let volumes = &mut self.volumes;
-        let Some((index, reprojects)) = volumes.holds.frame(&history, ctx.effective.fog.is_some())
+        let Some((index, reprojects)) = volumes
+            .holds
+            .frame(&history, ctx.effective.fog.map(|_| ctx.input.fog.length))
         else {
             return;
         };
@@ -484,7 +486,7 @@ impl VolumetricFog {
             }
             // A submitted frame may be retried without finish_frame. The
             // other volume then holds this frame, not its predecessor.
-            volumes.holds.filtered(index, history.frames);
+            volumes.holds.filtered(index);
             volumes.integrated_from = 1 - index;
         }
         let mut pass = ctx

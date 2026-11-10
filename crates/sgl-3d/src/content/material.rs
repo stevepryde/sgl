@@ -297,10 +297,9 @@ impl SurfaceMaterial {
         )
     }
 
-    /// What its shadow casters depend on: its side, its visibility group,
-    /// whether it is drawn blended (and casts nothing), for a masked
-    /// material, its cutoff and base alpha, and its shader, which places
-    /// their vertices.
+    /// The ordinary shadow caster key. A masked shader can derive coverage
+    /// from every evaluated material field, so its cache is invalidated on
+    /// any material edit in addition to these values.
     pub(crate) fn caster_values(
         &self,
     ) -> (bool, u32, AlphaMode, bool, f32, Option<MaterialShader>) {

@@ -133,11 +133,11 @@ fn compute_geometric_normal(pixel_pos: vec2<i32>, depth_c: f32, view_c: vec3<f32
 
 const M_PI = 3.14159265359;
 
-// SGL3D: the depth of the point `distance` behind the receiver along its view
-// ray, where its reflection appears (Wicked Engine ssr_resolveCS.hlsl).
+// SGL3D: the point `distance` beyond the receiver along its normalised view
+// ray (AMD's reflection denoiser, reflection_reprojection.wgsl).
 fn reflected_depth(receiver: vec3<f32>, distance: f32) -> f32 {
-	let clip = scene_data.projection * vec4<f32>(0.0, 0.0, receiver.z - distance, 1.0);
-	return clip.z / clip.w;
+	let clip = scene_data.projection * vec4<f32>(receiver, 1.0);
+	return reflection_virtual_depth(clip.z / clip.w, length(receiver), distance);
 }
 
 @compute @workgroup_size(8, 8, 1)

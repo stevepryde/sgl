@@ -258,10 +258,14 @@ impl MaterialUniform {
     /// its map each animation period. An unlit surface's shading takes no
     /// normal, and a layer whose speed rounds to none stands still.
     pub fn surface_moves(&self) -> bool {
-        self.flags & MATERIAL_UNLIT == 0
-            && self
-                .normal_layers
-                .iter()
-                .any(|layer| layer.cycles != [0.; 2])
+        self.flags & MATERIAL_UNLIT == 0 && self.normal_layers_move()
+    }
+
+    /// The quantized normal layers move, including an unlit material whose
+    /// shader may read their evaluated normal to determine coverage.
+    pub fn normal_layers_move(&self) -> bool {
+        self.normal_layers
+            .iter()
+            .any(|layer| layer.cycles != [0.; 2])
     }
 }

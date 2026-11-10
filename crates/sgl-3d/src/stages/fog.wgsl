@@ -10,6 +10,9 @@
 // "Physically Based and Unified Volumetric Rendering in Frostbite".
 //
 // Where it differs from Godot, and why:
+// - A change of covered length rejects the old froxel history (fog/volumes.rs),
+//   as a grid resize does. Godot's reprojection below uses the current range
+//   for both grids; reusing a different range moves stationary fog volumes.
 // - The froxel volume holds the quality's side across the geometric mean of
 //   the frame's sides (fog.rs froxels): square froxels, as many as Godot's
 //   split (side × r, side / r, r = width / mean side) gives, each side within

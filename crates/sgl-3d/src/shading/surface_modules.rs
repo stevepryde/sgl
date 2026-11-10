@@ -4,6 +4,12 @@
 //! Surface shading). `shading` re-exports each.
 use super::*;
 
+/// Diagnostic switches shared by raster materials and ray-hit surfaces.
+static SURFACE_OPTIONS: Module = Module {
+    name: "surface_options",
+    source: include_str!("surface_options.wgsl"),
+    deps: &[],
+};
 pub(crate) static ANISOTROPY: Module = Module {
     name: "anisotropy",
     source: include_str!("anisotropy.wgsl"),
@@ -55,6 +61,7 @@ pub(crate) static SURFACE: Module = Module {
     name: "surface",
     source: include_str!("surface.wgsl"),
     deps: &[
+        &SURFACE_OPTIONS,
         &ANISOTROPY,
         &IRIDESCENCE,
         &SHEEN,
@@ -83,6 +90,20 @@ pub(crate) static TRANSMISSION: Module = Module {
     source: include_str!("transmission.wgsl"),
     deps: &[&VERTEX, &PBR, &DFG, &SPECULAR_LOBES],
 };
+/// A rasterized material and its mapped normals, shared by camera geometry
+/// and shader-driven masked casters; no lighting or decal bindings.
+pub(crate) static MATERIAL_SURFACE_RASTER: Module = Module {
+    name: "material_surface_raster",
+    source: include_str!("material_surface_raster.wgsl"),
+    deps: &[
+        &SURFACE_OPTIONS,
+        &VERTEX,
+        &PBR,
+        &ANISOTROPY,
+        &MATERIAL_RASTER,
+        &MATERIAL_SHADER,
+    ],
+};
 /// A rasterized fragment's `Surface`. Reads `view`, `object` and the
 /// material, and the Extended tier's maps through the material-map provider
 /// the program composes (`material_provider`).
@@ -93,7 +114,7 @@ pub(crate) static SURFACE_RASTER: Module = Module {
         &VERTEX,
         &PBR,
         &ANISOTROPY,
-        &MATERIAL_RASTER,
+        &MATERIAL_SURFACE_RASTER,
         &SURFACE,
         &MATERIAL_SHADER,
     ],

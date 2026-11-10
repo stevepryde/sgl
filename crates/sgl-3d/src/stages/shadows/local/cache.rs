@@ -20,6 +20,7 @@ use super::shape::LightView;
 use crate::content::identity::{InstanceId, LightId, ModelId};
 use crate::scene::CasterShading;
 use crate::scene::origin::translated;
+use crate::view::pipelines::LayerConstants;
 use glam::{DVec3, Mat4};
 use std::collections::HashMap;
 
@@ -37,6 +38,8 @@ pub(super) struct FaceKey {
     /// What the shaders of the static casters that reach the face, and may
     /// change what they cast, read (`Scene::caster_shading`).
     pub shading: Shading,
+    /// Diagnostic map switches used to evaluate custom masked coverage.
+    pub maps: LayerConstants,
 }
 
 /// What the shaders that may change what casters cast read, as of a frame:

@@ -161,6 +161,7 @@ pub(super) fn render(
         crate::stages::shadows::local::ShadowFrame {
             mask: values.frame.visibility_mask,
             time: input.elapsed_seconds,
+            layers: effective.layers,
         },
         effective.local_lights,
     );

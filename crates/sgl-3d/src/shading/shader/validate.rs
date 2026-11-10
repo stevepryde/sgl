@@ -237,7 +237,7 @@ pub(crate) fn programs(
             geometry_program(GeometryForm::Blended, tier, shader),
         ));
     }
-    programs.push(("casters", caster_program(shader)));
+    programs.push(("casters", caster_program(tier, shader)));
     programs
 }
 

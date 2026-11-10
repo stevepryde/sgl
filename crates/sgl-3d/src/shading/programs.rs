@@ -156,7 +156,7 @@ pub(crate) static CASTER: Module = Module {
         &super::BIND_SCENE,
         &super::SCENE_RAYS,
         &super::VERTEX_PULL,
-        &super::MATERIAL_RASTER,
+        &super::MATERIAL_SURFACE_RASTER,
         &super::BIND_CASTER_POSITIONS,
         &super::MATERIAL_SHADER,
     ],
@@ -191,6 +191,13 @@ pub(crate) const SHADOW_SHADED_MASKED_UNCLIPPED_FS_ENTRY: &str =
     "shadow_shaded_masked_unclipped_fs";
 
 /// The caster program with `shader`.
-pub(crate) fn caster_program(shader: ProgramShader<'_>) -> String {
-    shaded(&[&CASTER, &SHADER_SCENE_DEPTH_NONE], shader)
+pub(crate) fn caster_program(tier: BindingTier, shader: ProgramShader<'_>) -> String {
+    shaded(
+        &[
+            &CASTER,
+            super::material_provider(tier),
+            &SHADER_SCENE_DEPTH_NONE,
+        ],
+        shader,
+    )
 }

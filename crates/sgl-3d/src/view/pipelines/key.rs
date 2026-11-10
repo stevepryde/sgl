@@ -34,19 +34,36 @@ impl LayerConstants {
         }
     }
 
-    fn constants(self) -> [(&'static str, f64); 4] {
+    /// Only the diagnostic switches that change evaluated material maps.
+    pub(crate) fn material_maps(self) -> Self {
+        Self {
+            normal_maps: self.normal_maps,
+            bump_maps: self.bump_maps,
+            ..Self::ALL
+        }
+    }
+
+    fn map_constants(self) -> [(&'static str, f64); 2] {
         [
             ("normal_maps_enabled", f64::from(u8::from(self.normal_maps))),
             ("bump_maps_enabled", f64::from(u8::from(self.bump_maps))),
-            (
-                "baked_lighting_enabled",
-                f64::from(u8::from(self.baked_lighting)),
-            ),
-            (
-                "instance_emission_enabled",
-                f64::from(u8::from(self.instance_emission)),
-            ),
         ]
+    }
+
+    fn constants(self) -> Vec<(&'static str, f64)> {
+        self.map_constants()
+            .into_iter()
+            .chain([
+                (
+                    "baked_lighting_enabled",
+                    f64::from(u8::from(self.baked_lighting)),
+                ),
+                (
+                    "instance_emission_enabled",
+                    f64::from(u8::from(self.instance_emission)),
+                ),
+            ])
+            .collect()
     }
 }
 
@@ -130,7 +147,8 @@ pub(crate) struct PipelineKey {
 }
 
 impl PipelineKey {
-    /// Casters and the volume layers take no layer or lit constants, and
+    /// Shader-driven masked casters take material-map diagnostics; other
+    /// casters and the volume layers take no layer or lit constants, and
     /// the volume layers cull no face, whatever the batch's side and pose;
     /// indexed casters read the positions they are given, deformed or not,
     /// and pulled ones pull a deforming instance's deformed positions. Only
@@ -143,6 +161,7 @@ impl PipelineKey {
         transmission: bool,
     ) -> Self {
         let constant = pass.caster() || pass.volume();
+        let shaded_mask = pass.caster() && variant.alpha == Alpha::Mask && shader.is_some();
         Self {
             pass,
             shader,
@@ -155,7 +174,9 @@ impl PipelineKey {
                 },
                 ..variant
             },
-            layers: if constant {
+            layers: if shaded_mask {
+                layers.material_maps()
+            } else if constant {
                 LayerConstants::ALL
             } else {
                 layers
@@ -169,9 +190,9 @@ impl PipelineKey {
         }
     }
 
-    /// Whether the key is one `new` makes under `specialisation`: casters
-    /// and the volume layers, which take none of its constants, belong to
-    /// every specialisation.
+    /// Whether the key belongs to this specialisation. Plain casters and
+    /// volume layers belong to every specialisation; shader-driven masked
+    /// casters follow the material-map diagnostics.
     pub(super) fn specialised(self, (layers, lit, transmission): Specialisation) -> bool {
         self == Self::new(
             self.pass,
@@ -199,6 +220,9 @@ impl PipelineKey {
             f64::from(u8::from(self.variant.deformed)),
         );
         let mut constants = Vec::new();
+        if self.pass.caster() && self.variant.alpha == Alpha::Mask && self.shader.is_some() {
+            constants.extend(self.layers.map_constants());
+        }
         if !self.pass.caster() {
             constants.extend(self.layers.constants());
             constants.extend(self.lit.constants());

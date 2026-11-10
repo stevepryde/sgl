@@ -117,13 +117,9 @@ struct LegacyStableOutput {
 }
 @fragment fn anisotropy_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->@location(0) vec4<f32> {
  let front=object_front_face(i,raster_front);
- let m=raster_material(i,front);
- var anisotropy=vec4(0.);
- if material.anisotropy_strength>0. {
-  anisotropy=surface_anisotropy(i,front,m.normal);
- }
- material_alpha_discard(m.base_color.a);
- return gbuffer_encode_anisotropy(anisotropy,material.environment_scale);
+ let s=stable_raster_surface(i,front);
+ material_alpha_discard(s.base.a);
+ return gbuffer_encode_anisotropy(s.anisotropy,s.environment_scale);
 }
 
 // Nonindexed pulled vertices, with source identity carrying the primitive.

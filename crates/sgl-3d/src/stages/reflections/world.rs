@@ -207,7 +207,12 @@ pub(crate) const WORLD_TRACE_ENTRY: &str = "world_trace";
 pub(crate) static DENOISE: shading::Module = shading::Module {
     name: "world_reflections_denoise",
     source: include_str!("world/world_reflections_denoise.wgsl"),
-    deps: &[&COMMON, &super::TEMPORAL_REPROJECTION, &shading::LUMINANCE],
+    deps: &[
+        &COMMON,
+        &super::TEMPORAL_REPROJECTION,
+        &super::REPROJECTION,
+        &shading::LUMINANCE,
+    ],
 };
 /// The entry points the denoiser's pipelines are created with.
 pub(crate) const WORLD_RESOLVE_ENTRY: &str = "world_resolve";

@@ -332,7 +332,8 @@ before opaque, the fog stage:
   0.9 of it (Godot's default reprojection amount), and samples another
   point of it each frame (Godot's 16 Halton offsets), so shafts and shadow
   edges in the fog resolve over frames; this history restarts with the
-  camera's;
+  camera's and whenever `Fog::length` changes, so density does not move
+  when the volume covers a different range;
 - with `Settings::fog_filter` (on by default, as Godot's `use_filter`),
   blurs each slice with Godot's 7-tap Gaussian across x and then y, which
   smooths what one sample per froxel leaves; the next frame reprojects the
@@ -755,7 +756,10 @@ combines passes from several engines, listed with their licences under it.
   neighbourhood; Godot itself flickers this way. The temporal pass
   (reprojection by motion and by reflection hit, depth disocclusion, a 3x3
   colour clamp) therefore accumulates the traced hits before the mip chain,
-  and restarts with the other histories. It costs about 0.9 ms at 1920x1080
+  and restarts with the other histories. Velvet and world-space rays share
+  hit reprojection along the normalised view ray, choose only in-bounds
+  history candidates, and compare depths in the previous camera's space.
+  It costs about 0.9 ms at 1920x1080
   on an Apple M5.
   - [Godot 4.7.2](https://github.com/godotengine/godot/tree/ed1daf0bf001b61586d9930840f2f1394092c079/servers/rendering/renderer_rd/shaders/effects)'s
     SSR (`screen_space_reflection*.glsl`, as `ss_effects.cpp` runs them): the
@@ -1591,7 +1595,10 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
   record and maps at a fragment, before decals, roughness filtering and the
   coat's normal, in every pass that builds a surface (an unlit material's
   base colour and emission among them), and for coverage alone in FSR2's
-  composition pass and a masked material's shadow casters. A field it does
+  composition pass and a masked material's shadow casters. Custom caster
+  coverage receives the same mapped material fields and mapped base normal
+  as camera coverage, on the device's material binding tier. Cached local
+  shadows track changes to those fields and animated normal layers too. A field it does
   not set keeps the record's and maps' value. The pipelines are the
   record's: its alpha mode, transmission, side and receiver flag choose
   them, so `transmission` and `thickness` take effect only on a material
@@ -3090,6 +3097,7 @@ gain and reflection filters remain approximations: narrow reflected lights can
 have large errors. Receiver transport adds one
 RGBA16F target (8 bytes/pixel); fused rendering needs eight color attachments and
 64 attachment-budget bytes, with separate material rendering on lower limits.
+Both paths derive the anisotropic tangent from the decal-adjusted base normal.
 The procedural example supports `--anisotropy 0.5` to exercise this path.
 
 Stable normal RGBA16F stores signed octahedral world-space base normals in RG and coat

@@ -22,8 +22,12 @@ fn grazing_mapped_normals_keep_distant_visible_targets() {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("production Godot trace"),
         source: wgpu::ShaderSource::Wgsl(
-            include_str!(
-                "../../../crates/sgl-3d/src/stages/reflections/velvet/godot_reflections_trace.wgsl"
+            concat!(
+                include_str!("../../../crates/sgl-3d/src/stages/reflections/reprojection.wgsl"),
+                "\n",
+                include_str!(
+                    "../../../crates/sgl-3d/src/stages/reflections/velvet/godot_reflections_trace.wgsl"
+                )
             )
             .into(),
         ),
