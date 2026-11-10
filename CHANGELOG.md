@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` showcase publication now runs the build and Cloudflare upload through
+  `spdeploy --operation deploy --no-ui` instead of two manual commands.
+  No game-code changes are needed.
 - `sgl-3d` showcase replaces separate Off/Split/On controls and the lower slider
   with direct image Slide/Toggle controls, adds feature explanations and a scene
   sidebar including a Bistro motorcycle view. No game-code changes are needed.

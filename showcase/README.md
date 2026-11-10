@@ -87,16 +87,32 @@ storage explicitly; do not silently reduce the original download's quality.
 
 ## Publish
 
+Install `spdeploy`, Bun, and Wrangler on the publishing machine. From the
+repository root, run:
+
+```sh
+spdeploy --operation deploy --no-ui
+```
+
+The root [deploy.yml](../deploy.yml) builds the site and collects its catalogued
+media with `local_artifact`, then publishes through Wrangler. The showcase uses
+Workers Static Assets, so the publish stage invokes the existing Workers
+configuration rather than spdeploy's Cloudflare Pages publisher. Bare `spdeploy`
+also offers this as the default operation.
+
 The custom domain belongs to the Cloudflare account with the
 `inspiredjourneys.dev` zone. Authenticate using Wrangler's account login or the
 repository's approved encrypted credential mechanism; do not add plaintext
 tokens or `.env` files. No deployment credentials are needed at runtime.
 
+To inspect the operation without publishing:
+
 ```sh
-bun scripts/showcase-build.ts
-wrangler deploy --config showcase/wrangler.jsonc
+spdeploy --operation deploy --dry-run --no-ui
 ```
 
+Unpublished captures must be present in `.cache/showcase/` on the publishing
+machine; existing captures can be fetched from the live site during the build.
 Deployment uploads the selected static files and configures only
 `sgl.inspiredjourneys.dev`. It does not include library builds/tests, bake
 regeneration, account inventories, or other environments. Run development

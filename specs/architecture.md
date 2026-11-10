@@ -22,6 +22,9 @@ on image click and displays its current On/Off state. Source, scene metadata,
 and attribution live in this repository; rendered media live on Cloudflare and
 in ignored local capture directories. The website switches captured images;
 it does not add a renderer or change the library's composition boundary.
+The root `deploy.yml` publishes this site through spdeploy: build the static
+artifact, then run Wrangler against the existing Workers Static Assets config.
+Library validation and scene capture generation are separate operations.
 
 SGL began by consolidating recurring code from AI-authored games:
 elemental_chaos (multiplayer action), shadow-sp (2D platforming), tiny / Kindred

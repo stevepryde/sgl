@@ -1,0 +1,19 @@
+name: SGL showcase
+
+operation:
+  deploy:
+    default: true
+    description: Publish the showcase to sgl.inspiredjourneys.dev
+    stage:
+      - type: local_artifact
+        description: Build the showcase and collect its captures
+        commands:
+          - program: bun
+            args: [scripts/showcase-build.ts]
+        artifact:
+          path: target/showcase/site
+      # The showcase uses Workers Static Assets, not Cloudflare Pages.
+      - type: local
+        description: Publish the showcase with Wrangler
+        commands:
+          - wrangler deploy --config showcase/wrangler.jsonc
