@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "sgl-showcase",
+  "account_id": "9e1484e8859472855da93cd5d544a457",
+  "compatibility_date": "2026-11-10",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "sgl.inspiredjourneys.dev", "custom_domain": true }],
+  "assets": { "directory": "../target/showcase/site", "not_found_handling": "404-page" }
+}

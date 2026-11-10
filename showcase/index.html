@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101212">
+  <meta name="description" content="Explore real SGL3D renders. Compare lighting, bloom, ambient occlusion, and anti-aliasing in Bistro and Sponza.">
+  <meta property="og:title" content="SGL — Render showcase">
+  <meta property="og:description" content="Real scenes. Rendered with Steve’s Game Library.">
+  <meta property="og:image" content="https://sgl.inspiredjourneys.dev/renders/bistro-sunlit-4k.png">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <title>SGL — Render showcase</title>
+</head>
+<body>
+  <header class="header">
+    <a class="brand" href="/" aria-label="SGL home"><svg width="27" height="30" viewBox="0 0 27 30" aria-hidden="true"><path d="m13.5 1 12 7v14l-12 7-12-7V8Zm0 0v14m12-7-12 7-12-7m12 7v14" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>SGL<span>Steve’s Game Library</span></a>
+    <nav aria-label="Main"><a href="https://github.com/stevepryde/sgl/tree/main/crates/sgl-3d/docs">Docs ↗</a><a href="https://github.com/stevepryde/sgl">GitHub ↗</a></nav>
+  </header>
+  <main>
+    <div class="intro"><div><p class="eyebrow">SGL3D / WEBGPU</p><h1>Render showcase<span>.</span></h1></div></div>
+    <section aria-label="Scene gallery" id="scene-list" class="scene-list"></section>
+    <section class="workspace" aria-labelledby="scene-title">
+      <div class="scene-heading"><div><p class="eyebrow" id="scene-kind"></p><h2 id="scene-title"></h2></div><span class="capture-tag">SGL3D capture</span></div>
+      <div class="viewer-grid">
+        <div class="render-column">
+          <div class="image-stage" id="stage" aria-busy="true">
+            <img id="image-on" alt="" fetchpriority="high">
+            <img id="image-off" alt="" hidden>
+            <div class="divider" id="divider" hidden><span>↔</span></div>
+            <div class="image-labels" id="image-labels" hidden><span>OFF</span><span>ON</span></div>
+            <p class="image-status" id="image-status" role="status">Loading capture…</p>
+          </div>
+          <div class="split-control" id="split-control" hidden><label for="split">Comparison position</label><input id="split" type="range" min="0" max="100" value="50"><output id="split-value" for="split">50%</output></div>
+          <div class="image-toolbar"><span id="capture-info"></span><div><a id="original" href="#" target="_blank" rel="noopener">Full resolution ↗</a><button id="share" type="button">Copy link</button></div></div>
+        </div>
+        <aside class="controls" aria-label="Render controls">
+          <p class="eyebrow">COMPARE A FEATURE</p>
+          <div id="feature-list" class="feature-list"></div>
+          <div id="comparison-controls" hidden>
+            <div class="mode-buttons" role="group" aria-label="Comparison view"><button data-mode="off" type="button">Off</button><button data-mode="split" type="button">Split</button><button data-mode="on" type="button">On</button></div>
+            <p id="feature-description" class="feature-description"></p>
+            <p class="comparison-note">Same camera and settings. Only the selected feature changes.</p>
+          </div>
+          <a id="capture-report" class="report-link" hidden>Capture settings ↗</a>
+        </aside>
+      </div>
+      <div class="details"><div><h3>About the capture</h3><p id="scene-description"></p></div><div><h3>Scene credits</h3><p id="scene-credits"></p><a id="license" href="#">Licence & credits ↗</a></div></div>
+    </section>
+    <noscript><p>Enable JavaScript to compare captures. Original renders: <a href="/renders/bistro-sunlit-4k.png">Bistro</a> · <a href="/renders/sponza.png">Sponza</a>.</p></noscript>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,5 +1,10 @@
 # SGL render showcase
 
+The [showcase website](https://sgl.inspiredjourneys.dev) hosts these images and
+matched feature comparisons on Cloudflare. Render binaries are not tracked in
+Git. See [showcase authoring and deployment](../../showcase/README.md) to add
+scenes or capture pairs. The notes below describe the original overview images.
+
 These are unretouched PNG captures from SGL3D's real WebGPU renderer on
 8 November 2026. The original capture pixels and resolution are preserved;
 there is no AI image generation, compositing, or post-capture colour adjustment.
@@ -9,7 +14,7 @@ or bake payloads are distributed here.
 
 ## Bistro
 
-[bistro-sunlit-4k.png](bistro-sunlit-4k.png) is the 3840 × 2160 sunlit quality capture, using the
+[bistro-sunlit-4k.png](https://sgl.inspiredjourneys.dev/renders/bistro-sunlit-4k.png) is the 3840 × 2160 sunlit quality capture, using the
 `bevy` camera in the [Bistro quality fixture](../../examples/sgl-3d/fixtures/bistro-quality.json).
 The sun is 70 degrees above the horizon, reaching the café terrace and most
 of the street. An expanded 2,592-probe GI volume covers the visible façades
@@ -33,7 +38,7 @@ by Greg Zaal / Poly Haven, CC0; rotated and sun-reduced for coherent authored li
 
 ## Sponza
 
-[sponza.png](sponza.png) is the final 1920 × 1080 sunlit gallery capture, using
+[sponza.png](https://sgl.inspiredjourneys.dev/renders/sponza.png) is the final 1920 × 1080 sunlit gallery capture, using
 full-resolution rendering with no upscaling, ACES at +2.1 EV, 4,095 diffuse GI
 probes covering the building, and a locally captured HDR reflection probe for
 the covered gallery. The capture followed 720 warm-up and 60 measured frames.

@@ -16,21 +16,23 @@ to build your own game—and, if it inspires you, your own library.
 
 ## Rendered with SGL
 
-Actual SGL3D captures in the browser with WebGPU. Click a PNG for full resolution.
+Explore the [SGL render showcase](https://sgl.inspiredjourneys.dev) for actual
+WebGPU captures, feature off/on comparisons, and a draggable split view.
+Click a PNG below for full resolution.
 
-[![Bistro: a sunlit cobblestone street, café terrace, and blue scooter rendered with SGL3D](assets/showcase/bistro-sunlit-4k.png)](assets/showcase/bistro-sunlit-4k.png)
+[![Bistro: a sunlit cobblestone street, café terrace, and blue scooter rendered with SGL3D](https://sgl.inspiredjourneys.dev/renders/bistro-sunlit-4k.png)](https://sgl.inspiredjourneys.dev/renders/bistro-sunlit-4k.png)
 
 **Bistro · 3840 × 2160**: detailed PBR materials, diffuse global illumination,
 ambient occlusion, and cascaded shadows.
 
-[![Sponza: sunlight across the atrium floor beneath ornate stone arches and colourful curtains rendered with SGL3D](assets/showcase/sponza.png)](assets/showcase/sponza.png)
+[![Sponza: sunlight across the atrium floor beneath ornate stone arches and colourful curtains rendered with SGL3D](https://sgl.inspiredjourneys.dev/renders/sponza.png)](https://sgl.inspiredjourneys.dev/renders/sponza.png)
 
 **Sponza · 1920 × 1080**: diffuse global illumination, sunlight and shadows,
 and an authored local reflection probe for the covered gallery.
 
 Scenes: Amazon Lumberyard Bistro and Intel Sponza 2022 with the Curtains add-on.
 [Capture details and full credits](assets/showcase/README.md).
-Only rendered images are included, not the scene assets.
+Render files are hosted on Cloudflare, outside Git. Scene assets are not distributed.
 
 ## Start here
 

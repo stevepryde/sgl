@@ -14,6 +14,12 @@ and runnable examples must be usable without access to the source games.
 [The consumer guide](../docs/README.md) routes agents by task; the root README
 introduces the project to people.
 
+The [render showcase](../showcase/README.md) is a static consumer-facing website
+with real SGL3D captures and matched feature comparisons. Source, scene metadata,
+and attribution live in this repository; rendered media live on Cloudflare and
+in ignored local capture directories. The website switches captured images;
+it does not add a renderer or change the library's composition boundary.
+
 SGL began by consolidating recurring code from AI-authored games:
 elemental_chaos (multiplayer action), shadow-sp (2D platforming), tiny / Kindred
 Acre (persistent co-op farming), and torchmates (co-op action adventure).

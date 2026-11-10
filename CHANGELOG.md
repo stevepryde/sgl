@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` showcase renders move from repository PNGs to the Cloudflare-hosted
+  gallery with feature off/on comparisons. Use the hosted README image URLs;
+  no game-code changes are needed.
 - `sgl-3d::Fog::length` changes now restart fog history instead of reusing
   density at the old range's positions. No game-code changes are needed.
 - `sgl-3d::MaterialShader` masked shadow casters now evaluate all material
