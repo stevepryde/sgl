@@ -22,7 +22,9 @@
 //  scale, a material value the anisotropy pass of a device that cannot
 //  write this target with the others also writes (gbuffer_encode_anisotropy).
 // motion: current minus previous unjittered UV, +y down, at most two screens
-//  along its longer axis (gbuffer_encode_motion).
+//  along its longer axis in RG (gbuffer_encode_motion). B holds previous minus
+//  current view depth for perspective projections; A is 1 when that depth
+//  motion is valid, otherwise 0. Geometry supplies it from both clip positions.
 // ambient: in rgb, the ambient light within lit colour (Shaded in
 //  surface.wgsl) before occlusion, its diffuse share and the specular
 //  multiple scattering it carries together; lit colour's alpha holds the
@@ -203,6 +205,20 @@ fn gbuffer_encode_motion(current_clip:vec4<f32>,previous_clip:vec4<f32>)->vec2<f
   return vec2(GBUFFER_MOTION_LIMIT,0.);
  }
  return scaled/longest*GBUFFER_MOTION_LIMIT;
+}
+
+// NRD's 2.5D motion convention: viewZprev = viewZ + motion.z. For
+// SGL's perspective projections clip.w is positive view depth. Both clip
+// positions already include instance, skin/morph and shader deformation at
+// their frame's time, so this follows moving surfaces as well as the camera.
+// XY retains the same bounded, unjittered screen motion. Invalid depth motion
+// (behind the old camera or outside finite half storage) rejects AO history.
+const GBUFFER_DEPTH_MOTION_LIMIT:f32=65504.;
+fn gbuffer_encode_velocity(current_clip:vec4<f32>,previous_clip:vec4<f32>)->vec4<f32> {
+ let delta=previous_clip.w-current_clip.w;
+ let valid=previous_clip.w>0. && abs(delta)<=GBUFFER_DEPTH_MOTION_LIMIT;
+ return vec4(gbuffer_encode_motion(current_clip,previous_clip),
+  select(0.,delta,valid),select(0.,1.,valid));
 }
 
 // The ambient target's texel for a lit pixel whose ambient light holds the

@@ -67,12 +67,12 @@ fn one_instanced_draw_renders_each_instance_at_its_own_pose() {
     let placed = [
         (
             Vec3::new(-1.2, 0.6, -4.),
-            moving(Vec3::new(0.05, 0., 0.), false, 0),
+            moving(Vec3::new(0.05, 0., 0.04), false, 0),
         ),
         (Vec3::new(0., 0.6, -4.5), None),
         (
             Vec3::new(1.2, 0.6, -5.),
-            moving(Vec3::new(-0.06, 0.04, 0.), true, 1),
+            moving(Vec3::new(-0.06, 0.04, -0.08), true, 1),
         ),
         (Vec3::new(-1.2, -0.6, -5.5), None),
         (
@@ -171,6 +171,9 @@ fn one_instanced_draw_renders_each_instance_at_its_own_pose() {
     );
     queue.submit([encoder.finish()]);
     renderer.finish_frame(&mut scene);
+    // Preserve actual old raster depth as the independent reference for
+    // depth motion; a static-world reconstruction misses moving instances.
+    let old_depths = test_support::read(&device, &queue, renderer.targets().depth.texture(), 4);
     // The first frame's draws, read back once it completes: each quad one
     // section of two triangles, by mobility; the hidden instance none.
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -195,7 +198,7 @@ fn one_instanced_draw_renders_each_instance_at_its_own_pose() {
     queue.submit([encoder.finish()]);
     let targets = renderer.targets();
     let identities = test_support::read(&device, &queue, targets.source_id.texture(), 8);
-    let motions = test_support::read(&device, &queue, targets.motion.texture(), 4);
+    let motions = test_support::read(&device, &queue, targets.motion.texture(), 8);
     let depths = test_support::read(&device, &queue, targets.depth.texture(), 4);
     let colors = test_support::read(&device, &queue, targets.color.texture(), 8);
     for (index, &(position, motion)) in placed.iter().enumerate() {
@@ -216,8 +219,17 @@ fn one_instanced_draw_renders_each_instance_at_its_own_pose() {
         let identity = u32::from_le_bytes(word(&identities, pixel * 8));
         let depth = f32::from_le_bytes(word(&depths, pixel * 4));
         let motion_read = Vec2::new(
-            test_support::half(&motions[pixel * 4..pixel * 4 + 2]),
-            test_support::half(&motions[pixel * 4 + 2..pixel * 4 + 4]),
+            test_support::half(&motions[pixel * 8..pixel * 8 + 2]),
+            test_support::half(&motions[pixel * 8 + 2..pixel * 8 + 4]),
+        );
+        let previous_pixel = (screen(clip_from_world, previous) * SIZE as f32).floor();
+        let previous_pixel = (previous_pixel.y as u32 * SIZE + previous_pixel.x as u32) as usize;
+        let old_depth = f32::from_le_bytes(word(&old_depths, previous_pixel * 4));
+        let measured_delta = test_support::half(&motions[pixel * 8 + 4..pixel * 8 + 6]);
+        let raster_depth_delta = 0.1 / old_depth - 0.1 / depth;
+        assert!(
+            (measured_delta - raster_depth_delta).abs() < 0.001,
+            "instance {index}: depth motion {measured_delta} disagrees with raster depth change {raster_depth_delta}"
         );
         let color: Vec<f32> = (0..3)
             .map(|channel| {

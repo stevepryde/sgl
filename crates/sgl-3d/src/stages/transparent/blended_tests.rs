@@ -100,7 +100,7 @@ fn frames(device: &wgpu::Device, queue: &wgpu::Queue, shown: bool) -> [Vec<u8>; 
     let targets = renderer.targets();
     [
         (&targets.depth, 4),
-        (&targets.motion, 4),
+        (&targets.motion, 8),
         (&targets.composite, 8),
     ]
     .map(|(view, bytes)| test_support::read(device, queue, view.texture(), bytes))

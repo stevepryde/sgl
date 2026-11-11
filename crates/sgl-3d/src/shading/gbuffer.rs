@@ -18,8 +18,9 @@ pub(crate) const F0: TextureFormat = TextureFormat::Rgba8Unorm;
 /// World anisotropy tangent, signed octahedral, its strength and the
 /// environment scale.
 pub(crate) const ANISOTROPY: TextureFormat = TextureFormat::Rgba16Float;
-/// Current minus previous unjittered UV.
-pub(crate) const MOTION: TextureFormat = TextureFormat::Rg16Float;
+/// RG: current minus previous unjittered UV. B: previous-minus-current
+/// perspective view depth. A: whether that depth motion is valid.
+pub(crate) const MOTION: TextureFormat = TextureFormat::Rgba16Float;
 /// The receiver layer: a receiver's traced lobe's normal and roughness.
 pub(crate) const RECEIVER: TextureFormat = TextureFormat::Rgba16Float;
 /// Reversed-Z depth.

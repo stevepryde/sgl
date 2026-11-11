@@ -1042,7 +1042,7 @@ fn sky_motion_follows_camera_rotation() {
     frames.render(1, false);
     let current = frames.input.camera.projection * view;
 
-    let motion = frames.texels::<2>(frames.target(DiagnosticTarget::Motion));
+    let motion = frames.texels::<4>(frames.target(DiagnosticTarget::Motion));
     let size = Vec2::new(SIZE[0] as f32, SIZE[1] as f32);
     for pixel in [Vec2::new(360., 40.), Vec2::new(60., 280.)] {
         let centre = (pixel + 0.5) / size;

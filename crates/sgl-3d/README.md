@@ -1007,7 +1007,7 @@ TAA or FSR, so its camera rays match the frame's depth and normals.
 XeGTAO's sample phase advances with submitted frames in every AA mode. Its
 own DiligentFX-derived temporal filter accumulates visibility before lighting,
 so noise reduction does not depend on the final TAA or FSR resolve. Reprojection
-uses rigid motion, raster jitter and depth rejection; a camera cut, skipped AO
+uses screen and depth motion (including moving receivers), raster jitter and depth rejection; a camera cut, skipped AO
 frame, render-size, quality or radius change restarts accumulation. Inspect
 moving and settled contacts: screen-space visibility still cannot retain
 history where geometry becomes newly visible.

@@ -11,7 +11,7 @@ struct Sky {
 }
 struct SkyOutput {
  @location(0) color:vec4<f32>,
- @location(1) motion:vec2<f32>,
+ @location(1) motion:vec4<f32>,
 }
 fn sky_color(i:Sky)->vec4<f32> {
  let world=view.inverse_view_projection*vec4(i.uv*2.-vec2(1.),1.,1.);
@@ -45,5 +45,5 @@ fn sky_motion(i:Sky)->vec2<f32> {
  return gbuffer_encode_motion(current,previous);
 }
 @fragment fn sky_fs(i:Sky)->SkyOutput {
- return SkyOutput(sky_color(i),sky_motion(i));
+ return SkyOutput(sky_color(i),vec4(sky_motion(i),0.,0.));
 }

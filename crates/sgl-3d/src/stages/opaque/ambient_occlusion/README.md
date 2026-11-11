@@ -162,10 +162,16 @@ avoids re-quantizing the accumulating visibility each frame.
 
 Adaptations: SGL supplies current-minus-previous UV motion, so no NDC scale
 is needed. Reprojection subtracts motion and adds previous-minus-current
-raster jitter in UV. Depth validation transforms the current raster position
-into the previous view before comparing linear depths, so camera translation
-alone does not reject a static surface. Moving geometry that changes its
-view depth beyond the threshold rejects history conservatively. Out-of-frame
+raster jitter in UV. Depth validation adds the receiver's previous-minus-current view-depth motion
+from the G-buffer to its current linear depth. Both object and camera motion
+are included, as [NRD's 2.5D motion guide](https://github.com/NVIDIA-RTX/NRD#integration)
+requires. Reconstructing only the current world point in the previous view
+incorrectly discarded a chase-camera vehicle's history on every moving frame.
+Geometry writes the depth delta from its two evaluated clip positions alongside
+UV motion in RGBA16Float (B is the delta, A marks validity). Behind-camera or
+unrepresentable depth deltas reject history; sky has no valid depth motion.
+Current depth reconstruction supports finite and infinite reversed perspective.
+No denoising constants or rejection thresholds changed. Out-of-frame
 bilinear taps are rejected, and sky writes unoccluded visibility with depth
 zero rather than retaining a previous surface. The stage resets on camera
 history loss, nonconsecutive frames, render-size, AO-quality or radius changes.

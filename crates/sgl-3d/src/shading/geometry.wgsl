@@ -11,7 +11,7 @@
 // pass (material_alpha_discard), after the fragment's last derivative.
 struct SceneOutput {
  @location(0) color:vec4<f32>,
- @location(1) motion:vec2<f32>,
+ @location(1) motion:vec4<f32>,
 }
 struct StableMaterial {
  normal:vec4<f32>,
@@ -39,13 +39,13 @@ fn stable_material(s:Surface)->StableMaterial {
 struct StableOutput {
  @location(0) normal:vec4<f32>,
  @location(1) material:vec4<f32>,
- @location(2) motion:vec2<f32>,
+ @location(2) motion:vec4<f32>,
  @location(3) f0:vec4<f32>,
  @location(4) anisotropy:vec4<f32>,
 }
 fn stable_surface(i:Fragment,s:Surface)->StableOutput {
  let m=stable_material(s);
- return StableOutput(m.normal,m.material,gbuffer_encode_motion(i.current_clip,i.previous_clip),m.f0,m.anisotropy);
+ return StableOutput(m.normal,m.material,gbuffer_encode_velocity(i.current_clip,i.previous_clip),m.f0,m.anisotropy);
 }
 // The G-buffer records no emission.
 fn stable_raster_surface(i:Fragment,front:bool)->Surface {
@@ -61,7 +61,7 @@ fn stable_raster_surface(i:Fragment,front:bool)->Surface {
 struct ShadedFragment {
  shaded:Shaded,
  alpha:f32,
- motion:vec2<f32>,
+ motion:vec4<f32>,
 }
 // A camera view's lit colour and ambient target texel for `shaded`: its
 // ambient light, and the multiple scattering's share of it in lit colour's
@@ -90,7 +90,7 @@ fn shade_surface(i:Fragment,raster_front:bool)->ShadedFragment {
   material_alpha_discard(alpha);
   shaded=shade_lit(s,context);
  }
- return ShadedFragment(shaded,alpha,gbuffer_encode_motion(i.current_clip,i.previous_clip));
+ return ShadedFragment(shaded,alpha,gbuffer_encode_velocity(i.current_clip,i.previous_clip));
 }
 // Probe captures, which keep their ambient light, occluded by their
 // material's occlusion, in color.
@@ -105,7 +105,7 @@ fn shade_surface(i:Fragment,raster_front:bool)->ShadedFragment {
 struct LegacyStableOutput {
  @location(0) normal:vec4<f32>,
  @location(1) material:vec4<f32>,
- @location(2) motion:vec2<f32>,
+ @location(2) motion:vec4<f32>,
  @location(3) f0:vec4<f32>,
 }
 @fragment fn stable_legacy_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->LegacyStableOutput {
@@ -146,7 +146,7 @@ struct LegacyStableOutput {
 struct SourceOutput {
  @location(0) color:vec4<f32>,
  @location(1) ambient:vec4<f32>,
- @location(2) motion:vec2<f32>,
+ @location(2) motion:vec4<f32>,
  @location(3) source_id:vec2<u32>,
 }
 @fragment fn source_fs(i:Fragment,@builtin(front_facing) front:bool)->SourceOutput {
@@ -158,7 +158,7 @@ struct SourceOutput {
 struct FusedOpaqueOutput {
  @location(0) normal:vec4<f32>,
  @location(1) material:vec4<f32>,
- @location(2) motion:vec2<f32>,
+ @location(2) motion:vec4<f32>,
  @location(3) f0:vec4<f32>,
  @location(4) color:vec4<f32>,
  @location(5) ambient:vec4<f32>,
@@ -188,13 +188,13 @@ struct FusedOpaqueOutput {
 // vectors draw a material that receives SSR.
 struct ReceiverOutput {
  @location(0) receiver:vec4<f32>,
- @location(1) motion:vec2<f32>,
+ @location(1) motion:vec4<f32>,
 }
 @fragment fn receiver_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->ReceiverOutput {
  let front=object_front_face(i,raster_front);
  let recorded=stable_material(stable_raster_surface(i,front));
  let lobe=gbuffer_traced_lobe(recorded.normal,recorded.material,recorded.f0);
- return ReceiverOutput(gbuffer_encode_receiver(lobe),gbuffer_encode_motion(i.current_clip,i.previous_clip));
+ return ReceiverOutput(gbuffer_encode_receiver(lobe),gbuffer_encode_velocity(i.current_clip,i.previous_clip));
 }
 
 // The volume layers (stages/transparent/volumes.rs): the blended materials

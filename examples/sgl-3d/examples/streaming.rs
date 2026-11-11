@@ -1239,9 +1239,10 @@ fn largest_motion(
     let motion = renderer
         .diagnostic_target(DiagnosticTarget::Motion)
         .ok_or("no motion target")?;
-    let bytes = sgl_3d::diagnostics::read(device, queue, motion.texture(), 4);
+    let bytes = sgl_3d::diagnostics::read(device, queue, motion.texture(), 8);
     Ok(bytes
-        .chunks_exact(2)
+        .chunks_exact(8)
+        .flat_map(|texel| texel[..4].chunks_exact(2))
         .map(|half| sgl_3d::diagnostics::half(half).abs())
         .fold(0., f32::max))
 }

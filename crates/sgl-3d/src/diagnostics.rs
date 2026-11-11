@@ -135,7 +135,9 @@ pub enum DiagnosticTarget {
     /// Rgba16Float: signed octahedral world-space base normal in RG and coat
     /// normal in BA.
     Normal,
-    /// Rg16Float: current minus previous unjittered UV, +y down.
+    /// Rgba16Float: RG is current minus previous unjittered UV, +y down;
+    /// B is previous-minus-current perspective view depth in metres; A is
+    /// 1 when depth motion is valid (0 for sky or a previous point behind the camera).
     Motion,
     /// Rg32Uint: each pixel's raster source in R (0 none, else the
     /// instance's [`source_id`]) and primitive in G.

@@ -315,8 +315,8 @@ fn motion_after_turn(
         renderer.finish_frame(&mut scene);
     }
     let shared = renderer.targets();
-    let motion = test_support::read(device, queue, shared.motion.texture(), 4)
-        .chunks_exact(4)
+    let motion = test_support::read(device, queue, shared.motion.texture(), 8)
+        .chunks_exact(8)
         .map(|texel| {
             Vec2::new(
                 test_support::half(&texel[0..2]),

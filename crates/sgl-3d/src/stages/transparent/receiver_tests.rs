@@ -441,7 +441,7 @@ fn a_receiver_writes_its_motion_and_the_surface_depth_not_the_opaque_depth() {
     };
     let opaque_depth = read_f32(&targets.depth);
     let surface_depth = read_f32(&surface.depth);
-    let motion = read(&device, &queue, targets.motion.texture(), 4);
+    let motion = read(&device, &queue, targets.motion.texture(), 8);
     // The receiver's centre, at x = 0.3 m, projects to NDC 0.18, column 18;
     // column 4 sees the floor alone.
     for (column, depth, motion_x) in [(18, 0.1 / 3., 0.6 / 3. * 1.83 / 2.), (4, 0.1 / 6., 0.)] {
@@ -456,7 +456,7 @@ fn a_receiver_writes_its_motion_and_the_surface_depth_not_the_opaque_depth() {
             "column {column}: the surface depth {}, expected {depth}",
             surface_depth[at]
         );
-        let [x, y] = [0, 1].map(|axis| half(&motion[at * 4 + axis * 2..]));
+        let [x, y] = [0, 1].map(|axis| half(&motion[at * 8 + axis * 2..]));
         assert!(
             (x - motion_x).abs() < 0.002 && y.abs() < 0.002,
             "column {column}: motion ({x}, {y}), expected ({motion_x}, 0)"

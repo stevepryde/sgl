@@ -381,9 +381,10 @@ fn a_still_camera_sees_no_motion_across_a_move() {
     scene.move_origin(&device, &queue, MOVE).unwrap();
     frame(gpu, &mut renderer, &mut scene, camera(MOVE), &output, true);
     frame(gpu, &mut renderer, &mut scene, camera(MOVE), &output, false);
-    let motion = test_support::read(&device, &queue, renderer.targets().motion.texture(), 4);
+    let motion = test_support::read(&device, &queue, renderer.targets().motion.texture(), 8);
     let largest = motion
-        .chunks_exact(2)
+        .chunks_exact(8)
+        .flat_map(|texel| texel[..4].chunks_exact(2))
         .map(|half| test_support::half(half).abs())
         .fold(0f32, f32::max);
     assert!(

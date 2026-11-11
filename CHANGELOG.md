@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d::Settings::ambient_occlusion` now retains valid history on moving
+  receivers using depth motion, instead of treating them as static world points.
+  Ordinary game code is unchanged. `diagnostics::DiagnosticTarget::Motion` is now
+  RGBA16Float (8 bytes/texel): RG retains UV motion, B is previous-minus-current
+  perspective view depth in metres, and A marks valid depth motion. Update
+  diagnostic readback strides from 4 to 8; consumers needing UV use RG.
+
 - `sgl-3d::Settings::ambient_occlusion` now temporally filters XeGTAO visibility
   before lighting, reducing sample noise previously left to TAA or FSR. All
   antialiasing modes accumulate AO; camera cuts and AO changes restart it.

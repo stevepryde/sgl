@@ -382,7 +382,8 @@ Environment and probe specular always apply. On top of them:
   light (its diffuse share, and the specular multiple scattering a rough
   metal reflects most of) and environment and probe reflections; turning it
   on draws no geometry again. Spatial and AO-owned temporal filtering run
-  before lighting composition in every antialiasing mode.
+  before lighting composition in every antialiasing mode; depth motion keeps
+  moving receivers eligible for history.
   [Ambient occlusion](../README.md#ambient-occlusion).
 - **Antialiasing**: SGL's DiligentFX-derived TAA in `sgl-post-fx`, SMAA at
   SMAA 2.8's Low, Medium, High or Ultra preset, or AMD FSR2/FSR3.1 temporal upscaling (no frame generation), with RCAS sharpening the game can turn off or set.

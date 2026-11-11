@@ -7,12 +7,11 @@ use crate::{
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
-    current_to_previous_view: [[f32; 4]; 4],
     size: [u32; 2],
     jitter_delta: [f32; 2],
-    near: f32,
+    depth_unpack: [f32; 2],
     reset: u32,
-    padding: [u32; 2],
+    padding: u32,
 }
 struct Targets {
     size: [u32; 2],
@@ -103,17 +102,17 @@ impl Temporal {
             });
         let previous = history.previous_camera.unwrap_or(history.camera);
         let params = Params {
-            current_to_previous_view: (previous.view
-                * history.camera.jittered_view_projection().inverse())
-            .to_cols_array_2d(),
             size,
             jitter_delta: [
                 (previous.jitter[0] - history.camera.jitter[0]) * 0.5,
                 (history.camera.jitter[1] - previous.jitter[1]) * 0.5,
             ],
-            near: history.camera.projection.w_axis.z,
+            depth_unpack: [
+                history.camera.projection.w_axis.z,
+                history.camera.projection.z_axis.z,
+            ],
             reset: u32::from(reset),
-            padding: [0; 2],
+            padding: 0,
         };
         crate::counters::write_buffer(queue, &self.params, 0, bytemuck::bytes_of(&params));
         let t = self.targets.as_ref().unwrap();

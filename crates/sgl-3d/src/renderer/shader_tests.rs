@@ -114,10 +114,10 @@ impl Harness {
             &self.device,
             &self.queue,
             self.renderer.targets().motion.texture(),
-            4,
+            8,
         );
         texels
-            .chunks_exact(4)
+            .chunks_exact(8)
             .map(|texel| [test_support::half(texel), test_support::half(&texel[2..])])
             .collect()
     }

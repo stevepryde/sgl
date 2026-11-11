@@ -1,12 +1,11 @@
 // DiligentFX SSAO_ComputeTemporalAccumulation.fx, f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b.
 // Apache-2.0; see LICENSE-diligent.txt and ambient_occlusion/README.md.
 struct Params {
-    current_to_previous_view: mat4x4<f32>,
     size: vec2<u32>,
     jitter_delta: vec2<f32>,
-    near: f32,
+    depth_unpack: vec2<f32>,
     reset: u32,
-    padding: vec2<u32>,
+    padding: u32,
 }
 @group(0) @binding(0) var<uniform> p: Params;
 @group(0) @binding(1) var current_ao: texture_2d<u32>;
@@ -37,22 +36,21 @@ fn resolve(@builtin(global_invocation_id) id: vec3<u32>) {
     var count = 1.0;
     var linear_depth = 0.0;
     if d > 0.0 {
-        linear_depth = p.near/d;
+        linear_depth = p.depth_unpack.x/(d+p.depth_unpack.y);
         let uv = (vec2<f32>(id.xy)+0.5)/vec2<f32>(p.size);
-        let velocity = textureLoad(motion, q, 0).xy;
-        let previous_uv = uv-velocity+p.jitter_delta;
+        let velocity = textureLoad(motion, q, 0);
+        let previous_uv = uv-velocity.xy+p.jitter_delta;
         let position = previous_uv*vec2<f32>(p.size)-0.5;
         let base = vec2<i32>(floor(position));
         let f = fract(position);
         let weights = vec4((1.0-f.x)*(1.0-f.y),f.x*(1.0-f.y),(1.0-f.x)*f.y,f.x*f.y);
         let offsets = array<vec2<i32>,4>(vec2(0,0),vec2(1,0),vec2(0,1),vec2(1,1));
-        // Full inverse current raster projection, then previous view: account
-        // for camera translation/rotation when validating the old depth.
-        let old_view = p.current_to_previous_view*vec4(uv*vec2(2.0,-2.0)+vec2(-1.0,1.0),d,1.0);
-        let expected_depth = -old_view.z/old_view.w;
+        // The geometry's depth motion includes object movement, unlike
+        // reconstructing the current world point in the previous camera.
+        let expected_depth = linear_depth+velocity.z;
         var total = 0.0;
         var accumulated = vec2(0.0);
-        if p.reset == 0u && expected_depth > 0.0 {
+        if p.reset == 0u && velocity.w > 0.0 && expected_depth > 0.0 {
             for(var i=0u;i<REPROJECTION_TAPS;i++) {
                 let at = base+offsets[i];
                 if all(at>=vec2(0)) && all(at<vec2<i32>(p.size)) {
@@ -73,7 +71,7 @@ fn resolve(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             moments /= 9.0;
             let deviation = sqrt(max(0.0,moments.y-moments.x*moments.x));
-            let motion_factor = clamp(1.025-length(velocity*vec2(f32(p.size.x)/f32(p.size.y),1.0))*128.0,0.0,1.0);
+            let motion_factor = clamp(1.025-length(velocity.xy*vec2(f32(p.size.x)/f32(p.size.y),1.0))*128.0,0.0,1.0);
             let gamma = mix(0.5,2.5,motion_factor*motion_factor);
             let inside = abs(accumulated.x-moments.x)<gamma*deviation;
             count = select(max(1.0,motion_factor*accumulated.y),accumulated.y,inside);

@@ -464,13 +464,13 @@ fn a_moving_joint_writes_its_screen_displacement_as_motion() {
         queue.submit([encoder.finish()]);
         renderer.finish_frame(scene);
         let targets = renderer.targets();
-        let motion = test_support::read(&device, &queue, targets.motion.texture(), 4);
+        let motion = test_support::read(&device, &queue, targets.motion.texture(), 8);
         let depth = test_support::read(&device, &queue, targets.depth.texture(), 4);
         let texel = ((SIZE[1] / 2) * SIZE[0] + SIZE[0] / 2) as usize * 4;
         (
             [
-                test_support::half(&motion[texel..texel + 2]),
-                test_support::half(&motion[texel + 2..texel + 4]),
+                test_support::half(&motion[texel * 2..texel * 2 + 2]),
+                test_support::half(&motion[texel * 2 + 2..texel * 2 + 4]),
             ],
             f32::from_le_bytes(depth[texel..texel + 4].try_into().unwrap()),
         )
