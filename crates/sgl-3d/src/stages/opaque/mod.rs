@@ -106,26 +106,32 @@ impl Opaque {
         self.ambient_occlusion_ran = ctx.effective.ambient_occlusion.is_some();
         if let Some(settings) = ctx.effective.ambient_occlusion {
             let targets = ctx.targets;
-            self.ambient_occlusion
-                .get_or_insert_with(|| {
-                    ambient_occlusion::AmbientOcclusion::new(ctx.device, ctx.queue)
-                })
-                .encode(
-                    ctx.device,
-                    ctx.queue,
-                    ctx.encoder,
-                    &targets.depth,
-                    &targets.normal,
-                    &ctx.views.camera.view.uniform,
-                    settings.quality,
-                    settings.radius,
-                    if ctx.effective.taa || ctx.effective.fsr {
-                        ctx.history.frames
-                    } else {
-                        0
-                    },
-                    ctx.timing,
-                );
+            let ao = self.ambient_occlusion.get_or_insert_with(|| {
+                ambient_occlusion::AmbientOcclusion::new(ctx.device, ctx.queue)
+            });
+            ao.encode(
+                ctx.device,
+                ctx.queue,
+                ctx.encoder,
+                &targets.depth,
+                &targets.normal,
+                &ctx.views.camera.view.uniform,
+                settings.quality,
+                settings.radius,
+                ctx.history.frames,
+                ctx.timing,
+            );
+            ao.resolve(
+                ctx.device,
+                ctx.queue,
+                ctx.encoder,
+                &targets.depth,
+                &targets.motion,
+                ctx.history,
+                settings.quality,
+                settings.radius,
+                ctx.timing,
+            );
         }
     }
 

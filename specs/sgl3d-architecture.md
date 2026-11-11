@@ -380,7 +380,16 @@ Stages run in one order, written in one place in `renderer`:
    before its opaque pass.
 5. **Opaque**: the sky, the G-buffer and lit colour (direct, baked, emitted and
    ambient light, the ambient light also recorded apart, unoccluded), then
-   ambient occlusion over the G-buffer's depth and normals. Where the device
+   ambient occlusion over the G-buffer's depth and normals. Its opaque-stage
+   owner temporally filters XeGTAO's spatially denoised visibility before
+   lighting composition, using DiligentFX's SSAO temporal accumulation
+   (f26cfe5). It reads rigid motion and camera history, retaining its own
+   visibility, sample count and linear depth at the render size. Jitter is
+   removed for motion reprojection and the previous jitter restored; depth
+   rejection compares in the previous camera's view space. Camera history
+   loss, skipped AO frames, render-size, quality or radius changes restart
+   accumulation. This remains within Opaque; no stage order or public
+   setting changes. Where the device
    has the colour attachments for it, the G-buffer and lit colour are one
    fused pass, the faster form on the consumer's route; otherwise a G-buffer
    pass and a lighting pass at its depth write the same targets. While

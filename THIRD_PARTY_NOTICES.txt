@@ -793,6 +793,7 @@ Sources:
 crates/sgl-post-fx/LICENSE.txt
 crates/sgl-post-fx/vendor/DiligentFX/License.txt
 crates/sgl-post-fx/vendor/DiligentCore/License.txt
+crates/sgl-3d/src/LICENSE-diligent.txt
 
                                  Apache License
                            Version 2.0, January 2004

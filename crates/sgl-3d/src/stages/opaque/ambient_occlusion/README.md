@@ -1,4 +1,4 @@
-# XeGTAO FP32 current-frame visibility
+# XeGTAO FP32 visibility with temporal filtering
 
 Authority: Intel GameTechDev/XeGTAO commit
 [`a5b1686c7ea37788eeb3576b5be47f7c03db532c`](https://github.com/GameTechDev/XeGTAO/tree/a5b1686c7ea37788eeb3576b5be47f7c03db532c).
@@ -11,7 +11,7 @@ Configuration is full-resolution FP32 (`XE_GTAO_FP32_DEPTHS`,
 the Hilbert lookup texture (`XE_GTAO_HILBERT_LUT_AVAILABLE`,
 vaGTAO's 64×64 R16Uint table of `HilbertIndex`), and the upstream default
 one final denoise pass (beta 1.2).
-There is no AO-owned history or temporal accumulation. Low/Medium/High/Ultra use the
+Low/Medium/High/Ultra use the
 upstream 1×2, 2×2, 3×3, and 9×3 slice/step counts. The physical radius is
 clamped to 0.01–10000 m and multiplied by 1.457 internally.
 `GTAOImGuiSettings` clamps it to at most 10000 and expects at least 0.01 (its
@@ -70,12 +70,9 @@ The default small-radius fade, projected-normal 0.05 adjustment, pixel minimum
   conversion ([Direct3D 11.3 §3.2.3.13](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#3.2.3.13)). Consumers divide the integer by 255.
 - `XeGTAO_ClampDepth` uses `#ifdef XE_GTAO_USE_HALF_FLOAT_PRECISION` even when the
   selected mode defines it as zero. Its resulting 65504 clamp is preserved.
-- With effective TAA or FSR, `NoiseIndex` follows the camera history frame
-  count and `noise` applies the exact `288 * (NoiseIndex % 64)` Hilbert/R2
-  offset from `vaGTAO.hlsl` `SpatioTemporalNoise`. As `vaGTAO::UpdateConstants`
-  does with its `usingTAA` argument, Off/SMAA retain phase zero. A camera cut
-  restarts the existing frame count, so its first sample is unchanged. The
-  final temporal AA resolves the lit image; this pass keeps no AO history.
+- `NoiseIndex` follows the camera history frame count in every AA mode. The
+  original `288 * (NoiseIndex % 64)` Hilbert/R2 offset is unchanged. A camera
+  cut restarts that count. AO owns temporal accumulation before lighting.
 - Optional bent normals, generated normals and debug visualizations are not
   enabled configurations; no replacement AO algorithm is introduced.
 
@@ -145,3 +142,36 @@ The numerical GPU fixture passed with fixed thresholds: open-plane mean error
 0.089380/0.170699 and raw mean/max error 0.096570/0.237365. The always-unoccluded
 negative control failed both budgets at 0.197409/0.430237. These measurements use
 30 receiver points and do not establish original-HLSL executable equivalence.
+
+## Temporal filtering
+
+The private `temporal` pass follows DiligentFX
+[`SSAO_ComputeTemporalAccumulation.fx` at f26cfe5](https://github.com/DiligentGraphics/DiligentFX/blob/f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b/Shaders/PostProcess/ScreenSpaceAmbientOcclusion/private/SSAO_ComputeTemporalAccumulation.fx),
+Apache-2.0, copyright Diligent Graphics LLC (retained source in `reference/`,
+licence in `src/LICENSE-diligent.txt`). It follows XeGTAO's one spatial pass;
+extra spatial denoising softened but did not sufficiently suppress Hyperdrive's
+stationary wing noise. DiligentFX also bases its AO on XeGTAO. This keeps AO
+noise out of the lighting input whose temporal upscaler can reject it as a
+shading change.
+
+Preserved: bilinear history with 1% relative depth rejection and minimum total
+weight 0.01; at most 16 accumulated samples; 3x3 visibility variance, gamma
+0.5–2.5 and motion factor 128. Visibility/count/depth share an RGBA32Float
+history pair; final visibility remains R32Uint 0–255. Unfiltered FP32 history
+avoids re-quantizing the accumulating visibility each frame.
+
+Adaptations: SGL supplies current-minus-previous UV motion, so no NDC scale
+is needed. Reprojection subtracts motion and adds previous-minus-current
+raster jitter in UV. Depth validation transforms the current raster position
+into the previous view before comparing linear depths, so camera translation
+alone does not reject a static surface. Moving geometry that changes its
+view depth beyond the threshold rejects history conservatively. Out-of-frame
+bilinear taps are rejected, and sky writes unoccluded visibility with depth
+zero rather than retaining a previous surface. The stage resets on camera
+history loss, nonconsecutive frames, render-size, AO-quality or radius changes.
+The stage keeps the same ownership and order; there is no new public control.
+
+On Hyperdrive's stationary 1920×1080 FSR3 Quality route (1280×720 render,
+Medium AO), 160 timed frames on Apple M5 measured AO at 0.728 ms before and
+0.988 ms with the temporal pass; complete GPU frame medians were 11.591 and
+11.853 ms. These are local observations, not cross-device budget guarantees.

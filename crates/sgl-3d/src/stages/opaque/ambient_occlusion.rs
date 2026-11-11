@@ -1,4 +1,5 @@
 //! Current-frame FP32 XeGTAO scalar visibility. See ambient_occlusion/README.md.
+mod temporal;
 use crate::{
     settings::AmbientOcclusionQuality, shading::uniforms::ViewUniform,
     view::cached_group::CachedGroup,
@@ -66,11 +67,40 @@ pub(crate) struct AmbientOcclusion {
     params: wgpu::Buffer,
     hilbert_lut: wgpu::TextureView,
     targets: Option<Targets>,
+    temporal: temporal::Temporal,
 }
 impl AmbientOcclusion {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn resolve(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        depth: &wgpu::TextureView,
+        motion: &wgpu::TextureView,
+        history: crate::view::history::HistoryFrame,
+        quality: AmbientOcclusionQuality,
+        radius: f32,
+        timing: Option<&crate::timing::GpuTiming>,
+    ) {
+        self.temporal.encode(
+            device,
+            queue,
+            encoder,
+            &self.targets.as_ref().unwrap().output,
+            depth,
+            motion,
+            history,
+            quality,
+            radius,
+            timing,
+        );
+    }
     /// The last encoded frame's denoised visibility.
     pub(crate) fn output(&self) -> Option<&wgpu::TextureView> {
-        self.targets.as_ref().map(|t| &t.output)
+        self.temporal
+            .output()
+            .or_else(|| self.targets.as_ref().map(|t| &t.output))
     }
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn raw(&self) -> Option<&wgpu::TextureView> {
@@ -119,6 +149,7 @@ impl AmbientOcclusion {
             ),
             hilbert_lut: hilbert_lut(device, queue),
             targets: None,
+            temporal: temporal::Temporal::new(device),
         }
     }
     #[allow(clippy::too_many_arguments)]

@@ -860,3 +860,153 @@ fn observe(@builtin(global_invocation_id) id:vec3<u32>) {
         }
     }
 }
+
+// Defects: temporal pass-through, stale history across disocclusion/reset,
+// or camera translation mistaken for disocclusion. Feed a scalar visibility
+// signal with known mean over an independently rasterized plane; inspect the
+// numerical AO buffer, not the appearance of the lit image.
+#[test]
+fn temporal_visibility_accumulates_and_rejects_invalid_history() {
+    use crate::{
+        settings::AmbientOcclusionQuality as Quality,
+        view::history::{CameraFrame, CameraHistory},
+    };
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let size = [17, 19];
+    let make = |label, format| crate::view::targets::target(&device, label, size, format);
+    let ao = make("noisy scalar visibility", wgpu::TextureFormat::R32Uint);
+    let motion = make("plane velocity", wgpu::TextureFormat::Rg16Float);
+    let write = |view: &wgpu::TextureView, bytes: &[u8], bpp| {
+        queue.write_texture(
+            view.texture().as_image_copy(),
+            bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(size[0] * bpp),
+                rows_per_image: None,
+            },
+            view.texture().size(),
+        )
+    };
+    write(&motion, &vec![0; (size[0] * size[1] * 4) as usize], 4);
+    let projection = crate::perspective(60f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1);
+    let plane = |distance: f32| {
+        rasterize(
+            &device,
+            &queue,
+            size,
+            &format!(
+                "var o:Output; o.normal=vec4(0.); o.depth={}; return o;",
+                0.1 / distance
+            ),
+        )
+        .0
+    };
+    let depth = plane(3.0);
+    let closer = plane(2.5);
+    let disoccluded = plane(6.0);
+    let mut temporal = super::temporal::Temporal::new(&device);
+    let mut camera_history = CameraHistory::default();
+    let mut camera = CameraFrame {
+        view: glam::Mat4::IDENTITY,
+        projection,
+        jitter: [0.; 2],
+    };
+    let mut render = |value: u32,
+                      depth: &wgpu::TextureView,
+                      camera: CameraFrame,
+                      reset: bool,
+                      skip: bool,
+                      quality,
+                      radius| {
+        write(
+            &ao,
+            bytemuck::cast_slice(&vec![value; (size[0] * size[1]) as usize]),
+            4,
+        );
+        let history = camera_history.begin(camera, reset, glam::DVec3::ZERO, 0.0);
+        if !skip {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            temporal.encode(
+                &device,
+                &queue,
+                &mut encoder,
+                &ao,
+                depth,
+                &motion,
+                history,
+                quality,
+                radius,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+        }
+        camera_history.finish(history);
+        if skip {
+            return Vec::new();
+        }
+        crate::test_support::read(&device, &queue, temporal.output().unwrap().texture(), 4)
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .collect::<Vec<_>>()
+    };
+    let mut settled = Vec::new();
+    for frame in 0..16 {
+        settled = render(
+            if frame % 2 == 0 { 51 } else { 204 },
+            &depth,
+            camera,
+            frame == 0,
+            false,
+            Quality::Medium,
+            1.0,
+        );
+    }
+    // Equal numbers of 0.2 and 0.8 visibility samples have mean 0.5.
+    assert!(
+        settled.iter().all(|&v| (v as f32 - 127.5).abs() < 2.0),
+        "AO did not accumulate the signal's known mean"
+    );
+    camera.view = glam::Mat4::from_translation(glam::Vec3::new(0., 0., 0.5));
+    let moved = render(204, &closer, camera, false, false, Quality::Medium, 1.0);
+    assert!(
+        moved.iter().all(|&v| v < 150),
+        "camera motion discarded valid plane history"
+    );
+    let revealed = render(
+        255,
+        &disoccluded,
+        camera,
+        false,
+        false,
+        Quality::Medium,
+        1.0,
+    );
+    assert!(
+        revealed.iter().all(|&v| v == 255),
+        "newly revealed depth inherited old occlusion"
+    );
+    let cut = render(51, &depth, camera, true, false, Quality::Medium, 1.0);
+    assert!(
+        cut.iter().all(|&v| v == 51),
+        "camera cut retained old visibility"
+    );
+    render(51, &depth, camera, false, true, Quality::Medium, 1.0);
+    let resumed = render(204, &depth, camera, false, false, Quality::Medium, 1.0);
+    assert!(
+        resumed.iter().all(|&v| v == 204),
+        "disabled AO retained history"
+    );
+    let radius = render(51, &depth, camera, false, false, Quality::Medium, 2.0);
+    assert!(
+        radius.iter().all(|&v| v == 51),
+        "new radius retained old visibility"
+    );
+    let quality = render(204, &depth, camera, false, false, Quality::High, 2.0);
+    assert!(
+        quality.iter().all(|&v| v == 204),
+        "new quality retained old visibility"
+    );
+}

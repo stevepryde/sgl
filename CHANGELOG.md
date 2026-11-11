@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d::Settings::ambient_occlusion` now temporally filters XeGTAO visibility
+  before lighting, reducing sample noise previously left to TAA or FSR. All
+  antialiasing modes accumulate AO; camera cuts and AO changes restart it.
+  No game-code changes are needed.
+
 - `sgl-3d::Antialiasing` now offers mutually exclusive `Fsr2` and `Fsr3`
   temporal upscaling, with unchanged defaults and TAA fallback; FSR3 does not
   enable frame generation. Rename `Fsr2Quality` to `FsrQuality`, settings

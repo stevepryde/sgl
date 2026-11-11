@@ -976,7 +976,7 @@ input.ambient_occlusion_radius = 0.5; // FrameInput: consumer-authored metres
 ```
 
 The default is Off. Low/Medium/High/Ultra select XeGTAO's 4/8/18/54 samples at
-full scene resolution with current-frame spatial denoising. The consumer persists
+full render resolution with spatial and temporal denoising. The consumer persists
 this choice and includes it in complete Low/High preset bundles. Enabled AO adds
 no geometry pass: it adds XeGTAO's depth mip, visibility and denoise passes
 after opaque shading, over its depth and normals, and reflection source
@@ -1004,11 +1004,13 @@ settings' maximum); `Settings::ambient_occlusion`
 alone turns AO off. AO works with centered reversed-Z perspective cameras.
 Its view-space reconstruction includes the actual raster jitter used by
 TAA or FSR, so its camera rays match the frame's depth and normals.
-With either temporal AA path effective, XeGTAO's sample phase advances with
-submitted frames so accumulation can reduce persistent spatial grain.
-Without temporal AA the phase stays fixed. This changes the noise tradeoff:
-inspect moving and settled contacts, since less fixed grain can leave
-visible temporal crawl rather than making every frame more stable.
+XeGTAO's sample phase advances with submitted frames in every AA mode. Its
+own DiligentFX-derived temporal filter accumulates visibility before lighting,
+so noise reduction does not depend on the final TAA or FSR resolve. Reprojection
+uses rigid motion, raster jitter and depth rejection; a camera cut, skipped AO
+frame, render-size, quality or radius change restarts accumulation. Inspect
+moving and settled contacts: screen-space visibility still cannot retain
+history where geometry becomes newly visible.
 Orthographic, off-axis and forward-depth cameras leave it ineffective while
 preserving the saved preference. Single-layer screen geometry cannot establish
 offscreen or thin-occluder visibility; [the pinned XeGTAO catalogue](src/stages/opaque/ambient_occlusion/README.md)
