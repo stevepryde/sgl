@@ -168,6 +168,7 @@ impl Presenter {
         let mut generation = Generation::new(backend.clone(), interface.clone());
         generation.configure(
             device,
+            queue,
             settings.frame_generation,
             renderer.sizes.render,
             renderer.sizes.output,
@@ -235,6 +236,15 @@ impl Presenter {
     /// Read-only renderer queries. Submission/history mutation stays with Presenter.
     pub fn renderer(&self) -> &Renderer {
         &self.renderer
+    }
+    /// Poll completed opaque-geometry statistics from real frames.
+    pub fn geometry_stats(&mut self) -> Option<super::GeometryStats> {
+        self.renderer.geometry_stats(&self.device)
+    }
+    /// Drain completed numerical frame-probe readbacks without exposing renderer mutation.
+    #[cfg(feature = "diagnostics")]
+    pub fn take_frame_probe_reports(&mut self) -> Vec<serde_json::Value> {
+        self.renderer.take_frame_probe_reports(&self.device)
     }
     pub fn frame_generation_status(&self) -> FrameGenerationStatus {
         self.renderer.frame_generation_status()
@@ -325,6 +335,7 @@ impl Presenter {
         }
         self.renderer.generation.as_mut().unwrap().configure(
             &self.device,
+            &self.queue,
             settings.frame_generation,
             self.renderer.sizes.render,
             self.renderer.sizes.output,
@@ -486,6 +497,10 @@ impl PresentationFrame<'_> {
     /// Record UI/custom commands; do not replace or submit this encoder yourself.
     pub fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
         self.encoder.as_mut().unwrap()
+    }
+    /// Borrow commands and optional GPU timing together for game-owned passes.
+    pub fn encoder_and_timing(&mut self) -> (&mut wgpu::CommandEncoder, Option<&GpuTiming>) {
+        (self.encoder.as_mut().unwrap(), self.timing.as_deref())
     }
     /// Cleared transparent target. Clone the view before borrowing `encoder()`.
     pub fn ui_target(&self) -> &wgpu::TextureView {

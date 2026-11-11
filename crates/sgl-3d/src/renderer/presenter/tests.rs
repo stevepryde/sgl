@@ -386,3 +386,38 @@ fn unsupported_device_falls_back_to_real_frames() {
     assert!(!images[0].0.interpolated);
     assert!(pollster::block_on(scope.pop()).is_none());
 }
+
+// A loading frame can disable generation before the initially configured SDK
+// ever dispatches. Re-enabling must not execute uploads to destroyed resources.
+#[test]
+fn generation_survives_reconfiguration_before_first_render() {
+    let Some((device, queue)) = test_support::fsr_device() else {
+        return;
+    };
+    if !device
+        .features()
+        .contains(sp_fidelity_wgpu::required_features())
+    {
+        return;
+    }
+    let mut settings = settings();
+    let (mut presenter, mut scene, images, _) = setup(&device, &queue, &settings);
+    settings.frame_generation = FrameGeneration::Off;
+    presenter.resize(&config(), 1., &settings).unwrap();
+    settings.frame_generation = FrameGeneration::Fsr3;
+    presenter
+        .render(&mut scene, &input(), &settings, None)
+        .unwrap()
+        .present()
+        .unwrap();
+    presenter.wait_for_presents().unwrap();
+    assert_eq!(
+        presenter.frame_generation_status(),
+        FrameGenerationStatus::Active
+    );
+    assert_eq!(
+        images.lock().unwrap().len(),
+        2,
+        "generated and real surface presents"
+    );
+}

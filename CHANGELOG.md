@@ -15,6 +15,15 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d::Presenter` now submits SDK initialization uploads while their resources
+  are live, preventing fallback after loading
+  screens or resizing before the first render. No game-code changes are needed.
+
+- `sgl-3d::Presenter::{geometry_stats, take_frame_probe_reports}` expose real-frame
+  statistics/readbacks without mutable renderer access;
+  `PresentationFrame::encoder_and_timing` preserves timing for game-owned UI passes. Presenter consumers can
+  use these instead of the corresponding `Renderer` queries; other game code is unchanged.
+
 - `sgl-3d::Settings::frame_generation` adds opt-in native FSR3 frame generation,
   independent of antialiasing; the default remains `Off`. To enable it, request
   `graphics_device::fsr_features`, use `Presenter` with `FrameGeneration::Fsr3`,

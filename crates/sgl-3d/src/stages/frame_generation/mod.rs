@@ -43,9 +43,11 @@ impl Generation {
         }
     }
     /// Caller drained old GPU work before this can replace SDK allocations.
+    #[allow(clippy::too_many_arguments)]
     pub fn configure(
         &mut self,
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         requested: FrameGeneration,
         render: [u32; 2],
         display: [u32; 2],
@@ -72,6 +74,7 @@ impl Generation {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let created = sdk::Sdk::new(
             device,
+            queue,
             self.backend.clone(),
             self.interface.clone(),
             render,

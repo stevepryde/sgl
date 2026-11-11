@@ -21,8 +21,10 @@ pub(super) struct Sdk {
 }
 
 impl Sdk {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         backend: Rc<RefCell<FfxWgpuBackend>>,
         interface: FfxInterfaceRef,
         render: [u32; 2],
@@ -108,6 +110,32 @@ impl Sdk {
                     .create_resource(&desc, shared_context)?,
             );
         }
+        // SDK creation queues resource uploads. Submit them while every source
+        // and destination is still alive: a loading screen or resize may destroy
+        // this context before the first prepare dispatch. Queue ordering keeps
+        // later frame dispatches behind initialization without a CPU wait.
+        let list =
+            sdk.backend
+                .borrow_mut()
+                .ffx_get_command_list_wgpu(device.create_command_encoder(
+                    &wgpu::CommandEncoderDescriptor {
+                        label: Some("FSR3 resource initialization"),
+                    },
+                ));
+        let initialized = sdk
+            .interface
+            .borrow_mut()
+            .execute_gpu_jobs(list, shared_context);
+        let encoder = sdk
+            .backend
+            .borrow_mut()
+            .ffx_take_command_list_wgpu(list)
+            .expect("generation initialization command list");
+        // This boundary owns initialization failures; do not leave a latched
+        // backend error for a later successfully reconfigured frame to consume.
+        sdk.backend.borrow_mut().take_job_error();
+        initialized?;
+        queue.submit([encoder.finish()]);
         Ok(sdk)
     }
     fn resources(&self) -> [FfxResource; 5] {

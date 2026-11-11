@@ -979,6 +979,9 @@ Generated frames never advance simulation or temporal histories. With GPU
 timing, call `GpuTiming::begin_frame` before `render`; the presenter calls
 `submitted` after submission, including a submission followed by an error.
 Read-only renderer queries are available through `Presenter::renderer()`.
+Poll real-frame geometry counts with `Presenter::geometry_stats`; diagnostics
+builds drain numerical probes with `Presenter::take_frame_probe_reports`.
+Use `PresentationFrame::encoder_and_timing` to record timed game-owned UI passes.
 
 UI is composed after interpolation on both generated and real frames. The
 UI attachment is non-sRGB and uses **premultiplied alpha in its stored color
