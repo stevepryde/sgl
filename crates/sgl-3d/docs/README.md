@@ -95,6 +95,16 @@ its rendering `settings::Settings`.
    (chunk-aligned in a streamed world); then give the camera and edits in
    the new frame. Nothing restarts or redraws.
 
+For native frame generation, use `Presenter` in place of the caller-target
+renderer: request FSR device features, set `Settings::frame_generation` to
+`Fsr3`, call `presenter.render`, draw UI into the returned frame's `ui_target`
+using its `encoder`, then call `frame.present`. It owns submission and commits
+histories; generated frames do not run game simulation. Call `resize` for a
+changed surface/scale and report `frame_generation_status()` to the player.
+See [native presentation](../README.md#native-frame-generation) for UI color,
+error recovery and GPU timing, and the
+[`frame_generation` example](../../../examples/sgl-3d/examples/frame_generation.rs).
+
 The examples live in the repository, not the published crate:
 <https://github.com/stevepryde/sgl/tree/main/examples/sgl-3d/examples>.
 [`examples/offscreen.rs`](../../../examples/sgl-3d/examples/offscreen.rs) is the loop to copy

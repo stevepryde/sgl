@@ -7,7 +7,11 @@ pub(crate) mod counters;
 pub mod diagnostics;
 mod frame_input;
 pub mod graphics_device;
+mod presentation;
 mod renderer;
+pub use presentation::FrameGenerationStatus;
+#[cfg(not(target_arch = "wasm32"))]
+pub use renderer::presenter::{PresentationFrame, Presenter, PresenterError};
 mod scene;
 pub mod settings;
 mod shading;
@@ -75,3 +79,7 @@ pub mod shader {
 pub mod heat_distortion {
     pub use crate::content::transient::{HeatDistortion, MAX_DISPLACEMENT_PIXELS, MAX_VERTICES};
 }
+
+/// Native presentation errors and completion reports from the FSR backend.
+#[cfg(not(target_arch = "wasm32"))]
+pub use sp_fidelity_wgpu::presentation::{PresentationError, PresentationReport};

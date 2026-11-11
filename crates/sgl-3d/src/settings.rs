@@ -3,6 +3,15 @@
 //! wants. Preset choices leave explicit overrides intact.
 use serde::{Deserialize, Serialize};
 
+/// Native frame generation, independently selected from antialiasing/upscaling.
+/// Requires a `Presenter`; browsers and caller-target renderers use real frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FrameGeneration {
+    #[default]
+    Off,
+    Fsr3,
+}
+
 /// The quality tier `Preset` choices resolve against.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RenderPreset {
@@ -25,7 +34,7 @@ pub enum Antialiasing {
     Smaa,
     Off,
     Fsr2,
-    /// AMD FSR3.1 temporal upscaling, without frame generation.
+    /// AMD FSR3.1 temporal upscaling; generation is selected by `frame_generation`.
     Fsr3,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -403,6 +412,7 @@ pub struct Settings {
     pub scene_resolution: SceneResolution,
     pub upscaling: Upscaling,
     pub antialiasing: Antialiasing,
+    pub frame_generation: FrameGeneration,
     pub fsr_quality: FsrQuality,
     /// FSR's robust contrast-adaptive sharpening (RCAS) of its output.
     pub fsr_sharpening: bool,
@@ -504,6 +514,7 @@ impl Default for Settings {
             scene_resolution: SceneResolution::default(),
             upscaling: Upscaling::default(),
             antialiasing: Antialiasing::default(),
+            frame_generation: FrameGeneration::Off,
             fsr_quality: FsrQuality::default(),
             fsr_sharpening: true,
             fsr_sharpness: 0.8,

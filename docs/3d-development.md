@@ -74,3 +74,14 @@ build foundations first, port proven permissively licensed code, delete what it
 supersedes, and measure per-pass GPU time. Changes to SGL3D itself keep to the
 [SGL3D architecture](../specs/sgl3d-architecture.md). Use captures from the real game to
 iterate; the owner judges the look.
+
+## Native frame generation
+
+Use SGL3D's `Presenter` for opt-in FSR3 frame generation. The game retains its
+window, event loop and simulation; the presenter owns surface acquisition,
+interpolation, UI composition, pacing and submission. Render UI with SGL2D
+into the returned frame's UI target, then consume it with `present`.
+Follow the [package workflow](../crates/sgl-3d/README.md#native-frame-generation)
+and [native example](../examples/sgl-3d/examples/frame_generation.rs).
+The ordinary `Renderer` remains the browser/offscreen path; requested
+frame generation falls back to real frames with an unavailable status.

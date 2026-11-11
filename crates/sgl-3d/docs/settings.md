@@ -32,7 +32,8 @@ replace every choice with a complete bundle.
 
 | Setting | Field | Values (default first) | `Preset` gives | Notes |
 | --- | --- | --- | --- | --- |
-| Antialiasing | `Settings::antialiasing` | `Preset`, `Taa`, `Smaa`, `Off`, `Fsr2`, `Fsr3` | Low: SMAA. High: TAA | FSR2 and FSR3.1 upscaling are mutually exclusive; both use the shared FSR controls. No frame generation. TAA runs where the device cannot run FSR, which includes every browser (WebGPU lacks its features). TAA and FSR need a `perspective` camera: without one SMAA stands in for TAA, but an FSR frame is presented without SMAA. |
+| Antialiasing | `Settings::antialiasing` | `Preset`, `Taa`, `Smaa`, `Off`, `Fsr2`, `Fsr3` | Low: SMAA. High: TAA | FSR2 and FSR3.1 upscaling are mutually exclusive; both use the shared FSR controls. Frame generation is a separate setting. TAA runs where the device cannot run FSR, which includes every browser (WebGPU lacks its features). TAA and FSR need a `perspective` camera: without one SMAA stands in for TAA, but an FSR frame is presented without SMAA. |
+| Frame generation | `Settings::frame_generation` | `Off`, `Fsr3` | Off in every preset | Native `Presenter` generates and paces an intermediate frame, independently of AA. Requires FSR device features and a `perspective` camera; other paths retain real frames and report `FrameGenerationStatus::Unavailable`. |
 | FSR quality | `Settings::fsr_quality` | `Quality`, `NativeAa`, `Balanced`, `Performance`, `UltraPerformance` | | Native AA renders every scene pixel; Quality, Balanced, Performance and Ultra Performance render 1/1.5, 1/1.7, 1/2 and 1/3 of it per axis. Set `FrameInput::frame_time_ms` every frame. |
 | FSR sharpening | `Settings::fsr_sharpening`, `Settings::fsr_sharpness` | `true`, `false`; 0.8, any of 0..=1 | | AMD's RCAS sharpening of FSR's output, as AMD asks games to offer: 0 sharpens least, 1 most; values outside are clamped, NaN to 0. |
 | SMAA quality | `Settings::smaa_quality` | `Medium`, `Low`, `High`, `Ultra` | | SMAA 2.8's presets: Low and Medium search up to 4 and 8 steps of two pixels each way along an edge; High up to 16 and also smooths diagonal lines and keeps sharp corners; Ultra up to 32 and finds fainter edges. Higher costs more. |
@@ -57,7 +58,7 @@ replace every choice with a complete bundle.
 | Volume paths | `Settings::volume_paths` | `true`, `false` | | Measures how far each view ray travels inside a blended volume whose shader reads `scene_volume_path`, for its absorption. Costs frames that draw such a material three copies of the opaque depth and three depth passes over its meshes (timing group `volume layers`), and three render-size depth targets held from the first such frame until it is turned off. Off, or on a device of the `Basic` binding tier, the shader gets `VOLUME_NONE` and takes its own fallback thickness. `Renderer::volume_paths_in_effect` says whether it runs. |
 | Heat shimmer | `Settings::heat_distortion` | `false`, `true` | | Needs geometry from `Scene::update_heat_distortion`. |
 | Motion blur | `Settings::motion_blur` | `Off`, `Reduced`, `Full` | | A comfort choice: Full blurs over `FrameInput::motion_blur`'s shutter, Reduced over half of it. Needs a `perspective` camera. |
-| Frame rate | the game's loop, from `settings::FrameRate` | `Display`, `Fps60` to `Fps240` | | Not part of `Settings`: SGL3D does not pace frames. `FrameRate::limit` gives the cap. |
+| Frame rate | the game's loop, from `settings::FrameRate` | `Display`, `Fps60` to `Fps240` | | Not part of `Settings`: the game caps real frames; native `Presenter` paces generated presentation. `FrameRate::limit` gives the cap. |
 
 ## When changes apply
 
@@ -69,6 +70,12 @@ material's sampler after an anisotropic filtering change.
 `Renderer::antialiasing_in_effect(&settings)` reports what actually runs and
 `fsr_error()` why FSR did not; show the effective choice without rewriting
 the saved value.
+
+Native `Presenter::render` applies settings changes automatically. Call
+`Presenter::resize` when the surface configuration or device scale changes;
+it drains pending presentations before replacing resources. Its
+`frame_generation_status()` reports `Off`, `Active` or `Unavailable(reason)`.
+Use this status for settings UI, leaving the saved request intact.
 
 ## Frame and scene values
 

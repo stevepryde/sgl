@@ -12,6 +12,8 @@ pub(crate) mod deform;
 pub(crate) mod dynamic_gi;
 pub(crate) mod exposure;
 pub(crate) mod fog;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod frame_generation;
 #[cfg(feature = "diagnostics")]
 pub(crate) mod frame_probe;
 pub(crate) mod motion_blur;

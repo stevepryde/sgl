@@ -15,39 +15,47 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d::Settings::ambient_occlusion` now retains valid history on moving
-  receivers using depth motion, instead of treating them as static world points.
-  Ordinary game code is unchanged. `diagnostics::DiagnosticTarget::Motion` is now
-  RGBA16Float (8 bytes/texel): RG retains UV motion, B is previous-minus-current
-  perspective view depth in metres, and A marks valid depth motion. Update
-  diagnostic readback strides from 4 to 8; consumers needing UV use RG.
+- `sgl-3d::Settings::frame_generation` adds opt-in native FSR3 frame generation,
+  independent of antialiasing; the default remains `Off`. To enable it, request
+  `graphics_device::fsr_features`, use `Presenter` with `FrameGeneration::Fsr3`,
+  draw UI into `PresentationFrame::ui_target`, and call the frame's `present`
+  instead of submitting and calling `Renderer::finish_frame` yourself.
+  Browser/unsupported devices retain real frames and report unavailability.
+  Existing games using default settings need no game-code changes; see the
+  [native presentation workflow](crates/sgl-3d/README.md#native-frame-generation).
 
-- `sgl-3d::Settings::ambient_occlusion` now temporally filters XeGTAO visibility
-  before lighting, reducing sample noise previously left to TAA or FSR. All
-  antialiasing modes accumulate AO; camera cuts and AO changes restart it.
-  No game-code changes are needed.
+## 0.6.0 — 2026-11-11
+
+Move every SGL crate to `0.6.0` together and commit the updated `Cargo.lock`.
+Apply the SGL3D migrations below. The other five library crates have no API
+changes; no game-code changes are needed for them.
+Existing baked assets and BC7 exports need no regeneration.
+
+- `sgl-3d::Settings::ambient_occlusion` now matches raster jitter, advances
+  XeGTAO's sample phase with effective TAA/FSR, and temporally filters visibility
+  before lighting, including moving receivers. All antialiasing modes accumulate
+  AO; Off/SMAA keep a fixed sample phase. Camera cuts and AO changes restart
+  history. No game-code changes are needed.
+- `sgl-3d::diagnostics::DiagnosticTarget::Motion` changes from RG16Float to
+  RGBA16Float: RG retains UV motion, B is previous-minus-current perspective
+  view depth in metres, and A marks valid depth motion. Update diagnostic
+  readback strides from 4 to 8 bytes/texel; consumers needing UV use RG.
 
 - `sgl-3d::Antialiasing` now offers mutually exclusive `Fsr2` and `Fsr3`
   temporal upscaling, with unchanged defaults and TAA fallback; FSR3 does not
   enable frame generation. Rename `Fsr2Quality` to `FsrQuality`, settings
   `fsr2_quality`/`fsr2_sharpening`/`fsr2_sharpness` to `fsr_*` (including saved
   data), `graphics_device::fsr2_features` to `fsr_features`, `Renderer::fsr2_error`
-  to `fsr_error`, and diagnostics `disable.fsr2` to `disable.fsr`. Both
+  to `fsr_error`, and diagnostics `disable.fsr2` to `disable.fsr`.
+  Exhaustive `Antialiasing` matches must handle `Fsr3`. Both
   `sp-fidelity` dependencies temporarily use the same pinned Git revision
   from main until the FSR3 port is published; see the workspace manifest.
 
-- `sgl-3d` showcase builds now use bounded curl transfers with progress and a
-  reusable cache instead of silent, unbounded downloads that could hang.
+- `sgl-3d` showcase renders move from repository PNGs to a Cloudflare-hosted
+  gallery with Slide/Toggle feature comparisons and a scene sidebar. Use the
+  hosted README image URLs; publishing now uses
+  `spdeploy --operation deploy --no-ui` and cached, bounded curl downloads.
   Install curl on the publishing machine; no game-code changes are needed.
-- `sgl-3d` showcase publication now runs the build and Cloudflare upload through
-  `spdeploy --operation deploy --no-ui` instead of two manual commands.
-  No game-code changes are needed.
-- `sgl-3d` showcase replaces separate Off/Split/On controls and the lower slider
-  with direct image Slide/Toggle controls, adds feature explanations and a scene
-  sidebar including a Bistro motorcycle view. No game-code changes are needed.
-- `sgl-3d` showcase renders move from repository PNGs to the Cloudflare-hosted
-  gallery with feature off/on comparisons. Use the hosted README image URLs;
-  no game-code changes are needed.
 - `sgl-3d::Fog::length` changes now restart fog history instead of reusing
   density at the old range's positions. No game-code changes are needed.
 - `sgl-3d::MaterialShader` masked shadow casters now evaluate all material
@@ -89,19 +97,19 @@ docs and specs the entry links.
   and emissive-only lamps. Rebuild the example and replay the fixtures;
   no game-code changes or asset regeneration are needed.
 
-- `sgl-3d::Renderer` ambient occlusion now matches raster jitter and advances
-  XeGTAO's sample phase with effective TAA/FSR2, instead of using centred
-  camera rays and a frozen pattern. No game-code changes are needed;
-  Off/SMAA retain a fixed phase. Compare contact grain and motion noise.
-
 - `sgl-3d::{SceneOptions, PreparedModelOptions}`: scenes can now explicitly
   omit ray-only data with `RayData::Disabled`; existing constructors retain
-  it. Use matching options for manually prepared models. Effective GI and
-  ray-tracing/shadow queries now take `&Scene` after `&Settings`, and
+  it. Use matching options for manually prepared models.
+  `Renderer::{dynamic_gi_in_effect, ray_tracing_in_effect,
+  ray_traced_shadows_in_effect}` now take `&Scene` after `&Settings`, and
   `world_space_reflections_in_effect` reports the same scene-aware fallback.
   ETC2/ASTC material images can omit their RGBA companion only when ray data
   is disabled; enabled rays and decal uploads reject a missing companion.
   No rendering settings are silently rewritten.
+
+- `sgl-3d::SceneError` adds `MissingDecodedImage` and `RayDataMismatch`
+  for missing ETC2/ASTC ray/decal companions and mismatched scene/model
+  capabilities. Add both variants to exhaustive matches.
 
 - `sgl-3d::asset::LoadOptions::budget`: import safety caps are now explicitly
   configurable with checked `LoadBudget::new(source_bytes, decoded_bytes)`;
@@ -127,8 +135,9 @@ docs and specs the entry links.
   images now support ETC2 RGBA8 and ASTC 4×4 stored mip chains with an explicit
   decoded level-zero ray/decal companion, plus prepared `Rgba8MipChain`
   uploads. Request the matching compression features; existing BC7 struct
-  literals must add `decoded_level_0: None`, and exhaustive image/format
-  matches must handle the new variants. Existing BC7 exports need no rebake.
+  literals must add `decoded_level_0: None`, and exhaustive matches must add
+  `Image::Rgba8Mips`, `CompressedFormat::Etc2Rgba8` and
+  `CompressedFormat::Astc4x4`. Existing BC7 exports need no rebake.
 
 - `sgl-3d::Settings::upscaling`: reduced-resolution scenes can now opt into
   portable spatial upscaling after tone mapping; the default remains `Off`

@@ -8,6 +8,8 @@
 //! its own.
 pub(crate) mod effective;
 pub(crate) mod frame;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod presenter;
 pub(crate) mod probe_capture;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod test_frame;
@@ -77,6 +79,9 @@ pub struct Renderer {
     motion_blur: MotionBlur,
     post: Post,
     history: CameraHistory,
+    frame_generation_requested: crate::settings::FrameGeneration,
+    #[cfg(not(target_arch = "wasm32"))]
+    generation: Option<crate::stages::frame_generation::Generation>,
     /// The device traces rays in hardware, in this form.
     ray_form: Option<crate::view::trace_paths::DeviceRayForm>,
     /// Targets changed since the last finished frame was rendered: history
@@ -252,6 +257,7 @@ impl Renderer {
             settings,
             effective::Device {
                 fsr_running: antialiasing.fsr_running(),
+                frame_generation: false,
                 fused_supported: pipelines.fused_supported,
                 occlusion_supported: cull.occlusion_supported(),
                 ray_queries: ray_form.as_ref().map(|form| form.form()),
@@ -296,6 +302,9 @@ impl Renderer {
             shadows,
             fog,
             history: CameraHistory::default(),
+            frame_generation_requested: settings.frame_generation,
+            #[cfg(not(target_arch = "wasm32"))]
+            generation: None,
             ray_form,
             pending_reset: false,
             targets_generation: 0,
@@ -317,6 +326,7 @@ impl Renderer {
         device_scale: f32,
         settings: &Settings,
     ) {
+        self.frame_generation_requested = settings.frame_generation;
         let scene = effective::scene_size(
             output_size,
             settings.preset,
@@ -381,6 +391,10 @@ impl Renderer {
     pub fn finish_frame(&mut self, scene: &mut Scene) {
         if let Some((frame, scene_id, generation)) = self.rendered.take() {
             self.history.finish(frame);
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(generation) = self.generation.as_mut() {
+                generation.finish_frame();
+            }
             // A resize after the render still restarts the next frame.
             if generation == self.targets_generation {
                 self.pending_reset = false;
@@ -398,6 +412,21 @@ impl Renderer {
             if let Some(probe) = &mut self.probe {
                 probe.submitted();
             }
+        }
+    }
+
+    /// Requested frame generation resolved for this renderer's presentation path.
+    pub fn frame_generation_status(&self) -> crate::FrameGenerationStatus {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(generation) = &self.generation {
+            return generation.status.clone();
+        }
+        if self.frame_generation_requested == crate::settings::FrameGeneration::Off {
+            crate::FrameGenerationStatus::Off
+        } else {
+            crate::FrameGenerationStatus::Unavailable(
+                "frame generation requires a native Presenter".into(),
+            )
         }
     }
 

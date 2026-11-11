@@ -450,3 +450,28 @@ explicit fallback or none where it cannot (D-27).
   browser's WebGPU (`browser_smoke`).
 - The required check passes, and the real consumer exercises creation, updates,
   resize, submission and presentation after each integrated change.
+
+
+## Native frame generation
+
+- **S3D-FG1:** `Settings::frame_generation` independently selects Off (default)
+  or FSR3 generation. `Antialiasing::Fsr3` continues to select upscaling only.
+  A native `Presenter` supplies generation for any supported antialiasing mode;
+  unsupported devices/projections, browser and caller-target rendering present
+  real frames and expose the effective state without rewriting saved settings.
+- **S3D-FG2:** The game supplies the surface, window/event loop, simulation,
+  scene input and UI. The presenter renders the scene, accepts separate
+  premultiplied UI and schedules generated-then-real images through sp-fidelity.
+  The game must not independently acquire/present that surface or submit the
+  encoder consumed by the presenter. Existing `Renderer` workflows remain valid.
+- **S3D-FG3:** One submitted real frame commits one scene/camera history update.
+  Camera cuts, resize, scene changes, generation transitions and abandoned
+  encoders reset interpolation. Resize and shutdown drain GPU work; acquisition
+  failures retire resources and allow recovery. Generation failure falls back
+  to the real image and remains observable.
+- **S3D-FG4:** Preserve the selected surface output transfer and composite UI
+  after interpolation. Measure prepare, optical-flow and interpolation passes;
+  validate GPU output and lifecycle, native presentation and browser fallback.
+  Native-only scheduling and the port's platform limits remain explicit.
+
+Internal placement and ownership: [frame generation architecture](sgl3d-architecture.md#frame-generation-and-presentation).

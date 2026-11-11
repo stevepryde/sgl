@@ -907,7 +907,8 @@ FSR2 and FSR3.1.4 come from the `sp-fidelity` port (SDK
 documentation and FSR sample describe; that file's header lists each input and
 its source. Choose `Antialiasing::Fsr2` or `Antialiasing::Fsr3`; the single
 antialiasing setting makes them mutually exclusive with each other, TAA and
-SMAA. FSR3 supplies upscaling only, without frame generation. Both versions
+SMAA. `Antialiasing::Fsr3` selects upscaling; frame generation is selected
+separately with `Settings::frame_generation`. Both versions
 share `FsrQuality` and the controls below. Defaults remain TAA on High and
 SMAA on Low. They antialias like TAA while upscaling:
 - `Settings::fsr_quality` (`settings::FsrQuality`) sets the render size: Native
@@ -945,6 +946,78 @@ SMAA on Low. They antialias like TAA while upscaling:
   The saved choice is unchanged.
 - FSR needs `perspective`'s infinite reversed-Z projection; with any other
   camera the render-size frame is scaled to the scene size without FSR.
+
+### Native frame generation
+
+Set `Settings::frame_generation = FrameGeneration::Fsr3` and use native
+`Presenter`. It owns one renderer, display-sized scene/UI targets and
+sp-fidelity's interpolation/presentation scheduler. The game still owns its
+window, wgpu device/queue, scene, event loop, simulation and real-frame cap.
+Generation is off by default in every preset and works independently of
+`Antialiasing` (Off, SMAA, TAA, FSR2 or FSR3).
+
+Request `graphics_device::fsr_features(&adapter)` when creating the device.
+Construct `Presenter::new` with an `Arc<wgpu::Surface<'static>>`, its chosen
+configuration/capabilities, device scale and settings. Give that surface
+exclusively to the presenter: it configures, acquires and presents it. Use
+`sgl_3d::perspective`, set `FrameInput::frame_time_ms` to the real-frame interval,
+and provide final scene poses once per real frame.
+
+```rust,ignore
+let mut frame = presenter.render(&mut scene, &input, &settings, timing.as_mut())?;
+let ui = frame.ui_target().clone();
+// Record the game's UI into `ui` using frame.encoder().
+frame.present()?;
+```
+
+`render` returns a borrowing `PresentationFrame` containing the scene's owned
+encoder and a cleared transparent UI target. `present` consumes the frame,
+submits its commands and advances SGL's scene/camera histories exactly once.
+Do not submit this encoder yourself or call `Renderer::finish_frame`.
+Dropping an unsubmitted frame abandons it and resets interpolation history.
+Generated frames never advance simulation or temporal histories. With GPU
+timing, call `GpuTiming::begin_frame` before `render`; the presenter calls
+`submitted` after submission, including a submission followed by an error.
+Read-only renderer queries are available through `Presenter::renderer()`.
+
+UI is composed after interpolation on both generated and real frames. The
+UI attachment is non-sRGB and uses **premultiplied alpha in its stored color
+domain**. Match `Presenter::ui_format()` and `ui_encodes_srgb()`: SGL2D's
+`canvas::sprite::SpritePass` uses `LightingSpace::Gamma` for encoded output,
+`Linear` for linear output. This also applies while generation is off. The
+scene transfer follows the surface's configured color space. A 10-bit
+RGB10A2 surface uses RGBA16F intermediates so real-frame fallback does not
+require optional storage-format features. There is no
+second tone map or implicit sRGB decode in UI composition.
+
+`frame_generation_status()` returns `Off`, `Active` or `Unavailable(reason)`.
+Missing device features, unsupported camera projections and initialization or
+dispatch failures preserve real-frame presentation. Ordinary `Renderer`
+(including offscreen and browser use) reports requested generation unavailable.
+Settings remain serializable on every target; the browser has no `Presenter`.
+
+Call `resize` with the new surface configuration and device scale. It drains
+pending work before changing SDK resources; a zero-size configuration is
+ignored, and the game should skip drawing while minimized. Camera cuts, scene
+changes, abandoned frames and target changes reset interpolation. Handle
+`PresenterError::Presentation(PresentationError::Surface(_))` from rendering,
+presentation or `wait_for_presents`: occlusion/timeouts are transient, and
+lost/outdated surfaces are reconfigured on the next render/resize. Surface
+availability does not permanently disable generation. Other errors should be
+reported or handled by the game. `shutdown` drains and reports errors; dropping
+the presenter also drains before destroying SDK contexts.
+
+`take_reports` returns the latest retired real-frame reports (at most two),
+including generated status and successful surface present-call timestamps.
+These are not physical scanout FPS. GPU timing groups are `FSR3 prepare`,
+`FSR3 optical flow` and `FSR3 interpolation`; presentation/UI scheduling adds
+cost outside those groups. The
+[`frame_generation` example](../../examples/sgl-3d/examples/frame_generation.rs)
+shows moving content, SGL2D UI, timing, resizing, toggles and shutdown:
+
+```sh
+cargo run -p sgl-3d-examples --example frame_generation -- --frames 120
+```
 
 ### Portable spatial upscaling
 

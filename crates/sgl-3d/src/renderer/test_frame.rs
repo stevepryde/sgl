@@ -88,6 +88,7 @@ impl Renderer {
             &input,
             super::effective::SceneContent::of(scene),
             super::effective::Device {
+                frame_generation: false,
                 fsr_running: None,
                 fused_supported: self.pipelines.fused_supported,
                 occlusion_supported: self.cull.occlusion_supported(),

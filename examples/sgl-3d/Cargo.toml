@@ -9,6 +9,7 @@ publish = false
 # package. Like sgl-3d, exempt from `[workspace.lints]`.
 
 [dev-dependencies]
+sgl-2d.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
 image = { workspace = true, features = ["hdr"] }
@@ -44,3 +45,6 @@ crate-type = ["cdylib"]
 [[example]]
 name = "browser_bistro"
 crate-type = ["cdylib"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
