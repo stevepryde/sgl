@@ -101,7 +101,11 @@ reports requested generation as unavailable without a native presenter.
    owns pacing, UI composition and generated-then-real surface presentation.
    The game renders premultiplied UI in the scene color's stored transfer
    domain into a cleared non-sRGB display-sized texture; the
-   same UI is composed over both outputs, including when generation is off.
+   same UI is composed over both outputs. With generation off, the scheduler
+   composes directly into the acquired surface in the caller submission, without
+   worker pacing or intermediate copies. Generated pairs batch their snapshot
+   composition into the rendering submission; surface copies rely on queue
+   ordering, with CPU completion waits reserved for pacing and explicit drains.
 3. `Presenter::render` returns a borrowing `PresentationFrame` holding its
    encoder and the rendered scene. `PresentationFrame::present` consumes that
    encoder and commits renderer/scene histories exactly once if that encoder was submitted, even if presentation

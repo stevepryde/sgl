@@ -454,6 +454,19 @@ explicit fallback or none where it cannot (D-27).
 
 ## Native frame generation
 
+The native Presenter uses direct game-queue composition when generation is off.
+Generated frames retain completion-based pacing, with queue-ordered surface
+copies and explicit GPU waits at drain/reconfiguration boundaries. This follows
+AMD SDK's `presentNonInterpolatedWithUiCompositionOnGameQueue` and wgpu's
+[submit-before-present contract](https://docs.rs/wgpu/latest/wgpu/struct.Queue.html#method.present);
+no duplicate game renderer or quality reduction is required.
+
+On Apple M5/Metal in Hyperdrive’s stationary Meridian scene (FSR3.1 Quality,
+1080p scene cap, 3024×1898 display, hardware tracing), representative 240-frame
+submission p95 fell from 31.5 to 17.1 ms with generation off and 44.3 to 39.7 ms
+with it on (2026-11-11). These sequential-run submission timings are not scanout
+measurements. Optical flow and interpolation remain significant GPU costs.
+
 - **S3D-FG1:** `Settings::frame_generation` independently selects Off (default)
   or FSR3 generation. `Antialiasing::Fsr3` continues to select upscaling only.
   A native `Presenter` supplies generation for any supported antialiasing mode;

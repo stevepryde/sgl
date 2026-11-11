@@ -949,6 +949,12 @@ SMAA on Low. They antialias like TAA while upscaling:
 
 ### Native frame generation
 
+With generation off, Presenter composes the scene and UI directly into the
+acquired surface on the calling thread, with no generation-worker waits.
+With generation on, prepared pairs use completion-based pacing; surface copies
+rely on queue ordering rather than CPU completion waits. `take_reports` returns
+successful present-call timestamps in chronological order, not scanout times.
+
 Set `Settings::frame_generation = FrameGeneration::Fsr3` and use native
 `Presenter`. It owns one renderer, display-sized scene/UI targets and
 sp-fidelity's interpolation/presentation scheduler. The game still owns its

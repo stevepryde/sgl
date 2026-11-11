@@ -99,7 +99,8 @@ For native frame generation, use `Presenter` in place of the caller-target
 renderer: request FSR device features, set `Settings::frame_generation` to
 `Fsr3`, call `presenter.render`, draw UI into the returned frame's `ui_target`
 using its `encoder`, then call `frame.present`. It owns submission and commits
-histories; generated frames do not run game simulation. Call `resize` for a
+histories; generated frames do not run game simulation. With generation off,
+it composes directly to the surface without the generation workers. Call `resize` for a
 changed surface/scale and report `frame_generation_status()` to the player.
 See [native presentation](../README.md#native-frame-generation) for UI color,
 error recovery and GPU timing, and the

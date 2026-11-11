@@ -2431,12 +2431,12 @@ dependencies = [
 [[package]]
 name = "sp-fidelity"
 version = "0.2.0"
-source = "git+https://github.com/stevepryde/sp-fidelity?rev=81cda1063e972cf39cf12ae801d2d8288b805751#81cda1063e972cf39cf12ae801d2d8288b805751"
+source = "git+https://github.com/stevepryde/sp-fidelity?rev=9f739deb9008bde6cc714209ba75ccfab8ae8b9d#9f739deb9008bde6cc714209ba75ccfab8ae8b9d"
 
 [[package]]
 name = "sp-fidelity-wgpu"
 version = "0.2.0"
-source = "git+https://github.com/stevepryde/sp-fidelity?rev=81cda1063e972cf39cf12ae801d2d8288b805751#81cda1063e972cf39cf12ae801d2d8288b805751"
+source = "git+https://github.com/stevepryde/sp-fidelity?rev=9f739deb9008bde6cc714209ba75ccfab8ae8b9d#9f739deb9008bde6cc714209ba75ccfab8ae8b9d"
 dependencies = [
  "bytemuck",
  "naga",
