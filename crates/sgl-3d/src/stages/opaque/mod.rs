@@ -119,7 +119,7 @@ impl Opaque {
                     &ctx.views.camera.view.uniform,
                     settings.quality,
                     settings.radius,
-                    if ctx.effective.taa || ctx.effective.fsr2 {
+                    if ctx.effective.taa || ctx.effective.fsr {
                         ctx.history.frames
                     } else {
                         0

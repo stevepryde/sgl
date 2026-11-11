@@ -37,21 +37,21 @@ pub(crate) enum GeometryPass {
     LocalShadow,
     /// Blended surfaces' lit colour over the beauty, premultiplied by their
     /// alpha, tested against the opaque depth without writing it, with the blended group 3
-    /// (`shading::bind::blended`); with `fsr2_masks`, also FSR2's reactive
+    /// (`shading::bind::blended`); with `fsr_masks`, also FSR's reactive
     /// and transparency-and-composition masks (`mask_targets`).
     Blended {
-        fsr2_masks: bool,
+        fsr_masks: bool,
     },
     /// Blended receivers of screen-space reflections as the surface: their
     /// traced lobe into the receiver layer and their motion into the
     /// G-buffer's, over the surface depth, tested strictly nearer and
     /// written. Draws only the receiver batches of the blended list.
     Receivers,
-    /// FSR2's transparency and composition mask, 1 over the opaque
+    /// FSR's transparency and composition mask, 1 over the opaque
     /// surfaces whose shading moves where their geometry stands still
     /// (`Material::surface_moves`), at the G-buffer's depth, with the
     /// reactive mask kept (`composition_targets`).
-    Fsr2Composition,
+    FsrComposition,
     /// The volume layers (`stages::transparent::volumes`): the depth of the
     /// nearest faces of the blended materials whose shader reads its volume
     /// path, over a copy of the opaque depth, tested strictly nearer and
@@ -115,7 +115,7 @@ impl GeometryPass {
     /// "The Apple GPU and the impossible bug"): two encodes of the same pass
     /// in one frame differ at primitive-edge quads in every output that
     /// uses screen-space derivatives (the mapped normal, the
-    /// variance-filtered roughness), by up to a few per cent, which FSR2's
+    /// variance-filtered roughness), by up to a few per cent, which FSR's
     /// history then keeps (#354). The same pass over pulled vertices is
     /// bit-exact between encodes and between runs.
     pub fn pulled(self) -> bool {
@@ -150,7 +150,7 @@ pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
         GeometryPass::GBuffer | GeometryPass::Fused => (true, GreaterEqual),
         GeometryPass::GBufferAnisotropy
         | GeometryPass::Lighting { .. }
-        | GeometryPass::Fsr2Composition => (false, Equal),
+        | GeometryPass::FsrComposition => (false, Equal),
         GeometryPass::Blended { .. } => (false, GreaterEqual),
     }
 }
@@ -193,7 +193,7 @@ pub(super) fn targets(pass: GeometryPass, anisotropy_inline: bool) -> Vec<wgpu::
         DirectionalShadow | PairedShadow | CaptureShadow | LocalShadow => Vec::new(),
         Blended { .. } => vec![gbuffer::COLOR],
         Receivers => vec![gbuffer::RECEIVER, gbuffer::MOTION],
-        Fsr2Composition | VolumeEntry | VolumeExit | VolumeSecondExit => Vec::new(),
+        FsrComposition | VolumeEntry | VolumeExit | VolumeSecondExit => Vec::new(),
     }
 }
 

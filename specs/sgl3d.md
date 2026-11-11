@@ -53,7 +53,7 @@ settings SGL3D has today.
    post-stage feature on both native and WebGPU devices: scene resolution
    controls its input size, and `Settings::upscaling` controls whether it
    reconstructs and sharpens that scene to output size. It adds no temporal
-   history and does not replace native FSR2; the default remains linear
+   history and does not replace native FSR; the default remains linear
    presentation. Its placement and transfer-space owner are defined by the
    [post stage](sgl3d-architecture.md#frame). What the browser cannot do is an input, not a
    platform fork: the game passes bytes rather than paths and the frame
@@ -297,7 +297,7 @@ The code's structure follows the
      predicate. Its ray starts at an eligible pixel in that quad, preserving
      the preferred stochastic offset when it qualifies; rough or background
      neighbors cannot veto a reflective surface.
-   - Exception: the external `sp-fidelity` (FSR2) is a 1:1 port. It diverges
+   - Exception: the external `sp-fidelity` (FSR2 and FSR3) is a 1:1 port. It diverges
      from upstream only
      where wgpu or WGSL force it, to fix a known upstream bug, or by owner
      decision, each recorded in the crate's `CONFORMANCE.md`, and contains
@@ -435,7 +435,7 @@ current capabilities and limits.
 Remaining work, in the existing roadmap order:
 
 1. **DLSS and MetalFX upscaling (12,
-   [#22](https://github.com/stevepryde/sgl/issues/22)).** Current antialiasing choices are TAA, SMAA, and FSR2; FSR2
+   [#22](https://github.com/stevepryde/sgl/issues/22)).** Current antialiasing choices are TAA, SMAA, and FSR; FSR
    requires native device features and falls back to TAA in the browser.
 
 This is a planned capability, not an API a game can depend on yet. Implement

@@ -7,7 +7,7 @@ use sgl_3d::{
     glam::{Mat4, Vec3, camera},
     settings::{
         AmbientOcclusionQuality, AnisotropicFiltering, Antialiasing, Bloom, DynamicGiQuality,
-        Fsr2Quality, RayTracedShadowQuality, ReflectionMethod, SceneResolution,
+        FsrQuality, RayTracedShadowQuality, ReflectionMethod, SceneResolution,
         ScreenSpaceReflections, Settings, ShadowQuality, SmaaQuality, WorldSpaceReflections,
     },
 };
@@ -241,7 +241,7 @@ pub fn settings(max_quality: bool, no_ray_shadows: bool) -> Settings {
     };
     if max_quality {
         settings.antialiasing = Antialiasing::Fsr2;
-        settings.fsr2_quality = Fsr2Quality::NativeAa;
+        settings.fsr_quality = FsrQuality::NativeAa;
         settings.scene_resolution = SceneResolution::Full;
         settings.anisotropic_filtering = AnisotropicFiltering::X16;
         settings.smaa_quality = SmaaQuality::Ultra;

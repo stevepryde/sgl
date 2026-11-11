@@ -28,7 +28,7 @@ its rendering `settings::Settings`.
 
 1. Device: request `graphics_device::limits(&adapter)`,
    `graphics_device::features(&adapter)` and
-   `graphics_device::fsr2_features(&adapter)`, plus `TEXTURE_COMPRESSION_BC`
+   `graphics_device::fsr_features(&adapter)`, plus `TEXTURE_COMPRESSION_BC`
    for compressed bakes and material textures and `TIMESTAMP_QUERY` for GPU timing.
    Hardware ray tracing is optional and opt-in: a game that takes it, so
    that the scene's rays trace its acceleration structures, also requests
@@ -170,8 +170,8 @@ and an asynchronous readback.
   environment lighting, materials, exposure and the post-processing
   parameters). In a `const`, use `..DirectionalShadow::DEFAULT`.
 - Report the effective state honestly:
-  `Renderer::antialiasing_in_effect(&settings)` and `fsr2_error()` say when
-  the device fell back (FSR2 always does in the browser). To reduce browser
+  `Renderer::antialiasing_in_effect(&settings)` and `fsr_error()` say when
+  the device fell back (FSR always does in the browser). To reduce browser
   rendering resolution, choose `SceneResolution` explicitly and opt into
   `Settings::upscaling` for portable spatial enlargement to the output.
 - In the browser, pass what a native game would read: asset bytes, and the

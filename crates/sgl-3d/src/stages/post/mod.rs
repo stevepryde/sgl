@@ -311,15 +311,15 @@ impl Post {
     }
 }
 
-/// Spatial upscaling fills only the scene-to-output gap, never FSR2's
-/// render-to-scene gap (including a failed FSR2 dispatch).
+/// Spatial upscaling fills only the scene-to-output gap, never FSR's
+/// render-to-scene gap (including a failed FSR dispatch).
 fn spatial_resolves(
     choice: crate::settings::Upscaling,
     sizes: Sizes,
     completed: Completed,
 ) -> bool {
     choice == crate::settings::Upscaling::On
-        && (sizes.render == sizes.scene || completed == Completed::Fsr2)
+        && (sizes.render == sizes.scene || completed == Completed::Fsr)
         && sizes.scene[0] <= sizes.output[0]
         && sizes.scene[1] <= sizes.output[1]
         && sizes.scene != sizes.output
@@ -327,14 +327,14 @@ fn spatial_resolves(
 
 /// Whether SMAA antialiases the scene `completed` holds: SMAA is in effect,
 /// or it stands in for TAA that did not run, which is TAA in effect that
-/// cannot run with this camera or diagnostics layer, or TAA replacing FSR2
-/// that failed this frame. A frame FSR2 did not upscale is otherwise
+/// cannot run with this camera or diagnostics layer, or TAA replacing FSR
+/// that failed this frame. A frame FSR did not upscale is otherwise
 /// presented as it is, as is any frame not at the scene size.
 fn smaa_resolves(effective: &Effective, sizes: Sizes, completed: Completed) -> bool {
     let antialiasing = match effective.antialiasing {
         Antialiasing::Smaa => true,
         Antialiasing::Taa => completed != Completed::Taa,
-        Antialiasing::Fsr2 => effective.fsr2 && completed != Completed::Fsr2,
+        Antialiasing::Fsr2 | Antialiasing::Fsr3 => effective.fsr && completed != Completed::Fsr,
         _ => false,
     };
     antialiasing && effective.smaa && sizes.render == sizes.scene

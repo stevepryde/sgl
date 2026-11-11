@@ -41,7 +41,7 @@ bun scripts/tasks.ts measure-browser --baseline --prepared --frames 180 --output
 
 `--scaled` selects `SceneResolution::ThreeQuarter` and `Upscaling::On`; this
 changes the render-resolution/quality tradeoff, so report it separately from
-an identical-settings renderer before/after comparison. Native FSR2 is not
+an identical-settings renderer before/after comparison. Native FSR is not
 selected.
 
 `--prepared` constructs `Image::Rgba8Mips(Rgba8MipChain::new(image)?)` before

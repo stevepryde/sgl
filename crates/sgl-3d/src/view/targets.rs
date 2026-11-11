@@ -4,7 +4,7 @@
 use crate::shading::gbuffer;
 
 /// The frame's sizes. Every pass up to antialiasing renders at `render`;
-/// antialiasing writes `scene` (they differ only while FSR2 upscales), which
+/// antialiasing writes `scene` (they differ only while FSR upscales), which
 /// motion blur, bloom, SMAA and tone mapping use; presentation writes
 /// `output`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub(crate) struct Sizes {
     pub output: [u32; 2],
 }
 
-/// The format of FSR2's reactive and transparency-and-composition masks, as
+/// The format of FSR's reactive and transparency-and-composition masks, as
 /// AMD's FSR sample allocates them (`samples/fsrapi/config/fsrapiconfig.json`).
 pub(crate) const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
@@ -82,9 +82,9 @@ pub(crate) struct SharedTargets {
     pub motion: wgpu::TextureView,
     /// The beauty reflections complete.
     pub composite: wgpu::TextureView,
-    /// R8: FSR2's reactive mask and its transparency and composition mask,
-    /// written by the composite's transparent draws while FSR2 runs.
-    pub fsr2_masks: Option<[wgpu::TextureView; 2]>,
+    /// R8: FSR's reactive mask and its transparency and composition mask,
+    /// written by the composite's transparent draws while FSR runs.
+    pub fsr_masks: Option<[wgpu::TextureView; 2]>,
     /// The surface's own targets, from the first frame of a scene that
     /// holds a blended receiver of screen-space reflections.
     pub surface: Option<SurfaceTargets>,
@@ -154,25 +154,22 @@ impl SharedTargets {
                 gbuffer::COLOR,
                 wgpu::TextureUsages::STORAGE_BINDING,
             ),
-            fsr2_masks: None,
+            fsr_masks: None,
             surface: surface.then(|| SurfaceTargets::new(device, size)),
         }
     }
 
     /// Masks exist only for frames whose temporal upscaler runs. Releasing
     /// them also releases the two render-size R8 allocations.
-    pub fn set_fsr2_masks(&mut self, device: &wgpu::Device, enabled: bool) {
+    pub fn set_fsr_masks(&mut self, device: &wgpu::Device, enabled: bool) {
         if enabled {
-            self.fsr2_masks.get_or_insert_with(|| {
+            self.fsr_masks.get_or_insert_with(|| {
                 let size = self.depth.texture().size();
-                [
-                    "FSR2 reactive mask",
-                    "FSR2 transparency and composition mask",
-                ]
-                .map(|label| target(device, label, [size.width, size.height], MASK_FORMAT))
+                ["FSR reactive mask", "FSR transparency and composition mask"]
+                    .map(|label| target(device, label, [size.width, size.height], MASK_FORMAT))
             });
         } else {
-            self.fsr2_masks = None;
+            self.fsr_masks = None;
         }
     }
 
@@ -286,33 +283,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fsr2_masks_are_allocated_only_while_enabled() {
+    fn fsr_masks_are_allocated_only_while_enabled() {
         let Some((device, _queue)) = crate::test_support::device() else {
             return;
         };
         for size in [[8, 6], [13, 9]] {
             let mut targets = SharedTargets::new(&device, size, false);
-            assert!(targets.fsr2_masks.is_none());
-            targets.set_fsr2_masks(&device, false);
-            assert!(targets.fsr2_masks.is_none());
-            targets.set_fsr2_masks(&device, true);
-            let previous = targets.fsr2_masks.as_ref().unwrap().clone();
+            assert!(targets.fsr_masks.is_none());
+            targets.set_fsr_masks(&device, false);
+            assert!(targets.fsr_masks.is_none());
+            targets.set_fsr_masks(&device, true);
+            let previous = targets.fsr_masks.as_ref().unwrap().clone();
             for mask in &previous {
                 assert_eq!(mask.texture().format(), wgpu::TextureFormat::R8Unorm);
                 assert_eq!([mask.texture().width(), mask.texture().height()], size);
             }
-            targets.set_fsr2_masks(&device, true);
+            targets.set_fsr_masks(&device, true);
             assert_eq!(
                 &previous,
-                targets.fsr2_masks.as_ref().unwrap(),
+                targets.fsr_masks.as_ref().unwrap(),
                 "enabled frames reuse masks"
             );
-            targets.set_fsr2_masks(&device, false);
-            assert!(targets.fsr2_masks.is_none());
-            targets.set_fsr2_masks(&device, true);
+            targets.set_fsr_masks(&device, false);
+            assert!(targets.fsr_masks.is_none());
+            targets.set_fsr_masks(&device, true);
             assert_ne!(
                 &previous,
-                targets.fsr2_masks.as_ref().unwrap(),
+                targets.fsr_masks.as_ref().unwrap(),
                 "re-enable allocates fresh masks"
             );
         }

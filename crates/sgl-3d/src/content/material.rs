@@ -204,7 +204,7 @@ pub struct SurfaceMaterial {
     /// function finishes every fragment from these values and the maps,
     /// with what culling allows for its displacement. Its parameters start as zeros
     /// (`Scene::set_shader_parameters`). A shader material's surface counts
-    /// as moving for FSR2's composition mask, and its `double_sided` holds
+    /// as moving for FSR's composition mask, and its `double_sided` holds
     /// even for a volume (`thickness` above 0). Rays, bakes and the static
     /// layers of local-light shadows see its rest geometry and these values.
     /// None by default.

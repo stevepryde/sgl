@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--baseline | --bistro] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|off] [--cascades <1..4>] [--motion] [--rect-light] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
+  "measure-browser [--baseline | --bistro] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
 
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
@@ -285,7 +285,7 @@ async function measureBrowser(args: string[]): Promise<void> {
   if (sceneOptions.warmup !== undefined && (!Number.isInteger(sceneOptions.warmup) || Number(sceneOptions.warmup)<0 || Number(sceneOptions.warmup)>3600)) throw new Error("--warmup must be 0..3600");
   if (sceneOptions.exposure !== undefined && !Number.isFinite(sceneOptions.exposure)) throw new Error("--exposure must be finite");
   if (sceneOptions.cascades !== undefined && (!Number.isInteger(sceneOptions.cascades) || Number(sceneOptions.cascades)<1 || Number(sceneOptions.cascades)>4)) throw new Error("--cascades must be 1..4");
-  if (sceneOptions.aa !== undefined && !["taa","smaa","fsr2","off"].includes(String(sceneOptions.aa))) throw new Error("--aa needs taa|smaa|fsr2|off");
+  if (sceneOptions.aa !== undefined && !["taa","smaa","fsr2","fsr3","off"].includes(String(sceneOptions.aa))) throw new Error("--aa needs taa|smaa|fsr2|fsr3|off");
   if (sceneOptions.ray_data !== undefined && !["enabled","disabled"].includes(String(sceneOptions.ray_data))) throw new Error("--ray-data needs enabled|disabled");
   if (baseline && bistro) throw new Error("choose --baseline or --bistro");
   if (!bistro && (Object.keys(sceneOptions).length || fixturePath || settingsPath || assetDir!=="target/bistro-browser-512")) throw new Error("scene options require --bistro or --fixture");

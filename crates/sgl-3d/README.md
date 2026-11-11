@@ -19,7 +19,7 @@ This page is the detailed reference:
 
 - [Frame lifecycle](#retained-scene-and-frame-lifecycle), [data conventions](#dependencies-and-data-conventions), [browser differences](#browser-wasm--webgpu)
 - [Lights and look](#frame-lights-and-look), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
-- [Reflections](#reflections), [TAA, SMAA and FSR2](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion)
+- [Reflections](#reflections), [TAA, SMAA and FSR](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
 - [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [programmable surfaces](#programmable-surfaces), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
@@ -134,7 +134,7 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   margin's edge. Receivers are offset along their geometry normal (not the
   normal map's) by Bevy's 1.8 texels (times √2) and toward the light by 2
   cm, so no bias is authored.
-  While TAA or FSR2 runs the camera's surfaces filter with Jimenez's 8-tap
+  While TAA or FSR runs the camera's surfaces filter with Jimenez's 8-tap
   spiral, turned per pixel and per frame for them to resolve; otherwise, and
   in probe captures and ray hits, with Castaño's fixed 9-tap kernel. At the
   Low shadow quality the camera's surfaces take one hardware 2×2 comparison
@@ -197,7 +197,7 @@ frame.color_grading = ColorGrading {
 };
 ```
 
-- The frame has one exposure, which FSR2 and the tone map both read. With
+- The frame has one exposure, which FSR and the tone map both read. With
   `automatic: None` it is `stops`. Otherwise it is Bevy's auto exposure,
   metered from the complete HDR frame at the render size, before
   antialiasing: a 64-bin histogram of log2 luminance (after `stops`) from -8
@@ -274,7 +274,7 @@ frame.motion_blur.shutter_angle = 0.5; // the default, film's 180° shutter
   one of nearly even blur takes a plain average along each pixel's motion.
   A blur is at most two tiles (64 pixels) long, as McGuire clamps it, so
   the neighbourhood carries it.
-- It runs on the antialiased frame at the scene size, after TAA or FSR2 and
+- It runs on the antialiased frame at the scene size, after TAA or FSR and
   before bloom, SMAA and tone mapping, as Bevy and Wicked Engine place it.
   Blended surfaces write no motion, so they blur as what is behind them
   moves.
@@ -683,7 +683,7 @@ unfinished frame is drawn again.
 
 Shadows are filtered and biased as the directional cascades are, with
 Bevy's filters (Castaño's 9-tap kernel, or the Jimenez spiral while TAA or
-FSR2 resolves it, whether or not a directional light casts; one hardware
+FSR resolves it, whether or not a directional light casts; one hardware
 2×2 tap at Low) and Bevy's spot-light receiver offset for every face,
 cube faces included: Bevy tunes its spot biases for these 2D filters and its
 point biases for its cube-map filter, which the atlas does not use. Each
@@ -859,7 +859,7 @@ resize restart accumulation from current data.
 
 ## Temporal anti-aliasing
 
-`Settings::antialiasing` (`settings::Antialiasing`) is TAA, SMAA, Off or FSR2;
+`Settings::antialiasing` (`settings::Antialiasing`) is TAA, SMAA, Off, FSR2 or FSR3;
 `Preset` selects TAA on High and SMAA on Low. TAA is derived from DiligentFX in `sgl-post-fx`,
 integrated as Diligent's Hydrogent renderer does:
 - The frame renders with a 16-sample Halton jitter and a −0.5 texture mip
@@ -899,45 +899,52 @@ Low, Medium (the default), High and Ultra. They search up to 4, 8, 16 and
 sRGB-encoded display colour of 0.15, 0.1, 0.1 and 0.05; High and Ultra also
 detect diagonal lines and corners.
 
-### FSR2
+### FSR
 
-FSR2 is AMD's FidelityFX Super Resolution 2 from the `sp-fidelity` port (SDK
+FSR2 and FSR3.1.4 come from the `sp-fidelity` port (SDK
 1.1.4) on `sp-fidelity-wgpu`, integrated in
-`src/stages/antialiasing/fsr2.rs` as AMD's
+`src/stages/antialiasing/fsr.rs` as AMD's
 documentation and FSR sample describe; that file's header lists each input and
-its source. It antialiases like TAA while upscaling:
-- `Settings::fsr2_quality` (`settings::Fsr2Quality`) sets the render size: Native
+its source. Choose `Antialiasing::Fsr2` or `Antialiasing::Fsr3`; the single
+antialiasing setting makes them mutually exclusive with each other, TAA and
+SMAA. FSR3 supplies upscaling only, without frame generation. Both versions
+share `FsrQuality` and the controls below. Defaults remain TAA on High and
+SMAA on Low. They antialias like TAA while upscaling:
+- `Settings::fsr_quality` (`settings::FsrQuality`) sets the render size: Native
   AA renders every scene pixel; Quality, Balanced, Performance and Ultra
   Performance render 1/1.5, 1/1.7, 1/2 and 1/3 of it per dimension.
   `Renderer::render_size()` is the size of every pass up to antialiasing;
-  `Renderer::scene_size()` stays the `SceneResolution` size, which FSR2 outputs
+  `Renderer::scene_size()` stays the `SceneResolution` size, which FSR outputs
   and bloom and tone mapping use.
-- The frame renders with FSR2's jitter sequence and a texture mip bias of
-  `log2(render / scene) - 1`. FSR2 reads the linear HDR frame, the unjittered
+- The frame renders with FSR's jitter sequence and a texture mip bias of
+  `log2(render / scene) - 1`. FSR reads the linear HDR frame, the unjittered
   motion vectors and depth, the frame's exposure, and
   `FrameInput::frame_time_ms`. It sharpens with RCAS while
-  `Settings::fsr2_sharpening` is on (the default), at `fsr2_sharpness` in
+  `Settings::fsr_sharpening` is on (the default), at `fsr_sharpness` in
   AMD's 0..=1 (0.8 by default, as AMD's sample).
-  The camera's blended surfaces, additive effects and mist also write FSR2's
+  The camera's blended surfaces, additive effects and mist also write FSR's
   reactive and transparency-and-composition masks, as AMD's FSR documentation
   and sample write them from translucent draws. Opaque and masked surfaces
   whose material's [normal layers](#scrolling-normal-layers) move (a lit
   material, a layer moving at least a repeat per hour) mark the
   transparency-and-composition mask, as AMD's sample marks its animated
   textures: the camera draws those materials' surfaces once more, at their
-  depth, before its blended surfaces (timing group `FSR2 composition`;
+  depth, before its blended surfaces (timing group `FSR composition`;
   nothing in a scene without such a material).
-- Request `graphics_device::fsr2_features(&adapter)` when creating the device.
-  `antialiasing` and `fsr2_quality` take effect at the next `Renderer::resize`,
-  which creates the FSR2 context. Where the device lacks the features or the
+- Request `graphics_device::fsr_features(&adapter)` when creating the device.
+  `antialiasing` and `fsr_quality` take effect at the next `Renderer::resize`,
+  which creates the selected FSR context. Switching versions destroys the
+  previous context and resets temporal history, even at the same resolution.
+  A failure is retained per version; switching to the other remains possible.
+  Where the device lacks the features or the
   context cannot be created, TAA runs at the scene size:
-  `Renderer::antialiasing_in_effect(&settings)` reports it and `fsr2_error()`
-  says why. A frame whose FSR2 dispatch fails is scaled to the scene size
-  without it, and TAA runs from the next `resize`, with `fsr2_error()`
+  `Renderer::antialiasing_in_effect(&settings)` reports it and `fsr_error()`
+  says why. A frame whose FSR dispatch fails is scaled to the scene size
+  without it, and TAA runs from the next `resize`, with `fsr_error()`
   saying why.
   The saved choice is unchanged.
-- FSR2 needs `perspective`'s infinite reversed-Z projection; with any other
-  camera the render-size frame is scaled to the scene size without FSR2.
+- FSR needs `perspective`'s infinite reversed-Z projection; with any other
+  camera the render-size frame is scaled to the scene size without FSR.
 
 ### Portable spatial upscaling
 
@@ -955,7 +962,7 @@ whether to upscale and the scene resolution; the filter and sharpening
 parameters remain SGL3D's. Measure the combined rendering and upscaling cost
 on the game's camera routes, including moving thin geometry and transparency.
 
-This does not make FSR2 available in WebGPU. Native FSR2 still reconstructs
+This does not make FSR available in WebGPU. Native FSR still reconstructs
 the HDR frame from render size to scene size; spatial upscaling, when chosen,
 only enlarges the final scene to output size. Existing settings retain their
 presentation behavior because spatial upscaling is opt-in.
@@ -996,7 +1003,7 @@ The radius is clamped to 0.01–10000 m (XeGTAO's expected minimum and its
 settings' maximum); `Settings::ambient_occlusion`
 alone turns AO off. AO works with centered reversed-Z perspective cameras.
 Its view-space reconstruction includes the actual raster jitter used by
-TAA or FSR2, so its camera rays match the frame's depth and normals.
+TAA or FSR, so its camera rays match the frame's depth and normals.
 With either temporal AA path effective, XeGTAO's sample phase advances with
 submitted frames so accumulation can reduce persistent spatial grain.
 Without temporal AA the phase stays fixed. This changes the noise tradeoff:
@@ -1213,12 +1220,12 @@ twice or more.
   can hold the material, and its shadow layers stay valid.
 - **History.** The layers change shading, not geometry: they write no
   motion. TAA and the reflection methods' accumulation reject what they
-  change by their colour clamps, as for any change of shading. FSR2 takes a
+  change by their colour clamps, as for any change of shading. FSR takes a
   blended surface's changing shading, a receiver's included, from the
   reactive and transparency-and-composition masks blended surfaces write,
   and an opaque or masked surface's from the transparency-and-composition
-  mask its moving layers mark ([FSR2](#fsr2)), as AMD documents for
-  animated textures: FSR2 then keeps no detail locked there.
+  mask its moving layers mark ([FSR](#fsr)), as AMD documents for
+  animated textures: FSR then keeps no detail locked there.
 
 The [water example](../../examples/sgl-3d/examples/water.rs) scrolls a procedural wave map over
 its shader's waves.
@@ -1341,9 +1348,9 @@ are:
   probe and sky specular, by the formula opaque composition uses. The opaque
   surface seen through a receiver keeps its own probe and sky specular, and
   world-space rays skip it.
-- TAA, FSR2 and motion blur reproject and blur a receiver's pixels by the
+- TAA, FSR and motion blur reproject and blur a receiver's pixels by the
   receiver's depth and motion. The pass runs while the scene holds a receiver
-  and SSR, TAA, FSR2 or motion blur runs, so with SSR off and TAA on, TAA
+  and SSR, TAA, FSR or motion blur runs, so with SSR off and TAA on, TAA
   still reprojects a receiver by its own motion rather than by what lies
   behind it.
 
@@ -1581,20 +1588,20 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
 
 - **The vertex function** runs in every pass's vertex shader, after
   skinning and morphing and before the pose: the G-buffer, lighting and
-  fused passes, the receiver pass, both blended draws, FSR2's composition
+  fused passes, the receiver pass, both blended draws, FSR's composition
   pass, probe-capture faces, the directional cascades and the local-light
   shadow faces. The camera's
-  passes that write motion (all but the blended draws and FSR2's
+  passes that write motion (all but the blended draws and FSR's
   composition mask) evaluate it again at the last submitted frame, with
   `ctx.previous` true and that frame's time, phase, parameters, instance
-  data and pose, so TAA, FSR2 and motion blur reproject what it moves; the
+  data and pose, so TAA, FSR and motion blur reproject what it moves; the
   game writes no motion. A function that displaces writes matching normals
   (and tangents, where a material is anisotropic); SGL3D makes a changed
   normal unit and the pose's transforms keep the frame perpendicular.
 - **The surface function** runs where SGL3D has evaluated the material's
   record and maps at a fragment, before decals, roughness filtering and the
   coat's normal, in every pass that builds a surface (an unlit material's
-  base colour and emission among them), and for coverage alone in FSR2's
+  base colour and emission among them), and for coverage alone in FSR's
   composition pass and a masked material's shadow casters. Custom caster
   coverage receives the same mapped material fields and mapped base normal
   as camera coverage, on the device's material binding tier. Cached local
@@ -1751,7 +1758,7 @@ shader's coverage is the base map's at ray hits. Probe captures hold the
 capture's instant. A static instance's local-light shadow layers hold its
 displacement at their draw while the cascades, drawn every frame, animate;
 an instance whose local-light shadow must animate is a moving instance. A
-material with a shader counts as one whose shading moves, so FSR2 marks its
+material with a shader counts as one whose shading moves, so FSR marks its
 opaque surfaces in its composition mask. The first frame that draws a
 shader's material creates its programs (at most four shader modules) and
 the pipelines its materials' alpha modes and sides need (natively, and on
@@ -1873,7 +1880,7 @@ authored look and per-frame state in a `FrameInput`.
 1. Select an adapter and request the renderer's device requirements:
    `graphics_device::limits` gives its adapter-sized limits,
    `graphics_device::features` the optional features SGL3D uses where the
-   adapter has them, `graphics_device::fsr2_features` the features FSR2
+   adapter has them, `graphics_device::fsr_features` the features FSR
    needs, and `graphics_device::ray_tracing_features` hardware ray
    tracing's, which a game that opts in requests with wgpu's experimental
    token ([Hardware ray tracing](#hardware-ray-tracing)). The game owns
@@ -2133,7 +2140,7 @@ stage (each stage's documentation lists its own), are:
   drawn into the reflection input while screen-space reflections run and onto
   the composed frame; and `heat distortion`;
 - exposure: `exposure`, while automatic;
-- antialiasing: `TAA` or `FSR2` (all of FSR2's passes);
+- antialiasing: `TAA`, `FSR2` or `FSR3` (all passes of the selected upscaler);
 - motion blur: `motion blur`;
 - post: `bloom`, `SMAA` and `tone map`;
 - DiligentFX's post-effect context, for TAA and Crystal: `DiligentFX inputs`,
@@ -2664,7 +2671,7 @@ bundles by explicitly replacing its settings fields when it applies one.
 `SceneResolution::Hd` and `FullHd` fit the scene within 1280×720 and 1920×1080
 physical pixels, preserving aspect ratio without upscaling. `Full` renders at
 the full output size; `ThreeQuarter`/`Half` scale it. UI output is unaffected.
-FSR2 upscales to that scene size from its quality's render size.
+FSR upscales to that scene size from its quality's render size.
 `Settings::upscaling` optionally enlarges the tone-mapped scene to output
 size with the [portable spatial filter](#portable-spatial-upscaling).
 Preserve the highest implemented fidelity as a selectable choice.
@@ -2724,9 +2731,9 @@ not supported, since SGL3D needs compute.
   it. Ship the appropriate fallback assets for the device. Without
   `TIMESTAMP_QUERY` `GpuTiming::new` returns `None`. Chrome quantizes
   timestamps, so browser pass times are coarse.
-- **FSR2** needs native-only features (texture atomics, 16-bit normalized and
+- **FSR** needs native-only features (texture atomics, 16-bit normalized and
   adapter-specific formats): chosen in the browser it resolves to TAA,
-  `Renderer::antialiasing_in_effect` reports TAA and `fsr2_error()` names the
+  `Renderer::antialiasing_in_effect` reports TAA and `fsr_error()` names the
   missing features. TAA, both screen-space reflection methods, world-space
   reflections, dynamic GI, ambient occlusion, fog, motion blur, bloom and
   SMAA run. For reduced-resolution browser rendering, use an explicit
@@ -3162,7 +3169,7 @@ results. Run relevant cases explicitly when changing their boundary. The
 not serialized: switches that turn a layer off, the numerical frame probe
 and the tone-target capture), `Renderer::diagnostic_target`,
 `Renderer::take_frame_probe_reports` (source-to-black comparisons run only
-when the actual observed textures have equal dimensions, including FSR2
+when the actual observed textures have equal dimensions, including FSR
 fallbacks),
 `Renderer::geometry_stats_for_model` (the camera's sections of one model's
 instances, read back with `geometry_stats`), `diagnostics::read`,
@@ -3319,7 +3326,7 @@ blended surfaces, additive effects and mist, then overwrites
 only submitted triangle coverage before bloom, antialiasing, tone mapping and
 the game's HUD. Medium transport and additive attenuation are not applied again.
 Displacement is scaled to render pixels, so it keeps its scene-pixel size
-under FSR2. Each displacement samples the immutable snapshot; overlapping triangles use
+under FSR. Each displacement samples the immutable snapshot; overlapping triangles use
 submission order, without repeated refraction. Off/empty skips the copy and draw.
 One full-size HDR snapshot is retained and replaced on resize; geometry storage
 is retained. Thus Off avoids a full-frame copy plus bounded raster work.

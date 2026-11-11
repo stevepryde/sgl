@@ -351,7 +351,7 @@ impl PostFx {
         self.jitter
     }
 
-    /// After `prepare`, when FSR2 rather than TAA jitters the frame: the
+    /// After `prepare`, when FSR rather than TAA jitters the frame: the
     /// frame's NDC jitter, which the effects' camera records (`f2Jitter`).
     pub fn set_jitter(&mut self, jitter: [f32; 2]) {
         self.jitter = jitter;

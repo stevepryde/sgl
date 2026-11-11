@@ -15,6 +15,15 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d::Antialiasing` now offers mutually exclusive `Fsr2` and `Fsr3`
+  temporal upscaling, with unchanged defaults and TAA fallback; FSR3 does not
+  enable frame generation. Rename `Fsr2Quality` to `FsrQuality`, settings
+  `fsr2_quality`/`fsr2_sharpening`/`fsr2_sharpness` to `fsr_*` (including saved
+  data), `graphics_device::fsr2_features` to `fsr_features`, `Renderer::fsr2_error`
+  to `fsr_error`, and diagnostics `disable.fsr2` to `disable.fsr`. Both
+  `sp-fidelity` dependencies temporarily use the same pinned Git revision
+  from main until the FSR3 port is published; see the workspace manifest.
+
 - `sgl-3d` showcase builds now use bounded curl transfers with progress and a
   reusable cache instead of silent, unbounded downloads that could hang.
   Install curl on the publishing machine; no game-code changes are needed.

@@ -14,7 +14,7 @@ pub(crate) static GLOW: crate::shading::Module = crate::shading::Module {
 /// The entry points the glow's pipelines are created with.
 pub(crate) const GLOW_VS_ENTRY: &str = "glow_vs";
 pub(crate) const GLOW_SOFT_FS_ENTRY: &str = "glow_soft_fs";
-pub(crate) const GLOW_SOFT_FSR2_MASKED_FS_ENTRY: &str = "glow_soft_fsr2_masked_fs";
+pub(crate) const GLOW_SOFT_FSR_MASKED_FS_ENTRY: &str = "glow_soft_fsr_masked_fs";
 /// The glow's vertex buffer, read by `glow_vs`.
 pub(crate) const GLOW_LAYOUT: VertexLayout = vertex_layout!(
     GlowVertex,
@@ -34,8 +34,8 @@ pub(crate) const GLOW_LAYOUT: VertexLayout = vertex_layout!(
 
 pub(crate) struct Effects {
     soft_glow: wgpu::RenderPipeline,
-    /// `soft_glow` also writing FSR2's masks (`mask_targets`).
-    soft_glow_fsr2_masked: wgpu::RenderPipeline,
+    /// `soft_glow` also writing FSR's masks (`mask_targets`).
+    soft_glow_fsr_masked: wgpu::RenderPipeline,
     depth_layout: wgpu::BindGroupLayout,
 }
 
@@ -91,7 +91,7 @@ impl Effects {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some(if masked {
-                        GLOW_SOFT_FSR2_MASKED_FS_ENTRY
+                        GLOW_SOFT_FSR_MASKED_FS_ENTRY
                     } else {
                         GLOW_SOFT_FS_ENTRY
                     }),
@@ -120,7 +120,7 @@ impl Effects {
         };
         Self {
             soft_glow: make(false),
-            soft_glow_fsr2_masked: make(true),
+            soft_glow_fsr_masked: make(true),
             depth_layout,
         }
     }
@@ -139,7 +139,7 @@ impl Effects {
     }
 
     /// Draws the glow with soft intersections, into a pass whose colour
-    /// attachment is followed by FSR2's masks when `fsr2_masked`. The
+    /// attachment is followed by FSR's masks when `fsr_masked`. The
     /// sampled depth attachment must be read-only (`depth_ops: None`).
     pub fn draw(
         &self,
@@ -147,14 +147,14 @@ impl Effects {
         unlit: &wgpu::BindGroup,
         depth: &wgpu::BindGroup,
         transient: &Transient,
-        fsr2_masked: bool,
+        fsr_masked: bool,
     ) {
         // Nothing to draw; WebGPU warns of an empty draw.
         if transient.glow_count == 0 {
             return;
         }
-        pass.set_pipeline(if fsr2_masked {
-            &self.soft_glow_fsr2_masked
+        pass.set_pipeline(if fsr_masked {
+            &self.soft_glow_fsr_masked
         } else {
             &self.soft_glow
         });

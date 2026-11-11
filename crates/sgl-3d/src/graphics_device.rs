@@ -36,12 +36,12 @@ pub fn features(adapter: &wgpu::Adapter) -> wgpu::Features {
         & (wgpu::Features::DEPTH_CLIP_CONTROL | wgpu::Features::RG11B10UFLOAT_RENDERABLE)
 }
 
-/// The features to request for FSR2 on `adapter`: its wgpu backend's, and the
+/// The features to request for FSR on `adapter`: its wgpu backend's, and the
 /// FP16 permutations' when the adapter has every required one; otherwise
-/// none, and TAA replaces FSR2. AMD recommends the FP16 permutations wherever
+/// none, and TAA replaces FSR. AMD recommends the FP16 permutations wherever
 /// they are supported (docs 484–499).
-pub fn fsr2_features(adapter: &wgpu::Adapter) -> wgpu::Features {
-    crate::stages::antialiasing::fsr2::features(adapter)
+pub fn fsr_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    crate::stages::antialiasing::fsr::features(adapter)
 }
 
 /// The feature to request for hardware ray tracing on `adapter`: wgpu's

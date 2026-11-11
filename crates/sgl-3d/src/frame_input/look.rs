@@ -3,7 +3,7 @@
 //! `AutoExposure`, `AutoExposureCompensationCurve`, `Bloom` and `MotionBlur`,
 //! `bevy_render` `ColorGrading`).
 
-/// The frame's one exposure, which the tone map and FSR2 both take.
+/// The frame's one exposure, which the tone map and FSR both take.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Exposure {
     /// Stops applied to the scene's linear light before tone mapping: 0

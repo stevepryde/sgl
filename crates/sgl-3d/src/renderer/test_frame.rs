@@ -88,7 +88,7 @@ impl Renderer {
             &input,
             super::effective::SceneContent::of(scene),
             super::effective::Device {
-                fsr2_running: false,
+                fsr_running: None,
                 fused_supported: self.pipelines.fused_supported,
                 occlusion_supported: self.cull.occlusion_supported(),
                 ray_queries: self.ray_form.as_ref().map(|form| form.form()),
@@ -366,9 +366,9 @@ impl Renderer {
         &self.reflections
     }
 
-    /// The last frame's FSR2 context.
-    pub(crate) fn test_fsr2(&self) -> Option<&crate::stages::antialiasing::fsr2::Fsr2> {
-        self.antialiasing.fsr2()
+    /// The last frame's FSR context.
+    pub(crate) fn test_fsr(&self) -> Option<&crate::stages::antialiasing::fsr::Fsr> {
+        self.antialiasing.fsr()
     }
 
     /// Marks the prepared camera view as a probe capture face's, so surfaces

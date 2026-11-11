@@ -932,7 +932,7 @@ type Edit = (&'static str, fn(&mut Frames));
 
 // Defect: a content edit or a lighting switch restarts every history (#356).
 // History restarts only for a camera cut, a resize or another scene, as in
-// Hydrogent, FSR2 and Wicked; each history rejects changed content itself.
+// Hydrogent, FSR and Wicked; each history rejects changed content itself.
 // After an edit that leaves the frame's content as it was, the frame equals
 // one without the edit, while a camera cut at the same point differs, so
 // history does shape these frames.

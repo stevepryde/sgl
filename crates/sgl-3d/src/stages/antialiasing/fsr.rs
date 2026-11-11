@@ -1,7 +1,16 @@
-//! AMD FidelityFX Super Resolution 2 (the `sp-fidelity` port of FidelityFX SDK
+//! AMD FidelityFX Super Resolution 2 and 3.1.4 (`sp-fidelity`, FidelityFX SDK
 //! 1.1.4, run by `sp-fidelity-wgpu`) as SGL3D's upscaling
 //! antialiasing: the one place SGL3D-specific adaptation of the port exists,
 //! as `view/post_fx.rs` is for DiligentFX.
+//!
+//! FSR3 uses the standalone `ffx_fsr3upscaler` component, with its own SDK
+//! quality/jitter helpers and three shared scratch textures, not the composite
+//! frame-generation API. The same HDR placement, masks, reversed-Z camera,
+//! motion scale, exposure and reset rules below apply to both versions; see
+//! `docs/techniques/super-resolution-upscaler.md`, `ffx_fsr3upscaler.cpp`
+//! and `samples/fsrapi/fsrapirendermodule.cpp` at the retained SDK revision.
+//! Godot's `servers/rendering/renderer_rd/effects/fsr2.cpp` follows the same
+//! caller-owned inputs and per-view history pattern.
 //!
 //! Integrated as AMD's documentation describes
 //! (`vendor/sdk-1.1.4/docs/techniques/super-resolution-temporal.md` in `sp-fidelity`,
@@ -40,7 +49,7 @@
 //! - `FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE`: linear HDR input (docs 478–482).
 //! - `frameTimeDelta` in milliseconds from the frame's `frame_time_ms`
 //!   (docs 472–476).
-//! - Sharpening: RCAS as `Settings::fsr2_sharpening` and `fsr2_sharpness`
+//! - Sharpening: RCAS as `Settings::fsr_sharpening` and `fsr_sharpness`
 //!   choose, a slider as the docs (110) ask applications to expose; by
 //!   default on at 0.8, the sample's `m_RCASSharpen` and `m_Sharpness`.
 //! - Reactive and transparency-and-composition masks (docs 222–242) at the
@@ -64,7 +73,7 @@
 //! back to TAA. So does a dispatch whose job fails, which the backend
 //! reports through `take_job_error`, since `ffxFsr2ContextDispatch` ignores
 //! its jobs' result.
-use crate::settings::Fsr2Quality;
+use crate::settings::{FsrQuality, FsrVersion};
 use sp_fidelity::fsr2::{
     FFX_FSR2_ENABLE_DEPTH_INFINITE, FFX_FSR2_ENABLE_DEPTH_INVERTED,
     FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE, FfxFsr2Context, FfxFsr2ContextDescription,
@@ -72,9 +81,10 @@ use sp_fidelity::fsr2::{
     ffx_fsr2_context_destroy, ffx_fsr2_context_dispatch, ffx_fsr2_get_jitter_offset,
     ffx_fsr2_get_jitter_phase_count, ffx_fsr2_get_render_resolution_from_quality_mode,
 };
+use sp_fidelity::fsr3upscaler::*;
 use sp_fidelity::types::{
-    FFX_RESOURCE_STATE_COMPUTE_READ, FFX_RESOURCE_STATE_UNORDERED_ACCESS, FfxDimensions2D,
-    FfxFloatCoords2D,
+    FFX_RESOURCE_STATE_COMPUTE_READ, FFX_RESOURCE_STATE_UNORDERED_ACCESS, FfxCommandList,
+    FfxDimensions2D, FfxFloatCoords2D, FfxResource,
 };
 use sp_fidelity_wgpu::{FfxWgpuBackend, FfxWgpuPassTimestamps, ffx_get_interface_wgpu};
 use std::cell::{Cell, RefCell};
@@ -85,7 +95,7 @@ fn required_features() -> wgpu::Features {
     sp_fidelity_wgpu::required_features()
 }
 
-/// `graphics_device::fsr2_features`.
+/// `graphics_device::fsr_features`.
 pub(crate) fn features(adapter: &wgpu::Adapter) -> wgpu::Features {
     let available = adapter.features();
     if available.contains(required_features()) {
@@ -97,19 +107,32 @@ pub(crate) fn features(adapter: &wgpu::Adapter) -> wgpu::Features {
 
 /// The SDK quality mode, `None` for Native AA (the sample's `NativeAA`
 /// preset, ratio 1).
-fn quality_mode(quality: Fsr2Quality) -> Option<FfxFsr2QualityMode> {
+fn quality_mode(quality: FsrQuality) -> Option<FfxFsr2QualityMode> {
     match quality {
-        Fsr2Quality::NativeAa => None,
-        Fsr2Quality::Quality => Some(FfxFsr2QualityMode::Quality),
-        Fsr2Quality::Balanced => Some(FfxFsr2QualityMode::Balanced),
-        Fsr2Quality::Performance => Some(FfxFsr2QualityMode::Performance),
-        Fsr2Quality::UltraPerformance => Some(FfxFsr2QualityMode::UltraPerformance),
+        FsrQuality::NativeAa => None,
+        FsrQuality::Quality => Some(FfxFsr2QualityMode::Quality),
+        FsrQuality::Balanced => Some(FfxFsr2QualityMode::Balanced),
+        FsrQuality::Performance => Some(FfxFsr2QualityMode::Performance),
+        FsrQuality::UltraPerformance => Some(FfxFsr2QualityMode::UltraPerformance),
     }
 }
 
 /// The render size for a `display` (scene) size:
 /// `ffxFsr2GetRenderResolutionFromQualityMode`, at least one pixel.
-pub(crate) fn render_size(display: [u32; 2], quality: Fsr2Quality) -> [u32; 2] {
+pub(crate) fn render_size(display: [u32; 2], quality: FsrQuality, version: FsrVersion) -> [u32; 2] {
+    if version == FsrVersion::Fsr3 {
+        let mode = match quality {
+            FsrQuality::NativeAa => FfxFsr3UpscalerQualityMode::NativeAa,
+            FsrQuality::Quality => FfxFsr3UpscalerQualityMode::Quality,
+            FsrQuality::Balanced => FfxFsr3UpscalerQualityMode::Balanced,
+            FsrQuality::Performance => FfxFsr3UpscalerQualityMode::Performance,
+            FsrQuality::UltraPerformance => FfxFsr3UpscalerQualityMode::UltraPerformance,
+        };
+        let (width, height) =
+            ffx_fsr3_upscaler_get_render_resolution_from_quality_mode(display[0], display[1], mode)
+                .expect("valid FSR3 quality mode");
+        return [width.max(1), height.max(1)];
+    }
     let Some(mode) = quality_mode(quality) else {
         return display;
     };
@@ -132,7 +155,7 @@ const MAX_TIMED_PASSES: u32 = 24;
 
 /// Validation errors caught by `scope`. Native wgpu reports them when the
 /// scope is popped, so the future is ready at once. WebGPU's would not be,
-/// but FSR2 is never created there: `fsr2_features` is empty and `Fsr2::new`
+/// but FSR2 is never created there: `fsr_features` is empty and `Fsr::new`
 /// refuses a device without them before pushing a scope.
 fn validation_error(scope: wgpu::ErrorScopeGuard) -> Option<wgpu::Error> {
     let mut future = std::pin::pin!(scope.pop());
@@ -168,9 +191,9 @@ pub(crate) struct Inputs<'a> {
     pub sharpness: Option<f32>,
 }
 
-pub(crate) struct Fsr2 {
+pub(crate) struct Fsr {
     backend: Rc<RefCell<FfxWgpuBackend>>,
-    context: FfxFsr2Context,
+    context: Context,
     display_size: [u32; 2],
     output: wgpu::TextureView,
     jitter_index: i32,
@@ -181,12 +204,17 @@ pub(crate) struct Fsr2 {
     history: Option<History>,
 }
 
-impl Fsr2 {
+impl Fsr {
     /// A context upscaling to `display_size`, or why FSR2 cannot run.
-    pub fn new(device: &wgpu::Device, display_size: [u32; 2]) -> Result<Self, String> {
+    pub fn new(
+        device: &wgpu::Device,
+        display_size: [u32; 2],
+        version: FsrVersion,
+    ) -> Result<Self, String> {
         if !device.features().contains(required_features()) {
             return Err(format!(
-                "the device lacks FSR2's features {:?}",
+                "the device lacks {}'s features {:?}",
+                version.label(),
                 required_features() - device.features()
             ));
         }
@@ -196,19 +224,99 @@ impl Fsr2 {
             width: display_size[0],
             height: display_size[1],
         };
-        let mut context = FfxFsr2Context::default();
-        let created = ffx_fsr2_context_create(
-            &mut context,
-            &FfxFsr2ContextDescription {
-                flags: FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE
-                    | FFX_FSR2_ENABLE_DEPTH_INVERTED
-                    | FFX_FSR2_ENABLE_DEPTH_INFINITE,
-                max_render_size: size,
-                display_size: size,
-                fp_message: None,
-                backend_interface: interface,
-            },
-        );
+        let (context, created) = match version {
+            FsrVersion::Fsr2 => {
+                let mut context = FfxFsr2Context::default();
+                let created = ffx_fsr2_context_create(
+                    &mut context,
+                    &FfxFsr2ContextDescription {
+                        flags: FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE
+                            | FFX_FSR2_ENABLE_DEPTH_INVERTED
+                            | FFX_FSR2_ENABLE_DEPTH_INFINITE,
+                        max_render_size: size,
+                        display_size: size,
+                        fp_message: None,
+                        backend_interface: interface,
+                    },
+                );
+                (Context::Fsr2(context), created)
+            }
+            FsrVersion::Fsr3 => {
+                let mut context = FfxFsr3UpscalerContext::default();
+                let mut created = ffx_fsr3_upscaler_context_create(
+                    &mut context,
+                    &FfxFsr3UpscalerContextDescription {
+                        flags: FFX_FSR3UPSCALER_ENABLE_HIGH_DYNAMIC_RANGE
+                            | FFX_FSR3UPSCALER_ENABLE_DEPTH_INVERTED
+                            | FFX_FSR3UPSCALER_ENABLE_DEPTH_INFINITE,
+                        max_render_size: size,
+                        max_upscale_size: size,
+                        fp_message: None,
+                        backend_interface: interface,
+                    },
+                );
+                // Standalone FSR3 exposes these three scratch outputs to its
+                // caller (ffxFsr3UpscalerGetSharedResourceDescriptions). They
+                // belong to this context, even without frame generation.
+                let shared = if created.is_ok() {
+                    ffx_fsr3_upscaler_get_shared_resource_descriptions(&context)
+                        .inspect_err(|&error| {
+                            created = Err(error);
+                        })
+                        .ok()
+                        .map(|descs| {
+                            let texture =
+                                |desc: sp_fidelity::types::FfxCreateResourceDescription<'_>,
+                                 format,
+                                 atomic| {
+                                    device.create_texture(&wgpu::TextureDescriptor {
+                                        label: Some(desc.name),
+                                        size: wgpu::Extent3d {
+                                            width: desc.resource_description.width,
+                                            height: desc.resource_description.height,
+                                            depth_or_array_layers: 1,
+                                        },
+                                        mip_level_count: 1,
+                                        sample_count: 1,
+                                        dimension: wgpu::TextureDimension::D2,
+                                        format,
+                                        usage: wgpu::TextureUsages::TEXTURE_BINDING
+                                            | wgpu::TextureUsages::STORAGE_BINDING
+                                            | wgpu::TextureUsages::COPY_DST
+                                            | atomic,
+                                        view_formats: &[],
+                                    })
+                                };
+                            Shared {
+                                depth: texture(
+                                    descs.dilated_depth,
+                                    wgpu::TextureFormat::R32Float,
+                                    wgpu::TextureUsages::empty(),
+                                ),
+                                motion: texture(
+                                    descs.dilated_motion_vectors,
+                                    wgpu::TextureFormat::Rg16Float,
+                                    wgpu::TextureUsages::empty(),
+                                ),
+                                previous_depth: texture(
+                                    descs.reconstructed_prev_nearest_depth,
+                                    wgpu::TextureFormat::R32Uint,
+                                    wgpu::TextureUsages::STORAGE_ATOMIC,
+                                ),
+                            }
+                        })
+                } else {
+                    None
+                };
+                (
+                    Context::Fsr3 {
+                        context,
+                        shared: shared.map(Box::new),
+                    },
+                    created,
+                )
+            }
+        };
         let texture = |label, size: [u32; 2], format, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -227,7 +335,7 @@ impl Fsr2 {
         };
         // The backend's output is RGBA16F; captures copy from it.
         let output = texture(
-            "FSR2 output",
+            version.label(),
             display_size,
             crate::shading::gbuffer::COLOR,
             wgpu::TextureUsages::STORAGE_BINDING
@@ -236,7 +344,7 @@ impl Fsr2 {
         )
         .create_view(&Default::default());
         let error = validation_error(scope);
-        let fsr2 = Self {
+        let fsr = Self {
             backend,
             context,
             display_size,
@@ -248,9 +356,22 @@ impl Fsr2 {
             history: None,
         };
         match (created, error) {
-            (Ok(()), None) => Ok(fsr2),
-            (Err(code), _) => Err(format!("FSR2 context creation failed ({code:#x})")),
-            (Ok(()), Some(error)) => Err(format!("FSR2 context creation failed: {error}")),
+            (Ok(()), None) => Ok(fsr),
+            (Err(code), _) => Err(format!(
+                "{} context creation failed ({code:#x})",
+                version.label()
+            )),
+            (Ok(()), Some(error)) => Err(format!(
+                "{} context creation failed: {error}",
+                version.label()
+            )),
+        }
+    }
+
+    pub fn version(&self) -> FsrVersion {
+        match self.context {
+            Context::Fsr2(_) => FsrVersion::Fsr2,
+            Context::Fsr3 { .. } => FsrVersion::Fsr3,
         }
     }
 
@@ -282,12 +403,18 @@ impl Fsr2 {
         });
         self.render_size = render_size;
         let [width, height] = render_size.map(|v| i32::try_from(v).unwrap_or(i32::MAX));
-        let phases = ffx_fsr2_get_jitter_phase_count(
-            width,
-            i32::try_from(self.display_size[0]).unwrap_or(i32::MAX),
-        );
-        let (x, y) = ffx_fsr2_get_jitter_offset(self.jitter_index, phases)
-            .expect("ffxFsr2GetJitterPhaseCount is positive");
+        let display_width = i32::try_from(self.display_size[0]).unwrap_or(i32::MAX);
+        let (x, y) = match self.version() {
+            FsrVersion::Fsr2 => ffx_fsr2_get_jitter_offset(
+                self.jitter_index,
+                ffx_fsr2_get_jitter_phase_count(width, display_width),
+            ),
+            FsrVersion::Fsr3 => ffx_fsr3_upscaler_get_jitter_offset(
+                self.jitter_index,
+                ffx_fsr3_upscaler_get_jitter_phase_count(width, display_width),
+            ),
+        }
+        .expect("the SDK's jitter phase count is positive");
         self.jitter_index = self.jitter_index.wrapping_add(1).max(0);
         self.jitter = [x, y];
         [2. * x / width as f32, -2. * y / height as f32]
@@ -306,16 +433,17 @@ impl Fsr2 {
         timing: Option<&crate::timing::GpuTiming>,
     ) -> Result<(), String> {
         let projection = inputs.projection;
+        let label = self.version().label();
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         // The backend records into an encoder it owns while it dispatches;
         // lend it the frame's encoder and take it back afterwards.
         let recorded = std::mem::replace(
             encoder,
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("frame after FSR2"),
+                label: Some("frame after FSR"),
             }),
         );
-        let mut description = FfxFsr2DispatchDescription {
+        let mut description = Dispatch {
             jitter_offset: FfxFloatCoords2D {
                 x: self.jitter[0],
                 y: self.jitter[1],
@@ -344,7 +472,7 @@ impl Fsr2 {
             let mut backend = self.backend.borrow_mut();
             backend.set_pass_timestamps(
                 timing
-                    .and_then(|t| t.reserve_compute_passes("FSR2", MAX_TIMED_PASSES))
+                    .and_then(|t| t.reserve_compute_passes(label, MAX_TIMED_PASSES))
                     .map(|(query_set, first, count)| FfxWgpuPassTimestamps {
                         query_set,
                         first,
@@ -355,56 +483,190 @@ impl Fsr2 {
             let read = FFX_RESOURCE_STATE_COMPUTE_READ;
             description.command_list = backend.ffx_get_command_list_wgpu(recorded);
             description.color =
-                backend.ffx_get_resource_wgpu(inputs.color.texture(), "FSR2_InputColor", read);
+                backend.ffx_get_resource_wgpu(inputs.color.texture(), "FSR_InputColor", read);
             description.depth =
-                backend.ffx_get_resource_wgpu(inputs.depth.texture(), "FSR2_InputDepth", read);
+                backend.ffx_get_resource_wgpu(inputs.depth.texture(), "FSR_InputDepth", read);
             description.motion_vectors = backend.ffx_get_resource_wgpu(
                 inputs.motion.texture(),
-                "FSR2_InputMotionVectors",
+                "FSR_InputMotionVectors",
                 read,
             );
             description.exposure =
-                backend.ffx_get_resource_wgpu(inputs.exposure, "FSR2_InputExposure", read);
+                backend.ffx_get_resource_wgpu(inputs.exposure, "FSR_InputExposure", read);
             let [reactive, composition] = inputs.masks;
             description.reactive =
-                backend.ffx_get_resource_wgpu(reactive.texture(), "FSR2_InputReactiveMap", read);
+                backend.ffx_get_resource_wgpu(reactive.texture(), "FSR_InputReactiveMap", read);
             description.transparency_and_composition = backend.ffx_get_resource_wgpu(
                 composition.texture(),
-                "FSR2_TransparencyAndCompositionMap",
+                "FSR_TransparencyAndCompositionMap",
                 read,
             );
             description.output = backend.ffx_get_resource_wgpu(
                 self.output.texture(),
-                "FSR2_OutputUpscaledColor",
+                "FSR_OutputUpscaledColor",
                 FFX_RESOURCE_STATE_UNORDERED_ACCESS,
             );
         }
-        let result = ffx_fsr2_context_dispatch(&mut self.context, &description);
+        let result = self
+            .context
+            .dispatch(&description, &self.backend, self.display_size);
         let mut backend = self.backend.borrow_mut();
         if let (Some(timing), Some(pool)) = (timing, backend.set_pass_timestamps(None)) {
             timing.release_unused(pool.count - pool.used.get());
         }
         *encoder = backend
             .ffx_take_command_list_wgpu(description.command_list)
-            .expect("the FSR2 command list");
+            .expect("the FSR command list");
         // `ffxFsr2ContextDispatch` ignores its jobs' result, as AMD's does.
         let job_error = backend.take_job_error();
         drop(backend);
         let error = validation_error(scope);
         match (result, job_error, error) {
             (Ok(()), None, None) => Ok(()),
-            (Err(code), _, _) => Err(format!("FSR2 dispatch failed ({code:#x})")),
-            (Ok(()), Some(job), _) => Err(format!("FSR2 dispatch failed: {job}")),
-            (Ok(()), None, Some(error)) => Err(format!("FSR2 dispatch failed: {error}")),
+            (Err(code), _, _) => Err(format!("{label} dispatch failed ({code:#x})")),
+            (Ok(()), Some(job), _) => Err(format!("{label} dispatch failed: {job}")),
+            (Ok(()), None, Some(error)) => Err(format!("{label} dispatch failed: {error}")),
         }
     }
 }
 
-impl Drop for Fsr2 {
+impl Drop for Fsr {
     fn drop(&mut self) {
         // fsr2Release reports no error; a context whose creation failed is
         // released the same way.
-        let _ = ffx_fsr2_context_destroy(&mut self.context);
+        match &mut self.context {
+            Context::Fsr2(context) => {
+                let _ = ffx_fsr2_context_destroy(context);
+            }
+            Context::Fsr3 { context, .. } => {
+                let _ = ffx_fsr3_upscaler_context_destroy(context);
+            }
+        }
+    }
+}
+
+struct Shared {
+    depth: wgpu::Texture,
+    motion: wgpu::Texture,
+    previous_depth: wgpu::Texture,
+}
+
+enum Context {
+    Fsr2(FfxFsr2Context),
+    Fsr3 {
+        context: FfxFsr3UpscalerContext,
+        shared: Option<Box<Shared>>,
+    },
+}
+
+#[derive(Default)]
+struct Dispatch {
+    command_list: FfxCommandList,
+    color: FfxResource,
+    depth: FfxResource,
+    motion_vectors: FfxResource,
+    exposure: FfxResource,
+    reactive: FfxResource,
+    transparency_and_composition: FfxResource,
+    output: FfxResource,
+    jitter_offset: FfxFloatCoords2D,
+    motion_vector_scale: FfxFloatCoords2D,
+    render_size: FfxDimensions2D,
+    enable_sharpening: bool,
+    sharpness: f32,
+    frame_time_delta: f32,
+    pre_exposure: f32,
+    reset: bool,
+    camera_near: f32,
+    camera_far: f32,
+    camera_fov_angle_vertical: f32,
+    view_space_to_meters_factor: f32,
+}
+
+impl Context {
+    fn dispatch(
+        &mut self,
+        frame: &Dispatch,
+        backend: &Rc<RefCell<FfxWgpuBackend>>,
+        display: [u32; 2],
+    ) -> Result<(), sp_fidelity::error::FfxErrorCode> {
+        match self {
+            Self::Fsr2(context) => ffx_fsr2_context_dispatch(
+                context,
+                &FfxFsr2DispatchDescription {
+                    command_list: frame.command_list,
+                    color: frame.color.clone(),
+                    depth: frame.depth.clone(),
+                    motion_vectors: frame.motion_vectors.clone(),
+                    exposure: frame.exposure.clone(),
+                    reactive: frame.reactive.clone(),
+                    transparency_and_composition: frame.transparency_and_composition.clone(),
+                    output: frame.output.clone(),
+                    jitter_offset: frame.jitter_offset,
+                    motion_vector_scale: frame.motion_vector_scale,
+                    render_size: frame.render_size,
+                    enable_sharpening: frame.enable_sharpening,
+                    sharpness: frame.sharpness,
+                    frame_time_delta: frame.frame_time_delta,
+                    pre_exposure: frame.pre_exposure,
+                    reset: frame.reset,
+                    camera_near: frame.camera_near,
+                    camera_far: frame.camera_far,
+                    camera_fov_angle_vertical: frame.camera_fov_angle_vertical,
+                    view_space_to_meters_factor: frame.view_space_to_meters_factor,
+                    ..Default::default()
+                },
+            ),
+            Self::Fsr3 { context, shared } => {
+                let shared = shared.as_ref().expect("created FSR3 shared resources");
+                let write = FFX_RESOURCE_STATE_UNORDERED_ACCESS;
+                let (depth, motion, previous_depth) = {
+                    let mut backend = backend.borrow_mut();
+                    (
+                        backend.ffx_get_resource_wgpu(&shared.depth, "FSR3 dilated depth", write),
+                        backend.ffx_get_resource_wgpu(&shared.motion, "FSR3 dilated motion", write),
+                        backend.ffx_get_resource_wgpu(
+                            &shared.previous_depth,
+                            "FSR3 previous depth",
+                            write,
+                        ),
+                    )
+                };
+                ffx_fsr3_upscaler_context_dispatch(
+                    context,
+                    &FfxFsr3UpscalerDispatchDescription {
+                        command_list: frame.command_list,
+                        color: frame.color.clone(),
+                        depth: frame.depth.clone(),
+                        motion_vectors: frame.motion_vectors.clone(),
+                        exposure: frame.exposure.clone(),
+                        reactive: frame.reactive.clone(),
+                        transparency_and_composition: frame.transparency_and_composition.clone(),
+                        output: frame.output.clone(),
+                        jitter_offset: frame.jitter_offset,
+                        motion_vector_scale: frame.motion_vector_scale,
+                        render_size: frame.render_size,
+                        enable_sharpening: frame.enable_sharpening,
+                        sharpness: frame.sharpness,
+                        frame_time_delta: frame.frame_time_delta,
+                        pre_exposure: frame.pre_exposure,
+                        reset: frame.reset,
+                        camera_near: frame.camera_near,
+                        camera_far: frame.camera_far,
+                        camera_fov_angle_vertical: frame.camera_fov_angle_vertical,
+                        view_space_to_meters_factor: frame.view_space_to_meters_factor,
+                        upscale_size: FfxDimensions2D {
+                            width: display[0],
+                            height: display[1],
+                        },
+                        dilated_depth: depth,
+                        dilated_motion_vectors: motion,
+                        reconstructed_prev_nearest_depth: previous_depth,
+                        ..Default::default()
+                    },
+                )
+            }
+        }
     }
 }
 

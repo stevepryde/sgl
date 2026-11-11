@@ -23,7 +23,7 @@ pub(crate) static MIST: crate::shading::Module = crate::shading::Module {
 /// The entry points the mist's pipelines are created with.
 pub(crate) const MIST_VS_ENTRY: &str = "mist_vs";
 pub(crate) const MIST_FS_ENTRY: &str = "mist_fs";
-pub(crate) const MIST_FSR2_MASKED_FS_ENTRY: &str = "mist_fsr2_masked_fs";
+pub(crate) const MIST_FSR_MASKED_FS_ENTRY: &str = "mist_fsr_masked_fs";
 /// The mist's instance buffer, one position (`Transient::mist_positions`)
 /// per quad, read by `mist_vs`.
 pub(crate) const MIST_LAYOUT: VertexLayout = VertexLayout {
@@ -42,8 +42,8 @@ pub(crate) const MIST_LAYOUT: VertexLayout = VertexLayout {
 
 pub(crate) struct Mist {
     mist: wgpu::RenderPipeline,
-    /// `mist` also writing FSR2's masks (`mask_targets`).
-    mist_fsr2_masked: wgpu::RenderPipeline,
+    /// `mist` also writing FSR's masks (`mask_targets`).
+    mist_fsr_masked: wgpu::RenderPipeline,
 }
 impl Mist {
     pub fn new(device: &wgpu::Device, frame: &wgpu::BindGroupLayout) -> Self {
@@ -70,7 +70,7 @@ impl Mist {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: Some(if masked {
-                        MIST_FSR2_MASKED_FS_ENTRY
+                        MIST_FSR_MASKED_FS_ENTRY
                     } else {
                         MIST_FS_ENTRY
                     }),
@@ -100,12 +100,12 @@ impl Mist {
         };
         Self {
             mist: pipeline(false),
-            mist_fsr2_masked: pipeline(true),
+            mist_fsr_masked: pipeline(true),
         }
     }
     /// The mist, sorted back to front, blended into `destination` and tested
     /// against `depth` without writing it, in timing group `group`.
-    /// `fsr2_masks`, already cleared this frame, also receive it.
+    /// `fsr_masks`, already cleared this frame, also receive it.
     #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &self,
@@ -114,7 +114,7 @@ impl Mist {
         transient: &Transient,
         destination: &wgpu::TextureView,
         depth: &wgpu::TextureView,
-        fsr2_masks: Option<&[wgpu::TextureView; 2]>,
+        fsr_masks: Option<&[wgpu::TextureView; 2]>,
         timing: Option<&crate::timing::GpuTiming>,
         group: &'static str,
     ) {
@@ -130,7 +130,7 @@ impl Mist {
                     },
                 })
             };
-            let attachments = match fsr2_masks {
+            let attachments = match fsr_masks {
                 Some([reactive, composition]) => {
                     vec![load(destination), load(reactive), load(composition)]
                 }
@@ -150,8 +150,8 @@ impl Mist {
                 timestamp_writes: timing.and_then(|t| t.render_pass(group)),
                 ..Default::default()
             });
-            pass.set_pipeline(if fsr2_masks.is_some() {
-                &self.mist_fsr2_masked
+            pass.set_pipeline(if fsr_masks.is_some() {
+                &self.mist_fsr_masked
             } else {
                 &self.mist
             });

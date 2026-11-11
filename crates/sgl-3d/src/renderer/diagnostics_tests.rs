@@ -164,11 +164,11 @@ fn an_abandoned_probed_frame_reports_nothing() {
     assert!(reports.is_empty(), "{reports:?}");
 }
 
-// With FSR2 disabled by diagnostics, the completed source stays at render
+// With FSR disabled by diagnostics, the completed source stays at render
 // size. Observe the comparison flag passed to stage 4 during a real frame.
 #[test]
-fn a_fsr2_fallback_does_not_compare_different_sized_frame_targets() {
-    let Some((device, queue)) = test_support::fsr2_device() else {
+fn a_fsr_fallback_does_not_compare_different_sized_frame_targets() {
+    let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
     let mut emitter = test_support::cube();
@@ -197,12 +197,12 @@ fn a_fsr2_fallback_does_not_compare_different_sized_frame_targets() {
     input.backdrop = Backdrop::Color([0.; 3]);
     let mut settings = Settings {
         antialiasing: Antialiasing::Fsr2,
-        fsr2_quality: crate::settings::Fsr2Quality::Quality,
+        fsr_quality: crate::settings::FsrQuality::Quality,
         bloom: Bloom::Off,
         atmosphere: false,
         ..Settings::default()
     };
-    settings.diagnostics.disable.fsr2 = true;
+    settings.diagnostics.disable.fsr = true;
     settings.diagnostics.frame_probe = true;
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
     if renderer.antialiasing_in_effect(&settings) != Antialiasing::Fsr2 {
@@ -210,7 +210,7 @@ fn a_fsr2_fallback_does_not_compare_different_sized_frame_targets() {
     }
     let output = crate::view::targets::target(
         &device,
-        "FSR2 fallback output",
+        "FSR fallback output",
         SIZE,
         crate::shading::gbuffer::COLOR,
     );

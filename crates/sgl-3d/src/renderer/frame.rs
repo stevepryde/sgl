@@ -74,14 +74,14 @@ pub(super) fn render(
         input,
         super::effective::SceneContent::of(scene),
         super::effective::Device {
-            fsr2_running: antialiasing.fsr2_running(),
+            fsr_running: antialiasing.fsr_running(),
             fused_supported: pipelines.fused_supported,
             occlusion_supported: cull.occlusion_supported(),
             ray_queries: ray_form.as_ref().map(|form| form.form()),
             tier: pipelines.tier,
         },
     );
-    targets.set_fsr2_masks(device, effective.fsr2);
+    targets.set_fsr_masks(device, effective.fsr);
     let targets: &SharedTargets = targets;
     pipelines.specialise(
         device,
@@ -307,7 +307,7 @@ pub(super) fn render(
     if effective.heat {
         transparent.encode_heat(&mut ctx, &targets.composite);
     }
-    // The frame's one exposure, which FSR2 and the tone map read.
+    // The frame's one exposure, which FSR and the tone map read.
     exposure.encode(&mut ctx, &targets.composite);
     let completed_kind = antialiasing.encode(&mut ctx, post_fx.as_mut(), exposure.texture());
     if antialiasing.take_failure() {
@@ -386,7 +386,7 @@ fn completed<'a>(
 ) -> &'a wgpu::TextureView {
     match kind {
         Completed::Taa => post_fx.as_ref().unwrap().taa_output(),
-        Completed::Fsr2 => antialiasing.output(),
+        Completed::Fsr => antialiasing.output(),
         Completed::Composite => &targets.composite,
     }
 }

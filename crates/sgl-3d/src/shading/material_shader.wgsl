@@ -16,7 +16,7 @@
 
 // Whether the pipeline writes motion, so its vertices are evaluated at the
 // last submitted frame too: a pipeline constant (view::pipelines), off for
-// the blended draws and FSR2's composition mask, which write none. It
+// the blended draws and FSR's composition mask, which write none. It
 // changes no input of the evaluation this frame.
 override motion_vertices:bool=true;
 // What material_vertex evaluates the instance whose object record is at

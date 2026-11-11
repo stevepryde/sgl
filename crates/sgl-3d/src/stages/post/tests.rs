@@ -435,7 +435,7 @@ fn spatial_upscaling_is_opt_in_and_does_not_replace_temporal_reconstruction() {
         render: [4, 3],
         ..scaled
     };
-    assert!(spatial_resolves(Upscaling::On, temporal, Completed::Fsr2));
+    assert!(spatial_resolves(Upscaling::On, temporal, Completed::Fsr));
     assert!(!spatial_resolves(
         Upscaling::On,
         temporal,

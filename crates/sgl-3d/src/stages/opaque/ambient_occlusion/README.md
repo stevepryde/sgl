@@ -70,7 +70,7 @@ The default small-radius fade, projected-normal 0.05 adjustment, pixel minimum
   conversion ([Direct3D 11.3 §3.2.3.13](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#3.2.3.13)). Consumers divide the integer by 255.
 - `XeGTAO_ClampDepth` uses `#ifdef XE_GTAO_USE_HALF_FLOAT_PRECISION` even when the
   selected mode defines it as zero. Its resulting 65504 clamp is preserved.
-- With effective TAA or FSR2, `NoiseIndex` follows the camera history frame
+- With effective TAA or FSR, `NoiseIndex` follows the camera history frame
   count and `noise` applies the exact `288 * (NoiseIndex % 64)` Hilbert/R2
   offset from `vaGTAO.hlsl` `SpatioTemporalNoise`. As `vaGTAO::UpdateConstants`
   does with its `usingTAA` argument, Off/SMAA retain phase zero. A camera cut

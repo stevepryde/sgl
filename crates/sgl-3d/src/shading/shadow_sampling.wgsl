@@ -184,7 +184,7 @@ fn sample_shadow_map_jimenez_fourteen(shadow_map:texture_depth_2d_array,comparis
 
 // Bevy's sample_shadow_map for `shadow_filtering`: one hardware 2x2 tap; the fixed
 // Castano '13 kernel; or the Jimenez '14 spiral turned per pixel and per
-// frame for TAA or FSR2 to resolve.
+// frame for TAA or FSR to resolve.
 fn sample_shadow_map(shadow_map:texture_depth_2d_array,comparison:sampler_comparison,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,texel_size:f32,shadow_filtering:u32)->f32 {
  if shadow_filtering==SHADOW_FILTER_HARDWARE_2X2 {
   return sample_shadow_map_hardware(shadow_map,comparison,light_local,depth,array_index,bounds);

@@ -365,15 +365,15 @@ mod tests {
     // before a transparent draw (glow or mist would land on the composite
     // unwarped) or on another target than the composite that exposure and
     // antialiasing read (the frame would not warp); and displacing in render
-    // pixels rather than the scene pixels it is authored in, which FSR2's
+    // pixels rather than the scene pixels it is authored in, which FSR's
     // render size, below the scene size, magnifies. Oracle: the same frame
     // without heat, its composite shifted by the authored two scene pixels
-    // (two render pixels without FSR2, one under FSR2 Performance's 2x)
+    // (two render pixels without FSR, one under FSR Performance's 2x)
     // wherever the heat covers it and its footprint stays on screen.
     #[test]
     fn heat_warps_the_composite_after_its_transparent_draws() {
         use crate::settings::Antialiasing;
-        let Some((device, queue)) = crate::test_support::fsr2_device() else {
+        let Some((device, queue)) = crate::test_support::fsr_device() else {
             return;
         };
         let render = [32, 24];
@@ -397,7 +397,7 @@ mod tests {
         shift: u32,
     ) {
         use crate::effects::Glow;
-        use crate::settings::{Bloom, Fsr2Quality, SceneResolution, Settings};
+        use crate::settings::{Bloom, FsrQuality, SceneResolution, Settings};
         use crate::{Camera, FrameInput, Mist, Renderer, Scene};
         use glam::{Mat4, Vec3};
         let mut scene = Scene::new(device, queue);
@@ -446,7 +446,7 @@ mod tests {
         let settings = Settings {
             scene_resolution: SceneResolution::Full,
             antialiasing,
-            fsr2_quality: Fsr2Quality::Performance,
+            fsr_quality: FsrQuality::Performance,
             bloom: Bloom::Off,
             ..Settings::default()
         };
@@ -456,7 +456,7 @@ mod tests {
             size,
             crate::shading::gbuffer::COLOR,
         );
-        // A fresh renderer per frame, so both frames take FSR2's first jitter.
+        // A fresh renderer per frame, so both frames take FSR's first jitter.
         let mut composite = |heat_distortion| {
             let settings = Settings {
                 heat_distortion,
@@ -466,7 +466,7 @@ mod tests {
             if renderer.antialiasing_in_effect(&settings) != antialiasing {
                 eprintln!(
                     "skipping {antialiasing:?}: it does not run here: {:?}",
-                    renderer.fsr2_error()
+                    renderer.fsr_error()
                 );
                 return None;
             }

@@ -4,9 +4,9 @@
 use crate::FrameInput;
 use crate::scene::RayData;
 use crate::settings::{
-    AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, FogQuality, ReflectionMethod,
-    RenderPreset, SceneResolution, ScreenSpaceReflections, Settings, ShadowQuality,
-    WorldSpaceReflections,
+    AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, FogQuality, FsrVersion,
+    ReflectionMethod, RenderPreset, SceneResolution, ScreenSpaceReflections, Settings,
+    ShadowQuality, WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
 use crate::shading::bind::BindingTier;
@@ -37,8 +37,11 @@ pub(super) fn traced_shadows(
 /// The size-affecting choices of `settings`.
 pub(super) fn sizing(settings: &Settings) -> Sizing {
     Sizing {
-        fsr2: (settings.antialiasing.resolve(settings.low()) == Antialiasing::Fsr2)
-            .then_some(settings.fsr2_quality),
+        fsr: settings
+            .antialiasing
+            .resolve(settings.low())
+            .fsr()
+            .map(|version| (version, settings.fsr_quality)),
         bloom_targets: settings.preset == RenderPreset::High,
     }
 }
@@ -74,11 +77,11 @@ pub(super) fn scene_size(
 }
 
 /// The antialiasing that runs for `settings`: their choice resolved for the
-/// preset, with TAA where FSR2 is chosen but not `fsr2_running`. The saved
+/// preset, with TAA where FSR is chosen but not `fsr_running`. The saved
 /// choice is unchanged.
-pub(super) fn antialiasing(settings: &Settings, fsr2_running: bool) -> Antialiasing {
+pub(super) fn antialiasing(settings: &Settings, fsr_running: Option<FsrVersion>) -> Antialiasing {
     match settings.antialiasing.resolve(settings.low()) {
-        Antialiasing::Fsr2 if !fsr2_running => Antialiasing::Taa,
+        choice if choice.fsr().is_some() && choice.fsr() != fsr_running => Antialiasing::Taa,
         other => other,
     }
 }
@@ -115,11 +118,11 @@ fn motion_blur(settings: &Settings, input: &FrameInput) -> Option<f32> {
     (shutter.is_finite() && shutter > 0.).then_some(shutter)
 }
 
-/// FSR2's sharpness while `fsr2` runs and the setting sharpens: within
+/// FSR's sharpness while `fsr` runs and the setting sharpens: within
 /// AMD's 0..=1, NaN as the least.
-fn fsr2_sharpness(settings: &Settings, fsr2: bool) -> Option<f32> {
-    let sharpness = settings.fsr2_sharpness;
-    (fsr2 && settings.fsr2_sharpening).then(|| {
+fn fsr_sharpness(settings: &Settings, fsr: bool) -> Option<f32> {
+    let sharpness = settings.fsr_sharpness;
+    (fsr && settings.fsr_sharpening).then(|| {
         if sharpness.is_nan() {
             0.
         } else {
@@ -150,8 +153,8 @@ pub(super) fn first_frame(settings: &Settings, device: Device) -> Effective {
 /// follows.
 #[derive(Clone, Copy)]
 pub(super) struct Device {
-    /// FSR2's context runs on it.
-    pub fsr2_running: bool,
+    /// FSR's context runs on it.
+    pub fsr_running: Option<FsrVersion>,
     /// It has the fused pass's attachments.
     pub fused_supported: bool,
     /// It binds the depth pyramid's storage textures.
@@ -232,7 +235,7 @@ pub(super) fn resolve(
     device: Device,
 ) -> Effective {
     let Device {
-        fsr2_running,
+        fsr_running,
         fused_supported,
         occlusion_supported,
         ray_queries,
@@ -255,14 +258,14 @@ pub(super) fn resolve(
             quality: settings.ambient_occlusion,
             radius: input.ambient_occlusion_radius,
         });
-    // DiligentFX's and FSR2's camera inputs are for `perspective`'s
+    // DiligentFX's and FSR's camera inputs are for `perspective`'s
     // infinite reversed-Z projection; with other cameras SSR is off and
-    // SMAA replaces TAA, and FSR2's render-size frame is presented as it
+    // SMAA replaces TAA, and FSR's render-size frame is presented as it
     // is.
     let post_fx_camera = p[3][3] == 0. && p[2][3] == -1. && p[2][2] == 0. && p[3][2] > 0.;
-    let antialiasing = antialiasing(settings, fsr2_running);
+    let antialiasing = antialiasing(settings, fsr_running);
     let taa = antialiasing == Antialiasing::Taa && !disable.taa && post_fx_camera;
-    let fsr2 = antialiasing == Antialiasing::Fsr2 && !disable.fsr2 && post_fx_camera;
+    let fsr = antialiasing.fsr().is_some() && !disable.fsr && post_fx_camera;
     let screen_space = match settings.screen_space_reflections {
         _ if !post_fx_camera => None,
         ScreenSpaceReflections::Off => None,
@@ -284,7 +287,7 @@ pub(super) fn resolve(
     // spiral while temporal antialiasing resolves it, else its Gaussian.
     let shadow_filter = match settings.shadow_quality {
         ShadowQuality::Low => ShadowFilter::Hardware,
-        ShadowQuality::High if taa || fsr2 => ShadowFilter::Temporal,
+        ShadowQuality::High if taa || fsr => ShadowFilter::Temporal,
         ShadowQuality::High => ShadowFilter::Gaussian,
     };
     let motion_blur = motion_blur(settings, input).filter(|_| post_fx_camera);
@@ -305,8 +308,8 @@ pub(super) fn resolve(
     Effective {
         antialiasing,
         taa,
-        fsr2,
-        fsr2_sharpness: fsr2_sharpness(settings, fsr2),
+        fsr,
+        fsr_sharpness: fsr_sharpness(settings, fsr),
         post_fx: taa || crystal,
         shadow_quality: settings.shadow_quality,
         shadow_filter,
@@ -317,7 +320,7 @@ pub(super) fn resolve(
         ray_traced_shadows,
         ray_traced_shadow_quality: settings.ray_traced_shadow_quality.resolve(low),
         receivers: content.receivers
-            && (screen_space.is_some() || taa || fsr2 || motion_blur.is_some()),
+            && (screen_space.is_some() || taa || fsr || motion_blur.is_some()),
         // Occlusion culling's late phase falls between the G-buffer passes,
         // so the opaque stage takes its two-pass form.
         fused: fused_supported && !disable.fused_opaque && !occlusion_culling,
@@ -396,7 +399,7 @@ mod ray_data_tests {
         };
         let input = FrameInput::new(camera);
         let device = Device {
-            fsr2_running: false,
+            fsr_running: None,
             fused_supported: true,
             occlusion_supported: true,
             ray_queries: Some(RayQueryForm::Baseline),
@@ -456,7 +459,7 @@ mod ray_data_tests {
             eye: glam::Vec3::ZERO,
         });
         let synthetic = Device {
-            fsr2_running: false,
+            fsr_running: None,
             fused_supported: true,
             occlusion_supported: true,
             ray_queries: Some(RayQueryForm::Baseline),

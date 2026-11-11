@@ -1,11 +1,11 @@
-//! Exposure: the frame's one exposure, which FSR2 and the tone map read.
+//! Exposure: the frame's one exposure, which FSR and the tone map read.
 //! Fixed, it is `Exposure::stops`; automatic, it is Bevy's auto exposure
 //! (`exposure.wgsl`): a 64-bin log-luminance histogram of the complete HDR
 //! frame through the metering mask, then its filtered average, the
 //! compensation curve and the adaptation at the authored speeds.
 //!
 //! Placement: Bevy meters after TAA and upscaling, at the output size,
-//! before tone mapping. Here FSR2 needs the frame's exposure before it
+//! before tone mapping. Here FSR needs the frame's exposure before it
 //! runs, so metering reads the frame at the render size before
 //! antialiasing, as Godot reduces luminance on its render-size internal
 //! texture (b130438 `renderer_scene_render_rd.cpp` 570). The histogram sees
@@ -36,7 +36,7 @@ pub(crate) static EXPOSURE: crate::shading::Module = crate::shading::Module {
 pub(crate) const COMPUTE_HISTOGRAM_ENTRY: &str = "compute_histogram";
 pub(crate) const COMPUTE_AVERAGE_ENTRY: &str = "compute_average";
 
-/// The exposure multiplier's format, which FSR2 reads as its exposure.
+/// The exposure multiplier's format, which FSR reads as its exposure.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 // How auto exposure meters and adapts, Bevy's `AutoExposure` defaults
@@ -327,7 +327,7 @@ impl Exposure {
         }
     }
 
-    /// The frame's exposure multiplier, 1×1 R32Float, which FSR2 reads.
+    /// The frame's exposure multiplier, 1×1 R32Float, which FSR reads.
     pub fn texture(&self) -> &wgpu::Texture {
         &self.exposure
     }

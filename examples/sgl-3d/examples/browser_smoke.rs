@@ -820,7 +820,7 @@ async fn read_pixels(
 struct Rendered {
     pixels: Vec<u8>,
     antialiasing: Antialiasing,
-    fsr2_error: Option<String>,
+    fsr_error: Option<String>,
     volume_paths: bool,
     timed_frames: usize,
 }
@@ -860,13 +860,15 @@ async fn configuration(
             "the sunlit ground (luma {lit:.1}) is not clearly brighter than the shadowed ground ({shadowed:.1})"
         ));
     }
-    // FSR2 either runs or reports why not: a silent fallback fails.
-    if settings.antialiasing == Antialiasing::Fsr2
-        && (rendered.antialiasing == Antialiasing::Fsr2) == rendered.fsr2_error.is_some()
+    // FSR either runs or reports why not: a silent fallback fails.
+    if matches!(
+        settings.antialiasing,
+        Antialiasing::Fsr2 | Antialiasing::Fsr3
+    ) && (rendered.antialiasing == settings.antialiasing) == rendered.fsr_error.is_some()
     {
         return Err(format!(
-            "FSR2 chosen: {:?} in effect with reason {:?}",
-            rendered.antialiasing, rendered.fsr2_error
+            "FSR chosen: {:?} in effect with reason {:?}",
+            rendered.antialiasing, rendered.fsr_error
         ));
     }
     let mut report = format!(
@@ -874,8 +876,8 @@ async fn configuration(
         rendered.antialiasing,
         if rendered.volume_paths { "on" } else { "off" }
     );
-    if let Some(reason) = rendered.fsr2_error {
-        let _ = write!(report, ", FSR2 off: {reason}");
+    if let Some(reason) = rendered.fsr_error {
+        let _ = write!(report, ", FSR off: {reason}");
     }
     if timing.is_some() {
         let _ = write!(report, ", {} timed frames read", rendered.timed_frames);
@@ -980,7 +982,7 @@ async fn render(
     Ok(Rendered {
         pixels: read_pixels(device, queue, &output).await?,
         antialiasing: renderer.antialiasing_in_effect(settings),
-        fsr2_error: renderer.fsr2_error().map(str::to_owned),
+        fsr_error: renderer.fsr_error().map(str::to_owned),
         volume_paths: renderer.volume_paths_in_effect(settings),
         timed_frames,
     })
@@ -1383,7 +1385,7 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("SGL3D browser smoke"),
             required_features: sgl_3d::graphics_device::features(&adapter)
-                | sgl_3d::graphics_device::fsr2_features(&adapter)
+                | sgl_3d::graphics_device::fsr_features(&adapter)
                 | sgl_3d::graphics_device::texture_compression_features(&adapter)
                 | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY),
             required_limits: sgl_3d::graphics_device::limits(&adapter),
@@ -1432,6 +1434,14 @@ async fn smoke(report: &mut String) -> Result<(), String> {
             "FSR2 chosen",
             Settings {
                 antialiasing: Antialiasing::Fsr2,
+                ..high
+            },
+            false,
+        ),
+        (
+            "FSR3 chosen",
+            Settings {
+                antialiasing: Antialiasing::Fsr3,
                 ..high
             },
             false,

@@ -13,8 +13,6 @@ import { chromium } from "playwright";
 const HOST = "127.0.0.1";
 const PORT = 8124;
 const DIST = process.env.SGL_BROWSER_PROBE_DIR ?? "target/browser-probe";
-/// Adapter, colour boundary, compressed materials, and four scene configurations.
-const REPORTS = 7;
 
 function servePage() {
   const types: Record<string, string> = {
@@ -62,7 +60,13 @@ test(
       console.log(report.trimEnd());
       const lines = report.trim().split("\n");
       expect(lines.filter((line) => line.startsWith("FAIL"))).toEqual([]);
-      expect(lines.filter((line) => line.startsWith("ok ")).length).toBe(REPORTS);
+      // WebGPU cannot expose the native SDK's required features. Observe the
+      // renderer's effective AA and diagnostic, not the number of report lines.
+      for (const method of ["FSR2", "FSR3"]) {
+        const fallback = lines.find((line) => line.startsWith(`ok ${method} chosen:`));
+        expect(fallback).toContain("antialiasing Taa");
+        expect(fallback).toContain(`FSR off: the device lacks ${method}'s features`);
+      }
       expect(errors).toEqual([]);
     } finally {
       await browser?.close();

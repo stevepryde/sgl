@@ -13,7 +13,7 @@ pub use crate::stages::dynamic_gi::DynamicGiChanges;
 /// `Counters::since` for what a frame or an operation cost.
 ///
 /// It counts `sgl-3d`'s own uploads and buffers only: the constant and
-/// staging buffers `sgl-post-fx` and the FSR2 port (`sp-fidelity`) write
+/// staging buffers `sgl-post-fx` and the FSR port (`sp-fidelity`) write
 /// for their passes are not included.
 pub fn counters() -> Counters {
     crate::counters::snapshot()
@@ -149,7 +149,7 @@ pub enum DiagnosticTarget {
     /// (`Diagnostics::capture_tone_target` or `frame_probe`).
     ToneMapped,
     /// R32Float, 1×1: the frame's exposure multiplier, which the tone map
-    /// and FSR2 read.
+    /// and FSR read.
     Exposure,
 }
 

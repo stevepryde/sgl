@@ -3,8 +3,8 @@
 //! read only this and the frame's authored values.
 use super::pipelines::LayerConstants;
 use crate::settings::{
-    AmbientOcclusionQuality, Antialiasing, FogQuality, Fsr2Quality, RayTracedShadowQuality,
-    ReflectionMethod, ShadowQuality, SmaaQuality, WorldSpaceReflections,
+    AmbientOcclusionQuality, Antialiasing, FogQuality, FsrQuality, FsrVersion,
+    RayTracedShadowQuality, ReflectionMethod, ShadowQuality, SmaaQuality, WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
 
@@ -26,8 +26,8 @@ pub(crate) enum ShadowFilter {
 /// targets are made for.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Sizing {
-    /// FSR2's quality, while FSR2 is the antialiasing chosen for the preset.
-    pub fsr2: Option<Fsr2Quality>,
+    /// FSR's quality, while FSR is the antialiasing chosen for the preset.
+    pub fsr: Option<(FsrVersion, FsrQuality)>,
     /// Bloom's targets start full size (the High preset), else 1×1; bloom
     /// sizes them each frame for whether it runs.
     pub bloom_targets: bool,
@@ -73,12 +73,12 @@ pub(crate) struct AmbientOcclusion {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Effective {
     /// The antialiasing in effect: the settings' choice for the preset, TAA
-    /// where FSR2 is chosen but not running.
+    /// where FSR is chosen but not running.
     pub antialiasing: Antialiasing,
     pub taa: bool,
-    pub fsr2: bool,
-    /// FSR2's RCAS sharpness in 0..=1, while it sharpens.
-    pub fsr2_sharpness: Option<f32>,
+    pub fsr: bool,
+    /// FSR's RCAS sharpness in 0..=1, while it sharpens.
+    pub fsr_sharpness: Option<f32>,
     /// DiligentFX's post-effect context runs: for TAA, and for Crystal SSR.
     pub post_fx: bool,
     /// The shadow maps' sizes.
@@ -104,7 +104,7 @@ pub(crate) struct Effective {
     /// setting resolved for the preset, Low or High.
     pub ray_traced_shadow_quality: RayTracedShadowQuality,
     /// The receiver pass runs: the scene holds a blended receiver of
-    /// screen-space reflections, and a screen-space method, TAA, FSR2 or
+    /// screen-space reflections, and a screen-space method, TAA, FSR or
     /// motion blur reads the surface it draws.
     pub receivers: bool,
     /// The G-buffer and lighting are one pass: the device has the

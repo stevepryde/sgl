@@ -205,7 +205,7 @@ impl Renderer {
         );
         let sizing = effective::sizing(settings);
         let mut antialiasing = antialiasing::Antialiasing::default();
-        let (render, _) = antialiasing.resize(device, scene, sizing.fsr2);
+        let (render, _) = antialiasing.resize(device, scene, sizing.fsr);
         let sizes = Sizes {
             render,
             scene,
@@ -251,7 +251,7 @@ impl Renderer {
         let first_frame = effective::first_frame(
             settings,
             effective::Device {
-                fsr2_running: antialiasing.fsr2_running(),
+                fsr_running: antialiasing.fsr_running(),
                 fused_supported: pipelines.fused_supported,
                 occlusion_supported: cull.occlusion_supported(),
                 ray_queries: ray_form.as_ref().map(|form| form.form()),
@@ -308,7 +308,7 @@ impl Renderer {
 
     /// Sizes the targets for an output of `output_size` physical pixels at
     /// `device_scale` and the size-affecting settings, and starts or stops
-    /// FSR2. Cheap when nothing changed, so a game calls it every frame;
+    /// FSR. Cheap when nothing changed, so a game calls it every frame;
     /// when the targets change, history restarts.
     pub fn resize(
         &mut self,
@@ -324,8 +324,10 @@ impl Renderer {
             device_scale,
         );
         let sizing = effective::sizing(settings);
-        let (render, restarted) = self.antialiasing.resize(device, scene, sizing.fsr2);
+        let (render, restarted) = self.antialiasing.resize(device, scene, sizing.fsr);
         if restarted {
+            self.pending_reset = true;
+            self.targets_generation = self.targets_generation.wrapping_add(1);
             self.post.forget_inputs();
             self.motion_blur.forget_inputs();
         }
@@ -413,10 +415,10 @@ impl Renderer {
     }
 
     /// The antialiasing that runs for `settings`: their choice resolved for
-    /// the preset, with TAA where FSR2 is chosen but not running (see
-    /// `fsr2_error`, or awaiting `resize`). The saved choice is unchanged.
+    /// the preset, with TAA where FSR is chosen but not running (see
+    /// `fsr_error`, or awaiting `resize`). The saved choice is unchanged.
     pub fn antialiasing_in_effect(&self, settings: &Settings) -> Antialiasing {
-        effective::antialiasing(settings, self.antialiasing.fsr2_running())
+        effective::antialiasing(settings, self.antialiasing.fsr_running())
     }
 
     /// The device's binding tier: `Extended` where it binds 48 or more
@@ -461,13 +463,14 @@ impl Renderer {
         effective::volume_paths(settings, self.binding_tier())
     }
 
-    /// Why FSR2 is not running on this device although it was chosen.
-    pub fn fsr2_error(&self) -> Option<&str> {
+    /// Why the FSR version selected at the last `resize` is unavailable.
+    /// Failures are retained independently for FSR2 and FSR3.
+    pub fn fsr_error(&self) -> Option<&str> {
         self.antialiasing.error()
     }
 
     /// The size every pass up to antialiasing renders at: the scene size,
-    /// or FSR2's render size while it upscales.
+    /// or FSR's render size while it upscales.
     pub fn render_size(&self) -> [u32; 2] {
         self.sizes.render
     }
@@ -587,9 +590,9 @@ impl Renderer {
         self.reflections.world()
     }
 
-    /// FSR2's upscaled frame of the last frame it ran.
+    /// FSR's upscaled frame of the last frame it ran.
     #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn fsr2_output(&self) -> &wgpu::TextureView {
+    pub(crate) fn fsr_output(&self) -> &wgpu::TextureView {
         self.antialiasing.output()
     }
 

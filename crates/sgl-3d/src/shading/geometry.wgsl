@@ -3,8 +3,8 @@
 // motion (fs), lit color with its ambient light, motion and exact primitive
 // identity (source_fs), the G-buffer and source_fs's outputs at once
 // (fused_opaque_fs), blended receivers as the surface (receiver_fs),
-// blended surfaces' colour (blended_fs), FSR2's transparency and
-// composition mask over moving opaque surfaces (fsr2_composition_fs) and
+// blended surfaces' colour (blended_fs), FSR's transparency and
+// composition mask over moving opaque surfaces (fsr_composition_fs) and
 // the volume layers' depth (volume_entry_fs, volume_exit_fs,
 // volume_second_exit_fs). A
 // masked material's pipelines discard the texels it cuts out in each opaque
@@ -278,9 +278,9 @@ struct BlendedColor {
  color:vec4<f32>,
  // The share of the pixel's light it gives itself, where the frame behind
  // it is lit alike: its own share and, where it keeps its specular, the
- // reflection its alpha does not fade (FSR2's reactive mask).
+ // reflection its alpha does not fade (FSR's reactive mask).
  own:f32,
- // Its coverage (FSR2's transparency and composition mask).
+ // Its coverage (FSR's transparency and composition mask).
  coverage:f32,
 }
 fn blended_color(i:Fragment,raster_front:bool)->BlendedColor {
@@ -346,7 +346,7 @@ fn blended_reflectance(s:Surface)->f32 {
 @fragment fn blended_fs(i:Fragment,@builtin(front_facing) front:bool)->@location(0) vec4<f32> {
  return blended_color(i,front).color;
 }
-// FSR2's masks (view::targets::mask_targets): AMD's FSR documentation
+// FSR's masks (view::targets::mask_targets): AMD's FSR documentation
 // (FidelityFX SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt,
 // docs/techniques/super-resolution-upscaler.md 131-132, 172, "Reactive
 // mask") asks that alpha-blended surfaces, which write no motion, write
@@ -358,16 +358,16 @@ fn blended_reflectance(s:Surface)->f32 {
 // (framework/rendermodules/translucency/shaders/translucencyps.hlsl); a
 // blended surface writes its coverage, the whole of a transmissive one's
 // pixel, whose refracted light follows no motion vector.
-struct BlendedFsr2Masked {
+struct BlendedFsrMasked {
  @location(0) color:vec4<f32>,
  @location(1) reactive:f32,
  @location(2) composition:f32,
 }
-@fragment fn blended_fsr2_masked_fs(i:Fragment,@builtin(front_facing) front:bool)->BlendedFsr2Masked {
+@fragment fn blended_fsr_masked_fs(i:Fragment,@builtin(front_facing) front:bool)->BlendedFsrMasked {
  let blended=blended_color(i,front);
- return BlendedFsr2Masked(blended.color,min(blended.own,.9),blended.coverage);
+ return BlendedFsrMasked(blended.color,min(blended.own,.9),blended.coverage);
 }
-// FSR2's transparency and composition mask over an opaque or masked
+// FSR's transparency and composition mask over an opaque or masked
 // surface whose shading moves where its geometry stands still (its
 // material's normal layers; stages/transparent), drawn at the G-buffer's
 // depth: 1, as AMD's FSR sample's animated textures write it, its depth and
@@ -376,7 +376,7 @@ struct BlendedFsr2Masked {
 // FidelityFX SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt). The reactive
 // mask at location 0 is kept (view::targets::composition_targets). A masked
 // material's cut-out texels are not its surface.
-@fragment fn fsr2_composition_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->@location(1) f32 {
+@fragment fn fsr_composition_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->@location(1) f32 {
  material_alpha_discard(raster_material(i,object_front_face(i,raster_front)).base_color.a);
  return 1.;
 }

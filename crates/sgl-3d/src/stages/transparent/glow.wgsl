@@ -103,19 +103,19 @@ fn glow_soft_color(i:Glow)->vec4<f32> {
 @fragment fn glow_soft_fs(i:Glow)->@location(0) vec4<f32> {
  return glow_soft_color(i);
 }
-// FSR2's masks (fsr2.rs): additive glow is a reactive emitter in AMD's FSR
+// FSR's masks (fsr.rs): additive glow is a reactive emitter in AMD's FSR
 // sample (FidelityFX SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt,
 // framework/rendermodules/translucency/shaders/particlerender.hlsl:249-254 and
 // samples/fsrapi/fsrapirendermodule.cpp:100-101): reactivity max(r, g, b)
 // times alpha, no transparency and composition. Modified: the reactivity is
-// clamped to 0.9, as AMD's FSR2 documentation recommends ("Reactive mask"),
+// clamped to 0.9, as AMD's FSR documentation recommends ("Reactive mask"),
 // because this radiance is HDR.
-struct GlowFsr2Masked {
+struct GlowFsrMasked {
  @location(0) color:vec4<f32>,
  @location(1) reactive:f32,
  @location(2) composition:f32,
 }
-@fragment fn glow_soft_fsr2_masked_fs(i:Glow)->GlowFsr2Masked {
+@fragment fn glow_soft_fsr_masked_fs(i:Glow)->GlowFsrMasked {
  let color=glow_soft_color(i);
- return GlowFsr2Masked(color,min(max(color.r,max(color.g,color.b))*color.a,.9),0.);
+ return GlowFsrMasked(color,min(max(color.r,max(color.g,color.b))*color.a,.9),0.);
 }

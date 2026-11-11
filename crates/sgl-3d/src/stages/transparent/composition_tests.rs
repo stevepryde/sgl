@@ -1,4 +1,4 @@
-//! FSR2's transparency and composition mask over opaque surfaces whose
+//! FSR's transparency and composition mask over opaque surfaces whose
 //! shading moves where their geometry stands still, observed in real
 //! frames.
 use crate::asset::{Asset, Image};
@@ -102,11 +102,11 @@ fn glass() -> Asset {
     glass
 }
 
-/// A renderer running FSR2 at the scene size, or `None` where it cannot.
-fn fsr2_renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(Renderer, Settings)> {
+/// A renderer running FSR at the scene size, or `None` where it cannot.
+fn fsr_renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(Renderer, Settings)> {
     let settings = Settings {
         antialiasing: settings::Antialiasing::Fsr2,
-        fsr2_quality: settings::Fsr2Quality::NativeAa,
+        fsr_quality: settings::FsrQuality::NativeAa,
         bloom: settings::Bloom::Off,
         atmosphere: false,
         ..Settings::default()
@@ -114,15 +114,15 @@ fn fsr2_renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(Renderer
     let renderer = Renderer::for_test(device, queue, SIZE, &settings);
     if renderer.antialiasing_in_effect(&settings) != settings::Antialiasing::Fsr2 {
         eprintln!(
-            "skipping: FSR2 does not run here: {:?}",
-            renderer.fsr2_error()
+            "skipping: FSR does not run here: {:?}",
+            renderer.fsr_error()
         );
         return None;
     }
     Some((renderer, settings))
 }
 
-/// One frame of `scene` from the origin looking down -Z, and FSR2's
+/// One frame of `scene` from the origin looking down -Z, and FSR's
 /// reactive and transparency and composition masks after it, each texel in
 /// 0..=1.
 fn masks(
@@ -139,7 +139,7 @@ fn masks(
     });
     input.camera_cut = true;
     input.elapsed_seconds = elapsed_seconds;
-    let output = crate::view::targets::target(device, "FSR2 masks frame", SIZE, gbuffer::COLOR);
+    let output = crate::view::targets::target(device, "FSR masks frame", SIZE, gbuffer::COLOR);
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.render(
         device,
@@ -155,7 +155,7 @@ fn masks(
     renderer.finish_frame(scene);
     renderer
         .targets()
-        .fsr2_masks
+        .fsr_masks
         .as_ref()
         .unwrap()
         .each_ref()
@@ -186,7 +186,7 @@ fn assert_masks(masks: &[Vec<f32>; 2], expected: &[((u32, u32), [f32; 2], &str)]
 }
 
 // Plausible defects: opaque or masked surfaces whose normal layers move
-// leave FSR2's transparency and composition mask unmarked, or write the
+// leave FSR's transparency and composition mask unmarked, or write the
 // reactive mask; surfaces whose shading does not move (layers standing
 // still, an unlit material, the floor) are marked, or a moving surface
 // where an opaque one hides it; or the blended surfaces drawn after clear
@@ -208,13 +208,13 @@ fn assert_masks(masks: &[Vec<f32>; 2], expected: &[((u32, u32), [f32; 2], &str)]
 // 47.3 to 56.7 and rows 39.3 to 48.7. At 2 m a metre spans 29.3 texels:
 // the blended square, 0.4 m wide at (0.273, -0.4), spans columns 34.1 to
 // 45.9 and rows 37.8 to 49.6. Sampled texels lie at least 2.5 texels from
-// every edge, past FSR2's half-texel jitter.
+// every edge, past FSR's half-texel jitter.
 #[test]
-fn moving_opaque_surfaces_mark_fsr2s_composition_mask() {
-    let Some((device, queue)) = test_support::fsr2_device() else {
+fn moving_opaque_surfaces_mark_fsrs_composition_mask() {
+    let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
-    let Some((mut renderer, settings)) = fsr2_renderer(&device, &queue) else {
+    let Some((mut renderer, settings)) = fsr_renderer(&device, &queue) else {
         return;
     };
     let mut scene = Scene::new(&device, &queue);
@@ -275,11 +275,11 @@ fn moving_opaque_surfaces_mark_fsr2s_composition_mask() {
 // `Scene::set_material` gives a still square moving layers, its texels read
 // (0, 1) where they read (0, 0) before.
 #[test]
-fn a_material_set_moving_marks_fsr2s_composition_mask() {
-    let Some((device, queue)) = test_support::fsr2_device() else {
+fn a_material_set_moving_marks_fsrs_composition_mask() {
+    let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
-    let Some((mut renderer, settings)) = fsr2_renderer(&device, &queue) else {
+    let Some((mut renderer, settings)) = fsr_renderer(&device, &queue) else {
         return;
     };
     let mut scene = Scene::new(&device, &queue);
@@ -306,7 +306,7 @@ fn a_material_set_moving_marks_fsr2s_composition_mask() {
     assert_masks(&after, &[((32, 32), [0., 1.], "layers set moving")]);
 }
 
-// Plausible defect: the composition pass loads FSR2's masks rather than
+// Plausible defect: the composition pass loads FSR's masks rather than
 // clearing them, so what a blended surface wrote stays in them after it has
 // gone. The oracle is AMD's FSR sample, which clears both masks every frame
 // before its animated textures and translucency write them
@@ -314,11 +314,11 @@ fn a_material_set_moving_marks_fsr2s_composition_mask() {
 // the pass running, the floor behind a blended square of alpha 0.4 reads
 // (0.4, 0.4) while it shows and (0, 0) the frame after it is hidden.
 #[test]
-fn fsr2s_masks_start_clear_each_frame_with_moving_surfaces() {
-    let Some((device, queue)) = test_support::fsr2_device() else {
+fn fsrs_masks_start_clear_each_frame_with_moving_surfaces() {
+    let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
-    let Some((mut renderer, settings)) = fsr2_renderer(&device, &queue) else {
+    let Some((mut renderer, settings)) = fsr_renderer(&device, &queue) else {
         return;
     };
     let mut scene = Scene::new(&device, &queue);
@@ -364,10 +364,10 @@ fn fsr2s_masks_start_clear_each_frame_with_moving_surfaces() {
 // stopped one reads (0, 0) and the other still (0, 1).
 #[test]
 fn a_material_set_still_leaves_the_others_marked() {
-    let Some((device, queue)) = test_support::fsr2_device() else {
+    let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
-    let Some((mut renderer, settings)) = fsr2_renderer(&device, &queue) else {
+    let Some((mut renderer, settings)) = fsr_renderer(&device, &queue) else {
         return;
     };
     let mut scene = Scene::new(&device, &queue);
@@ -414,10 +414,10 @@ fn a_material_set_still_leaves_the_others_marked() {
 // next frame renders.
 #[test]
 fn removing_the_last_moving_material_renders_on() {
-    let Some((device, queue)) = test_support::fsr2_device() else {
+    let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
-    let Some((mut renderer, settings)) = fsr2_renderer(&device, &queue) else {
+    let Some((mut renderer, settings)) = fsr_renderer(&device, &queue) else {
         return;
     };
     let mut scene = Scene::new(&device, &queue);

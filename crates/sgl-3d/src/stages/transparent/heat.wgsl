@@ -5,7 +5,7 @@ const HEAT_TAPS_PER_AXIS:i32=2;
 struct View {
  camera:mat4x4<f32>,
  // Render pixels per scene pixel on each axis: displacement is authored in
- // scene pixels and this pass runs at the render size (below it under FSR2).
+ // scene pixels and this pass runs at the render size (below it under FSR).
  render_per_scene:vec2<f32>,
 }
 @group(0) @binding(0) var<uniform> view:View;

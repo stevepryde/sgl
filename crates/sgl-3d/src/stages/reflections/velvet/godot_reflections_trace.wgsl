@@ -19,7 +19,7 @@
 // SGL3D also writes the post-projection depth of each receiver's reflected
 // point, the input of godot_reflections_temporal.wgsl's hit reprojection.
 // Radiance above binary16's range (+infinity) reads as its largest finite
-// value, as FSR2's PrepareRgb clamps its input, so the tone map makes no
+// value, as FSR's PrepareRgb clamps its input, so the tone map makes no
 // inf / inf (#464).
 
 // The most steps a trace takes, the top of Godot's `ssr_max_steps` range

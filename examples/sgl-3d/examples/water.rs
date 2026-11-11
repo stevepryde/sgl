@@ -36,7 +36,7 @@ use sgl_3d::{
     deformation::{MeshDeformation, MorphDelta, MorphTarget},
     environment::{EnvironmentMap, PmremAtlas},
     settings::{
-        Antialiasing, Fsr2Quality, MotionBlur, ReflectionMethod, ScreenSpaceReflections, Settings,
+        Antialiasing, FsrQuality, MotionBlur, ReflectionMethod, ScreenSpaceReflections, Settings,
     },
     timing::{FrameTime, GpuTiming},
 };
@@ -146,7 +146,14 @@ fn runs(morph: bool) -> Vec<Run> {
             "fsr2",
             with(|s| {
                 s.antialiasing = Antialiasing::Fsr2;
-                s.fsr2_quality = Fsr2Quality::Quality;
+                s.fsr_quality = FsrQuality::Quality;
+            }),
+        ),
+        run(
+            "fsr3",
+            with(|s| {
+                s.antialiasing = Antialiasing::Fsr3;
+                s.fsr_quality = FsrQuality::Quality;
             }),
         ),
         Run {
@@ -924,8 +931,9 @@ impl Times {
             "transmission copy",
             "blended",
             "TAA",
-            "FSR2 composition",
+            "FSR composition",
             "FSR2",
+            "FSR3",
             "motion blur",
         ] {
             if let Some(times) = self.groups.get(group) {
@@ -1135,8 +1143,8 @@ fn render(
             }
         }
     }
-    if let Some(error) = renderer.fsr2_error() {
-        println!("{}: FSR2 does not run here ({error}); TAA ran", run.name);
+    if let Some(error) = renderer.fsr_error() {
+        println!("{}: FSR does not run here ({error}); TAA ran", run.name);
     }
     Ok(times)
 }
@@ -1203,7 +1211,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: (adapter.features() & wgpu::Features::TIMESTAMP_QUERY)
             | sgl_3d::graphics_device::features(&adapter)
-            | sgl_3d::graphics_device::fsr2_features(&adapter),
+            | sgl_3d::graphics_device::fsr_features(&adapter),
         required_limits: sgl_3d::graphics_device::limits(&adapter),
         ..Default::default()
     }))?;

@@ -719,7 +719,7 @@ fn bind_groups_reuse_resources_and_follow_replaced_inputs() {
     );
 }
 
-// A depth texel belongs to the ray that rasterized it, including TAA/FSR2's
+// A depth texel belongs to the ray that rasterized it, including TAA/FSR's
 // subpixel offset. The oracle is an inverse homogeneous projection, not a
 // second copy of XeGTAO's reconstruction. A front-facing plane keeps its
 // depth under jitter while its view-space XY moves with the raster ray.

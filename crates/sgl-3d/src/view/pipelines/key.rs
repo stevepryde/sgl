@@ -207,7 +207,7 @@ impl PipelineKey {
     /// material_raster.wgsl), for the pulled passes deformed vertices, and
     /// for the camera and probe passes the layers and the lit constants and
     /// whether they write motion (`motion_vertices`, material_shader.wgsl:
-    /// not the blended draws, FSR2's composition mask or the volume
+    /// not the blended draws, FSR's composition mask or the volume
     /// layers), and for the
     /// blended passes whether transmission is compiled in.
     pub(super) fn constants(self) -> Vec<(&'static str, f64)> {
@@ -228,7 +228,7 @@ impl PipelineKey {
             constants.extend(self.lit.constants());
             let motion = !matches!(
                 self.pass,
-                GeometryPass::Blended { .. } | GeometryPass::Fsr2Composition
+                GeometryPass::Blended { .. } | GeometryPass::FsrComposition
             ) && !self.pass.volume();
             constants.push(("motion_vertices", f64::from(u8::from(motion))));
         }

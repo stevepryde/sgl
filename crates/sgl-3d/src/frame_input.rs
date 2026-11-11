@@ -99,7 +99,7 @@ pub struct FrameInput {
     /// and the mist's drift. Double precision, so sessions hours long keep
     /// their animation smooth.
     pub elapsed_seconds: f64,
-    /// Milliseconds since the previous frame: FSR2's `frameTimeDelta` and
+    /// Milliseconds since the previous frame: FSR's `frameTimeDelta` and
     /// auto exposure's time step.
     pub frame_time_ms: f32,
     /// Enabled material visibility groups. Use only the low 24 bits.

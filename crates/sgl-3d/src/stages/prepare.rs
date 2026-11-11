@@ -169,7 +169,7 @@ impl Prepare {
         views.reflection_camera = reflection_camera::Camera::new(camera.view, camera.projection);
         if let Some(jitter) = jitter {
             // As Diligent's `TemporalAntiAliasing::GetJitteredProjMatrix`
-            // and FSR2's documented jitter translation apply it to the
+            // and FSR's documented jitter translation apply it to the
             // projection, which the camera history records with the jitter
             // (`CameraFrame::jittered_projection`). Motion vectors stay
             // unjittered (`stable_view_projection`).

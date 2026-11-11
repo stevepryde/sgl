@@ -11,7 +11,7 @@
 // Wicked's int2 truncates, so one off the grid is skipped rather than
 // read as the edge pixel; the temporal pass keeps its own reduced-grid depth
 // history; the resolve reads radiance above binary16's range (+infinity) as
-// its largest finite value, as FSR2's PrepareRgb clamps its input, so its
+// its largest finite value, as FSR's PrepareRgb clamps its input, so its
 // tone map makes no inf / inf, and keeps its inverse within that range (#464).
 @group(0) @binding(8) var linear_sampler:sampler;
 

@@ -353,7 +353,7 @@ fn a_receiver_over_a_rough_floor_reflects_what_lies_in_front_of_it() {
 }
 
 // Plausible defects: the receiver pass leaves the motion of what lies behind
-// a receiver (TAA, FSR2 and motion blur would then reproject the receiver by
+// a receiver (TAA, FSR and motion blur would then reproject the receiver by
 // its background and trail it), writes jittered motion, or draws into the
 // opaque depth, which completion, probe culling and the transparent stage's
 // depth tests keep reading. The oracle is the geometry: a receiver moving 0.6

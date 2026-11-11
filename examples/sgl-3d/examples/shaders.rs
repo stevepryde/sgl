@@ -528,7 +528,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "opaque geometry + lighting",
         "geometry",
         "opaque lighting",
-        "FSR2 composition",
+        "FSR composition",
         "transmission copy",
         "blended",
         "TAA",

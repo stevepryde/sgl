@@ -113,7 +113,7 @@ cargo run --release -p sgl-3d-examples --example bistro -- --max-quality --rect-
 ```
 
 `--max-quality` is an example-owned bundle, not a new library default. It sets
-full scene resolution, FSR2 Native AA (no upscaling), 16× anisotropic filtering,
+full scene resolution, FSR Native AA (no upscaling), 16× anisotropic filtering,
 Ultra AO, full-resolution Velvet SSR, all-scene world-space reflections,
 hardware ray tracing, High ray-traced shadows, four high-quality shadow
 cascades, bloom, and High dynamic GI. It installs an authored volume of 2,584
@@ -126,14 +126,14 @@ The original textures top out at 2048; that export decodes about 3.5 GiB of
 images before geometry/GPU data and needs substantially more RAM than 1024.
 
 The JSON records the requested settings, actual AA, hardware RT state/errors,
-ray-source coverage and GI-volume presence. FSR2 can fall back to TAA; absent
+ray-source coverage and GI-volume presence. FSR can fall back to TAA; absent
 hardware ray tracing uses portable rays for GI/reflections and shadow maps.
 WSR and ray shadows internally trace at half resolution even at maximum
-supported quality. `--aa taa|fsr2|smaa|off` isolates AA, `--no-gi` leaves out the
+supported quality. `--aa taa|fsr2|fsr3|smaa|off` isolates AA, `--no-gi` leaves out the
 volume, and `--no-ray-shadows` leaves shadows on maps. `--settings FILE` loads
 a complete serialized `Settings` bundle after the max/default bundle; the
 AA override then applies. Device features are selected from these resolved
-settings, including FSR2 or hardware rays requested by a fixture. Use an
+settings, including FSR or hardware rays requested by a fixture. Use an
 explicit volume or `--max-quality` when its GI volume is required, or `--no-gi`
 to omit that volume. This supports
 controlled single-feature comparisons without changing production defaults.
@@ -175,13 +175,13 @@ The harness fetches/decodes/uploads the GLB, releases its source, and only
 then fetches the HDR environment. Its default is 1280×720, 60 warm-up frames,
 TAA, high three-cascade shadow maps, bloom and the supplied environment;
 AO, SSR, world-space reflections, ray shadows and dynamic GI are off.
-It requests no hardware RT or native FSR2 features. Actual AA, ray-tracing
+It requests no hardware RT or native FSR features. Actual AA, ray-tracing
 state, GI-volume absence, sizes, binding tier and errors are recorded, so a
 requested unavailable feature is not mistaken for active rendering.
 
 Controls include `--asset-dir DIR`, `--view street|bike|overview|bevy`,
 `--size WxH`, `--warmup N`, `--exposure STOPS`, `--cascades 1..4`,
-`--aa taa|smaa|fsr2|off`, `--rect-light`, and `--settings FILE` for a complete
+`--aa taa|smaa|fsr|off`, `--rect-light`, and `--settings FILE` for a complete
 serialized settings bundle. `--skip-build` repeats the saved release module;
 the module hash and its saved build provenance distinguish it from current
 checkout source. As with the native example, lighting changes are explicit

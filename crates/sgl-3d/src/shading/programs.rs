@@ -105,9 +105,9 @@ pub(crate) const ANISOTROPY_FS_ENTRY: &str = "anisotropy_fs";
 pub(crate) const SOURCE_FS_ENTRY: &str = "source_fs";
 pub(crate) const FUSED_OPAQUE_FS_ENTRY: &str = "fused_opaque_fs";
 pub(crate) const BLENDED_FS_ENTRY: &str = "blended_fs";
-pub(crate) const BLENDED_FSR2_MASKED_FS_ENTRY: &str = "blended_fsr2_masked_fs";
+pub(crate) const BLENDED_FSR_MASKED_FS_ENTRY: &str = "blended_fsr_masked_fs";
 pub(crate) const RECEIVER_FS_ENTRY: &str = "receiver_fs";
-pub(crate) const FSR2_COMPOSITION_FS_ENTRY: &str = "fsr2_composition_fs";
+pub(crate) const FSR_COMPOSITION_FS_ENTRY: &str = "fsr_composition_fs";
 /// The volume layers' fragments, each keeping one side
 /// (`view::pipelines::GeometryPass::VolumeEntry` and its siblings).
 pub(crate) const VOLUME_ENTRY_FS_ENTRY: &str = "volume_entry_fs";

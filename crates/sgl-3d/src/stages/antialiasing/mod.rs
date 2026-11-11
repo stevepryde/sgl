@@ -1,24 +1,24 @@
 //! Antialiasing: DiligentFX's TAA (a thin operation over the renderer's
-//! lent post-effect context) or AMD's FSR2 (`fsr2.rs`), resolving the
+//! lent post-effect context) or AMD's FSR (`fsr.rs`), resolving the
 //! complete linear HDR frame from the render size to the scene size before
-//! bloom and tone mapping, as in Hydrogent, Bevy, Unreal and AMD's FSR2
+//! bloom and tone mapping, as in Hydrogent, Bevy, Unreal and AMD's FSR
 //! placement.
 //!
 //! Reads: the complete HDR frame (the composite), the surface's depth and
-//! motion (the Surface contract), FSR2's masks, the camera's projection, the
+//! motion (the Surface contract), FSR's masks, the camera's projection, the
 //! frame time, the frame's exposure (`stages::exposure`) and the lent
 //! post-effect context, whose inputs hold the surface.
 //! Writes: the frame's jitter and mip bias; TAA's accumulation (in the
-//! context) or its own FSR2 output; which view completes the scene
+//! context) or its own FSR output; which view completes the scene
 //! (`Completed`).
-//! Honours: the antialiasing in effect, FSR2 and its quality (the effective
-//! sizing), FSR2's sharpening, the TAA and FSR2 diagnostics layers.
-//! Timing groups: `TAA`, `FSR2`.
-//! History: FSR2's context, which restarts on SGL3D's history loss; TAA's
+//! Honours: the antialiasing in effect, FSR and its quality (the effective
+//! sizing), FSR's sharpening, the TAA and FSR diagnostics layers.
+//! Timing groups: `TAA`, `FSR2`, `FSR3`.
+//! History: FSR's context, which restarts on SGL3D's history loss; TAA's
 //! lives in the post-effect context.
-pub(crate) mod fsr2;
+pub(crate) mod fsr;
 
-use crate::settings::Fsr2Quality;
+use crate::settings::{FsrQuality, FsrVersion};
 use crate::view::Jitter;
 use crate::view::effective::Effective;
 use crate::view::frame::{Completed, FrameContext};
@@ -28,61 +28,63 @@ use crate::view::targets::Sizes;
 
 #[derive(Default)]
 pub(crate) struct Antialiasing {
-    /// Present while FSR2 is chosen and its context runs on this device.
-    fsr2: Option<fsr2::Fsr2>,
-    /// Why FSR2 could not run; it is not retried.
-    fsr2_error: Option<String>,
-    /// FSR2 failed this frame and stopped.
+    /// Present while FSR is chosen and its context runs on this device.
+    fsr: Option<fsr::Fsr>,
+    /// Why FSR could not run; it is not retried.
+    errors: [Option<String>; 2],
+    selected: Option<FsrVersion>,
+    /// FSR failed this frame and stopped.
     failed: bool,
 }
 
 impl Antialiasing {
-    pub fn fsr2_running(&self) -> bool {
-        self.fsr2.is_some()
+    pub fn fsr_running(&self) -> Option<FsrVersion> {
+        self.fsr.as_ref().map(|fsr| fsr.version())
     }
 
     pub fn error(&self) -> Option<&str> {
-        self.fsr2_error.as_deref()
+        self.selected
+            .and_then(|version| self.errors[version.index()].as_deref())
     }
 
-    /// The render size for `scene_size`: FSR2's for its `fsr2` quality while
-    /// FSR2 is chosen and its context runs, else the scene size. As in AMD's
-    /// sample, the context upscales to the scene size with that as its
-    /// maximum render size, and is recreated when the scene size changes.
-    /// Also returns whether the context was dropped or recreated.
+    /// Recreate the one context on version or output-size changes. A failed
+    /// version stays unavailable for this renderer; the other can still run.
     pub fn resize(
         &mut self,
         device: &wgpu::Device,
         scene_size: [u32; 2],
-        fsr2: Option<Fsr2Quality>,
+        selection: Option<(FsrVersion, FsrQuality)>,
     ) -> ([u32; 2], bool) {
-        let Some(quality) = fsr2.filter(|_| self.fsr2_error.is_none()) else {
-            let dropped = self.fsr2.take().is_some();
+        self.selected = selection.map(|(version, _)| version);
+        let Some((version, quality)) =
+            selection.filter(|(version, _)| self.errors[version.index()].is_none())
+        else {
+            let dropped = self.fsr.take().is_some();
             return (scene_size, dropped);
         };
         let mut restarted = false;
         if self
-            .fsr2
+            .fsr
             .as_ref()
-            .is_none_or(|fsr2| fsr2.display_size() != scene_size)
+            .is_none_or(|fsr| fsr.display_size() != scene_size || fsr.version() != version)
         {
-            self.fsr2 = None;
+            self.fsr = None;
             restarted = true;
-            match fsr2::Fsr2::new(device, scene_size) {
-                Ok(fsr2) => self.fsr2 = Some(fsr2),
+            match fsr::Fsr::new(device, scene_size, version) {
+                Ok(fsr) => self.fsr = Some(fsr),
                 Err(error) => {
-                    self.fsr2_error = Some(error);
+                    self.errors[version.index()] = Some(error);
                     return (scene_size, restarted);
                 }
             }
         }
-        (fsr2::render_size(scene_size, quality), restarted)
+        (fsr::render_size(scene_size, quality, version), restarted)
     }
 
     /// Before the frame's geometry, after the lent post-effect context's
     /// `prepare` returned `context_jitter`: the jitter and mip bias of the
     /// temporal antialiasing that runs, if any. TAA's jitter is the
-    /// context's, at Hydrogent's mip bias. FSR2 decides whether its history
+    /// context's, at Hydrogent's mip bias. FSR decides whether its history
     /// continues and jitters at AMD's mip bias; the context's camera records
     /// that jitter.
     pub fn prepare(
@@ -93,9 +95,9 @@ impl Antialiasing {
         post_fx: Option<&mut PostFx>,
         context_jitter: Option<[f32; 2]>,
     ) -> Option<Jitter> {
-        // A reset ends FSR2's history even in a frame it does not run.
+        // A reset ends FSR's history even in a frame it does not run.
         if !history.valid
-            && let Some(upscaler) = self.fsr2.as_mut()
+            && let Some(upscaler) = self.fsr.as_mut()
         {
             upscaler.forget_history();
         }
@@ -104,11 +106,11 @@ impl Antialiasing {
                 ndc: context_jitter.expect("TAA runs in the post-effect context"),
                 mip_bias: TAA_MIP_BIAS,
             })
-        } else if effective.fsr2 {
-            let upscaler = self.fsr2.as_mut().unwrap();
+        } else if effective.fsr {
+            let upscaler = self.fsr.as_mut().unwrap();
             let jitter = Jitter {
                 ndc: upscaler.prepare(sizes.render, history.frames, history.valid),
-                mip_bias: fsr2::mip_bias(sizes.render, sizes.scene),
+                mip_bias: fsr::mip_bias(sizes.render, sizes.scene),
             };
             if let Some(post_fx) = post_fx {
                 post_fx.set_jitter(jitter.ndc);
@@ -119,9 +121,9 @@ impl Antialiasing {
         }
     }
 
-    /// TAA or FSR2 of the composite, the complete linear HDR frame, which
+    /// TAA or FSR of the composite, the complete linear HDR frame, which
     /// `exposure` exposes. Returns where the completed scene is: the
-    /// composite when neither ran, or FSR2 failed.
+    /// composite when neither ran, or FSR failed.
     pub fn encode(
         &mut self,
         ctx: &mut FrameContext<'_>,
@@ -133,25 +135,25 @@ impl Antialiasing {
             let post_fx = post_fx.unwrap();
             post_fx.temporal_anti_aliasing(ctx.device, ctx.queue, ctx.encoder, color, ctx.timing);
             Completed::Taa
-        } else if ctx.effective.fsr2 {
-            // FSR2 upscales the same linear HDR frame (AMD's FSR2 placement).
-            let upscaler = self.fsr2.as_mut().unwrap();
-            let inputs = fsr2::Inputs {
+        } else if ctx.effective.fsr {
+            // FSR upscales the same linear HDR frame (AMD's FSR placement).
+            let upscaler = self.fsr.as_mut().unwrap();
+            let inputs = fsr::Inputs {
                 color,
                 depth: ctx.surface.depth,
                 motion: &ctx.targets.motion,
-                masks: ctx.targets.fsr2_masks.as_ref().expect("FSR2 frame masks"),
+                masks: ctx.targets.fsr_masks.as_ref().expect("FSR frame masks"),
                 projection: glam::Mat4::from_cols_array_2d(&ctx.values.view.projection),
                 frame_time_ms: ctx.input.frame_time_ms,
                 exposure,
-                sharpness: ctx.effective.fsr2_sharpness,
+                sharpness: ctx.effective.fsr_sharpness,
             };
             match upscaler.dispatch(ctx.device, ctx.encoder, &inputs, ctx.timing) {
-                Ok(()) => Completed::Fsr2,
-                // TAA, the antialiasing in effect without FSR2, takes over.
+                Ok(()) => Completed::Fsr,
+                // TAA, the antialiasing in effect without FSR, takes over.
                 Err(error) => {
-                    self.fsr2 = None;
-                    self.fsr2_error = Some(error);
+                    self.errors[upscaler.version().index()] = Some(error);
+                    self.fsr = None;
                     self.failed = true;
                     Completed::Composite
                 }
@@ -161,18 +163,18 @@ impl Antialiasing {
         }
     }
 
-    /// Whether FSR2 failed and stopped since the last call.
+    /// Whether FSR failed and stopped since the last call.
     pub fn take_failure(&mut self) -> bool {
         std::mem::take(&mut self.failed)
     }
 
-    /// FSR2's output of the last successful frame.
+    /// FSR's output of the last successful frame.
     pub fn output(&self) -> &wgpu::TextureView {
-        self.fsr2.as_ref().expect("FSR2 ran").output()
+        self.fsr.as_ref().expect("FSR ran").output()
     }
 
     #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub fn fsr2(&self) -> Option<&fsr2::Fsr2> {
-        self.fsr2.as_ref()
+    pub fn fsr(&self) -> Option<&fsr::Fsr> {
+        self.fsr.as_ref()
     }
 }

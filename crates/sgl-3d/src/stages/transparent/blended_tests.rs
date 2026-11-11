@@ -132,7 +132,7 @@ fn blended_surfaces_leave_depth_and_motion_unchanged() {
     assert!(changed > 0, "the blended surface was not drawn");
 }
 
-// Plausible defects: blended surfaces leave FSR2's masks unwritten, write
+// Plausible defects: blended surfaces leave FSR's masks unwritten, write
 // them where they are not, write other values than AMD documents, or a later
 // transparent pass clears what they wrote. The oracle is AMD's FSR
 // documentation ("Reactive mask": alpha, clamped to about 0.9) and its
@@ -140,13 +140,13 @@ fn blended_surfaces_leave_depth_and_motion_unchanged() {
 // blended square of alpha 0.4 the masks hold 0.4 and 0.4, behind one of 0.95
 // they hold 0.9 and 0.95, and between them nothing.
 #[test]
-fn blended_surfaces_write_fsr2s_masks() {
-    let Some((device, queue)) = test_support::fsr2_device() else {
+fn blended_surfaces_write_fsrs_masks() {
+    let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
     let settings = Settings {
         antialiasing: settings::Antialiasing::Fsr2,
-        fsr2_quality: settings::Fsr2Quality::NativeAa,
+        fsr_quality: settings::FsrQuality::NativeAa,
         bloom: settings::Bloom::Off,
         atmosphere: false,
         ..Settings::default()
@@ -154,8 +154,8 @@ fn blended_surfaces_write_fsr2s_masks() {
     let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
     if renderer.antialiasing_in_effect(&settings) != settings::Antialiasing::Fsr2 {
         eprintln!(
-            "skipping: FSR2 does not run here: {:?}",
-            renderer.fsr2_error()
+            "skipping: FSR does not run here: {:?}",
+            renderer.fsr_error()
         );
         return;
     }
@@ -185,7 +185,7 @@ fn blended_surfaces_write_fsr2s_masks() {
         eye: Vec3::ZERO,
     });
     input.camera_cut = true;
-    let output = crate::view::targets::target(&device, "FSR2 masks frame", SIZE, gbuffer::COLOR);
+    let output = crate::view::targets::target(&device, "FSR masks frame", SIZE, gbuffer::COLOR);
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.render(
         &device,
@@ -201,7 +201,7 @@ fn blended_surfaces_write_fsr2s_masks() {
     renderer.finish_frame(&mut scene);
     let [reactive, composition] = renderer
         .targets()
-        .fsr2_masks
+        .fsr_masks
         .as_ref()
         .unwrap()
         .each_ref()

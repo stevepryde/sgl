@@ -138,7 +138,7 @@ const FRAME_BAKED_LIGHTING:u32=2u;
 // An irradiance atlas is installed (Scene::set_static_irradiance_atlas).
 const FRAME_IRRADIANCE_ATLAS:u32=4u;
 const FRAME_BACKDROP_COLOR:u32=8u;
-// The camera's shadows take the temporal filter, for TAA or FSR2 to resolve.
+// The camera's shadows take the temporal filter, for TAA or FSR to resolve.
 const FRAME_TEMPORAL_SHADOW_FILTER:u32=16u;
 // The camera's shadows take one hardware 2x2 tap (the Low shadow quality).
 const FRAME_HARDWARE_SHADOW_FILTER:u32=32u;

@@ -1,4 +1,4 @@
-// Auto exposure, metered at the render size before antialiasing, since FSR2
+// Auto exposure, metered at the render size before antialiasing, since FSR
 // reads the result (stages/exposure.rs). Ports Bevy 9d12036
 // crates/bevy_post_process/src/auto_exposure/auto_exposure.wesl
 // (color_to_bin, metering_weight, compute_histogram, compute_average), MIT OR
@@ -12,7 +12,7 @@
 // correction to its target; the adaptation step stops at the remaining
 // delta, so a long frame lands on the target where Bevy and Godot overshoot;
 // the result is also written as the frame's exposure multiplier, which the
-// tone map and FSR2 read.
+// tone map and FSR read.
 // The most points a compensation curve has (CompensationCurve::MAX_POINTS).
 const EXPOSURE_COMPENSATION_POINTS:u32=8u;
 // Exactly the histogram's 64 bins; no data can extend either histogram walk.

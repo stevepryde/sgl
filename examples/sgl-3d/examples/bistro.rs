@@ -124,9 +124,10 @@ mod native {
                         options.aa = Some(match args.next().as_deref() {
                             Some("taa") => Antialiasing::Taa,
                             Some("fsr2") => Antialiasing::Fsr2,
+                            Some("fsr3") => Antialiasing::Fsr3,
                             Some("smaa") => Antialiasing::Smaa,
                             Some("off") => Antialiasing::Off,
-                            _ => return Err("--aa needs taa|fsr2|smaa|off".into()),
+                            _ => return Err("--aa needs taa|fsr2|fsr3|smaa|off".into()),
                         })
                     }
                     "--no-gi" => options.no_gi = true,
@@ -136,7 +137,7 @@ mod native {
                     "--split" => options.split = true,
                     "--help" => {
                         println!(
-                            "bistro [--asset FILE] [--output DIR] [--view all|CAMERA_ID] [--size WxH] [--frames N] [--warmup N] [--exposure STOPS] [--rect-light] [--no-normal-maps] [--split] [--max-quality] [--aa taa|fsr2|smaa|off] [--no-gi] [--no-ray-shadows] [--settings FILE] [--gi-volume FILE] [--fixture FILE] [--cascades 1..4] [--capture-probe FILE]"
+                            "bistro [--asset FILE] [--output DIR] [--view all|CAMERA_ID] [--size WxH] [--frames N] [--warmup N] [--exposure STOPS] [--rect-light] [--no-normal-maps] [--split] [--max-quality] [--aa taa|fsr2|fsr3|smaa|off] [--no-gi] [--no-ray-shadows] [--settings FILE] [--gi-volume FILE] [--fixture FILE] [--cascades 1..4] [--capture-probe FILE]"
                         );
                         std::process::exit(0);
                     }
@@ -389,8 +390,11 @@ mod native {
         } else {
             wgpu::Features::empty()
         };
-        let fsr2_features = if settings.antialiasing == Antialiasing::Fsr2 {
-            sgl_3d::graphics_device::fsr2_features(&adapter)
+        let fsr_features = if matches!(
+            settings.antialiasing,
+            Antialiasing::Fsr2 | Antialiasing::Fsr3
+        ) {
+            sgl_3d::graphics_device::fsr_features(&adapter)
         } else {
             wgpu::Features::empty()
         };
@@ -398,7 +402,7 @@ mod native {
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 required_features: sgl_3d::graphics_device::features(&adapter)
                     | hardware_features
-                    | fsr2_features
+                    | fsr_features
                     | compression_feature
                     | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY),
                 required_limits: sgl_3d::graphics_device::limits(&adapter),
@@ -690,7 +694,7 @@ mod native {
                     "antialiasing": format!("{:?}",renderer.antialiasing_in_effect(&settings)),
                     "render_size": renderer.render_size(),
                     "scene_size": renderer.scene_size(),
-                    "fsr2_error": renderer.fsr2_error(),
+                    "fsr_error": renderer.fsr_error(),
                     "hardware_ray_tracing": renderer.ray_tracing_in_effect(&settings, &scene),
                     "ray_tracing_error": renderer.ray_tracing_error(),
                     "ray_tracing_stats": format!("{:?}",renderer.ray_tracing_stats()),

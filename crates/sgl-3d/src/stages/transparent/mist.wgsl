@@ -27,7 +27,7 @@ fn mist_color(i:Mist)->vec4<f32> {
 @fragment fn mist_fs(i:Mist)->@location(0) vec4<f32> {
  return mist_color(i);
 }
-// FSR2's masks (fsr2.rs): mist is a translucent material in AMD's FSR sample
+// FSR's masks (fsr.rs): mist is a translucent material in AMD's FSR sample
 // (FidelityFX SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt,
 // framework/rendermodules/translucency/shaders/translucencyps.hlsl:168-169 and
 // samples/fsrapi/fsrapirendermodule.cpp:100-101): no reactivity, its alpha as
@@ -37,7 +37,7 @@ struct MistFsr2Masked {
  @location(1) reactive:f32,
  @location(2) composition:f32,
 }
-@fragment fn mist_fsr2_masked_fs(i:Mist)->MistFsr2Masked {
+@fragment fn mist_fsr_masked_fs(i:Mist)->MistFsr2Masked {
  let color=mist_color(i);
  return MistFsr2Masked(color,0.,color.a);
 }

@@ -909,16 +909,16 @@ fn a_packed_occlusion_map_occludes_lightmapped_multiple_scattering() {
 }
 
 // Defect: the real stage keeps XeGTAO's non-temporal sample pattern even
-// while TAA/FSR2 accumulates, or animates it with AA Off/SMAA. Observe a
+// while TAA/FSR accumulates, or animates it with AA Off/SMAA. Observe a
 // static physical box/floor through the whole renderer, not phase constants.
-// Diligent TAA repeats its 16-sample raster jitter; FSR2 Native AA repeats
+// Diligent TAA repeats its 16-sample raster jitter; FSR Native AA repeats
 // after eight. Matching depth/normals prove that frame 1 and 17 see the same
 // rasterized geometry, so a changed AO sample is independent of jitter.
 // A camera cut must reproduce the first sample, with no AO-owned history.
 #[test]
 fn gtao_temporal_samples_follow_effective_aa_and_camera_resets() {
     use crate::diagnostics::DiagnosticTarget;
-    use settings::{Antialiasing, Fsr2Quality, RenderPreset};
+    use settings::{Antialiasing, FsrQuality, RenderPreset};
     for (request, aa, preset) in [
         (
             test_support::device as fn() -> _,
@@ -936,11 +936,11 @@ fn gtao_temporal_samples_follow_effective_aa_and_camera_resets() {
             Antialiasing::Preset,
             RenderPreset::High,
         ),
-        // Exercise both FSR2's TAA fallback on a regular device and its
+        // Exercise both FSR's TAA fallback on a regular device and its
         // actual running path where the adapter offers the required features.
         (test_support::device, Antialiasing::Fsr2, RenderPreset::High),
         (
-            test_support::fsr2_device,
+            test_support::fsr_device,
             Antialiasing::Fsr2,
             RenderPreset::High,
         ),
@@ -953,7 +953,7 @@ fn gtao_temporal_samples_follow_effective_aa_and_camera_resets() {
             preset,
             scene_resolution: settings::SceneResolution::Full,
             antialiasing: aa,
-            fsr2_quality: Fsr2Quality::NativeAa,
+            fsr_quality: FsrQuality::NativeAa,
             screen_space_reflections: settings::ScreenSpaceReflections::Off,
             atmosphere: false,
             bloom: settings::Bloom::Off,
@@ -975,7 +975,7 @@ fn gtao_temporal_samples_follow_effective_aa_and_camera_resets() {
             wgpu::TextureFormat::Rgba8Unorm,
         );
         let mut snapshots = Vec::new();
-        // Cut at frame 24: FSR2 preserves its jitter counter across cuts,
+        // Cut at frame 24: FSR preserves its jitter counter across cuts,
         // so Native AA returns to the initial raster sample every eight frames.
         for index in 0..24 {
             input.camera_cut = index == 0;

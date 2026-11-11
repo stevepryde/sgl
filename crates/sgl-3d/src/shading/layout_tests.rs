@@ -184,9 +184,9 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         view::SOURCE_FS_ENTRY,
         view::FUSED_OPAQUE_FS_ENTRY,
         view::BLENDED_FS_ENTRY,
-        view::BLENDED_FSR2_MASKED_FS_ENTRY,
+        view::BLENDED_FSR_MASKED_FS_ENTRY,
         view::RECEIVER_FS_ENTRY,
-        view::FSR2_COMPOSITION_FS_ENTRY,
+        view::FSR_COMPOSITION_FS_ENTRY,
         view::VOLUME_ENTRY_FS_ENTRY,
         view::VOLUME_EXIT_FS_ENTRY,
         view::VOLUME_SECOND_EXIT_FS_ENTRY,
@@ -231,7 +231,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             vec![
                 effects::GLOW_VS_ENTRY,
                 effects::GLOW_SOFT_FS_ENTRY,
-                effects::GLOW_SOFT_FSR2_MASKED_FS_ENTRY,
+                effects::GLOW_SOFT_FSR_MASKED_FS_ENTRY,
             ],
         ),
         (
@@ -239,7 +239,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             vec![
                 mist::MIST_VS_ENTRY,
                 mist::MIST_FS_ENTRY,
-                mist::MIST_FSR2_MASKED_FS_ENTRY,
+                mist::MIST_FSR_MASKED_FS_ENTRY,
             ],
         ),
         (

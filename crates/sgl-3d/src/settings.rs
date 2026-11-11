@@ -13,9 +13,9 @@ pub enum RenderPreset {
 
 /// Preset is TAA on High and SMAA on Low. TAA is DiligentFX's temporal
 /// anti-aliasing: the frame renders with sub-pixel jitter and resolves into a
-/// history before bloom and tone mapping. FSR2 is AMD's FidelityFX Super
-/// Resolution 2, which does the same while upscaling from the
-/// [`Fsr2Quality`] render size; TAA replaces it where the device cannot run
+/// history before bloom and tone mapping. FSR2 and FSR3 are mutually exclusive
+/// AMD temporal upscalers, using the
+/// [`FsrQuality`] render size; TAA replaces it where the device cannot run
 /// it ([`Renderer::antialiasing_in_effect`](crate::Renderer::antialiasing_in_effect)).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Antialiasing {
@@ -25,9 +25,38 @@ pub enum Antialiasing {
     Smaa,
     Off,
     Fsr2,
+    /// AMD FSR3.1 temporal upscaling, without frame generation.
+    Fsr3,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FsrVersion {
+    Fsr2,
+    Fsr3,
+}
+impl FsrVersion {
+    pub fn index(self) -> usize {
+        match self {
+            Self::Fsr2 => 0,
+            Self::Fsr3 => 1,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fsr2 => "FSR2",
+            Self::Fsr3 => "FSR3",
+        }
+    }
 }
 impl Antialiasing {
-    /// The chosen method: Taa, Smaa, Off or Fsr2.
+    pub(crate) fn fsr(self) -> Option<FsrVersion> {
+        match self {
+            Self::Fsr2 => Some(FsrVersion::Fsr2),
+            Self::Fsr3 => Some(FsrVersion::Fsr3),
+            _ => None,
+        }
+    }
+
+    /// The chosen method: Taa, Smaa, Off, Fsr2 or Fsr3.
     pub fn resolve(self, low: bool) -> Self {
         match self {
             Self::Preset if low => Self::Smaa,
@@ -37,12 +66,12 @@ impl Antialiasing {
     }
 }
 
-/// FSR2's render size relative to the scene (its output): Native AA renders
+/// FSR's render size relative to the scene (its output): Native AA renders
 /// every scene pixel, the others are the SDK's quality modes
-/// (`FfxFsr2QualityMode`), 1.5×, 1.7×, 2× and 3× per dimension. The default is
+/// (FSR2 or FSR3), 1.5×, 1.7×, 2× and 3× per dimension. The default is
 /// AMD's FSR sample's (`m_ScalePreset`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Fsr2Quality {
+pub enum FsrQuality {
     NativeAa,
     #[default]
     Quality,
@@ -257,7 +286,7 @@ pub enum ShadowQuality {
     /// Godot's desktop defaults: 2048-texel cascades (its 4096 atlas holds
     /// four; Bevy's `DirectionalLightShadowMap` default), a 4096-texel
     /// local-light atlas, and Bevy's soft filters: Jimenez's spiral, turned
-    /// each frame, while TAA or FSR2 resolves it, else Castaño's kernel.
+    /// each frame, while TAA or FSR resolves it, else Castaño's kernel.
     #[default]
     High,
 }
@@ -354,7 +383,7 @@ pub enum SceneResolution {
 }
 
 /// Spatial reconstruction when `SceneResolution` is below the output size.
-/// Independent of antialiasing and native FSR2's temporal reconstruction.
+/// Independent of antialiasing and native FSR's temporal reconstruction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Upscaling {
     /// Existing linear presentation, with no spatial reconstruction pass.
@@ -366,7 +395,7 @@ pub enum Upscaling {
 
 /// Every rendering setting the renderer resolves into its effective
 /// configuration each frame. Size-affecting choices (preset, scene
-/// resolution, FSR2 and its quality) take effect at `Renderer::resize`.
+/// resolution, FSR and its quality) take effect at `Renderer::resize`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -374,12 +403,12 @@ pub struct Settings {
     pub scene_resolution: SceneResolution,
     pub upscaling: Upscaling,
     pub antialiasing: Antialiasing,
-    pub fsr2_quality: Fsr2Quality,
-    /// FSR2's robust contrast-adaptive sharpening (RCAS) of its output.
-    pub fsr2_sharpening: bool,
-    /// How much FSR2 sharpens while `fsr2_sharpening` is on, 0..=1 as AMD's
+    pub fsr_quality: FsrQuality,
+    /// FSR's robust contrast-adaptive sharpening (RCAS) of its output.
+    pub fsr_sharpening: bool,
+    /// How much FSR sharpens while `fsr_sharpening` is on, 0..=1 as AMD's
     /// `sharpness`: 0 is the least, 1 the most. Others are clamped, NaN to 0.
-    pub fsr2_sharpness: f32,
+    pub fsr_sharpness: f32,
     pub smaa_quality: SmaaQuality,
     pub anisotropic_filtering: AnisotropicFiltering,
     pub bloom: Bloom,
@@ -465,7 +494,7 @@ impl Default for Settings {
     /// High, with atmosphere allowed and the fog filter and volume paths
     /// on, heat
     /// distortion, world-space reflections, hardware ray tracing,
-    /// ray-traced shadows, occlusion culling and motion blur off, FSR2
+    /// ray-traced shadows, occlusion culling and motion blur off, FSR
     /// sharpening on at AMD's FSR sample's 0.8
     /// (`m_RCASSharpen`, `m_Sharpness`), and every other choice at its
     /// default.
@@ -475,9 +504,9 @@ impl Default for Settings {
             scene_resolution: SceneResolution::default(),
             upscaling: Upscaling::default(),
             antialiasing: Antialiasing::default(),
-            fsr2_quality: Fsr2Quality::default(),
-            fsr2_sharpening: true,
-            fsr2_sharpness: 0.8,
+            fsr_quality: FsrQuality::default(),
+            fsr_sharpening: true,
+            fsr_sharpness: 0.8,
             smaa_quality: SmaaQuality::default(),
             tone_mapping: ToneMapping::default(),
             anisotropic_filtering: AnisotropicFiltering::default(),
@@ -577,8 +606,8 @@ mod diagnostics {
         pub local_lights: bool,
         /// TAA: SMAA stands in for it.
         pub taa: bool,
-        /// FSR2: its render-size frame is presented as it is.
-        pub fsr2: bool,
+        /// FSR: its render-size frame is presented as it is.
+        pub fsr: bool,
         /// The volumetric fog and mist.
         pub atmosphere: bool,
         pub bloom: bool,

@@ -689,10 +689,10 @@ pub(crate) fn device_without(features: wgpu::Features) -> Option<(wgpu::Device, 
     device_choosing(|adapter| crate::graphics_device::features(adapter) - features)
 }
 
-/// `device`, with FSR2's features where the adapter has them.
-pub(crate) fn fsr2_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+/// `device`, with FSR's features where the adapter has them.
+pub(crate) fn fsr_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     device_choosing(|adapter| {
-        crate::graphics_device::features(adapter) | crate::graphics_device::fsr2_features(adapter)
+        crate::graphics_device::features(adapter) | crate::graphics_device::fsr_features(adapter)
     })
 }
 

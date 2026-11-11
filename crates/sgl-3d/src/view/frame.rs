@@ -100,8 +100,8 @@ pub(crate) struct ShadowMask<'a> {
 pub(crate) enum Completed {
     /// TAA's output in the post-effect context.
     Taa,
-    /// FSR2's output.
-    Fsr2,
+    /// FSR's output.
+    Fsr,
     /// The shared composite.
     Composite,
 }

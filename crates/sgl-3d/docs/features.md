@@ -6,8 +6,8 @@ settings a game chooses are listed in [settings](settings.md).
 ## Platforms
 
 Native (Metal, Vulkan, DX12) and the browser (WASM + WebGPU) run the same
-features, with two exceptions: FSR2 needs native-only device features, so the
-browser runs TAA in its place and `Renderer::fsr2_error` says why, and
+features, with two exceptions: FSR2 and FSR3 need native-only device features, so the
+browser runs TAA in its place and `Renderer::fsr_error` says why, and
 `Renderer::capture_specular_probe`, an authoring tool that blocks for its
 readback, runs natively only. Hardware ray tracing is native too, where the
 device has ray queries; elsewhere rays trace the software BVHs. WebGL2 is not a target:
@@ -152,7 +152,7 @@ them through unrefracted. A probe captured on an
 - **Blended receivers** (`AlphaMode::Blend { receives_screen_space_reflections:
   true, .. }`): water or glass, with the normals the game animates, that
   receives the frame's screen-space reflections where it is the nearest
-  receiver, and that TAA, FSR2 and motion blur reproject by its own motion.
+  receiver, and that TAA, FSR and motion blur reproject by its own motion.
   One reflecting layer per pixel; a transmissive receiver refracts too. Move
   water's waves with a shader's vertex function and add their detail with
   scrolling normal layers; a mesh replaced every frame with
@@ -163,13 +163,13 @@ them through unrefracted. A probe captured on an
   normal map drawn as two layers, each with its velocity, scale and
   strength, moving with `FrameInput::elapsed_seconds` (an `f64`) in every
   view and ray: water's waves with no per-frame upload, on static instances
-  too. Precise however long a session runs. FSR2 is told where they move,
+  too. Precise however long a session runs. FSR is told where they move,
   opaque surfaces included, as AMD asks for animated textures.
   [Scrolling normal layers](../README.md#scrolling-normal-layers).
 - **Programmable surfaces** (`Scene::add_shader`, `SurfaceMaterial::shader`
   through `Scene::set_material`): the game's WGSL vertex and surface
   functions for a material, run in every pass that rasterises it (G-buffer,
-  lighting, receivers, blended draws, FSR2's composition pass, captures,
+  lighting, receivers, blended draws, FSR's composition pass, captures,
   cascades and local-light faces), with motion and culling that follow
   them: waves on static water chunks, wind on vegetation, glass of varying
   thickness, with no per-frame upload. On `Extended`, a blended draw's
@@ -384,8 +384,7 @@ Environment and probe specular always apply. On top of them:
   on draws no geometry again.
   [Ambient occlusion](../README.md#ambient-occlusion).
 - **Antialiasing**: SGL's DiligentFX-derived TAA in `sgl-post-fx`, SMAA at
-  SMAA 2.8's Low, Medium, High or Ultra preset, or AMD FSR2, which also
-  upscales, with RCAS sharpening the game can turn off or set.
+  SMAA 2.8's Low, Medium, High or Ultra preset, or AMD FSR2/FSR3.1 temporal upscaling (no frame generation), with RCAS sharpening the game can turn off or set.
   [Temporal anti-aliasing](../README.md#temporal-anti-aliasing).
 - **Anisotropic texture filtering** of materials, Off to 16×.
 - **Scene resolution** scaling below the output size; the game's UI stays at
@@ -393,7 +392,7 @@ Environment and probe specular always apply. On top of them:
 - **Exposure** (`FrameInput::exposure`): fixed stops, or automatic exposure
   from a log-luminance histogram with a metering mask, a compensation curve,
   separate brightening and darkening speeds and limits. Near-black pixels
-  position the outlier filter but do not lower the average. FSR2 and the tone map
+  position the outlier filter but do not lower the average. FSR and the tone map
   take the same exposure.
   [Exposure, bloom and colour grading](../README.md#exposure-bloom-and-colour-grading).
 - **Bloom** (`FrameInput::bloom`): energy-conserving, through a mip chain;
