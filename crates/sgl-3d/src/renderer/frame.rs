@@ -56,8 +56,6 @@ pub(super) fn render(
         transparent,
         exposure,
         antialiasing,
-        #[cfg(not(target_arch = "wasm32"))]
-        generation,
         motion_blur,
         post,
         rendered,
@@ -77,18 +75,6 @@ pub(super) fn render(
         super::effective::SceneContent::of(scene),
         super::effective::Device {
             fsr_running: antialiasing.fsr_running(),
-            frame_generation: {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    generation
-                        .as_ref()
-                        .is_some_and(|generation| generation.available())
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    false
-                }
-            },
             fused_supported: pipelines.fused_supported,
             occlusion_supported: cull.occlusion_supported(),
             ray_queries: ray_form.as_ref().map(|form| form.form()),
@@ -318,20 +304,15 @@ pub(super) fn render(
             true,
         );
     }
-    let _distortion = effective
-        .heat
-        .then(|| transparent.encode_heat(&mut ctx, &targets.composite))
-        .flatten();
+    if effective.heat {
+        transparent.encode_heat(&mut ctx, &targets.composite);
+    }
     // The frame's one exposure, which FSR and the tone map read.
     exposure.encode(&mut ctx, &targets.composite);
     let completed_kind = antialiasing.encode(&mut ctx, post_fx.as_mut(), exposure.texture());
     if antialiasing.take_failure() {
         post.forget_inputs();
         motion_blur.forget_inputs();
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(generation) = generation.as_mut() {
-        generation.prepare(&mut ctx);
     }
     let antialiased = completed(completed_kind, post_fx, antialiasing, targets);
     let completed_view = motion_blur
@@ -355,10 +336,6 @@ pub(super) fn render(
         exposure.view(),
         output,
     );
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(generation) = generation.as_mut() {
-        generation.encode(&mut ctx, output.texture(), _distortion.as_ref());
-    }
     #[cfg(feature = "diagnostics")]
     if let Some(probe) = probe.as_deref() {
         probe.observe(

@@ -9,6 +9,9 @@ the code. They are kept current with every feature change; the code and the
 - [Settings](settings.md): every rendering setting a game can choose, with
   values, defaults and preset behaviour.
 
+For UI composed into the renderer's output, `Renderer::output_encodes_srgb()`
+reports whether its shader should emit encoded sRGB or linear values.
+
 ## What SGL3D is
 
 A Rust/wgpu 3D renderer that a game links as a library, native or in the
@@ -94,19 +97,6 @@ its rendering `settings::Settings`.
    `Scene::move_origin` to keep what it renders near the render origin
    (chunk-aligned in a streamed world); then give the camera and edits in
    the new frame. Nothing restarts or redraws.
-
-For native frame generation, use `Presenter` in place of the caller-target
-renderer: request FSR device features, set `Settings::frame_generation` to
-`Fsr3`, call `presenter.render`, draw UI into the returned frame's `ui_target`
-using its `encoder`, then call `frame.present`. It owns submission and commits
-histories; generated frames do not run game simulation. With generation off,
-it composes directly to the surface without the generation workers. Call `resize` for a
-changed surface/scale and report `frame_generation_status()` to the player.
-Heat distortion supplies its UV offset field to AMD's existing interpolation
-input automatically; no game-owned distortion resource is required.
-See [native presentation](../README.md#native-frame-generation) for UI color,
-error recovery and GPU timing, and the
-[`frame_generation` example](../../../examples/sgl-3d/examples/frame_generation.rs).
 
 The examples live in the repository, not the published crate:
 <https://github.com/stevepryde/sgl/tree/main/examples/sgl-3d/examples>.

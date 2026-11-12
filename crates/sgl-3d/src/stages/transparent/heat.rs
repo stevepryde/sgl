@@ -15,7 +15,6 @@ pub(crate) static HEAT: crate::shading::Module = crate::shading::Module {
 /// The entry points the shimmer's pipeline is created with.
 pub(crate) const VS_ENTRY: &str = "vs";
 pub(crate) const FS_ENTRY: &str = "fs";
-pub(crate) const FS_FIELD_ENTRY: &str = "fs_with_field";
 /// The heat shimmer's vertex buffer, read by `vs`.
 pub(crate) const HEAT_LAYOUT: VertexLayout =
     vertex_layout!(HeatDistortion, [position, displacement, weight]);
@@ -31,11 +30,9 @@ struct View {
 
 pub(crate) struct Heat {
     pipeline: wgpu::RenderPipeline,
-    field_pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     view: wgpu::Buffer,
     source: Option<wgpu::TextureView>,
-    distortion: Option<wgpu::TextureView>,
 }
 impl Heat {
     pub fn new(device: &wgpu::Device) -> Self {
@@ -83,43 +80,33 @@ impl Heat {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |field: bool| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("bounded heat shimmer"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(VS_ENTRY),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(HEAT_LAYOUT.buffer)],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(if field { FS_FIELD_ENTRY } else { FS_ENTRY }),
-                    compilation_options: Default::default(),
-                    targets: &[
-                        Some(wgpu::ColorTargetState {
-                            format: HDR,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                        field.then_some(wgpu::ColorTargetState {
-                            format: wgpu::TextureFormat::Rg16Float,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                    ],
-                }),
-                primitive: Default::default(),
-                depth_stencil: None,
-                multisample: Default::default(),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("bounded heat shimmer"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some(VS_ENTRY),
+                compilation_options: Default::default(),
+                buffers: &[Some(HEAT_LAYOUT.buffer)],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some(FS_ENTRY),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         Self {
-            pipeline: pipeline(false),
-            field_pipeline: pipeline(true),
+            pipeline,
             layout,
             view: crate::counters::buffer_init(
                 device,
@@ -134,7 +121,6 @@ impl Heat {
                 },
             ),
             source: None,
-            distortion: None,
         }
     }
     /// Heat distortion of `color`, at the render size, in place, its
@@ -151,10 +137,9 @@ impl Heat {
         color: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         timing: Option<&crate::timing::GpuTiming>,
-        record_distortion: bool,
-    ) -> Option<&wgpu::TextureView> {
+    ) {
         if transient.heat_count == 0 {
-            return None;
+            return;
         }
         let size = [color.texture().width(), color.texture().height()];
         let source = hold(
@@ -192,40 +177,18 @@ impl Heat {
                 },
             ],
         });
-        let field = record_distortion.then(|| {
-            hold(
-                &mut self.distortion,
-                wgpu::TextureView::texture,
-                color.texture().size(),
-                || {
-                    target(
-                        device,
-                        "heat distortion UV offsets",
-                        size,
-                        wgpu::TextureFormat::Rg16Float,
-                    )
-                },
-            )
-        });
-        let field_attachment = field.and_then(attachment);
         let mut attachment = attachment(color).unwrap();
         attachment.ops.load = wgpu::LoadOp::Load;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("camera heat before bloom and HUD"),
-            color_attachments: &[Some(attachment), field_attachment],
+            color_attachments: &[Some(attachment)],
             timestamp_writes: timing.and_then(|t| t.render_pass("heat distortion")),
             ..Default::default()
         });
-        pass.set_pipeline(if record_distortion {
-            &self.field_pipeline
-        } else {
-            &self.pipeline
-        });
+        pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &group, &[]);
         pass.set_vertex_buffer(0, transient.heat.slice(..));
         pass.draw(0..transient.heat_count, 0..1);
-        drop(pass);
-        field
     }
 }
 
@@ -354,13 +317,9 @@ mod tests {
                         &color,
                         &depth,
                         None,
-                        true,
                     );
-                    let field = heat.distortion.as_ref().map(|view| view.texture().clone());
                     queue.submit([encoder.finish()]);
                     let actual = crate::test_support::read(&device, &queue, color.texture(), 8);
-                    let offsets =
-                        field.map(|field| crate::test_support::read(&device, &queue, &field, 4));
                     for y in 0..size[1] {
                         for x in 0..size[0] {
                             let i = ((y * size[0] + x) * 8) as usize;
@@ -376,26 +335,6 @@ mod tests {
                                 } else {
                                     x >= 3 && x != 12 && x != 13
                                 };
-                            if !clear {
-                                let field = offsets.as_ref().unwrap();
-                                let offset_index = i / 2;
-                                for (axis, dimension) in size.iter().enumerate() {
-                                    let measured =
-                                        (crate::test_support::half(&actual[i + axis * 2..])
-                                            - crate::test_support::half(
-                                                &bytemuck::cast_slice::<_, u8>(&pixels)
-                                                    [i + axis * 2..],
-                                            ))
-                                            * 64.;
-                                    let reported = crate::test_support::half(
-                                        &field[offset_index + axis * 2..],
-                                    ) * *dimension as f32;
-                                    assert!(
-                                        (reported - measured).abs() < 0.07,
-                                        "distortion must address the source of the visible colour at ({x},{y}): {reported} vs {measured}"
-                                    );
-                                }
-                            }
                             if changed {
                                 let red = crate::test_support::half(&actual[i..]);
                                 let green = crate::test_support::half(&actual[i + 2..]);

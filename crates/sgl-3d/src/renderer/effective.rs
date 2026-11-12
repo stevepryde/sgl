@@ -155,7 +155,6 @@ pub(super) fn first_frame(settings: &Settings, device: Device) -> Effective {
 pub(super) struct Device {
     /// FSR's context runs on it.
     pub fsr_running: Option<FsrVersion>,
-    pub frame_generation: bool,
     /// It has the fused pass's attachments.
     pub fused_supported: bool,
     /// It binds the depth pyramid's storage textures.
@@ -237,7 +236,6 @@ pub(super) fn resolve(
 ) -> Effective {
     let Device {
         fsr_running,
-        frame_generation,
         fused_supported,
         occlusion_supported,
         ray_queries,
@@ -292,7 +290,6 @@ pub(super) fn resolve(
         ShadowQuality::High if taa || fsr => ShadowFilter::Temporal,
         ShadowQuality::High => ShadowFilter::Gaussian,
     };
-    let frame_generation = frame_generation && post_fx_camera;
     let motion_blur = motion_blur(settings, input).filter(|_| post_fx_camera);
     let hardware_ray_tracing = match (settings.hardware_ray_tracing, content.ray_data, ray_queries)
     {
@@ -322,9 +319,8 @@ pub(super) fn resolve(
         hardware_ray_tracing,
         ray_traced_shadows,
         ray_traced_shadow_quality: settings.ray_traced_shadow_quality.resolve(low),
-        frame_generation,
         receivers: content.receivers
-            && (screen_space.is_some() || taa || fsr || frame_generation || motion_blur.is_some()),
+            && (screen_space.is_some() || taa || fsr || motion_blur.is_some()),
         // Occlusion culling's late phase falls between the G-buffer passes,
         // so the opaque stage takes its two-pass form.
         fused: fused_supported && !disable.fused_opaque && !occlusion_culling,
@@ -404,7 +400,6 @@ mod ray_data_tests {
         let input = FrameInput::new(camera);
         let device = Device {
             fsr_running: None,
-            frame_generation: false,
             fused_supported: true,
             occlusion_supported: true,
             ray_queries: Some(RayQueryForm::Baseline),
@@ -465,7 +460,6 @@ mod ray_data_tests {
         });
         let synthetic = Device {
             fsr_running: None,
-            frame_generation: false,
             fused_supported: true,
             occlusion_supported: true,
             ray_queries: Some(RayQueryForm::Baseline),

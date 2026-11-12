@@ -821,7 +821,6 @@ struct Rendered {
     pixels: Vec<u8>,
     antialiasing: Antialiasing,
     fsr_error: Option<String>,
-    generation: sgl_3d::FrameGenerationStatus,
     volume_paths: bool,
     timed_frames: usize,
 }
@@ -859,19 +858,6 @@ async fn configuration(
     if lit <= 2. * shadowed + 10. {
         return Err(format!(
             "the sunlit ground (luma {lit:.1}) is not clearly brighter than the shadowed ground ({shadowed:.1})"
-        ));
-    }
-    // Requesting native generation must preserve the rendered browser scene
-    // and expose the unavailable status instead of silently claiming it runs.
-    if settings.frame_generation == sgl_3d::settings::FrameGeneration::Fsr3
-        && !matches!(
-            rendered.generation,
-            sgl_3d::FrameGenerationStatus::Unavailable(_)
-        )
-    {
-        return Err(format!(
-            "browser generation status: {:?}",
-            rendered.generation
         ));
     }
     // FSR either runs or reports why not: a silent fallback fails.
@@ -997,7 +983,6 @@ async fn render(
         pixels: read_pixels(device, queue, &output).await?,
         antialiasing: renderer.antialiasing_in_effect(settings),
         fsr_error: renderer.fsr_error().map(str::to_owned),
-        generation: renderer.frame_generation_status(),
         volume_paths: renderer.volume_paths_in_effect(settings),
         timed_frames,
     })
@@ -1457,7 +1442,6 @@ async fn smoke(report: &mut String) -> Result<(), String> {
             "FSR3 chosen",
             Settings {
                 antialiasing: Antialiasing::Fsr3,
-                frame_generation: sgl_3d::settings::FrameGeneration::Fsr3,
                 ..high
             },
             false,

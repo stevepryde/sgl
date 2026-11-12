@@ -15,37 +15,20 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d::Presenter` restores AMD's original FSR3 interpolation algorithm and
-  now supplies heat-distortion offsets to its existing distortion-field input.
-  It uses the port's corrected inpainting synchronization and removes custom
-  outgoing-edge reconstruction. No game-code changes are needed.
-
-- `sgl-3d::Presenter`: real-only frames now compose directly to the surface without generation-worker waits; generated pairs batch composition and avoid redundant GPU waits. No game-code changes are needed.
-
-- `sgl-3d::Presenter` now submits SDK initialization uploads while their resources
-  are live, preventing fallback after loading
-  screens or resizing before the first render. No game-code changes are needed.
-
-- `sgl-3d::Presenter::{geometry_stats, take_frame_probe_reports}` expose real-frame
-  statistics/readbacks without mutable renderer access;
-  `PresentationFrame::encoder_and_timing` preserves timing for game-owned UI passes. Presenter consumers can
-  use these instead of the corresponding `Renderer` queries; other game code is unchanged.
-
-- `sgl-3d::Settings::frame_generation` adds opt-in native FSR3 frame generation,
-  independent of antialiasing; the default remains `Off`. To enable it, request
-  `graphics_device::fsr_features`, use `Presenter` with `FrameGeneration::Fsr3`,
-  draw UI into `PresentationFrame::ui_target`, and call the frame's `present`
-  instead of submitting and calling `Renderer::finish_frame` yourself.
-  Browser/unsupported devices retain real frames and report unavailability.
-  Existing games using default settings need no game-code changes; see the
-  [native presentation workflow](crates/sgl-3d/README.md#native-frame-generation).
-
-## 0.6.0 — 2026-11-11
+## 0.6.0 — 2026-11-12
 
 Move every SGL crate to `0.6.0` together and commit the updated `Cargo.lock`.
 Apply the SGL3D migrations below. The other five library crates have no API
 changes; no game-code changes are needed for them.
 Existing baked assets and BC7 exports need no regeneration.
+
+- `sgl-3d` removes the Git-only FSR3 frame generation, `Settings::frame_generation`,
+  `Presenter` and `PresentationFrame`. Use `Renderer::new_surface`, render
+  scene and UI into the acquired surface, submit once, call
+  `Renderer::finish_frame`, then present through wgpu. Use
+  `Renderer::output_encodes_srgb()` to match direct UI composition to the output.
+  FSR2/FSR3.1 upscaling and AO remain available. Remove saved frame-generation
+  choices in consumers.
 
 - `sgl-3d::Settings::ambient_occlusion` now matches raster jitter, advances
   XeGTAO's sample phase with effective TAA/FSR, and temporally filters visibility
@@ -63,9 +46,11 @@ Existing baked assets and BC7 exports need no regeneration.
   `fsr2_quality`/`fsr2_sharpening`/`fsr2_sharpness` to `fsr_*` (including saved
   data), `graphics_device::fsr2_features` to `fsr_features`, `Renderer::fsr2_error`
   to `fsr_error`, and diagnostics `disable.fsr2` to `disable.fsr`.
-  Exhaustive `Antialiasing` matches must handle `Fsr3`. Both
-  `sp-fidelity` dependencies temporarily use the same pinned Git revision
-  from main until the FSR3 port is published; see the workspace manifest.
+  Exhaustive `Antialiasing` matches must handle `Fsr3`.
+- `sgl-3d` now uses the published `sp-fidelity` and `sp-fidelity-wgpu` crates
+  instead of temporary Git pins, with frame generation disabled. Remove local
+  patches for the old Git source if present; otherwise no game-code changes
+  are needed. Refresh dependency notices; licence obligations are unchanged.
 
 - `sgl-3d` showcase renders move from repository PNGs to a Cloudflare-hosted
   gallery with Slide/Toggle feature comparisons and a scene sidebar. Use the

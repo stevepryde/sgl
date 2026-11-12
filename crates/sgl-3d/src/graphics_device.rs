@@ -38,7 +38,7 @@ pub fn features(adapter: &wgpu::Adapter) -> wgpu::Features {
 
 /// The features to request for FSR on `adapter`: its wgpu backend's, and the
 /// FP16 permutations' when the adapter has every required one; otherwise
-/// none: TAA replaces FSR upscaling and frame generation uses real frames. AMD recommends the FP16 permutations wherever
+/// none, and TAA replaces FSR. AMD recommends the FP16 permutations wherever
 /// they are supported (docs 484–499).
 pub fn fsr_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     crate::stages::antialiasing::fsr::features(adapter)

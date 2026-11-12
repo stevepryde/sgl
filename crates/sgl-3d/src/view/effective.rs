@@ -77,7 +77,6 @@ pub(crate) struct Effective {
     pub antialiasing: Antialiasing,
     pub taa: bool,
     pub fsr: bool,
-    pub frame_generation: bool,
     /// FSR's RCAS sharpness in 0..=1, while it sharpens.
     pub fsr_sharpness: Option<f32>,
     /// DiligentFX's post-effect context runs: for TAA, and for Crystal SSR.

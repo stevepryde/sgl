@@ -159,9 +159,9 @@ compatibility shims solely to avoid updating consumers.
   conformance obligation. Preserve source attribution, licences and useful
   algorithm notes in `PROVENANCE.md`. It knows nothing of SGL3D; scene and
   frame integration stays in SGL3D.
-- FSR2 and FSR3 upscaling come from `sp-fidelity`, a 1:1 port of AMD's
+- FSR2 and FSR3 upscaling come from `sp-fidelity`, a Rust/WGSL port of AMD's
   SDK kept in its own repository (github.com/stevepryde/sp-fidelity).
-  The workspace manifest pins its source until the FSR3 port is published.
+  Use the published crates.io dependencies in the workspace manifest.
   Integration problems are fixed in SGL3D, in the stage that uses the port.
 - Rendering evidence is proportionate: the required check, tests that can fail
   at real boundaries, and per-pass GPU timings. Look at captures from the real

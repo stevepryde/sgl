@@ -461,25 +461,18 @@ impl Transparent {
     }
 
     /// Heat distortion of the completed scene `color` in place.
-    pub fn encode_heat(
-        &mut self,
-        ctx: &mut FrameContext<'_>,
-        color: &wgpu::TextureView,
-    ) -> Option<wgpu::Texture> {
-        self.heat
-            .encode(
-                ctx.device,
-                ctx.queue,
-                ctx.encoder,
-                &ctx.scene.transient,
-                &ctx.values.view.view_projection,
-                ctx.sizes.scene,
-                color,
-                &ctx.targets.depth,
-                ctx.timing,
-                ctx.effective.frame_generation,
-            )
-            .map(|field| field.texture().clone())
+    pub fn encode_heat(&mut self, ctx: &mut FrameContext<'_>, color: &wgpu::TextureView) {
+        self.heat.encode(
+            ctx.device,
+            ctx.queue,
+            ctx.encoder,
+            &ctx.scene.transient,
+            &ctx.values.view.view_projection,
+            ctx.sizes.scene,
+            color,
+            &ctx.targets.depth,
+            ctx.timing,
+        );
     }
 }
 

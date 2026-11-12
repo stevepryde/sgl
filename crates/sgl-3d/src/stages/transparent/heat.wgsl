@@ -19,17 +19,11 @@ struct Vertex {
 @vertex fn vs(@location(0) position:vec3<f32>, @location(1) displacement:vec2<f32>, @location(2) weight:f32)->Vertex {
  return Vertex(view.camera*vec4(position,1.),displacement*view.render_per_scene,weight);
 }
-struct Distorted {
- @location(0) color:vec4<f32>,
- // Source UV minus output UV, as AMD's distortion lookup adds this offset
- // when reading the undistorted depth and motion buffers.
- @location(1) offset:vec2<f32>,
-}
-fn distort(v:Vertex)->Distorted {
+@fragment fn fs(v:Vertex)->@location(0) vec4<f32> {
  let pixel=vec2<i32>(v.p.xy);
  let original=textureLoad(source,pixel,0);
  if v.weight<=0. || all(v.displacement==vec2(0.)) || textureLoad(depth,pixel,0)>v.p.z {
-  return Distorted(original,vec2(0.));
+  return original;
  }
  let sample_pixel=v.p.xy+v.displacement*v.weight-vec2(.5);
  let base=vec2<i32>(floor(sample_pixel));
@@ -43,20 +37,14 @@ fn distort(v:Vertex)->Distorted {
     let tap=base+vec2(x,y);
     // Reject offscreen footprints; never clamp unrelated viewport-edge colors.
     if any(tap<vec2(0)) || any(tap>=size) {
-     return Distorted(original,vec2(0.));
+     return original;
     }
     if textureLoad(depth,tap,0)>v.p.z {
-     return Distorted(original,vec2(0.));
+     return original;
     }
     color+=textureLoad(source,tap,0)*weight;
    }
   }
  }
- return Distorted(color,v.displacement*v.weight/vec2<f32>(size));
-}
-@fragment fn fs(v:Vertex)->@location(0) vec4<f32> {
- return distort(v).color;
-}
-@fragment fn fs_with_field(v:Vertex)->Distorted {
- return distort(v);
+ return color;
 }

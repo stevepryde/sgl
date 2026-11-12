@@ -225,8 +225,8 @@ slotmap@1.1.1 — authors: Orson Peters <orsonpeters@gmail.com>
 smallvec@1.15.2 — authors: The Servo Project Developers
 smithay-client-toolkit@0.19.2 — authors: Elinor Berger <elinor@safaradeg.net>, i509VCB <mail@i509.me>, Ashley Wulber <ashley@system76.com>
 smol_str@0.2.2 — authors: Aleksey Kladov <aleksey.kladov@gmail.com>
-sp-fidelity-wgpu@0.2.0
-sp-fidelity@0.2.0
+sp-fidelity-wgpu@0.3.0
+sp-fidelity@0.3.0
 spirv@0.4.0+sdk-1.4.341.0 — authors: Lei Zhang <antiagainst@gmail.com>
 static_assertions@1.1.0 — authors: Nikolai Vazquez
 syn@2.0.119 — authors: David Tolnay <dtolnay@gmail.com>
@@ -6359,7 +6359,7 @@ The `cfg_aliases!` macro uses a lot of the code from [`tectonic_cfg_support::tar
     SOFTWARE.
 ---
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 # This file is part of the FidelityFX SDK.
 #
@@ -6390,7 +6390,7 @@ set(FSR2_API_BASE_ARGS
 # Compile hlsl shaders
 include("${FFX_GPU_PATH}/fsr2/CMakeCompileFSR2Shaders.txt")
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 # This file is part of the FidelityFX SDK.
 #
@@ -6420,7 +6420,7 @@ set(FRAMEINTERPOLATION_API_BASE_ARGS
 # Compile hlsl shaders
 include("${FFX_GPU_PATH}/frameinterpolation/CMakeCompileFrameinterpolationShaders.txt")
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 # This file is part of the FidelityFX SDK.
 #
@@ -6478,7 +6478,7 @@ compile_shaders_with_depfile(
 # add the header files they generate to the main list of dependencies
 add_shader_output("${FRAMEINTERPOLATION_PERMUTATION_OUTPUTS}")
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 # This file is part of the FidelityFX SDK.
 #
@@ -6508,7 +6508,7 @@ set(FSR3UPSCALER_API_BASE_ARGS
 # Compile hlsl shaders
 include("${FFX_GPU_PATH}/fsr3upscaler/CMakeCompileFSR3UpscalerShaders.txt")
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 # This file is part of the FidelityFX SDK.
 #
@@ -6538,7 +6538,7 @@ set(OPTICALFLOW_API_BASE_ARGS
 # Compile hlsl shaders
 include("${FFX_GPU_PATH}/opticalflow/CMakeCompileOpticalflowShaders.txt")
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 # This file is part of the FidelityFX SDK.
 #
@@ -6596,7 +6596,7 @@ compile_shaders_with_depfile(
 # add the header files they generate to the main list of dependencies
 add_shader_output("${OPTICALFLOW_PERMUTATION_OUTPUTS}")
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6651,7 +6651,7 @@ fn setupFrameinterpolationResources(iPxPos: FfxInt32x2)
 
 #endif // FFX_FRAMEINTERPOLATION_SETUP_H
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6704,7 +6704,7 @@ void setupFrameinterpolationResources(FfxInt32x2 iPxPos)
 
 #endif // FFX_FRAMEINTERPOLATION_SETUP_H
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6731,7 +6731,7 @@ void setupFrameinterpolationResources(FfxInt32x2 iPxPos)
 #include "../fsr2/ffx_fsr2_callbacks_hlsl.h"
 #include "ffx_fsr3_resources.h"
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6759,7 +6759,7 @@ void setupFrameinterpolationResources(FfxInt32x2 iPxPos)
 #include "../frameinterpolation/ffx_frameinterpolation_common.h"
 #include "../opticalflow/ffx_opticalflow_common.h"
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6810,7 +6810,7 @@ void ffxSafeReleaseResource(FfxInterface* backendInterface, FfxResourceInternal 
     backendInterface->fpDestroyResource(backendInterface, resource, effectContextId);
 }
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6858,7 +6858,7 @@ FfxErrorCode frameInterpolationIsWave64(uint32_t permutationOptions, bool& isWav
 }
 #endif // #if defined(__cplusplus)
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6905,7 +6905,7 @@ FfxErrorCode fsr2IsWave64(uint32_t permutationOptions, bool& isWave64);
 }
 #endif // #if defined(__cplusplus)
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6952,7 +6952,7 @@ FfxErrorCode fsr3UpscalerIsWave64(uint32_t permutationOptions, bool& isWave64);
 }
 #endif // #if defined(__cplusplus)
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -6999,7 +6999,7 @@ FfxErrorCode opticalflowIsWave64(uint32_t permutationOptions, bool& isWave64);
 }
 #endif // #if defined(__cplusplus)
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -7032,7 +7032,7 @@ D3D12_RESOURCE_STATES   ffxGetDX12StateFromResourceState(FfxResourceStates state
 
 FFX_API FfxErrorCode    ffxFrameInterpolationDebugPacing(const FfxPresentCallbackDescription* params);
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -7065,7 +7065,7 @@ D3D12_RESOURCE_STATES   ffxGetDX12StateFromResourceState(FfxResourceStates state
 
 FFX_API FfxErrorCode    ffxFrameInterpolationUiComposition(const FfxPresentCallbackDescription* params, void* unusedUserCtx);
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -7100,7 +7100,7 @@ VkFormat ffxGetVkFormatFromSurfaceFormat(FfxSurfaceFormat fmt);
 
 FFX_API FfxErrorCode ffxFrameInterpolationUiComposition(const FfxPresentCallbackDescription* params, void* unusedUserCtx);
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -7140,7 +7140,7 @@ VkFormat ffxGetVkFormatFromSurfaceFormat(FfxSurfaceFormat fmt);
 
 FFX_API FfxErrorCode ffxFrameInterpolationDebugPacing(const FfxPresentCallbackDescription* params, void* unusedUserCtx);
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -7181,7 +7181,7 @@ FFX_API void ffxSafeReleaseResource(FfxInterface* backendInterface, FfxResourceI
 }
 #endif  // #if defined(__cplusplus)
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -7230,7 +7230,7 @@ FfxErrorCode ffxIsWave64(FfxEffect effectId, uint32_t permutationOptions, bool& 
 }
 #endif // #if defined(__cplusplus)
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 // This file is part of the FidelityFX SDK.
 //
@@ -7738,7 +7738,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- Applies to: sp-fidelity-wgpu@0.2.0
+--- Applies to: sp-fidelity-wgpu@0.3.0
 
 MIT License
 
@@ -8170,7 +8170,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 This file is part of the FidelityFX SDK.
 
@@ -8194,7 +8194,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
---- Applies to: sp-fidelity@0.2.0
+--- Applies to: sp-fidelity@0.3.0
 
 This file is part of the FidelityFX SDK.
 

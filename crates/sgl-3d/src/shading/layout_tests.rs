@@ -250,10 +250,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
                 fog::INTEGRATE_ENTRY,
             ],
         ),
-        (
-            heat::HEAT.name,
-            vec![heat::VS_ENTRY, heat::FS_ENTRY, heat::FS_FIELD_ENTRY],
-        ),
+        (heat::HEAT.name, vec![heat::VS_ENTRY, heat::FS_ENTRY]),
         (
             transmission::COPY.name,
             vec![

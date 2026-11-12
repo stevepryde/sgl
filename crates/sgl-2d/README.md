@@ -57,13 +57,6 @@ Ordinary widgets stay below these layers regardless of list length. Draw
 cursors saturate within their bands after millions of steps; equal-z draws
 retain screen-list push order.
 
-With SGL3D's native `Presenter`, draw the screen channel into the cleared
-`PresentationFrame::ui_target()` through `frame.encoder()`. Use the presenter's
-`ui_format()` and choose `LightingSpace::Gamma` when `ui_encodes_srgb()` is true,
-otherwise `Linear`. `SpritePass` writes the required premultiplied alpha.
-Then call `frame.present()`; SGL3D composes the HUD over both generated and
-real frames. See the [native frame generation workflow](../sgl-3d/README.md#native-frame-generation).
-
 For HUDs over SGL3D, share the game-owned wgpu device and queue and draw UI
 after the 3D scene. A HUD that drives `canvas::sprite::SpritePass` itself
 keeps one pass: `upload` adds a texture or replaces a known handle's pixels
