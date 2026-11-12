@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d::Presenter` supplies camera history for FSR3 reconstruction of outgoing
+  screen-edge geometry instead of relying only on extrapolated motion there.
+  No game-code changes are needed.
+
 - `sgl-3d::Presenter`: real-only frames now compose directly to the surface without generation-worker waits; generated pairs batch composition and avoid redundant GPU waits. No game-code changes are needed.
 
 - `sgl-3d::Presenter` now submits SDK initialization uploads while their resources

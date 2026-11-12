@@ -959,6 +959,11 @@ Set `Settings::frame_generation = FrameGeneration::Fsr3` and use native
 `Presenter`. It owns one renderer, display-sized scene/UI targets and
 sp-fidelity's interpolation/presentation scheduler. The game still owns its
 window, wgpu device/queue, scene, event loop, simulation and real-frame cap.
+The stage supplies camera poses for sp-fidelity's reconstruction of geometry
+leaving the screen from previous-frame depth, prior visibility checks and
+blending at image boundaries. Camera cuts, resizing and render-origin changes
+restart that history. Transparent effects and view-dependent reflections can
+still have interpolation artifacts.
 Generation is off by default in every preset and works independently of
 `Antialiasing` (Off, SMAA, TAA, FSR2 or FSR3).
 

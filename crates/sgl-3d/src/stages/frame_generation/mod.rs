@@ -26,6 +26,7 @@ pub(crate) struct Generation {
     prepared: bool,
     generated: bool,
     failed: bool,
+    origin: Option<glam::DVec3>,
 }
 impl Generation {
     pub fn new(backend: Rc<RefCell<FfxWgpuBackend>>, interface: FfxInterfaceRef) -> Self {
@@ -40,6 +41,7 @@ impl Generation {
             prepared: false,
             generated: false,
             failed: false,
+            origin: None,
         }
     }
     /// Caller drained old GPU work before this can replace SDK allocations.
@@ -55,6 +57,7 @@ impl Generation {
         encoded: bool,
     ) {
         self.sdk = None;
+        self.origin = None;
         self.reset = true;
         self.pending = false;
         self.prepared = false;
@@ -129,6 +132,11 @@ impl Generation {
             return;
         }
         self.status = FrameGenerationStatus::Active;
+        // SDK camera poses share the scene's render origin. Retained depth
+        // cannot be reprojected through poses from a different coordinate frame.
+        self.reset |= self.origin != Some(ctx.history.origin);
+        self.origin = Some(ctx.history.origin);
+        let camera_world = ctx.input.camera.view.inverse();
         let projection = ctx.input.camera.projection;
         let size = ctx.sizes.render;
         let jitter = ctx.history.camera.jitter;
@@ -150,6 +158,10 @@ impl Generation {
             camera_far: projection.w_axis.z,
             camera_fov_angle_vertical: 2. * projection.y_axis.y.recip().atan(),
             view_space_to_meters_factor: 1.,
+            camera_position: camera_world.w_axis.truncate().to_array(),
+            camera_right: camera_world.x_axis.truncate().to_array(),
+            camera_up: camera_world.y_axis.truncate().to_array(),
+            camera_forward: (-camera_world.z_axis.truncate()).to_array(),
             frame_id: self.frame_id,
             ..Default::default()
         };
