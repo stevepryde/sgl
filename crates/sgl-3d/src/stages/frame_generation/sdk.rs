@@ -217,6 +217,7 @@ impl Sdk {
         list: FfxCommandList,
         color: &wgpu::Texture,
         reset: bool,
+        distortion: Option<&wgpu::Texture>,
     ) -> Result<(), FfxErrorCode> {
         let [
             dilated_depth,
@@ -240,6 +241,15 @@ impl Sdk {
                 ),
             )
         };
+        let distortion_field = distortion
+            .map(|texture| {
+                self.backend.borrow_mut().ffx_get_resource_wgpu(
+                    texture,
+                    "FSR3 heat distortion",
+                    FFX_RESOURCE_STATE_COMPUTE_READ,
+                )
+            })
+            .unwrap_or_default();
         let p = &self.prepare;
         ffx_frame_interpolation_dispatch(
             &mut self.fi,
@@ -249,6 +259,7 @@ impl Sdk {
                 render_size: p.render_size,
                 current_back_buffer: color,
                 output,
+                distortion_field,
                 optical_flow_vector,
                 optical_flow_scene_change_detection,
                 optical_flow_block_size: 8,

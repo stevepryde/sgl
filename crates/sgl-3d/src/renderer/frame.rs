@@ -318,9 +318,10 @@ pub(super) fn render(
             true,
         );
     }
-    if effective.heat {
-        transparent.encode_heat(&mut ctx, &targets.composite);
-    }
+    let _distortion = effective
+        .heat
+        .then(|| transparent.encode_heat(&mut ctx, &targets.composite))
+        .flatten();
     // The frame's one exposure, which FSR and the tone map read.
     exposure.encode(&mut ctx, &targets.composite);
     let completed_kind = antialiasing.encode(&mut ctx, post_fx.as_mut(), exposure.texture());
@@ -356,7 +357,7 @@ pub(super) fn render(
     );
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(generation) = generation.as_mut() {
-        generation.encode(&mut ctx, output.texture());
+        generation.encode(&mut ctx, output.texture(), _distortion.as_ref());
     }
     #[cfg(feature = "diagnostics")]
     if let Some(probe) = probe.as_deref() {

@@ -73,8 +73,8 @@ console_error_panic_hook = "0.1.7"
 pollster = "0.4.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sp-fidelity = { git = "https://github.com/stevepryde/sp-fidelity", rev = "35f82a1032dbb49261e282aa144fa3a53a208a08" }
-sp-fidelity-wgpu = { git = "https://github.com/stevepryde/sp-fidelity", rev = "35f82a1032dbb49261e282aa144fa3a53a208a08" }
+sp-fidelity = { git = "https://github.com/stevepryde/sp-fidelity", rev = "bd6ac74ee0d41c4db6d427f02c35aa1fecf6b3fa" }
+sp-fidelity-wgpu = { git = "https://github.com/stevepryde/sp-fidelity", rev = "bd6ac74ee0d41c4db6d427f02c35aa1fecf6b3fa" }
 zeroize = "1.8"
 wasm-bindgen = "0.2.127"
 wasm-bindgen-futures = "0.4.77"

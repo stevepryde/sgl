@@ -93,8 +93,7 @@ its rendering `settings::Settings`.
 5. A large world: keep the game's own coordinates and call
    `Scene::move_origin` to keep what it renders near the render origin
    (chunk-aligned in a streamed world); then give the camera and edits in
-   the new frame. Rendering histories move with the origin; frame generation
-   restarts its retained camera/depth history.
+   the new frame. Nothing restarts or redraws.
 
 For native frame generation, use `Presenter` in place of the caller-target
 renderer: request FSR device features, set `Settings::frame_generation` to
@@ -103,8 +102,8 @@ using its `encoder`, then call `frame.present`. It owns submission and commits
 histories; generated frames do not run game simulation. With generation off,
 it composes directly to the surface without the generation workers. Call `resize` for a
 changed surface/scale and report `frame_generation_status()` to the player.
-Camera poses feed reconstruction of geometry leaving the screen; camera cuts,
-resizing and render-origin changes reset that history automatically.
+Heat distortion supplies its UV offset field to AMD's existing interpolation
+input automatically; no game-owned distortion resource is required.
 See [native presentation](../README.md#native-frame-generation) for UI color,
 error recovery and GPU timing, and the
 [`frame_generation` example](../../../examples/sgl-3d/examples/frame_generation.rs).

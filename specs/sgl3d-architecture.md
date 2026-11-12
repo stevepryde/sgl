@@ -89,19 +89,18 @@ reports requested generation as unavailable without a native presenter.
 
 1. The `frame_generation` stage owns standalone optical-flow and interpolation
    contexts and their shared scratch resources, independent of antialiasing.
-   It uses the SDK prepare/optical-flow/interpolation sequence with sp-fidelity's
-   camera/depth reconstruction of outgoing screen-edge geometry. Prepare
+   It uses the original SDK prepare/optical-flow/interpolation sequence. Prepare
    follows antialiasing before motion blur/post; optical flow and interpolation
    follow post over display-encoded scene color without UI. The renderer only
    orders these operations. Existing reverse-infinite depth, unjittered motion,
    jitter, camera parameters, units, frame time and history reset cross through
    `FrameContext`; no second encoding or motion-vector convention is added.
-   The stage supplies the camera pose in the scene's render coordinates. A
-   render-origin change resets interpolation history so the port never combines
-   retained depth with camera poses from different coordinate frames. Previous
-   geometry storage, moving-surface rejection, depth-cell reprojection, prior
-   visibility and edge blending belong to the port; the stage adds no
-   independent interpolation algorithm.
+   Heat owns an optional render-sized RG16F field of the offsets actually
+   applied to color, cleared outside accepted heat coverage each frame. When
+   generation runs, the renderer passes it from the transparent stage to the
+   generation stage, which binds AMD's existing distortion-field input. A
+   frame with no heat uses the SDK's zero-distortion resource. This adds no
+   interpolation algorithm to SGL or the port.
 2. The presenter gives the stage and native scheduler one backend. SDK external
    handles remain within each live command-list scope. Interpolation is recorded
    on the owner thread; the scheduler's external-output path submits it and
