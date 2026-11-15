@@ -18,6 +18,13 @@
 // does (get_closest_pixel_velocity_3x3), with the search of DiligentFX's
 // Shaders/Common/private/ComputeClosestMotion.fx.
 
+// Motion-adaptive rectification/feedback and depth neighborhoods follow
+// Filament 35db9f6597d2dfa337245129ee9b684dd03796d9, taa.mat/taa.md,
+// Copyright The Android Open Source Project, Apache-2.0 (LICENSE-filament.txt).
+// Camera and caller-reported rigid-object motion retain the reference's
+// global hold. Surface/material deformation and disocclusion also transport
+// local recovery, so animated material geometry does not hold the whole view.
+
 #include "BasicStructures.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
 #include "PostFX_Common.fxh"
@@ -36,6 +43,16 @@
 // (1 - Bevy's MIN_HISTORY_BLEND_RATE) and is not rejected by depth disocclusion.
 const TAA_STILL_MOTION_PIXELS = 0.01;
 const TAA_STILL_HISTORY_FACTOR = 0.985;
+
+// Filament's paired defaults (Options.h / taa.mat), not game tuning.
+const TAA_ADAPTIVE_BOX_STRENGTH = 0.1;
+const TAA_ADAPTIVE_ALPHA_STRENGTH = 0.3;
+const TAA_ADAPTIVE_MOTION_THRESHOLD_PIXELS = 1.0;
+const TAA_ADAPTIVE_DEPTH_THRESHOLD = 0.001;
+const TAA_ADAPTIVE_HOLD_FRAMES = 12.0;
+const TAA_ADAPTIVE_CAMERA_EPSILON = 1e-6;
+const TAA_ADAPTIVE_DEPTH_FADE_START_PIXELS = 1.0;
+const TAA_ADAPTIVE_DEPTH_FADE_END_PIXELS = 2.0;
 
 // WGSL: one uniform holds the constant buffer's two cameras, so the upstream
 // g_CurrCamera and g_PrevCamera read as cbCameraAttribs.g_CurrCamera and
@@ -342,8 +359,12 @@ fn ComputeVarianceGamma(Speed: f32) -> f32
 
 fn ComputeMaxAlpha(IsStill: bool) -> f32
 {
+#if TAA_OPTION_MOTION_ADAPTIVE_HISTORY
+    return 1.0 - (1.0 - g_TAAAttribs.TemporalStabilityFactor) * TAA_ADAPTIVE_ALPHA_STRENGTH;
+#else
     // PROVENANCE.md DFX-19: still pixels accumulate up to TAA_STILL_HISTORY_FACTOR.
     return select(g_TAAAttribs.TemporalStabilityFactor, TAA_STILL_HISTORY_FACTOR, IsStill);
+#endif
 }
 
 fn ComputeCorrectedAlpha(Alpha: f32, IsStill: bool) -> f32
@@ -351,23 +372,97 @@ fn ComputeCorrectedAlpha(Alpha: f32, IsStill: bool) -> f32
     return min(ComputeMaxAlpha(IsStill), saturate(1.0 / (2.0 - Alpha)));
 }
 
+
+// Normalize either depth convention into Filament's near=1, far=0 space.
+fn AdaptiveDepth(depth:f32, camera:CameraAttribs)->f32 {
+    return (depth-camera.fFarPlaneDepth)/(camera.fNearPlaneDepth-camera.fFarPlaneDepth);
+}
+// The cameras carry jittered matrices and record that offset separately.
+// Removing offset*w recovers stable clip coordinates for perspective AND
+// orthographic projections, without mistaking jitter for camera motion.
+fn AdaptiveCameraMoved()->bool {
+    const MATRIX_COLUMNS:u32=4u;
+    var current_projection=cbCameraAttribs.g_CurrCamera.mProj;
+    var previous_projection=cbCameraAttribs.g_PrevCamera.mProj;
+    // Cancel in projection first. Cancelling an already-multiplied f32 VP
+    // loses low bits beside a translated camera, which can rearm forever.
+    for (var column=0u;column<MATRIX_COLUMNS;column++) {
+        current_projection[column]-=vec4(cbCameraAttribs.g_CurrCamera.f2Jitter,0.,0.)*current_projection[column].w;
+        previous_projection[column]-=vec4(cbCameraAttribs.g_PrevCamera.f2Jitter,0.,0.)*previous_projection[column].w;
+    }
+    let stable_current=current_projection*cbCameraAttribs.g_CurrCamera.mView;
+    let stable_previous=previous_projection*cbCameraAttribs.g_PrevCamera.mView;
+    for (var column=0u;column<MATRIX_COLUMNS;column++) {
+        if any(abs(stable_current[column]-stable_previous[column])>vec4(TAA_ADAPTIVE_CAMERA_EPSILON)) {
+            return true;
+        }
+    }
+    return false;
+}
+// Current raw depth and previous raw depth have different jittered grids.
+// Current depth for the comparison is already projected into the previous
+// camera by PostFXContext. Both neighborhoods bound subpixel depth changes.
+fn AdaptiveDisocclusion(position:vec2<f32>,previous_position:vec2<f32>,motion_pixels:f32)->f32 {
+    let camera=cbCameraAttribs.g_CurrCamera;
+    let previous_camera=cbCameraAttribs.g_PrevCamera;
+    let size=vec2<i32>(camera.f4ViewportSize.xy);
+    let jitter_delta=(previous_camera.f2Jitter-camera.f2Jitter)*F3NDC_XYZ_TO_UVD_SCALE.xy;
+    let history_position=previous_position+jitter_delta*camera.f4ViewportSize.xy;
+    // The stable history coordinate was already viewport-checked. Jitter
+    // alignment may move a border depth tap just outside its raw grid;
+    // clamp it as Filament's depth sampler does, rather than declaring a
+    // disocclusion and flashing the current border sample.
+    let p=vec2<i32>(position);
+    let h=ClampScreenCoord(vec2<i32>(floor(history_position)),size);
+    let expected=AdaptiveDepth(SampleCurrDepth(p),previous_camera);
+    // The context's sentinel for a point on/behind the previous camera
+    // is its near depth (DFX-32), never usable previous-frame history.
+    if expected>=1. {
+        return 1.;
+    }
+    let history=AdaptiveDepth(SamplePrevDepth(h),previous_camera);
+    var current_min=1.;
+    var current_max=0.;
+    var history_min=1.;
+    var history_max=0.;
+    const DEPTH_RADIUS:i32=1;
+    for (var y=-DEPTH_RADIUS;y<=DEPTH_RADIUS;y++) {
+        for (var x=-DEPTH_RADIUS;x<=DEPTH_RADIUS;x++) {
+            let offset=vec2(x,y);
+            let current=AdaptiveDepth(SampleDepth(ClampScreenCoord(p+offset,size)),camera);
+            let previous=AdaptiveDepth(SamplePrevDepth(ClampScreenCoord(h+offset,size)),previous_camera);
+            current_min=min(current_min,current);
+            current_max=max(current_max,current);
+            history_min=min(history_min,previous);
+            history_max=max(history_max,previous);
+        }
+    }
+    let jitter_explainable=(current_max-current_min)*(1.-smoothstep(TAA_ADAPTIVE_DEPTH_FADE_START_PIXELS,TAA_ADAPTIVE_DEPTH_FADE_END_PIXELS,motion_pixels));
+    var evidence=abs(history-expected)-jitter_explainable;
+    evidence=min(evidence,max(expected-history_max,history_min-expected));
+    return smoothstep(0.,TAA_ADAPTIVE_DEPTH_THRESHOLD,max(0.,evidence));
+}
+
+struct PSOutput {
+    @location(0) Color:vec4<f32>,
+    // XY: NDC motion; Z: adaptive recovery hold (zero for legacy); W: zero.
+    @location(1) ClosestMotion:vec4<f32>,
+}
+
 // PROVENANCE.md DFX-47: the placeholder (DFX-2) of a feature set's first frame is the
 // input, as upstream's CopyTextureColor copies it, loaded and clamped as the resolve
 // loads it (DFX-46). Alpha is history confidence, initialized as a reset sample
 // rather than copied from the input colour.
 @fragment
-fn ComputePlaceholderPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) vec4<f32>
+fn ComputePlaceholderPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 {
     let PixelCoord = vec2<i32>(VSOut.f4PixelPos.xy);
-    return vec4<f32>(SampleCurrColor(PixelCoord), 0.5);
-}
-
-// PROVENANCE.md DFX-13: the accumulated frame, and the closest motion vector the next frame
-// reads (DFX-14).
-struct PSOutput
-{
-    @location(0) Color:         vec4<f32>,
-    @location(1) ClosestMotion: vec2<f32>,
+#if TAA_OPTION_MOTION_ADAPTIVE_HISTORY
+    let hold=TAA_ADAPTIVE_HOLD_FRAMES;
+#else
+    let hold=0.;
+#endif
+    return PSOutput(vec4<f32>(SampleCurrColor(PixelCoord),0.5),vec4(SampleMotion(PixelCoord),hold,0.));
 }
 
 @fragment
@@ -376,10 +471,15 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let Position = VSOut.f4PixelPos.xy;
     let ClosestMotion = SampleClosestMotion(vec2<i32>(Position.xy));
     let Motion = ClosestMotion * F3NDC_XYZ_TO_UVD_SCALE.xy;
+#if TAA_OPTION_MOTION_ADAPTIVE_HISTORY
+    let reset_motion=vec4(ClosestMotion,TAA_ADAPTIVE_HOLD_FRAMES,0.);
+#else
+    let reset_motion=vec4(ClosestMotion,0.,0.);
+#endif
     let PrevPosition = Position.xy - Motion * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
 
     if (!IsInsideScreen_f2(PrevPosition, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy) || g_TAAAttribs.ResetAccumulation != 0u) {
-        return PSOutput(vec4<f32>(SampleCurrColor(vec2<i32>(Position)), 0.5), ClosestMotion);
+        return PSOutput(vec4<f32>(SampleCurrColor(vec2<i32>(Position)), 0.5), reset_motion);
     }
 
     // PROVENANCE.md DFX-14: Godot's velocity disocclusion (taa_resolve.glsl
@@ -403,18 +503,44 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     if (g_TAAAttribs.SkipRejection != 0u)
     {
         let RGBHDROutput = SDRToHDR(YCoCgToRGB(mix(YCoCgSDRCurrColor, YCoCgSDRPrevColor, RGBHDRPrevColor.a)));
-        return PSOutput(vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(RGBHDRPrevColor.a, false)), ClosestMotion);
+        return PSOutput(vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(RGBHDRPrevColor.a, false)), reset_motion);
     }
 
     let VarianceGamma = ComputeVarianceGamma(length(Motion));
     let PixelStat = ComputePixelStatisticYCoCgSDR(vec2<i32>(Position.xy));
     let YCoCgSDRClampedColor = ClipToAABB(YCoCgSDRPrevColor, PixelStat.Mean, VarianceGamma * PixelStat.StdDev);
 
+#if TAA_OPTION_MOTION_ADAPTIVE_HISTORY
+    let motion_pixels=length(Motion*cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
+    let disocclusion=AdaptiveDisocclusion(Position,PrevPosition,motion_pixels);
+    let previous_hold=HlslLoad(g_TexturePrevMotion,vec2<i32>(PrevPosition),0).z;
+    // Preserve continuous confidence: an arbitrarily small f32 depth
+    // residual must not become a full twelve-frame recovery event.
+    var hold=max(max(previous_hold-1.,0.),disocclusion*TAA_ADAPTIVE_HOLD_FRAMES);
+    // The established still-pixel threshold distinguishes motion from
+    // projection/interpolation residue (DFX-19), rather than exact != 0.
+    if AdaptiveCameraMoved() || g_TAAAttribs.RigidObjectMotion!=0u || !IsStill {
+        hold=TAA_ADAPTIVE_HOLD_FRAMES;
+    }
+    let depth=AdaptiveDepth(SampleDepth(vec2<i32>(Position)),cbCameraAttribs.g_CurrCamera);
+    let farness=1.-smoothstep(0.,TAA_ADAPTIVE_DEPTH_THRESHOLD,depth);
+    let motion_amount=clamp(motion_pixels*motion_pixels/(TAA_ADAPTIVE_MOTION_THRESHOLD_PIXELS*TAA_ADAPTIVE_MOTION_THRESHOLD_PIXELS),0.,1.);
+    let strength=max(max(motion_amount,farness),hold/TAA_ADAPTIVE_HOLD_FRAMES);
+    let box_strength=max(mix(TAA_ADAPTIVE_BOX_STRENGTH,1.,strength),disocclusion);
+    let alpha_strength=max(mix(TAA_ADAPTIVE_ALPHA_STRENGTH,1.,strength),disocclusion);
+    var history=mix(YCoCgSDRPrevColor,YCoCgSDRClampedColor,box_strength);
+    history=mix(history,YCoCgSDRCurrColor,disocclusion);
+    let current_weight=(1.-g_TAAAttribs.TemporalStabilityFactor)*alpha_strength;
+    let Alpha=min(RGBHDRPrevColor.a,max(1.-current_weight-MotionDiffRejection,0.));
+    let output=SDRToHDR(YCoCgToRGB(mix(YCoCgSDRCurrColor,history,Alpha)));
+    return PSOutput(vec4(output,ComputeCorrectedAlpha(Alpha,false)),vec4(ClosestMotion,hold,0.));
+#else
     // PROVENANCE.md DFX-14: Godot adds the rejection to its current weight
     // (blend_factor = RPC_16 + factor_disocclusion), so history keeps at most
     // the cap less the rejection. DiligentFX's confidence still ramps the
     // weight up after a reset, and the rejection does not compound with it.
     let Alpha = min(RGBHDRPrevColor.a * DepthFactor, max(ComputeMaxAlpha(IsStill) - MotionDiffRejection, 0.0));
     let RGBHDROutput = SDRToHDR(YCoCgToRGB(mix(YCoCgSDRCurrColor, YCoCgSDRClampedColor, Alpha)));
-    return PSOutput(vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(Alpha, IsStill)), ClosestMotion);
+    return PSOutput(vec4<f32>(RGBHDROutput, ComputeCorrectedAlpha(Alpha, IsStill)), reset_motion);
+#endif
 }

@@ -149,6 +149,9 @@ pub(crate) struct Instances {
     pub objects: Objects,
     /// Live static and moving instances.
     counts: [usize; 2],
+    /// Rigid changes since the last submitted frame, including departures.
+    /// Procedural/material deformation does not set this view-wide signal.
+    rigid_changes: bool,
 }
 
 /// `Instances::counts`' index of a mobility.
@@ -165,6 +168,7 @@ impl Instances {
             slots: Slots::default(),
             objects: Objects::new(device),
             counts: [0; 2],
+            rigid_changes: false,
         }
     }
 
@@ -187,6 +191,15 @@ impl Instances {
     pub fn set_shader_data(&mut self, queue: &wgpu::Queue, id: InstanceId, data: [f32; 4]) {
         self.slots.get_mut(id).expect("a live instance").shader_data = data;
         self.write_shader_data(queue, id);
+    }
+
+    /// Geometry replacement can uncover old pixels without any pose motion.
+    /// Include prior visible users even when the new geometry/position is culled.
+    pub fn geometry_changed(&mut self, model: ModelId) {
+        self.rigid_changes |= self.slots.iter().any(|(_, instance)| {
+            instance.state.model == model
+                && (instance.state.visible || instance.submitted.is_some())
+        });
     }
 
     /// Rewrites the object records of `model`'s instances.
@@ -275,6 +288,7 @@ impl Instances {
     /// visible, and each instance's shader data the one its shaders'
     /// motion is.
     pub fn finish_frame(&mut self) {
+        self.rigid_changes = false;
         for (_, instance) in self.slots.iter_mut() {
             if instance.submitted_shader_data != Some(instance.shader_data) {
                 instance.shader_stale |= instance.submitted_shader_data.is_some();
@@ -387,6 +401,7 @@ impl Scene {
             .slots
             .insert(Instance::new(state, mobility, model, deformation));
         self.instances.counts[kind(mobility)] += 1;
+        self.instances.rigid_changes |= state.visible;
         self.write_instance(queue, id);
         // Its index may be a removed instance's.
         self.instances.write_shader_data(queue, id);
@@ -403,6 +418,13 @@ impl Scene {
             instance.state.pose,
         );
         self.ray_instances.set(id.index(), ray, pose);
+    }
+
+    /// Rigid changes visible now or before their departure. Deliberately
+    /// conservative across frustum/occlusion culling: a culled new position
+    /// can still expose history at the old position. Clears only on submit.
+    pub(crate) fn rigid_objects_changed(&self) -> bool {
+        self.instances.rigid_changes
     }
 
     /// An instance's current state.
@@ -471,6 +493,8 @@ impl Scene {
             self.static_edits.record(posed_bounds(after, state.pose));
         }
         let placed = instance.state.pose != state.pose || previous != state.model;
+        self.instances.rigid_changes |=
+            (old.visible || state.visible) && (placed || old.visible != state.visible);
         instance.state = state;
         instance.stale = false;
         if placed {
@@ -488,6 +512,7 @@ impl Scene {
             .slots
             .remove(id)
             .ok_or(SceneError::UnknownInstance)?;
+        self.instances.rigid_changes |= instance.state.visible || instance.submitted.is_some();
         self.candidates.remove(id.index());
         if let Some(deformation) = instance.deformation.take() {
             deformation.free(&mut self.rays);
@@ -535,5 +560,90 @@ impl Scene {
             .objects
             .write_baked_irradiance(queue, id.index(), cube);
         Ok(())
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod temporal_recovery_tests {
+    use super::*;
+
+    // A pose which leaves the camera and a hidden/removed object can uncover
+    // zero-motion background. Observe changes through real scene mutations,
+    // rather than setting the temporal signal directly.
+    #[test]
+    fn rigid_recovery_tracks_departures_until_submission_and_ignores_unchanged_poses() {
+        let Some((device, queue)) = crate::test_support::device() else {
+            return;
+        };
+        let mut scene = Scene::new(&device, &queue);
+        let model = scene
+            .add_asset(&device, &queue, crate::test_support::cube())
+            .unwrap()
+            .model;
+        let mut state = InstanceState {
+            model,
+            pose: Mat4::IDENTITY,
+            visible: true,
+            capture_visible: true,
+        };
+        let id = scene
+            .add_instance(&device, &queue, state, Mobility::Moving)
+            .unwrap();
+        assert!(
+            scene.rigid_objects_changed(),
+            "appearance exposes new temporal content"
+        );
+        scene.finish_frame();
+        scene.set_instance(&queue, id, state).unwrap();
+        assert!(
+            !scene.rigid_objects_changed(),
+            "repeated game pose writes must not suppress stabilization"
+        );
+        scene
+            .set_model(
+                &device,
+                &queue,
+                model,
+                crate::PreparedModel::new(Vec::new()).unwrap(),
+            )
+            .unwrap();
+        assert!(
+            scene.rigid_objects_changed(),
+            "same-ID geometry removal uncovers history even though instance pose and identity are unchanged"
+        );
+        scene.finish_frame();
+        state.pose = Mat4::from_translation(Vec3::new(1000., 0., 0.));
+        scene.set_instance(&queue, id, state).unwrap();
+        assert!(
+            scene.rigid_objects_changed(),
+            "a new culled position still uncovers the old position"
+        );
+        scene.finish_frame();
+        state.visible = false;
+        scene.set_instance(&queue, id, state).unwrap();
+        assert!(
+            scene.rigid_objects_changed(),
+            "hiding a previously visible object is a departure"
+        );
+        scene.finish_frame();
+        state.pose = Mat4::IDENTITY;
+        scene.set_instance(&queue, id, state).unwrap();
+        assert!(
+            !scene.rigid_objects_changed(),
+            "fully hidden rigid motion has no visible history"
+        );
+        state.visible = true;
+        scene.set_instance(&queue, id, state).unwrap();
+        scene.finish_frame();
+        scene.remove_instance(id).unwrap();
+        assert!(
+            scene.rigid_objects_changed(),
+            "removal must retain departure evidence after its slot is gone"
+        );
+        scene.finish_frame();
+        assert!(
+            !scene.rigid_objects_changed(),
+            "only submission retires departure evidence"
+        );
     }
 }

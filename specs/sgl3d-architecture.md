@@ -459,6 +459,26 @@ Stages run in one order, written in one place in `renderer`:
    HDR frame at the render size, before both of its readers.
 10. **Antialiasing**: TAA or FSR, from render size to scene size, reprojected
    by the surface's depth and motion. FSR reads the exposure.
+   SGL3D's TAA opts into `sgl-post-fx`'s `MOTION_ADAPTIVE_HISTORY` with
+   `TemporalStabilityFactor = 0.88`: Filament's motion-adaptive history
+   rectification and feedback (revision
+   `35db9f6597d2dfa337245129ee9b684dd03796d9`, Apache-2.0), retaining partial
+   rectification at rest and restoring full rejection on camera motion,
+   local surface motion, depth disocclusion and invalid history. The effects
+   library's other flag combinations retain their existing behavior. Current
+   and previous depth neighborhoods bound jitter-explainable depth changes,
+   in normalized reversed depth under either projection convention. A
+   twelve-frame recovery hold travels in the closest-motion history's B
+   channel (RGBA16F instead of RG16F only for this flag: eight extra bytes per
+   pixel across the pair); W is initialized to zero. Camera motion rearms the
+   whole view. `TemporalAntiAliasingAttribs::rigid_object_motion` also rearms
+   the whole view, as Filament's global rigid-object signal does: the scene
+   retains pose/model/visibility changes, same-ID geometry replacements, additions and departures until a
+   submitted frame, including an old visible object whose new position is
+   culled. Identical state writes and procedural material deformation do not
+   set this signal. Local surface motion and depth confidence additionally
+   transport recovery without a deforming material suppressing stabilization
+   throughout the world. The hold never bypasses rejection. No new full-size history pair is allocated.
 11. **Motion blur**: the antialiased frame blurred along the surface's
    motion, at the scene size, before bloom, SMAA and tone mapping, as Bevy
    and Wicked Engine run it after TAA.

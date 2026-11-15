@@ -56,7 +56,8 @@ struct TemporalAntiAliasingAttribs
 
     SkipRejection: u32,
 
-    Padding0: f32,
+    // Caller-owned rigid-object changes rearm view-wide adaptive recovery.
+    RigidObjectMotion: u32,
 }
 
 #endif //_TEMPORAL_ANTI_ALIASING_STRUCTURES_FXH_

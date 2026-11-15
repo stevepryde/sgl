@@ -17,6 +17,10 @@ are off for that scene, while shadow maps, screen-space reflections and volume
 paths remain available. Scene-aware effective queries take `(&settings, &scene)`;
 saved settings are unchanged. Existing scene constructors retain ray data.
 
+TAA uses motion-adaptive partial history rectification to stabilize static
+subpixel geometry, with motion and depth rejection retained. No game-side
+filter or history tuning is needed.
+
 ## Presets
 
 `Settings::preset` (`RenderPreset`: `High`, the default, or `Low`) is SGL3D's

@@ -52,7 +52,11 @@ library; their rules, content, and process layouts stay with the games.
      without filtering; changing convention recreates its resources and
      resets history. Its post-effect context reports the latest frame
      description, including output-only size changes, without reallocating
-     unchanged render-size depth resources.
+     unchanged render-size depth resources. Its optional TAA
+     `MOTION_ADAPTIVE_HISTORY` retains partial history rectification at rest,
+     with camera/local-motion recovery holds and jitter-aware depth rejection;
+     SGL3D enables it with a 0.88 history stability factor. Other TAA flags
+     retain their legacy resolve.
    - `sgl-2d` — assets, immediate UI, and a caller-driven logical-canvas wgpu
      renderer
    - `sgl-input` — controller discovery and normalized events/state, independent

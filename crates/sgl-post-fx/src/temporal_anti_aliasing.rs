@@ -28,6 +28,12 @@ impl FeatureFlags {
     pub const BICUBIC_FILTER: Self = Self(1 << 1);
     /// Use YCoCg color space for color clipping.
     pub const YCOCG_COLOR_SPACE: Self = Self(1 << 2);
+    /// Filament-derived partial rectification and adaptive feedback at rest,
+    /// with camera/local-motion holds and jitter-aware depth disocclusion.
+    /// Feedback is `1 - TemporalStabilityFactor`; SGL3D uses 0.12, paired
+    /// with the reference's twelve-frame hold. Retains an RGBA16F motion
+    /// history instead of RG16F; default/legacy flags are unchanged.
+    pub const MOTION_ADAPTIVE_HISTORY: Self = Self(1 << 3);
 
     pub fn contains(self, flag: Self) -> bool {
         self.0 & flag.0 != 0
@@ -93,7 +99,13 @@ const ACCUMULATED_BUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba
 /// The closest motion vectors the resolve finds and keeps for the next frame
 /// (PROVENANCE.md DFX-13, DFX-14), in the format of DiligentFX's
 /// `PostFXContext`.
-const CLOSEST_MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+fn closest_motion_format(flags: FeatureFlags) -> wgpu::TextureFormat {
+    if flags.contains(FeatureFlags::MOTION_ADAPTIVE_HISTORY) {
+        wgpu::TextureFormat::Rgba16Float
+    } else {
+        wgpu::TextureFormat::Rg16Float
+    }
+}
 
 /// `TemporalAntiAliasing::AccumulationBufferInfo`.
 struct AccumulationBufferInfo {
@@ -142,10 +154,12 @@ impl AccumulationBufferInfo {
         curr_frame_idx: u32,
         feature_flags: FeatureFlags,
     ) {
+        let motion_format_changed =
+            closest_motion_format(self.feature_flags) != closest_motion_format(feature_flags);
         self.feature_flags = feature_flags;
         self.current_frame_idx = curr_frame_idx;
 
-        if self.width == width && self.height == height {
+        if self.width == width && self.height == height && !motion_format_changed {
             return;
         }
 
@@ -207,7 +221,10 @@ impl AccumulationBufferInfo {
             )
         }));
         self.closest_motion = Some(std::array::from_fn(|_| {
-            texture("TemporalAntiAliasing::ClosestMotion", CLOSEST_MOTION_FORMAT)
+            texture(
+                "TemporalAntiAliasing::ClosestMotion",
+                closest_motion_format(feature_flags),
+            )
         }));
     }
 
@@ -479,6 +496,10 @@ impl TemporalAntiAliasing {
                     flag(FeatureFlags::YCOCG_COLOR_SPACE),
                 ),
                 (
+                    "TAA_OPTION_MOTION_ADAPTIVE_HISTORY",
+                    flag(FeatureFlags::MOTION_ADAPTIVE_HISTORY),
+                ),
+                (
                     "POSTFX_OPTION_INVERTED_DEPTH",
                     if reversed_depth { "1" } else { "0" },
                 ),
@@ -515,7 +536,10 @@ impl TemporalAntiAliasing {
                     (8, Resource::Texture),
                     (9, Resource::DepthTexture),
                 ],
-                &[ACCUMULATED_BUFFER_FORMAT, CLOSEST_MOTION_FORMAT],
+                &[
+                    ACCUMULATED_BUFFER_FORMAT,
+                    closest_motion_format(feature_flags),
+                ],
                 None,
                 DepthStencilStateDesc::DisableDepth,
             );
@@ -534,8 +558,11 @@ impl TemporalAntiAliasing {
                     "TemporalAntiAliasing::ComputePlaceholder",
                     &vs,
                     &placeholder_ps,
-                    &[(2, Resource::Texture)],
-                    &[ACCUMULATED_BUFFER_FORMAT],
+                    &[(2, Resource::Texture), (4, Resource::Texture)],
+                    &[
+                        ACCUMULATED_BUFFER_FORMAT,
+                        closest_motion_format(feature_flags),
+                    ],
                     None,
                     DepthStencilStateDesc::DisableDepth,
                 );
@@ -644,15 +671,24 @@ impl TemporalAntiAliasing {
         let group = tech.bind_group(
             render_attribs.device,
             "ComputePlaceholder",
-            &[wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(render_attribs.color_buffer_srv),
-            }],
+            &[
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(render_attribs.color_buffer_srv),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(render_attribs.motion_vectors_srv),
+                },
+            ],
         );
         draw(
             render_attribs.device_context,
             "ComputePlaceholder",
-            &[acc_buff.accumulated_buffer(buff_idx)],
+            &[
+                acc_buff.accumulated_buffer(buff_idx),
+                acc_buff.closest_motion(buff_idx),
+            ],
             tech,
             &group,
             0..3,
@@ -661,20 +697,7 @@ impl TemporalAntiAliasing {
                 .and_then(|timestamps| timestamps("TemporalAccumulation")),
         );
 
-        // PROVENANCE.md DFX-14: without the resolve, the next frame's previous
-        // closest motion is this frame's motion, copied with
-        // `CopyTextureColor`.
-        render_attribs.post_fx_context.copy_texture_color(
-            &mut TextureOperationAttribs {
-                device: render_attribs.device,
-                device_context: render_attribs.device_context,
-                timestamp_writes: render_attribs
-                    .pass_timestamps
-                    .and_then(|timestamps| timestamps("TemporalAccumulation")),
-            },
-            render_attribs.motion_vectors_srv,
-            acc_buff.closest_motion(buff_idx),
-            CLOSEST_MOTION_FORMAT,
-        );
+        // The placeholder owns both MRT outputs: arbitrary input B/A must
+        // never become an adaptive recovery counter.
     }
 }

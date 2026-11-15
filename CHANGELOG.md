@@ -15,6 +15,15 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx::temporal_anti_aliasing::FeatureFlags::MOTION_ADAPTIVE_HISTORY`
+  adds motion-adaptive history rectification; `sgl-3d` enables it for TAA to
+  stabilize static subpixel geometry while retaining motion/depth rejection.
+  Other postFX flag combinations keep their existing resolve. No game-code
+  changes are needed for SGL3D. Direct postFX callers replace the unused
+  `TemporalAntiAliasingAttribs::padding0` with `rigid_object_motion` (default
+  zero), setting it when rigid geometry moves, appears or departs; the struct
+  remains 16 bytes.
+
 ## 0.6.0 — 2026-11-12
 
 Move every SGL crate to `0.6.0` together and commit the updated `Cargo.lock`.

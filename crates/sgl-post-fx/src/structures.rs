@@ -176,7 +176,11 @@ pub struct TemporalAntiAliasingAttribs {
 
     pub skip_rejection: u32,
 
-    pub padding0: f32,
+    /// Nonzero when a rigid object moved, appeared or departed this frame.
+    /// With MOTION_ADAPTIVE_HISTORY, rearms recovery across the view so
+    /// newly uncovered zero-motion background does not retain object history.
+    /// Vertex/material deformation is handled locally; default is zero.
+    pub rigid_object_motion: u32,
 }
 
 impl Default for TemporalAntiAliasingAttribs {
@@ -185,7 +189,7 @@ impl Default for TemporalAntiAliasingAttribs {
             temporal_stability_factor: 0.9375,
             reset_accumulation: 0,
             skip_rejection: 0,
-            padding0: 0.0,
+            rigid_object_motion: 0,
         }
     }
 }

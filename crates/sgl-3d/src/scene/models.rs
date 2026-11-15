@@ -472,6 +472,7 @@ impl Scene {
         });
         self.refresh_scene_group(device);
         let (built, posed) = posed?;
+        self.instances.geometry_changed(id);
         for (_, instance) in self.instances.slots.iter_mut() {
             if instance.state.model == id
                 && let Some(previous) = instance.deformation.take()
