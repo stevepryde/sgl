@@ -336,7 +336,7 @@ fn every_taa_feature_permutation_executes() {
         return;
     };
     for reversed in [false, true] {
-        for bits in 0..8 {
+        for bits in 0..16 {
             let flags = temporal_anti_aliasing::FeatureFlags(bits);
             let mut context = PostFXContext::new(&device, &queue, Default::default());
             let mut taa = TemporalAntiAliasing::new(&device);
@@ -2737,3 +2737,6 @@ fn context_tracks_output_only_resizes_without_rebuilding_depths() {
         "output resize keeps the render-size previous depth resource"
     );
 }
+
+#[path = "support/adaptive_taa.rs"]
+mod adaptive_taa;

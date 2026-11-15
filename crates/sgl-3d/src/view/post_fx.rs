@@ -113,7 +113,10 @@ pub(crate) const TAA_MIP_BIAS: f32 = -0.5;
 
 /// Hydrogent's TAA feature flags (`HnPostProcessTaskParams::TAAFeatureFlags`).
 const TAA_FEATURE_FLAGS: temporal_anti_aliasing::FeatureFlags =
-    temporal_anti_aliasing::FeatureFlags::BICUBIC_FILTER;
+    temporal_anti_aliasing::FeatureFlags(
+        temporal_anti_aliasing::FeatureFlags::BICUBIC_FILTER.0
+            | temporal_anti_aliasing::FeatureFlags::MOTION_ADAPTIVE_HISTORY.0,
+    );
 
 /// The frame the effects' history refers to.
 struct History {
@@ -563,6 +566,7 @@ impl PostFx {
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         color: &wgpu::TextureView,
+        rigid_object_motion: bool,
         timing: Option<&crate::timing::GpuTiming>,
     ) -> &wgpu::TextureView {
         let taa = self.taa.as_mut().expect("PostFx::new with TAA");
@@ -579,6 +583,8 @@ impl PostFx {
             motion_vectors_srv: &inputs.motion,
             taa_attribs: &TemporalAntiAliasingAttribs {
                 reset_accumulation: u32::from(self.reset_accumulation),
+                temporal_stability_factor: 0.88,
+                rigid_object_motion: u32::from(rigid_object_motion),
                 ..Default::default()
             },
             accumulation_buffer_idx: 0,

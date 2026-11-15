@@ -149,5 +149,11 @@
     "component": "DiligentFX/DiligentCore — Copyright Diligent Graphics LLC",
     "path": "crates/sgl-3d/src/LICENSE-diligent.txt",
     "url": "https://raw.githubusercontent.com/DiligentGraphics/DiligentFX/f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b/License.txt"
+  },
+  {
+    "component": "Filament TAA",
+    "path": "crates/sgl-post-fx/LICENSE-filament.txt",
+    "url": "https://raw.githubusercontent.com/google/filament/35db9f6597d2dfa337245129ee9b684dd03796d9/LICENSE",
+    "prefix": "Filament, https://github.com/google/filament\nRevision 35db9f6597d2dfa337245129ee9b684dd03796d9, Apache-2.0.\nSGL postFX ports motion-adaptive history rectification, feedback and\njitter-aware depth-neighborhood disocclusion from taa.mat/taa.md, with\nglobal rigid-object recovery plus transported local surface recovery.\nCopyright The Android Open Source Project.\n\n"
   }
 ]

@@ -133,7 +133,14 @@ impl Antialiasing {
         let color = &ctx.targets.composite;
         if ctx.effective.taa {
             let post_fx = post_fx.unwrap();
-            post_fx.temporal_anti_aliasing(ctx.device, ctx.queue, ctx.encoder, color, ctx.timing);
+            post_fx.temporal_anti_aliasing(
+                ctx.device,
+                ctx.queue,
+                ctx.encoder,
+                color,
+                ctx.scene.rigid_objects_changed(),
+                ctx.timing,
+            );
             Completed::Taa
         } else if ctx.effective.fsr {
             // FSR upscales the same linear HDR frame (AMD's FSR placement).

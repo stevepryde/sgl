@@ -85,3 +85,49 @@ code matches upstream.
 | DFX-59 | `ScreenSpaceReflection.cpp:243–247` stores resolved device depth in `R16Float` for both conventions. Binary16 spacing near conventional depth 1 loses metres in the virtual point used by hit reprojection; DFX-33's retained precision analysis applies to SGL3D's reversed depth only. Wicked's resolve likewise exports post-projection reprojection depth (`ssr_resolveCS.hlsl:144–150`, revision [`cee348b7135d4b6369f85a99ed5e9ed222b71bc7`](https://github.com/turanszkij/WickedEngine/blob/cee348b7135d4b6369f85a99ed5e9ed222b71bc7/WickedEngine/shaders/ssr_resolveCS.hlsl)). | Keep the existing encoding and reversed-depth storage, but use `R32Float` under conventional depth, following the precision requirements of perspective device depth ([NVIDIA, Visualizing Depth Precision](https://developer.nvidia.com/blog/visualizing-depth-precision/)). Resource preparation and the depth-keyed spatial pipeline select the same format; changing convention recreates resources and resets history. The temporal pass already uses an unfilterable binding and `textureLoad`, so the [WebGPU format requirements](https://www.w3.org/TR/webgpu/#plain-color-formats) need no optional feature. This costs two additional bytes per full-resolution pixel only for conventional consumers. The geometric readback test resolves a plane at 50 m plus a 4 m reflected ray to within 0.1 m at full/half resolution, across conventional→reversed→conventional changes, and executes the temporal consumer. No upstream code is copied (#650). |
 
 | DFX-60 | `SSR_ComputeIntersection.fx:276,323` stores the GGX sampling PDF unchanged in RGBA16F; glossy grazing samples can exceed binary16's finite range. The retained DiligentFX shader and AMD's [SSSR sampling pipeline](https://gpuopen.com/manuals/fidelityfx_sdk/techniques/stochastic-screen-space-reflections/) keep importance sampling and reconstruction coupled. | Clamp only the stored PDF to `HALF_MAX`, as DFX-48 clamps the stored ray length. This retains the existing storage and weighting while avoiding backend-dependent saturation versus infinity, whose reconstruction weight collapses to its fallback floor. The GPU mirror-floor test at perceptual roughness 17/255 checks finite stored PDFs through the real intersection and weights through the real reconstruction function. Metal already saturates the original store, so the test documents that backend's saturation case; the explicit clamp establishes the same finite boundary before conversion everywhere (#712). |
+
+
+## Motion-adaptive TAA
+
+`MOTION_ADAPTIVE_HISTORY` follows Filament revision
+`35db9f6597d2dfa337245129ee9b684dd03796d9`,
+`filament/src/materials/antiAliasing/taa/{taa.mat,taa.md}` and
+`filament/include/filament/Options.h` (Apache-2.0,
+`LICENSE-filament.txt`). It retains partial box rectification at rest,
+scales current-frame feedback, restores full rejection with motion/farness,
+and compares current/previous depth neighborhoods with jitter alignment.
+The defaults are the source's: box floor 0.1, feedback scale 0.3, motion
+threshold one render pixel, reversed-normalized depth threshold 0.001,
+recovery hold twelve frames and stable-camera matrix threshold 1e-6.
+SGL3D pairs it with current feedback 0.12 (history stability 0.88).
+
+Adaptations: caller depth may be forward, so the shader normalizes it; the
+context's current reprojection texture is already in previous-camera depth,
+while raw current depth supplies current neighborhoods/farness. Input motion
+is total unjittered camera+object motion, not Filament's object-only residual,
+so depth restoration remains conservative during object motion. Camera
+changes and caller-reported rigid-object motion rearm the whole view, as
+Filament does. The closest-motion history's B additionally transports local
+surface-motion/disocclusion recovery. The scene supplies rigid changes until
+submission, including pose/model/visibility changes, same-ID geometry replacements, appearances and departed
+objects; procedural/material deformation does not set this global signal.
+A GPU thin-strip fixture proves why the global signal is necessary: a resting
+2-pixel foreground strip moves eight pixels and exposes zero-motion background
+whose historical neighborhood still contains background. A local-only hold
+left 0.644 radiance where the newly exposed surface is 0.05. This matches
+Filament's warning that local-neighborhood alternatives retain more ghosting.
+Slower feedback also delays lighting convergence. No historical variance/feedback path
+changes without the opt-in flag. Current-only hard clipping cannot preserve
+a feature missing from the complete current neighborhood; replacing variance
+with current min/max alone does not solve that sampling limitation.
+
+The local hold uses the existing 0.01-pixel stillness classification rather
+than exact nonzero velocity, and carries depth confidence continuously
+(`disocclusion * hold duration`), so tiny interpolation/reprojection residue
+cannot rearm a full hold indefinitely. Stable camera comparison first removes
+jitter from each projection, then multiplies by its view; cancelling jitter
+from an already-rounded translated view-projection loses low bits. A depth
+lookup corrected for jitter clamps at texture edges as Filament's sampler
+does; the stable color-history coordinate still rejects outside the viewport.
+GPU regressions cover the translated captured camera, its observed tiny
+projection residue, and valid border histories.

@@ -154,6 +154,33 @@ resolve ramps up history weight as after an explicit reset.
 TAA finds the closest motion vectors in its resolve, from the depth buffer
 and motion vectors it is given (DFX-13). Both are listed in PROVENANCE.md.
 
+### Motion-adaptive TAA
+
+`temporal_anti_aliasing::FeatureFlags::MOTION_ADAPTIVE_HISTORY` opts into
+Filament-derived partial history rectification and adaptive feedback at rest,
+with camera/local-surface recovery holds and jitter-aware current/previous
+depth-neighborhood rejection. Default flags retain the existing resolve.
+Use `TemporalStabilityFactor = 0.88` for the reference's 0.12 current feedback,
+0.036 relaxed feedback and twelve-frame recovery hold; SGL3D uses that pair.
+Changing feedback changes convergence and recovery time. Both forward and
+reversed depth are normalized to near=1/far=0 for the adaptive comparisons.
+The closest-motion history uses RGBA16F rather than RG16F under this flag,
+adding eight bytes per pixel across its two buffers; B transports recovery
+hold, W is zero, and input motion's extra channels are never copied into it.
+
+Set `TemporalAntiAliasingAttribs::rigid_object_motion` when a rigid object
+moves, changes geometry, appears, is hidden or leaves the view; camera and rigid-object changes
+rearm recovery throughout the view, as Filament does. Newly exposed background
+can have zero current and previous motion and still require this global hold.
+SGL3D supplies the signal from scene instance changes, conservatively including
+old visible objects whose new positions are culled. Procedural material motion
+and depth confidence additionally transport local recovery, so one animated
+material does not prevent stabilization everywhere. Depth
+restoration is conservative for object motion because the caller supplies
+total motion rather than Filament's object-only residual. This is partial
+rectification, not disabled history rejection. It cannot reconstruct geometry
+never sampled across the jitter sequence. See [provenance](PROVENANCE.md).
+
 ## Translation conventions
 
 The original port established these conventions, which the current shaders use:
@@ -176,7 +203,8 @@ changes; it is not an exhaustive conformance ledger.
 
 `cargo test -p sgl-post-fx -p sgl-post-fx-tests` builds, binds and executes every feature
 permutation of each effect (reversed depth; SSR's previous frame and half
-resolution; TAA's Gaussian weighting, bicubic filter and YCoCg colour space)
+resolution; TAA's Gaussian weighting, bicubic filter, YCoCg colour space and
+motion-adaptive history)
 on the device and checks the output stays finite. SGL3D's integration
 (`crates/sgl-3d/src/view/post_fx.rs`) is tested in
 `tests/sgl-3d/tests/screen_space_reflections.rs`.
