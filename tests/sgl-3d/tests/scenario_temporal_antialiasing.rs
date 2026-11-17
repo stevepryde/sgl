@@ -713,10 +713,7 @@ fn at_rest_the_resolve_converges_on_coverage() {
                     )
                 });
             }
-            // #793 adds FSR2's bound back.
-            if method != Antialiasing::Fsr2 {
-                failures.bounded(&rig, format!("{method:?} at rest, {distance}"));
-            }
+            failures.bounded(&rig, format!("{method:?} at rest, {distance}"));
         }
     }
     failures.assert();
@@ -923,10 +920,6 @@ fn panning_keeps_history() {
                 )
             });
             for (name, (error, frame, pixel)) in ["card", "sky"].into_iter().zip(held_error) {
-                // #793 adds FSR2's held sky back.
-                if method == Antialiasing::Fsr2 && name == "sky" {
-                    continue;
-                }
                 failures.check(error <= stores(method) * HALF_STEP, || {
                     format!(
                         "{method:?} panning {rate} px a frame: a pixel held in the {name} for the hold is {error} of its radiance off, frame {frame} pixel {pixel:?}"
@@ -937,8 +930,8 @@ fn panning_keeps_history() {
     }
     for (method, rig, _) in &rigs {
         let method = *method;
-        // #792 and #793 add TAA's and FSR2's bounds back.
-        if !matches!(method, Antialiasing::Taa | Antialiasing::Fsr2) {
+        // #792 adds TAA's bound back.
+        if method != Antialiasing::Taa {
             failures.bounded(rig.as_ref().unwrap(), format!("{method:?} panning"));
         }
     }
@@ -1058,8 +1051,8 @@ fn a_disocclusion_recovers() {
                     residual.0, residual.1, residual.2
                 )
             });
-            // #792 and #793 add TAA's and FSR2's bounds back.
-            if !matches!(method, Antialiasing::Taa | Antialiasing::Fsr2) {
+            // #792 adds TAA's bound back.
+            if method != Antialiasing::Taa {
                 failures.bounded(&rig, format!("{method:?} disocclusion {name}"));
             }
         }
@@ -1137,10 +1130,7 @@ fn a_surface_the_camera_follows_keeps_its_history() {
                 ours.rmse, theirs.rmse
             )
         });
-        // #793 adds FSR2's bound back.
-        if method != Antialiasing::Fsr2 {
-            failures.bounded(&rig, format!("{method:?} following"));
-        }
+        failures.bounded(&rig, format!("{method:?} following"));
     }
     failures.assert();
 }
@@ -1239,10 +1229,7 @@ fn a_surface_moving_along_the_view_keeps_its_history() {
                 )
             });
         }
-        // #793 adds FSR2's bound back.
-        if method != Antialiasing::Fsr2 {
-            failures.bounded(&rig, format!("{method:?} approaching"));
-        }
+        failures.bounded(&rig, format!("{method:?} approaching"));
     }
     failures.assert();
 }
@@ -1372,8 +1359,8 @@ fn a_surface_its_vertex_function_moves_from_rest_uncovers_what_lies_behind() {
                         residual.0, residual.1, residual.2
                     )
                 });
-                // #792 and #793 add TAA's and FSR2's bounds back.
-                if !matches!(method, Antialiasing::Taa | Antialiasing::Fsr2) {
+                // #792 adds TAA's bound back.
+                if method != Antialiasing::Taa {
                     failures.bounded(&rig, format!("{method:?} vertex function {name}"));
                 }
             }
@@ -1479,10 +1466,7 @@ fn appearance_and_departure_at_rest_resolve_within_the_hold() {
                     )
                 });
             }
-            // #793 adds FSR2's bound back.
-            if method != Antialiasing::Fsr2 {
-                failures.bounded(&rig, format!("{method:?} events {name}"));
-            }
+            failures.bounded(&rig, format!("{method:?} events {name}"));
         }
     }
     failures.assert();
@@ -1632,8 +1616,8 @@ fn moving_the_origin_during_a_pan_changes_nothing() {
                 values[1], values[0]
             )
         });
-        // #792 and #793 add TAA's and FSR2's bounds back.
-        if !matches!(method, Antialiasing::Taa | Antialiasing::Fsr2) {
+        // #792 adds TAA's bound back.
+        if method != Antialiasing::Taa {
             failures.bounded(&plain, format!("{method:?} panning"));
             failures.bounded(&moved, format!("{method:?} panning with origin moves"));
         }

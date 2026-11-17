@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` FSR2 no longer darkens pixels at the frame's corners and edges
+  (the bottom-left corner by 14% on some jitter phases): it takes
+  `sp-fidelity` and `sp-fidelity-wgpu` 0.3.1, which correct the port's
+  accumulate pass there. FSR3 is unchanged. No game-code changes are needed.
 - `sgl-3d` hardware ray tracing (`Settings::hardware_ray_tracing`) no longer
   traces a frame as if a model were absent when its BLAS was compacted just
   before it (seen on Metal under GPU load, one frame of rays through it
