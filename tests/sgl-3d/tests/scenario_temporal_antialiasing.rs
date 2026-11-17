@@ -580,11 +580,7 @@ fn panning_keeps_history() {
         }
     }
     for (method, rig, _) in &rigs {
-        let method = *method;
-        // #792 adds TAA's bound back.
-        if method != Antialiasing::Taa {
-            failures.bounded(rig.as_ref().unwrap(), format!("{method:?} panning"));
-        }
+        failures.bounded(rig.as_ref().unwrap(), format!("{method:?} panning"));
     }
     failures.assert();
 }
@@ -680,10 +676,7 @@ fn a_disocclusion_recovers() {
                     residual.0, residual.1, residual.2
                 )
             });
-            // #792 adds TAA's bound back.
-            if method != Antialiasing::Taa {
-                failures.bounded(&rig, format!("{method:?} disocclusion {name}"));
-            }
+            failures.bounded(&rig, format!("{method:?} disocclusion {name}"));
         }
     }
     failures.assert();
@@ -971,10 +964,7 @@ fn departures(
                         residual.0, residual.1, residual.2
                     )
                 });
-                // #792 adds TAA's bound back.
-                if method != Antialiasing::Taa {
-                    failures.bounded(&rig, format!("{method:?} vertex function {name}"));
-                }
+                failures.bounded(&rig, format!("{method:?} vertex function {name}"));
             }
         }
     }
@@ -1431,11 +1421,8 @@ fn moving_the_origin_during_a_pan_changes_nothing() {
                 values[1], values[0]
             )
         });
-        // #792 adds TAA's bound back.
-        if method != Antialiasing::Taa {
-            failures.bounded(&plain, format!("{method:?} panning"));
-            failures.bounded(&moved, format!("{method:?} panning with origin moves"));
-        }
+        failures.bounded(&plain, format!("{method:?} panning"));
+        failures.bounded(&moved, format!("{method:?} panning with origin moves"));
     }
     failures.assert();
 }
@@ -1966,10 +1953,7 @@ fn at_rest_taa_holds_silhouettes_beyond_the_reach_of_motion_still() {
 fn at_rest_taa_holds_silhouettes_within_the_reach_of_slow_motion_still() {
     let Some(gpu) = gpu() else { return };
     let scenario = far_stage(1., None, &stage_poses);
-    // Between the fixture's radiances, so the moving card's own edge, which
-    // TAA overshoots in motion (#792), stays within the bound case 12 holds
-    // the frame to.
-    let mover = Shape::card(Vec2::new(0.4, 0.4), 0., 0.3);
+    let mover = Shape::card(Vec2::new(0.4, 0.4), 0., CARD);
     let rest = Pose::at(Vec3::new(-0.9, -1.2, -DEPTH));
     let frames = SETTLE + 2 * JITTER_CYCLE;
     let velocity = Vec3::X * 0.5 * px() * FRAME_RATE as f32;

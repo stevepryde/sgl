@@ -302,8 +302,10 @@ pub struct Rig {
     /// still hold them.
     range: [f32; 2],
     /// The antialiased frames' furthest excursion beyond the fixture's
-    /// radiance range, relative to it, and where it was.
+    /// radiance range, relative to it, and where and when it was.
     excursion: RefCell<Option<(f32, String)>>,
+    /// The index of the frame last rendered.
+    frame: u32,
 }
 
 impl Rig {
@@ -346,6 +348,7 @@ impl Rig {
             camera: Pose::at(Vec3::ZERO),
             range: [sky; 2],
             excursion: RefCell::new(None),
+            frame: 0,
         }
     }
 
@@ -633,6 +636,7 @@ impl Rig {
     /// no-op unless the size or settings changed), and `camera_cut` holds
     /// for this frame only.
     pub fn render(&mut self, frame: u32) {
+        self.frame = frame;
         self.input.elapsed_seconds = f64::from(frame) / FRAME_RATE;
         self.input.frame_time_ms = (1000. / FRAME_RATE) as f32;
         if self.output.1 != self.view.size {
@@ -684,7 +688,10 @@ impl Rig {
                     let pixel = [i as u32 % image.size[0], i as u32 / image.size[0]];
                     *excursion = Some((
                         beyond,
-                        format!("{c} at {pixel:?} of the range {low}..={high}"),
+                        format!(
+                            "{c} at {pixel:?}, frame {}, of the range {low}..={high}",
+                            self.frame
+                        ),
                     ));
                 }
             }

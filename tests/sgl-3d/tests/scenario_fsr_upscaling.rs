@@ -11,10 +11,9 @@
 //! `<case>::<version>_<quality>`, so a change to one path reruns only its
 //! tests: `cargo test -p sgl-3d-tests --test scenario_fsr_upscaling
 //! at_rest::fsr3_balanced`. Every case but U6 and U7 checks case 12's bound
-//! over the frames it read (`Failures::bounded`), except TAA's under motion,
-//! which #792 adds back. #810 parks FSR3's strip bar at the upscaling
-//! qualities in U1 and U8. Case U1 dumps its frames and metrics with
-//! `SGL_SCENARIO_DUMP`.
+//! over the frames it read (`Failures::bounded`). #810 parks FSR3's strip
+//! bar at the upscaling qualities in U1 and U8. Case U1 dumps its frames and
+//! metrics with `SGL_SCENARIO_DUMP`.
 //!
 //! The fixtures' truth assumes `rig::fixture_settings`: unlit cards, no
 //! bloom, fog, ambient occlusion, reflections or motion blur, a fixed
@@ -893,10 +892,7 @@ fn turning(method: Antialiasing, quality: FsrQuality) {
             )
         });
     }
-    // #792 adds TAA's bound back.
-    if method != Antialiasing::Taa {
-        failures.bounded(&rig, format!("{name} turning"));
-    }
+    failures.bounded(&rig, format!("{name} turning"));
     failures.assert();
 }
 

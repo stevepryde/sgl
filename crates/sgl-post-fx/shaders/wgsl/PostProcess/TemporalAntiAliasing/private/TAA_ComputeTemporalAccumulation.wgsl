@@ -24,6 +24,10 @@
 // Camera and caller-reported rigid-object motion retain the reference's
 // global hold. Surface/material deformation and disocclusion also transport
 // local recovery, so animated material geometry does not hold the whole view.
+// Under every flag, the history clip's variance box is intersected with
+// Filament's min/max box (taa.mat, the box construction), so the resolve
+// never leaves the neighbourhood's range (#792); Filament's deringing of the
+// Catmull-Rom fetch is not ported (PROVENANCE.md, Motion-adaptive TAA).
 
 #include "BasicStructures.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
@@ -102,6 +106,11 @@ struct PixelStatistic
     Mean:     vec3<f32>,
     Variance: vec3<f32>,
     StdDev:   vec3<f32>,
+    // PROVENANCE.md, Motion-adaptive TAA (#792): Filament's min/max box,
+    // halfway between the cross's (the pixel and its four edge neighbours)
+    // and the whole 3x3's.
+    Min:      vec3<f32>,
+    Max:      vec3<f32>,
 }
 
 fn RGBToYCoCg(RGB: vec3<f32>) -> vec3<f32>
@@ -217,22 +226,22 @@ fn SamplePrevMotion(PixelCoord: vec2<i32>) -> vec2<f32>
 }
 
 // PROVENANCE.md DFX-14: Godot's clip_aabb (taa_resolve.glsl, after Playdead's
-// temporal reprojection): ColorPrev moves towards the box's centre, the
-// neighbourhood mean, until it lies in the box. Godot clips towards the mean
-// clamped to the box, which is the mean itself. Godot's FLT_MIN is the margin.
-fn ClipToAABB(ColorPrev: vec3<f32>, AABBCentre: vec3<f32>, AABBExtents: vec3<f32>) -> vec3<f32>
+// temporal reprojection): ColorPrev moves towards P, the neighbourhood mean
+// clamped to the box, until it lies in the box. Godot's FLT_MIN is the
+// margin.
+fn ClipToAABB(ColorPrev: vec3<f32>, P: vec3<f32>, AABBMin: vec3<f32>, AABBMax: vec3<f32>) -> vec3<f32>
 {
     const Margin = 0.00000001;
-    var R = ColorPrev - AABBCentre;
-    let RMax = AABBExtents;
-    let RMin = -AABBExtents;
+    var R = ColorPrev - P;
+    let RMax = AABBMax - P;
+    let RMin = AABBMin - P;
     if (R.x > RMax.x + Margin) { R *= RMax.x / R.x; }
     if (R.y > RMax.y + Margin) { R *= RMax.y / R.y; }
     if (R.z > RMax.z + Margin) { R *= RMax.z / R.z; }
     if (R.x < RMin.x - Margin) { R *= RMin.x / R.x; }
     if (R.y < RMin.y - Margin) { R *= RMin.y / R.y; }
     if (R.z < RMin.z - Margin) { R *= RMin.z / R.z; }
-    return AABBCentre + R;
+    return P + R;
 }
 
 fn ComputeDepthDisocclusionWeight(CurrDepth: f32, PrevDepth: f32) -> f32
@@ -333,6 +342,10 @@ fn ComputePixelStatisticYCoCgSDR(PixelCoord: vec2<i32>) -> PixelStatistic
     var WeightSum = 0.0;
     var M1 = vec3<f32>(0.0, 0.0, 0.0);
     var M2 = vec3<f32>(0.0, 0.0, 0.0);
+    var CrossMin = vec3<f32>(HALF_MAX);
+    var CrossMax = vec3<f32>(-HALF_MAX);
+    var BoxMin = vec3<f32>(HALF_MAX);
+    var BoxMax = vec3<f32>(-HALF_MAX);
 
     const StatisticRadius = 1;
     for (var x = -StatisticRadius; x <= StatisticRadius; x++)
@@ -351,9 +364,17 @@ fn ComputePixelStatisticYCoCgSDR(PixelCoord: vec2<i32>) -> PixelStatistic
             M1 += SDRColor * Weight;
             M2 += SDRColor * SDRColor * Weight;
             WeightSum += Weight;
+            BoxMin = min(BoxMin, SDRColor);
+            BoxMax = max(BoxMax, SDRColor);
+            if (x == 0 || y == 0) {
+                CrossMin = min(CrossMin, SDRColor);
+                CrossMax = max(CrossMax, SDRColor);
+            }
         }
     }
 
+    Desc.Min = mix(CrossMin, BoxMin, 0.5);
+    Desc.Max = mix(CrossMax, BoxMax, 0.5);
     Desc.Mean = M1 / WeightSum;
     Desc.Variance = M2 / WeightSum - (Desc.Mean * Desc.Mean);
     Desc.StdDev = sqrt(max(Desc.Variance, vec3<f32>(0.0)));
@@ -586,7 +607,18 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 
     let VarianceGamma = ComputeVarianceGamma(length(Motion));
     let PixelStat = ComputePixelStatisticYCoCgSDR(vec2<i32>(Position.xy));
-    let YCoCgSDRClampedColor = ClipToAABB(YCoCgSDRPrevColor, PixelStat.Mean, VarianceGamma * PixelStat.StdDev);
+    // PROVENANCE.md, Motion-adaptive TAA (#792): Filament intersects the
+    // variance box with the min/max box, so the history the resolve blends
+    // stays within the range of what the neighbourhood holds, which the
+    // bicubic history fetch's negative lobes overshoot at an edge. Clamping
+    // the variance box's corners into the min/max box is that intersection,
+    // and the nearest point of the min/max box where they do not meet (a
+    // dark or bright minority pulls the mean outside the min/max box, whose
+    // corners are halfway to the cross's, and the variance box closes on
+    // the mean with speed), so the box never inverts.
+    let AABBMin = clamp(PixelStat.Mean - VarianceGamma * PixelStat.StdDev, PixelStat.Min, PixelStat.Max);
+    let AABBMax = clamp(PixelStat.Mean + VarianceGamma * PixelStat.StdDev, PixelStat.Min, PixelStat.Max);
+    let YCoCgSDRClampedColor = ClipToAABB(YCoCgSDRPrevColor, clamp(PixelStat.Mean, AABBMin, AABBMax), AABBMin, AABBMax);
 
 #if TAA_OPTION_MOTION_ADAPTIVE_HISTORY
     let motion_pixels=length(Motion*cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);

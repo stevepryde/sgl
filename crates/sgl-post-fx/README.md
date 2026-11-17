@@ -62,7 +62,8 @@ licences, source revisions and the blue-noise table source it reads.
   skipped tile's histories hold zero radiance and DiligentFX's no-history
   variance (DFX-29).
 - TAA accumulates a Halton-jittered frame into a history, rejecting by depth
-  disocclusion and motion and clipping to the neighbourhood's variance box;
+  disocclusion and motion and clipping to the neighbourhood's variance box,
+  intersected with its min/max box as Filament's is;
   `vendor/DiligentFX/PostProcess/TemporalAntiAliasing/README.md` describes it.
   As Godot's TAA, it rejects history gradually where motion changes between
   frames, not by speed, and clips it towards the neighbourhood mean within a

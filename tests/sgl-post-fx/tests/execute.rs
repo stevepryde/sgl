@@ -2082,6 +2082,119 @@ fn ssr_roughness_zero_reflection_rays_are_finite() {
 }
 
 /// IEEE binary16 +infinity: a scene texel brighter than the format holds.
+/// Defect (#792): a resolve that creates radiance at an edge in motion. The
+/// bicubic history fetch's negative lobes over- and undershoot a step read
+/// between texels, and the variance box it is then clipped to can extend
+/// past the neighbourhood's levels, so the overshoot survives. Oracle: the
+/// convexity of a resolve over its samples. A step of two levels, still
+/// for its first frame (the placeholder copies it, DFX-47) and then
+/// reprojected by 0.37 of a pixel a frame, gives the resolve nothing but
+/// those two levels, in its history and in its current frame alike, so
+/// every output lies between them, within its own half-float store (one
+/// step), under both rectifications that read history bicubically.
+#[test]
+fn taa_reprojecting_a_step_by_a_fraction_of_a_pixel_stays_within_its_levels() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    // The levels as the RGBA16F colour stores them (`half` truncates).
+    let [low, high] = [0.05f32, 0.5].map(|v| f32::from_bits(v.to_bits() & !0x1fff));
+    let colour: Vec<u8> = (0..SIZE[0] * SIZE[1])
+        .flat_map(|i| {
+            let v = if i % SIZE[0] < SIZE[0] / 2 { low } else { high };
+            half(&[v, v, v, 1.0])
+        })
+        .collect();
+    // 0.37 of a pixel a frame in NDC x (two units across the width).
+    let shift = 2. * 0.37 / SIZE[0] as f32;
+    let step = 2f32.powi(-10);
+    let mut failures = Vec::new();
+    for flags in [
+        temporal_anti_aliasing::FeatureFlags::BICUBIC_FILTER,
+        temporal_anti_aliasing::FeatureFlags(
+            temporal_anti_aliasing::FeatureFlags::BICUBIC_FILTER.0
+                | temporal_anti_aliasing::FeatureFlags::MOTION_ADAPTIVE_HISTORY.0,
+        ),
+    ] {
+        let mut context = PostFXContext::new(&device, &queue, Default::default());
+        let mut taa = TemporalAntiAliasing::new(&device);
+        let color = texels(&device, &queue, wgpu::TextureFormat::Rgba16Float, &colour);
+        // No depth motion, and valid (Z and W), which the adaptive flag reads.
+        let motions = [0., shift].map(|x| {
+            texture(
+                &device,
+                &queue,
+                wgpu::TextureFormat::Rgba16Float,
+                &half(&[x, 0.0, 0.0, 1.0]),
+            )
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let current_depth = depth(&device, &mut encoder, 0.05);
+        let previous_depth = depth(&device, &mut encoder, 0.05);
+        let camera = camera(true, 0);
+        let mut extremes = [f32::MAX, f32::MIN];
+        for index in 0..4u32 {
+            context.prepare_resources(
+                &device,
+                &FrameDesc {
+                    index,
+                    width: SIZE[0],
+                    height: SIZE[1],
+                    output_width: SIZE[0],
+                    output_height: SIZE[1],
+                },
+                post_fx_context::FeatureFlags::REVERSED_DEPTH,
+            );
+            taa.prepare_resources(&device, &mut encoder, &context, flags, 0);
+            context.execute(&mut RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                curr_depth_buffer_srv: &current_depth,
+                prev_depth_buffer_srv: &previous_depth,
+                curr_camera: Some(&camera),
+                prev_camera: Some(&camera),
+                camera_attribs_cb: None,
+                pass_timestamps: None,
+            });
+            taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+                device: &device,
+                queue: &queue,
+                device_context: &mut encoder,
+                post_fx_context: &mut context,
+                color_buffer_srv: &color,
+                depth_buffer_srv: &current_depth,
+                motion_vectors_srv: &motions[usize::from(index > 0)],
+                responsive_masks: &[],
+                neighborhood_motion: None,
+                taa_attribs: &TemporalAntiAliasingAttribs::default(),
+                accumulation_buffer_idx: 0,
+                pass_timestamps: None,
+            });
+            queue.submit([std::mem::replace(
+                &mut encoder,
+                device.create_command_encoder(&Default::default()),
+            )
+            .finish()]);
+            for texel in read_rgba16f(&device, &queue, taa.get_accumulated_frame_srv(false, 0)) {
+                for &c in &texel[..3] {
+                    extremes = [extremes[0].min(c), extremes[1].max(c)];
+                }
+            }
+        }
+        if extremes[0] < low * (1. - step) || extremes[1] > high * (1. + step) {
+            failures.push(format!(
+                "flags {flags:?}: the resolve ranged over {extremes:?}"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "outside the step's levels {low}..={high}:\n{}",
+        failures.join("\n")
+    );
+}
+
 const HALF_INFINITY: [u8; 2] = 0x7c00u16.to_le_bytes();
 
 // PROVENANCE.md DFX-46: TAA reads a scene texel of +infinity as binary16's

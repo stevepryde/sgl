@@ -917,7 +917,9 @@ gradually where motion changes by more than 2.5 pixels per frame (none left
 at about 96 pixels), and clips it towards the neighbourhood mean within a
 variance box that narrows with speed, to none at 2% of the screen per frame:
 fast motion resolves softened rather than aliased. Upstream rejects by speed
-(`sgl-post-fx` PROVENANCE.md DFX-14).
+(`sgl-post-fx` PROVENANCE.md DFX-14). As Filament's, the box never reaches
+past the neighbourhood's own range, so the resolve creates no fringe
+brighter or darker than the scene at an edge in motion.
 
 ### SMAA
 

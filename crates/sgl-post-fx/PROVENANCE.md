@@ -37,7 +37,7 @@ code matches upstream.
 | DFX-11 | Internal textures (TAA's accumulated buffers included) are shader resources and render targets. | They also allow copies (`COPY_SRC`) so callers can capture intermediate results. |
 | DFX-12 | SSR has no history reset; its histories are cleared only when `PrepareResources` creates them. | SSR resets them by the rule DiligentFX's TAA uses (`TemporalAntiAliasing::AccumulationBufferInfo::UpdateConstantBuffer`): on the first execution, when the frame index is not the last one plus one (skipped frames), or when `RenderAttributes::reset_accumulation` asks. A reset clears the four histories as creation does, so the frame equals a new effect's. Owner decision 2026-09-28. |
 | DFX-13 | `PostFXContext::Execute` computes the closest motion vectors in a full-screen pass (`ComputeClosestMotion.fx`, a 3×3 search for the nearest depth) for its effects to read. | TAA, their only reader here, finds them in its resolve, as Godot's TAA finds the velocity of the closest depth in its resolve (`get_closest_pixel_velocity_3x3` in `servers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl`, revision `b13043816a0f234985030ec035363a005bc86c32`), with DiligentFX's search: `TemporalAntiAliasing::RenderAttributes` takes the depth buffer and motion vectors the context took, and the context no longer computes them (nor needs the motion vectors). The resolved frame is unchanged; one full-screen pass and its texture fewer. Replaces the 2026-09-28 option to skip them (#16). |
-| DFX-14 | TAA's `MotionFactor` (pixel speed) scales both the variance gamma and the history weight, so any pixel moving faster than 1/`TAA_MOTION_VECTOR_DIFF_FACTOR` (256) of the viewport per frame loses its history. That contradicts the constant's documentation ("the difference in motion vectors between the current frame and the previous frame"). `ClipToAABB` moves history along the line to the current colour until any one channel enters the variance box, extrapolating up to `TAA_VARIANCE_INTERSECTION_MAX_T` (10) times past the current colour. | History is rejected by the difference between the pixel's motion and the previous frame's closest motion at its reprojected position, gradually, as Godot's TAA rejects ("velocity disocclusion", `get_factor_disocclusion` in `servers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl` with `servers/rendering/renderer_rd/effects/taa.cpp`, revision `b13043816a0f234985030ec035363a005bc86c32`, MIT, `LICENSE-godot.txt`; the shader is based on Spartan Engine's TAA, MIT, `LICENSE-spartan.txt`): none within 2.5 pixels (`taa.cpp`'s `disocclusion_threshold`; the shader's comment of 0.1/max(resolution) is stale), then a share of 0.01 per pixel. Godot adds that share to its 1/16 current weight (`RPC_16`), so the history weight is at most the cap less the share (`TemporalStabilityFactor`, 0.9375, Godot's 1 - 1/16; DFX-19's 0.985 at still pixels), and none is left 93.75 pixels beyond the threshold. DiligentFX's accumulated confidence still ramps the weight up after a reset or disocclusion, but is not multiplied by the share: through `ComputeCorrectedAlpha`'s 1/(2 - weight) that compounds frame over frame and settles at 1 - sqrt(share) (0.50 at 27.5 pixels, where Godot keeps 0.69). History is clipped towards the neighbourhood mean (Godot's `clip_aabb`, after Playdead) within a box of Godot's `variance_dynamic` standard deviations that narrows smoothly to none at 2% of the screen per frame (`clip_history_3x3`), so fast motion resolves towards the neighbourhood mean instead of the aliased current sample. `variance_dynamic` is 1.1 × 1080 / height clamped to 0.75–1; 1.1 at 1080 rows clamps to 1, so at rest the box is clamp(1188 / height, 0.75, 1) deviations: 1 up to 1188 rows, 0.75 from 1584. The deviations are of DiligentFX's tone-mapped colour (`HDRToSDR`), in YCoCg under `FeatureFlags::YCOCG_COLOR_SPACE` as Bevy measures its box, otherwise in RGB (SGL3D's Hydrogent flags); Godot measures linear HDR RGB. DiligentFX's clip extrapolated bright edges into coloured specks in such narrow boxes. The box applies to every pixel, DFX-19's still ones included: under the 4-pixel limit's rejection, a still pixel an object had just left lost its history; with the gradual rejection, DiligentFX's 2.5-deviation still box kept the object's trail. The resolve writes each frame's closest motion beside its accumulated frame, alternating with the accumulated buffers, and the next frame binds it as `g_TexturePrevMotion` (until #16, a `CopyTextureColor` of the context's after each execution). A frame that copies its input instead (DFX-2's first frame of a feature set) copies the motion vectors in their place, so the next frame compares with them: they differ from the closest motion only within a pixel of a depth edge. Owner decision 2026-09-28; Godot's gradual rejection, box and clip 2026-10-05 (#93). |
+| DFX-14 | TAA's `MotionFactor` (pixel speed) scales both the variance gamma and the history weight, so any pixel moving faster than 1/`TAA_MOTION_VECTOR_DIFF_FACTOR` (256) of the viewport per frame loses its history. That contradicts the constant's documentation ("the difference in motion vectors between the current frame and the previous frame"). `ClipToAABB` moves history along the line to the current colour until any one channel enters the variance box, extrapolating up to `TAA_VARIANCE_INTERSECTION_MAX_T` (10) times past the current colour. | History is rejected by the difference between the pixel's motion and the previous frame's closest motion at its reprojected position, gradually, as Godot's TAA rejects ("velocity disocclusion", `get_factor_disocclusion` in `servers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl` with `servers/rendering/renderer_rd/effects/taa.cpp`, revision `b13043816a0f234985030ec035363a005bc86c32`, MIT, `LICENSE-godot.txt`; the shader is based on Spartan Engine's TAA, MIT, `LICENSE-spartan.txt`): none within 2.5 pixels (`taa.cpp`'s `disocclusion_threshold`; the shader's comment of 0.1/max(resolution) is stale), then a share of 0.01 per pixel. Godot adds that share to its 1/16 current weight (`RPC_16`), so the history weight is at most the cap less the share (`TemporalStabilityFactor`, 0.9375, Godot's 1 - 1/16; DFX-19's 0.985 at still pixels), and none is left 93.75 pixels beyond the threshold. DiligentFX's accumulated confidence still ramps the weight up after a reset or disocclusion, but is not multiplied by the share: through `ComputeCorrectedAlpha`'s 1/(2 - weight) that compounds frame over frame and settles at 1 - sqrt(share) (0.50 at 27.5 pixels, where Godot keeps 0.69). History is clipped towards the neighbourhood mean (Godot's `clip_aabb`, after Playdead) within a box of Godot's `variance_dynamic` standard deviations that narrows smoothly to none at 2% of the screen per frame (`clip_history_3x3`), so fast motion resolves towards the neighbourhood mean instead of the aliased current sample. `variance_dynamic` is 1.1 × 1080 / height clamped to 0.75–1; 1.1 at 1080 rows clamps to 1, so at rest the box is clamp(1188 / height, 0.75, 1) deviations: 1 up to 1188 rows, 0.75 from 1584. The deviations are of DiligentFX's tone-mapped colour (`HDRToSDR`), in YCoCg under `FeatureFlags::YCOCG_COLOR_SPACE` as Bevy measures its box, otherwise in RGB (SGL3D's Hydrogent flags); Godot measures linear HDR RGB. DiligentFX's clip extrapolated bright edges into coloured specks in such narrow boxes. The box applies to every pixel, DFX-19's still ones included: under the 4-pixel limit's rejection, a still pixel an object had just left lost its history; with the gradual rejection, DiligentFX's 2.5-deviation still box kept the object's trail. The resolve writes each frame's closest motion beside its accumulated frame, alternating with the accumulated buffers, and the next frame binds it as `g_TexturePrevMotion` (until #16, a `CopyTextureColor` of the context's after each execution). A frame that copies its input instead (DFX-2's first frame of a feature set) copies the motion vectors in their place, so the next frame compares with them: they differ from the closest motion only within a pixel of a depth edge. Since #792 the box is intersected with Filament's min/max box under every flag, so history stays within the neighbourhood's range (Motion-adaptive TAA, History range). Owner decision 2026-09-28; Godot's gradual rejection, box and clip 2026-10-05 (#93). |
 | DFX-15 | `ScreenXYDepthToViewSpace` (`PostFX_Common.fxh`) divides NDC by the projection's scale only and drops its off-centre terms, while `ProjectPosition` applies the whole matrix. Hydrogent passes the TAA-jittered projection (`TemporalAntiAliasing::GetJitteredProjMatrix` adds the jitter to `m20` and `m21`). SSR's screen-space ray therefore bends by the jitter scaled by its length, and the hit reads radiance texels away from the reflected point, differently each frame. | The reconstruction subtracts `m20` and `m21` from NDC first, the exact inverse of the projection in x and y. AMD's SSSR reconstructs the same way with its full inverse projection (`FFX_SSSR_ScreenSpaceToViewSpace`). Upstream bug fix, 2026-09-28. |
 | DFX-16 | `SSR_ComputeSpatialReconstruction` averages raw radiance. The pass is Wicked Engine's `ssr_resolveCS` (the same BRDF-over-PDF ray reuse, weighted variance and ray-length reprojection depth) without its tone mapping, so one ray that hits an emitter dominates a glossy pixel's average. With `TemporalRadianceStabilityFactor` 1.0, the temporal pass clamps history to a neighbourhood box that such outliers widen and narrow. A static glossy reflection of bright emitters then sparkles, and its mean falls several times below the resolved radiance. | Samples are tone-mapped by 1/(1 + luminance) before the weighted average and variance, and the average is inverse tone-mapped, as Wicked's `ssr_resolveCS` does. The weight applies to confidence as well as colour, so the premultiplied radiance of DFX-17 stays consistent: the round trip is a luminance-weighted average of whole samples. A receiver whose reconstruction radius is under half a texel (perceptual roughness under 0.025) resolves only its own ray, which the round trip leaves unchanged. Fixes the static SSR sparkle the owner reported, 2026-09-28. |
 | DFX-17 | `SSR_ComputeIntersection` stores a hit's full radiance whenever its confidence is above zero, and black for a miss, with the confidence in alpha. The spatial pass averages rays, so the colour carries the share of rays that hit but not their partial confidence. Hydrogent then composites `lerp(IBL, SSR, alpha)`, as Wicked does. That scales hits by the hit share twice and weak hits not at all, so reflected light fades too early and too dark wherever only some of a pixel's rays hit. | Each ray stores its radiance premultiplied by its confidence, so every average keeps colour and confidence consistent, and the transition fade (`AlphaInterpolation`) scales both. A consumer composites `radiance + (1 - confidence) * environment`, as Bevy composites its SSR, and as AMD's SSSR blends the environment into each missed ray. Owner decision 2026-09-28. |
@@ -264,3 +264,74 @@ to 63 render pixels from it) lose their resting stability while it moves,
 by design, and the band content has just left is at full strength for a
 hold; speeds above a tile (32 render pixels) a frame reach beyond the
 neighbourhood.
+
+### History range (#792)
+
+The bicubic history fetch (Catmull-Rom in five taps, DiligentFX's after
+Jimenez's Filmic SMAA) has negative lobes, so a step read between texels
+over- and undershoots both its levels. DFX-14's box, the neighbourhood mean
+plus or minus a multiple of its standard deviation, reaches past the
+neighbourhood's minimum or maximum wherever a minority of one level pulls
+the mean towards it, so the overshoot survived the clip and the resolve
+blended radiance the frame does not hold. Panning 0.37 px a frame (SGL3D's
+case 5), the sky pixel [72, 63] beside the card's corner read its history at
+x = 72.13: weights -0.043, 1.117 and -0.073 over taps of 0.05, 0.05 and
+0.278 gave 0.0332, below every tap. Its box, 0.111 ± 0.974 × 0.119 in
+v / (1 + v), reached down to -0.0046, past the neighbourhood's minimum of
+0.0476, so the history passed unclipped and the resolve wrote 0.0352 where
+nothing in the scene is below 0.05.
+
+Filament (`taa.mat`, the revision above) does two things here: it clamps
+its Catmull-Rom result to the range of the five taps it read ("deringing",
+`sampleTextureCatmullRom`), and it intersects its variance box with a
+min/max box halfway between the cross's (the pixel and its four edge
+neighbours) and the whole 3x3's (the box construction before `clipToBox`).
+Bevy (`taa.wesl`) and Godot (`taa_resolve.glsl`), at the revisions above,
+do neither; Unreal's TAA as Karis presented it (SIGGRAPH 2014, "High
+Quality Temporal Supersampling") clips to the neighbourhood's range. The
+resolve ports the intersection under every flag, the legacy path's
+included, which shares the fetch and the clip. The variance box's corners
+are clamped into the min/max box: that is the intersection where the two
+meet, and the min/max box's nearest point where they do not (the variance
+box closes on the mean with speed, and the mean can lie outside the
+min/max box), so the box never inverts. History is clipped towards the mean
+clamped into it (Godot's `clip_aabb`). The history the resolve blends then
+lies within the range the neighbourhood holds, and so does its output, a
+convex blend of that history and the current sample.
+
+The deringing is not ported. Alone it kept the image within the fixture's
+range too, but its range takes in taps whose weight is zero, which change
+where the history read crosses a texel row or column. A pan along one axis
+reads history exactly on a row, where one-ulp noise in the motion (±6e-8 in
+UV after a render-origin move) chose one tap set or the other, and with the
+lobes along the other axis the range jumped: moving the origin during a pan
+(case 11) changed pixel [122, 68] at frame 36 by 6.5% of its value, where
+the resolve had been bit-identical. With the intersection as well it failed
+the same way. Known limit: at rest, `MOTION_ADAPTIVE_HISTORY` clips at a
+tenth of full strength, so most of the history a still pixel reads passes
+unclipped, but a pixel is at rest only below 0.01 px of motion a frame, where
+the lobes weigh at most about 0.5% of a step.
+
+SGL3D's scenario suites, TAA before and after (the bound, case 12: the
+furthest value beyond the fixtures' range of 0.05 to 0.5; the others the
+cases' own measures, where higher RMSE ratios and lower "times below" are
+worse):
+
+| Measure | Before | After |
+| --- | --- | --- |
+| Bound, panning (case 5) and moving the origin during a pan (case 11) | 0.0352 (pixel [72, 63], frame 39); 0.0215 | within |
+| Bound, disocclusions (case 6): before the background / against the sky, near and far | 0.0320 / 0.0331 | within |
+| Bound, a vertex function starting a card from rest (case 13, #802) at 0.5 / 1.5 px a frame: over the sky / over a wall | 0.0240 / 0.0251; 0.5229 / 0.5215 | within |
+| Bound, a card deforming 0.5 px a frame within reach of resting silhouettes, at the card's radiance | 0.5107 | within |
+| Bound, turning (U8) | 0.0352 | within |
+| Case 11, largest difference moving the origin makes (bound 0.00098) | 0 | 0 (0.065 with the deringing) |
+| Case 3, times below a single sample's RMSE, strips / outlines (bars 4 / 2.83), near and far | 6.8438 / 4.7175 | 6.8434 / 4.7175 |
+| Case 5, worst RMSE against the reference as a share of a single sample's, 1 / 0.37 px a frame | 0.20820 / 0.43948 | 0.20826 / 0.43982 |
+| U8, the same turning; then at rest, times below, strips / outlines | 0.4859; 6.661 / 4.986 | 0.4867; 6.629 / 4.996 |
+
+The panning errors rise by under 0.2% and the strips' convergence after
+turning by 0.5%, still well within their bars: the tighter box clips a
+little more history at edges in motion. The effects test
+`taa_reprojecting_a_step_by_a_fraction_of_a_pixel_stays_within_its_levels`
+reprojects a step of 0.05 and 0.5 by 0.37 px a frame and requires every
+output within the two levels; before, both rectifications wrote 0.0400.

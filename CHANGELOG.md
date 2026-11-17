@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` TAA (`TemporalAntiAliasing`, every feature flag) and so
+  `sgl-3d` TAA: an edge in motion no longer gets a fringe brighter or darker
+  than anything in the scene; history is clipped within the neighbourhood's
+  min/max range as well as its variance box. No settings; no game-code
+  changes are needed.
 - `sgl-3d` FSR2 at the frame's edges: no more negative values in the column
   the camera turns towards at Ultra Performance, and no dip below the scene
   beside a brighter surface at the edge. It takes `sp-fidelity` and
