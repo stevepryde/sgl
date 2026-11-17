@@ -51,6 +51,26 @@ impl Image {
         Image { size, texels }
     }
 
+    /// The image at `size`, no smaller, each pixel the texel under its
+    /// centre (nearest-neighbour enlargement): pixel `[x, y]` takes texel
+    /// `floor((x + 0.5) * width / size[0])` across, likewise down.
+    pub fn enlarged(&self, size: [u32; 2]) -> Image {
+        assert!(
+            size[0] >= self.size[0] && size[1] >= self.size[1],
+            "an enlargement to {size:?} of {:?}",
+            self.size
+        );
+        let source = |i: usize, x: u32| {
+            ((f64::from(x) + 0.5) * f64::from(self.size[i]) / f64::from(size[i])) as u32
+        };
+        Image {
+            size,
+            texels: pixels(size)
+                .map(|[x, y]| self.at([source(0, x), source(1, y)]))
+                .collect(),
+        }
+    }
+
     /// The pixels whose R holds `id` (a `SourceId` target's instance).
     pub fn region_of(&self, id: u32) -> Region {
         Region::from_fn(self.size, |pixel| self.at(pixel)[0] == id as f32)

@@ -26,11 +26,18 @@ pub struct Gpu {
     pub queue: wgpu::Queue,
 }
 
-/// A device with the renderer's limits and optional features, or `None`
+/// A device with the renderer's limits and optional features, and the
+/// texture compression the adapter has, as a game requests them, or `None`
 /// after printing why. `SGL_REQUIRE_GPU` (`specs/testing.md` requirement 5)
 /// turns a missing adapter into a failure.
 pub fn gpu() -> Option<Gpu> {
-    device(sgl_3d::graphics_device::features)
+    device(features)
+}
+
+/// The renderer's optional features and the adapter's texture compression.
+fn features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    sgl_3d::graphics_device::features(adapter)
+        | sgl_3d::graphics_device::texture_compression_features(adapter)
 }
 
 /// A device with FSR's features too, or `None` after printing that the
@@ -42,7 +49,7 @@ pub fn fsr_gpu() -> Option<Gpu> {
         if fsr.is_empty() {
             return None;
         }
-        Some(sgl_3d::graphics_device::features(adapter) | fsr)
+        Some(features(adapter) | fsr)
     })
 }
 
@@ -336,6 +343,61 @@ impl Rig {
         self.add_placed(shape, pose, group, false)
     }
 
+    /// Adds an unlit card `size` metres across facing +Z, whose base colour
+    /// is `image` from corner to corner (UV 0..=1, V down), at `pose` as a
+    /// moving instance in visibility group 0. It is not one of the rig's
+    /// shapes: `instances`, `replace_scene` and the radiance range leave it
+    /// out.
+    pub fn add_textured(&mut self, size: Vec2, image: sgl_3d::asset::Image, pose: Pose) {
+        let [low, high] = [-size * 0.5, size * 0.5];
+        let vertex = |x: f32, y: f32, u: f32, v: f32| Vertex {
+            position: [x, y, 0.],
+            normal: [0., 0., 1.],
+            uv: [u, v],
+            color: [1.; 4],
+            tangent: [1., 0., 0., 1.],
+            lightmap_bounds: [0., 0., 1., 1.],
+            lightmap_uv: [0.; 2],
+        };
+        let asset = Asset {
+            meshes: vec![CpuMesh {
+                vertices: vec![
+                    vertex(low.x, low.y, 0., 1.),
+                    vertex(high.x, low.y, 1., 1.),
+                    vertex(high.x, high.y, 1., 0.),
+                    vertex(low.x, high.y, 0., 0.),
+                ],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                material: 0,
+                deformation: Default::default(),
+            }],
+            materials: vec![Material {
+                name: "scenario textured fixture".into(),
+                base: [1.; 4],
+                base_texture: Some(0),
+                metallic: 0.,
+                double_sided: true,
+                unlit: true,
+                ..Material::default()
+            }],
+            images: vec![image],
+            rig: Default::default(),
+            ignored: Vec::new(),
+        };
+        let Gpu { device, queue } = &self.gpu;
+        let ids = self
+            .scene
+            .add_asset(device, queue, asset)
+            .expect("a textured fixture model");
+        let state = InstanceState {
+            pose: self.render_pose(pose),
+            ..InstanceState::new(ids.model)
+        };
+        self.scene
+            .add_instance(device, queue, state, Mobility::Moving)
+            .expect("a textured fixture instance");
+    }
+
     /// Adds `shape` at `pose` as a moving instance in visibility `group`,
     /// each of its materials drawn through `shader` (a game's,
     /// `Scene::add_shader` on `scene`) with `params` as its `ShaderParams`
@@ -508,6 +570,16 @@ impl Rig {
     /// and every shape's it held.
     pub fn radiance_range(&self) -> [f32; 2] {
         self.range
+    }
+
+    /// Sizes the renderer for the rig's view and settings, as `render` does
+    /// first, and returns the size its passes up to antialiasing render at
+    /// (`Renderer::render_size`): FSR's render size while it upscales.
+    pub fn render_size(&mut self) -> [u32; 2] {
+        let Gpu { device, .. } = &self.gpu;
+        self.renderer
+            .resize(device, self.view.size, 1., &self.settings);
+        self.renderer.render_size()
     }
 
     /// Renders and submits frame `frame` at `view.size`: `elapsed_seconds`

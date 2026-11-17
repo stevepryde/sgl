@@ -10,56 +10,28 @@
 //! bloom, fog, ambient occlusion, reflections or motion blur, and a fixed
 //! exposure, so what antialiasing receives is exactly their radiance.
 //!
-//! Not covered yet: the resolve under camera rotation (case 1 checks its
-//! motion only), FSR at its upscaling qualities (it runs at Native AA, where
-//! the render and scene sizes agree), and FSR with sharpening on (RCAS moves
-//! edges away from their coverage on purpose, so the reference does not
-//! measure it). Each needs its own fixture or oracle.
+//! FSR runs here at Native AA, where the render and scene sizes agree, and
+//! without sharpening (RCAS moves edges away from their coverage on
+//! purpose, so the reference does not measure it); case 1 checks the motion
+//! under rotation. `scenario_fsr_upscaling` covers FSR at its upscaling
+//! qualities, RCAS's bound and every method's resolve under rotation. The
+//! stage, scripts and oracles both share are `scenario::temporal`'s.
 #![cfg(not(target_arch = "wasm32"))]
 mod scenario;
 
 use scenario::geometry::{FRAME_RATE, Motion, Pose, View, coverage};
 use scenario::image::{self, Image, Region, centre, error, error_to, pixels};
-use scenario::rig::{Dump, Gpu, HALF_STEP, Rig, Shape, fsr_gpu, gpu};
+use scenario::rig::{Dump, Gpu, HALF_STEP, Rig, Shape, gpu};
+use scenario::temporal::{
+    BACKGROUND, CARD, DEPTH, Edge, Failures, GRATING, HOLD, JITTER_CYCLE, Oracles, SETTLE, SKY,
+    STRIPS, Scenario, Script, VIEW, ahead, background, bar, card, grating, methods, px, stage,
+    stage_poses, still, stores, vacated,
+};
 use sgl_3d::ShaderSource;
 use sgl_3d::diagnostics::{self, DiagnosticTarget};
 use sgl_3d::glam::{Vec2, Vec3};
 use sgl_3d::settings::Antialiasing;
 
-/// 192 by 108 at a one-radian vertical field: a fixture 4 m ahead spans
-/// tens of pixels, and the 8 times reference stays small.
-const VIEW: View = View {
-    size: [192, 108],
-    fov_y: 1.,
-    near: 0.1,
-};
-/// The fixtures' distance ahead of the camera.
-const DEPTH: f32 = 4.;
-/// The fixtures' radiances: a dark sky and background beneath mid-grey
-/// cards, values a lit scene at exposure 0 puts on screen below white,
-/// where the tone map's mid-tones are, with contrasts far above half-float
-/// rounding.
-const SKY: f32 = 0.05;
-const BACKGROUND: f32 = 0.1;
-const CARD: f32 = 0.5;
-const GRATING: f32 = 0.1;
-const STRIPS: f32 = 0.5;
-/// TAA's jitter cycle: the frame's "16-sample Halton jitter" (sgl-3d's
-/// README, TAA), DiligentFX's Halton (2, 3) sequence (`sgl-post-fx`'s
-/// `TemporalAntiAliasing::get_jitter_offset`), in which every jitter
-/// position contributes once a cycle.
-const JITTER_CYCLE: u32 = 16;
-/// The recovery hold of `specs/sgl3d-architecture.md` Frame item 10 ("a
-/// twelve-frame recovery hold"): after a reset, motion or a re-arming
-/// change, rejection is restored for that long.
-const HOLD: u32 = 12;
-/// Frames after a history restart until a resolve at rest has had its hold
-/// expire and then a whole jitter cycle.
-const SETTLE: u32 = HOLD + JITTER_CYCLE;
-/// The reference oracle's supersampling: 8 by 8 samples a pixel, so its
-/// own estimate of a tilted sub-pixel strip's coverage errs well below the
-/// differences the comparisons resolve.
-const SUPERSAMPLE: u32 = 8;
 /// A fifth of TAA's still-pixel classification (`TAA_STILL_MOTION_PIXELS`,
 /// 0.01 px, DFX-19 in `sgl-post-fx`'s PROVENANCE.md) at this view's width,
 /// in UV: motion the resolve could mistake for movement exceeds it.
@@ -80,86 +52,6 @@ const STILL_DEPTH: f32 = 1e-4;
 /// far plane, so none of them is the sky.
 const FAR: f32 = 500.;
 
-/// The temporal methods this device runs, each on a device that has its
-/// features; FSR is skipped, saying so, where the adapter lacks them.
-fn methods() -> Vec<(Antialiasing, Gpu)> {
-    let mut out = Vec::new();
-    if let Some(gpu) = gpu() {
-        out.push((Antialiasing::Taa, gpu));
-    }
-    match fsr_gpu() {
-        Some(gpu) => {
-            out.push((Antialiasing::Fsr2, gpu.clone()));
-            out.push((Antialiasing::Fsr3, gpu));
-        }
-        None => eprintln!("FSR2 and FSR3 scenarios skipped on this device"),
-    }
-    out
-}
-
-/// The jitter phases `method` cycles through at `rig`'s sizes: TAA's
-/// `JITTER_CYCLE`, and FSR's own count at its render and display widths, as
-/// the AMD SDK port the renderer uses gives it (`8 * (display / render)^2`,
-/// 8 at Native AA).
-fn phases(method: Antialiasing, rig: &Rig) -> u32 {
-    let render = rig.renderer.render_size()[0] as i32;
-    let display = rig.renderer.scene_size()[0] as i32;
-    let count = match method {
-        Antialiasing::Taa => return JITTER_CYCLE,
-        Antialiasing::Fsr2 => sp_fidelity::fsr2::ffx_fsr2_get_jitter_phase_count(render, display),
-        Antialiasing::Fsr3 => {
-            sp_fidelity::fsr3upscaler::ffx_fsr3_upscaler_get_jitter_phase_count(render, display)
-        }
-        other => panic!("{other:?} does not jitter"),
-    };
-    u32::try_from(count).expect("a positive phase count")
-}
-
-/// The kind of edge pixel a resolve is judged on.
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Edge {
-    /// A pixel crossed by sub-pixel strips.
-    Strips,
-    /// A pixel crossed by the outline of a surface wider than a pixel.
-    Outline,
-}
-
-/// How many times below the single centre sample's RMSE a resolve that has
-/// averaged all `phases` (N) must be. N uncorrelated samples at random
-/// positions in a pixel estimate its coverage with 1 / N of one such
-/// sample's mean squared error (a low-discrepancy sequence does better).
-/// Where sub-pixel strips cross a pixel the centre sample hits or misses
-/// like a random one, so the bar is sqrt(N). Where an edge wider than the
-/// pixel crosses it at a uniformly distributed position, the centre sample
-/// errs by 1/12 of the contrast squared against coverage and a random one by
-/// 1/6, so N samples are sqrt(N / 2) better than the centre: 4 and 2.83 for
-/// TAA's 16 phases, 2.83 and 2 for FSR's 8 at Native AA.
-fn bar(method: Antialiasing, rig: &Rig, edge: Edge) -> f32 {
-    let n = phases(method, rig) as f32;
-    match edge {
-        Edge::Strips => n.sqrt(),
-        Edge::Outline => (n / 2.).sqrt(),
-    }
-}
-
-/// The half-float stores a uniform radiance passes through on its way to
-/// the `Antialiased` target, each of which may leave it one step off (WGSL
-/// lets a conversion take either neighbour; this suite's Metal device takes
-/// the lower, storing 0.15 as 0.14990234): the composite, then TAA's
-/// accumulation, which is its output, or FSR's prepared input colour, its
-/// upscaled history (both RGBA16F in the SDK port's resources) and its
-/// output. Their arithmetic between stores is f32, far below a step, and at
-/// a uniform pixel the current frame's weight holds the history within a
-/// step of the composite rather than letting it drift.
-fn stores(method: Antialiasing) -> f32 {
-    match method {
-        Antialiasing::Taa => 2.,
-        Antialiasing::Fsr2 | Antialiasing::Fsr3 => 4.,
-        Antialiasing::Off => 1.,
-        other => panic!("{other:?} is not under test"),
-    }
-}
-
 /// Of `stores`, those made after the motion target is read, which a change
 /// of the motion below a step may tip to a value's other neighbour: TAA's
 /// accumulation (its output), and FSR's upscaled history and output (its
@@ -170,36 +62,6 @@ fn stores_after_motion(method: Antialiasing) -> f32 {
         Antialiasing::Fsr2 | Antialiasing::Fsr3 => 2.,
         other => panic!("{other:?} is not under test"),
     }
-}
-
-/// A pixel's width in metres at `DEPTH`.
-fn px() -> f32 {
-    VIEW.pixel_metres(DEPTH)
-}
-
-fn card() -> Shape {
-    Shape::card(Vec2::new(1.4, 0.9), 0.3, CARD)
-}
-
-/// Strips 0.4 px wide every 1.6 px at `DEPTH`.
-fn grating() -> Shape {
-    Shape::grating(
-        Vec2::new(1.4, 0.9),
-        0.25,
-        GRATING,
-        STRIPS,
-        0.4 * px(),
-        1.6 * px(),
-    )
-}
-
-/// A card 6 by 4 m at 8 m, centred, of `BACKGROUND`, with the sky beside
-/// it.
-fn background() -> (Shape, Pose) {
-    (
-        Shape::card(Vec2::new(6., 4.), 0., BACKGROUND),
-        Pose::at(Vec3::new(0., 0., -8.)),
-    )
 }
 
 /// A wall of `BACKGROUND` filling the view `depth` metres ahead.
@@ -217,140 +79,6 @@ fn farther(pose: Pose, factor: f32) -> Pose {
         position: pose.position * factor,
         ..pose
     }
-}
-
-/// Each shape's pose at a frame.
-type Script<'a> = &'a dyn Fn(u32) -> Vec<Pose>;
-
-/// A scene of `shapes`, seen from `camera`'s pose at each frame, with the
-/// shapes at `script`'s.
-struct Scenario<'a> {
-    shapes: Vec<Shape>,
-    camera: &'a dyn Fn(u32) -> Pose,
-    script: Script<'a>,
-}
-
-impl Scenario<'_> {
-    fn rig(&self, gpu: &Gpu, view: View, method: Antialiasing) -> Rig {
-        let mut rig = Rig::new(gpu, view, method, SKY);
-        self.populate(&mut rig);
-        rig
-    }
-
-    /// Gives `rig` a new scene of this scenario's shapes, which restarts
-    /// its history: case 10 checks that a frame after a scene switch does
-    /// not depend on the frames before it.
-    fn restage(&self, rig: &mut Rig) {
-        rig.new_scene();
-        self.populate(rig);
-    }
-
-    fn populate(&self, rig: &mut Rig) {
-        for (shape, pose) in self.shapes.iter().zip((self.script)(0)) {
-            rig.add(shape, pose, 0);
-        }
-    }
-
-    /// Poses `rig` for `frame` and renders it. Only shapes whose pose
-    /// changed are placed, so a still one is no scene edit.
-    fn render(&self, rig: &mut Rig, frame: u32) {
-        rig.look((self.camera)(frame));
-        let poses = (self.script)(frame);
-        let before = frame.checked_sub(1).map(|f| (self.script)(f));
-        for (i, id) in rig.instances().into_iter().enumerate() {
-            if before.as_ref().is_none_or(|b| b[i] != poses[i]) {
-                rig.place(id, poses[i]);
-            }
-        }
-        rig.render(frame);
-    }
-
-    /// Each shape's quads, projected at `frame`.
-    fn polygons(&self, frame: u32) -> Vec<Vec<Vec<Vec2>>> {
-        let camera = VIEW.camera((self.camera)(frame));
-        self.shapes
-            .iter()
-            .zip((self.script)(frame))
-            .map(|(shape, pose)| {
-                shape
-                    .quads_at(pose)
-                    .iter()
-                    .map(|quad| VIEW.project_polygon(&camera, quad).unwrap())
-                    .collect()
-            })
-            .collect()
-    }
-
-    /// The pixels whose box straddles an edge of any quad of `shapes` at
-    /// `frame`: where a single sample errs and antialiasing works.
-    fn edges(&self, frame: u32, shapes: &[usize]) -> Region {
-        let polygons = self.polygons(frame);
-        Region::from_fn(VIEW.size, |pixel| {
-            shapes.iter().any(|&s| {
-                polygons[s].iter().any(|polygon| {
-                    let c = coverage(polygon, pixel, 0.);
-                    c > 0. && c < 1.
-                })
-            })
-        })
-    }
-
-    /// The pixels wholly inside `shape`'s outline crossed by an edge of its
-    /// other quads (a grating's strips) at `frame`: `Edge::Strips`.
-    fn strip_edges(&self, frame: u32, shape: usize) -> Region {
-        let polygons = &self.polygons(frame)[shape];
-        Region::from_fn(VIEW.size, |pixel| {
-            coverage(&polygons[0], pixel, 0.) >= 1.
-                && polygons[1..].iter().any(|strip| {
-                    let c = coverage(strip, pixel, 0.);
-                    c > 0. && c < 1.
-                })
-        })
-    }
-
-    /// The pixels crossed by the outline (first quad) of any of `shapes` at
-    /// `frame` and met by no other quad: `Edge::Outline`.
-    fn outline_edges(&self, frame: u32, shapes: &[usize]) -> Region {
-        let polygons = self.polygons(frame);
-        Region::from_fn(VIEW.size, |pixel| {
-            let crosses = shapes.iter().any(|&s| {
-                let c = coverage(&polygons[s][0], pixel, 0.);
-                c > 0. && c < 1.
-            });
-            crosses
-                && polygons
-                    .iter()
-                    .flat_map(|quads| &quads[1..])
-                    .all(|strip| coverage(strip, pixel, 0.) == 0.)
-        })
-    }
-
-    /// The pixels whose box, grown by `margin` pixels, lies wholly inside
-    /// `shape`'s outline (its first quad) at `frame`.
-    fn inside(&self, frame: u32, shape: usize, margin: f32) -> Region {
-        let outline = &self.polygons(frame)[shape][0];
-        Region::from_fn(VIEW.size, |pixel| coverage(outline, pixel, margin) >= 1.)
-    }
-
-    /// The pixels whose box, grown by `margin` pixels, meets no shape at
-    /// `frame`: the sky.
-    fn outside(&self, frame: u32, margin: f32) -> Region {
-        let polygons = self.polygons(frame);
-        Region::from_fn(VIEW.size, |pixel| {
-            polygons
-                .iter()
-                .all(|quads| coverage(&quads[0], pixel, margin) == 0.)
-        })
-    }
-}
-
-/// The poses of the stage most cases share: the card and the grating side
-/// by side `DEPTH` ahead over the sky, both still.
-fn stage_poses(_: u32) -> Vec<Pose> {
-    vec![
-        Pose::at(Vec3::new(-0.9, 0.1, -DEPTH)),
-        Pose::at(Vec3::new(0.9, -0.1, -DEPTH)),
-    ]
 }
 
 /// The stage's shapes, `scale` times the size.
@@ -383,91 +111,6 @@ fn far_stage<'a>(scale: f32, behind: Option<&(Shape, Pose)>, script: Script<'a>)
 
 /// The two distances each far case runs at.
 const DISTANCES: [(&str, f32); 2] = [("near", 1.), ("far", FAR)];
-
-fn stage(camera: &dyn Fn(u32) -> Pose) -> Scenario<'_> {
-    Scenario {
-        shapes: vec![card(), grating()],
-        camera,
-        script: &stage_poses,
-    }
-}
-
-fn still(_: u32) -> Pose {
-    Pose::at(Vec3::ZERO)
-}
-
-/// Frames of a scenario without temporal antialiasing: the reference
-/// oracle, rendered with antialiasing off at `SUPERSAMPLE` times the size,
-/// which no temporal path touches, and box-filtered down in the space the
-/// resolves average in; and the single unjittered sample a pixel that
-/// antialiasing must beat. Neither keeps history, so any frame renders
-/// alone. TAA averages in v / (1 + v) per channel (`HDRToSDR` in
-/// `TAA_ComputeTemporalAccumulation.wgsl`), and FSR2 and FSR3 in AMD's
-/// `Tonemap`, rgb / (1 + max(rgb)) (`ffx_fsr2_accumulate.h` and
-/// `ffx_fsr3upscaler_accumulate.h`, "YCoCg -> RGB -> Tonemap -> YCoCg"),
-/// the same map for the grey fixtures, so one reference serves all three.
-struct Oracles {
-    reference: Rig,
-    single: Rig,
-}
-
-impl Oracles {
-    fn new(scenario: &Scenario, gpu: &Gpu) -> Oracles {
-        Oracles {
-            reference: scenario.rig(gpu, VIEW.scaled(SUPERSAMPLE), Antialiasing::Off),
-            single: scenario.rig(gpu, VIEW, Antialiasing::Off),
-        }
-    }
-
-    fn restage(&mut self, scenario: &Scenario) {
-        scenario.restage(&mut self.reference);
-        scenario.restage(&mut self.single);
-    }
-
-    fn reference(&mut self, scenario: &Scenario, frame: u32) -> Image {
-        scenario.render(&mut self.reference, frame);
-        self.reference.antialiased().downsampled_through(
-            SUPERSAMPLE,
-            |v| v / (1. + v),
-            |t| t / (1. - t),
-        )
-    }
-
-    fn single(&mut self, scenario: &Scenario, frame: u32) -> Image {
-        scenario.render(&mut self.single, frame);
-        self.single.antialiased()
-    }
-}
-
-/// A case's failures across its methods and runs, asserted once at its
-/// end, so one run reports every method's numbers.
-#[derive(Default)]
-struct Failures(Vec<String>);
-
-impl Failures {
-    fn check(&mut self, holds: bool, message: impl FnOnce() -> String) {
-        if !holds {
-            self.0.push(message());
-        }
-    }
-
-    /// Case 12 over every antialiased frame `rig` read. Plausible defects:
-    /// a resolve or an upscaler that rings, overshoots or writes NaN
-    /// creates radiance an unlit fixture cannot. The oracle is the bound
-    /// (`Rig::excursion`), within the rounding of the method's `stores`.
-    fn bounded(&mut self, rig: &Rig, what: impl std::fmt::Display) {
-        let rounding = stores(rig.settings.antialiasing) * HALF_STEP;
-        if let Some((beyond, at)) = rig.excursion(rounding) {
-            self.0.push(format!(
-                "{what}: an antialiased value left the fixture's radiance range by {beyond} of the bound it crossed: {at} (case 12)"
-            ));
-        }
-    }
-
-    fn assert(self) {
-        assert!(self.0.is_empty(), "\n{}", self.0.join("\n"));
-    }
-}
 
 /// The square's corners of `pixel`.
 fn corners(pixel: [u32; 2]) -> [Vec2; 4] {
@@ -938,28 +581,6 @@ fn panning_keeps_history() {
     failures.assert();
 }
 
-/// The pixels at each frame from `HOLD` on that `shape`'s outline, grown by
-/// 2 px (the bicubic history fetch's reach), met at some frame before the
-/// hold up to it and at none since: what a moving surface vacated for the
-/// hold.
-fn vacated(scenario: &Scenario, shape: usize, frames: u32) -> Vec<Region> {
-    let met: Vec<Region> = (0..frames)
-        .map(|f| {
-            let outline = &scenario.polygons(f)[shape][0];
-            Region::from_fn(VIEW.size, |p| coverage(outline, p, 2.) > 0.)
-        })
-        .collect();
-    let mut earlier = Region::from_fn(VIEW.size, |_| false);
-    (HOLD..frames)
-        .map(|frame| {
-            earlier = earlier.or(&met[(frame - HOLD) as usize]);
-            met[(frame + 1 - HOLD) as usize..=frame as usize]
-                .iter()
-                .fold(earlier.clone(), |a, b| a.and(&b.not()))
-        })
-        .collect()
-}
-
 /// What stands behind a case's moving or changing card: the background
 /// card (the near variant's) or the sky.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1009,7 +630,7 @@ fn a_disocclusion_recovers() {
             Behind::Background => BACKGROUND,
             Behind::Sky => SKY,
         };
-        let vacated: Vec<Region> = vacated(&scenario, 0, frames)
+        let vacated: Vec<Region> = vacated(&scenario, 0, frames, 2.)
             .into_iter()
             .enumerate()
             .map(|(i, region)| match behind {
@@ -1058,11 +679,6 @@ fn a_disocclusion_recovers() {
         }
     }
     failures.assert();
-}
-
-/// The pose `distance` ahead of and slightly below `camera`, facing it.
-fn ahead(camera: Pose, distance: f32) -> Pose {
-    camera.then(Pose::at(Vec3::new(0., -0.2, -distance)))
 }
 
 /// Case 7 (#768). Plausible defect: history rejected on a surface whose
@@ -1303,7 +919,7 @@ fn a_surface_its_vertex_function_moves_from_rest_uncovers_what_lies_behind() {
                 camera: &still,
                 script: &moved,
             };
-            let vacated = vacated(&truth, 0, frames);
+            let vacated = vacated(&truth, 0, frames, 2.);
             let value = if wall.is_some() { BACKGROUND } else { SKY };
             let params = [velocity.x, velocity.y, velocity.z, start];
             let bound = velocity.length() * frames as f32 / FRAME_RATE as f32;

@@ -87,8 +87,9 @@ rendering behaviour without a game or a person looking at it.
    on which nothing asserts.
 
 The harness is test-support modules that each scenario binary includes: the
-rig, the fixtures and readback (`rig`), the analytic truth (`geometry`) and
-the regions and metrics (`image`). A suite is a `tests/scenario_<feature>.rs`
+rig, the fixtures and readback (`rig`), the analytic truth (`geometry`), the
+regions and metrics (`image`), and the temporal antialiasing suites' shared
+stage, scripts and oracles (`temporal`). A suite is a `tests/scenario_<feature>.rs`
 binary; `scenario_geometry` tests the analytic truth against values computed
 by hand. With `SGL_SCENARIO_DUMP` naming a directory (for example
 `SGL_SCENARIO_DUMP=.cache/scenarios`), the scenarios that dump, which each
