@@ -138,7 +138,9 @@ impl Antialiasing {
                 ctx.queue,
                 ctx.encoder,
                 color,
-                ctx.scene.rigid_objects_changed(),
+                // Instances, and material groups the frame's mask switched,
+                // that appeared or departed since the last submitted frame.
+                ctx.scene.rigid_objects_changed() || ctx.history.visibility_changed,
                 ctx.timing,
             );
             Completed::Taa

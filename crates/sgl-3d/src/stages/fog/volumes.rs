@@ -199,7 +199,7 @@ mod tests {
             (false, true, Some(true)),
         ];
         for (frame, (reset, fog, expected)) in frames.into_iter().enumerate() {
-            let begun = history.begin(camera, reset, DVec3::ZERO, 0.);
+            let begun = history.begin(camera, reset, DVec3::ZERO, 0., 0);
             let reprojects = holds
                 .frame(&begun, fog.then_some(64.))
                 .map(|(_, reprojects)| reprojects);

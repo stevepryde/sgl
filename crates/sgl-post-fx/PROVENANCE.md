@@ -123,7 +123,9 @@ changes and caller-reported rigid-object motion rearm the whole view, as
 Filament does. The closest-motion history's B additionally transports local
 surface-motion/disocclusion recovery. The scene supplies rigid changes until
 submission, including pose/model/visibility changes, same-ID geometry replacements, appearances and departed
-objects; procedural/material deformation does not set this global signal.
+objects, and SGL3D adds a frame whose visibility mask differs from the last
+submitted frame's; procedural/material deformation does not set this global
+signal.
 A GPU thin-strip fixture proves why the global signal is necessary: a resting
 2-pixel foreground strip moves eight pixels and exposes zero-motion background
 whose historical neighborhood still contains background. A local-only hold

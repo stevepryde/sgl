@@ -935,7 +935,7 @@ fn temporal_visibility_accumulates_and_rejects_invalid_history() {
                 bytemuck::cast_slice(&vec![value; (size[0] * size[1]) as usize]),
                 4,
             );
-            let history = camera_history.begin(camera, reset, glam::DVec3::ZERO, 0.0);
+            let history = camera_history.begin(camera, reset, glam::DVec3::ZERO, 0.0, 0);
             if !skip {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 temporal.encode(
@@ -1090,7 +1090,7 @@ fn temporal_visibility_keeps_history_when_the_receiver_follows_the_camera() {
             projection,
             jitter: [0.; 2],
         };
-        let history = camera_history.begin(camera, frame == 0, glam::DVec3::ZERO, 0.0);
+        let history = camera_history.begin(camera, frame == 0, glam::DVec3::ZERO, 0.0, 0);
         let mut encoder = device.create_command_encoder(&Default::default());
         temporal.encode(
             &device,
