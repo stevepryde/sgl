@@ -345,6 +345,7 @@ impl Renderer {
             self.targets_generation = self.targets_generation.wrapping_add(1);
             self.post.forget_inputs();
             self.motion_blur.forget_inputs();
+            self.antialiasing.forget_inputs();
         }
         let sizes = Sizes {
             render,
@@ -357,6 +358,7 @@ impl Renderer {
         self.targets = SharedTargets::new(device, render, self.targets.surface.is_some());
         self.exposure.forget_inputs();
         self.motion_blur.forget_inputs();
+        self.antialiasing.forget_inputs();
         self.post.resize(device, sizes, sizing.bloom_targets);
         self.transparent.resize(device, &self.targets);
         self.reflections.resize(device, render);
@@ -614,6 +616,12 @@ impl Renderer {
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn fsr_output(&self) -> &wgpu::TextureView {
         self.antialiasing.output()
+    }
+
+    /// The motion reach's cached bind group sets, while TAA runs.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn reach_groups(&self) -> Option<usize> {
+        self.antialiasing.reach_groups()
     }
 
     /// The motion-blurred frame, once motion blur has run.

@@ -83,6 +83,20 @@ struct CameraAttribsPair
 // WGSL: the depth buffer binds as a depth texture.
 @group(0) @binding(9) var g_TextureDepth: texture_depth_2d;
 
+// PROVENANCE.md, Motion-adaptive TAA: the responsive inputs, bound only
+// where the caller gives them (TAA_OPTION_RESPONSIVE_MASKS masks, and the
+// neighbourhood motion in tiles of TAA_OPTION_NEIGHBORHOOD_MOTION_TILE
+// pixels, 0 for none).
+#if TAA_OPTION_RESPONSIVE_MASKS > 0
+@group(0) @binding(10) var g_TextureResponsiveMask0: texture_2d<f32>;
+#endif
+#if TAA_OPTION_RESPONSIVE_MASKS > 1
+@group(0) @binding(11) var g_TextureResponsiveMask1: texture_2d<f32>;
+#endif
+#if TAA_OPTION_NEIGHBORHOOD_MOTION_TILE > 0
+@group(0) @binding(12) var g_TextureNeighborhoodMotion: texture_2d<f32>;
+#endif
+
 struct PixelStatistic
 {
     Mean:     vec3<f32>,
@@ -484,9 +498,32 @@ fn AdaptiveDisocclusion(position:vec2<f32>,previous_position:vec2<f32>,motion_pi
     return smoothstep(0.,TAA_ADAPTIVE_DEPTH_THRESHOLD,max(0.,evidence));
 }
 
+// PROVENANCE.md, Motion-adaptive TAA: the larger of the responsive masks at
+// the pixel, 0 without one: how much of its content changes without a
+// motion vector of its own.
+fn SampleResponsiveMask(PixelCoord: vec2<i32>) -> f32 {
+    var mask=0.;
+#if TAA_OPTION_RESPONSIVE_MASKS > 0
+    mask=max(mask,HlslLoad(g_TextureResponsiveMask0,PixelCoord,0).x);
+#endif
+#if TAA_OPTION_RESPONSIVE_MASKS > 1
+    mask=max(mask,HlslLoad(g_TextureResponsiveMask1,PixelCoord,0).x);
+#endif
+    return saturate(mask);
+}
+// PROVENANCE.md, Motion-adaptive TAA: the largest motion within reach of the
+// pixel, in pixels a frame, from its tile; none without the input.
+fn SampleNeighborhoodMotionPixels(PixelCoord: vec2<i32>) -> vec2<f32> {
+#if TAA_OPTION_NEIGHBORHOOD_MOTION_TILE > 0
+    return HlslLoad(g_TextureNeighborhoodMotion,PixelCoord/TAA_OPTION_NEIGHBORHOOD_MOTION_TILE,0).xy;
+#else
+    return vec2(0.);
+#endif
+}
 struct PSOutput {
     @location(0) Color:vec4<f32>,
-    // XY: NDC motion; Z: adaptive recovery hold (zero for legacy); W: zero.
+    // XY: NDC motion; Z: adaptive recovery hold (zero for legacy); W: the
+    // responsive masks' recovery hold (zero for legacy).
     @location(1) ClosestMotion:vec4<f32>,
 }
 
@@ -554,13 +591,30 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 #if TAA_OPTION_MOTION_ADAPTIVE_HISTORY
     let motion_pixels=length(Motion*cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
     let disocclusion=AdaptiveDisocclusion(Position,PrevPosition,motion_pixels);
-    let previous_hold=HlslLoad(g_TexturePrevMotion,vec2<i32>(PrevPosition),0).z;
+    let previous_holds=HlslLoad(g_TexturePrevMotion,vec2<i32>(PrevPosition),0).zw;
     // Preserve continuous confidence: an arbitrarily small f32 depth
     // residual must not become a full twelve-frame recovery event.
-    var hold=max(max(previous_hold-1.,0.),disocclusion*TAA_ADAPTIVE_HOLD_FRAMES);
+    var hold=max(max(previous_holds.x-1.,0.),disocclusion*TAA_ADAPTIVE_HOLD_FRAMES);
     // The established still-pixel threshold distinguishes motion from
     // projection/interpolation residue (DFX-19), rather than exact != 0.
     if AdaptiveCameraMoved() || g_TAAAttribs.RigidObjectMotion!=0u || !IsStill {
+        hold=TAA_ADAPTIVE_HOLD_FRAMES;
+    }
+    // PROVENANCE.md, Motion-adaptive TAA, responsive inputs: content that
+    // changes here without a motion vector of its own. While a pixel is
+    // marked its strength is the mask's, and the mask arms its own hold in
+    // full. Once the pixel is no longer marked every frame left of that
+    // hold is at full strength, so what the content left is rejected
+    // however dim it was and however long its trailing edge lay in the
+    // neighbourhood after the pixel was last marked. The neighbourhood motion
+    // arms the hold where it is at least the motion threshold, the speed
+    // this pixel's own closest-motion search covers: a pixel a surface has
+    // just left beyond that search. Reprojection, the closest motion and
+    // the depth test keep the pixel's own motion.
+    let responsive=SampleResponsiveMask(vec2<i32>(Position));
+    let marked=responsive>0.;
+    let mask_hold=select(max(previous_holds.y-1.,0.),TAA_ADAPTIVE_HOLD_FRAMES,marked);
+    if length(SampleNeighborhoodMotionPixels(vec2<i32>(Position)))>=TAA_ADAPTIVE_MOTION_THRESHOLD_PIXELS {
         hold=TAA_ADAPTIVE_HOLD_FRAMES;
     }
     // Filament's sky override (taa.mat farness) is not ported: depth's
@@ -568,7 +622,8 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     // TAA). The camera test, the rigid signal, the hold and disocclusion
     // restore rejection over the sky and far surfaces as elsewhere.
     let motion_amount=clamp(motion_pixels*motion_pixels/(TAA_ADAPTIVE_MOTION_THRESHOLD_PIXELS*TAA_ADAPTIVE_MOTION_THRESHOLD_PIXELS),0.,1.);
-    let strength=max(motion_amount,hold/TAA_ADAPTIVE_HOLD_FRAMES);
+    let responsive_strength=select(select(0.,1.,mask_hold>0.),responsive,marked);
+    let strength=max(max(motion_amount,hold/TAA_ADAPTIVE_HOLD_FRAMES),responsive_strength);
     let box_strength=max(mix(TAA_ADAPTIVE_BOX_STRENGTH,1.,strength),disocclusion);
     let alpha_strength=max(mix(TAA_ADAPTIVE_ALPHA_STRENGTH,1.,strength),disocclusion);
     var history=mix(YCoCgSDRPrevColor,YCoCgSDRClampedColor,box_strength);
@@ -576,7 +631,7 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let current_weight=(1.-g_TAAAttribs.TemporalStabilityFactor)*alpha_strength;
     let Alpha=min(RGBHDRPrevColor.a,max(1.-current_weight-MotionDiffRejection,0.));
     let output=SDRToHDR(YCoCgToRGB(mix(YCoCgSDRCurrColor,history,Alpha)));
-    return PSOutput(vec4(output,ComputeCorrectedAlpha(Alpha,false)),vec4(ClosestMotion,hold,0.));
+    return PSOutput(vec4(output,ComputeCorrectedAlpha(Alpha,false)),vec4(ClosestMotion,hold,mask_hold));
 #else
     // PROVENANCE.md DFX-14: Godot adds the rejection to its current weight
     // (blend_factor = RPC_16 + factor_disocclusion), so history keeps at most

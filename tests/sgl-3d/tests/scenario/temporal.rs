@@ -202,12 +202,13 @@ impl Scenario<'_> {
     }
 
     /// Poses `rig` for `frame` and renders it. Only shapes whose pose
-    /// changed are placed, so a still one is no scene edit.
+    /// changed are placed, so a still one is no scene edit; shapes a case
+    /// adds after the scenario's are its own.
     pub fn render(&self, rig: &mut Rig, frame: u32) {
         rig.look((self.camera)(frame));
         let poses = (self.script)(frame);
         let before = frame.checked_sub(1).map(|f| (self.script)(f));
-        for (i, id) in rig.instances().into_iter().enumerate() {
+        for (i, id) in rig.instances().into_iter().take(poses.len()).enumerate() {
             if before.as_ref().is_none_or(|b| b[i] != poses[i]) {
                 rig.place(id, poses[i]);
             }

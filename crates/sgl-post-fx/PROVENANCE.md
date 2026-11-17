@@ -166,13 +166,13 @@ depth for the sky, which normalizes to exactly 0, so a pixel at it where no
 texel of the previous 3x3 depth neighbourhood was, or a 3x3 neighbourhood
 with no sky where every previous texel was sky, is a disocclusion whatever
 the depths' difference; requiring the whole neighbourhood keeps jitter at a
-silhouette from flipping it. Not covered, and accepted for removing a
-permanent flicker: a surface a vertex function or skin starts moving from
-rest at more than about a pixel a frame leaves a transient ghost on its old
-outline, whose previous neighbourhood already held what it uncovers and
-which the 3x3 closest-motion search does not reach. That exists on `main`
-over near backgrounds and the override hid it only over the sky and far
-surfaces (#802).
+silhouette from flipping it. Not covered by these, and since covered by the
+neighbourhood motion (Responsive inputs, below): a surface a vertex
+function or skin starts moving from rest at more than about a pixel a frame
+left a transient ghost on its old outline, whose previous neighbourhood
+already held what it uncovers and which the 3x3 closest-motion search does
+not reach. That existed over near backgrounds too, and the override hid it
+only over the sky and far surfaces (#802).
 
 SGL3D's scenario suite (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`),
 with the far variants the near scene scaled 500 times (2 km, normalized depth
@@ -187,9 +187,80 @@ with the far variants the near scene scaled 500 times (2 km, normalized depth
 | Outlines at rest, the same, near / far (bar 2.83) | 3.53 / 3.47 | 4.72 / 4.72 |
 | Ghost on the sky 12 frames after a vertex function starts a card at 1.5 / 4 px a frame, near and far (#802) | 1.2e-5 / 1.2e-5 | 0.0331 / 0.0602 |
 
-The same card over a near wall, where the override never applied, leaves
+The same card over a near wall, where the override never applied, left
 0.0304 / 0.0555 before the change and after. Without the categorical sky, a
 far surface 90 m away under a 100 m far plane that reveals the sky at rest
 kept 0.581 where the frame shows 0.05 (the effects tests); with it, the
 frame's colour. Crossings, appearances and departures against the sky, near
 and far, stay within their stores.
+
+### Responsive inputs (#795, #802)
+
+Filament's motion-adaptive resolve has no input for content that changes
+without a motion vector of its own, and relaxes wherever the camera, the
+pixel's motion and the depth test are still. That is wrong for blended
+surfaces, effects and shading that animates where geometry stands still,
+and for a pixel a deforming surface has just left: at rest such a change
+converged at about 13% a frame where it left the variance box and 3.6%
+where it stayed inside. This is a departure from Filament, added under
+`MOTION_ADAPTIVE_HISTORY` only; the other flags ignore the inputs.
+
+- **Responsive masks.** The common engine practice of a responsive or
+  reactive mask that raises the current frame's weight for translucency and
+  particles, with AMD's FSR reactive and transparency-and-composition masks
+  (FidelityFX SDK 1.1.4 `super-resolution-upscaler.md`, "Reactive mask") as
+  the inputs a caller may lend. The resolve takes the larger of up to two,
+  `m`. While a pixel is marked its strength is `m`: the box and feedback
+  move toward full strength in proportion, `mix(floor, 1, m)`, so a fully
+  marked pixel follows a step as `1 - 0.88^n`. A marked pixel also arms a
+  twelve-frame hold of its own, carried in the closest-motion history's W
+  beside the existing hold in B, and once it is no longer marked every
+  frame left of that hold is at full strength (a plateau, where the other
+  holds ramp). A hold in proportion to the mask, as first built, left the
+  pixels dim content had just left half of the defect's error twelve frames
+  later: the step such content leaves is already in proportion to it. A
+  ramp from full strength was not enough either: an edge pixel the content
+  covers only partly is marked only on the frames its jittered sample hits
+  the content, so its hold may have run down by the time the content's
+  edge leaves its 3x3 neighbourhood, and the feedback alone then leaves
+  0.0011 of a 0.1 background in case 14 (0.00046 for the card).
+- **Neighbourhood motion.** The tile maximum and 3x3 tile neighbourhood
+  maximum of McGuire et al. 2012 ("A Reconstruction Filter for Plausible
+  Motion Blur"), as Wicked Engine's motion blur computes it, which SGL3D
+  runs on the frame's motion for this. Where its length is at least the
+  resolve's motion threshold (one pixel a frame, the radius its own 3x3
+  closest-motion search reaches), it arms the recovery hold; slower motion
+  is the search's, and changes nothing, so slowly deforming surfaces (cloth,
+  foliage, waves) leave the resting stability about them alone. It never
+  reprojects, so the history a pixel reads is its own. Using a motion blur
+  neighbourhood to arm a temporal resolve's rejection is SGL3D's own.
+  It is given in input pixels a frame, in tiles of a stated size, rather
+  than in the motion input's NDC units sampled by UV: the reduction picks
+  the longest vector by its length in the units it stores, which in NDC is
+  anisotropic (a pixel along x and along y differ by the aspect ratio), and
+  a tile grid whose size does not divide the input's maps UV to the wrong
+  tile near its far edge, shrinking the reach.
+
+SGL3D's scenario suite, before and after (TAA, the camera at rest, the hold
+expired; errors in v / (1 + v) unless stated):
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| Glow of 0.5 crossing a wall into the sky: largest error inside it over its bound `survives(m)^n` of the step | 0.174 against 0.024 | within (0.00049 against 0.0011) |
+| Blended card of alpha 0.5, the same | 0.095 against 0.013 | within (0.00026 against 0.00059) |
+| Pixels they left for the hold, the glow / the card (linear, bound the stores, 0.0002 over a 0.1 wall) | 0.057 / 0.027 | 1.2e-5 / 1.2e-5 |
+| Scrolling normals under one light: mean temporal deviation, against what 0.12 feedback keeps of the unantialiased 0.0144 (0.0054) | 0.0032 | 0.0107 |
+| Card a vertex function starts at 1.5 / 4 px a frame, residual a hold after it left a pixel (linear), over the sky / a far wall / a near wall | 0.036 / 0.033 / 0.033, 0.049 / 0.045 / 0.045 | 1.2e-5 / 8.5e-5 / 8.5e-5 (within the stores) |
+| The same at 0.5 px a frame, which the closest-motion search covers | within | within, unchanged |
+| Resting step at outlines, sky / far wall / between surfaces (bound 0.0388) | 0.0121 / 0.0126 / 0.0085 | unchanged |
+| The same beside a moving glow, two tiles from a moving card, and within the reach of a card deforming 0.5 px a frame | 0.0121 each | 0.0121 each (0.0976 with a hold on any neighbourhood motion, as first built) |
+
+Known limits: content moving so slowly that its trailing edge stays in a
+pixel's 3x3 neighbourhood for longer than a hold after the pixel was last
+marked converges there by the relaxed feedback alone once it leaves (case
+14's edges, at 1.5 px a frame, are within the hold). Pixels whose tile
+neighbourhood holds motion of a pixel a frame or more (at least 32 and up
+to 63 render pixels from it) lose their resting stability while it moves,
+by design, and the band content has just left is at full strength for a
+hold; speeds above a tile (32 render pixels) a frame reach beyond the
+neighbourhood.

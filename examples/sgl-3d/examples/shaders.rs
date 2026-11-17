@@ -528,9 +528,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         "opaque geometry + lighting",
         "geometry",
         "opaque lighting",
-        "FSR composition",
+        "temporal composition",
         "transmission copy",
         "blended",
+        "TAA motion reach",
         "TAA",
     ] {
         if let Some(times) = groups.get_mut(group) {

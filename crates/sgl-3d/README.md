@@ -893,10 +893,22 @@ integrated as Diligent's Hydrogent renderer does:
   near ones, and sky revealed or covered counts as a disocclusion however
   far the surface. Depth disocclusion follows moving surfaces by the
   G-buffer's depth motion, so a surface the camera follows, or one moving
-  towards it, keeps its history. A surface a material's vertex function or a
-  skin starts moving from rest at more than about a pixel a frame leaves a
-  brief ghost along its old outline
-  ([#802](https://github.com/stevepryde/sgl/issues/802)).
+  towards it, keeps its history.
+- What changes at a pixel without a motion vector of its own is rejected
+  there as motion is, at rest too: blended surfaces, additive effects, mist,
+  heat shimmer and opaque surfaces whose
+  [normal layers](#scrolling-normal-layers) move, by the reactive and
+  transparency-and-composition masks they write for FSR (in proportion to
+  them while they mark a pixel, and at full strength for a hold after, so
+  even dim content leaves no trail), and the pixels whose 3x3 neighbourhood
+  of 32-pixel tiles holds motion of a pixel a frame or more (at least 32 and
+  up to 63 pixels from it), by the largest motion in that neighbourhood
+  (motion blur's tile reduction, at the render size), so a deforming or
+  skinned surface leaves no ghost where it was. Slower motion is left to the
+  resolve's own closest-motion search.
+  Elsewhere at rest TAA keeps its resting stability. The masks are held
+  only while the frame can mark them; the reduction's tile targets, 1/32 of
+  the render size, while TAA runs (timing group `TAA motion reach`).
 
 SSR and TAA share DiligentFX's post-effect context. History restarts with
 SSR's, and a restarted frame renders without jitter. As Godot's TAA, it keeps
@@ -942,7 +954,7 @@ SMAA on Low. They antialias like TAA while upscaling:
   `FrameInput::frame_time_ms`. It sharpens with RCAS while
   `Settings::fsr_sharpening` is on (the default), at `fsr_sharpness` in
   AMD's 0..=1 (0.8 by default, as AMD's sample).
-  The camera's blended surfaces, additive effects and mist also write FSR's
+  The camera's blended surfaces, additive effects and mist also write the
   reactive and transparency-and-composition masks, as AMD's FSR documentation
   and sample write them from translucent draws, and heat shimmer marks its
   weight in the transparency-and-composition mask where it covers. Opaque and masked surfaces
@@ -950,7 +962,7 @@ SMAA on Low. They antialias like TAA while upscaling:
   material, a layer moving at least a repeat per hour) mark the
   transparency-and-composition mask, as AMD's sample marks its animated
   textures: the camera draws those materials' surfaces once more, at their
-  depth, before its blended surfaces (timing group `FSR composition`;
+  depth, before its blended surfaces (timing group `temporal composition`;
   nothing in a scene without such a material).
 - Request `graphics_device::fsr_features(&adapter)` when creating the device.
   `antialiasing` and `fsr_quality` take effect at the next `Renderer::resize`,

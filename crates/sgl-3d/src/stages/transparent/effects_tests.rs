@@ -41,6 +41,15 @@ fn soft_intersection_metric_depth_and_clear_background() {
                 crate::perspective(1.2, size[0] as f32 / size[1] as f32, 0.1),
                 camera::rh::proj::directx::orthographic(-50., 50., -50., 50., 100., 0.1),
             ] {
+                // The frame holds glow, which its effective configuration
+                // follows; each case below replaces it.
+                let placeholder = [[0., 0., -1.]; 3].map(|position| crate::effects::Glow {
+                    position,
+                    color: [0.; 4],
+                    kind: crate::effects::GlowKind::Uniform,
+                    soft_distance: 0.,
+                });
+                scene.update_effects(&device, &queue, &placeholder).unwrap();
                 let prepared = renderer.prepare_test_frame(
                     &device,
                     &queue,

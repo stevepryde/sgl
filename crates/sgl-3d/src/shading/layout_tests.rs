@@ -40,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 31] = [
+    let roots: [&'static super::Module; 32] = [
         &crate::shading::PACKED_VERTEX,
         &crate::stages::opaque::sky::SKY,
         &crate::stages::transparent::effects::GLOW,
@@ -65,6 +65,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::dynamic_gi::pipelines::ALLOCATE,
         &crate::stages::dynamic_gi::pipelines::UPDATE,
         &crate::stages::motion_blur::MOTION_BLUR,
+        &crate::shading::motion_tiles::MOTION_TILES,
         &crate::stages::shadows::traced::TEMPORAL,
         &crate::stages::shadows::traced::UPSAMPLE,
         &crate::stages::shadows::traced::denoise::TILE_CLASSIFICATION_FOUR,
@@ -184,9 +185,9 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         view::SOURCE_FS_ENTRY,
         view::FUSED_OPAQUE_FS_ENTRY,
         view::BLENDED_FS_ENTRY,
-        view::BLENDED_FSR_MASKED_FS_ENTRY,
+        view::BLENDED_MASKED_FS_ENTRY,
         view::RECEIVER_FS_ENTRY,
-        view::FSR_COMPOSITION_FS_ENTRY,
+        view::TEMPORAL_COMPOSITION_FS_ENTRY,
         view::VOLUME_ENTRY_FS_ENTRY,
         view::VOLUME_EXIT_FS_ENTRY,
         view::VOLUME_SECOND_EXIT_FS_ENTRY,
@@ -231,7 +232,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             vec![
                 effects::GLOW_VS_ENTRY,
                 effects::GLOW_SOFT_FS_ENTRY,
-                effects::GLOW_SOFT_FSR_MASKED_FS_ENTRY,
+                effects::GLOW_SOFT_MASKED_FS_ENTRY,
             ],
         ),
         (
@@ -239,7 +240,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             vec![
                 mist::MIST_VS_ENTRY,
                 mist::MIST_FS_ENTRY,
-                mist::MIST_FSR_MASKED_FS_ENTRY,
+                mist::MIST_MASKED_FS_ENTRY,
             ],
         ),
         (
@@ -252,7 +253,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         ),
         (
             heat::HEAT.name,
-            vec![heat::VS_ENTRY, heat::FS_ENTRY, heat::FS_FSR_MASKED_ENTRY],
+            vec![heat::VS_ENTRY, heat::FS_ENTRY, heat::FS_MASKED_ENTRY],
         ),
         (
             transmission::COPY.name,
@@ -390,7 +391,15 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         ),
         (
             motion_blur::MOTION_BLUR.name,
-            motion_blur::ENTRY_POINTS.to_vec(),
+            [
+                crate::shading::motion_tiles::ENTRY_POINTS.as_slice(),
+                &[motion_blur::FILTER_ENTRY],
+            ]
+            .concat(),
+        ),
+        (
+            crate::shading::motion_tiles::MOTION_TILES.name,
+            crate::shading::motion_tiles::ENTRY_POINTS.to_vec(),
         ),
         (traced::TEMPORAL.name, vec![traced::TEMPORAL_ENTRY]),
         (traced::UPSAMPLE.name, vec![traced::UPSAMPLE_ENTRY]),
@@ -820,6 +829,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::opaque::ambient_occlusion::mirrors())
     .chain(crate::stages::exposure::mirrors())
     .chain(crate::stages::motion_blur::mirrors())
+    .chain(super::motion_tiles::mirrors())
     .chain(crate::stages::fog::mirrors())
     .chain(crate::stages::dynamic_gi::mirrors())
     .chain(crate::stages::fog::volume_froxels::mirrors())

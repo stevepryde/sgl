@@ -9,6 +9,11 @@
 //! into DiligentFX's inputs in one fullscreen pass and runs
 //! `PostFXContext::Execute` once for every effect; SSR and TAA then read that
 //! context.
+mod inputs;
+
+pub(crate) use inputs::{FS_MAIN_ENTRY, INPUTS};
+use inputs::{Inputs, MATERIAL_FORMAT, MOTION_FORMAT, NORMAL_FORMAT};
+
 use super::history::CameraFrame;
 use super::targets::{SharedTargets, Surface};
 use crate::shading;
@@ -26,62 +31,6 @@ use sgl_post_fx::{CameraAttribs, ScreenSpaceReflectionAttribs, TemporalAntiAlias
 /// farther plane was measured and not taken (`sgl-post-fx` PROVENANCE.md
 /// DFX-33).
 pub(crate) const FAR_PLANE: f32 = 10_000.;
-
-/// DiligentFX's inputs converted from SGL3D's G-buffer, at one render size.
-struct Inputs {
-    size: [u32; 2],
-    normal: wgpu::TextureView,
-    material: wgpu::TextureView,
-    motion: wgpu::TextureView,
-    /// Depth under the effect camera's finite-far projection, alternating by
-    /// frame index as Hydrogent swaps its two depth buffers: the frame's is
-    /// `pCurrDepthBufferSRV` and `pDepthBufferSRV`, the other the previous
-    /// frame's, `pPrevDepthBufferSRV`.
-    depth: [wgpu::TextureView; 2],
-}
-
-impl Inputs {
-    fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
-        let texture = |label, format, usage| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: size[0],
-                    height: size[1],
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | usage,
-                view_formats: &[],
-            })
-        };
-        let target = |label, format| {
-            texture(label, format, wgpu::TextureUsages::RENDER_ATTACHMENT)
-                .create_view(&Default::default())
-        };
-        Self {
-            size,
-            normal: target("DiligentFX input normal", NORMAL_FORMAT),
-            material: target("DiligentFX input material parameters", MATERIAL_FORMAT),
-            motion: target("DiligentFX input motion vectors", MOTION_FORMAT),
-            depth: std::array::from_fn(|_| {
-                target("DiligentFX input depth", wgpu::TextureFormat::Depth32Float)
-            }),
-        }
-    }
-}
-
-const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-// Full precision, so DiligentFX's traced test (roughness <= threshold, made
-// once by its mask for every pass, DFX-62) sees the roughness SGL3D's
-// composition tests.
-const MATERIAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-/// Screen motion in RG and the G-buffer's depth motion in BA, which TAA's
-/// `MOTION_ADAPTIVE_HISTORY` reads; SSR reads RG.
-const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// Crystal's DiligentFX attributes, the same at every
 /// `Settings::screen_space_reflections` level: DiligentFX's
@@ -121,20 +70,22 @@ const TAA_FEATURE_FLAGS: temporal_anti_aliasing::FeatureFlags =
             | temporal_anti_aliasing::FeatureFlags::MOTION_ADAPTIVE_HISTORY.0,
     );
 
+/// What changes in a TAA frame without a motion vector of its own at the
+/// pixel, which raises its rejection there (Frame item 10).
+#[derive(Clone, Copy)]
+pub(crate) struct Responsive<'a> {
+    /// The reactive and the transparency and composition masks (R8, the
+    /// render size), while the frame has them (`SharedTargets`).
+    pub masks: Option<&'a [wgpu::TextureView; 2]>,
+    /// The motion reach: the largest motion, in render pixels a frame, in
+    /// the 3x3 neighbourhood of each `TILE_SIZE` tile.
+    pub reach: &'a wgpu::TextureView,
+}
+
 /// The frame the effects' history refers to.
 struct History {
     frame_index: u32,
 }
-
-/// SGL3D's G-buffer as DiligentFX's inputs.
-pub(crate) static INPUTS: shading::Module = shading::Module {
-    name: "post_fx_inputs",
-    source: include_str!("post_fx_inputs.wgsl"),
-    deps: &[&shading::GBUFFER, &shading::FULLSCREEN_VS],
-};
-/// The entry point the inputs' pipeline is created with, beside
-/// `shading::FULLSCREEN_VS_ENTRY`.
-pub(crate) const FS_MAIN_ENTRY: &str = "fs_main";
 
 pub(crate) struct PostFx {
     context: PostFXContext,
@@ -346,6 +297,18 @@ impl PostFx {
         self.jitter = match &mut self.taa {
             Some(taa) => {
                 taa.prepare_resources(device, encoder, &self.context, TAA_FEATURE_FLAGS, 0);
+                // The resolves a frame can bind: with the reach, and without
+                // or with both temporal masks, created here rather than in
+                // the first frame that has masks (`temporal_anti_aliasing`).
+                for masks in [0, 2] {
+                    taa.prepare_responsive_variant(
+                        device,
+                        &self.context,
+                        TAA_FEATURE_FLAGS,
+                        masks,
+                        Some(crate::shading::motion_tiles::TILE_SIZE),
+                    );
+                }
                 if self.reset_accumulation {
                     [0.; 2]
                 } else {
@@ -563,6 +526,11 @@ impl PostFx {
 
     /// DiligentFX TAA of `color`, the frame's linear HDR before bloom and
     /// tone mapping, after `begin`. Requires a context created with `taa`.
+    /// `responsive` marks what changes without a motion vector of its own:
+    /// the frame's temporal masks, while it has them, as TAA's responsive
+    /// masks, and the motion reach (`stages::antialiasing::reach`) as its
+    /// neighbourhood motion.
+    #[allow(clippy::too_many_arguments)]
     pub fn temporal_anti_aliasing(
         &mut self,
         device: &wgpu::Device,
@@ -570,10 +538,13 @@ impl PostFx {
         encoder: &mut wgpu::CommandEncoder,
         color: &wgpu::TextureView,
         rigid_object_motion: bool,
+        responsive: Responsive<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) -> &wgpu::TextureView {
         let taa = self.taa.as_mut().expect("PostFx::new with TAA");
         let inputs = self.inputs.as_ref().expect("PostFx::begin");
+        let masks: Vec<&wgpu::TextureView> =
+            responsive.masks.iter().flat_map(|m| m.iter()).collect();
         let timestamps =
             |pass: &'static str| timing.and_then(|timing| timing.render_pass(pass_group(pass)));
         taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
@@ -584,6 +555,11 @@ impl PostFx {
             color_buffer_srv: color,
             depth_buffer_srv: &inputs.depth[(self.frame_index & 1) as usize],
             motion_vectors_srv: &inputs.motion,
+            responsive_masks: &masks,
+            neighborhood_motion: Some(temporal_anti_aliasing::NeighborhoodMotion {
+                srv: responsive.reach,
+                tile_size: crate::shading::motion_tiles::TILE_SIZE,
+            }),
             taa_attribs: &TemporalAntiAliasingAttribs {
                 reset_accumulation: u32::from(self.reset_accumulation),
                 temporal_stability_factor: 0.88,

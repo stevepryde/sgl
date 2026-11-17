@@ -37,7 +37,7 @@ pub(crate) use variant::{Alpha, Cull, Variant};
 /// Which alpha modes the scene's materials use beyond opaque, whether one
 /// is a receiver of screen-space reflections, whether an opaque or masked
 /// one's surface moves, whether it holds a deforming model, and whether a
-/// material is transmissive: the masked, blended, receiver, FSR
+/// material is transmissive: the masked, blended, receiver, temporal
 /// composition and deformed pipelines are prepared once it holds such
 /// content, and the blended ones compile transmission in while it holds a
 /// transmissive material.
@@ -293,8 +293,12 @@ impl GeometryPipelines {
             GeometryPass::PairedShadow,
             GeometryPass::CaptureShadow,
             GeometryPass::LocalShadow,
-            GeometryPass::Blended { fsr_masks: false },
-            GeometryPass::Blended { fsr_masks: true },
+            GeometryPass::Blended {
+                temporal_masks: false,
+            },
+            GeometryPass::Blended {
+                temporal_masks: true,
+            },
         ];
         if !self.anisotropy_inline {
             passes.push(GeometryPass::GBufferAnisotropy);
@@ -340,7 +344,7 @@ impl GeometryPipelines {
                 passes.push(GeometryPass::Receivers);
             }
             if moving {
-                passes.push(GeometryPass::FsrComposition);
+                passes.push(GeometryPass::TemporalComposition);
             }
             if volumes {
                 passes.extend([
@@ -446,10 +450,10 @@ impl GeometryPipelines {
                 &self.lit,
                 "blended receivers",
             ),
-            FsrComposition => (
+            TemporalComposition => (
                 Program::Geometry(GeometryForm::Plain),
                 &self.lit,
-                "FSR composition of moving surfaces",
+                "temporal composition of moving surfaces",
             ),
             VolumeEntry | VolumeExit => (
                 Program::Geometry(GeometryForm::Plain),
@@ -546,10 +550,14 @@ impl GeometryPipelines {
                 (SHADOW_UNCLIPPED_VS_ENTRY, Some(SHADOW_UNCLIPPED_FS_ENTRY))
             }
             CaptureShadow | LocalShadow => (SHADOW_VS_ENTRY, None),
-            Blended { fsr_masks: false } => (SOURCE_VS_ENTRY, Some(BLENDED_FS_ENTRY)),
-            Blended { fsr_masks: true } => (SOURCE_VS_ENTRY, Some(BLENDED_FSR_MASKED_FS_ENTRY)),
+            Blended {
+                temporal_masks: false,
+            } => (SOURCE_VS_ENTRY, Some(BLENDED_FS_ENTRY)),
+            Blended {
+                temporal_masks: true,
+            } => (SOURCE_VS_ENTRY, Some(BLENDED_MASKED_FS_ENTRY)),
             Receivers => (SOURCE_VS_ENTRY, Some(RECEIVER_FS_ENTRY)),
-            FsrComposition => (SOURCE_VS_ENTRY, Some(FSR_COMPOSITION_FS_ENTRY)),
+            TemporalComposition => (SOURCE_VS_ENTRY, Some(TEMPORAL_COMPOSITION_FS_ENTRY)),
             VolumeEntry => (SOURCE_VS_ENTRY, Some(VOLUME_ENTRY_FS_ENTRY)),
             VolumeExit => (SOURCE_VS_ENTRY, Some(VOLUME_EXIT_FS_ENTRY)),
             VolumeSecondExit => (SOURCE_VS_ENTRY, Some(VOLUME_SECOND_EXIT_FS_ENTRY)),
@@ -574,10 +582,14 @@ impl GeometryPipelines {
                 })
             })
             .collect();
-        if key.pass == (Blended { fsr_masks: true }) {
+        if key.pass
+            == (Blended {
+                temporal_masks: true,
+            })
+        {
             targets.extend(mask_targets());
         }
-        if key.pass == FsrComposition {
+        if key.pass == TemporalComposition {
             targets.extend(composition_targets());
         }
         let constants = key.constants();

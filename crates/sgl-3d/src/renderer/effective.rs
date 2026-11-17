@@ -11,6 +11,7 @@ use crate::settings::{
 use crate::shading::RayQueryForm;
 use crate::shading::bind::BindingTier;
 use crate::stages::reflections::velvet;
+use crate::view::effective::CompositeDraws;
 use crate::view::effective::{
     AmbientOcclusion, Effective, HardwareRayTracing, ScreenSpace, ShadowFilter, Sizing,
 };
@@ -199,6 +200,15 @@ pub(super) struct SceneContent {
     pub receivers: bool,
     /// A dynamic GI volume.
     pub dynamic_gi_volume: bool,
+    /// Blended or transmissive materials.
+    pub blended: bool,
+    /// An opaque or masked material whose shading moves
+    /// (`Material::surface_moves`).
+    pub moving_surfaces: bool,
+    /// Glow, mist and heat distortion to draw.
+    pub glow: bool,
+    pub mist: bool,
+    pub heat: bool,
 }
 
 impl SceneContent {
@@ -208,6 +218,11 @@ impl SceneContent {
             fog_volumes: !scene.transient.fog_volume_corners.is_empty(),
             receivers: scene.materials.holds_receivers(),
             dynamic_gi_volume: scene.dynamic_gi.is_some(),
+            blended: scene.materials.holds_blended() || scene.materials.holds_transmissive(),
+            moving_surfaces: scene.materials.holds_moving_surfaces(),
+            glow: scene.transient.glow_count > 0,
+            mist: !scene.transient.mist_positions.is_empty(),
+            heat: scene.transient.heat_count > 0,
         }
     }
 }
@@ -291,6 +306,18 @@ pub(super) fn resolve(
         ShadowQuality::High => ShadowFilter::Gaussian,
     };
     let motion_blur = motion_blur(settings, input).filter(|_| post_fx_camera);
+    // What draws onto the composite, each of which marks the temporal
+    // masks while the frame has them (Frame item 8). TAA reads the masks
+    // only in a frame one of them can mark; FSR's dispatch binds them in
+    // every frame.
+    let composite = CompositeDraws {
+        blended: content.blended,
+        moving_surfaces: content.moving_surfaces,
+        glow: content.glow && !disable.effects,
+        mist: content.mist && atmosphere(settings, input),
+        heat: content.heat && settings.heat_distortion,
+    };
+    let temporal_masks = fsr || taa && composite.any();
     let hardware_ray_tracing = match (settings.hardware_ray_tracing, content.ray_data, ray_queries)
     {
         (false, _, _) => HardwareRayTracing::Off,
@@ -309,6 +336,7 @@ pub(super) fn resolve(
         antialiasing,
         taa,
         fsr,
+        temporal_masks,
         fsr_sharpness: fsr_sharpness(settings, fsr),
         post_fx: taa || crystal,
         shadow_quality: settings.shadow_quality,
@@ -326,7 +354,6 @@ pub(super) fn resolve(
         fused: fused_supported && !disable.fused_opaque && !occlusion_culling,
         occlusion_culling,
         local_lights: !disable.local_lights,
-        atmosphere: atmosphere(settings, input),
         fog: fog(
             settings,
             input,
@@ -340,8 +367,7 @@ pub(super) fn resolve(
         volume_paths: volume_paths(settings, tier),
         bloom: settings.bloom.enabled(low) && !disable.bloom,
         motion_blur,
-        heat: settings.heat_distortion,
-        effects: !disable.effects,
+        composite,
         culling: !disable.culling,
         smaa: !disable.smaa,
         smaa_quality: settings.smaa_quality,
@@ -504,6 +530,91 @@ mod ray_data_tests {
                 let delta = crate::counters::snapshot().since(&before);
                 assert_eq!(delta.blas_builds + delta.tlas_builds, 0);
             }
+        }
+    }
+}
+
+#[cfg(all(test, feature = "diagnostics"))]
+mod temporal_mask_tests {
+    use super::*;
+    use crate::settings::{Antialiasing, FsrVersion};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Plausible defects: TAA frames allocate the temporal masks though
+    // nothing draws into them, or not when one writer alone draws; a writer
+    // counted although its own draw is off (glow with effects disabled, mist
+    // without the frame's atmosphere, heat with the setting off); FSR frames
+    // left without the masks their dispatch binds. The oracle is Frame item
+    // 8's rule as a table: the masks are held for every FSR frame, and for a
+    // TAA frame exactly when blended or moving-shading materials, or glow,
+    // mist or heat that draws, can mark them.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn the_temporal_masks_are_held_exactly_while_a_writer_can_mark_them() {
+        let camera = crate::Camera {
+            view: glam::Mat4::IDENTITY,
+            projection: crate::perspective(1., 1., 0.1),
+            eye: glam::Vec3::ZERO,
+        };
+        let mut input = FrameInput::new(camera);
+        input.atmosphere = true;
+        let device = Device {
+            fsr_running: Some(FsrVersion::Fsr2),
+            fused_supported: true,
+            occlusion_supported: true,
+            ray_queries: None,
+            tier: BindingTier::Extended,
+        };
+        let taa = Settings {
+            antialiasing: Antialiasing::Taa,
+            atmosphere: true,
+            heat_distortion: true,
+            ..Settings::default()
+        };
+        let none = SceneContent::default();
+        let alone = [
+            SceneContent {
+                blended: true,
+                ..none
+            },
+            SceneContent {
+                moving_surfaces: true,
+                ..none
+            },
+            SceneContent { glow: true, ..none },
+            SceneContent { mist: true, ..none },
+            SceneContent { heat: true, ..none },
+        ];
+        let held = |settings: &Settings, content| {
+            resolve(settings, &input, content, device).temporal_masks
+        };
+        assert!(!held(&taa, none), "a TAA frame nothing can mark");
+        for content in alone {
+            assert!(held(&taa, content), "one writer alone");
+        }
+        let mut no_effects = taa;
+        no_effects.diagnostics.disable.effects = true;
+        assert!(!held(&no_effects, alone[2]), "glow with effects disabled");
+        let no_atmosphere = Settings {
+            atmosphere: false,
+            ..taa
+        };
+        assert!(!held(&no_atmosphere, alone[3]), "mist without atmosphere");
+        let no_heat = Settings {
+            heat_distortion: false,
+            ..taa
+        };
+        assert!(!held(&no_heat, alone[4]), "heat with the setting off");
+        let fsr = Settings {
+            antialiasing: Antialiasing::Fsr2,
+            ..taa
+        };
+        assert!(held(&fsr, none), "an FSR frame, whose dispatch binds them");
+        let off = Settings {
+            antialiasing: Antialiasing::Off,
+            ..taa
+        };
+        for content in alone {
+            assert!(!held(&off, content), "no temporal antialiasing");
         }
     }
 }

@@ -328,16 +328,6 @@ fn infinite_texels_blur_into_a_finite_frame() {
         wgpu::TextureFormat::Depth32Float,
     );
     let mut blur = super::MotionBlur::new(&device);
-    queue.write_buffer(
-        &blur.uniform,
-        0,
-        bytemuck::bytes_of(&super::MotionBlurUniform {
-            velocity_scale: size.map(|v| v as f32),
-            render_scale: [1.; 2],
-            near: 0.1,
-            frame: 3,
-        }),
-    );
     let mut encoder = device.create_command_encoder(&Default::default());
     // Every surface 5 m away.
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -351,7 +341,23 @@ fn infinite_texels_blur_into_a_finite_frame() {
         }),
         ..Default::default()
     });
-    blur.dispatch(&device, &mut encoder, &frame, [&motion, &depth], None);
+    blur.dispatch(
+        (&device, &queue),
+        &mut encoder,
+        &frame,
+        [&motion, &depth],
+        (
+            crate::shading::motion_tiles::MotionTilesUniform {
+                velocity_scale: size.map(|v| v as f32),
+                render_scale: [1.; 2],
+            },
+            super::MotionBlurUniform {
+                near: 0.1,
+                frame: 3,
+            },
+        ),
+        None,
+    );
     queue.submit([encoder.finish()]);
     let blurred = test_support::read(&device, &queue, blur.output().unwrap().texture(), 8);
     let non_finite: Vec<_> = texels(&blurred)

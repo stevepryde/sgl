@@ -17,12 +17,15 @@
 //! `shading::SCENE_COLOR`'s bound, the surface's depth and
 //! motion at the render size (the Surface contract), the camera's
 //! projection and the frames since history restarted.
-//! Writes: its tile targets and the blurred frame, at the frame's size.
+//! Writes: its tile targets (`view::motion_tiles`, the passes it shares with
+//! TAA's motion reach) and the blurred frame, at the frame's size.
 //! Honours: the effective shutter (`Settings::motion_blur` and
 //! `FrameInput::motion_blur`); without one it does not run.
 //! Timing group: `motion blur`.
 use crate::shading::gbuffer::COLOR;
+use crate::shading::motion_tiles::{GROUP_SIZE, MOTION_TILES, MotionTilesUniform};
 use crate::view::frame::FrameContext;
+use crate::view::motion_tiles::MotionTiles;
 use crate::view::targets::target_with_usage;
 
 /// The tile passes and the filter.
@@ -30,32 +33,20 @@ pub(crate) static MOTION_BLUR: crate::shading::Module = crate::shading::Module {
     name: "motion_blur",
     source: include_str!("motion_blur.wgsl"),
     deps: &[
+        &MOTION_TILES,
         &crate::shading::DEPTH,
         &crate::shading::NOISE,
         &crate::shading::SCENE_COLOR,
         &crate::shading::FINITE,
     ],
 };
-/// The entry points the pipelines are created with, in the order they run.
-pub(crate) const ENTRY_POINTS: [&str; 4] = [
-    "motionblur_tileMaxVelocity_horizontal",
-    "motionblur_tileMaxVelocity_vertical",
-    "motionblur_neighborhoodMaxVelocity",
-    "motionblur",
-];
-
-/// Wicked's `MOTIONBLUR_TILESIZE`: frame pixels per tile side, which the
-/// shader takes as its override.
-const TILE_SIZE: u32 = 32;
-/// The shader's workgroup side.
-const GROUP_SIZE: u32 = 8;
+/// The filter's entry point, after the tile passes.
+pub(crate) const FILTER_ENTRY: &str = "motionblur";
 
 /// `MotionBlur` in `motion_blur.wgsl`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct MotionBlurUniform {
-    velocity_scale: [f32; 2],
-    render_scale: [f32; 2],
     near: f32,
     frame: u32,
 }
@@ -68,54 +59,19 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
         "motion_blur",
         "MotionBlur",
         MotionBlurUniform,
-        [velocity_scale, render_scale, near, frame]
+        [near, frame]
     )]
 }
 
-/// The targets for one frame size.
-struct Targets {
-    size: [u32; 2],
-    /// Each tile column's largest and smallest blur per frame row.
-    horizontal: wgpu::TextureView,
-    /// Each tile's.
-    tiles: wgpu::TextureView,
-    /// Each tile neighbourhood's.
-    neighborhood: wgpu::TextureView,
-    /// The blurred frame.
-    output: wgpu::TextureView,
-}
-
-impl Targets {
-    fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
-        let tiles = size.map(|v| v.div_ceil(TILE_SIZE));
-        let target = |label, size| {
-            target_with_usage(
-                device,
-                label,
-                size,
-                COLOR,
-                wgpu::TextureUsages::STORAGE_BINDING,
-            )
-        };
-        Self {
-            size,
-            horizontal: target("motion blur tile columns", [tiles[0], size[1]]),
-            tiles: target("motion blur tiles", tiles),
-            neighborhood: target("motion blur tile neighbourhoods", tiles),
-            output: target("motion-blurred HDR scene", size),
-        }
-    }
-}
-
 pub(crate) struct MotionBlur {
-    pipelines: [wgpu::ComputePipeline; 4],
-    layout: wgpu::BindGroupLayout,
+    tiles: MotionTiles,
+    filter: wgpu::ComputePipeline,
     uniform: wgpu::Buffer,
-    targets: Option<Targets>,
-    /// The groups of each pass, one set per frame view blurred (TAA
-    /// alternates two) and surface depth, until the targets or the views
-    /// are replaced.
-    groups: Vec<(wgpu::TextureView, wgpu::TextureView, [wgpu::BindGroup; 4])>,
+    /// The blurred frame, at its size.
+    output: Option<wgpu::TextureView>,
+    /// The filter's group for each frame view blurred (TAA alternates two)
+    /// and surface depth, until the targets or the views are replaced.
+    groups: Vec<(wgpu::TextureView, wgpu::TextureView, wgpu::BindGroup)>,
 }
 
 impl MotionBlur {
@@ -124,67 +80,23 @@ impl MotionBlur {
             label: Some("motion blur"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&MOTION_BLUR]).into()),
         });
-        let texture = |binding, sample_type| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Texture {
-                sample_type,
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
+        let filter = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(FILTER_ENTRY),
+            layout: None,
+            module: &shader,
+            entry_point: Some(FILTER_ENTRY),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &[(
+                    "MOTIONBLUR_TILESIZE",
+                    f64::from(crate::shading::motion_tiles::TILE_SIZE),
+                )],
+                ..Default::default()
             },
-            count: None,
-        };
-        let float = wgpu::TextureSampleType::Float { filterable: false };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("motion blur"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                texture(1, float),
-                texture(2, wgpu::TextureSampleType::Depth),
-                texture(3, float),
-                texture(4, float),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: COLOR,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("motion blur"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipelines = ENTRY_POINTS.map(|entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[("MOTIONBLUR_TILESIZE", f64::from(TILE_SIZE))],
-                    ..Default::default()
-                },
-                cache: None,
-            })
+            cache: None,
         });
         Self {
-            pipelines,
-            layout,
+            tiles: MotionTiles::new(device, &shader),
+            filter,
             uniform: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -194,7 +106,7 @@ impl MotionBlur {
                     mapped_at_creation: false,
                 },
             ),
-            targets: None,
+            output: None,
             groups: Vec::new(),
         }
     }
@@ -202,12 +114,13 @@ impl MotionBlur {
     /// The blurred frame, once the stage has run.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn output(&self) -> Option<&wgpu::TextureView> {
-        self.targets.as_ref().map(|targets| &targets.output)
+        self.output.as_ref()
     }
 
     /// Drops the bind groups, which hold frame views and shared targets
     /// that a resize or a new antialiasing context replaces.
     pub fn forget_inputs(&mut self) {
+        self.tiles.forget_inputs();
         self.groups.clear();
     }
 
@@ -227,107 +140,106 @@ impl MotionBlur {
         let size = frame.texture().size();
         let size = [size.width, size.height];
         let render = ctx.sizes.render;
-        let uniform = MotionBlurUniform {
+        let tiles = MotionTilesUniform {
             velocity_scale: size.map(|v| v as f32 * shutter),
             render_scale: [0, 1].map(|axis| render[axis] as f32 / size[axis] as f32),
+        };
+        let uniform = MotionBlurUniform {
             // `perspective`'s near plane (the effective configuration
             // requires its projection).
             near: ctx.input.camera.projection.w_axis.z,
             frame: ctx.history.frames,
         };
-        crate::counters::write_buffer(ctx.queue, &self.uniform, 0, bytemuck::bytes_of(&uniform));
         self.dispatch(
-            ctx.device,
+            (ctx.device, ctx.queue),
             ctx.encoder,
             frame,
             [&ctx.targets.motion, ctx.surface.depth],
+            (tiles, uniform),
             ctx.timing,
         );
-        self.targets.as_ref().map(|targets| &targets.output)
+        self.output.as_ref()
     }
 
     /// The tile passes and the filter of `frame` with the `motion` and
-    /// `depth` targets.
+    /// `depth` targets and the passes' values.
     fn dispatch(
         &mut self,
-        device: &wgpu::Device,
+        (device, queue): (&wgpu::Device, &wgpu::Queue),
         encoder: &mut wgpu::CommandEncoder,
         frame: &wgpu::TextureView,
         [motion, depth]: [&wgpu::TextureView; 2],
+        (tiles, uniform): (MotionTilesUniform, MotionBlurUniform),
         timing: Option<&crate::timing::GpuTiming>,
     ) {
+        crate::counters::write_buffer(queue, &self.uniform, 0, bytemuck::bytes_of(&uniform));
         let size = frame.texture().size();
-        let size = [size.width, size.height];
-        if self.targets.as_ref().is_none_or(|t| t.size != size) {
-            self.targets = Some(Targets::new(device, size));
+        if self
+            .output
+            .as_ref()
+            .is_none_or(|output| output.texture().size() != size)
+        {
+            self.output = Some(target_with_usage(
+                device,
+                "motion-blurred HDR scene",
+                [size.width, size.height],
+                COLOR,
+                wgpu::TextureUsages::STORAGE_BINDING,
+            ));
             self.groups.clear();
         }
-        let groups = self.groups(device, frame, motion, depth);
-        let tiles = size.map(|v| v.div_ceil(TILE_SIZE));
-        let dispatches = [[tiles[0], size[1]], tiles, tiles, size];
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("motion blur"),
             timestamp_writes: timing.and_then(|t| t.compute_pass("motion blur")),
         });
-        for ((pipeline, group), extent) in self.pipelines.iter().zip(&groups).zip(dispatches) {
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, group, &[]);
-            pass.dispatch_workgroups(
-                extent[0].div_ceil(GROUP_SIZE),
-                extent[1].div_ceil(GROUP_SIZE),
-                1,
-            );
-        }
+        let neighborhood = self
+            .tiles
+            .encode(device, queue, &mut pass, [motion, frame], tiles)
+            .clone();
+        let group = self.group(device, [motion, depth, frame], &neighborhood);
+        pass.set_pipeline(&self.filter);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(
+            size.width.div_ceil(GROUP_SIZE),
+            size.height.div_ceil(GROUP_SIZE),
+            1,
+        );
     }
 
-    /// Each pass's group for `frame` and `depth`, made once while they are
+    /// The filter's group for `frame` and `depth`, made once while they are
     /// the frame blurred and the surface depth (the opaque depth, or the
-    /// receivers'): binding 4 is the tiles a pass reads, 5 what it writes.
-    fn groups(
+    /// receivers'), over the tile `neighborhood`.
+    fn group(
         &mut self,
         device: &wgpu::Device,
-        frame: &wgpu::TextureView,
-        motion: &wgpu::TextureView,
-        depth: &wgpu::TextureView,
-    ) -> [wgpu::BindGroup; 4] {
-        if let Some((.., groups)) = self
+        [motion, depth, frame]: [&wgpu::TextureView; 3],
+        neighborhood: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        if let Some((.., group)) = self
             .groups
             .iter()
             .find(|(view, surface, _)| view == frame && surface == depth)
         {
-            return groups.clone();
+            return group.clone();
         }
-        let targets = self.targets.as_ref().unwrap();
-        let passes = [
-            (&targets.tiles, &targets.horizontal),
-            (&targets.horizontal, &targets.tiles),
-            (&targets.tiles, &targets.neighborhood),
-            (&targets.neighborhood, &targets.output),
-        ];
-        let groups = passes.map(|(read, write)| {
-            let views = [motion, depth, frame, read, write];
-            let mut entries = vec![wgpu::BindGroupEntry {
-                binding: 0,
-                resource: self.uniform.as_entire_binding(),
-            }];
-            entries.extend(
-                views
-                    .iter()
-                    .zip(1..)
-                    .map(|(view, binding)| wgpu::BindGroupEntry {
-                        binding,
-                        resource: wgpu::BindingResource::TextureView(view),
-                    }),
-            );
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("motion blur"),
-                layout: &self.layout,
-                entries: &entries,
-            })
+        let view = wgpu::BindingResource::TextureView;
+        let entry = |binding, resource| wgpu::BindGroupEntry { binding, resource };
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("motion blur"),
+            layout: &self.filter.get_bind_group_layout(0),
+            entries: &[
+                entry(0, self.tiles.uniform().as_entire_binding()),
+                entry(1, view(motion)),
+                entry(2, view(depth)),
+                entry(3, view(frame)),
+                entry(4, view(neighborhood)),
+                entry(5, view(self.output.as_ref().unwrap())),
+                entry(6, self.uniform.as_entire_binding()),
+            ],
         });
         self.groups
-            .push((frame.clone(), depth.clone(), groups.clone()));
-        groups
+            .push((frame.clone(), depth.clone(), group.clone()));
+        group
     }
 }
 

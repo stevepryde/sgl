@@ -44,6 +44,26 @@ docs and specs the entry links.
   surface took that surface's; a one-pixel slit showing a far surface takes
   that surface's shadow from the texels about it. Only the mask near such
   features changes; no settings. No game-code changes are needed.
+- `sgl-post-fx` `temporal_anti_aliasing::RenderAttributes` gains
+  `responsive_masks` and `neighborhood_motion` (`NeighborhoodMotion`), which
+  `MOTION_ADAPTIVE_HISTORY` reads to reject history at rest where content
+  changes without a motion vector of its own, and `TemporalAntiAliasing`
+  gains `prepare_responsive_variant` to create such a resolve ahead of the
+  frame that needs it; the closest-motion history's W now carries a hold.
+  Direct callers add `responsive_masks: &[], neighborhood_motion: None` to
+  keep the resolve as it was.
+- `sgl-3d` TAA at rest now rejects history where content changes without a
+  motion vector of its own: blended surfaces, additive effects, mist, heat
+  shimmer and moving normal layers, by the reactive and
+  transparency-and-composition masks (now drawn in TAA frames that can mark
+  them, at full strength for a hold after the content leaves), and pixels
+  within 32 to 63 pixels (a 3x3 neighbourhood of 32-pixel tiles) of anything
+  moving a pixel a frame or more, so a deforming or skinned surface no
+  longer leaves a ghost where it was.
+  Unmarked pixels away from motion settle as before. The pass timing group
+  `FSR composition` is renamed `temporal composition`, and TAA adds `TAA
+  motion reach`: update any timing lookups by those names. No settings and
+  no other game-code changes are needed.
 - `sgl-3d` reflection source completion: a lit colour or ambient light texel
   of +infinity (over-range radiance on backends that round overflow to
   infinity) no longer composes to NaN under opaque fog or to black where

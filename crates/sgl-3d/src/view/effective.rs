@@ -70,6 +70,34 @@ pub(crate) struct AmbientOcclusion {
     pub radius: f32,
 }
 
+/// What the frame draws onto the composite (Frame item 8), each of which
+/// marks the temporal masks while the frame has them: the one condition
+/// each draw and the masks' allocation read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CompositeDraws {
+    /// The scene holds blended or transmissive materials, which the camera's
+    /// blended list draws where it holds them.
+    pub blended: bool,
+    /// The scene holds an opaque or masked material whose shading moves
+    /// (`Material::surface_moves`), which the temporal composition marks.
+    pub moving_surfaces: bool,
+    /// Glow is drawn: the scene holds some and effects draw (a diagnostics
+    /// layer).
+    pub glow: bool,
+    /// Mist is drawn: the scene holds some, in the frame's atmosphere.
+    pub mist: bool,
+    /// Heat distortion is drawn: the scene holds some and
+    /// `Settings::heat_distortion` is on.
+    pub heat: bool,
+}
+
+impl CompositeDraws {
+    /// Whether anything draws that marks the masks.
+    pub fn any(self) -> bool {
+        self.blended || self.moving_surfaces || self.glow || self.mist || self.heat
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Effective {
     /// The antialiasing in effect: the settings' choice for the preset, TAA
@@ -77,6 +105,9 @@ pub(crate) struct Effective {
     pub antialiasing: Antialiasing,
     pub taa: bool,
     pub fsr: bool,
+    /// The temporal masks are drawn and read: while FSR runs, and while TAA
+    /// runs and the frame can mark them (Frame item 8).
+    pub temporal_masks: bool,
     /// FSR's RCAS sharpness in 0..=1, while it sharpens.
     pub fsr_sharpness: Option<f32>,
     /// DiligentFX's post-effect context runs: for TAA, and for Crystal SSR.
@@ -117,8 +148,6 @@ pub(crate) struct Effective {
     pub occlusion_culling: bool,
     /// The scene's point and spot lights render (a diagnostics layer).
     pub local_lights: bool,
-    /// Mist draws (the frame's atmosphere).
-    pub atmosphere: bool,
     /// The volumetric fog runs, at this quality, and every draw fogs from
     /// its volume: the frame's atmosphere, with a medium (a density or fog
     /// volumes) the volume can hold, seen by a `perspective` camera.
@@ -136,9 +165,8 @@ pub(crate) struct Effective {
     /// The share of each pixel's motion that motion blur spreads it over:
     /// the authored shutter scaled by the setting, while positive.
     pub motion_blur: Option<f32>,
-    pub heat: bool,
-    /// Additive effects draw (a diagnostics layer).
-    pub effects: bool,
+    /// What draws onto the composite and marks the temporal masks.
+    pub composite: CompositeDraws,
     /// The camera culls against its view (a diagnostics layer).
     pub culling: bool,
     /// SMAA may run (a diagnostics layer).

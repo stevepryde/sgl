@@ -8,8 +8,8 @@ use sgl_3d::diagnostics::{self, DiagnosticTarget};
 use sgl_3d::glam::{Mat4, Vec2, Vec3};
 use sgl_3d::settings::{self, Settings};
 use sgl_3d::{
-    Backdrop, Exposure, FrameInput, InstanceId, InstanceState, MaterialId, MaterialShader,
-    Mobility, Renderer, Scene, ShaderId, SurfaceMaterial,
+    AlphaMode, Backdrop, Exposure, FrameInput, InstanceId, InstanceState, MaterialId,
+    MaterialShader, Mobility, Renderer, Scene, ShaderId, SurfaceMaterial,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -123,6 +123,9 @@ pub struct Quad {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Shape {
     pub quads: Vec<Quad>,
+    /// Drawn blended with this alpha (`AlphaMode::Blend`), which writes no
+    /// depth or motion; `None` opaque.
+    pub blend: Option<f32>,
 }
 
 impl Shape {
@@ -131,6 +134,7 @@ impl Shape {
     pub fn card(size: Vec2, roll: f32, radiance: f32) -> Shape {
         Shape {
             quads: vec![quad(-size * 0.5, size * 0.5, 0., roll, radiance)],
+            blend: None,
         }
     }
 
@@ -158,7 +162,17 @@ impl Shape {
             ));
             x += period;
         }
-        Shape { quads }
+        Shape { quads, blend: None }
+    }
+
+    /// The same shape drawn blended with `alpha`: over what lies behind it
+    /// a quad shows `alpha` of its radiance and `1 - alpha` of what is
+    /// behind.
+    pub fn blended(&self, alpha: f32) -> Shape {
+        Shape {
+            blend: Some(alpha),
+            ..self.clone()
+        }
     }
 
     /// The same shape `factor` times the size about its own origin. Placed
@@ -175,6 +189,7 @@ impl Shape {
                     ..*q
                 })
                 .collect(),
+            blend: self.blend,
         }
     }
 
@@ -194,10 +209,17 @@ impl Shape {
             .map(|q| Material {
                 name: "scenario fixture".into(),
                 visibility_group: group,
-                base: [q.radiance, q.radiance, q.radiance, 1.],
+                base: [q.radiance, q.radiance, q.radiance, self.blend.unwrap_or(1.)],
                 metallic: 0.,
                 double_sided: true,
                 unlit: true,
+                alpha: match self.blend {
+                    Some(_) => AlphaMode::Blend {
+                        receives_screen_space_reflections: false,
+                        keeps_specular: false,
+                    },
+                    None => AlphaMode::Opaque,
+                },
                 ..Material::default()
             })
             .collect();
@@ -427,6 +449,30 @@ impl Rig {
                 .expect("the shader's parameters");
         }
         id
+    }
+
+    /// Adds `asset` whole at `pose` as a moving instance: a fixture whose
+    /// radiance the rig does not know (a lit one), outside the shapes it
+    /// places and the radiance range it bounds.
+    pub fn add_model(&mut self, asset: Asset, pose: Pose) -> InstanceId {
+        let Gpu { device, queue } = &self.gpu;
+        let ids = self
+            .scene
+            .add_asset(device, queue, asset)
+            .expect("a fixture model");
+        let state = InstanceState {
+            pose: self.render_pose(pose),
+            ..InstanceState::new(ids.model)
+        };
+        self.scene
+            .add_instance(device, queue, state, Mobility::Moving)
+            .expect("a fixture instance")
+    }
+
+    /// Widens the radiance range the bound oracle holds the frames to by
+    /// `radiance`: what a fixture outside the placed shapes adds (a glow).
+    pub fn admit(&mut self, radiance: f32) {
+        self.range = [self.range[0].min(radiance), self.range[1].max(radiance)];
     }
 
     fn add_placed(

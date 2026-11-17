@@ -24,6 +24,7 @@ pub(crate) mod effective;
 pub(crate) mod frame;
 pub(crate) mod history;
 pub(crate) mod lod;
+pub(crate) mod motion_tiles;
 pub(crate) mod pipelines;
 pub(crate) mod population;
 pub(crate) mod post_fx;

@@ -15,7 +15,7 @@ pub(crate) static HEAT: crate::shading::Module = crate::shading::Module {
 /// The entry points the shimmer's pipeline is created with.
 pub(crate) const VS_ENTRY: &str = "vs";
 pub(crate) const FS_ENTRY: &str = "fs";
-pub(crate) const FS_FSR_MASKED_ENTRY: &str = "fs_fsr_masked";
+pub(crate) const FS_MASKED_ENTRY: &str = "fs_masked";
 /// The heat shimmer's vertex buffer, read by `vs`.
 pub(crate) const HEAT_LAYOUT: VertexLayout =
     vertex_layout!(HeatDistortion, [position, displacement, weight]);
@@ -31,9 +31,9 @@ struct View {
 
 pub(crate) struct Heat {
     pipeline: wgpu::RenderPipeline,
-    /// `pipeline` also marking FSR's transparency and composition mask
+    /// `pipeline` also marking the temporal transparency and composition mask
     /// (`mask_targets`).
-    pipeline_fsr_masked: wgpu::RenderPipeline,
+    pipeline_masked: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     view: wgpu::Buffer,
     source: Option<wgpu::TextureView>,
@@ -99,11 +99,7 @@ impl Heat {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some(if masked {
-                        FS_FSR_MASKED_ENTRY
-                    } else {
-                        FS_ENTRY
-                    }),
+                    entry_point: Some(if masked { FS_MASKED_ENTRY } else { FS_ENTRY }),
                     compilation_options: Default::default(),
                     targets: &[
                         Some(wgpu::ColorTargetState {
@@ -123,7 +119,7 @@ impl Heat {
         };
         Self {
             pipeline: pipeline(false),
-            pipeline_fsr_masked: pipeline(true),
+            pipeline_masked: pipeline(true),
             layout,
             view: crate::counters::buffer_init(
                 device,
@@ -142,7 +138,7 @@ impl Heat {
     }
     /// Heat distortion of `color`, at the render size, in place, its
     /// displacement authored in pixels of a `scene`-sized frame. Where it
-    /// covers (its weight above 0, in front of `depth`), `fsr_masks`, which
+    /// covers (its weight above 0, in front of `depth`), `temporal_masks`, which
     /// the transparent draws wrote this frame, also take its weight as
     /// transparency and composition, as those draws accumulate theirs.
     #[allow(clippy::too_many_arguments)]
@@ -156,7 +152,7 @@ impl Heat {
         scene: [u32; 2],
         color: &wgpu::TextureView,
         depth: &wgpu::TextureView,
-        fsr_masks: Option<&[wgpu::TextureView; 2]>,
+        temporal_masks: Option<&[wgpu::TextureView; 2]>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
         if transient.heat_count == 0 {
@@ -200,15 +196,15 @@ impl Heat {
         });
         let load = |view| super::loaded(attachment(view), true);
         let mut attachments = vec![load(color)];
-        attachments.extend(fsr_masks.map(|[_, composition]| load(composition)));
+        attachments.extend(temporal_masks.map(|[_, composition]| load(composition)));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("camera heat before bloom and HUD"),
             color_attachments: &attachments,
             timestamp_writes: timing.and_then(|t| t.render_pass("heat distortion")),
             ..Default::default()
         });
-        pass.set_pipeline(if fsr_masks.is_some() {
-            &self.pipeline_fsr_masked
+        pass.set_pipeline(if temporal_masks.is_some() {
+            &self.pipeline_masked
         } else {
             &self.pipeline
         });

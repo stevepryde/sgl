@@ -37,21 +37,21 @@ pub(crate) enum GeometryPass {
     LocalShadow,
     /// Blended surfaces' lit colour over the beauty, premultiplied by their
     /// alpha, tested against the opaque depth without writing it, with the blended group 3
-    /// (`shading::bind::blended`); with `fsr_masks`, also FSR's reactive
+    /// (`shading::bind::blended`); with `temporal_masks`, also the temporal masks' reactive
     /// and transparency-and-composition masks (`mask_targets`).
     Blended {
-        fsr_masks: bool,
+        temporal_masks: bool,
     },
     /// Blended receivers of screen-space reflections as the surface: their
     /// traced lobe into the receiver layer and their motion into the
     /// G-buffer's, over the surface depth, tested strictly nearer and
     /// written. Draws only the receiver batches of the blended list.
     Receivers,
-    /// FSR's transparency and composition mask, 1 over the opaque
+    /// The temporal transparency and composition mask, 1 over the opaque
     /// surfaces whose shading moves where their geometry stands still
     /// (`Material::surface_moves`), at the G-buffer's depth, with the
     /// reactive mask kept (`composition_targets`).
-    FsrComposition,
+    TemporalComposition,
     /// The volume layers (`stages::transparent::volumes`): the depth of the
     /// nearest faces of the blended materials whose shader reads its volume
     /// path, over a copy of the opaque depth, tested strictly nearer and
@@ -150,7 +150,7 @@ pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
         GeometryPass::GBuffer | GeometryPass::Fused => (true, GreaterEqual),
         GeometryPass::GBufferAnisotropy
         | GeometryPass::Lighting { .. }
-        | GeometryPass::FsrComposition => (false, Equal),
+        | GeometryPass::TemporalComposition => (false, Equal),
         GeometryPass::Blended { .. } => (false, GreaterEqual),
     }
 }
@@ -193,7 +193,7 @@ pub(super) fn targets(pass: GeometryPass, anisotropy_inline: bool) -> Vec<wgpu::
         DirectionalShadow | PairedShadow | CaptureShadow | LocalShadow => Vec::new(),
         Blended { .. } => vec![gbuffer::COLOR],
         Receivers => vec![gbuffer::RECEIVER, gbuffer::MOTION],
-        FsrComposition | VolumeEntry | VolumeExit | VolumeSecondExit => Vec::new(),
+        TemporalComposition | VolumeEntry | VolumeExit | VolumeSecondExit => Vec::new(),
     }
 }
 

@@ -76,12 +76,42 @@ pub struct RenderAttributes<'a, 'p> {
     /// (above 0 valid, 0 where there is none, such as the sky); `execute`
     /// panics on fewer channels. Other flags read XY only.
     pub motion_vectors_srv: &'a wgpu::TextureView,
+    /// Up to two responsive masks: single-channel views at the input size
+    /// holding in their first channel, in `0..=1`, how much of a pixel's
+    /// content changes without a motion vector of its own (blended
+    /// surfaces, effects, animated shading). Read only under
+    /// [`FeatureFlags::MOTION_ADAPTIVE_HISTORY`]: the resolve takes the
+    /// larger and, while a pixel is marked, rectifies and feeds back toward
+    /// full strength in proportion to it; it arms a hold of its own, at full
+    /// strength once the pixel is no longer marked. Empty for none;
+    /// `execute` panics on more than two.
+    pub responsive_masks: &'a [&'a wgpu::TextureView],
+    /// The motion within reach of each pixel, read only under
+    /// [`FeatureFlags::MOTION_ADAPTIVE_HISTORY`]; `None` for none.
+    pub neighborhood_motion: Option<NeighborhoodMotion<'a>>,
     /// TAA settings.
     pub taa_attribs: &'a TemporalAntiAliasingAttribs,
     /// Accumulation buffer index.
     pub accumulation_buffer_idx: u32,
     /// Per-pass timestamps (the upstream debug groups), when profiling.
     pub pass_timestamps: Option<&'a post_fx_context::PassTimestamps<'p>>,
+}
+
+/// The largest motion within reach of each pixel: where a surface that moves
+/// could have been a frame ago, so a pixel it has just left is still
+/// resolved as moving. Where it is at least the motion threshold (a pixel a
+/// frame, the reach of the resolve's own closest-motion search) it arms the
+/// recovery hold; slower, it changes nothing. It is never used for
+/// reprojection or the depth test.
+#[derive(Clone, Copy, Debug)]
+pub struct NeighborhoodMotion<'a> {
+    /// A view in a float format, at least the input size over `tile_size`
+    /// rounded up: texel `(x / tile_size, y / tile_size)` holds in its first
+    /// two channels a motion, in pixels of the input a frame, at least as
+    /// long as any that reaches the pixel `(x, y)`. Only its length is read.
+    pub srv: &'a wgpu::TextureView,
+    /// The input pixels along each side of a texel's tile; positive.
+    pub tile_size: u32,
 }
 
 // The upstream RENDER_TECH_COMPUTE_* names.
@@ -102,6 +132,37 @@ struct RenderTechniqueKey {
     /// The context's `REVERSED_DEPTH`, for the closest-motion search
     /// (PROVENANCE.md DFX-13).
     reversed_depth: bool,
+    /// The responsive inputs the resolve binds.
+    responsive: Responsive,
+}
+
+/// The responsive inputs a resolve binds: how many masks, and the
+/// neighbourhood motion's tile, 0 for none. None outside
+/// `MOTION_ADAPTIVE_HISTORY`, which alone reads them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+struct Responsive {
+    masks: u32,
+    neighborhood_tile: u32,
+}
+
+impl Responsive {
+    fn new(flags: FeatureFlags, masks: usize, neighborhood_tile: Option<u32>) -> Self {
+        if !flags.contains(FeatureFlags::MOTION_ADAPTIVE_HISTORY) {
+            return Self::default();
+        }
+        Self {
+            masks: masks as u32,
+            neighborhood_tile: neighborhood_tile.unwrap_or(0),
+        }
+    }
+
+    fn of(attribs: &RenderAttributes<'_, '_>, flags: FeatureFlags) -> Self {
+        Self::new(
+            flags,
+            attribs.responsive_masks.len(),
+            attribs.neighborhood_motion.map(|n| n.tile_size),
+        )
+    }
 }
 
 const ACCUMULATED_BUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -371,25 +432,52 @@ impl TemporalAntiAliasing {
 
         // wgpu creates pipelines synchronously, so a created technique is
         // ready (PROVENANCE.md DFX-2).
+        // The responsive inputs are not known before `execute`, whose
+        // variant is created synchronously with the rest: any of these
+        // flags' techniques is ready.
         let reversed_depth = reversed_depth(post_fx_context);
         self.all_psos_ready = RENDER_TECHS.iter().all(|&render_tech| {
-            self.render_tech
-                .get(&RenderTechniqueKey {
-                    render_tech,
-                    feature_flags,
-                    reversed_depth,
-                })
-                .is_some_and(PostFXRenderTechnique::is_initialized_pso)
+            self.render_tech.iter().any(|(key, tech)| {
+                key.render_tech == render_tech
+                    && key.feature_flags == feature_flags
+                    && key.reversed_depth == reversed_depth
+                    && tech.is_initialized_pso()
+            })
         });
+    }
+
+    /// Creates the resolve that binds `responsive_masks` masks (at most two)
+    /// and, with `neighborhood_tile`, a neighbourhood motion in tiles of
+    /// that size, so the first frame that binds them does not create it
+    /// while recording. `execute` creates any resolve it lacks.
+    pub fn prepare_responsive_variant(
+        &mut self,
+        device: &wgpu::Device,
+        post_fx_context: &PostFXContext,
+        feature_flags: FeatureFlags,
+        responsive_masks: usize,
+        neighborhood_tile: Option<u32>,
+    ) {
+        assert!(
+            responsive_masks <= 2,
+            "TAA reads at most two responsive masks"
+        );
+        self.prepare_shaders_and_pso(
+            device,
+            feature_flags,
+            reversed_depth(post_fx_context),
+            Responsive::new(feature_flags, responsive_masks, neighborhood_tile),
+        );
     }
 
     /// Executes the effect.
     ///
     /// # Panics
     ///
-    /// If `prepare_resources` was not called for the accumulation buffer, or
-    /// if `MOTION_ADAPTIVE_HISTORY` is set and the motion vectors have fewer
-    /// than four channels.
+    /// If `prepare_resources` was not called for the accumulation buffer, if
+    /// `MOTION_ADAPTIVE_HISTORY` is set and the motion vectors have fewer
+    /// than four channels, if more than two responsive masks are given, or
+    /// if the neighbourhood motion's tile is 0 or its view too small.
     pub fn execute(
         &mut self,
         render_attribs: &mut RenderAttributes<'_, '_>,
@@ -413,10 +501,31 @@ impl TemporalAntiAliasing {
             "MOTION_ADAPTIVE_HISTORY reads depth motion from the motion vectors' Z and W, \
              which {motion_format:?} lacks"
         );
+        assert!(
+            render_attribs.responsive_masks.len() <= 2,
+            "TAA reads at most two responsive masks, not {}",
+            render_attribs.responsive_masks.len()
+        );
+        if let Some(neighborhood) = render_attribs.neighborhood_motion {
+            let tile = neighborhood.tile_size;
+            let size = neighborhood.srv.texture().size();
+            assert!(
+                tile > 0
+                    && size.width >= acc_buffer.width.div_ceil(tile)
+                    && size.height >= acc_buffer.height.div_ceil(tile),
+                "the neighbourhood motion, {}x{} in tiles of {tile}, does not cover {}x{}",
+                size.width,
+                size.height,
+                acc_buffer.width,
+                acc_buffer.height
+            );
+        }
+        let responsive = Responsive::of(render_attribs, feature_flags);
         self.prepare_shaders_and_pso(
             render_attribs.device,
             feature_flags,
             reversed_depth(render_attribs.post_fx_context),
+            responsive,
         );
 
         let acc_buffer = self
@@ -428,9 +537,9 @@ impl TemporalAntiAliasing {
         let all_psos_ready = self.all_psos_ready && render_attribs.post_fx_context.is_psos_ready();
         let acc_buffer = &self.accumulation_buffers[&render_attribs.accumulation_buffer_idx];
         if all_psos_ready {
-            self.compute_temporal_accumulation(render_attribs, acc_buffer);
+            self.compute_temporal_accumulation(render_attribs, acc_buffer, responsive);
         } else {
-            self.compute_placeholder_texture(render_attribs, acc_buffer);
+            self.compute_placeholder_texture(render_attribs, acc_buffer, responsive);
         }
 
         if all_psos_ready {
@@ -488,17 +597,21 @@ impl TemporalAntiAliasing {
         device: &wgpu::Device,
         feature_flags: FeatureFlags,
         reversed_depth: bool,
+        responsive: Responsive,
     ) {
         let key = |render_tech| RenderTechniqueKey {
             render_tech,
             feature_flags,
             reversed_depth,
+            responsive,
         };
         let tech = self
             .render_tech
             .entry(key(RenderTech::ComputeTemporalAccumulation))
             .or_default();
         if !tech.is_initialized_pso() {
+            let responsive_masks = responsive.masks.to_string();
+            let neighborhood_tile = responsive.neighborhood_tile.to_string();
             let flag = |flag: FeatureFlags| {
                 if feature_flags.contains(flag) {
                     "1"
@@ -527,6 +640,8 @@ impl TemporalAntiAliasing {
                     "POSTFX_OPTION_INVERTED_DEPTH",
                     if reversed_depth { "1" } else { "0" },
                 ),
+                ("TAA_OPTION_RESPONSIVE_MASKS", &responsive_masks),
+                ("TAA_OPTION_NEIGHBORHOOD_MOTION_TILE", &neighborhood_tile),
             ];
 
             let vs = create_shader(
@@ -559,7 +674,11 @@ impl TemporalAntiAliasing {
                     (7, Resource::Sampler { filtering: true }),
                     (8, Resource::Texture),
                     (9, Resource::DepthTexture),
-                ],
+                ]
+                .into_iter()
+                .chain((0..responsive.masks).map(|mask| (10 + mask, Resource::Texture)))
+                .chain((responsive.neighborhood_tile > 0).then_some((12, Resource::Texture)))
+                .collect::<Vec<_>>(),
                 &[
                     ACCUMULATED_BUFFER_FORMAT,
                     closest_motion_format(feature_flags),
@@ -597,12 +716,14 @@ impl TemporalAntiAliasing {
         &self,
         render_attribs: &mut RenderAttributes<'_, '_>,
         acc_buff: &AccumulationBufferInfo,
+        responsive: Responsive,
     ) {
         let ctx = &*render_attribs.post_fx_context;
         let tech = &self.render_tech[&RenderTechniqueKey {
             render_tech: RenderTech::ComputeTemporalAccumulation,
             feature_flags: acc_buff.feature_flags,
             reversed_depth: reversed_depth(ctx),
+            responsive,
         }];
 
         let frame_index = ctx.get_frame_desc().index;
@@ -612,6 +733,24 @@ impl TemporalAntiAliasing {
         let curr_buffer_rtv = acc_buff.accumulated_buffer(curr_buff_idx);
 
         let texture = wgpu::BindingResource::TextureView;
+        let mut responsive_entries: Vec<wgpu::BindGroupEntry<'_>> = render_attribs
+            .responsive_masks
+            .iter()
+            .take(responsive.masks as usize)
+            .zip(10..)
+            .map(|(&mask, binding)| wgpu::BindGroupEntry {
+                binding,
+                resource: texture(mask),
+            })
+            .collect();
+        if responsive.neighborhood_tile > 0
+            && let Some(neighborhood) = render_attribs.neighborhood_motion
+        {
+            responsive_entries.push(wgpu::BindGroupEntry {
+                binding: 12,
+                resource: texture(neighborhood.srv),
+            });
+        }
         let group = tech.bind_group(
             render_attribs.device,
             "ComputeTemporalAccumulation",
@@ -660,7 +799,10 @@ impl TemporalAntiAliasing {
                     binding: 9,
                     resource: texture(render_attribs.depth_buffer_srv),
                 },
-            ],
+            ]
+            .into_iter()
+            .chain(responsive_entries)
+            .collect::<Vec<_>>(),
         );
 
         // PROVENANCE.md DFX-13: the resolve also writes this frame's closest
@@ -682,6 +824,7 @@ impl TemporalAntiAliasing {
         &self,
         render_attribs: &mut RenderAttributes<'_, '_>,
         acc_buff: &AccumulationBufferInfo,
+        responsive: Responsive,
     ) {
         let buff_idx = acc_buff.current_frame_idx & 0x01;
 
@@ -691,6 +834,7 @@ impl TemporalAntiAliasing {
             render_tech: RenderTech::ComputePlaceholder,
             feature_flags: acc_buff.feature_flags,
             reversed_depth: reversed_depth(render_attribs.post_fx_context),
+            responsive,
         }];
         let group = tech.bind_group(
             render_attribs.device,

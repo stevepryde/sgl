@@ -5,25 +5,26 @@
 //! placement.
 //!
 //! Reads: the complete HDR frame (the composite), the surface's depth and
-//! motion (the Surface contract), FSR's masks, the camera's projection, the
-//! frame time, the frame's exposure (`stages::exposure`) and the lent
-//! post-effect context, whose inputs hold the surface.
-//! Writes: the frame's jitter and mip bias; TAA's accumulation (in the
-//! context) or its own FSR output; which view completes the scene
-//! (`Completed`).
+//! motion (the Surface contract), the temporal masks, the camera's
+//! projection, the frame time, the frame's exposure (`stages::exposure`)
+//! and the lent post-effect context, whose inputs hold the surface.
+//! Writes: the frame's jitter and mip bias; TAA's motion reach (`reach`)
+//! and accumulation (in the context) or its own FSR output; which view
+//! completes the scene (`Completed`).
 //! Honours: the antialiasing in effect, FSR and its quality (the effective
 //! sizing), FSR's sharpening, the TAA and FSR diagnostics layers.
-//! Timing groups: `TAA`, `FSR2`, `FSR3`.
+//! Timing groups: `TAA`, `TAA motion reach`, `FSR2`, `FSR3`.
 //! History: FSR's context, which restarts on SGL3D's history loss; TAA's
 //! lives in the post-effect context.
 pub(crate) mod fsr;
+pub(crate) mod reach;
 
 use crate::settings::{FsrQuality, FsrVersion};
 use crate::view::Jitter;
 use crate::view::effective::Effective;
 use crate::view::frame::{Completed, FrameContext};
 use crate::view::history::HistoryFrame;
-use crate::view::post_fx::{PostFx, TAA_MIP_BIAS};
+use crate::view::post_fx::{PostFx, Responsive, TAA_MIP_BIAS};
 use crate::view::targets::Sizes;
 
 #[derive(Default)]
@@ -35,6 +36,8 @@ pub(crate) struct Antialiasing {
     selected: Option<FsrVersion>,
     /// FSR failed this frame and stopped.
     failed: bool,
+    /// TAA's motion reach, held while TAA runs.
+    reach: Option<reach::Reach>,
 }
 
 impl Antialiasing {
@@ -131,8 +134,15 @@ impl Antialiasing {
         exposure: &wgpu::Texture,
     ) -> Completed {
         let color = &ctx.targets.composite;
+        if !ctx.effective.taa {
+            self.reach = None;
+        }
         if ctx.effective.taa {
             let post_fx = post_fx.unwrap();
+            let reach = self
+                .reach
+                .get_or_insert_with(|| reach::Reach::new(ctx.device))
+                .encode(ctx);
             post_fx.temporal_anti_aliasing(
                 ctx.device,
                 ctx.queue,
@@ -141,6 +151,10 @@ impl Antialiasing {
                 // Instances, and material groups the frame's mask switched,
                 // that appeared or departed since the last submitted frame.
                 ctx.scene.rigid_objects_changed() || ctx.history.visibility_changed,
+                Responsive {
+                    masks: ctx.targets.temporal_masks.as_ref(),
+                    reach: &reach,
+                },
                 ctx.timing,
             );
             Completed::Taa
@@ -151,7 +165,11 @@ impl Antialiasing {
                 color,
                 depth: ctx.surface.depth,
                 motion: &ctx.targets.motion,
-                masks: ctx.targets.fsr_masks.as_ref().expect("FSR frame masks"),
+                masks: ctx
+                    .targets
+                    .temporal_masks
+                    .as_ref()
+                    .expect("FSR frame masks"),
                 projection: glam::Mat4::from_cols_array_2d(&ctx.values.view.projection),
                 frame_time_ms: ctx.input.frame_time_ms,
                 exposure,
@@ -170,6 +188,20 @@ impl Antialiasing {
         } else {
             Completed::Composite
         }
+    }
+
+    /// Drops the motion reach's bind groups, which hold the shared motion
+    /// target a resize replaces.
+    pub fn forget_inputs(&mut self) {
+        if let Some(reach) = self.reach.as_mut() {
+            reach.forget_inputs();
+        }
+    }
+
+    /// The motion reach's cached bind group sets, while TAA runs.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn reach_groups(&self) -> Option<usize> {
+        self.reach.as_ref().map(reach::Reach::cached_groups)
     }
 
     /// Whether FSR failed and stopped since the last call.

@@ -111,7 +111,7 @@ TAA runs the same way, after the context:
 ```rust,ignore
 taa.prepare_resources(&device, &mut encoder, &context, temporal_anti_aliasing::FeatureFlags::NONE, 0);
 // Render the frame with TemporalAntiAliasing::get_jittered_proj_matrix(proj, taa.get_jitter_offset(0)).
-taa.execute(&mut temporal_anti_aliasing::RenderAttributes { /* color, depth, motion, attribs */ });
+taa.execute(&mut temporal_anti_aliasing::RenderAttributes { /* color, depth, motion, responsive inputs, attribs */ });
 // taa.get_accumulated_frame_srv(false, 0): the anti-aliased frame
 ```
 
@@ -180,7 +180,8 @@ or from it is a disocclusion however close the depths (PROVENANCE.md,
 Motion-adaptive TAA).
 The closest-motion history uses RGBA16F rather than RG16F under this flag,
 adding eight bytes per pixel across its two buffers; B transports recovery
-hold, W is zero, and input motion's extra channels are never copied into it.
+hold, W the responsive masks' recovery hold (zero without them), and input
+motion's extra channels are never copied into it.
 
 Set `TemporalAntiAliasingAttribs::rigid_object_motion` when a rigid object
 moves, changes geometry, appears, is hidden or leaves the view; camera and rigid-object changes
@@ -192,6 +193,33 @@ and depth confidence additionally transport local recovery, so one animated
 material does not prevent stabilization everywhere. This is partial
 rectification, not disabled history rejection. It cannot reconstruct geometry
 never sampled across the jitter sequence. See [provenance](PROVENANCE.md).
+
+Two optional inputs mark what changes at a pixel without a motion vector of
+its own, read only under this flag; `&[]` and `None` leave the resolve as
+it was:
+
+- `RenderAttributes::responsive_masks`: up to two single-channel views at the
+  input size in 0..1, such as FSR's reactive and transparency-and-composition
+  masks. The resolve takes the larger: while a pixel is marked it rectifies
+  and feeds back toward full strength (0.12 of the current frame at 0.88)
+  in proportion to it, and it arms a twelve-frame hold of its own at full
+  strength for once the pixel is no longer marked, so blended surfaces,
+  effects and animated shading respond at rest as in motion and leave no
+  trail however dim they were.
+- `RenderAttributes::neighborhood_motion` (`NeighborhoodMotion`): a view
+  whose texel `pixel / tile_size` holds a motion, in input pixels a frame,
+  at least as long as any that reaches that pixel, such as a tile maximum
+  and its 3x3 neighbourhood maximum. Where its length is at least the motion
+  threshold (a pixel a frame, the reach of the resolve's own closest-motion
+  search) it arms the recovery hold, so a pixel a surface has just left is
+  rejected however it moved; slower motion changes nothing, and
+  reprojection, the closest-motion search and the depth test keep the
+  pixel's own motion.
+
+`execute` panics on more than two masks, a tile of 0, or a neighbourhood
+motion that does not cover the input. Each combination of inputs is its own
+resolve, which `execute` creates when it first meets it;
+`prepare_responsive_variant` creates one ahead of the frame that needs it.
 
 ## Translation conventions
 
@@ -216,7 +244,7 @@ changes; it is not an exhaustive conformance ledger.
 `cargo test -p sgl-post-fx -p sgl-post-fx-tests` builds, binds and executes every feature
 permutation of each effect (reversed depth; SSR's previous frame and half
 resolution; TAA's Gaussian weighting, bicubic filter, YCoCg colour space and
-motion-adaptive history)
+motion-adaptive history, with and without its responsive inputs)
 on the device and checks the output stays finite. SGL3D's integration
 (`crates/sgl-3d/src/view/post_fx.rs`) is tested in
 `tests/sgl-3d/tests/screen_space_reflections.rs`.

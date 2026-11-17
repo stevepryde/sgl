@@ -104,17 +104,27 @@ fn glass() -> Asset {
 
 /// A renderer running FSR at the scene size, or `None` where it cannot.
 fn fsr_renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(Renderer, Settings)> {
+    temporal_renderer(device, queue, settings::Antialiasing::Fsr2)
+}
+
+/// A renderer running `antialiasing`, a temporal method, at the scene size,
+/// or `None` where it cannot.
+fn temporal_renderer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    antialiasing: settings::Antialiasing,
+) -> Option<(Renderer, Settings)> {
     let settings = Settings {
-        antialiasing: settings::Antialiasing::Fsr2,
+        antialiasing,
         fsr_quality: settings::FsrQuality::NativeAa,
         bloom: settings::Bloom::Off,
         atmosphere: false,
         ..Settings::default()
     };
     let renderer = Renderer::for_test(device, queue, SIZE, &settings);
-    if renderer.antialiasing_in_effect(&settings) != settings::Antialiasing::Fsr2 {
+    if renderer.antialiasing_in_effect(&settings) != antialiasing {
         eprintln!(
-            "skipping: FSR does not run here: {:?}",
+            "skipping: {antialiasing:?} does not run here: {:?}",
             renderer.fsr_error()
         );
         return None;
@@ -155,7 +165,7 @@ fn masks(
     renderer.finish_frame(scene);
     renderer
         .targets()
-        .fsr_masks
+        .temporal_masks
         .as_ref()
         .unwrap()
         .each_ref()
@@ -445,7 +455,8 @@ fn removing_the_last_moving_material_renders_on() {
 // reads (0, 0.6) over the floor and over a blended square of alpha 0.4
 // (0.4, 0.4 + 0.6 (1 - 0.4) = 0.76), above both; the square beside it
 // (0.4, 0.4); heat behind an opaque square, heat of weight 0 and the floor
-// beside both (0, 0).
+// beside both (0, 0). Under TAA too, which reads the same masks (#795):
+// heat is what marks them there, under the condition every draw follows.
 //
 // The camera at the origin looks down -Z with cot(0.5) = 1.830, so at 3 m
 // a metre spans 19.5 of the 64 texels: the heat of weight 0.6, corners
@@ -459,12 +470,23 @@ fn removing_the_last_moving_material_renders_on() {
 // texel centres lie at least 2.5 texels from every edge, past FSR's
 // half-texel jitter.
 #[test]
-fn heat_distortion_marks_fsrs_composition_mask() {
-    use crate::heat_distortion::HeatDistortion;
+fn heat_distortion_marks_the_composition_mask() {
     let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
-    let Some((mut renderer, settings)) = fsr_renderer(&device, &queue) else {
+    for antialiasing in [settings::Antialiasing::Fsr2, settings::Antialiasing::Taa] {
+        heat_distortion_marks_the_composition_mask_under(&device, &queue, antialiasing);
+    }
+}
+
+fn heat_distortion_marks_the_composition_mask_under(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    antialiasing: settings::Antialiasing,
+) {
+    use crate::heat_distortion::HeatDistortion;
+    let (device, queue) = (device.clone(), queue.clone());
+    let Some((mut renderer, settings)) = temporal_renderer(&device, &queue, antialiasing) else {
         return;
     };
     let settings = Settings {

@@ -752,7 +752,11 @@ crates/sgl-3d/src/LICENSE-wicked.txt
 Wicked Engine, https://github.com/turanszkij/WickedEngine
 Revision 4323a33c94d021d45404adaf863e9b01673ab365, LICENSE.txt. SGL3D ports the
 probe culling of WickedEngine/shaders/lightCullingCS.hlsl in probe_culling.wgsl,
-and from revision 2ff1d9e7b36091d6edf9f823af77e6bc9af20e3b the RT reflection
+its motion blur (motionblur_tileMaxVelocity_horizontalCS.hlsl,
+motionblur_tileMaxVelocity_verticalCS.hlsl, motionblur_neighborhoodMaxVelocityCS.hlsl,
+motionblurCS.hlsl and globals.hlsli's BayerMatrix8 and dither) in
+stages/motion_blur.wgsl and shading/motion_tiles.wgsl, whose tile passes TAA's
+motion reach also runs, and from revision 2ff1d9e7b36091d6edf9f823af77e6bc9af20e3b the RT reflection
 trace and denoiser (rtreflectionCS.hlsl, ssr_resolveCS.hlsl, ssr_temporalCS.hlsl,
 ssr_upsampleCS.hlsl, stochasticSSRHF.hlsli and brdf.hlsli in
 WickedEngine/shaders/) in world_reflections*.wgsl and temporal_reprojection.wgsl,

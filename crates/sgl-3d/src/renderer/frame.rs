@@ -83,7 +83,7 @@ pub(super) fn render(
             tier: pipelines.tier,
         },
     );
-    targets.set_fsr_masks(device, effective.fsr);
+    targets.set_temporal_masks(device, effective.temporal_masks);
     let targets: &SharedTargets = targets;
     pipelines.specialise(
         device,
@@ -306,7 +306,7 @@ pub(super) fn render(
             true,
         );
     }
-    if effective.heat {
+    if effective.composite.heat {
         transparent.encode_heat(&mut ctx, &targets.composite);
     }
     // The frame's one exposure, which FSR and the tone map read.

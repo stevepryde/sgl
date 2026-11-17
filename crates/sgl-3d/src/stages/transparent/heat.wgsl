@@ -55,17 +55,17 @@ fn heat(v:Vertex)->vec4<f32> {
 @fragment fn fs(v:Vertex)->@location(0) vec4<f32> {
  return heat(v);
 }
-// FSR's masks (fsr.rs): the shimmer changes what a pixel shows while its
+// The temporal masks (view/targets.rs): the shimmer changes what a pixel shows while its
 // motion follows the still surface behind, the case AMD's FSR documentation
 // gives the transparency and composition mask, not reactivity
 // (super-resolution-upscaler.md 131; FidelityFX SDK 1.1.4,
 // MIT, see LICENSE-amd-fidelityfx.txt): its weight as transparency and
 // composition where it covers. It marks no reactivity, so the pass does not
 // attach that mask.
-struct HeatFsrMasked {
+struct HeatMasked {
  @location(0) color:vec4<f32>,
  @location(1) composition:f32,
 }
-@fragment fn fs_fsr_masked(v:Vertex)->HeatFsrMasked {
- return HeatFsrMasked(heat(v),select(0.,v.weight,covers(v)));
+@fragment fn fs_masked(v:Vertex)->HeatMasked {
+ return HeatMasked(heat(v),select(0.,v.weight,covers(v)));
 }

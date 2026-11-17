@@ -208,6 +208,8 @@ fn sequence(
             color_buffer_srv: &color,
             depth_buffer_srv: &current_depth,
             motion_vectors_srv: &motion,
+            responsive_masks: &[],
+            neighborhood_motion: None,
             taa_attribs: &TemporalAntiAliasingAttribs {
                 temporal_stability_factor: 0.88,
                 ..Default::default()
@@ -569,6 +571,8 @@ fn taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost() {
                     color_buffer_srv: &color,
                     depth_buffer_srv: &current_depth,
                     motion_vectors_srv: &motion,
+                    responsive_masks: &[],
+                    neighborhood_motion: None,
                     taa_attribs: &TemporalAntiAliasingAttribs {
                         temporal_stability_factor: 0.88,
                         rigid_object_motion: u32::from(report_motion && moved),
@@ -705,6 +709,8 @@ fn depth_motion_sequence(
             color_buffer_srv: &color,
             depth_buffer_srv: &current_depth,
             motion_vectors_srv: &motion,
+            responsive_masks: &[],
+            neighborhood_motion: None,
             taa_attribs: &TemporalAntiAliasingAttribs {
                 temporal_stability_factor: 0.88,
                 ..Default::default()
@@ -753,5 +759,317 @@ fn taa_adaptive_keeps_history_of_surfaces_moving_in_depth() {
                 );
             }
         }
+    }
+}
+
+/// What a step sequence gives the resolve beside its colour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Responsive {
+    /// Nothing.
+    None,
+    /// One responsive mask holding this value everywhere.
+    Mask(u8),
+    /// Two masks, the first 0 and the second this value: the larger counts.
+    SecondMask(u8),
+    /// One mask holding this value everywhere before the step and 0 from
+    /// it: the content that marked the pixel leaves as the value steps.
+    MaskUntilStep(u8),
+    /// A neighbourhood motion of this many pixels along X, in 32-pixel tiles,
+    /// the pixel's own motion zero.
+    Reach(f32),
+}
+
+/// The checkerboard's radiances, and the centre pixel's before and after
+/// its step. Around the centre the board's 3x3 neighbourhood spans both
+/// board values, so its variance box (one standard deviation about the
+/// mean at this height, DFX-14) holds every blend of the two centre
+/// values: rectification leaves the history alone and only feedback acts.
+const BOARD: [f32; 2] = [0.8, 0.05];
+const BEFORE: f32 = 0.15;
+const AFTER: f32 = 0.35;
+const STEP_FRAME: u32 = 40;
+
+/// The centre pixel's resolved value per frame, of a still, unjittered
+/// camera on a plane at Z = 2 showing a checkerboard whose centre pixel
+/// steps from `BEFORE` to `AFTER` at `STEP_FRAME`, with `responsive`.
+fn step_sequence(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    reversed: bool,
+    responsive: Responsive,
+) -> Vec<f32> {
+    use wgpu::util::DeviceExt;
+    let mut context = PostFXContext::new(device, queue, Default::default());
+    let mut taa = TemporalAntiAliasing::new(device);
+    let camera = jittered_camera(reversed, 0, [0.; 2], 0.);
+    let centre = [SIZE[0] / 2, SIZE[1] / 2];
+    let r8 = |value: u8| texture(device, queue, wgpu::TextureFormat::R8Unorm, &[value]);
+    let masks: Vec<wgpu::TextureView> = match responsive {
+        Responsive::Mask(value) => vec![r8(value)],
+        Responsive::SecondMask(value) => vec![r8(0), r8(value)],
+        Responsive::MaskUntilStep(value) => vec![r8(value), r8(0)],
+        _ => Vec::new(),
+    };
+    let tiles = [SIZE[0].div_ceil(32), SIZE[1].div_ceil(32)];
+    let reach = match responsive {
+        Responsive::Reach(pixels) => Some(
+            device
+                .create_texture_with_data(
+                    queue,
+                    &wgpu::TextureDescriptor {
+                        label: None,
+                        size: wgpu::Extent3d {
+                            width: tiles[0],
+                            height: tiles[1],
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba32Float,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    },
+                    wgpu::util::TextureDataOrder::LayerMajor,
+                    bytemuck::cast_slice(
+                        &[[pixels, 0f32, 0., 0.]].repeat((tiles[0] * tiles[1]) as usize),
+                    ),
+                )
+                .create_view(&Default::default()),
+        ),
+        _ => None,
+    };
+    let mask_views: Vec<&wgpu::TextureView> = masks.iter().collect();
+    // The mask of each frame: before the step and from it.
+    let until_step = |index: u32| -> Vec<&wgpu::TextureView> {
+        match responsive {
+            Responsive::MaskUntilStep(_) => vec![&masks[usize::from(index >= STEP_FRAME)]],
+            _ => mask_views.clone(),
+        }
+    };
+    let mut previous_depth = None;
+    let mut out = Vec::new();
+    for index in 0u32..STEP_FRAME + 24 {
+        let mut colour = Vec::new();
+        for y in 0..SIZE[1] {
+            for x in 0..SIZE[0] {
+                let value = if [x, y] == centre {
+                    if index < STEP_FRAME { BEFORE } else { AFTER }
+                } else {
+                    BOARD[((x + y) % 2) as usize]
+                };
+                colour.extend_from_slice(&[value, value, value, 1.]);
+            }
+        }
+        let color = texels(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba16Float,
+            &half(&colour),
+        );
+        let motion = texture(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba32Float,
+            bytemuck::cast_slice(&[0f32, 0., 0., 1.]),
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let current_depth = depth(
+            device,
+            &mut encoder,
+            camera.m_proj[10] + camera.m_proj[14] / 2.,
+        );
+        context.prepare_resources(
+            device,
+            &FrameDesc {
+                index,
+                width: SIZE[0],
+                height: SIZE[1],
+                output_width: SIZE[0],
+                output_height: SIZE[1],
+            },
+            if reversed {
+                post_fx_context::FeatureFlags::REVERSED_DEPTH
+            } else {
+                post_fx_context::FeatureFlags::NONE
+            },
+        );
+        taa.prepare_resources(device, &mut encoder, &context, ADAPTIVE, 0);
+        context.execute(&mut RenderAttributes {
+            device,
+            queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &current_depth,
+            prev_depth_buffer_srv: previous_depth.as_ref().unwrap_or(&current_depth),
+            curr_camera: Some(&camera),
+            prev_camera: Some(&camera),
+            camera_attribs_cb: None,
+            pass_timestamps: None,
+        });
+        taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+            device,
+            queue,
+            device_context: &mut encoder,
+            post_fx_context: &mut context,
+            color_buffer_srv: &color,
+            depth_buffer_srv: &current_depth,
+            motion_vectors_srv: &motion,
+            responsive_masks: &until_step(index),
+            neighborhood_motion: reach
+                .as_ref()
+                .map(|srv| temporal_anti_aliasing::NeighborhoodMotion { srv, tile_size: 32 }),
+            taa_attribs: &TemporalAntiAliasingAttribs {
+                temporal_stability_factor: 0.88,
+                ..Default::default()
+            },
+            accumulation_buffer_idx: 0,
+            pass_timestamps: None,
+        });
+        queue.submit([encoder.finish()]);
+        let frame = read_rgba16f(device, queue, taa.get_accumulated_frame_srv(false, 0));
+        out.push(frame[(centre[1] * SIZE[0] + centre[0]) as usize][0]);
+        previous_depth = Some(current_depth);
+    }
+    out
+}
+
+/// The share of the step from `BEFORE` to `AFTER` each frame from the step
+/// on has made, in the blend space x / (1 + x): the first after one
+/// resolve of the new value.
+fn step_shares(values: &[f32]) -> Vec<f32> {
+    let sdr = |v: f32| v / (1. + v);
+    values[STEP_FRAME as usize..]
+        .iter()
+        .map(|&v| (sdr(v) - sdr(BEFORE)) / (sdr(AFTER) - sdr(BEFORE)))
+        .collect()
+}
+
+/// #795. Defect: content the caller marks as changing without a motion
+/// vector (a responsive mask) is resolved at rest with the relaxed blend,
+/// or the mask changes an unmarked pixel. Oracle, by hand from the spec's
+/// blend (Frame item 10): at rest after the hold, with the history inside
+/// the variance box, a pixel takes 1 - 0.88 x 0.3 = 0.036 of the current
+/// frame unmarked, so n frames after a step it has made 1 - 0.964^n of it;
+/// fully marked it takes 0.12, and has made 1 - 0.88^n, whichever of two
+/// masks marks it; marked 0.5 (128 of 255), in proportion,
+/// 0.12 (0.3 + 0.7 x 128 / 255). Each frame's store rounds to half
+/// precision: a step of the value, about 0.002 of the step's share here,
+/// over the frames. A mask of zero changes nothing: the same values as no
+/// mask.
+#[test]
+fn taa_adaptive_a_marked_pixel_follows_a_step_at_full_feedback() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for reversed in [false, true] {
+        let unmarked = step_sequence(&device, &queue, reversed, Responsive::None);
+        for (n, share) in step_shares(&unmarked).into_iter().enumerate() {
+            let expected = 1. - 0.964f32.powi(n as i32 + 1);
+            assert!(
+                (share - expected).abs() < 0.01,
+                "reversed={reversed}: unmarked, {} resolves into the step it made {share}, not {expected}",
+                n + 1
+            );
+        }
+        assert_eq!(
+            step_sequence(&device, &queue, reversed, Responsive::Mask(0)),
+            unmarked,
+            "reversed={reversed}: a zero mask changed the resolve"
+        );
+        for (responsive, mask) in [
+            (Responsive::Mask(255), 1.),
+            (Responsive::SecondMask(255), 1.),
+            (Responsive::Mask(128), 128. / 255.),
+        ] {
+            let marked = step_sequence(&device, &queue, reversed, responsive);
+            let kept: f32 = 1. - 0.12 * (0.3 + 0.7 * mask);
+            for (n, share) in step_shares(&marked).into_iter().enumerate() {
+                let expected = 1. - kept.powi(n as i32 + 1);
+                assert!(
+                    (share - expected).abs() < 0.01,
+                    "reversed={reversed}, {responsive:?}: {} resolves into the step it made {share}, not {expected}",
+                    n + 1
+                );
+            }
+        }
+    }
+}
+
+/// #802. Defect: a pixel whose own motion is zero but within reach of a
+/// moving surface (its neighbourhood motion) is resolved at rest; or the
+/// neighbourhood motion reprojects it, reading history from where the
+/// surface was. Oracles: by hand, as the marked pixel above, a still pixel
+/// whose neighbourhood moves 3 px a frame (above the 1 px threshold) has
+/// made 1 - 0.88^n of a step n frames on; and equivalence: its values are
+/// exactly a fully marked pixel's, whose reprojection is its own still
+/// one. Had the 3 px reprojected it, it would read the board's history
+/// three pixels away (0.05 or 0.8) instead.
+#[test]
+fn taa_adaptive_a_still_pixel_within_reach_of_motion_follows_a_step_at_full_feedback() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for reversed in [false, true] {
+        let reach = step_sequence(&device, &queue, reversed, Responsive::Reach(3.));
+        for (n, share) in step_shares(&reach).into_iter().enumerate() {
+            let expected = 1. - 0.88f32.powi(n as i32 + 1);
+            assert!(
+                (share - expected).abs() < 0.01,
+                "reversed={reversed}: within reach, {} resolves into the step it made {share}, not {expected}",
+                n + 1
+            );
+        }
+        assert_eq!(
+            reach,
+            step_sequence(&device, &queue, reversed, Responsive::Mask(255)),
+            "reversed={reversed}: within reach, the resolve differs from a fully marked pixel's"
+        );
+    }
+}
+
+/// #795. Defect: a pixel whose content has just left it relaxes at once, or
+/// holds only in proportion to the mask it had, so dim content leaves a
+/// trail. Oracle, by hand from the spec's rule (Frame item 10): a marked
+/// pixel arms the twelve-frame hold in full, and once it is no longer
+/// marked the hold's remaining frames are at full strength, whatever its
+/// mask was; with the history inside the variance box only feedback acts,
+/// 0.12 of the current frame, so n frames after content marked 0.5 left as
+/// the value stepped the pixel has made 1 - 0.88^n of the step, as a fully
+/// marked one (judged over six frames, well within the hold).
+#[test]
+fn taa_adaptive_a_pixel_marked_content_left_holds_at_full_strength() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for reversed in [false, true] {
+        let left = step_sequence(&device, &queue, reversed, Responsive::MaskUntilStep(128));
+        for (n, share) in step_shares(&left).into_iter().enumerate().take(6) {
+            let expected = 1. - 0.88f32.powi(n as i32 + 1);
+            assert!(
+                (share - expected).abs() < 0.01,
+                "reversed={reversed}: {} resolves after the content left it made {share}, not {expected}",
+                n + 1
+            );
+        }
+    }
+}
+
+/// #802. Defect: a neighbourhood motion slower than the motion threshold
+/// (a pixel a frame, the radius the resolve's own closest-motion search
+/// covers) changes the resolve, costing slowly deforming surfaces' surroundings
+/// their resting stability. Oracle, equivalence (Frame item 10: slower
+/// motion is the search's): a neighbourhood moving 0.5 px a frame gives
+/// exactly the values of no neighbourhood motion.
+#[test]
+fn taa_adaptive_a_neighbourhood_slower_than_the_threshold_changes_nothing() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for reversed in [false, true] {
+        assert_eq!(
+            step_sequence(&device, &queue, reversed, Responsive::Reach(0.5)),
+            step_sequence(&device, &queue, reversed, Responsive::None),
+            "reversed={reversed}"
+        );
     }
 }

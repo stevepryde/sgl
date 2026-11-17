@@ -3,16 +3,14 @@
 // and McGuire et al. 2012 ("A Reconstruction Filter for Plausible Motion
 // Blur"), over the antialiased frame (stages/motion_blur.rs).
 //
-// Ports Wicked Engine 4323a33 WickedEngine/shaders/
-// motionblur_tileMaxVelocity_horizontalCS.hlsl,
-// motionblur_tileMaxVelocity_verticalCS.hlsl,
-// motionblur_neighborhoodMaxVelocityCS.hlsl and motionblurCS.hlsl (DepthCmp,
-// SpreadCmp, SampleWeight, main and its MOTIONBLUR_CHEAP and
+// Ports Wicked Engine 4323a33 WickedEngine/shaders/motionblurCS.hlsl
+// (DepthCmp, SpreadCmp, SampleWeight, main and its MOTIONBLUR_CHEAP and
 // MOTIONBLUR_EARLYEXIT variants), with globals.hlsli BayerMatrix8 and dither,
-// MIT (src/LICENSE-wicked.txt). Changes:
+// MIT (src/LICENSE-wicked.txt), over the tiles of its tile passes, which
+// the shared motion_tiles module ports (shading/motion_tiles.wgsl). Changes:
 // - Velocities are blur vectors in pixels of the frame being blurred: the
 //   G-buffer's motion times the frame's size and the shutter
-//   (`MotionBlur.velocity_scale`), so a pixel blurs over the shutter's share
+//   (`MotionTiles.velocity_scale`), so a pixel blurs over the shutter's share
 //   of its motion at any resolution and frame rate. Wicked scales UV velocity
 //   by its strength (100 at 60 Hz) and the reciprocal resolution.
 // - Samples are eight pairs mirrored about the pixel (Jimenez's mirror
@@ -38,9 +36,7 @@
 //   copies (early exit); blur lengths within a pixel of each other average
 //   along the pixel's own velocity (cheap); else the weighted filter. Wicked
 //   lists tiles for three indirect dispatches, with UV thresholds.
-// - Each tile texture holds the largest velocity in xy and the smallest in
-//   zw; tiles beyond the frame's edge are its edge tiles, and samples beyond
-//   it its edge pixels.
+// - Samples beyond the frame's edge are its edge pixels.
 // - The frame's colour is read through finite_scene_color
 //   (shading/scene_color.wgsl): a texel of +infinity, which the frame holds
 //   unclamped where neither TAA nor FSR ran, would make a sample's weight of
@@ -49,29 +45,18 @@
 //   pixel whose result is not finite: bounding every sample of every pixel
 //   cost 0.3-0.45 ms at 1920x1080 on an Apple M5, where the test costs
 //   nothing measurable.
+
+// The tile passes' bindings 0, 1, 3, 4 and 5 are the motion_tiles module's:
+// the filter reads the tile neighbourhoods at 4 and writes the blurred frame
+// at 5.
 struct MotionBlur {
- // Frame pixels of blur per unit of the G-buffer's motion: the frame's size
- // times the shutter.
- velocity_scale:vec2<f32>,
- // The render size over the frame's: motion and depth texels per frame
- // pixel.
- render_scale:vec2<f32>,
  // The perspective projection's near plane.
  near:f32,
  // Frames since history restarted, which turn the noise.
  frame:u32,
 }
-@group(0) @binding(0) var<uniform> settings:MotionBlur;
-@group(0) @binding(1) var texture_velocity:texture_2d<f32>;
 @group(0) @binding(2) var texture_depth:texture_depth_2d;
-@group(0) @binding(3) var input:texture_2d<f32>;
-// The previous tile pass's result; the neighbourhood's, for the filter.
-@group(0) @binding(4) var tiles:texture_2d<f32>;
-// This pass's tiles; the blurred frame, for the filter.
-@group(0) @binding(5) var output:texture_storage_2d<rgba16float,write>;
-
-// Frame pixels per tile side (stages/motion_blur.rs TILE_SIZE).
-override MOTIONBLUR_TILESIZE:u32;
+@group(0) @binding(6) var<uniform> settings:MotionBlur;
 
 var<private> BayerMatrix8:array<array<f32,8>,8>=array<array<f32,8>,8>(
  array<f32,8>(1.0/65.0,49.0/65.0,13.0/65.0,61.0/65.0,4.0/65.0,52.0/65.0,16.0/65.0,64.0/65.0),
@@ -88,108 +73,12 @@ fn dither(pixel:vec2<u32>)->f32 {
  return BayerMatrix8[pixel.x%8u][pixel.y%8u];
 }
 
-// The blur vector at `pixel` of the frame, edge pixels beyond it, at most
-// two tiles long.
-fn motionblur_velocity(pixel:vec2<i32>)->vec2<f32> {
- let frame_pixel=clamp(pixel,vec2(0),vec2<i32>(textureDimensions(input))-1);
- let texel=min(vec2<u32>((vec2<f32>(frame_pixel)+0.5)*settings.render_scale),textureDimensions(texture_velocity)-1u);
- let velocity=textureLoad(texture_velocity,texel,0).xy*settings.velocity_scale;
- let longest=2.0*f32(MOTIONBLUR_TILESIZE);
- return velocity*min(1.0,longest/max(length(velocity),1e-30));
-}
-
 // Linear view depth in metres at `pixel` of the frame; very far where
 // nothing was drawn.
 fn motionblur_lineardepth(pixel:vec2<i32>)->f32 {
  let frame_pixel=clamp(pixel,vec2(0),vec2<i32>(textureDimensions(input))-1);
- let texel=min(vec2<u32>((vec2<f32>(frame_pixel)+0.5)*settings.render_scale),textureDimensions(texture_depth)-1u);
+ let texel=min(vec2<u32>((vec2<f32>(frame_pixel)+0.5)*motion_tiles.render_scale),textureDimensions(texture_depth)-1u);
  return linear_depth(settings.near,textureLoad(texture_depth,texel,0));
-}
-
-@compute @workgroup_size(8,8,1)
-fn motionblur_tileMaxVelocity_horizontal(@builtin(global_invocation_id) DTid:vec3<u32>) {
- if any(DTid.xy>=textureDimensions(output)) {
-  return;
- }
- let tile_upperleft=vec2(DTid.x*MOTIONBLUR_TILESIZE,DTid.y);
- var max_magnitude=0.0;
- var max_velocity=vec2(0.0);
- var min_magnitude=100000.0;
- var min_velocity=vec2(100000.0);
- for (var i=0u;i<MOTIONBLUR_TILESIZE;i+=1u) {
-  let pixel=vec2(tile_upperleft.x+i,tile_upperleft.y);
-  let velocity=motionblur_velocity(vec2<i32>(pixel));
-  let magnitude=length(velocity);
-  if magnitude>max_magnitude {
-   max_magnitude=magnitude;
-   max_velocity=velocity;
-  }
-  if magnitude<min_magnitude {
-   min_magnitude=magnitude;
-   min_velocity=velocity;
-  }
- }
- textureStore(output,DTid.xy,vec4(max_velocity,min_velocity));
-}
-
-@compute @workgroup_size(8,8,1)
-fn motionblur_tileMaxVelocity_vertical(@builtin(global_invocation_id) DTid:vec3<u32>) {
- if any(DTid.xy>=textureDimensions(output)) {
-  return;
- }
- let tile_upperleft=vec2(DTid.x,DTid.y*MOTIONBLUR_TILESIZE);
- let last_row=textureDimensions(tiles).y-1u;
- var max_magnitude=0.0;
- var max_velocity=vec2(0.0);
- var min_magnitude=100000.0;
- var min_velocity=vec2(100000.0);
- for (var i=0u;i<MOTIONBLUR_TILESIZE;i+=1u) {
-  let pixel=vec2(tile_upperleft.x,min(tile_upperleft.y+i,last_row));
-  let tile=textureLoad(tiles,pixel,0);
-  var velocity=tile.xy;
-  var magnitude=length(velocity);
-  if magnitude>max_magnitude {
-   max_magnitude=magnitude;
-   max_velocity=velocity;
-  }
-  velocity=tile.zw;
-  magnitude=length(velocity);
-  if magnitude<min_magnitude {
-   min_magnitude=magnitude;
-   min_velocity=velocity;
-  }
- }
- textureStore(output,DTid.xy,vec4(max_velocity,min_velocity));
-}
-
-@compute @workgroup_size(8,8,1)
-fn motionblur_neighborhoodMaxVelocity(@builtin(global_invocation_id) DTid:vec3<u32>) {
- let dim=textureDimensions(output);
- if any(DTid.xy>=dim) {
-  return;
- }
- var max_magnitude=0.0;
- var max_velocity=vec2(0.0);
- var min_magnitude=100000.0;
- var min_velocity=vec2(100000.0);
- for (var x=-1;x<=1;x+=1) {
-  for (var y=-1;y<=1;y+=1) {
-   let tile=textureLoad(tiles,clamp(vec2<i32>(DTid.xy)+vec2(x,y),vec2(0),vec2<i32>(dim)-1),0);
-   var velocity=tile.xy;
-   var magnitude=length(velocity);
-   if magnitude>max_magnitude {
-    max_magnitude=magnitude;
-    max_velocity=velocity;
-   }
-   velocity=tile.zw;
-   magnitude=length(velocity);
-   if magnitude<min_magnitude {
-    min_magnitude=magnitude;
-    min_velocity=velocity;
-   }
-  }
- }
- textureStore(output,DTid.xy,vec4(max_velocity,min_velocity));
 }
 
 fn DepthCmp(centerDepth:f32,sampleDepth:f32,depthScale:f32)->vec2<f32> {

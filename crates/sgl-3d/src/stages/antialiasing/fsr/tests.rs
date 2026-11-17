@@ -111,12 +111,12 @@ fn fsr_renders_each_quality_or_falls_back_to_taa() {
                         "{:?}",
                         renderer.fsr_error()
                     );
-                    assert!(renderer.targets().fsr_masks.is_some());
+                    assert!(renderer.targets().temporal_masks.is_some());
                     assert_eq!(extent(&renderer.targets().color), render, "{quality:?}");
                     assert_eq!(extent(renderer.test_fsr().unwrap().output()), SIZE);
                 } else {
                     assert!(
-                        renderer.targets().fsr_masks.is_none(),
+                        renderer.targets().temporal_masks.is_none(),
                         "unsupported FSR must allocate no masks"
                     );
                     eprintln!(
@@ -226,7 +226,7 @@ fn additive_effects_mark_fsr_reactivity_for_their_frame_only_for(method: Antiali
         renderer.finish_frame(&mut scene);
         renderer
             .targets()
-            .fsr_masks
+            .temporal_masks
             .as_ref()
             .unwrap()
             .clone()
