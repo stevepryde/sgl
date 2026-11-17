@@ -748,8 +748,14 @@ last, after everything it may use, and refuses a directive in it.
   Wicked's `RAY_FLAG_CULL_FRONT_FACING_TRIANGLES` (227), applied by the
   shared predicate as every side policy is: a ray whose origin lies a
   rounding behind its lit face meets that face from behind, which the
-  policy accepts, so the `TMin` is what keeps it from its own receiver, as
-  in Wicked. A pixel the G-buffer drew nothing lit at (an unlit material)
+  policy accepts, so the origin is lifted off the surface by an offset
+  that grows with the position's magnitude (Falcor's `computeRayOrigin`,
+  `traced_ray_origin`) on the geometry's side of the ray, along whichever
+  of the pixel's recorded normals faces the ray (the base, then the coat
+  or a coatless surface's geometry normal, else the base flipped, which on
+  a surface with a clearcoat normal map may still lie inside it, where both
+  lobes' light is near none) (#771), and the `TMin` keeps it
+  from the rest of its receiver, as in Wicked. A pixel the G-buffer drew nothing lit at (an unlit material)
   casts no ray and is the sky to the passes that follow, which keeps its
   zero visibility out of its lit neighbours' upsample. A baked light lights
   only the surfaces that take baked lights, the moving instances and the
@@ -851,7 +857,14 @@ last, after everything it may use, and refuses a directive in it.
   variance clamp, a response from 0.88 to 1 by the change, refreshed by
   velocity); and the upsample weights the four half-resolution texels by
   linear depth against the full-resolution pixel's (`_upsampleCS.hlsl`
-  35–55) into the mask's layers. Changed at the port boundary: the trace
+  35–55) into the mask's layers. The upsample weighs only the texels that
+  hold a receiver (a depth short of the sky's), and a pixel with none
+  about it takes 1, the trace's rule for a pixel it casts no ray from,
+  whether or not it is occluded: a feature one pixel wide at an odd column
+  or row, where the half-size trace casts no ray, reads lit even in shadow;
+  the temporal blend's box likewise takes the receivers about a texel
+  alone, so a sky or unlit texel's zeros never shadow a thin lit feature
+  beside them (#771). Changed at the port boundary: the trace
   reads normals and depth from the G-buffer at the full-resolution pixel
   of each half-resolution one, as Wicked's denoiser reads its depth
   (`texture_depth[did * 2]`) where its trace samples depth between four

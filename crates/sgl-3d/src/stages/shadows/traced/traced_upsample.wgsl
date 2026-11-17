@@ -13,9 +13,16 @@
 // fraction of half for an odd p and none for an even one; Wicked's taps
 // (p / 2 and the next, at the fraction of a grid half a texel over) and
 // its top row (its gather order's x reversed) do not agree with its
-// fraction. Every layer with a slot that holds a light is written, four
-// slots at once, where Wicked writes the lights of the pixel's tile; the
-// lighting pass reads only the slots that hold a light.
+// fraction. Only the taps that hold a receiver are weighed, and a pixel
+// with none about it takes 1 in every slot, the trace's rule for a pixel it
+// casts no ray from (traced_visible), where Wicked weighs every tap, at
+// least 0.001, and so carries what a sky texel holds (never written there,
+// as its trace returns early; SGL3D's trace writes 0) onto a lit pixel
+// whose taps are all sky: a thin lit feature at an odd pixel against the
+// sky or an unlit surface read as fully shadowed (#771). Every layer with a
+// slot that holds a light is written, four slots at once, where Wicked
+// writes the lights of the pixel's tile; the lighting pass reads only the
+// slots that hold a light.
 @group(0) @binding(0) var upsample_visibility:texture_2d<u32>;
 @group(0) @binding(1) var upsample_half_depth:texture_2d<f32>;
 @group(0) @binding(2) var upsample_depth:texture_depth_2d;
@@ -38,6 +45,13 @@ fn upsample_store(pixel:vec2<u32>,layer:u32,sums:mat4x4<f32>,total:f32) {
   textureStore(upsample_mask,pixel,layer,sums[layer]/total);
  }
 }
+// Every layer of the mask at `pixel` lit, 1 in every slot.
+fn upsample_store_lit(pixel:vec2<u32>) {
+ let lit=mat4x4(vec4(1.),vec4(1.),vec4(1.),vec4(1.));
+ for (var layer=0u;layer<SHADOW_MASK_LAYERS;layer++) {
+  upsample_store(pixel,layer,lit,1.);
+ }
+}
 
 @compute @workgroup_size(8,8) fn traced_shadow_upsample(@builtin(global_invocation_id) id:vec3<u32>) {
  let full=vec2<u32>(traced.full.xy);
@@ -46,10 +60,7 @@ fn upsample_store(pixel:vec2<u32>,layer:u32,sums:mat4x4<f32>,total:f32) {
  }
  let z=textureLoad(upsample_depth,id.xy,0);
  if z<=0. {
-  let lit=mat4x4(vec4(1.),vec4(1.),vec4(1.),vec4(1.));
-  for (var layer=0u;layer<SHADOW_MASK_LAYERS;layer++) {
-   upsample_store(id.xy,layer,lit,1.);
-  }
+  upsample_store_lit(id.xy);
   return;
  }
  let uv=(vec2<f32>(id.xy)+.5)*traced.full.zw;
@@ -64,10 +75,16 @@ fn upsample_store(pixel:vec2<u32>,layer:u32,sums:mat4x4<f32>,total:f32) {
  for (var tap=0u;tap<UPSAMPLE_TAPS;tap++) {
   let texel=min(base+vec2(tap%2u,tap/2u),reduced-1u);
   let along=select(1.-fraction,fraction,vec2(tap%2u,tap/2u)==vec2(1u));
-  let closeness=max(UPSAMPLE_LEAST_WEIGHT,1.-saturate(abs(textureLoad(upsample_half_depth,texel,0).x-depth)*UPSAMPLE_DEPTH_FALLOFF));
-  let weight=along.x*along.y*closeness;
+  let tap_depth=textureLoad(upsample_half_depth,texel,0).x;
+  let closeness=max(UPSAMPLE_LEAST_WEIGHT,1.-saturate(abs(tap_depth-depth)*UPSAMPLE_DEPTH_FALLOFF));
+  // A sky or unlit texel holds no receiver: its zeros are no visibility.
+  let weight=select(0.,along.x*along.y*closeness,traced_holds_receiver(tap_depth));
   sums+=traced_unpack_words(textureLoad(upsample_visibility,texel,0))*weight;
   total+=weight;
+ }
+ if total<=0. {
+  upsample_store_lit(id.xy);
+  return;
  }
  upsample_store(id.xy,0u,sums,total);
  upsample_store(id.xy,1u,sums,total);
