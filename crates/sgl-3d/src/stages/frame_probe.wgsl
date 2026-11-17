@@ -9,9 +9,6 @@ struct Params {
  pad:vec2<u32>,
 }
 @group(0) @binding(3) var<uniform> params:Params;
-fn finite(v:vec3<u32>)->bool {
- return all((v&vec3(0x7f800000u))!=vec3(0x7f800000u));
-}
 fn save(base:u32,p:vec2<u32>,v:vec3<u32>,s:vec3<u32>) {
  atomicStore(&stats[base],p.x);
  atomicStore(&stats[base+1u],p.y);
@@ -24,20 +21,23 @@ fn save(base:u32,p:vec2<u32>,v:vec3<u32>,s:vec3<u32>) {
  if any(id.xy>=textureDimensions(current)) {
   return;
  }
- let v=bitcast<vec3<u32>>(textureLoad(current,vec2<i32>(id.xy),0).rgb);
- let s=bitcast<vec3<u32>>(textureLoad(source,vec2<i32>(id.xy),0).rgb);
+ let current_rgb=textureLoad(current,vec2<i32>(id.xy),0).rgb;
+ let source_rgb=textureLoad(source,vec2<i32>(id.xy),0).rgb;
+ let v=bitcast<vec3<u32>>(current_rgb);
+ let s=bitcast<vec3<u32>>(source_rgb);
+ let v_finite=all_finite(vec4(current_rgb,0.));
  let base=params.stage*32u;
  atomicStore(&stats[base+31u],1u);
  let zero=all((v&vec3(0x7fffffffu))==vec3(0u));
  if zero {
   atomicAdd(&stats[base],1u);
  }
- if !finite(v) {
+ if !v_finite {
   if atomicAdd(&stats[base+1u],1u)==0u {
    save(base+8u,id.xy,v,s);
   }
  }
- if finite(v) && any(((v&vec3(0x80000000u))!=vec3(0u)) & ((v&vec3(0x7fffffffu))!=vec3(0u))) {
+ if v_finite && any(((v&vec3(0x80000000u))!=vec3(0u)) & ((v&vec3(0x7fffffffu))!=vec3(0u))) {
   atomicAdd(&stats[base+2u],1u);
  }
  if any((v&vec3(0x7fffffffu))>vec3(0x7f800000u)) {
@@ -49,7 +49,7 @@ fn save(base:u32,p:vec2<u32>,v:vec3<u32>,s:vec3<u32>) {
  if any(v==vec3(0xff800000u)) {
   atomicAdd(&stats[base+7u],1u);
  }
- let source_positive=finite(s) && any((s>vec3(0u)) & (s<vec3(0x7f800000u)));
+ let source_positive=all_finite(vec4(source_rgb,0.)) && any((s>vec3(0u)) & (s<vec3(0x7f800000u)));
  if params.compare_source!=0u && zero && source_positive {
   if atomicAdd(&stats[base+3u],1u)==0u {
    save(base+16u,id.xy,v,s);

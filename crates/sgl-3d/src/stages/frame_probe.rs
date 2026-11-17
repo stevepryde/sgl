@@ -27,7 +27,7 @@ static STATS: crate::shading::Module = crate::shading::Module {
 pub(crate) static PROBE: crate::shading::Module = crate::shading::Module {
     name: "frame_probe",
     source: include_str!("frame_probe.wgsl"),
-    deps: &[&STATS],
+    deps: &[&STATS, &crate::shading::FINITE],
 };
 /// The primary raster's coverage.
 pub(crate) static COVERAGE: crate::shading::Module = crate::shading::Module {

@@ -112,7 +112,7 @@ fn scene_bvh_leaf(node:u32,words:u32)->vec2<u32> {
 // that endpoint before min/max, preserving overlap with finite nonnegative t.
 fn scene_slab_endpoint(difference:f32,direction:f32)->f32 {
  let t=difference/direction;
- if scene_finite(t) {
+ if finite(t) {
   return t;
  }
  return select(-3.402823466e+38,3.402823466e+38,(difference<0.)==(direction<0.));
@@ -161,7 +161,7 @@ fn scene_intersect_primitive(ray:SceneRay,index:u32,mesh_id:u32,primitive_id:u32
  let p=cross(direction,e2);
  let determinant=scene_winding(e1,e2,direction);
  // No grazing-angle epsilon: a small nonzero determinant is a valid solve.
- if !scene_finite(determinant) || determinant==0. {
+ if !finite(determinant) || determinant==0. {
   return miss;
  }
  let offset=origin-a;
@@ -169,7 +169,7 @@ fn scene_intersect_primitive(ray:SceneRay,index:u32,mesh_id:u32,primitive_id:u32
  let u=dot(offset,p)/determinant;
  let v=dot(direction,q)/determinant;
  let t=dot(e2,q)/determinant;
- if !scene_finite3(vec3(t,u,v)) {
+ if !all_finite(vec4(t,u,v,0.)) {
   return miss;
  }
  if u<0. || v<0. || u+v>1. {
@@ -192,7 +192,7 @@ fn scene_trace_model(index:u32,ray:SceneRay,any_hit:bool,receiver:vec2<u32>,side
  // preserves WORLD t under arbitrary scale.
  let origin=(instance.inverse_world*vec4(ray.origin.xyz,1.)).xyz;
  let direction=(instance.inverse_world*vec4(ray.direction.xyz,0.)).xyz;
- if !scene_finite3(origin) || !scene_finite3(direction) {
+ if !all_finite(vec4(origin,0.)) || !all_finite(vec4(direction,0.)) {
   return closest;
  }
  var maximum=maximum_before;

@@ -1,7 +1,9 @@
 //! The scene's ray queries: the WGSL modules that trace the scene, through
 //! the portable walk or the hardware path's query of the device's form, and
 //! the root a tracing pipeline composes.
-use super::{BC7, BIND_SCENE, DEFORMATION, MATERIAL, Module, PACKED_VERTEX, SCENE_SOURCE, SRGB};
+use super::{
+    BC7, BIND_SCENE, DEFORMATION, FINITE, MATERIAL, Module, PACKED_VERTEX, SCENE_SOURCE, SRGB,
+};
 
 /// The scene's geometry and materials for ray queries, at group 1, and the
 /// object records a hit reads its instance's pose, flags and ambient cube
@@ -24,7 +26,7 @@ pub(crate) static SCENE_RAYS: Module = Module {
 pub(crate) static SCENE_RAYS_PREDICATE: Module = Module {
     name: "scene_rays_predicate",
     source: include_str!("scene_rays_predicate.wgsl"),
-    deps: &[&SCENE_RAYS],
+    deps: &[&SCENE_RAYS, &FINITE],
 };
 /// The portable walk: the BVH traversal over the source header's roots,
 /// which the portable function set and the hardware module both compose.

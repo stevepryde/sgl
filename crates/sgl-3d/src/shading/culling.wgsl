@@ -152,12 +152,6 @@ struct CullLists {
  late_sections_side:u32,
  entries:array<vec2<u32>>,
 }
-// Whether the 32-bit pattern of each component is finite, which fast math
-// cannot fold away as it may `x != x`.
-fn cull_finite(v:vec3<f32>)->bool {
- let exponent=bitcast<vec3<u32>>(v)&vec3(0x7f800000u);
- return all(exponent!=vec3(0x7f800000u));
-}
 // The world-space plane `plane` in the space of a model at pose `model`:
 // dot(plane, model * p) is dot(transpose(model) * plane, p).
 fn cull_plane_in_model(plane:vec4<f32>,model:mat4x4<f32>)->vec4<f32> {
@@ -171,7 +165,7 @@ fn cull_plane_in_model(plane:vec4<f32>,model:mat4x4<f32>)->vec4<f32> {
 // allow twice what raster's own rounding needs (view::culling::Frustum::planes).
 // Nonfinite bounds never reject.
 fn cull_reaches(model:mat4x4<f32>,lo:vec3<f32>,hi:vec3<f32>)->bool {
- if !cull_finite(lo) || !cull_finite(hi) {
+ if !all_finite(vec4(lo,0.)) || !all_finite(vec4(hi,0.)) {
   return true;
  }
  let center=vec4((lo+hi)*0.5,1.);
@@ -212,7 +206,7 @@ const CULL_OCCLUSION_BLOCK:u32=4u;
 // that needs a level past the pyramid's built ones, and nonfinite bounds,
 // are kept.
 fn cull_occluded(clip_from_world:mat4x4<f32>,model:mat4x4<f32>,lo:vec3<f32>,hi:vec3<f32>)->bool {
- if !cull_finite(lo) || !cull_finite(hi) {
+ if !all_finite(vec4(lo,0.)) || !all_finite(vec4(hi,0.)) {
   return false;
  }
  let clip_from_local=clip_from_world*model;

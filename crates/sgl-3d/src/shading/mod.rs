@@ -158,7 +158,7 @@ pub(crate) static LOD: Module = Module {
 pub(crate) static CULLING: Module = Module {
     name: "culling",
     source: include_str!("culling.wgsl"),
-    deps: &[&LOD],
+    deps: &[&LOD, &FINITE],
 };
 pub(crate) static BIND_MATERIAL: Module = Module {
     name: "bind_material",
