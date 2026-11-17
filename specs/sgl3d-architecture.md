@@ -2947,8 +2947,9 @@ last, after everything it may use, and refuses a directive in it.
    reads and writes, the contracts it touches and what it deletes. If it does
    not fit this spec, amend the spec first, in the same change.
 10. **AR-10 — Review structure.** A change covered by AR-9 gets an independent
-    agent review against this spec, which the implementer obtains and resolves
-    before merging. It never waits on the owner. Other changes do not need one.
+    agent review against this spec, obtained and resolved before it lands. It
+    never waits on the owner. Other changes do not need one: the agent that
+    lands them reads the diff ([Contributing](../CONTRIBUTING.md#deliver-a-change)).
 11. **AR-11 — Leave it cleaner.** RD-3 applies to structure. A change leaves no
     compatibility shim, parallel path or dead option behind. Work that finds a
     breach of these rules in the code it touches fixes it or files the issue.

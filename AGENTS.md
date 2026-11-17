@@ -39,7 +39,8 @@ compatibility shims solely to avoid updating consumers.
   and symbol, the old and new behavior in a clause, and the migration in a
   line or a short code sample. Explicitly say when no game-code changes are
   needed. Rationale, measurements, sources and implementation details belong
-  in package docs, specs and the PR, not the changelog.
+  in package docs, specs and the commit that lands the change, not the
+  changelog.
 - Record changes that compile successfully but alter behavior too: defaults,
   settings, units, frame ordering, platform support, and asset/bake formats,
   with any required data conversion or explicit re-export, and what to
@@ -95,6 +96,10 @@ compatibility shims solely to avoid updating consumers.
   reports, inventories, or identity tables in `docs/`.
 - Never gate a ticket on owner sign-off, acceptance, or review. The owner steers
   by filing new tickets.
+- A change lands on `main` directly, as one commit per issue, after the
+  required check and a review in proportion to its consequence
+  ([Contributing](CONTRIBUTING.md#deliver-a-change)). Open a pull request only
+  where it adds something.
 - SGL is offered as is, with no guarantee of correctness or maintenance and no
   support (D-51). Do not add promises, process or machinery on behalf of
   outside users; they are encouraged to fork or copy what they want.

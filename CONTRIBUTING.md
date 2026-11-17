@@ -81,11 +81,31 @@ Mutation testing is a separate periodic audit, described in
 For API documentation, run `cargo doc --workspace --no-deps`. Runnable entry
 points are linked from the [consumer guide](docs/README.md).
 
-## Describe the result
+## Deliver a change
 
-Explain the problem, resulting behavior, and validation in the change
-summary. Mention affected consumers and known limitations. Keep result
-reports out of `docs/`; that directory holds maintained consumer guidance.
+Agents plan, implement, review and land every change ([D-50](specs/decisions.md),
+[D-53](specs/decisions.md)). There is no pull request by default: open one
+only where it adds something, such as work that needs a visible home while
+unfinished, or a change the owner has asked to see before it lands.
+
+1. **Plan.** The issue holds the plan and stays the record of why.
+2. **Implement.** Work on a branch from the tip of `origin/main`. Run the
+   required check on the final commit, push the branch, and report what
+   changed, the evidence, anything not done, and the commit.
+3. **Review, in proportion.** A change that adds or alters a stage, a shared
+   contract, a layer boundary or a public type (AR-9), and any other whose
+   consequence or uncertainty warrants it, gets an independent agent's review
+   of the pushed branch against the contracts (AR-10). A localized change
+   that follows established patterns gets the landing agent's own reading of
+   the diff. Findings are resolved on the branch.
+4. **Land.** Merge `main` into the branch, repeat the checks that could have
+   been invalidated, then put the change on `main` as one commit by
+   fast-forward push. Its message is the record: what was wrong or wanted,
+   what changed and why, the evidence, how it was reviewed, known limits, and
+   `Closes #n`. Delete the branch. Never force-push `main`.
+
+Keep result reports out of `docs/`; that directory holds maintained consumer
+guidance.
 
 First-party changes use the repository's [MIT OR Apache-2.0 terms](LICENSE).
 Third-party code keeps its original licence and attribution; follow

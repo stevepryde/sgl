@@ -225,8 +225,8 @@ departure is itself wrong.
 **Classify and act.**
 
 - *Defect* (the code breaks a rule or gives a wrong result): file an issue in
-  the repository's style and hand it to an implementation agent; one pull
-  request per issue, with the independent review the repository's flow requires.
+  the repository's style and hand it to an implementation agent; it lands as
+  `CONTRIBUTING.md` describes, one commit per issue, reviewed in proportion.
 - *The record is wrong* (the code is right and a spec, guide or comment is
   stale): correct the record.
 - *A missing guard* (the code relies on an invariant nothing states or tests):

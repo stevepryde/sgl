@@ -818,3 +818,15 @@ Use the [current specs](README.md) for implementation and the
   Rationale: the version number exists to keep the owner's games from
   breaking on `cargo update`; a patch that requires caller changes defeats
   that.
+
+- **D-53** Owner direction, 2026-11-17: changes land on `main` directly when
+  the landing agent is confident in them, without a pull request, unless one
+  adds value. Review is proportionate: an independent agent's review where
+  the change alters structure or a contract or carries real consequence or
+  uncertainty (AR-10), the landing agent's own reading of the diff
+  otherwise. The issue is the plan, the branch is the unit of review, and
+  the landing commit's message is the record. `main` keeps its history rule
+  (no force-push, no deletion); the rule requiring pull requests is off.
+  Rationale: with agents as the only authors and reviewers (D-50), a pull
+  request repeats what the issue and the commit already say and costs tokens
+  and steps without adding a check.
