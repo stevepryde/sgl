@@ -197,8 +197,8 @@ pub(crate) static LUMINANCE: Module = Module {
     source: include_str!("luminance.wgsl"),
     deps: &[],
 };
-/// The bound the passes after composition read the scene colour within
-/// (`scene_color.wgsl`).
+/// The bound the passes after composition read the scene colour within, and
+/// composition the lit colour and ambient light (`scene_color.wgsl`).
 pub(crate) static SCENE_COLOR: Module = Module {
     name: "scene_color",
     source: include_str!("scene_color.wgsl"),

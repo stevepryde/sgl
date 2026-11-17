@@ -132,6 +132,11 @@ fn complete_source(scene:vec3<f32>,alpha:f32,ambient:GBufferAmbient,normals:vec4
  return CompletedSource(vec4(fog_composite(incoming,fog),completed_alpha),vec4(fog_composite(incident,fog),completed_alpha));
 }
 
+// Lit colour, read through finite_scene_color, as is the ambient light
+// within it (source_ambient): a texel of either holds +infinity where a lit,
+// emissive or ambient value passed binary16's range on a backend that rounds
+// overflow to infinity, which an occlusion share, a fog transmittance of 0
+// or infinity less infinity would make NaN (#801).
 @group(0) @binding(0) var source_scene:texture_2d<f32>;
 @group(0) @binding(2) var source_output:texture_storage_2d<rgba16float,write>;
 @group(0) @binding(3) var source_normal:texture_2d<f32>;
@@ -193,7 +198,7 @@ override incident_radiance_enabled:bool=true;
   return;
  }
  let p=vec2<i32>(id.xy);
- let c=textureLoad(source_scene,p,0);
+ let c=finite_scene_color(textureLoad(source_scene,p,0));
  let z=textureLoad(source_depth,p,0);
  let f0=textureLoad(source_f0,p,0);
  var normals=vec4(0.);
@@ -203,7 +208,7 @@ override incident_radiance_enabled:bool=true;
  if z>0. && gbuffer_lit(f0) {
   normals=textureLoad(source_normal,p,0);
   material=gbuffer_material(textureLoad(receiver_material,p,0));
-  ambient=gbuffer_ambient(textureLoad(source_ambient,p,0),c.a);
+  ambient=gbuffer_ambient(finite_scene_color(textureLoad(source_ambient,p,0)),c.a);
   visibility=source_visibility(id.xy,f0);
  }
  let completed=complete_source(max(vec3(0.),c.rgb),c.a,ambient,normals,material,f0,textureLoad(source_anisotropy,p,0),z,id.xy,textureDimensions(source_output),source_camera,env.traced,visibility);

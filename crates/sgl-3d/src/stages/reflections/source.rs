@@ -21,6 +21,7 @@ pub(crate) static COMPLETION: shading::Module = shading::Module {
         &shading::PROBE_COLLECTION,
         &shading::FULLSCREEN_VS,
         &shading::FOG,
+        &shading::SCENE_COLOR,
     ],
 };
 /// The entry points the program's pipelines are created with:
@@ -519,3 +520,6 @@ mod incident_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod receiver_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod infinity_tests;

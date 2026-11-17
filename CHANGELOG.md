@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` reflection source completion: a lit colour or ambient light texel
+  of +infinity (over-range radiance on backends that round overflow to
+  infinity) no longer composes to NaN under opaque fog or to black where
+  occlusion hides ambient light; it reads as 65504. No game-code changes are
+  needed.
 - `sgl-3d` FSR2 no longer darkens pixels at the frame's corners and edges
   (the bottom-left corner by 14% on some jitter phases): it takes
   `sp-fidelity` and `sp-fidelity-wgpu` 0.3.1, which correct the port's
