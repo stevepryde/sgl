@@ -32,7 +32,11 @@ console.log(
     : "GPU tests: may skip without an adapter (set SGL_REQUIRE_GPU=1 to require)",
 );
 
-const commands: Array<{ argv: string[]; env?: Record<string, string> }> = [
+// The long tests' cap (testing.md 8): the whole lane, in minutes. A lane
+// that passes it is killed and fails the check.
+const LONG_TESTS_CAP_MINUTES = 10;
+
+const commands: Array<{ argv: string[]; env?: Record<string, string>; capMinutes?: number }> = [
   { argv: ["bun", "scripts/license-notices.ts", "check"] },
   { argv: ["cargo", "fmt", "--check"] },
   { argv: ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"] },
@@ -41,9 +45,11 @@ const commands: Array<{ argv: string[]; env?: Record<string, string> }> = [
     env: requireGpu ? { SGL_REQUIRE_GPU: "1" } : undefined,
   },
   // The long tests (testing.md 8): ignored everywhere else, named `long_…`.
+  // The step before built every test binary, so the cap times the tests.
   {
     argv: ["cargo", "test", "--workspace", "--", "--ignored", "long_"],
     env: requireGpu ? { SGL_REQUIRE_GPU: "1" } : undefined,
+    capMinutes: LONG_TESTS_CAP_MINUTES,
   },
   // Release semantics differ (debug_assertions off); sgl-net must hold there.
   { argv: ["cargo", "test", "-p", "sgl-net", "-p", "sgl-net-tests", "--release"] },
@@ -72,16 +78,46 @@ function requireWasmBindgenCli(): void {
   }
 }
 
+// Stops `pid` and every process descended from it: stopping `cargo test`
+// alone would leave the test binary it started running.
+function killTree(pid: number): void {
+  const children = Bun.spawnSync(["pgrep", "-P", String(pid)]).stdout.toString();
+  for (const child of children.split("\n").filter(Boolean)) {
+    killTree(Number(child));
+  }
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // It had already exited.
+  }
+}
+
 if (task === "check") {
   requireWasmBindgenCli();
-  for (const { argv, env } of commands) {
-    const result = Bun.spawnSync(argv, {
+  for (const { argv, env, capMinutes } of commands) {
+    const step = Bun.spawn(argv, {
       stderr: "inherit",
       stdout: "inherit",
       env: env ? { ...process.env, ...env } : undefined,
     });
-    if (result.exitCode !== 0) {
-      process.exit(result.exitCode ?? 1);
+    let capped = false;
+    const cap = capMinutes
+      ? setTimeout(() => {
+          capped = true;
+          killTree(step.pid);
+        }, capMinutes * 60_000)
+      : undefined;
+    const exitCode = await step.exited;
+    clearTimeout(cap);
+    if (capped) {
+      console.error(
+        `\n${argv.join(" ")}: stopped at its cap of ${capMinutes} minutes (testing.md 8). ` +
+          "Split or shorten a long test; do not raise the cap.",
+      );
+      process.exit(1);
+    }
+    if (exitCode !== 0) {
+      process.exit(exitCode ?? 1);
     }
   }
 }

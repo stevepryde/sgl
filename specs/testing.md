@@ -48,12 +48,16 @@ check, run once before a release or over a batch of landed changes
 7. Mutation testing (`bun scripts/tasks.ts mutants`, needs `cargo-mutants`)
    is the periodic audit for tests that cannot fail; it is not part of
    `check`.
-8. A test is cheap alone: it runs by name in seconds, on the smallest
-   fixture and fewest frames that still let its oracle discriminate, and one
-   test covers one concern, so a change reruns only what it bears on. A test
-   that cannot be made cheap without losing its oracle is named `long_…` and
-   marked `#[ignore = "long: <why>"]`; the full check runs those and nothing
-   else does.
+8. A test is cheap alone: it runs by name in seconds, ten at most, on the
+   smallest fixture and fewest frames that still let its oracle
+   discriminate, and one test covers one concern, so a change reruns only
+   what it bears on. A test that cannot be made cheap without losing its
+   oracle is named `long_…` and marked `#[ignore = "long: <why>, about
+   <time>"]`; the full check runs those and nothing else does. Long tests
+   are capped: two minutes each alone, and ten minutes together, at which
+   the full check stops the long lane and fails
+   (`LONG_TESTS_CAP_MINUTES`, `scripts/tasks.ts`). A test that needs more
+   is split or shortened; the caps are not raised to fit one.
 
 ## SGL3D scenario harness
 

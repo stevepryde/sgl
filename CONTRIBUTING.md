@@ -97,9 +97,12 @@ long ones, release-mode networking tests, repository tooling tests, WASM
 builds and tests, and the browser lane. A failure it finds is filed and
 fixed like any defect.
 
-Write tests to be cheap alone: each runs by name in seconds. A test that
-cannot be made cheap without losing its oracle is named `long_…` and marked
-`#[ignore = "long: <why>"]`; the full check runs those.
+Write tests to be cheap alone: each runs by name in seconds, ten at most.
+A test that cannot be made cheap without losing its oracle is named
+`long_…` and marked `#[ignore = "long: <why>, about <time>"]`; the full
+check runs those. Long tests are capped at two minutes each alone and ten
+minutes together: the full check stops the long lane at ten minutes and
+fails. Split or shorten a test that needs more; do not raise the caps.
 
 GPU tests are required on macOS. On other GPU-equipped hosts, set
 `SGL_REQUIRE_GPU=1` when running checks. Report a missing tool, unavailable GPU,

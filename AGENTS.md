@@ -102,9 +102,12 @@ compatibility shims solely to avoid updating consumers.
   modules it touches and the scenarios it bears on, each by name. Never end
   a change with the full check, and never run two long test runs at once on
   one machine: several agents share it. Write every test to run alone, by
-  name, in seconds; one that cannot be made cheap without losing its oracle
-  is named `long_…` and marked `#[ignore]` with the reason, and runs in the
-  full check only.
+  name, in seconds (ten at most); one that cannot be made cheap without
+  losing its oracle is named `long_…` and marked `#[ignore]` with the reason
+  and its time, and runs in the full check only. Long tests are capped: two
+  minutes each alone, and ten minutes for all of them together, which the
+  full check enforces by stopping. A test that needs more is split or
+  shortened; the caps are not raised to fit one.
 - Never gate a ticket on owner sign-off, acceptance, or review. The owner steers
   by filing new tickets.
 - A change lands on `main` directly, as one commit per issue, after its

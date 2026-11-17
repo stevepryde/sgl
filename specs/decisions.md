@@ -845,3 +845,11 @@ Use the [current specs](README.md) for implementation and the
   change in the whole suite, often twice, the suite ran many times over for
   one batch and a slot waiting on tests was a slot not working; integration
   failures are found as well by one run as by one per change.
+- **D-55** Owner direction, 2026-11-17: long tests are capped. A test runs
+  alone in seconds, ten at most; a `long_…` test (D-54) takes at most two
+  minutes alone, and all of them together at most ten, which the full check
+  enforces by stopping its long lane there and failing. A test that needs
+  more is split or shortened; the caps are not raised to fit one.
+  Rationale: a lane for tests allowed to be long grows until the full check
+  takes an hour unless something bounds it, and a bound that only a person
+  notices is no bound (D-50).
