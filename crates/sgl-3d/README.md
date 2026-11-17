@@ -2757,8 +2757,10 @@ WebGL is ever added it will be a minimal fallback.
   it. Ship the appropriate fallback assets for the device. Without
   `TIMESTAMP_QUERY` `GpuTiming::new` returns `None`. Chrome quantizes
   timestamps, so browser pass times are coarse.
-- **FSR** needs native-only features (texture atomics, 16-bit normalized and
-  adapter-specific formats): chosen in the browser it resolves to TAA,
+- **FSR** needs texture atomics, which WebGPU lacks, and subgroup operations,
+  16-bit normalized formats and storage formats beyond WebGPU's core set,
+  which wgpu's browser backend does not request: chosen in the browser it
+  resolves to TAA,
   `Renderer::antialiasing_in_effect` reports TAA and `fsr_error()` names the
   missing features. TAA, both screen-space reflection methods, world-space
   reflections, dynamic GI, ambient occlusion, fog, motion blur, bloom and
@@ -2769,10 +2771,10 @@ WebGL is ever added it will be a minimal fallback.
   and fails in the browser. The frame time comes from
   `FrameInput::frame_time_ms`; SGL3D reads no clock.
 - **No blocking readback.** `Renderer::capture_specular_probe` blocks for its
-  readback, which WebGPU cannot: in the browser it fails with
-  `ProbeError::Readback` before rendering. Capture natively and load the
-  baked probes. The `diagnostics` feature's `diagnostics::read` also blocks,
-  so a browser build does not have it.
+  readback, which a browser cannot, and has no awaitable form yet: in the
+  browser it fails with `ProbeError::Readback` before rendering. Capture
+  natively and load the baked probes. The `diagnostics` feature's
+  `diagnostics::read` blocks too, so a browser build does not have it.
 
 `browser_smoke` ([`examples/sgl-3d/examples/browser_smoke.rs`](../../examples/sgl-3d/examples/browser_smoke.rs)) is the browser lane's test and a
 minimal page integration: device creation; procedural content (a textured

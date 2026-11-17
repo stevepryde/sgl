@@ -80,3 +80,36 @@ Design choices, recorded so a later pass does not rediscover them.
 - Far content at rest blends 12% of the current frame under motion-adaptive TAA (Filament's sky override, from about `near / 0.001` metres), where the still-pixel rule it superseded gave 1.5%. Whether distant sub-pixel detail shimmers at rest is the owner's to judge.
 - At rest, motion-adaptive TAA's slower feedback delays shading-only changes (a light switching, a flash). Filament has the same trade-off.
 - The directional light's disc sampling is slightly centre-weighted for a large `angular_diameter`, as Wicked Engine's is.
+
+## 2026-11-17 — web target pass
+
+Commit `ca3c65c5`. Scope: every native-only path in the library crates, read
+against D-48 (the web supports everything its platform can run): each
+`target_arch` gate outside tests, each optional device feature SGL or its FSR
+port requests, and each platform exception the guides record. WebGPU's
+capabilities are from the specification's feature index (editor's draft of this
+date) and wgpu 30.0.1's WebGPU backend (`FEATURES_MAPPING`); browser support is
+from MDN's compatibility data. [#782](https://github.com/stevepryde/sgl/issues/782).
+
+### Native-only that the web could run
+
+- **FSR2 and FSR3.** Of the five device features the port requires, the platform lacks one: texture atomics, for which atomics in a storage buffer are an exact substitute (minimum and maximum do not depend on order). Subgroups, 16-bit normalized formats and the storage formats are in WebGPU (`subgroups`, `texture-formats-tier1`, `texture-formats-tier2`) and missing only from wgpu's browser backend; `float32-filterable` is granted. Planned in [#803](https://github.com/stevepryde/sgl/issues/803).
+- **Blocking readbacks.** `diagnostics::read`, `Renderer::capture_specular_probe` and `sgl_2d`'s `read_scene` are native-only only because they block; WebGPU maps asynchronously, and the browser example already carries its own awaiting copy of the first. Planned in [#804](https://github.com/stevepryde/sgl/issues/804).
+
+### Records that were wrong
+
+- The feature guide said FSR needs "native-only device features" without saying which or why, and the README's list omitted subgroups. Both now give the reason, split by whether the platform or wgpu's backend is the obstacle.
+- The feature guide gave no reason for hardware ray tracing's absence in the browser (WebGPU has no ray queries).
+- `sgl-net`'s README did not say what a browser peer loses by having only the WebSocket.
+
+### Waiting on the owner
+
+- Whether browser peers get unreliable datagrams. WebTransport's are in every major browser and fit `DatagramTransport` as it is; the cost is a QUIC and HTTP/3 server in-process. [#805](https://github.com/stevepryde/sgl/issues/805).
+
+### Left as they are
+
+- Hardware ray tracing: WebGPU has neither acceleration structures nor ray queries. Rays trace the software BVHs, as on any device without them.
+- `asset::load` and `capture_scene` take a path: a browser has no file system. `load_slice` and `sgl-2d`'s `fetch_runtime_bundle` are the browser's ways in.
+- The 1 GiB default load budget and the 2 GiB decal atlas build limit on `wasm32`: its 4 GiB address space, shared with the game's other content.
+- The blocking constructors (`Gpu::headless`, `Context::new`, `try_new`) are native conveniences over asynchronous forms the browser awaits.
+- The other way round, nothing was found: every optional WebGPU feature SGL3D uses natively it also requests in the browser (depth clip control, RG11B10 render targets, BC, ETC2 and ASTC, timestamp queries), and the WebGPU features it leaves unused (dual-source blending, clip distances, indirect first instance, blendable 32-bit float) it does not use natively either.

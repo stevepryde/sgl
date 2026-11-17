@@ -14,6 +14,10 @@ and connection lifecycle, with no rendering or windowing dependency.
 | Native or browser WebSocket | [`websocket`](src/websocket/mod.rs) |
 | Several server transports behind one interface | [`ServerIoMux`](src/mux.rs) |
 
+A browser has no UDP sockets, so a browser peer uses the WebSocket:
+everything it sends then travels one ordered reliable stream, and a lost
+segment delays every lane behind it, unreliable ones included.
+
 The shared [`ClientIo` and `ServerIo`](src/lib.rs) traits provide `poll`,
 `send`, `capacity`, `flush`, and disconnect operations. Supply monotonic
 `now_ms` values from the game's clock, poll events, enqueue encoded
