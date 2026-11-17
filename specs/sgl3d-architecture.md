@@ -488,7 +488,14 @@ Stages run in one order, written in one place in `renderer`:
    materials use the groups it switched. Identical state writes and
    procedural material deformation do not set this signal. Local surface motion and depth confidence additionally
    transport recovery without a deforming material suppressing stabilization
-   throughout the world. The hold never bypasses rejection. No new full-size history pair is allocated.
+   throughout the world. The hold never bypasses rejection. Depth's magnitude
+   does not select the rejection strength (Filament's sky override is not
+   ported, #791); the sky, the far plane's exact depth, is a categorical
+   disocclusion in both directions, where a whole 3x3 neighbourhood changes
+   to or from it. Known limit: a surface procedural deformation starts
+   moving from rest at more than about a pixel a frame leaves a transient
+   ghost on its old outline, beyond the closest-motion search
+   ([#802](https://github.com/stevepryde/sgl/issues/802)). No new full-size history pair is allocated.
 11. **Motion blur**: the antialiased frame blurred along the surface's
    motion, at the scene size, before bloom, SMAA and tone mapping, as Bevy
    and Wicked Engine run it after TAA.

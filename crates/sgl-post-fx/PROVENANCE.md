@@ -95,7 +95,7 @@ code matches upstream.
 `filament/src/materials/antiAliasing/taa/{taa.mat,taa.md}` and
 `filament/include/filament/Options.h` (Apache-2.0,
 `LICENSE-filament.txt`). It retains partial box rectification at rest,
-scales current-frame feedback, restores full rejection with motion/farness,
+scales current-frame feedback, restores full rejection with motion,
 and compares current/previous depth neighborhoods with jitter alignment.
 The defaults are the source's: box floor 0.1, feedback scale 0.3, motion
 threshold one render pixel, reversed-normalized depth threshold 0.001,
@@ -104,7 +104,7 @@ SGL3D pairs it with current feedback 0.12 (history stability 0.88).
 
 Adaptations: caller depth may be forward, so the shader normalizes it; the
 context's current reprojection texture is already in previous-camera depth,
-while raw current depth supplies current neighborhoods/farness. Input motion
+while raw current depth supplies current neighborhoods. Input motion
 is total unjittered camera+object motion, not Filament's object-only residual.
 Filament's expected history depth reprojects the pixel as if static, so it
 skips the depth test on object-motion pixels (`taa.mat` "an object moving in
@@ -147,3 +147,49 @@ lookup corrected for jitter clamps at texture edges as Filament's sampler
 does; the stable color-history coordinate still rejects outside the viewport.
 GPU regressions cover the translated captured camera, its observed tiny
 projection residue, and valid border histories.
+
+Filament's sky override (`taa.mat` `farness`, `skyDepthThreshold` 0.001, and
+`taa.md` "Sky / Far-Plane Override") is not ported (#791): depth's magnitude
+does not select the rejection strength. It gave full strength to every pixel
+below normalized depth 0.001, from about `near / 0.001` metres (100 m at a
+0.1 m near plane), so the sky and far surfaces took the full variance clip
+and 0.12 of the current frame at rest. Jitter moves an outline's pixels on
+and off the sky from frame to frame, so every outline against the sky or a
+far surface flickered, and far sub-pixel detail lost its accumulation. Its
+purpose is covered here otherwise: camera translation that uncovers sky by
+the exact camera-motion test; a rigid object moving, appearing or departing
+before the sky by the view-wide rigid signal; a surface uncovering sky while
+it moves by the hold carried in the motion history; and a surface whose
+depth is too close to the sky's for the depth threshold by treating the sky
+as categorical in the depth test. The caller writes the far plane's exact
+depth for the sky, which normalizes to exactly 0, so a pixel at it where no
+texel of the previous 3x3 depth neighbourhood was, or a 3x3 neighbourhood
+with no sky where every previous texel was sky, is a disocclusion whatever
+the depths' difference; requiring the whole neighbourhood keeps jitter at a
+silhouette from flipping it. Not covered, and accepted for removing a
+permanent flicker: a surface a vertex function or skin starts moving from
+rest at more than about a pixel a frame leaves a transient ghost on its old
+outline, whose previous neighbourhood already held what it uncovers and
+which the 3x3 closest-motion search does not reach. That exists on `main`
+over near backgrounds and the override hid it only over the sky and far
+surfaces (#802).
+
+SGL3D's scenario suite (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`),
+with the far variants the near scene scaled 500 times (2 km, normalized depth
+4e-5), before and after:
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| Largest resting step at outlines against the sky, near / far (bound 0.0388 in v / (1 + v)) | 0.0756 / 0.0974 | 0.0121 / 0.0121 |
+| The same against a far wall, near / far | 0.0748 / 0.0980 | 0.0126 / 0.0126 |
+| Between surfaces, near / far | 0.0085 / 0.0285 | 0.0085 / 0.0085 |
+| Strips at rest, times below a single sample's RMSE, near / far (bar 4) | 6.84 / 4.91 | 6.84 / 6.84 |
+| Outlines at rest, the same, near / far (bar 2.83) | 3.53 / 3.47 | 4.72 / 4.72 |
+| Ghost on the sky 12 frames after a vertex function starts a card at 1.5 / 4 px a frame, near and far (#802) | 1.2e-5 / 1.2e-5 | 0.0331 / 0.0602 |
+
+The same card over a near wall, where the override never applied, leaves
+0.0304 / 0.0555 before the change and after. Without the categorical sky, a
+far surface 90 m away under a 100 m far plane that reveals the sky at rest
+kept 0.581 where the frame shows 0.05 (the effects tests); with it, the
+frame's colour. Crossings, appearances and departures against the sky, near
+and far, stay within their stores.

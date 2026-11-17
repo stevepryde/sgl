@@ -886,10 +886,15 @@ integrated as Diligent's Hydrogent renderer does:
   camera, rigid objects and the surface at a pixel are still, only partial rectification
   and slower feedback, which steadies subpixel detail; full rejection
   returns, held for twelve frames, on camera motion, rigid-object changes,
-  a changed `FrameInput::visibility_mask`, local motion, depth disocclusion
-  and far content. Depth disocclusion follows moving surfaces by the
+  a changed `FrameInput::visibility_mask`, local motion and depth
+  disocclusion, at any distance: the sky and far surfaces settle at rest like
+  near ones, and sky revealed or covered counts as a disocclusion however
+  far the surface. Depth disocclusion follows moving surfaces by the
   G-buffer's depth motion, so a surface the camera follows, or one moving
-  towards it, keeps its history.
+  towards it, keeps its history. A surface a material's vertex function or a
+  skin starts moving from rest at more than about a pixel a frame leaves a
+  brief ghost along its old outline
+  ([#802](https://github.com/stevepryde/sgl/issues/802)).
 
 SSR and TAA share DiligentFX's post-effect context. History restarts with
 SSR's, and a restarted frame renders without jitter. As Godot's TAA, it keeps

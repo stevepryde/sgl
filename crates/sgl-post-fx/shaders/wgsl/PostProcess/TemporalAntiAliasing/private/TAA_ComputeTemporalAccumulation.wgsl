@@ -462,6 +462,16 @@ fn AdaptiveDisocclusion(position:vec2<f32>,previous_position:vec2<f32>,motion_pi
             history_max=max(history_max,previous);
         }
     }
+    // The sky is categorical (#791): the caller writes the far plane's exact
+    // depth for it, which normalizes to exactly 0 under either convention,
+    // so sky where no texel of the previous neighbourhood was, or a
+    // neighbourhood with no sky where every previous texel was sky, is a
+    // disocclusion however little the depths differ. Requiring the whole
+    // neighbourhood keeps jitter at a silhouette from flipping it.
+    let sky=AdaptiveDepth(SampleDepth(p),camera)==0.;
+    if (sky && history_min>0.) || (current_min>0. && history_max==0.) {
+        return 1.;
+    }
     let jitter_explainable=(current_max-current_min)*(1.-smoothstep(TAA_ADAPTIVE_DEPTH_FADE_START_PIXELS,TAA_ADAPTIVE_DEPTH_FADE_END_PIXELS,motion_pixels));
     // Normalized depths lie in [0, 1]: an evidence of 1 rejects fully.
     var evidence=1.;
@@ -553,10 +563,12 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     if AdaptiveCameraMoved() || g_TAAAttribs.RigidObjectMotion!=0u || !IsStill {
         hold=TAA_ADAPTIVE_HOLD_FRAMES;
     }
-    let depth=AdaptiveDepth(SampleDepth(vec2<i32>(Position)),cbCameraAttribs.g_CurrCamera);
-    let farness=1.-smoothstep(0.,TAA_ADAPTIVE_DEPTH_THRESHOLD,depth);
+    // Filament's sky override (taa.mat farness) is not ported: depth's
+    // magnitude does not select the strength (PROVENANCE.md, Motion-adaptive
+    // TAA). The camera test, the rigid signal, the hold and disocclusion
+    // restore rejection over the sky and far surfaces as elsewhere.
     let motion_amount=clamp(motion_pixels*motion_pixels/(TAA_ADAPTIVE_MOTION_THRESHOLD_PIXELS*TAA_ADAPTIVE_MOTION_THRESHOLD_PIXELS),0.,1.);
-    let strength=max(max(motion_amount,farness),hold/TAA_ADAPTIVE_HOLD_FRAMES);
+    let strength=max(motion_amount,hold/TAA_ADAPTIVE_HOLD_FRAMES);
     let box_strength=max(mix(TAA_ADAPTIVE_BOX_STRENGTH,1.,strength),disocclusion);
     let alpha_strength=max(mix(TAA_ADAPTIVE_ALPHA_STRENGTH,1.,strength),disocclusion);
     var history=mix(YCoCgSDRPrevColor,YCoCgSDRClampedColor,box_strength);

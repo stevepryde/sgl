@@ -52,8 +52,16 @@ enum Signal {
     Border,
     CameraStop,
     Reveal,
+    /// A far surface at rest until frame 40, then the sky.
+    RevealSky,
+    /// The sky until frame 40, then a far surface at rest.
+    CoverSky,
     Toggle,
 }
+
+/// The far surface of `RevealSky` and `CoverSky`, at view Z 90 under the
+/// camera's 100 m far plane.
+const FAR_SURFACE_Z: f32 = 90.;
 
 // The stripes have a one-pixel period and 35% coverage on the plane at Z=2.
 // A whole 3x3 current neighborhood can therefore miss their bright faces
@@ -103,7 +111,11 @@ fn sequence(
                 }
             }
         }
-        let occluded = matches!(signal, Signal::Reveal) && index < 40;
+        let occluded = match signal {
+            Signal::Reveal | Signal::RevealSky => index < 40,
+            Signal::CoverSky => index >= 40,
+            _ => false,
+        };
         let color_value = if occluded {
             0.8
         } else if (0.5 - jitter[0] + pan).rem_euclid(1.) < 0.35 {
@@ -142,8 +154,17 @@ fn sequence(
             ]),
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        let z = if occluded { 0.4 } else { 2. };
-        let clip_depth = curr.m_proj[10] + curr.m_proj[14] / z;
+        let sky = matches!(signal, Signal::RevealSky | Signal::CoverSky) && !occluded;
+        let z = match signal {
+            _ if !occluded => 2.,
+            Signal::RevealSky | Signal::CoverSky => FAR_SURFACE_Z,
+            _ => 0.4,
+        };
+        let clip_depth = if sky {
+            curr.f_far_plane_depth
+        } else {
+            curr.m_proj[10] + curr.m_proj[14] / z
+        };
         let current_depth = depth(device, &mut encoder, clip_depth);
         let flags = if adaptive && !(matches!(signal, Signal::Toggle) && (32..48).contains(&index))
         {
@@ -285,6 +306,31 @@ fn taa_adaptive_depth_disocclusion_rearms_zero_motion_background() {
             error(&settled[40..48])
         );
         assert!(variance(&frames[64..96]) < variance(&frames[40..48]) * 0.25);
+    }
+}
+
+// #791: the sky is categorical in the adaptive depth test. The far surface
+// lies at normalized depth 0.1 (100 - 90) / (90 * 99.9) = 1.1e-4, a ninth of
+// the depth threshold 0.001, so its depth difference from the sky rejects
+// only smoothstep(0, 0.001, 1.1e-4) = 0.034 of history. Defect: a far
+// surface leaving the sky behind it, or appearing over it, with no motion
+// and no camera change keeps most of the old colour. Oracle: the first
+// changed frame's disocclusion is whole, so the resolve is that frame's own
+// colour, within the stores the Reveal test allows.
+#[test]
+fn taa_adaptive_sky_and_a_far_surface_replacing_each_other_reject_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for reversed in [false, true] {
+        for signal in [Signal::RevealSky, Signal::CoverSky] {
+            let frames = sequence(&device, &queue, reversed, true, signal);
+            let (output, current) = frames[40];
+            assert!(
+                (output - current).abs() < 0.002,
+                "reversed={reversed}: the old colour stayed where the sky and a far surface swapped: {output}/{current}"
+            );
+        }
     }
 }
 

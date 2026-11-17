@@ -172,7 +172,12 @@ The flag requires a four-channel motion input (such as `Rgba16Float`;
 previous minus current camera-space Z, its own and the camera's motion
 included, and W that depth motion's validity (above 0 valid, 0 none). The depth
 test accepts history matching either the camera reprojection or the surface's
-own previous depth, so surfaces moving in depth keep their history.
+own previous depth, so surfaces moving in depth keep their history. Depth's
+magnitude does not select the rejection strength, unlike Filament's sky
+override: the sky and far surfaces settle at rest like near ones. The sky is
+the far plane's exact depth, and a 3x3 neighbourhood that changes wholly to
+or from it is a disocclusion however close the depths (PROVENANCE.md,
+Motion-adaptive TAA).
 The closest-motion history uses RGBA16F rather than RG16F under this flag,
 adding eight bytes per pixel across its two buffers; B transports recovery
 hold, W is zero, and input motion's extra channels are never copied into it.

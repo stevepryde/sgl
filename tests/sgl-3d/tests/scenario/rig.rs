@@ -8,7 +8,8 @@ use sgl_3d::diagnostics::{self, DiagnosticTarget};
 use sgl_3d::glam::{Mat4, Vec2, Vec3};
 use sgl_3d::settings::{self, Settings};
 use sgl_3d::{
-    Backdrop, Exposure, FrameInput, InstanceId, InstanceState, Mobility, Renderer, Scene,
+    Backdrop, Exposure, FrameInput, InstanceId, InstanceState, MaterialId, MaterialShader,
+    Mobility, Renderer, Scene, ShaderId, SurfaceMaterial,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -153,6 +154,23 @@ impl Shape {
         Shape { quads }
     }
 
+    /// The same shape `factor` times the size about its own origin. Placed
+    /// `factor` times as far from a camera, it projects to the same pixels
+    /// at `factor` times the depth: the same picture with only depth's
+    /// magnitude changed.
+    pub fn scaled(&self, factor: f32) -> Shape {
+        Shape {
+            quads: self
+                .quads
+                .iter()
+                .map(|q| Quad {
+                    corners: q.corners.map(|c| c * factor),
+                    ..*q
+                })
+                .collect(),
+        }
+    }
+
     /// Every quad's corners at `pose`.
     pub fn quads_at(&self, pose: Pose) -> Vec<[Vec3; 4]> {
         let matrix = pose.matrix();
@@ -229,6 +247,8 @@ struct Placed {
     pose: Pose,
     group: u32,
     visible: bool,
+    /// Drawn through a game's shader ([`Rig::add_shaded`]).
+    shaded: bool,
 }
 
 /// A renderer, its scene and its output at `view.size`, driven frame by
@@ -302,38 +322,87 @@ impl Rig {
 
     /// Adds `shape` at `pose` as a moving instance in visibility `group`.
     pub fn add(&mut self, shape: &Shape, pose: Pose, group: u32) -> InstanceId {
+        self.add_placed(shape, pose, group, false).0
+    }
+
+    /// Adds `shape` at `pose` as a moving instance in visibility `group`,
+    /// each of its materials drawn through `shader` (a game's,
+    /// `Scene::add_shader` on `scene`) with `params` as its `ShaderParams`
+    /// and its vertices moving at most `bound` metres. The rig's poses do
+    /// not include what the shader moves.
+    pub fn add_shaded(
+        &mut self,
+        shape: &Shape,
+        pose: Pose,
+        group: u32,
+        (shader, bound): (ShaderId, f32),
+        params: &[u8],
+    ) -> InstanceId {
+        let (id, materials) = self.add_placed(shape, pose, group, true);
+        let queue = &self.gpu.queue;
+        for material in materials {
+            let values = self.scene.material(material).expect("a fixture material");
+            let shader = Some(MaterialShader {
+                shader,
+                displacement_bound: bound,
+            });
+            self.scene
+                .set_material(queue, material, SurfaceMaterial { shader, ..values })
+                .expect("a shaded fixture material");
+            self.scene
+                .set_shader_parameters(queue, material, params)
+                .expect("the shader's parameters");
+        }
+        id
+    }
+
+    fn add_placed(
+        &mut self,
+        shape: &Shape,
+        pose: Pose,
+        group: u32,
+        shaded: bool,
+    ) -> (InstanceId, Vec<MaterialId>) {
         for quad in &shape.quads {
             self.range = [
                 self.range[0].min(quad.radiance),
                 self.range[1].max(quad.radiance),
             ];
         }
-        let id = self.instance(shape, pose, group, true);
+        let (id, materials) = self.instance(shape, pose, group, true);
         self.placed.push(Placed {
             id,
             shape: shape.clone(),
             pose,
             group,
             visible: true,
+            shaded,
         });
-        id
+        (id, materials)
     }
 
-    fn instance(&mut self, shape: &Shape, pose: Pose, group: u32, visible: bool) -> InstanceId {
+    fn instance(
+        &mut self,
+        shape: &Shape,
+        pose: Pose,
+        group: u32,
+        visible: bool,
+    ) -> (InstanceId, Vec<MaterialId>) {
         let Gpu { device, queue } = &self.gpu;
-        let model = self
+        let ids = self
             .scene
             .add_asset(device, queue, shape.asset(group))
-            .expect("a fixture model")
-            .model;
+            .expect("a fixture model");
         let state = InstanceState {
             pose: self.render_pose(pose),
             visible,
-            ..InstanceState::new(model)
+            ..InstanceState::new(ids.model)
         };
-        self.scene
+        let id = self
+            .scene
             .add_instance(device, queue, state, Mobility::Moving)
-            .expect("a fixture instance")
+            .expect("a fixture instance");
+        (id, ids.materials)
     }
 
     fn placed(&mut self, id: InstanceId) -> &mut Placed {
@@ -380,12 +449,17 @@ impl Rig {
     }
 
     /// Replaces the scene with a new one holding the same placed shapes:
-    /// another scene, which restarts history.
+    /// another scene, which restarts history. Shaded shapes' shaders belong
+    /// to the old scene, so it takes plain shapes only.
     pub fn replace_scene(&mut self) {
+        assert!(
+            self.placed.iter().all(|p| !p.shaded),
+            "replace_scene re-adds plain shapes only"
+        );
         self.scene = Scene::new(&self.gpu.device, &self.gpu.queue);
         let placed = std::mem::take(&mut self.placed);
         for p in placed {
-            let id = self.instance(&p.shape, p.pose, p.group, p.visible);
+            let id = self.instance(&p.shape, p.pose, p.group, p.visible).0;
             self.placed.push(Placed { id, ..p });
         }
     }

@@ -38,6 +38,8 @@ code before it was filed.
 | A-10 | With SMAA or no antialiasing, an over-range pixel that a backend stores as infinity presents black, or spreads through bloom. | #464 made TAA, SSR and the reflection resolves safe against an infinite texel; bloom, the tone map, motion blur and heat were not covered. Backend-dependent; not observed on Metal, which saturates. | [#776](https://github.com/stevepryde/sgl/issues/776) |
 | A-11 | Heat distortion is invisible to FSR: the pixels it displaces keep static motion and empty masks. | The heat pass runs after the masks are written and writes neither. | [#777](https://github.com/stevepryde/sgl/issues/777) |
 | A-12 | Velvet's roughness cutoff has three unlinked copies (AR-2); nothing renders wrongly yet. | The trace and the temporal pass hard-code the value composition takes from a Rust constant. | [#778](https://github.com/stevepryde/sgl/issues/778) |
+| A-13 | Under motion-adaptive TAA every outline against the sky or a far surface flickers at rest, and far sub-pixel detail does not settle. | Filament's sky override gave full rejection to all depth beyond about `near / 0.001` metres, the sky included, which jitter flips at an outline. | [#791](https://github.com/stevepryde/sgl/issues/791) |
+| A-14 | A surface a vertex function or skin starts moving from rest at over about a pixel a frame leaves a ghost on its old outline for several frames. | Its previous depth neighbourhood already holds what it uncovers, and the 3x3 closest-motion search does not reach it; no rigid signal fires. | [#802](https://github.com/stevepryde/sgl/issues/802) |
 
 Each fix, and the test that fails without it, is recorded in its issue and
 pull request. No test of the whole frame could catch any of these; the
@@ -77,7 +79,6 @@ belong to the harness suites that follow #770.
 
 Design choices, recorded so a later pass does not rediscover them.
 
-- Far content at rest blends 12% of the current frame under motion-adaptive TAA (Filament's sky override, from about `near / 0.001` metres), where the still-pixel rule it superseded gave 1.5%. Whether distant sub-pixel detail shimmers at rest is the owner's to judge.
 - At rest, motion-adaptive TAA's slower feedback delays shading-only changes (a light switching, a flash). Filament has the same trade-off.
 - The directional light's disc sampling is slightly centre-weighted for a large `angular_diameter`, as Wicked Engine's is.
 

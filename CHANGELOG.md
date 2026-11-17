@@ -35,7 +35,8 @@ docs and specs the entry links.
   `DiagnosticTarget` matches add `Antialiased`.
 - `sgl-post-fx::temporal_anti_aliasing::FeatureFlags::MOTION_ADAPTIVE_HISTORY`
   adds motion-adaptive history rectification; `sgl-3d` enables it for TAA to
-  stabilize static subpixel geometry while retaining motion/depth rejection.
+  stabilize static subpixel geometry, near, far and against the sky, while
+  retaining motion/depth rejection.
   Other postFX flag combinations keep their existing resolve. No game-code
   changes are needed for SGL3D. Direct postFX callers replace the unused
   `TemporalAntiAliasingAttribs::padding0` with `rigid_object_motion` (default
