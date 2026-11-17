@@ -169,7 +169,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 		// Do not compute SSR for rough materials to improve
 		// performance at the cost of subtle artifacting.
-		if (roughness >= 0.7) {
+		if (roughness >= ROUGHNESS_CUTOFF) {
 			textureStore(output_color, pixel_pos, vec4<f32>(0.0));
 			textureStore(output_mip_level, pixel_pos, vec4<f32>(0.0));
 			textureStore(output_reprojection, pixel_pos, vec4<f32>(0.0));

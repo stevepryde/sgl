@@ -36,15 +36,21 @@ static HIZ: Module = Module {
     source: include_str!("velvet/godot_reflections_hiz.wgsl"),
     deps: &[],
 };
+/// The roughness cutoff the trace and the temporal pass share.
+static CUTOFF: Module = Module {
+    name: "godot_reflections_cutoff",
+    source: include_str!("velvet/godot_reflections_cutoff.wgsl"),
+    deps: &[],
+};
 static TRACE: Module = Module {
     name: "godot_reflections_trace",
     source: include_str!("velvet/godot_reflections_trace.wgsl"),
-    deps: &[&super::REPROJECTION],
+    deps: &[&super::REPROJECTION, &CUTOFF],
 };
 static TEMPORAL: Module = Module {
     name: "godot_reflections_temporal",
     source: include_str!("velvet/godot_reflections_temporal.wgsl"),
-    deps: &[&super::TEMPORAL_REPROJECTION],
+    deps: &[&super::TEMPORAL_REPROJECTION, &CUTOFF],
 };
 static FILTER: Module = Module {
     name: "godot_reflections_filter",
@@ -80,7 +86,8 @@ const FADE_IN: f32 = 0.15;
 const FADE_OUT: f32 = 2.0;
 const DEPTH_TOLERANCE: f32 = 0.5;
 /// Perceptual roughness at which Godot's trace stops (`roughness >= 0.7`),
-/// and the width of the fade below it in its forward pass (0.6 to 0.7).
+/// twin of `ROUGHNESS_CUTOFF` in godot_reflections_cutoff.wgsl, and the width
+/// of the fade below it in its forward pass (0.6 to 0.7).
 pub(crate) const ROUGHNESS_CUTOFF: f32 = 0.7;
 pub(crate) const ROUGHNESS_FADE: f32 = 0.1;
 
@@ -584,12 +591,20 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 4] {
 
 /// The constants with WGSL twins.
 #[cfg(test)]
-pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 1] {
-    [crate::shading::layout_tests::Constant::new(
-        "godot_reflections_temporal",
-        "TEMPORAL_CONTINUES",
-        naga::Literal::U32(TEMPORAL_CONTINUES),
-    )]
+pub(crate) fn constants() -> [crate::shading::layout_tests::Constant; 2] {
+    use crate::shading::layout_tests::Constant;
+    [
+        Constant::new(
+            "godot_reflections_temporal",
+            "TEMPORAL_CONTINUES",
+            naga::Literal::U32(TEMPORAL_CONTINUES),
+        ),
+        Constant::new(
+            "godot_reflections_trace",
+            "ROUGHNESS_CUTOFF",
+            naga::Literal::F32(ROUGHNESS_CUTOFF),
+        ),
+    ]
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

@@ -26,6 +26,10 @@ fn grazing_mapped_normals_keep_distant_visible_targets() {
                 include_str!("../../../crates/sgl-3d/src/stages/reflections/reprojection.wgsl"),
                 "\n",
                 include_str!(
+                    "../../../crates/sgl-3d/src/stages/reflections/velvet/godot_reflections_cutoff.wgsl"
+                ),
+                "\n",
+                include_str!(
                     "../../../crates/sgl-3d/src/stages/reflections/velvet/godot_reflections_trace.wgsl"
                 )
             )

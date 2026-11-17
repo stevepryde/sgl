@@ -1182,6 +1182,8 @@ last, after everything it may use, and refuses a directive in it.
   `shading/occlusion.wgsl`,
   which completion and composition, lit shading (probe captures, ray hits
   and blended surfaces) and the G-buffer's traced normal and roughness call.
+  A screen-space method's cutoff has one owner, which its trace, its
+  temporal pass and composition read.
   Every lobe's response takes the reflectance at grazing incidence (F90)
   KHR_materials_specular defines, the specular strength mixed toward 1 by
   metallic (`surface_f90`), as Filament ef1a133's specular-factor path

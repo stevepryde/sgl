@@ -29,6 +29,10 @@ fn trace_numerical_boundaries() {
                 include_str!("../../../crates/sgl-3d/src/stages/reflections/reprojection.wgsl"),
                 "\n",
                 include_str!(
+                    "../../../crates/sgl-3d/src/stages/reflections/velvet/godot_reflections_cutoff.wgsl"
+                ),
+                "\n",
+                include_str!(
                     "../../../crates/sgl-3d/src/stages/reflections/velvet/godot_reflections_trace.wgsl"
                 )
             )

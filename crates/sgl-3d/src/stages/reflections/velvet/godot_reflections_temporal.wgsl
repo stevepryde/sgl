@@ -8,7 +8,7 @@
 // rays accumulate. Modified: at Godot's traced size, on its tone-mapped
 // premultiplied colour and confidence; no variance output; receiver depth is
 // Godot's hi-z mip 0 and the pass keeps its own depth history; pixels Godot
-// does not trace (sky, roughness >= 0.7) pass through.
+// does not trace (sky, roughness >= ROUGHNESS_CUTOFF) pass through.
 struct TemporalParams {
 	inverse_view_projection: mat4x4<f32>,
 	previous_view_projection: mat4x4<f32>,
@@ -43,7 +43,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 	let z = textureLoad(depth, p, 0).x;
 	textureStore(depth_output, p, vec4<f32>(z));
 	let c = textureLoad(temporal_current, p, 0);
-	let traced = z > 0.0 && textureLoad(normal_roughness, p, 0).w < 0.7;
+	let traced = z > 0.0 && textureLoad(normal_roughness, p, 0).w < ROUGHNESS_CUTOFF;
 	if ((params.flags & TEMPORAL_CONTINUES) == 0u || !traced) {
 		textureStore(output, p, c);
 		textureStore(history_output, p, c);
