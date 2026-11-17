@@ -32,6 +32,9 @@ struct WorldParams {
 @group(3) @binding(2) var world_material:texture_2d<f32>;
 @group(3) @binding(3) var world_f0:texture_2d<f32>;
 @group(3) @binding(4) var<uniform> world:WorldParams;
+// The surface depth (the Surface contract, specs/sgl3d-architecture.md),
+// which the classification and the temporal pass read.
+@group(3) @binding(7) var world_surface_depth:texture_depth_2d;
 
 // Full-resolution pixels per tracing pixel on each axis (world.rs
 // DOWNSCALE).
@@ -65,6 +68,12 @@ fn world_receiver(p:vec2<i32>)->WorldReceiver {
  let lit=gbuffer_lit(textureLoad(world_f0,q,0));
  let roughness=gbuffer_traced_roughness(material,lit);
  return WorldReceiver(depth,gbuffer_reflection_normal(normals,material.coat),roughness,world_traces(depth,lit,roughness));
+}
+// Whether a blended receiver is the surface at `p`, whose opaque depth is
+// `depth`: its opaque surface, which composes its fallback alone there,
+// traces no world ray, and the G-buffer's motion there is the receiver's.
+fn world_under_receiver(p:vec2<i32>,depth:f32)->bool {
+ return gbuffer_under_receiver(textureLoad(world_surface_depth,world_clamped(p),0),depth);
 }
 fn world_clamped(p:vec2<i32>)->vec2<i32> {
  return clamp(p,vec2(0),vec2<i32>(world.full.xy)-vec2(1));

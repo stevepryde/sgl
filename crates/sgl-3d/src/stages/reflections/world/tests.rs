@@ -1153,3 +1153,382 @@ fn world_trace_pipelines_retain_current_and_previous() {
         "C is compiled"
     );
 }
+
+/// The full-resolution side of the temporal fixture, a power of two so that
+/// its traced grid's texel centres are exact in UV, and the frames a blended
+/// receiver crosses it before it is removed.
+const TEMPORAL_SIZE: u32 = 64;
+const RECEIVER_FRAMES: u32 = 9;
+/// The receiver's full-resolution rows, and its width; it moves a traced
+/// texel (2 pixels) a frame from `receiver_left(0)`.
+const RECEIVER_ROWS: std::ops::Range<u32> = 16..48;
+const RECEIVER_WIDTH: u32 = 16;
+fn receiver_left(frame: u32) -> u32 {
+    8 + 2 * frame
+}
+
+/// Resolved world-ray radiance at traced texel `(x, y)` on content frame
+/// `frame`: varied (0.5 to 1.5 per channel, a new draw each frame) so that
+/// accumulated history differs from any one frame's rays and the colour
+/// box admits history, and, under a receiver, the near-empty colour the
+/// resolve leaves where the classification traced nothing.
+fn resolved(x: u32, y: u32, frame: u32, covered: bool) -> [f32; 4] {
+    if covered {
+        return [0.00001; 4];
+    }
+    std::array::from_fn(|channel| {
+        let mut h = x.wrapping_mul(73_856_093)
+            ^ y.wrapping_mul(19_349_663)
+            ^ frame.wrapping_mul(83_492_791)
+            ^ (channel as u32).wrapping_mul(2_654_435_761);
+        h ^= h >> 13;
+        h = h.wrapping_mul(0x5bd1_e995);
+        h ^= h >> 15;
+        if channel == 3 {
+            1.
+        } else {
+            0.5 + (h & 0xffff) as f32 / 65535.
+        }
+    })
+}
+
+/// One frame of the temporal fixture: the stage's history count, the
+/// content frame of its rays, and the receiver's left edge, if it holds one.
+#[derive(Clone, Copy)]
+struct TemporalFrame {
+    count: u32,
+    content: u32,
+    receiver: Option<u32>,
+}
+
+/// The production temporal pass's colour output after `frames`, run in
+/// order over one history pair: a static camera 10 m in front of a lit,
+/// traced floor facing it (the opaque depth), and, where a frame holds a
+/// receiver, a blended receiver 5 m away drawn over a copy of that depth
+/// (the surface depth) and moving right, whose motion the G-buffer's
+/// motion holds under it (the Surface contract).
+fn temporal_output(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    frames: &[TemporalFrame],
+) -> Vec<[f32; 4]> {
+    use wgpu::util::DeviceExt;
+    let size = [TEMPORAL_SIZE; 2];
+    let reduced = size.map(|side| side / super::DOWNSCALE);
+    let full_texels = (size[0] * size[1]) as usize;
+    let normal = test_support::hdr_texture(device, queue, size, &vec![[0.; 4]; full_texels]);
+    let material =
+        test_support::hdr_texture(device, queue, size, &vec![[0., 0.2, 0., 1.]; full_texels]);
+    let f0 = test_support::hdr_texture(device, queue, size, &vec![[1.; 4]; full_texels]);
+    let traced = |label, format, usage| super::texture(device, label, reduced, format, usage);
+    let hdr = crate::shading::gbuffer::COLOR;
+    let r32 = wgpu::TextureFormat::R32Float;
+    let written = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC;
+    let colour = [0, 1].map(|_| traced("temporal colour", hdr, written));
+    let variance = [0, 1].map(|_| traced("temporal variance", hdr, written));
+    let depth_history = [0, 1].map(|_| traced("temporal depth", r32, written));
+    let reprojection = traced("hit depth", r32, wgpu::TextureUsages::COPY_DST);
+    queue.write_texture(
+        reprojection.texture().as_image_copy(),
+        bytemuck::cast_slice(&vec![0.005f32; (reduced[0] * reduced[1]) as usize]),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(reduced[0] * 4),
+            rows_per_image: Some(reduced[1]),
+        },
+        reprojection.texture().size(),
+    );
+    let variance_current = test_support::hdr_texture(
+        device,
+        queue,
+        reduced,
+        &vec![[0.01; 4]; (reduced[0] * reduced[1]) as usize],
+    );
+    let depth_target =
+        |label| crate::view::targets::target(device, label, size, crate::shading::gbuffer::DEPTH);
+    let opaque_depth = depth_target("floor depth");
+    let surface_depth = depth_target("surface depth");
+    let fill = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("receiver depth"),
+        source: wgpu::ShaderSource::Wgsl(
+            "@vertex fn fill(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32> {\n let uv=vec2<f32>(f32((i<<1u)&2u),f32(i&2u));\n return vec4(uv*2.-1.,0.,1.);\n}\n"
+                .into(),
+        ),
+    });
+    // Fills its viewport at the viewport's depth.
+    let receiver_pass = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("receiver depth"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: &fill,
+            entry_point: Some("fill"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: None,
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: crate::shading::gbuffer::DEPTH,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("world reflection temporal"),
+        source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&super::DENOISE]).into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("world reflection temporal"),
+        layout: None,
+        module: &shader,
+        entry_point: Some(super::WORLD_TEMPORAL_ENTRY),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    let bind = |index, entries: &[(u32, wgpu::BindingResource)]| {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(index),
+            entries: &entries
+                .iter()
+                .map(|(binding, resource)| wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: resource.clone(),
+                })
+                .collect::<Vec<_>>(),
+        })
+    };
+    let projection = crate::perspective(std::f32::consts::FRAC_PI_2, 1., 0.1);
+    let [w, h] = size.map(|v| v as f32);
+    let [rw, rh] = reduced.map(|v| v as f32);
+    let covered = |receiver: Option<u32>, x: u32, y: u32| {
+        receiver.is_some_and(|left| {
+            (left..left + RECEIVER_WIDTH).contains(&x) && RECEIVER_ROWS.contains(&y)
+        })
+    };
+    let mut written = 0;
+    for (index, frame) in frames.iter().enumerate() {
+        written = index % 2;
+        let previous = 1 - written;
+        let texture = wgpu::BindingResource::TextureView;
+        let current = test_support::hdr_texture(
+            device,
+            queue,
+            reduced,
+            &(0..reduced[1])
+                .flat_map(|y| (0..reduced[0]).map(move |x| (x, y)))
+                .map(|(x, y)| {
+                    let d = super::DOWNSCALE;
+                    resolved(x, y, frame.content, covered(frame.receiver, x * d, y * d))
+                })
+                .collect::<Vec<_>>(),
+        );
+        // Current minus previous UV, a frame's move, under the receiver.
+        let motion = test_support::hdr_texture(
+            device,
+            queue,
+            size,
+            &(0..size[1])
+                .flat_map(|y| (0..size[0]).map(move |x| (x, y)))
+                .map(|(x, y)| {
+                    if covered(frame.receiver, x, y) {
+                        [2. / w, 0., 0., 0.]
+                    } else {
+                        [0.; 4]
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+        let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::bytes_of(&super::Params {
+                inverse_view_projection: projection.inverse().to_cols_array_2d(),
+                previous_view_projection: projection.to_cols_array_2d(),
+                eye: [0., 0., 0., 0.1],
+                full: [w, h, 1. / w, 1. / h],
+                reduced: [rw, rh, 1. / rw, 1. / rh],
+                frame: frame.count,
+                rays: 0,
+                traced: 0.49,
+                range: super::RANGE,
+                previous_near: 0.1,
+                fade: 0.1,
+                padding: [0; 2],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let depth_pass = |encoder: &mut wgpu::CommandEncoder, view, receiver: Option<u32>| {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("fixture depth"),
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.01),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            if let Some(left) = receiver {
+                pass.set_pipeline(&receiver_pass);
+                pass.set_viewport(
+                    left as f32,
+                    RECEIVER_ROWS.start as f32,
+                    RECEIVER_WIDTH as f32,
+                    RECEIVER_ROWS.len() as f32,
+                    0.02,
+                    0.02,
+                );
+                pass.draw(0..3, 0..1);
+            }
+        };
+        depth_pass(&mut encoder, &opaque_depth, None);
+        depth_pass(&mut encoder, &surface_depth, frame.receiver);
+        let inputs = bind(
+            0,
+            &[
+                (8, wgpu::BindingResource::Sampler(&sampler)),
+                (30, texture(&current)),
+                (31, texture(&colour[previous])),
+                (32, texture(&variance_current)),
+                (33, texture(&variance[previous])),
+                (34, texture(&reprojection)),
+                (35, texture(&motion)),
+                (36, texture(&depth_history[previous])),
+                (40, texture(&colour[written])),
+                (41, texture(&variance[written])),
+                (42, texture(&depth_history[written])),
+            ],
+        );
+        let receivers = bind(
+            3,
+            &[
+                (0, texture(&opaque_depth)),
+                (1, texture(&normal)),
+                (2, texture(&material)),
+                (3, texture(&f0)),
+                (4, params.as_entire_binding()),
+                (7, texture(&surface_depth)),
+            ],
+        );
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &inputs, &[]);
+            pass.set_bind_group(3, &receivers, &[]);
+            pass.dispatch_workgroups(reduced[0].div_ceil(8), reduced[1].div_ceil(8), 1);
+        }
+        queue.submit([encoder.finish()]);
+    }
+    test_support::read(device, queue, colour[written].texture(), 8)
+        .chunks_exact(8)
+        .map(|texel| std::array::from_fn(|c| test_support::half(&texel[c * 2..c * 2 + 2])))
+        .collect()
+}
+
+// Plausible defect: under a blended receiver the classification traces no
+// world ray, but the temporal pass keeps accumulating the opaque surface's
+// history there, reprojected by the receiver's motion and tested against
+// the opaque depth, which agrees with itself; when the receiver moves on,
+// the uncovered texels blend this frame's rays with that dragged, emptied
+// history at Wicked's 0.95 response, with no disocclusion raised. Oracle:
+// an independent run that never had the receiver and restarts its history
+// on the frame the receiver is removed, whose output is that frame's rays
+// whole; the uncovered texels must equal it. Texels at least a texel inside the
+// last covered region are compared, since Wicked's disocclusion search
+// takes a valid neighbour's history within one texel of a disoccluded
+// one. Texels two or more from the receiver's whole path, whose inputs
+// and 3 by 3 colour box are the same with and without it, must equal a
+// run that never had the receiver, over all its frames: the fix keeps
+// their accumulation, which differs from their current rays.
+#[test]
+fn texels_a_receiver_uncovers_take_their_current_rays_whole() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let removed = RECEIVER_FRAMES;
+    let frames = |receiver: bool| {
+        (0..=removed)
+            .map(|frame| TemporalFrame {
+                count: frame,
+                content: frame,
+                receiver: (receiver && frame < removed).then(|| receiver_left(frame)),
+            })
+            .collect::<Vec<_>>()
+    };
+    let crossed = temporal_output(gpu, &frames(true));
+    let never = temporal_output(gpu, &frames(false));
+    let restarted = temporal_output(
+        gpu,
+        &[TemporalFrame {
+            count: 0,
+            content: removed,
+            receiver: None,
+        }],
+    );
+    let side = TEMPORAL_SIZE / super::DOWNSCALE;
+    let traced =
+        |full: std::ops::Range<u32>| full.start / super::DOWNSCALE..full.end / super::DOWNSCALE;
+    let last = receiver_left(removed - 1);
+    let last_x = traced(last..last + RECEIVER_WIDTH);
+    let rows = traced(RECEIVER_ROWS);
+    let path_x = traced(receiver_left(0)..last + RECEIVER_WIDTH);
+    let mut uncovered = Vec::new();
+    let mut kept = Vec::new();
+    let mut accumulated = 0;
+    for y in 0..side {
+        for x in 0..side {
+            let i = (y * side + x) as usize;
+            let inside = |range: &std::ops::Range<u32>, v: u32, margin: u32| {
+                v >= range.start + margin && v + margin < range.end
+            };
+            if inside(&last_x, x, 1) && inside(&rows, y, 1) {
+                if crossed[i] != restarted[i] {
+                    uncovered.push(((x, y), crossed[i], restarted[i]));
+                }
+            } else {
+                let near =
+                    |range: &std::ops::Range<u32>, v: u32| v + 2 > range.start && v < range.end + 1;
+                if !(near(&path_x, x) && near(&rows, y)) {
+                    accumulated += usize::from(never[i] != restarted[i]);
+                    if crossed[i] != never[i] {
+                        kept.push(((x, y), crossed[i], never[i]));
+                    }
+                }
+            }
+        }
+    }
+    eprintln!(
+        "uncovered texels unlike a restarted run: {}; texels off the receiver's path unlike a run without it: {}; of those, accumulated: {accumulated}",
+        uncovered.len(),
+        kept.len()
+    );
+    assert!(
+        uncovered.is_empty(),
+        "{} uncovered texels kept history from under the receiver: {:?}",
+        uncovered.len(),
+        &uncovered[..uncovered.len().min(4)]
+    );
+    assert!(
+        accumulated > 0,
+        "the fixture must accumulate history off the receiver's path"
+    );
+    assert!(
+        kept.is_empty(),
+        "{} texels off the receiver's path differ from a run without it: {:?}",
+        kept.len(),
+        &kept[..kept.len().min(4)]
+    );
+}

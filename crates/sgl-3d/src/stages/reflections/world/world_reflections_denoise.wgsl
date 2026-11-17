@@ -10,9 +10,14 @@
 // HLSL would read zero; a resolve neighbour floors its offset pixel where
 // Wicked's int2 truncates, so one off the grid is skipped rather than
 // read as the edge pixel; the temporal pass keeps its own reduced-grid depth
-// history; the resolve reads radiance above binary16's range (+infinity) as
-// its largest finite value, as FSR's PrepareRgb clamps its input, so its
-// tone map makes no inf / inf, and keeps its inverse within that range (#464).
+// history, and takes a traced surface under a blended receiver, where the
+// classification traced no ray and the motion is the receiver's, as
+// Wicked's temporal pass takes one that needs no reflection, storing no
+// depth there (0, the sky's), against which the surface fails the
+// disocclusion test once uncovered (#774); the resolve reads radiance above
+// binary16's range (+infinity) as its largest finite value, as FSR's
+// PrepareRgb clamps its input, so its tone map makes no inf / inf, and keeps
+// its inverse within that range (#464).
 @group(0) @binding(8) var linear_sampler:sampler;
 
 // Walter et al. 2007; Heitz 2014 (Wicked brdf.hlsli, mediump-saturated).
@@ -149,14 +154,15 @@ const VARIANCE_TEMPORAL_RESPONSE:f32=.9;
  let p=vec2<i32>(id.xy);
  let downscale=i32(WORLD_DOWNSCALE);
  let receiver=world_receiver(p*downscale);
- textureStore(temporal_depth_output,p,vec4(receiver.depth));
+ let covered=receiver.traced && world_under_receiver(p*downscale,receiver.depth);
+ textureStore(temporal_depth_output,p,vec4(select(receiver.depth,0.,covered)));
  let current=textureLoad(temporal_current,p,0);
  if world.frame==0u {
   textureStore(temporal_output,p,current);
   textureStore(temporal_variance_output,p,textureLoad(temporal_variance_current,p,0));
   return;
  }
- if !receiver.traced {
+ if !receiver.traced || covered {
   textureStore(temporal_output,p,current);
   textureStore(temporal_variance_output,p,vec4(0.));
   return;

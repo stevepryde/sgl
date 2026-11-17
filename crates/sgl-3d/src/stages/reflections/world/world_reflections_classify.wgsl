@@ -23,12 +23,10 @@
 // reset here; no denoiser tile list, since the denoise passes run over the
 // whole grid (the architecture's Reflections says why); and the indirect
 // dispatch runs in rows of WORLD_GROUP_ROW workgroups.
-// The screen-space method's result and the surface depth (the Surface
-// contract, specs/sgl3d-architecture.md): a receiver whose lobe composition
-// takes whole from the method, or an opaque one under a blended receiver,
-// which composes its own, traces nothing.
+// The screen-space method's result: a receiver whose lobe composition
+// takes whole from the method, or an opaque one under a blended receiver
+// (world_under_receiver), traces nothing.
 @group(3) @binding(5) var world_screen_space:texture_2d<f32>;
-@group(3) @binding(7) var world_surface_depth:texture_depth_2d;
 @group(0) @binding(10) var classify_indirect:texture_storage_2d<rgba16float,write>;
 @group(0) @binding(11) var classify_direction_pdf:texture_storage_2d<rgba16float,write>;
 @group(0) @binding(12) var classify_length:texture_storage_2d<r32float,write>;
@@ -47,7 +45,7 @@ fn world_needs_ray(tracing:vec2<u32>)->bool {
  if world_fallback_share(pixel,textureLoad(world_screen_space,pixel,0).a)<=0.001 {
   return false;
  }
- return !gbuffer_under_receiver(textureLoad(world_surface_depth,pixel,0),textureLoad(world_depth,pixel,0));
+ return !world_under_receiver(pixel,textureLoad(world_depth,pixel,0));
 }
 var<workgroup> tile_rays:atomic<u32>;
 var<workgroup> tile_base:u32;

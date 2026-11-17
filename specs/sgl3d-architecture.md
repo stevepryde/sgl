@@ -1171,7 +1171,10 @@ last, after everything it may use, and refuses a directive in it.
   confidence ([D-17](decisions.md)); world-space rays, from the opaque
   surfaces, fill its misses and skip pixels under a receiver; one
   composition adds the opaque lobes, and under a receiver gives the opaque
-  lobe its fallback alone, since the result there is the receiver's. The
+  lobe its fallback alone, since the result there is the receiver's.
+  World-ray accumulation keeps no history at a pixel under a receiver,
+  whose motion is the receiver's, so the opaque surface a receiver
+  uncovers starts from its current rays. The
   lobes' responses and directions, which lobe is
   traced, the method's cutoff test and fade, and the formula response ×
   (reflected × fade + fallback × (1 − confidence × fade)) have one owner,

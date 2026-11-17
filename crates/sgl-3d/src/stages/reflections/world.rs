@@ -27,7 +27,7 @@ const RANGE: f32 = 1000.;
 
 pub(crate) struct Inputs<'a> {
     /// The opaque depth, and the surface depth nearer than it under a
-    /// receiver, whose pixels the rays skip.
+    /// receiver, whose pixels the rays skip and keep no history at.
     pub depth: &'a wgpu::TextureView,
     pub surface_depth: &'a wgpu::TextureView,
     pub normal: &'a wgpu::TextureView,
@@ -494,13 +494,14 @@ impl WorldReflections {
                         slot: usize,
                         label: &'static str,
                         entries: &[(u32, wgpu::BindingResource)],
+                        receivers: &[(u32, wgpu::BindingResource)],
                         grid: [u32; 2],
                         encoder: &mut wgpu::CommandEncoder| {
             let bind = denoise.groups[slot].get(device, label, entries);
             let receiver_group =
                 denoise
                     .receivers
-                    .get(device, "world reflection receivers", &receivers);
+                    .get(device, "world reflection receivers", receivers);
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(label),
                 timestamp_writes: timing.and_then(|t| t.compute_pass("world reflection denoise")),
@@ -522,6 +523,7 @@ impl WorldReflections {
                 (21, view(&t.resolve_variance)),
                 (22, view(&t.reprojection)),
             ],
+            &receivers,
             t.reduced,
             encoder,
         );
@@ -542,6 +544,7 @@ impl WorldReflections {
                 (41, view(&t.temporal_variance[current])),
                 (42, view(&t.depth[current])),
             ],
+            &[receivers.as_slice(), &[(7, view(input.surface_depth))]].concat(),
             t.reduced,
             encoder,
         );
@@ -555,6 +558,7 @@ impl WorldReflections {
                 (51, view(&t.temporal_variance[current])),
                 (52, view(&t.output)),
             ],
+            &receivers,
             t.full,
             encoder,
         );

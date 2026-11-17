@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` world-space reflections (`Settings::world_space_reflections`) no
+  longer fade in over about a second behind a moving blended receiver: the
+  opaque surface it uncovers takes that frame's rays rather than history
+  dragged and emptied under the receiver. No game-code changes are needed.
 - `sgl-post-fx` SSR now treats as background only depths at or beyond the
   camera's far plane, whatever the near plane (it lost surfaces past 909 m
   with a 1 mm near plane, past 9.1 km with 0.1 m), and every pass after the
