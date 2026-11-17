@@ -2719,12 +2719,14 @@ what its maps and lights did there.
 
 ## Browser (WASM + WebGPU)
 
-The browser is a first-class, maintained target ([D-20](../../specs/decisions.md),
-[D-27](../../specs/decisions.md)), not a parity target: features or
-speed-ups the browser cannot have fall back or are absent there. The
-same `Scene`, `Renderer` and frame run on the page's WebGPU device, built for
-`wasm32-unknown-unknown` (sgl-3d enables wgpu's `webgpu` backend). WebGL2 is
-not supported, since SGL3D needs compute.
+The browser is a first-class target in its own right
+([D-20](../../specs/decisions.md), [D-27](../../specs/decisions.md),
+[D-48](../../specs/decisions.md)): SGL3D supports there everything WebGPU
+supports, and only a feature or speed-up the web platform cannot run falls
+back or is absent. The same `Scene`, `Renderer` and frame run on the page's
+WebGPU device, built for `wasm32-unknown-unknown` (sgl-3d enables wgpu's
+`webgpu` backend). WebGL2 is not supported, since SGL3D needs compute; if
+WebGL is ever added it will be a minimal fallback.
 
 - **Device.** Request it as natively, with `graphics_device::limits` (the
   adapter's limits; WebGPU's defaults are the floor, S3D-1) and

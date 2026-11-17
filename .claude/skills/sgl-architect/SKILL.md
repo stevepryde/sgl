@@ -48,9 +48,12 @@ this is the spirit they share.
 - **Coherence over compatibility.** Releases may break APIs, behaviour and data
   formats; the changelog tells the consuming agent how to migrate. No shims, no
   parallel paths, no dead options kept to spare a consumer an edit.
-- **Native takes everything the device can do; the browser is maintained, not a
-  parity target.** It gets a fallback or goes without. Hardware ray tracing is
-  always optional.
+- **Native and the web are both first class, each in its own right.** Each takes
+  everything its platform can do: native every feature the device supports,
+  the web every feature WebGPU supports. A feature the web cannot run falls
+  back or is absent there, and native is never held back for it; a feature the
+  web can run is never left native-only. WebGPU only; WebGL, if ever added, is
+  a minimal fallback. Hardware ray tracing is always optional.
 - **Evidence that can fail.** Tests have independent oracles; rendering is judged
   by numbers read from the frame and by per-pass GPU time. The owner judges
   the look. Nothing is verified by ceremony.
@@ -110,8 +113,9 @@ each is cheap to settle on paper and expensive to reverse in code.
 6. **What it replaces.** Name what becomes obsolete and is deleted in the same
    change (RD-3, AR-11): code, settings, tests, docs, records. If nothing is
    deleted, check that nothing now overlaps.
-7. **Platforms and limits.** Native and browser behaviour (D-27), the Basic and
-   Extended binding tiers, the software path where hardware ray tracing is the
+7. **Platforms and limits.** What it does on native and on the web: everything
+   each platform can run, and for anything native-only the reason the web
+   cannot and its fallback (D-27, D-48). The Basic and Extended binding tiers, the software path where hardware ray tracing is the
    fast one (D-30), a named compile-time cap on every GPU loop (AR-12), and what
    happens on resize, camera cut, device loss and a skipped frame if it keeps
    history.
@@ -183,6 +187,7 @@ not the test: a grep finds candidates, reading the code decides.
 | A change that reached `main` without its changelog entry, spec update or notices | `AGENTS.md` | commits since the last pass |
 | Tests that cannot fail; a feature nothing tests in motion | `specs/testing.md` | test oracles; each feature in the feature guide against the tests that render it |
 | A port without its header, licence or registered upstream | RD-2 | ported files, `licenses/upstreams.json` |
+| A feature left native-only that the web platform could run | D-48 | `target_arch` gates, `graphics_device` feature requests, the effective configuration's fallbacks, the feature guide's platform exceptions |
 
 For a large scope, hand independent sweeps to read-only agents, each with one
 area, the rules it checks and the rule of evidence below, and wait for them.

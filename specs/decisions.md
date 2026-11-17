@@ -741,3 +741,19 @@ Use the [current specs](README.md) for implementation and the
   Rationale: a fixed list of excluded features ruled out things SGL may
   come to need, to prevent an outcome, SGL becoming an engine, that the
   ownership rule already prevents.
+
+- **D-48** Owner direction, 2026-11-17: the web is a first-class target in
+  its own right, through wgpu's WebGPU backend. Each target takes everything
+  its own platform can do: native every feature the device supports, the web
+  every feature WebGPU supports. Where the web platform cannot run a native
+  feature, the web does not use it and takes a fallback or goes without,
+  reported through the effective configuration, and no native feature or
+  speed-up is held back for it: D-27 stands in that. The tightening is the
+  converse: a feature the web can run is supported there, never left
+  native-only because native came first, and the web is not judged against
+  native but against what its own platform offers. WebGPU only for now;
+  WebGL stays unsupported, and if it is ever added it is a minimal fallback,
+  not a second full target. This replaces D-27's summary of the browser as
+  "maintained" and "not a feature-parity target".
+  Rationale: "maintained, not parity" described the web by what it lacks and
+  licensed leaving it behind; first class means complete on its own terms.
