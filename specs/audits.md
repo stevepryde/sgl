@@ -39,17 +39,17 @@ code before it was filed.
 | A-11 | Heat distortion is invisible to FSR: the pixels it displaces keep static motion and empty masks. | The heat pass runs after the masks are written and writes neither. | [#777](https://github.com/stevepryde/sgl/issues/777) |
 | A-12 | Velvet's roughness cutoff has three unlinked copies (AR-2); nothing renders wrongly yet. | The trace and the temporal pass hard-code the value composition takes from a Rust constant. | [#778](https://github.com/stevepryde/sgl/issues/778) |
 
-Each fix, and the scenario or test that fails without it, is recorded in its
-issue and pull request. Until the scenario harness
-([#770](https://github.com/stevepryde/sgl/issues/770)) existed, none of these
-could have been caught by a test of the whole frame.
+Each fix, and the test that fails without it, is recorded in its issue and
+pull request. No test of the whole frame could catch any of these; the
+scenario harness ([#770](https://github.com/stevepryde/sgl/issues/770)) is
+meant to change that.
 
 ### Records that were wrong
 
-Corrected with this log; the code was right.
+The code was right. Corrected with this log unless noted.
 
-- The README's temporal antialiasing section predated #767 and did not describe the motion-adaptive history (corrected with A-1).
-- The Shared contracts' statement that every history "rejects what changed by reprojection and clamping" no longer holds for TAA at rest, where a shading-only change converges over about twenty frames.
+- The README's temporal antialiasing section predated #767 and did not describe the motion-adaptive history; corrected by A-1's fix, not here.
+- The Shared contracts' statement that every history "rejects what changed by reprojection and clamping" no longer holds for TAA at rest, where a shading-only change converges over tens of frames.
 - `settings.md` said ambient occlusion runs at scene resolution; it runs at render resolution.
 - `AutoExposure`'s documentation still described Bevy's metering of near-black samples, which D-46 replaced.
 - The README's receiver limits omitted `keeps_specular` and transmissive receivers; the README and `material.rs` said the unrefracted transmission fallback keeps its tint, where it passes the mean.
@@ -59,15 +59,15 @@ Corrected with this log; the code was right.
 ### Guards that were missing
 
 Invariants the code relied on that no spec clause or test protected. Each is
-now stated in `sgl3d-architecture.md`; the tests that would fail belong to the
-harness suites that follow #770.
+now stated in `sgl3d-architecture.md` unless noted; the tests that would fail
+belong to the harness suites that follow #770.
 
 - FSR's `motionVectorScale` is minus the render size because motion is current minus previous UV; the raster jitter is the clip-space translation of the pixel offset reported to the resolver (the Temporal design).
 - The motion target's UV is texture space, +y down; no motion blur test fails for a flipped y (the Temporal design).
 - Ambient occlusion runs only under a centred reversed-Z perspective projection (Frame item 5).
 - The fog volume is indexed by planar view depth, never distance along the ray; the one blended-fog test reads the centre pixel, where the two agree (the Fog design).
 - Cluster lookups pass render-size pixels and the clustered view's depth (Shared contracts, Lights and shadows).
-- Cascade map sizes must be powers of two for the texel snapping to be exact; stated and tested with [#772](https://github.com/stevepryde/sgl/issues/772).
+- Cascade map sizes must be powers of two for the texel snapping to be exact; not stated here: to be stated and tested with [#772](https://github.com/stevepryde/sgl/issues/772).
 
 ### Waiting on the owner
 
@@ -80,15 +80,3 @@ Design choices, recorded so a later pass does not rediscover them.
 - Far content at rest blends 12% of the current frame under motion-adaptive TAA (Filament's sky override, from about `near / 0.001` metres), where the still-pixel rule it superseded gave 1.5%. Whether distant sub-pixel detail shimmers at rest is the owner's to judge.
 - At rest, motion-adaptive TAA's slower feedback delays shading-only changes (a light switching, a flash). Filament has the same trade-off.
 - The directional light's disc sampling is slightly centre-weighted for a large `angular_diameter`, as Wicked Engine's is.
-
-### Found consistent
-
-Every other invariant the passes checked matched its reference or a recorded
-departure, among them: TAA's jitter, reprojection, history sampling, clip and
-reset rules; every input FSR2 and FSR3.1 are given; each Crystal and Velvet
-pass against its source; BVH traversal bounds; cascade fitting and filtering;
-the AMD shadow denoiser; XeGTAO and its temporal filter; DDGI; the irradiance
-volume; auto exposure, bloom, grading, the three tone mappers, SMAA and FSR1;
-froxel fog; transmission against three.js; the BRDF, LTC rectangle lights,
-clusters, decals and two-phase occlusion culling; and a named compile-time cap
-on every GPU loop.

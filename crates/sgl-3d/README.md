@@ -1049,9 +1049,10 @@ scene.set_baked_specular_probes(&device, &queue, &[])?;
 
 - `influence` and `blend`: where receivers use the probe. Its weight is one at
   `blend` inside each face on that local axis, falling linearly to zero at the
-  face (a per-axis blend distance as Godot's, without Godot's squared weight
-  or its clamp of the distance to the box, so a blend wider than half the box
-  on an axis caps the probe's weight below one); zero blend is a hard edge. Influences may and
+  face (Godot's blend distance, given per axis here, without Godot's squared
+  weight or its clamp of the distance to the box's half extent, so a blend
+  wider than the half extent on an axis caps the probe's weight below one);
+  zero blend is a hard edge. Influences may and
   should overlap: a receiver's probes are normalised by their total weight, so
   neighbours whose blends meet partition it exactly, and where the total is
   below one, as at the collection's edge, the sky fills the rest. Each box
@@ -1370,8 +1371,8 @@ another, and one seen in another's reflection, show their probe and sky
 specular. The reflection is scaled by the receiver's alpha with the rest of
 its colour (glTF's coverage blend, as Godot and Bevy blend), unless the
 material keeps its specular, which stays full. What lies behind is blended
-under it undistorted, unless the receiver is transmissive on the `Extended`
-binding tier, which refracts it, and reprojects and blurs by
+under it undistorted (refracted where the receiver is transmissive on the
+`Extended` binding tier), and it reprojects and blurs by
 the receiver's motion, so a receiver moving against its background trails the
 background, not its reflection. World-space rays do not fill a receiver's
 misses; probe and sky specular do. Unlit receivers, additive effects and mist

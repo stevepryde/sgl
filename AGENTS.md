@@ -8,8 +8,9 @@ to the original games or a maintainer's machine.
 
 - Planning a feature, setting, API, port or refactor, or reviewing the
   architecture: the [architect skill](.claude/skills/sgl-architect/SKILL.md).
-  Plan every change against it before it is implemented, and put its
-  architecture fit in the issue. Its architecture pass, run from time to time,
+  Plan every feature, setting, public type, stage, shared contract, crate
+  boundary, port, dependency or refactor against it before it is implemented,
+  and put its architecture fit in the issue. Its architecture pass, run from time to time,
   finds and removes drift and records it in the
   [audit log](specs/audits.md).
 - Building a game: [consumer guide](docs/README.md), then the relevant package

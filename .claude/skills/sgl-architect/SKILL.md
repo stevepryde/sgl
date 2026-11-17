@@ -40,7 +40,8 @@ this is the spirit they share.
 - **One good implementation.** Extract from working games; where an engine with a
   compatible licence already solved a problem, port it, then improve it with a
   measurement and a recorded decision. A better implementation replaces the old
-  one, which is deleted with its settings, tests and records.
+  one, which is deleted with its settings, tests and records; two stay side
+  by side only as a setting with a real trade-off (S3D-6, RD-3).
 - **Games choose what and how much; SGL owns how.** A game turns a feature on or
   off and picks its level. Algorithms, kernels, thresholds and other internals
   are never game fields. Correctness is not a setting.
@@ -51,7 +52,7 @@ this is the spirit they share.
   parity target.** It gets a fallback or goes without. Hardware ray tracing is
   always optional.
 - **Evidence that can fail.** Tests have independent oracles; rendering is judged
-  by numbers in the scenario harness and by per-pass GPU time. The owner judges
+  by numbers read from the frame and by per-pass GPU time. The owner judges
   the look. Nothing is verified by ceremony.
 - **Lean records.** Specs hold contracts and decisions, issues hold work, source
   headers hold provenance. Nothing is written down twice.
@@ -68,7 +69,7 @@ skill and a contract disagree, the contract wins and this skill is wrong: fix it
 | SGL3D's consumer contract (S3D-n), rendering rules (RD-n), roadmap | `specs/sgl3d.md` |
 | SGL3D's layers, stage order, shared contracts, cross-stage designs, rules (AR-n) | `specs/sgl3d-architecture.md` (very long: grep for the feature) |
 | Why something was decided (D-n) | `specs/decisions.md` |
-| What a test may assert; the scenario harness | `specs/testing.md` |
+| What a test may assert, and how rendering is tested | `specs/testing.md` |
 | Other boundaries (core, 2D, input, net, content, stack) | `specs/README.md` index |
 | What exists today, for a game agent | `docs/README.md`, each crate's README and `crates/sgl-3d/docs/` |
 | What changed for consumers | `CHANGELOG.md` |
@@ -114,10 +115,11 @@ each is cheap to settle on paper and expensive to reverse in code.
    fast one (D-30), a named compile-time cap on every GPU loop (AR-12), and what
    happens on resize, camera cut, device loss and a skipped frame if it keeps
    history.
-8. **How it will be shown to work.** The scenario or scenarios it adds to the
-   harness and each one's oracle (`specs/testing.md`), the lower-level tests at
-   real boundaries, and the per-pass GPU time to report. No test that restates
-   the implementation.
+8. **How it will be shown to work.** The tests that fail without it and each
+   one's oracle, at the lowest boundary that shows the behaviour and at the
+   whole frame where only the frame shows it, by whatever means
+   `specs/testing.md` provides for that, and the per-pass GPU time to report.
+   No test that restates the implementation.
 9. **What must be updated with it.** The spec amended first where the change does
    not fit it (AR-9), the package README, the feature and settings guides, the
    affected examples, `CHANGELOG.md`, and licences and notices for ported code.
@@ -137,7 +139,7 @@ builds from:
 - Follows: <engine, revision, licence>; departs where: …
 - Replaces and deletes: …
 - Platforms and limits: …
-- Evidence: <scenarios and oracles; tests; timing>
+- Evidence: <tests and their oracles, frame-level where needed; timing>
 - Updates: <spec sections, docs, examples, changelog, notices, decision>
 ```
 
@@ -179,7 +181,7 @@ not the test: a grep finds candidates, reading the code decides.
 | Spec, code and docs saying different things | each contract | per stage: its Frame item and designs against the code; the feature and settings guides against `settings.rs`; README claims; the roadmap's status |
 | Records of things that no longer exist; superseded decisions not marked | RD-7 | specs, READMEs, `decisions.md`, open questions |
 | A change that reached `main` without its changelog entry, spec update or notices | `AGENTS.md` | commits since the last pass |
-| Tests that cannot fail; a feature with no scenario suite | `specs/testing.md` | test oracles; the harness's suites against the feature guide |
+| Tests that cannot fail; a feature nothing tests in motion | `specs/testing.md` | test oracles; each feature in the feature guide against the tests that render it |
 | A port without its header, licence or registered upstream | RD-2 | ported files, `licenses/upstreams.json` |
 
 For a large scope, hand independent sweeps to read-only agents, each with one
@@ -199,8 +201,8 @@ departure is itself wrong.
 - *The record is wrong* (the code is right and a spec, guide or comment is
   stale): correct the record.
 - *A missing guard* (the code relies on an invariant nothing states or tests):
-  write the one or two sentences in the owning spec, and the scenario or test
-  that would fail if it broke.
+  write the one or two sentences in the owning spec, and the test that would
+  fail if it broke.
 - *A design question* (two reasonable structures, or a rule that no longer
   serves): do not decide it inside the pass. Put the options and a
   recommendation to the owner; what is decided becomes a D-n entry.
