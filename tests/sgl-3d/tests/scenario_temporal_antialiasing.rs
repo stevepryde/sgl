@@ -1277,6 +1277,170 @@ fn material_edits_at_rest_resolve_within_the_hold() {
     failures.assert();
 }
 
+/// A game's shader (`Scene::add_shader`) that dissolves a masked card from
+/// its parameters' `cut` or its instance's data (`SurfaceContext::instance`
+/// x), whichever is larger: a texel is cut out, its alpha 0 under the
+/// card's cutoff of 0.5, where its key is below the cut. The key is 0 left
+/// of the world's x = `split` and 1 right of it, so a cut of 0 cuts out
+/// nothing, 0.5 the left half and 2 every texel.
+const DISSOLVE_SHADER: &str = r#"
+struct ShaderParams {
+ cut:f32,
+ split:f32,
+ unused:vec2<f32>,
+}
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {
+ return v;
+}
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {
+ var out=s;
+ let key=select(1.,0.,ctx.position.x<params.split);
+ out.base_color.a=select(1.,0.,key<max(params.cut,ctx.instance.x));
+ return out;
+}
+"#;
+
+/// What drives `DISSOLVE_SHADER`'s cut.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Dissolve {
+    /// `Scene::set_shader_parameters`.
+    Parameters,
+    /// `Scene::set_instance_shader_data`.
+    InstanceData,
+}
+
+/// Case 9's dissolves (#807). Plausible defect: a masked card whose game
+/// shader cuts its texels out by a parameter or its instance's data, edited
+/// at rest after the hold has expired, fades over many frames because
+/// nothing re-arms rejection where the texels vanish or return: neither
+/// write is a material edit, sets the view-wide signal (Frame item 10) or
+/// moves anything. Frame item 10's rule for content that changes without a
+/// motion vector of its own covers it: a shaded material's surface marks
+/// the transparency-and-composition mask wherever it is drawn, so a texel
+/// cut out was marked the frame before and is held at full strength. The
+/// fixture is case 9's card before the background, where depth
+/// disocclusion cannot reject (against the sky the sky's categorical
+/// disocclusion would); the edits cut out every texel, none, then the half
+/// left of the card's centre. The oracle is case 9's: the hold after each
+/// edit the pixels whose box grown by 2 px lies wholly inside the card,
+/// and on one side of the cut, show their new truth (the background or the
+/// card) within the method's `stores`. TAA only: the rule is TAA's, while
+/// FSR reads the masks by AMD's rules.
+fn dissolve_at_rest_resolves_within_the_hold(dissolve: Dissolve) {
+    let Some(gpu) = gpu() else { return };
+    let (back, back_pose) = background();
+    let layer = Shape::card(Vec2::new(2.4, 1.6), 0.3, CARD);
+    let layer_pose = Pose::at(Vec3::new(0.6, 0.2, -7.8));
+    let split = layer_pose.position.x;
+    let script = move |_| vec![layer_pose];
+    let scenario = Scenario {
+        shapes: vec![layer.clone()],
+        camera: &still,
+        script: &script,
+    };
+    let inside = scenario.inside(0, 0, 2.);
+    // The split's column: the world's x = `split` at the card's depth,
+    // which the still camera sees as a vertical line.
+    let (at, _) = VIEW
+        .project(&VIEW.camera(still(0)), layer_pose.position)
+        .unwrap();
+    let left = inside.and(&Region::from_fn(VIEW.size, |p| p[0] as f32 + 3. <= at.x));
+    let right = inside.and(&Region::from_fn(VIEW.size, |p| p[0] as f32 - 2. >= at.x));
+    assert!(
+        !left.is_empty() && !right.is_empty(),
+        "the cut halves the card"
+    );
+    let edits = [
+        (2., vec![(&inside, BACKGROUND)]),
+        (0., vec![(&inside, CARD)]),
+        (0.5, vec![(&left, BACKGROUND), (&right, CARD)]),
+    ];
+    let mut failures = Failures::default();
+    {
+        let method = Antialiasing::Taa;
+        let mut rig = Rig::new(&gpu, VIEW, method, SKY);
+        rig.add(&back, back_pose, 0);
+        let shader = rig
+            .scene
+            .add_shader(ShaderSource {
+                wgsl: DISSOLVE_SHADER.into(),
+                label: "dissolve".into(),
+            })
+            .unwrap_or_else(|error| panic!("{error}"));
+        let params = |cut: f32| [cut, split, 0., 0.];
+        // Visibility group 1, which the rig's mask enables.
+        let (id, materials) = rig.add_shaded(
+            &layer,
+            layer_pose,
+            1,
+            (shader, 0.),
+            bytemuck::bytes_of(&params(0.)),
+        );
+        let material = materials[0];
+        let mut values = rig.scene.material(material).unwrap();
+        values.alpha = sgl_3d::AlphaMode::Mask { cutoff: 0.5 };
+        rig.scene
+            .set_material(&rig.gpu.queue, material, values)
+            .unwrap();
+        rig.look(still(0));
+        let mut frame = 0;
+        for (cut, truths) in &edits {
+            let at = frame + SETTLE + HOLD;
+            while frame < at {
+                rig.render(frame);
+                frame += 1;
+            }
+            let queue = &rig.gpu.queue;
+            match dissolve {
+                Dissolve::Parameters => rig.scene.set_shader_parameters(
+                    queue,
+                    material,
+                    bytemuck::bytes_of(&params(*cut)),
+                ),
+                Dissolve::InstanceData => {
+                    rig.scene
+                        .set_instance_shader_data(queue, id, [*cut, 0., 0., 0.])
+                }
+            }
+            .unwrap();
+            let mut residuals = vec![Vec::new(); truths.len()];
+            while frame <= at + HOLD {
+                rig.render(frame);
+                let resolved = rig.antialiased();
+                for ((region, truth), residuals) in truths.iter().zip(&mut residuals) {
+                    residuals.push(error_to(&resolved, *truth, region).max);
+                }
+                frame += 1;
+            }
+            for ((_, truth), residuals) in truths.iter().zip(&residuals) {
+                let residual = *residuals.last().unwrap();
+                let epsilon = stores(method) * truth * HALF_STEP;
+                let converged = image::frames_to_converge(residuals, epsilon);
+                eprintln!(
+                    "{method:?} {dissolve:?}, cut {cut} towards {truth}: residual {residual} the hold after it, within {epsilon} from frame {converged:?} after it"
+                );
+                failures.check(residual <= epsilon, || {
+                    format!(
+                        "{method:?} {dissolve:?}, cut {cut}: pixels are {residual} off their new truth {truth} the hold after the edit; residuals by frame {residuals:?}"
+                    )
+                });
+            }
+        }
+        failures.bounded(&rig, format!("{method:?} {dissolve:?} dissolve"));
+    }
+    failures.assert();
+}
+
+#[test]
+fn a_dissolve_by_shader_parameters_at_rest_resolves_within_the_hold() {
+    dissolve_at_rest_resolves_within_the_hold(Dissolve::Parameters);
+}
+
+#[test]
+fn a_dissolve_by_instance_data_at_rest_resolves_within_the_hold() {
+    dissolve_at_rest_resolves_within_the_hold(Dissolve::InstanceData);
+}
+
 /// How case 10 restarts history.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Restart {

@@ -426,8 +426,9 @@ impl Rig {
     /// Adds `shape` at `pose` as a moving instance in visibility `group`,
     /// each of its materials drawn through `shader` (a game's,
     /// `Scene::add_shader` on `scene`) with `params` as its `ShaderParams`
-    /// and its vertices moving at most `bound` metres. The rig's poses do
-    /// not include what the shader moves.
+    /// and its vertices moving at most `bound` metres, with its quads'
+    /// materials in order. The rig's poses do not include what the shader
+    /// moves.
     pub fn add_shaded(
         &mut self,
         shape: &Shape,
@@ -435,10 +436,10 @@ impl Rig {
         group: u32,
         (shader, bound): (ShaderId, f32),
         params: &[u8],
-    ) -> InstanceId {
+    ) -> (InstanceId, Vec<MaterialId>) {
         let (id, materials) = self.add_placed(shape, pose, group, true);
         let queue = &self.gpu.queue;
-        for material in materials {
+        for &material in &materials {
             let values = self.scene.material(material).expect("a fixture material");
             let shader = Some(MaterialShader {
                 shader,
@@ -451,7 +452,7 @@ impl Rig {
                 .set_shader_parameters(queue, material, params)
                 .expect("the shader's parameters");
         }
-        id
+        (id, materials)
     }
 
     /// Adds `asset` whole at `pose` as a moving instance: a fixture whose
