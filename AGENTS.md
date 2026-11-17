@@ -23,8 +23,11 @@ maintainer's machine.
   [spec index](specs/README.md). Load only the relevant detail.
 - Updating a game: read [CHANGELOG.md](CHANGELOG.md) from the game's current
   version through the target version, then follow the affected package guides.
-- Validating a change: `bun scripts/tasks.ts check` is the required check;
-  setup and target requirements are in [Contributing](CONTRIBUTING.md#setup).
+- Validating a change: run the checks that can fail because of it, by name
+  ([Contributing](CONTRIBUTING.md#validate)). `bun scripts/tasks.ts check` is
+  the full check, run once before a release or over a batch of landed
+  changes, never per change (D-54). Setup and target requirements are in
+  [Contributing](CONTRIBUTING.md#setup).
 
 ## Compatibility and migrations
 
@@ -92,12 +95,20 @@ compatibility shims solely to avoid updating consumers.
 
 ## Repository rules
 
-- Tickets close when the repository's required checks pass. Do not write result
+- Tickets close when the checks that bear on the change pass. Do not write result
   reports, inventories, or identity tables in `docs/`.
+- Checks are tiered by cost (D-54). A change runs only what can fail because
+  of it: formatting, Clippy on the crates it touches, the tests of the
+  modules it touches and the scenarios it bears on, each by name. Never end
+  a change with the full check, and never run two long test runs at once on
+  one machine: several agents share it. Write every test to run alone, by
+  name, in seconds; one that cannot be made cheap without losing its oracle
+  is named `long_…` and marked `#[ignore]` with the reason, and runs in the
+  full check only.
 - Never gate a ticket on owner sign-off, acceptance, or review. The owner steers
   by filing new tickets.
-- A change lands on `main` directly, as one commit per issue, after the
-  required check and a review in proportion to its consequence
+- A change lands on `main` directly, as one commit per issue, after its
+  focused checks and a review in proportion to its consequence
   ([Contributing](CONTRIBUTING.md#deliver-a-change)). Open a pull request only
   where it adds something.
 - SGL is offered as is, with no guarantee of correctness or maintenance and no
@@ -198,8 +209,8 @@ compatibility shims solely to avoid updating consumers.
   SDK kept in its own repository (github.com/stevepryde/sp-fidelity).
   Use the published crates.io dependencies in the workspace manifest.
   Integration problems are fixed in SGL3D, in the stage that uses the port.
-- Rendering evidence is proportionate: the required check, tests that can fail
-  at real boundaries, and per-pass GPU timings. Look at captures from the real
+- Rendering evidence is proportionate: the checks that bear on the change,
+  tests that can fail at real boundaries, and per-pass GPU timings. Look at captures from the real
   game while iterating, but the owner judges the look; do not declare materials,
   reflections or motion correct, and never base an automated test on image
   interpretation.

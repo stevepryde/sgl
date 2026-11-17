@@ -117,7 +117,7 @@ and its [frame guide](crates/sgl-3d/docs/README.md#a-frame).
 
 Repository development also needs Bun, Node.js, the matching wasm-bindgen
 CLI, and a GPU for browser checks. [Contributing](CONTRIBUTING.md) covers setup
-and the required `bun scripts/tasks.ts check` command.
+and which checks to run.
 
 ## Why this is public, and what to expect
 

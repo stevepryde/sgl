@@ -145,7 +145,9 @@ each is cheap to settle on paper and expensive to reverse in code.
    whole frame where only the frame shows it, by whatever means
    `specs/testing.md` provides for that, and the per-pass GPU time to report.
    No test that restates the implementation, and nothing that only a person
-   looking could confirm.
+   looking could confirm. Each test cheap enough to run alone by name, and
+   the brief names the focused checks the implementer runs (D-54): never the
+   full check.
 9. **What must be updated with it.** Whether it is breaking, in D-52's sense, and
    so which version it can ship in. The spec amended first where the change does
    not fit it (AR-9), the package README, the feature and settings guides, the

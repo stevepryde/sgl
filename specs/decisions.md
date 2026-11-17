@@ -830,3 +830,18 @@ Use the [current specs](README.md) for implementation and the
   Rationale: with agents as the only authors and reviewers (D-50), a pull
   request repeats what the issue and the commit already say and costs tokens
   and steps without adding a check.
+- **D-54** Owner direction, 2026-11-17: checks are tiered by cost. A change
+  is validated by the checks that can fail because of it (formatting, Clippy
+  on the crates it touches, the tests of the modules it touches and the
+  scenarios it bears on, each by name), and a ticket closes on those. The
+  full check (`bun scripts/tasks.ts check`) runs once at a stable boundary:
+  before a release, or over a batch of landed changes; never per change, and
+  never two long runs at once on one machine. Tests are written to run
+  alone, by name, in seconds; one that cannot be made cheap without losing
+  its oracle is named `long_…`, marked `#[ignore]` with the reason, and runs
+  in the full check only. A failure the full check finds is filed and fixed
+  like any defect. This replaces "the required check" on every change.
+  Rationale: with several agents working on one machine, each ending its
+  change in the whole suite, often twice, the suite ran many times over for
+  one batch and a slot waiting on tests was a slot not working; integration
+  failures are found as well by one run as by one per change.

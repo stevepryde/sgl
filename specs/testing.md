@@ -1,8 +1,10 @@
 # Testing
 
 The specs in this directory are the anchor: tests enforce them so a feature a
-game relies on is not dropped or changed by accident. `bun scripts/tasks.ts
-check` is the required check.
+game relies on is not dropped or changed by accident. A change runs the
+tests that can fail because of it; `bun scripts/tasks.ts check` is the full
+check, run once before a release or over a batch of landed changes
+([D-54](decisions.md), [Contributing](../CONTRIBUTING.md#validate)).
 
 ## Requirements
 
@@ -37,7 +39,7 @@ check` is the required check.
    test launches the `chromium` channel, the full browser in its new
    headless mode, which exposes the GPU's WebGPU adapter; the default
    headless shell exposes none on macOS. It fails on any WebGPU error and on
-   a pixel result reasoned from the scene's geometry. The required `check`
+   a pixel result reasoned from the scene's geometry. The full `check`
    runs the browser lane after its native and WASM steps, and
    `bun scripts/tasks.ts check-browser` runs it alone. It needs Playwright's
    browser build and a GPU.
@@ -46,6 +48,12 @@ check` is the required check.
 7. Mutation testing (`bun scripts/tasks.ts mutants`, needs `cargo-mutants`)
    is the periodic audit for tests that cannot fail; it is not part of
    `check`.
+8. A test is cheap alone: it runs by name in seconds, on the smallest
+   fixture and fewest frames that still let its oracle discriminate, and one
+   test covers one concern, so a change reruns only what it bears on. A test
+   that cannot be made cheap without losing its oracle is named `long_…` and
+   marked `#[ignore = "long: <why>"]`; the full check runs those and nothing
+   else does.
 
 ## SGL3D scenario harness
 
@@ -74,8 +82,9 @@ rendering behaviour without a game or a person looking at it.
    cover yet.
 4. A fix for a rendering defect adds the scenario that fails without it, at
    the lowest boundary that shows it: the frame when only the frame shows it.
-5. Scenarios run in the required check on the native lane and write nothing
-   but an opt-in dump under an ignored directory, on which nothing asserts.
+5. Scenarios run on the native lane, each alone by name (requirement 8
+   above), and write nothing but an opt-in dump under an ignored directory,
+   on which nothing asserts.
 
 The harness is test-support modules that each scenario binary includes: the
 rig, the fixtures and readback (`rig`), the analytic truth (`geometry`) and

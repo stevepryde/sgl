@@ -40,6 +40,11 @@ const commands: Array<{ argv: string[]; env?: Record<string, string> }> = [
     argv: ["cargo", "test", "--workspace"],
     env: requireGpu ? { SGL_REQUIRE_GPU: "1" } : undefined,
   },
+  // The long tests (testing.md 8): ignored everywhere else, named `long_…`.
+  {
+    argv: ["cargo", "test", "--workspace", "--", "--ignored", "long_"],
+    env: requireGpu ? { SGL_REQUIRE_GPU: "1" } : undefined,
+  },
   // Release semantics differ (debug_assertions off); sgl-net must hold there.
   { argv: ["cargo", "test", "-p", "sgl-net", "-p", "sgl-net-tests", "--release"] },
   // Example unit tests are not run by `cargo test --workspace` by default.

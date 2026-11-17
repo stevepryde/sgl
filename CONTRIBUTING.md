@@ -63,19 +63,43 @@ libraries and libudev.
 
 ## Validate
 
-Use focused package checks while iterating. At the final boundary, run:
+Checks are tiered by cost ([D-54](specs/decisions.md)): several agents share
+one machine, and a change that ends in the whole suite holds everyone up.
+
+**For a change**, run what can fail because of it, by name, one run at a time:
+
+```sh
+cargo fmt --check
+cargo clippy -p <crate you touched> --all-targets -- -D warnings
+cargo test -p sgl-3d --lib -- <module path>      # e.g. stages::shadows::traced
+cargo test -p sgl-3d-tests --test <suite> -- <scenario name>
+```
+
+Add `cargo check -p <crate> --target wasm32-unknown-unknown` for code the
+browser runs, and the browser lane alone for a change about the browser:
+
+```sh
+bun scripts/tasks.ts check-browser
+```
+
+Say in the report exactly what was run. Repeat a run only if a later edit
+could have invalidated it.
+
+**The full check** runs once, before a release or over a batch of landed
+changes, by whoever cuts the release or lands the batch, never per change:
 
 ```sh
 bun scripts/tasks.ts check
 ```
 
-This is the required check: licence notices, formatting, Clippy, native tests,
-release-mode networking tests, repository tooling tests, WASM builds/tests,
-and browser transport and rendering tests. The browser lane can be run alone:
+It is licence notices, formatting, Clippy, every native test including the
+long ones, release-mode networking tests, repository tooling tests, WASM
+builds and tests, and the browser lane. A failure it finds is filed and
+fixed like any defect.
 
-```sh
-bun scripts/tasks.ts check-browser
-```
+Write tests to be cheap alone: each runs by name in seconds. A test that
+cannot be made cheap without losing its oracle is named `long_…` and marked
+`#[ignore = "long: <why>"]`; the full check runs those.
 
 GPU tests are required on macOS. On other GPU-equipped hosts, set
 `SGL_REQUIRE_GPU=1` when running checks. Report a missing tool, unavailable GPU,
@@ -95,8 +119,9 @@ unfinished, or a change the owner has asked to see before it lands.
 
 1. **Plan.** The issue holds the plan and stays the record of why.
 2. **Implement.** Work on a branch from the tip of `origin/main`. Run the
-   required check on the final commit, push the branch, and report what
-   changed, the evidence, anything not done, and the commit.
+   focused checks ([Validate](#validate)) on the final commit, push the
+   branch, and report what changed, the evidence, what was run, anything not
+   done, and the commit.
 3. **Review, in proportion.** A change that adds or alters a stage, a shared
    contract, a layer boundary or a public type (AR-9), and any other whose
    consequence or uncertainty warrants it, gets an independent agent's review
