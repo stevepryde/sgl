@@ -66,6 +66,14 @@ this is the spirit they share.
   the look. Nothing is verified by ceremony.
 - **Lean records.** Specs hold contracts and decisions, issues hold work, source
   headers hold provenance. Nothing is written down twice.
+- **Shared, with exact credit and no promises.** SGL is public because it
+  borrows from open-source projects. It claims nothing taken from them: what is
+  SGL's own is the assembly and adaptation into one coherent library. It is
+  offered as is, with no guarantee of correctness or maintenance and no
+  support; others are encouraged to fork it or copy what they want (D-51). So
+  attribution is part of the work of every port, not paperwork after it, and
+  nothing is designed, kept or promised for outside users: plan for the
+  library's coherence and the games it serves.
 
 ## Where the rules live
 

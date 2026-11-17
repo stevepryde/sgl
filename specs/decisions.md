@@ -786,3 +786,19 @@ Use the [current specs](README.md) for implementation and the
   Rationale: designing for a human contributor who does not exist adds
   ceremony for nobody and leaves gaps where a person was expected to fill
   them in.
+
+- **D-51** Owner direction, 2026-11-17: SGL is public because it depends on
+  and borrows from open-source engines and libraries, and making its own
+  source available, with the correct attributions, is the right return.
+  Nothing taken from another project is claimed as SGL's own. What is SGL's,
+  made through AI coding agents, is the assembly: putting those pieces
+  together and adapting them into one coherent whole. SGL is run as an
+  open-source project that makes no guarantee of correctness or of
+  maintenance. Anyone using it does so for their own purposes, with no
+  expectation of support, and is encouraged to fork it or copy features into
+  a library of their own. This states the posture behind D-24 and D-25, and
+  it means that attribution is part of every port, that nothing is designed,
+  kept or promised for the sake of outside users, and that a breaking change
+  owes them a changelog entry and nothing more.
+  Rationale: the project stands on others' work and should say so exactly;
+  it is one person's library, shared, not a product with obligations.
