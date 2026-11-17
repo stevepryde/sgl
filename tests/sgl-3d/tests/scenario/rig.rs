@@ -1,8 +1,8 @@
 //! The native rig: a device, renderer, scene and output target driven one
 //! frame at a time through the public API, fixtures whose radiance is known
 //! by construction, typed readback of the frame's targets, and opt-in dumps.
-use crate::geometry::{FRAME_RATE, Pose, View};
-use crate::image::Image;
+use super::geometry::{FRAME_RATE, Pose, View};
+use super::image::Image;
 use sgl_3d::asset::{Asset, CpuMesh, Material, Vertex};
 use sgl_3d::diagnostics::{self, DiagnosticTarget};
 use sgl_3d::glam::{Mat4, Vec2, Vec3};
@@ -151,12 +151,6 @@ impl Shape {
             x += period;
         }
         Shape { quads }
-    }
-
-    /// The outline of its first quad (a grating's card), at `pose`.
-    pub fn outline(&self, pose: Pose) -> [Vec3; 4] {
-        let matrix = pose.matrix();
-        self.quads[0].corners.map(|c| matrix.transform_point3(c))
     }
 
     /// Every quad's corners at `pose`.
@@ -481,7 +475,7 @@ impl Rig {
                 let beyond = if !c.is_finite() || c < 0. {
                     f32::INFINITY
                 } else {
-                    (low - c).max(c - high).max(0.) / high
+                    ((low - c) / low).max((c - high) / high).max(0.)
                 };
                 if beyond > excursion.as_ref().map_or(0., |e| e.0) {
                     let pixel = [i as u32 % image.size[0], i as u32 / image.size[0]];
@@ -498,16 +492,15 @@ impl Rig {
     /// The bound oracle over every antialiased frame read: finite,
     /// non-negative and within the fixture's radiance range, since an unlit
     /// fixture's antialiased pixel blends its radiances and creates none.
-    /// `None` when every frame held; otherwise how far the furthest value
-    /// went beyond the range, relative to its top, and where. Rounding of
-    /// the two half-float stores a radiance passes through (the composite
-    /// and the antialiased target) is [`HALF_STEP`] each, so an excursion
-    /// within `2 * HALF_STEP` is rounding.
-    pub fn excursion(&self) -> Option<(f32, String)> {
+    /// `None` when every frame held within `rounding` (relative: the
+    /// half-float stores the radiance passed through, `HALF_STEP` each);
+    /// otherwise how far the furthest value went beyond the range, relative
+    /// to the bound it crossed, and where.
+    pub fn excursion(&self, rounding: f32) -> Option<(f32, String)> {
         self.excursion
             .borrow()
             .clone()
-            .filter(|(beyond, _)| *beyond > 2. * HALF_STEP)
+            .filter(|(beyond, _)| *beyond > rounding)
     }
 }
 
@@ -562,10 +555,10 @@ pub fn read(gpu: &Gpu, texture: &wgpu::Texture) -> Image {
     }
 }
 
-/// A scenario's opt-in dump (RD-5): with `SGL_SCENARIO_DUMP=<dir>`, frames
-/// as PNG and metrics as JSON under `<dir>/<scenario>/`, for people and
-/// agents to look at. Nothing asserts on it; without the variable it writes
-/// nothing.
+/// A scenario's opt-in dump (RD-5): with `SGL_SCENARIO_DUMP` naming a
+/// directory (for example `SGL_SCENARIO_DUMP=.cache/scenarios`), frames as
+/// PNG and metrics as JSON under `<dir>/<scenario>/`, for agents to look at.
+/// Nothing asserts on it; without the variable it writes nothing.
 pub struct Dump {
     directory: Option<PathBuf>,
     metrics: serde_json::Map<String, serde_json::Value>,

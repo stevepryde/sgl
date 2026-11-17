@@ -3,18 +3,27 @@
 //! where the device runs them, judged against analytic truth, a supersampled
 //! reference, equivalent scripts, bounds and the numbers the spec states.
 //! Case 12, the bound, is checked over every antialiased frame each case
-//! read, after the case's own assertions (`bounded`).
+//! read, after the case's own assertions (`Failures::bounded`). Cases 3, 4
+//! and 7 dump their frames and metrics with `SGL_SCENARIO_DUMP`.
 //!
 //! The fixtures' truth assumes `rig::fixture_settings`: unlit cards, no
 //! bloom, fog, ambient occlusion, reflections or motion blur, and a fixed
 //! exposure, so what antialiasing receives is exactly their radiance.
+//!
+//! Not covered yet: the resolve under camera rotation (case 1 checks its
+//! motion only), FSR at its upscaling qualities (it runs at Native AA, where
+//! the render and scene sizes agree), and FSR with sharpening on (RCAS moves
+//! edges away from their coverage on purpose, so the reference does not
+//! measure it). Each needs its own fixture or oracle.
 #![cfg(not(target_arch = "wasm32"))]
+mod scenario;
+
+use scenario::geometry::{Motion, Pose, View, coverage};
+use scenario::image::{self, Image, Region, centre, error, error_to, pixels};
+use scenario::rig::{Dump, Gpu, HALF_STEP, Rig, Shape, fsr_gpu, gpu};
 use sgl_3d::diagnostics::{self, DiagnosticTarget};
 use sgl_3d::glam::{Vec2, Vec3};
 use sgl_3d::settings::Antialiasing;
-use sgl_3d_tests::geometry::{Motion, Pose, View, coverage};
-use sgl_3d_tests::image::{self, Image, Region, centre, error, error_to, pixels};
-use sgl_3d_tests::rig::{Dump, Gpu, HALF_STEP, Rig, Shape, fsr_gpu, gpu};
 
 /// 192 by 108 at a one-radian vertical field: a fixture 4 m ahead spans
 /// tens of pixels, and the 8 times reference stays small.
@@ -25,17 +34,15 @@ const VIEW: View = View {
 };
 /// The fixtures' distance ahead of the camera.
 const DEPTH: f32 = 4.;
-/// Radiances stay within 0.02..=0.15. TAA blends in v / (1 + v)
-/// (Karis's tone-mapped resolve), whose mean of an edge's two radiances
-/// differs from their linear mean by at most c (1 - c) (b - a)^2 / (1 + a):
-/// under 0.0042 here, 3 % of the contrast, small beside the errors the
-/// comparisons resolve. (At 0.05 and 0.5 it is 9 % of the contrast, which
-/// alone left TAA 3.8 times below a single sample instead of 4.)
-const SKY: f32 = 0.02;
-const BACKGROUND: f32 = 0.03;
-const CARD: f32 = 0.15;
-const GRATING: f32 = 0.03;
-const STRIPS: f32 = 0.15;
+/// The fixtures' radiances: a dark sky and background beneath mid-grey
+/// cards, values a lit scene at exposure 0 puts on screen below white,
+/// where the tone map's mid-tones are, with contrasts far above half-float
+/// rounding.
+const SKY: f32 = 0.05;
+const BACKGROUND: f32 = 0.1;
+const CARD: f32 = 0.5;
+const GRATING: f32 = 0.1;
+const STRIPS: f32 = 0.5;
 /// TAA's jitter cycle: the frame's "16-sample Halton jitter" (sgl-3d's
 /// README, TAA), DiligentFX's Halton (2, 3) sequence (`sgl-post-fx`'s
 /// `TemporalAntiAliasing::get_jitter_offset`), in which every jitter
@@ -56,8 +63,9 @@ const SUPERSAMPLE: u32 = 8;
 /// 0.01 px, DFX-19 in `sgl-post-fx`'s PROVENANCE.md) at this view's width,
 /// in UV: motion the resolve could mistake for movement exceeds it.
 const STILL_UV: f32 = 0.01 / 5. / VIEW.size[0] as f32;
-/// Depth motion within f32 rounding of view depths of a few metres, far
-/// below the 0.03 m a frame the slowest scripted depth motion makes.
+/// Depth motion beside its half-float step (`HALF_STEP` of the value): the
+/// f32 rounding of two view depths of a few metres differenced, far below
+/// the slowest scripted depth motion, 0.05 m a frame.
 const STILL_DEPTH: f32 = 1e-4;
 
 /// The temporal methods this device runs, each on a device that has its
@@ -95,14 +103,61 @@ fn phases(method: Antialiasing, rig: &Rig) -> u32 {
     u32::try_from(count).expect("a positive phase count")
 }
 
-/// How many times below a single sample's RMSE an edge's resolve must be
-/// once every phase has contributed: a resolve averaging N jittered samples
-/// of a pixel estimates its coverage with an RMS error at most 1 / sqrt(N)
-/// of one sample's (the bound for uncorrelated samples; a low-discrepancy
-/// sequence does better), so sqrt(N) of `phases`: 4 for TAA, 2.83 for FSR
-/// at Native AA.
-fn bar(method: Antialiasing, rig: &Rig) -> f32 {
-    (phases(method, rig) as f32).sqrt()
+/// The kind of edge pixel a resolve is judged on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Edge {
+    /// A pixel crossed by sub-pixel strips.
+    Strips,
+    /// A pixel crossed by the outline of a surface wider than a pixel.
+    Outline,
+}
+
+/// How many times below the single centre sample's RMSE a resolve that has
+/// averaged all `phases` (N) must be. N uncorrelated samples at random
+/// positions in a pixel estimate its coverage with 1 / N of one such
+/// sample's mean squared error (a low-discrepancy sequence does better).
+/// Where sub-pixel strips cross a pixel the centre sample hits or misses
+/// like a random one, so the bar is sqrt(N). Where an edge wider than the
+/// pixel crosses it at a uniformly distributed position, the centre sample
+/// errs by 1/12 of the contrast squared against coverage and a random one by
+/// 1/6, so N samples are sqrt(N / 2) better than the centre: 4 and 2.83 for
+/// TAA's 16 phases, 2.83 and 2 for FSR's 8 at Native AA.
+fn bar(method: Antialiasing, rig: &Rig, edge: Edge) -> f32 {
+    let n = phases(method, rig) as f32;
+    match edge {
+        Edge::Strips => n.sqrt(),
+        Edge::Outline => (n / 2.).sqrt(),
+    }
+}
+
+/// The half-float stores a uniform radiance passes through on its way to
+/// the `Antialiased` target, each of which may leave it one step off (WGSL
+/// lets a conversion take either neighbour; this suite's Metal device takes
+/// the lower, storing 0.15 as 0.14990234): the composite, then TAA's
+/// accumulation, which is its output, or FSR's prepared input colour, its
+/// upscaled history (both RGBA16F in the SDK port's resources) and its
+/// output. Their arithmetic between stores is f32, far below a step, and at
+/// a uniform pixel the current frame's weight holds the history within a
+/// step of the composite rather than letting it drift.
+fn stores(method: Antialiasing) -> f32 {
+    match method {
+        Antialiasing::Taa => 2.,
+        Antialiasing::Fsr2 | Antialiasing::Fsr3 => 4.,
+        Antialiasing::Off => 1.,
+        other => panic!("{other:?} is not under test"),
+    }
+}
+
+/// Of `stores`, those made after the motion target is read, which a change
+/// of the motion below a step may tip to a value's other neighbour: TAA's
+/// accumulation (its output), and FSR's upscaled history and output (its
+/// prepared input colour is the input frame's, whatever the motion).
+fn stores_after_motion(method: Antialiasing) -> f32 {
+    match method {
+        Antialiasing::Taa => 1.,
+        Antialiasing::Fsr2 | Antialiasing::Fsr3 => 2.,
+        other => panic!("{other:?} is not under test"),
+    }
 }
 
 /// A pixel's width in metres at `DEPTH`.
@@ -154,7 +209,8 @@ impl Scenario<'_> {
     }
 
     /// Gives `rig` a new scene of this scenario's shapes, which restarts
-    /// its history (case 10 holds it to that).
+    /// its history: case 10 checks that a frame after a scene switch does
+    /// not depend on the frames before it.
     fn restage(&self, rig: &mut Rig) {
         rig.new_scene();
         self.populate(rig);
@@ -210,6 +266,36 @@ impl Scenario<'_> {
         })
     }
 
+    /// The pixels wholly inside `shape`'s outline crossed by an edge of its
+    /// other quads (a grating's strips) at `frame`: `Edge::Strips`.
+    fn strip_edges(&self, frame: u32, shape: usize) -> Region {
+        let polygons = &self.polygons(frame)[shape];
+        Region::from_fn(VIEW.size, |pixel| {
+            coverage(&polygons[0], pixel, 0.) >= 1.
+                && polygons[1..].iter().any(|strip| {
+                    let c = coverage(strip, pixel, 0.);
+                    c > 0. && c < 1.
+                })
+        })
+    }
+
+    /// The pixels crossed by the outline (first quad) of any of `shapes` at
+    /// `frame` and met by no other quad: `Edge::Outline`.
+    fn outline_edges(&self, frame: u32, shapes: &[usize]) -> Region {
+        let polygons = self.polygons(frame);
+        Region::from_fn(VIEW.size, |pixel| {
+            let crosses = shapes.iter().any(|&s| {
+                let c = coverage(&polygons[s][0], pixel, 0.);
+                c > 0. && c < 1.
+            });
+            crosses
+                && polygons
+                    .iter()
+                    .flat_map(|quads| &quads[1..])
+                    .all(|strip| coverage(strip, pixel, 0.) == 0.)
+        })
+    }
+
     /// The pixels whose box, grown by `margin` pixels, lies wholly inside
     /// `shape`'s outline (its first quad) at `frame`.
     fn inside(&self, frame: u32, shape: usize, margin: f32) -> Region {
@@ -251,10 +337,15 @@ fn still(_: u32) -> Pose {
 }
 
 /// Frames of a scenario without temporal antialiasing: the reference
-/// oracle, rendered with antialiasing off at `SUPERSAMPLE` times the size
-/// and box-filtered down in linear space, which no temporal path touches,
-/// and the single unjittered sample a pixel that antialiasing must beat.
-/// Neither keeps history, so any frame renders alone.
+/// oracle, rendered with antialiasing off at `SUPERSAMPLE` times the size,
+/// which no temporal path touches, and box-filtered down in the space the
+/// resolves average in; and the single unjittered sample a pixel that
+/// antialiasing must beat. Neither keeps history, so any frame renders
+/// alone. TAA averages in v / (1 + v) per channel (`HDRToSDR` in
+/// `TAA_ComputeTemporalAccumulation.wgsl`), and FSR2 and FSR3 in AMD's
+/// `Tonemap`, rgb / (1 + max(rgb)) (`ffx_fsr2_accumulate.h` and
+/// `ffx_fsr3upscaler_accumulate.h`, "YCoCg -> RGB -> Tonemap -> YCoCg"),
+/// the same map for the grey fixtures, so one reference serves all three.
 struct Oracles {
     reference: Rig,
     single: Rig,
@@ -275,7 +366,11 @@ impl Oracles {
 
     fn reference(&mut self, scenario: &Scenario, frame: u32) -> Image {
         scenario.render(&mut self.reference, frame);
-        self.reference.antialiased().downsampled(SUPERSAMPLE)
+        self.reference.antialiased().downsampled_through(
+            SUPERSAMPLE,
+            |v| v / (1. + v),
+            |t| t / (1. - t),
+        )
     }
 
     fn single(&mut self, scenario: &Scenario, frame: u32) -> Image {
@@ -299,11 +394,12 @@ impl Failures {
     /// Case 12 over every antialiased frame `rig` read. Plausible defects:
     /// a resolve or an upscaler that rings, overshoots or writes NaN
     /// creates radiance an unlit fixture cannot. The oracle is the bound
-    /// (`Rig::excursion`).
+    /// (`Rig::excursion`), within the rounding of the method's `stores`.
     fn bounded(&mut self, rig: &Rig, what: impl std::fmt::Display) {
-        if let Some((beyond, at)) = rig.excursion() {
+        let rounding = stores(rig.settings.antialiasing) * HALF_STEP;
+        if let Some((beyond, at)) = rig.excursion(rounding) {
             self.0.push(format!(
-                "{what}: an antialiased value left the fixture's radiance range by {beyond} of its top: {at} (case 12)"
+                "{what}: an antialiased value left the fixture's radiance range by {beyond} of the bound it crossed: {at} (case 12)"
             ));
         }
     }
@@ -511,17 +607,21 @@ fn jitter_is_sub_pixel_and_never_in_the_motion() {
 /// samples (no jitter, history discarded, a wrong blend). The oracle is the
 /// reference: after the hold and a whole jitter cycle every edge pixel has
 /// averaged every jitter phase, so its RMSE against the supersampled frame
-/// is at least `bar` times below a single sample's. FSR runs without
-/// sharpening (`fixture_settings`): RCAS deliberately moves edges away from
-/// their coverage, which is what the reference measures.
+/// is at least `bar` times below the single centre sample's, on the
+/// grating's strips and on the outlines alike. FSR runs without sharpening
+/// (`fixture_settings`): RCAS deliberately moves edges away from their
+/// coverage, which is what the reference measures.
 #[test]
 fn at_rest_the_resolve_converges_on_coverage() {
     let Some(plain) = gpu() else { return };
     let scenario = stage(&still);
     let mut oracles = Oracles::new(&scenario, &plain);
     let truth = oracles.reference(&scenario, 0);
-    let edges = scenario.edges(0, &[0, 1]);
-    let single = error(&oracles.single(&scenario, 0), &truth, &edges);
+    let single = oracles.single(&scenario, 0);
+    let regions = [
+        (Edge::Strips, scenario.strip_edges(0, 1)),
+        (Edge::Outline, scenario.outline_edges(0, &[0, 1])),
+    ];
     let mut failures = Failures::default();
     for (method, gpu) in methods() {
         let mut rig = scenario.rig(&gpu, VIEW, method);
@@ -529,24 +629,26 @@ fn at_rest_the_resolve_converges_on_coverage() {
             scenario.render(&mut rig, frame);
         }
         let resolved = rig.antialiased();
-        let converged = error(&resolved, &truth, &edges);
         let mut dump = Dump::new(&format!("at_rest_{method:?}"));
         dump.image("converged", &resolved);
         dump.image("reference", &truth);
-        dump.metric("converged_rmse", converged.rmse);
-        dump.metric("single_sample_rmse", single.rmse);
-        eprintln!("{method:?} at rest: {converged:?} against a single sample's {single:?}");
-        let bar = bar(method, &rig);
-        eprintln!(
-            "{method:?} at rest: {} times below a single sample, against the bar {bar}",
-            single.rmse / converged.rmse
-        );
-        failures.check(converged.rmse * bar <= single.rmse, || {
-            format!(
-                "{method:?}: the converged resolve's RMSE {} is not {bar} times below a single sample's {}",
-                converged.rmse, single.rmse
-            )
-        });
+        for (edge, region) in &regions {
+            let ours = error(&resolved, &truth, region).rmse;
+            let theirs = error(&single, &truth, region).rmse;
+            let bar = bar(method, &rig, *edge);
+            dump.metric(format!("{edge:?}_rmse"), ours);
+            dump.metric(format!("{edge:?}_single_sample_rmse"), theirs);
+            eprintln!(
+                "{method:?} at rest, {edge:?} ({} pixels): RMSE {ours}, a single sample's {theirs}, {} times below against the bar {bar}",
+                region.len(),
+                theirs / ours
+            );
+            failures.check(ours * bar <= theirs, || {
+                format!(
+                    "{method:?} at rest, {edge:?}: the converged resolve's RMSE {ours} is not {bar} times below a single sample's {theirs}"
+                )
+            });
+        }
         // #793 adds FSR2's bound back.
         if method != Antialiasing::Fsr2 {
             failures.bounded(&rig, format!("{method:?} at rest"));
@@ -619,7 +721,7 @@ fn at_rest_taa_holds_edges_between_surfaces_still() {
 /// edges against that frame's reference is never above a single sample's
 /// (reference); and a pixel whose box, grown by the 2 px reach of the
 /// bicubic history fetch, has lain wholly inside the card, or wholly in the
-/// sky, for the hold shows that radiance within its two half-float stores
+/// sky, for the hold shows that radiance within the method's `stores`
 /// (analytic).
 #[test]
 fn panning_keeps_history() {
@@ -713,7 +815,7 @@ fn panning_keeps_history() {
                 if method == Antialiasing::Fsr2 && name == "sky" {
                     continue;
                 }
-                failures.check(error <= 2. * HALF_STEP, || {
+                failures.check(error <= stores(method) * HALF_STEP, || {
                     format!(
                         "{method:?} panning {rate} px a frame: a pixel held in the {name} for the hold is {error} of its radiance off, frame {frame} pixel {pixel:?}"
                     )
@@ -735,7 +837,7 @@ fn panning_keeps_history() {
 /// another (no disocclusion, no rejection). The oracle is analytic with the
 /// spec's hold: a pixel whose grown box met the moving card and has since
 /// lain wholly on the still background behind it for the hold shows the
-/// background's radiance within its two half-float stores.
+/// background's radiance within the method's `stores`.
 #[test]
 fn a_disocclusion_recovers() {
     let (back, back_pose) = background();
@@ -793,7 +895,7 @@ fn a_disocclusion_recovers() {
             residual.0, residual.1, residual.2
         );
         assert!(checked > 0, "the card vacated no pixel for the hold");
-        failures.check(residual.0 <= 2. * BACKGROUND * HALF_STEP, || {
+        failures.check(residual.0 <= stores(method) * BACKGROUND * HALF_STEP, || {
             format!(
                 "{method:?}: a pixel vacated for the hold is {} off the background, frame {} pixel {:?}",
                 residual.0, residual.1, residual.2
@@ -815,11 +917,15 @@ fn ahead(camera: Pose, distance: f32) -> Pose {
 /// Case 7 (#768). Plausible defect: history rejected on a surface whose
 /// view depth and screen position stay fixed while the camera moves, as a
 /// chase camera's craft does, because the depth test expects the camera's
-/// motion alone. The oracle is equivalence: a grating rigidly attached to a
-/// camera dollying 0.2 m a frame over a still background is the same
-/// picture in its interior as with both still, so after the settle and a
-/// cycle the following run is at least case 3's `bar` times closer to the still
-/// run than a single sample is.
+/// motion alone. The oracle is a closeness bound: a grating rigidly attached
+/// to a camera dollying 0.2 m a frame over a still background keeps its
+/// screen position and depth, so in its interior it is sampled exactly as at
+/// rest, and a resolve that keeps its history converges there on the still
+/// run's picture. One that discards it shows a single jittered sample. So
+/// after the settle and a cycle, on the strips two pixels inside its
+/// outline (whose neighbourhoods see no moving background), the following
+/// run is at least case 3's strip `bar` times closer to the still run than
+/// the single centre sample is.
 #[test]
 fn a_surface_the_camera_follows_keeps_its_history() {
     let Some(plain) = gpu() else { return };
@@ -840,7 +946,9 @@ fn a_surface_the_camera_follows_keeps_its_history() {
         script: &moving_script,
     };
     let last = SETTLE + JITTER_CYCLE - 1;
-    let interior = following.inside(last, 1, 2.);
+    let interior = following
+        .strip_edges(last, 1)
+        .and(&following.inside(last, 1, 2.));
     let single = Oracles::new(&following, &plain).single(&following, last);
     let mut failures = Failures::default();
     for (method, gpu) in methods() {
@@ -860,7 +968,11 @@ fn a_surface_the_camera_follows_keeps_its_history() {
         dump.metric("following_rmse", ours.rmse);
         dump.metric("single_sample_rmse", theirs.rmse);
         eprintln!("{method:?} following: {ours:?} from the still run; a single sample {theirs:?}");
-        let bar = bar(method, &rig);
+        let bar = bar(method, &rig, Edge::Strips);
+        eprintln!(
+            "{method:?} following: {} times closer than a single sample, against the bar {bar}",
+            theirs.rmse / ours.rmse
+        );
         failures.check(ours.rmse * bar <= theirs.rmse, || {
             format!(
                 "{method:?}: the followed grating is {} from its still resolve, not {bar} times below a single sample's {} (#768)",
@@ -876,24 +988,59 @@ fn a_surface_the_camera_follows_keeps_its_history() {
 }
 
 /// Case 8 (#768). Plausible defect: the same rejection on a surface
-/// approaching a still camera, here at a walking pace (0.03 m a frame) from
-/// 2.5 m. The oracle is the reference: over the frames after the settle the
-/// grating's RMSE against each frame's reference stays case 3's `bar` times below
-/// a single sample's, relaxed by the RMSE between that frame's reference and
-/// the last one's, the most a resolve one frame behind could lose.
+/// approaching a still camera. A grating centred ahead comes 3 mm a frame
+/// closer from 0.6 m: past 0.55 m its depth changes by 0.1 x 0.003 / z^2 of
+/// normalized depth a frame, above the adaptive depth threshold 0.001 (Frame
+/// item 10), throughout its interior, where every depth around a pixel is
+/// the grating's (at its outline the neighbourhood holds the background's
+/// depth too, and the depth test cannot reject there). Its strips are 0.4 px
+/// wide where it ends. The oracle is the reference, on the strips whose
+/// script moves them under 0.1 px a frame (those near the view axis): over
+/// the frames after the settle their RMSE against each frame's reference
+/// stays case 3's strip `bar` times below the single centre sample's,
+/// relaxed by the RMSE between that frame's reference and the last one's,
+/// the most a resolve one frame behind could lose. That relaxation stays
+/// below what the bar leaves of a single sample's error, so the scenario
+/// fails both antialiasing off and a resolve that discards its history, a
+/// single jittered sample; the case checks that it does.
 #[test]
 fn a_surface_moving_along_the_view_keeps_its_history() {
     let Some(plain) = gpu() else { return };
     let (back, back_pose) = background();
-    let approach = Motion::translate(Vec3::new(0., 0., 0.03));
-    let start = ahead(Pose::at(Vec3::ZERO), 2.5);
+    let approach = Motion::translate(Vec3::new(0., 0., 0.003));
+    let start = Pose::at(Vec3::new(0., 0., -0.6));
     let script = move |f: u32| vec![back_pose, approach.pose(start, f)];
+    let px = VIEW.pixel_metres(0.5);
+    let near_grating = Shape::grating(
+        Vec2::new(0.3, 0.2),
+        0.25,
+        GRATING,
+        STRIPS,
+        0.4 * px,
+        1.6 * px,
+    );
     let scenario = Scenario {
-        shapes: vec![back, grating()],
+        shapes: vec![back, near_grating],
         camera: &still,
         script: &script,
     };
     let frames = SETTLE + 4;
+    // The strips two pixels inside the outline whose script moves them
+    // under 0.1 px a frame.
+    let measured = |frame: u32| {
+        let camera = VIEW.camera(still(frame));
+        let [now, before] = [frame, frame - 1].map(|f| script(f)[1].matrix());
+        let corners = scenario.shapes[1].quads[0].corners;
+        let size = Vec2::new(VIEW.size[0] as f32, VIEW.size[1] as f32);
+        let slow = Region::from_fn(VIEW.size, |pixel| {
+            VIEW.surface_motion(&camera, &camera, corners, now, before, centre(pixel))
+                .is_some_and(|motion| (motion.truncate() * size).length() < 0.1)
+        });
+        scenario
+            .strip_edges(frame, 1)
+            .and(&scenario.inside(frame, 1, 2.))
+            .and(&slow)
+    };
     let mut oracles = Oracles::new(&scenario, &plain);
     let truths: Vec<(Image, Image)> = (SETTLE - 1..frames)
         .map(|f| {
@@ -906,6 +1053,7 @@ fn a_surface_moving_along_the_view_keeps_its_history() {
     let mut failures = Failures::default();
     for (method, gpu) in methods() {
         let mut rig = scenario.rig(&gpu, VIEW, method);
+        let bar = bar(method, &rig, Edge::Strips);
         for frame in 0..frames {
             scenario.render(&mut rig, frame);
             if frame < SETTLE {
@@ -914,22 +1062,27 @@ fn a_surface_moving_along_the_view_keeps_its_history() {
             let resolved = rig.antialiased();
             let index = (frame + 1 - SETTLE) as usize;
             let (truth, single) = &truths[index];
-            let interior = scenario.inside(frame, 1, 2.);
-            let ours = error(&resolved, truth, &interior).rmse;
-            let theirs = error(single, truth, &interior).rmse;
-            let change = error(&truths[index - 1].0, truth, &interior).rmse;
+            let strips = measured(frame);
+            let ours = error(&resolved, truth, &strips).rmse;
+            let theirs = error(single, truth, &strips).rmse;
+            let change = error(&truths[index - 1].0, truth, &strips).rmse;
             eprintln!(
-                "{method:?} approaching, frame {frame}: RMSE {ours}, a single sample's {theirs}, the reference's change {change}"
+                "{method:?} approaching, frame {frame} ({} pixels): RMSE {ours}, a single sample's {theirs}, the reference's change {change}, bar {bar}",
+                strips.len()
             );
-            let bar = bar(method, &rig);
+            failures.check(change < theirs * (1. - 1. / bar), || {
+                format!(
+                    "approaching, frame {frame}: the reference changes by {change}, too much for a single sample's {theirs} to fail the bar {bar}"
+                )
+            });
             failures.check(ours <= theirs / bar + change, || {
                 format!(
-                    "{method:?} approaching, frame {frame}: the grating's RMSE {ours} is not {bar} times below a single sample's {theirs} plus the frame's change {change} (#768)"
+                    "{method:?} approaching, frame {frame}: the strips' RMSE {ours} is not {bar} times below a single sample's {theirs} plus the frame's change {change} (#768)"
                 )
             });
         }
-        // #792 and #793 add TAA's and FSR2's bounds back.
-        if !matches!(method, Antialiasing::Taa | Antialiasing::Fsr2) {
+        // #793 adds FSR2's bound back.
+        if method != Antialiasing::Fsr2 {
             failures.bounded(&rig, format!("{method:?} approaching"));
         }
     }
@@ -957,7 +1110,7 @@ enum Event {
 /// departures and visibility changes re-arm the view (Frame item 10): the
 /// hold after each event, the pixels whose box grown by 2 px lies wholly
 /// inside the card show their new truth (the background, or the card)
-/// within their two half-float stores. Each event follows the last by the
+/// within the method's `stores`. Each event follows the last by the
 /// settle and the hold, so the hold has expired; every event and method
 /// runs before the assertion, so one failure reports them all.
 #[test]
@@ -1013,7 +1166,7 @@ fn appearance_and_departure_at_rest_resolve_within_the_hold() {
                 frame += 1;
             }
             let residual = *residuals.last().unwrap();
-            let epsilon = 2. * truth * HALF_STEP;
+            let epsilon = stores(method) * truth * HALF_STEP;
             let converged = image::frames_to_converge(&residuals, epsilon);
             eprintln!(
                 "{method:?} {event:?}: residual {residual} the hold after it, within {epsilon} from frame {converged:?} after it"
@@ -1130,21 +1283,24 @@ fn a_cut_a_resize_and_another_scene_restart_history() {
 /// misplaces history (the History contract translates retained state and
 /// restarts nothing). The oracle is equivalence with the run that never
 /// moves it, frame by frame. The moves change only the f32 rounding of
-/// positions of a few metres (about 1e-6 m, 3e-5 px here), so the runs
-/// agree within a half-float step of the brightest radiance for each run's
-/// store.
+/// positions of a few metres (about 1e-6 m, 3e-5 px here), which reaches the
+/// motion target as at most its last half-float step at a few pixels (6e-8
+/// UV, measured). A resolve is continuous in its motion, so that moves a
+/// pixel's value by far less than a step, but each store after the motion is
+/// read may then land on the other neighbour: each pixel of the two runs
+/// agrees within `stores_after_motion` steps of its value.
 #[test]
 fn moving_the_origin_during_a_pan_changes_nothing() {
     let pan = VIEW.pan(-0.37, DEPTH);
     let camera = move |f: u32| pan.pose(Pose::at(Vec3::ZERO), f);
     let scenario = stage(&camera);
     let moves = [(20, Vec3::new(8., 0., -4.)), (30, Vec3::new(-3., 1., 2.))];
-    let everywhere = Region::from_fn(VIEW.size, |_| true);
     let mut failures = Failures::default();
     for (method, gpu) in methods() {
         let mut plain = scenario.rig(&gpu, VIEW, method);
         let mut moved = scenario.rig(&gpu, VIEW, method);
-        let mut largest = 0f32;
+        // The largest difference relative to the pixel's value, with where.
+        let mut largest = (0f32, 0, [0; 2], [0f32; 2]);
         for frame in 0..SETTLE + HOLD {
             for &(at, by) in &moves {
                 if frame == at {
@@ -1153,12 +1309,25 @@ fn moving_the_origin_during_a_pan_changes_nothing() {
             }
             scenario.render(&mut plain, frame);
             scenario.render(&mut moved, frame);
-            let e = error(&moved.antialiased(), &plain.antialiased(), &everywhere);
-            largest = largest.max(e.max);
+            let [a, b] = [&moved, &plain].map(|rig| rig.antialiased());
+            for pixel in pixels(VIEW.size) {
+                let values = [a.value(pixel), b.value(pixel)];
+                let relative = (values[0] - values[1]).abs() / values[0].max(values[1]);
+                if relative > largest.0 {
+                    largest = (relative, frame, pixel, values);
+                }
+            }
         }
-        eprintln!("{method:?} origin moves: largest difference {largest}");
-        failures.check(largest <= 2. * CARD * HALF_STEP, || {
-            format!("{method:?}: moving the origin changed a pixel by {largest}")
+        let (relative, frame, pixel, values) = largest;
+        eprintln!(
+            "{method:?} origin moves: largest difference {relative} of the value (frame {frame}, pixel {pixel:?}, {values:?})"
+        );
+        let bound = stores_after_motion(method) * HALF_STEP;
+        failures.check(relative <= bound, || {
+            format!(
+                "{method:?}: moving the origin changed pixel {pixel:?} at frame {frame} from {} to {}, {relative} of its value, above {bound}",
+                values[1], values[0]
+            )
         });
         // #792 and #793 add TAA's and FSR2's bounds back.
         if !matches!(method, Antialiasing::Taa | Antialiasing::Fsr2) {

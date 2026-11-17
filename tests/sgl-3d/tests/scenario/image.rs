@@ -21,8 +21,16 @@ impl Image {
         (r + g + b) / 3.
     }
 
-    /// The box filter of each `factor` by `factor` block, in linear space.
-    pub fn downsampled(&self, factor: u32) -> Image {
+    /// The box filter of each `factor` by `factor` block of RGB in the space
+    /// `to` maps a channel into and `from` maps back: a resolve that
+    /// averages its samples there converges on this. Alpha is averaged as
+    /// it is.
+    pub fn downsampled_through(
+        &self,
+        factor: u32,
+        to: impl Fn(f32) -> f32,
+        from: impl Fn(f32) -> f32,
+    ) -> Image {
         let size = self.size.map(|s| s / factor);
         let weight = 1. / (factor * factor) as f32;
         let texels = pixels(size)
@@ -31,12 +39,13 @@ impl Image {
                 for dy in 0..factor {
                     for dx in 0..factor {
                         let texel = self.at([x * factor + dx, y * factor + dy]);
-                        for c in 0..4 {
-                            sum[c] += texel[c] * weight;
+                        for c in 0..3 {
+                            sum[c] += to(texel[c]) * weight;
                         }
+                        sum[3] += texel[3] * weight;
                     }
                 }
-                sum
+                [from(sum[0]), from(sum[1]), from(sum[2]), sum[3]]
             })
             .collect();
         Image { size, texels }
