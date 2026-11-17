@@ -253,7 +253,7 @@ mod tests {
             jitter: [0.; 2],
         };
         let mut history = CameraHistory::default();
-        let mut frame = |history: &mut CameraHistory, reset: bool, mask: u32, finish: bool| {
+        let frame = |history: &mut CameraHistory, reset: bool, mask: u32, finish: bool| {
             let frame = history.begin(camera, reset, DVec3::ZERO, 0., mask);
             if finish {
                 history.finish(frame);
