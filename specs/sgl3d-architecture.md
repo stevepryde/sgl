@@ -1251,7 +1251,13 @@ last, after everything it may use, and refuses a directive in it.
   the pixel and at each blur tap, take the hardware's bilinear read where
   all four hold rays and otherwise those that do, renormalised as Godot's
   half-resolution SSR resolve weights its four, so a pixel beside an
-  untraced surface or a receiver keeps its whole reflection (#811). The
+  untraced surface or a receiver keeps its whole reflection (#811). Each
+  side of a silhouette or a crease keeps its own reflection (#815): the
+  resolve weighs reused rays by Godot's depth term, the temporal pass
+  records a texel at an edge where a neighbour falls below one half by
+  Godot's weight taken on its departure from a plane, and the upsample
+  reads a window holding an edge or a texel without rays by Godot's weights
+  against the reading pixel, one function owning them all. The
   lobes' responses and directions, which lobe is
   traced, the method's cutoff test and fade, and the formula response ×
   (reflected × fade + fallback × (1 − confidence × fade)) have one owner,

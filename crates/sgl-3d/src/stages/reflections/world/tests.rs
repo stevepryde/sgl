@@ -1634,24 +1634,142 @@ struct UpsampleFloor<'a> {
     radiance: &'a dyn Fn([u32; 2]) -> [f32; 4],
 }
 
+/// A second traced surface over the full-resolution pixels left of column
+/// `edge`, or above row `edge` where `rows`, of an upsample fixture: 5 m
+/// away, in front of the floor, where `nearer`, else at the floor's depth;
+/// of the floor's roughness and the unit `normal`; its rays, cast along that
+/// normal, hit `radiance`.
+#[derive(Clone, Copy, Debug)]
+struct Near {
+    rows: bool,
+    edge: u32,
+    nearer: bool,
+    normal: [f32; 3],
+    radiance: [f32; 4],
+}
+
+impl Near {
+    fn contains(&self, [x, y]: [u32; 2]) -> bool {
+        (if self.rows { y } else { x }) < self.edge
+    }
+}
+
+/// The floor's normal, facing the camera.
+const FACING: [f32; 3] = [0., 0., 1.];
+
+/// `normal` as the G-buffer encodes it (gbuffer_octahedral_encode), for
+/// normals in the upper hemisphere (z at least 0), whose encoding is the
+/// projection onto the octahedron.
+fn octahedral([x, y, z]: [f32; 3]) -> [f32; 2] {
+    assert!(z >= 0.);
+    let sum = x.abs() + y.abs() + z.abs();
+    [x / sum, y / sum]
+}
+
+/// `upsampled_surfaces` without a second surface.
+fn upsampled_floor(gpu: (&wgpu::Device, &wgpu::Queue), floor: &UpsampleFloor) -> Vec<[f32; 4]> {
+    upsampled_surfaces(gpu, floor, None)
+}
+
+/// The upsample fixture's floor: its device depth over the frame,
+/// `a + b u + c v` at UV (u, v) (0 at the top left) where `tilt` holds
+/// `[a, b, c]`, else 10 m away facing the camera; and whether the temporal
+/// pass takes the resolve's output, as the stage runs it, or the rays
+/// themselves, so that the upsample reads them unchanged.
+#[derive(Clone, Copy)]
+struct Plane {
+    tilt: Option<[f32; 3]>,
+    resolved: bool,
+}
+
+/// The fixture's floor 10 m away, as the stage runs it.
+const LEVEL: Plane = Plane {
+    tilt: None,
+    resolved: true,
+};
+
+/// `upsampled_plane` over the floor 10 m away.
+fn upsampled_surfaces(
+    gpu: (&wgpu::Device, &wgpu::Queue),
+    floor: &UpsampleFloor,
+    near: Option<Near>,
+) -> Vec<[f32; 4]> {
+    upsampled_plane(gpu, floor, near, LEVEL)
+}
+
+/// Draws a plane over the whole of its target at the device depth
+/// `a + b u + c v` at UV (u, v) (0 at the top left), which the rasterizer
+/// interpolates affinely in screen space.
+fn tilted_depth(device: &wgpu::Device, [a, b, c]: [f32; 3]) -> wgpu::RenderPipeline {
+    let plane = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("tilted depth"),
+        source: wgpu::ShaderSource::Wgsl(
+            format!(
+                "@vertex fn plane(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32> {{\n let uv=vec2<f32>(f32(i&1u),f32(i>>1u));\n return vec4(uv*2.-1.,{a:.6}+{b:.6}*uv.x+{c:.6}*(1.-uv.y),1.);\n}}\n"
+            )
+            .into(),
+        ),
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("tilted depth"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: &plane,
+            entry_point: Some("plane"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: None,
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: crate::shading::gbuffer::DEPTH,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 /// The production resolve, then the production upsample, over a static
-/// camera 10 m in front of a lit floor facing it. Its rays hit `radiance`
-/// and hold nothing where `empty` holds a traced texel's first pixel, as the
-/// classification leaves them; there, the floor is rough enough that the
-/// screen-space method does not trace it, or a blended receiver covers it.
-/// The production temporal pass runs between them on a first frame, which
-/// passes the resolve's colour through, and its variance, which stands in
-/// for noisy rays (uniform rays have none), is `variance` where a texel
-/// holds rays and 0 where it does not.
-fn upsampled_floor(
+/// camera in front of a lit floor, `plane`, and `near` where it holds a
+/// pixel. The floor's rays hit `radiance` and hold nothing where
+/// `empty` holds a traced texel's first pixel, as the classification leaves
+/// them; there, the floor is rough enough that the screen-space method does
+/// not trace it, or a blended receiver covers it. The production temporal
+/// pass runs between them on a first frame, which passes the resolve's
+/// colour through, and its variance, which stands in for noisy rays
+/// (uniform rays have none), is `variance` where a texel holds rays and 0
+/// where it does not.
+fn upsampled_plane(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     floor: &UpsampleFloor,
+    near: Option<Near>,
+    plane: Plane,
 ) -> Vec<[f32; 4]> {
     use wgpu::util::DeviceExt;
+    let near_at = |pixel| near.filter(|near| near.contains(pixel));
     let size = [UPSAMPLE_SIZE; 2];
     let reduced = size.map(|side| side / super::DOWNSCALE);
     let full_texels = (size[0] * size[1]) as usize;
-    let normal = test_support::hdr_texture(device, queue, size, &vec![[0.; 4]; full_texels]);
+    let pixels = || (0..size[1]).flat_map(|y| (0..size[0]).map(move |x| [x, y]));
+    let normal = test_support::hdr_texture(
+        device,
+        queue,
+        size,
+        &pixels()
+            .map(|pixel| {
+                let [x, y] = octahedral(near_at(pixel).map_or(FACING, |near| near.normal));
+                [x, y, 0., 0.]
+            })
+            .collect::<Vec<_>>(),
+    );
     let untraced = |pixel| {
         floor
             .empty
@@ -1661,8 +1779,7 @@ fn upsampled_floor(
         device,
         queue,
         size,
-        &(0..size[1])
-            .flat_map(|y| (0..size[0]).map(move |x| [x, y]))
+        &pixels()
             .map(|pixel| {
                 [
                     0.,
@@ -1687,14 +1804,20 @@ fn upsampled_floor(
             .collect::<Vec<_>>();
         test_support::hdr_texture(device, queue, reduced, &texels)
     };
-    let indirect = traced(&|texel, empty| {
+    let judged = |texel: [u32; 2]| near_at(texel.map(|v| v * super::DOWNSCALE));
+    let indirect = traced(&|texel, empty| match (empty, judged(texel)) {
+        (true, _) => [0.; 4],
+        (false, Some(near)) => near.radiance,
+        (false, None) => (floor.radiance)(texel),
+    });
+    let direction = traced(&|texel, empty| {
         if empty {
             [0.; 4]
         } else {
-            (floor.radiance)(texel)
+            let [x, y, z] = judged(texel).map_or(FACING, |near| near.normal);
+            [x, y, z, 1.]
         }
     });
-    let direction = traced(&|_, empty| if empty { [0.; 4] } else { [0., 0., 1., 1.] });
     let variance = traced(&|_, empty| [if empty { 0. } else { floor.variance }; 4]);
     let r32 = wgpu::TextureFormat::R32Float;
     let hdr = crate::shading::gbuffer::COLOR;
@@ -1784,19 +1907,60 @@ fn upsampled_floor(
     ];
     let mut encoder = device.create_command_encoder(&Default::default());
     let fill = receiver_depth(device);
-    fixture_depth(&mut encoder, &opaque_depth, &fill, None);
-    fixture_depth(
-        &mut encoder,
-        &surface_depth,
-        &fill,
-        floor
-            .empty
-            .filter(|empty| matches!(empty.kind, EmptyKind::Receiver))
-            .map(|empty| match empty.rows {
-                false => [0, 0, empty.edge, size[1]],
-                true => [0, 0, size[0], empty.edge],
-            }),
-    );
+    let region = |rows, edge| match rows {
+        false => [0, 0, edge, size[1]],
+        true => [0, 0, size[0], edge],
+    };
+    // A nearer surface is the opaque surface and so the surface there: the
+    // fixture holds it or a receiver, not both.
+    let nearer = near
+        .filter(|near| near.nearer)
+        .map(|near| region(near.rows, near.edge));
+    assert!(nearer.is_none() || floor.empty.is_none());
+    let surface = floor
+        .empty
+        .filter(|empty| matches!(empty.kind, EmptyKind::Receiver))
+        .map(|empty| region(empty.rows, empty.edge))
+        .or(nearer);
+    match plane.tilt {
+        None => {
+            fixture_depth(&mut encoder, &opaque_depth, &fill, nearer);
+            fixture_depth(&mut encoder, &surface_depth, &fill, surface);
+        }
+        Some(tilt) => {
+            // The tilted floor, then what is in front of it, at 0.05 (2 m),
+            // clear of the floor everywhere (`STEEP`).
+            let tilted = tilted_depth(device, tilt);
+            for (view, rect) in [(&opaque_depth, nearer), (&surface_depth, surface)] {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("tilted fixture depth"),
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0.),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    ..Default::default()
+                });
+                pass.set_pipeline(&tilted);
+                pass.draw(0..4, 0..1);
+                if let Some([left, top, width, height]) = rect {
+                    pass.set_pipeline(&fill);
+                    pass.set_viewport(
+                        left as f32,
+                        top as f32,
+                        width as f32,
+                        height as f32,
+                        0.05,
+                        0.05,
+                    );
+                    pass.draw(0..3, 0..1);
+                }
+            }
+        }
+    }
     let mut dispatch = |entry_point,
                         inputs: &[(u32, wgpu::BindingResource)],
                         receivers: &[(u32, wgpu::BindingResource)],
@@ -1841,7 +2005,10 @@ fn upsampled_floor(
         super::WORLD_TEMPORAL_ENTRY,
         &[
             (8, wgpu::BindingResource::Sampler(&sampler)),
-            (30, texture(&resolve)),
+            (
+                30,
+                texture(if plane.resolved { &resolve } else { &indirect }),
+            ),
             (31, texture(&resolve)),
             (32, texture(&variance)),
             (33, texture(&variance)),
@@ -2107,5 +2274,331 @@ fn the_blur_beside_an_untraced_surface_runs_as_it_does_away_from_it() {
         "{} traced pixels beside an untraced surface blur unlike the rest of the floor: {:?}",
         unlike.len(),
         &unlike[..unlike.len().min(8)]
+    );
+}
+
+/// The radiance a second surface's rays hit in the upsample fixture.
+const NEAR_RADIANCE: [f32; 4] = [0.2, 0.2, 0.2, 1.];
+
+/// The side of an edge between two surfaces a comparison takes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Side {
+    /// The floor's pixels.
+    Floor,
+    /// The second surface's pixels.
+    Second,
+}
+
+/// The upsample fixture's floor of uniform radiance with a second surface
+/// (`Near`) of `NEAR_RADIANCE`, `nearer` and of `normal`, left of each of
+/// the columns `edges` and above each of those rows, smooth (no blur) and
+/// at `UPSAMPLE_ROUGHNESS` (the blur's full radius), against that `side`'s
+/// surface alone: the floor without the second surface, or the second
+/// surface over the whole frame. For each run, its description and how
+/// many of `side`'s pixels differ from the surface alone by more than two
+/// binary16 steps.
+fn beside_an_edge(
+    gpu: (&wgpu::Device, &wgpu::Queue),
+    nearer: bool,
+    normal: [f32; 3],
+    side: Side,
+    edges: &[u32],
+) -> Vec<(String, usize)> {
+    // Uniform rays resolve and filter to within a binary16 step (2^-11
+    // below 1) of their radiance; two steps allow for both runs.
+    const ROUNDING: f32 = 1. / 1024.;
+    let mut runs = Vec::new();
+    for roughness in [0., UPSAMPLE_ROUGHNESS] {
+        let floor = UpsampleFloor {
+            roughness,
+            empty: None,
+            variance: 0.1,
+            radiance: &|_| UNIFORM,
+        };
+        let second = |rows, edge| Near {
+            rows,
+            edge,
+            nearer,
+            normal,
+            radiance: NEAR_RADIANCE,
+        };
+        let alone = upsampled_surfaces(
+            gpu,
+            &floor,
+            (side == Side::Second).then_some(second(false, UPSAMPLE_SIZE)),
+        );
+        for rows in [false, true] {
+            for &edge in edges {
+                let near = second(rows, edge);
+                let upsampled = upsampled_surfaces(gpu, &floor, Some(near));
+                let mut differ = 0;
+                let mut largest = [0f32; 6];
+                for y in 0..UPSAMPLE_SIZE {
+                    for x in 0..UPSAMPLE_SIZE {
+                        if near.contains([x, y]) != (side == Side::Second) {
+                            continue;
+                        }
+                        let i = (y * UPSAMPLE_SIZE + x) as usize;
+                        let difference = largest_difference(&upsampled[i], &alone[i]);
+                        if difference > ROUNDING {
+                            differ += 1;
+                            let along = if rows { y } else { x };
+                            let distance =
+                                along.abs_diff(edge) as usize - usize::from(side == Side::Second);
+                            if let Some(largest) = largest.get_mut(distance) {
+                                *largest = largest.max(difference);
+                            }
+                        }
+                    }
+                }
+                let description = format!(
+                    "{side:?} side, second surface {} {edge}, roughness {roughness}: {differ} pixels differ; largest difference by distance from the edge {:?}",
+                    if rows { "above row" } else { "left of column" },
+                    largest.map(|difference| (difference * 1000.).round() / 1000.),
+                );
+                eprintln!("{description}");
+                runs.push((description, differ));
+            }
+        }
+    }
+    runs
+}
+
+/// The runs of `beside_an_edge` whose pixels differ.
+fn differing(runs: Vec<(String, usize)>) -> Vec<(String, usize)> {
+    runs.into_iter().filter(|(_, differ)| *differ > 0).collect()
+}
+
+// Plausible defect: world-space reflections trace at half resolution; the
+// resolve's spatial reuse takes a neighbouring texel wherever its depth is
+// above 0 (Wicked's ssr_resolveCS), and the upsample's read of the reduced
+// grid, at the pixel and at each blur tap, weighs its four texels by the
+// filter and by whether they hold rays alone, so at a depth silhouette the
+// farther surface's pixels take the reflection of texels whose surface,
+// judged at their block's first pixel, is the nearer one. Oracle: the same
+// floor without the nearer surface, over uniform radiance on each; every
+// floor pixel must equal it, with the edge on both parities of a column and
+// of a row, smooth, where the reuse reaches one texel across and the blur
+// does not run, and rough, where the reuse reaches three and the blur its
+// full radius.
+#[test]
+fn the_far_side_of_a_silhouette_keeps_its_own_reflection() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let taken = differing(beside_an_edge(
+        (&device, &queue),
+        true,
+        FACING,
+        Side::Floor,
+        &[32, 33],
+    ));
+    assert!(
+        taken.is_empty(),
+        "floor pixels beside a nearer surface took its reflection: {taken:#?}"
+    );
+}
+
+// Plausible defect: as on the far side, the nearer surface's pixels beside
+// the silhouette read texels judged on the floor behind it, through the
+// resolve's reuse and the upsample's reads. Oracle: the nearer surface
+// alone, filling the frame, over uniform radiance; every pixel of it must
+// equal that, on both parities of a column and of a row edge, smooth and
+// rough.
+#[test]
+fn the_near_side_of_a_silhouette_keeps_its_own_reflection() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let taken = differing(beside_an_edge(
+        (&device, &queue),
+        true,
+        FACING,
+        Side::Second,
+        &[32, 33],
+    ));
+    assert!(
+        taken.is_empty(),
+        "pixels of a nearer surface took the reflection of the floor behind it: {taken:#?}"
+    );
+}
+
+// Plausible defect: a crease, where a wall meets a floor at the same depth,
+// passes a test of depth alone, so the reuse and the upsample's reads take
+// the other surface's reflection across it. The ported weight
+// (world_same_surface, Godot's) compares normals too: between perpendicular
+// normals at equal depth and roughness its depth and roughness terms are 1
+// and its normal term exp(-32), about 1.3e-14, below binary16's resolution
+// beside the weights of a pixel's own surface, so it prescribes what a
+// silhouette gets: each side keeps its own reflection. Oracle: each surface
+// alone, over uniform radiance on each, on both parities of a column and
+// of a row edge, smooth and rough.
+#[test]
+fn each_side_of_a_crease_keeps_its_own_reflection() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    const UP: [f32; 3] = [0., 1., 0.];
+    let taken = differing(
+        [Side::Floor, Side::Second]
+            .into_iter()
+            .flat_map(|side| beside_an_edge(gpu, false, UP, side, &[32, 33]))
+            .collect(),
+    );
+    assert!(
+        taken.is_empty(),
+        "pixels beside a crease took the other surface's reflection: {taken:#?}"
+    );
+}
+
+// Plausible defect: the upsample's window gate compares each texel of a
+// workgroup's window with the next in x, y and both, so one that skips the
+// pairs at the window's last row or column, or a window that does not hold
+// every texel its reads take, leaves a silhouette there to the hardware's
+// bilinear read, which takes the other surface's reflection. The windows of
+// adjacent workgroups overlap, and the pattern repeats each workgroup (8
+// pixels), so an edge at each of the 8 columns 40 to 47, and each of those
+// rows, crosses every place in a window. Oracle: each surface alone, as
+// for the silhouette's far and near sides, smooth and rough.
+#[test]
+fn a_silhouette_keeps_each_side_its_own_reflection_wherever_it_meets_the_workgroups() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let edges: Vec<u32> = (40..48).collect();
+    let taken = differing(
+        [Side::Floor, Side::Second]
+            .into_iter()
+            .flat_map(|side| beside_an_edge(gpu, true, FACING, side, &edges))
+            .collect(),
+    );
+    assert!(
+        taken.is_empty(),
+        "pixels beside a silhouette took the other surface's reflection: {taken:#?}"
+    );
+}
+
+/// A floor steep along x and one steep along y, from 0.001 to 0.019 in
+/// device depth across the frame (1000 m to 5.3 m at the fixture's 0.1 m
+/// near plane): neighbouring texels differ by 5.6e-4, which Godot's weight
+/// takes at exp(-1.15), about 0.32, so a gate on the step between
+/// neighbours would hold every window an edge. Behind a nearer surface at
+/// 0.05 (2 m), which Godot's depth term then takes at below exp(-63).
+const STEEP: [[f32; 3]; 2] = [[0.001, 0.018, 0.], [0.001, 0., 0.018]];
+
+// Plausible defect: the window gate takes the step in depth between
+// neighbouring texels, which is large on a steep surface, so a steep plane
+// is held an edge throughout and every read of it is Godot's weighted read,
+// whose depth weights there fall below 1 and differ between the four
+// texels: slower, and unlike the hardware's bilinear read. Oracle: with the
+// rays read unresolved, so that the upsample reads the same texels, and
+// smooth, so that no blur runs, the upsample's output over a steep plane
+// must equal, to the bit, its output over the level floor, where every read
+// is the hardware's; varied radiance makes any other read show.
+#[test]
+fn a_steep_plane_takes_the_hardware_reads_a_level_one_does() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let floor = UpsampleFloor {
+        roughness: 0.,
+        empty: None,
+        variance: 0.1,
+        radiance: &|[x, y]| {
+            let h = (x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663)) % 1000;
+            [0.2 + h as f32 / 1000., 0.5, 1.2 - h as f32 / 1000., 1.]
+        },
+    };
+    let unresolved = |tilt| Plane {
+        tilt,
+        resolved: false,
+    };
+    let level = upsampled_plane(gpu, &floor, None, unresolved(None));
+    let unlike = STEEP
+        .map(|tilt| {
+            let steep = upsampled_plane(gpu, &floor, None, unresolved(Some(tilt)));
+            let differ = steep.iter().zip(&level).filter(|(a, b)| a != b).count();
+            eprintln!("floor of depth {tilt:?}: {differ} pixels unlike the level floor's");
+            differ
+        })
+        .to_vec();
+    assert!(
+        unlike.iter().all(|&differ| differ == 0),
+        "a steep plane's reads are not the hardware's: {unlike:?} pixels differ"
+    );
+}
+
+// Plausible defect: a gate that holds a steep plane no edge by loosening its
+// threshold, or by testing the step's change alone, misses a silhouette
+// on that plane, or the resolve's depth term, taken on the steep plane's
+// own step, rejects its own neighbours there. Oracle: the steep plane
+// alone, over uniform radiance; every pixel of the plane beside a nearer
+// surface must equal it, on both parities of a column and of a row edge,
+// on planes steep along x and along y, smooth and rough.
+#[test]
+fn the_far_side_of_a_silhouette_on_a_steep_plane_keeps_its_own_reflection() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    // Uniform rays resolve and filter to within a binary16 step (2^-11
+    // below 1) of their radiance; two steps allow for both runs.
+    const ROUNDING: f32 = 1. / 1024.;
+    let mut taken = Vec::new();
+    for tilt in STEEP {
+        let plane = Plane {
+            tilt: Some(tilt),
+            resolved: true,
+        };
+        for roughness in [0., UPSAMPLE_ROUGHNESS] {
+            let floor = UpsampleFloor {
+                roughness,
+                empty: None,
+                variance: 0.1,
+                radiance: &|_| UNIFORM,
+            };
+            let alone = upsampled_plane(gpu, &floor, None, plane);
+            for rows in [false, true] {
+                for edge in [32, 33] {
+                    let near = Near {
+                        rows,
+                        edge,
+                        nearer: true,
+                        normal: FACING,
+                        radiance: NEAR_RADIANCE,
+                    };
+                    let upsampled = upsampled_plane(gpu, &floor, Some(near), plane);
+                    let (mut differ, mut largest) = (0, 0f32);
+                    for y in 0..UPSAMPLE_SIZE {
+                        for x in 0..UPSAMPLE_SIZE {
+                            if near.contains([x, y]) {
+                                continue;
+                            }
+                            let i = (y * UPSAMPLE_SIZE + x) as usize;
+                            let difference = largest_difference(&upsampled[i], &alone[i]);
+                            if difference > ROUNDING {
+                                differ += 1;
+                                largest = largest.max(difference);
+                            }
+                        }
+                    }
+                    let description = format!(
+                        "floor of depth {tilt:?}, nearer surface {} {edge}, roughness {roughness}: {differ} floor pixels differ, by up to {largest:.3}",
+                        if rows { "above row" } else { "left of column" },
+                    );
+                    eprintln!("{description}");
+                    if differ > 0 {
+                        taken.push(description);
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        taken.is_empty(),
+        "floor pixels beside a nearer surface on a steep plane took its reflection: {taken:#?}"
     );
 }

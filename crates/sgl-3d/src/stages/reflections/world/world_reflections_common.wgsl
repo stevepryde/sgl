@@ -69,6 +69,74 @@ fn world_receiver(p:vec2<i32>)->WorldReceiver {
  let roughness=gbuffer_traced_roughness(material,lit);
  return WorldReceiver(depth,gbuffer_reflection_normal(normals,material.coat),roughness,world_traces(depth,lit,roughness));
 }
+// What the denoiser compares of two traced lobes: device depth, normal and
+// perceptual roughness.
+struct WorldSurface {
+ depth:f32,
+ normal:vec3<f32>,
+ roughness:f32,
+}
+fn world_surface(receiver:WorldReceiver)->WorldSurface {
+ return WorldSurface(receiver.depth,receiver.normal,receiver.roughness);
+}
+// How far reduced texel `texel`'s surface, as its block's first pixel
+// judges it (the resolve and the temporal pass judge it there), is the
+// surface `surface` that reads it: 1 where depth, normal and roughness
+// agree, falling towards 0 across a silhouette or a crease. Godot Engine's
+// half-resolution SSR resolve weight (get_sample in
+// servers/rendering/renderer_rd/shaders/effects/
+// screen_space_reflection_resolve.glsl 23-55, revision
+// ed1daf0bf001b61586d9930840f2f1394092c079, 4.7.2-stable, unchanged at
+// master 203bf0a23fd7d90a860917e66de08e20d2596244, MIT, see
+// LICENSE-godot.txt), with its factors: its depths are device depths, as
+// Godot's are (the depth buffer and its half-resolution copy), and its
+// roughness perceptual, as Godot's normal-roughness buffer holds it.
+// Modified: translated to WGSL; it takes decoded surfaces; each term is its
+// exponent, which world_same_depth and world_surface_edge share (#815).
+const WORLD_SURFACE_DEPTH_FACTOR:f32=2048.;
+const WORLD_SURFACE_NORMAL_FACTOR:f32=32.;
+const WORLD_SURFACE_ROUGHNESS_FACTOR:f32=16.;
+fn world_depth_exponent(difference:f32)->f32 {
+ return abs(difference)*WORLD_SURFACE_DEPTH_FACTOR;
+}
+fn world_normal_exponent(a:vec3<f32>,b:vec3<f32>)->f32 {
+ return clamp(1.-dot(a,b),0.,1.)*WORLD_SURFACE_NORMAL_FACTOR;
+}
+fn world_roughness_exponent(a:f32,b:f32)->f32 {
+ return abs(a-b)*WORLD_SURFACE_ROUGHNESS_FACTOR;
+}
+fn world_same_surface(texel:WorldSurface,surface:WorldSurface)->f32 {
+ let weight_depth=world_same_depth(texel.depth,surface.depth);
+ let weight_normal=exp(-world_normal_exponent(surface.normal,texel.normal));
+ let weight_roughness=exp(-world_roughness_exponent(surface.roughness,texel.roughness));
+ return weight_depth*weight_normal*weight_roughness;
+}
+// world_same_surface's depth term alone, which the resolve's spatial reuse
+// weighs a neighbour's rays by: how far a texel whose surface lies at
+// device depth `texel` is the surface at `depth`.
+fn world_same_depth(texel:f32,depth:f32)->f32 {
+ return exp(-world_depth_exponent(depth-texel));
+}
+// Whether texel surface `texel` meets its neighbour `neighbor` at an edge,
+// where the texel departs from the line through its two neighbours on that
+// neighbour's axis by `departure` in device depth (z[i-1] - 2 z[i] + z[i+1]):
+// world_same_surface below one half, with its depth term taken on that
+// departure rather than on the step between the two. Device depth is
+// affine in screen space over a plane and the texels are evenly spaced, so
+// a plane's departure is 0 at any slope and only a silhouette or a crease
+// breaks it. SVGF compensates its depth edge-stopping for slope the same
+// way, dividing the step by the depth gradient (Schied et al. 2017,
+// "Spatiotemporal Variance-Guided Filtering"; NVIDIA Falcor
+// 759aad033ff610fb0d82c74f7e0a508d0096d5f2,
+// Source/RenderPasses/SVGFPass/SVGFAtrous.ps.slang 97 and 122-124,
+// SVGFCommon.slang 35-54); this takes the idea, not that code. The same
+// depth term on another argument; the normal and roughness terms are
+// Godot's between the two. Below one half: where the exponents' sum
+// exceeds ln 2.
+const WORLD_LN_2:f32=.69314718;
+fn world_surface_edge(departure:f32,texel:WorldSurface,neighbor:WorldSurface)->bool {
+ return world_depth_exponent(departure)+world_normal_exponent(texel.normal,neighbor.normal)+world_roughness_exponent(texel.roughness,neighbor.roughness)>WORLD_LN_2;
+}
 // Whether a blended receiver is the surface at `p`, whose opaque depth is
 // `depth`: its opaque surface, which composes its fallback alone there,
 // traces no world ray, and the G-buffer's motion there is the receiver's.

@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` world-space reflections (`Settings::world_space_reflections`):
+  a surface beside a nearer one, or meeting another at a crease, keeps its
+  own reflection up to the edge, where it took up to 72% of the other's
+  over a few pixels; the half-resolution passes weigh texels by surface
+  there. Image-changing along silhouettes and creases only; no settings.
+  No game-code changes are needed.
 - `sgl-post-fx` TAA (`TemporalAntiAliasing`, every feature flag) and so
   `sgl-3d` TAA: an edge in motion no longer gets a fringe brighter or darker
   than anything in the scene; history is clipped within the neighbourhood's
