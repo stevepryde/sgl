@@ -799,6 +799,22 @@ Use the [current specs](README.md) for implementation and the
   a library of their own. This states the posture behind D-24 and D-25, and
   it means that attribution is part of every port, that nothing is designed,
   kept or promised for the sake of outside users, and that a breaking change
-  owes them a changelog entry and nothing more.
+  owes them a changelog entry and the version number semver requires, nothing
+  more.
   Rationale: the project stands on others' work and should say so exactly;
   it is one person's library, shared, not a product with obligations.
+
+- **D-52** Owner direction, 2026-11-17: SGL follows semver as Cargo reads
+  it, so that updating within a version requirement never breaks a game. A
+  release is breaking when a game that built and behaved correctly on the
+  previous one must change its code, data or settings to do so again; during
+  `0.x` that advances the minor version, and a patch release is every other
+  kind, additions and fixes alike. Semver is the whole of the release
+  discipline: there is no stable line, stabilisation period or release train,
+  and a new version need not be large; it is only a version. This replaces
+  the rule of 2026-10-13 that fixes are patch releases even when callers
+  must change, under which `0.4.1` changed APIs in a patch; the changelog's
+  history stands as written. The next release after `0.6.0` holds to it.
+  Rationale: the version number exists to keep the owner's games from
+  breaking on `cargo update`; a patch that requires caller changes defeats
+  that.
