@@ -153,6 +153,10 @@ pub enum DiagnosticTarget {
     /// R32Float, 1×1: the frame's exposure multiplier, which the tone map
     /// and FSR read.
     Exposure,
+    /// Rgba16Float: the completed linear HDR scene as antialiasing leaves
+    /// it, before motion blur, bloom and tone mapping: TAA's or FSR's output
+    /// at the scene size, else the composite at the render size.
+    Antialiased,
 }
 
 /// `texture`'s rows, `bpp` bytes a texel, without row padding. Blocks until

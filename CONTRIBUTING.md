@@ -46,7 +46,12 @@ libraries and libudev.
   separate from the historical [decision log](specs/decisions.md).
 - For SGL3D, follow its [architecture](specs/sgl3d-architecture.md) and
   [rendering development rules](specs/sgl3d.md#rendering-development).
-  Keep licences and provenance with ported code.
+  Keep licences and provenance with ported code. A change to a rendering
+  feature lands with that feature's
+  [scenario suite](specs/testing.md#sgl3d-scenario-harness) or extends it,
+  and a suite says which situations it does not cover. A fix for a rendering
+  defect adds the scenario that fails without it, at the lowest boundary that
+  shows it: the frame when only the frame shows it.
 - Library crates take the root `[workspace.lints]`. `sgl-input` mirrors its
   clippy table because its macOS FFI module needs `unsafe_code` denied rather
   than forbidden. `sgl-3d` and `sgl-post-fx` are exempt from clippy's pedantic

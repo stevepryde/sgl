@@ -455,7 +455,8 @@ size, and record counts must fit `u32`.
   `obstructed_distance`.
 - **Diagnostics** feature: `Settings::diagnostics` turns layers off (culling
   among them), runs the frame probe and captures the tone-mapped target;
-  `Renderer::diagnostic_target`, `take_frame_probe_reports`,
+  `Renderer::diagnostic_target` (among its targets `Antialiased`, the linear
+  HDR scene as antialiasing leaves it), `take_frame_probe_reports`,
   `diagnostic_draws`, `diagnostic_view_times` and
   `take_dynamic_gi_reports` (`Diagnostics::dynamic_gi`: the dynamic GI
   volume's probes, rays, BVH visits and budget stride, by frame) return what

@@ -25,6 +25,10 @@ docs and specs the entry links.
   infinity) no longer presents black or NaN, behind a transmissive surface
   with any antialiasing and elsewhere where neither TAA nor FSR ran; it reads
   as 65504. No game-code changes are needed.
+- `sgl-3d::diagnostics::DiagnosticTarget::Antialiased` (`diagnostics`
+  feature) returns the last frame's linear HDR scene as antialiasing leaves
+  it (TAA's or FSR's output, else the composite). Exhaustive
+  `DiagnosticTarget` matches add `Antialiased`.
 - `sgl-post-fx::temporal_anti_aliasing::FeatureFlags::MOTION_ADAPTIVE_HISTORY`
   adds motion-adaptive history rectification; `sgl-3d` enables it for TAA to
   stabilize static subpixel geometry while retaining motion/depth rejection.

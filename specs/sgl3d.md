@@ -319,7 +319,8 @@ The code's structure follows the
    required check. Add a test only where it can fail at a real boundary: API
    behaviour, resource and history lifetime, coordinate conventions, or frame
    invariants such as finite output. Automated tests must not depend on
-   interpreting images.
+   interpreting images. Rendering behaviour over frames is tested in the
+   [scenario harness](testing.md#sgl3d-scenario-harness).
 5. **RD-5 — Judge the look in the game.** Iterate with fixed-camera captures and
    short moving sequences from the real consumer, compared with the previous
    build and the concept art. Agents should look at captures to find and fix

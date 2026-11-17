@@ -120,6 +120,12 @@ module_name_repetitions = "allow"
 [profile.dev]
 overflow-checks = true
 
+# The scenario harness decodes, filters and measures full-frame readbacks
+# (supersampled references among them) on the CPU; unoptimised, that
+# dominates its share of the required check.
+[profile.dev.package.sgl-3d-tests]
+opt-level = 2
+
 [profile.release]
 overflow-checks = true
 

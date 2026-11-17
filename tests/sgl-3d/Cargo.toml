@@ -5,8 +5,10 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-# Integration tests for sgl-3d, kept out of its published package. Like
-# sgl-3d, exempt from `[workspace.lints]`.
+# Integration tests for sgl-3d, kept out of its published package, and the
+# scenario harness (`tests/scenario/`) its scenario tests include. Like
+# sgl-3d, exempt from `[workspace.lints]`. Everything is a dev-dependency, so
+# no workspace build but the tests' turns on sgl-3d's diagnostics.
 
 [dev-dependencies]
 bytemuck.workspace = true
@@ -14,6 +16,11 @@ glam.workspace = true
 gltf.workspace = true
 image.workspace = true
 pollster.workspace = true
+serde_json.workspace = true
 # The tests read the frame's targets through the diagnostics accessors.
 sgl-3d = { workspace = true, features = ["diagnostics"] }
+# The temporal antialiasing suite takes FSR's jitter phase count from the
+# SDK port the renderer uses.
+sp-fidelity.workspace = true
+wasm-bindgen-test.workspace = true
 wgpu.workspace = true
