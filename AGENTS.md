@@ -61,6 +61,10 @@ compatibility shims solely to avoid updating consumers.
 
 ## Licence notices and distribution
 
+- SGL is public because it borrows from open-source projects, and it claims
+  nothing taken from them as its own: only the assembly and adaptation into
+  one library is SGL's (D-51). Attribution is therefore part of the work,
+  never optional and never approximate.
 - Preserve original licences, copyright notices and provenance for copied code
   and assets. Update `licenses/upstreams.json` with the actual licence-source
   revision when updating a port; run `bun scripts/refresh-licenses.ts` and keep
@@ -85,6 +89,9 @@ compatibility shims solely to avoid updating consumers.
   reports, inventories, or identity tables in `docs/`.
 - Never gate a ticket on owner sign-off, acceptance, or review. The owner steers
   by filing new tickets.
+- SGL is offered as is, with no guarantee of correctness or maintenance and no
+  support (D-51). Do not add promises, process or machinery on behalf of
+  outside users; they are encouraged to fork or copy what they want.
 - SGL is a game library a game imports. The game owns composition.
   Do not call it a game engine, add an engine on top of it, or turn it into one.
   Game logic is the game's: Rust today. Authored gameplay data is RON. New 3D clients use

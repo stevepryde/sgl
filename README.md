@@ -116,6 +116,20 @@ Repository development also needs Bun, Node.js, the matching wasm-bindgen
 CLI, and a GPU for browser checks. [Contributing](CONTRIBUTING.md) covers setup
 and the required `bun scripts/tasks.ts check` command.
 
+## Why this is public, and what to expect
+
+SGL borrows from and depends on open-source engines and libraries, so its own
+source is public too, with their authors credited. Nothing taken from another
+project is claimed as SGL's: that code, those techniques and that data remain
+their authors' work, under their licences. What is SGL's own, written by AI
+coding agents under one person's direction, is the assembly: choosing,
+porting and adapting those pieces and joining them into one coherent library.
+
+SGL is offered as is. It makes no guarantee of correctness or of continued
+maintenance, and it comes with no support. Use it for your own purposes. You
+are encouraged to fork it, or to copy the parts you want into a library of
+your own.
+
 ## Inspirations and credits
 
 SGL builds on the work generously shared by
