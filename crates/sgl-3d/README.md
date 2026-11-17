@@ -3193,7 +3193,11 @@ retained capture inputs; the ordinary test command does not establish those
 results. Run relevant cases explicitly when changing their boundary. The
 `diagnostics` feature adds `Settings::diagnostics` (`settings::Diagnostics`,
 not serialized: switches that turn a layer off, the numerical frame probe
-and the tone-target capture), `Renderer::diagnostic_target`,
+and the tone-target capture), `Renderer::diagnostic_target` (the frame's
+targets: depth, normals, motion, source identity, the composite, ambient
+occlusion, the captured tone-mapped target, the exposure, and `Antialiased`,
+the completed linear HDR scene as antialiasing leaves it, before motion blur,
+bloom and tone mapping),
 `Renderer::take_frame_probe_reports` (source-to-black comparisons run only
 when the actual observed textures have equal dimensions, including FSR
 fallbacks),

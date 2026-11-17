@@ -63,6 +63,8 @@ pub(super) fn render(
         ray_form,
         #[cfg(feature = "diagnostics")]
         probe,
+        #[cfg(any(test, feature = "diagnostics"))]
+            completed: diagnostic_completed,
         ..
     } = renderer;
     // The surface's own targets, from a scene's first receiver on.
@@ -314,6 +316,10 @@ pub(super) fn render(
         post.forget_inputs();
         motion_blur.forget_inputs();
     }
+    #[cfg(any(test, feature = "diagnostics"))]
+    {
+        *diagnostic_completed = Some(completed_kind);
+    }
     let antialiased = completed(completed_kind, post_fx, antialiasing, targets);
     let completed_view = motion_blur
         .encode(&mut ctx, antialiased)
@@ -378,7 +384,7 @@ pub(super) fn encode_opaque(
 }
 
 /// The view holding `kind`.
-fn completed<'a>(
+pub(super) fn completed<'a>(
     kind: Completed,
     post_fx: &'a Option<PostFx>,
     antialiasing: &'a crate::stages::antialiasing::Antialiasing,

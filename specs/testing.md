@@ -47,6 +47,41 @@ check` is the required check.
    is the periodic audit for tests that cannot fail; it is not part of
    `check`.
 
+## SGL3D scenario harness
+
+`tests/sgl-3d` holds SGL3D's scenario harness (`sgl_3d_tests`): scripted,
+deterministic multi-frame scenes rendered through the public API on a real
+device and judged by numbers read from the frame's targets. It protects
+rendering behaviour without a game or a person looking at it.
+
+1. A scenario is a fixture whose truth is known by construction, a script of
+   camera and object motion by frame index, the settings under test, and
+   assertions. It uses only the public API and the `diagnostics` feature.
+2. An assertion names its oracle: analytic (computed from the fixture and
+   script), reference (the frame supersampled with the temporal feature under
+   test off), equivalence (two scripts a contract says look the same), bound
+   (finite, non-negative, within the fixture's radiance range, energy not
+   created), or a number a spec states. Requirement 1 applies: no stored
+   image, no threshold fitted to the current output, no interpretation of the
+   picture. A threshold is comparative where a comparison states the
+   requirement, and otherwise says where it comes from.
+3. Each rendering feature in the feature guide has a suite. A suite covers the
+   feature at rest, under camera translation and rotation, with an object
+   moving across and along the view, with an object the camera follows,
+   across an appearance and a departure, a camera cut and a resize, and at
+   each of its settings levels, and says which of these cannot affect the
+   feature.
+4. A fix for a rendering defect adds the scenario that fails without it, at
+   the lowest boundary that shows it: the frame when only the frame shows it.
+5. Scenarios run in the required check on the native lane and write nothing
+   but an opt-in dump under an ignored directory, on which nothing asserts.
+
+The harness's library has the rig, the fixtures and readback (`rig`), the
+analytic truth (`geometry`) and the regions and metrics (`image`); each suite
+is a `tests/scenario_<feature>.rs` binary beside it. `SGL_SCENARIO_DUMP=<dir>`
+writes each scenario's frames as PNG and its metrics as JSON under
+`<dir>/<scenario>/`.
+
 ## Repository tooling
 
 Run `bun install` at the repository root for the Playwright dependency used by

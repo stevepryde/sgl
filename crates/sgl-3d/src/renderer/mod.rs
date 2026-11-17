@@ -94,6 +94,10 @@ pub struct Renderer {
     /// The numerical frame probe, once a frame asked for it.
     #[cfg(feature = "diagnostics")]
     probe: Option<crate::stages::frame_probe::FrameProbe>,
+    /// Which view completed the last rendered frame's scene
+    /// (`DiagnosticTarget::Antialiased`).
+    #[cfg(any(test, feature = "diagnostics"))]
+    completed: Option<crate::view::frame::Completed>,
 }
 
 /// Why a renderer could not be created.
@@ -312,6 +316,8 @@ impl Renderer {
             rendered: None,
             #[cfg(feature = "diagnostics")]
             probe: None,
+            #[cfg(any(test, feature = "diagnostics"))]
+            completed: None,
         })
     }
 
@@ -636,6 +642,9 @@ impl Renderer {
             DiagnosticTarget::AmbientOcclusion => return self.opaque.visibility(),
             DiagnosticTarget::ToneMapped => return self.post.captured_tone_mapped(),
             DiagnosticTarget::Exposure => self.exposure.view(),
+            DiagnosticTarget::Antialiased => {
+                frame::completed(self.completed?, &self.post_fx, &self.antialiasing, targets)
+            }
         })
     }
 

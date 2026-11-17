@@ -2225,7 +2225,9 @@ dependencies = [
  "gltf",
  "image",
  "pollster",
+ "serde_json",
  "sgl-3d",
+ "wasm-bindgen-test",
  "wgpu",
 ]
 

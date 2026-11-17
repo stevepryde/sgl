@@ -5,15 +5,22 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-# Integration tests for sgl-3d, kept out of its published package. Like
-# sgl-3d, exempt from `[workspace.lints]`.
+# Integration tests for sgl-3d, kept out of its published package, and the
+# scenario harness (`src/`) its scenario tests share. Like sgl-3d, exempt
+# from `[workspace.lints]`.
+
+[dependencies]
+glam.workspace = true
+# The harness reads the frame's targets through the diagnostics accessors.
+sgl-3d = { workspace = true, features = ["diagnostics"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+image.workspace = true
+pollster.workspace = true
+serde_json.workspace = true
+wgpu.workspace = true
 
 [dev-dependencies]
 bytemuck.workspace = true
-glam.workspace = true
 gltf.workspace = true
-image.workspace = true
-pollster.workspace = true
-# The tests read the frame's targets through the diagnostics accessors.
-sgl-3d = { workspace = true, features = ["diagnostics"] }
-wgpu.workspace = true
+wasm-bindgen-test.workspace = true
