@@ -24,10 +24,19 @@ the owner's routing policy, not this file's.
 Read this as the lens for every judgment below. The contracts own the detail;
 this is the spirit they share.
 
-- **A library a game imports, never an engine.** The game owns its executable,
-  window, loop, simulation, content, camera, UI, networking policy and process
-  layout. SGL owns reusable, game-independent implementations the game composes.
-  No ECS, physics engine, gameplay scripting language, editor or application host.
+- **A library a game imports, never an engine.** The test is who holds control.
+  The game owns its executable and its main loop and calls SGL; SGL never hosts
+  the game, and a game is never a script or data layer on a runtime SGL
+  provides. The game also owns its window, simulation, content, camera, UI,
+  networking policy and process layout. SGL is one library or several, each a
+  reusable, game-independent implementation the game chooses and composes. A
+  capability passes this test when a game can take it or leave it and still
+  owns its binary: that is what would let SGL offer something like an
+  embeddable scripting runtime one day without becoming an engine. Today's
+  contracts also exclude an ECS, a physics engine, a second gameplay language,
+  an editor and an application host (`AGENTS.md`, S3D-1, D-33). Those are
+  decisions, which can change on purpose; the ownership test is the definition,
+  which does not.
 - **Built for AI coding agents, as consumers and as authors.** Ownership, inputs,
   outputs and lifetime are explicit at every public boundary. Guides are short
   and navigable, and examples run without the games SGL came from.
@@ -80,9 +89,11 @@ each is cheap to settle on paper and expensive to reverse in code.
    which concrete game needs it. A change with no consumer need is speculative:
    say so and stop.
 2. **Does it belong in SGL?** It does not if it is composition, policy or
-   content (the game's), if only one game could want it (AR-6), if it makes SGL
-   more of an engine, or if its foundation is not built yet (RD-1: build the
-   foundation, not a workaround for its absence). When it fails, say what the
+   content (the game's), if only one game could want it (AR-6), if it would have
+   SGL hold control (own the loop, host the game, or make a game depend on a
+   runtime it cannot leave out), if a current contract excludes it and no
+   decision has changed that, or if its foundation is not built yet (RD-1:
+   build the foundation, not a workaround for its absence). When it fails, say what the
    game should do instead, or name the smaller reusable piece that does belong.
 3. **Where it lives.** The crate, keeping the dependency boundaries of
    `specs/architecture.md`. For SGL3D: the layer (AR-1), the stage and its place
