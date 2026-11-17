@@ -2220,7 +2220,12 @@ lightmapped. The caller must regenerate it when the static scene, source
 radiance, UV chart, or caster visibility changes.
 
 This opt-in application extension supplies Lambertian diffuse irradiance,
-which a material reflects as it reflects the environment's: what its
+which adds to the frame's ambient (the environment's diffuse light and the
+hemisphere fill): a charted surface takes both, as does a moving instance
+with a cube where no volume lights it, so a bake excludes the sky and the
+fill, or the game lowers `FrameInput::hemisphere_light` and
+`diffuse_environment` where its bake holds them. A material reflects it as
+it reflects the environment's: what its
 specular does not scatter, plus its multiple scattering, the one rule every
 indirect source follows. On a coated material the coat's Fresnel toward
 the view dims it, and the irradiance atlas's and a moving instance's
@@ -2327,7 +2332,8 @@ scene.write_irradiance_cells(&queue, &region)?;
   blended by its shading normal's squared components. Blending with dark
   solid cells darkens convex edges, as smooth voxel lighting does; fill
   solid cells from their air neighbours where that is unwanted.
-- **Which surfaces.** Lightmap and irradiance atlas charts keep their bake.
+- **Which surfaces.** Lightmap and irradiance atlas charts keep their bake,
+  with the frame's ambient added whole.
   Within the volume it covers the dynamic GI volume and ambient cubes, its
   share fading over the one cell past each face to what follows it: leave a
   region uncovered to light it from the dynamic GI volume or cubes. A face
@@ -2422,12 +2428,16 @@ rays and, when lit, reflects the light that reaches it, as Unity's emission
 "Global Illumination: None" keeps a material's glow out of its GI while the
 object stays in it.
 
-Surfaces take their indirect diffuse light by one determination: a
-lightmap or irradiance atlas chart keeps its bake; else the
-[irradiance volume](#irradiance-volume) where it lights the surface; else
-the dynamic GI volume lights the surface, in place of the environment's diffuse light and the hemisphere
-fill, which ambient occlusion then occludes as it did them; else a moving
-instance takes its ambient cube, else the frame's ambient. The camera's
+Surfaces take their indirect diffuse light by one determination, in which
+baked light adds to the frame's ambient (the environment's diffuse light and
+the hemisphere fill) and only the volumes replace it: a lightmap or
+irradiance atlas chart keeps its bake and adds the frame's ambient whole;
+any other surface takes the [irradiance volume](#irradiance-volume) where it
+lights the surface, then the dynamic GI volume, each by its share, in place
+of the frame's ambient, and ambient occlusion occludes them as it does it;
+and, in the share they leave, the frame's ambient, to which a moving
+instance adds its ambient cube. A bake therefore excludes the sky and the
+fill, or the game lowers them where its bake holds them. The camera's
 opaque and blended surfaces, probe captures, world-space ray hits and the
 probes' own hits sample the same volume. `SurfaceMaterial::environment_scale`
 scales the environment, not the volume. Beyond its extent the volume's share

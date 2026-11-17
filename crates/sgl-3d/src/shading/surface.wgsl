@@ -575,18 +575,21 @@ fn directional_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,coat_n
  return LightSample(l,radiance,shadow,transmitted,1.,NO_RECT_LIGHT,disc);
 }
 // A receiver's indirect diffuse light along `normal`, by the one
-// determination: its lightmap or irradiance atlas chart
-// (baked_diffuse_source), else the irradiance volume where it lights the
-// frame and reaches the receiver (irradiance_volume_light), else the dynamic
-// GI volume where it lights the frame, reaches the receiver and has a
-// blended, active probe about it (dynamic_gi_irradiance; a moving receiver
-// also weighs dormant probes, those with no surface in their cell; for a
-// probe ray's hit, wherever it reaches the hit, its light zero where no
-// probe about the hit weighs), else a moving instance's ambient cube, else
-// the frame's ambient alone. Each volume takes its share
-// and leaves the rest to what follows it, so a receiver hands over at its
-// border without a seam. A chart takes all of it, as no volume lights a
-// charted receiver.
+// determination, in which baked light adds to the frame's ambient (the
+// environment's diffuse light and the hemisphere fill) and only the volumes
+// replace it (D-56). A charted receiver, by its lightmap or irradiance atlas
+// chart (baked_diffuse_source), takes its chart and the frame's ambient
+// whole, as no volume lights it. Any other takes the irradiance volume where
+// it lights the frame and reaches the receiver (irradiance_volume_light),
+// with its sky visibility of the frame's ambient, then, in the share it
+// leaves, the dynamic GI volume where it lights the frame, reaches the
+// receiver and has a blended, active probe about it (dynamic_gi_irradiance;
+// a moving receiver also weighs dormant probes, those with no surface in
+// their cell; for a probe ray's hit, wherever it reaches the hit, its light
+// zero where no probe about the hit weighs), and in the share both leave
+// the frame's ambient, to which a moving instance adds its ambient cube.
+// Each volume takes its share and leaves the rest to what follows it, so a
+// receiver hands over at its border without a seam.
 struct IndirectDiffuse {
  // The chart's irradiance / PI, or the cube's times the share the volumes
  // leave it.

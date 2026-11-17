@@ -288,6 +288,10 @@ them through unrefracted. A probe captured on an
   be a baked scene light, which lights moving instances live; its light then
   stays out of their ambient cubes. Every indirect source (the environment,
   the hemisphere fill, these and both volumes) lights a material alike.
+  Baked light adds to the frame's ambient (the environment's diffuse light
+  and the hemisphere fill), which only the two volumes below replace: bake
+  without the sky and the fill, or lower `FrameInput::hemisphere_light` and
+  `diffuse_environment` where the bake holds them.
   While an atlas is installed, a static instance's vertex with a
   `lightmap_uv` (a glTF's `TEXCOORD_1`) samples it and takes no baked
   lights: set `lightmap_uv` to `[0, 0]` on models the bake does not chart,

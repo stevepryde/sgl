@@ -78,6 +78,7 @@ The code was right. Corrected with this log unless noted.
 - The README's receiver limits omitted `keeps_specular` and transmissive receivers; the README and `material.rs` said the unrefracted transmission fallback keeps its tint, where it passes the mean.
 - The probe influence ramp was attributed to Godot, whose ramp is squared and clamped to the box.
 - FSR1's RCAS comment called 0.2 stops "the FSR sample's 0.8 sharpness"; the SDK maps 0.8 to 0.4 stops, and 0.2 stops is Godot's default.
+- The Shared contracts' determination of indirect diffuse light, its Bevy precedent, the README and the comment above `surface_indirect_diffuse` read as if a baked chart or an ambient cube replaced the frame's ambient; the code adds them. The owner decided additive (D-56), and the records now say so; corrected by [#779](https://github.com/stevepryde/sgl/issues/779), not here. Guard: a lightmapped and a moving square's lit colour against values computed by hand.
 
 ### Guards that were missing
 
@@ -93,7 +94,6 @@ now stated in `sgl3d-architecture.md`; what tests it is said beside it.
 
 ### Waiting on the owner
 
-- Whether a baked chart or an ambient cube adds to the frame's ambient or replaces it. The code, the tests and the feature guide are additive; the Shared contracts' determination and its Bevy precedent read as exclusive. [#779](https://github.com/stevepryde/sgl/issues/779).
 - Whether to report the ordering gap behind A-26 to wgpu. SGL works around it.
 
 ### Left as they are

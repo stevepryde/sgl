@@ -1202,3 +1202,166 @@ fn a_basic_device_validates_but_uploads_no_baked_directionality() {
         Err(SceneError::InvalidDirectionality)
     ));
 }
+
+/// A 2 m square on z = 0 facing +Z, of a grey Lambertian material with no
+/// specular reflection (`KHR_materials_specular`'s factor 0: F0 and F90 are
+/// 0), so the one rule's diffuse weight is its albedo, 0.5, exactly; and a
+/// frame of a uniform environment of radiance 0.5, seen head-on through an
+/// orthographic camera, with no lights.
+fn lambertian_square(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    scene: &mut Scene,
+) -> (asset::Asset, FrameInput) {
+    let mut model = test_support::cube();
+    model.materials[0].base = [0.5, 0.5, 0.5, 1.];
+    model.materials[0].metallic = 0.;
+    model.materials[0].specular = 0.;
+    model.materials[0].roughness = 1.;
+    model.materials[0].emissive = [0.; 3];
+    model.meshes[0].vertices = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
+        .map(|(x, y)| asset::Vertex {
+            tangent: [0.; 4],
+            position: [x, y, 0.],
+            normal: [0., 0., 1.],
+            uv: [(x + 1.) * 0.5, (y + 1.) * 0.5],
+            color: [1.; 4],
+            lightmap_uv: [0.; 2],
+            lightmap_bounds: [0., 0., 1., 1.],
+        })
+        .to_vec();
+    model.meshes[0].indices = vec![0, 1, 2, 0, 2, 3];
+    let radiance: Vec<u8> = [0.5f32, 0.5, 0.5, 1.]
+        .iter()
+        .flat_map(|&value| test_support::to_half(value).to_le_bytes())
+        .collect();
+    let environment = scene
+        .add_environment(
+            device,
+            queue,
+            &test_support::environment([255; 4], &radiance),
+        )
+        .unwrap();
+    let eye = Vec3::Z * 3.;
+    let mut input = FrameInput::new(Camera {
+        eye,
+        view: camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
+        projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
+    });
+    input.environment = Some(environment);
+    (model, input)
+}
+
+/// The square's lit colour at the frame's centre pixel.
+fn square_color(
+    gpu: (&wgpu::Device, &wgpu::Queue),
+    renderer: &mut Renderer,
+    scene: &mut Scene,
+    input: &FrameInput,
+) -> [f32; 3] {
+    let bytes = fused_lit_color(gpu, renderer, scene, input, &Settings::default());
+    let pixel = &bytes[(32 * 64 + 32) * 8..];
+    [0, 1, 2].map(|c| test_support::half(&pixel[c * 2..]))
+}
+
+/// A hemisphere fill of sky and ground colour 1 at intensity 0.5: irradiance
+/// 0.5 on any normal (`HemisphereLight`), so E / PI = 0.5 / PI.
+const FILL: HemisphereLight = HemisphereLight {
+    sky_color: [1.; 3],
+    ground_color: [1.; 3],
+    intensity: 0.5,
+};
+
+// D-56: a chart adds to the frame's ambient. Plausible defects: a charted
+// receiver drops the frame's ambient (Bevy's lightmapped meshes drop the
+// environment's diffuse light), or one of its two terms, or the chart. The
+// oracle, by hand: a uniform environment of radiance L = 0.5 gives any plane
+// irradiance E = PI L, and a Lambertian surface of albedo 0.5 with no
+// specular reflects 0.5 E / PI = 0.5 L = 0.25. Under an all-zero lightmap
+// that is its colour; under a lightmap of 0.25 (irradiance / PI) and the
+// fill (E / PI = 0.5 / PI) it is 0.5 (0.25 + 0.5 + 0.5 / PI) = 0.45458.
+// Binary16 colour rounds each by at most 0.00013, and a dropped term is
+// 0.08 off or more, so a tolerance of 0.0005 tells them apart.
+#[test]
+fn a_lightmapped_surface_adds_its_chart_to_the_frames_ambient() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let mut scene = Scene::new(&device, &queue);
+    let (model, mut input) = lambertian_square(gpu, &mut scene);
+    let (world, _) = test_support::add_static(&device, &queue, &mut scene, model);
+    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &Settings::default());
+    let fill = 0.5 / std::f32::consts::PI;
+    for (chart, hemisphere, expected) in [
+        (0., HemisphereLight::default(), 0.5 * 0.5),
+        (0.25, FILL, 0.5 * (0.25 + 0.5 + fill)),
+    ] {
+        let map = Lightmap {
+            directionality: vec![],
+            size: [2, 2],
+            uv_scale_offset: [1., 1., 0., 0.],
+            irradiance: vec![[chart; 3]; 4],
+        };
+        scene
+            .set_lightmap(&device, &queue, &map, &world.materials)
+            .unwrap();
+        input.hemisphere_light = hemisphere;
+        let color = square_color(gpu, &mut renderer, &mut scene, &input);
+        assert!(
+            color.iter().all(|c| (c - expected).abs() < 0.0005),
+            "chart {chart}, fill {hemisphere:?}: {color:?}, expected {expected}"
+        );
+    }
+}
+
+// D-56: a moving instance's ambient cube adds to the frame's ambient, which
+// an unset cube, black, leaves whole. Plausible defects: the cube replaces
+// the frame's ambient, or one of its terms, or a moving instance without a
+// cube takes none. The oracle, by hand, as for a chart above: the
+// environment and the fill give 0.5 (0.5 + 0.5 / PI) = 0.32958 without a
+// cube, and a cube of 0.25 (irradiance / PI) on every face adds 0.5 × 0.25,
+// to 0.45458.
+#[test]
+fn a_moving_instances_ambient_cube_adds_to_the_frames_ambient() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let mut scene = Scene::new(&device, &queue);
+    let (model, mut input) = lambertian_square(gpu, &mut scene);
+    let model = scene.add_asset(&device, &queue, model).unwrap().model;
+    let instance = scene
+        .add_instance(
+            &device,
+            &queue,
+            InstanceState {
+                model,
+                pose: Mat4::IDENTITY,
+                visible: true,
+                capture_visible: true,
+            },
+            Mobility::Moving,
+        )
+        .unwrap();
+    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &Settings::default());
+    input.hemisphere_light = FILL;
+    let ambient = 0.5 + 0.5 / std::f32::consts::PI;
+    for (cube, expected) in [(None, 0.5 * ambient), (Some(0.25), 0.5 * (0.25 + ambient))] {
+        if let Some(face) = cube {
+            scene
+                .set_instance_baked_irradiance(
+                    &queue,
+                    instance,
+                    AmbientCube {
+                        irradiance: [[face; 3]; 6],
+                    },
+                )
+                .unwrap();
+        }
+        let color = square_color(gpu, &mut renderer, &mut scene, &input);
+        assert!(
+            color.iter().all(|c| (c - expected).abs() < 0.0005),
+            "cube {cube:?}: {color:?}, expected {expected}"
+        );
+    }
+}

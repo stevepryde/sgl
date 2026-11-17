@@ -853,3 +853,23 @@ Use the [current specs](README.md) for implementation and the
   Rationale: a lane for tests allowed to be long grows until the full check
   takes an hour unless something bounds it, and a bound that only a person
   notices is no bound (D-50).
+- **D-56** Owner direction, 2026-11-17: a surface's baked indirect diffuse
+  light adds to the frame's ambient (the environment's diffuse light and the
+  hemisphere fill); only the volumes replace it. A lightmap or irradiance
+  atlas chart adds to the frame's ambient whole, and a moving instance's
+  ambient cube adds to it in the share the volumes leave; the irradiance
+  volume and the dynamic GI volume alone take the frame's ambient's place,
+  each by its share, the irradiance volume letting its sky visibility of it
+  through. A game's bake therefore excludes the sky and the hemisphere fill,
+  or the game lowers them where its bake holds them: a closed lightmapped
+  room under a bright environment takes that environment on its walls unless
+  the game manages it through its hemisphere and environment intensities, or
+  lights the room from an irradiance volume, whose sky visibility occludes
+  the frame's ambient, in place of charts. This differs from Bevy 9d12036,
+  whose lightmapped meshes drop the environment's diffuse light
+  (`pbr_functions.wesl` 683–711). SGL keeps it because it is what the
+  consumers' bakes assume (baked fixtures, the sky as fill) and what an
+  ambient cube needs: an unset cube is black, and a moving instance without
+  one would otherwise take no indirect light at all.
+  Rationale: the code, the tests and the existing bakes were already
+  additive, and the records that read as exclusive were wrong (#779).
