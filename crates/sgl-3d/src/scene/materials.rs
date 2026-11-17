@@ -157,8 +157,8 @@ impl Material {
 
 pub(crate) struct Materials {
     pub slots: Slots<MaterialId, Material>,
-    /// Changes when an edit changes a value casters read
-    /// (`SurfaceMaterial::caster_values`).
+    /// Changes when an edit changes what casters draw
+    /// (`SurfaceMaterial::draws_other_geometry`).
     pub casters: u64,
     /// How many of its materials are masked, how many blended and how many
     /// of those receive screen-space reflections, how many opaque or masked
@@ -573,11 +573,7 @@ impl Materials {
         validate_diffuse_transmission(&values)?;
         validate_normal_layers(&values, material.maps, material.bound.wrap)?;
         if material.values != values {
-            // A masked shader can derive coverage from any material input.
-            // Other casters retain the narrower key and cached layers.
-            if material.values.caster_values() != values.caster_values()
-                || (values.shader.is_some() && matches!(values.alpha, AlphaMode::Mask { .. }))
-            {
+            if material.values.draws_other_geometry(&values) {
                 self.casters = super::next_generation();
             }
             let old = (material.values, material.record_moves());
@@ -716,6 +712,13 @@ impl Scene {
         }
         self.candidates
             .material_changed(id, super::candidates::look(self.materials.get(id)?));
+        // What its users draw appearing or departing at rest re-arms
+        // temporal rejection, as a geometry replacement does.
+        if old.draws_other_geometry(&values) {
+            for &model in &users {
+                self.instances.geometry_changed(model);
+            }
+        }
         Ok(())
     }
 

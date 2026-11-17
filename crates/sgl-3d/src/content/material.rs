@@ -298,23 +298,50 @@ impl SurfaceMaterial {
         )
     }
 
-    /// The ordinary shadow caster key. A masked shader can derive coverage
-    /// from every evaluated material field, so its cache is invalidated on
-    /// any material edit in addition to these values.
-    pub(crate) fn caster_values(
-        &self,
-    ) -> (bool, u32, AlphaMode, bool, f32, Option<MaterialShader>) {
-        let alpha = match self.alpha {
-            AlphaMode::Mask { .. } => self.base[3],
-            _ => 1.,
+    /// Whether every view draws both faces of its meshes: a double-sided
+    /// material's, but a volume's (`volume`) front faces alone.
+    pub(crate) fn two_sided(&self) -> bool {
+        self.double_sided && !self.volume()
+    }
+
+    /// Whether `other`'s meshes are drawn as other geometry than its, so
+    /// surfaces may appear or depart where nothing moved: other faces, its
+    /// visibility group, alpha mode or cutoff, a masked base alpha, whether
+    /// it is blended or a blended receiver of screen-space reflections
+    /// (which writes the G-buffer's motion), or its shader, whose vertex
+    /// function places vertices and whose surface function may cut texels
+    /// out. A masked shader can derive coverage from every evaluated
+    /// material field, so any edit of such a material counts. Shadow
+    /// casters' caches and the camera's view-wide temporal signal
+    /// (`Scene::set_material`) both take it.
+    pub(crate) fn draws_other_geometry(&self, other: &Self) -> bool {
+        let drawn = |values: &Self| {
+            let (mode, alpha) = match values.alpha {
+                AlphaMode::Mask { .. } => (values.alpha, values.base[3]),
+                // Whether it keeps its specular light is shading alone.
+                AlphaMode::Blend {
+                    receives_screen_space_reflections,
+                    ..
+                } => (
+                    AlphaMode::Blend {
+                        receives_screen_space_reflections,
+                        keeps_specular: false,
+                    },
+                    1.,
+                ),
+                AlphaMode::Opaque => (values.alpha, 1.),
+            };
+            (
+                values.two_sided(),
+                values.visibility_group,
+                mode,
+                values.blended(),
+                alpha,
+                values.shader,
+            )
         };
-        (
-            self.double_sided,
-            self.visibility_group,
-            self.alpha,
-            self.blended(),
-            alpha,
-            self.shader,
-        )
+        self != other
+            && (drawn(self) != drawn(other)
+                || (other.shader.is_some() && matches!(other.alpha, AlphaMode::Mask { .. })))
     }
 }

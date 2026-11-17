@@ -886,7 +886,9 @@ integrated as Diligent's Hydrogent renderer does:
   camera, rigid objects and the surface at a pixel are still, only partial rectification
   and slower feedback, which steadies subpixel detail; full rejection
   returns, held for twelve frames, on camera motion, rigid-object changes,
-  a changed `FrameInput::visibility_mask`, local motion and depth
+  a `Scene::set_material` edit that changes what is drawn (faces,
+  visibility group, alpha mode, cutoff, blending or shader), a changed
+  `FrameInput::visibility_mask`, local motion and depth
   disocclusion, at any distance: the sky and far surfaces settle at rest like
   near ones, and sky revealed or covered counts as a disocclusion however
   far the surface. Depth disocclusion follows moving surfaces by the

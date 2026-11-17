@@ -156,11 +156,7 @@ pub(crate) fn camera_variant(
     deformed: bool,
 ) -> Variant {
     Variant {
-        cull: Cull::of(
-            Cull::Back,
-            material.double_sided && !material.volume(),
-            mirrored,
-        ),
+        cull: Cull::of(Cull::Back, material.two_sided(), mirrored),
         alpha: Alpha::of(material),
         deformed,
     }

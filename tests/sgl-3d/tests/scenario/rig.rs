@@ -325,6 +325,17 @@ impl Rig {
         self.add_placed(shape, pose, group, false).0
     }
 
+    /// [`Rig::add`], with its quads' materials in order, which a script
+    /// edits with `Scene::set_material` on `scene`.
+    pub fn add_editable(
+        &mut self,
+        shape: &Shape,
+        pose: Pose,
+        group: u32,
+    ) -> (InstanceId, Vec<MaterialId>) {
+        self.add_placed(shape, pose, group, false)
+    }
+
     /// Adds `shape` at `pose` as a moving instance in visibility `group`,
     /// each of its materials drawn through `shader` (a game's,
     /// `Scene::add_shader` on `scene`) with `params` as its `ShaderParams`

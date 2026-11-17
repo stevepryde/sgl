@@ -487,7 +487,11 @@ Stages run in one order, written in one place in `renderer`:
    pixel across the pair); W is initialized to zero. Camera motion rearms the
    whole view. `TemporalAntiAliasingAttribs::rigid_object_motion` also rearms
    the whole view, as Filament's global rigid-object signal does: the scene
-   retains pose/model/visibility changes, same-ID geometry replacements, additions and departures until a
+   retains pose/model/visibility changes, same-ID geometry replacements,
+   material edits that change what a shown or previously submitted
+   instance draws (faces, visibility group, alpha mode, cutoff or masked
+   alpha, blending or shader: `SurfaceMaterial::draws_other_geometry`, not
+   shading alone), additions and departures until a
    submitted frame, including an old visible object whose new position is
    culled; the frame's `FrameInput::visibility_mask` sets it too where it
    differs from the last submitted frame's (the camera history's), whichever

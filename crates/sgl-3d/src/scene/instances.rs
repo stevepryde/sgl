@@ -149,8 +149,10 @@ pub(crate) struct Instances {
     pub objects: Objects,
     /// Live static and moving instances.
     counts: [usize; 2],
-    /// Rigid changes since the last submitted frame, including departures.
-    /// Procedural/material deformation does not set this view-wide signal.
+    /// Rigid changes since the last submitted frame, including departures
+    /// and material edits that change what their users draw
+    /// (`Scene::set_material`). Procedural/material deformation does not
+    /// set this view-wide signal.
     rigid_changes: bool,
 }
 
@@ -193,7 +195,8 @@ impl Instances {
         self.write_shader_data(queue, id);
     }
 
-    /// Geometry replacement can uncover old pixels without any pose motion.
+    /// Geometry replacement, or a material edit that changes what `model`'s
+    /// meshes draw, can uncover old pixels without any pose motion.
     /// Include prior visible users even when the new geometry/position is culled.
     pub fn geometry_changed(&mut self, model: ModelId) {
         self.rigid_changes |= self.slots.iter().any(|(_, instance)| {
@@ -645,5 +648,146 @@ mod temporal_recovery_tests {
             !scene.rigid_objects_changed(),
             "only submission retires departure evidence"
         );
+    }
+
+    // Plausible defect: a material edit that adds or removes what its
+    // users draw, with nothing moving, leaves the view-wide signal down, so
+    // the camera at rest fades the change in over many frames. The expected
+    // values are Frame item 10's rule: an edit raises the signal, until a
+    // submitted frame, exactly when it changes what a visible instance's
+    // meshes draw; shading alone, or a material nothing visible draws with,
+    // does not.
+    #[test]
+    fn material_edits_that_change_what_is_drawn_rearm_until_submission() {
+        use crate::{AlphaMode, MaterialShader, SurfaceMaterial};
+        let Some((device, queue)) = crate::test_support::device() else {
+            return;
+        };
+        let mut scene = Scene::new(&device, &queue);
+        let shader = crate::test_support::add_test_shader(&mut scene);
+        let mut material = |visible: bool| {
+            let ids = scene
+                .add_asset(&device, &queue, crate::test_support::cube())
+                .unwrap();
+            let state = InstanceState {
+                visible,
+                ..InstanceState::new(ids.model)
+            };
+            scene
+                .add_instance(&device, &queue, state, Mobility::Moving)
+                .unwrap();
+            ids.materials[0]
+        };
+        let (shown, hidden) = (material(true), material(false));
+        let base = scene.material(shown).unwrap();
+        let masked = |cutoff| SurfaceMaterial {
+            alpha: AlphaMode::Mask { cutoff },
+            ..base
+        };
+        let blended = |receives_screen_space_reflections, keeps_specular| SurfaceMaterial {
+            alpha: AlphaMode::Blend {
+                receives_screen_space_reflections,
+                keeps_specular,
+            },
+            ..base
+        };
+        let edits = [
+            (
+                "visibility group",
+                base,
+                SurfaceMaterial {
+                    visibility_group: base.visibility_group ^ 2,
+                    ..base
+                },
+                true,
+            ),
+            ("opaque to masked", base, masked(0.5), true),
+            ("mask cutoff", masked(0.5), masked(0.75), true),
+            (
+                "masked base alpha",
+                masked(0.5),
+                SurfaceMaterial {
+                    base: [base.base[0], base.base[1], base.base[2], 0.25],
+                    ..masked(0.5)
+                },
+                true,
+            ),
+            ("opaque to blended", base, blended(false, false), true),
+            (
+                "masked to blended",
+                masked(0.5),
+                blended(false, false),
+                true,
+            ),
+            (
+                "transmissive",
+                base,
+                SurfaceMaterial {
+                    transmission: 1.,
+                    ..base
+                },
+                true,
+            ),
+            (
+                "blended receiver",
+                blended(false, false),
+                blended(true, false),
+                true,
+            ),
+            (
+                "double-sided",
+                base,
+                SurfaceMaterial {
+                    double_sided: !base.double_sided,
+                    ..base
+                },
+                true,
+            ),
+            (
+                "shader",
+                base,
+                SurfaceMaterial {
+                    shader: Some(MaterialShader {
+                        shader,
+                        displacement_bound: 0.,
+                    }),
+                    ..base
+                },
+                true,
+            ),
+            (
+                "colour",
+                base,
+                SurfaceMaterial {
+                    base: [0.25, 0.5, 0.75, base.base[3]],
+                    ..base
+                },
+                false,
+            ),
+            (
+                "blended specular",
+                blended(false, false),
+                blended(false, true),
+                false,
+            ),
+        ];
+        for (name, before, after, draws) in edits {
+            for (id, users) in [(shown, "a visible instance"), (hidden, "nothing visible")] {
+                scene.set_material(&queue, id, before).unwrap();
+                scene.finish_frame();
+                scene.set_material(&queue, id, after).unwrap();
+                let expected = draws && id == shown;
+                assert_eq!(
+                    scene.rigid_objects_changed(),
+                    expected,
+                    "{name} edit of a material {users} draws with"
+                );
+                scene.finish_frame();
+                assert!(
+                    !scene.rigid_objects_changed(),
+                    "{name}: only submission retires the edit"
+                );
+            }
+        }
     }
 }

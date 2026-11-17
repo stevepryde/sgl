@@ -1472,6 +1472,109 @@ fn appearance_and_departure_at_rest_resolve_within_the_hold() {
     failures.assert();
 }
 
+/// What case 9's material edits do, in the order they happen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Edit {
+    /// Its visibility group becomes one the frame's mask lacks.
+    Regrouped,
+    /// Its visibility group is the mask's again.
+    Ungrouped,
+    /// Opaque becomes masked at a cutoff above its base alpha.
+    CutOut,
+    /// The cutoff falls below its base alpha.
+    Uncut,
+}
+
+/// Case 9's material edits (#798). Plausible defect: a material edit that
+/// adds or removes what its users draw, at rest after the hold has
+/// expired, fades over many frames because nothing re-arms rejection, as
+/// an instance's appearance or departure would without it. The fixtures,
+/// truth, oracle and epsilon are case 9's: Frame item 10 re-arms the view
+/// for material edits that change what is drawn, so the hold after each
+/// edit the pixels whose box grown by 2 px lies wholly inside the card show
+/// their new truth within the method's `stores`. The card's base alpha is
+/// 0.5, which its opaque mode ignores, so a cutoff of 0.75 cuts out every
+/// texel and one of 0.25 none.
+#[test]
+fn material_edits_at_rest_resolve_within_the_hold() {
+    use sgl_3d::{AlphaMode, SurfaceMaterial};
+    let (back, back_pose) = background();
+    let edits = [Edit::Regrouped, Edit::Ungrouped, Edit::CutOut, Edit::Uncut];
+    let mut failures = Failures::default();
+    for (name, scale, behind) in AGAINST {
+        let layer = Shape::card(Vec2::new(2.4, 1.6), 0.3, CARD).scaled(scale);
+        let layer_pose = farther(Pose::at(Vec3::new(0.6, 0.2, -7.8)), scale);
+        let script = move |_| vec![layer_pose];
+        let scenario = Scenario {
+            shapes: vec![layer.clone()],
+            camera: &still,
+            script: &script,
+        };
+        let inside = scenario.inside(0, 0, 2.);
+        let gone = match behind {
+            Behind::Background => BACKGROUND,
+            Behind::Sky => SKY,
+        };
+        for (method, gpu) in methods() {
+            let mut rig = Rig::new(&gpu, VIEW, method, SKY);
+            if behind == Behind::Background {
+                rig.add(&back, back_pose, 0);
+            }
+            // Visibility group 1, which the rig's mask enables; the mask
+            // lacks the top byte's groups.
+            let (_, materials) = rig.add_editable(&layer, layer_pose, 1);
+            let material = materials[0];
+            let mut values = rig.scene.material(material).unwrap();
+            values.base[3] = 0.5;
+            let set = |rig: &mut Rig, values: SurfaceMaterial| {
+                rig.scene
+                    .set_material(&rig.gpu.queue, material, values)
+                    .unwrap();
+            };
+            set(&mut rig, values);
+            rig.look(still(0));
+            let mut frame = 0;
+            for edit in edits {
+                let at = frame + SETTLE + HOLD;
+                while frame < at {
+                    rig.render(frame);
+                    frame += 1;
+                }
+                match edit {
+                    Edit::Regrouped => values.visibility_group = 1 << 24,
+                    Edit::Ungrouped => values.visibility_group = 1,
+                    Edit::CutOut => values.alpha = AlphaMode::Mask { cutoff: 0.75 },
+                    Edit::Uncut => values.alpha = AlphaMode::Mask { cutoff: 0.25 },
+                }
+                set(&mut rig, values);
+                let truth = match edit {
+                    Edit::Regrouped | Edit::CutOut => gone,
+                    Edit::Ungrouped | Edit::Uncut => CARD,
+                };
+                let mut residuals = Vec::new();
+                while frame <= at + HOLD {
+                    rig.render(frame);
+                    residuals.push(error_to(&rig.antialiased(), truth, &inside).max);
+                    frame += 1;
+                }
+                let residual = *residuals.last().unwrap();
+                let epsilon = stores(method) * truth * HALF_STEP;
+                let converged = image::frames_to_converge(&residuals, epsilon);
+                eprintln!(
+                    "{method:?} {name}, {edit:?}: residual {residual} the hold after it, within {epsilon} from frame {converged:?} after it"
+                );
+                failures.check(residual <= epsilon, || {
+                    format!(
+                        "{method:?} {name}, {edit:?}: the card's pixels are {residual} off their new truth {truth} the hold after the edit; residuals by frame {residuals:?}"
+                    )
+                });
+            }
+            failures.bounded(&rig, format!("{method:?} material edits {name}"));
+        }
+    }
+    failures.assert();
+}
+
 /// How case 10 restarts history.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Restart {
