@@ -94,7 +94,7 @@ now stated in `sgl3d-architecture.md`; what tests it is said beside it.
 
 ### Waiting on the owner
 
-- Whether to report the ordering gap behind A-26 to wgpu. SGL works around it.
+- Whether to report the ordering gap behind A-26 to wgpu. SGL works around it. Decided: no fork; a wgpu-only reproduction and a draft report first, for the owner to read before anything is filed ([#817](https://github.com/stevepryde/sgl/issues/817), paused).
 
 ### Left as they are
 
