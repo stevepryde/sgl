@@ -18,7 +18,8 @@ pub struct Exposure {
 /// (after `Exposure::stops`) from -8 to 8 through a metering mask, whose
 /// average without the darkest and brightest 10% of samples sets a target
 /// that makes that average the compensation curve's stops above 1.
-/// Luminance below the range is metered at -8; above it counts in the
+/// Luminance below the range positions the 10-90% window but stays out of
+/// the average (-8 where nothing else is left); above it counts in the
 /// highest bin. The correction moves toward the target at the authored
 /// speeds, linearly while far from it and exponentially within 1.5 stops,
 /// against jitter when the target keeps moving slightly, never stepping past
