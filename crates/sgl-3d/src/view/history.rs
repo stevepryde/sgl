@@ -290,6 +290,14 @@ mod tests {
             !frame(&mut history, false, 0b11, true),
             "the reset frame committed its mask"
         );
+        assert!(
+            frame(&mut history, false, 0b01, false),
+            "group 2 departs in a frame that is abandoned"
+        );
+        assert!(
+            !frame(&mut history, false, 0b11, true),
+            "a mask changed back before any frame was finished changed nothing"
+        );
     }
 
     #[wasm_bindgen_test(unsupported = test)]

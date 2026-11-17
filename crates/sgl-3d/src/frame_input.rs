@@ -102,7 +102,8 @@ pub struct FrameInput {
     /// Milliseconds since the previous frame: FSR's `frameTimeDelta` and
     /// auto exposure's time step.
     pub frame_time_ms: f32,
-    /// Enabled material visibility groups. Use only the low 24 bits.
+    /// Enabled material visibility groups: a material draws while every bit
+    /// of its `visibility_group` is set here.
     pub visibility_mask: u32,
     /// The scene's environment that lights the frame, draws its sky and
     /// backs its reflections; with none, or one the scene no longer has, no
