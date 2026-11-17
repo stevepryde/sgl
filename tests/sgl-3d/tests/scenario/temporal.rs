@@ -2,7 +2,8 @@
 //! the view and the fixtures of known radiance they share, the frames a
 //! resolve takes to settle, the jitter samples a method gives a pixel and
 //! the bar they set, the supersampled reference and the single sample a
-//! resolve must beat, and the failures a case collects across its methods.
+//! resolve must beat, the device a method needs, the tests a case
+//! instantiates, and the failures a case collects across its runs.
 //! `scenario_temporal_antialiasing` judges TAA and FSR at Native AA with
 //! them, `scenario_fsr_upscaling` FSR at its upscaling qualities and every
 //! method under rotation.
@@ -47,22 +48,33 @@ pub const SETTLE: u32 = HOLD + JITTER_CYCLE;
 /// differences the comparisons resolve.
 pub const SUPERSAMPLE: u32 = 8;
 
-/// The temporal methods this device runs, each on a device that has its
-/// features; FSR is skipped, saying so, where the adapter lacks them.
-pub fn methods() -> Vec<(Antialiasing, Gpu)> {
-    let mut out = Vec::new();
-    if let Some(gpu) = gpu() {
-        out.push((Antialiasing::Taa, gpu));
+/// A device that runs `method`: FSR's features for FSR, or `None` after
+/// saying why the case is skipped.
+pub fn device(method: Antialiasing) -> Option<Gpu> {
+    match method {
+        Antialiasing::Taa => gpu(),
+        _ => fsr_gpu(),
     }
-    match fsr_gpu() {
-        Some(gpu) => {
-            out.push((Antialiasing::Fsr2, gpu.clone()));
-            out.push((Antialiasing::Fsr3, gpu));
-        }
-        None => eprintln!("FSR2 and FSR3 scenarios skipped on this device"),
-    }
-    out
 }
+
+/// One test per `$name`, each calling the case's function `super::$case`
+/// with its arguments: a method, and a variant where the case has them. A
+/// suite invokes it in a module named after the case, so each test runs
+/// alone by name, `<case>::<name>`. The temporal suites use it; the other
+/// binaries that include the harness do not.
+#[allow(unused_macros)]
+macro_rules! case_tests {
+    ($case:ident; $($name:ident: ($($arg:expr),* $(,)?)),* $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                super::$case($($arg),*)
+            }
+        )*
+    };
+}
+#[allow(unused_imports)]
+pub(crate) use case_tests;
 
 /// The jitter phases `method` cycles through at `rig`'s sizes: TAA's
 /// `JITTER_CYCLE`, and FSR's own count at its render and display widths, as
@@ -378,8 +390,8 @@ impl Oracles {
     }
 }
 
-/// A case's failures across its methods and runs, asserted once at its
-/// end, so one run reports every method's numbers.
+/// A case's failures across its runs, asserted once at its end, so one
+/// test reports every run's numbers.
 #[derive(Default)]
 pub struct Failures(Vec<String>);
 

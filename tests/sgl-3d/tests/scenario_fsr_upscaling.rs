@@ -41,10 +41,10 @@ mod scenario;
 
 use scenario::geometry::{Motion, Pose, View, coverage};
 use scenario::image::{Image, Region, error, error_to};
-use scenario::rig::{Dump, Gpu, HALF_STEP, Rig, fsr_gpu, gpu};
+use scenario::rig::{Dump, HALF_STEP, Rig};
 use scenario::temporal::{
     BACKGROUND, CARD, DEPTH, Edge, Failures, HOLD, Oracles, SETTLE, SKY, Scenario, VIEW, ahead,
-    background, bar, card, grating, phases, px, samples, stage, still, stores, vacated,
+    background, bar, card, device, grating, phases, px, samples, stage, still, stores, vacated,
 };
 use sgl_3d::asset::{CompressedFormat, CompressedImage, Image as AssetImage};
 use sgl_3d::diagnostics::DiagnosticTarget;
@@ -79,15 +79,6 @@ fn ratio(quality: FsrQuality) -> f32 {
     }
 }
 
-/// A device that runs `method`: FSR's features for FSR, or `None` after
-/// saying why the case is skipped.
-fn device(method: Antialiasing) -> Option<Gpu> {
-    match method {
-        Antialiasing::Taa => gpu(),
-        _ => fsr_gpu(),
-    }
-}
-
 /// Gives `rig` FSR's `quality` and a new scene of `scenario`'s shapes, both
 /// of which restart history, and returns the render size.
 fn at_quality(rig: &mut Rig, scenario: &Scenario, quality: FsrQuality) -> [u32; 2] {
@@ -116,34 +107,22 @@ fn parked_strips(method: Antialiasing, quality: FsrQuality, edge: Edge) -> bool 
     method == Antialiasing::Fsr3 && quality != FsrQuality::NativeAa && edge == Edge::Strips
 }
 
-/// One test calling `super::$case` with each version and quality given,
-/// named `$name`.
-macro_rules! quality_tests {
-    ($case:ident; $($name:ident: $method:ident $quality:ident),* $(,)?) => {
-        $(
-            #[test]
-            fn $name() {
-                super::$case(Antialiasing::$method, FsrQuality::$quality)
-            }
-        )*
-    };
-}
-
 /// A module named after a case holding one test per FSR version and
 /// upscaling quality.
 macro_rules! upscaling {
     ($module:ident, $case:ident) => {
         mod $module {
-            use sgl_3d::settings::{Antialiasing, FsrQuality};
-            quality_tests!($case;
-                fsr2_quality: Fsr2 Quality,
-                fsr2_balanced: Fsr2 Balanced,
-                fsr2_performance: Fsr2 Performance,
-                fsr2_ultra_performance: Fsr2 UltraPerformance,
-                fsr3_quality: Fsr3 Quality,
-                fsr3_balanced: Fsr3 Balanced,
-                fsr3_performance: Fsr3 Performance,
-                fsr3_ultra_performance: Fsr3 UltraPerformance,
+            use sgl_3d::settings::Antialiasing::{Fsr2, Fsr3};
+            use sgl_3d::settings::FsrQuality::{Balanced, Performance, Quality, UltraPerformance};
+            crate::scenario::temporal::case_tests!($case;
+                fsr2_quality: (Fsr2, Quality),
+                fsr2_balanced: (Fsr2, Balanced),
+                fsr2_performance: (Fsr2, Performance),
+                fsr2_ultra_performance: (Fsr2, UltraPerformance),
+                fsr3_quality: (Fsr3, Quality),
+                fsr3_balanced: (Fsr3, Balanced),
+                fsr3_performance: (Fsr3, Performance),
+                fsr3_ultra_performance: (Fsr3, UltraPerformance),
             );
         }
     };
@@ -154,17 +133,19 @@ macro_rules! every_quality {
     ($module:ident, $case:ident $(, $extra:item)*) => {
         mod $module {
             use sgl_3d::settings::{Antialiasing, FsrQuality};
-            quality_tests!($case;
-                fsr2_native_aa: Fsr2 NativeAa,
-                fsr2_quality: Fsr2 Quality,
-                fsr2_balanced: Fsr2 Balanced,
-                fsr2_performance: Fsr2 Performance,
-                fsr2_ultra_performance: Fsr2 UltraPerformance,
-                fsr3_native_aa: Fsr3 NativeAa,
-                fsr3_quality: Fsr3 Quality,
-                fsr3_balanced: Fsr3 Balanced,
-                fsr3_performance: Fsr3 Performance,
-                fsr3_ultra_performance: Fsr3 UltraPerformance,
+            use Antialiasing::{Fsr2, Fsr3};
+            use FsrQuality::{Balanced, NativeAa, Performance, Quality, UltraPerformance};
+            crate::scenario::temporal::case_tests!($case;
+                fsr2_native_aa: (Fsr2, NativeAa),
+                fsr2_quality: (Fsr2, Quality),
+                fsr2_balanced: (Fsr2, Balanced),
+                fsr2_performance: (Fsr2, Performance),
+                fsr2_ultra_performance: (Fsr2, UltraPerformance),
+                fsr3_native_aa: (Fsr3, NativeAa),
+                fsr3_quality: (Fsr3, Quality),
+                fsr3_balanced: (Fsr3, Balanced),
+                fsr3_performance: (Fsr3, Performance),
+                fsr3_ultra_performance: (Fsr3, UltraPerformance),
             );
             $($extra)*
         }

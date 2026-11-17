@@ -2,9 +2,17 @@
 //! (`specs/testing.md`, "SGL3D scenario harness"): TAA, and FSR2 and FSR3
 //! where the device runs them, judged against analytic truth, a supersampled
 //! reference, equivalent scripts, bounds and the numbers the spec states.
-//! Case 12, the bound, is checked over every antialiased frame each case
+//! Case 12, the bound, is checked over every antialiased frame each test
 //! read, after the case's own assertions (`Failures::bounded`). Cases 3, 4
 //! and 7 dump their frames and metrics with `SGL_SCENARIO_DUMP`.
+//!
+//! Each case runs alone, one test per method (and per variant where its
+//! variants together would take longer than a test may alone), named
+//! `<case>::<method>…`, so a change to one resolve reruns only its tests:
+//! `cargo test -p sgl-3d-tests --test scenario_temporal_antialiasing
+//! panning_keeps_history::fsr2`. FSR's tests skip, saying so, where the
+//! device lacks its features. Each test renders its own oracles. A case
+//! that runs TAA alone is one test, or one per variant.
 //!
 //! The fixtures' truth assumes `rig::fixture_settings`: unlit cards, no
 //! bloom, fog, ambient occlusion, reflections or motion blur, and a fixed
@@ -24,7 +32,7 @@ use scenario::image::{self, Image, Region, centre, error, error_to, pixels};
 use scenario::rig::{Dump, Gpu, HALF_STEP, Rig, Shape, gpu};
 use scenario::temporal::{
     BACKGROUND, CARD, DEPTH, Edge, Failures, GRATING, HOLD, JITTER_CYCLE, Oracles, SETTLE, SKY,
-    STRIPS, Scenario, Script, VIEW, ahead, background, bar, card, grating, methods, px, stage,
+    STRIPS, Scenario, Script, VIEW, ahead, background, bar, card, device, grating, px, stage,
     stage_poses, still, stores, vacated,
 };
 use sgl_3d::ShaderSource;
@@ -109,8 +117,22 @@ fn far_stage<'a>(scale: f32, behind: Option<&(Shape, Pose)>, script: Script<'a>)
     }
 }
 
-/// The two distances each far case runs at.
-const DISTANCES: [(&str, f32); 2] = [("near", 1.), ("far", FAR)];
+/// The two distances each far case runs at: the stage's, and `FAR` times
+/// as far.
+const NEAR: (&str, f32) = ("near", 1.);
+const DISTANT: (&str, f32) = ("far", FAR);
+const DISTANCES: [(&str, f32); 2] = [NEAR, DISTANT];
+
+/// A module named after a case with one test per method, each calling the
+/// case's function, of the same name, with the method.
+macro_rules! every_method {
+    ($case:ident) => {
+        mod $case {
+            use sgl_3d::settings::Antialiasing::{Fsr2, Fsr3, Taa};
+            crate::scenario::temporal::case_tests!($case; taa: (Taa), fsr2: (Fsr2), fsr3: (Fsr3));
+        }
+    };
+}
 
 /// The square's corners of `pixel`.
 fn corners(pixel: [u32; 2]) -> [Vec2; 4] {
@@ -258,8 +280,8 @@ fn motion_vectors_match_the_script() {
 /// sample inside its pixel (bound); and some silhouette pixel changes over
 /// a cycle, since the antialiasing in effect jitters the projection
 /// (Temporal design).
-#[test]
-fn jitter_is_sub_pixel_and_never_in_the_motion() {
+fn jitter_is_sub_pixel_and_never_in_the_motion(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
     let one = |_| vec![Pose::at(Vec3::new(0., 0., -DEPTH))];
     let scenario = Scenario {
         shapes: vec![card()],
@@ -271,40 +293,39 @@ fn jitter_is_sub_pixel_and_never_in_the_motion() {
         let c = coverage(outline, pixel, 0.);
         c > 0. && c < 1.
     });
-    for (method, gpu) in methods() {
-        let mut rig = scenario.rig(&gpu, VIEW, method);
-        let mut last: Option<Region> = None;
-        let mut changed = 0;
-        for frame in 0..=JITTER_CYCLE + 1 {
-            scenario.render(&mut rig, frame);
-            let motion = rig.read(DiagnosticTarget::Motion);
+    let mut rig = scenario.rig(&gpu, VIEW, method);
+    let mut last: Option<Region> = None;
+    let mut changed = 0;
+    for frame in 0..=JITTER_CYCLE + 1 {
+        scenario.render(&mut rig, frame);
+        let motion = rig.read(DiagnosticTarget::Motion);
+        for pixel in pixels(VIEW.size) {
+            let [r, g, b, _] = motion.at(pixel);
+            assert!(
+                r.abs() <= STILL_UV && g.abs() <= STILL_UV && b.abs() <= STILL_DEPTH,
+                "{method:?} frame {frame}: a still scene wrote motion {:?} at {pixel:?}",
+                motion.at(pixel)
+            );
+        }
+        let depth = rig.read(DiagnosticTarget::Depth);
+        let silhouette = Region::from_fn(VIEW.size, |pixel| depth.at(pixel)[0] > 0.);
+        if let Some(last) = &last {
             for pixel in pixels(VIEW.size) {
-                let [r, g, b, _] = motion.at(pixel);
-                assert!(
-                    r.abs() <= STILL_UV && g.abs() <= STILL_UV && b.abs() <= STILL_DEPTH,
-                    "{method:?} frame {frame}: a still scene wrote motion {:?} at {pixel:?}",
-                    motion.at(pixel)
-                );
-            }
-            let depth = rig.read(DiagnosticTarget::Depth);
-            let silhouette = Region::from_fn(VIEW.size, |pixel| depth.at(pixel)[0] > 0.);
-            if let Some(last) = &last {
-                for pixel in pixels(VIEW.size) {
-                    if last.contains(pixel) != silhouette.contains(pixel) {
-                        changed += 1;
-                        assert!(
-                            straddles.contains(pixel),
-                            "{method:?} frame {frame}: pixel {pixel:?}, whose box misses the card's edge, changed silhouette: the jitter left the pixel"
-                        );
-                    }
+                if last.contains(pixel) != silhouette.contains(pixel) {
+                    changed += 1;
+                    assert!(
+                        straddles.contains(pixel),
+                        "{method:?} frame {frame}: pixel {pixel:?}, whose box misses the card's edge, changed silhouette: the jitter left the pixel"
+                    );
                 }
             }
-            last = Some(silhouette);
         }
-        eprintln!("{method:?}: {changed} silhouette changes over a cycle");
-        assert!(changed > 0, "{method:?} never jittered the projection");
+        last = Some(silhouette);
     }
+    eprintln!("{method:?}: {changed} silhouette changes over a cycle");
+    assert!(changed > 0, "{method:?} never jittered the projection");
 }
+every_method!(jitter_is_sub_pixel_and_never_in_the_motion);
 
 /// Case 3. Plausible defects: the resolve does not accumulate the jittered
 /// samples (no jitter, history discarded, a wrong blend), or, with the
@@ -316,51 +337,49 @@ fn jitter_is_sub_pixel_and_never_in_the_motion() {
 /// the outlines alike, at either distance. FSR runs without sharpening
 /// (`fixture_settings`): RCAS deliberately moves edges away from their
 /// coverage, which is what the reference measures.
-#[test]
-fn at_rest_the_resolve_converges_on_coverage() {
-    let Some(plain) = gpu() else { return };
+fn at_rest_the_resolve_converges_on_coverage(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
     let mut failures = Failures::default();
     for (distance, scale) in DISTANCES {
         let script = stage_poses_at(scale, None);
         let scenario = far_stage(scale, None, &script);
-        let mut oracles = Oracles::new(&scenario, &plain);
+        let mut oracles = Oracles::new(&scenario, &gpu);
         let truth = oracles.reference(&scenario, 0);
         let single = oracles.single(&scenario, 0);
         let regions = [
             (Edge::Strips, scenario.strip_edges(0, 1)),
             (Edge::Outline, scenario.outline_edges(0, &[0, 1])),
         ];
-        for (method, gpu) in methods() {
-            let mut rig = scenario.rig(&gpu, VIEW, method);
-            for frame in 0..SETTLE {
-                scenario.render(&mut rig, frame);
-            }
-            let resolved = rig.antialiased();
-            let mut dump = Dump::new(&format!("at_rest_{distance}_{method:?}"));
-            dump.image("converged", &resolved);
-            dump.image("reference", &truth);
-            for (edge, region) in &regions {
-                let ours = error(&resolved, &truth, region).rmse;
-                let theirs = error(&single, &truth, region).rmse;
-                let bar = bar(method, &rig, *edge);
-                dump.metric(format!("{edge:?}_rmse"), ours);
-                dump.metric(format!("{edge:?}_single_sample_rmse"), theirs);
-                eprintln!(
-                    "{method:?} at rest, {distance}, {edge:?} ({} pixels): RMSE {ours}, a single sample's {theirs}, {} times below against the bar {bar}",
-                    region.len(),
-                    theirs / ours
-                );
-                failures.check(ours * bar <= theirs, || {
-                    format!(
-                        "{method:?} at rest, {distance}, {edge:?}: the converged resolve's RMSE {ours} is not {bar} times below a single sample's {theirs}"
-                    )
-                });
-            }
-            failures.bounded(&rig, format!("{method:?} at rest, {distance}"));
+        let mut rig = scenario.rig(&gpu, VIEW, method);
+        for frame in 0..SETTLE {
+            scenario.render(&mut rig, frame);
         }
+        let resolved = rig.antialiased();
+        let mut dump = Dump::new(&format!("at_rest_{distance}_{method:?}"));
+        dump.image("converged", &resolved);
+        dump.image("reference", &truth);
+        for (edge, region) in &regions {
+            let ours = error(&resolved, &truth, region).rmse;
+            let theirs = error(&single, &truth, region).rmse;
+            let bar = bar(method, &rig, *edge);
+            dump.metric(format!("{edge:?}_rmse"), ours);
+            dump.metric(format!("{edge:?}_single_sample_rmse"), theirs);
+            eprintln!(
+                "{method:?} at rest, {distance}, {edge:?} ({} pixels): RMSE {ours}, a single sample's {theirs}, {} times below against the bar {bar}",
+                region.len(),
+                theirs / ours
+            );
+            failures.check(ours * bar <= theirs, || {
+                format!(
+                    "{method:?} at rest, {distance}, {edge:?}: the converged resolve's RMSE {ours} is not {bar} times below a single sample's {theirs}"
+                )
+            });
+        }
+        failures.bounded(&rig, format!("{method:?} at rest, {distance}"));
     }
     failures.assert();
 }
+every_method!(at_rest_the_resolve_converges_on_coverage);
 
 /// What a case adds to a rig's frame beside its scenario, before the frame
 /// renders.
@@ -483,15 +502,11 @@ fn at_rest_taa_holds_silhouettes_against_a_far_surface_still() {
 /// bicubic history fetch, has lain wholly inside the card, or wholly in the
 /// sky, for the hold shows that radiance within the method's `stores`
 /// (analytic).
-#[test]
-fn panning_keeps_history() {
-    let Some(plain) = gpu() else { return };
+fn panning_keeps_history(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
     let mut oracles: Option<Oracles> = None;
     let mut failures = Failures::default();
-    let mut rigs: Vec<(Antialiasing, Option<Rig>, Gpu)> = methods()
-        .into_iter()
-        .map(|(m, gpu)| (m, None, gpu))
-        .collect();
+    let mut rig: Option<Rig> = None;
     for rate in [1., 0.37] {
         // Leftward, so the stage crosses the view without leaving it.
         let pan = VIEW.pan(-rate, DEPTH);
@@ -502,7 +517,7 @@ fn panning_keeps_history() {
                 oracles.restage(&scenario);
                 oracles
             }
-            None => oracles.insert(Oracles::new(&scenario, &plain)),
+            None => oracles.insert(Oracles::new(&scenario, &gpu)),
         };
         let frames = SETTLE + 2 * HOLD;
         let truths: Vec<(Image, Image)> = (SETTLE..frames)
@@ -528,62 +543,58 @@ fn panning_keeps_history() {
                 (scenario.edges(f, &[0, 1]), held)
             })
             .collect();
-        for (method, rig, gpu) in &mut rigs {
-            let method = *method;
-            let rig = match rig {
-                Some(rig) => {
-                    scenario.restage(rig);
-                    rig
-                }
-                None => rig.insert(scenario.rig(gpu, VIEW, method)),
-            };
-            // The largest RMSE ratio to a single sample's, and in each held
-            // region the largest error relative to its radiance, with where.
-            let mut worst = (0f32, 0);
-            let mut held_error = [(0f32, 0, [0; 2]); 2];
-            for frame in 0..frames {
-                scenario.render(rig, frame);
-                if frame < SETTLE {
-                    continue;
-                }
-                let resolved = rig.antialiased();
-                let (truth, single) = &truths[(frame - SETTLE) as usize];
-                let (edges, held) = &measured[(frame - SETTLE) as usize];
-                let [ours, theirs] = [&resolved, single].map(|i| error(i, truth, edges).rmse);
-                if ours / theirs > worst.0 {
-                    worst = (ours / theirs, frame);
-                }
-                for ((region, radiance), held_error) in held.iter().zip(&mut held_error) {
-                    let e = error_to(&resolved, *radiance, region);
-                    if e.max / radiance > held_error.0 {
-                        *held_error = (e.max / radiance, frame, e.worst);
-                    }
-                }
+        let rig = match &mut rig {
+            Some(rig) => {
+                scenario.restage(rig);
+                rig
             }
-            eprintln!(
-                "{method:?} panning {rate} px a frame: RMSE at most {} of a single sample's (frame {}); held pixels within {:?} relative (card, sky: error, frame, pixel)",
-                worst.0, worst.1, held_error
-            );
-            failures.check(worst.0 <= 1., || {
-                format!(
-                    "{method:?} panning {rate} px a frame: RMSE {} times a single sample's at frame {}",
-                    worst.0, worst.1
-                )
-            });
-            for (name, (error, frame, pixel)) in ["card", "sky"].into_iter().zip(held_error) {
-                failures.check(error <= stores(method) * HALF_STEP, || {
-                    format!(
-                        "{method:?} panning {rate} px a frame: a pixel held in the {name} for the hold is {error} of its radiance off, frame {frame} pixel {pixel:?}"
-                    )
-                });
+            None => rig.insert(scenario.rig(&gpu, VIEW, method)),
+        };
+        // The largest RMSE ratio to a single sample's, and in each held
+        // region the largest error relative to its radiance, with where.
+        let mut worst = (0f32, 0);
+        let mut held_error = [(0f32, 0, [0; 2]); 2];
+        for frame in 0..frames {
+            scenario.render(rig, frame);
+            if frame < SETTLE {
+                continue;
+            }
+            let resolved = rig.antialiased();
+            let (truth, single) = &truths[(frame - SETTLE) as usize];
+            let (edges, held) = &measured[(frame - SETTLE) as usize];
+            let [ours, theirs] = [&resolved, single].map(|i| error(i, truth, edges).rmse);
+            if ours / theirs > worst.0 {
+                worst = (ours / theirs, frame);
+            }
+            for ((region, radiance), held_error) in held.iter().zip(&mut held_error) {
+                let e = error_to(&resolved, *radiance, region);
+                if e.max / radiance > held_error.0 {
+                    *held_error = (e.max / radiance, frame, e.worst);
+                }
             }
         }
+        eprintln!(
+            "{method:?} panning {rate} px a frame: RMSE at most {} of a single sample's (frame {}); held pixels within {:?} relative (card, sky: error, frame, pixel)",
+            worst.0, worst.1, held_error
+        );
+        failures.check(worst.0 <= 1., || {
+            format!(
+                "{method:?} panning {rate} px a frame: RMSE {} times a single sample's at frame {}",
+                worst.0, worst.1
+            )
+        });
+        for (name, (error, frame, pixel)) in ["card", "sky"].into_iter().zip(held_error) {
+            failures.check(error <= stores(method) * HALF_STEP, || {
+                format!(
+                    "{method:?} panning {rate} px a frame: a pixel held in the {name} for the hold is {error} of its radiance off, frame {frame} pixel {pixel:?}"
+                )
+            });
+        }
     }
-    for (method, rig, _) in &rigs {
-        failures.bounded(rig.as_ref().unwrap(), format!("{method:?} panning"));
-    }
+    failures.bounded(rig.as_ref().unwrap(), format!("{method:?} panning"));
     failures.assert();
 }
+every_method!(panning_keeps_history);
 
 /// What stands behind a case's moving or changing card: the background
 /// card (the near variant's) or the sky.
@@ -606,8 +617,8 @@ const AGAINST: [(&str, f32, Behind); 3] = [
 /// analytic with the spec's hold: a pixel `vacated` by the moving card for
 /// the hold shows what lies behind, the still background or the sky, within
 /// the method's `stores`; against the sky near and far (#791).
-#[test]
-fn a_disocclusion_recovers() {
+fn a_disocclusion_recovers(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
     let (back, back_pose) = background();
     let mut failures = Failures::default();
     for (name, scale, behind) in AGAINST {
@@ -642,45 +653,44 @@ fn a_disocclusion_recovers() {
                 Behind::Sky => region,
             })
             .collect();
-        for (method, gpu) in methods() {
-            let mut rig = scenario.rig(&gpu, VIEW, method);
-            let mut checked = 0;
-            let mut residual = (0f32, 0, [0; 2]);
-            for frame in 0..frames {
-                scenario.render(&mut rig, frame);
-                let resolved = rig.antialiased();
-                if frame < HOLD {
-                    continue;
-                }
-                let vacated = &vacated[(frame - HOLD) as usize];
-                if vacated.is_empty() {
-                    continue;
-                }
-                let e = error_to(&resolved, truth, vacated);
-                if e.max > residual.0 {
-                    residual = (e.max, frame, e.worst);
-                }
-                checked += e.pixels;
+        let mut rig = scenario.rig(&gpu, VIEW, method);
+        let mut checked = 0;
+        let mut residual = (0f32, 0, [0; 2]);
+        for frame in 0..frames {
+            scenario.render(&mut rig, frame);
+            let resolved = rig.antialiased();
+            if frame < HOLD {
+                continue;
             }
-            eprintln!(
-                "{method:?} disocclusion {name}: {checked} pixel-frames vacated for the hold, residual at most {} (frame {}, pixel {:?})",
-                residual.0, residual.1, residual.2
-            );
-            assert!(
-                checked > 0,
-                "{name}: the card vacated no pixel for the hold"
-            );
-            failures.check(residual.0 <= stores(method) * truth * HALF_STEP, || {
-                format!(
-                    "{method:?} {name}: a pixel vacated for the hold is {} off what lies behind, frame {} pixel {:?}",
-                    residual.0, residual.1, residual.2
-                )
-            });
-            failures.bounded(&rig, format!("{method:?} disocclusion {name}"));
+            let vacated = &vacated[(frame - HOLD) as usize];
+            if vacated.is_empty() {
+                continue;
+            }
+            let e = error_to(&resolved, truth, vacated);
+            if e.max > residual.0 {
+                residual = (e.max, frame, e.worst);
+            }
+            checked += e.pixels;
         }
+        eprintln!(
+            "{method:?} disocclusion {name}: {checked} pixel-frames vacated for the hold, residual at most {} (frame {}, pixel {:?})",
+            residual.0, residual.1, residual.2
+        );
+        assert!(
+            checked > 0,
+            "{name}: the card vacated no pixel for the hold"
+        );
+        failures.check(residual.0 <= stores(method) * truth * HALF_STEP, || {
+            format!(
+                "{method:?} {name}: a pixel vacated for the hold is {} off what lies behind, frame {} pixel {:?}",
+                residual.0, residual.1, residual.2
+            )
+        });
+        failures.bounded(&rig, format!("{method:?} disocclusion {name}"));
     }
     failures.assert();
 }
+every_method!(a_disocclusion_recovers);
 
 /// Case 7 (#768). Plausible defect: history rejected on a surface whose
 /// view depth and screen position stay fixed while the camera moves, as a
@@ -694,9 +704,8 @@ fn a_disocclusion_recovers() {
 /// outline (whose neighbourhoods see no moving background), the following
 /// run is at least case 3's strip `bar` times closer to the still run than
 /// the single centre sample is.
-#[test]
-fn a_surface_the_camera_follows_keeps_its_history() {
-    let Some(plain) = gpu() else { return };
+fn a_surface_the_camera_follows_keeps_its_history(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
     let (back, _) = background();
     let far = Pose::at(Vec3::new(0., 0., -30.));
     let dolly = Motion::translate(Vec3::new(0., 0., -0.2));
@@ -717,40 +726,39 @@ fn a_surface_the_camera_follows_keeps_its_history() {
     let interior = following
         .strip_edges(last, 1)
         .and(&following.inside(last, 1, 2.));
-    let single = Oracles::new(&following, &plain).single(&following, last);
+    let single = Oracles::new(&following, &gpu).single(&following, last);
     let mut failures = Failures::default();
-    for (method, gpu) in methods() {
-        let mut rig = resting.rig(&gpu, VIEW, method);
-        let [still_image, follow_image] = [&resting, &following].map(|scenario| {
-            scenario.restage(&mut rig);
-            for frame in 0..=last {
-                scenario.render(&mut rig, frame);
-            }
-            rig.antialiased()
-        });
-        let ours = error(&follow_image, &still_image, &interior);
-        let theirs = error(&single, &still_image, &interior);
-        let mut dump = Dump::new(&format!("follow_{method:?}"));
-        dump.image("still", &still_image);
-        dump.image("following", &follow_image);
-        dump.metric("following_rmse", ours.rmse);
-        dump.metric("single_sample_rmse", theirs.rmse);
-        eprintln!("{method:?} following: {ours:?} from the still run; a single sample {theirs:?}");
-        let bar = bar(method, &rig, Edge::Strips);
-        eprintln!(
-            "{method:?} following: {} times closer than a single sample, against the bar {bar}",
-            theirs.rmse / ours.rmse
-        );
-        failures.check(ours.rmse * bar <= theirs.rmse, || {
-            format!(
-                "{method:?}: the followed grating is {} from its still resolve, not {bar} times below a single sample's {} (#768)",
-                ours.rmse, theirs.rmse
-            )
-        });
-        failures.bounded(&rig, format!("{method:?} following"));
-    }
+    let mut rig = resting.rig(&gpu, VIEW, method);
+    let [still_image, follow_image] = [&resting, &following].map(|scenario| {
+        scenario.restage(&mut rig);
+        for frame in 0..=last {
+            scenario.render(&mut rig, frame);
+        }
+        rig.antialiased()
+    });
+    let ours = error(&follow_image, &still_image, &interior);
+    let theirs = error(&single, &still_image, &interior);
+    let mut dump = Dump::new(&format!("follow_{method:?}"));
+    dump.image("still", &still_image);
+    dump.image("following", &follow_image);
+    dump.metric("following_rmse", ours.rmse);
+    dump.metric("single_sample_rmse", theirs.rmse);
+    eprintln!("{method:?} following: {ours:?} from the still run; a single sample {theirs:?}");
+    let bar = bar(method, &rig, Edge::Strips);
+    eprintln!(
+        "{method:?} following: {} times closer than a single sample, against the bar {bar}",
+        theirs.rmse / ours.rmse
+    );
+    failures.check(ours.rmse * bar <= theirs.rmse, || {
+        format!(
+            "{method:?}: the followed grating is {} from its still resolve, not {bar} times below a single sample's {} (#768)",
+            ours.rmse, theirs.rmse
+        )
+    });
+    failures.bounded(&rig, format!("{method:?} following"));
     failures.assert();
 }
+every_method!(a_surface_the_camera_follows_keeps_its_history);
 
 /// Case 8 (#768). Plausible defect: the same rejection on a surface
 /// approaching a still camera. A grating centred ahead comes 3 mm a frame
@@ -768,9 +776,8 @@ fn a_surface_the_camera_follows_keeps_its_history() {
 /// below what the bar leaves of a single sample's error, so the scenario
 /// fails both antialiasing off and a resolve that discards its history, a
 /// single jittered sample; the case checks that it does.
-#[test]
-fn a_surface_moving_along_the_view_keeps_its_history() {
-    let Some(plain) = gpu() else { return };
+fn a_surface_moving_along_the_view_keeps_its_history(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
     let (back, back_pose) = background();
     let approach = Motion::translate(Vec3::new(0., 0., 0.003));
     let start = Pose::at(Vec3::new(0., 0., -0.6));
@@ -806,7 +813,7 @@ fn a_surface_moving_along_the_view_keeps_its_history() {
             .and(&scenario.inside(frame, 1, 2.))
             .and(&slow)
     };
-    let mut oracles = Oracles::new(&scenario, &plain);
+    let mut oracles = Oracles::new(&scenario, &gpu);
     let truths: Vec<(Image, Image)> = (SETTLE - 1..frames)
         .map(|f| {
             (
@@ -816,40 +823,39 @@ fn a_surface_moving_along_the_view_keeps_its_history() {
         })
         .collect();
     let mut failures = Failures::default();
-    for (method, gpu) in methods() {
-        let mut rig = scenario.rig(&gpu, VIEW, method);
-        let bar = bar(method, &rig, Edge::Strips);
-        for frame in 0..frames {
-            scenario.render(&mut rig, frame);
-            if frame < SETTLE {
-                continue;
-            }
-            let resolved = rig.antialiased();
-            let index = (frame + 1 - SETTLE) as usize;
-            let (truth, single) = &truths[index];
-            let strips = measured(frame);
-            let ours = error(&resolved, truth, &strips).rmse;
-            let theirs = error(single, truth, &strips).rmse;
-            let change = error(&truths[index - 1].0, truth, &strips).rmse;
-            eprintln!(
-                "{method:?} approaching, frame {frame} ({} pixels): RMSE {ours}, a single sample's {theirs}, the reference's change {change}, bar {bar}",
-                strips.len()
-            );
-            failures.check(change < theirs * (1. - 1. / bar), || {
-                format!(
-                    "approaching, frame {frame}: the reference changes by {change}, too much for a single sample's {theirs} to fail the bar {bar}"
-                )
-            });
-            failures.check(ours <= theirs / bar + change, || {
-                format!(
-                    "{method:?} approaching, frame {frame}: the strips' RMSE {ours} is not {bar} times below a single sample's {theirs} plus the frame's change {change} (#768)"
-                )
-            });
+    let mut rig = scenario.rig(&gpu, VIEW, method);
+    let bar = bar(method, &rig, Edge::Strips);
+    for frame in 0..frames {
+        scenario.render(&mut rig, frame);
+        if frame < SETTLE {
+            continue;
         }
-        failures.bounded(&rig, format!("{method:?} approaching"));
+        let resolved = rig.antialiased();
+        let index = (frame + 1 - SETTLE) as usize;
+        let (truth, single) = &truths[index];
+        let strips = measured(frame);
+        let ours = error(&resolved, truth, &strips).rmse;
+        let theirs = error(single, truth, &strips).rmse;
+        let change = error(&truths[index - 1].0, truth, &strips).rmse;
+        eprintln!(
+            "{method:?} approaching, frame {frame} ({} pixels): RMSE {ours}, a single sample's {theirs}, the reference's change {change}, bar {bar}",
+            strips.len()
+        );
+        failures.check(change < theirs * (1. - 1. / bar), || {
+            format!(
+                "approaching, frame {frame}: the reference changes by {change}, too much for a single sample's {theirs} to fail the bar {bar}"
+            )
+        });
+        failures.check(ours <= theirs / bar + change, || {
+            format!(
+                "{method:?} approaching, frame {frame}: the strips' RMSE {ours} is not {bar} times below a single sample's {theirs} plus the frame's change {change} (#768)"
+            )
+        });
     }
+    failures.bounded(&rig, format!("{method:?} approaching"));
     failures.assert();
 }
+every_method!(a_surface_moving_along_the_view_keeps_its_history);
 
 /// A game's shader (`Scene::add_shader`) whose vertex function moves every
 /// vertex by its parameters' `velocity` metres a second from `start`
@@ -873,101 +879,113 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
 }
 "#;
 
-/// The surfaces case 13 and #802's scenarios move, before what lies behind
-/// them: the stage's distance (1, or `FAR` times as far) and the wall.
-type Departure<'a> = (&'static str, f32, Option<&'a (Shape, Pose)>);
+/// What lies behind the card case 13 and #802's scenarios move.
+#[derive(Clone, Copy, Debug)]
+enum Over {
+    Sky,
+    /// A wall at 4 km.
+    FarWall,
+    /// A wall at 8 m.
+    NearWall,
+}
 
-/// Case 13 and #802's scenarios: for each of `variants` and `rates`
-/// (pixels a frame), a card at `DEPTH` its material's vertex function
-/// starts moving from rest at frame `start_frame`, after the hold has
-/// expired, rendered to `frames` with each of `methods`, its failures added
-/// to `failures`. The oracle is analytic with the spec's hold, as case 6's:
-/// a pixel `vacated` by the card, whose pose the shader's motion gives
-/// exactly (the frame's time is `FrameInput::elapsed_seconds` in f32),
-/// shows what lies behind within the method's `stores`.
-fn departures(
-    failures: &mut Failures,
-    methods: Vec<(Antialiasing, Gpu)>,
-    variants: &[Departure<'_>],
-    rates: &[f32],
-    (start_frame, frames): (u32, u32),
-) {
-    for &(behind, scale, wall) in variants {
-        for &rate in rates {
-            let name = format!("{behind} at {rate} px a frame");
-            let shape = card().scaled(scale);
-            let rest = farther(Pose::at(Vec3::new(-0.6, 0., -DEPTH)), scale);
-            let velocity = Vec3::X * rate * px() * scale * FRAME_RATE as f32;
-            let start = (f64::from(start_frame) / FRAME_RATE) as f32;
-            let moved = move |f: u32| {
-                let time = (f64::from(f) / FRAME_RATE) as f32;
-                vec![Pose::at(rest.position + velocity * (time - start).max(0.))]
-            };
-            let truth = Scenario {
-                shapes: vec![shape.clone()],
-                camera: &still,
-                script: &moved,
-            };
-            let vacated = vacated(&truth, 0, frames, 2.);
-            let value = if wall.is_some() { BACKGROUND } else { SKY };
-            let params = [velocity.x, velocity.y, velocity.z, start];
-            let bound = velocity.length() * frames as f32 / FRAME_RATE as f32;
-            for (method, gpu) in methods.clone() {
-                let mut rig = Rig::new(&gpu, VIEW, method, SKY);
-                if let Some((wall, pose)) = wall {
-                    rig.add(wall, *pose, 0);
-                }
-                let shader = rig
-                    .scene
-                    .add_shader(ShaderSource {
-                        wgsl: DEPARTING_SHADER.into(),
-                        label: "departing".into(),
-                    })
-                    .unwrap_or_else(|error| panic!("{error}"));
-                rig.add_shaded(
-                    &shape,
-                    rest,
-                    0,
-                    (shader, bound),
-                    bytemuck::bytes_of(&params),
-                );
-                rig.look(still(0));
-                let mut checked = 0;
-                let mut residual = (0f32, 0, [0; 2]);
-                for frame in 0..frames {
-                    rig.render(frame);
-                    let resolved = rig.antialiased();
-                    if frame < HOLD {
-                        continue;
-                    }
-                    let vacated = &vacated[(frame - HOLD) as usize];
-                    if vacated.is_empty() {
-                        continue;
-                    }
-                    let e = error_to(&resolved, value, vacated);
-                    if e.max > residual.0 {
-                        residual = (e.max, frame, e.worst);
-                    }
-                    checked += e.pixels;
-                }
-                eprintln!(
-                    "{method:?} vertex function {name}: {checked} pixel-frames vacated for the hold, residual at most {} (frame {}, pixel {:?})",
-                    residual.0, residual.1, residual.2
-                );
-                assert!(
-                    checked > 0,
-                    "{name}: the card vacated no pixel for the hold"
-                );
-                failures.check(residual.0 <= stores(method) * value * HALF_STEP, || {
-                    format!(
-                        "{method:?} vertex function {name}: a pixel vacated for the hold is {} off what lies behind, frame {} pixel {:?}",
-                        residual.0, residual.1, residual.2
-                    )
-                });
-                failures.bounded(&rig, format!("{method:?} vertex function {name}"));
-            }
+impl Over {
+    /// Its name and its wall.
+    fn wall(self) -> (&'static str, Option<(Shape, Pose)>) {
+        match self {
+            Over::Sky => ("over the sky", None),
+            Over::FarWall => ("over a far wall", Some(wall(8. * FAR))),
+            Over::NearWall => ("over a near wall", Some(wall(8.))),
         }
     }
+}
+
+/// Case 13 and #802's scenarios: a card at `DEPTH`, `scale` times as far,
+/// before `wall` or the sky (named `behind`), its material's vertex function
+/// starts moving from rest at `rate` pixels a frame at frame `start_frame`,
+/// after the hold has expired, rendered with `method` to `frames`, its
+/// failures added to `failures`. The oracle is analytic with the spec's
+/// hold, as case 6's: a pixel `vacated` by the card, whose pose the
+/// shader's motion gives exactly (the frame's time is
+/// `FrameInput::elapsed_seconds` in f32), shows what lies behind within the
+/// method's `stores`.
+fn departures(
+    failures: &mut Failures,
+    (method, gpu): (Antialiasing, &Gpu),
+    (behind, scale, wall): (&str, f32, Option<&(Shape, Pose)>),
+    rate: f32,
+    (start_frame, frames): (u32, u32),
+) {
+    let name = format!("{behind} at {rate} px a frame");
+    let shape = card().scaled(scale);
+    let rest = farther(Pose::at(Vec3::new(-0.6, 0., -DEPTH)), scale);
+    let velocity = Vec3::X * rate * px() * scale * FRAME_RATE as f32;
+    let start = (f64::from(start_frame) / FRAME_RATE) as f32;
+    let moved = move |f: u32| {
+        let time = (f64::from(f) / FRAME_RATE) as f32;
+        vec![Pose::at(rest.position + velocity * (time - start).max(0.))]
+    };
+    let truth = Scenario {
+        shapes: vec![shape.clone()],
+        camera: &still,
+        script: &moved,
+    };
+    let vacated = vacated(&truth, 0, frames, 2.);
+    let value = if wall.is_some() { BACKGROUND } else { SKY };
+    let params = [velocity.x, velocity.y, velocity.z, start];
+    let bound = velocity.length() * frames as f32 / FRAME_RATE as f32;
+    let mut rig = Rig::new(gpu, VIEW, method, SKY);
+    if let Some((wall, pose)) = wall {
+        rig.add(wall, *pose, 0);
+    }
+    let shader = rig
+        .scene
+        .add_shader(ShaderSource {
+            wgsl: DEPARTING_SHADER.into(),
+            label: "departing".into(),
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    rig.add_shaded(
+        &shape,
+        rest,
+        0,
+        (shader, bound),
+        bytemuck::bytes_of(&params),
+    );
+    rig.look(still(0));
+    let mut checked = 0;
+    let mut residual = (0f32, 0, [0; 2]);
+    for frame in 0..frames {
+        rig.render(frame);
+        let resolved = rig.antialiased();
+        if frame < HOLD {
+            continue;
+        }
+        let vacated = &vacated[(frame - HOLD) as usize];
+        if vacated.is_empty() {
+            continue;
+        }
+        let e = error_to(&resolved, value, vacated);
+        if e.max > residual.0 {
+            residual = (e.max, frame, e.worst);
+        }
+        checked += e.pixels;
+    }
+    eprintln!(
+        "{method:?} vertex function {name}: {checked} pixel-frames vacated for the hold, residual at most {} (frame {}, pixel {:?})",
+        residual.0, residual.1, residual.2
+    );
+    assert!(
+        checked > 0,
+        "{name}: the card vacated no pixel for the hold"
+    );
+    failures.check(residual.0 <= stores(method) * value * HALF_STEP, || {
+        format!(
+            "{method:?} vertex function {name}: a pixel vacated for the hold is {} off what lies behind, frame {} pixel {:?}",
+            residual.0, residual.1, residual.2
+        )
+    });
+    failures.bounded(&rig, format!("{method:?} vertex function {name}"));
 }
 
 /// Case 13 (#791). Plausible defect: a surface its material's vertex
@@ -981,39 +999,47 @@ fn departures(
 /// of the moving card, so its own motion re-arms the hold there (faster:
 /// #802's scenarios below). The oracle is `departures`': the sky, a wall at
 /// 4 km behind the card near and far, and a wall at 8 m behind the near
-/// card.
-#[test]
-fn a_surface_its_vertex_function_moves_from_rest_uncovers_what_lies_behind() {
-    let near_wall = wall(8.);
-    let far_wall = wall(8. * FAR);
-    let variants = [
-        ("near over the sky", 1., None),
-        ("far over the sky", FAR, None),
-        ("near over a far wall", 1., Some(&far_wall)),
-        ("far over a far wall", FAR, Some(&far_wall)),
-        ("near over a near wall", 1., Some(&near_wall)),
-    ];
+/// card, one test each.
+fn a_surface_its_vertex_function_moves_from_rest_uncovers_what_lies_behind(
+    method: Antialiasing,
+    (distance, scale): (&str, f32),
+    over: Over,
+) {
+    let Some(gpu) = device(method) else { return };
+    let (behind, wall) = over.wall();
+    let name = format!("{distance} {behind}");
     let mut failures = Failures::default();
     departures(
         &mut failures,
-        methods(),
-        &variants,
-        &[0.5],
+        (method, &gpu),
+        (&name, scale, wall.as_ref()),
+        0.5,
         (SETTLE, SETTLE + 3 * HOLD),
     );
     failures.assert();
 }
 
-/// #802's backgrounds: the sky, a wall at 4 km and a wall at 8 m behind the
-/// card at `DEPTH`.
-fn departure_backgrounds(test: impl FnOnce(&[Departure<'_>])) {
-    let near_wall = wall(8.);
-    let far_wall = wall(8. * FAR);
-    test(&[
-        ("over the sky", 1., None),
-        ("over a far wall", 1., Some(&far_wall)),
-        ("over a near wall", 1., Some(&near_wall)),
-    ]);
+mod a_surface_its_vertex_function_moves_from_rest_uncovers_what_lies_behind {
+    use super::Over::{FarWall, NearWall, Sky};
+    use super::{DISTANT, NEAR};
+    use sgl_3d::settings::Antialiasing::{Fsr2, Fsr3, Taa};
+    crate::scenario::temporal::case_tests!(a_surface_its_vertex_function_moves_from_rest_uncovers_what_lies_behind;
+        taa_near_over_the_sky: (Taa, NEAR, Sky),
+        taa_far_over_the_sky: (Taa, DISTANT, Sky),
+        taa_near_over_a_far_wall: (Taa, NEAR, FarWall),
+        taa_far_over_a_far_wall: (Taa, DISTANT, FarWall),
+        taa_near_over_a_near_wall: (Taa, NEAR, NearWall),
+        fsr2_near_over_the_sky: (Fsr2, NEAR, Sky),
+        fsr2_far_over_the_sky: (Fsr2, DISTANT, Sky),
+        fsr2_near_over_a_far_wall: (Fsr2, NEAR, FarWall),
+        fsr2_far_over_a_far_wall: (Fsr2, DISTANT, FarWall),
+        fsr2_near_over_a_near_wall: (Fsr2, NEAR, NearWall),
+        fsr3_near_over_the_sky: (Fsr3, NEAR, Sky),
+        fsr3_far_over_the_sky: (Fsr3, DISTANT, Sky),
+        fsr3_near_over_a_far_wall: (Fsr3, NEAR, FarWall),
+        fsr3_far_over_a_far_wall: (Fsr3, DISTANT, FarWall),
+        fsr3_near_over_a_near_wall: (Fsr3, NEAR, NearWall),
+    );
 }
 
 /// The frames #802's scenarios run: the first hold, which every history
@@ -1021,54 +1047,48 @@ fn departure_backgrounds(test: impl FnOnce(&[Departure<'_>])) {
 /// vacated for a hold are judged.
 const DEPARTURE_FRAMES: (u32, u32) = (HOLD + 1, HOLD + 1 + 3 * HOLD);
 
-/// #802 at `rate` pixels a frame, TAA: faster than the 3x3 closest-motion
-/// search reaches, so only the reach of the moving card (Frame item 10)
-/// re-arms the hold on what it uncovers. The oracle is `departures`'.
-fn taa_departure(rate: f32) {
-    let Some(gpu) = gpu() else { return };
+/// #802 at `rate` pixels a frame, over the sky, a wall at 4 km and a wall
+/// at 8 m behind the card at `DEPTH`: faster than the 3x3 closest-motion
+/// search reaches, so under TAA only the reach of the moving card (Frame
+/// item 10) re-arms the hold on what it uncovers, and FSR2 and FSR3 resolve
+/// it with their own reprojection and locks. FSR2's radiance bound at 4 px
+/// a frame, where the card leaves the frame at its edge, guards #808. The
+/// oracle is `departures`'.
+fn a_surface_its_vertex_function_moves_from_rest_beyond_the_search(
+    method: Antialiasing,
+    rate: f32,
+) {
+    let Some(gpu) = device(method) else { return };
     let mut failures = Failures::default();
-    departure_backgrounds(|variants| {
+    for over in [Over::Sky, Over::FarWall, Over::NearWall] {
+        let (behind, wall) = over.wall();
         departures(
             &mut failures,
-            vec![(Antialiasing::Taa, gpu)],
-            variants,
-            &[rate],
+            (method, &gpu),
+            (behind, 1., wall.as_ref()),
+            rate,
             DEPARTURE_FRAMES,
-        )
-    });
-    failures.assert();
-}
-
-/// #802 at 1.5 px a frame.
-#[test]
-fn a_surface_its_vertex_function_moves_from_rest_at_1_5_px_a_frame_under_taa() {
-    taa_departure(1.5);
-}
-
-/// #802 at 4 px a frame.
-#[test]
-fn a_surface_its_vertex_function_moves_from_rest_at_4_px_a_frame_under_taa() {
-    taa_departure(4.);
-}
-
-/// #802's scenarios under FSR2 and FSR3, which their own reprojection and
-/// locks resolve. FSR2's radiance bound at 4 px a frame, where the card
-/// leaves the frame at its edge, guards #808.
-#[test]
-#[ignore = "long: two upscalers, two rates and three backgrounds, about 30 s"]
-fn long_a_surface_its_vertex_function_moves_from_rest_under_fsr() {
-    let fsr: Vec<_> = methods()
-        .into_iter()
-        .filter(|(method, _)| *method != Antialiasing::Taa)
-        .collect();
-    if fsr.is_empty() {
-        return;
+        );
     }
-    let mut failures = Failures::default();
-    departure_backgrounds(|variants| {
-        departures(&mut failures, fsr, variants, &[1.5, 4.], DEPARTURE_FRAMES)
-    });
     failures.assert();
+}
+
+mod a_surface_its_vertex_function_moves_from_rest_at_1_5_px_a_frame {
+    use sgl_3d::settings::Antialiasing::{Fsr2, Fsr3, Taa};
+    crate::scenario::temporal::case_tests!(a_surface_its_vertex_function_moves_from_rest_beyond_the_search;
+        taa: (Taa, 1.5),
+        fsr2: (Fsr2, 1.5),
+        fsr3: (Fsr3, 1.5),
+    );
+}
+
+mod a_surface_its_vertex_function_moves_from_rest_at_4_px_a_frame {
+    use sgl_3d::settings::Antialiasing::{Fsr2, Fsr3, Taa};
+    crate::scenario::temporal::case_tests!(a_surface_its_vertex_function_moves_from_rest_beyond_the_search;
+        taa: (Taa, 4.),
+        fsr2: (Fsr2, 4.),
+        fsr3: (Fsr3, 4.),
+    );
 }
 
 /// What appears or departs in case 9, in the order it happens.
@@ -1097,8 +1117,8 @@ enum Event {
 /// within the method's `stores`. Each event follows the last by the
 /// settle and the hold, so the hold has expired; every event and method
 /// runs before the assertion, so one failure reports them all.
-#[test]
-fn appearance_and_departure_at_rest_resolve_within_the_hold() {
+fn appearance_and_departure_at_rest_resolve_within_the_hold(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
     let (back, back_pose) = background();
     let events = [
         Event::Hidden,
@@ -1123,56 +1143,55 @@ fn appearance_and_departure_at_rest_resolve_within_the_hold() {
             Behind::Background => BACKGROUND,
             Behind::Sky => SKY,
         };
-        for (method, gpu) in methods() {
-            let mut rig = Rig::new(&gpu, VIEW, method, SKY);
-            if behind == Behind::Background {
-                rig.add(&back, back_pose, 0);
-            }
-            // Visibility group 1, which the rig's mask enables.
-            let mut instance = Some(rig.add(&layer, layer_pose, 1));
-            rig.look(still(0));
-            let mut frame = 0;
-            for event in events {
-                let at = frame + SETTLE + HOLD;
-                while frame < at {
-                    rig.render(frame);
-                    frame += 1;
-                }
-                match event {
-                    Event::Hidden => rig.set_visible(instance.unwrap(), false),
-                    Event::Shown => rig.set_visible(instance.unwrap(), true),
-                    Event::Masked => rig.input.visibility_mask &= !1,
-                    Event::Unmasked => rig.input.visibility_mask |= 1,
-                    Event::Removed => rig.remove(instance.take().unwrap()),
-                    Event::Added => instance = Some(rig.add(&layer, layer_pose, 1)),
-                }
-                let truth = match event {
-                    Event::Hidden | Event::Masked | Event::Removed => gone,
-                    Event::Shown | Event::Unmasked | Event::Added => CARD,
-                };
-                let mut residuals = Vec::new();
-                while frame <= at + HOLD {
-                    rig.render(frame);
-                    residuals.push(error_to(&rig.antialiased(), truth, &inside).max);
-                    frame += 1;
-                }
-                let residual = *residuals.last().unwrap();
-                let epsilon = stores(method) * truth * HALF_STEP;
-                let converged = image::frames_to_converge(&residuals, epsilon);
-                eprintln!(
-                    "{method:?} {name}, {event:?}: residual {residual} the hold after it, within {epsilon} from frame {converged:?} after it"
-                );
-                failures.check(residual <= epsilon, || {
-                    format!(
-                        "{method:?} {name}, {event:?}: the card's pixels are {residual} off their new truth {truth} the hold after the event; residuals by frame {residuals:?}"
-                    )
-                });
-            }
-            failures.bounded(&rig, format!("{method:?} events {name}"));
+        let mut rig = Rig::new(&gpu, VIEW, method, SKY);
+        if behind == Behind::Background {
+            rig.add(&back, back_pose, 0);
         }
+        // Visibility group 1, which the rig's mask enables.
+        let mut instance = Some(rig.add(&layer, layer_pose, 1));
+        rig.look(still(0));
+        let mut frame = 0;
+        for event in events {
+            let at = frame + SETTLE + HOLD;
+            while frame < at {
+                rig.render(frame);
+                frame += 1;
+            }
+            match event {
+                Event::Hidden => rig.set_visible(instance.unwrap(), false),
+                Event::Shown => rig.set_visible(instance.unwrap(), true),
+                Event::Masked => rig.input.visibility_mask &= !1,
+                Event::Unmasked => rig.input.visibility_mask |= 1,
+                Event::Removed => rig.remove(instance.take().unwrap()),
+                Event::Added => instance = Some(rig.add(&layer, layer_pose, 1)),
+            }
+            let truth = match event {
+                Event::Hidden | Event::Masked | Event::Removed => gone,
+                Event::Shown | Event::Unmasked | Event::Added => CARD,
+            };
+            let mut residuals = Vec::new();
+            while frame <= at + HOLD {
+                rig.render(frame);
+                residuals.push(error_to(&rig.antialiased(), truth, &inside).max);
+                frame += 1;
+            }
+            let residual = *residuals.last().unwrap();
+            let epsilon = stores(method) * truth * HALF_STEP;
+            let converged = image::frames_to_converge(&residuals, epsilon);
+            eprintln!(
+                "{method:?} {name}, {event:?}: residual {residual} the hold after it, within {epsilon} from frame {converged:?} after it"
+            );
+            failures.check(residual <= epsilon, || {
+                format!(
+                    "{method:?} {name}, {event:?}: the card's pixels are {residual} off their new truth {truth} the hold after the event; residuals by frame {residuals:?}"
+                )
+            });
+        }
+        failures.bounded(&rig, format!("{method:?} events {name}"));
     }
     failures.assert();
 }
+every_method!(appearance_and_departure_at_rest_resolve_within_the_hold);
 
 /// What case 9's material edits do, in the order they happen.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1197,8 +1216,8 @@ enum Edit {
 /// their new truth within the method's `stores`. The card's base alpha is
 /// 0.5, which its opaque mode ignores, so a cutoff of 0.75 cuts out every
 /// texel and one of 0.25 none.
-#[test]
-fn material_edits_at_rest_resolve_within_the_hold() {
+fn material_edits_at_rest_resolve_within_the_hold(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
     use sgl_3d::{AlphaMode, SurfaceMaterial};
     let (back, back_pose) = background();
     let edits = [Edit::Regrouped, Edit::Ungrouped, Edit::CutOut, Edit::Uncut];
@@ -1217,65 +1236,64 @@ fn material_edits_at_rest_resolve_within_the_hold() {
             Behind::Background => BACKGROUND,
             Behind::Sky => SKY,
         };
-        for (method, gpu) in methods() {
-            let mut rig = Rig::new(&gpu, VIEW, method, SKY);
-            if behind == Behind::Background {
-                rig.add(&back, back_pose, 0);
-            }
-            // Visibility group 1, which the rig's mask enables; the mask
-            // lacks the top byte's groups.
-            let (_, materials) = rig.add_editable(&layer, layer_pose, 1);
-            let material = materials[0];
-            let mut values = rig.scene.material(material).unwrap();
-            values.base[3] = 0.5;
-            let set = |rig: &mut Rig, values: SurfaceMaterial| {
-                rig.scene
-                    .set_material(&rig.gpu.queue, material, values)
-                    .unwrap();
-            };
-            set(&mut rig, values);
-            rig.look(still(0));
-            let mut frame = 0;
-            for edit in edits {
-                let at = frame + SETTLE + HOLD;
-                while frame < at {
-                    rig.render(frame);
-                    frame += 1;
-                }
-                match edit {
-                    Edit::Regrouped => values.visibility_group = 1 << 24,
-                    Edit::Ungrouped => values.visibility_group = 1,
-                    Edit::CutOut => values.alpha = AlphaMode::Mask { cutoff: 0.75 },
-                    Edit::Uncut => values.alpha = AlphaMode::Mask { cutoff: 0.25 },
-                }
-                set(&mut rig, values);
-                let truth = match edit {
-                    Edit::Regrouped | Edit::CutOut => gone,
-                    Edit::Ungrouped | Edit::Uncut => CARD,
-                };
-                let mut residuals = Vec::new();
-                while frame <= at + HOLD {
-                    rig.render(frame);
-                    residuals.push(error_to(&rig.antialiased(), truth, &inside).max);
-                    frame += 1;
-                }
-                let residual = *residuals.last().unwrap();
-                let epsilon = stores(method) * truth * HALF_STEP;
-                let converged = image::frames_to_converge(&residuals, epsilon);
-                eprintln!(
-                    "{method:?} {name}, {edit:?}: residual {residual} the hold after it, within {epsilon} from frame {converged:?} after it"
-                );
-                failures.check(residual <= epsilon, || {
-                    format!(
-                        "{method:?} {name}, {edit:?}: the card's pixels are {residual} off their new truth {truth} the hold after the edit; residuals by frame {residuals:?}"
-                    )
-                });
-            }
-            failures.bounded(&rig, format!("{method:?} material edits {name}"));
+        let mut rig = Rig::new(&gpu, VIEW, method, SKY);
+        if behind == Behind::Background {
+            rig.add(&back, back_pose, 0);
         }
+        // Visibility group 1, which the rig's mask enables; the mask
+        // lacks the top byte's groups.
+        let (_, materials) = rig.add_editable(&layer, layer_pose, 1);
+        let material = materials[0];
+        let mut values = rig.scene.material(material).unwrap();
+        values.base[3] = 0.5;
+        let set = |rig: &mut Rig, values: SurfaceMaterial| {
+            rig.scene
+                .set_material(&rig.gpu.queue, material, values)
+                .unwrap();
+        };
+        set(&mut rig, values);
+        rig.look(still(0));
+        let mut frame = 0;
+        for edit in edits {
+            let at = frame + SETTLE + HOLD;
+            while frame < at {
+                rig.render(frame);
+                frame += 1;
+            }
+            match edit {
+                Edit::Regrouped => values.visibility_group = 1 << 24,
+                Edit::Ungrouped => values.visibility_group = 1,
+                Edit::CutOut => values.alpha = AlphaMode::Mask { cutoff: 0.75 },
+                Edit::Uncut => values.alpha = AlphaMode::Mask { cutoff: 0.25 },
+            }
+            set(&mut rig, values);
+            let truth = match edit {
+                Edit::Regrouped | Edit::CutOut => gone,
+                Edit::Ungrouped | Edit::Uncut => CARD,
+            };
+            let mut residuals = Vec::new();
+            while frame <= at + HOLD {
+                rig.render(frame);
+                residuals.push(error_to(&rig.antialiased(), truth, &inside).max);
+                frame += 1;
+            }
+            let residual = *residuals.last().unwrap();
+            let epsilon = stores(method) * truth * HALF_STEP;
+            let converged = image::frames_to_converge(&residuals, epsilon);
+            eprintln!(
+                "{method:?} {name}, {edit:?}: residual {residual} the hold after it, within {epsilon} from frame {converged:?} after it"
+            );
+            failures.check(residual <= epsilon, || {
+                format!(
+                    "{method:?} {name}, {edit:?}: the card's pixels are {residual} off their new truth {truth} the hold after the edit; residuals by frame {residuals:?}"
+                )
+            });
+        }
+        failures.bounded(&rig, format!("{method:?} material edits {name}"));
     }
     failures.assert();
 }
+every_method!(material_edits_at_rest_resolve_within_the_hold);
 
 /// A game's shader (`Scene::add_shader`) that dissolves a masked card from
 /// its parameters' `cut` or its instance's data (`SurfaceContext::instance`
@@ -1460,9 +1478,8 @@ enum Restart {
 /// whose restart frame is unjittered and passes the current frame through,
 /// it is the frame without antialiasing. The restarts follow each other a
 /// hold apart, the runs building history in between.
-#[test]
-fn a_cut_a_resize_and_another_scene_restart_history() {
-    let Some(plain) = gpu() else { return };
+fn a_cut_a_resize_and_another_scene_restart_history(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
     let restarts = [
         (HOLD, Restart::Cut),
         (2 * HOLD, Restart::Resize),
@@ -1487,53 +1504,52 @@ fn a_cut_a_resize_and_another_scene_restart_history() {
         size: [160, 90],
         ..VIEW
     };
-    let mut unantialiased = panned.rig(&plain, VIEW, Antialiasing::Off);
+    let mut unantialiased = panned.rig(&gpu, VIEW, Antialiasing::Off);
     let mut failures = Failures::default();
-    for (method, gpu) in methods() {
-        let mut runs = [&panned, &held].map(|scenario| scenario.rig(&gpu, VIEW, method));
-        for frame in 0..=restarts[2].0 {
-            let restart = restarts.iter().find(|r| r.0 == frame).map(|r| r.1);
-            let mut images = Vec::new();
-            for (rig, scenario) in runs.iter_mut().zip([&panned, &held]) {
-                match restart {
-                    Some(Restart::Cut) => rig.input.camera_cut = true,
-                    Some(Restart::Resize) => rig.view = resized,
-                    Some(Restart::Scene) => rig.replace_scene(),
-                    None => {}
-                }
-                scenario.render(rig, frame);
-                if restart.is_some() {
-                    images.push(rig.antialiased());
-                }
+    let mut runs = [&panned, &held].map(|scenario| scenario.rig(&gpu, VIEW, method));
+    for frame in 0..=restarts[2].0 {
+        let restart = restarts.iter().find(|r| r.0 == frame).map(|r| r.1);
+        let mut images = Vec::new();
+        for (rig, scenario) in runs.iter_mut().zip([&panned, &held]) {
+            match restart {
+                Some(Restart::Cut) => rig.input.camera_cut = true,
+                Some(Restart::Resize) => rig.view = resized,
+                Some(Restart::Scene) => rig.replace_scene(),
+                None => {}
             }
-            let Some(restart) = restart else { continue };
-            let everywhere = Region::from_fn(images[0].size, |_| true);
-            let apart = error(&images[0], &images[1], &everywhere);
-            eprintln!("{method:?} {restart:?}: {apart:?} between runs with different pasts");
-            failures.check(apart.max == 0., || {
+            scenario.render(rig, frame);
+            if restart.is_some() {
+                images.push(rig.antialiased());
+            }
+        }
+        let Some(restart) = restart else { continue };
+        let everywhere = Region::from_fn(images[0].size, |_| true);
+        let apart = error(&images[0], &images[1], &everywhere);
+        eprintln!("{method:?} {restart:?}: {apart:?} between runs with different pasts");
+        failures.check(apart.max == 0., || {
+            format!(
+                "{method:?} {restart:?}: the restarted frame depends on the frames before it, by up to {}",
+                apart.max
+            )
+        });
+        if method == Antialiasing::Taa {
+            unantialiased.view = runs[0].view;
+            panned.render(&mut unantialiased, frame);
+            let off = error(&images[0], &unantialiased.antialiased(), &everywhere);
+            failures.check(off.max == 0., || {
                 format!(
-                    "{method:?} {restart:?}: the restarted frame depends on the frames before it, by up to {}",
-                    apart.max
+                    "TAA {restart:?}: the restarted frame differs from the unjittered single sample by up to {}",
+                    off.max
                 )
             });
-            if method == Antialiasing::Taa {
-                unantialiased.view = runs[0].view;
-                panned.render(&mut unantialiased, frame);
-                let off = error(&images[0], &unantialiased.antialiased(), &everywhere);
-                failures.check(off.max == 0., || {
-                    format!(
-                        "TAA {restart:?}: the restarted frame differs from the unjittered single sample by up to {}",
-                        off.max
-                    )
-                });
-            }
         }
-        for rig in &runs {
-            failures.bounded(rig, format!("{method:?} restarts"));
-        }
+    }
+    for rig in &runs {
+        failures.bounded(rig, format!("{method:?} restarts"));
     }
     failures.assert();
 }
+every_method!(a_cut_a_resize_and_another_scene_restart_history);
 
 /// Case 11. Plausible defect: moving the render origin during a pan cuts or
 /// misplaces history (the History contract translates retained state and
@@ -1545,51 +1561,50 @@ fn a_cut_a_resize_and_another_scene_restart_history() {
 /// pixel's value by far less than a step, but each store after the motion is
 /// read may then land on the other neighbour: each pixel of the two runs
 /// agrees within `stores_after_motion` steps of its value.
-#[test]
-fn moving_the_origin_during_a_pan_changes_nothing() {
+fn moving_the_origin_during_a_pan_changes_nothing(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
     let pan = VIEW.pan(-0.37, DEPTH);
     let camera = move |f: u32| pan.pose(Pose::at(Vec3::ZERO), f);
     let scenario = stage(&camera);
     let moves = [(20, Vec3::new(8., 0., -4.)), (30, Vec3::new(-3., 1., 2.))];
     let mut failures = Failures::default();
-    for (method, gpu) in methods() {
-        let mut plain = scenario.rig(&gpu, VIEW, method);
-        let mut moved = scenario.rig(&gpu, VIEW, method);
-        // The largest difference relative to the pixel's value, with where.
-        let mut largest = (0f32, 0, [0; 2], [0f32; 2]);
-        for frame in 0..SETTLE + HOLD {
-            for &(at, by) in &moves {
-                if frame == at {
-                    moved.move_origin(by);
-                }
-            }
-            scenario.render(&mut plain, frame);
-            scenario.render(&mut moved, frame);
-            let [a, b] = [&moved, &plain].map(|rig| rig.antialiased());
-            for pixel in pixels(VIEW.size) {
-                let values = [a.value(pixel), b.value(pixel)];
-                let relative = (values[0] - values[1]).abs() / values[0].max(values[1]);
-                if relative > largest.0 {
-                    largest = (relative, frame, pixel, values);
-                }
+    let mut plain = scenario.rig(&gpu, VIEW, method);
+    let mut moved = scenario.rig(&gpu, VIEW, method);
+    // The largest difference relative to the pixel's value, with where.
+    let mut largest = (0f32, 0, [0; 2], [0f32; 2]);
+    for frame in 0..SETTLE + HOLD {
+        for &(at, by) in &moves {
+            if frame == at {
+                moved.move_origin(by);
             }
         }
-        let (relative, frame, pixel, values) = largest;
-        eprintln!(
-            "{method:?} origin moves: largest difference {relative} of the value (frame {frame}, pixel {pixel:?}, {values:?})"
-        );
-        let bound = stores_after_motion(method) * HALF_STEP;
-        failures.check(relative <= bound, || {
-            format!(
-                "{method:?}: moving the origin changed pixel {pixel:?} at frame {frame} from {} to {}, {relative} of its value, above {bound}",
-                values[1], values[0]
-            )
-        });
-        failures.bounded(&plain, format!("{method:?} panning"));
-        failures.bounded(&moved, format!("{method:?} panning with origin moves"));
+        scenario.render(&mut plain, frame);
+        scenario.render(&mut moved, frame);
+        let [a, b] = [&moved, &plain].map(|rig| rig.antialiased());
+        for pixel in pixels(VIEW.size) {
+            let values = [a.value(pixel), b.value(pixel)];
+            let relative = (values[0] - values[1]).abs() / values[0].max(values[1]);
+            if relative > largest.0 {
+                largest = (relative, frame, pixel, values);
+            }
+        }
     }
+    let (relative, frame, pixel, values) = largest;
+    eprintln!(
+        "{method:?} origin moves: largest difference {relative} of the value (frame {frame}, pixel {pixel:?}, {values:?})"
+    );
+    let bound = stores_after_motion(method) * HALF_STEP;
+    failures.check(relative <= bound, || {
+        format!(
+            "{method:?}: moving the origin changed pixel {pixel:?} at frame {frame} from {} to {}, {relative} of its value, above {bound}",
+            values[1], values[0]
+        )
+    });
+    failures.bounded(&plain, format!("{method:?} panning"));
+    failures.bounded(&moved, format!("{method:?} panning with origin moves"));
     failures.assert();
 }
+every_method!(moving_the_origin_during_a_pan_changes_nothing);
 
 /// The motion-adaptive resolve's blend (Frame item 10; `sgl-post-fx`
 /// PROVENANCE.md, "Motion-adaptive TAA"): the current frame's weight at
