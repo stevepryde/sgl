@@ -89,11 +89,14 @@ changes to game code; we prioritize improving the library over preserving old
 APIs. Every consumer-facing update carries [changelog and migration notes](CHANGELOG.md)
 that agents can follow.
 
-Depend on SGL with ordinary semver requirements such as `sgl-3d = "0.4.1"`
-and commit `Cargo.lock` (or reference a full Git commit `rev`). Any release
-may require game-code changes, including a patch release whose fixes change
-an API, so update deliberately using the
-[agent update workflow](docs/README.md#updating-a-game).
+Versions follow semver as Cargo applies it. Depend on SGL with ordinary
+requirements such as `sgl-3d = "0.4.1"` and commit `Cargo.lock` (or reference
+a full Git commit `rev`). During `0.x` a release that requires game changes
+advances the minor version and a patch release never does, so `cargo update`
+within a requirement is safe; move to a new minor version deliberately, using
+the [agent update workflow](docs/README.md#updating-a-game). A version is
+just a version: releases can be small and frequent, and there is no stable
+or long-term-support line.
 
 ## Try it
 

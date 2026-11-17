@@ -53,8 +53,10 @@ this is the spirit they share.
   off and picks its level. Algorithms, kernels, thresholds and other internals
   are never game fields. Correctness is not a setting.
 - **Coherence over compatibility.** Releases may break APIs, behaviour and data
-  formats; the changelog tells the consuming agent how to migrate. No shims, no
-  parallel paths, no dead options kept to spare a consumer an edit.
+  formats; the changelog tells the consuming agent how to migrate and the
+  version number, by semver, tells a game when it must (D-52). No shims, no
+  parallel paths, no dead options kept to spare a consumer an edit. A release
+  is only a version: small and frequent is fine.
 - **Native and the web are both first class, each in its own right.** Each takes
   everything its platform can do: native every feature the device supports,
   the web every feature WebGPU supports. A feature the web cannot run falls
@@ -144,7 +146,8 @@ each is cheap to settle on paper and expensive to reverse in code.
    `specs/testing.md` provides for that, and the per-pass GPU time to report.
    No test that restates the implementation, and nothing that only a person
    looking could confirm.
-9. **What must be updated with it.** The spec amended first where the change does
+9. **What must be updated with it.** Whether it is breaking, in D-52's sense, and
+   so which version it can ship in. The spec amended first where the change does
    not fit it (AR-9), the package README, the feature and settings guides, the
    affected examples, `CHANGELOG.md`, and licences and notices for ported code.
    A real trade-off that was decided gets a `specs/decisions.md` entry.

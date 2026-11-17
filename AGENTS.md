@@ -49,10 +49,16 @@ compatibility shims solely to avoid updating consumers.
   `Cargo.toml`; keep `version.workspace = true` in each crate. Update the
   root's internal dependency version requirements alongside release bumps.
 - At release, move those entries into a dated version section, merging
-  entries that changed the same symbol; retain older migration notes. Use
-  Cargo-compatible version numbers by kind of change: during `0.x`, new
-  features and reworked APIs advance the minor version; fixes are patch
-  releases even when callers must change, with the migration in the changelog.
+  entries that changed the same symbol; retain older migration notes.
+  Versions follow semver as Cargo reads it, so `cargo update` never breaks a
+  game (D-52). A release is breaking when a game that built and behaved
+  correctly on the last one must change its code, data or settings to do so
+  again, whether a feature, a rework or a fix caused it: during `0.x` it
+  advances the minor version, from `1.0` the major. Anything else, additions
+  and fixes alike, is a patch release during `0.x`. One breaking change in
+  any crate makes the shared version's release breaking.
+- A release is only a version. Cut one whenever it is useful, however small:
+  there is no stabilisation period, release train or minimum content.
 - Games depend on every SGL crate with the same version requirement (for
   example, `"0.4.1"`) and commit `Cargo.lock`; Git consumers reference one full
   commit `rev`. Upgrade to a new release deliberately, applying all
