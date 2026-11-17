@@ -25,6 +25,10 @@ docs and specs the entry links.
   remains 16 bytes. Under this flag `RenderAttributes::motion_vectors_srv`
   must have four channels (such as `Rgba16Float`): Z the surface's previous
   minus current camera-space Z and W its validity (above 0 valid).
+- `sgl-3d` ray-traced shadows (`Settings::ray_traced_shadows`) no longer
+  shadow thin lit features against the sky or an unlit surface, nor
+  normal-mapped surfaces under a low light, which now read as lit where
+  nothing occludes them. No game-code changes are needed.
 
 ## 0.6.0 — 2026-11-12
 

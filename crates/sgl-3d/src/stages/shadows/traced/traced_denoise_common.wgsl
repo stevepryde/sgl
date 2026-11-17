@@ -13,12 +13,12 @@
 // Whether tracing pixel `p` receives shadows: neither sky nor unlit, which
 // the trace records as the sky's depth.
 fn traced_denoise_receiver(p:vec2<u32>)->bool {
- return textureLoad(denoise_half_depth,min(p,vec2<u32>(traced.reduced.xy)-1u),0).x<TRACED_SKY_DEPTH;
+ return traced_holds_receiver(textureLoad(denoise_half_depth,min(p,vec2<u32>(traced.reduced.xy)-1u),0).x);
 }
 // Tracing pixel `p`'s linear depth, 0 for the sky and unlit pixels.
 fn traced_denoise_linear_depth(p:vec2<u32>)->f32 {
  let depth=textureLoad(denoise_half_depth,min(p,vec2<u32>(traced.reduced.xy)-1u),0).x;
- return select(0.,depth,depth<TRACED_SKY_DEPTH);
+ return select(0.,depth,traced_holds_receiver(depth));
 }
 // Tracing pixel `p`'s shading normal.
 fn traced_denoise_normal(p:vec2<u32>)->vec3<f32> {

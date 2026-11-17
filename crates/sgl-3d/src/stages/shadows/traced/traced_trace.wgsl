@@ -63,19 +63,33 @@ const TRACED_T_MIN:f32=.01;
 const TRACED_FAR:f32=3.402823466e+38;
 
 // Where a ray leaving the surface at `position` along `direction` starts:
-// `position` lifted off the surface along its normal `normal`, on the side
-// the ray leaves, by an offset that grows with the position's magnitude.
-// A position reconstructed from depth carries rounding proportional to its
-// size, centimetres a kilometre out, which a fixed TMin does not clear, so
-// the ray met its own receiver from behind (scene_rays_predicate.wgsl's
-// shadow policy accepts back faces) and distant surfaces flickered. Ports
-// Falcor 759aad0's computeRayOrigin (Source/Falcor/Utils/Geometry/
+// `position` lifted off the surface on the side the ray leaves, by an
+// offset that grows with the position's magnitude. A position
+// reconstructed from depth carries rounding proportional to its size,
+// centimetres a kilometre out, which a fixed TMin does not clear, so the
+// ray met its own receiver from behind (scene_rays_predicate.wgsl's shadow
+// policy accepts back faces) and distant surfaces flickered. Ports Falcor
+// 759aad0's computeRayOrigin (Source/Falcor/Utils/Geometry/
 // GeometryHelpers.slang; BSD-3-Clause, src/LICENSE-falcor.txt), Wächter and
 // Binder's "A Fast and Robust Method for Avoiding Self-Intersection" (Ray
-// Tracing Gems, chapter 6), with Falcor's flip of the normal to the ray's
-// side.
-fn traced_ray_origin(position:vec3<f32>,normal:vec3<f32>,direction:vec3<f32>)->vec3<f32> {
- let n=select(-normal,normal,dot(normal,direction)>=0.);
+// Tracing Gems, chapter 6). Changed: Falcor lifts along the face normal,
+// flipped to the ray's side; the G-buffer records no face normal, so the
+// lift is along whichever of the receiver's two recorded normals faces the
+// ray, base (`normal`, mapped) first and then `coat_normal` (the coat's,
+// else the geometry normal), each on the geometry's side of the surface,
+// and only where neither does, the base flipped to the ray's side, which
+// on a surface with a clearcoat normal map may still point into it. The
+// base alone, flipped, pointed into the surface where its map tilts it
+// away from the ray while the geometry faces it, by more than the ray
+// rises within TMin under a low light, so the ray met its own surface
+// (#771). Reconstructing the face normal from the depth instead, as
+// Falcor's would have it, costs four more depth loads a pixel and is wrong
+// at silhouettes, where a neighbour lies on another surface.
+fn traced_ray_origin(position:vec3<f32>,normal:vec3<f32>,coat_normal:vec3<f32>,direction:vec3<f32>)->vec3<f32> {
+ var n=normal;
+ if dot(normal,direction)<0. {
+  n=select(-normal,coat_normal,dot(coat_normal,direction)>=0.);
+ }
  let origin=1./16.;
  let f_scale=3./65536.;
  let i_scale=3.*256.;
@@ -131,7 +145,7 @@ fn traced_visible(key:u32,untraced:bool,position:vec3<f32>,normal:vec3<f32>,coat
    return false;
   }
   let direction=directional_ray_direction(to_light,light.disc_radius,random);
-  let origin=traced_ray_origin(position,normal,direction);
+  let origin=traced_ray_origin(position,normal,coat_normal,direction);
   return scene_segment_visible(origin,direction,TRACED_T_MIN,TRACED_FAR,SCENE_SIDES_SHADOW);
  }
  if key>=arrayLength(&lights) {
@@ -145,7 +159,7 @@ fn traced_visible(key:u32,untraced:bool,position:vec3<f32>,normal:vec3<f32>,coat
   return true;
  }
  let ray=light_visibility_ray(light,position,random,TRACED_T_MIN);
- let origin=traced_ray_origin(position,normal,ray.xyz);
+ let origin=traced_ray_origin(position,normal,coat_normal,ray.xyz);
  return scene_segment_visible(origin,ray.xyz,TRACED_T_MIN,ray.w,SCENE_SIDES_SHADOW);
 }
 
