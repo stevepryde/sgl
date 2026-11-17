@@ -518,4 +518,113 @@ mod tests {
             }
         }
     }
+
+    // Plausible defect: heat turning a composite texel of +infinity, which
+    // RGBA16F holds where radiance passed its range on a backend that rounds
+    // overflow to infinity (#464), into NaN by weighing it with a bilinear
+    // weight of 0. Heat warps the composite in place, so a texel it leaves
+    // or gathers may stay infinite for the readers after composition to
+    // bound; NaN, which no bound removes, must not appear. Oracle: the
+    // composite holds no NaN after heat displaced every pixel across
+    // infinite texels, by a whole pixel across, where half its bilinear
+    // taps weigh 0, and a fraction down.
+    #[test]
+    fn heat_over_infinite_texels_makes_no_nan() {
+        let Some((device, queue)) = crate::test_support::device() else {
+            return;
+        };
+        let size = [32u32, 24];
+        let inf = f32::INFINITY;
+        let infinite = [
+            ([8, 8], [inf, inf, inf]),
+            ([20, 10], [inf, 0.5, 0.25]),
+            ([12, 16], [0.25, inf, 0.5]),
+            ([25, 18], [0.5, 0.25, inf]),
+        ];
+        let texels: Vec<_> = (0..size[1])
+            .flat_map(|y| (0..size[0]).map(move |x| [x, y]))
+            .map(|texel| {
+                let [r, g, b] = infinite
+                    .iter()
+                    .find(|(at, _)| *at == texel)
+                    .map_or([0.2, 0.1, 0.05], |(_, color)| *color);
+                [r, g, b, 1.]
+            })
+            .collect();
+        let halves: Vec<u16> = texels
+            .iter()
+            .flatten()
+            .map(|&value| crate::test_support::to_half(value))
+            .collect();
+        let color = target(&device, "infinite composite", size, HDR);
+        queue.write_texture(
+            color.texture().as_image_copy(),
+            bytemuck::cast_slice(&halves),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(size[0] * 8),
+                rows_per_image: Some(size[1]),
+            },
+            color.texture().size(),
+        );
+        let depth = target(
+            &device,
+            "far depth",
+            size,
+            wgpu::TextureFormat::Depth32Float,
+        );
+        let mut heat = Heat::new(&device);
+        let mut transient = Transient::new(&device);
+        // The whole frame, in front of the cleared depth.
+        let vertices = [
+            [-1., -1., 0.5],
+            [1., -1., 0.5],
+            [-1., 1., 0.5],
+            [-1., 1., 0.5],
+            [1., -1., 0.5],
+            [1., 1., 0.5],
+        ]
+        .map(|position| HeatDistortion {
+            position,
+            // Whole across, so each pixel's right-hand taps weigh 0.
+            displacement: [2., -0.75],
+            weight: 1.,
+        });
+        transient.update_heat(&queue, &vertices).unwrap();
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0.2),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            ..Default::default()
+        });
+        heat.encode(
+            &device,
+            &queue,
+            &mut encoder,
+            &transient,
+            &glam::Mat4::IDENTITY.to_cols_array_2d(),
+            size,
+            &color,
+            &depth,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        let actual = crate::test_support::read(&device, &queue, color.texture(), 8);
+        let nan = actual
+            .chunks_exact(2)
+            .filter(|value| {
+                let bits = u16::from_le_bytes([value[0], value[1]]);
+                bits & 0x7c00 == 0x7c00 && bits & 0x3ff != 0
+            })
+            .count();
+        assert_eq!(nan, 0, "NaN channels in the warped composite");
+        // Heat moved the infinite texels, so it ran over them.
+        assert_ne!(actual, bytemuck::cast_slice::<_, u8>(&halves));
+    }
 }

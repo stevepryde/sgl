@@ -5,11 +5,15 @@
 // r185's WebGPU backend builds a texture's mipmaps
 // (src/renderers/webgpu/utils/WebGPUTexturePassUtils.js 49-120, 317-333;
 // commit 2431a09f, MIT, see stages/post/smaa/LICENSE-three.txt). Both draw
-// the full-screen triangle (fullscreen_vs).
+// the full-screen triangle (fullscreen_vs). The first level reads the
+// composed frame through finite_scene_color (shading/scene_color.wgsl), so
+// every level is finite: a texel of +infinity would filter into infinity or
+// NaN down the chain and make NaN of the light a transmissive surface
+// blends into the frame.
 @group(0) @binding(0) var source:texture_2d<f32>;
 @group(0) @binding(1) var source_sampler:sampler;
 @fragment fn transmission_copy_fs(@builtin(position) position:vec4<f32>)->@location(0) vec4<f32> {
- return textureLoad(source,vec2<i32>(position.xy),0);
+ return finite_scene_color(textureLoad(source,vec2<i32>(position.xy),0));
 }
 @fragment fn transmission_downsample_fs(@builtin(position) position:vec4<f32>)->@location(0) vec4<f32> {
  let size=max(textureDimensions(source)/2u,vec2(1u));

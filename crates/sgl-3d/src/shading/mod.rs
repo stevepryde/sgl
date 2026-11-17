@@ -197,6 +197,19 @@ pub(crate) static LUMINANCE: Module = Module {
     source: include_str!("luminance.wgsl"),
     deps: &[],
 };
+/// The bound the passes after composition read the scene colour within
+/// (`scene_color.wgsl`).
+pub(crate) static SCENE_COLOR: Module = Module {
+    name: "scene_color",
+    source: include_str!("scene_color.wgsl"),
+    deps: &[],
+};
+/// Whether a value is neither infinite nor NaN (`finite.wgsl`).
+pub(crate) static FINITE: Module = Module {
+    name: "finite",
+    source: include_str!("finite.wgsl"),
+    deps: &[],
+};
 pub(crate) static PBR: Module = Module {
     name: "pbr",
     source: include_str!("pbr.wgsl"),

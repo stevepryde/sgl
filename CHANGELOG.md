@@ -20,6 +20,11 @@ docs and specs the entry links.
   with a 1 mm near plane, past 9.1 km with 0.1 m), and every pass after the
   full-resolution mask takes eligibility from it rather than re-testing the
   8-bit roughness. No game-code changes are needed.
+- `sgl-3d` motion blur, bloom, tone mapping and transmission: a scene colour
+  texel of +infinity (over-range radiance on backends that round overflow to
+  infinity) no longer presents black or NaN, behind a transmissive surface
+  with any antialiasing and elsewhere where neither TAA nor FSR ran; it reads
+  as 65504. No game-code changes are needed.
 - `sgl-post-fx::temporal_anti_aliasing::FeatureFlags::MOTION_ADAPTIVE_HISTORY`
   adds motion-adaptive history rectification; `sgl-3d` enables it for TAA to
   stabilize static subpixel geometry while retaining motion/depth rejection.

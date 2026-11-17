@@ -647,3 +647,65 @@ fn a_sheen_keeps_refracted_light_within_a_white_furnace() {
         }
     }
 }
+
+// Plausible defect: an infinite composed-frame texel, which RGBA16F holds
+// where radiance passed its range on a backend that rounds overflow to
+// infinity (#464), entering the transmission copy, whose downsample filters
+// infinity into infinity or NaN at every level and whose bicubic sample,
+// level mix and tint then make NaN of it (infinity minus infinity, 0 times
+// infinity) in the light a transmissive surface blends into the composite,
+// before exposure, TAA history and post read it. Oracles: RD-4's finite
+// output at every level of the copy, and the scene colour contract: the
+// first level holds the composed frame read within 65504, each finite
+// texel as it is.
+#[test]
+fn an_infinite_composed_texel_leaves_every_level_of_the_copy_finite() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let size = [24u32, 20];
+    let inf = f32::INFINITY;
+    let infinite = [
+        ([3, 4], [inf, inf, inf]),
+        ([11, 9], [inf, 0.5, 0.25]),
+        ([20, 2], [0.25, inf, 0.5]),
+        ([0, 19], [0.5, 0.25, inf]),
+    ];
+    let texels: Vec<_> = (0..size[1])
+        .flat_map(|y| (0..size[0]).map(move |x| [x, y]))
+        .map(|texel| {
+            let [r, g, b] = infinite
+                .iter()
+                .find(|(at, _)| *at == texel)
+                .map_or([0.2, 0.1, 0.05], |(_, color)| *color);
+            [r, g, b, 1.]
+        })
+        .collect();
+    let composed = test_support::hdr_texture(&device, &queue, size, &texels);
+    let mut transmission = super::transmission::Transmission::new(&device);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let copy = transmission
+        .encode(&device, &mut encoder, &composed, None)
+        .texture()
+        .clone();
+    queue.submit([encoder.finish()]);
+    for level in 0..copy.mip_level_count() {
+        let bytes = test_support::read_mip(&device, &queue, &copy, level);
+        let non_finite = bytes
+            .chunks_exact(2)
+            .filter(|value| u16::from_le_bytes([value[0], value[1]]) & 0x7c00 == 0x7c00)
+            .count();
+        assert_eq!(non_finite, 0, "level {level}: non-finite channels");
+        if level == 0 {
+            for (index, texel) in texels.iter().enumerate() {
+                for (channel, &value) in texel.iter().enumerate() {
+                    // The uploaded binary16, +infinity as 65504 (0x7bff).
+                    let expected = test_support::to_half(value).min(0x7bff);
+                    let at = index * 8 + channel * 2;
+                    let actual = u16::from_le_bytes([bytes[at], bytes[at + 1]]);
+                    assert_eq!(actual, expected, "level 0, texel {index} channel {channel}");
+                }
+            }
+        }
+    }
+}

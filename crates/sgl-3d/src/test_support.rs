@@ -433,9 +433,60 @@ pub(crate) fn storage_words(
 mod ktx2_writer;
 pub(crate) use ktx2_writer::{bc7_mode_6, ktx2};
 
+/// Level `mip` of `texture`, read back tightly packed.
+pub(crate) fn read_mip(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    mip: u32,
+) -> Vec<u8> {
+    let size = texture
+        .size()
+        .mip_level_size(mip, wgpu::TextureDimension::D2);
+    let bpp = texture.format().block_copy_size(None).unwrap();
+    let row = (size.width * bpp).div_ceil(256) * 256;
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("mip readback"),
+        size: u64::from(row * size.height),
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: mip,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(row),
+                rows_per_image: Some(size.height),
+            },
+        },
+        size,
+    );
+    queue.submit([encoder.finish()]);
+    buffer.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let mapped = buffer.get_mapped_range(..).unwrap();
+    mapped
+        .chunks(row as usize)
+        .flat_map(|line| &line[..(size.width * bpp) as usize])
+        .copied()
+        .collect()
+}
+
 /// Binary16 of a nonnegative finite `value` below 65536, truncated; values
-/// below binary16's normal range become zero.
+/// below binary16's normal range become zero, and +infinity is binary16's
+/// +infinity (0x7c00), which an upload stores as it is on every backend.
 pub(crate) fn to_half(value: f32) -> u16 {
+    if value == f32::INFINITY {
+        return 0x7c00;
+    }
     let bits = value.to_bits();
     let exponent = ((bits >> 23) & 0xff) as i32 - 127 + 15;
     if exponent <= 0 {

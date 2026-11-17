@@ -109,6 +109,12 @@ fn chain_size(scene_size: [u32; 2], largest: u32) -> [u32; 2] {
     scene_size.map(|x| ((x as f32 * ratio).round() as u32).clamp(1, largest))
 }
 
+/// Tests read the mip chain back.
+#[cfg(test)]
+const CHAIN_READBACK: wgpu::TextureUsages = wgpu::TextureUsages::COPY_SRC;
+#[cfg(not(test))]
+const CHAIN_READBACK: wgpu::TextureUsages = wgpu::TextureUsages::empty();
+
 /// Bloom's targets, or 1×1 stand-ins while it does not run.
 struct Targets {
     /// One view per mip of the chain.
@@ -143,7 +149,9 @@ impl Targets {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | CHAIN_READBACK,
             view_formats: &[],
         });
         Self {

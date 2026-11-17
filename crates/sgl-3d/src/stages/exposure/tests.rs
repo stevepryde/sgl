@@ -444,3 +444,62 @@ fn a_zero_speed_holds_over_an_unbounded_frame() {
         assert_eq!(after, held, "a speed of 0 over an unbounded frame");
     }
 }
+
+// Plausible defect: the meter turning a scene texel of +infinity, which
+// RGBA16F holds where radiance passed its range on a backend that rounds
+// overflow to infinity (#464), into NaN: a NaN luminance's bin index is
+// undefined, corrupting the histogram, and the exposure multiplier every
+// later pass reads would follow. Oracles: an infinite luminance lies above
+// the histogram's range, so each such texel counts in the top bin as any
+// luminance above the range does (Bevy's saturate), at the uniform mask's
+// full weight; and RD-4's finite output, the multiplier.
+#[test]
+fn infinite_texels_meter_in_the_top_bin_and_keep_the_exposure_finite() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let inf = f32::INFINITY;
+    let infinite = [
+        [inf, inf, inf],
+        [inf, 0.5, 0.25],
+        [0.25, inf, 0.5],
+        [0.5, 0.25, inf],
+    ];
+    let texels: Vec<_> = (0..64 * 64)
+        .map(|index| match infinite.get(index % 97) {
+            Some(&[r, g, b]) => [r, g, b, 1.],
+            None => [1., 1., 1., 1.],
+        })
+        .collect();
+    let infinite_count = texels
+        .iter()
+        .filter(|texel| texel[..3].contains(&inf))
+        .count() as u32;
+    let frame = hdr_texture(&device, &queue, [64, 64], &texels);
+    let automatic = AutoExposure::default();
+    let mut exposure = Exposure::new(&device);
+    let histogram = histogram_of(&device, &queue, &mut exposure, &frame, &automatic);
+    // Luminance 1, log2 0, in the bin the histogram's scale puts it.
+    let grey_bin =
+        ((0. - MIN_LOG_LUMINANCE) / (MAX_LOG_LUMINANCE - MIN_LOG_LUMINANCE) * 62. + 1.) as usize;
+    let mut expected = vec![0u32; 64];
+    expected[grey_bin] = (64 * 64 - infinite_count) * 16;
+    expected[63] = infinite_count * 16;
+    assert_eq!(histogram, expected);
+    let correction = adapt(
+        &device,
+        &queue,
+        &mut exposure,
+        &frame,
+        Metering {
+            automatic: &automatic,
+            stops: 0.,
+            delta_time: 0.,
+            reset: true,
+        },
+    );
+    assert!(
+        correction.is_finite(),
+        "the exposure correction is {correction}"
+    );
+}

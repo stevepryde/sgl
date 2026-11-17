@@ -1,7 +1,9 @@
 //! What every post pass binds as group 0: a scene view, a bloom view, the
 //! linear sampler and the bloom settings uniform (`bloom::BloomSettings`).
-//! One bind group per pair of views, kept until an input is replaced; and the
-//! full-screen pipeline and pass the post passes share.
+//! One bind group per pair of views, kept until an input is replaced; the
+//! full-screen pipeline and pass the post passes share; and
+//! `finite_filtered` and `bounded_filter`, through which every filtered read
+//! of the completed scene keeps it within `shading::SCENE_COLOR`'s bound.
 use crate::view::targets::attachment;
 use std::cell::RefCell;
 
@@ -9,7 +11,11 @@ use std::cell::RefCell;
 pub(crate) static INPUTS: crate::shading::Module = crate::shading::Module {
     name: "post_inputs",
     source: include_str!("inputs.wgsl"),
-    deps: &[&crate::shading::FULLSCREEN],
+    deps: &[
+        &crate::shading::FULLSCREEN,
+        &crate::shading::SCENE_COLOR,
+        &crate::shading::FINITE,
+    ],
 };
 /// The full-screen vertex entry point every post pipeline is created with.
 pub(crate) const VS_ENTRY: &str = "vs";

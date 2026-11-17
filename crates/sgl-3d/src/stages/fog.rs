@@ -48,6 +48,7 @@ pub(crate) static VOLUMETRIC_FOG: crate::shading::Module = crate::shading::Modul
         &crate::shading::PBR,
         &crate::shading::RECT_LIGHT,
         &crate::shading::FOG,
+        &crate::shading::FINITE,
     ],
 };
 /// The entry points the fog's pipelines are created with.
