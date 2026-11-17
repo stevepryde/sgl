@@ -134,7 +134,7 @@ from MDN's compatibility data. [#782](https://github.com/stevepryde/sgl/issues/7
 
 ### Waiting on the owner
 
-- Whether browser peers get unreliable datagrams. WebTransport's are in every major browser and fit `DatagramTransport` as it is; the cost is a QUIC and HTTP/3 server in-process. [#805](https://github.com/stevepryde/sgl/issues/805).
+- Whether browser peers get unreliable datagrams. WebTransport's are in every major browser and fit `DatagramTransport` as it is; the cost is a QUIC and HTTP/3 server in-process. Decided: wanted, by WebTransport, and built when a game needs it; it stays open as planned work ([#805](https://github.com/stevepryde/sgl/issues/805)).
 
 ### Left as they are
 
