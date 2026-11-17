@@ -419,8 +419,13 @@ impl Renderer {
             projection: input.camera.projection,
             jitter: [0.; 2],
         };
-        self.history
-            .begin(camera, reset, scene.origin(), input.elapsed_seconds)
+        self.history.begin(
+            camera,
+            reset,
+            scene.origin(),
+            input.elapsed_seconds,
+            input.visibility_mask,
+        )
     }
 
     /// The antialiasing that runs for `settings`: their choice resolved for

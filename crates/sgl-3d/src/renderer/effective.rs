@@ -477,6 +477,7 @@ mod ray_data_tests {
                 true,
                 glam::DVec3::ZERO,
                 0.,
+                input.visibility_mask,
             );
             let before = crate::counters::snapshot();
             renderer.prepare.run(

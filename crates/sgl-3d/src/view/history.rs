@@ -1,7 +1,8 @@
 //! The camera's history: the last submitted frame's unjittered view and
 //! projection, with the jitter antialiasing applied to that frame, its time
 //! (`FrameInput::elapsed_seconds`), at which a material's vertex function
-//! evaluates the motion it writes, and the frames since the last reset. The renderer owns it; a frame commits to it
+//! evaluates the motion it writes, its visibility mask, and the frames since
+//! the last reset. The renderer owns it; a frame commits to it
 //! only when the caller finishes that frame. It is kept in the render frame
 //! of the scene's origin it was committed at, and a frame whose scene moved
 //! its origin since sees it translated into its own (the architecture's
@@ -66,6 +67,13 @@ pub(crate) struct HistoryFrame {
     /// frame's; this frame's after a reset.
     pub elapsed_seconds: f64,
     pub previous_elapsed_seconds: f64,
+    /// This frame's visibility mask (`FrameInput::visibility_mask`), which
+    /// `finish` commits.
+    pub visibility_mask: u32,
+    /// Whether it differs from the last submitted frame's: material groups
+    /// appeared or departed without moving, which rearms TAA's rejection
+    /// across the view. False after a reset, which restarts every history.
+    pub visibility_changed: bool,
 }
 
 /// A stage's temporal history: its frame count since it last restarted (0
@@ -94,18 +102,23 @@ pub(crate) struct CameraHistory {
     origin: DVec3,
     /// The last submitted frame's time.
     elapsed_seconds: f64,
+    /// The last submitted frame's visibility mask.
+    visibility_mask: u32,
 }
 
 impl CameraHistory {
     /// The history of a frame seen by `camera` at `elapsed_seconds` with the
-    /// scene's origin at `origin`, restarted when `reset`. Nothing changes
-    /// until `finish`, so an abandoned frame translates nothing twice.
+    /// scene's origin at `origin` and `visibility_mask` enabling its material
+    /// groups, restarted when `reset`. Nothing changes until `finish`, so an
+    /// abandoned frame translates nothing twice and a mask change it saw is
+    /// seen again by the next.
     pub fn begin(
         &self,
         camera: CameraFrame,
         reset: bool,
         origin: DVec3,
         elapsed_seconds: f64,
+        visibility_mask: u32,
     ) -> HistoryFrame {
         let (previous, frames) = if reset {
             (None, 0)
@@ -131,6 +144,8 @@ impl CameraHistory {
             } else {
                 elapsed_seconds
             },
+            visibility_mask,
+            visibility_changed: previous.is_some() && visibility_mask != self.visibility_mask,
         }
     }
 
@@ -140,6 +155,7 @@ impl CameraHistory {
         self.frames = frame.frames.wrapping_add(1);
         self.origin = frame.origin;
         self.elapsed_seconds = frame.elapsed_seconds;
+        self.visibility_mask = frame.visibility_mask;
     }
 }
 
@@ -169,14 +185,14 @@ mod tests {
             jitter: [0.25, -0.5],
         };
         let mut history = CameraHistory::default();
-        let first = history.begin(camera(eye), false, DVec3::ZERO, 0.);
+        let first = history.begin(camera(eye), false, DVec3::ZERO, 0., 0);
         history.finish(first);
         let moved = Vec3::new(5000., 0., -7000.);
         let point = Vec3::new(5010.5, 11., -7031.);
         let before = first.camera.jittered_view_projection() * point.extend(1.);
         // An abandoned frame after the move, then the frame that finishes.
         for _ in 0..2 {
-            let frame = history.begin(camera(eye - moved), false, moved.as_dvec3(), 0.);
+            let frame = history.begin(camera(eye - moved), false, moved.as_dvec3(), 0., 0);
             let previous = frame.previous_camera.expect("history continues");
             let after = previous.jittered_view_projection() * (point - moved).extend(1.);
             let ndc = |clip: Vec4| clip.truncate() / clip.w;
@@ -188,7 +204,7 @@ mod tests {
             );
             assert_eq!(previous.jitter, first.camera.jitter);
         }
-        let reset = history.begin(camera(eye - moved), true, moved.as_dvec3(), 0.);
+        let reset = history.begin(camera(eye - moved), true, moved.as_dvec3(), 0., 0);
         assert!(reset.previous_camera.is_none() && !reset.valid);
     }
 
@@ -210,13 +226,70 @@ mod tests {
         };
         let mut last = None;
         for _ in 0..4 {
-            let frame = history.begin(camera, false, DVec3::ZERO, 0.);
+            let frame = history.begin(camera, false, DVec3::ZERO, 0., 0);
             if let Some(last) = last {
                 assert_eq!(frame.frames, u32::wrapping_add(last, 1));
             }
             last = Some(frame.frames);
             history.finish(frame);
         }
+    }
+
+    // Plausible defects: a mask change never reported (the old image of a
+    // hidden group fades out over many frames at TAA's relaxed rejection),
+    // the comparison value committed when a frame is rendered rather than
+    // submitted (an abandoned frame or a frame rendered again loses the
+    // change), the change reported on every later frame (stabilization
+    // never returns), or a change in the high bits ignored although
+    // `Material::enabled` tests every bit. The oracle is the architecture's
+    // rule (Frame item 10) that appearances and departures rearm the view
+    // until a submitted frame; the expected values follow from the masks
+    // each frame passes, compared by hand.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_changed_visibility_mask_is_reported_until_a_frame_is_finished() {
+        let camera = CameraFrame {
+            view: Mat4::IDENTITY,
+            projection: crate::perspective(1.1, 1.5, 0.1),
+            jitter: [0.; 2],
+        };
+        let mut history = CameraHistory::default();
+        let mut frame = |history: &mut CameraHistory, reset: bool, mask: u32, finish: bool| {
+            let frame = history.begin(camera, reset, DVec3::ZERO, 0., mask);
+            if finish {
+                history.finish(frame);
+            }
+            frame.visibility_changed
+        };
+        assert!(
+            !frame(&mut history, true, 0b11, true),
+            "the first frame restarts history: nothing to compare"
+        );
+        assert!(!frame(&mut history, false, 0b11, true), "an unchanged mask");
+        assert!(frame(&mut history, false, 0b01, false), "group 2 departs");
+        assert!(
+            frame(&mut history, false, 0b01, false),
+            "the abandoned frame did not consume the change"
+        );
+        assert!(
+            frame(&mut history, false, 0b01, true),
+            "nor did a frame rendered twice"
+        );
+        assert!(
+            !frame(&mut history, false, 0b01, true),
+            "the change was submitted"
+        );
+        assert!(
+            frame(&mut history, false, 0b01 | 1 << 30, true),
+            "a high group appears"
+        );
+        assert!(
+            !frame(&mut history, true, 0b11, true),
+            "a reset restarts history, which needs no signal"
+        );
+        assert!(
+            !frame(&mut history, false, 0b11, true),
+            "the reset frame committed its mask"
+        );
     }
 
     #[wasm_bindgen_test(unsupported = test)]
