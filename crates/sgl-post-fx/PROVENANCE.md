@@ -112,8 +112,9 @@ input's Z and W carry the surface's own depth motion (previous minus current
 camera-space Z, NRD's 2.5D motion) and its validity, and history is
 consistent when it matches either the camera reprojection or, where valid,
 the current view Z plus that motion projected by the previous camera. Moving
-surfaces therefore keep the test, so a surface uncovered from behind a moving
-one is still rejected, where Filament's skip would keep it; and a surface the
+surfaces therefore keep the test, so a moving surface uncovered from behind
+another is still rejected, where Filament's skip on object motion would keep
+it (a static one both reject); and a surface the
 camera follows, or one moving along the view axis, keeps its history. Taking
 the smaller evidence of the two never rejects more than the camera-only test,
 which stays exact in f32 for static surfaces where half-float depth motion

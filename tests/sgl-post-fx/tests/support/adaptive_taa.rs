@@ -119,6 +119,11 @@ fn sequence(
         );
         // Every surface here keeps its view depth (the camera pans across
         // the plane, the occluder rests): depth motion zero and valid.
+        // Frame 0, which only the placeholder reads, carries poison in Z:
+        // the placeholder must initialize its own recovery hold rather than
+        // copy the caller's channel, or the following frames would hold full
+        // rejection for about 88 frames and fail the stabilization checks.
+        let depth_motion = if index == 0 { 100. } else { 0. };
         let motion = texture(
             device,
             queue,
@@ -132,7 +137,7 @@ fn sequence(
                     })
                     / SIZE[0] as f32,
                 0.,
-                0.,
+                depth_motion,
                 1.,
             ]),
         );
@@ -412,6 +417,8 @@ fn taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost() {
                 let jitter = [halton(2, index % 16 + 1), halton(3, index % 16 + 1)];
                 let left = if index < 32 { 24.25 } else { 32.25 };
                 let moved = index == 32;
+                // Poison in frame 0's Z, which only the placeholder reads.
+                let depth_motion = if index == 0 { 100. } else { 0. };
                 let lo = left + jitter[0];
                 let hi = lo + 2.;
                 let mut color = Vec::new();
@@ -428,7 +435,7 @@ fn taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost() {
                                 0.
                             },
                             0.,
-                            0.,
+                            depth_motion,
                             1.,
                         ]);
                     }

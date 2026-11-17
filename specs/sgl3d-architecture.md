@@ -474,8 +474,8 @@ Stages run in one order, written in one place in `renderer`:
    expected previous depth is the surface's own: history is consistent when
    it matches the camera reprojection or, where its depth motion is valid,
    its view depth plus that motion (the adapter passes the G-buffer's B and A
-   as the motion input's Z and W), so a surface is never rejected for moving
-   in depth. A
+   as the motion input's Z and W), so a surface whose depth motion is valid
+   is not rejected for moving in depth. A
    twelve-frame recovery hold travels in the closest-motion history's B
    channel (RGBA16F instead of RG16F only for this flag: eight extra bytes per
    pixel across the pair); W is initialized to zero. Camera motion rearms the

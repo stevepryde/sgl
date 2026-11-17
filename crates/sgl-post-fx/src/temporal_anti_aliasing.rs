@@ -384,6 +384,12 @@ impl TemporalAntiAliasing {
     }
 
     /// Executes the effect.
+    ///
+    /// # Panics
+    ///
+    /// If `prepare_resources` was not called for the accumulation buffer, or
+    /// if `MOTION_ADAPTIVE_HISTORY` is set and the motion vectors have fewer
+    /// than four channels.
     pub fn execute(
         &mut self,
         render_attribs: &mut RenderAttributes<'_, '_>,
