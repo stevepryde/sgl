@@ -2658,8 +2658,9 @@ hardware.
   8-bit step, for less. A light that takes another's place, a light whose
   `baked` changes, and a camera cut start afresh. The
   visibilities are upsampled to the render size by depth from the texels
-  about each pixel that hold a surface (a thin lit pole against the sky,
-  whose texels hold none, takes full light), then the
+  about each pixel that hold a lit surface (a pole one pixel wide against
+  the sky, whose texels hold none, takes full light, shadowed or not), then
+  the
   lighting pass takes them through the light's shadow opacity. The opaque
   stage takes its two-pass form while they run (a G-buffer pass, then a
   lighting pass), so the setting costs the second geometry pass besides

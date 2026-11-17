@@ -77,7 +77,8 @@ const TRACED_FAR:f32=3.402823466e+38;
 // lift is along whichever of the receiver's two recorded normals faces the
 // ray, base (`normal`, mapped) first and then `coat_normal` (the coat's,
 // else the geometry normal), each on the geometry's side of the surface,
-// and only where neither does, the base flipped to the ray's side. The
+// and only where neither does, the base flipped to the ray's side, which
+// on a surface with a clearcoat normal map may still point into it. The
 // base alone, flipped, pointed into the surface where its map tilts it
 // away from the ray while the geometry faces it, by more than the ray
 // rises within TMin under a low light, so the ray met its own surface

@@ -752,8 +752,9 @@ last, after everything it may use, and refuses a directive in it.
   that grows with the position's magnitude (Falcor's `computeRayOrigin`,
   `traced_ray_origin`) on the geometry's side of the ray, along whichever
   of the pixel's recorded normals faces the ray (the base, then the coat
-  or a coatless surface's geometry normal, else the base flipped), never a
-  mapped normal flipped into the surface (#771), and the `TMin` keeps it
+  or a coatless surface's geometry normal, else the base flipped, which on
+  a surface with a clearcoat normal map may still lie inside it, where both
+  lobes' light is near none) (#771), and the `TMin` keeps it
   from the rest of its receiver, as in Wicked. A pixel the G-buffer drew nothing lit at (an unlit material)
   casts no ray and is the sky to the passes that follow, which keeps its
   zero visibility out of its lit neighbours' upsample. A baked light lights
@@ -858,7 +859,9 @@ last, after everything it may use, and refuses a directive in it.
   linear depth against the full-resolution pixel's (`_upsampleCS.hlsl`
   35–55) into the mask's layers. The upsample weighs only the texels that
   hold a receiver (a depth short of the sky's), and a pixel with none
-  about it takes 1, the trace's rule for a pixel it casts no ray from;
+  about it takes 1, the trace's rule for a pixel it casts no ray from,
+  whether or not it is occluded: a feature one pixel wide at an odd column
+  or row, where the half-size trace casts no ray, reads lit even in shadow;
   the temporal blend's box likewise takes the receivers about a texel
   alone, so a sky or unlit texel's zeros never shadow a thin lit feature
   beside them (#771). Changed at the port boundary: the trace

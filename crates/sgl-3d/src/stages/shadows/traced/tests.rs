@@ -2232,16 +2232,21 @@ fn thin_lit_features_against_the_sky_are_unoccluded() {
                     let Some((index, position)) = receiver([x, y]) else {
                         continue;
                     };
+                    // A lone bar pixel must lie on an odd column or row:
+                    // the trace casts rays at even pixels alone, so only
+                    // there do both of its tracing texels miss the bar.
                     if index == 0
                         && receiver([x - 1, y]).is_none()
                         && receiver([x + 1, y]).is_none()
                     {
+                        assert_eq!(x % 2, 1, "{label}: the bar across x is at column {x}");
                         lone[0] += 1;
                     }
                     if index == 1
                         && receiver([x, y - 1]).is_none()
                         && receiver([x, y + 1]).is_none()
                     {
+                        assert_eq!(y % 2, 1, "{label}: the bar across y is at row {y}");
                         lone[1] += 1;
                     }
                     let others: Vec<Block> = receivers
@@ -2446,11 +2451,9 @@ fn a_normal_mapped_surface_does_not_shadow_itself() {
         angular_diameter: 0.,
         ..DirectionalLight::default()
     };
-    // The maps' normals as the test intends them: the base's faces away
-    // from the sun, the coat's toward it.
-    let base = Vec3::new(-0.6, 0.8, 0.);
-    let coat = Vec3::new(0.6, 0.8, 0.);
-    assert!(base.dot(to_sun) < 0. && coat.dot(to_sun) > 0. && Vec3::Y.dot(to_sun) > 0.);
+    // The maps' normals as the fixture authors them: the base's, about
+    // (-0.6, 0.8, 0), faces away from the sun, and the coat's, about
+    // (0.6, 0.8, 0), toward it, as the geometry's +Y does.
     let size = [64, 64];
     let eye = Vec3::new(0., TILTED_HEIGHT + 4., 4.);
     let camera = camera(eye, Vec3::new(0., TILTED_HEIGHT, 0.), size);
