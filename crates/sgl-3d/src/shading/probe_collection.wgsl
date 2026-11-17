@@ -2,9 +2,12 @@
 // With Parallax-corrected Cubemaps", SIGGRAPH 2012). Consumers declare
 // `collection` (ProbeCollection) and `baked` (the cube array).
 //
-// A probe's influence weight is Godot's per-axis blend distance
+// A probe's influence weight is a per-axis blend distance as Godot's
 // (scene_forward_lights_inc.glsl reflection_process): one at `blend` inside
 // each face of its influence box, falling linearly to zero at the face.
+// Godot also clamps the distance to the box's half extent and squares the
+// product; this takes neither, so a blend wider than half the box on an axis
+// caps the weight below one.
 fn probe_influence(world:vec3<f32>,probe:BakedProbe)->f32 {
  let p=(probe.world_to_local*vec4(world,1.)).xyz;
  let inside=min(p-probe.influence_min.xyz,probe.influence_max.xyz-p);

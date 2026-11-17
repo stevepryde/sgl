@@ -6,6 +6,12 @@ to the original games or a maintainer's machine.
 
 ## Read by task
 
+- Planning a feature, setting, API, port or refactor, or reviewing the
+  architecture: the [architect skill](.claude/skills/sgl-architect/SKILL.md).
+  Plan every change against it before it is implemented, and put its
+  architecture fit in the issue. Its architecture pass, run from time to time,
+  finds and removes drift and records it in the
+  [audit log](specs/audits.md).
 - Building a game: [consumer guide](docs/README.md), then the relevant package
   guide. For 3D, start with [SGL3D for game agents](crates/sgl-3d/docs/README.md).
 - Changing SGL: [contribution workflow](CONTRIBUTING.md),

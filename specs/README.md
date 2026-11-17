@@ -18,6 +18,11 @@ These documents define the library's required behavior. For usage, start with
 | Game-owned schemas and shared loaders | [Content](content.md) |
 | Test oracles, target coverage, and required checks | [Testing](testing.md) |
 
+[The audit log](audits.md) records what each audit and architecture pass
+found, what was done and what now guards it; the
+[architect skill](../.claude/skills/sgl-architect/SKILL.md) plans changes
+against these contracts and runs those passes.
+
 [Decisions](decisions.md) records why the design changed. It includes retired
 crate names and superseded approaches; use the current contracts above for
 implementation. Keep requirement and decision identifiers stable when editing,

@@ -327,7 +327,9 @@ The code's structure follows the
    design records, equations, evidence tables or measurement logs to specs or
    docs; usage belongs in the package README and provenance in source headers.
    Bugs and follow-ups go in GitHub issues. Existing component records may be
-   deleted with the mechanism they describe.
+   deleted with the mechanism they describe. The [audit log](audits.md) is the
+   one history kept here: a terse entry per audit finding, never a design
+   record or a measurement table.
 
 ## Roadmap
 
