@@ -882,7 +882,13 @@ integrated as Diligent's Hydrogent renderer does:
 - TAA resolves the complete linear HDR frame, including reflections, fog,
   effects, mist and heat shimmer, before bloom and tone mapping.
 - It uses Catmull-Rom history sampling, depth disocclusion and a variance
-  clip.
+  clip, with `sgl-post-fx`'s motion-adaptive history (Filament's): while the
+  camera, rigid objects and the surface at a pixel are still, only partial rectification
+  and slower feedback, which steadies subpixel detail; full rejection
+  returns, held for twelve frames, on camera motion, rigid-object changes,
+  local motion, depth disocclusion and far content. Depth disocclusion
+  follows moving surfaces by the G-buffer's depth motion, so a surface the
+  camera follows, or one moving towards it, keeps its history.
 
 SSR and TAA share DiligentFX's post-effect context. History restarts with
 SSR's, and a restarted frame renders without jitter. As Godot's TAA, it keeps
@@ -1049,7 +1055,10 @@ scene.set_baked_specular_probes(&device, &queue, &[])?;
 
 - `influence` and `blend`: where receivers use the probe. Its weight is one at
   `blend` inside each face on that local axis, falling linearly to zero at the
-  face (Godot's blend distance); zero blend is a hard edge. Influences may and
+  face (Godot's blend distance, given per axis here, without Godot's squared
+  weight or its clamp of the distance to the box's half extent, so a blend
+  wider than the half extent on an axis caps the probe's weight below one);
+  zero blend is a hard edge. Influences may and
   should overlap: a receiver's probes are normalised by their total weight, so
   neighbours whose blends meet partition it exactly, and where the total is
   below one, as at the collection's edge, the sky fills the rest. Each box
@@ -1335,7 +1344,8 @@ frame that shows a transmissive material, on a device of the `Extended`
 [binding tier](#binding-tiers) (timing group `transmission copy`). On
 `Basic`, and in what screen-space reflections see of it, a transmissive
 surface blends the light behind it through unrefracted and unblurred,
-dimmed as the refracted light would be.
+dimmed by the mean over colour channels of what the refracted light would
+pass, so without its tint.
 
 ### Blended receivers
 
@@ -1365,8 +1375,10 @@ are:
 Limits: the nearest receiver at a pixel alone reflects; a receiver behind
 another, and one seen in another's reflection, show their probe and sky
 specular. The reflection is scaled by the receiver's alpha with the rest of
-its colour (glTF's coverage blend, as Godot and Bevy blend). What lies behind
-is blended under it undistorted (no refraction), and reprojects and blurs by
+its colour (glTF's coverage blend, as Godot and Bevy blend), unless the
+material keeps its specular, which stays full. What lies behind is blended
+under it undistorted (refracted where the receiver is transmissive on the
+`Extended` binding tier), and it reprojects and blurs by
 the receiver's motion, so a receiver moving against its background trails the
 background, not its reflection. World-space rays do not fill a receiver's
 misses; probe and sky specular do. Unlit receivers, additive effects and mist
@@ -2715,12 +2727,14 @@ what its maps and lights did there.
 
 ## Browser (WASM + WebGPU)
 
-The browser is a first-class, maintained target ([D-20](../../specs/decisions.md),
-[D-27](../../specs/decisions.md)), not a parity target: features or
-speed-ups the browser cannot have fall back or are absent there. The
-same `Scene`, `Renderer` and frame run on the page's WebGPU device, built for
-`wasm32-unknown-unknown` (sgl-3d enables wgpu's `webgpu` backend). WebGL2 is
-not supported, since SGL3D needs compute.
+The browser is a first-class target in its own right
+([D-20](../../specs/decisions.md), [D-27](../../specs/decisions.md),
+[D-48](../../specs/decisions.md)): SGL3D supports there everything WebGPU
+supports, and only a feature or speed-up the web platform cannot run falls
+back or is absent. The same `Scene`, `Renderer` and frame run on the page's
+WebGPU device, built for `wasm32-unknown-unknown` (sgl-3d enables wgpu's
+`webgpu` backend). WebGL2 is not supported, since SGL3D needs compute; if
+WebGL is ever added it will be a minimal fallback.
 
 - **Device.** Request it as natively, with `graphics_device::limits` (the
   adapter's limits; WebGPU's defaults are the floor, S3D-1) and

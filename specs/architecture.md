@@ -8,8 +8,11 @@ caller-driven wgpu path.
 
 ## Design audience and origins
 
-AI coding agents are the primary consumers and authors. Public boundaries
-must make ownership, inputs, outputs, and lifecycle explicit. Package guides
+AI coding agents are the only authors and maintainers, of SGL and of the
+games that consume it and their assets; the owner steers
+([D-50](decisions.md)). Nothing assumes a person writes code, authors an
+asset, performs a step or holds knowledge the repository does not. Public
+boundaries must make ownership, inputs, outputs, and lifecycle explicit. Package guides
 and runnable examples must be usable without access to the source games.
 [The consumer guide](../docs/README.md) routes agents by task; the root README
 introduces the project to people.
@@ -38,6 +41,11 @@ library; their rules, content, and process layouts stay with the games.
    authority, UI layout, and process layout.
 2. SGL owns reusable, game-independent pieces extracted from the source games.
    When those games share a pattern, SGL should become the copy they call.
+   No kind of reusable piece is excluded in advance: what decides is that
+   games can reuse it, and that a game can take it or leave it while owning
+   its executable and loop ([D-47](decisions.md)). Reusable in principle is
+   enough: a piece does not have to be shared by several games, or extracted
+   from more than one, before it belongs here ([D-49](decisions.md)).
 3. Each package must own an implemented reusable boundary. New modules appear
    when extracted code needs a home.
 
@@ -54,7 +62,8 @@ library; their rules, content, and process layouts stay with the games.
      description, including output-only size changes, without reallocating
      unchanged render-size depth resources. Its optional TAA
      `MOTION_ADAPTIVE_HISTORY` retains partial history rectification at rest,
-     with camera/local-motion recovery holds and jitter-aware depth rejection;
+     with camera/local-motion recovery holds and jitter-aware depth rejection
+     that follows the surface's depth motion (motion input Z and W);
      SGL3D enables it with a 0.88 history stability factor. Other TAA flags
      retain their legacy resolve.
    - `sgl-2d` — assets, immediate UI, and a caller-driven logical-canvas wgpu

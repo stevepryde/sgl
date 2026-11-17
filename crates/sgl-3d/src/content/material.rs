@@ -153,7 +153,8 @@ pub struct SurfaceMaterial {
     /// its own material: a transmission map's zeros do not make the rest of
     /// the material opaque. On a device of the `Basic` binding tier, and
     /// in what screen-space reflections see of it, the light behind it
-    /// passes unrefracted and unblurred, dimmed as the refracted light is.
+    /// passes unrefracted and unblurred, dimmed by the mean over colour
+    /// channels of what the refracted light passes, so without its tint.
     pub transmission: f32,
     /// The thickness of the volume beneath the surface, in the mesh's units
     /// (the instance's scale applies), which the transmitted light crosses

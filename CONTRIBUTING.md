@@ -1,6 +1,7 @@
 # Contributing to SGL
 
-AI coding agents are SGL's primary consumers and authors. A useful change
+AI coding agents write and maintain all of SGL and are its consumers; the
+owner steers. A useful change
 makes a concrete game task easier while preserving explicit ownership,
 small public boundaries, and examples an agent can adapt.
 
@@ -33,6 +34,9 @@ libraries and libudev.
 
 - Start with the existing implementation and a concrete consumer need.
   Preserve the game/library boundary in [architecture](specs/architecture.md).
+  Plan a feature, setting, public type, port or refactor with the
+  [architect skill](.claude/skills/sgl-architect/SKILL.md) before building it,
+  and put its architecture fit in the issue.
 - Breaking changes are an expected part of SGL's evolution. Prefer a clear
   API over compatibility shims, and give consumer agents actionable migration
   instructions in [CHANGELOG.md](CHANGELOG.md). Every consumer-visible change

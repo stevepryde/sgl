@@ -120,7 +120,9 @@ fn fsr1_rcas(p:vec2<i32>)->vec3<f32> {
  let hit_min=mn4/select(vec3(1.),4.*mx4,mx4>vec3(0.));
  let hit_max=(vec3(1.)-mx4)/select(vec3(-1.),4.*mn4-4.,mn4<vec3(1.));
  let lobes=max(-hit_min,hit_max);
- // FsrRcasCon: fixed 0.2 stops, the FSR sample's 0.8 sharpness.
+ // FsrRcasCon: fixed 0.2 stops of attenuation, Godot's default
+ // (`fsr_sharpness` 0.2); AMD's SDK maps its 0..1 sharpness s to 2 - 2s
+ // stops, so this is 0.9 there.
  let lobe=max(-(.25-1./16.),min(max(max(lobes.r,lobes.g),lobes.b),0.))*exp2(-.2);
  let color=clamp((lobe*b+lobe*d+lobe*h+lobe*f+e)*fsr1_rcp_medium(4.*lobe+1.),vec3(0.),vec3(1.));
  return color*color;

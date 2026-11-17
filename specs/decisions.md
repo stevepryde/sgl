@@ -720,3 +720,101 @@ Use the [current specs](README.md) for implementation and the
   and an all-black or sub-sample window stays finite. This changes only the
   averaging walk, from 64 bins to 63; metering and its GPU pass stay in the
   exposure stage, with no additional resources or passes.
+
+- **D-47** Owner direction, 2026-11-17: SGL is whatever can be reused between
+  games, and no kind of capability is excluded in advance. It began as the
+  reusable layer lifted out of custom games and stays that: the game provides
+  its shell, its logic and its composition, in Rust and, where it chooses, a
+  scripting runtime, and builds from SGL's pieces. An entity system, physics
+  (a custom layer, or Rapier or Jolt behind one) or a scripting runtime (Nybl
+  is the candidate) may join SGL when a game needs it, as a library a game
+  can take or leave. What stays fixed is who holds control: the game owns its
+  executable and main loop, SGL is never a host that a game scripts, and a
+  headless server still builds without what it does not use
+  ([architecture](architecture.md) 4). This replaces the categorical
+  exclusions `AGENTS.md` and S3D-1 carried, and the reading of D-12's "no
+  editor, ECS, separate engine, or new gameplay language" as a rule: it
+  described that decision's scope. D-33 remains the guidance for choosing
+  physics today, and its condition, physics in SGL where it brings a
+  significant benefit, is the rule. None of these is planned yet; each is
+  planned through the architect skill when a game needs it.
+  Rationale: a fixed list of excluded features ruled out things SGL may
+  come to need, to prevent an outcome, SGL becoming an engine, that the
+  ownership rule already prevents.
+
+- **D-48** Owner direction, 2026-11-17: the web is a first-class target in
+  its own right, through wgpu's WebGPU backend. Each target takes everything
+  its own platform can do: native every feature the device supports, the web
+  every feature WebGPU supports. Where the web platform cannot run a native
+  feature, the web does not use it and takes a fallback or goes without,
+  reported through the effective configuration, and no native feature or
+  speed-up is held back for it: D-27 stands in that. The tightening is the
+  converse: a feature the web can run is supported there, never left
+  native-only because native came first, and the web is not judged against
+  native but against what its own platform offers. WebGPU only for now;
+  WebGL stays unsupported, and if it is ever added it is a minimal fallback,
+  not a second full target. This replaces D-27's summary of the browser as
+  "maintained" and "not a feature-parity target".
+  Rationale: "maintained, not parity" described the web by what it lacks and
+  licensed leaving it behind; first class means complete on its own terms.
+
+- **D-49** Owner direction, 2026-11-17: a piece belongs in SGL when it is
+  reusable in principle: nothing in it is one game's, so another game could
+  use it as it stands. It does not have to be used by several games, or by
+  any yet, and it need not be extracted from more than one. This is the test
+  behind AR-6 ("a mechanism only one game could want lives in that game")
+  and replaces the reading of architecture 2 and 5 ("when those games share
+  a pattern", "one good implementation over four variants"), which describe
+  how SGL began, and of D-47's "when a game needs it", as a count of
+  consumers.
+  Rationale: SGL is the reusable layer of the owner's games; waiting for a
+  second game before moving a reusable piece into it defeats the point.
+
+- **D-50** Owner direction, 2026-11-17: SGL is written and maintained
+  entirely by AI agents. The owner steers and writes none of it, and the same
+  holds for the games that use it and for their assets. Architecture,
+  workflow and tooling therefore assume an agent on both sides of every
+  boundary and never a human author. Everything needed to change or use the
+  library is in the repository: contracts, guides and issues, with nothing
+  left to a maintainer's memory. Work is planned, implemented, reviewed and
+  verified by agents. Verification is something an agent can run and read,
+  not something a person looks at; the owner judges the look and steers,
+  which is direction, not a step in the work. Authored content is text, code
+  or the output of a command an agent runs, never a step in an interactive
+  tool. This replaces "primary consumers and authors" in the architecture
+  and the contribution guide.
+  Rationale: designing for a human contributor who does not exist adds
+  ceremony for nobody and leaves gaps where a person was expected to fill
+  them in.
+
+- **D-51** Owner direction, 2026-11-17: SGL is public because it depends on
+  and borrows from open-source engines and libraries, and making its own
+  source available, with the correct attributions, is the right return.
+  Nothing taken from another project is claimed as SGL's own. What is SGL's,
+  made through AI coding agents, is the assembly: putting those pieces
+  together and adapting them into one coherent whole. SGL is run as an
+  open-source project that makes no guarantee of correctness or of
+  maintenance. Anyone using it does so for their own purposes, with no
+  expectation of support, and is encouraged to fork it or copy features into
+  a library of their own. This states the posture behind D-24 and D-25, and
+  it means that attribution is part of every port, that nothing is designed,
+  kept or promised for the sake of outside users, and that a breaking change
+  owes them a changelog entry and the version number semver requires, nothing
+  more.
+  Rationale: the project stands on others' work and should say so exactly;
+  it is one person's library, shared, not a product with obligations.
+
+- **D-52** Owner direction, 2026-11-17: SGL follows semver as Cargo reads
+  it, so that updating within a version requirement never breaks a game. A
+  release is breaking when a game that built and behaved correctly on the
+  previous one must change its code, data or settings to do so again; during
+  `0.x` that advances the minor version, and a patch release is every other
+  kind, additions and fixes alike. Semver is the whole of the release
+  discipline: there is no stable line, stabilisation period or release train,
+  and a new version need not be large; it is only a version. This replaces
+  the rule of 2026-10-13 that fixes are patch releases even when callers
+  must change, under which `0.4.1` changed APIs in a patch; the changelog's
+  history stands as written. The next release after `0.6.0` holds to it.
+  Rationale: the version number exists to keep the owner's games from
+  breaking on `cargo update`; a patch that requires caller changes defeats
+  that.

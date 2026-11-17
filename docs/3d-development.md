@@ -4,7 +4,7 @@ Use Rust/wgpu through `sgl-3d` for new 3D clients, native or in the browser
 (WASM + WebGPU); both are first-class targets. The
 [SGL3D contract](../specs/sgl3d.md) owns the requirements; its
 [package README](../crates/sgl-3d/README.md) describes resource and frame use.
-SGL3D is part of SGL, with the game owning composition. It adds no editor,
+SGL3D is part of SGL, with the game owning composition. It needs no editor,
 ECS, scene authoring application, or gameplay language.
 
 ## Composition

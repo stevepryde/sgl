@@ -89,11 +89,14 @@ changes to game code; we prioritize improving the library over preserving old
 APIs. Every consumer-facing update carries [changelog and migration notes](CHANGELOG.md)
 that agents can follow.
 
-Depend on SGL with ordinary semver requirements such as `sgl-3d = "0.4.1"`
-and commit `Cargo.lock` (or reference a full Git commit `rev`). Any release
-may require game-code changes, including a patch release whose fixes change
-an API, so update deliberately using the
-[agent update workflow](docs/README.md#updating-a-game).
+Versions follow semver as Cargo applies it. Depend on SGL with ordinary
+requirements such as `sgl-3d = "0.4.1"` and commit `Cargo.lock` (or reference
+a full Git commit `rev`). During `0.x` a release that requires game changes
+advances the minor version and a patch release never does, so `cargo update`
+within a requirement is safe; move to a new minor version deliberately, using
+the [agent update workflow](docs/README.md#updating-a-game). A version is
+just a version: releases can be small and frequent, and there is no stable
+or long-term-support line.
 
 ## Try it
 
@@ -115,6 +118,20 @@ and its [frame guide](crates/sgl-3d/docs/README.md#a-frame).
 Repository development also needs Bun, Node.js, the matching wasm-bindgen
 CLI, and a GPU for browser checks. [Contributing](CONTRIBUTING.md) covers setup
 and the required `bun scripts/tasks.ts check` command.
+
+## Why this is public, and what to expect
+
+SGL borrows from and depends on open-source engines and libraries, so its own
+source is public too, with their authors credited. Nothing taken from another
+project is claimed as SGL's: that code, those techniques and that data remain
+their authors' work, under their licences. What is SGL's own, written by AI
+coding agents under one person's direction, is the assembly: choosing,
+porting and adapting those pieces and joining them into one coherent library.
+
+SGL is offered as is. It makes no guarantee of correctness or of continued
+maintenance, and it comes with no support. Use it for your own purposes. You
+are encouraged to fork it, or to copy the parts you want into a library of
+your own.
 
 ## Inspirations and credits
 

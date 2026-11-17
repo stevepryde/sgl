@@ -1,11 +1,21 @@
 # Agent instructions
 
-SGL is Steve's Game Library, designed primarily for AI coding agents building
-games. Keep APIs explicit, docs navigable, and examples useful without access
-to the original games or a maintainer's machine.
+SGL is Steve's Game Library, written and maintained entirely by AI coding
+agents, for AI coding agents building games. The owner steers and writes none
+of it. Never assume a line of code or an asset, here or in a game that uses
+SGL, was or will be made by a person (D-50). Keep APIs explicit, docs
+navigable, and examples useful without access to the original games or a
+maintainer's machine.
 
 ## Read by task
 
+- Planning a feature, setting, API, port or refactor, or reviewing the
+  architecture: the [architect skill](.claude/skills/sgl-architect/SKILL.md).
+  Plan every feature, setting, public type, stage, shared contract, crate
+  boundary, port, dependency or refactor against it before it is implemented,
+  and put its architecture fit in the issue. Its architecture pass, run from time to time,
+  finds and removes drift and records it in the
+  [audit log](specs/audits.md).
 - Building a game: [consumer guide](docs/README.md), then the relevant package
   guide. For 3D, start with [SGL3D for game agents](crates/sgl-3d/docs/README.md).
 - Changing SGL: [contribution workflow](CONTRIBUTING.md),
@@ -39,10 +49,16 @@ compatibility shims solely to avoid updating consumers.
   `Cargo.toml`; keep `version.workspace = true` in each crate. Update the
   root's internal dependency version requirements alongside release bumps.
 - At release, move those entries into a dated version section, merging
-  entries that changed the same symbol; retain older migration notes. Use
-  Cargo-compatible version numbers by kind of change: during `0.x`, new
-  features and reworked APIs advance the minor version; fixes are patch
-  releases even when callers must change, with the migration in the changelog.
+  entries that changed the same symbol; retain older migration notes.
+  Versions follow semver as Cargo reads it, so `cargo update` never breaks a
+  game (D-52). A release is breaking when a game that built and behaved
+  correctly on the last one must change its code, data or settings to do so
+  again, whether a feature, a rework or a fix caused it: during `0.x` it
+  advances the minor version, from `1.0` the major. Anything else, additions
+  and fixes alike, is a patch release during `0.x`. One breaking change in
+  any crate makes the shared version's release breaking.
+- A release is only a version. Cut one whenever it is useful, however small:
+  there is no stabilisation period, release train or minimum content.
 - Games depend on every SGL crate with the same version requirement (for
   example, `"0.4.1"`) and commit `Cargo.lock`; Git consumers reference one full
   commit `rev`. Upgrade to a new release deliberately, applying all
@@ -51,6 +67,10 @@ compatibility shims solely to avoid updating consumers.
 
 ## Licence notices and distribution
 
+- SGL is public because it borrows from open-source projects, and it claims
+  nothing taken from them as its own: only the assembly and adaptation into
+  one library is SGL's (D-51). Attribution is therefore part of the work,
+  never optional and never approximate.
 - Preserve original licences, copyright notices and provenance for copied code
   and assets. Update `licenses/upstreams.json` with the actual licence-source
   revision when updating a port; run `bun scripts/refresh-licenses.ts` and keep
@@ -75,18 +95,28 @@ compatibility shims solely to avoid updating consumers.
   reports, inventories, or identity tables in `docs/`.
 - Never gate a ticket on owner sign-off, acceptance, or review. The owner steers
   by filing new tickets.
+- SGL is offered as is, with no guarantee of correctness or maintenance and no
+  support (D-51). Do not add promises, process or machinery on behalf of
+  outside users; they are encouraged to fork or copy what they want.
 - SGL is a game library a game imports. The game owns composition.
   Do not call it a game engine, add an engine on top of it, or turn it into one.
-  Game logic is Rust. Authored gameplay data is RON. New 3D clients use
+  Game logic is the game's: Rust today. Authored gameplay data is RON. New 3D clients use
   Rust/wgpu through `sgl-3d` (SGL3D), native and in the browser (WASM +
-  WebGPU): both are first-class targets, meaning both are maintained. The
-  browser is not a parity target: native supports everything the device can,
-  and the browser takes a fallback or goes without a feature where it is not
-  feasible (D-27). The game owns its window or
+  WebGPU): both are first-class targets, each in its own right. Each takes
+  everything its platform can do: native every feature the device supports,
+  the web every feature WebGPU supports. Where the web cannot run a native
+  feature it takes a fallback or goes without, and no native feature is held
+  back for it; a feature the web can run is supported there, never left
+  native-only for convenience. WebGPU only: WebGL, if ever added, is a
+  minimal fallback (D-27, D-48). The game owns its window or
   canvas and event loop. `sgl-2d` renders 2D games and the HUD and UI over a
   3D scene. See `specs/sgl3d.md` and
-  `docs/3d-development.md`. Do not add a second gameplay scripting language, an
-  ECS, a physics engine (D-33), a layer process, or compatibility-lock
+  `docs/3d-development.md`. SGL is whatever games can reuse, and no kind of
+  capability is excluded in advance (D-47): an entity system, physics or a
+  scripting runtime may join as a library a game can take or leave, once the
+  architect skill has planned it. A piece need only be reusable in
+  principle; it does not have to be used by several games first (D-49). None
+  of those three exists yet. Do not add a layer process or compatibility-lock
   machinery.
 - Baked and generated assets (lightmaps, probe captures, other bakes) are
   content, refreshed only by explicitly running their export commands when their

@@ -347,11 +347,12 @@ fn every_taa_feature_permutation_executes() {
                 wgpu::TextureFormat::Rgba16Float,
                 &half(&[4.0, 2.0, 1.0, 1.0]),
             );
+            // Valid, zero depth motion in ZW for MOTION_ADAPTIVE_HISTORY.
             let motion = texture(
                 &device,
                 &queue,
-                wgpu::TextureFormat::Rg16Float,
-                &half(&[0.01, 0.0]),
+                wgpu::TextureFormat::Rgba16Float,
+                &half(&[0.01, 0.0, 0.0, 1.0]),
             );
             let context_flags = if reversed {
                 post_fx_context::FeatureFlags::REVERSED_DEPTH
