@@ -399,9 +399,33 @@ fn AdaptiveCameraMoved()->bool {
     }
     return false;
 }
+// The surface's own previous depth, normalized: its current view Z plus the
+// depth motion it supplies (motion Z, previous minus current view Z, valid
+// where W > 0), projected by the previous camera. At or beyond the near
+// plane (1 or more) where the motion is invalid or the surface was on or
+// behind the previous camera's plane (DFX-32), so it is never usable.
+fn AdaptiveMotionExpectedDepth(p:vec2<i32>)->f32 {
+    let depth_motion=HlslLoad(g_TextureMotion,p,0).zw;
+    let previous_projection=cbCameraAttribs.g_PrevCamera.mProj;
+    let previous_z=DepthToCameraZ(SampleDepth(p),cbCameraAttribs.g_CurrCamera.mProj)+depth_motion.x;
+    let previous_w=previous_projection[2][3]*previous_z+previous_projection[3][3];
+    if !(depth_motion.y>0.) || !(previous_w>0.) {
+        return 1.;
+    }
+    return AdaptiveDepth(CameraZToDepth(previous_z,previous_projection),cbCameraAttribs.g_PrevCamera);
+}
+// Evidence that history belongs to a different surface than one expected at
+// `expected`: Filament's two-sided jitter-explainable test.
+fn AdaptiveEvidence(expected:f32,history:f32,history_min:f32,history_max:f32,jitter_explainable:f32)->f32 {
+    let evidence=abs(history-expected)-jitter_explainable;
+    return min(evidence,max(expected-history_max,history_min-expected));
+}
 // Current raw depth and previous raw depth have different jittered grids.
-// Current depth for the comparison is already projected into the previous
-// camera by PostFXContext. Both neighborhoods bound subpixel depth changes.
+// Both neighborhoods bound subpixel depth changes. History is consistent when
+// it matches either expected previous depth: the context's camera-only
+// reprojection (exact in f32, for static surfaces) or the surface's own depth
+// motion (for surfaces whose view depth changed otherwise). Filament instead
+// skips the test on object motion (PROVENANCE.md, Motion-adaptive TAA).
 fn AdaptiveDisocclusion(position:vec2<f32>,previous_position:vec2<f32>,motion_pixels:f32)->f32 {
     let camera=cbCameraAttribs.g_CurrCamera;
     let previous_camera=cbCameraAttribs.g_PrevCamera;
@@ -414,10 +438,11 @@ fn AdaptiveDisocclusion(position:vec2<f32>,previous_position:vec2<f32>,motion_pi
     // disocclusion and flashing the current border sample.
     let p=vec2<i32>(position);
     let h=ClampScreenCoord(vec2<i32>(floor(history_position)),size);
-    let expected=AdaptiveDepth(SampleCurrDepth(p),previous_camera);
     // The context's sentinel for a point on/behind the previous camera
     // is its near depth (DFX-32), never usable previous-frame history.
-    if expected>=1. {
+    let camera_expected=AdaptiveDepth(SampleCurrDepth(p),previous_camera);
+    let motion_expected=AdaptiveMotionExpectedDepth(p);
+    if camera_expected>=1. && motion_expected>=1. {
         return 1.;
     }
     let history=AdaptiveDepth(SamplePrevDepth(h),previous_camera);
@@ -438,8 +463,14 @@ fn AdaptiveDisocclusion(position:vec2<f32>,previous_position:vec2<f32>,motion_pi
         }
     }
     let jitter_explainable=(current_max-current_min)*(1.-smoothstep(TAA_ADAPTIVE_DEPTH_FADE_START_PIXELS,TAA_ADAPTIVE_DEPTH_FADE_END_PIXELS,motion_pixels));
-    var evidence=abs(history-expected)-jitter_explainable;
-    evidence=min(evidence,max(expected-history_max,history_min-expected));
+    // Normalized depths lie in [0, 1]: an evidence of 1 rejects fully.
+    var evidence=1.;
+    if camera_expected<1. {
+        evidence=AdaptiveEvidence(camera_expected,history,history_min,history_max,jitter_explainable);
+    }
+    if motion_expected<1. {
+        evidence=min(evidence,AdaptiveEvidence(motion_expected,history,history_min,history_max,jitter_explainable));
+    }
     return smoothstep(0.,TAA_ADAPTIVE_DEPTH_THRESHOLD,max(0.,evidence));
 }
 

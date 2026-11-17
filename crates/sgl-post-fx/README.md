@@ -164,6 +164,12 @@ Use `TemporalStabilityFactor = 0.88` for the reference's 0.12 current feedback,
 0.036 relaxed feedback and twelve-frame recovery hold; SGL3D uses that pair.
 Changing feedback changes convergence and recovery time. Both forward and
 reversed depth are normalized to near=1/far=0 for the adaptive comparisons.
+The flag requires a four-channel motion input (such as `Rgba16Float`;
+`execute` panics on fewer): XY the NDC motion, Z the surface's
+previous minus current camera-space Z, its own and the camera's motion
+included, and W that depth motion's validity (above 0 valid, 0 none). The depth
+test accepts history matching either the camera reprojection or the surface's
+own previous depth, so surfaces moving in depth keep their history.
 The closest-motion history uses RGBA16F rather than RG16F under this flag,
 adding eight bytes per pixel across its two buffers; B transports recovery
 hold, W is zero, and input motion's extra channels are never copied into it.
@@ -175,9 +181,7 @@ can have zero current and previous motion and still require this global hold.
 SGL3D supplies the signal from scene instance changes, conservatively including
 old visible objects whose new positions are culled. Procedural material motion
 and depth confidence additionally transport local recovery, so one animated
-material does not prevent stabilization everywhere. Depth
-restoration is conservative for object motion because the caller supplies
-total motion rather than Filament's object-only residual. This is partial
+material does not prevent stabilization everywhere. This is partial
 rectification, not disabled history rejection. It cannot reconstruct geometry
 never sampled across the jitter sequence. See [provenance](PROVENANCE.md).
 

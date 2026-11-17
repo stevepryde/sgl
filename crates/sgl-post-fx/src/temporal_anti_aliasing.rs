@@ -33,6 +33,9 @@ impl FeatureFlags {
     /// Feedback is `1 - TemporalStabilityFactor`; SGL3D uses 0.12, paired
     /// with the reference's twelve-frame hold. Retains an RGBA16F motion
     /// history instead of RG16F; default/legacy flags are unchanged.
+    /// Requires depth motion in the motion vectors' Z and W
+    /// ([`RenderAttributes::motion_vectors_srv`]), so the depth test follows
+    /// surfaces that move in depth.
     pub const MOTION_ADAPTIVE_HISTORY: Self = Self(1 << 3);
 
     pub fn contains(self, flag: Self) -> bool {
@@ -65,7 +68,13 @@ pub struct RenderAttributes<'a, 'p> {
     /// found (PROVENANCE.md DFX-13).
     pub depth_buffer_srv: &'a wgpu::TextureView,
     /// Shader resource view of the motion vectors, in a filterable float
-    /// format such as `Rg16Float`.
+    /// format: NDC motion (current − previous) in XY. Under
+    /// [`FeatureFlags::MOTION_ADAPTIVE_HISTORY`] it must have four channels
+    /// (such as `Rgba16Float`): Z holds the surface's previous minus
+    /// current camera-space Z (the cameras' view units, positive in front),
+    /// motion of the surface and the camera included, and W its validity
+    /// (above 0 valid, 0 where there is none, such as the sky); `execute`
+    /// panics on fewer channels. Other flags read XY only.
     pub motion_vectors_srv: &'a wgpu::TextureView,
     /// TAA settings.
     pub taa_attribs: &'a TemporalAntiAliasingAttribs,
@@ -375,6 +384,12 @@ impl TemporalAntiAliasing {
     }
 
     /// Executes the effect.
+    ///
+    /// # Panics
+    ///
+    /// If `prepare_resources` was not called for the accumulation buffer, or
+    /// if `MOTION_ADAPTIVE_HISTORY` is set and the motion vectors have fewer
+    /// than four channels.
     pub fn execute(
         &mut self,
         render_attribs: &mut RenderAttributes<'_, '_>,
@@ -389,6 +404,15 @@ impl TemporalAntiAliasing {
             );
         };
         let feature_flags = acc_buffer.feature_flags;
+        // A two-channel view reads as Z = 0, W = 1 in WGSL: valid, unmoving
+        // depth, which would be wrong rather than absent.
+        let motion_format = render_attribs.motion_vectors_srv.texture().format();
+        assert!(
+            !feature_flags.contains(FeatureFlags::MOTION_ADAPTIVE_HISTORY)
+                || motion_format.components() == 4,
+            "MOTION_ADAPTIVE_HISTORY reads depth motion from the motion vectors' Z and W, \
+             which {motion_format:?} lacks"
+        );
         self.prepare_shaders_and_pso(
             render_attribs.device,
             feature_flags,
