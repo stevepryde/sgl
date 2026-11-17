@@ -23,7 +23,11 @@
 //! internal errors fail it, and so does a ground pixel in the box's shadow
 //! that is not clearly darker than one the sun reaches. That expectation comes
 //! from the geometry alone: the box stands between the sun and the shadowed
-//! point, and nothing stands between it and the lit one.
+//! point, and nothing stands between it and the lit one. Frames are read
+//! back through the library's `diagnostics::read_async`. Before the scene,
+//! it captures a specular probe inside an enclosure of uniform emission,
+//! after dropping one capture part-way, and every texel must hold the
+//! emission (`probe_capture`).
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -772,48 +776,102 @@ fn luma(pixels: &[u8], at: [u32; 2]) -> f32 {
     sum / 9.
 }
 
-async fn read_pixels(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    texture: &wgpu::Texture,
-) -> Result<Vec<u8>, String> {
-    let stride = (texture.width() * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("smoke readback"),
-        size: u64::from(stride) * u64::from(texture.height()),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    encoder.copy_texture_to_buffer(
-        texture.as_image_copy(),
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(stride),
-                rows_per_image: Some(texture.height()),
-            },
-        },
-        texture.size(),
-    );
-    queue.submit([encoder.finish()]);
-    // The browser maps the buffer once control returns to it.
-    let (send, receive) = futures::channel::oneshot::channel();
-    buffer
-        .slice(..)
-        .map_async(wgpu::MapMode::Read, move |result| {
-            let _ = send.send(result);
-        });
-    receive
+/// Radiance every inner face of the probe enclosure emits: powers of two,
+/// which binary16 holds exactly.
+const ENCLOSURE_EMISSION: [f32; 3] = [1., 0.5, 0.25];
+
+/// Captures a specular probe at the centre of a closed box whose inner
+/// faces emit `ENCLOSURE_EMISSION` and reflect nothing: they are black, with
+/// no light, environment or probe to reflect. Every direction from the
+/// centre meets an inner face, so the radiance about it is the emission
+/// whichever way it looks, and every texel of every level must hold it: the
+/// face average, the mip chain and the GGX prefilter each average copies of
+/// it with weights that sum to one, whose float32 error (a few parts in
+/// 2^24) is far below half a binary16 step (a part in 2^11), so rounding to
+/// the capture's Rgba16Float gives the emission exactly. First a capture is
+/// dropped at its readback, its only suspension, which a browser cannot
+/// pass before control returns to the page; the renderer must capture
+/// again after it.
+async fn probe_capture(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, String> {
+    const FACE_SIZE: u32 = 64;
+    let mut wall = material([0., 0., 0., 1.], 0., 1.);
+    wall.emissive = ENCLOSURE_EMISSION;
+    wall.double_sided = true;
+    let mut scene = Scene::new(device, queue);
+    let enclosure = Asset {
+        meshes: vec![cuboid(Vec3::ZERO, Vec3::splat(4.), 0)],
+        materials: vec![wall],
+        images: Vec::new(),
+        rig: Default::default(),
+        ignored: Vec::new(),
+    };
+    let model = scene
+        .add_asset(device, queue, enclosure)
+        .map_err(|e| format!("add_asset: {e}"))?
+        .model;
+    scene
+        .add_instance(device, queue, InstanceState::new(model), Mobility::Static)
+        .map_err(|e| format!("add_instance: {e}"))?;
+    let settings = Settings::default();
+    let mut renderer = Renderer::new(
+        device,
+        queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        SIZE,
+        1.,
+        &settings,
+    )
+    .map_err(|e| format!("Renderer::new: {e}"))?;
+    let input = FrameInput::new(camera());
+    {
+        let mut abandoned = std::pin::pin!(renderer.capture_specular_probe_async(
+            device,
+            queue,
+            &mut scene,
+            &input,
+            &settings,
+            Vec3::ZERO,
+            FACE_SIZE,
+        ));
+        let poll = abandoned
+            .as_mut()
+            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()));
+        if poll.is_ready() {
+            return Err("a capture finished before control returned to the page".into());
+        }
+    }
+    let radiance = renderer
+        .capture_specular_probe_async(
+            device,
+            queue,
+            &mut scene,
+            &input,
+            &settings,
+            Vec3::ZERO,
+            FACE_SIZE,
+        )
         .await
-        .map_err(|_| "readback dropped".to_string())?
-        .map_err(|e| format!("readback: {e}"))?;
-    let mapped = buffer.slice(..).get_mapped_range().unwrap();
-    Ok(mapped
-        .chunks_exact(stride as usize)
-        .flat_map(|row| row[..texture.width() as usize * 4].iter().copied())
-        .collect())
+        .map_err(|e| format!("capture after an abandoned one: {e}"))?;
+    let SpecularProbeTexels::Rgba16Float(texels) = radiance.texels else {
+        return Err("a capture returned texels other than RGBA16F".into());
+    };
+    let texel_count = texels.len() / 4;
+    if texel_count < 6 * (FACE_SIZE * FACE_SIZE) as usize {
+        return Err(format!("the capture holds only {texel_count} texels"));
+    }
+    for (index, texel) in texels.chunks_exact(4).enumerate() {
+        let rgb: [f32; 3] =
+            std::array::from_fn(|c| sgl_3d::diagnostics::half(&texel[c].to_le_bytes()));
+        if rgb != ENCLOSURE_EMISSION {
+            return Err(format!(
+                "texel {index} of {texel_count} holds {rgb:?}, not the enclosure's emission \
+                 {ENCLOSURE_EMISSION:?}"
+            ));
+        }
+    }
+    Ok(format!(
+        "{texel_count} texels at {FACE_SIZE} a face equal the enclosure's emission"
+    ))
 }
 
 /// What one configuration rendered.
@@ -980,7 +1038,7 @@ async fn render(
         renderer.finish_frame(scene);
     }
     Ok(Rendered {
-        pixels: read_pixels(device, queue, &output).await?,
+        pixels: sgl_3d::diagnostics::read_async(device, queue, &output, 4).await,
         antialiasing: renderer.antialiasing_in_effect(settings),
         fsr_error: renderer.fsr_error().map(str::to_owned),
         volume_paths: renderer.volume_paths_in_effect(settings),
@@ -1166,7 +1224,7 @@ async fn color_outputs(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(),
                 }
                 queue.submit([encoder.finish()]);
                 renderer.finish_frame(&mut scene);
-                let pixels = read_pixels(device, queue, &sink).await?;
+                let pixels = sgl_3d::diagnostics::read_async(device, queue, &sink, 4).await;
                 for pixel in pixels.chunks_exact(4) {
                     for channel in 0..3 {
                         let linear: f64 = expected[channel];
@@ -1329,7 +1387,7 @@ async fn compressed_materials(
                 );
                 queue.submit([encoder.finish()]);
                 renderer.finish_frame(&mut scene);
-                outputs.push(read_pixels(device, queue, &target).await?);
+                outputs.push(sgl_3d::diagnostics::read_async(device, queue, &target, 4).await);
             }
             let reference = &outputs[1];
             let center = (16 * 32 + 16) * 4;
@@ -1408,6 +1466,19 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         report,
         "ok browser compressed material formats: {compressed}"
     );
+    let probe = probe_capture(&device, &queue).await;
+    let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
+    match probe {
+        Ok(_) if !errors.is_empty() => {
+            let _ = writeln!(report, "FAIL specular probe capture: uncaptured {errors:?}");
+        }
+        Ok(detail) => {
+            let _ = writeln!(report, "ok specular probe capture: {detail}");
+        }
+        Err(error) => {
+            let _ = writeln!(report, "FAIL specular probe capture: {error}");
+        }
+    }
     let mut timing = GpuTiming::new(&device, &queue);
     let mut scene = Scene::new(&device, &queue);
     let content = add_content(&device, &queue, &mut scene)?;

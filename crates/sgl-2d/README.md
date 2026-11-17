@@ -19,8 +19,9 @@ For resource lifetimes, color spaces, and presentation behavior, read the
 [2D rendering contract](../../specs/rendering.md).
 `Context` caps initial and resized swapchain dimensions per axis to the device's
 maximum 2D texture dimension; `Context::size` reports the configured dimensions.
-`Renderer::read_scene` and `capture_scene` block for their readback and are native-only; a browser build
-does not have them. Shadow geometry shares one buffer across shadowed
+`Renderer::read_scene_async` reads the scene back on either platform; its
+blocking form `read_scene` and `capture_scene` (a PNG at a path) are
+native-only. Shadow geometry shares one buffer across shadowed
 lights, bounded by the device's `max_buffer_size` and u32 draw range. When
 an entire occluder edge does not fit, it and subsequent edges are dropped;
 lights with no retained shadow geometry render unshadowed.

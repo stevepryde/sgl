@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d::diagnostics::read_async`, `sgl-3d::Renderer::capture_specular_probe_async`
+  and `sgl-2d::canvas::Renderer::read_scene_async` (with `CaptureError`, now
+  on every target) await their readback, so they run in the browser too;
+  `diagnostics::read`, `capture_specular_probe` and `read_scene` block on
+  them natively, as before. In a browser build, where it always failed,
+  `capture_specular_probe` is gone: await `capture_specular_probe_async`.
+  No other game-code changes are needed.
 - `sgl-3d` ray-traced shadows (`Settings::ray_traced_shadows`): a feature
   one render pixel wide at an odd column or row now takes its own shadow,
   where a shadowed one against the sky read lit and one in front of a

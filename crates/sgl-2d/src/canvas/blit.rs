@@ -181,8 +181,8 @@ fn scene_targets(
     }
 }
 
-/// Scene-capture failures ([`Renderer::capture_scene`]).
-#[cfg(not(target_arch = "wasm32"))]
+/// Scene-readback failures ([`Renderer::read_scene_async`],
+/// [`Renderer::capture_scene`]).
 #[derive(Debug)]
 pub enum CaptureError {
     /// The GPU readback failed (map/poll error).
@@ -191,7 +191,6 @@ pub enum CaptureError {
     Encode(image::ImageError),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl std::fmt::Display for CaptureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -201,7 +200,6 @@ impl std::fmt::Display for CaptureError {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl std::error::Error for CaptureError {}
 
 /// The lighting composite: `albedo × (canvas_modulate + light_accum)` over a
@@ -1066,10 +1064,10 @@ impl Renderer {
     /// Read the composited scene target (lit scene + UI) back as tightly
     /// packed, fully opaque RGBA8 rows — the sRGB-encoded bytes the
     /// swapchain shows, in either lighting space. Reflects the last
-    /// submitted frame; blocks until the GPU copy completes, so it is
-    /// native-only: a browser cannot block on a WebGPU map.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn read_scene(&self, gpu: &Gpu) -> Result<Vec<u8>, CaptureError> {
+    /// submitted frame. Natively it waits on the device before it awaits, so
+    /// any executor finishes it; in a browser the page maps the copy once
+    /// control returns to it.
+    pub async fn read_scene_async(&self, gpu: &Gpu) -> Result<Vec<u8>, CaptureError> {
         let (w, h) = (self.logical_width, self.logical_height);
         let unpadded = 4 * w;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT; // 256
@@ -1110,17 +1108,9 @@ impl Renderer {
         );
         gpu.queue.submit(Some(encoder.finish()));
 
-        // Map + block until the copy lands.
-        let (tx, rx) = std::sync::mpsc::channel();
-        buffer.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        gpu.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| CaptureError::Readback(format!("poll: {e}")))?;
-        rx.recv()
-            .map_err(|_| CaptureError::Readback("map callback dropped".into()))?
-            .map_err(|e| CaptureError::Readback(format!("map: {e}")))?;
+        map_read(&gpu.device, &buffer)
+            .await
+            .map_err(CaptureError::Readback)?;
 
         // Strip row padding; opaque alpha.
         let data = buffer
@@ -1139,8 +1129,18 @@ impl Renderer {
         Ok(pixels)
     }
 
+    /// [`read_scene_async`](Self::read_scene_async), blocking until it
+    /// completes. Native-only: a browser cannot block on WebGPU, and awaits
+    /// the asynchronous form.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn read_scene(&self, gpu: &Gpu) -> Result<Vec<u8>, CaptureError> {
+        pollster::block_on(self.read_scene_async(gpu))
+    }
+
     /// [`read_scene`](Self::read_scene) written to `path` as a PNG (AR-9:
-    /// the visual-parity screenshot harness, AC-PR-1). Native-only.
+    /// the visual-parity screenshot harness, AC-PR-1). Native-only: a
+    /// browser has no file system, and encodes or sends
+    /// [`read_scene_async`](Self::read_scene_async)'s bytes itself.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn capture_scene(&self, gpu: &Gpu, path: &Path) -> Result<(), CaptureError> {
         let (w, h) = (self.logical_width, self.logical_height);
@@ -1169,6 +1169,47 @@ pub(crate) struct ResourceStats {
     pub instance_capacity: u64,
     pub sprite_pages: usize,
     pub shadow_capacity: u64,
+}
+
+/// Maps `buffer`, whose copy the caller has submitted, for reading.
+/// Natively it first waits on `device`, so the map has completed before it
+/// awaits and the future finishes under any executor, a bare `block_on`
+/// included. In a browser it only awaits: the page maps the buffer once
+/// control returns to it.
+async fn map_read(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Result<(), String> {
+    use std::sync::{Arc, Mutex, PoisonError};
+    use std::task::{Poll, Waker};
+    #[derive(Default)]
+    struct Map {
+        result: Option<Result<(), wgpu::BufferAsyncError>>,
+        waker: Option<Waker>,
+    }
+    let map = Arc::new(Mutex::new(Map::default()));
+    let mapped = Arc::clone(&map);
+    // Whichever thread's poll runs the callback, the result lands here.
+    buffer.map_async(wgpu::MapMode::Read, .., move |result| {
+        let mut map = mapped.lock().unwrap_or_else(PoisonError::into_inner);
+        map.result = Some(result);
+        if let Some(waker) = map.waker.take() {
+            waker.wake();
+        }
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|e| format!("poll: {e}"))?;
+    #[cfg(target_arch = "wasm32")]
+    let _ = device;
+    std::future::poll_fn(|context| {
+        let mut map = map.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(result) = map.result.take() {
+            Poll::Ready(result.map_err(|e| format!("map: {e}")))
+        } else {
+            map.waker = Some(context.waker().clone());
+            Poll::Pending
+        }
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -1427,6 +1468,31 @@ mod gpu_tests {
             renderer.resource_stats().sprite_pages,
             grown.sprite_pages + 1
         );
+    }
+
+    /// `read_scene_async` drives the device itself natively, so a single
+    /// poll with a waker that does nothing finishes it: nothing else maps
+    /// the buffer. Defect: it awaits the map without polling the device,
+    /// which stays pending here (and hangs a `block_on` forever). The bytes
+    /// are the clear colour, which gamma space stores unchanged under the
+    /// default canvas modulate of one.
+    #[test]
+    fn read_scene_async_finishes_without_an_outside_poll() {
+        use std::task::{Context, Poll, Waker};
+        let Some(gpu) = gpu() else { return };
+        let mut renderer = Renderer::headless(&gpu, 8, 4, [1.0, 0.0, 0.0], LightingSpace::Gamma);
+        renderer.render_scene(
+            &gpu,
+            &mut DrawList::new(),
+            &Camera::new(8, 4),
+            &LightFrame::default(),
+        );
+        let mut read = std::pin::pin!(renderer.read_scene_async(&gpu));
+        let Poll::Ready(pixels) = read.as_mut().poll(&mut Context::from_waker(Waker::noop()))
+        else {
+            panic!("the readback waited for someone else to poll the device");
+        };
+        assert_eq!(pixels.unwrap(), [255, 0, 0, 255].repeat(8 * 4));
     }
 
     /// #384: text that rasterizes a new glyph every frame keeps one asset and

@@ -2,7 +2,8 @@
 //! capture's opaque pass renders, one face at a time, averaged into the
 //! cube's face; a solid-angle mip chain over the six faces; and a cube with
 //! the perceptual roughness `specular_probe_levels.wgsl` assigns each mip,
-//! read back for the caller. Used only by `Renderer::capture_specular_probe`.
+//! read back for the caller. Used only by
+//! `Renderer::capture_specular_probe_async`.
 //!
 //! Each face renders at `CAPTURE_SIZE` texels a side, or at the probe's face
 //! size if that is larger, and a uniform box (the 2x2 `mip_reduce` chain)
@@ -361,10 +362,9 @@ impl ProbePrefilter {
     }
 
     /// Submits `encoder` and reads every level of the prefiltered cube
-    /// back, in `SpecularProbeRadiance` order. Blocks for the device, which
-    /// nothing else may poll meanwhile; in a browser, whose device cannot
-    /// block, it fails with `Readback`.
-    pub fn read(
+    /// back, in `SpecularProbeRadiance` order, once the GPU has copied it
+    /// (`readback::map_read`).
+    pub async fn read(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -405,20 +405,9 @@ impl ProbePrefilter {
             offset += u64::from(row) * u64::from(size) * 6;
         }
         queue.submit([encoder.finish()]);
-        let (tx, rx) = std::sync::mpsc::channel();
-        readback.map_async(wgpu::MapMode::Read, .., move |result| {
-            let _ = tx.send(result);
-        });
-        device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|e| ProbeError::Readback(e.to_string()))?;
-        // A device that waits maps the buffer within this `poll`, provided
-        // nothing else polls the device meanwhile and takes the callback.
-        // WebGPU's poll cannot wait: its mapping completes only after control
-        // returns to the browser, so the readback is unavailable there.
-        rx.try_recv()
-            .map_err(|_| ProbeError::Readback("the readback was not ready after polling".into()))?
-            .map_err(|e| ProbeError::Readback(e.to_string()))?;
+        crate::readback::map_read(device, &readback)
+            .await
+            .map_err(ProbeError::Readback)?;
         let mut rgba16 =
             Vec::with_capacity(payload_size(wgpu::TextureFormat::Rgba16Float, face_size) / 2);
         {

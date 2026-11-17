@@ -53,7 +53,6 @@ pub mod sprite;
 pub(crate) mod test_gpu;
 pub mod text;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub use blit::CaptureError;
 pub use blit::Renderer;
 pub use camera::{Camera, WorldUnits};

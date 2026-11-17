@@ -179,8 +179,9 @@ and an asynchronous readback.
   rendering resolution, choose `SceneResolution` explicitly and opt into
   `Settings::upscaling` for portable spatial enlargement to the output.
 - In the browser, pass what a native game would read: asset bytes, and the
-  frame time in `FrameInput::frame_time_ms`. Capture probes natively; the
-  capture's blocking readback fails on WebGPU.
+  frame time in `FrameInput::frame_time_ms`, and await readbacks
+  (`Renderer::capture_specular_probe_async`, `diagnostics::read_async`): a
+  browser cannot block on WebGPU.
 - Measure cost per pass with `timing::GpuTiming` before and after a change.
   The [browser baseline](../../../examples/sgl-3d/BROWSER_BASELINE.md) measures
   a repeatable textured scene and separate upload phases with the existing

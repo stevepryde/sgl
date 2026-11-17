@@ -23,9 +23,9 @@ turns `Settings::hardware_ray_tracing` on, and `Settings::ray_traced_shadows`
 for ray-traced shadows.
 In the browser, fetch asset bytes and load them with `asset::load_slice` or
 `asset::load_slice_with_options`, pass the measured frame time in
-`FrameInput::frame_time_ms`, and capture specular probes natively:
-`Renderer::capture_specular_probe` blocks for readback, which WebGPU cannot,
-so the browser loads the baked result.
+`FrameInput::frame_time_ms`, and await readbacks, which WebGPU cannot block
+on: `Renderer::capture_specular_probe_async` captures a specular probe, as
+`capture_specular_probe` does natively.
 
 Keep metres, +Y up, and a right-handed camera looking along local -Z. Adapt
 source conventions once at the game boundary. Use `sgl_3d::glam` for renderer

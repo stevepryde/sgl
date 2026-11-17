@@ -1093,9 +1093,11 @@ roughness levels, within the device's `max_buffer_size`; oversized captures
 return `ProbeError::InvalidDimensions` before rendering. Installed probes
 have no readback-buffer requirement.
 
-For offline authoring, install the static instances' fixed-light atlases, then
-`renderer.capture_specular_probe(&device, &queue, &mut scene, &input, &settings,
-center, face_size)?` renders six faces of the static capture-visible instances
+For authoring, offline or while a level loads, install the static instances'
+fixed-light atlases, then
+`renderer.capture_specular_probe_async(&device, &queue, &mut scene, &input,
+&settings, center, face_size).await?` (natively also the blocking
+`capture_specular_probe`) renders six faces of the static capture-visible instances
 and the reflection sky of `input`'s environment with `input`'s lights, and
 GGX-prefilters them with filtered importance sampling. Each face renders at
 2048 texels a side (or `face_size`, if larger) in its own submission and is
@@ -1107,7 +1109,13 @@ surfaces without baked lighting), with their static casters' shadows from
 the local-light atlas, and excludes moving instances, effects and
 atmospheric post; the camera is unused. A capture runs outside a frame,
 after `finish_frame` and before the next `render`: it shares the renderer's
-shadow face views, cascade layers and local-light atlas with the frame.
+shadow face views, cascade layers and local-light atlas with the frame. It holds the renderer and the scene until it resolves, so
+the game draws no frame meanwhile; in the browser it awaits WebGPU's map of
+its readback and the page keeps running. That readback is its only
+suspension: a capture dropped there has changed what a finished one changes
+(the shadow maps at its quality, its static local-light layers, pipelines
+specialised for it), and the next frame sets them for itself as after any
+capture.
 Like the frame, it draws only materials whose visibility group
 `input.visibility_mask` selects, so a caller can leave geometry out of a
 probe as a reflection probe's culling mask does.
@@ -2784,11 +2792,10 @@ WebGL is ever added it will be a minimal fallback.
   `asset::load_slice` or `load_slice_with_options`; `asset::load` reads a file
   and fails in the browser. The frame time comes from
   `FrameInput::frame_time_ms`; SGL3D reads no clock.
-- **No blocking readback.** `Renderer::capture_specular_probe` blocks for its
-  readback, which a browser cannot, and has no awaitable form yet: in the
-  browser it fails with `ProbeError::Readback` before rendering. Capture
-  natively and load the baked probes. The `diagnostics` feature's
-  `diagnostics::read` blocks too, so a browser build does not have it.
+- **Readbacks are awaited.** A browser cannot block on WebGPU, so it awaits
+  `Renderer::capture_specular_probe_async` and the `diagnostics` feature's
+  `diagnostics::read_async`; their blocking forms, `capture_specular_probe`
+  and `diagnostics::read`, are native-only.
 
 `browser_smoke` ([`examples/sgl-3d/examples/browser_smoke.rs`](../../examples/sgl-3d/examples/browser_smoke.rs)) is the browser lane's test and a
 minimal page integration: device creation; procedural content (a textured
@@ -2798,8 +2805,10 @@ static irradiance atlas, point, spot and rectangle lights, a decal, a BC6H
 specular probe, a dynamic GI volume, an irradiance volume written by region,
 glow, heat shimmer, mist, a fog volume, a glass pane through a game's shader,
 which naga validates in the browser, and an environment);
-frames under four settings configurations; an asynchronous readback; and
-error scopes. It loads no glTF and sets no lightmap or mesh LODs.
+frames under four settings configurations, read through
+`diagnostics::read_async`; a specular probe capture, every texel of which
+must hold the uniform emission of the enclosure around it; and error
+scopes. It loads no glTF and sets no lightmap or mesh LODs.
 
 For repeatable performance measurements, run
 `bun scripts/tasks.ts measure-browser --baseline --frames 180`.
@@ -3218,7 +3227,8 @@ bloom and tone mapping),
 when the actual observed textures have equal dimensions, including FSR
 fallbacks),
 `Renderer::geometry_stats_for_model` (the camera's sections of one model's
-instances, read back with `geometry_stats`), `diagnostics::read`,
+instances, read back with `geometry_stats`), `diagnostics::read_async` (natively
+also the blocking `diagnostics::read`),
 `diagnostics::source_id`, the value the source-identity target holds for an
 instance's pixels, `diagnostics::crystal_roughness_threshold`, where
 Crystal stops tracing, `diagnostics::counters` (what `sgl-3d` itself counted on

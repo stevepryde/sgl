@@ -557,8 +557,10 @@ quarter of a texel. An emitter's width is still quantised to whole samples,
 1/2048 of a face's width: unbiased over its positions, and a strip w samples
 wide is stored, when caught, at no more than ceil(w)/w of its energy. The
 uniform box weighs a texel's samples equally where their solid angles differ
-by under 1 %. A browser cannot block for the readback, so a capture there
-fails before rendering.
+by under 1 %. The capture is asynchronous: it suspends only at its readback,
+after every face is submitted, which natively it completes by waiting on the
+device and in a browser by awaiting WebGPU's map; its blocking form is a
+native wrapper.
 
 A stage is one module with one struct. It owns its private pipelines, bind
 groups, targets and history, and offers the renderer the same few operations:

@@ -97,6 +97,7 @@ from MDN's compatibility data. [#782](https://github.com/stevepryde/sgl/issues/7
 
 - **FSR2 and FSR3.** Of the five device features the port requires, the platform lacks one: texture atomics, for which atomics in a storage buffer are an exact substitute (minimum and maximum do not depend on order). Subgroups, 16-bit normalized formats and the storage formats are in WebGPU (`subgroups`, `texture-formats-tier1`, `texture-formats-tier2`) and missing only from wgpu's browser backend; `float32-filterable` is granted. Planned in [#803](https://github.com/stevepryde/sgl/issues/803).
 - **Blocking readbacks.** `diagnostics::read`, `Renderer::capture_specular_probe` and `sgl_2d`'s `read_scene` are native-only only because they block; WebGPU maps asynchronously, and the browser example already carries its own awaiting copy of the first. Planned in [#804](https://github.com/stevepryde/sgl/issues/804).
+- **Blocking readbacks, closed** by [#804](https://github.com/stevepryde/sgl/issues/804): each is now an asynchronous function, its one implementation, with the blocking name a native wrapper (`diagnostics::read_async`, `Renderer::capture_specular_probe_async`, `read_scene_async`); the browser lane reads its frames through the first and captures a probe through the second.
 
 ### Records that were wrong
 

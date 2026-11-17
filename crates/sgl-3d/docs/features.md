@@ -9,9 +9,7 @@ Native (Metal, Vulkan, DX12) and the browser (WASM + WebGPU) run the same
 features, with these exceptions. FSR2 and FSR3 need texture atomics, which
 WebGPU lacks, and subgroup operations and storage formats that wgpu's
 browser backend does not request, so the browser runs TAA in their place
-and `Renderer::fsr_error` says why. `Renderer::capture_specular_probe` and
-`diagnostics::read` block for their readback, which a browser cannot, and
-have no awaitable form yet. Hardware ray tracing needs ray queries, which
+and `Renderer::fsr_error` says why. Hardware ray tracing needs ray queries, which
 WebGPU does not have: there, as on any device without them, rays trace the
 software BVHs. WebGL2 is not a target: SGL3D needs compute.
 [Browser](../README.md#browser-wasm--webgpu).
@@ -329,8 +327,9 @@ them through unrefracted. A probe captured on an
   `Settings::dynamic_gi` sets its rays and budget.
   [Dynamic GI](../README.md#dynamic-diffuse-gi).
 - **Baked specular probes**: parallax-corrected reflection cubes with blended
-  influence boxes (`Scene::set_baked_specular_probes`), captured offline with
-  `Renderer::capture_specular_probe`.
+  influence boxes (`Scene::set_baked_specular_probes`), captured offline or
+  while a level loads with `Renderer::capture_specular_probe_async` (natively
+  also blocking, `capture_specular_probe`).
   [Probes](../README.md#baked-specular-probes).
 
 ## Reflections
@@ -462,8 +461,8 @@ size, and record counts must fit `u32`.
   `diagnostic_draws`, `diagnostic_view_times` and
   `take_dynamic_gi_reports` (`Diagnostics::dynamic_gi`: the dynamic GI
   volume's probes, rays, BVH visits and budget stride, by frame) return what
-  they observed; `diagnostics::read` reads a target back, blocking, so
-  natively only. Configuration only:
+  they observed; `diagnostics::read_async` reads a target back (natively
+  also blocking, `diagnostics::read`). Configuration only:
   no environment variables or files. Shipping builds leave it off.
 
 ## Not provided

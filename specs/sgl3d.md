@@ -59,8 +59,8 @@ settings SGL3D has today.
    presentation. Its placement and transfer-space owner are defined by the
    [post stage](sgl3d-architecture.md#frame). What the browser cannot do is an input, not a
    platform fork: the game passes bytes rather than paths and the frame
-   time rather than a clock, and an operation that must block for readback
-   fails with an error. SGL3D must not depend on a game crate, or require
+   time rather than a clock, and a readback is awaited, with a blocking
+   wrapper natively. SGL3D must not depend on a game crate, or require
    winit, input handling, an editor, an entity system, a gameplay language or
    an application host: it stays usable on its own
    ([D-47](decisions.md)).

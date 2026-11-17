@@ -60,6 +60,7 @@ test(
       console.log(report.trimEnd());
       const lines = report.trim().split("\n");
       expect(lines.filter((line) => line.startsWith("FAIL"))).toEqual([]);
+      expect(lines.some((line) => line.startsWith("ok specular probe capture:"))).toBe(true);
       // WebGPU cannot expose the native SDK's required features. Observe the
       // renderer's effective AA and diagnostic, not the number of report lines.
       for (const method of ["FSR2", "FSR3"]) {

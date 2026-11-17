@@ -159,11 +159,11 @@ pub enum DiagnosticTarget {
     Antialiased,
 }
 
-/// `texture`'s rows, `bpp` bytes a texel, without row padding. Blocks until
-/// the GPU copy completes, so it is native-only: a browser cannot block on a
-/// WebGPU map.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn read(
+/// `texture`'s rows, `bpp` bytes a texel, without row padding, once the GPU
+/// copy of it completes. Natively it waits on the device before it awaits,
+/// so any executor finishes it; in a browser the page maps the copy once
+/// control returns to it. Panics if the copy cannot be mapped.
+pub async fn read_async(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
@@ -194,12 +194,9 @@ pub fn read(
         size,
     );
     queue.submit([encoder.finish()]);
-    let (tx, rx) = std::sync::mpsc::channel();
-    buffer.map_async(wgpu::MapMode::Read, .., move |r| {
-        tx.send(r).unwrap();
-    });
-    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    rx.recv().unwrap().unwrap();
+    if let Err(e) = crate::readback::map_read(device, &buffer).await {
+        panic!("frame evidence readback: {e}");
+    }
     let mapped = buffer.get_mapped_range(..).expect("mapped readback");
     let mut pixels = Vec::new();
     for line in mapped.chunks(row as usize) {
@@ -207,6 +204,19 @@ pub fn read(
     }
     pixels
 }
+
+/// [`read_async`], blocking until it completes. Native-only: a browser
+/// cannot block on WebGPU, and awaits `read_async`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    bpp: u32,
+) -> Vec<u8> {
+    pollster::block_on(read_async(device, queue, texture, bpp))
+}
+
 pub fn half(bytes: &[u8]) -> f32 {
     let bits = u16::from_le_bytes([bytes[0], bytes[1]]);
     let sign = if bits & 0x8000 == 0 { 1.0 } else { -1.0 };

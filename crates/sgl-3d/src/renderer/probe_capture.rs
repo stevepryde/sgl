@@ -29,15 +29,26 @@ impl Renderer {
     /// between frames, not between `render` and `finish_frame`. Those maps
     /// follow `settings.shadow_quality`: a capture at another quality than
     /// the frames reallocates the frame's maps and resets the local-light
-    /// shadow cache, so the next frame draws every shadow again. This blocks
-    /// for GPU readback; it is for asset authoring, never a runtime loop.
-    /// WebGPU cannot block, so in a browser it fails with
-    /// `ProbeError::Readback` before rendering: bake natively and load the
-    /// result. Each face renders at 2048 texels a side, or `face_size` if
-    /// larger, and is averaged to `face_size` (`stages::probe_prefilter`),
-    /// one face per submission.
+    /// shadow cache, so the next frame draws every shadow again. It is for
+    /// authoring and level building, never a per-frame loop. Each face
+    /// renders at 2048 texels a side, or `face_size` if larger, and is
+    /// averaged to `face_size` (`stages::probe_prefilter`), one face per
+    /// submission.
+    ///
+    /// It holds the renderer and `scene` until it resolves, so the game
+    /// draws no frame meanwhile; in a browser the page shows what it likes.
+    /// Natively it waits on the device before it awaits its readback, so any
+    /// executor finishes it; in a browser the page maps the readback once
+    /// control returns to it. That readback is its only suspension, and
+    /// comes after it has submitted every face and changed all it changes in
+    /// the renderer: a capture dropped there leaves what a finished one
+    /// does, the frame's shadow maps at `settings.shadow_quality`, the
+    /// capture's static local-light layers committed to the shadow cache
+    /// and the pipelines specialised for its settings, which the next frame
+    /// specialises, resizes and places again for its own as after any
+    /// capture.
     #[allow(clippy::too_many_arguments)]
-    pub fn capture_specular_probe(
+    pub async fn capture_specular_probe_async(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -47,11 +58,6 @@ impl Renderer {
         center: Vec3,
         face_size: u32,
     ) -> Result<SpecularProbeRadiance, ProbeError> {
-        if cfg!(target_arch = "wasm32") {
-            return Err(ProbeError::Readback(
-                "WebGPU cannot block for a capture's readback; capture natively".into(),
-            ));
-        }
         if !center.is_finite() {
             return Err(ProbeError::InvalidProbe("coordinates must be finite"));
         }
@@ -177,11 +183,33 @@ impl Renderer {
         // Commit the submitted capture's shadow layers before fallible readback.
         self.shadows.local.finish_capture();
         prefilter.encode(device, &mut encoder);
-        let rgba16 = prefilter.read(device, queue, encoder)?;
+        let rgba16 = prefilter.read(device, queue, encoder).await?;
         Ok(SpecularProbeRadiance {
             face_size,
             texels: SpecularProbeTexels::Rgba16Float(rgba16),
         })
+    }
+
+    /// [`Self::capture_specular_probe_async`], blocking until it completes.
+    /// Native-only: a browser cannot block on WebGPU, and awaits the
+    /// asynchronous form.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn capture_specular_probe(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &mut Scene,
+        input: &FrameInput,
+        settings: &Settings,
+        center: Vec3,
+        face_size: u32,
+    ) -> Result<SpecularProbeRadiance, ProbeError> {
+        pollster::block_on(
+            self.capture_specular_probe_async(
+                device, queue, scene, input, settings, center, face_size,
+            ),
+        )
     }
 }
 

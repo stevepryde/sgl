@@ -7,6 +7,7 @@ pub(crate) mod counters;
 pub mod diagnostics;
 mod frame_input;
 pub mod graphics_device;
+mod readback;
 mod renderer;
 mod scene;
 pub mod settings;

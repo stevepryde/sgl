@@ -61,10 +61,10 @@ Their CPU-side contracts are in [client](client.md).
    does not request another redraw or advance game state.
 7. The renderer renders and reads back its offscreen scene without a
    window: a `Gpu` (device + queue, which a windowed `Context` derefs to)
-   is enough for uploads, `render_scene`, `read_scene`, and `capture_scene`.
-   Only the swapchain blit needs a surface. `read_scene` and `capture_scene`
-   block until the GPU copy maps, which WebGPU cannot, so they and
-   `CaptureError` exist only in native builds.
+   is enough for uploads, `render_scene`, `read_scene_async`, `read_scene`
+   and `capture_scene`. Only the swapchain blit needs a surface.
+   `read_scene_async` is the readback on both platforms; `read_scene`, which
+   blocks on it, and `capture_scene`, which writes a file, are native-only.
 
 ## Acceptance
 

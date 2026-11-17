@@ -305,6 +305,145 @@ fn a_capture_at_another_shadow_quality_shadows_from_its_own_maps() {
     }
 }
 
+// A frame after a capture renders what it would have without it. The
+// capture changes the frame's shadow maps to its quality, commits its
+// static local-light layers, placed about its own centre, to the frame's
+// shadow cache, and specialises pipelines for itself. Its asynchronous form
+// suspends only at its readback, after all of that, so a capture dropped
+// there leaves the renderer as a finished one does, and this covers both.
+// Plausible defects: the next frame drawing with the capture's maps, or
+// sampling its layers as if placed for the frame's camera. The oracle is
+// the same two frames from a renderer that captured nothing between them:
+// identical inputs on one device give identical bytes.
+#[test]
+fn a_frame_after_a_capture_renders_as_without_it() {
+    use crate::asset::CpuMesh;
+    use crate::diagnostics::DiagnosticTarget;
+    use crate::settings::Settings;
+    use crate::{
+        Camera, DirectionalLight, DirectionalShadow, FrameInput, Light, LightShape, Scene,
+    };
+    use glam::Vec3;
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    // A white double-sided square facing +Y at height `y`.
+    let square = |y: f32, half: f32| {
+        let mut asset = crate::test_support::cube();
+        let mut mesh: CpuMesh = asset.meshes.remove(0);
+        // The cube's +Y face: vertices 12..16, indices 18..24.
+        mesh.vertices = mesh.vertices[12..16]
+            .iter()
+            .map(|vertex| {
+                let [x, _, z] = vertex.position;
+                crate::asset::Vertex {
+                    position: [x * 2. * half, y, z * 2. * half],
+                    ..*vertex
+                }
+            })
+            .collect();
+        mesh.indices = vec![0, 1, 2, 0, 2, 3];
+        asset.meshes = vec![mesh];
+        asset.materials[0].base = [0.8, 0.8, 0.8, 1.];
+        asset.materials[0].metallic = 0.;
+        asset.materials[0].double_sided = true;
+        asset
+    };
+    let mut input = FrameInput::new(Camera {
+        view: camera::rh::view::look_at_mat4(Vec3::new(0., 9., 9.), Vec3::ZERO, Vec3::Y),
+        projection: crate::perspective(1., 1., 0.1),
+        eye: Vec3::new(0., 9., 9.),
+    });
+    input.directional_lights[0] = Some(DirectionalLight {
+        direction: Vec3::new(0.3, -1., 0.2).normalize(),
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: Some(DirectionalShadow {
+            distance: 30.,
+            cascades: 2,
+        }),
+        ..Default::default()
+    });
+    let settings = Settings::default();
+    // The second frame's composite, after a capture at `capture` when given.
+    let mut frames = |capture: Option<ShadowQuality>| {
+        let mut scene = Scene::new(&device, &queue);
+        crate::test_support::add_static(&device, &queue, &mut scene, square(0., 6.));
+        crate::test_support::add_static(&device, &queue, &mut scene, square(3., 1.));
+        scene
+            .add_light(
+                &device,
+                &queue,
+                Light {
+                    position: Vec3::new(0., 5., 0.),
+                    shape: LightShape::Point {
+                        radius: LightShape::DEFAULT_RADIUS,
+                    },
+                    color: [1.; 3],
+                    intensity: 20.,
+                    range: 10.,
+                    casts_shadow: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+        let output = crate::view::targets::target(
+            &device,
+            "frame around the capture",
+            [64, 64],
+            crate::shading::gbuffer::COLOR,
+        );
+        for frame in 0..2 {
+            if frame == 1
+                && let Some(shadow_quality) = capture
+            {
+                renderer
+                    .capture_specular_probe(
+                        &device,
+                        &queue,
+                        &mut scene,
+                        &input,
+                        &Settings {
+                            shadow_quality,
+                            ..settings
+                        },
+                        Vec3::new(4., 1., -4.),
+                        64,
+                    )
+                    .unwrap();
+            }
+            input.elapsed_seconds = f64::from(frame) / 60.;
+            input.camera_cut = frame == 0;
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &input,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+        }
+        let composite = renderer
+            .diagnostic_target(DiagnosticTarget::Composite)
+            .unwrap()
+            .texture();
+        crate::diagnostics::read(&device, &queue, composite, 8)
+    };
+    let uncaptured = frames(None);
+    for capture in [settings.shadow_quality, ShadowQuality::Low] {
+        assert!(
+            frames(Some(capture)) == uncaptured,
+            "the frame after a capture at {capture:?} differs from the frame without it"
+        );
+    }
+}
+
 /// The floor a capture records below it, under an occluder and without it,
 /// at the shadow quality `capture`, after a frame at `frames` when given: a
 /// capture looks down at a floor that an occluder high above it, beyond its
