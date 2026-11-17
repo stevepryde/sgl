@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` SSR now treats as background only depths at or beyond the
+  camera's far plane, whatever the near plane (it lost surfaces past 909 m
+  with a 1 mm near plane, past 9.1 km with 0.1 m), and every pass after the
+  full-resolution mask takes eligibility from it rather than re-testing the
+  8-bit roughness. No game-code changes are needed.
 - `sgl-post-fx::temporal_anti_aliasing::FeatureFlags::MOTION_ADAPTIVE_HISTORY`
   adds motion-adaptive history rectification; `sgl-3d` enables it for TAA to
   stabilize static subpixel geometry while retaining motion/depth rejection.

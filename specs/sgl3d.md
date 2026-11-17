@@ -299,7 +299,11 @@ The code's structure follows the
      eligible when any sampled pixel meets the full-resolution reflection
      predicate. Its ray starts at an eligible pixel in that quad, preserving
      the preferred stochastic offset when it qualifies; rough or background
-     neighbors cannot veto a reflective surface.
+     neighbors cannot veto a reflective surface. SSR treats as background
+     only depths at or beyond the effect camera's far plane, whatever the
+     near plane. Every pass after the full-resolution mask takes a pixel's
+     reflection eligibility from that mask, which evaluated the predicate on
+     the full-precision roughness, rather than re-testing a stored copy.
    - Exception: the external `sp-fidelity` (FSR2 and FSR3) is a 1:1 port. It diverges
      from upstream only
      where wgpu or WGSL force it, to fix a known upstream bug, or by owner

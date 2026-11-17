@@ -25,6 +25,9 @@
 @group(0) @binding(6) var g_TextureVariance: texture_2d<f32>;
 // PROVENANCE.md DFX-29.
 @group(0) @binding(7) var g_TextureDenoiserTiles: texture_2d<f32>;
+// PROVENANCE.md DFX-62: the eligibility mask, also this pass's read-only
+// depth attachment.
+@group(0) @binding(8) var g_TextureMask: texture_depth_2d;
 
 fn LoadDepth(PixelCoord: vec2<i32>) -> f32
 {
@@ -85,13 +88,12 @@ fn ComputeBilateralCleanupPS(VSOut: FullScreenTriangleVSOutput) -> @location(0) 
             {
                 let Location = ClampScreenCoord(PixelCoord + vec2<i32>(x, y), vec2<i32>(g_Camera.f4ViewportSize.xy));
 
-                let SampledDepth     = LoadDepth(Location);
-                let SampledRoughness = LoadRoughness(Location);
-                let SampledRadiance  = LoadRadiance(Location);
-                let SampledNormalWS  = LoadNormalWS(Location);
-
-                if (IsReflectionSample(SampledRoughness, SampledDepth, g_SSRAttribs.RoughnessThreshold))
+                // DFX-62: a neighbor counts where the mask traced it.
+                if (IsMaskedReflectionSample(HlslLoadDepth(g_TextureMask, Location, 0)))
                 {
+                    let SampledDepth     = LoadDepth(Location);
+                    let SampledRadiance  = LoadRadiance(Location);
+                    let SampledNormalWS  = LoadNormalWS(Location);
                     let SampledCameraZ = DepthToCameraZ(SampledDepth, g_Camera.mProj);
                     let WeightS = exp(-0.5 * dot(vec2<f32>(f32(x), f32(y)), vec2<f32>(f32(x), f32(y))) / (Sigma * Sigma));
                     let WeightZ = exp(-abs(CameraZ - SampledCameraZ) / (SSR_BILATERAL_SIGMA_DEPTH * (abs(dot(vec2<f32>(f32(x), f32(y)), GradCamZ)) + 1e-6)));

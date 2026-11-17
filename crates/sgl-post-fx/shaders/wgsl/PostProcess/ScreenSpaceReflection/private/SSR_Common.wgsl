@@ -24,18 +24,29 @@
 // equivalent. The passes that carry it neither discard nor write depth, so
 // the depth test already runs before the fragment shader (PROVENANCE.md).
 
+// PROVENANCE.md DFX-61: background is the far plane's own depth, or beyond
+// it, whatever the near plane. Upstream's 1e-6 margin is reached at a view
+// depth the near plane sets (909 m with a 1 mm near plane and a 10 km far one).
 fn IsBackground(Depth: f32) -> bool
 {
 #if SSR_OPTION_INVERTED_DEPTH
-    return Depth < 1e-6;
+    return Depth <= DepthFarPlane;
 #else
-    return Depth >= (1.0 - 1e-6);
+    return Depth >= DepthFarPlane;
 #endif // SSR_OPTION_INVERTED_DEPTH
 }
 
 fn IsReflectionSample(Roughness: f32, Depth: f32, RoughnessThreshold: f32) -> bool
 {
     return Roughness <= RoughnessThreshold && !IsBackground(Depth);
+}
+
+// PROVENANCE.md DFX-62: whether the 0/1 eligibility mask
+// (ComputeStencilMaskAndExtractRoughnessPS) holds a pixel. Passes after the
+// mask take eligibility from it rather than re-testing the 8-bit roughness.
+fn IsMaskedReflectionSample(Mask: f32) -> bool
+{
+    return Mask > 0.5;
 }
 
 fn IsMirrorReflection(Roughness: f32) -> bool

@@ -29,12 +29,15 @@ licences, source revisions and the blue-noise table source it reads.
   `radiance + (1 - confidence) * environment` (DFX-17). A ray more than the
   depth-buffer thickness behind a surface passes behind it, as Godot's
   hierarchical SSR traces (DFX-18). A ray stops at the viewport edge (DFX-22)
-  and at the far plane (DFX-26), as AMD's hybrid traversal stops it. At half
+  and at the far plane (DFX-26), as AMD's hybrid traversal stops it. Only
+  depths at or beyond the far plane are background, whatever the near plane
+  (DFX-61). At half
   resolution each displaced pixel centre reads the ray of its containing
   2×2 block, so a mirror in a complete block reads its own ray (DFX-55).
   An unpaired final row or column clamps to the existing ray grid. The half-
   resolution mask keeps a block if any sampled pixel is a non-background
-  surface within `RoughnessThreshold`; the intersection keeps its preferred
+  surface within `RoughnessThreshold`, as the full-resolution mask decided it
+  (DFX-62), which bilateral cleanup also reads; the intersection keeps its preferred
   quadrant pixel if eligible, otherwise chooses another eligible pixel in
   that quad (DFX-58). Rough or background neighbors no longer suppress a
   mirror strip. A quad with no eligible surface reports a miss. At full

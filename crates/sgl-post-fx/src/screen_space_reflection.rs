@@ -685,11 +685,8 @@ impl ScreenSpaceReflection {
                         "SSR_ComputeDownsampledStencilMask.fx",
                         "ComputeDownsampledStencilMaskPS",
                     ),
-                    &[
-                        (0, Resource::ConstantBuffer),
-                        (1, Resource::Texture),
-                        (2, Resource::DepthTexture),
-                    ],
+                    // DFX-62: the full-resolution eligibility mask.
+                    &[(1, Resource::DepthTexture)],
                     &[],
                     Some(DEPTH_STENCIL_FORMAT),
                     DepthStencilStateDesc::WriteAlways,
@@ -708,6 +705,10 @@ impl ScreenSpaceReflection {
             ];
             if previous_frame {
                 layout.push((5, Resource::Texture));
+            }
+            if self.feature_flags.contains(FeatureFlags::HALF_RESOLUTION) {
+                // DFX-62: the full-resolution eligibility mask.
+                layout.push((8, Resource::DepthTexture));
             }
             let tech = self.render_technique(RenderTech::ComputeIntersection);
             if !tech.is_initialized_pso() {
@@ -841,6 +842,9 @@ impl ScreenSpaceReflection {
                         (5, Resource::Texture),
                         (6, Resource::Texture),
                         (7, Resource::Texture),
+                        // DFX-62: the eligibility mask, also the read-only
+                        // depth attachment.
+                        (8, Resource::DepthTexture),
                     ],
                     &[RADIANCE_FORMAT],
                     Some(DEPTH_STENCIL_FORMAT),
@@ -1008,20 +1012,10 @@ impl ScreenSpaceReflection {
         let group = tech.bind_group(
             render_attribs.device,
             "ComputeDownsampledStencilMask",
-            &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.constant_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: texture(&r.roughness),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: texture(render_attribs.depth_buffer_srv),
-                },
-            ],
+            &[wgpu::BindGroupEntry {
+                binding: 1,
+                resource: texture(&r.depth_stencil_mask),
+            }],
         );
         // Clear depth to 0.0. Pixels that are not discarded write 1.0.
         draw_pass(
@@ -1078,6 +1072,12 @@ impl ScreenSpaceReflection {
             entries.push(wgpu::BindGroupEntry {
                 binding: 5,
                 resource: texture(render_attribs.motion_vectors_srv),
+            });
+        }
+        if self.feature_flags.contains(FeatureFlags::HALF_RESOLUTION) {
+            entries.push(wgpu::BindGroupEntry {
+                binding: 8,
+                resource: texture(&r.depth_stencil_mask),
             });
         }
         let group = tech.bind_group(render_attribs.device, "ComputeIntersection", &entries);
@@ -1346,6 +1346,10 @@ impl ScreenSpaceReflection {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: texture(&r.denoiser_tiles),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: texture(&r.depth_stencil_mask),
                 },
             ],
         );

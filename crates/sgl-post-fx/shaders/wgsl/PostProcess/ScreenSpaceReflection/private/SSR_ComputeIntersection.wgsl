@@ -40,6 +40,11 @@ struct PSOutput
 
 @group(0) @binding(6) var g_TextureBlueNoise: texture_2d<f32>;
 @group(0) @binding(7) var g_TextureDepthHierarchy: texture_2d<f32>;
+#if SSR_OPTION_HALF_RESOLUTION
+// PROVENANCE.md DFX-62: the full-resolution eligibility mask, which chooses
+// each block's traced pixel.
+@group(0) @binding(8) var g_TextureMask: texture_depth_2d;
+#endif
 
 // PROVENANCE.md DFX-54: a mip's cells are its texels, max(1, size >> mip) a side, as Godot's
 // compute_cell_count counts them, not size / 2^mip, which addresses past the last texel.
@@ -216,15 +221,10 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
         }
         // DFX-26: stop at the far plane, where a ray can only miss, as AMD's
         // hybrid traversal does, instead of descending every mip there.
-#if SSR_OPTION_INVERTED_DEPTH
-        if (Position.z < 1e-6) {
+        // DFX-61: here a ray that a cell-boundary step carried to or past it.
+        if (IsBackground(Position.z)) {
             break;
         }
-#else
-        if (Position.z > 1.0 - 1e-6) {
-            break;
-        }
-#endif
         // DFX-54: as Godot does, per lookup; nearly every lookup changes the mip.
         let CurrentMipResolution = GetMipResolution(CurrentMip);
         let InvCurrentMipResolution = 1.0 / CurrentMipResolution;
@@ -245,6 +245,14 @@ fn HierarchicalRaymarch(Origin: vec3<f32>, Direction: vec3<f32>, ScreenSize: vec
         }
 
         let SkippedTile = AdvanceRay(Origin, Direction, InvDirection, CurrentMipPosition, InvCurrentMipResolution, FloorOffset, UVOffset, SurfaceDepth, &Position, &CurrentT);
+
+        // DFX-61: a cell that holds only background is the far plane; a ray stopped at it rather
+        // than at the cell's edge reached the plane (DFX-26). Its depth there is the far plane's
+        // up to rounding, which DFX-48 must read as background.
+        if (!SkippedTile && IsBackground(SurfaceDepth)) {
+            Position.z = DepthFarPlane;
+            break;
+        }
 
         // Don't increase mip further than this because we did not generate it
         let NextMipIsOutOfRange = SkippedTile && (CurrentMip >= TopMip);
@@ -384,7 +392,7 @@ fn SelectReflectiveHalfResolutionPixel(Block: vec2<f32>) -> vec2<f32>
     for (var Offset = 0u; Offset < SSR_HALF_RESOLUTION_QUAD_PIXELS; Offset++) {
         let Position = HalfResolutionPosition(Block, (Preferred + Offset) & 3u);
         let Pixel = vec2<i32>(Position);
-        if (IsReflectionSample(LoadRoughness(Pixel), LoadDepthHierarchy(Pixel, 0), g_SSRAttribs.RoughnessThreshold)) {
+        if (IsMaskedReflectionSample(HlslLoadDepth(g_TextureMask, Pixel, 0))) {
             return Position;
         }
     }
@@ -400,7 +408,7 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 #if SSR_OPTION_HALF_RESOLUTION
     let Position = SelectReflectiveHalfResolutionPixel(VSOut.f4PixelPos.xy);
     let Pixel = vec2<i32>(Position);
-    if (!IsReflectionSample(LoadRoughness(Pixel), LoadDepthHierarchy(Pixel, 0), g_SSRAttribs.RoughnessThreshold)) {
+    if (!IsMaskedReflectionSample(HlslLoadDepth(g_TextureMask, Pixel, 0))) {
         return Miss();
     }
 #else

@@ -4,27 +4,20 @@
 // licensed under the Apache License, Version 2.0 (vendor/DiligentFX/License.txt).
 // Modified: translated from HLSL to WGSL; see crates/sgl-post-fx/README.md.
 
-#include "ScreenSpaceReflectionStructures.fxh"
 #include "SSR_Common.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
 
-// cbuffer cbScreenSpaceReflectionAttribs
-@group(0) @binding(0) var<uniform> g_SSRAttribs: ScreenSpaceReflectionAttribs;
-
-@group(0) @binding(1) var g_TextureRoughness: texture_2d<f32>;
-// WGSL: the depth buffer binds as a depth texture.
-@group(0) @binding(2) var g_TextureDepth: texture_depth_2d;
+// PROVENANCE.md DFX-62: the full-resolution eligibility mask, in place of
+// upstream's roughness and depth.
+@group(0) @binding(1) var g_TextureMask: texture_depth_2d;
 
 fn UpdateReflectionEligibility(Location_: vec2<i32>, Dimension: vec2<i32>, Eligible: ptr<function, bool>)
 {
     // WGSL: parameters are immutable; the upstream in-parameter is copied.
     let Location = ClampScreenCoord(Location_, Dimension);
 
-    let Depth     = HlslLoadDepth(g_TextureDepth, Location, 0);
-    let Roughness = HlslLoad(g_TextureRoughness, Location, 0).x;
-
     // DFX-58: a rough or background neighbor cannot veto a reflective surface.
-    *Eligible = *Eligible || IsReflectionSample(Roughness, Depth, g_SSRAttribs.RoughnessThreshold);
+    *Eligible = *Eligible || IsMaskedReflectionSample(HlslLoadDepth(g_TextureMask, Location, 0));
 }
 
 @fragment
@@ -32,7 +25,7 @@ fn ComputeDownsampledStencilMaskPS(VSOut: FullScreenTriangleVSOutput)
 {
     let RemappedPosition = vec2<i32>(2.0 * floor(VSOut.f4PixelPos.xy));
 
-    let TextureDimension = vec2<i32>(textureDimensions(g_TextureDepth));
+    let TextureDimension = vec2<i32>(textureDimensions(g_TextureMask));
 
     var Eligible = false;
 

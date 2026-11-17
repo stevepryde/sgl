@@ -1162,11 +1162,35 @@ fn ssr_radiance_with_flags(
     color: &[u8],
     flags: FeatureFlags,
 ) -> Vec<[f32; 4]> {
+    ssr_radiance_with_material(
+        device,
+        queue,
+        camera,
+        depths,
+        normals,
+        (wgpu::TextureFormat::R8Unorm, roughness),
+        color,
+        flags,
+    )
+}
+
+/// `ssr_radiance_with_flags` with roughness texels of any `material` format.
+#[allow(clippy::too_many_arguments)]
+fn ssr_radiance_with_material(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    camera: &CameraAttribs,
+    depths: &[f32],
+    normals: &[u8],
+    material: (wgpu::TextureFormat, &[u8]),
+    color: &[u8],
+    flags: FeatureFlags,
+) -> Vec<[f32; 4]> {
     let mut encoder = device.create_command_encoder(&Default::default());
     let current_depth = depth_values(device, queue, &mut encoder, depths);
     let previous_depth = depth(device, &mut encoder, 1.0);
     let normal = texels(device, queue, wgpu::TextureFormat::Rgba16Float, normals);
-    let material = texels(device, queue, wgpu::TextureFormat::R8Unorm, roughness);
+    let material = texels(device, queue, material.0, material.1);
     let color = texels(device, queue, wgpu::TextureFormat::Rgba16Float, color);
     let motion = texture(
         device,
@@ -1501,6 +1525,98 @@ fn half_resolution_keeps_one_pixel_mirror_strips_beside_rough_surfaces() {
             assert_eq!(
                 half[rough_pixel], [0.0; 4],
                 "rough neighbor gained a reflection"
+            );
+        }
+    }
+}
+
+// PROVENANCE.md DFX-62: a texel outside the full-resolution mask cannot
+// change any other pixel's reflection through its roughness. A mirror floor
+// at roughness 0.15 reflects a wall whose colour is its texel coordinates;
+// four isolated floor texels, one at each position of a 2x2 block, are
+// 0.2005 in one run and 0.3 in the other. Both exceed the 0.2 threshold, so
+// both are outside the mask, and every other pixel's output must be
+// identical in the two runs. The defect: later passes re-tested eligibility
+// on the 8-bit roughness copy, where 0.2005 rounds to 51/255 = 0.2 and
+// passes, so bilateral cleanup averaged the texel's empty result into its
+// neighbours and the half-resolution pass could trace from it.
+#[test]
+fn texels_outside_the_mask_do_not_change_their_neighbours() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    const ODD: [(u32, u32); 4] = [(20, 36), (27, 36), (34, 37), (41, 37)];
+    for reversed in [false, true] {
+        let camera = camera(reversed, 0);
+        let [width, height] = SIZE.map(f64::from);
+        let p = camera.m_proj.map(f64::from);
+        const WALL_Z: f64 = 8.0;
+        let mut depths = Vec::new();
+        let mut normals = Vec::new();
+        let mut floor_roughness = Vec::new();
+        let mut color = Vec::new();
+        for y in 0..SIZE[1] {
+            for x in 0..SIZE[0] {
+                let ray_y = (1.0 - (f64::from(y) + 0.5) / height * 2.0) / p[5];
+                let floor_z = if ray_y < 0.0 {
+                    -1.0 / ray_y
+                } else {
+                    f64::INFINITY
+                };
+                let floor = floor_z < WALL_Z;
+                depths.push((p[10] + p[14] / floor_z.min(WALL_Z)) as f32);
+                normals.extend(half(if floor {
+                    &[0.0, 1.0, 0.0, 0.0]
+                } else {
+                    &[0.0, 0.0, -1.0, 0.0]
+                }));
+                floor_roughness.push(if floor { 0.15f32 } else { 1.0 });
+                color.extend(half(&[
+                    f64::from(x) as f32 / width as f32,
+                    f64::from(y) as f32 / height as f32,
+                    0.25,
+                    1.0,
+                ]));
+            }
+        }
+        let run = |odd: f32, flags: FeatureFlags| {
+            let mut roughness = floor_roughness.clone();
+            for (x, y) in ODD {
+                roughness[(y * SIZE[0] + x) as usize] = odd;
+            }
+            let bytes: Vec<u8> = roughness.iter().flat_map(|r| r.to_le_bytes()).collect();
+            ssr_radiance_with_material(
+                &device,
+                &queue,
+                &camera,
+                &depths,
+                &normals,
+                (wgpu::TextureFormat::R32Float, &bytes),
+                &color,
+                flags,
+            )
+        };
+        for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+            let [near_threshold, rough] = [0.2005, 0.3].map(|odd| run(odd, flags));
+            let floor_reflects = near_threshold
+                .iter()
+                .skip((36 * SIZE[0]) as usize)
+                .filter(|v| v[3] > 0.1)
+                .count();
+            assert!(
+                floor_reflects > 200,
+                "reversed {reversed} {flags:?}: only {floor_reflects} floor pixels reflect the wall"
+            );
+            let differing: Vec<_> = (0..SIZE[0] * SIZE[1])
+                .filter(|&i| !ODD.contains(&(i % SIZE[0], i / SIZE[0])))
+                .filter(|&i| near_threshold[i as usize] != rough[i as usize])
+                .map(|i| (i % SIZE[0], i / SIZE[0]))
+                .collect();
+            assert!(
+                differing.is_empty(),
+                "reversed {reversed} {flags:?}: {} pixels changed with a texel outside the mask, first {:?}",
+                differing.len(),
+                &differing[..differing.len().min(8)]
             );
         }
     }

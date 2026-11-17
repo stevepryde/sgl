@@ -444,6 +444,75 @@ fn reflects_an_emitter_where_the_mirror_puts_it() {
     }
 }
 
+/// The effect camera's far plane, 10 km, past which surfaces are background
+/// to Crystal (`ReflectionMethod::Crystal`, sgl-post-fx PROVENANCE.md DFX-33).
+const CRYSTAL_FAR_PLANE: f32 = 10_000.;
+
+// Defect: Crystal decided what is background by a fixed depth epsilon, which
+// the near plane moves: with a 1 mm near plane everything past 909 m, and
+// with the default 0.1 m everything past 9.1 km, was sky to it (DFX-61). A
+// camera 1.2 m above a mirror floor looks at an unlit panel `distance` away,
+// a fifth of that tall and wide. The oracle is the mirror geometry and the
+// documented far plane: the floor shows the panel's radiance where its
+// mirror image projects when the panel is inside the far plane, and the
+// black sky's where it is beyond.
+#[test]
+fn reflects_a_distant_emitter_up_to_the_far_plane_whatever_the_near_plane() {
+    for (near, distance) in [
+        (0.001, 2_000.),
+        (0.1, 0.98 * CRYSTAL_FAR_PLANE),
+        (0.1, 1.02 * CRYSTAL_FAR_PLANE),
+    ] {
+        let size = distance / 5.;
+        let [a, b, c, d] = [(-1., 4.), (1., 4.), (1., -1.1), (-1., -1.1)]
+            .map(|(x, z)| Vec3::new(x * distance / 2., -1., z * distance));
+        let mut glow = material([4., 4., 4., 1.], 0., 1.);
+        glow.unlit = true;
+        let [e, f, g, h] = [(-1., -1.), (1., -1.), (1., size), (-1., size)]
+            .map(|(x, y)| Vec3::new(x * size, y, -distance));
+        let world = Asset {
+            meshes: vec![
+                quad([a, b, c, d], Vec3::Y, 0),
+                quad([e, f, g, h], Vec3::Z, 1),
+            ],
+            materials: vec![smooth_metal(), glow],
+            images: Vec::new(),
+            rig: Default::default(),
+            ignored: Vec::new(),
+        };
+        let Some(mut frames) = Frames::new(world, environment(0.), true, SIZE) else {
+            return;
+        };
+        frames.settings.reflection_method = settings::ReflectionMethod::Crystal;
+        let eye = Vec3::new(0., 0.2, 0.);
+        frames.input.camera = Camera {
+            eye,
+            view: camera::rh::view::look_at_mat4(eye, Vec3::new(0., 0.2, -1.), Vec3::Y),
+            projection: perspective(1., SIZE[0] as f32 / SIZE[1] as f32, near),
+        };
+        frames.render(FRAMES, true);
+        let composite = frames.composite();
+        let centre = (size - 1.) / 2.;
+        let panel = frames.luminance_at(&composite, Vec3::new(0., centre, -distance));
+        assert!(
+            panel > 2.,
+            "near {near}, panel {distance} m away: luminance {panel}"
+        );
+        let mirror = frames.luminance_at(&composite, Vec3::new(0., -2. - centre, -distance));
+        if distance < CRYSTAL_FAR_PLANE {
+            assert!(
+                mirror > 2.,
+                "near {near}: floor reflecting the panel {distance} m away: luminance {mirror}"
+            );
+        } else {
+            assert!(
+                mirror < 0.2,
+                "near {near}: floor reflecting the panel {distance} m away, past the far plane: luminance {mirror}"
+            );
+        }
+    }
+}
+
 // Defect: the trace ends at the first surface a ray passes behind, so a thin
 // foreground object blanks every reflection seen past it (DFX-18, and Godot's
 // depth tolerance). A bar floats near the camera, across the screen between
