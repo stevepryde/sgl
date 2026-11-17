@@ -640,6 +640,69 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
     }
 }
 
+// Defect: SMAA's scene-size edge and weight targets live for the renderer's
+// life, made by `Post::new` and remade by every resize, on renderers that
+// never run SMAA (TAA, FSR). Oracle: the architecture's post item, "Post
+// holds full-size intermediate targets only for their active consumer, and
+// releases disabled-path resources rather than retaining them in caches".
+#[test]
+fn smaa_holds_scene_size_targets_only_while_it_runs() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let mut sizes = sizes([8, 6]);
+    let mut post = Post::new(
+        &device,
+        &queue,
+        Output::texture(HDR),
+        sizes,
+        false,
+        SmaaQuality::default(),
+    )
+    .unwrap();
+    let exposure = exposure_texture(&device, &queue, 1.);
+    let frame = |post: &mut Post, sizes: Sizes, smaa: Option<SmaaQuality>| {
+        let scene = crate::test_support::hdr_texture(
+            &device,
+            &queue,
+            sizes.scene,
+            &vec![[0.5, 0.25, 0.1, 1.]; (sizes.scene[0] * sizes.scene[1]) as usize],
+        );
+        let output = target(&device, "SMAA lifetime output", sizes.output, HDR);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        post.present(
+            &device,
+            &queue,
+            &mut encoder,
+            &scene,
+            Presentation {
+                bloom: false,
+                smaa,
+                capture: false,
+                spatial: false,
+            },
+            look(&exposure),
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+    };
+    // A TAA frame: SMAA does not run.
+    frame(&mut post, sizes, None);
+    assert!(!post.smaa.holds_targets(), "held without SMAA running");
+    frame(&mut post, sizes, Some(SmaaQuality::Medium));
+    assert!(post.smaa.holds_targets(), "SMAA ran without its targets");
+    frame(&mut post, sizes, None);
+    assert!(!post.smaa.holds_targets(), "kept after SMAA stopped");
+    sizes = self::sizes([10, 7]);
+    post.resize(&device, sizes, false);
+    assert!(!post.smaa.holds_targets(), "resize made unused targets");
+    frame(&mut post, sizes, None);
+    assert!(!post.smaa.holds_targets(), "held without SMAA running");
+    frame(&mut post, sizes, Some(SmaaQuality::Medium));
+    assert!(post.smaa.holds_targets(), "SMAA ran without its targets");
+}
+
 /// Binary16's +infinity, which an RGBA16F scene texel holds where radiance
 /// passed its range on a backend that rounds overflow to infinity (#464).
 /// Uploaded as its bits (0x7c00), it is stored as infinity on every backend.

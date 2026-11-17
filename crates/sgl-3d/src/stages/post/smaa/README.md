@@ -43,10 +43,12 @@ lookup tables originate in [SMAA v2.8](https://github.com/iryoku/smaa/releases/t
 The adjacent `LICENSE-three.txt` and `LICENSE-smaa.txt` retain their notices.
 
 Call `Smaa::new(device, queue, width, height, output_format, quality)`, then
-`resize` when target size changes and `set_quality` when the preset does,
-which rebuilds the detection and weight pipelines.
+`resize(width, height)` when target size changes and `set_quality` when the
+preset does, which rebuilds the detection and weight pipelines.
 `encode(device, encoder, input, output, timing)` performs
-edge detection, weight calculation, and blending. Input and output must be
+edge detection, weight calculation, and blending, making the scene-size edge
+and weight targets on its first call at a size; `release` frees them while
+SMAA does not run, as does a resize. Input and output must be
 distinct equally sized views; input must be filterable and texture-bindable.
 Input is tone-mapped, display-linear colour (RGBA16F at the scene size, before
 the resample to the output and its dither). Edge detection compares its sRGB
@@ -55,8 +57,8 @@ thresholds require; blending mixes the linear colour, as `SMAA.hlsl` asks of
 its neighbourhood blending. Godot 4's SMAA runs at the same place, on its tone
 mapper's output before scaling (`renderer_scene_render_rd.cpp`
 `_render_buffers_post_process_and_tonemap`, `smaa_blending.glsl`), as Bevy's
-runs after its tone mapping. Overlay the HUD after presentation. Resize
-retains pipelines, samplers and lookup textures.
+runs after its tone mapping. Overlay the HUD after presentation. Resize and
+release retain pipelines, samplers and lookup textures.
 
 ## Settings that isolate it
 

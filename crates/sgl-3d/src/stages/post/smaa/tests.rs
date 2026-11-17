@@ -78,7 +78,12 @@ fn color_local_contrast_matches_reference_pixel_pairs() {
                     let mut encoder = device.create_command_encoder(&Default::default());
                     smaa.encode(&device, &mut encoder, &input, &output, None);
                     queue.submit([encoder.finish()]);
-                    let edges = read(&device, &queue, smaa.edges.texture(), 8);
+                    let edges = read(
+                        &device,
+                        &queue,
+                        smaa.targets.as_ref().unwrap().edges.texture(),
+                        8,
+                    );
                     // Probe (4,4): immediate neighbours in the other axis,
                     // and right/bottom, have the centre's colour.
                     let offset = ((4 * size[0] + 4) * 8) as usize;
@@ -196,7 +201,7 @@ fn coverage(
         }
         queue.submit([encoder.finish()]);
     };
-    smaa.resize(device, size[0], size[1]);
+    smaa.resize(size[0], size[1]);
     let input = image_target(device, size);
     let output = image_target(device, size);
     let supersampled = image_target(device, [size[0] * 16, size[1] * 16]);

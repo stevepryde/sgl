@@ -13,8 +13,8 @@
 //! antialiased and tone-mapped targets, the optional spatial reconstruction
 //! target, and the output. The diagnostic output-size tone-mapped target
 //! exists only while capture is enabled. The tone-mapped
-//! scene and antialiased targets are made the first frame SMAA runs at the
-//! scene size.
+//! scene, antialiased and SMAA's edge and weight targets are made the first
+//! frame SMAA runs at the scene size; SMAA's own are released when it stops.
 //! Honours: bloom (and the frame's authored bloom parameters, and the
 //! effective sizing's bloom targets), the frame's colour grading, the
 //! antialiasing in effect and SMAA's quality, the bloom and SMAA diagnostics
@@ -130,7 +130,7 @@ impl Post {
         self.smaa_targets = None;
         self.smaa.forget_inputs();
         self.tone_map.resize(device, sizes.output);
-        self.smaa.resize(device, sizes.scene[0], sizes.scene[1]);
+        self.smaa.resize(sizes.scene[0], sizes.scene[1]);
     }
 
     /// Drops cached input groups, which may hold a replaced input's views.
@@ -222,7 +222,7 @@ impl Post {
         // Godot (`_render_buffers_post_process_and_tonemap`) and Bevy order
         // them: its thresholds are for display colour.
         if presentation.smaa.is_none() {
-            self.smaa.forget_inputs();
+            self.smaa.release();
         }
         if !presentation.spatial && self.fsr1.target_is_held() {
             self.inputs.forget();

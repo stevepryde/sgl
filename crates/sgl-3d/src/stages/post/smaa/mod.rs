@@ -3,7 +3,6 @@
 //! whose sRGB encoding edges are detected on; HUD follows output. See README.md and the adjacent upstream
 //! licenses for shader/atlas provenance.
 use crate::settings::SmaaQuality;
-use std::cell::RefCell;
 
 pub(crate) static SMAA: crate::shading::Module = crate::shading::Module {
     name: "smaa",
@@ -23,16 +22,30 @@ struct Bindings {
     input: wgpu::TextureView,
     groups: [wgpu::BindGroup; 3],
 }
-pub(crate) struct Smaa {
-    size: [u32; 2],
-    bindings: RefCell<Option<Bindings>>,
+/// What SMAA holds at the scene size, only while it runs.
+struct Targets {
     edges: wgpu::TextureView,
     weights: wgpu::TextureView,
+    inverse_size: wgpu::Buffer,
+}
+impl Targets {
+    fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
+        Self {
+            edges: target(device, size, "SMAA color edges"),
+            weights: target(device, size, "SMAA neighborhood weights"),
+            inverse_size: inverse_size(device, size),
+        }
+    }
+}
+pub(crate) struct Smaa {
+    size: [u32; 2],
+    /// From the first frame SMAA runs at `size` until it stops or resizes.
+    targets: Option<Targets>,
+    bindings: Option<Bindings>,
     area: wgpu::TextureView,
     search: wgpu::TextureView,
     linear: wgpu::Sampler,
     point: wgpu::Sampler,
-    inverse_size: wgpu::Buffer,
     shader: wgpu::ShaderModule,
     /// The preset `detect` and `calculate` run.
     quality: SmaaQuality,
@@ -212,10 +225,8 @@ impl Smaa {
         let [detect, calculate] = Self::preset_pipelines(device, &shader, quality);
         Ok(Self {
             size,
-            bindings: RefCell::new(None),
-            inverse_size: inverse_size(device, size),
-            edges: target(device, size, "SMAA color edges"),
-            weights: target(device, size, "SMAA neighborhood weights"),
+            targets: None,
+            bindings: None,
             area: lookup(device, queue, include_bytes!("area.png"), "SMAA area atlas")?,
             search: lookup(
                 device,
@@ -279,38 +290,53 @@ impl Smaa {
             [self.detect, self.calculate] = Self::preset_pipelines(device, &self.shader, quality);
             self.quality = quality;
             // Groups made for the old pipelines' layouts.
-            self.bindings.get_mut().take();
+            self.bindings = None;
         }
+    }
+
+    /// Whether SMAA holds its scene-size targets.
+    #[cfg(test)]
+    pub(crate) fn holds_targets(&self) -> bool {
+        self.targets.is_some()
     }
 
     /// Drop groups retaining a presentation target that no longer runs.
     pub(crate) fn forget_inputs(&mut self) {
-        self.bindings.get_mut().take();
+        self.bindings = None;
     }
 
-    /// Replaces only size-dependent targets; pipelines and atlases stay resident.
-    pub(crate) fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    /// Releases the scene-size targets and the groups that hold them, while
+    /// SMAA does not run; pipelines and atlases stay resident.
+    pub(crate) fn release(&mut self) {
+        self.bindings = None;
+        self.targets = None;
+    }
+
+    /// Runs at this size from now on, releasing targets of another size;
+    /// the next frame SMAA runs makes them.
+    pub(crate) fn resize(&mut self, width: u32, height: u32) {
         let size = [width.max(1), height.max(1)];
         if size != self.size {
-            self.bindings.get_mut().take();
             self.size = size;
-            self.inverse_size = inverse_size(device, size);
-            self.edges = target(device, size, "SMAA color edges");
-            self.weights = target(device, size, "SMAA neighborhood weights");
+            self.release();
         }
     }
 
     /// Source and destination must be distinct views with the current frame size.
     /// Each preset runs the same three passes with no temporal state or jitter.
     pub(crate) fn encode(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         input: &wgpu::TextureView,
         output: &wgpu::TextureView,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        let mut bindings = self.bindings.borrow_mut();
+        let size = self.size;
+        let targets = self
+            .targets
+            .get_or_insert_with(|| Targets::new(device, size));
+        let bindings = &mut self.bindings;
         if bindings
             .as_ref()
             .is_none_or(|bindings| bindings.input != *input)
@@ -323,7 +349,7 @@ impl Smaa {
                     sampler(1, &self.linear),
                     wgpu::BindGroupEntry {
                         binding: 7,
-                        resource: self.inverse_size.as_entire_binding(),
+                        resource: targets.inverse_size.as_entire_binding(),
                     },
                 ],
             });
@@ -332,13 +358,13 @@ impl Smaa {
                 layout: &self.calculate.get_bind_group_layout(0),
                 entries: &[
                     sampler(1, &self.linear),
-                    texture(2, &self.edges),
+                    texture(2, &targets.edges),
                     texture(3, &self.area),
                     texture(4, &self.search),
                     sampler(5, &self.point),
                     wgpu::BindGroupEntry {
                         binding: 7,
-                        resource: self.inverse_size.as_entire_binding(),
+                        resource: targets.inverse_size.as_entire_binding(),
                     },
                 ],
             });
@@ -348,10 +374,10 @@ impl Smaa {
                 entries: &[
                     texture(0, input),
                     sampler(1, &self.linear),
-                    texture(6, &self.weights),
+                    texture(6, &targets.weights),
                     wgpu::BindGroupEntry {
                         binding: 7,
-                        resource: self.inverse_size.as_entire_binding(),
+                        resource: targets.inverse_size.as_entire_binding(),
                     },
                 ],
             });
@@ -362,8 +388,8 @@ impl Smaa {
         }
         let [detect, calculate, blend] = &bindings.as_ref().unwrap().groups;
         for (pipeline, group, view) in [
-            (&self.detect, detect, &self.edges),
-            (&self.calculate, calculate, &self.weights),
+            (&self.detect, detect, &targets.edges),
+            (&self.calculate, calculate, &targets.weights),
             (&self.blend, blend, output),
         ] {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
