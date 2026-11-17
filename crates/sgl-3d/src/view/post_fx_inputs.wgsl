@@ -17,7 +17,9 @@ struct Inputs {
  @location(0) normal:vec4<f32>,
  // Perceptual roughness in channel 0 (pMaterialBufferSRV, IsRoughnessPerceptual).
  @location(1) material:vec4<f32>,
- // NDC current - previous position (pMotionVectorsSRV).
+ // NDC current - previous position in xy, and the G-buffer's depth motion
+ // (previous - current positive view depth in metres, the effect camera's
+ // view z) and its validity in zw (pMotionVectorsSRV).
  @location(2) motion:vec4<f32>,
 }
 // Drawn with the vertex entry fullscreen_vs.
@@ -30,10 +32,10 @@ struct Inputs {
  let lobe=gbuffer_surface_lobe(d,textureLoad(opaque_depth,p,0),textureLoad(surface_receivers,p,0),textureLoad(stable_normal,p,0),textureLoad(stable_material,p,0),textureLoad(stable_f0,p,0));
  // SGL3D motion is current - previous UV (+y down); Diligent's is NDC
  // (+y up) and the shaders scale it by F3NDC_XYZ_TO_UVD_SCALE (0.5, -0.5).
- let motion=textureLoad(stable_motion,p,0).xy;
+ let motion=textureLoad(stable_motion,p,0);
  // SGL3D's infinite reversed-Z depth is near / z; the same z under a far
  // plane F is (F d - near) / (F - near). Beyond F (the sky included) is the
  // far plane.
  let far=(planes.y*d-planes.x)/(planes.y-planes.x);
- return Inputs(max(far,0.),vec4(lobe.normal,0.),vec4(lobe.roughness),vec4(motion*vec2(2.,-2.),0.,0.));
+ return Inputs(max(far,0.),vec4(lobe.normal,0.),vec4(lobe.roughness),vec4(motion.xy*vec2(2.,-2.),motion.zw));
 }

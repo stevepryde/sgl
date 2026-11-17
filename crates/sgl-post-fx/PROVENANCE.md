@@ -104,8 +104,20 @@ SGL3D pairs it with current feedback 0.12 (history stability 0.88).
 Adaptations: caller depth may be forward, so the shader normalizes it; the
 context's current reprojection texture is already in previous-camera depth,
 while raw current depth supplies current neighborhoods/farness. Input motion
-is total unjittered camera+object motion, not Filament's object-only residual,
-so depth restoration remains conservative during object motion. Camera
+is total unjittered camera+object motion, not Filament's object-only residual.
+Filament's expected history depth reprojects the pixel as if static, so it
+skips the depth test on object-motion pixels (`taa.mat` "an object moving in
+Z would fail the depth comparison against its own history"). Here the motion
+input's Z and W carry the surface's own depth motion (previous minus current
+camera-space Z, NRD's 2.5D motion) and its validity, and history is
+consistent when it matches either the camera reprojection or, where valid,
+the current view Z plus that motion projected by the previous camera. Moving
+surfaces therefore keep the test, so a surface uncovered from behind a moving
+one is still rejected, where Filament's skip would keep it; and a surface the
+camera follows, or one moving along the view axis, keeps its history. Taking
+the smaller evidence of the two never rejects more than the camera-only test,
+which stays exact in f32 for static surfaces where half-float depth motion
+is coarser. Camera
 changes and caller-reported rigid-object motion rearm the whole view, as
 Filament does. The closest-motion history's B additionally transports local
 surface-motion/disocclusion recovery. The scene supplies rigid changes until

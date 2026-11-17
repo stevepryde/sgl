@@ -117,8 +117,8 @@ fn sequence(
             wgpu::TextureFormat::Rgba16Float,
             &half(&[color_value, color_value, color_value, 1.]),
         );
-        // Poison unused input B/A. The placeholder must initialize its own
-        // recovery history rather than copying arbitrary caller channels.
+        // Every surface here keeps its view depth (the camera pans across
+        // the plane, the occluder rests): depth motion zero and valid.
         let motion = texture(
             device,
             queue,
@@ -132,8 +132,8 @@ fn sequence(
                     })
                     / SIZE[0] as f32,
                 0.,
-                100.,
-                0.75,
+                0.,
+                1.,
             ]),
         );
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -255,6 +255,10 @@ fn taa_adaptive_camera_stop_holds_recovery_then_stabilizes() {
     }
 }
 
+// The revealed background supplies valid depth motion (zero: it rests), which
+// places its previous surface at its own depth, not the occluder's that the
+// previous depth buffer holds. Defect: trusting valid depth motion by
+// skipping the depth test, as Filament skips it on object motion.
 #[test]
 fn taa_adaptive_depth_disocclusion_rearms_zero_motion_background() {
     let Some((device, queue)) = device() else {
@@ -424,8 +428,8 @@ fn taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost() {
                                 0.
                             },
                             0.,
-                            100.,
-                            0.75,
+                            0.,
+                            1.,
                         ]);
                     }
                 }
@@ -538,6 +542,162 @@ fn taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost() {
                 }
                 prev_depth = Some(current_depth);
                 prev_camera = curr;
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DepthMotion {
+    /// The camera moves 0.5 forward a frame and the plane, which it follows,
+    /// stays 2 ahead: zero screen and depth motion, while a static point 2
+    /// ahead was 2.5 ahead of the previous camera.
+    FollowedByCamera,
+    /// A still camera, and a plane whose points move along their own view
+    /// rays between 2 and 2.5 ahead: zero screen motion, depth motion ±0.5
+    /// (exact in half precision).
+    AlongViewRays,
+}
+
+/// The centre pixel's resolved colour, the colour drawn there, and the colour
+/// drawn there the previous frame, per frame. Columns alternate between 0.8
+/// and 0.05 and swap every frame, so each 3x3 neighbourhood holds both values
+/// and the variance box does not clip a temporal blend away.
+fn depth_motion_sequence(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    reversed: bool,
+    case: DepthMotion,
+) -> Vec<(f32, f32, f32)> {
+    const FORWARD: f32 = 0.5;
+    let mut context = PostFXContext::new(device, queue, Default::default());
+    let mut taa = TemporalAntiAliasing::new(device);
+    let mut previous_camera = jittered_camera(reversed, 0, [0.; 2], 0.);
+    let mut previous_depth = None;
+    let mut previous_z = 2.;
+    let value = |x: u32, index: u32| {
+        if (x + index).is_multiple_of(2) {
+            0.8
+        } else {
+            0.05
+        }
+    };
+    let mut samples = Vec::new();
+    for index in 0u32..48 {
+        let jitter = [halton(2, index % 16 + 1), halton(3, index % 16 + 1)];
+        let mut curr = jittered_camera(reversed, index, jitter, 0.);
+        let z = match case {
+            DepthMotion::FollowedByCamera => {
+                curr = moved(curr, [0., 0., FORWARD * index as f32], 0.);
+                2.
+            }
+            DepthMotion::AlongViewRays => {
+                if index.is_multiple_of(2) {
+                    2.
+                } else {
+                    2.5
+                }
+            }
+        };
+        let colour: Vec<f32> = (0..SIZE[1])
+            .flat_map(|_| (0..SIZE[0]).flat_map(move |x| [value(x, index); 4]))
+            .collect();
+        let color = texels(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba16Float,
+            &half(&colour),
+        );
+        // Previous minus current view depth, valid.
+        let motion = texture(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba32Float,
+            bytemuck::cast_slice(&[0f32, 0., previous_z - z, 1.]),
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let current_depth = depth(device, &mut encoder, curr.m_proj[10] + curr.m_proj[14] / z);
+        context.prepare_resources(
+            device,
+            &FrameDesc {
+                index,
+                width: SIZE[0],
+                height: SIZE[1],
+                output_width: SIZE[0],
+                output_height: SIZE[1],
+            },
+            if reversed {
+                post_fx_context::FeatureFlags::REVERSED_DEPTH
+            } else {
+                post_fx_context::FeatureFlags::NONE
+            },
+        );
+        taa.prepare_resources(device, &mut encoder, &context, ADAPTIVE, 0);
+        context.execute(&mut RenderAttributes {
+            device,
+            queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &current_depth,
+            prev_depth_buffer_srv: previous_depth.as_ref().unwrap_or(&current_depth),
+            curr_camera: Some(&curr),
+            prev_camera: Some(&previous_camera),
+            camera_attribs_cb: None,
+            pass_timestamps: None,
+        });
+        taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+            device,
+            queue,
+            device_context: &mut encoder,
+            post_fx_context: &mut context,
+            color_buffer_srv: &color,
+            depth_buffer_srv: &current_depth,
+            motion_vectors_srv: &motion,
+            taa_attribs: &TemporalAntiAliasingAttribs {
+                temporal_stability_factor: 0.88,
+                ..Default::default()
+            },
+            accumulation_buffer_idx: 0,
+            pass_timestamps: None,
+        });
+        queue.submit([encoder.finish()]);
+        let frame = read_rgba16f(device, queue, taa.get_accumulated_frame_srv(false, 0));
+        let (x, y) = (SIZE[0] / 2, SIZE[1] / 2);
+        samples.push((
+            frame[(y * SIZE[0] + x) as usize][0],
+            value(x, index),
+            value(x, index + 1),
+        ));
+        previous_camera = curr;
+        previous_depth = Some(current_depth);
+        previous_z = z;
+    }
+    samples
+}
+
+/// Defect: the adaptive depth test expecting the previous depth a static
+/// point would have had, so a surface whose view depth changed differently
+/// (one the camera follows, one moving along the view axis) is rejected as
+/// disoccluded every frame and resolves to the current frame alone. Oracle:
+/// TAA blends in x/(1+x) space, and with history weight h a two-valued
+/// alternation settles h/(1+h) of the way to the other value: 0.468 at the
+/// moving camera's full-strength 0.88, 0.49 at the still camera's relaxed
+/// 0.964. A rejected history leaves 0.
+#[test]
+fn taa_adaptive_keeps_history_of_surfaces_moving_in_depth() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let sdr = |v: f32| v / (1. + v);
+    for case in [DepthMotion::FollowedByCamera, DepthMotion::AlongViewRays] {
+        for reversed in [false, true] {
+            let frames = depth_motion_sequence(&device, &queue, reversed, case);
+            for (index, &(output, current, other)) in frames.iter().enumerate().skip(24) {
+                let share = (sdr(output) - sdr(current)) / (sdr(other) - sdr(current));
+                assert!(
+                    (0.4..0.6).contains(&share),
+                    "{case:?}, reversed={reversed}, frame {index}: output {output} is {share} of \
+                     the way from the current {current} to the previous {other}"
+                );
             }
         }
     }

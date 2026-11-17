@@ -78,7 +78,9 @@ const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 // Full precision, so DiligentFX's traced test (roughness <= threshold) sees
 // the roughness SGL3D's composition tests.
 const MATERIAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+/// Screen motion in RG and the G-buffer's depth motion in BA, which TAA's
+/// `MOTION_ADAPTIVE_HISTORY` reads; SSR reads RG.
+const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// Crystal's DiligentFX attributes, the same at every
 /// `Settings::screen_space_reflections` level: DiligentFX's

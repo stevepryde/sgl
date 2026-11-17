@@ -22,7 +22,9 @@ docs and specs the entry links.
   changes are needed for SGL3D. Direct postFX callers replace the unused
   `TemporalAntiAliasingAttribs::padding0` with `rigid_object_motion` (default
   zero), setting it when rigid geometry moves, appears or departs; the struct
-  remains 16 bytes.
+  remains 16 bytes. Under this flag `RenderAttributes::motion_vectors_srv`
+  must have four channels (`Rgba16Float`): Z the surface's previous minus
+  current camera-space Z and W its validity (1 valid, 0 none).
 
 ## 0.6.0 — 2026-11-12
 
