@@ -34,9 +34,15 @@ this is the spirit they share.
   leave each. No capability is excluded in advance (D-47), and a piece need
   only be reusable in principle (D-49): nothing in it belongs to one game. It
   does not have to be used by several games first, or by any yet.
-- **Built for AI coding agents, as consumers and as authors.** Ownership, inputs,
-  outputs and lifetime are explicit at every public boundary. Guides are short
-  and navigable, and examples run without the games SGL came from.
+- **Written, maintained and used entirely by AI agents.** The owner steers and
+  writes none of it; the same goes for the games that use SGL and their
+  assets (D-50). So nothing may assume a person: no step a human performs, no
+  knowledge outside the repository, no check that is only someone looking, no
+  content that needs an interactive tool to author. Ownership, inputs,
+  outputs and lifetime are explicit at every public boundary. Guides are
+  short and navigable, and examples run without the games SGL came from.
+  Design for what serves an agent: explicit contracts, one owner per fact,
+  names that grep, verification it can run and read.
 - **One good implementation.** Extract from a working game where one has it;
   where an engine with a compatible licence already solved a problem, port it,
   then improve it with a measurement and a recorded decision. A better
@@ -109,7 +115,9 @@ each is cheap to settle on paper and expensive to reverse in code.
    (AR-7), typed (AR-5). Classify each control by S3D-6: a `Settings` field for a
    mode or level, `FrameInput` for per-frame look, a scene type for content.
    Give it a default so a game need not set it. If you are about to expose how
-   rather than what or how much, stop.
+   rather than what or how much, stop. Whatever a game authors for it is
+   something an agent can write or generate: text, code or a command's
+   output, never the product of an interactive tool (D-50).
 5. **What it follows.** Name the engine implementation it ports or the practice
    it follows, its licence and revision (RD-2), and any deliberate departure with
    how it will be measured against the ported baseline.
@@ -126,7 +134,8 @@ each is cheap to settle on paper and expensive to reverse in code.
    one's oracle, at the lowest boundary that shows the behaviour and at the
    whole frame where only the frame shows it, by whatever means
    `specs/testing.md` provides for that, and the per-pass GPU time to report.
-   No test that restates the implementation.
+   No test that restates the implementation, and nothing that only a person
+   looking could confirm.
 9. **What must be updated with it.** The spec amended first where the change does
    not fit it (AR-9), the package README, the feature and settings guides, the
    affected examples, `CHANGELOG.md`, and licences and notices for ported code.
@@ -190,6 +199,7 @@ not the test: a grep finds candidates, reading the code decides.
 | A change that reached `main` without its changelog entry, spec update or notices | `AGENTS.md` | commits since the last pass |
 | Tests that cannot fail; a feature nothing tests in motion | `specs/testing.md` | test oracles; each feature in the feature guide against the tests that render it |
 | A port without its header, licence or registered upstream | RD-2 | ported files, `licenses/upstreams.json` |
+| A step, a check or a piece of knowledge that needs a person | D-50 | workflows that say "manually", "by eye", "open in"; verification that is only a capture to look at; rules that exist only in an agent's memory or a past conversation |
 | A feature left native-only that the web platform could run | D-48 | `target_arch` gates, `graphics_device` feature requests, the effective configuration's fallbacks, the feature guide's platform exceptions |
 
 For a large scope, hand independent sweeps to read-only agents, each with one
