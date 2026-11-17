@@ -97,9 +97,11 @@ compatibility shims solely to avoid updating consumers.
   3D scene. See `specs/sgl3d.md` and
   `docs/3d-development.md`. SGL is whatever games can reuse, and no kind of
   capability is excluded in advance (D-47): an entity system, physics or a
-  scripting runtime may join as a library a game can take or leave, once a
-  game needs it and the architect skill has planned it. None exists yet. Do
-  not add a layer process or compatibility-lock machinery.
+  scripting runtime may join as a library a game can take or leave, once the
+  architect skill has planned it. A piece need only be reusable in
+  principle; it does not have to be used by several games first (D-49). None
+  of those three exists yet. Do not add a layer process or compatibility-lock
+  machinery.
 - Baked and generated assets (lightmaps, probe captures, other bakes) are
   content, refreshed only by explicitly running their export commands when their
   inputs or format change. Never add fingerprints, source or lockfile hashing,
