@@ -12,8 +12,7 @@
 //! tests: `cargo test -p sgl-3d-tests --test scenario_fsr_upscaling
 //! at_rest::fsr3_balanced`. Every case but U6 and U7 checks case 12's bound
 //! over the frames it read (`Failures::bounded`), except TAA's under motion,
-//! which #792 adds back, and FSR2's at Ultra Performance while turning,
-//! which #809 adds back. #810 parks FSR3's strip bar at the upscaling
+//! which #792 adds back. #810 parks FSR3's strip bar at the upscaling
 //! qualities in U1 and U8. Case U1 dumps its frames and metrics with
 //! `SGL_SCENARIO_DUMP`.
 //!
@@ -894,10 +893,8 @@ fn turning(method: Antialiasing, quality: FsrQuality) {
             )
         });
     }
-    // #792 adds TAA's bound back, #809 FSR2's at Ultra Performance.
-    if method != Antialiasing::Taa
-        && (method, quality) != (Antialiasing::Fsr2, FsrQuality::UltraPerformance)
-    {
+    // #792 adds TAA's bound back.
+    if method != Antialiasing::Taa {
         failures.bounded(&rig, format!("{name} turning"));
     }
     failures.assert();

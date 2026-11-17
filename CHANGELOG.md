@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` FSR2 at the frame's edges: no more negative values in the column
+  the camera turns towards at Ultra Performance, and no dip below the scene
+  beside a brighter surface at the edge. It takes `sp-fidelity` and
+  `sp-fidelity-wgpu` 0.3.2, which correct two further faults of AMD's FSR2
+  there. FSR3 is unchanged. No game-code changes are needed.
 - `sgl-3d` world-space reflections (`Settings::world_space_reflections`): a
   reflection beside an untraced surface or a blended receiver no longer
   fades toward its fallback along a line one or two pixels wide (up to 75%

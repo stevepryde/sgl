@@ -2431,15 +2431,15 @@ dependencies = [
 
 [[package]]
 name = "sp-fidelity"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a73530ded1abe52662e70e16886e7c0aef437d73c8977a5eec71a3c83db88e1"
+checksum = "d916c7e8444a0299c5b503d134965490d94af35b1bd2ed1ab71574d4de6ad673"
 
 [[package]]
 name = "sp-fidelity-wgpu"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "303bf0aa264a2d0547e2fcc572c96901c108e24dfc80928eb20b853aeff77219"
+checksum = "4d9fc4216b67d97acc14d283e26fbc1cd2ee456b8c133d21be475e278e6ce4d6"
 dependencies = [
  "bytemuck",
  "naga",
