@@ -4,6 +4,7 @@
 use super::geometry::{FRAME_RATE, Pose, View};
 use super::image::Image;
 use sgl_3d::asset::{Asset, CpuMesh, Material, Vertex};
+use sgl_3d::deformation::{MorphDelta, MorphTarget};
 use sgl_3d::diagnostics::{self, DiagnosticTarget};
 use sgl_3d::glam::{Mat4, Vec2, Vec3};
 use sgl_3d::settings::{self, Settings};
@@ -471,6 +472,42 @@ impl Rig {
         self.scene
             .add_instance(device, queue, state, Mobility::Moving)
             .expect("a fixture instance")
+    }
+
+    /// Adds `shape` at `pose` as a moving instance in visibility group 0
+    /// whose every vertex one morph target, of morph weight 0, displaces by
+    /// `by` in its own space: `Scene::set_instance_deformation` with a
+    /// weight moves it that share of the way with no pose change, no game
+    /// shader and no mask, as a game's morph or skin animation does. It is
+    /// not one of the rig's shapes: `instances` and `replace_scene` leave
+    /// it out, while the radiance range takes it in.
+    pub fn add_morphing(&mut self, shape: &Shape, pose: Pose, by: Vec3) -> InstanceId {
+        for quad in &shape.quads {
+            self.admit(quad.radiance);
+        }
+        let mut asset = shape.asset(0);
+        for mesh in &mut asset.meshes {
+            let delta = MorphDelta {
+                position: by.to_array(),
+                ..MorphDelta::default()
+            };
+            mesh.deformation.morph_targets = vec![MorphTarget {
+                weight: 0,
+                deltas: vec![delta; mesh.vertices.len()],
+            }];
+        }
+        let Gpu { device, queue } = &self.gpu;
+        let ids = self
+            .scene
+            .add_asset(device, queue, asset)
+            .expect("a morphing fixture model");
+        let state = InstanceState {
+            pose: self.render_pose(pose),
+            ..InstanceState::new(ids.model)
+        };
+        self.scene
+            .add_instance(device, queue, state, Mobility::Moving)
+            .expect("a morphing fixture instance")
     }
 
     /// Widens the radiance range the bound oracle holds the frames to by

@@ -14,6 +14,23 @@
 //! device lacks its features. Each test renders its own oracles. A case
 //! that runs TAA alone is one test, or one per variant.
 //!
+//! Each rule of TAA's motion-adaptive resolve (Frame item 10) has a test
+//! that fails with that rule alone removed (#816): the camera test
+//! (`a_camera_step_rearms_the_whole_view`), the hold carried over its
+//! frames (`the_hold_lasts_its_frames_after_a_camera_step`), the rigid
+//! signal (case 9 and its material edits), the visibility mask (case 9's
+//! masking), the pixel's own motion (case 13), depth disocclusion
+//! (`depth_disocclusion_rejects_beyond_the_reach`), the sky a surface
+//! leaves (`the_sky_a_far_surface_leaves_is_a_disocclusion`), the
+//! responsive masks' strength and full hold (cases 14 and 15 and case 9's
+//! dissolves), and the motion reach
+//! (`a_surface_its_morph_target_moves_from_rest_beyond_the_search`, and
+//! case 4 beside motion for its threshold). The sky a surface arrives over
+//! has none: whatever covers a neighbourhood that held only sky moved
+//! there, so its own motion re-arms the hold; or it appeared, which sets
+//! the rigid signal; or a shader drew it, which marks the masks. No scene
+//! the public API builds depends on that rule alone.
+//!
 //! The fixtures' truth assumes `rig::fixture_settings`: unlit cards, no
 //! bloom, fog, ambient occlusion, reflections or motion blur, and a fixed
 //! exposure, so what antialiasing receives is exactly their radiance.
@@ -900,23 +917,35 @@ impl Over {
     }
 }
 
+/// What moves the card of case 13 and #802's scenarios with no pose change.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Mover {
+    /// Its material's vertex function (`DEPARTING_SHADER`). A shaded
+    /// material also marks the transparency and composition mask wherever
+    /// it is drawn (case 9's dissolves).
+    Shader,
+    /// A morph target its weight moves (`Rig::add_morphing`): no shader and
+    /// no mask, so only motion re-arms rejection.
+    Morph,
+}
+
 /// Case 13 and #802's scenarios: a card at `DEPTH`, `scale` times as far,
-/// before `wall` or the sky (named `behind`), its material's vertex function
-/// starts moving from rest at `rate` pixels a frame at frame `start_frame`,
-/// after the hold has expired, rendered with `method` to `frames`, its
-/// failures added to `failures`. The oracle is analytic with the spec's
-/// hold, as case 6's: a pixel `vacated` by the card, whose pose the
-/// shader's motion gives exactly (the frame's time is
+/// before `wall` or the sky (named `behind`), that `mover` starts moving
+/// from rest at `rate` pixels a frame at frame `start_frame`, after the
+/// hold has expired, rendered with `method` to `frames`, its failures added
+/// to `failures`. The oracle is analytic with the spec's hold, as case 6's:
+/// a pixel `vacated` by the card, whose pose the shader's motion or the
+/// morph weight gives exactly (the frame's time is
 /// `FrameInput::elapsed_seconds` in f32), shows what lies behind within the
 /// method's `stores`.
 fn departures(
     failures: &mut Failures,
     (method, gpu): (Antialiasing, &Gpu),
     (behind, scale, wall): (&str, f32, Option<&(Shape, Pose)>),
-    rate: f32,
+    (mover, rate): (Mover, f32),
     (start_frame, frames): (u32, u32),
 ) {
-    let name = format!("{behind} at {rate} px a frame");
+    let name = format!("{behind} at {rate} px a frame, moved by {mover:?}");
     let shape = card().scaled(scale);
     let rest = farther(Pose::at(Vec3::new(-0.6, 0., -DEPTH)), scale);
     let velocity = Vec3::X * rate * px() * scale * FRAME_RATE as f32;
@@ -938,24 +967,41 @@ fn departures(
     if let Some((wall, pose)) = wall {
         rig.add(wall, *pose, 0);
     }
-    let shader = rig
-        .scene
-        .add_shader(ShaderSource {
-            wgsl: DEPARTING_SHADER.into(),
-            label: "departing".into(),
-        })
-        .unwrap_or_else(|error| panic!("{error}"));
-    rig.add_shaded(
-        &shape,
-        rest,
-        0,
-        (shader, bound),
-        bytemuck::bytes_of(&params),
-    );
+    // The morph target moves the card as far as the shader does by the
+    // last frame, at weight 1.
+    let span = frames as f32 / FRAME_RATE as f32;
+    let morphing = match mover {
+        Mover::Shader => {
+            let shader = rig
+                .scene
+                .add_shader(ShaderSource {
+                    wgsl: DEPARTING_SHADER.into(),
+                    label: "departing".into(),
+                })
+                .unwrap_or_else(|error| panic!("{error}"));
+            rig.add_shaded(
+                &shape,
+                rest,
+                0,
+                (shader, bound),
+                bytemuck::bytes_of(&params),
+            );
+            None
+        }
+        Mover::Morph => Some(rig.add_morphing(&shape, rest, velocity * span)),
+    };
     rig.look(still(0));
     let mut checked = 0;
     let mut residual = (0f32, 0, [0; 2]);
     for frame in 0..frames {
+        if let Some(id) = morphing
+            && frame > start_frame
+        {
+            let time = (f64::from(frame) / FRAME_RATE) as f32;
+            rig.scene
+                .set_instance_deformation(&rig.gpu.queue, id, &[], &[(time - start) / span])
+                .unwrap();
+        }
         rig.render(frame);
         let resolved = rig.antialiased();
         if frame < HOLD {
@@ -972,7 +1018,7 @@ fn departures(
         checked += e.pixels;
     }
     eprintln!(
-        "{method:?} vertex function {name}: {checked} pixel-frames vacated for the hold, residual at most {} (frame {}, pixel {:?})",
+        "{method:?} {name}: {checked} pixel-frames vacated for the hold, residual at most {} (frame {}, pixel {:?})",
         residual.0, residual.1, residual.2
     );
     assert!(
@@ -981,11 +1027,11 @@ fn departures(
     );
     failures.check(residual.0 <= stores(method) * value * HALF_STEP, || {
         format!(
-            "{method:?} vertex function {name}: a pixel vacated for the hold is {} off what lies behind, frame {} pixel {:?}",
+            "{method:?} {name}: a pixel vacated for the hold is {} off what lies behind, frame {} pixel {:?}",
             residual.0, residual.1, residual.2
         )
     });
-    failures.bounded(&rig, format!("{method:?} vertex function {name}"));
+    failures.bounded(&rig, format!("{method:?} {name}"));
 }
 
 /// Case 13 (#791). Plausible defect: a surface its material's vertex
@@ -1013,7 +1059,7 @@ fn a_surface_its_vertex_function_moves_from_rest_uncovers_what_lies_behind(
         &mut failures,
         (method, &gpu),
         (&name, scale, wall.as_ref()),
-        0.5,
+        (Mover::Shader, 0.5),
         (SETTLE, SETTLE + 3 * HOLD),
     );
     failures.assert();
@@ -1066,7 +1112,7 @@ fn a_surface_its_vertex_function_moves_from_rest_beyond_the_search(
             &mut failures,
             (method, &gpu),
             (behind, 1., wall.as_ref()),
-            rate,
+            (Mover::Shader, rate),
             DEPARTURE_FRAMES,
         );
     }
@@ -1089,6 +1135,30 @@ mod a_surface_its_vertex_function_moves_from_rest_at_4_px_a_frame {
         fsr2: (Fsr2, 4.),
         fsr3: (Fsr3, 4.),
     );
+}
+
+/// #802's departure at 1.5 px a frame over the sky, its card moved by a
+/// morph target (#816). Plausible defect: the motion reach does not arm the
+/// hold at a pixel a frame (Frame item 10: "Where that is at least the
+/// speed its own closest-motion search covers (a pixel a frame), it arms
+/// the recovery hold"), so the band the card leaves in its first frame of
+/// motion, beyond the closest-motion search and held by nothing while the
+/// card rested, keeps its ghost. The game shader of #802's scenarios also
+/// marks the transparency and composition mask wherever it draws, whose
+/// hold cleans that band without the reach; a morph target marks nothing.
+/// TAA only: the reach is TAA's. The oracle is `departures`'.
+#[test]
+fn a_surface_its_morph_target_moves_from_rest_beyond_the_search() {
+    let Some(gpu) = gpu() else { return };
+    let mut failures = Failures::default();
+    departures(
+        &mut failures,
+        (Antialiasing::Taa, &gpu),
+        ("over the sky", 1., None),
+        (Mover::Morph, 1.5),
+        DEPARTURE_FRAMES,
+    );
+    failures.assert();
 }
 
 /// What appears or departs in case 9, in the order it happens.
@@ -2187,4 +2257,203 @@ fn at_rest_taa_holds_silhouettes_within_the_reach_of_slow_motion_still() {
         &elsewhere,
     );
     failures.assert();
+}
+
+/// The frame #816's scenarios act at: the first hold, which every history
+/// starts with, has expired.
+const ACTS: u32 = HOLD + 1;
+
+/// #816's sky: nothing but the sky, so every pixel's motion is zero
+/// whatever the camera's translation (the sky moves by its rotation alone,
+/// case 1), its depth is the far plane's and its 3x3 neighbourhood is
+/// uniform. The camera rests, steps 0.5 m sideways at frame `ACTS` and
+/// rests again; `after` frames later the sky's radiance becomes `CARD`, a
+/// change with no motion, depth, rigid signal or mask of its own, which
+/// only the camera test and the hold it arms reject. Returns, at the
+/// frame of the change, the largest error over the view against `CARD` in
+/// TAA's blend space v / (1 + v), the change's step in that space, and a
+/// store's rounding at `CARD` for each of TAA's `stores`.
+fn the_sky_changes_after_a_camera_step(gpu: &Gpu, after: u32) -> (f32, f32, f32) {
+    let mut rig = Rig::new(gpu, VIEW, Antialiasing::Taa, SKY);
+    rig.admit(CARD);
+    let changed = ACTS + after;
+    for frame in 0..=changed {
+        let x = if frame < ACTS { 0. } else { 0.5 };
+        rig.look(Pose::at(Vec3::new(x, 0., 0.)));
+        if frame == changed {
+            rig.input.backdrop = sgl_3d::Backdrop::Color([CARD; 3]);
+        }
+        rig.render(frame);
+    }
+    let resolved = rig.antialiased();
+    let error = pixels(VIEW.size)
+        .map(|pixel| (sdr(resolved.value(pixel)) - sdr(CARD)).abs())
+        .fold(0f32, f32::max);
+    let mut failures = Failures::default();
+    failures.bounded(&rig, "TAA's sky after a camera step");
+    failures.assert();
+    (
+        error,
+        sdr(CARD) - sdr(SKY),
+        stores(Antialiasing::Taa) * CARD * HALF_STEP,
+    )
+}
+
+/// #816. Plausible defect: the camera test misses a translation, or arms
+/// only pixels whose own motion is non-zero, so content that changes where
+/// nothing moves on screen while the camera moves (here the sky) is
+/// resolved at the resting blend. The oracle is the requirement of Frame
+/// item 10, "Camera motion rearms the whole view", with the resolve's blend
+/// at full strength: in the frame the camera steps, the sky changes; its
+/// neighbourhood is uniform, so the error left is `survives(1)` = 0 of the
+/// step, plus the stores' rounding. At the resting blend `survives(0)`,
+/// 0.868 of it, would be left.
+#[test]
+fn a_camera_step_rearms_the_whole_view() {
+    let Some(gpu) = gpu() else { return };
+    let (error, step, rounding) = the_sky_changes_after_a_camera_step(&gpu, 0);
+    let bound = survives(1.) * step + rounding;
+    eprintln!(
+        "TAA, the sky changing as the camera steps: error {error} of a step {step}, against {bound}"
+    );
+    assert!(
+        error <= bound,
+        "TAA left {error} of the sky's step {step} in the frame the camera stepped, above {bound}: the camera test did not re-arm the whole view"
+    );
+}
+
+/// #816. Plausible defect: the recovery hold is not carried from frame to
+/// frame (it lasts the frame that armed it), so a change soon after a
+/// re-arming event with nothing re-arming it since, here half a hold after
+/// the camera stopped, is resolved at the resting blend. The oracle is the
+/// spec's hold (Frame item 10, "a twelve-frame recovery hold"; `HOLD`),
+/// which ramps from full strength down over its frames (`sgl-post-fx`
+/// PROVENANCE.md, "Motion-adaptive TAA", Responsive inputs: "where the
+/// other holds ramp"): `HOLD / 2` frames after the step the hold left is
+/// half of it, strength 0.5, and the sky's uniform neighbourhood leaves
+/// `survives(0.5)` = 0.415 of the step, plus the stores' rounding. A hold
+/// of a frame leaves `survives(0)`, 0.868 of it, and any hold that ends by
+/// then leaves more than 0.415.
+#[test]
+fn the_hold_lasts_its_frames_after_a_camera_step() {
+    let Some(gpu) = gpu() else { return };
+    let after = HOLD / 2;
+    let (error, step, rounding) = the_sky_changes_after_a_camera_step(&gpu, after);
+    let strength = (HOLD - after) as f32 / HOLD as f32;
+    let bound = survives(strength) * step + rounding;
+    eprintln!(
+        "TAA, the sky changing {after} frames after the camera stepped: error {error} of a step {step}, against {bound}"
+    );
+    assert!(
+        error <= bound,
+        "TAA left {error} of the sky's step {step} {after} frames after the camera stepped, above {bound}: the hold did not last"
+    );
+}
+
+/// #816's jumps: a card 0.5 m square at `DEPTH`, `scale` times as far,
+/// before `wall` or the sky, that a morph target moves 5.8 m (130 px)
+/// across the view in one frame at `ACTS`, from rest: no pose change, no
+/// shader and no mask, nor any motion where it was, since what it
+/// uncovered is still and it rested before. It leaves the view's first
+/// column of the motion reach's tiles for its fifth and sixth, so the reach
+/// (the 3x3 tile neighbourhood) does not cover where it was, and the
+/// closest-motion search does not reach it. Returns, at that frame, the
+/// largest linear error against what lies behind over the pixels whose box
+/// grown by 2 px lay wholly inside the card before (the history fetch's
+/// reach and the depth test's neighbourhood with its jitter alignment),
+/// and the bound of the method's `stores` at that radiance.
+fn a_deformation_jumps_beyond_the_reach(
+    gpu: &Gpu,
+    scale: f32,
+    wall: Option<(Shape, Pose)>,
+) -> (f32, f32) {
+    let shape = Shape::card(Vec2::new(0.5, 0.5), 0., CARD).scaled(scale);
+    let rest = farther(Pose::at(Vec3::new(-3.2, 0.3, -DEPTH)), scale);
+    let by = Vec3::X * 5.8 * scale;
+    let script = move |f: u32| {
+        let at = if f < ACTS { 0. } else { 1. };
+        vec![Pose::at(rest.position + by * at)]
+    };
+    let truth = Scenario {
+        shapes: vec![shape.clone()],
+        camera: &still,
+        script: &script,
+    };
+    let columns = |frame: u32| {
+        let polygon = &truth.polygons(frame)[0][0];
+        pixels(VIEW.size)
+            .filter(|&p| coverage(polygon, p, 1.) > 0.)
+            .map(|p| p[0] / REACH_TILE)
+            .collect::<std::collections::BTreeSet<u32>>()
+    };
+    let (before, after) = (columns(ACTS - 1), columns(ACTS));
+    assert!(
+        after.first().unwrap() >= &(before.last().unwrap() + 2),
+        "the card jumps beyond the reach's tile neighbourhood: tile columns {before:?} to {after:?}"
+    );
+    let left = truth.inside(ACTS - 1, 0, 2.);
+    assert!(!left.is_empty(), "the card covers pixels with their margin");
+    let value = if wall.is_some() { BACKGROUND } else { SKY };
+    let mut rig = Rig::new(gpu, VIEW, Antialiasing::Taa, SKY);
+    if let Some((wall, pose)) = &wall {
+        rig.add(wall, *pose, 0);
+    }
+    let id = rig.add_morphing(&shape, rest, by);
+    rig.look(still(0));
+    for frame in 0..=ACTS {
+        if frame == ACTS {
+            rig.scene
+                .set_instance_deformation(&rig.gpu.queue, id, &[], &[1.])
+                .unwrap();
+        }
+        rig.render(frame);
+    }
+    let error = error_to(&rig.antialiased(), value, &left).max;
+    let mut failures = Failures::default();
+    failures.bounded(&rig, "TAA, a deformation's jump");
+    failures.assert();
+    (error, stores(Antialiasing::Taa) * value * HALF_STEP)
+}
+
+/// #816. Plausible defect: the depth test does not reject history whose
+/// depth differs from the surface the pixel now shows, so a surface that
+/// leaves a pixel faster than the motion reach covers (a tile, 32 px, a
+/// frame), from rest, leaves its ghost there: nothing else restores
+/// rejection (`a_deformation_jumps_beyond_the_reach`). The card at 4 m and
+/// the wall at 8 m behind it differ by 0.1 / 4 - 0.1 / 8 = 0.0125 in
+/// normalized depth, above the depth threshold 0.001 (`sgl-post-fx`
+/// PROVENANCE.md, "Motion-adaptive TAA"), and their previous 3x3 depth
+/// neighbourhood held the card alone. The oracle is analytic with Frame
+/// item 10's full rejection on depth disocclusion: in the frame the card
+/// leaves, the pixels it covered show the wall within TAA's `stores`.
+#[test]
+fn depth_disocclusion_rejects_beyond_the_reach() {
+    let Some(gpu) = gpu() else { return };
+    let (error, bound) = a_deformation_jumps_beyond_the_reach(&gpu, 1., Some(wall(8.)));
+    eprintln!("TAA, a card's jump uncovering a wall: error {error} against {bound}");
+    assert!(
+        error <= bound,
+        "TAA left {error} of the card where it uncovered the wall, above {bound}: depth disocclusion did not reject"
+    );
+}
+
+/// #816. Plausible defect: the sky is not a categorical disocclusion where
+/// a surface leaves it (Frame item 10: sky "where no texel of the previous
+/// neighbourhood was"), so a far surface that leaves a pixel faster than
+/// the motion reach covers, from rest, leaves its ghost on the sky: at
+/// `FAR` times as far, 2 km, the card's normalized depth (4e-5) differs
+/// from the sky's (0) by less than the depth threshold 0.001, and nothing
+/// else restores rejection (`a_deformation_jumps_beyond_the_reach`). The
+/// oracle is analytic with Frame item 10's categorical sky: in the frame
+/// the card leaves, the pixels it covered show the sky within TAA's
+/// `stores`.
+#[test]
+fn the_sky_a_far_surface_leaves_is_a_disocclusion() {
+    let Some(gpu) = gpu() else { return };
+    let (error, bound) = a_deformation_jumps_beyond_the_reach(&gpu, FAR, None);
+    eprintln!("TAA, a far card's jump uncovering the sky: error {error} against {bound}");
+    assert!(
+        error <= bound,
+        "TAA left {error} of the far card where it uncovered the sky, above {bound}: the sky was not a disocclusion"
+    );
 }
