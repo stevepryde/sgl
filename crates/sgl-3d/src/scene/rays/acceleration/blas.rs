@@ -12,8 +12,10 @@
 //! the pending ones nearest the camera first under Bevy's budget of
 //! vertices (`MOST_VERTICES_PER_FRAME`), the first always, and a replaced
 //! or re-pended model's outside it; a built one is then compacted through
-//! Bevy's queue under the same budget (`blas.rs` 104–142). A BLAS is built
-//! for its geometry and its geometries' opacity under the form in effect,
+//! Bevy's queue under the same budget (`blas.rs` 104–142), and the TLAS
+//! keeps the built one until the GPU has finished the compacted copy
+//! (`compact`). A BLAS is built for its geometry and its geometries'
+//! opacity under the form in effect,
 //! so a material edit that moves a mesh between masked and not re-pends a
 //! model's under the candidate form, and a deforming instance's is made
 //! again for the opacity of the form in effect, as Wicked Engine rebuilds a
@@ -30,6 +32,8 @@ pub(super) use build::BlasBuild;
 use build::{Built, GeometryStart, built_non_opaque, create, fits, model_build, non_opaque, sizes};
 use glam::Vec3;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Bevy's `MAX_COMPACTION_VERTICES_PER_FRAME` (`blas.rs` 19–21), which
 /// serves the builds too: once a frame has built, or compacted, this many
@@ -94,7 +98,21 @@ enum DeformedBlas {
 struct Compaction {
     model: ModelId,
     vertices: u32,
-    started: bool,
+    stage: CompactionStage,
+}
+
+/// Where a queued compaction is.
+enum CompactionStage {
+    /// Waiting for its compacted size, its compaction prepared or not.
+    Sizing { started: bool },
+    /// Its compacted copy queued: whether a submission since holds the
+    /// copy (`Blases::submitted`), and, once one does, whether the GPU has
+    /// finished it.
+    Copying {
+        compacted: wgpu::Blas,
+        submitted: bool,
+        done: Option<Arc<AtomicBool>>,
+    },
 }
 
 /// A model whose BLAS is pending: its distance from the camera (its
@@ -170,32 +188,92 @@ impl Blases {
     /// Bevy's compaction (`blas.rs` 104–142): each built model BLAS in the
     /// queue is prepared for compaction once, and compacted through `queue`
     /// once ready, until the frame has compacted the budget's vertices or
-    /// looked at every queued BLAS once; the TLAS takes a compacted BLAS at
-    /// its next build. A BLAS the device's memory cannot hold compacted stays
-    /// as it was built.
+    /// looked at every queued BLAS once. A BLAS the device's memory cannot
+    /// hold compacted stays as it was built.
+    ///
+    /// Changed: the TLAS takes a compacted BLAS at the first build after
+    /// the GPU has finished its copy, where Bevy's takes it at the next. wgpu
+    /// 30 records the copy (`Queue::compact_blas`) in the queue's own
+    /// command buffer, and the TLAS's build and the rays that traverse it
+    /// reach a BLAS only through the TLAS's instances, which Metal does not
+    /// order against the copy: wgpu-hal's Metal backend places no
+    /// acceleration-structure barrier and makes the instances' BLASes
+    /// resident through a residency set, which tracks no hazards (Apple,
+    /// `MTLResidencySet`). Under load a frame's rays then crossed a BLAS
+    /// still being written and met nothing (#790). Its built BLAS, which the
+    /// copy only reads, serves until then; whether a copy is done is learnt
+    /// from `Queue::on_submitted_work_done`, asked after a submission that
+    /// holds the copy.
     pub fn compact(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let models = &mut self.models;
+        self.compaction.retain_mut(|entry| {
+            let CompactionStage::Copying {
+                compacted,
+                submitted,
+                done,
+            } = &mut entry.stage
+            else {
+                return true;
+            };
+            let Some(ModelBlas::Built { blas, .. }) = models.get_mut(&entry.model) else {
+                return false;
+            };
+            if done
+                .as_ref()
+                .is_some_and(|done| done.load(Ordering::Acquire))
+            {
+                *blas = compacted.clone();
+                return false;
+            }
+            if *submitted && done.is_none() {
+                let flag = Arc::new(AtomicBool::new(false));
+                let finished = flag.clone();
+                queue.on_submitted_work_done(move || finished.store(true, Ordering::Release));
+                *done = Some(flag);
+            }
+            true
+        });
         let queued = self.compaction.len();
         let mut looked = 0;
         let mut vertices = 0;
         while !self.compaction.is_empty() && vertices < MOST_VERTICES_PER_FRAME && looked < queued {
             looked += 1;
             let mut next = self.compaction.pop_front().expect("a queued BLAS");
-            let Some(ModelBlas::Built { blas, .. }) = self.models.get_mut(&next.model) else {
+            let CompactionStage::Sizing { started } = next.stage else {
+                self.compaction.push_back(next);
                 continue;
             };
-            if !next.started {
+            let Some(ModelBlas::Built { blas, .. }) = self.models.get(&next.model) else {
+                continue;
+            };
+            if !started {
                 blas.prepare_compaction_async(|_| {});
             }
             if blas.ready_for_compaction() {
                 if let Some(compacted) = allocated(device, || queue.compact_blas(blas)) {
-                    *blas = compacted;
                     crate::counters::blas_compaction(next.vertices);
                     vertices += next.vertices;
+                    next.stage = CompactionStage::Copying {
+                        compacted,
+                        submitted: false,
+                        done: None,
+                    };
+                    self.compaction.push_back(next);
                 }
                 continue;
             }
-            next.started = true;
+            next.stage = CompactionStage::Sizing { started: true };
             self.compaction.push_back(next);
+        }
+    }
+
+    /// The caller submitted the queue's work so far: every compacted copy
+    /// queued before is in a submission.
+    pub fn submitted(&mut self) {
+        for entry in &mut self.compaction {
+            if let CompactionStage::Copying { submitted, .. } = &mut entry.stage {
+                *submitted = true;
+            }
         }
     }
 
@@ -415,7 +493,7 @@ impl Blases {
                     self.compaction.push_back(Compaction {
                         model: id,
                         vertices,
-                        started: false,
+                        stage: CompactionStage::Sizing { started: false },
                     });
                 }
                 Built::Deformed {

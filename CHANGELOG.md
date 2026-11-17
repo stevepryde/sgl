@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` hardware ray tracing (`Settings::hardware_ray_tracing`) no longer
+  traces a frame as if a model were absent when its BLAS was compacted just
+  before it (seen on Metal under GPU load, one frame of rays through it
+  meeting nothing): the TLAS keeps the built BLAS until the GPU has finished
+  the compacted copy. No game-code changes are needed.
 - `sgl-3d` heat distortion (`Settings::heat_distortion`) under FSR now marks
   FSR's transparency and composition mask where it covers, so FSR no longer
   holds the shimmer as static detail; other antialiasing is unchanged. No

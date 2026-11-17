@@ -2266,7 +2266,14 @@ last, after everything it may use, and refuses a directive in it.
   frame outside the budget, so an edited chunk never drops out of a frame's
   rays. A built BLAS is prepared for compaction and, once ready, compacted
   through the queue under Bevy's budget (`blas.rs` 104–142), the TLAS
-  taking the compacted BLAS at its next build; compaction stays, as Bevy
+  taking the compacted BLAS at its first build after the GPU has finished
+  the copy (`Queue::on_submitted_work_done`, asked after a submission that
+  holds it), where Bevy's takes it at the next: the TLAS's build and its rays
+  reach a BLAS only through its instances, which Metal does not order
+  against the copy in the queue's own command buffer (wgpu-hal places no
+  acceleration-structure barrier there and makes the BLASes resident
+  through a residency set, which tracks no hazards), so a frame's rays could
+  cross a BLAS still being written and meet nothing (#790); compaction stays, as Bevy
   keeps it, its cost unmeasured until wgpu can timestamp acceleration-structure
   work: wgpu 30's `build_acceleration_structures` and `Queue::compact_blas`
   take no timestamp writes, and a compaction's copy runs in the queue's own

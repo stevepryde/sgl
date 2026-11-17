@@ -190,12 +190,12 @@ impl AccelerationStructures {
     }
 
     /// Before a frame that builds the structures for `form`, seen from
-    /// `eye`: commits ready compactions, chooses the BLASes the frame
-    /// builds (pending models under the budget, replaced and re-pended ones
-    /// and deforming instances outside it) and sets the TLAS's instances,
-    /// as many as the device holds, its capacity grown with the instance
-    /// entries (`entries`). A frame rendered before it and never finished
-    /// is abandoned: its work is chosen again.
+    /// `eye`: takes the compactions the GPU has finished, chooses the
+    /// BLASes the frame builds (pending models under the budget, replaced
+    /// and re-pended ones and deforming instances outside it) and sets the
+    /// TLAS's instances, as many as the device holds, its capacity grown
+    /// with the instance entries (`entries`). A frame rendered before it
+    /// and never finished is abandoned: its work is chosen again.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -361,8 +361,10 @@ impl AccelerationStructures {
         frame.encoded.store(true, Ordering::Relaxed);
     }
 
-    /// Commits a submitted frame's builds.
+    /// Commits a submitted frame's builds; the compacted copies queued
+    /// before were submitted with it.
     pub fn finish_frame(&mut self) {
+        self.blases.submitted();
         if let Some(frame) = self.frame.take()
             && frame.encoded.into_inner()
         {
