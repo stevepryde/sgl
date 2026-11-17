@@ -48,9 +48,24 @@ fn holds(cascade: &Cascade, point: DVec3) -> bool {
 // camera's orientation, any of which makes a still shadow shimmer as the
 // camera moves. The oracle is the map itself: a fixed world point, projected
 // by each pose's cascade, lands on texel coordinates that differ between
-// poses by whole texels.
+// poses by whole texels, at every shadow quality's map size, as the fit's
+// snapping holds only while the texel size is exact.
 #[wasm_bindgen_test(unsupported = test)]
 fn a_fixed_point_moves_by_whole_texels_as_the_camera_moves_and_turns() {
+    use crate::settings::ShadowQuality;
+    let levels = [ShadowQuality::Low, ShadowQuality::High];
+    // A level missing from the list fails to compile here.
+    for level in levels {
+        match level {
+            ShadowQuality::Low | ShadowQuality::High => {}
+        }
+    }
+    for map in levels.map(ShadowQuality::cascade_size) {
+        whole_texel_moves(map);
+    }
+}
+
+fn whole_texel_moves(map: u32) {
     let projection = crate::perspective(1.1, 16. / 9., 0.3);
     let points = [
         DVec3::new(13.7, 2.3, -41.9),
@@ -83,7 +98,7 @@ fn a_fixed_point_moves_by_whole_texels_as_the_camera_moves_and_turns() {
         let fits: Vec<Cascades> = poses
             .iter()
             .map(|&view| {
-                Cascades::camera(view, projection, direction, &shadow(4), MAP, DVec3::ZERO)
+                Cascades::camera(view, projection, direction, &shadow(4), map, DVec3::ZERO)
             })
             .collect();
         for (index, first) in fits[0].as_slice().iter().enumerate() {
@@ -92,13 +107,13 @@ fn a_fixed_point_moves_by_whole_texels_as_the_camera_moves_and_turns() {
                 for point in points {
                     let texels = |cascade: &Cascade| {
                         let p = clip(cascade, point);
-                        (p.truncate() * 0.5 + 0.5) * f64::from(MAP)
+                        (p.truncate() * 0.5 + 0.5) * f64::from(map)
                     };
                     let moved = texels(later) - texels(first);
                     let fraction = (moved - moved.round()).abs();
                     assert!(
                         fraction.max_element() < 0.01,
-                        "cascade {index}, light {direction:?}: {point:?} moved {moved:?} texels"
+                        "{map} texels, cascade {index}, light {direction:?}: {point:?} moved {moved:?} texels"
                     );
                 }
             }

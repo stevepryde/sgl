@@ -182,18 +182,47 @@ fn half_space_faces(normal: Vec3) -> u8 {
 }
 
 /// The cube faces a spot cone around unit `direction`, `outer_angle` wide,
-/// can reach: those whose four side planes it does not lie wholly beyond.
-/// Conservative: it keeps every face the cone reaches.
+/// reaches: those whose pyramid holds a direction within `outer_angle` of
+/// `direction`. Exact for any cone narrower than a right angle, as a
+/// scene's spots are (`scene::lights::validate`), so it keeps every face
+/// the cone reaches and no other.
 fn cone_faces(direction: Vec3, outer_angle: f32) -> u8 {
-    let reach = -outer_angle.sin();
+    let reach = outer_angle.cos();
     let mut faces = 0;
     for (face, (axis, across, along)) in CUBE_AXES.into_iter().enumerate() {
-        let reached = [across, -across, along, -along]
-            .into_iter()
-            .all(|side| direction.dot((axis + side).normalize()) >= reach);
-        if reached {
+        if nearest_cos(direction, axis, across, along) >= reach {
             faces |= 1 << face;
         }
     }
     faces
 }
+
+/// The cosine of the angle from unit `direction` to the nearest direction
+/// of the cube face along `axis`, the pyramid `x >= |y|, x >= |z|` in its
+/// coordinates (`axis`, `across`, `along`), where it is positive; at most 0
+/// where every direction of the face is a right angle or more away.
+///
+/// That cosine is the length of `direction`'s projection onto the convex
+/// pyramid, whose remainder is perpendicular to it and points out of the
+/// pyramid (Moreau's decomposition). Mirrored into `y >= z >= 0`, a
+/// direction with `x >= y` lies inside; otherwise it projects onto the side
+/// plane `x = y`, at `(m, m, z)` with `m = (x + y) / 2`, while that point
+/// keeps `m >= z`, and onto the corner ray `(1, 1, 1)` beyond it, or onto
+/// the light itself where its dot with that ray is negative.
+fn nearest_cos(direction: Vec3, axis: Vec3, across: Vec3, along: Vec3) -> f32 {
+    let x = direction.dot(axis);
+    let (a, b) = (direction.dot(across).abs(), direction.dot(along).abs());
+    let (y, z) = (a.max(b), a.min(b));
+    if x >= y {
+        return 1.;
+    }
+    let m = 0.5 * (x + y);
+    if m >= z {
+        (2. * m * m + z * z).sqrt()
+    } else {
+        (x + y + z) / 3f32.sqrt()
+    }
+}
+
+#[cfg(test)]
+mod tests;

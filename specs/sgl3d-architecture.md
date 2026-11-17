@@ -665,7 +665,8 @@ last, after everything it may use, and refuses a directive in it.
   from the camera's near plane to the shadow's distance, and Bevy's
   constant-diameter, texel-snapped fit with its near plane Godot's 20 m
   pancake toward the light beyond the slice; both are SGL3D's, not the
-  game's. Each
+  game's. Every cascade map size is a power of two, so the texel size, a
+  whole-metre diameter over it, is exact. Each
   cascade is a view with its own draw list in one layer of a depth array. A cascade's
   casters are culled without its near plane and drawn with unclipped depth
   (emulated where the device lacks `DEPTH_CLIP_CONTROL`), so a caster
