@@ -2227,6 +2227,7 @@ dependencies = [
  "pollster",
  "serde_json",
  "sgl-3d",
+ "sp-fidelity",
  "wasm-bindgen-test",
  "wgpu",
 ]

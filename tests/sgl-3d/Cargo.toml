@@ -22,5 +22,8 @@ wgpu.workspace = true
 
 [dev-dependencies]
 bytemuck.workspace = true
+# The temporal antialiasing suite takes FSR's jitter phase count from the
+# SDK port the renderer uses.
+sp-fidelity.workspace = true
 gltf.workspace = true
 wasm-bindgen-test.workspace = true

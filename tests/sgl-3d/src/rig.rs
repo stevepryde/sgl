@@ -78,7 +78,8 @@ where
 
 /// The settings a fixture's truth assumes, with `antialiasing` under test:
 /// the scene at the output size with no upscaling, FSR at native quality
-/// without sharpening, and everything that would change an unlit card's
+/// without sharpening (RCAS deliberately moves edges away from their
+/// coverage, which the reference oracle measures), and everything that would change an unlit card's
 /// radiance or the frame before antialiasing off (bloom, ambient
 /// occlusion, screen-space and world-space reflections, atmosphere, dynamic
 /// GI, motion blur). The frame input adds a fixed exposure of 0 stops, no
