@@ -15,117 +15,100 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d` world-space reflections (`Settings::world_space_reflections`):
-  a surface beside a nearer one, or meeting another at a crease, keeps its
-  own reflection up to the edge, where it took up to 72% of the other's
-  over a few pixels; the half-resolution passes weigh texels by surface
-  there. Image-changing along silhouettes and creases only; no settings.
-  No game-code changes are needed.
-- `sgl-post-fx` TAA (`TemporalAntiAliasing`, every feature flag) and so
-  `sgl-3d` TAA: an edge in motion no longer gets a fringe brighter or darker
-  than anything in the scene; history is clipped within the neighbourhood's
-  min/max range as well as its variance box. No settings; no game-code
-  changes are needed.
-- `sgl-3d` FSR2 at the frame's edges: no more negative values in the column
-  the camera turns towards at Ultra Performance, and no dip below the scene
-  beside a brighter surface at the edge. It takes `sp-fidelity` and
-  `sp-fidelity-wgpu` 0.3.2, which correct two further faults of AMD's FSR2
-  there. FSR3 is unchanged. No game-code changes are needed.
-- `sgl-3d` world-space reflections (`Settings::world_space_reflections`): a
-  reflection beside an untraced surface or a blended receiver no longer
-  fades toward its fallback along a line one or two pixels wide (up to 75%
-  of the nearest pixel's reflection); the upsample reads only the
-  half-resolution texels that hold rays there. No game-code changes are
-  needed.
-- `sgl-3d` world-space reflections (`Settings::world_space_reflections`): a
-  rough, noisy reflection beside a blended receiver no longer fades up to
-  7% toward its fallback over the two pixels nearest the receiver's edge;
-  the upsample's blur leaves out pixels under the receiver, which hold no
-  rays. No game-code changes are needed.
-- `sgl-3d::diagnostics::read_async`, `sgl-3d::Renderer::capture_specular_probe_async`
-  and `sgl-2d::canvas::Renderer::read_scene_async` (with `CaptureError`, now
-  on every target) await their readback, so they run in the browser too;
-  `diagnostics::read`, `capture_specular_probe` and `read_scene` block on
+## 0.7.0 — 2026-11-17
+
+Move every SGL crate to `0.7.0` together and commit the updated `Cargo.lock`.
+A game that uses `sgl-3d` through its settings needs code changes only where
+it awaits a probe capture in the browser, matches `DiagnosticTarget`
+exhaustively, or looks up GPU timing groups by name; a direct caller of
+`sgl-post-fx`'s TAA updates its attributes. `sgl-core`, `sgl-net` and
+`sgl-input` have no API changes. Existing baked assets and BC7 exports need
+no regeneration. Most of this release corrects what SGL3D rendered: expect
+the image to change where the entries below say so.
+
+- `sgl-3d::Renderer::capture_specular_probe_async`,
+  `sgl-3d::diagnostics::read_async` and
+  `sgl-2d::canvas::Renderer::read_scene_async` (with `CaptureError`, now on
+  every target) await their readback, so they run in the browser too;
+  `capture_specular_probe`, `diagnostics::read` and `read_scene` block on
   them natively, as before. In a browser build, where it always failed,
   `capture_specular_probe` is gone: await `capture_specular_probe_async`.
-  No other game-code changes are needed.
-- `sgl-3d` ray-traced shadows (`Settings::ray_traced_shadows`): a feature
-  one render pixel wide at an odd column or row now takes its own shadow,
-  where a shadowed one against the sky read lit and one in front of a
-  surface took that surface's; a one-pixel slit showing a far surface takes
-  that surface's shadow from the texels about it. Only the mask near such
-  features changes; no settings. No game-code changes are needed.
-- `sgl-post-fx` `temporal_anti_aliasing::RenderAttributes` gains
-  `responsive_masks` and `neighborhood_motion` (`NeighborhoodMotion`), which
-  `MOTION_ADAPTIVE_HISTORY` reads to reject history at rest where content
-  changes without a motion vector of its own, and `TemporalAntiAliasing`
-  gains `prepare_responsive_variant` to create such a resolve ahead of the
-  frame that needs it; the closest-motion history's W now carries a hold.
-  Direct callers add `responsive_masks: &[], neighborhood_motion: None` to
-  keep the resolve as it was.
-- `sgl-3d` TAA at rest now rejects history where content changes without a
-  motion vector of its own: blended surfaces, additive effects, mist, heat
-  shimmer and moving normal layers, by the reactive and
-  transparency-and-composition masks (now drawn in TAA frames that can mark
-  them, at full strength for a hold after the content leaves), and pixels
-  within 32 to 63 pixels (a 3x3 neighbourhood of 32-pixel tiles) of anything
-  moving a pixel a frame or more, so a deforming or skinned surface no
-  longer leaves a ghost where it was.
-  Unmarked pixels away from motion settle as before. The pass timing group
-  `FSR composition` is renamed `temporal composition`, and TAA adds `TAA
-  motion reach`: update any timing lookups by those names. No settings and
-  no other game-code changes are needed.
-- `sgl-3d` reflection source completion: a lit colour or ambient light texel
-  of +infinity (over-range radiance on backends that round overflow to
-  infinity) no longer composes to NaN under opaque fog or to black where
-  occlusion hides ambient light; it reads as 65504. No game-code changes are
-  needed.
-- `sgl-3d` FSR2 no longer darkens pixels at the frame's corners and edges
-  (the bottom-left corner by 14% on some jitter phases): it takes
-  `sp-fidelity` and `sp-fidelity-wgpu` 0.3.1, which correct the port's
-  accumulate pass there. FSR3 is unchanged. No game-code changes are needed.
+- `sgl-3d::diagnostics::DiagnosticTarget::Antialiased` (`diagnostics`
+  feature) returns the last frame's linear HDR scene as antialiasing leaves
+  it (TAA's or FSR's output, else the composite). Exhaustive
+  `DiagnosticTarget` matches add `Antialiased`.
+- `sgl-post-fx` `temporal_anti_aliasing`: `FeatureFlags::MOTION_ADAPTIVE_HISTORY`
+  adds motion-adaptive history rectification, which keeps static sub-pixel
+  geometry steady at rest while camera motion, object motion and depth
+  disocclusion restore full rejection. Direct callers replace the unused
+  `TemporalAntiAliasingAttribs::padding0` with `rigid_object_motion` (default
+  zero), setting it when rigid geometry moves, appears or departs (the struct
+  remains 16 bytes), and add `responsive_masks: &[], neighborhood_motion: None`
+  to `RenderAttributes` to keep the resolve as it was; those two inputs
+  (`NeighborhoodMotion`) let the flag reject history at rest where content
+  changes without a motion vector of its own, and
+  `TemporalAntiAliasing::prepare_responsive_variant` creates such a resolve
+  ahead of the frame that needs it. Under the flag
+  `RenderAttributes::motion_vectors_srv` must have four channels (such as
+  `Rgba16Float`): Z the surface's previous minus current camera-space Z and W
+  its validity (above 0 valid); the closest-motion history's Z and W carry
+  holds. Under every flag an edge in motion no longer gets a fringe brighter
+  or darker than anything in the scene: history is clipped within the
+  neighbourhood's min/max range as well as its variance box.
+- `sgl-3d` TAA uses that motion-adaptive history. Static sub-pixel geometry
+  settles at rest, near, far and against the sky. Full rejection returns on
+  camera motion, rigid changes, a changed `FrameInput::visibility_mask`, a
+  `Scene::set_material` edit that changes what is drawn, local motion and
+  disocclusion, and, with the camera at rest, wherever content changes
+  without a motion vector of its own: blended surfaces, additive effects,
+  mist, heat shimmer and moving normal layers (by the reactive and
+  transparency-and-composition masks, now drawn in TAA frames that can mark
+  them), and pixels within 32 to 63 pixels of anything moving a pixel a frame
+  or more, so a deforming or skinned surface leaves no ghost where it was.
+  The pass timing group `FSR composition` is renamed `temporal composition`,
+  and TAA adds `TAA motion reach`: update any timing lookups by those names.
+  No settings and no other game-code changes are needed.
+- `sgl-3d` FSR2 at the frame's edges and corners: no darkened corner pixel
+  (14% at the bottom-left on some jitter phases), no negative values in the
+  column the camera turns towards at Ultra Performance, and no dip below the
+  scene beside a brighter surface at the edge. It takes `sp-fidelity` and
+  `sp-fidelity-wgpu` 0.3.2, which correct three faults of AMD's FSR2 there.
+  FSR3 is unchanged. No game-code changes are needed.
+- `sgl-3d` heat distortion (`Settings::heat_distortion`) now marks the
+  transparency and composition mask where it covers, so FSR, and TAA by the
+  entry above, no longer hold the shimmer as static detail. No game-code
+  changes are needed.
+- `sgl-3d` world-space reflections (`Settings::world_space_reflections`): a
+  surface beside a nearer one, or meeting another at a crease, keeps its own
+  reflection up to the edge (it took up to 72% of the other's over a few
+  pixels); a reflection beside an untraced surface or a blended receiver no
+  longer fades toward its fallback along a line one or two pixels wide; and
+  the opaque surface a moving blended receiver uncovers no longer fades in
+  over about a second. Image-changing along those edges only; no settings.
+  No game-code changes are needed.
+- `sgl-3d` ray-traced shadows (`Settings::ray_traced_shadows`): thin lit
+  features against the sky or an unlit surface, and normal-mapped surfaces
+  under a low light, no longer read as shadowed where nothing occludes them;
+  a feature one render pixel wide at an odd column or row takes its own
+  shadow, where it took its neighbours'; a one-pixel slit showing a far
+  surface takes that surface's shadow from the texels about it. No settings.
+  No game-code changes are needed.
 - `sgl-3d` hardware ray tracing (`Settings::hardware_ray_tracing`) no longer
   traces a frame as if a model were absent when its BLAS was compacted just
   before it (seen on Metal under GPU load, one frame of rays through it
   meeting nothing): the TLAS keeps the built BLAS until the GPU has finished
   the compacted copy. No game-code changes are needed.
-- `sgl-3d` heat distortion (`Settings::heat_distortion`) under FSR now marks
-  FSR's transparency and composition mask where it covers, so FSR no longer
-  holds the shimmer as static detail; other antialiasing is unchanged. No
-  game-code changes are needed.
-- `sgl-3d` world-space reflections (`Settings::world_space_reflections`) no
-  longer fade in over about a second behind a moving blended receiver: the
-  opaque surface it uncovers takes that frame's rays rather than history
-  dragged and emptied under the receiver. No game-code changes are needed.
+- `sgl-3d` over-range radiance that a backend stores as +infinity no longer
+  presents black or NaN: reflection source completion reads the lit colour
+  and the ambient light, and motion blur, bloom, tone mapping and the
+  transmission copy read the scene colour, as 65504. It showed under opaque
+  fog, where occlusion hides ambient light, behind a transmissive surface,
+  and where neither TAA nor FSR ran. No game-code changes are needed.
 - `sgl-post-fx` SSR now treats as background only depths at or beyond the
   camera's far plane, whatever the near plane (it lost surfaces past 909 m
   with a 1 mm near plane, past 9.1 km with 0.1 m), and every pass after the
   full-resolution mask takes eligibility from it rather than re-testing the
   8-bit roughness. No game-code changes are needed.
-- `sgl-3d` motion blur, bloom, tone mapping and transmission: a scene colour
-  texel of +infinity (over-range radiance on backends that round overflow to
-  infinity) no longer presents black or NaN, behind a transmissive surface
-  with any antialiasing and elsewhere where neither TAA nor FSR ran; it reads
-  as 65504. No game-code changes are needed.
-- `sgl-3d::diagnostics::DiagnosticTarget::Antialiased` (`diagnostics`
-  feature) returns the last frame's linear HDR scene as antialiasing leaves
-  it (TAA's or FSR's output, else the composite). Exhaustive
-  `DiagnosticTarget` matches add `Antialiased`.
-- `sgl-post-fx::temporal_anti_aliasing::FeatureFlags::MOTION_ADAPTIVE_HISTORY`
-  adds motion-adaptive history rectification; `sgl-3d` enables it for TAA to
-  stabilize static subpixel geometry, near, far and against the sky, while
-  retaining motion/depth rejection.
-  Other postFX flag combinations keep their existing resolve. No game-code
-  changes are needed for SGL3D. Direct postFX callers replace the unused
-  `TemporalAntiAliasingAttribs::padding0` with `rigid_object_motion` (default
-  zero), setting it when rigid geometry moves, appears or departs; the struct
-  remains 16 bytes. Under this flag `RenderAttributes::motion_vectors_srv`
-  must have four channels (such as `Rgba16Float`): Z the surface's previous
-  minus current camera-space Z and W its validity (above 0 valid).
-- `sgl-3d` ray-traced shadows (`Settings::ray_traced_shadows`) no longer
-  shadow thin lit features against the sky or an unlit surface, nor
-  normal-mapped surfaces under a low light, which now read as lit where
-  nothing occludes them. No game-code changes are needed.
 
 ## 0.6.0 — 2026-11-12
 
