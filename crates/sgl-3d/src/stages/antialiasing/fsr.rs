@@ -60,7 +60,19 @@
 //!   translucent materials do (`glow.wgsl`, `mist.wgsl`). Before them,
 //!   opaque and masked surfaces whose material's normal layers move mark
 //!   transparency and composition 1, as its animated textures do (docs 237
-//!   name animated textures; `view::targets::composition_targets`). SDK
+//!   name animated textures; `view::targets::composition_targets`). After
+//!   them all, heat distortion marks its weight where it covers (in front
+//!   of the opaque depth) as transparency and composition, accumulated as
+//!   the translucent draws accumulate theirs, under their condition
+//!   (`heat.wgsl`). It displaces the frame in screen space: its pixels keep
+//!   the surface behind's motion while what they show changes, which the
+//!   upscaler docs give the T&C mask, for areas whose "motion vectors [do
+//!   not match] the change in shading", "a softer alternative compared to
+//!   the reactive mask, as it only affects locks and color clamping"
+//!   (`super-resolution-upscaler.md` 131). Reactivity is for content that
+//!   leaves no depth or motion footprint, its alpha the proxy (docs
+//!   222–227); distortion has the surface behind as its footprint and no
+//!   alpha, and AMD's sample draws no distortion to follow. SDK
 //!   1.1.4's `ffxFsr2ContextGenerateReactiveMask` schedules nothing, and the
 //!   docs prefer masks rendered from materials to generated ones.
 //! - Reset on SGL3D history loss: an invalid temporal frame (a camera cut, a

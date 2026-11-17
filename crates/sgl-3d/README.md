@@ -942,7 +942,8 @@ SMAA on Low. They antialias like TAA while upscaling:
   AMD's 0..=1 (0.8 by default, as AMD's sample).
   The camera's blended surfaces, additive effects and mist also write FSR's
   reactive and transparency-and-composition masks, as AMD's FSR documentation
-  and sample write them from translucent draws. Opaque and masked surfaces
+  and sample write them from translucent draws, and heat shimmer marks its
+  weight in the transparency-and-composition mask where it covers. Opaque and masked surfaces
   whose material's [normal layers](#scrolling-normal-layers) move (a lit
   material, a layer moving at least a repeat per hour) mark the
   transparency-and-composition mask, as AMD's sample marks its animated

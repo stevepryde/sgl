@@ -5,7 +5,7 @@ use crate::content::transient::HeatDistortion;
 use crate::scene::transient::Transient;
 use crate::shading::gbuffer::COLOR as HDR;
 use crate::shading::vertex::{VertexLayout, vertex_layout};
-use crate::view::targets::{attachment, hold, target};
+use crate::view::targets::{attachment, hold, mask_targets, target};
 
 pub(crate) static HEAT: crate::shading::Module = crate::shading::Module {
     name: "heat_distortion",
@@ -15,6 +15,7 @@ pub(crate) static HEAT: crate::shading::Module = crate::shading::Module {
 /// The entry points the shimmer's pipeline is created with.
 pub(crate) const VS_ENTRY: &str = "vs";
 pub(crate) const FS_ENTRY: &str = "fs";
+pub(crate) const FS_FSR_MASKED_ENTRY: &str = "fs_fsr_masked";
 /// The heat shimmer's vertex buffer, read by `vs`.
 pub(crate) const HEAT_LAYOUT: VertexLayout =
     vertex_layout!(HeatDistortion, [position, displacement, weight]);
@@ -30,6 +31,9 @@ struct View {
 
 pub(crate) struct Heat {
     pipeline: wgpu::RenderPipeline,
+    /// `pipeline` also marking FSR's transparency and composition mask
+    /// (`mask_targets`).
+    pipeline_fsr_masked: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     view: wgpu::Buffer,
     source: Option<wgpu::TextureView>,
@@ -80,33 +84,46 @@ impl Heat {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("bounded heat shimmer"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some(VS_ENTRY),
-                compilation_options: Default::default(),
-                buffers: &[Some(HEAT_LAYOUT.buffer)],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some(FS_ENTRY),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        // Distortion marks no reactivity, so its pass attaches that mask
+        // not at all.
+        let [_, composition] = mask_targets();
+        let pipeline = |masked: bool| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("bounded heat shimmer"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some(VS_ENTRY),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(HEAT_LAYOUT.buffer)],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(if masked {
+                        FS_FSR_MASKED_ENTRY
+                    } else {
+                        FS_ENTRY
+                    }),
+                    compilation_options: Default::default(),
+                    targets: &[
+                        Some(wgpu::ColorTargetState {
+                            format: HDR,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        }),
+                        composition.clone(),
+                    ][..if masked { 2 } else { 1 }],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
         Self {
-            pipeline,
+            pipeline: pipeline(false),
+            pipeline_fsr_masked: pipeline(true),
             layout,
             view: crate::counters::buffer_init(
                 device,
@@ -124,7 +141,10 @@ impl Heat {
         }
     }
     /// Heat distortion of `color`, at the render size, in place, its
-    /// displacement authored in pixels of a `scene`-sized frame.
+    /// displacement authored in pixels of a `scene`-sized frame. Where it
+    /// covers (its weight above 0, in front of `depth`), `fsr_masks`, which
+    /// the transparent draws wrote this frame, also take its weight as
+    /// transparency and composition, as those draws accumulate theirs.
     #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
@@ -136,6 +156,7 @@ impl Heat {
         scene: [u32; 2],
         color: &wgpu::TextureView,
         depth: &wgpu::TextureView,
+        fsr_masks: Option<&[wgpu::TextureView; 2]>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
         if transient.heat_count == 0 {
@@ -177,15 +198,20 @@ impl Heat {
                 },
             ],
         });
-        let mut attachment = attachment(color).unwrap();
-        attachment.ops.load = wgpu::LoadOp::Load;
+        let load = |view| super::loaded(attachment(view), true);
+        let mut attachments = vec![load(color)];
+        attachments.extend(fsr_masks.map(|[_, composition]| load(composition)));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("camera heat before bloom and HUD"),
-            color_attachments: &[Some(attachment)],
+            color_attachments: &attachments,
             timestamp_writes: timing.and_then(|t| t.render_pass("heat distortion")),
             ..Default::default()
         });
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(if fsr_masks.is_some() {
+            &self.pipeline_fsr_masked
+        } else {
+            &self.pipeline
+        });
         pass.set_bind_group(0, &group, &[]);
         pass.set_vertex_buffer(0, transient.heat.slice(..));
         pass.draw(0..transient.heat_count, 0..1);
@@ -316,6 +342,7 @@ mod tests {
                         size,
                         &color,
                         &depth,
+                        None,
                         None,
                     );
                     queue.submit([encoder.finish()]);
@@ -612,6 +639,7 @@ mod tests {
             size,
             &color,
             &depth,
+            None,
             None,
         );
         queue.submit([encoder.finish()]);

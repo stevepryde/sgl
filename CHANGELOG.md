@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` heat distortion (`Settings::heat_distortion`) under FSR now marks
+  FSR's transparency and composition mask where it covers, so FSR no longer
+  holds the shimmer as static detail; other antialiasing is unchanged. No
+  game-code changes are needed.
 - `sgl-3d` world-space reflections (`Settings::world_space_reflections`) no
   longer fade in over about a second behind a moving blended receiver: the
   opaque surface it uncovers takes that frame's rays rather than history

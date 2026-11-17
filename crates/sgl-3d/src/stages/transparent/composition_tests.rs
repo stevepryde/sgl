@@ -1,6 +1,6 @@
 //! FSR's transparency and composition mask over opaque surfaces whose
-//! shading moves where their geometry stands still, observed in real
-//! frames.
+//! shading moves where their geometry stands still, and under heat
+//! distortion, observed in real frames.
 use crate::asset::{Asset, Image};
 use crate::renderer::Renderer;
 use crate::settings::{self, Settings};
@@ -430,4 +430,81 @@ fn removing_the_last_moving_material_renders_on() {
     scene.remove_material(material).unwrap();
     let after = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 2.);
     assert_masks(&after, &[((32, 32), [0., 0.], "the floor")]);
+}
+
+// Plausible defects: heat distortion, which changes what its pixels show
+// while their motion stays the still surface's behind, leaves FSR's
+// transparency and composition mask unmarked (#777); marks it where its
+// weight is 0, outside its triangle, or where an opaque surface in front
+// hides it; writes the reactive mask; or replaces what a blended surface
+// marked at a pixel it also covers with less. The oracle is the rule of
+// Frame item 8 (specs/sgl3d-architecture.md): heat distortion marks its
+// weight as transparency and composition where it lies in front of the
+// opaque depth, accumulated as the transparent draws accumulate theirs,
+// AMD's `m (1 - mask) + mask` (fsrapirendermodule.cpp). Heat of weight 0.6
+// reads (0, 0.6) over the floor and over a blended square of alpha 0.4
+// (0.4, 0.4 + 0.6 (1 - 0.4) = 0.76), above both; the square beside it
+// (0.4, 0.4); heat behind an opaque square, heat of weight 0 and the floor
+// beside both (0, 0).
+//
+// The camera at the origin looks down -Z with cot(0.5) = 1.830, so at 3 m
+// a metre spans 19.5 of the 64 texels: the heat of weight 0.6, corners
+// (-1.2, 1.2), (1.2, 1.2) and (-1.2, -1.2), covers columns and rows from
+// 8.6 where column + row < 64, texel centres counted; the heat of weight 0,
+// corners (1.2, -0.2), (1.2, -1.2) and (0.2, -1.2), covers columns and rows
+// up to 55.4 where column + row > 91.3. At 2.5 m a metre spans 23.4
+// texels: the opaque square, 0.4 m wide at (-0.4, 0.4), spans columns and
+// rows 17.9 to 27.3. At 2 m a metre spans 29.3 texels: the blended square,
+// 0.4 m wide at the centre, spans columns and rows 26.1 to 37.9. Sampled
+// texel centres lie at least 2.5 texels from every edge, past FSR's
+// half-texel jitter.
+#[test]
+fn heat_distortion_marks_fsrs_composition_mask() {
+    use crate::heat_distortion::HeatDistortion;
+    let Some((device, queue)) = test_support::fsr_device() else {
+        return;
+    };
+    let Some((mut renderer, settings)) = fsr_renderer(&device, &queue) else {
+        return;
+    };
+    let settings = Settings {
+        heat_distortion: true,
+        ..settings
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, square(-6., 8.));
+    place(
+        &device,
+        &queue,
+        &mut scene,
+        square(-2.5, 0.2),
+        Vec3::new(-0.4, 0.4, 0.),
+    );
+    place(&device, &queue, &mut scene, glass(), Vec3::ZERO);
+    let heat = |corners: [[f32; 2]; 3], weight| {
+        corners.map(|[x, y]| HeatDistortion {
+            position: [x, y, -3.],
+            displacement: [2., 0.],
+            weight,
+        })
+    };
+    let marked = heat([[-1.2, 1.2], [1.2, 1.2], [-1.2, -1.2]], 0.6);
+    let unweighted = heat([[1.2, -0.2], [1.2, -1.2], [0.2, -1.2]], 0.);
+    scene
+        .update_heat_distortion(&queue, &[marked, unweighted].concat())
+        .unwrap();
+    let masks = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 1.);
+    assert_masks(
+        &masks,
+        &[
+            ((14, 30), [0., 0.6], "heat over the floor"),
+            ((40, 14), [0., 0.6], "heat over the floor"),
+            ((29, 29), [0.4, 0.76], "heat over a blended square"),
+            ((34, 34), [0.4, 0.4], "a blended square beside the heat"),
+            ((22, 22), [0., 0.], "heat an opaque square hides"),
+            ((48, 48), [0., 0.], "heat of weight 0"),
+            ((4, 32), [0., 0.], "the floor beside the heat"),
+            ((60, 4), [0., 0.], "the floor beside the heat"),
+        ],
+    );
 }

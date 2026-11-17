@@ -231,11 +231,9 @@ impl Transparent {
         // The draw's slot in `blended`, and the method's result it composes.
         let (beauty, fsr_masks, (trace, reflections)) = match beauty {
             Beauty::Incident(view) => (view, None, (0, None)),
-            Beauty::Composite { reflections } => (
-                &targets.composite,
-                targets.fsr_masks.as_ref().filter(|_| ctx.effective.fsr),
-                (1, reflections),
-            ),
+            Beauty::Composite { reflections } => {
+                (&targets.composite, composite_masks(ctx), (1, reflections))
+            }
         };
         // The first pass that writes FSR's masks clears them: the moving
         // opaque surfaces' while the scene holds one, else the blended
@@ -460,7 +458,9 @@ impl Transparent {
         );
     }
 
-    /// Heat distortion of the completed scene `color` in place.
+    /// Heat distortion of the completed scene `color` in place, marking
+    /// FSR's masks under the condition the draws onto the composite mark
+    /// them (`composite_masks`).
     pub fn encode_heat(&mut self, ctx: &mut FrameContext<'_>, color: &wgpu::TextureView) {
         self.heat.encode(
             ctx.device,
@@ -471,9 +471,17 @@ impl Transparent {
             ctx.sizes.scene,
             color,
             &ctx.targets.depth,
+            composite_masks(ctx),
             ctx.timing,
         );
     }
+}
+
+/// FSR's masks, while the frame's draws onto the composite write them:
+/// the one condition the blended surfaces, additive effects, mist and heat
+/// distortion all follow.
+fn composite_masks<'a>(ctx: &FrameContext<'a>) -> Option<&'a [wgpu::TextureView; 2]> {
+    ctx.targets.fsr_masks.as_ref().filter(|_| ctx.effective.fsr)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

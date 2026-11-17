@@ -458,6 +458,12 @@ Stages run in one order, written in one place in `renderer`:
    tested equal, marking the transparency and composition mask 1, as AMD's
    FSR sample marks its animated textures after its lighting and before its
    translucency (SDK 1.1.4 `AnimatedTexture.hlsl`, `fsrapiconfig.json`).
+   Distortion, last, changes what its pixels show while their motion stays
+   the surface's behind, so under the draws' condition it marks its weight,
+   where it lies in front of the opaque depth, in the transparency and
+   composition mask, accumulated as theirs are, and leaves reactivity: AMD
+   gives that mask to shading that motion vectors do not follow
+   (`super-resolution-upscaler.md` 131).
 9. **Exposure**: the frame's one exposure, fixed or metered from the complete
    HDR frame at the render size, before both of its readers.
 10. **Antialiasing**: TAA or FSR, from render size to scene size, reprojected

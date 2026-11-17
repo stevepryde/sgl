@@ -19,10 +19,14 @@ struct Vertex {
 @vertex fn vs(@location(0) position:vec3<f32>, @location(1) displacement:vec2<f32>, @location(2) weight:f32)->Vertex {
  return Vertex(view.camera*vec4(position,1.),displacement*view.render_per_scene,weight);
 }
-@fragment fn fs(v:Vertex)->@location(0) vec4<f32> {
+// Where the heat lies in front of the opaque depth, at weight above 0.
+fn covers(v:Vertex)->bool {
+ return v.weight>0. && textureLoad(depth,vec2<i32>(v.p.xy),0)<=v.p.z;
+}
+fn heat(v:Vertex)->vec4<f32> {
  let pixel=vec2<i32>(v.p.xy);
  let original=textureLoad(source,pixel,0);
- if v.weight<=0. || all(v.displacement==vec2(0.)) || textureLoad(depth,pixel,0)>v.p.z {
+ if !covers(v) || all(v.displacement==vec2(0.)) {
   return original;
  }
  let sample_pixel=v.p.xy+v.displacement*v.weight-vec2(.5);
@@ -47,4 +51,21 @@ struct Vertex {
   }
  }
  return color;
+}
+@fragment fn fs(v:Vertex)->@location(0) vec4<f32> {
+ return heat(v);
+}
+// FSR's masks (fsr.rs): the shimmer changes what a pixel shows while its
+// motion follows the still surface behind, the case AMD's FSR documentation
+// gives the transparency and composition mask, not reactivity
+// (super-resolution-upscaler.md 131; FidelityFX SDK 1.1.4,
+// MIT, see LICENSE-amd-fidelityfx.txt): its weight as transparency and
+// composition where it covers. It marks no reactivity, so the pass does not
+// attach that mask.
+struct HeatFsrMasked {
+ @location(0) color:vec4<f32>,
+ @location(1) composition:f32,
+}
+@fragment fn fs_fsr_masked(v:Vertex)->HeatFsrMasked {
+ return HeatFsrMasked(heat(v),select(0.,v.weight,covers(v)));
 }
