@@ -14,10 +14,13 @@
 // classification traced no ray and the motion is the receiver's, as
 // Wicked's temporal pass takes one that needs no reflection, storing no
 // depth there (0, the sky's), against which the surface fails the
-// disocclusion test once uncovered (#774); the resolve reads radiance above
-// binary16's range (+infinity) as its largest finite value, as FSR's
-// PrepareRgb clamps its input, so its tone map makes no inf / inf, and keeps
-// its inverse within that range (#464).
+// disocclusion test once uncovered (#774); the upsample's blur skips a
+// neighbour under a blended receiver as Wicked's skips one that needs no
+// reflection, since it holds no rays and would fade the opaque pixels
+// beside the receiver toward their fallback (#806); the resolve reads
+// radiance above binary16's range (+infinity) as its largest finite value,
+// as FSR's PrepareRgb clamps its input, so its tone map makes no inf / inf,
+// and keeps its inverse within that range (#464).
 @group(0) @binding(8) var linear_sampler:sampler;
 
 // Walter et al. 2007; Heitz 2014 (Wicked brdf.hlsli, mediump-saturated).
@@ -227,8 +230,9 @@ const UPSAMPLE_BILATERAL_SIGMA:f32=.9;
      continue;
     }
     let sample=world_receiver(q);
-    // Don't let invalid roughness samples interfere.
-    if !sample.traced {
+    // Don't let invalid roughness samples interfere, nor a neighbour under
+    // a receiver, which holds no rays; the centre, traced, always counts.
+    if !sample.traced || (r!=0 && world_under_receiver(q,sample.depth)) {
      continue;
     }
     let sample_uv=(vec2<f32>(q)+.5)*world.full.zw;

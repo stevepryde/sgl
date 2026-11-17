@@ -33,7 +33,7 @@ struct WorldParams {
 @group(3) @binding(3) var world_f0:texture_2d<f32>;
 @group(3) @binding(4) var<uniform> world:WorldParams;
 // The surface depth (the Surface contract, specs/sgl3d-architecture.md),
-// which the classification and the temporal pass read.
+// which the classification, the temporal pass and the upsample read.
 @group(3) @binding(7) var world_surface_depth:texture_depth_2d;
 
 // Full-resolution pixels per tracing pixel on each axis (world.rs

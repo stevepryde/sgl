@@ -1223,7 +1223,8 @@ last, after everything it may use, and refuses a directive in it.
   lobe its fallback alone, since the result there is the receiver's.
   World-ray accumulation keeps no history at a pixel under a receiver,
   whose motion is the receiver's, so the opaque surface a receiver
-  uncovers starts from its current rays. The
+  uncovers starts from its current rays, and the upsample's blur leaves
+  out a neighbour under a receiver, which holds no rays. The
   lobes' responses and directions, which lobe is
   traced, the method's cutoff test and fade, and the formula response ×
   (reflected × fade + fallback × (1 − confidence × fade)) have one owner,

@@ -27,7 +27,8 @@ const RANGE: f32 = 1000.;
 
 pub(crate) struct Inputs<'a> {
     /// The opaque depth, and the surface depth nearer than it under a
-    /// receiver, whose pixels the rays skip and keep no history at.
+    /// receiver, whose pixels the rays skip, keep no history at and leave
+    /// out of the upsample's blur.
     pub depth: &'a wgpu::TextureView,
     pub surface_depth: &'a wgpu::TextureView,
     pub normal: &'a wgpu::TextureView,
@@ -558,7 +559,7 @@ impl WorldReflections {
                 (51, view(&t.temporal_variance[current])),
                 (52, view(&t.output)),
             ],
-            &receivers,
+            &[receivers.as_slice(), &[(7, view(input.surface_depth))]].concat(),
             t.full,
             encoder,
         );

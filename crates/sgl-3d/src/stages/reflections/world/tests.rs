@@ -1192,6 +1192,76 @@ fn resolved(x: u32, y: u32, frame: u32, covered: bool) -> [f32; 4] {
     })
 }
 
+/// Fills its viewport at the viewport's depth: a blended receiver drawn
+/// over a copy of the opaque depth makes the surface depth (the Surface
+/// contract).
+fn receiver_depth(device: &wgpu::Device) -> wgpu::RenderPipeline {
+    let fill = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("receiver depth"),
+        source: wgpu::ShaderSource::Wgsl(
+            "@vertex fn fill(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32> {\n let uv=vec2<f32>(f32((i<<1u)&2u),f32(i&2u));\n return vec4(uv*2.-1.,0.,1.);\n}\n"
+                .into(),
+        ),
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("receiver depth"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: &fill,
+            entry_point: Some("fill"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: None,
+        primitive: Default::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: crate::shading::gbuffer::DEPTH,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// Clears `view` to a floor facing the camera 10 m away and, over
+/// `receiver`'s full-resolution pixels (left, top, width, height), draws a
+/// blended receiver 5 m away.
+fn fixture_depth(
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    fill: &wgpu::RenderPipeline,
+    receiver: Option<[u32; 4]>,
+) {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("fixture depth"),
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(0.01),
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        ..Default::default()
+    });
+    if let Some([left, top, width, height]) = receiver {
+        pass.set_pipeline(fill);
+        pass.set_viewport(
+            left as f32,
+            top as f32,
+            width as f32,
+            height as f32,
+            0.02,
+            0.02,
+        );
+        pass.draw(0..3, 0..1);
+    }
+}
+
 /// One frame of the temporal fixture: the stage's history count, the
 /// content frame of its rays, and the receiver's left edge, if it holds one.
 #[derive(Clone, Copy)]
@@ -1247,36 +1317,7 @@ fn temporal_output(
         |label| crate::view::targets::target(device, label, size, crate::shading::gbuffer::DEPTH);
     let opaque_depth = depth_target("floor depth");
     let surface_depth = depth_target("surface depth");
-    let fill = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("receiver depth"),
-        source: wgpu::ShaderSource::Wgsl(
-            "@vertex fn fill(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32> {\n let uv=vec2<f32>(f32((i<<1u)&2u),f32(i&2u));\n return vec4(uv*2.-1.,0.,1.);\n}\n"
-                .into(),
-        ),
-    });
-    // Fills its viewport at the viewport's depth.
-    let receiver_pass = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("receiver depth"),
-        layout: None,
-        vertex: wgpu::VertexState {
-            module: &fill,
-            entry_point: Some("fill"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        fragment: None,
-        primitive: Default::default(),
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: crate::shading::gbuffer::DEPTH,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: Default::default(),
-        multiview_mask: None,
-        cache: None,
-    });
+    let receiver_pass = receiver_depth(device);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("world reflection temporal"),
         source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&super::DENOISE]).into()),
@@ -1367,34 +1408,20 @@ fn temporal_output(
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let mut encoder = device.create_command_encoder(&Default::default());
-        let depth_pass = |encoder: &mut wgpu::CommandEncoder, view, receiver: Option<u32>| {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("fixture depth"),
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0.01),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
-            if let Some(left) = receiver {
-                pass.set_pipeline(&receiver_pass);
-                pass.set_viewport(
-                    left as f32,
-                    RECEIVER_ROWS.start as f32,
-                    RECEIVER_WIDTH as f32,
-                    RECEIVER_ROWS.len() as f32,
-                    0.02,
-                    0.02,
-                );
-                pass.draw(0..3, 0..1);
-            }
-        };
-        depth_pass(&mut encoder, &opaque_depth, None);
-        depth_pass(&mut encoder, &surface_depth, frame.receiver);
+        fixture_depth(&mut encoder, &opaque_depth, &receiver_pass, None);
+        fixture_depth(
+            &mut encoder,
+            &surface_depth,
+            &receiver_pass,
+            frame.receiver.map(|left| {
+                [
+                    left,
+                    RECEIVER_ROWS.start,
+                    RECEIVER_WIDTH,
+                    RECEIVER_ROWS.len() as u32,
+                ]
+            }),
+        );
         let inputs = bind(
             0,
             &[
@@ -1530,5 +1557,268 @@ fn texels_a_receiver_uncovers_take_their_current_rays_whole() {
         "{} texels off the receiver's path differ from a run without it: {:?}",
         kept.len(),
         &kept[..kept.len().min(4)]
+    );
+}
+
+/// The upsample fixture's full-resolution side; its floor's roughness,
+/// where the blur takes its largest radius; and the full-resolution
+/// columns a blended receiver covers, an odd count, so that one traced
+/// texel straddles its edge.
+const UPSAMPLE_SIZE: u32 = 64;
+const UPSAMPLE_ROUGHNESS: f32 = 0.125;
+const UPSAMPLE_EDGE: u32 = 33;
+
+/// The production resolve, then the production upsample, over a static
+/// camera 10 m in front of a lit, traced floor facing it, which, with
+/// `receiver`, a blended receiver 5 m away covers left of `UPSAMPLE_EDGE`.
+/// Rays hit uniform radiance but for a checkerboard at traced columns 24 on,
+/// and hold nothing where the receiver covers a traced texel's first pixel,
+/// as the classification leaves them; the temporal pass, which passes the
+/// resolve's colour through there and on a first frame, is left out. Its
+/// variance is `variance`, standing in for noisy rays (uniform rays have
+/// none), and 0 under the receiver, as the temporal pass stores it.
+fn upsampled(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    receiver: bool,
+    variance: f32,
+) -> Vec<[f32; 4]> {
+    use wgpu::util::DeviceExt;
+    let size = [UPSAMPLE_SIZE; 2];
+    let reduced = size.map(|side| side / super::DOWNSCALE);
+    let full_texels = (size[0] * size[1]) as usize;
+    let normal = test_support::hdr_texture(device, queue, size, &vec![[0.; 4]; full_texels]);
+    let material = test_support::hdr_texture(
+        device,
+        queue,
+        size,
+        &vec![[0., UPSAMPLE_ROUGHNESS, 0., 1.]; full_texels],
+    );
+    let f0 = test_support::hdr_texture(device, queue, size, &vec![[1.; 4]; full_texels]);
+    let traced = |texel: &dyn Fn([u32; 2], bool) -> [f32; 4]| {
+        let texels = (0..reduced[1])
+            .flat_map(|y| (0..reduced[0]).map(move |x| (x, y)))
+            .map(|(x, y)| texel([x, y], receiver && x * super::DOWNSCALE < UPSAMPLE_EDGE))
+            .collect::<Vec<_>>();
+        test_support::hdr_texture(device, queue, reduced, &texels)
+    };
+    let indirect = traced(&|[x, y], covered| match covered {
+        true => [0.; 4],
+        false if x >= 24 && (x + y) % 2 == 0 => [0.2, 0.2, 0.2, 1.],
+        false => [0.6, 0.8, 1., 1.],
+    });
+    let direction = traced(&|_, covered| if covered { [0.; 4] } else { [0., 0., 1., 1.] });
+    let variance = traced(&|_, covered| [if covered { 0. } else { variance }; 4]);
+    let r32 = wgpu::TextureFormat::R32Float;
+    let hdr = crate::shading::gbuffer::COLOR;
+    let length = super::texture(
+        device,
+        "lengths",
+        reduced,
+        r32,
+        wgpu::TextureUsages::COPY_DST,
+    );
+    queue.write_texture(
+        length.texture().as_image_copy(),
+        bytemuck::cast_slice(&vec![10f32; (reduced[0] * reduced[1]) as usize]),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(reduced[0] * 4),
+            rows_per_image: Some(reduced[1]),
+        },
+        length.texture().size(),
+    );
+    let storage = wgpu::TextureUsages::STORAGE_BINDING;
+    let resolve = super::texture(device, "resolve", reduced, hdr, storage);
+    let resolve_variance = super::texture(device, "resolve variance", reduced, hdr, storage);
+    let reprojection = super::texture(device, "hit depth", reduced, r32, storage);
+    let output = super::texture(
+        device,
+        "upsampled",
+        size,
+        hdr,
+        storage | wgpu::TextureUsages::COPY_SRC,
+    );
+    let depth_target =
+        |label| crate::view::targets::target(device, label, size, crate::shading::gbuffer::DEPTH);
+    let opaque_depth = depth_target("floor depth");
+    let surface_depth = depth_target("surface depth");
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("world reflection denoise"),
+        source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&super::DENOISE]).into()),
+    });
+    let pipeline = |entry_point| {
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(entry_point),
+            layout: None,
+            module: &shader,
+            entry_point: Some(entry_point),
+            compilation_options: Default::default(),
+            cache: None,
+        })
+    };
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    let projection = crate::perspective(std::f32::consts::FRAC_PI_2, 1., 0.1);
+    let [w, h] = size.map(|v| v as f32);
+    let [rw, rh] = reduced.map(|v| v as f32);
+    let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents: bytemuck::bytes_of(&super::Params {
+            inverse_view_projection: projection.inverse().to_cols_array_2d(),
+            previous_view_projection: projection.to_cols_array_2d(),
+            eye: [0., 0., 0., 0.1],
+            full: [w, h, 1. / w, 1. / h],
+            reduced: [rw, rh, 1. / rw, 1. / rh],
+            frame: 0,
+            rays: 0,
+            traced: 0.49,
+            range: super::RANGE,
+            previous_near: 0.1,
+            fade: 0.1,
+            padding: [0; 2],
+        }),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let texture = wgpu::BindingResource::TextureView;
+    let receivers = [
+        (0, texture(&opaque_depth)),
+        (1, texture(&normal)),
+        (2, texture(&material)),
+        (3, texture(&f0)),
+        (4, params.as_entire_binding()),
+    ];
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let fill = receiver_depth(device);
+    fixture_depth(&mut encoder, &opaque_depth, &fill, None);
+    fixture_depth(
+        &mut encoder,
+        &surface_depth,
+        &fill,
+        receiver.then_some([0, 0, UPSAMPLE_EDGE, size[1]]),
+    );
+    let mut dispatch = |entry_point,
+                        inputs: &[(u32, wgpu::BindingResource)],
+                        receivers: &[(u32, wgpu::BindingResource)],
+                        grid: [u32; 2]| {
+        let pipeline = pipeline(entry_point);
+        let bind = |index, entries: &[(u32, wgpu::BindingResource)]| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &pipeline.get_bind_group_layout(index),
+                entries: &entries
+                    .iter()
+                    .map(|(binding, resource)| wgpu::BindGroupEntry {
+                        binding: *binding,
+                        resource: resource.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            })
+        };
+        let (inputs, receivers) = (bind(0, inputs), bind(3, receivers));
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &inputs, &[]);
+        pass.set_bind_group(3, &receivers, &[]);
+        pass.dispatch_workgroups(grid[0].div_ceil(8), grid[1].div_ceil(8), 1);
+    };
+    dispatch(
+        super::WORLD_RESOLVE_ENTRY,
+        &[
+            (10, texture(&indirect)),
+            (11, texture(&direction)),
+            (12, texture(&length)),
+            (20, texture(&resolve)),
+            (21, texture(&resolve_variance)),
+            (22, texture(&reprojection)),
+        ],
+        &receivers,
+        reduced,
+    );
+    dispatch(
+        super::WORLD_UPSAMPLE_ENTRY,
+        &[
+            (8, wgpu::BindingResource::Sampler(&sampler)),
+            (50, texture(&resolve)),
+            (51, texture(&variance)),
+            (52, texture(&output)),
+        ],
+        &[receivers.as_slice(), &[(7, texture(&surface_depth))]].concat(),
+        size,
+    );
+    queue.submit([encoder.finish()]);
+    test_support::read(device, queue, output.texture(), 8)
+        .chunks_exact(8)
+        .map(|texel| std::array::from_fn(|c| test_support::half(&texel[c * 2..c * 2 + 2])))
+        .collect()
+}
+
+// Plausible defect: the upsample's edge-aware blur skips a neighbour only
+// where its opaque surface would not trace, so one under a blended
+// receiver, where the classification traced no ray and the temporal pass
+// keeps none, enters the blur at full depth and normal weight with the
+// colour the resolve left there, empty where its reuse of nearby rays
+// reached none, and composition gives the opaque pixels beside the
+// receiver that share of their reflection's fallback. Oracle: the same
+// floor without the receiver. Over uniform radiance, opaque pixels from the
+// receiver's edge out to the blur's radius must equal it, and so must
+// those beyond, so that a blur changed everywhere fails too; the
+// checkerboard, away from the edge, shows the blur ran. Rows within the
+// resolve's largest reach (4 traced texels) of the frame's top and bottom
+// are left out: off the grid there, its samples can leave the texel that
+// straddles the edge empty, which the first, bilinear sample of the
+// reduced grid reads before any blur (#811).
+#[test]
+fn opaque_pixels_beside_a_receiver_keep_their_blurred_reflection() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let covered = upsampled(gpu, true, 0.1);
+    let uncovered = upsampled(gpu, false, 0.1);
+    let unblurred = upsampled(gpu, false, 0.);
+    let blurred = uncovered
+        .iter()
+        .zip(&unblurred)
+        .filter(|(a, b)| a != b)
+        .count();
+    // The resolve's weighted sums over uniform rays, its samples under the
+    // receiver dropped, round to within a binary16 step (2^-11 below 1) of
+    // the floor's radiance; two steps allow for both runs.
+    const ROUNDING: f32 = 1. / 1024.;
+    let radius = UPSAMPLE_EDGE..=UPSAMPLE_EDGE + 2;
+    let (mut beside, mut beyond) = (Vec::new(), Vec::new());
+    for y in 8..UPSAMPLE_SIZE - 8 {
+        for x in UPSAMPLE_EDGE..UPSAMPLE_SIZE {
+            let i = (y * UPSAMPLE_SIZE + x) as usize;
+            if largest_difference(&covered[i], &uncovered[i]) > ROUNDING {
+                let differs = ((x, y), covered[i], uncovered[i]);
+                if radius.contains(&x) {
+                    beside.push(differs);
+                } else {
+                    beyond.push(differs);
+                }
+            }
+        }
+    }
+    eprintln!(
+        "pixels the blur changed: {blurred}; opaque pixels unlike the floor without the receiver, beside it: {}, beyond its radius: {}",
+        beside.len(),
+        beyond.len()
+    );
+    assert!(blurred > 0, "the fixture's blur must run");
+    assert!(
+        beside.is_empty(),
+        "{} opaque pixels beside the receiver lost reflection to it: {:?}",
+        beside.len(),
+        &beside[..beside.len().min(4)]
+    );
+    assert!(
+        beyond.is_empty(),
+        "{} opaque pixels beyond the blur's radius differ: {:?}",
+        beyond.len(),
+        &beyond[..beyond.len().min(4)]
     );
 }
