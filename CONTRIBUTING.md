@@ -1,6 +1,7 @@
 # Contributing to SGL
 
-AI coding agents are SGL's primary consumers and authors. A useful change
+AI coding agents write and maintain all of SGL and are its consumers; the
+owner steers. A useful change
 makes a concrete game task easier while preserving explicit ownership,
 small public boundaries, and examples an agent can adapt.
 

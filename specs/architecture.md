@@ -8,8 +8,11 @@ caller-driven wgpu path.
 
 ## Design audience and origins
 
-AI coding agents are the primary consumers and authors. Public boundaries
-must make ownership, inputs, outputs, and lifecycle explicit. Package guides
+AI coding agents are the only authors and maintainers, of SGL and of the
+games that consume it and their assets; the owner steers
+([D-50](decisions.md)). Nothing assumes a person writes code, authors an
+asset, performs a step or holds knowledge the repository does not. Public
+boundaries must make ownership, inputs, outputs, and lifecycle explicit. Package guides
 and runnable examples must be usable without access to the source games.
 [The consumer guide](../docs/README.md) routes agents by task; the root README
 introduces the project to people.

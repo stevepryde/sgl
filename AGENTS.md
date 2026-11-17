@@ -1,8 +1,11 @@
 # Agent instructions
 
-SGL is Steve's Game Library, designed primarily for AI coding agents building
-games. Keep APIs explicit, docs navigable, and examples useful without access
-to the original games or a maintainer's machine.
+SGL is Steve's Game Library, written and maintained entirely by AI coding
+agents, for AI coding agents building games. The owner steers and writes none
+of it. Never assume a line of code or an asset, here or in a game that uses
+SGL, was or will be made by a person (D-50). Keep APIs explicit, docs
+navigable, and examples useful without access to the original games or a
+maintainer's machine.
 
 ## Read by task
 

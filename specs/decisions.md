@@ -769,3 +769,20 @@ Use the [current specs](README.md) for implementation and the
   consumers.
   Rationale: SGL is the reusable layer of the owner's games; waiting for a
   second game before moving a reusable piece into it defeats the point.
+
+- **D-50** Owner direction, 2026-11-17: SGL is written and maintained
+  entirely by AI agents. The owner steers and writes none of it, and the same
+  holds for the games that use it and for their assets. Architecture,
+  workflow and tooling therefore assume an agent on both sides of every
+  boundary and never a human author. Everything needed to change or use the
+  library is in the repository: contracts, guides and issues, with nothing
+  left to a maintainer's memory. Work is planned, implemented, reviewed and
+  verified by agents. Verification is something an agent can run and read,
+  not something a person looks at; the owner judges the look and steers,
+  which is direction, not a step in the work. Authored content is text, code
+  or the output of a command an agent runs, never a step in an interactive
+  tool. This replaces "primary consumers and authors" in the architecture
+  and the contribution guide.
+  Rationale: designing for a human contributor who does not exist adds
+  ceremony for nobody and leaves gaps where a person was expected to fill
+  them in.
