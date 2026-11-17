@@ -720,3 +720,24 @@ Use the [current specs](README.md) for implementation and the
   and an all-black or sub-sample window stays finite. This changes only the
   averaging walk, from 64 bins to 63; metering and its GPU pass stay in the
   exposure stage, with no additional resources or passes.
+
+- **D-47** Owner direction, 2026-11-17: SGL is whatever can be reused between
+  games, and no kind of capability is excluded in advance. It began as the
+  reusable layer lifted out of custom games and stays that: the game provides
+  its shell, its logic and its composition, in Rust and, where it chooses, a
+  scripting runtime, and builds from SGL's pieces. An entity system, physics
+  (a custom layer, or Rapier or Jolt behind one) or a scripting runtime (Nybl
+  is the candidate) may join SGL when a game needs it, as a library a game
+  can take or leave. What stays fixed is who holds control: the game owns its
+  executable and main loop, SGL is never a host that a game scripts, and a
+  headless server still builds without what it does not use
+  ([architecture](architecture.md) 4). This replaces the categorical
+  exclusions `AGENTS.md` and S3D-1 carried, and the reading of D-12's "no
+  editor, ECS, separate engine, or new gameplay language" as a rule: it
+  described that decision's scope. D-33 remains the guidance for choosing
+  physics today, and its condition, physics in SGL where it brings a
+  significant benefit, is the rule. None of these is planned yet; each is
+  planned through the architect skill when a game needs it.
+  Rationale: a fixed list of excluded features ruled out things SGL may
+  come to need, to prevent an outcome, SGL becoming an engine, that the
+  ownership rule already prevents.

@@ -58,9 +58,10 @@ settings SGL3D has today.
    [post stage](sgl3d-architecture.md#frame). What the browser cannot do is an input, not a
    platform fork: the game passes bytes rather than paths and the frame
    time rather than a clock, and an operation that must block for readback
-   fails with an error. SGL3D must not depend on a game crate,
-   require winit or input handling, or introduce an editor, ECS, gameplay
-   language or application host.
+   fails with an error. SGL3D must not depend on a game crate, or require
+   winit, input handling, an editor, an entity system, a gameplay language or
+   an application host: it stays usable on its own
+   ([D-47](decisions.md)).
 2. **S3D-2 — Reusable content.** The renderer accepts caller-supplied meshes,
    materials, instances, environment maps, lights, decals and atmosphere
    inputs, and
@@ -131,7 +132,7 @@ settings SGL3D has today.
    functions SGL3D composes into its own programs) are its content, never
    SGL3D's built-in look: SGL3D ships no water, wind or glass equations,
    which live with the game and the examples. They are shading content, not
-   a gameplay scripting language: game logic stays Rust.
+   gameplay logic, which stays the game's.
 3. **S3D-3 — Coordinates and state.** The boundary uses metres, +Y up,
    right-handed view/projection matrices, camera-local forward −Z, reversed-Z
    device depth (1 at the near plane, 0 at the far plane; `sgl_3d::perspective`
@@ -327,7 +328,9 @@ The code's structure follows the
    design records, equations, evidence tables or measurement logs to specs or
    docs; usage belongs in the package README and provenance in source headers.
    Bugs and follow-ups go in GitHub issues. Existing component records may be
-   deleted with the mechanism they describe.
+   deleted with the mechanism they describe. The [audit log](audits.md) is the
+   one audit history kept here: a terse entry per audit finding, never a design
+   record or a measurement table.
 
 ## Roadmap
 

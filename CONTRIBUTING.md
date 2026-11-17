@@ -33,6 +33,9 @@ libraries and libudev.
 
 - Start with the existing implementation and a concrete consumer need.
   Preserve the game/library boundary in [architecture](specs/architecture.md).
+  Plan a feature, setting, public type, port or refactor with the
+  [architect skill](.claude/skills/sgl-architect/SKILL.md) before building it,
+  and put its architecture fit in the issue.
 - Breaking changes are an expected part of SGL's evolution. Prefer a clear
   API over compatibility shims, and give consumer agents actionable migration
   instructions in [CHANGELOG.md](CHANGELOG.md). Every consumer-visible change

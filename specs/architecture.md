@@ -38,6 +38,9 @@ library; their rules, content, and process layouts stay with the games.
    authority, UI layout, and process layout.
 2. SGL owns reusable, game-independent pieces extracted from the source games.
    When those games share a pattern, SGL should become the copy they call.
+   No kind of reusable piece is excluded in advance: what decides is that
+   games can reuse it, and that a game can take it or leave it while owning
+   its executable and loop ([D-47](decisions.md)).
 3. Each package must own an implemented reusable boundary. New modules appear
    when extracted code needs a home.
 
