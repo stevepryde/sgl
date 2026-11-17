@@ -30,6 +30,13 @@ struct TracedParams {
 }
 // The linear depth a texel the G-buffer drew nothing at records.
 const TRACED_SKY_DEPTH:f32=1e30;
+// Whether a tracing texel of linear depth `depth` holds a receiver: not the
+// sky, nor a pixel the G-buffer drew nothing lit at, which the trace
+// records as the sky (traced_pixel). The passes after weigh no other
+// texel's visibility.
+fn traced_holds_receiver(depth:f32)->bool {
+ return depth<TRACED_SKY_DEPTH;
+}
 // The slots AMD's shadow denoiser may filter, as Wicked's first four: the
 // directional light's and slots 1 to 3's local lights, each kept by the
 // light that holds it, the packed visibility's word 0; which of them it filters a frame is

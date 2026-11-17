@@ -2077,3 +2077,416 @@ fn a_baked_light_casts_no_ray_at_a_receiver_with_baked_lighting() {
         }
     }
 }
+
+/// A box of `test_support::cube` at `block`, its material as `material`
+/// leaves it.
+fn add_box(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    scene: &mut Scene,
+    block: Block,
+    material: impl FnOnce(&mut crate::asset::Material),
+) {
+    let mut asset = test_support::cube();
+    material(&mut asset.materials[0]);
+    let model = scene.add_asset(device, queue, asset).unwrap().model;
+    let state = InstanceState {
+        pose: Mat4::from_scale_rotation_translation(block.half * 2., Quat::IDENTITY, block.centre),
+        ..InstanceState::new(model)
+    };
+    scene
+        .add_instance(device, queue, state, block.mobility)
+        .unwrap();
+}
+
+/// The thin-feature scene's output size, camera position and the distance
+/// from it to the receivers' front faces, at z = 0, facing the camera.
+const THIN_SIZE: [u32; 2] = [64, 64];
+const THIN_EYE: Vec3 = Vec3::new(0., 1., 5.);
+const THIN_DEPTH: f32 = 5.;
+
+/// A receiver of the thin-feature scene: a box whose front face, at z = 0,
+/// covers the centres of render pixels `columns` by `rows` (inclusive) and
+/// no other's, 1 cm deep.
+fn thin_receiver(camera: &Camera, columns: [u32; 2], rows: [u32; 2]) -> Block {
+    let [width, height] = THIN_SIZE.map(|side| side as f32);
+    let x = |column: u32| {
+        ((column as f32 + 0.5) / width * 2. - 1.) / camera.projection.x_axis.x * THIN_DEPTH
+    };
+    let y = |row: u32| {
+        THIN_EYE.y
+            + (1. - (row as f32 + 0.5) / height * 2.) / camera.projection.y_axis.y * THIN_DEPTH
+    };
+    // 0.3 of a pixel beyond the outer pixels' centres, short of the next's.
+    let margin = 0.3 * 2. * THIN_DEPTH / (camera.projection.x_axis.x * width);
+    let [left, right] = columns.map(x);
+    let [top, bottom] = rows.map(y);
+    Block::new(
+        Vec3::new((left + right) / 2., (top + bottom) / 2., -0.005),
+        Vec3::new(
+            (right - left) / 2. + margin,
+            (top - bottom) / 2. + margin,
+            0.005,
+        ),
+        Mobility::Static,
+    )
+}
+
+/// Whether `position` lies on `block`'s front face (z = 0).
+fn on_front(block: Block, position: DVec3) -> bool {
+    let (centre, half) = (block.centre.as_dvec3(), block.half.as_dvec3());
+    (position.z - (centre.z + half.z)).abs() < 1e-3
+        && (position.x - centre.x).abs() <= half.x + 1e-3
+        && (position.y - centre.y).abs() <= half.y + 1e-3
+}
+
+// Thin lit features one render pixel across, against the sky and in front
+// of an unlit surface, beside a broad panel the sun's shadow covers. The
+// trace takes one ray per 2×2 block, at its even pixel, so a bar at an odd
+// column (or row) traces no ray of its own: its tracing texels are the sky
+// or the unlit surface, which hold no receiver. Plausible defects: the
+// upsample weighing those texels' zeros, so an unoccluded bar reads as
+// shadowed (#771); and a fix that turns a real shadow to 1 where it meets
+// the sky (the panel's edge pixels, whose taps are a shadowed texel and a
+// sky texel), or that the denoiser's history then moves. The oracle
+// is the boxes' geometry in f64, the slab test from each receiver pixel's
+// position toward the sun past the other boxes: nothing occludes the bars,
+// and the slab above the panel occludes all of it. Each scene runs a
+// camera cut and then still frames, whose denoiser and temporal histories
+// accumulate.
+#[test]
+fn thin_lit_features_against_the_sky_are_unoccluded() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let camera = camera(THIN_EYE, THIN_EYE - Vec3::Z * THIN_DEPTH, THIN_SIZE);
+    let odd_column = thin_receiver(&camera, [33, 33], [8, 48]);
+    let odd_row = thin_receiver(&camera, [28, 60], [55, 55]);
+    let panel = thin_receiver(&camera, [4, 13], [8, 48]);
+    let to_sun = Vec3::new(0., 1., 0.6).normalize();
+    // Across every ray from the panel's front face toward the sun, above
+    // the view.
+    let rise = 4.;
+    let slab = Block::new(
+        Vec3::new(
+            panel.centre.x,
+            panel.centre.y + rise,
+            rise * to_sun.z / to_sun.y,
+        ),
+        Vec3::new(
+            panel.half.x + 0.3,
+            0.05,
+            panel.half.y * to_sun.z / to_sun.y + 0.3,
+        ),
+        Mobility::Static,
+    );
+    let receivers = [odd_column, odd_row, panel];
+    let sun = DirectionalLight {
+        direction: -to_sun,
+        illuminance: 3.,
+        shadow: Some(DirectionalShadow::DEFAULT),
+        angular_diameter: 0.,
+        ..DirectionalLight::default()
+    };
+    let settings = settings(true);
+    for unlit_behind in [false, true] {
+        let mut scene = Scene::new(&device, &queue);
+        for block in receivers.into_iter().chain([slab]) {
+            add_box(gpu, &mut scene, block, |_| ());
+        }
+        if unlit_behind {
+            let wall = Block::new(
+                Vec3::new(0., 1., -3.),
+                Vec3::new(20., 20., 0.05),
+                Mobility::Static,
+            );
+            add_box(gpu, &mut scene, wall, |material| material.unlit = true);
+        }
+        let mut renderer = Renderer::for_test(&device, &queue, THIN_SIZE, &settings);
+        let mut input = input(camera, Some(sun));
+        for frame in 0..8 {
+            input.camera_cut = frame == 0;
+            let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+            assert!(renderer.ray_traced_shadows_in_effect(&settings, &scene));
+            let label = format!(
+                "frame {frame}, {}",
+                if unlit_behind {
+                    "an unlit wall behind"
+                } else {
+                    "the sky behind"
+                }
+            );
+            let receiver = |pixel: [u32; 2]| {
+                let position = observed.position(&camera, pixel)?;
+                receivers
+                    .iter()
+                    .position(|&block| on_front(block, position))
+                    .map(|index| (index, position))
+            };
+            // The premise: the odd bars' pixels have no receiver either side
+            // across them.
+            let mut lone = [0; 2];
+            let mut decided = [0; 2];
+            for y in 1..THIN_SIZE[1] - 1 {
+                for x in 1..THIN_SIZE[0] - 1 {
+                    let Some((index, position)) = receiver([x, y]) else {
+                        continue;
+                    };
+                    if index == 0
+                        && receiver([x - 1, y]).is_none()
+                        && receiver([x + 1, y]).is_none()
+                    {
+                        lone[0] += 1;
+                    }
+                    if index == 1
+                        && receiver([x, y - 1]).is_none()
+                        && receiver([x, y + 1]).is_none()
+                    {
+                        lone[1] += 1;
+                    }
+                    let others: Vec<Block> = receivers
+                        .iter()
+                        .enumerate()
+                        .filter(|&(other, _)| other != index)
+                        .map(|(_, &block)| block)
+                        .chain([slab])
+                        .collect();
+                    let Some(occluded) = occluded(
+                        &others,
+                        position,
+                        to_sun.as_dvec3(),
+                        (0.01, f64::from(f32::MAX)),
+                    ) else {
+                        continue;
+                    };
+                    assert_eq!(
+                        observed.mask(0, [x, y]),
+                        if occluded { 0 } else { 255 },
+                        "{label}: receiver {index} at {x}, {y} ({position:?}): the oracle says occluded {occluded}"
+                    );
+                    decided[usize::from(occluded)] += 1;
+                }
+            }
+            assert!(
+                lone.iter().all(|&count| count > 20),
+                "{label}: only {lone:?} lone bar pixels"
+            );
+            let [lit, shadowed] = decided;
+            assert!(
+                lit > 60 && shadowed > 200,
+                "{label}: only {lit} lit and {shadowed} shadowed receiver pixels decided"
+            );
+        }
+    }
+}
+
+// A lit bar one render pixel wide at an even column, against the sky,
+// which a local light in a slot the temporal blend alone fills shines on:
+// the bar traces its own rays, and the sky either side of it in the
+// blend's neighbourhood holds no receiver. In the first frame a moving
+// block above the view shadows the bar; in the next it has gone, so the
+// bar is lit. Plausible defect: the blend's box about the bar's value
+// taking the sky texels' zeros, which widen it down to the bar's shadowed
+// history, so the bar keeps most of a shadow that has gone (a broad lit
+// surface's box is its lit value alone, and drops that history at once).
+// The oracle is the boxes' geometry in f64, the slab test from each bar
+// pixel toward the light past the block, in each frame.
+#[test]
+fn a_thin_feature_s_history_is_clamped_by_receivers_alone() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let camera = camera(THIN_EYE, THIN_EYE - Vec3::Z * THIN_DEPTH, THIN_SIZE);
+    let bar = thin_receiver(&camera, [44, 44], [8, 48]);
+    let light = Light {
+        position: Vec3::new(bar.centre.x, 6., 2.),
+        shape: LightShape::Point { radius: 0. },
+        intensity: 40.,
+        range: 15.,
+        casts_shadow: true,
+        ..Light::default()
+    };
+    // Across every ray from the bar's front face toward the light, above
+    // the view.
+    let shade = Block::new(
+        Vec3::new(bar.centre.x, 4.5, 1.35),
+        Vec3::new(0.3, 0.05, 0.6),
+        Mobility::Moving,
+    );
+    let gone = Block::new(Vec3::splat(50.), shade.half, Mobility::Moving);
+    let mut scene = Scene::new(&device, &queue);
+    add_box(gpu, &mut scene, bar, |_| ());
+    let cube = scene
+        .add_asset(&device, &queue, test_support::cube())
+        .unwrap()
+        .model;
+    let placed = |block: Block| InstanceState {
+        pose: Mat4::from_scale_rotation_translation(block.half * 2., Quat::IDENTITY, block.centre),
+        ..InstanceState::new(cube)
+    };
+    let shade_id = scene
+        .add_instance(&device, &queue, placed(shade), Mobility::Moving)
+        .unwrap();
+    for decoy in decoys(THIN_EYE) {
+        scene.add_light(&device, &queue, decoy).unwrap();
+    }
+    let key = scene.add_light(&device, &queue, light).unwrap().index() as u32;
+    let settings = settings(true);
+    let mut renderer = Renderer::for_test(&device, &queue, THIN_SIZE, &settings);
+    let mut input = input(camera, None);
+    for (frame, block) in [shade, gone].into_iter().enumerate() {
+        input.camera_cut = frame == 0;
+        scene.set_instance(&queue, shade_id, placed(block)).unwrap();
+        let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+        let slot = observed.slot(key);
+        assert!(
+            slot >= super::denoise::DENOISED_SLOTS as usize,
+            "the decoys outrank the light: slot {slot}"
+        );
+        let mut decided = 0;
+        for y in 0..THIN_SIZE[1] {
+            for x in 0..THIN_SIZE[0] {
+                let Some(position) = observed
+                    .position(&camera, [x, y])
+                    .filter(|&position| on_front(bar, position))
+                else {
+                    continue;
+                };
+                let to_light = light.position.as_dvec3() - position;
+                let distance = to_light.length();
+                let Some(occluded) =
+                    occluded(&[block], position, to_light / distance, (0.01, distance))
+                else {
+                    continue;
+                };
+                assert_eq!(
+                    observed.mask(slot, [x, y]),
+                    if occluded { 0 } else { 255 },
+                    "frame {frame}: the bar at {x}, {y} ({position:?}): the oracle says occluded {occluded}"
+                );
+                decided += 1;
+            }
+        }
+        assert!(
+            decided > 30,
+            "frame {frame}: only {decided} bar pixels decided"
+        );
+    }
+}
+
+/// The normal-mapped plane's height: the distance from the render origin
+/// at which a position's rounding is about 8 µm a unit in the last place.
+const TILTED_HEIGHT: f32 = 100.;
+
+/// A plane facing +Y at `TILTED_HEIGHT`, 30 m to each side, its U along -X
+/// and V along +Z; its normal map tilts the base normal 37° toward +U (X
+/// 0.6, Z 0.8), and where `coat`, a clearcoat whose normal map tilts the
+/// coat's 37° toward -U.
+fn tilted_plane(coat: bool) -> Asset {
+    let half = 30.;
+    let mut asset = test_support::cube();
+    asset.meshes = vec![CpuMesh {
+        vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
+            .map(|(x, z)| Vertex {
+                tangent: [0.; 4],
+                lightmap_bounds: [0., 0., 1., 1.],
+                lightmap_uv: [0.; 2],
+                position: [x * half, TILTED_HEIGHT, z * half],
+                normal: [0., 1., 0.],
+                uv: [(1. - x) / 2., (z + 1.) / 2.],
+                color: [1.; 4],
+            })
+            .to_vec(),
+        indices: vec![0, 2, 1, 0, 3, 2],
+        material: 0,
+        deformation: Default::default(),
+    }];
+    let material = &mut asset.materials[0];
+    material.double_sided = false;
+    material.normal_texture = Some(0);
+    if coat {
+        material.clearcoat = 1.;
+        material.coat_roughness = 0.1;
+        material.coat_normal_texture = Some(1);
+    }
+    asset.images = [204, 51]
+        .map(|x| {
+            crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(
+                4,
+                4,
+                image::Rgba([x, 128, 230, 255]),
+            ))
+        })
+        .to_vec();
+    asset
+}
+
+// A normal-mapped plane 100 m from the render origin under a sun 15° above
+// it, whose map tilts the base normal away from the sun while the geometry
+// (and, with a clearcoat, the coat's mapped normal) faces it. Plausible
+// defect: the shadow ray's origin lifted along the base normal flipped to
+// the ray's side, which points into the surface here, by more than the ray
+// rises before its TMin, so the ray meets its own plane from behind
+// (#771). The oracle: nothing but the plane is in the scene, and the sun
+// reaches it (its geometry normal faces the sun), so every pixel on it is
+// unoccluded.
+#[test]
+fn a_normal_mapped_surface_does_not_shadow_itself() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let elevation = 15_f32.to_radians();
+    let to_sun = Vec3::new(elevation.cos(), elevation.sin(), 0.);
+    let sun = DirectionalLight {
+        direction: -to_sun,
+        illuminance: 3.,
+        shadow: Some(DirectionalShadow::DEFAULT),
+        angular_diameter: 0.,
+        ..DirectionalLight::default()
+    };
+    // The maps' normals as the test intends them: the base's faces away
+    // from the sun, the coat's toward it.
+    let base = Vec3::new(-0.6, 0.8, 0.);
+    let coat = Vec3::new(0.6, 0.8, 0.);
+    assert!(base.dot(to_sun) < 0. && coat.dot(to_sun) > 0. && Vec3::Y.dot(to_sun) > 0.);
+    let size = [64, 64];
+    let eye = Vec3::new(0., TILTED_HEIGHT + 4., 4.);
+    let camera = camera(eye, Vec3::new(0., TILTED_HEIGHT, 0.), size);
+    let settings = settings(true);
+    for coated in [false, true] {
+        let mut scene = Scene::new(&device, &queue);
+        test_support::add_static(&device, &queue, &mut scene, tilted_plane(coated));
+        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let mut input = input(camera, Some(sun));
+        for frame in 0..4 {
+            input.camera_cut = frame == 0;
+            let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+            assert!(renderer.ray_traced_shadows_in_effect(&settings, &scene));
+            let mut shadowed = Vec::new();
+            let mut on_plane = 0;
+            for y in 0..size[1] {
+                for x in 0..size[0] {
+                    let Some(position) = observed.position(&camera, [x, y]) else {
+                        continue;
+                    };
+                    if (position.y - f64::from(TILTED_HEIGHT)).abs() > 1e-2 {
+                        continue;
+                    }
+                    on_plane += 1;
+                    if observed.mask(0, [x, y]) != 255 {
+                        shadowed.push([x, y]);
+                    }
+                }
+            }
+            assert_eq!(on_plane, size[0] * size[1], "the plane fills the view");
+            assert!(
+                shadowed.is_empty(),
+                "frame {frame}, coated {coated}: {} of {on_plane} pixels shadowed, as {:?}",
+                shadowed.len(),
+                &shadowed[..shadowed.len().min(8)]
+            );
+        }
+    }
+}

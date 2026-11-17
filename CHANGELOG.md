@@ -23,6 +23,10 @@ docs and specs the entry links.
   `TemporalAntiAliasingAttribs::padding0` with `rigid_object_motion` (default
   zero), setting it when rigid geometry moves, appears or departs; the struct
   remains 16 bytes.
+- `sgl-3d` ray-traced shadows (`Settings::ray_traced_shadows`) no longer
+  shadow thin lit features against the sky or an unlit surface, nor
+  normal-mapped surfaces under a low light, which now read as lit where
+  nothing occludes them. No game-code changes are needed.
 
 ## 0.6.0 — 2026-11-12
 
