@@ -31,17 +31,18 @@ this is the spirit they share.
   main loop, provides its shell and its logic, and builds from SGL's pieces;
   SGL never hosts the game, and a game is never a script or data layer on a
   runtime SGL owns. SGL is one library or several, and a game can take or
-  leave each. No capability is excluded in advance (D-47): an entity system,
-  physics or a scripting runtime belongs once a game needs it and it passes
-  that test.
+  leave each. No capability is excluded in advance (D-47), and a piece need
+  only be reusable in principle (D-49): nothing in it belongs to one game. It
+  does not have to be used by several games first, or by any yet.
 - **Built for AI coding agents, as consumers and as authors.** Ownership, inputs,
   outputs and lifetime are explicit at every public boundary. Guides are short
   and navigable, and examples run without the games SGL came from.
-- **One good implementation.** Extract from working games; where an engine with a
-  compatible licence already solved a problem, port it, then improve it with a
-  measurement and a recorded decision. A better implementation replaces the old
-  one, which is deleted with its settings, tests and records; two stay side
-  by side only as a setting with a real trade-off (S3D-6, RD-3).
+- **One good implementation.** Extract from a working game where one has it;
+  where an engine with a compatible licence already solved a problem, port it,
+  then improve it with a measurement and a recorded decision. A better
+  implementation replaces the old one, which is deleted with its settings,
+  tests and records; two stay side by side only as a setting with a real
+  trade-off (S3D-6, RD-3).
 - **Games choose what and how much; SGL owns how.** A game turns a feature on or
   off and picks its level. Algorithms, kernels, thresholds and other internals
   are never game fields. Correctness is not a setting.
@@ -86,15 +87,17 @@ contract, crate boundary, port or dependency. A plan that cannot answer one of
 these questions is not ready; that is the point of asking them first, because
 each is cheap to settle on paper and expensive to reverse in code.
 
-1. **Outcome.** State what a game can do afterwards that it cannot do now, and
-   which concrete game needs it. A change with no consumer need is speculative:
-   say so and stop.
-2. **Does it belong in SGL?** It does not if it is composition, policy or
-   content (the game's), if only one game could want it (AR-6), if it would have
-   SGL hold control (own the loop, host the game, or make a game depend on a
+1. **Outcome.** State what a game can do afterwards that it cannot do now. The
+   need can be one game's, or the owner's for games to come; it does not have
+   to be shared by several games already.
+2. **Does it belong in SGL?** It belongs when it is reusable in principle
+   (D-49): another game could use it as it stands. It does not if it is one
+   game's composition, policy or content, if no other game could use it
+   without that game's names, constants or rules (AR-6), if it would have SGL
+   hold control (own the loop, host the game, or make a game depend on a
    piece it cannot leave out), or if its foundation is not built yet (RD-1:
-   build the foundation, not a workaround for its absence). The kind of
-   feature never decides it (D-47). When it fails, say what the
+   build the foundation, not a workaround for its absence). Neither the kind
+   of feature (D-47) nor how many games use it today decides it. When it fails, say what the
    game should do instead, or name the smaller reusable piece that does belong.
 3. **Where it lives.** The crate, keeping the dependency boundaries of
    `specs/architecture.md`. For SGL3D: the layer (AR-1), the stage and its place

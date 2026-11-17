@@ -757,3 +757,15 @@ Use the [current specs](README.md) for implementation and the
   "maintained" and "not a feature-parity target".
   Rationale: "maintained, not parity" described the web by what it lacks and
   licensed leaving it behind; first class means complete on its own terms.
+
+- **D-49** Owner direction, 2026-11-17: a piece belongs in SGL when it is
+  reusable in principle: nothing in it is one game's, so another game could
+  use it as it stands. It does not have to be used by several games, or by
+  any yet, and it need not be extracted from more than one. This is the test
+  behind AR-6 ("a mechanism only one game could want lives in that game")
+  and replaces the reading of architecture 2 and 5 ("when those games share
+  a pattern", "one good implementation over four variants"), which describe
+  how SGL began, and of D-47's "when a game needs it", as a count of
+  consumers.
+  Rationale: SGL is the reusable layer of the owner's games; waiting for a
+  second game before moving a reusable piece into it defeats the point.
