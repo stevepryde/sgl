@@ -42,10 +42,31 @@ fn traced_holds_receiver(depth:f32)->bool {
 // light that holds it, the packed visibility's word 0; which of them it filters a frame is
 // TracedParams.denoised. The others take the temporal blend alone.
 const TRACED_DENOISED_SLOTS:u32=4u;
-// The full-resolution pixel whose depth and normals tracing pixel `q`
-// takes: pixel 2q, within the render size.
-fn traced_full_pixel(q:vec2<u32>)->vec2<u32> {
- return min(q*2u,vec2<u32>(traced.full.xy)-1u);
+// Wicked's upsample threshold: the weight lost per metre of linear depth
+// between a tracing texel and a pixel, and the least weight; how close
+// texel depth `a` is to `b`. A texel above the least weight is the pixel's
+// surface, to the trace's choice of a block's pixel and to the upsample.
+const TRACED_DEPTH_FALLOFF:f32=2.;
+const TRACED_LEAST_WEIGHT:f32=.001;
+fn traced_closeness(a:f32,b:f32)->f32 {
+ return max(TRACED_LEAST_WEIGHT,1.-saturate(abs(a-b)*TRACED_DEPTH_FALLOFF));
+}
+// The pixels of a tracing texel's 2×2 block, by index: x, then y.
+const TRACED_BLOCK_PIXELS:u32=4u;
+// Pixel `index` (x, then y) of tracing texel `q`'s 2×2 block, within the
+// render size.
+fn traced_block_pixel(q:vec2<u32>,index:u32)->vec2<u32> {
+ return min(q*2u+vec2(index&1u,index>>1u),vec2<u32>(traced.full.xy)-1u);
+}
+// The full-resolution pixel tracing texel `q` stands for, whose depth,
+// normals and motion every pass takes for it: the pixel of its block the
+// trace cast its rays from (traced_trace.wgsl traced_block_choice), pixel
+// 2q but where that holds no receiver or the block holds a feature in
+// front that the even pixels miss, whose index in the block the trace
+// records in the fourth component of the texel's half-resolution normals,
+// `record`.
+fn traced_texel_pixel(q:vec2<u32>,record:vec4<f32>)->vec2<u32> {
+ return traced_block_pixel(q,u32(record.w));
 }
 // Wicked's globals.hlsli reconstruct_position: the world position of the
 // G-buffer's device depth `z` at full-resolution `uv`.

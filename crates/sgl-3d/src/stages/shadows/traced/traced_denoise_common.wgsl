@@ -3,10 +3,11 @@
 // the layout of the denoiser's scratch, which both write and read, and
 // their reading of the tracing pixels' depth and normals for AMD's
 // callbacks, from the copies the trace writes at the tracing resolution,
-// where AMD's sample reads its full G-buffer: the linear depth of each
-// tracing pixel's full-resolution pixel 2q, the pixel whose depth Wicked
-// Engine's denoiser reads (2ff1d9e rtshadow_denoise_tileclassificationCS.hlsl
-// and rtshadow_denoise_filterCS.hlsl, `texture_depth[did * 2]`), and the
+// where AMD's sample reads its full G-buffer: the linear depth of the
+// full-resolution pixel each tracing pixel stands for (traced_texel_pixel),
+// where Wicked Engine's denoiser reads pixel 2q's (2ff1d9e
+// rtshadow_denoise_tileclassificationCS.hlsl and
+// rtshadow_denoise_filterCS.hlsl, `texture_depth[did * 2]`), and the
 // shading normals, as Wicked's denoiser reads its half-resolution normals
 // copy. Reads `denoise_half_depth` and `denoise_normal`, which each pass's
 // bindings declare.

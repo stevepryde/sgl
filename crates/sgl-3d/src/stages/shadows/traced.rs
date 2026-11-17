@@ -479,6 +479,7 @@ impl TracedShadows {
                 (6, self.slot_table.as_entire_binding()),
                 (7, resource(&targets.temporal[current])),
                 (8, targets.denoise.denoised.as_entire_binding()),
+                (9, resource(&targets.denoise.normal)),
             ],
         );
         {
@@ -508,6 +509,7 @@ impl TracedShadows {
                 (3, self.params.as_entire_binding()),
                 (4, resource(&targets.mask)),
                 (5, self.slot_table.as_entire_binding()),
+                (6, resource(&targets.denoise.normal)),
             ],
         );
         {

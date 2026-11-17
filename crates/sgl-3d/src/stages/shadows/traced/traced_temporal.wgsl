@@ -27,7 +27,9 @@
 // history restarts (TracedParams.frame 0); the history is the stage's own
 // linear depth at the tracing resolution, where Wicked reads its
 // full-resolution depth history; the velocity in tracing pixels is the
-// motion at the texel's full-resolution pixel; the neighbourhood is read
+// motion at the pixel the texel stands for (traced_texel_pixel), and its
+// history the texel whose block holds that pixel's surface at the same
+// place in it last frame; the neighbourhood is read
 // once and a word's four slots blended at once, where Wicked reads it
 // again for each slot, and a word whose slots hold no light is left as
 // traced.
@@ -42,6 +44,9 @@
 // The denoiser's result for the denoised slots, a word a tracing pixel,
 // packed as the trace packs its first word.
 @group(0) @binding(8) var<storage,read> temporal_denoised:array<u32>;
+// The trace's half-resolution normals, whose fourth component records the
+// pixel each texel stands for.
+@group(0) @binding(9) var temporal_normal:texture_2d<f32>;
 
 // Wicked's temporalResponseMin and temporalResponseMax: the history's
 // least and greatest share.
@@ -92,17 +97,19 @@ fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
   textureStore(temporal_output,id.xy,temporal_denoised_words(current,id.xy));
   return;
  }
- // The texel's surface at its full-resolution pixel, where it was last
+ // The texel's surface at the pixel it stands for, where it was last
  // frame.
- let pixel=traced_full_pixel(id.xy);
+ let pixel=traced_texel_pixel(id.xy,textureLoad(temporal_normal,id.xy,0));
  let motion=textureLoad(temporal_motion,pixel,0).xy;
  let previous=vec2<f32>(pixel)+.5-motion*traced.full.xy;
  if any(previous<vec2(0.)) || any(previous>=traced.full.xy) {
   textureStore(temporal_output,id.xy,temporal_denoised_words(current,id.xy));
   return;
  }
- // The nearest tracing texel, whose centre is full-resolution pixel 2q's.
- let previous_texel=min(vec2<u32>(floor(previous*.5+.25)),reduced-1u);
+ // The nearest tracing texel whose block holds a pixel at the same place
+ // in it (pixel 2q's for pixel 2q).
+ let offset=vec2<f32>(pixel-id.xy*2u);
+ let previous_texel=min(vec2<u32>(max(floor((previous-offset)*.5+.25),vec2(0.))),reduced-1u);
  if abs(depth-textureLoad(temporal_previous_depth,previous_texel,0).x)>TEMPORAL_DISOCCLUSION {
   textureStore(temporal_output,id.xy,temporal_denoised_words(current,id.xy));
   return;

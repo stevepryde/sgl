@@ -26,8 +26,9 @@
 // them (the slot table's baked bits, the G-buffer's F0 flag), its slot
 // holding 1 there wherever the light reaches (traced_visible), where
 // Wicked traces no static light live at all; the depth and normals are the
-// G-buffer's at the full-resolution pixel 2q of tracing pixel q, where
-// Wicked samples depth linearly between four; the side policy and
+// G-buffer's at the full-resolution pixel tracing pixel q stands for
+// (traced_block_choice), where Wicked samples depth linearly between four
+// and its normals at pixel 2q; the side policy and
 // cut-out texels are the shared predicate's, where Wicked's query culls
 // front faces and alpha-tests candidates; a pixel the G-buffer drew
 // nothing lit at (an unlit material) casts nothing and is the sky to the
@@ -40,7 +41,37 @@
 // gather through workgroup atomics into a storage texture, where Wicked
 // ORs them into a buffer; and the half-resolution normals copy (310) holds
 // the shading normal as it is, which the denoiser reads directly, where
-// Wicked's encodes it to [0, 1] and its denoiser normalises it back.
+// Wicked's encodes it to [0, 1] and its denoiser normalises it back,
+// and its fourth component records the pixel of the block the texel
+// stands for (traced_texel_pixel).
+//
+// Which pixel of a block a texel stands for departs from both engines.
+// Wicked's trace takes one depth for the block, sampled linearly at its
+// centre, and the normals at pixel 2q, and its upsample weighs each texel
+// by the block's farthest depth (the depth pyramid's mip 1, the least of
+// four reversed depths, visibility_resolveCS.hlsl 130–139;
+// rtshadow_upsampleCS.hlsl 35–55); AMD's hybrid shadows sample traces
+// every pixel (FidelityFX SDK 1.1, its classifier and denoiser at the
+// render size), so has no block to choose from. At half size neither
+// samples a feature one pixel wide at an odd column or row: a shadowed one
+// against the sky read lit, and one in front of a far receiver took that
+// receiver's visibility (#794). Here a texel stands for pixel 2q but
+// where 2q holds no receiver, or where another pixel of the block holds a
+// receiver in front of every even pixel beside it, which none of them
+// samples (traced_block_choice), and the upsample searches the blocks
+// about a pixel that leaves unsampled (traced_upsample.wgsl). Taking the
+// block's nearest receiver instead, the depth-aware choice of
+// mixed-resolution effects, gave every occluder edge's blocks to the
+// occluder, so the receiver behind an edge lost its own rays in all of
+// them. A slit one pixel wide showing a far surface is not taken: it is
+// the same surface as the pixels about it, so when that surface is
+// reprojected onto its texel the temporal blend's depth test cannot tell
+// it from a texel standing a pixel off, and takes history across a shadow
+// edge; the upsample's search gives it the surface's shadow from the
+// blocks about it instead. A feature in front is separated from the
+// surface behind by that depth test only where it lies more than its
+// disocclusion distance (1 m, traced_temporal.wgsl) in front, beyond the
+// same-surface distance the choice tests (0.4995 m).
 @group(3) @binding(0) var traced_depth:texture_depth_2d;
 @group(3) @binding(1) var traced_normal:texture_2d<f32>;
 @group(3) @binding(2) var traced_f0:texture_2d<f32>;
@@ -163,13 +194,104 @@ fn traced_visible(key:u32,untraced:bool,position:vec3<f32>,normal:vec3<f32>,coat
  return scene_segment_visible(origin,ray.xyz,TRACED_T_MIN,ray.w,SCENE_SIDES_SHADOW);
 }
 
+// Full-resolution `pixel`'s linear depth, the sky's where the G-buffer
+// drew nothing there.
+fn traced_drawn_depth(pixel:vec2<u32>)->f32 {
+ let z=textureLoad(traced_depth,pixel,0);
+ if z<=0. {
+  return TRACED_SKY_DEPTH;
+ }
+ return traced_linear_depth(traced_position((vec2<f32>(pixel)+.5)*traced.full.zw,z));
+}
+// Whether full-resolution `pixel` holds a receiver: something lit drawn.
+fn traced_receives(pixel:vec2<u32>,depth:f32)->bool {
+ return traced_holds_receiver(depth) && gbuffer_lit(textureLoad(traced_f0,pixel,0));
+}
+// Whether linear depth `depth` is nearer than `than` by more than the
+// same-surface distance (traced_closeness): another surface in front.
+fn traced_nearer(depth:f32,than:f32)->bool {
+ return depth<than && traced_closeness(depth,than)<=TRACED_LEAST_WEIGHT;
+}
+// Whether the receiver at linear depth `depth`, at pixel 2q + `offset` of
+// tracing texel q's block, is a feature in front that the even grid
+// misses: it is nearer (traced_nearer) than every even pixel adjacent to
+// it, 2q (at linear depth `even`) and, beside it in x, 2q + (2, 0), in y,
+// 2q + (0, 2), and for the diagonal pixel those and 2q + (2, 2), each at
+// its receiver's depth or the sky's where it holds none. An even pixel
+// beyond the render size is no neighbour, so the frame's edge never makes
+// a pixel missed that 2q samples.
+fn traced_missed(q:vec2<u32>,offset:vec2<u32>,depth:f32,even:f32)->bool {
+ if !traced_nearer(depth,even) {
+  return false;
+ }
+ for (var adjacent=1u;adjacent<TRACED_BLOCK_PIXELS;adjacent++) {
+  let step=vec2(adjacent&1u,adjacent>>1u);
+  let pixel=q*2u+step*2u;
+  if any(step>offset) || any(pixel>=vec2<u32>(traced.full.xy)) {
+   continue;
+  }
+  let drawn=traced_drawn_depth(pixel);
+  let neighbour=select(TRACED_SKY_DEPTH,drawn,traced_receives(pixel,drawn));
+  if !traced_nearer(depth,neighbour) {
+   return false;
+  }
+ }
+ return true;
+}
+// The index (x, then y) of the pixel of tracing texel `q`'s block the
+// texel stands for: 2q, but where 2q holds no receiver, the block's pixel
+// that does, and where another pixel of the block holds a receiver in
+// front that the even grid misses (traced_missed), that pixel; the
+// nearest of several, the lower index of equals. The trace makes the choice once; the other
+// passes read it (traced_texel_pixel).
+fn traced_block_choice(q:vec2<u32>)->u32 {
+ let even_pixel=q*2u;
+ let drawn=traced_drawn_depth(even_pixel);
+ let receives=traced_receives(even_pixel,drawn);
+ let even=select(TRACED_SKY_DEPTH,drawn,receives);
+ var chosen=0u;
+ var nearest=TRACED_SKY_DEPTH;
+ for (var index=1u;index<TRACED_BLOCK_PIXELS;index++) {
+  let offset=vec2(index&1u,index>>1u);
+  let pixel=even_pixel+offset;
+  if any(pixel>=vec2<u32>(traced.full.xy)) {
+   continue;
+  }
+  let depth=traced_drawn_depth(pixel);
+  // Nothing in front of a receiving 2q is missed.
+  if depth>=nearest || (receives && !traced_nearer(depth,even)) {
+   continue;
+  }
+  if !traced_receives(pixel,depth) || (receives && !traced_missed(q,offset,depth,even)) {
+   continue;
+  }
+  chosen=index;
+  nearest=depth;
+ }
+ return chosen;
+}
+
 // The visibility words of tracing pixel `q`, and its linear depth, which
 // it stores: none for a pixel beyond the tracing size.
 fn traced_pixel(q:vec2<u32>)->vec4<u32> {
  if any(q>=vec2<u32>(traced.reduced.xy)) {
   return vec4(0u);
  }
- let pixel=traced_full_pixel(q);
+ let index=traced_block_choice(q);
+ if index==0u {
+  return traced_cast(q,traced_block_pixel(q,0u),0u);
+ }
+ return traced_cast(q,traced_block_pixel(q,index),index);
+}
+// The visibility words of tracing pixel `q`, standing for pixel `index`
+// of its block, `pixel`, and its linear depth, which it stores. A texel
+// standing for 2q calls it with that pixel written as 2q (traced_pixel),
+// not through the choice: Metal compiles with fast math, and given the
+// same pixel through the choice's index it changed the results of a
+// texel standing for 2q, 26,742 bytes of a static scene's mask of one
+// surface, where written so it leaves them as they were. This is what
+// that compiler did, not a guarantee of the language.
+fn traced_cast(q:vec2<u32>,pixel:vec2<u32>,index:u32)->vec4<u32> {
  let z=textureLoad(traced_depth,pixel,0);
  var words=vec4(0u);
  // A pixel the G-buffer drew nothing lit at is no receiver: the lighting
@@ -187,7 +309,7 @@ fn traced_pixel(q:vec2<u32>)->vec4<u32> {
  textureStore(traced_half_depth,q,vec4(traced_linear_depth(position)));
  let normals=textureLoad(traced_normal,pixel,0);
  let normal=gbuffer_base_normal(normals);
- textureStore(traced_half_normal,q,vec4(normal,0.));
+ textureStore(traced_half_normal,q,vec4(normal,f32(index)));
  let coat_normal=gbuffer_coat_normal(normals);
  // One draw on every light a pixel and frame, where Wicked reads its blue
  // noise.

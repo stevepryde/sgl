@@ -13,8 +13,8 @@
 // each with its index pushed (rtshadow_denoise_lightindex), so the tile
 // masks, metadata and history hold the four slots in one texel's
 // channels, a lane's its own, and one lane leaves the others zero;
-// depth is the G-buffer's at the full-resolution pixel of each tracing
-// pixel (Wicked's reads at did * 2), its normals the trace's
+// depth and motion are the G-buffer's at the pixel each tracing pixel
+// stands for (traced_texel_pixel; Wicked's reads at did * 2), its normals the trace's
 // half-resolution copy, as Wicked's (traced_denoise_common.wgsl); the
 // previous depth is the stage's own, linear; a pixel the trace found
 // nothing lit at reads as the sky, as the trace records it; AMD's kernel
@@ -78,7 +78,12 @@ fn FFX_DNSR_Shadows_ReadDepth(did:vec2<u32>)->f32 {
  if !traced_denoise_receiver(did) {
   return 0.;
  }
- return textureLoad(denoise_depth,traced_full_pixel(did),0);
+ return textureLoad(denoise_depth,traced_denoise_pixel(did),0);
+}
+// The full-resolution pixel tracing pixel `did` stands for; past the
+// tracing size, the render size's last.
+fn traced_denoise_pixel(did:vec2<u32>)->vec2<u32> {
+ return traced_texel_pixel(did,textureLoad(denoise_normal,min(did,vec2<u32>(traced.reduced.xy)-1u),0));
 }
 fn FFX_DNSR_Shadows_ReadNormals(did:vec2<u32>)->vec3<f32> {
  return traced_denoise_normal(did);
@@ -122,7 +127,7 @@ fn FFX_DNSR_Shadows_ReadHistory(history_uv:vec2<f32>)->FfxDnsrFloat {
  return mix(top,bottom,fraction.y);
 }
 fn FFX_DNSR_Shadows_ReadVelocity(did:vec2<u32>)->vec2<f32> {
- return textureLoad(denoise_motion,traced_full_pixel(did),0).xy;
+ return textureLoad(denoise_motion,traced_denoise_pixel(did),0).xy;
 }
 
 fn FFX_DNSR_Shadows_WriteReprojectionResults(did:vec2<u32>,mean:FfxDnsrFloat,variance:FfxDnsrFloat) {

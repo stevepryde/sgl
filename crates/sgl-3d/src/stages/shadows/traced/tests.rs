@@ -324,15 +324,29 @@ const DENOISER_REACH: i32 = 8;
 
 /// The floor pixels of tracing texels: each full-resolution pixel 2q the
 /// trace and the mask share, with the world position its depth gives, on
-/// the floor (height 0).
+/// the floor (height 0), of the blocks whose four pixels all show the
+/// floor. Such a block's texel stands for its even pixel whatever else the
+/// scene holds; a block that also shows a feature the even pixels miss
+/// gives its texel to that feature and leaves its even pixel to the
+/// upsample's search of the blocks about it (traced_texel_pixel), which
+/// is no texel of its own.
 fn floor_texels(observed: &Observed, camera: &Camera) -> Vec<([u32; 2], DVec3)> {
     let [width, height] = observed.size;
+    let on_floor = |pixel: [u32; 2]| {
+        observed
+            .position(camera, pixel)
+            .filter(|position| position.y.abs() < 1e-3)
+    };
     (0..height)
         .step_by(2)
         .flat_map(|y| (0..width).step_by(2).map(move |x| [x, y]))
-        .filter_map(|pixel| {
-            let position = observed.position(camera, pixel)?;
-            (position.y.abs() < 1e-3).then_some((pixel, position))
+        .filter_map(|[x, y]| {
+            let position = on_floor([x, y])?;
+            [[x + 1, y], [x, y + 1], [x + 1, y + 1]]
+                .into_iter()
+                .filter(|&[bx, by]| bx < width && by < height)
+                .all(|pixel| on_floor(pixel).is_some())
+                .then_some(([x, y], position))
         })
         .collect()
 }
@@ -2141,9 +2155,9 @@ fn on_front(block: Block, position: DVec3) -> bool {
 
 // Thin lit features one render pixel across, against the sky and in front
 // of an unlit surface, beside a broad panel the sun's shadow covers. The
-// trace takes one ray per 2×2 block, at its even pixel, so a bar at an odd
-// column (or row) traces no ray of its own: its tracing texels are the sky
-// or the unlit surface, which hold no receiver. Plausible defects: the
+// trace takes one ray per 2×2 block, so a bar at an odd column (or row)
+// lies where no even pixel samples it: its blocks' even pixels are the
+// sky or the unlit surface, which hold no receiver. Plausible defects: the
 // upsample weighing those texels' zeros, so an unoccluded bar reads as
 // shadowed (#771); and a fix that turns a real shadow to 1 where it meets
 // the sky (the panel's edge pixels, whose taps are a shadowed texel and a
@@ -2232,9 +2246,8 @@ fn thin_lit_features_against_the_sky_are_unoccluded() {
                     let Some((index, position)) = receiver([x, y]) else {
                         continue;
                     };
-                    // A lone bar pixel must lie on an odd column or row:
-                    // the trace casts rays at even pixels alone, so only
-                    // there do both of its tracing texels miss the bar.
+                    // A lone bar pixel must lie on an odd column or row,
+                    // where no even pixel samples the bar.
                     if index == 0
                         && receiver([x - 1, y]).is_none()
                         && receiver([x + 1, y]).is_none()
@@ -2264,11 +2277,25 @@ fn thin_lit_features_against_the_sky_are_unoccluded() {
                     ) else {
                         continue;
                     };
-                    assert_eq!(
-                        observed.mask(0, [x, y]),
-                        if occluded { 0 } else { 255 },
-                        "{label}: receiver {index} at {x}, {y} ({position:?}): the oracle says occluded {occluded}"
-                    );
+                    // The panel holds the oracle's 0 or 1. The bars hold
+                    // the oracle's side of half: they trace rays of their
+                    // own (#794), which the sun's denoiser filters, and it
+                    // leaves a bar's end a step short of 1, where the
+                    // defect read them as shadowed.
+                    let byte = observed.mask(0, [x, y]);
+                    if index == 2 {
+                        assert_eq!(
+                            byte,
+                            if occluded { 0 } else { 255 },
+                            "{label}: the panel at {x}, {y} ({position:?}): the oracle says occluded {occluded}"
+                        );
+                    } else {
+                        assert_eq!(
+                            byte < 128,
+                            occluded,
+                            "{label}: bar {index} at {x}, {y} ({position:?}) holds {byte}: the oracle says occluded {occluded}"
+                        );
+                    }
                     decided[usize::from(occluded)] += 1;
                 }
             }
@@ -2377,6 +2404,248 @@ fn a_thin_feature_s_history_is_clamped_by_receivers_alone() {
             decided > 30,
             "frame {frame}: only {decided} bar pixels decided"
         );
+    }
+}
+
+/// The width in render pixels of the bars either side of the thin-feature
+/// test's slits: two, so the upsample's search, one tracing texel either
+/// side of a slit's block, reaches the far surface beside them.
+const SLIT_BARS: u32 = 2;
+
+// Bars one render pixel wide at an odd column and at an odd row, lit and
+// shadowed, against the sky, in front of a lit wall and in front of a
+// shadowed one; and slits one pixel wide, at an odd column and an odd row,
+// between bars two pixels wide, showing a wall of the opposite state to
+// theirs. A local light in a slot the temporal blend alone fills shines
+// on them, so a texel holds its rays' 0 or 1. No even pixel samples such
+// a bar or slit. Plausible defects: a texel that always stands for its
+// even pixel, so no ray leaves the bar, which then reads lit against the
+// sky (no tap holds a receiver) and takes the wall's visibility in front
+// of one, at the upsample's least weight (#794); a choice that gives an
+// edge's blocks to the bar beyond the pixels the even grid misses, or a
+// search that weighs the bar, so that the wall beside it, at even pixels
+// or odd, takes the bar's visibility; the record of the pixel a texel
+// stands for misread, so the bar's texel is weighed at another depth; and
+// a slit that takes its bars' visibility, which its four taps, both bars,
+// give at the least weight, where the search finds the wall about it. The
+// oracle is the boxes' geometry in f64: the slab test from each receiver
+// pixel's position toward the light past the other boxes. A slab out of
+// view above each shadowed bar crosses all of its rays and none of the
+// others'; for the shadowed wall, a canopy out of view crosses the wall's
+// rays and none of the bars'. A camera cut and then still frames, whose
+// histories hold the same values.
+#[test]
+fn thin_features_take_their_own_shadow_and_leave_the_surface_behind_its() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let camera = camera(THIN_EYE, THIN_EYE - Vec3::Z * THIN_DEPTH, THIN_SIZE);
+    let light = Light {
+        position: Vec3::new(0., 30., 3.),
+        shape: LightShape::Point { radius: 0. },
+        intensity: 4000.,
+        range: 40.,
+        casts_shadow: true,
+        ..Light::default()
+    };
+    // Lit and shadowed, across x at odd columns and across y at odd rows.
+    let single = [
+        (false, thin_receiver(&camera, [33, 33], [8, 28])),
+        (true, thin_receiver(&camera, [43, 43], [8, 28])),
+        (false, thin_receiver(&camera, [10, 30], [37, 37])),
+        (true, thin_receiver(&camera, [10, 30], [55, 55])),
+    ];
+    // The slits: column 33 over rows 8 to 28, and row 37 over columns 10 to
+    // 30, each between two bars, all of state `shadowed`.
+    let slit = |[x, y]: [u32; 2]| {
+        (x == 33 && (8..=28).contains(&y)) || (y == 37 && (10..=30).contains(&x))
+    };
+    let slit_bars = |shadowed: bool| {
+        [
+            thin_receiver(&camera, [33 - SLIT_BARS, 32], [8, 28]),
+            thin_receiver(&camera, [34, 33 + SLIT_BARS], [8, 28]),
+            thin_receiver(&camera, [10, 30], [37 - SLIT_BARS, 36]),
+            thin_receiver(&camera, [10, 30], [38, 37 + SLIT_BARS]),
+        ]
+        .map(|bar| (shadowed, bar))
+    };
+    // The box 5 m above `bar` that every ray from its front face toward the
+    // light crosses, 3 cm about the points they cross its height at.
+    let shade = |bar: Block| {
+        let height = bar.centre.y + bar.half.y + 5.;
+        let crossings = [(-1., -1.), (1., -1.), (-1., 1.), (1., 1.)].map(|(sx, sy)| {
+            let corner = bar.centre + bar.half * Vec3::new(sx, sy, 1.);
+            corner
+                + (light.position - corner) * ((height - corner.y) / (light.position.y - corner.y))
+        });
+        let low = crossings.iter().copied().reduce(Vec3::min).unwrap();
+        let high = crossings.iter().copied().reduce(Vec3::max).unwrap();
+        Block::new(
+            Vec3::new((low.x + high.x) / 2., height, (low.z + high.z) / 2.),
+            Vec3::new(
+                (high.x - low.x) / 2. + 0.03,
+                0.02,
+                (high.z - low.z) / 2. + 0.03,
+            ),
+            Mobility::Static,
+        )
+    };
+    let wall = Block::new(
+        Vec3::new(0., 1., -3.),
+        Vec3::new(20., 20., 0.05),
+        Mobility::Static,
+    );
+    let canopy = Block::new(
+        Vec3::new(0., 6., -2.),
+        Vec3::new(5., 0.05, 0.7),
+        Mobility::Static,
+    );
+    // Each scene: its label, its bars, whether a wall lies behind them and
+    // whether the canopy shadows it, and whether it shows slits.
+    let scenes = [
+        ("bars against the sky", single, false, false, false),
+        ("bars before a lit wall", single, true, false, false),
+        ("bars before a shadowed wall", single, true, true, false),
+        ("slits onto a lit wall", slit_bars(true), true, false, true),
+        (
+            "slits onto a shadowed wall",
+            slit_bars(false),
+            true,
+            true,
+            true,
+        ),
+    ];
+    let settings = settings(true);
+    for (scene_label, bars, behind, shadowed_wall, slits) in scenes {
+        let mut blocks: Vec<Block> = bars.iter().map(|&(_, bar)| bar).collect();
+        blocks.extend(
+            bars.iter()
+                .filter(|(shadowed, _)| *shadowed)
+                .map(|&(_, bar)| shade(bar)),
+        );
+        if behind {
+            blocks.push(wall);
+        }
+        if shadowed_wall {
+            blocks.push(canopy);
+        }
+        let mut scene = Scene::new(&device, &queue);
+        for &block in &blocks {
+            add_box(gpu, &mut scene, block, |_| ());
+        }
+        for decoy in decoys(THIN_EYE) {
+            scene.add_light(&device, &queue, decoy).unwrap();
+        }
+        let key = scene.add_light(&device, &queue, light).unwrap().index() as u32;
+        let mut renderer = Renderer::for_test(&device, &queue, THIN_SIZE, &settings);
+        let mut input = input(camera, None);
+        for frame in 0..4 {
+            input.camera_cut = frame == 0;
+            let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+            let slot = observed.slot(key);
+            assert!(
+                slot >= super::denoise::DENOISED_SLOTS as usize,
+                "the decoys outrank the light: slot {slot}"
+            );
+            let label = format!("frame {frame}, {scene_label}");
+            // Which receiver a pixel shows: a bar by its index, or the wall.
+            let receiver = |[x, y]: [u32; 2]| {
+                if x >= THIN_SIZE[0] || y >= THIN_SIZE[1] {
+                    return None;
+                }
+                let position = observed.position(&camera, [x, y])?;
+                let index = bars
+                    .iter()
+                    .position(|&(_, bar)| on_front(bar, position))
+                    .or_else(|| (behind && on_front(wall, position)).then_some(bars.len()))?;
+                Some((index, position))
+            };
+            // Decided pixels: each bar's; the wall's within two pixels
+            // across a single bar, at even and at odd pixels across it; and
+            // the slits'.
+            let mut bar_pixels = [0; 4];
+            let mut beside = [[0; 2]; 4];
+            let mut slit_pixels = 0;
+            for y in 0..THIN_SIZE[1] {
+                for x in 0..THIN_SIZE[0] {
+                    let Some((index, position)) = receiver([x, y]) else {
+                        continue;
+                    };
+                    let receiving = bars.get(index).map_or(wall, |&(_, bar)| bar);
+                    let others: Vec<Block> = blocks
+                        .iter()
+                        .copied()
+                        .filter(|block| {
+                            (block.centre, block.half) != (receiving.centre, receiving.half)
+                        })
+                        .collect();
+                    let to_light = light.position.as_dvec3() - position;
+                    let distance = to_light.length();
+                    let Some(occluded) =
+                        occluded(&others, position, to_light / distance, (0.01, distance))
+                    else {
+                        continue;
+                    };
+                    assert_eq!(
+                        observed.mask(slot, [x, y]),
+                        if occluded { 0 } else { 255 },
+                        "{label}: receiver {index} at {x}, {y} ({position:?}): the oracle says occluded {occluded}"
+                    );
+                    if index < bars.len() {
+                        assert_eq!(
+                            occluded, bars[index].0,
+                            "{label}: bar {index}'s premise at {x}, {y}"
+                        );
+                        bar_pixels[index] += 1;
+                        continue;
+                    }
+                    if slits {
+                        if slit([x, y]) {
+                            assert_eq!(
+                                occluded, shadowed_wall,
+                                "{label}: the slit's premise at {x}, {y}"
+                            );
+                            slit_pixels += 1;
+                        }
+                        continue;
+                    }
+                    for (bar, &(_, block)) in bars.iter().enumerate() {
+                        let across_x = block.half.x < block.half.y;
+                        for step in [-2, -1, 1, 2] {
+                            let [nx, ny] = if across_x {
+                                [x as i32 + step, y as i32]
+                            } else {
+                                [x as i32, y as i32 + step]
+                            };
+                            if nx >= 0
+                                && ny >= 0
+                                && receiver([nx as u32, ny as u32])
+                                    .is_some_and(|(near, _)| near == bar)
+                            {
+                                beside[bar][((if across_x { x } else { y }) % 2) as usize] += 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            assert!(
+                bar_pixels.iter().all(|&count| count >= 15),
+                "{label}: only {bar_pixels:?} bar pixels decided"
+            );
+            if slits {
+                assert!(
+                    slit_pixels >= 30,
+                    "{label}: only {slit_pixels} slit pixels decided"
+                );
+            } else if behind {
+                assert!(
+                    beside.iter().flatten().all(|&count| count >= 15),
+                    "{label}: only {beside:?} wall pixels beside the bars, even and odd, decided"
+                );
+            }
+        }
     }
 }
 

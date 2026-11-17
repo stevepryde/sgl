@@ -2666,11 +2666,17 @@ hardware.
   filters the directional light's alone too: the same result within one
   8-bit step, for less. A light that takes another's place, a light whose
   `baked` changes, and a camera cut start afresh. The
-  visibilities are upsampled to the render size by depth from the texels
-  about each pixel that hold a lit surface (a pole one pixel wide against
-  the sky, whose texels hold none, takes full light, shadowed or not), then
-  the
-  lighting pass takes them through the light's shadow opacity. The opaque
+  rays leave from one pixel of each 2×2 block, its even one unless that
+  shows no lit surface or another shows a feature in front that no even
+  pixel sees, so a pole or wire one pixel wide gets its own shadow,
+  against the sky or in front of a wall. The visibilities are upsampled to
+  the render size by depth from the texels about each pixel that hold its
+  surface, then the lighting pass takes them through the light's shadow
+  opacity. A slit one pixel wide showing a far surface between features
+  takes that surface's shadow from the texels about it, which is right
+  where the shadow is coherent over a few pixels and not where it varies
+  at pixel scale, or where the features either side are wider than about
+  two pixels. The opaque
   stage takes its two-pass form while they run (a G-buffer pass, then a
   lighting pass), so the setting costs the second geometry pass besides
   the rays. The volumetric fog, blended surfaces, probe captures,

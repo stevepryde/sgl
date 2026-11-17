@@ -880,15 +880,45 @@ last, after everything it may use, and refuses a directive in it.
   linear depth against the full-resolution pixel's (`_upsampleCS.hlsl`
   35–55) into the mask's layers. The upsample weighs only the texels that
   hold a receiver (a depth short of the sky's), and a pixel with none
-  about it takes 1, the trace's rule for a pixel it casts no ray from,
-  whether or not it is occluded: a feature one pixel wide at an odd column
-  or row, where the half-size trace casts no ray, reads lit even in shadow;
+  about it takes 1, the trace's rule for a pixel it casts no ray from;
   the temporal blend's box likewise takes the receivers about a texel
   alone, so a sky or unlit texel's zeros never shadow a thin lit feature
-  beside them (#771). Changed at the port boundary: the trace
-  reads normals and depth from the G-buffer at the full-resolution pixel
-  of each half-resolution one, as Wicked's denoiser reads its depth
-  (`texture_depth[did * 2]`) where its trace samples depth between four
+  beside them (#771). Each half-resolution texel stands for one pixel of
+  its 2×2 block, chosen once in the trace and recorded in the fourth
+  component of its half-resolution normals, which the trace, the temporal
+  blend and the denoiser read through one function (`traced_texel_pixel`):
+  the even pixel 2q, but where 2q holds no receiver, the block's pixel
+  that does, and where another pixel of the block holds a receiver nearer
+  than every even pixel adjacent to it by more than the upsample's
+  same-surface distance (0.4995 m), a feature in front that no even pixel
+  samples, that pixel, the nearest of several (#794). Wicked's trace
+  samples one depth between a block's four pixels and its normals at 2q,
+  and its upsample weighs the block's farthest depth; AMD's hybrid shadows
+  sample traces every pixel; neither samples a feature one pixel wide at
+  an odd column or row. Taking a block's nearest receiver instead gave
+  every occluder edge's blocks to the occluder. A texel standing for 2q
+  goes through the trace's arithmetic as before, its pixel written as 2q,
+  since Metal's fast-math compilation changed its results when it came
+  through the choice. The upsample keeps its four taps wherever one of
+  them is the pixel's surface, and only for a pixel none of whose weighed
+  taps is (the even pixel behind a feature its block's texel took, a
+  slit) searches the 3×3 texels about its block, a fixed nine, weighing
+  those that are its surface by the same closeness and by a tent of their
+  pixels' distance from it. A slit one pixel wide showing a far surface is
+  not taken: it is the same surface as the pixels about it, so the
+  temporal blend's depth test cannot tell that surface reprojected onto
+  its texel from a texel standing a pixel off. It takes its surface's
+  shadow from the nearest texels that hold it, which is right where that
+  shadow is coherent over the search's reach and not where it varies at
+  pixel scale; between features wider than about two pixels, beyond that
+  reach, it keeps their visibility. The temporal blend's depth test
+  separates a taken feature from the surface behind only beyond its
+  disocclusion distance (1 m), so a feature 0.4995 to 1 m in front shares
+  the blend's existing blind zone, as one at an even pixel that close
+  does. Changed at the port boundary: the trace reads normals and depth
+  from the G-buffer at the full-resolution pixel each half-resolution one
+  stands for, where Wicked's denoiser reads its depth at pixel 2q
+  (`texture_depth[did * 2]`) and its trace samples depth between four
   pixels, and writes that pixel's linear depth and shading normal, the
   half-resolution copies the denoiser reads as Wicked's reads its own
   (its tile classification still reprojects from the G-buffer's depth);

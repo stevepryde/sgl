@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` ray-traced shadows (`Settings::ray_traced_shadows`): a feature
+  one render pixel wide at an odd column or row now takes its own shadow,
+  where a shadowed one against the sky read lit and one in front of a
+  surface took that surface's; a one-pixel slit showing a far surface takes
+  that surface's shadow from the texels about it. Only the mask near such
+  features changes; no settings. No game-code changes are needed.
 - `sgl-3d` reflection source completion: a lit colour or ambient light texel
   of +infinity (over-range radiance on backends that round overflow to
   infinity) no longer composes to NaN under opaque fog or to black where
