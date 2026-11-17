@@ -299,11 +299,16 @@ fn present_rounded(color:vec3<f32>,frag_coord:vec2<f32>)->vec4<f32> {
  let ba=unpack2x16float(pack2x16float(vec2(color.b,1.)));
  return vec4(dither(vec3(rg,ba.x),frag_coord),ba.y);
 }
+// The completed scene, or it with bloom, at `uv`, within the bound the
+// passes after composition read it within (finite_filtered, inputs.wgsl).
+fn hdr_scene(uv:vec2<f32>)->vec3<f32> {
+ return finite_filtered(scene,textureSample(scene,linear_sampler,uv),uv,vec2(0)).rgb;
+}
 @fragment fn present(i:Output)->@location(0) vec4<f32> {
- return vec4(tone_map(textureSample(scene,linear_sampler,i.uv).rgb),1.);
+ return vec4(tone_map(hdr_scene(i.uv)),1.);
 }
 @fragment fn present_direct(i:Output)->@location(0) vec4<f32> {
- return present_rounded(tone_map(textureSample(scene,linear_sampler,i.uv).rgb),i.position.xy);
+ return present_rounded(tone_map(hdr_scene(i.uv)),i.position.xy);
 }
 // The antialiased tone-mapped scene, at the scene size, resampled to the
 // tone-mapped target.

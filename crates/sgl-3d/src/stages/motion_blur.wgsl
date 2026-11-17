@@ -41,6 +41,14 @@
 // - Each tile texture holds the largest velocity in xy and the smallest in
 //   zw; tiles beyond the frame's edge are its edge tiles, and samples beyond
 //   it its edge pixels.
+// - The frame's colour is read through finite_scene_color
+//   (shading/scene_color.wgsl): a texel of +infinity, which the frame holds
+//   unclamped where neither TAA nor FSR ran, would make a sample's weight of
+//   0 NaN and carry infinity into every pixel gathering it. main's sampling
+//   loop is motionblur_gather, run again with bounded samples only for a
+//   pixel whose result is not finite: bounding every sample of every pixel
+//   cost 0.3-0.45 ms at 1920x1080 on an Apple M5, where the test costs
+//   nothing measurable.
 struct MotionBlur {
  // Frame pixels of blur per unit of the G-buffer's motion: the frame's size
  // times the shutter.
@@ -201,33 +209,19 @@ fn SampleWeight(centerDepth:f32,sampleDepth:f32,offsetLen:f32,centerSpreadLen:f3
 // The pairs of samples each pixel takes.
 const MOTIONBLUR_PAIRS=8;
 
-@compute @workgroup_size(8,8,1)
-fn motionblur(@builtin(global_invocation_id) DTid:vec3<u32>) {
- let pixel=DTid.xy;
- if any(pixel>=textureDimensions(input)) {
-  return;
+// The frame's colour at `pixel`, edge pixels beyond it; read through
+// finite_scene_color where `bounded`.
+fn motionblur_color(pixel:vec2<i32>,bounded:bool)->vec3<f32> {
+ let color=textureLoad(input,clamp(pixel,vec2(0),vec2<i32>(textureDimensions(input))-1),0);
+ if bounded {
+  return finite_scene_color(color).rgb;
  }
- let center_color=textureLoad(input,pixel,0);
- // The workgroup's tile, which selects the variant for all of it.
- let tile=textureLoad(tiles,pixel/MOTIONBLUR_TILESIZE,0);
- let tile_max_magnitude=length(tile.xy);
- let tile_min_magnitude=length(tile.zw);
- // MOTIONBLUR_EARLYEXIT: no blur reaches a pixel beyond the centre's.
- if tile_max_magnitude<1.0 {
-  textureStore(output,pixel,center_color);
-  return;
- }
- let cheap=tile_max_magnitude-tile_min_magnitude<1.0;
- // Dither to reduce tile artifact.
- let neighborhood_tile=vec2<i32>(floor((vec2<f32>(pixel)+(dither(pixel)-0.5)*16.0)/f32(MOTIONBLUR_TILESIZE)));
- let tile_dim=vec2<i32>(textureDimensions(tiles));
- let neighborhood_velocity=textureLoad(tiles,clamp(neighborhood_tile,vec2(0),tile_dim-1),0).xy;
- let center_velocity=motionblur_velocity(vec2<i32>(pixel));
- let center_velocity_magnitude=length(center_velocity);
- let center_depth=motionblur_lineardepth(vec2<i32>(pixel));
- let random_offset=interleaved_gradient_noise(vec2<f32>(pixel),settings.frame);
- // MOTIONBLUR_CHEAP samples along the pixel's own velocity.
- let sampling_direction=select(neighborhood_velocity,center_velocity,cheap);
+ return color.rgb;
+}
+
+// main's sampling of the blur and its mix with the centre, with each sample
+// read through finite_scene_color where `bounded`.
+fn motionblur_gather(pixel:vec2<u32>,center_color:vec4<f32>,cheap:bool,sampling_direction:vec2<f32>,center_velocity_magnitude:f32,center_depth:f32,random_offset:f32,bounded:bool)->vec4<f32> {
  let center=vec2<f32>(pixel)+0.5;
  var sum=vec4(0.0);
  for (var i=0;i<MOTIONBLUR_PAIRS;i+=1) {
@@ -236,8 +230,8 @@ fn motionblur(@builtin(global_invocation_id) DTid:vec3<u32>) {
   let offset=sampling_direction*(f32(i)+random_offset)/f32(2*MOTIONBLUR_PAIRS);
   let pixel1=vec2<i32>(floor(center+offset));
   let pixel2=vec2<i32>(floor(center-offset));
-  let color1=textureLoad(input,clamp(pixel1,vec2(0),vec2<i32>(textureDimensions(input))-1),0).rgb;
-  let color2=textureLoad(input,clamp(pixel2,vec2(0),vec2<i32>(textureDimensions(input))-1),0).rgb;
+  let color1=motionblur_color(pixel1,bounded);
+  let color2=motionblur_color(pixel2,bounded);
   if cheap {
    sum+=vec4(color1,1.0);
    sum+=vec4(color2,1.0);
@@ -260,5 +254,46 @@ fn motionblur(@builtin(global_invocation_id) DTid:vec3<u32>) {
   sum+=weight2*vec4(color2,1.0);
  }
  sum/=f32(2*MOTIONBLUR_PAIRS);
- textureStore(output,pixel,vec4(sum.rgb+(1.0-sum.w)*center_color.rgb,center_color.a));
+ return vec4(sum.rgb+(1.0-sum.w)*center_color.rgb,center_color.a);
+}
+
+@compute @workgroup_size(8,8,1)
+fn motionblur(@builtin(global_invocation_id) DTid:vec3<u32>) {
+ let pixel=DTid.xy;
+ if any(pixel>=textureDimensions(input)) {
+  return;
+ }
+ let center_color=finite_scene_color(textureLoad(input,pixel,0));
+ // The workgroup's tile, which selects the variant for all of it.
+ let tile=textureLoad(tiles,pixel/MOTIONBLUR_TILESIZE,0);
+ let tile_max_magnitude=length(tile.xy);
+ let tile_min_magnitude=length(tile.zw);
+ // MOTIONBLUR_EARLYEXIT: no blur reaches a pixel beyond the centre's.
+ if tile_max_magnitude<1.0 {
+  textureStore(output,pixel,center_color);
+  return;
+ }
+ let cheap=tile_max_magnitude-tile_min_magnitude<1.0;
+ // Dither to reduce tile artifact.
+ let neighborhood_tile=vec2<i32>(floor((vec2<f32>(pixel)+(dither(pixel)-0.5)*16.0)/f32(MOTIONBLUR_TILESIZE)));
+ let tile_dim=vec2<i32>(textureDimensions(tiles));
+ let neighborhood_velocity=textureLoad(tiles,clamp(neighborhood_tile,vec2(0),tile_dim-1),0).xy;
+ let center_velocity=motionblur_velocity(vec2<i32>(pixel));
+ let center_velocity_magnitude=length(center_velocity);
+ let center_depth=motionblur_lineardepth(vec2<i32>(pixel));
+ let random_offset=interleaved_gradient_noise(vec2<f32>(pixel),settings.frame);
+ // MOTIONBLUR_CHEAP samples along the pixel's own velocity.
+ let sampling_direction=select(neighborhood_velocity,center_velocity,cheap);
+ // An infinite sample makes the result infinite, or NaN where its weight is
+ // 0, and a NaN sample makes it NaN; only then is the gather repeated with
+ // every sample bounded, so a finite frame costs one test a pixel. A NaN
+ // sample, outside the scene colour contract, may stay NaN. An invocation
+ // runs at most these two gathers of MOTIONBLUR_PAIRS pairs (AR-12): two
+ // calls rather than a loop of gathers, whose bounding became a branch in
+ // every sample and cost 0.4-0.7 ms at 1920x1080 on an Apple M5.
+ var blurred=motionblur_gather(pixel,center_color,cheap,sampling_direction,center_velocity_magnitude,center_depth,random_offset,false);
+ if !all_finite(blurred) {
+  blurred=motionblur_gather(pixel,center_color,cheap,sampling_direction,center_velocity_magnitude,center_depth,random_offset,true);
+ }
+ textureStore(output,pixel,blurred);
 }

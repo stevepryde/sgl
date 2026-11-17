@@ -6,8 +6,9 @@
 //! RCAS shares the final presentation/dither pass.
 //!
 //! Reads: the completed scene at the scene size, motion-blurred when motion
-//! blur ran (`stages::motion_blur`), which antialiasing completed it
-//! (`Completed`), and the frame's exposure (`stages::exposure`).
+//! blur ran (`stages::motion_blur`), within `shading::SCENE_COLOR`'s bound
+//! (`inputs`), which antialiasing completed it (`Completed`), and the
+//! frame's exposure (`stages::exposure`).
 //! Writes: its own bloom chain, combined HDR, SMAA, tone-mapped scene,
 //! antialiased and tone-mapped targets, the optional spatial reconstruction
 //! target, and the output. The diagnostic output-size tone-mapped target

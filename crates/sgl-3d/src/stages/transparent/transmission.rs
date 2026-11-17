@@ -8,21 +8,28 @@
 //! ViewportTextureNode.js 159-200, `viewportOpaqueMipTexture` 239-256;
 //! commit 2431a09f, MIT, see `stages/post/smaa/LICENSE-three.txt`): the
 //! render size in the composed frame's format (Rgba16Float), every level to
-//! one texel. It is allocated in the first frame that needs it, and again
-//! after a resize, as heat distortion's snapshot is, and keeps no history.
+//! one texel, its first level read within `shading::SCENE_COLOR`'s bound.
+//! It is allocated in the first frame that needs it, and again after a
+//! resize, as heat distortion's snapshot is, and keeps no history.
 use crate::shading::gbuffer::COLOR;
 use crate::view::targets::{attachment, hold};
 
 pub(crate) static COPY: crate::shading::Module = crate::shading::Module {
     name: "transmission_copy",
     source: include_str!("transmission.wgsl"),
-    deps: &[&crate::shading::FULLSCREEN_VS],
+    deps: &[&crate::shading::FULLSCREEN_VS, &crate::shading::SCENE_COLOR],
 };
 /// The entry points the copy's pipelines are created with, beside
 /// `shading::FULLSCREEN_VS_ENTRY`: the first level's copy and each further
 /// level's downsample.
 pub(crate) const COPY_FS_ENTRY: &str = "transmission_copy_fs";
 pub(crate) const DOWNSAMPLE_FS_ENTRY: &str = "transmission_downsample_fs";
+
+/// Tests read the copy back.
+#[cfg(test)]
+const COPY_READBACK: wgpu::TextureUsages = wgpu::TextureUsages::COPY_SRC;
+#[cfg(not(test))]
+const COPY_READBACK: wgpu::TextureUsages = wgpu::TextureUsages::empty();
 
 pub(crate) struct Transmission {
     layout: wgpu::BindGroupLayout,
@@ -168,7 +175,9 @@ impl Levels {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: COLOR,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | COPY_READBACK,
             view_formats: &[],
         });
         let level = |level| {

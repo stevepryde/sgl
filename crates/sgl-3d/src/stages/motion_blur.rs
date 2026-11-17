@@ -13,7 +13,8 @@
 //! `motion_blur/mod.rs`), and Wicked Engine 4323a33 after TAA and before
 //! tone mapping and bloom (`wiRenderPath3D.cpp` `Postprocess_MotionBlur`).
 //!
-//! Reads: the antialiased HDR frame (`Completed`), the surface's depth and
+//! Reads: the antialiased HDR frame (`Completed`), each texel at most
+//! `shading::SCENE_COLOR`'s bound, the surface's depth and
 //! motion at the render size (the Surface contract), the camera's
 //! projection and the frames since history restarted.
 //! Writes: its tile targets and the blurred frame, at the frame's size.
@@ -28,7 +29,12 @@ use crate::view::targets::target_with_usage;
 pub(crate) static MOTION_BLUR: crate::shading::Module = crate::shading::Module {
     name: "motion_blur",
     source: include_str!("motion_blur.wgsl"),
-    deps: &[&crate::shading::DEPTH, &crate::shading::NOISE],
+    deps: &[
+        &crate::shading::DEPTH,
+        &crate::shading::NOISE,
+        &crate::shading::SCENE_COLOR,
+        &crate::shading::FINITE,
+    ],
 };
 /// The entry points the pipelines are created with, in the order they run.
 pub(crate) const ENTRY_POINTS: [&str; 4] = [

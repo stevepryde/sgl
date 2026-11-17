@@ -12,7 +12,7 @@ const LOOKS: [AgxLook; 3] = [AgxLook::None, AgxLook::Punchy, AgxLook::Golden];
 /// `AgxToneMapper`, Rec. 2020 to sRGB, saturate). Printed by a driver
 /// compiled against Filament's own `filament/src/ToneMapper.cpp` and
 /// `ColorSpaceUtils.h`, not by SGL3D's port. Inputs are exact in binary16.
-const FILAMENT_AGX: [([f32; 3], [[f32; 3]; 3]); 14] = [
+pub(in crate::stages::post) const FILAMENT_AGX: [([f32; 3], [[f32; 3]; 3]); 14] = [
     (
         [0., 0., 0.],
         [

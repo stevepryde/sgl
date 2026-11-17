@@ -197,12 +197,6 @@ fn henyey_greenstein(cos_theta:f32,g:f32)->f32 {
  let k=.0795774715459;
  return k*(1.-g*g)/pow(1.+g*g-2.*g*cos_theta,1.5);
 }
-// Neither infinite nor NaN, judged by the exponent bits so no fast-math
-// assumption removes the test.
-fn fog_finite(value:vec4<f32>)->bool {
- let exponent=bitcast<vec4<u32>>(value)&vec4(0x7f800000u);
- return all(exponent!=vec4(0x7f800000u));
-}
 // The frame position of a froxel's unit x and y, with y down the frame.
 // It and froxel_view_position have their Rust inverse in
 // stages/fog/volume_froxels.rs, which bounds the fog volumes' froxels.
@@ -357,9 +351,9 @@ var<workgroup> fog_ambient_light:vec3<f32>;
   }
  }
  var froxel=vec4(light*albedo,density);
- if !fog_finite(froxel) {
-  froxel=select(vec4(0.),reprojected,fog_finite(reprojected));
- } else if fog_finite(reprojected) {
+ if !all_finite(froxel) {
+  froxel=select(vec4(0.),reprojected,all_finite(reprojected));
+ } else if all_finite(reprojected) {
   froxel=mix(froxel,reprojected,reproject_amount);
  }
  textureStore(scattering,id,clamp(froxel,vec4(0.),vec4(65504.)));
@@ -459,6 +453,6 @@ fn filter_gauss(t0:vec4<f32>,t1:vec4<f32>,t2:vec4<f32>,t3:vec4<f32>,t4:vec4<f32>
   let transmittance=exp(-(depth-previous_depth)*ray_scale*froxel.a);
   accumulated=vec4(accumulated.rgb+(froxel.rgb-froxel.rgb*transmittance)/max(froxel.a,.00001)*accumulated.a,accumulated.a*transmittance);
   previous_depth=depth;
-  textureStore(integrated,position,select(vec4(0.),clamp(accumulated,vec4(0.),vec4(65504.)),fog_finite(accumulated)));
+  textureStore(integrated,position,select(vec4(0.),clamp(accumulated,vec4(0.),vec4(65504.)),all_finite(accumulated)));
  }
 }

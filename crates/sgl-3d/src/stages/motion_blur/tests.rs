@@ -280,3 +280,90 @@ fn a_camera_cut_frame_is_not_blurred() {
     let full = frames(&device, &queue, MotionBlur::Full, 1., teleported);
     assert!(off.output == full.output, "a camera-cut frame was blurred");
 }
+
+// Plausible defect: motion blur turning a texel of +infinity, which an
+// RGBA16F frame holds where radiance passed its range on a backend that
+// rounds overflow to infinity (#464) and which reaches it unclamped when
+// neither TAA nor FSR ran, into NaN or spreading it as infinity: its filter
+// weighs each sample, a weight of 0 times infinity is NaN, and its averages
+// carry infinity to every pixel that gathers the texel. The frame moves
+// 9.6 pixels across its left part and stands still on its right, so tiles
+// of every variant (early exit, the cheap average and the weighted filter)
+// gather an infinite texel. Oracle: RD-4's finite-output invariant over the
+// blurred frame.
+#[test]
+fn infinite_texels_blur_into_a_finite_frame() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let size = [96u32, 64];
+    let inf = f32::INFINITY;
+    let infinite = [
+        ([44, 20], [inf, inf, inf]),
+        ([20, 20], [inf, 0.5, 0.25]),
+        ([70, 40], [0.25, inf, 0.5]),
+        ([36, 50], [0.5, 0.25, inf]),
+        ([90, 10], [inf, inf, inf]),
+    ];
+    let frame_texels: Vec<_> = (0..size[1])
+        .flat_map(|y| (0..size[0]).map(move |x| [x, y]))
+        .map(|texel| {
+            let [r, g, b] = infinite
+                .iter()
+                .find(|(at, _)| *at == texel)
+                .map_or([0.2, 0.1, 0.05], |(_, color)| *color);
+            [r, g, b, 1.]
+        })
+        .collect();
+    let frame = test_support::hdr_texture(&device, &queue, size, &frame_texels);
+    // UV motion: 0.1 of the frame's width, 9.6 pixels, left of x = 40.
+    let motion_texels: Vec<_> = (0..size[1])
+        .flat_map(|_| (0..size[0]).map(|x| if x < 40 { [0.1, 0., 0., 0.] } else { [0.; 4] }))
+        .collect();
+    let motion = test_support::hdr_texture(&device, &queue, size, &motion_texels);
+    let depth = crate::view::targets::target(
+        &device,
+        "motion blur fixture depth",
+        size,
+        wgpu::TextureFormat::Depth32Float,
+    );
+    let mut blur = super::MotionBlur::new(&device);
+    queue.write_buffer(
+        &blur.uniform,
+        0,
+        bytemuck::bytes_of(&super::MotionBlurUniform {
+            velocity_scale: size.map(|v| v as f32),
+            render_scale: [1.; 2],
+            near: 0.1,
+            frame: 3,
+        }),
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    // Every surface 5 m away.
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &depth,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(0.02),
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        ..Default::default()
+    });
+    blur.dispatch(&device, &mut encoder, &frame, [&motion, &depth], None);
+    queue.submit([encoder.finish()]);
+    let blurred = test_support::read(&device, &queue, blur.output().unwrap().texture(), 8);
+    let non_finite: Vec<_> = texels(&blurred)
+        .iter()
+        .enumerate()
+        .filter(|(_, texel)| !texel.iter().all(|value| value.is_finite()))
+        .map(|(index, texel)| (index as u32 % size[0], index as u32 / size[0], *texel))
+        .collect();
+    assert!(
+        non_finite.is_empty(),
+        "{} non-finite pixels, first {:?}",
+        non_finite.len(),
+        non_finite.first()
+    );
+}
