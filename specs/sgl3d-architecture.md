@@ -1224,7 +1224,13 @@ last, after everything it may use, and refuses a directive in it.
   World-ray accumulation keeps no history at a pixel under a receiver,
   whose motion is the receiver's, so the opaque surface a receiver
   uncovers starts from its current rays, and the upsample's blur leaves
-  out a neighbour under a receiver, which holds no rays. The
+  out a neighbour under a receiver, which holds no rays. The temporal pass
+  records which half-resolution texels hold rays (the opaque surface
+  traces and no receiver covers it), and the upsample's reads of them, at
+  the pixel and at each blur tap, take the hardware's bilinear read where
+  all four hold rays and otherwise those that do, renormalised as Godot's
+  half-resolution SSR resolve weights its four, so a pixel beside an
+  untraced surface or a receiver keeps its whole reflection (#811). The
   lobes' responses and directions, which lobe is
   traced, the method's cutoff test and fade, and the formula response ×
   (reflected × fade + fallback × (1 − confidence × fade)) have one owner,

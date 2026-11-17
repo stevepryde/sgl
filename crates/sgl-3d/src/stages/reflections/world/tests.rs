@@ -1573,41 +1573,129 @@ const UPSAMPLE_EDGE: u32 = 33;
 /// `receiver`, a blended receiver 5 m away covers left of `UPSAMPLE_EDGE`.
 /// Rays hit uniform radiance but for a checkerboard at traced columns 24 on,
 /// and hold nothing where the receiver covers a traced texel's first pixel,
-/// as the classification leaves them; the temporal pass, which passes the
-/// resolve's colour through there and on a first frame, is left out. Its
-/// variance is `variance`, standing in for noisy rays (uniform rays have
-/// none), and 0 under the receiver, as the temporal pass stores it.
-fn upsampled(
-    (device, queue): (&wgpu::Device, &wgpu::Queue),
-    receiver: bool,
+/// as the classification leaves them. Its variance is `variance`, standing
+/// in for noisy rays (uniform rays have none) (`upsampled_floor`).
+fn upsampled(gpu: (&wgpu::Device, &wgpu::Queue), receiver: bool, variance: f32) -> Vec<[f32; 4]> {
+    upsampled_floor(
+        gpu,
+        &UpsampleFloor {
+            roughness: UPSAMPLE_ROUGHNESS,
+            empty: receiver.then_some(Empty {
+                kind: EmptyKind::Receiver,
+                rows: false,
+                edge: UPSAMPLE_EDGE,
+            }),
+            variance,
+            radiance: &|[x, y]| {
+                if x >= 24 && (x + y) % 2 == 0 {
+                    [0.2, 0.2, 0.2, 1.]
+                } else {
+                    UNIFORM
+                }
+            },
+        },
+    )
+}
+
+/// The uniform radiance the upsample fixture's rays hit.
+const UNIFORM: [f32; 4] = [0.6, 0.8, 1., 1.];
+
+/// What holds no rays where an upsample fixture's floor has an empty region:
+/// an opaque surface the screen-space method does not trace, or one under a
+/// blended receiver 5 m away.
+#[derive(Clone, Copy, Debug)]
+enum EmptyKind {
+    Untraced,
+    Receiver,
+}
+
+/// An upsample fixture's empty region: the full-resolution pixels left of
+/// column `edge`, or above row `edge` where `rows`.
+#[derive(Clone, Copy, Debug)]
+struct Empty {
+    kind: EmptyKind,
+    rows: bool,
+    edge: u32,
+}
+
+impl Empty {
+    fn contains(&self, [x, y]: [u32; 2]) -> bool {
+        (if self.rows { y } else { x }) < self.edge
+    }
+}
+
+/// An upsample fixture: a floor of perceptual `roughness`, the region whose
+/// pixels hold no rays, the variance of the texels that hold rays, and the
+/// radiance their rays hit at each traced texel.
+struct UpsampleFloor<'a> {
+    roughness: f32,
+    empty: Option<Empty>,
     variance: f32,
+    radiance: &'a dyn Fn([u32; 2]) -> [f32; 4],
+}
+
+/// The production resolve, then the production upsample, over a static
+/// camera 10 m in front of a lit floor facing it. Its rays hit `radiance`
+/// and hold nothing where `empty` holds a traced texel's first pixel, as the
+/// classification leaves them; there, the floor is rough enough that the
+/// screen-space method does not trace it, or a blended receiver covers it.
+/// The production temporal pass runs between them on a first frame, which
+/// passes the resolve's colour through, and its variance, which stands in
+/// for noisy rays (uniform rays have none), is `variance` where a texel
+/// holds rays and 0 where it does not.
+fn upsampled_floor(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    floor: &UpsampleFloor,
 ) -> Vec<[f32; 4]> {
     use wgpu::util::DeviceExt;
     let size = [UPSAMPLE_SIZE; 2];
     let reduced = size.map(|side| side / super::DOWNSCALE);
     let full_texels = (size[0] * size[1]) as usize;
     let normal = test_support::hdr_texture(device, queue, size, &vec![[0.; 4]; full_texels]);
+    let untraced = |pixel| {
+        floor
+            .empty
+            .is_some_and(|empty| matches!(empty.kind, EmptyKind::Untraced) && empty.contains(pixel))
+    };
     let material = test_support::hdr_texture(
         device,
         queue,
         size,
-        &vec![[0., UPSAMPLE_ROUGHNESS, 0., 1.]; full_texels],
+        &(0..size[1])
+            .flat_map(|y| (0..size[0]).map(move |x| [x, y]))
+            .map(|pixel| {
+                [
+                    0.,
+                    if untraced(pixel) { 1. } else { floor.roughness },
+                    0.,
+                    1.,
+                ]
+            })
+            .collect::<Vec<_>>(),
     );
     let f0 = test_support::hdr_texture(device, queue, size, &vec![[1.; 4]; full_texels]);
     let traced = |texel: &dyn Fn([u32; 2], bool) -> [f32; 4]| {
         let texels = (0..reduced[1])
-            .flat_map(|y| (0..reduced[0]).map(move |x| (x, y)))
-            .map(|(x, y)| texel([x, y], receiver && x * super::DOWNSCALE < UPSAMPLE_EDGE))
+            .flat_map(|y| (0..reduced[0]).map(move |x| [x, y]))
+            .map(|texel_at| {
+                let first = texel_at.map(|v| v * super::DOWNSCALE);
+                texel(
+                    texel_at,
+                    floor.empty.is_some_and(|empty| empty.contains(first)),
+                )
+            })
             .collect::<Vec<_>>();
         test_support::hdr_texture(device, queue, reduced, &texels)
     };
-    let indirect = traced(&|[x, y], covered| match covered {
-        true => [0.; 4],
-        false if x >= 24 && (x + y) % 2 == 0 => [0.2, 0.2, 0.2, 1.],
-        false => [0.6, 0.8, 1., 1.],
+    let indirect = traced(&|texel, empty| {
+        if empty {
+            [0.; 4]
+        } else {
+            (floor.radiance)(texel)
+        }
     });
-    let direction = traced(&|_, covered| if covered { [0.; 4] } else { [0., 0., 1., 1.] });
-    let variance = traced(&|_, covered| [if covered { 0. } else { variance }; 4]);
+    let direction = traced(&|_, empty| if empty { [0.; 4] } else { [0., 0., 1., 1.] });
+    let variance = traced(&|_, empty| [if empty { 0. } else { floor.variance }; 4]);
     let r32 = wgpu::TextureFormat::R32Float;
     let hdr = crate::shading::gbuffer::COLOR;
     let length = super::texture(
@@ -1631,6 +1719,10 @@ fn upsampled(
     let resolve = super::texture(device, "resolve", reduced, hdr, storage);
     let resolve_variance = super::texture(device, "resolve variance", reduced, hdr, storage);
     let reprojection = super::texture(device, "hit depth", reduced, r32, storage);
+    let temporal = super::texture(device, "temporal", reduced, hdr, storage);
+    let temporal_variance = super::texture(device, "temporal variance", reduced, hdr, storage);
+    let depth_history = [0, 1].map(|_| super::texture(device, "depth", reduced, r32, storage));
+    let motion = test_support::hdr_texture(device, queue, size, &vec![[0.; 4]; full_texels]);
     let output = super::texture(
         device,
         "upsampled",
@@ -1697,7 +1789,13 @@ fn upsampled(
         &mut encoder,
         &surface_depth,
         &fill,
-        receiver.then_some([0, 0, UPSAMPLE_EDGE, size[1]]),
+        floor
+            .empty
+            .filter(|empty| matches!(empty.kind, EmptyKind::Receiver))
+            .map(|empty| match empty.rows {
+                false => [0, 0, empty.edge, size[1]],
+                true => [0, 0, size[0], empty.edge],
+            }),
     );
     let mut dispatch = |entry_point,
                         inputs: &[(u32, wgpu::BindingResource)],
@@ -1737,15 +1835,35 @@ fn upsampled(
         &receivers,
         reduced,
     );
+    let surfaces = [receivers.as_slice(), &[(7, texture(&surface_depth))]].concat();
+    // A first frame, whose history the pass does not read.
+    dispatch(
+        super::WORLD_TEMPORAL_ENTRY,
+        &[
+            (8, wgpu::BindingResource::Sampler(&sampler)),
+            (30, texture(&resolve)),
+            (31, texture(&resolve)),
+            (32, texture(&variance)),
+            (33, texture(&variance)),
+            (34, texture(&reprojection)),
+            (35, texture(&motion)),
+            (36, texture(&depth_history[0])),
+            (40, texture(&temporal)),
+            (41, texture(&temporal_variance)),
+            (42, texture(&depth_history[1])),
+        ],
+        &surfaces,
+        reduced,
+    );
     dispatch(
         super::WORLD_UPSAMPLE_ENTRY,
         &[
             (8, wgpu::BindingResource::Sampler(&sampler)),
-            (50, texture(&resolve)),
-            (51, texture(&variance)),
+            (50, texture(&temporal)),
+            (51, texture(&temporal_variance)),
             (52, texture(&output)),
         ],
-        &[receivers.as_slice(), &[(7, texture(&surface_depth))]].concat(),
+        &surfaces,
         size,
     );
     queue.submit([encoder.finish()]);
@@ -1820,5 +1938,174 @@ fn opaque_pixels_beside_a_receiver_keep_their_blurred_reflection() {
         "{} opaque pixels beyond the blur's radius differ: {:?}",
         beyond.len(),
         &beyond[..beyond.len().min(4)]
+    );
+}
+
+/// The traced pixels of the upsample fixture over `kind`'s empty region
+/// that differ from the same floor holding rays everywhere, smooth (no
+/// blur) and at `UPSAMPLE_ROUGHNESS` (the blur's full radius), with the
+/// region left of an even and an odd column and above an even and an odd
+/// row: for each run, its description, how many differ, and the largest
+/// share of its reflection a pixel lost at each distance from the edge.
+fn beside_empty(gpu: (&wgpu::Device, &wgpu::Queue), kind: EmptyKind) -> Vec<(String, usize)> {
+    // Uniform rays resolve and filter to within a binary16 step (2^-11
+    // below 1) of their radiance; two steps allow for both runs.
+    const ROUNDING: f32 = 1. / 1024.;
+    let mut runs = Vec::new();
+    for roughness in [0., UPSAMPLE_ROUGHNESS] {
+        let floor = |empty| UpsampleFloor {
+            roughness,
+            empty,
+            variance: 0.1,
+            radiance: &|_| UNIFORM,
+        };
+        let everywhere = upsampled_floor(gpu, &floor(None));
+        for rows in [false, true] {
+            for edge in [32, 33] {
+                let empty = Empty { kind, rows, edge };
+                let upsampled = upsampled_floor(gpu, &floor(Some(empty)));
+                let mut differ = 0;
+                let mut lost = [0f32; 6];
+                for y in 0..UPSAMPLE_SIZE {
+                    for x in 0..UPSAMPLE_SIZE {
+                        if empty.contains([x, y]) {
+                            continue;
+                        }
+                        let i = (y * UPSAMPLE_SIZE + x) as usize;
+                        if largest_difference(&upsampled[i], &everywhere[i]) > ROUNDING {
+                            differ += 1;
+                            let distance = (if rows { y } else { x } - edge) as usize;
+                            let share = 1. - upsampled[i][3] / everywhere[i][3];
+                            if let Some(lost) = lost.get_mut(distance) {
+                                *lost = lost.max(share);
+                            }
+                        }
+                    }
+                }
+                let description = format!(
+                    "{kind:?} {} {edge}, roughness {roughness}: {differ} traced pixels differ; largest share lost by distance from the edge {:?}",
+                    if rows { "above row" } else { "left of column" },
+                    lost.map(|share| (share * 1000.).round() / 1000.),
+                );
+                eprintln!("{description}");
+                runs.push((description, differ));
+            }
+        }
+    }
+    runs
+}
+
+// Plausible defect: the upsample reads the reduced grid by bilinear
+// filtering, at the pixel and at each blur tap, so a reduced texel whose
+// opaque surface does not trace, and holds no rays, enters the read at its
+// full weight with its empty colour, and composition gives that share of a
+// traced pixel's reflection beside it to the fallback: 25% or 75% of the
+// nearest pixel's by the edge's parity, and some of the next pixels' through
+// the blur. Oracle: the same floor traced everywhere, over uniform
+// radiance; every traced pixel must equal it, with the edge on both
+// parities of a column and of a row, smooth, where neither the resolve's
+// reuse nor the blur reaches across it, and rough, where the blur takes its
+// full radius.
+#[test]
+fn traced_pixels_beside_an_untraced_surface_keep_their_whole_reflection() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let faded = beside_empty((&device, &queue), EmptyKind::Untraced)
+        .into_iter()
+        .filter(|(_, differ)| *differ > 0)
+        .collect::<Vec<_>>();
+    assert!(
+        faded.is_empty(),
+        "traced pixels beside an untraced surface lost reflection: {faded:#?}"
+    );
+}
+
+// Plausible defect: as beside an untraced surface, a reduced texel under a
+// blended receiver holds no rays, and enters the upsample's bilinear read
+// with whatever colour the resolve's reuse left it, empty where its reuse
+// reached no ray; its offsets are floored, so it reaches across the edge
+// only from the right and below. Oracle: the same floor without the
+// receiver, over uniform radiance; every opaque pixel beside a receiver
+// left of it or above it must equal it, on both parities of the edge,
+// smooth, where the reuse cannot reach across it, and rough.
+#[test]
+fn opaque_pixels_beside_a_receiver_keep_their_whole_reflection() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let faded = beside_empty((&device, &queue), EmptyKind::Receiver)
+        .into_iter()
+        .filter(|(_, differ)| *differ > 0)
+        .collect::<Vec<_>>();
+    assert!(
+        faded.is_empty(),
+        "opaque pixels beside a receiver lost reflection: {faded:#?}"
+    );
+}
+
+// Plausible defect: the upsample reads the reduced variance by bilinear
+// filtering too, so a texel that holds no rays, whose variance is 0,
+// dilutes it beside the edge by 25% or 75% by its parity, and the blur,
+// which runs only where the variance exceeds its thresholds, stops there
+// while it runs on the rest of the floor. Oracle: the blur's output depends
+// on the variance only through its thresholds, so a floor whose variance
+// (0.018) exceeds them, but would fall below them diluted by either share,
+// must blur as one whose variance (1) exceeds them by far. Every traced
+// pixel of a checkerboard of radiance beside an untraced surface must equal
+// that floor's, on both parities of a column edge; the checkerboard,
+// against a floor without variance, shows the blur ran.
+#[test]
+fn the_blur_beside_an_untraced_surface_runs_as_it_does_away_from_it() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let mut unlike = Vec::new();
+    let mut blurred = 0;
+    for edge in [32, 33] {
+        let floor = |variance| {
+            let empty = Empty {
+                kind: EmptyKind::Untraced,
+                rows: false,
+                edge,
+            };
+            let upsampled = upsampled_floor(
+                gpu,
+                &UpsampleFloor {
+                    roughness: UPSAMPLE_ROUGHNESS,
+                    empty: Some(empty),
+                    variance,
+                    radiance: &|[x, y]| {
+                        if (x + y) % 2 == 0 {
+                            [0.2, 0.2, 0.2, 1.]
+                        } else {
+                            UNIFORM
+                        }
+                    },
+                },
+            );
+            (0..UPSAMPLE_SIZE * UPSAMPLE_SIZE)
+                .filter(|&i| !empty.contains([i % UPSAMPLE_SIZE, i / UPSAMPLE_SIZE]))
+                .map(|i| (i % UPSAMPLE_SIZE, upsampled[i as usize]))
+                .collect::<Vec<_>>()
+        };
+        let (low, high, none) = (floor(0.018), floor(1.), floor(0.));
+        blurred += low.iter().zip(&none).filter(|(a, b)| a != b).count();
+        let differ = low.iter().zip(&high).filter(|(a, b)| a != b);
+        let columns = differ.map(|((x, _), _)| x - edge).collect::<Vec<_>>();
+        eprintln!(
+            "edge {edge}: {} traced pixels blur unlike a floor of variance 1, at columns {:?} from the edge",
+            columns.len(),
+            columns.iter().collect::<std::collections::BTreeSet<_>>()
+        );
+        unlike.extend(columns.into_iter().map(|column| (edge, column)));
+    }
+    assert!(blurred > 0, "the fixture's blur must run");
+    assert!(
+        unlike.is_empty(),
+        "{} traced pixels beside an untraced surface blur unlike the rest of the floor: {:?}",
+        unlike.len(),
+        &unlike[..unlike.len().min(8)]
     );
 }

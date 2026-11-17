@@ -16,6 +16,12 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-3d` world-space reflections (`Settings::world_space_reflections`): a
+  reflection beside an untraced surface or a blended receiver no longer
+  fades toward its fallback along a line one or two pixels wide (up to 75%
+  of the nearest pixel's reflection); the upsample reads only the
+  half-resolution texels that hold rays there. No game-code changes are
+  needed.
+- `sgl-3d` world-space reflections (`Settings::world_space_reflections`): a
   rough, noisy reflection beside a blended receiver no longer fades up to
   7% toward its fallback over the two pixels nearest the receiver's edge;
   the upsample's blur leaves out pixels under the receiver, which hold no

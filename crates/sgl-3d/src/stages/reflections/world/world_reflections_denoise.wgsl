@@ -17,7 +17,33 @@
 // disocclusion test once uncovered (#774); the upsample's blur skips a
 // neighbour under a blended receiver as Wicked's skips one that needs no
 // reflection, since it holds no rays and would fade the opaque pixels
-// beside the receiver toward their fallback (#806); the resolve reads
+// beside the receiver toward their fallback (#806); the upsample reads the
+// reduced grid, at the pixel and at each blur tap, by the hardware's
+// bilinear filter as Wicked's does only where all four texels the read
+// takes hold rays, as the temporal pass records them (its variance
+// target's second channel); where some do not, it weights the four by the
+// filter's weights where they hold rays and 0 where they do not and
+// renormalises, as Godot Engine's half-resolution SSR resolve
+// (servers/rendering/renderer_rd/shaders/effects/
+// screen_space_reflection_resolve.glsl, revision
+// ed1daf0bf001b61586d9930840f2f1394092c079, 4.7.2-stable, MIT, see
+// LICENSE-godot.txt) weights its four by its bilateral weights, the empty
+// colour where none does, so a texel that holds no rays (an opaque surface
+// the screen-space method does not trace, or one under a receiver) no
+// longer takes up to 75% of a traced pixel's reflection beside it to its
+// fallback (#811); the variance read beside it takes the same weights,
+// since a texel without rays stores 0 there, which would stop the blur
+// beside the edge; Wicked's upsample is unchanged at its current master
+// (55fca37716f1079a27df4859147f71b8f215d453) and Godot's resolve at
+// 203bf0a23fd7d90a860917e66de08e20d2596244, while Bevy (9d12036) and
+// Filament (ef1a133) trace their SSR at full resolution and FidelityFX
+// SSSR (c6efa6b) denoises at full resolution, so none has such a read;
+// each workgroup reads its texels' records once into a mask and takes
+// Wicked's reads unchanged where they all hold rays, and a read whose four
+// do is the hardware's anywhere, so pixels away from a texel without rays
+// are Wicked's to the bit; with no such texel in view that costs about
+// 0.05 ms of the denoise passes' 2.15 ms at 1920x1080 on an Apple M5,
+// where testing the G-buffer at every read doubled them; the resolve reads
 // radiance above binary16's range (+infinity) as its largest finite value,
 // as FSR's PrepareRgb clamps its input, so its tone map makes no inf / inf,
 // and keeps its inverse within that range (#464).
@@ -147,6 +173,9 @@ fn world_hammersley(index:u32,count:u32,random:vec2<u32>)->vec2<f32> {
 @group(0) @binding(35) var world_motion:texture_2d<f32>;
 @group(0) @binding(36) var temporal_depth_history:texture_2d<f32>;
 @group(0) @binding(40) var temporal_output:texture_storage_2d<rgba16float,write>;
+// x the variance; y 1 where the texel holds rays (its opaque surface traces
+// and lies under no blended receiver, where the pass keeps history), else
+// 0, which the upsample reads.
 @group(0) @binding(41) var temporal_variance_output:texture_storage_2d<rgba16float,write>;
 @group(0) @binding(42) var temporal_depth_output:texture_storage_2d<r32float,write>;
 const VARIANCE_TEMPORAL_RESPONSE:f32=.9;
@@ -160,12 +189,13 @@ const VARIANCE_TEMPORAL_RESPONSE:f32=.9;
  let covered=receiver.traced && world_under_receiver(p*downscale,receiver.depth);
  textureStore(temporal_depth_output,p,vec4(select(receiver.depth,0.,covered)));
  let current=textureLoad(temporal_current,p,0);
+ let holds_rays=receiver.traced && !covered;
  if world.frame==0u {
   textureStore(temporal_output,p,current);
-  textureStore(temporal_variance_output,p,textureLoad(temporal_variance_current,p,0));
+  textureStore(temporal_variance_output,p,vec4(textureLoad(temporal_variance_current,p,0).x,select(0.,1.,holds_rays),0.,0.));
   return;
  }
- if !receiver.traced || covered {
+ if !holds_rays {
   textureStore(temporal_output,p,current);
   textureStore(temporal_variance_output,p,vec4(0.));
   return;
@@ -183,11 +213,13 @@ const VARIANCE_TEMPORAL_RESPONSE:f32=.9;
  }
  let previous_variance=textureSampleLevel(temporal_variance_history,linear_sampler,accumulated.uv,0.).x;
  textureStore(temporal_output,p,max(vec4(0.),accumulated.color));
- textureStore(temporal_variance_output,p,vec4(max(0.,mix(current_variance,previous_variance,response))));
+ textureStore(temporal_variance_output,p,vec4(max(0.,mix(current_variance,previous_variance,response)),1.,0.,0.));
 }
 
 // Upsample.
 @group(0) @binding(50) var upsample_temporal:texture_2d<f32>;
+// The temporal pass's variance target: x the variance, y whether the
+// texel holds rays.
 @group(0) @binding(51) var upsample_variance:texture_2d<f32>;
 @group(0) @binding(52) var upsample_output:texture_storage_2d<rgba16float,write>;
 const UPSAMPLE_DEPTH_THRESHOLD:f32=10000.;
@@ -198,7 +230,102 @@ const UPSAMPLE_VARIANCE_ESTIMATE_THRESHOLD:f32=.015;
 const UPSAMPLE_VARIANCE_EXIT_THRESHOLD:f32=.005;
 const UPSAMPLE_RADIUS_MAX:f32=2.;
 const UPSAMPLE_BILATERAL_SIGMA:f32=.9;
-@compute @workgroup_size(8,8) fn world_upsample(@builtin(global_invocation_id) id:vec3<u32>) {
+// The upsample's workgroups: squares of UPSAMPLE_GROUP full-resolution
+// pixels, which read whether each reduced texel their reads take holds
+// rays once, a texel a thread, into a bit of upsample_empty where it does
+// not. Their pixels and blur taps span the group and UPSAMPLE_RADIUS_MAX
+// pixels each side, 12 in all, whose bilinear reads take 8 texels on each
+// axis where the reduced grid has at most half the pixels, so the window
+// is the group's size; a read outside it, which no grid of the stage's
+// sizes makes, loads its texels' flags itself. world.rs dispatches the
+// denoise passes in groups of 8 by 8.
+const UPSAMPLE_GROUP:u32=8u;
+var<workgroup> upsample_empty:array<atomic<u32>,2>;
+// The workgroup's window of reduced texels: its first, and a bit for each
+// that holds no rays, row by row.
+struct WorldWindow {
+ first:vec2<i32>,
+ empty:vec2<u32>,
+}
+// The reduced grid's texel coordinates at full-resolution `uv`, as the
+// bilinear filter places its texel centres.
+fn world_reduced_coord(uv:vec2<f32>)->vec2<f32> {
+ return uv*world.reduced.xy-.5;
+}
+// The first texel of workgroup `group`'s window: the first that the read at
+// its first blur tap takes.
+fn world_window_first(group:vec2<u32>)->vec2<i32> {
+ let first=vec2<i32>(group*UPSAMPLE_GROUP)-vec2(i32(UPSAMPLE_RADIUS_MAX));
+ return vec2<i32>(floor(world_reduced_coord((vec2<f32>(first)+.5)*world.full.zw)));
+}
+// 1 where reduced texel `t`, clamped to the grid as the sampler clamps it,
+// holds rays, as the temporal pass records it, else 0.
+fn world_texel_holds_rays(t:vec2<i32>)->f32 {
+ let clamped=clamp(t,vec2(0),vec2<i32>(world.reduced.xy)-vec2(1));
+ return select(0.,1.,textureLoad(upsample_variance,clamped,0).y>0.);
+}
+fn world_window_holds_rays(t:vec2<i32>,window:WorldWindow)->f32 {
+ let i=t-window.first;
+ if all(i>=vec2(0)) && all(i<vec2(i32(UPSAMPLE_GROUP))) {
+  let bit=u32(i.y)*UPSAMPLE_GROUP+u32(i.x);
+  return select(1.,0.,((window.empty[bit/32u]>>(bit%32u))&1u)!=0u);
+ }
+ return world_texel_holds_rays(t);
+}
+// The four reduced texels a bilinear read at full-resolution `uv` takes
+// (the first; the rest follow at +x, +y and +xy, clamped to the grid as
+// the sampler clamps them), the filter's weight of each in that order
+// where it holds rays and 0 where it does not, and whether all hold rays.
+struct WorldFootprint {
+ texel:vec2<i32>,
+ weights:vec4<f32>,
+ whole:bool,
+}
+fn world_footprint(uv:vec2<f32>,window:WorldWindow)->WorldFootprint {
+ let coord=world_reduced_coord(uv);
+ let first=floor(coord);
+ let f=coord-first;
+ let texel=vec2<i32>(first);
+ let held=vec4(
+  world_window_holds_rays(texel,window),
+  world_window_holds_rays(texel+vec2(1,0),window),
+  world_window_holds_rays(texel+vec2(0,1),window),
+  world_window_holds_rays(texel+vec2(1,1),window),
+ );
+ let bilinear=vec4((1.-f.x)*(1.-f.y),f.x*(1.-f.y),(1.-f.x)*f.y,f.x*f.y);
+ return WorldFootprint(texel,bilinear*held,all(held>vec4(0.)));
+}
+// The reduced grid `reduced` at `uv` from the texels of `footprint` that
+// hold rays: the hardware's bilinear read where all do, else their
+// weighted sum renormalised, as Godot's half-resolution resolve weights its
+// four texels, and the empty colour where none does.
+fn world_upsample_read(reduced:texture_2d<f32>,uv:vec2<f32>,footprint:WorldFootprint)->vec4<f32> {
+ if footprint.whole {
+  return textureSampleLevel(reduced,linear_sampler,uv,0.);
+ }
+ let total=dot(footprint.weights,vec4(1.));
+ if total<=0. {
+  return vec4(0.);
+ }
+ let last=vec2<i32>(world.reduced.xy)-vec2(1);
+ let t=footprint.texel;
+ let w=footprint.weights;
+ return (textureLoad(reduced,clamp(t,vec2(0),last),0)*w.x
+  +textureLoad(reduced,clamp(t+vec2(1,0),vec2(0),last),0)*w.y
+  +textureLoad(reduced,clamp(t+vec2(0,1),vec2(0),last),0)*w.z
+  +textureLoad(reduced,clamp(t+vec2(1,1),vec2(0),last),0)*w.w)/total;
+}
+@compute @workgroup_size(UPSAMPLE_GROUP,UPSAMPLE_GROUP)
+fn world_upsample(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_id) local:vec3<u32>) {
+ let first=world_window_first(group.xy);
+ let bit=local.y*UPSAMPLE_GROUP+local.x;
+ if world_texel_holds_rays(first+vec2<i32>(local.xy))<=0. {
+  atomicOr(&upsample_empty[bit/32u],1u<<(bit%32u));
+ }
+ workgroupBarrier();
+ let window=WorldWindow(first,vec2(atomicLoad(&upsample_empty[0]),atomicLoad(&upsample_empty[1])));
+ // Every texel of the window holds rays: every read is the hardware's.
+ let whole=all(window.empty==vec2(0u));
  if !world_in_grid(vec2<i32>(id.xy),world.full) {
   return;
  }
@@ -211,8 +338,16 @@ const UPSAMPLE_BILATERAL_SIGMA:f32=.9;
  let linear_depth=world_linear_depth(receiver.depth);
  let n=receiver.normal;
  let uv=(vec2<f32>(id.xy)+.5)*world.full.zw;
- var output=textureSampleLevel(upsample_temporal,linear_sampler,uv,0.);
- let variance=textureSampleLevel(upsample_variance,linear_sampler,uv,0.).x;
+ var output=vec4(0.);
+ var variance=0.;
+ if whole {
+  output=textureSampleLevel(upsample_temporal,linear_sampler,uv,0.);
+  variance=textureSampleLevel(upsample_variance,linear_sampler,uv,0.).x;
+ } else {
+  let footprint=world_footprint(uv,window);
+  output=world_upsample_read(upsample_temporal,uv,footprint);
+  variance=world_upsample_read(upsample_variance,uv,footprint).x;
+ }
  // Roughness 0.125 is the destination.
  let radius=mix(0.,select(0.,UPSAMPLE_RADIUS_MAX,variance>UPSAMPLE_VARIANCE_ESTIMATE_THRESHOLD),clamp(receiver.roughness*8.,0.,1.));
  let sigma=radius*UPSAMPLE_BILATERAL_SIGMA;
@@ -236,7 +371,12 @@ const UPSAMPLE_BILATERAL_SIGMA:f32=.9;
      continue;
     }
     let sample_uv=(vec2<f32>(q)+.5)*world.full.zw;
-    let color=textureSampleLevel(upsample_temporal,linear_sampler,sample_uv,0.);
+    var color=vec4(0.);
+    if whole {
+     color=textureSampleLevel(upsample_temporal,linear_sampler,sample_uv,0.);
+    } else {
+     color=world_upsample_read(upsample_temporal,sample_uv,world_footprint(sample_uv,window));
+    }
     let dq=position-world_position(sample_uv,sample.depth);
     let plane=max(abs(dot(dq,sample.normal)),abs(dot(dq,n)));
     let depth_weight=exp(-(plane/linear_depth)*(plane/linear_depth)*UPSAMPLE_DEPTH_THRESHOLD);
