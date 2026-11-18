@@ -184,14 +184,19 @@ adding eight bytes per pixel across its two buffers; B transports recovery
 hold, W the responsive masks' recovery hold (zero without them), and input
 motion's extra channels are never copied into it.
 
-Set `TemporalAntiAliasingAttribs::rigid_object_motion` when a rigid object
-moves, changes geometry, appears, is hidden or leaves the view; camera and rigid-object changes
-rearm recovery throughout the view, as Filament does. Newly exposed background
-can have zero current and previous motion and still require this global hold.
-SGL3D supplies the signal from scene instance changes, conservatively including
-old visible objects whose new positions are culled. Procedural material motion
-and depth confidence additionally transport local recovery, so one animated
-material does not prevent stabilization everywhere. This is partial
+Set `TemporalAntiAliasingAttribs::camera_motion` from
+`TemporalAntiAliasing::camera_moved(&current, &previous)`, the cameras given
+to the context: it compares the unjittered matrices to within a few f32
+rounding steps of each element, so a camera at rest anywhere from the origin
+is at rest. Set `rigid_object_motion` when content changes without a motion
+vector that describes it: an object appears, leaves, is shown or hidden,
+changes geometry, or moves without writing its motion. Each rearms recovery
+throughout the view. Newly exposed background can have zero current and
+previous motion and still require this global hold. Motion the motion
+vectors carry, an object's or deformation's, arms recovery locally (the
+pixel's own motion, its 3x3 closest-motion search and the neighbourhood
+motion below), so things moving elsewhere do not prevent stabilization
+everywhere. This is partial
 rectification, not disabled history rejection. It cannot reconstruct geometry
 never sampled across the jitter sequence. See [provenance](PROVENANCE.md).
 

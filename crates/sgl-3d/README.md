@@ -883,13 +883,17 @@ integrated as Diligent's Hydrogent renderer does:
   effects, mist and heat shimmer, before bloom and tone mapping.
 - It uses Catmull-Rom history sampling, depth disocclusion and a variance
   clip, with `sgl-post-fx`'s motion-adaptive history (Filament's): while the
-  camera, rigid objects and the surface at a pixel are still, only partial rectification
+  camera and the surface at a pixel are still, only partial rectification
   and slower feedback, which steadies subpixel detail; full rejection
-  returns, held for twelve frames, on camera motion, rigid-object changes,
-  a `Scene::set_material` edit that changes what is drawn (faces,
-  visibility group, alpha mode, cutoff, blending or shader), a changed
-  `FrameInput::visibility_mask`, local motion and depth
-  disocclusion, at any distance: the sky and far surfaces settle at rest like
+  returns, held for twelve frames, across the view on camera motion (beyond
+  f32 rounding of its matrices, wherever it is from the origin), an instance
+  added, removed, shown or hidden, a static instance moved, a model or its
+  geometry replaced, a `Scene::set_material` edit that changes what is drawn
+  (faces, visibility group, alpha mode, cutoff, blending or shader) and a
+  changed `FrameInput::visibility_mask`; and locally on motion, a moving
+  instance's included, whose motion vectors arm the pixels it covers and
+  leaves rather than the whole view, and on depth disocclusion, at any
+  distance: the sky and far surfaces settle at rest like
   near ones, and sky revealed or covered counts as a disocclusion however
   far the surface. Depth disocclusion follows moving surfaces by the
   G-buffer's depth motion, so a surface the camera follows, or one moving

@@ -11,7 +11,7 @@ use crate::render_technique::{
     DepthStencilStateDesc, PostFXRenderTechnique, Resource, Shader, create_shader,
 };
 use crate::screen_space_reflection::PostFxExecutionStatus;
-use crate::structures::TemporalAntiAliasingAttribs;
+use crate::structures::{CameraAttribs, TemporalAntiAliasingAttribs};
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
@@ -349,6 +349,30 @@ fn reversed_depth(post_fx_context: &PostFXContext) -> bool {
         .contains(post_fx_context::FeatureFlags::REVERSED_DEPTH)
 }
 
+/// The rounding steps, relative to an element's magnitude (at least 1), by
+/// which a camera's matrices may differ and the camera still be at rest
+/// (`TemporalAntiAliasing::camera_moved`; PROVENANCE.md, "Motion-adaptive
+/// TAA"). A view recomputed each frame from unchanged float state
+/// accumulates a few half-steps per term, so a camera at rest anywhere from
+/// the render origin differs by a few steps; eight covers that. A larger
+/// tolerance is safe because the view-wide camera signal only has to catch
+/// real motion: a camera change that moves any pixel by 0.01 px or more
+/// still arms that pixel through its own motion vector (the still-pixel
+/// threshold, DFX-19), and real camera motion is orders of magnitude above
+/// eight steps.
+const CAMERA_REST_STEPS: f32 = 8.;
+
+/// `proj` (columns) without `jitter`: the inverse of a jitter applied as a
+/// clip-space translation, `T(jitter) * P`, which offsets every column's x
+/// and y by the jitter times its w (perspective and orthographic alike).
+fn unjittered_projection(mut proj: [f32; 16], jitter: [f32; 2]) -> [f32; 16] {
+    for column in proj.chunks_exact_mut(4) {
+        column[0] -= jitter[0] * column[3];
+        column[1] -= jitter[1] * column[3];
+    }
+    proj
+}
+
 // https://en.wikipedia.org/wiki/Halton_sequence#Implementation_in_pseudocode
 fn halton_sequence(base: u32, mut index: u32) -> f32 {
     let mut result = 0.0f32;
@@ -567,6 +591,27 @@ impl TemporalAntiAliasing {
             .wrapping_add(u32::from(is_prev_frame))
             & 0x01;
         acc_buffer.accumulated_buffer(buff_idx)
+    }
+
+    /// Whether the camera moved between `previous` and `current`, the
+    /// cameras the context was given: [`TemporalAntiAliasingAttribs::camera_motion`].
+    /// Each camera's jitter (`f2_jitter`) is removed from its projection
+    /// first, so jitter is never motion, and the unjittered projections and
+    /// the views are compared element by element: elements `a` and `b`
+    /// agree when `|a - b| <= CAMERA_REST_STEPS * f32::EPSILON * max(1, |a|, |b|)`.
+    /// A camera whose matrices are recomputed each frame from unchanged
+    /// state, anywhere from the render origin, is at rest; any change larger
+    /// than that rounding has moved it.
+    pub fn camera_moved(current: &CameraAttribs, previous: &CameraAttribs) -> bool {
+        let projection =
+            |camera: &CameraAttribs| unjittered_projection(camera.m_proj, camera.f2_jitter);
+        let agree = |a: &[f32; 16], b: &[f32; 16]| {
+            a.iter().zip(b).all(|(&a, &b)| {
+                (a - b).abs() <= CAMERA_REST_STEPS * f32::EPSILON * 1f32.max(a.abs()).max(b.abs())
+            })
+        };
+        !(agree(&current.m_view, &previous.m_view)
+            && agree(&projection(current), &projection(previous)))
     }
 
     /// Computes the jittered projection matrix. `proj` is a Diligent
@@ -867,5 +912,198 @@ impl TemporalAntiAliasing {
 
         // The placeholder owns both MRT outputs: arbitrary input B/A must
         // never become an adaptive recovery counter.
+    }
+}
+
+#[cfg(test)]
+mod camera_tests {
+    use super::{CameraAttribs, TemporalAntiAliasing};
+
+    /// The vertical field of view and rows the smallest changes are judged at:
+    /// a 1080p view one radian high.
+    const FOV_Y: f32 = 1.;
+    const ROWS: f32 = 1080.;
+
+    /// A left-handed perspective of `fov_y` (columns), near 0.1, far 100.
+    fn projection(fov_y: f32) -> [f32; 16] {
+        let (near, far) = (0.1f32, 100f32);
+        let y = 1. / (fov_y * 0.5).tan();
+        let x = y * ROWS / 1920.;
+        let m22 = far / (far - near);
+        [
+            x,
+            0.,
+            0.,
+            0., //
+            0.,
+            y,
+            0.,
+            0., //
+            0.,
+            0.,
+            m22,
+            1., //
+            0.,
+            0.,
+            -near * m22,
+            0.,
+        ]
+    }
+
+    /// The view (columns) of a camera at `position` turned `yaw` radians
+    /// about Y: the rotation's transpose, and its translation `-Rᵀ p`.
+    fn view(position: [f32; 3], yaw: f32) -> [f32; 16] {
+        let (s, c) = yaw.sin_cos();
+        let [x, y, z] = position;
+        [
+            c,
+            0.,
+            s,
+            0., //
+            0.,
+            1.,
+            0.,
+            0., //
+            -s,
+            0.,
+            c,
+            0., //
+            -(c * x - s * z),
+            -y,
+            -(s * x + c * z),
+            1.,
+        ]
+    }
+
+    /// A camera of `view` and `projection`, the projection jittered by
+    /// `jitter` (NDC) as a clip-space translation.
+    fn camera(view: [f32; 16], mut projection: [f32; 16], jitter: [f32; 2]) -> CameraAttribs {
+        for column in projection.chunks_exact_mut(4) {
+            column[0] += jitter[0] * column[3];
+            column[1] += jitter[1] * column[3];
+        }
+        CameraAttribs {
+            f2_jitter: jitter,
+            m_view: view,
+            m_proj: projection,
+            ..Default::default()
+        }
+    }
+
+    /// `value` `steps` f32 rounding steps up (or down, if negative).
+    fn stepped(mut value: f32, steps: i32) -> f32 {
+        for _ in 0..steps.unsigned_abs() {
+            value = if steps > 0 {
+                value.next_up()
+            } else {
+                value.next_down()
+            };
+        }
+        value
+    }
+
+    /// The camera positions the cases run at: near the render origin, about
+    /// 100 m from it and several kilometres from it.
+    const POSITIONS: [[f32; 3]; 3] = [
+        [0.3, 1.2, -0.7],
+        [83.1, 21.7, -54.9],
+        [3170.4, 412.9, -4021.6],
+    ];
+
+    // Plausible defect: an absolute threshold (the 1e-6 TAA used before)
+    // takes a camera at rest away from the render origin as moving, because
+    // a view element of magnitude 16 or more has a rounding step above it.
+    // The oracle is the requirement that a camera at rest is at rest
+    // wherever it is: the same view re-submitted with one to three rounding
+    // steps of noise on every element, at each distance, with a different
+    // jitter each frame (jitter is not motion).
+    #[test]
+    fn a_camera_at_rest_with_rounding_noise_has_not_moved() {
+        let projection = projection(FOV_Y);
+        for position in POSITIONS {
+            let rest = view(position, 0.7);
+            let previous = camera(rest, projection, [0.3 / 1920., -0.1 / 1080.]);
+            for (frame, steps) in [1, -2, 3, -3, 2, -1].into_iter().enumerate() {
+                let mut noisy = rest;
+                for (i, element) in noisy.iter_mut().enumerate() {
+                    // Constant elements (0, 1) are rebuilt exactly; the
+                    // rotation and translation carry the rounding.
+                    if *element != 0. && *element != 1. {
+                        *element = stepped(*element, if i % 2 == 0 { steps } else { -steps });
+                    }
+                }
+                let current = camera(noisy, projection, [-0.2 / 1920., 0.4 / 1080.]);
+                assert!(
+                    !TemporalAntiAliasing::camera_moved(&current, &previous),
+                    "a camera at rest at {position:?} with {steps} rounding steps of noise (frame {frame}) moved"
+                );
+            }
+        }
+    }
+
+    // Plausible defect: a tolerance so wide, or a comparison that skips the
+    // view or the projection, that a real camera change is taken for rest.
+    // The changes, each the smallest of its kind that must count: a 1 mm
+    // translation at the render origin, a rotation by a hundredth of a
+    // pixel's angle at the view's centre, and a field of view widened enough
+    // to move the edge rows by a hundredth of a pixel, at every distance.
+    #[test]
+    fn the_smallest_real_camera_changes_move_it() {
+        let pixel_angle = (2. * (FOV_Y * 0.5).tan() / ROWS).atan();
+        // The edge row lies `ROWS / 2` pixels from the centre, so a scale of
+        // 1 + 0.01 / (ROWS / 2) moves it a hundredth of a pixel.
+        let scale = 1. + 0.01 / (ROWS * 0.5);
+        let wider = 2. * ((FOV_Y * 0.5).tan() * scale).atan();
+        let projection = projection(FOV_Y);
+        let [x, y, z] = POSITIONS[0];
+        let translated = camera(view([x + 0.001, y, z], 0.7), projection, [0.; 2]);
+        let origin = camera(view(POSITIONS[0], 0.7), projection, [0.; 2]);
+        assert!(
+            TemporalAntiAliasing::camera_moved(&translated, &origin),
+            "a 1 mm translation at the render origin did not move the camera"
+        );
+        for position in POSITIONS {
+            let rest = camera(view(position, 0.7), projection, [0.; 2]);
+            let turned = camera(
+                view(position, 0.7 + 0.01 * pixel_angle),
+                projection,
+                [0.; 2],
+            );
+            let widened = camera(view(position, 0.7), self::projection(wider), [0.; 2]);
+            for (what, current) in [("a turn", turned), ("a wider field", widened)] {
+                assert!(
+                    TemporalAntiAliasing::camera_moved(&current, &rest),
+                    "{what} moving pixels by a hundredth at {position:?} did not move the camera"
+                );
+            }
+        }
+    }
+
+    // The tolerance is relative to an element's magnitude, so far from the
+    // render origin it admits a translation of up to 8 rounding steps of the
+    // view's translation: 8 * 2^-23 * 5015 m (the farthest camera's largest
+    // translation element) = 4.8 mm. That is at rest for the view-wide
+    // signal only: a surface the translation moves by 0.01 px or more (one
+    // within about 475 m at this view, whose pixel spans 1.01 mrad) arms its
+    // own pixels through its motion vector, and a farther one moved less
+    // than that. The oracle is that bound: 1 mm (0.77 mm along the largest
+    // element) is within it, 1 cm (7.7 mm) beyond it.
+    #[test]
+    fn far_from_the_origin_a_translation_within_the_rounding_bound_is_left_to_the_pixels() {
+        let projection = projection(FOV_Y);
+        let position = POSITIONS[2];
+        let rest = camera(view(position, 0.7), projection, [0.; 2]);
+        let at = |offset: f32| {
+            let [x, y, z] = position;
+            camera(view([x + offset, y, z], 0.7), projection, [0.; 2])
+        };
+        assert!(
+            !TemporalAntiAliasing::camera_moved(&at(0.001), &rest),
+            "1 mm at 5 km is within the 4.8 mm the rounding tolerance admits there"
+        );
+        assert!(
+            TemporalAntiAliasing::camera_moved(&at(0.01), &rest),
+            "1 cm at 5 km is beyond the 4.8 mm the rounding tolerance admits there"
+        );
     }
 }

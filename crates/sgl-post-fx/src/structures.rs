@@ -176,11 +176,24 @@ pub struct TemporalAntiAliasingAttribs {
 
     pub skip_rejection: u32,
 
-    /// Nonzero when a rigid object moved, appeared or departed this frame.
+    /// Nonzero when content changed this frame without a motion vector that
+    /// describes the change: an object appeared, departed, was shown or
+    /// hidden, changed its geometry, or moved without writing its motion.
     /// With MOTION_ADAPTIVE_HISTORY, rearms recovery across the view so
     /// newly uncovered zero-motion background does not retain object history.
-    /// Vertex/material deformation is handled locally; default is zero.
+    /// Motion the motion vectors carry (a moving object's, deformation's) is
+    /// followed per pixel and needs no flag; default is zero.
     pub rigid_object_motion: u32,
+
+    /// Nonzero when the camera moved this frame:
+    /// [`TemporalAntiAliasing::camera_moved`](crate::temporal_anti_aliasing::TemporalAntiAliasing::camera_moved)
+    /// of the cameras given to the context. With MOTION_ADAPTIVE_HISTORY,
+    /// rearms recovery across the view; default is zero.
+    pub camera_motion: u32,
+
+    pub padding0: u32,
+    pub padding1: u32,
+    pub padding2: u32,
 }
 
 impl Default for TemporalAntiAliasingAttribs {
@@ -190,6 +203,10 @@ impl Default for TemporalAntiAliasingAttribs {
             reset_accumulation: 0,
             skip_rejection: 0,
             rigid_object_motion: 0,
+            camera_motion: 0,
+            padding0: 0,
+            padding1: 0,
+            padding2: 0,
         }
     }
 }

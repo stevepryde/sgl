@@ -214,10 +214,16 @@ impl Scenario<'_> {
         }
     }
 
-    /// Poses `rig` for `frame` and renders it. Only shapes whose pose
+    /// Poses `rig` for `frame` and renders it.
+    pub fn render(&self, rig: &mut Rig, frame: u32) {
+        self.pose(rig, frame);
+        rig.render(frame);
+    }
+
+    /// Poses `rig`'s camera and shapes for `frame`. Only shapes whose pose
     /// changed are placed, so a still one is no scene edit; shapes a case
     /// adds after the scenario's are its own.
-    pub fn render(&self, rig: &mut Rig, frame: u32) {
+    pub fn pose(&self, rig: &mut Rig, frame: u32) {
         rig.look((self.camera)(frame));
         let poses = (self.script)(frame);
         let before = frame.checked_sub(1).map(|f| (self.script)(f));
@@ -226,7 +232,6 @@ impl Scenario<'_> {
                 rig.place(id, poses[i]);
             }
         }
-        rig.render(frame);
     }
 
     /// Each shape's quads, projected at `frame`: the part of each that lies

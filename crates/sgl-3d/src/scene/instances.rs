@@ -149,10 +149,13 @@ pub(crate) struct Instances {
     pub objects: Objects,
     /// Live static and moving instances.
     counts: [usize; 2],
-    /// Rigid changes since the last submitted frame, including departures
-    /// and material edits that change what their users draw
-    /// (`Scene::set_material`). Procedural/material deformation does not
-    /// set this view-wide signal.
+    /// Changes since the last submitted frame that no motion vector
+    /// describes (M-9): appearances, departures, showing or hiding, model
+    /// and geometry replacement, a static instance moved, a moving one
+    /// moved where its last submitted pose does not apply, and material
+    /// edits that change what their users draw (`Scene::set_material`). A
+    /// moving instance's move from its submitted pose, deformation and
+    /// vertex functions write motion and do not set it.
     rigid_changes: bool,
 }
 
@@ -423,9 +426,10 @@ impl Scene {
         self.ray_instances.set(id.index(), ray, pose);
     }
 
-    /// Rigid changes visible now or before their departure. Deliberately
-    /// conservative across frustum/occlusion culling: a culled new position
-    /// can still expose history at the old position. Clears only on submit.
+    /// Changes without a motion vector, visible now or before their
+    /// departure (M-9). Deliberately conservative across frustum and
+    /// occlusion culling: a culled new state can still expose history at
+    /// the old one. Clears only on submit.
     pub(crate) fn rigid_objects_changed(&self) -> bool {
         self.instances.rigid_changes
     }
@@ -496,8 +500,16 @@ impl Scene {
             self.static_edits.record(posed_bounds(after, state.pose));
         }
         let placed = instance.state.pose != state.pose || previous != state.model;
-        self.instances.rigid_changes |=
-            (old.visible || state.visible) && (placed || old.visible != state.visible);
+        // A moving instance whose last submitted pose applies to the new
+        // state writes its move as motion, which TAA follows per pixel; any
+        // other change has no motion vector and re-arms the view (M-9).
+        let motion_describes_it = instance.mobility == Mobility::Moving
+            && state.visible
+            && instance
+                .submitted
+                .is_some_and(|(_, model)| model == state.model);
+        self.instances.rigid_changes |= (old.visible || state.visible)
+            && (old.visible != state.visible || (placed && !motion_describes_it));
         instance.state = state;
         instance.stale = false;
         if placed {
@@ -570,7 +582,7 @@ impl Scene {
 mod temporal_recovery_tests {
     use super::*;
 
-    // A pose which leaves the camera and a hidden/removed object can uncover
+    // A hidden or removed object, or replaced geometry, can uncover
     // zero-motion background. Observe changes through real scene mutations,
     // rather than setting the temporal signal directly.
     #[test]
@@ -615,13 +627,6 @@ mod temporal_recovery_tests {
             "same-ID geometry removal uncovers history even though instance pose and identity are unchanged"
         );
         scene.finish_frame();
-        state.pose = Mat4::from_translation(Vec3::new(1000., 0., 0.));
-        scene.set_instance(&queue, id, state).unwrap();
-        assert!(
-            scene.rigid_objects_changed(),
-            "a new culled position still uncovers the old position"
-        );
-        scene.finish_frame();
         state.visible = false;
         scene.set_instance(&queue, id, state).unwrap();
         assert!(
@@ -647,6 +652,134 @@ mod temporal_recovery_tests {
         assert!(
             !scene.rigid_objects_changed(),
             "only submission retires departure evidence"
+        );
+    }
+
+    // Plausible defects: a moving instance's move, which its motion vectors
+    // describe, re-arms the whole view (so a scene with anything moving never
+    // rests); or a change that writes no motion vector does not. The
+    // expected values are M-9's rule: a pose change of a moving instance
+    // whose last submitted pose applies (visible in that frame and now, the
+    // same model) leaves the signal down, wherever it moves; every change M-5
+    // and M-4 give no motion (another model, hidden, shown after a hidden
+    // frame, a hidden new instance shown and moved before its first
+    // submitted frame, a static instance moved) raises it until a frame is
+    // submitted.
+    #[test]
+    fn rigid_recovery_leaves_moves_with_motion_to_the_pixels() {
+        let Some((device, queue)) = crate::test_support::device() else {
+            return;
+        };
+        let mut scene = Scene::new(&device, &queue);
+        let mut add_model = || {
+            scene
+                .add_asset(&device, &queue, crate::test_support::cube())
+                .unwrap()
+                .model
+        };
+        let (model, other) = (add_model(), add_model());
+        let at = |x: f32| Mat4::from_translation(Vec3::new(x, 0., 0.));
+        let shown = |model| InstanceState {
+            model,
+            pose: Mat4::IDENTITY,
+            visible: true,
+            capture_visible: true,
+        };
+        let moving = scene
+            .add_instance(&device, &queue, shown(model), Mobility::Moving)
+            .unwrap();
+        let fixed = scene
+            .add_instance(&device, &queue, shown(model), Mobility::Static)
+            .unwrap();
+        let mut state = InstanceState {
+            pose: at(0.5),
+            ..shown(model)
+        };
+        scene.finish_frame();
+        let expect = |scene: &mut Scene, change: InstanceState, id, raised: bool, what: &str| {
+            scene.set_instance(&queue, id, change).unwrap();
+            assert_eq!(scene.rigid_objects_changed(), raised, "{what}");
+            scene.finish_frame();
+            assert!(
+                !scene.rigid_objects_changed(),
+                "{what}: only submission retires it"
+            );
+        };
+        for (x, what) in [
+            (0.5, "a moving instance moved from its submitted pose"),
+            (1000., "a moving instance moved out of view"),
+            (0.75, "a moving instance moved back into view"),
+        ] {
+            state.pose = at(x);
+            expect(&mut scene, state, moving, false, what);
+        }
+        state.model = other;
+        expect(
+            &mut scene,
+            state,
+            moving,
+            true,
+            "a moving instance given another model",
+        );
+        state.pose = at(1.);
+        expect(
+            &mut scene,
+            state,
+            moving,
+            false,
+            "the next move of the other model",
+        );
+        state.visible = false;
+        expect(&mut scene, state, moving, true, "a moving instance hidden");
+        state = InstanceState {
+            pose: at(2.),
+            ..shown(other)
+        };
+        expect(
+            &mut scene,
+            state,
+            moving,
+            true,
+            "a moving instance shown elsewhere after a hidden frame",
+        );
+        expect(
+            &mut scene,
+            InstanceState {
+                pose: at(0.25),
+                ..shown(model)
+            },
+            fixed,
+            true,
+            "a static instance moved",
+        );
+        let fresh = scene
+            .add_instance(
+                &device,
+                &queue,
+                InstanceState {
+                    visible: false,
+                    ..shown(model)
+                },
+                Mobility::Moving,
+            )
+            .unwrap();
+        assert!(
+            !scene.rigid_objects_changed(),
+            "a hidden instance added shows nothing"
+        );
+        scene
+            .set_instance(
+                &queue,
+                fresh,
+                InstanceState {
+                    pose: at(3.),
+                    ..shown(model)
+                },
+            )
+            .unwrap();
+        assert!(
+            scene.rigid_objects_changed(),
+            "an instance with no submitted frame shown and moved"
         );
     }
 

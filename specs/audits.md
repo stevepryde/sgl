@@ -143,3 +143,70 @@ from MDN's compatibility data. [#782](https://github.com/stevepryde/sgl/issues/7
 - The 1 GiB default load budget and the 2 GiB decal atlas build limit on `wasm32`: its 4 GiB address space, shared with the game's other content.
 - The blocking constructors (`Gpu::headless`, `Context::new`, `try_new`) are native conveniences over asynchronous forms the browser awaits.
 - The other way round, nothing was found: every optional WebGPU feature SGL3D uses natively it also requests in the browser (depth clip control, RG11B10 render targets, BC, ETC2 and ASTC, timestamp queries), and the WebGPU features it leaves unused (dual-source blending, clip distances, indirect first instance, blendable 32-bit float) it does not use natively either.
+
+## 2026-11-18 — temporal history audit
+
+Commit `d3b785f2`. Scope: every condition under which anything in SGL3D or
+`sgl-post-fx` discards temporal history, weakens it, withholds jitter,
+restarts a stage, or zeroes, replaces or disregards a motion vector, with the
+AMD shaders SGL3D ships through `sp-fidelity` 0.3.2 read as SGL3D's own
+behaviour. Five readings: the frame, the renderer and motion vectors;
+temporal antialiasing; FSR2 and FSR3; reflections; shadows, ambient
+occlusion, fog, dynamic GI, exposure and the remaining stages. Asked for by
+the owner after a run of artefacts that each traced to a rejection rule
+nobody had written down. The audit registered 224 conditions; each is now an
+entry of [SGL3D temporal history](sgl3d-history.md), which is a rule, a
+defect or an open question, and that register's first section says how it is
+kept. No issue is filed yet for the defects below.
+
+### Defects
+
+Identifiers are the register's. Two were confirmed in a game before the
+reading: with the craft at rest, Hyperdrive's capture harness at 1920x1080
+showed thin emitters flickering under TAA while B-1's signal was raised in
+400 of 400 frames (the city's traffic), and ignoring it cut the pixels that
+changed in more than a quarter of frames from 13,292 to 2,637; with the game
+running and the craft at rest, the camera's view matrix differed from the
+last frame's by 2e-6 to 2e-5 in 80 of 100 frames (B-2), and ignoring B-1
+alone then changed nothing.
+
+| # | Finding | Cause | Fix, and what guards it |
+| --- | --- | --- | --- |
+| B-1 | TAA never reaches resting stability in a scene where any rigid instance moves, anywhere. | The view-wide signal Filament raises for visible renderables that moved was ported as "any visible-flagged instance whose pose changed", before the motion reach existed; a moving instance writes motion that the per-pixel hold, the closest-motion search and the reach already follow. | A pose change of a `Mobility::Moving` instance whose last submitted pose applies (visible then and now, the same model) no longer raises the scene's signal: it writes motion, which arms the pixels it covers and leaves through the pixel's own motion, the closest-motion search and the reach, as deformation always has; every change without a motion vector (appearance, departure, showing or hiding, a model swap, a static instance moved, a mover with no applicable pose, geometry, drawing-changing material edits, the visibility mask) still raises it. Narrowing the signal rather than gating it by screen or distance follows the reason it exists: only what has no motion vector needs it. Movers faster than the reach now share deformation's limit (T-23). Guard: the scene's signal rule (`rigid_recovery_leaves_moves_with_motion_to_the_pixels`), resting stability beside a rigid mover in view and behind the camera, and no ghost where a card or a 2-pixel strip moved by its pose at 0.5 to 16 px a frame (`a_rigid_card_moves_from_rest`), with case 9 and a moved static instance still re-arming. |
+| B-2 | A camera at rest tens of metres from the render origin re-arms TAA across the view on most frames. | Filament's 1e-6 is applied to double-precision matrices on the CPU; the port compares `f32` products on the GPU, where 1e-6 is one rounding step at a magnitude of 16. | Camera motion is decided on the CPU (`TemporalAntiAliasing::camera_moved`, passed to the resolve as `camera_motion`) from the unjittered views and projections the caller supplied, element by element and never as products, agreeing within eight rounding steps of each element's magnitude, so rest is rest at any distance from the origin, as Filament's double-precision comparison intends. Eight steps covers a view recomputed from float state, and is safe because a camera change that moves any pixel by 0.01 px still arms that pixel through its motion. Guard: rounding noise at the origin, 100 m and 5 km is at rest, and a 1 mm step, a hundredth of a pixel's turn and a hundredth of a pixel's zoom are motion (`sgl-post-fx` unit tests); resting stability from a camera 100 m and 5 km from the origin with one to three steps of noise (`at_rest_taa_holds_silhouettes_still_far_from_the_origin`), and the camera step and hold scenarios unchanged. |
+| B-3 | Every opaque or masked material with a game shader is marked transparency and composition 1 on every frame. | `Material::surface_moves` counts any shader, since SGL3D does not read the game's code; the scene already records whether a shader reads the time. Item 8 of the Frame names only moving normal layers, the Material records row any shader. | Open. |
+| B-4 | A frame rendered but not finished restarts TAA, Crystal, FSR, ambient occlusion and ray-traced shadows. | Those stages record the frame they last ran at render time; the camera history commits at `finish_frame`. The History contract says an abandoned frame restarts nothing. | Open. |
+| B-5 | Crystal's reflections on a surface the camera follows drift by a pixel a frame or lose their history. | Its disocclusion test reprojects depth through the camera alone, the fault A-22's successor fixed for Velvet and world rays (`f973ce36`), and DiligentFX's fallback search returns the first neighbour that passes. | Open. |
+| B-6 | The sun's ray-traced shadow on a surface the camera follows shows each frame's rays. | AMD's shadow denoiser reprojects the current position through the previous view for its depth test, faithfully ported. | Open. |
+| B-7 | Ray-traced shadows on still scenery lose history when the camera travels more than 1 m a frame. | The temporal blend compares linear depth with the previous frame's at an absolute 1 m, Wicked's test, without the surface's depth motion. | Open. |
+| B-8 | A material that gains a game shader writes one frame of motion from all-zero parameters. | A new parameter block starts its committed copy at zeros, where an instance's shader data starts at this frame's. | Open. |
+| B-9 | Velvet at half resolution misplaces history at silhouettes of moving surfaces. | Depth is taken from the nearest pixel of a 2x2 block and motion from its last. | Open. |
+| B-10 | Glow marks FSR's reactive mask at its 0.9 cap however dim it shows. | The value is the glow's HDR radiance times alpha, not its exposed contribution. | Open. |
+| B-11 | A local light at the edge of the shadow atlas ranking restarts its ray-traced shadow history each time it re-enters. | A slot is freed the frame its light leaves the ranking. | Open. |
+| B-12 | With the camera at rest 100 m sideways of the render origin, TAA settles outlines 0.4% below the sky's radiance, past the scenario bound (0.2%). Found while fixing B-2, by the far-from-origin scenario. | A still pixel (closest motion under 0.01 px, DFX-19) still reprojected its history by that motion: 1.9e-4 px of f32 residue in the static stage's motion there, which put the Catmull-Rom fetch a fraction of a texel off. Its small over- and undershoot accumulates under the relaxed rectification at rest, which B-1 and B-2 had kept the whole view out of. The residue itself comes from `material_shader.wgsl` composing the previous clip position as `(previous_view_projection * previous_model) * v` and the current as `stable_view_projection * (model * v)`. | A still pixel reads its own history: every history read (colour and confidence, previous motion, the holds, the depth history position) takes its own centre, where the fetch returns its texel exactly. Residue is not motion, so it must not move the fetch, whatever produced it; a real camera carries rounding too. Guard: resting stability and the radiance bound with the camera 100 m sideways and still (`at_100_m_sideways_without_rounding`) and 100 m away with rounding noise (`at_100_m`), both of which failed the bound before. The evaluation order is unchanged here. |
+
+### Records that were wrong
+
+- The History contract's "an abandoned frame ... nothing restarts" holds for the camera history, fog and dynamic GI only (B-4).
+- Item 8 of the Frame and the Material records row state the moving-surface mark's trigger differently (B-3).
+- `scene/materials/params.rs` says a material that gains a shader "has no motion from its parameters in its first frame" (B-8).
+- `sgl-post-fx`'s PROVENANCE justified the view-wide rigid signal with a thin-strip fixture measured before the motion reach existed (B-1; corrected with its fix), and does not record that Filament's minimum box half-width is not ported (O-10).
+- The Frame's antialiasing item lists what restores TAA's full rejection without the motion-difference rejection (DFX-14), which the adaptive resolve keeps (T-10).
+
+### Waiting on the owner
+
+- O-1: whether one renderer may draw more than one view a frame, and what two renderers of one scene see.
+- O-5: whether blended receivers mark reactivity.
+- O-6: whether FSR3's `VelocityFactor` or its debug view is exposed. Zeroing AMD's three FSR3 scales in Hyperdrive raised the error on a moving craft's flat regions from 0.0175 to 0.020 against a supersampled reference, so the defaults stay until a measurement says otherwise.
+
+### Unmeasured
+
+O-2, O-3, O-4, O-7 to O-12 of the register: each names the capture or the
+comparison that settles it.
+
+### Left as they are
+
+- AMD's previous-depth reconstruction writes each pixel's current depth at its previous position, so scenery now nearer than a followed surface that was behind it a frame ago flags that surface disoccluded (U-17, U-40). It is the algorithm, with correct inputs; scenario case U9 holds the inputs and places its scenery where the reconstruction is exact.
+- FSR's velocity-based history weights (U-28, U-47), its shading-change and lock rules (U-31, U-43, U-44): AMD's, listed with what a game sees.
+- The motion reach's limits (M-14, T-23): surfaces within a tile of motion of a pixel a frame lose resting stability while it moves, by design.
+- Surfaces under blended materials, glow, mist and heat distortion are marked every frame and stay at the strength their mask gives (M-11, M-17a to M-17c).

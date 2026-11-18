@@ -42,7 +42,7 @@ code matches upstream.
 | DFX-16 | `SSR_ComputeSpatialReconstruction` averages raw radiance. The pass is Wicked Engine's `ssr_resolveCS` (the same BRDF-over-PDF ray reuse, weighted variance and ray-length reprojection depth) without its tone mapping, so one ray that hits an emitter dominates a glossy pixel's average. With `TemporalRadianceStabilityFactor` 1.0, the temporal pass clamps history to a neighbourhood box that such outliers widen and narrow. A static glossy reflection of bright emitters then sparkles, and its mean falls several times below the resolved radiance. | Samples are tone-mapped by 1/(1 + luminance) before the weighted average and variance, and the average is inverse tone-mapped, as Wicked's `ssr_resolveCS` does. The weight applies to confidence as well as colour, so the premultiplied radiance of DFX-17 stays consistent: the round trip is a luminance-weighted average of whole samples. A receiver whose reconstruction radius is under half a texel (perceptual roughness under 0.025) resolves only its own ray, which the round trip leaves unchanged. Fixes the static SSR sparkle the owner reported, 2026-09-28. |
 | DFX-17 | `SSR_ComputeIntersection` stores a hit's full radiance whenever its confidence is above zero, and black for a miss, with the confidence in alpha. The spatial pass averages rays, so the colour carries the share of rays that hit but not their partial confidence. Hydrogent then composites `lerp(IBL, SSR, alpha)`, as Wicked does. That scales hits by the hit share twice and weak hits not at all, so reflected light fades too early and too dark wherever only some of a pixel's rays hit. | Each ray stores its radiance premultiplied by its confidence, so every average keeps colour and confidence consistent, and the transition fade (`AlphaInterpolation`) scales both. A consumer composites `radiance + (1 - confidence) * environment`, as Bevy composites its SSR, and as AMD's SSSR blends the environment into each missed ray. Owner decision 2026-09-28. |
 | DFX-18 | `HierarchicalRaymarch` (`SSR_ComputeIntersection`, AMD's FidelityFX SSSR traversal) treats the depth buffer as infinitely thick: a ray ends at the first surface it passes behind. `ValidateHit` then rejects a hit more than `DepthBufferThickness` behind that surface, so every ray that passes behind a thin foreground object (a pole, a vehicle) on its way to a farther reflected surface falls back to the environment. | At the most detailed mip, a ray behind the surface by at least `DepthBufferThickness` (measured as `ValidateHit` measures it, where its confidence reaches zero) advances to the next cell at the same mip and continues, as Godot's hierarchical SSR does with its depth tolerance (`servers/rendering/renderer_rd/shaders/effects/screen_space_reflection.glsl`, revision `d851ae838de54a0bd3dde9043912f39c74265cdd`, MIT, `LICENSE-godot.txt`). Hits `ValidateHit` accepted are unchanged. Owner decision 2026-09-29. |
-| DFX-19 | `TAA_ComputeTemporalAccumulation` keeps at most `TemporalStabilityFactor` (0.9375) of history and rejects it by depth disocclusion at every pixel. The depth buffers it compares are rendered with different jitter, so with the camera still, sub-pixel geometry (distant light strips) changes depth between frames: its history is rejected every few frames and it blinks. The remaining 1/16 current weight leaves jittered detail and reflections shimmering in a still image. | A pixel whose closest motion is under 0.01 pixels on both axes keeps up to 0.985 of history and skips the depth test, as Bevy's TAA does for pixels that are not moving (`crates/bevy_anti_alias/src/taa/taa.wesl`, revision `92a29e701a6b0bf8846484c3999c2ba97d90dd06`, MIT, `LICENSE-bevy.txt`: `MIN_HISTORY_BLEND_RATE` 0.015, no depth rejection). Moving pixels are unchanged. Owner request 2026-09-29 (visible jitter while stopped). Since #93, still pixels take DFX-14's box instead of upstream's 2.5 deviations: at rest clamp(1188 / height, 0.75, 1) deviations clipped towards the neighbourhood mean, Bevy's 1σ clip (`taa.wesl` `clip_towards_aabb_center`) up to 1188 rows and tighter above (#94). |
+| DFX-19 | `TAA_ComputeTemporalAccumulation` keeps at most `TemporalStabilityFactor` (0.9375) of history and rejects it by depth disocclusion at every pixel. The depth buffers it compares are rendered with different jitter, so with the camera still, sub-pixel geometry (distant light strips) changes depth between frames: its history is rejected every few frames and it blinks. The remaining 1/16 current weight leaves jittered detail and reflections shimmering in a still image. | A pixel whose closest motion is under 0.01 pixels on both axes keeps up to 0.985 of history and skips the depth test, as Bevy's TAA does for pixels that are not moving (`crates/bevy_anti_alias/src/taa/taa.wesl`, revision `92a29e701a6b0bf8846484c3999c2ba97d90dd06`, MIT, `LICENSE-bevy.txt`: `MIN_HISTORY_BLEND_RATE` 0.015, no depth rejection). Moving pixels are unchanged. Owner request 2026-09-29 (visible jitter while stopped). Since #93, still pixels take DFX-14's box instead of upstream's 2.5 deviations: at rest clamp(1188 / height, 0.75, 1) deviations clipped towards the neighbourhood mean, Bevy's 1σ clip (`taa.wesl` `clip_towards_aabb_center`) up to 1188 rows and tighter above (#94). A still pixel also reads its own history: its motion is residue, so the colour and confidence fetch, the previous closest motion, and under `MOTION_ADAPTIVE_HISTORY` the holds and the depth history position read at its own centre, where the Catmull-Rom fetch returns its texel exactly (SGL's own, 2026-11-18 audit B-12). Reprojected by residue the fetch sat a fraction of a texel off, and its small over- and undershoot accumulated under the motion-adaptive resolve's relaxed rectification at rest: with a camera 100 m sideways of the render origin, whose static geometry carried 1.9e-4 px of f32 motion residue, an outline settled 0.4% below the sky. A surface moving slower than 0.01 px a frame keeps its history unmoved, which the box bounds. |
 | DFX-20 | `SampleReflectionVector` (`SSR_ComputeIntersection`) moves the second random number to 0 by `GGXImportanceSampleBias`. Under the spherical-cap VNDF sampler (`SmithGGXSampleVisibleNormalSC`, Dupuy and Benyoub 2023) that is the cap's pole, so at bias 1 the micro-normal is the normalised sum of the roughness-stretched view direction and the normal. It tilts towards the viewer by an angle that grows with roughness and towards grazing view, so rays rise above the mirror direction: at perceptual roughness 0.125 by about a fifth of their elevation 2° above the surface. Reflections far along a glossy floor are squashed towards what they reflect and stretch back as the camera approaches. | At bias 1 the micro-normal is the macro normal, so the ray follows the mirror direction, the lobe's peak, as Godot's SSR traces `reflect(view_dir, normal)` (`servers/rendering/renderer_rd/shaders/effects/screen_space_reflection.glsl`, revision `ed1daf0bf001b61586d9930840f2f1394092c079`, 4.7.2-stable, MIT, `LICENSE-godot.txt`); its PDF is evaluated there. Bias below 1 is unchanged. Owner request 2026-09-29 (distant reflections warping as the camera approaches). |
 | DFX-21 | `SSR_ComputeStencilMaskAndExtractRoughness` discards rejected pixels before exporting roughness, although the half-resolution mask reads all pixels in a block. Preserved roughness can describe an earlier frame. | Export current roughness for every pixel and write the existing depth eligibility mask explicitly as 0/1 in the same pass. Full-resolution eligibility is preserved. The upstream maximum-roughness reduction is retained: a half-resolution block traces only when every contributing roughness is eligible, including current rough/background values, rather than retaining a previous glossy value. Full-resolution bilateral cleanup likewise excludes newly rough neighbors. This fixes stale input data (#313); the conservative half-block policy remains upstream's. |
 | DFX-22 | Hierarchical raymarching validates unfinished budget endpoints with proximity confidence, as AMD FidelityFX SSSR does. | Budget exhaustion reports a miss since DFX-38. Stop traversal on viewport exit, as [AMD's hybrid traversal](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/blob/c6efa6bf7f2027b3ec94f28578bb5965eabb9e55/samples/hybridreflections/shaders/ffx_sssr_intersect.h#L139-L158) does; `ValidateHit` already assigns zero confidence outside the viewport. The miss endpoint now stops at the first exit, so its shorter ray length can affect the confidence-independent `NearestSurfaceHitDistance` used by spatial reconstruction. This is an early-out optimization, not an upstream exhaustion bug fix (#312 review correction, 2026-09-30). |
@@ -98,9 +98,11 @@ code matches upstream.
 scales current-frame feedback, restores full rejection with motion,
 and compares current/previous depth neighborhoods with jitter alignment.
 The defaults are the source's: box floor 0.1, feedback scale 0.3, motion
-threshold one render pixel, reversed-normalized depth threshold 0.001,
-recovery hold twelve frames and stable-camera matrix threshold 1e-6.
-SGL3D pairs it with current feedback 0.12 (history stability 0.88).
+threshold one render pixel, reversed-normalized depth threshold 0.001 and
+recovery hold twelve frames. Filament's stable-camera threshold, 1e-6 on
+double-precision matrices, is replaced by a tolerance relative to each
+element's magnitude (below). SGL3D pairs it with current feedback 0.12
+(history stability 0.88).
 
 Adaptations: caller depth may be forward, so the shader normalizes it; the
 context's current reprojection texture is already in previous-camera depth,
@@ -120,18 +122,32 @@ camera follows, or one moving along the view axis, keeps its history. Taking
 the smaller evidence of the two never rejects more than the camera-only test,
 which stays exact in f32 for static surfaces where half-float depth motion
 is coarser. Camera
-changes and caller-reported rigid-object motion rearm the whole view, as
-Filament does. The closest-motion history's B additionally transports local
-surface-motion/disocclusion recovery. The scene supplies rigid changes until
-submission, including pose/model/visibility changes, same-ID geometry replacements, appearances and departed
-objects, and SGL3D adds a frame whose visibility mask differs from the last
-submitted frame's; procedural/material deformation does not set this global
-signal.
-A GPU thin-strip fixture proves why the global signal is necessary: a resting
-2-pixel foreground strip moves eight pixels and exposes zero-motion background
-whose historical neighborhood still contains background. A local-only hold
-left 0.644 radiance where the newly exposed surface is 0.05. This matches
-Filament's warning that local-neighborhood alternatives retain more ghosting.
+changes and caller-reported content changes rearm the whole view, as
+Filament does for the camera and for moving renderables. The closest-motion
+history's B additionally transports local surface-motion/disocclusion
+recovery. Filament re-arms the view for every renderable whose transform
+changed because its hold is one value a frame; here the hold is per pixel,
+armed by the pixel's own motion of 0.01 px or more, by the 3x3
+closest-motion search and by the neighbourhood motion (Responsive inputs,
+below), so an object whose motion vectors describe its move needs no
+view-wide signal, as deformation and vertex functions never have.
+`rigid_object_motion` is therefore for changes no motion vector describes:
+SGL3D raises it until submission for appearances, departures, showing or
+hiding, model and same-ID geometry replacement, a static instance moved, a
+moving one moved where its last submitted pose does not apply, material
+edits that change what is drawn, and a frame whose visibility mask differs
+from the last submitted frame's.
+A GPU thin-strip fixture shows why such changes need the view-wide signal:
+a resting 2-pixel foreground strip jumps eight pixels and exposes zero-motion
+background whose historical neighborhood still contains background, with no
+neighbourhood motion given. A local-only hold left 0.644 radiance where the
+newly exposed surface is 0.05. This matches Filament's warning that
+local-neighborhood alternatives retain more ghosting. A rigid object SGL3D
+moves by its pose writes motion, which the neighbourhood motion reaches from
+a pixel up to a 32-pixel tile a frame: its scenarios move a 2-pixel strip at
+0.5 to 16 pixels a frame and leave no ghost (`a_rigid_card_moves_from_rest`).
+Faster than that reach, a moved object is left, as deformation is, to the
+depth test and the categorical sky.
 Slower feedback also delays lighting convergence. No historical variance/feedback path
 changes without the opt-in flag. Current-only hard clipping cannot preserve
 a feature missing from the complete current neighborhood; replacing variance
@@ -140,9 +156,25 @@ with current min/max alone does not solve that sampling limitation.
 The local hold uses the existing 0.01-pixel stillness classification rather
 than exact nonzero velocity, and carries depth confidence continuously
 (`disocclusion * hold duration`), so tiny interpolation/reprojection residue
-cannot rearm a full hold indefinitely. Stable camera comparison first removes
-jitter from each projection, then multiplies by its view; cancelling jitter
-from an already-rounded translated view-projection loses low bits. A depth
+cannot rearm a full hold indefinitely. Camera motion is decided on the host
+(`TemporalAntiAliasing::camera_moved`, passed as `camera_motion`) from the
+cameras the caller gives the context: each projection has its jitter removed,
+and the views and projections are compared element by element, never their
+products, elements `a` and `b` agreeing when `|a - b|` is at most eight f32
+rounding steps of `max(1, |a|, |b|)`. Filament compares double-precision
+matrices against 1e-6; the shader's f32 comparison of view-projections
+against an absolute 1e-6, used before, is a single rounding step for
+elements of about 16, so a camera at rest tens of metres from the origin,
+its view recomputed each frame, re-armed the whole view on rounding noise
+(2e-6 to 2e-5 between frames for Hyperdrive's chase camera at rest near
+100 m). Eight steps covers the few half-steps a view composed from float
+state accumulates. It is safe because a camera change that moves a pixel by
+0.01 px or more arms that pixel through its own motion, so the view-wide
+test only has to catch real motion, orders of magnitude above it: far from
+the origin it admits a translation of up to eight steps of the coordinate
+(4.8 mm at 5 km), which moves only surfaces nearer than about 475 m by 0.01
+px or more at 1080 rows and a one-radian field, and those arm their own
+pixels. A depth
 lookup corrected for jitter clamps at texture edges as Filament's sampler
 does; the stable color-history coordinate still rejects outside the viewport.
 GPU regressions cover the translated captured camera, its observed tiny
@@ -157,8 +189,8 @@ and 0.12 of the current frame at rest. Jitter moves an outline's pixels on
 and off the sky from frame to frame, so every outline against the sky or a
 far surface flickered, and far sub-pixel detail lost its accumulation. Its
 purpose is covered here otherwise: camera translation that uncovers sky by
-the exact camera-motion test; a rigid object moving, appearing or departing
-before the sky by the view-wide rigid signal; a surface uncovering sky while
+the camera-motion test; a rigid object appearing or departing before the sky
+by the view-wide rigid signal; a surface uncovering sky while
 it moves by the hold carried in the motion history; and a surface whose
 depth is too close to the sky's for the depth threshold by treating the sky
 as categorical in the depth test. The caller writes the far plane's exact

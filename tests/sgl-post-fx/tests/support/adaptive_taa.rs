@@ -212,6 +212,10 @@ fn sequence(
             neighborhood_motion: None,
             taa_attribs: &TemporalAntiAliasingAttribs {
                 temporal_stability_factor: 0.88,
+                camera_motion: u32::from(TemporalAntiAliasing::camera_moved(
+                    &curr,
+                    &previous_camera,
+                )),
                 ..Default::default()
             },
             accumulation_buffer_idx: 0,
@@ -713,6 +717,10 @@ fn depth_motion_sequence(
             neighborhood_motion: None,
             taa_attribs: &TemporalAntiAliasingAttribs {
                 temporal_stability_factor: 0.88,
+                camera_motion: u32::from(TemporalAntiAliasing::camera_moved(
+                    &curr,
+                    &previous_camera,
+                )),
                 ..Default::default()
             },
             accumulation_buffer_idx: 0,

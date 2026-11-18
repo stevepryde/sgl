@@ -54,7 +54,6 @@ const TAA_ADAPTIVE_ALPHA_STRENGTH = 0.3;
 const TAA_ADAPTIVE_MOTION_THRESHOLD_PIXELS = 1.0;
 const TAA_ADAPTIVE_DEPTH_THRESHOLD = 0.001;
 const TAA_ADAPTIVE_HOLD_FRAMES = 12.0;
-const TAA_ADAPTIVE_CAMERA_EPSILON = 1e-6;
 const TAA_ADAPTIVE_DEPTH_FADE_START_PIXELS = 1.0;
 const TAA_ADAPTIVE_DEPTH_FADE_END_PIXELS = 2.0;
 
@@ -412,28 +411,6 @@ fn ComputeCorrectedAlpha(Alpha: f32, IsStill: bool) -> f32
 fn AdaptiveDepth(depth:f32, camera:CameraAttribs)->f32 {
     return (depth-camera.fFarPlaneDepth)/(camera.fNearPlaneDepth-camera.fFarPlaneDepth);
 }
-// The cameras carry jittered matrices and record that offset separately.
-// Removing offset*w recovers stable clip coordinates for perspective AND
-// orthographic projections, without mistaking jitter for camera motion.
-fn AdaptiveCameraMoved()->bool {
-    const MATRIX_COLUMNS:u32=4u;
-    var current_projection=cbCameraAttribs.g_CurrCamera.mProj;
-    var previous_projection=cbCameraAttribs.g_PrevCamera.mProj;
-    // Cancel in projection first. Cancelling an already-multiplied f32 VP
-    // loses low bits beside a translated camera, which can rearm forever.
-    for (var column=0u;column<MATRIX_COLUMNS;column++) {
-        current_projection[column]-=vec4(cbCameraAttribs.g_CurrCamera.f2Jitter,0.,0.)*current_projection[column].w;
-        previous_projection[column]-=vec4(cbCameraAttribs.g_PrevCamera.f2Jitter,0.,0.)*previous_projection[column].w;
-    }
-    let stable_current=current_projection*cbCameraAttribs.g_CurrCamera.mView;
-    let stable_previous=previous_projection*cbCameraAttribs.g_PrevCamera.mView;
-    for (var column=0u;column<MATRIX_COLUMNS;column++) {
-        if any(abs(stable_current[column]-stable_previous[column])>vec4(TAA_ADAPTIVE_CAMERA_EPSILON)) {
-            return true;
-        }
-    }
-    return false;
-}
 // The surface's own previous depth, normalized: its current view Z plus the
 // depth motion it supplies (motion Z, previous minus current view Z, valid
 // where W > 0), projected by the previous camera. At or beyond the near
@@ -575,7 +552,17 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 #else
     let reset_motion=vec4(ClosestMotion,0.,0.);
 #endif
-    let PrevPosition = Position.xy - Motion * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
+    // PROVENANCE.md DFX-19: a pixel whose closest motion is under
+    // TAA_STILL_MOTION_PIXELS on both axes is still: that motion is
+    // projection and interpolation residue, not movement, so the pixel reads
+    // its own history. Reprojecting by it would put every history read a
+    // fraction of a texel off, where the Catmull-Rom fetch over- and
+    // undershoots a little each frame and the relaxed rectification at rest
+    // lets the error accumulate. At the pixel's centre the fetch returns
+    // the texel exactly.
+    let MotionPixels = abs(Motion * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
+    let IsStill = MotionPixels.x < TAA_STILL_MOTION_PIXELS && MotionPixels.y < TAA_STILL_MOTION_PIXELS;
+    let PrevPosition = select(Position.xy - Motion * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy, Position.xy, IsStill);
 
     if (!IsInsideScreen_f2(PrevPosition, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy) || g_TAAAttribs.ResetAccumulation != 0u) {
         return PSOutput(vec4<f32>(SampleCurrColor(vec2<i32>(Position)), 0.5), reset_motion);
@@ -589,8 +576,6 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let MotionDiffRejection = saturate((length(MotionDiffPixels) - TAA_MOTION_DIFF_THRESHOLD_PIXELS) * TAA_MOTION_DIFF_REJECTION_PER_PIXEL);
     // PROVENANCE.md DFX-19: nothing moved at a still pixel, and the depth buffers differ only by
     // their jitter, which on sub-pixel geometry would reject its history every few frames.
-    let MotionPixels = abs(Motion * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
-    let IsStill = MotionPixels.x < TAA_STILL_MOTION_PIXELS && MotionPixels.y < TAA_STILL_MOTION_PIXELS;
     let DepthFactor = select(ComputeDepthDisocclusion(Position, PrevPosition), 1.0, IsStill);
 
     let RGBHDRCurrColor = SampleCurrColor(vec2<i32>(Position));
@@ -629,7 +614,9 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     var hold=max(max(previous_holds.x-1.,0.),disocclusion*TAA_ADAPTIVE_HOLD_FRAMES);
     // The established still-pixel threshold distinguishes motion from
     // projection/interpolation residue (DFX-19), rather than exact != 0.
-    if AdaptiveCameraMoved() || g_TAAAttribs.RigidObjectMotion!=0u || !IsStill {
+    // The caller decides camera motion on the host, from the cameras it
+    // supplied (TemporalAntiAliasing::camera_moved, PROVENANCE.md).
+    if g_TAAAttribs.CameraMotion!=0u || g_TAAAttribs.RigidObjectMotion!=0u || !IsStill {
         hold=TAA_ADAPTIVE_HOLD_FRAMES;
     }
     // PROVENANCE.md, Motion-adaptive TAA, responsive inputs: content that

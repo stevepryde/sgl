@@ -398,7 +398,8 @@ fn at_rest_the_resolve_converges_on_coverage(method: Antialiasing) {
 }
 every_method!(at_rest_the_resolve_converges_on_coverage);
 
-/// What a case adds to a rig's frame beside its scenario, before the frame
+/// What a case adds to a rig's frame beside its scenario, after the
+/// scenario posed the frame's camera and shapes and before the frame
 /// renders.
 type Elsewhere<'a> = &'a dyn Fn(&mut Rig, u32);
 
@@ -420,7 +421,8 @@ type Elsewhere<'a> = &'a dyn Fn(&mut Rig, u32);
 /// pixel reaches through the partial rectification the spec keeps. The bound
 /// holds over `region` for the two jitter cycles after the resolve settled.
 /// `elsewhere` adds to the frame what the scenario does not hold before each
-/// frame renders (content beside the region that changes while it rests).
+/// frame renders (content beside the region that changes while it rests,
+/// or the camera's rounding).
 fn taa_holds_still_at_rest(
     failures: &mut Failures,
     gpu: &Gpu,
@@ -432,8 +434,9 @@ fn taa_holds_still_at_rest(
     let mut rig = scenario.rig(gpu, VIEW, Antialiasing::Taa);
     let mut resolved = Vec::new();
     for frame in 0..SETTLE + 2 * JITTER_CYCLE {
+        scenario.pose(&mut rig, frame);
         elsewhere(&mut rig, frame);
-        scenario.render(&mut rig, frame);
+        rig.render(frame);
         if frame + 1 >= SETTLE {
             resolved.push(rig.antialiased());
         }
@@ -917,7 +920,8 @@ impl Over {
     }
 }
 
-/// What moves the card of case 13 and #802's scenarios with no pose change.
+/// What moves the card of case 13 and #802's scenarios: with no pose
+/// change, or by its pose.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Mover {
     /// Its material's vertex function (`DEPARTING_SHADER`). A shaded
@@ -927,26 +931,30 @@ enum Mover {
     /// A morph target its weight moves (`Rig::add_morphing`): no shader and
     /// no mask, so only motion re-arms rejection.
     Morph,
+    /// Its pose, as a moving instance (`Rig::add`, `Rig::place`): no shader
+    /// and no mask, and since its last submitted pose applies, no view-wide
+    /// signal (M-9), so only motion re-arms rejection.
+    Pose,
 }
 
-/// Case 13 and #802's scenarios: a card at `DEPTH`, `scale` times as far,
-/// before `wall` or the sky (named `behind`), that `mover` starts moving
-/// from rest at `rate` pixels a frame at frame `start_frame`, after the
-/// hold has expired, rendered with `method` to `frames`, its failures added
-/// to `failures`. The oracle is analytic with the spec's hold, as case 6's:
-/// a pixel `vacated` by the card, whose pose the shader's motion or the
-/// morph weight gives exactly (the frame's time is
-/// `FrameInput::elapsed_seconds` in f32), shows what lies behind within the
-/// method's `stores`.
+/// Case 13 and #802's scenarios: `shape` (`card()` unless a case says
+/// otherwise) at `DEPTH`, `scale` times as far, before `wall` or the sky
+/// (named `behind`), that `mover` starts moving from rest at `rate` pixels
+/// a frame at frame `start_frame`, after the hold has expired, rendered with
+/// `method` to `frames`, its failures added to `failures`. The oracle is
+/// analytic with the spec's hold, as case 6's: a pixel `vacated` by the
+/// card, whose pose the shader's motion, the morph weight or the pose gives
+/// exactly (the frame's time is `FrameInput::elapsed_seconds` in f32), shows
+/// what lies behind within the method's `stores`.
 fn departures(
     failures: &mut Failures,
     (method, gpu): (Antialiasing, &Gpu),
     (behind, scale, wall): (&str, f32, Option<&(Shape, Pose)>),
-    (mover, rate): (Mover, f32),
+    (shape, mover, rate): (&Shape, Mover, f32),
     (start_frame, frames): (u32, u32),
 ) {
     let name = format!("{behind} at {rate} px a frame, moved by {mover:?}");
-    let shape = card().scaled(scale);
+    let shape = shape.scaled(scale);
     let rest = farther(Pose::at(Vec3::new(-0.6, 0., -DEPTH)), scale);
     let velocity = Vec3::X * rate * px() * scale * FRAME_RATE as f32;
     let start = (f64::from(start_frame) / FRAME_RATE) as f32;
@@ -970,7 +978,7 @@ fn departures(
     // The morph target moves the card as far as the shader does by the
     // last frame, at weight 1.
     let span = frames as f32 / FRAME_RATE as f32;
-    let morphing = match mover {
+    let (morphing, posed) = match mover {
         Mover::Shader => {
             let shader = rig
                 .scene
@@ -986,9 +994,10 @@ fn departures(
                 (shader, bound),
                 bytemuck::bytes_of(&params),
             );
-            None
+            (None, None)
         }
-        Mover::Morph => Some(rig.add_morphing(&shape, rest, velocity * span)),
+        Mover::Morph => (Some(rig.add_morphing(&shape, rest, velocity * span)), None),
+        Mover::Pose => (None, Some(rig.add(&shape, rest, 0))),
     };
     rig.look(still(0));
     let mut checked = 0;
@@ -1001,6 +1010,11 @@ fn departures(
             rig.scene
                 .set_instance_deformation(&rig.gpu.queue, id, &[], &[(time - start) / span])
                 .unwrap();
+        }
+        if let Some(id) = posed
+            && frame > start_frame
+        {
+            rig.place(id, moved(frame)[0]);
         }
         rig.render(frame);
         let resolved = rig.antialiased();
@@ -1059,7 +1073,7 @@ fn a_surface_its_vertex_function_moves_from_rest_uncovers_what_lies_behind(
         &mut failures,
         (method, &gpu),
         (&name, scale, wall.as_ref()),
-        (Mover::Shader, 0.5),
+        (&card(), Mover::Shader, 0.5),
         (SETTLE, SETTLE + 3 * HOLD),
     );
     failures.assert();
@@ -1112,7 +1126,7 @@ fn a_surface_its_vertex_function_moves_from_rest_beyond_the_search(
             &mut failures,
             (method, &gpu),
             (behind, 1., wall.as_ref()),
-            (Mover::Shader, rate),
+            (&card(), Mover::Shader, rate),
             DEPARTURE_FRAMES,
         );
     }
@@ -1155,10 +1169,62 @@ fn a_surface_its_morph_target_moves_from_rest_beyond_the_search() {
         &mut failures,
         (Antialiasing::Taa, &gpu),
         ("over the sky", 1., None),
-        (Mover::Morph, 1.5),
+        (&card(), Mover::Morph, 1.5),
         DEPARTURE_FRAMES,
     );
     failures.assert();
+}
+
+/// A strip 2 px wide at `DEPTH` and as tall as `card()`: the thin strip
+/// `sgl-post-fx`'s PROVENANCE.md cites for the view-wide rigid signal
+/// (`taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost`),
+/// whose whole width a move of 2 px a frame or more vacates at once.
+fn thin_card() -> Shape {
+    Shape::card(Vec2::new(2. * px(), 0.9), 0., CARD)
+}
+
+/// A rigid moving instance moved by its pose (M-9, T-21). Plausible defect:
+/// with the view-wide signal left to changes without a motion vector, the
+/// pixels a moving instance's pose change vacates keep its ghost, because
+/// its own motion does not arm them: the closest-motion search below a pixel
+/// a frame, the motion reach from a pixel to a tile (32 px) a frame (Frame
+/// item 10). The fixtures: `card()` and the thin strip, moving from rest
+/// after the hold has expired at speeds the search covers (0.5 px a frame)
+/// and the reach covers (1.5 to 16 px a frame), over the sky, a wall at
+/// 4 km and a wall at 8 m behind them, and `FAR` times as far over the 4 km
+/// wall, where the depth test cannot see the step (case 13). TAA only: the
+/// signal is TAA's. The oracle is `departures`'.
+fn a_rigid_card_moves_from_rest(shape: fn() -> Shape, rate: f32) {
+    let Some(gpu) = gpu() else { return };
+    let mut failures = Failures::default();
+    let shape = shape();
+    for ((distance, scale), over) in [
+        (NEAR, Over::Sky),
+        (NEAR, Over::FarWall),
+        (NEAR, Over::NearWall),
+        (DISTANT, Over::FarWall),
+    ] {
+        let (behind, wall) = over.wall();
+        departures(
+            &mut failures,
+            (Antialiasing::Taa, &gpu),
+            (&format!("{distance} {behind}"), scale, wall.as_ref()),
+            (&shape, Mover::Pose, rate),
+            DEPARTURE_FRAMES,
+        );
+    }
+    failures.assert();
+}
+
+mod a_rigid_card_moves_from_rest {
+    use super::{card, thin_card};
+    crate::scenario::temporal::case_tests!(a_rigid_card_moves_from_rest;
+        card_at_1_5_px_a_frame: (card, 1.5),
+        thin_at_0_5_px_a_frame: (thin_card, 0.5),
+        thin_at_1_5_px_a_frame: (thin_card, 1.5),
+        thin_at_4_px_a_frame: (thin_card, 4.),
+        thin_at_16_px_a_frame: (thin_card, 16.),
+    );
 }
 
 /// What appears or departs in case 9, in the order it happens.
@@ -1262,6 +1328,90 @@ fn appearance_and_departure_at_rest_resolve_within_the_hold(method: Antialiasing
     failures.assert();
 }
 every_method!(appearance_and_departure_at_rest_resolve_within_the_hold);
+
+/// Case 9 for a static instance moved (M-4, M-9). Plausible defect: a
+/// `Mobility::Static` instance moved at rest, after the hold has expired,
+/// fades over many frames where it left and where it arrived, because it
+/// writes no motion and nothing re-arms rejection. The fixtures, truth,
+/// oracle and epsilon are case 9's, with the layer a static instance moved
+/// 1.2 m sideways (about 15 px) and back: the hold after each move, the
+/// pixels whose box grown by 2 px lies wholly inside the layer where it now
+/// is show the card, and those grown by 2 px wholly inside where it was and
+/// clear of where it is show what lies behind, within the method's
+/// `stores`.
+fn a_static_instance_moved_at_rest_resolves_within_the_hold(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
+    let (back, back_pose) = background();
+    let mut failures = Failures::default();
+    for (name, scale, behind) in AGAINST {
+        let layer = Shape::card(Vec2::new(2.4, 1.6), 0.3, CARD).scaled(scale);
+        let poses = [0.6, -0.6].map(|x| farther(Pose::at(Vec3::new(x, 0.2, -7.8)), scale));
+        let gone = match behind {
+            Behind::Background => BACKGROUND,
+            Behind::Sky => SKY,
+        };
+        // Where the layer is at each pose, with the 2 px margin inside it
+        // and around it.
+        let regions = poses.map(|pose| {
+            let script = move |_| vec![pose];
+            let scenario = Scenario {
+                shapes: vec![layer.clone()],
+                camera: &still,
+                script: &script,
+            };
+            let met = Region::from_fn(VIEW.size, |pixel| {
+                coverage(&scenario.polygons(0)[0][0], pixel, 2.) > 0.
+            });
+            (scenario.inside(0, 0, 2.), met)
+        });
+        let mut rig = Rig::new(&gpu, VIEW, method, SKY);
+        if behind == Behind::Background {
+            rig.add(&back, back_pose, 0);
+        }
+        let id = rig.add_static(&layer, poses[0], 1);
+        rig.look(still(0));
+        let mut frame = 0;
+        for (to, from) in [(1, 0), (0, 1)] {
+            let at = frame + SETTLE + HOLD;
+            while frame < at {
+                rig.render(frame);
+                frame += 1;
+            }
+            rig.place(id, poses[to]);
+            let left = regions[from].0.and(&regions[to].1.not());
+            let mut residuals = Vec::new();
+            while frame <= at + HOLD {
+                rig.render(frame);
+                let resolved = rig.antialiased();
+                residuals.push([
+                    error_to(&resolved, CARD, &regions[to].0).max,
+                    error_to(&resolved, gone, &left).max,
+                ]);
+                frame += 1;
+            }
+            for (i, (what, truth)) in [("where it arrived", CARD), ("where it left", gone)]
+                .into_iter()
+                .enumerate()
+            {
+                let residuals: Vec<f32> = residuals.iter().map(|r| r[i]).collect();
+                let residual = *residuals.last().unwrap();
+                let epsilon = stores(method) * truth * HALF_STEP;
+                let converged = image::frames_to_converge(&residuals, epsilon);
+                eprintln!(
+                    "{method:?} {name}, a static move {what}: residual {residual} the hold after it, within {epsilon} from frame {converged:?} after it"
+                );
+                failures.check(residual <= epsilon, || {
+                    format!(
+                        "{method:?} {name}, a static move: the pixels {what} are {residual} off their new truth {truth} the hold after it; residuals by frame {residuals:?}"
+                    )
+                });
+            }
+        }
+        failures.bounded(&rig, format!("{method:?} static moves {name}"));
+    }
+    failures.assert();
+}
+every_method!(a_static_instance_moved_at_rest_resolves_within_the_hold);
 
 /// What case 9's material edits do, in the order they happen.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2257,6 +2407,194 @@ fn at_rest_taa_holds_silhouettes_within_the_reach_of_slow_motion_still() {
         &elsewhere,
     );
     failures.assert();
+}
+
+/// Where case 4's rigid mover moves (M-9, T-21).
+#[derive(Clone, Copy, Debug)]
+enum RigidMover {
+    /// Down the view's left edge, inside the first column of tiles.
+    InView,
+    /// Behind the camera, outside the view.
+    Behind,
+}
+
+/// Case 4 beside a rigid mover (M-9, T-21). Plausible defect: a moving
+/// instance's pose change, whose motion vectors already describe it, raises
+/// the view-wide signal, so anything moving anywhere, on screen or not,
+/// costs the whole view its resting stability (B-1 of the 2026-11-18
+/// history audit). The fixture: the stage at rest, with a small card, a
+/// moving instance, posed every frame at 1.5 px a frame down the view's left
+/// edge inside the first column of tiles, as
+/// `at_rest_taa_holds_silhouettes_beyond_the_reach_of_motion_still`'s vertex
+/// function moves it; or moving 0.1 m a frame 3 m behind the camera. The
+/// region: case 4's silhouettes in tile columns two or more from the mover
+/// in view, beyond the 3x3 tile neighbourhood of every tile it touches, and
+/// every silhouette with the mover behind. The oracle is case 4's bound.
+fn at_rest_taa_holds_silhouettes_beside_a_rigid_mover_still(mover_at: RigidMover) {
+    let Some(gpu) = gpu() else { return };
+    let scenario = far_stage(1., None, &stage_poses);
+    let mover = Shape::card(Vec2::new(0.5, 0.5), 0., CARD);
+    let frames = SETTLE + 2 * JITTER_CYCLE;
+    let (rest, velocity) = match mover_at {
+        RigidMover::InView => (
+            Pose::at(Vec3::new(-3.5, 1.4, -DEPTH)),
+            -Vec3::Y * MARKED_RATE * px(),
+        ),
+        RigidMover::Behind => (Pose::at(Vec3::new(0., 0., 3.)), Vec3::X * 0.1),
+    };
+    let pose = move |f: u32| Pose::at(rest.position + velocity * f as f32);
+    let near_outline = scenario
+        .inside(0, 0, 2.)
+        .or(&scenario.inside(0, 1, 2.))
+        .not();
+    let mut region = scenario.edges(0, &[0, 1]).and(&near_outline);
+    if let RigidMover::InView = mover_at {
+        // The tile columns the moving card's pixels lie in, at any frame.
+        let mut columns = std::collections::BTreeSet::new();
+        for f in 0..frames {
+            let quad = &mover.quads_at(pose(f))[0];
+            let projected = VIEW.project_polygon(&VIEW.camera(still(f)), quad).unwrap();
+            for pixel in pixels(VIEW.size) {
+                if coverage(&projected, pixel, 1.) > 0. {
+                    columns.insert(pixel[0] / REACH_TILE);
+                }
+            }
+        }
+        assert_eq!(
+            columns.iter().copied().collect::<Vec<_>>(),
+            [0],
+            "the mover leaves the first tile column"
+        );
+        region = region.and(&Region::from_fn(VIEW.size, |pixel| {
+            pixel[0] / REACH_TILE >= 2
+        }));
+    }
+    let mut failures = Failures::default();
+    let elsewhere = |rig: &mut Rig, frame: u32| {
+        if frame == 0 {
+            rig.add(&mover, pose(0), 0);
+        } else {
+            let id = *rig.instances().last().unwrap();
+            rig.place(id, pose(frame));
+        }
+    };
+    taa_holds_still_at_rest(
+        &mut failures,
+        &gpu,
+        &format!("silhouettes beside a rigid mover {mover_at:?}"),
+        &scenario,
+        &region,
+        &elsewhere,
+    );
+    failures.assert();
+}
+
+mod at_rest_taa_holds_silhouettes_beside_a_rigid_mover_still {
+    use super::RigidMover::{Behind, InView};
+    crate::scenario::temporal::case_tests!(at_rest_taa_holds_silhouettes_beside_a_rigid_mover_still;
+        in_view: (InView),
+        behind_the_camera: (Behind),
+    );
+}
+
+/// The rounding steps by which the camera's view translation is off its
+/// value at each frame of a jitter cycle's half: one to three steps either
+/// way, one or two steps from the last frame's.
+const ROUNDING: [i32; 8] = [0, 1, 3, 2, 0, -1, -3, -2];
+
+/// `value` `steps` f32 rounding steps up (or down, if negative).
+fn stepped(mut value: f32, steps: i32) -> f32 {
+    for _ in 0..steps.unsigned_abs() {
+        value = if steps > 0 {
+            value.next_up()
+        } else {
+            value.next_down()
+        };
+    }
+    value
+}
+
+/// Case 4 with a camera at rest away from the render origin whose view
+/// carries rounding noise (T-20). Plausible defect: the camera test takes
+/// rounding for motion (an absolute threshold of 1e-6 is one rounding step
+/// at a magnitude of 16), so a camera at rest tens of metres or more from
+/// the render origin, its view recomputed each frame as a game's is, keeps
+/// the whole view at full strength (B-2 of the 2026-11-18 history audit).
+/// The fixture: the stage before the sky, seen from a camera at `offset`,
+/// the stage moved with it, whose view's translation elements are each
+/// re-submitted one to three rounding steps off (`ROUNDING`, alternating in
+/// sign between elements) every frame. Near the stage is 4 m ahead; at
+/// kilometres it is `FAR` times as far, because there three steps of the
+/// translation (1.5 mm) are 0.04 px at 4 m, a real motion above the
+/// still-pixel threshold that arms its pixels as it should, and 0.0001 px at
+/// 2 km. The region and oracle are case 4's at the outlines, the bound
+/// (case 12) included.
+///
+/// Without `rounding` the camera is bit-identical every frame and the case
+/// guards the still-pixel rule's read position (DFX-19, B-12 of the audit):
+/// 100 m sideways of the origin the static stage's motion carries f32
+/// residue of about 2e-4 px, under the stillness threshold. Reprojecting
+/// history by it puts the Catmull-Rom fetch a fraction of a texel off, whose
+/// small over- and undershoot the relaxed rectification at rest lets
+/// accumulate past the bound; a still pixel reads its own texel instead.
+fn at_rest_taa_holds_silhouettes_still_far_from_the_origin(
+    (distance, scale): (&str, f32),
+    offset: Vec3,
+    rounding: bool,
+) {
+    let Some(gpu) = gpu() else { return };
+    let script = move |f: u32| {
+        stage_poses_at(scale, None)(f)
+            .into_iter()
+            .map(|p| Pose {
+                position: p.position + offset,
+                ..p
+            })
+            .collect()
+    };
+    let camera = move |_: u32| Pose::at(offset);
+    let scenario = Scenario {
+        shapes: stage_shapes(scale),
+        camera: &camera,
+        script: &script,
+    };
+    let near_outline = scenario
+        .inside(0, 0, 2.)
+        .or(&scenario.inside(0, 1, 2.))
+        .not();
+    let region = scenario.edges(0, &[0, 1]).and(&near_outline);
+    let elsewhere = |rig: &mut Rig, frame: u32| {
+        if !rounding {
+            return;
+        }
+        let steps = ROUNDING[frame as usize % ROUNDING.len()];
+        let translation = &mut rig.input.camera.view.w_axis;
+        translation.x = stepped(translation.x, steps);
+        translation.y = stepped(translation.y, -steps);
+        translation.z = stepped(translation.z, steps);
+    };
+    let mut failures = Failures::default();
+    taa_holds_still_at_rest(
+        &mut failures,
+        &gpu,
+        &format!(
+            "{distance} silhouettes seen from {offset} m from the origin, rounding {rounding}"
+        ),
+        &scenario,
+        &region,
+        &elsewhere,
+    );
+    failures.assert();
+}
+
+mod at_rest_taa_holds_silhouettes_still_far_from_the_origin {
+    use super::{DISTANT, NEAR};
+    use sgl_3d::glam::Vec3;
+    crate::scenario::temporal::case_tests!(at_rest_taa_holds_silhouettes_still_far_from_the_origin;
+        at_100_m: (NEAR, Vec3::new(80., 40., -50.), true),
+        at_5_km: (DISTANT, Vec3::new(3000., 1500., -4000.), true),
+        at_100_m_sideways_without_rounding: (NEAR, Vec3::new(100., 0., 0.), false),
+    );
 }
 
 /// The frame #816's scenarios act at: the first hold, which every history

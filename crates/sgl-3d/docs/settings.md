@@ -20,7 +20,7 @@ saved settings are unchanged. Existing scene constructors retain ray data.
 TAA uses motion-adaptive partial history rectification to stabilize static
 subpixel geometry, with motion and depth rejection retained, and rejects at
 rest what changes without motion vectors: effects, blended surfaces, moving
-normal layers and what a deforming surface leaves. No game-side filter or
+normal layers and what a moving or deforming surface leaves. No game-side filter or
 history tuning is needed.
 
 ## Presets

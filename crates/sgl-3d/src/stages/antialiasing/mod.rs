@@ -148,8 +148,9 @@ impl Antialiasing {
                 ctx.queue,
                 ctx.encoder,
                 color,
-                // Instances, and material groups the frame's mask switched,
-                // that appeared or departed since the last submitted frame.
+                // What changed since the last submitted frame without a
+                // motion vector (M-9), and material groups the frame's mask
+                // switched (F-10). Camera motion is `PostFx::begin`'s.
                 ctx.scene.rigid_objects_changed() || ctx.history.visibility_changed,
                 Responsive {
                     masks: ctx.targets.temporal_masks.as_ref(),

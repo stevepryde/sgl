@@ -15,6 +15,30 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` TAA: a moving instance posed from its last submitted pose no
+  longer re-arms full rejection across the whole view (its motion vectors
+  re-arm only the pixels it covers and leaves), and a camera at rest away
+  from the render origin is no longer taken as moving on f32 rounding of its
+  matrices. Thin and sub-pixel detail now settles at rest while anything
+  else in the scene moves, on screen or off. Appearances, departures,
+  showing or hiding, model or geometry replacement, a moved
+  `Mobility::Static` instance, drawing-changing material edits and a changed
+  `FrameInput::visibility_mask` still re-arm the view. No game-code changes
+  are needed; pose movers as `Mobility::Moving` every frame, as before.
+- `sgl-post-fx` `TemporalAntiAliasingAttribs`: the resolve no longer
+  compares cameras on the GPU; new `camera_motion` (with `padding0` to
+  `padding2`, now 32 bytes) carries it, set from the new
+  `TemporalAntiAliasing::camera_moved(&current, &previous)` over the
+  cameras given to the context. `rigid_object_motion` is now for changes no
+  motion vector describes. Direct callers set
+  `camera_motion: u32::from(TemporalAntiAliasing::camera_moved(&curr, &prev))`
+  and stop raising `rigid_object_motion` for moves whose motion vectors they
+  write.
+- `sgl-post-fx` TAA, every flag: a still pixel (motion under 0.01 px on
+  both axes) reads its own history instead of reprojecting by that residue,
+  so outlines at rest no longer drift past the scene's radiance range far
+  from the render origin. No code changes are needed.
+
 ## 0.7.1 — 2026-11-18
 
 Move every SGL crate to `0.7.1` together and commit the updated `Cargo.lock`.

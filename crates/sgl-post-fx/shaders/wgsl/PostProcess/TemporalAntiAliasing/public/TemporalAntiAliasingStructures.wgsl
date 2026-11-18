@@ -56,8 +56,13 @@ struct TemporalAntiAliasingAttribs
 
     SkipRejection: u32,
 
-    // Caller-owned rigid-object changes rearm view-wide adaptive recovery.
+    // Caller-owned: content that changed without a motion vector, and camera
+    // motion decided on the host, each rearm view-wide adaptive recovery.
     RigidObjectMotion: u32,
+    CameraMotion: u32,
+    Padding0: u32,
+    Padding1: u32,
+    Padding2: u32,
 }
 
 #endif //_TEMPORAL_ANTI_ALIASING_STRUCTURES_FXH_

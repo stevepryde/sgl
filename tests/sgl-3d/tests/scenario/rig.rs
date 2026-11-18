@@ -279,6 +279,7 @@ struct Placed {
     visible: bool,
     /// Drawn through a game's shader ([`Rig::add_shaded`]).
     shaded: bool,
+    mobility: Mobility,
 }
 
 /// A renderer, its scene and its output at `view.size`, driven frame by
@@ -356,6 +357,13 @@ impl Rig {
     /// Adds `shape` at `pose` as a moving instance in visibility `group`.
     pub fn add(&mut self, shape: &Shape, pose: Pose, group: u32) -> InstanceId {
         self.add_placed(shape, pose, group, false).0
+    }
+
+    /// [`Rig::add`] as a static instance (`Mobility::Static`), which writes
+    /// no motion when [`Rig::place`] moves it.
+    pub fn add_static(&mut self, shape: &Shape, pose: Pose, group: u32) -> InstanceId {
+        self.add_placed_as(shape, pose, group, false, Mobility::Static)
+            .0
     }
 
     /// [`Rig::add`], with its quads' materials in order, which a script
@@ -523,13 +531,24 @@ impl Rig {
         group: u32,
         shaded: bool,
     ) -> (InstanceId, Vec<MaterialId>) {
+        self.add_placed_as(shape, pose, group, shaded, Mobility::Moving)
+    }
+
+    fn add_placed_as(
+        &mut self,
+        shape: &Shape,
+        pose: Pose,
+        group: u32,
+        shaded: bool,
+        mobility: Mobility,
+    ) -> (InstanceId, Vec<MaterialId>) {
         for quad in &shape.quads {
             self.range = [
                 self.range[0].min(quad.radiance),
                 self.range[1].max(quad.radiance),
             ];
         }
-        let (id, materials) = self.instance(shape, pose, group, true);
+        let (id, materials) = self.instance(shape, pose, group, true, mobility);
         self.placed.push(Placed {
             id,
             shape: shape.clone(),
@@ -537,6 +556,7 @@ impl Rig {
             group,
             visible: true,
             shaded,
+            mobility,
         });
         (id, materials)
     }
@@ -547,6 +567,7 @@ impl Rig {
         pose: Pose,
         group: u32,
         visible: bool,
+        mobility: Mobility,
     ) -> (InstanceId, Vec<MaterialId>) {
         let Gpu { device, queue } = &self.gpu;
         let ids = self
@@ -560,7 +581,7 @@ impl Rig {
         };
         let id = self
             .scene
-            .add_instance(device, queue, state, Mobility::Moving)
+            .add_instance(device, queue, state, mobility)
             .expect("a fixture instance");
         (id, ids.materials)
     }
@@ -619,7 +640,9 @@ impl Rig {
         self.scene = Scene::new(&self.gpu.device, &self.gpu.queue);
         let placed = std::mem::take(&mut self.placed);
         for p in placed {
-            let id = self.instance(&p.shape, p.pose, p.group, p.visible).0;
+            let id = self
+                .instance(&p.shape, p.pose, p.group, p.visible, p.mobility)
+                .0;
             self.placed.push(Placed { id, ..p });
         }
     }

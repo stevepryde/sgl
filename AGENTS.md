@@ -23,6 +23,10 @@ maintainer's machine.
   [spec index](specs/README.md). Load only the relevant detail.
 - Updating a game: read [CHANGELOG.md](CHANGELOG.md) from the game's current
   version through the target version, then follow the affected package guides.
+- Changing anything that keeps, rejects or reprojects temporal history, or
+  that writes or reads motion vectors: the
+  [temporal history register](specs/sgl3d-history.md). Every such rule is
+  an entry there, and a change to one updates its entry in the same change.
 - Validating a change: run the checks that can fail because of it, by name
   ([Contributing](CONTRIBUTING.md#validate)). `bun scripts/tasks.ts check` is
   the full check, run once before a release or over a batch of landed

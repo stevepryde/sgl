@@ -13,6 +13,7 @@ These documents define the library's required behavior. For usage, start with
 | 2D sprite and canvas rendering | [Rendering](rendering.md) |
 | 3D behavior, rendering development, and roadmap | [SGL3D](sgl3d.md) |
 | 3D layers, stages, contracts, and ownership | [SGL3D architecture](sgl3d-architecture.md) |
+| Every rule that drops, weakens or withholds temporal history or motion | [SGL3D temporal history](sgl3d-history.md) |
 | Controller input and lifecycle | [Input](input.md) |
 | Payload transports and delivery guarantees | [Netcode](netcode.md) |
 | Game-owned schemas and shared loaders | [Content](content.md) |

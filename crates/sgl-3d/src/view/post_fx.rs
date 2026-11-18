@@ -102,6 +102,9 @@ pub(crate) struct PostFx {
     frame_index: u32,
     jitter: [f32; 2],
     reset_accumulation: bool,
+    /// Whether this frame's camera moved from the previous one's
+    /// (`TemporalAntiAliasing::camera_moved`), which TAA re-arms the view on.
+    camera_moved: bool,
 }
 
 /// Diligent's shaders place view space in front of the camera at +z (`w =
@@ -246,6 +249,7 @@ impl PostFx {
             ),
             frame_index: 0,
             jitter: [0.; 2],
+            camera_moved: false,
             reset_accumulation: true,
         }
     }
@@ -451,6 +455,7 @@ impl PostFx {
             ),
             _ => camera,
         };
+        self.camera_moved = TemporalAntiAliasing::camera_moved(&camera, &previous_camera);
         let timestamps =
             |pass: &'static str| timing.and_then(|timing| timing.render_pass(pass_group(pass)));
         self.context
@@ -529,7 +534,8 @@ impl PostFx {
     /// `responsive` marks what changes without a motion vector of its own:
     /// the frame's temporal masks, while it has them, as TAA's responsive
     /// masks, and the motion reach (`stages::antialiasing::reach`) as its
-    /// neighbourhood motion.
+    /// neighbourhood motion; `rigid_object_motion` what changed across the
+    /// view without one. Camera motion is `begin`'s.
     #[allow(clippy::too_many_arguments)]
     pub fn temporal_anti_aliasing(
         &mut self,
@@ -564,6 +570,7 @@ impl PostFx {
                 reset_accumulation: u32::from(self.reset_accumulation),
                 temporal_stability_factor: 0.88,
                 rigid_object_motion: u32::from(rigid_object_motion),
+                camera_motion: u32::from(self.camera_moved),
                 ..Default::default()
             },
             accumulation_buffer_idx: 0,
