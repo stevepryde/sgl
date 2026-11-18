@@ -2185,7 +2185,7 @@ rejection repeats (R-16, R-29).
   surface's history and it lies beyond the tolerance it is discarded, where it takes the
   reflection's it is kept), on Crystal's production temporal pass
   (`crates/sgl-post-fx/src/ssr_surface_discard_tests.rs`).
-- **Status.** Rule. Kept by measurement as a trade-off, not a fault with a free fix (settled
+- **Status.** Rule. A workaround whose replacement is tracked in [#819](https://github.com/stevepryde/sgl/issues/819): the cause of the streaks it reduces is not established. Kept by measurement as a trade-off, not a fault with a free fix (settled
   from B-20 by the 2026-11-18 history audit); the choice is the owner's to revisit. The discard's tolerance is the variance of a
   deterministic signal, so it fires on any change of the reflected radiance under motion, not only
   on parallax, and alternates with the jitter. DFX-25 added it because it cut fast-motion smear of
