@@ -22,22 +22,35 @@ pub(crate) const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm
 /// The reactive and transparency-and-composition mask targets a transparent
 /// draw adds after its colour, as AMD's FSR sample adds them to its
 /// translucency pass (`samples/fsrapi/fsrapirendermodule.cpp:93–101`, MIT,
-/// see `LICENSE-amd-fidelityfx.txt`): each
-/// draw's value `m` accumulates in red as `m (1 - mask) + mask`.
+/// see `LICENSE-amd-fidelityfx.txt`): each draw's transparency and
+/// composition `m` accumulates in red as `m (1 - mask) + mask`; its
+/// reactivity, which it outputs through `temporal_reactive`
+/// (`shading/temporal_masks.wgsl`) as `r` in red and `r / 0.9` in alpha,
+/// as `r + mask (1 - r / 0.9)`, the same union in units of AMD's
+/// recommended cap, which it never exceeds.
 pub(crate) fn mask_targets() -> [Option<wgpu::ColorTargetState>; 2] {
-    let blend = wgpu::BlendState {
+    let alpha = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::Zero,
+        operation: wgpu::BlendOperation::Add,
+    };
+    let reactive = wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha,
+    };
+    let composition = wgpu::BlendState {
         color: wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::OneMinusDst,
             dst_factor: wgpu::BlendFactor::One,
             operation: wgpu::BlendOperation::Add,
         },
-        alpha: wgpu::BlendComponent {
-            src_factor: wgpu::BlendFactor::One,
-            dst_factor: wgpu::BlendFactor::Zero,
-            operation: wgpu::BlendOperation::Add,
-        },
+        alpha,
     };
-    [0, 1].map(|_| {
+    [reactive, composition].map(|blend| {
         Some(wgpu::ColorTargetState {
             format: MASK_FORMAT,
             blend: Some(blend),

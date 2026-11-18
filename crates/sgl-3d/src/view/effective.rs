@@ -79,7 +79,8 @@ pub(crate) struct CompositeDraws {
     /// blended list draws where it holds them.
     pub blended: bool,
     /// The scene holds an opaque or masked material whose shading moves
-    /// (`Material::surface_moves`), which the temporal composition marks.
+    /// (`Materials::holds_moving_surfaces`), which the temporal composition
+    /// marks in the frames it changes (`Scene::shading_changes`).
     pub moving_surfaces: bool,
     /// Glow is drawn: the scene holds some and effects draw (a diagnostics
     /// layer).

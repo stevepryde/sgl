@@ -9,7 +9,11 @@ use crate::view::targets::mask_targets;
 pub(crate) static GLOW: crate::shading::Module = crate::shading::Module {
     name: "glow",
     source: include_str!("glow.wgsl"),
-    deps: &[&crate::shading::BIND_UNLIT, &crate::shading::FRAME_FOG],
+    deps: &[
+        &crate::shading::BIND_UNLIT,
+        &crate::shading::FRAME_FOG,
+        &crate::shading::TEMPORAL_MASKS,
+    ],
 };
 /// The entry points the glow's pipelines are created with.
 pub(crate) const GLOW_VS_ENTRY: &str = "glow_vs";
@@ -47,16 +51,28 @@ impl Effects {
         });
         let depth_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("soft effect depth"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
         });
         let soft_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("soft additive geometry"),
@@ -125,16 +141,28 @@ impl Effects {
         }
     }
 
-    /// The opaque depth soft intersections read, as group 1. Recreate it
-    /// when the depth target is.
-    pub fn depth_group(&self, device: &wgpu::Device, depth: &wgpu::TextureView) -> wgpu::BindGroup {
+    /// The opaque depth soft intersections read and the frame's
+    /// `exposure` multiplier the reactive mask is computed at, as group 1.
+    /// Recreate it when the depth target is.
+    pub fn depth_group(
+        &self,
+        device: &wgpu::Device,
+        depth: &wgpu::TextureView,
+        exposure: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("soft effect primary depth"),
             layout: &self.depth_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(depth),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(depth),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(exposure),
+                },
+            ],
         })
     }
 

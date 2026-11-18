@@ -87,16 +87,10 @@ impl Material {
         MaterialUniform::new(&self.values, self.bound.maps.maps())
     }
 
-    /// Whether its shading may change with the frame's time where its
-    /// geometry stands still: its record's (`record_moves`), or any
-    /// material's with a shader, whose surface may follow its parameters
-    /// and instance data from frame to frame as well as the time. Only the
-    /// local-light shadow cache narrows this, by whether the shader reads
-    /// the time (`Shader::reads_time`, as Godot b130438's `is_animated()`
-    /// reads its material's code; scene_shader_forward_clustered.cpp
-    /// 250–252).
-    pub fn surface_moves(&self) -> bool {
-        self.record_moves() || self.values.shader.is_some()
+    /// Whether its shader's parameter block differs from the last
+    /// submitted frame's; false without a shader.
+    pub fn parameters_changed(&self) -> bool {
+        self.params.as_ref().is_some_and(ParamBlock::changed)
     }
 
     /// Whether its record's shading changes with the frame's time
@@ -162,7 +156,8 @@ pub(crate) struct Materials {
     pub casters: u64,
     /// How many of its materials are masked, how many blended and how many
     /// of those receive screen-space reflections, how many opaque or masked
-    /// ones' surfaces move (`Material::surface_moves`) and of those how many
+    /// ones' surfaces may move from frame to frame (their records move or they
+    /// have a shader: `Scene::shading_changes`) and of those how many
     /// records do (`Material::record_moves`), and how many have an
     /// iridescent film.
     masked: usize,
@@ -212,8 +207,9 @@ impl Materials {
         self.receivers > 0
     }
 
-    /// Whether an opaque or masked material's surface moves
-    /// (`Material::surface_moves`).
+    /// Whether an opaque or masked material's shading may change where its
+    /// geometry stands still in some frame (`Scene::shading_changes`): its
+    /// record moves (`Material::record_moves`) or it has a shader.
     pub fn holds_moving_surfaces(&self) -> bool {
         self.moving > 0
     }

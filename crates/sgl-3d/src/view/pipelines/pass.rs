@@ -48,10 +48,17 @@ pub(crate) enum GeometryPass {
     /// written. Draws only the receiver batches of the blended list.
     Receivers,
     /// The temporal transparency and composition mask, 1 over the opaque
-    /// surfaces whose shading moves where their geometry stands still
-    /// (`Material::surface_moves`), at the G-buffer's depth, with the
-    /// reactive mask kept (`composition_targets`).
-    TemporalComposition,
+    /// surfaces whose shading changes where their geometry stands still
+    /// (`Scene::shading_changes`), with the reactive mask kept
+    /// (`composition_targets`): at the G-buffer's depth, a masked
+    /// material's cut-out texels discarded; with `footprint`, a masked
+    /// material whose shader's inputs were edited, over its whole
+    /// rasterised footprint at or in front of the opaque depth, its cut-out
+    /// texels included, since the edit may have cut out texels that showed
+    /// in the last submitted frame.
+    TemporalComposition {
+        footprint: bool,
+    },
     /// The volume layers (`stages::transparent::volumes`): the depth of the
     /// nearest faces of the blended materials whose shader reads its volume
     /// path, over a copy of the opaque depth, tested strictly nearer and
@@ -78,6 +85,9 @@ impl GeometryPass {
     pub(super) fn draws(self, alpha: Alpha) -> bool {
         if self == Self::PairedShadow {
             return alpha == Alpha::Opaque;
+        }
+        if self == (Self::TemporalComposition { footprint: true }) {
+            return alpha == Alpha::Mask;
         }
         matches!(
             self,
@@ -150,8 +160,10 @@ pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
         GeometryPass::GBuffer | GeometryPass::Fused => (true, GreaterEqual),
         GeometryPass::GBufferAnisotropy
         | GeometryPass::Lighting { .. }
-        | GeometryPass::TemporalComposition => (false, Equal),
-        GeometryPass::Blended { .. } => (false, GreaterEqual),
+        | GeometryPass::TemporalComposition { footprint: false } => (false, Equal),
+        GeometryPass::Blended { .. } | GeometryPass::TemporalComposition { footprint: true } => {
+            (false, GreaterEqual)
+        }
     }
 }
 
@@ -193,7 +205,7 @@ pub(super) fn targets(pass: GeometryPass, anisotropy_inline: bool) -> Vec<wgpu::
         DirectionalShadow | PairedShadow | CaptureShadow | LocalShadow => Vec::new(),
         Blended { .. } => vec![gbuffer::COLOR],
         Receivers => vec![gbuffer::RECEIVER, gbuffer::MOTION],
-        TemporalComposition | VolumeEntry | VolumeExit | VolumeSecondExit => Vec::new(),
+        TemporalComposition { .. } | VolumeEntry | VolumeExit | VolumeSecondExit => Vec::new(),
     }
 }
 

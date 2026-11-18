@@ -34,10 +34,10 @@ fn mist_color(i:Mist)->vec4<f32> {
 // transparency and composition.
 struct MistMasked {
  @location(0) color:vec4<f32>,
- @location(1) reactive:f32,
+ @location(1) reactive:vec4<f32>,
  @location(2) composition:f32,
 }
 @fragment fn mist_masked_fs(i:Mist)->MistMasked {
  let color=mist_color(i);
- return MistMasked(color,0.,color.a);
+ return MistMasked(color,temporal_reactive(0.),color.a);
 }

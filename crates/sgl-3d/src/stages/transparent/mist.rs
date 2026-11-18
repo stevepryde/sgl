@@ -17,6 +17,7 @@ pub(crate) static MIST: crate::shading::Module = crate::shading::Module {
     deps: &[
         &crate::shading::BIND_UNLIT,
         &crate::shading::FRAME_FOG,
+        &crate::shading::TEMPORAL_MASKS,
         &MIST_NOISE,
     ],
 };

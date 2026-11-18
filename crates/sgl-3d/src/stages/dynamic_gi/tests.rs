@@ -3111,7 +3111,7 @@ fn reports_number_their_frames_and_count_those_skipped() {
 // material stands still, is unlit or is blended changes them every frame and
 // its volume never pauses; or they leave it out for one that moves, so the
 // volume pauses on light that has moved on. The oracle is the material
-// definition (`Material::surface_moves`, the README's scrolling normal
+// definition (`Material::record_moves`, the README's scrolling normal
 // layers): a lit material with a layer moving at least a repeat of its map
 // an hour, which the rays meet unless it is blended, since they pass
 // through blended surfaces. A frame one second after the first reports the

@@ -7,6 +7,8 @@ pub(crate) mod mist;
 pub(crate) mod transmission;
 pub(crate) mod volumes;
 
+use crate::content::material::AlphaMode;
+use crate::scene::shaders::ShadingChange;
 use crate::shading::bind::{self, BindingTier, BlendedTrace};
 use crate::view::cached_group::CachedGroup;
 use crate::view::frame::FrameContext;
@@ -44,17 +46,20 @@ pub(crate) enum Beauty<'a> {
 /// transmissive surfaces sample; elsewhere, and in the draw into the
 /// incident radiance, they blend the light behind them through. While the frame has the
 /// temporal masks and the scene
-/// holds an opaque or masked material whose shading moves where its
-/// geometry stands still (`Material::surface_moves`: its normal layers), the
-/// draw onto the composite first marks those surfaces in the
-/// transparency and composition mask, at the opaque depth, as AMD's FSR
+/// holds an opaque or masked material whose shading may change where its
+/// geometry stands still (its normal layers move or it has a game's
+/// shader), the draw onto the composite first marks the surfaces whose
+/// shading changes in this frame (`Scene::shading_changes`) in the
+/// transparency and composition mask, at the opaque depth (a masked
+/// material whose shader's inputs were edited over its footprint in front
+/// of it), as AMD's FSR
 /// sample marks its animated textures after its lighting and before its
 /// translucency (`samples/fsrapi/config/fsrapiconfig.json`, its render
 /// modules' order; SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt).
 ///
 /// Reads: the camera's blended draw list with its lit group 0 and the
 /// geometry pipelines, the camera's opaque draw list (its sets whose
-/// material's surface moves, with the temporal masks), its unlit group 0 (with the
+/// material's shading changes, with the temporal masks), its unlit group 0 (with the
 /// fog volume), the opaque depth (copied into the surface depth, and tested
 /// by every draw but the receiver pass, never written), the surface depth
 /// and the screen-space method's result (receivers that are the surface),
@@ -81,7 +86,7 @@ pub(crate) struct Transparent {
     effects: effects::Effects,
     mist: mist::Mist,
     heat: heat::Heat,
-    /// The depth soft glow reads.
+    /// The depth soft glow reads, and the frame's exposure.
     depth_group: wgpu::BindGroup,
     /// No screen-space result, which the blended draws bind while none
     /// composes, and no transmission copy, which they bind on the Extended
@@ -110,12 +115,14 @@ struct BlendedGroup {
 impl Transparent {
     /// The stage over `unlit` group 0 for its effects and mist and `blended`
     /// group 3 (`shading::bind::blended`) of the device's binding `tier` for
-    /// its blended draws.
+    /// its blended draws, its glow reading the frame's `exposure`
+    /// multiplier (`stages::exposure::Exposure::view`).
     pub fn new(
         device: &wgpu::Device,
         unlit: &wgpu::BindGroupLayout,
         blended: &wgpu::BindGroupLayout,
         targets: &SharedTargets,
+        exposure: &wgpu::TextureView,
         tier: BindingTier,
     ) -> Self {
         let effects = effects::Effects::new(device, unlit);
@@ -133,7 +140,7 @@ impl Transparent {
             written: None,
         };
         Self {
-            depth_group: effects.depth_group(device, &targets.depth),
+            depth_group: effects.depth_group(device, &targets.depth, exposure),
             effects,
             mist: mist::Mist::new(device, unlit),
             heat: heat::Heat::new(device),
@@ -222,9 +229,14 @@ impl Transparent {
         self.volumes.encode(ctx, &self.no_reflections)
     }
 
-    /// Rebinds the depth the glow reads.
-    pub fn resize(&mut self, device: &wgpu::Device, targets: &SharedTargets) {
-        self.depth_group = self.effects.depth_group(device, &targets.depth);
+    /// Rebinds the depth the glow reads, beside the frame's `exposure`.
+    pub fn resize(
+        &mut self,
+        device: &wgpu::Device,
+        targets: &SharedTargets,
+        exposure: &wgpu::TextureView,
+    ) {
+        self.depth_group = self.effects.depth_group(device, &targets.depth, exposure);
     }
 
     /// Blended surfaces, glow and mist onto `beauty`.
@@ -386,9 +398,13 @@ impl Transparent {
     }
 
     /// The temporal `masks`, cleared, with the camera's opaque and masked
-    /// surfaces whose material's shading moves (`Material::surface_moves`)
-    /// marked in its transparency and composition mask, drawn at the
-    /// opaque depth, which they test for equality without writing it.
+    /// surfaces whose material's shading changes in this frame where their
+    /// geometry stands still (`Scene::shading_changes`) marked in its
+    /// transparency and composition mask, drawn at the opaque depth, which
+    /// they test for equality without writing it; a masked material whose
+    /// shader's inputs were edited is drawn over its footprint at or in
+    /// front of the opaque depth, its cut-out texels included
+    /// (`GeometryPass::TemporalComposition`).
     fn encode_composition(ctx: &mut FrameContext<'_>, masks: &[wgpu::TextureView; 2]) {
         let attachments = masks.each_ref().map(attachment);
         let started = crate::counters::Moment::now();
@@ -407,12 +423,29 @@ impl Transparent {
         });
         pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
         let scene = ctx.scene;
+        let changes = scene.shading_changes();
+        // Whether a material's edit marks its footprint: a masked one's, whose
+        // coverage the edit may have changed.
+        let footprint = |material| {
+            changes.of(scene, material) == ShadingChange::Edited
+                && matches!(
+                    scene.drawn_material(material).values.alpha,
+                    AlphaMode::Mask { .. }
+                )
+        };
         ctx.views.camera.list.draw_materials(
             scene,
             ctx.pipelines,
             &mut pass,
-            GeometryPass::TemporalComposition,
-            &|material| scene.drawn_material(material).surface_moves(),
+            GeometryPass::TemporalComposition { footprint: false },
+            &|material| changes.of(scene, material) != ShadingChange::None && !footprint(material),
+        );
+        ctx.views.camera.list.draw_materials(
+            scene,
+            ctx.pipelines,
+            &mut pass,
+            GeometryPass::TemporalComposition { footprint: true },
+            &footprint,
         );
         drop(pass);
         ctx.views.camera.recorded_since(started);

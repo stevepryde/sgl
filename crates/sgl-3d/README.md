@@ -901,8 +901,10 @@ integrated as Diligent's Hydrogent renderer does:
   towards it, keeps its history.
 - What changes at a pixel without a motion vector of its own is rejected
   there as motion is, at rest too: blended surfaces, additive effects, mist,
-  heat shimmer and opaque surfaces whose
-  [normal layers](#scrolling-normal-layers) move, by the reactive and
+  heat shimmer, opaque surfaces whose
+  [normal layers](#scrolling-normal-layers) move and opaque surfaces whose
+  [shader](#programmable-surfaces) reads the time or whose shader's
+  parameters or instance data the game changed, by the reactive and
   transparency-and-composition masks they write for FSR (in proportion to
   them while they mark a pixel, and at full strength for a hold after, so
   even dim content leaves no trail), and the pixels whose 3x3 neighbourhood
@@ -963,14 +965,25 @@ SMAA on Low. They antialias like TAA while upscaling:
   AMD's 0..=1 (0.8 by default, as AMD's sample).
   The camera's blended surfaces, additive effects and mist also write the
   reactive and transparency-and-composition masks, as AMD's FSR documentation
-  and sample write them from translucent draws, and heat shimmer marks its
+  and sample write them from translucent draws (glow's reactivity from its
+  light at the frame's exposure, so it follows what shows, not the scene's
+  light units; a pixel's reactivity at most 0.9 however many draws overlap
+  it), and heat shimmer marks its
   weight in the transparency-and-composition mask where it covers. Opaque and masked surfaces
-  whose material's [normal layers](#scrolling-normal-layers) move (a lit
-  material, a layer moving at least a repeat per hour) mark the
+  whose shading changes where they stand still mark the
   transparency-and-composition mask, as AMD's sample marks its animated
-  textures: the camera draws those materials' surfaces once more, at their
-  depth, before its blended surfaces (timing group `temporal composition`;
-  nothing in a scene without such a material).
+  textures: those whose material's [normal layers](#scrolling-normal-layers)
+  move (a lit material, a layer moving at least a repeat per hour) or whose
+  [shader](#programmable-surfaces) reads the frame's time, every frame, and
+  those whose shader's parameters (`Scene::set_shader_parameters`) or an
+  instance's shader data (`Scene::set_instance_shader_data`) differ from the
+  last submitted frame's, in that frame alone (for instance data, every
+  instance drawn with the same material; a masked one over its whole
+  footprint, the texels the edit cut out included). The camera draws those
+  materials' surfaces once more, at their depth, before its blended
+  surfaces (timing group `temporal composition`; nothing in a scene without
+  a moving or shaded material). A shader that reads no time, with inputs
+  written unchanged, marks nothing.
 - Request `graphics_device::fsr_features(&adapter)` when creating the device.
   `antialiasing` and `fsr_quality` take effect at the next `Renderer::resize`,
   which creates the selected FSR context. Switching versions destroys the
@@ -1814,8 +1827,10 @@ shader's coverage is the base map's at ray hits. Probe captures hold the
 capture's instant. A static instance's local-light shadow layers hold its
 displacement at their draw while the cascades, drawn every frame, animate;
 an instance whose local-light shadow must animate is a moving instance. A
-material with a shader counts as one whose shading moves, so FSR marks its
-opaque surfaces in its composition mask. The first frame that draws a
+material with a shader marks FSR's composition mask in the frames its
+shading may change ([FSR](#fsr)): every frame while its module reads the
+time (`ctx.time` or `ctx.phase`, anywhere in the module), else only the
+frame after an edit of its parameters or an instance's data. The first frame that draws a
 shader's material creates its programs (at most four shader modules) and
 the pipelines its materials' alpha modes and sides need (natively, and on
 the browser's main thread there): add shaders at load. A

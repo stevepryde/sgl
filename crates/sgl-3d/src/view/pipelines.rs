@@ -69,7 +69,7 @@ impl Content {
 /// alpha modes they use, opaque among them, whether one is a receiver, and
 /// whether one is blended and the shader reads its volume path, whose
 /// meshes the volume layers draw. A shader's opaque or masked material's
-/// surface always counts as moving (`Material::surface_moves`).
+/// surface may always move (`Scene::shading_changes`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ShaderContent {
     opaque: bool,
@@ -317,7 +317,17 @@ impl GeometryPipelines {
         if content.blend {
             alphas.push(Alpha::Blend);
         }
-        let mut sets = vec![(None, alphas, content.receivers, content.moving, false)];
+        // Each set: its shader, alpha modes, whether it holds receivers,
+        // opaque or masked materials whose shading may change, materials
+        // whose shader may edit what a masked one covers, and volume paths.
+        let mut sets = vec![(
+            None,
+            alphas,
+            content.receivers,
+            content.moving,
+            false,
+            false,
+        )];
         // The volume layers exist on the Extended binding tier alone.
         let extended = self.tier == BindingTier::Extended;
         for &(id, shader) in &self.shaders {
@@ -331,20 +341,30 @@ impl GeometryPipelines {
             .collect();
             let moving = shader.opaque || shader.mask;
             let volumes = shader.volumes && extended;
-            sets.push((Some(id), alphas, shader.receivers, moving, volumes));
+            sets.push((
+                Some(id),
+                alphas,
+                shader.receivers,
+                moving,
+                shader.mask,
+                volumes,
+            ));
         }
         let deformed: &[bool] = if content.deformed {
             &[false, true]
         } else {
             &[false]
         };
-        for (shader, alphas, receivers, moving, volumes) in sets {
+        for (shader, alphas, receivers, moving, footprint, volumes) in sets {
             let mut passes = passes.clone();
             if receivers {
                 passes.push(GeometryPass::Receivers);
             }
             if moving {
-                passes.push(GeometryPass::TemporalComposition);
+                passes.push(GeometryPass::TemporalComposition { footprint: false });
+            }
+            if footprint {
+                passes.push(GeometryPass::TemporalComposition { footprint: true });
             }
             if volumes {
                 passes.extend([
@@ -450,7 +470,7 @@ impl GeometryPipelines {
                 &self.lit,
                 "blended receivers",
             ),
-            TemporalComposition => (
+            TemporalComposition { .. } => (
                 Program::Geometry(GeometryForm::Plain),
                 &self.lit,
                 "temporal composition of moving surfaces",
@@ -557,7 +577,7 @@ impl GeometryPipelines {
                 temporal_masks: true,
             } => (SOURCE_VS_ENTRY, Some(BLENDED_MASKED_FS_ENTRY)),
             Receivers => (SOURCE_VS_ENTRY, Some(RECEIVER_FS_ENTRY)),
-            TemporalComposition => (SOURCE_VS_ENTRY, Some(TEMPORAL_COMPOSITION_FS_ENTRY)),
+            TemporalComposition { .. } => (SOURCE_VS_ENTRY, Some(TEMPORAL_COMPOSITION_FS_ENTRY)),
             VolumeEntry => (SOURCE_VS_ENTRY, Some(VOLUME_ENTRY_FS_ENTRY)),
             VolumeExit => (SOURCE_VS_ENTRY, Some(VOLUME_EXIT_FS_ENTRY)),
             VolumeSecondExit => (SOURCE_VS_ENTRY, Some(VOLUME_SECOND_EXIT_FS_ENTRY)),
@@ -589,7 +609,7 @@ impl GeometryPipelines {
         {
             targets.extend(mask_targets());
         }
-        if key.pass == TemporalComposition {
+        if matches!(key.pass, TemporalComposition { .. }) {
             targets.extend(composition_targets());
         }
         let constants = key.constants();

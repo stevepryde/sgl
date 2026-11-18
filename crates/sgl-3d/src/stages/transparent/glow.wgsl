@@ -103,19 +103,29 @@ fn glow_soft_color(i:Glow)->vec4<f32> {
 @fragment fn glow_soft_fs(i:Glow)->@location(0) vec4<f32> {
  return glow_soft_color(i);
 }
+// The frame's exposure multiplier (stages/exposure.rs), which the tone map
+// and FSR apply: the fixed exposure's, or with automatic exposure the one
+// the last rendered frame adapted to, since this frame's is metered from the
+// frame the glow is drawn onto.
+@group(1) @binding(2) var effect_exposure:texture_2d<f32>;
 // The temporal masks (view/targets.rs): additive glow is a reactive emitter in AMD's FSR
 // sample (FidelityFX SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt,
 // framework/rendermodules/translucency/shaders/particlerender.hlsl:249-254 and
 // samples/fsrapi/fsrapirendermodule.cpp:100-101): reactivity max(r, g, b)
-// times alpha, no transparency and composition. Modified: the reactivity is
-// clamped to 0.9, as AMD's FSR documentation recommends ("Reactive mask"),
-// because this radiance is HDR.
+// times alpha, no transparency and composition. Modified: the colour is the
+// glow's radiance at the frame's exposure, the light it adds to the frame
+// FSR accumulates and the tone map shows (FSR multiplies its input by that
+// exposure before every comparison: ffx_fsr2_common.h PrepareRgb), as the
+// sample's particle colour is at its exposure of 1; and the reactivity is
+// capped at 0.9, as AMD's FSR documentation recommends ("Reactive mask";
+// temporal_reactive).
 struct GlowMasked {
  @location(0) color:vec4<f32>,
- @location(1) reactive:f32,
+ @location(1) reactive:vec4<f32>,
  @location(2) composition:f32,
 }
 @fragment fn glow_soft_masked_fs(i:Glow)->GlowMasked {
  let color=glow_soft_color(i);
- return GlowMasked(color,min(max(color.r,max(color.g,color.b))*color.a,.9),0.);
+ let exposed=color.rgb*textureLoad(effect_exposure,vec2(0),0).r;
+ return GlowMasked(color,temporal_reactive(max(exposed.r,max(exposed.g,exposed.b))*color.a),0.);
 }

@@ -349,9 +349,12 @@ fn blended_reflectance(s:Surface)->f32 {
 // The temporal masks (view::targets::mask_targets): AMD's FSR documentation
 // (FidelityFX SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt,
 // docs/techniques/super-resolution-upscaler.md 131-132, 172, "Reactive
-// mask") asks that alpha-blended surfaces, which write no motion, write
-// their alpha as reactivity, clamped to 0.9: the share of the pixel's light
-// their motion vectors do not describe. A blended surface writes the share
+// mask") asks that alpha-blended surfaces write their alpha as reactivity
+// (172: those that write motion vectors too), capped at 0.9
+// (temporal_reactive): the share of the pixel's light their motion vectors
+// do not describe. Receivers, which write their own depth and motion
+// (receiver_fs), mark it as the others do: what the pixel shows through
+// them follows no motion vector. A blended surface writes the share
 // of the pixel's light it gives itself (BlendedColor.own), its alpha
 // unless it is transmissive or keeps its specular. AMD's FSR sample writes
 // a translucent surface's alpha as its transparency and composition
@@ -360,22 +363,24 @@ fn blended_reflectance(s:Surface)->f32 {
 // pixel, whose refracted light follows no motion vector.
 struct BlendedMasked {
  @location(0) color:vec4<f32>,
- @location(1) reactive:f32,
+ @location(1) reactive:vec4<f32>,
  @location(2) composition:f32,
 }
 @fragment fn blended_masked_fs(i:Fragment,@builtin(front_facing) front:bool)->BlendedMasked {
  let blended=blended_color(i,front);
- return BlendedMasked(blended.color,min(blended.own,.9),blended.coverage);
+ return BlendedMasked(blended.color,temporal_reactive(blended.own),blended.coverage);
 }
 // The temporal transparency and composition mask over an opaque or masked
-// surface whose shading moves where its geometry stands still (its
-// material's normal layers; stages/transparent), drawn at the G-buffer's
-// depth: 1, as AMD's FSR sample's animated textures write it, its depth and
-// motion a static surface's but its contents changing
+// surface whose shading changes in this frame where its geometry stands
+// still (Scene::shading_changes; stages/transparent), drawn at the
+// G-buffer's depth: 1, as AMD's FSR sample's animated textures write it,
+// its depth and motion a static surface's but its contents changing
 // (framework/rendermodules/animatedtextures/shaders/AnimatedTexture.hlsl;
 // FidelityFX SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt). The reactive
 // mask at location 0 is kept (view::targets::composition_targets). A masked
-// material's cut-out texels are not its surface.
+// material's cut-out texels are not its surface, except in the footprint
+// pass (view::pipelines::GeometryPass::TemporalComposition), which compiles
+// the discard out.
 @fragment fn temporal_composition_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->@location(1) f32 {
  material_alpha_discard(raster_material(i,object_front_face(i,raster_front)).base_color.a);
  return 1.;

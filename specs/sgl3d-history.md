@@ -58,8 +58,12 @@ contract a game follows:
   draws only when the content changes: each re-arms antialiasing across the
   view (F-10, M-9).
 - Expect surfaces under blended materials, glow, mist, heat distortion and
-  materials whose normal layers move never to reach antialiasing's resting
-  stability: they are marked as changing every frame (M-11, M-16, M-17a to M-17c).
+  materials whose normal layers move or whose shader reads the time never to
+  reach antialiasing's resting stability: they are marked as changing every
+  frame (M-11, M-16, M-17a to M-17c). Set a shader's parameters and an
+  instance's shader data only when they change: each change marks the
+  material's surfaces for that frame (M-16); writing the values in effect
+  marks nothing.
 
 ## Defects
 
@@ -428,21 +432,21 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 
 #### M-11 Blended surfaces write masks, not motion
 
-- **Rule.** Blended and transmissive surfaces that are not receivers write no depth and no motion, so their pixels reproject by the opaque surface behind. While the frame has the temporal masks, each draw writes reactive = min(own share, 0.9), where its own share is its coverage less what it transmits and, for a material that keeps its specular, 1 − (1 − that) × (1 − its mean split-sum reflectance); and transparency and composition = its coverage (its alpha when blended, the whole pixel when transmissive). Draws accumulate as m × (1 − mask) + mask. The masks are cleared each frame.
+- **Rule.** Blended and transmissive surfaces that are not receivers write no depth and no motion, so their pixels reproject by the opaque surface behind. While the frame has the temporal masks, each blended draw, receivers included (U-12), writes reactive = its own share capped at 0.9, where its own share is its coverage less what it transmits and, for a material that keeps its specular, 1 − (1 − that) × (1 − its mean split-sum reflectance); and transparency and composition = its coverage (its alpha when blended, the whole pixel when transmissive). Transparency and composition accumulate as m × (1 − mask) + mask; reactivity as the same union in units of the cap, r + mask × (1 − r / 0.9), so a pixel's reactivity never exceeds 0.9 (U-10). The masks are cleared each frame.
 - **Raised by.** Every blended or transmissive surface drawn, moving or not.
 - **Stays triggered while.** The surface is on screen: a still window is marked every frame, so TAA rectifies at its pixels in proportion to the marks and never fully settles there; FSR treats it as AMD documents.
-- **Source.** AMD FidelityFX SDK 1.1.4 FSR documentation (reactive mask, 0.9) and sample (`translucencyps.hlsl`), Filament's blending. Code: `shading/geometry.wgsl` (`blended_color`, `blended_masked_fs`), `view/targets.rs` (`mask_targets`).
-- **Guard.** `blended_surfaces_leave_depth_and_motion_unchanged`, `blended_surfaces_write_fsrs_masks` (`stages/transparent/blended_tests.rs`).
+- **Source.** AMD FidelityFX SDK 1.1.4 FSR documentation (reactive mask: alpha for alpha-blended objects, at most about 0.9) and sample (`translucencyps.hlsl`; the union, `fsrapirendermodule.cpp`), Filament's blending. Code: `shading/geometry.wgsl` (`blended_color`, `blended_masked_fs`), `shading/temporal_masks.wgsl` (`temporal_reactive`), `view/targets.rs` (`mask_targets`).
+- **Guard.** `blended_surfaces_leave_depth_and_motion_unchanged`, `blended_surfaces_write_fsrs_masks` (`stages/transparent/blended_tests.rs`); `overlapping_reactive_writers_stay_within_amds_cap`, `a_receiver_marks_the_masks_as_a_blended_surface_does` (`stages/transparent/composition_tests.rs`).
 - **Status.** Rule.
 
-#### M-16 Moving surfaces and every material with a game shader are marked 1
+#### M-16 Surfaces whose shading changes where they stand still are marked 1
 
-- **Rule.** While the frame has the temporal masks and the scene holds an opaque or masked material whose surface moves (`Material::surface_moves`: its normal layers move, or it has any game shader), the transparent stage first clears the masks and draws the camera's sets of such materials at the opaque depth, tested equal, writing transparency and composition 1 and leaving reactivity; a masked material's cut-out texels are not marked. This repeats every frame for every pixel of those materials, whether or not the shader reads time or its parameters or instance data change.
-- **Raised by.** Water and scrolling normal layers; also any opaque or masked material with a game shader, including static procedural surfaces and shaders used only for an anchor or a constant phase.
-- **Stays triggered while.** Such a material is on screen: TAA's responsive rejection and hold stay armed on it every frame and it never reaches resting stability.
-- **Source.** AMD FidelityFX SDK 1.1.4 sample animated textures (`AnimatedTexture.hlsl`, transparency and composition 1); counting every shader material as moving is SGL3D's own. Code: `scene/materials.rs` (`Material::surface_moves`), `stages/transparent/mod.rs` (`Transparent::encode_composition`), `shading/geometry.wgsl` (`temporal_composition_fs`), `view/targets.rs` (`composition_targets`).
-- **Guard.** `moving_opaque_surfaces_mark_fsrs_composition_mask`, `a_material_set_moving_marks_fsrs_composition_mask` (`stages/transparent/composition_tests.rs`), normal layers only.
-- **Status.** Defect B-3. Every shader material is marked every frame whether or not its shading changes, and the specs describe the trigger two ways.
+- **Rule.** While the frame has the temporal masks and the scene holds an opaque or masked material whose shading may change where its geometry stands still (its normal layers move, or it has a game shader), the transparent stage first clears the masks and then marks transparency and composition 1, leaving reactivity, over the camera's sets of the materials whose shading changes in this frame (`Scene::shading_changes`). A material's shading changes in a frame when: its normal layers move (`Material::record_moves`), every frame; its shader's module reads the frame's time or phase anywhere (`Shader::reads_time`, which covers the surface function and, through `custom`, what the vertex function passes it), every frame; or its shader parameter block differs from the last submitted frame's (`Material::parameters_changed`), or the shader data of an instance of a model drawn with it differs from that instance's in the last submitted frame (`Instances::shader_data_edited`), in that frame alone. Never for having a shader alone; a write of the values already in effect is no change. An instance's data edit marks the material, so every instance drawn with it, not that instance alone. The sets are drawn at the opaque depth, tested equal, a masked material's cut-out texels discarded; but a masked material changed by an edit is drawn over its whole footprint at or in front of the opaque depth, its cut-out texels included, since the edit may have cut out texels that showed in the last submitted frame and the frame before marked nothing there. Scope: the material's pixels. Recovery: the frame after the change (TAA then holds them as T-25 says).
+- **Raised by.** Water and scrolling normal layers; a game shader that reads `ctx.time` or `ctx.phase`; a game editing a shader's parameters or an instance's shader data.
+- **Stays triggered while.** Normal layers move or the shader reads the time (also where it reads it without changing what it draws: the test is of the module's code), or the game changes the parameters or instance data every frame.
+- **Source.** AMD FidelityFX SDK 1.1.4 sample animated textures (`AnimatedTexture.hlsl`, transparency and composition 1) and FSR documentation (`super-resolution-upscaler.md` 131, 192: the mask is for shading that motion vectors do not follow); the time test is Godot b130438's `is_animated()` reading of a material's code; the edit test and the footprint of an edited masked material are SGL3D's own, from the scene's history of parameter blocks and instance data. Code: `scene/shaders.rs` (`Scene::shading_changes`, `ShadingChanges::of`), `scene/materials/params.rs` (`ParamBlock::changed`), `scene/instances.rs` (`Instances::shader_data_edited`), `stages/transparent/mod.rs` (`Transparent::encode_composition`), `view/pipelines/pass.rs` (`GeometryPass::TemporalComposition`), `shading/geometry.wgsl` (`temporal_composition_fs`), `view/targets.rs` (`composition_targets`).
+- **Guard.** `moving_opaque_surfaces_mark_fsrs_composition_mask`, `a_material_set_moving_marks_fsrs_composition_mask`, `a_shader_surface_marks_composition_only_in_frames_its_shading_changes`, `a_shader_reading_the_time_marks_composition_every_frame` (`stages/transparent/composition_tests.rs`); `a_still_shader_surface_holds_taas_resting_bound` (`tests/sgl-3d/tests/scenario_history_masks.rs`); `a_dissolve_by_shader_parameters_at_rest_resolves_within_the_hold`, `a_dissolve_by_instance_data_at_rest_resolves_within_the_hold` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`).
+- **Status.** Rule.
 
 #### M-17a Heat distortion marks composition
 
@@ -453,14 +457,14 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Guard.** `heat_distortion_marks_the_composition_mask` (`stages/transparent/composition_tests.rs`).
 - **Status.** Rule.
 
-#### M-17b Glow marks reactivity from radiance
+#### M-17b Glow marks reactivity by the light it adds to the displayed frame
 
-- **Rule.** While the frame has the temporal masks, additive glow writes reactive = min(max(r, g, b) × a, 0.9) of its soft-faded HDR radiance and transparency and composition 0, accumulated as the blended draws accumulate theirs.
+- **Rule.** While the frame has the temporal masks, additive glow writes reactive = max(r, g, b) × a, capped at 0.9, of its soft-faded radiance times the frame's exposure multiplier, and transparency and composition 0, accumulated as the blended draws accumulate theirs (M-11). The multiplier is the one the tone map and FSR apply: the fixed exposure's in a frame of fixed exposure; with automatic exposure, the one the last rendered frame adapted to, since this frame's is metered from the frame the glow is drawn onto (it differs by one frame's adaptation step, and in a renderer's first frame of automatic exposure it is 0, so that frame's glow marks nothing; that frame restarts history anyway).
 - **Raised by.** Glow effects (`Scene::update_effects`), unless the effects diagnostics layer is off.
-- **Stays triggered while.** The glow is on screen, every frame by design; any glow whose brightest channel times alpha reaches 0.9 in the game's light units marks its pixels at the cap.
-- **Source.** AMD FidelityFX SDK 1.1.4 sample `particlerender.hlsl` (reactivity max(r, g, b) × alpha); the 0.9 clamp per AMD's documentation. Code: `stages/transparent/glow.wgsl` (`glow_soft_masked_fs`).
-- **Guard.** None.
-- **Status.** Defect B-10. Reactivity is computed from HDR radiance without exposure, so it saturates by the game's light units rather than by what shows.
+- **Stays triggered while.** The glow is on screen, every frame by design; a glow whose displayed light, brightest channel times alpha, reaches 0.9 marks its pixels at the cap.
+- **Source.** AMD FidelityFX SDK 1.1.4 sample `particlerender.hlsl` 249–254 (reactivity max(r, g, b) × alpha of its particle colour, at the sample's exposure of 1); FSR multiplies its input by the exposure before every comparison (`ffx_fsr2_common.h` `PrepareRgb`); the 0.9 cap per AMD's documentation. Code: `stages/transparent/glow.wgsl` (`glow_soft_masked_fs`), `stages/transparent/effects.rs` (`Effects::depth_group`), `stages/exposure.rs` (`Exposure::view`).
+- **Guard.** `glow_marks_reactivity_by_what_it_adds_to_the_displayed_frame` (`stages/transparent/composition_tests.rs`); `additive_effects_mark_fsr_reactivity_for_their_frame_only` (`stages/antialiasing/fsr/tests.rs`).
+- **Status.** Rule.
 
 #### M-17c Mist marks composition by alpha
 
@@ -1154,13 +1158,15 @@ pixel's motion hold is set to 12.
 
 - **Rule.** TAA does not distinguish the reactive mask from the transparency and
   composition mask: it takes the larger as `m` (T-25). The writers (M-11, M-16, M-17a to M-17c) give:
-  - Blended and transmissive surfaces (M-11): reactive up to 0.9, composition up to their
-    coverage (1 for a transmissive non-blended one), so a near-opaque blended surface
-    holds full or near-full strength on and through it every frame.
-  - Opaque or masked materials whose shading moves (M-16): composition 1, so those
-    pixels are at full strength every frame (see T-29).
-  - Glow (M-17): reactive up to 0.9 by `max(r, g, b) × alpha`, so a glow's strength is
-    its brightness and its faint tails arm the mask hold.
+  - Blended and transmissive surfaces (M-11): reactive up to 0.9 (also where they
+    overlap), composition up to their coverage (1 for a transmissive non-blended one),
+    so a near-opaque blended surface holds full or near-full strength on and through it
+    every frame.
+  - Opaque or masked materials whose shading changes (M-16): composition 1, so those
+    pixels are at full strength in every frame their shading changes (see T-29).
+  - Glow (M-17b): reactive up to 0.9 by `max(r, g, b) × alpha` of its light at the
+    frame's exposure, so a glow's strength is its displayed brightness and its faint
+    tails arm the mask hold.
   - Mist (M-17): composition equal to its alpha, which drifts with time, so pixels in
     mist alternate between marked and held.
   - Heat distortion (M-17): composition equal to its weight where it lies in front of
@@ -1168,8 +1174,8 @@ pixel's motion hold is set to 12.
 
   The masks are bound only in frames whose scene can mark them; without them `m` is 0
   and the mask hold decays.
-- **Raised by.** Blended or transmissive materials, moving-shading materials, glow, mist
-  and heat in view.
+- **Raised by.** Blended or transmissive materials, materials whose shading changes, glow,
+  mist and heat in view.
 - **Stays triggered while.** Any of them is in view, moving or not.
 - **Source.** AMD FidelityFX SDK 1.1.4 (FSR's reactive and composition masks) for the
   values; their use as TAA strength is SGL3D's own.
@@ -1181,48 +1187,21 @@ pixel's motion hold is set to 12.
   (`crates/sgl-3d/src/renderer/effective.rs`).
 - **Status.** Rule.
 
-#### T-29 Shader materials held at full strength
+#### T-29 Shader materials held at full strength while their shading changes
 
-- **Rule.** See M-16. Every pixel of an opaque or masked material that has a game shader
-  is marked composition 1 on every frame, so TAA holds it at full strength permanently,
-  whether or not its shading changes.
-- **Status.** Defect B-3. The mark does not depend on whether the shading changes, and
-  the specs describe its trigger two ways.
-
-### How the rules combine
-
-- T-20 and T-21 both arm the hold at every pixel; either alone keeps the whole view at
-  full strength. Neither is raised by a camera at rest within f32 rounding or by
-  moving instances posed from their submitted pose.
-- T-22 makes T-24's gradual sub-pixel response moot; T-22, T-9 and T-23 together cover
-  what anything with a motion vector leaves, up to about 32 pixels a frame.
-- T-17 cannot see disocclusions among distant scenery, which is why T-21 stays
-  view-wide for changes without a motion vector; what moves faster than T-23's reach
-  shares that limit.
-- T-25's plateau with jitter-dependent coverage (T-28) makes the strength at the edges of
-  static marked content alternate between `m` and full from frame to frame.
-- T-26's ramp lengthens every hold's recovery by a few frames.
-- T-4 with T-1 makes an abandoned or re-rendered frame a full reset for TAA.
-
-## FSR2 and FSR3 upscaling
-
-FSR keeps its history in AMD's context: the upscaled colour, per-pixel locks, FSR2's temporal reactive factor and
-FSR3's accumulation counter, all reprojected by the surface depth and motion at the render size. SGL3D restarts it
-on the renderer's one reset, on any frame FSR did not see, and on a new render size, version or scene size;
-everything else is AMD's own rejection, shipped as a faithful port (`sp-fidelity`, FidelityFX SDK 1.1.4). A
-chase-camera racing game trips most: AMD's reconstructed previous depth marking the followed vehicle's lowest band
-disoccluded at speed (U-17, U-40), the motion weights that keep moving scenery on a few frames of history (U-28,
-U-47), FSR3's use of the reactive mask as shading change on glass and glow (U-43), and materials marked
-transparency and composition 1 every frame (U-11).
-
-In this section FSR2 velocity is in display pixels (`length(motion_uv × display size)`); FSR3 velocity is in
-"4K pixels" (`length(motion_uv × (3840, 2160))`) whatever the display size. View depth is in metres, SGL3D's world
-units, with `view_space_to_meters_factor` 1. AMD file names abbreviate
-`sp-fidelity: vendor/sdk-1.1.4/sdk/include/FidelityFX/gpu/fsr2/ffx_fsr2_<name>.h` as `fsr2/<name>.h` and
-`.../gpu/fsr3upscaler/ffx_fsr3upscaler_<name>.h` as `fsr3/<name>.h`; the port runs the same algorithms from
-`sp-fidelity: shaders/wgsl/fsr2` and `shaders/wgsl/fsr3upscaler`.
-
-### SGL3D's integration
+- **Rule.** See M-16. An opaque or masked material with a game shader is marked
+  composition 1 in the frames its shading changes: every frame while its module reads
+  the time, else the frame after an edit of its parameters or of an instance's shader
+  data. TAA then holds its pixels at full strength for those frames and the hold after
+  them (T-25), and a shader that reads no time and whose inputs stay the same reaches
+  resting stability.
+- **Raised by.** Time-reading shaders; edits of shader parameters or instance data.
+- **Stays triggered while.** The shader reads the time, or the game edits its inputs every frame.
+- **Source.** See M-16.
+- **Guard.** `a_still_shader_surface_holds_taas_resting_bound`
+  (`tests/sgl-3d/tests/scenario_history_masks.rs`); the dissolve cases of
+  `scenario_temporal_antialiasing.rs`.
+- **Status.** Rule.
 
 #### U-1 Reset on the renderer's history reset
 
@@ -1358,56 +1337,76 @@ channel holds T&C and motion divergence, and the game's reactive mask feeds the 
 
 See M-11, M-16 and M-17a to M-17c (the first writer of a frame clears both masks; FSR binds them in every frame).
 
-#### U-10 Overlapping writers combine above 0.9
+#### U-10 Overlapping writers combine within 0.9
 
-- **Rule.** Every mask writer but the moving-surface pass blends `m (1 - mask) + mask`, so overlapping draws
-  raise a pixel towards 1; each draw's reactive value is capped at 0.9, their union is not (two 0.9 draws give
-  0.99). FSR2 and FSR3 then apply U-25 or U-43 at that value.
+- **Rule.** Every mask writer but the moving-surface pass blends transparency and composition as AMD's sample does,
+  `m (1 - mask) + mask`, so overlapping draws raise a pixel towards 1. Reactivity combines as the same union in units
+  of AMD's recommended cap: each draw outputs `r` = its value capped at 0.9 and `r / 0.9`
+  (`shading/temporal_masks.wgsl`, `temporal_reactive`), and the target blends `r + mask (1 - r / 0.9)`, so
+  `1 - mask / 0.9` is the product of each draw's `1 - r / 0.9` and a pixel's reactivity never exceeds 0.9 (two 0.9
+  draws give 0.9, two 0.5 draws 0.72 where AMD's union gives 0.75). FSR2 and FSR3 then apply U-25 or U-43 at that
+  value.
 - **Raised by.** Two panes of glass, glass in front of glow.
 - **Stays triggered while.** The camera looks through the followed vehicle's rear window at its own exhaust glow.
-- **Source.** AMD's FSR sample (`fsrapirendermodule.cpp`), faithful. Code: `crates/sgl-3d/src/view/targets.rs`
-  (`mask_targets`).
-- **Guard.** `moving_opaque_surfaces_mark_fsrs_composition_mask` in
-  `crates/sgl-3d/src/stages/transparent/composition_tests.rs`.
-- **Status.** Open question O-12. AMD recommends capping reactivity at about 0.9; the union across draws exceeds it.
+- **Source.** AMD's FSR sample (`fsrapirendermodule.cpp`, the union, which caps nothing) and FSR documentation
+  (`super-resolution-upscaler.md` 180: reactivity near 1 does not give good results, so clamp it to about 0.9),
+  applied to the value FSR reads. Code: `crates/sgl-3d/src/view/targets.rs` (`mask_targets`),
+  `crates/sgl-3d/src/shading/temporal_masks.wgsl`.
+- **Guard.** `overlapping_reactive_writers_stay_within_amds_cap`, `moving_opaque_surfaces_mark_fsrs_composition_mask`,
+  `heat_distortion_marks_the_composition_mask` in `crates/sgl-3d/src/stages/transparent/composition_tests.rs`.
+- **Status.** Rule.
 
-#### U-11 Surfaces marked T&C 1 every frame
+#### U-11 Surfaces marked T&C 1 while their shading changes
 
-- **Rule.** Opaque and masked materials whose normal layers move, and every opaque or masked material with a game
-  shader, are marked T&C 1 over all their visible pixels (M-16). FSR2 then removes their locks, tightens their
-  rectification box to 1 σ and drops luma instability (U-26); FSR3 sets its reactive channel to 1: box scale 1
-  instead of 3, locks drained and none created (U-45). Accumulation weight is unchanged.
-- **Raised by.** Water, wet or animated road decks, any material given a shader.
-- **Stays triggered while.** The material is in the scene. A road deck with moving normal layers or any shader
-  has no thin-feature protection and the tightest clamp on the largest surface on screen, every frame.
-- **Source.** AMD's FSR sample's animated textures (`AnimatedTexture.hlsl`) for normal layers; the shader
-  extension is SGL3D's own. Code: `crates/sgl-3d/src/scene/materials.rs` (`Material::surface_moves`).
-- **Guard.** `moving_opaque_surfaces_mark_fsrs_composition_mask`, `a_material_set_moving_marks_fsrs_composition_mask`
-  in `crates/sgl-3d/src/stages/transparent/composition_tests.rs`; none for shader materials.
-- **Status.** Defect B-3. A shader material is marked every frame whether or not its shading changes.
+- **Rule.** Opaque and masked materials whose normal layers move or whose shader reads the time are marked T&C 1
+  over all their visible pixels every frame, and a shader material whose parameters or instances' data were edited
+  in the frame after the edit (M-16). FSR2 then removes their locks, tightens their rectification box to 1 σ and
+  drops luma instability (U-26); FSR3 sets its reactive channel to 1: box scale 1 instead of 3, locks drained and
+  none created (U-45). Accumulation weight is unchanged.
+- **Raised by.** Water, wet or animated road decks, time-reading shaders, edits of a shader's inputs.
+- **Stays triggered while.** The layers move or the shader reads the time: a road deck with moving normal layers
+  or a time-reading shader has no thin-feature protection and the tightest clamp on the largest surface on screen,
+  every frame. A shader that reads no time, with its inputs unedited, is unmarked.
+- **Source.** AMD's FSR sample's animated textures (`AnimatedTexture.hlsl`) for normal layers; the shader rule is
+  M-16's. Code: `crates/sgl-3d/src/scene/shaders.rs` (`Scene::shading_changes`).
+- **Guard.** `moving_opaque_surfaces_mark_fsrs_composition_mask`, `a_material_set_moving_marks_fsrs_composition_mask`,
+  `a_shader_surface_marks_composition_only_in_frames_its_shading_changes`,
+  `a_shader_reading_the_time_marks_composition_every_frame`
+  in `crates/sgl-3d/src/stages/transparent/composition_tests.rs`.
+- **Status.** Rule.
 
 #### U-12 Blended receivers mark reactivity
 
 - **Rule.** Blended surfaces write reactive and T&C (M-11), receivers included, although a receiver writes its own
-  depth and motion; FSR2 and FSR3 then weaken their history as U-25 and U-43 say.
+  depth and motion (M-12): what the pixel shows through a receiver, and its traced reflection, follow no motion
+  vector, and AMD asks alpha-blended objects to write motion vectors and their alpha as reactivity both. FSR2 and
+  FSR3 then weaken their history as U-25 and U-43 say.
 - **Raised by.** Glass, canopies and water made `Blend` receivers.
 - **Stays triggered while.** A receiver is on screen, e.g. the followed vehicle's glass made a receiver.
-- **Source.** SGL3D's own reading of AMD's alpha rule. Code: `crates/sgl-3d/src/shading/geometry.wgsl`
-  (`blended_masked_fs`).
-- **Guard.** `blended_surfaces_write_fsrs_masks` in `crates/sgl-3d/src/stages/transparent/blended_tests.rs`.
-- **Status.** Open question O-5. Whether a surface whose motion vectors describe it should mark reactivity.
+- **Source.** AMD FidelityFX SDK 1.1.4 `super-resolution-upscaler.md` 172 ("all opaque, alpha-tested and
+  alpha-blended objects should write their motion vectors… For alpha-blended objects it is also strongly advised
+  that the alpha value of each covered pixel is stored to the corresponding pixel in the reactive mask") and 131
+  (T&C for highly reflective surfaces); the sample's translucency (`translucencyps.hlsl`) for T&C. Code:
+  `crates/sgl-3d/src/shading/geometry.wgsl` (`blended_masked_fs`).
+- **Guard.** `a_receiver_marks_the_masks_as_a_blended_surface_does` in
+  `crates/sgl-3d/src/stages/transparent/composition_tests.rs`; `blended_surfaces_write_fsrs_masks` in
+  `crates/sgl-3d/src/stages/transparent/blended_tests.rs`.
+- **Status.** Rule. Settles O-5.
 
-#### U-13 Glow reactivity from radiance
+#### U-13 Glow reactivity by its displayed light
 
-- **Rule.** Additive glow writes reactivity from its HDR radiance times alpha, capped at 0.9 (M-17), so its value
-  follows the game's light units rather than what shows; FSR2 and FSR3 apply U-25 and U-43 at that value.
+- **Rule.** Additive glow writes reactivity from its radiance times the frame's exposure multiplier times alpha,
+  capped at 0.9 (M-17b), so its value follows what it adds to the displayed frame and not the game's light units;
+  FSR2 and FSR3 apply U-25 and U-43 at that value.
 - **Raised by.** Exhaust flames, trails, neon drawn as glow.
-- **Stays triggered while.** The glow is on screen: in a bright scene nearly every glow pixel sits at 0.9.
-- **Source.** AMD's FSR sample (`particlerender.hlsl`), modified by the 0.9 cap and HDR input.
+- **Stays triggered while.** The glow is on screen; a glow whose displayed brightest channel times alpha reaches 0.9
+  sits at the cap.
+- **Source.** AMD's FSR sample (`particlerender.hlsl`), at the frame's exposure, modified by the 0.9 cap.
   Code: `crates/sgl-3d/src/stages/transparent/glow.wgsl` (`glow_soft_masked_fs`).
-- **Guard.** `additive_effects_mark_fsr_reactivity_for_their_frame_only` in
-  `crates/sgl-3d/src/stages/antialiasing/fsr/tests.rs`.
-- **Status.** Defect B-10. The value saturates by the game's light units, not by what shows.
+- **Guard.** `glow_marks_reactivity_by_what_it_adds_to_the_displayed_frame` in
+  `crates/sgl-3d/src/stages/transparent/composition_tests.rs`; `additive_effects_mark_fsr_reactivity_for_their_frame_only`
+  in `crates/sgl-3d/src/stages/antialiasing/fsr/tests.rs`.
+- **Status.** Rule.
 
 #### U-14 Mist marks T&C
 
