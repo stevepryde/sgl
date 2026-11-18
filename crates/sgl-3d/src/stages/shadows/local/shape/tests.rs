@@ -17,7 +17,7 @@ const GRID_MARGIN: f64 = 2. / (GRID - 1) as f64 / std::f64::consts::SQRT_2;
 /// Each face's clip-from-light, as the renderer draws it.
 fn face_clips() -> [DMat4; 6] {
     std::array::from_fn(|face| {
-        View::local_shadow_face(face as u8, Vec3::ZERO, RANGE)
+        ViewData::local_shadow_face(face as u8, Vec3::ZERO, RANGE)
             .view_projection()
             .as_dmat4()
     })

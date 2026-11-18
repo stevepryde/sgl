@@ -5,7 +5,7 @@ use super::{DrawInstances, DrawList, Geometry};
 use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::shading::uniforms::ViewUniform;
 use crate::shading::vertex::DrawInstance;
-use crate::view::View;
+use crate::view::ViewData;
 use crate::view::pipelines::{Alpha, Cull, Variant};
 use crate::view::population::Population;
 use crate::{AlphaMode, InstanceState, Mobility, Scene, test_support};
@@ -79,7 +79,7 @@ fn merged_draws_share_material_pipeline_and_geometry() {
             );
         }
     }
-    let camera = View::camera(ViewUniform {
+    let camera = ViewData::camera(ViewUniform {
         view: Mat4::IDENTITY.to_cols_array_2d(),
         projection: crate::perspective(1., 1., 0.1).to_cols_array_2d(),
         ..ViewUniform::zeroed()

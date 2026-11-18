@@ -3,7 +3,7 @@
 use super::{DrawInstances, DrawList, Geometry};
 use crate::content::identity::Identity;
 use crate::shading::uniforms::ViewUniform;
-use crate::view::View;
+use crate::view::ViewData;
 use crate::view::population::Population;
 use crate::{AlphaMode, InstanceState, Mobility, Scene, test_support};
 use bytemuck::Zeroable;
@@ -105,7 +105,7 @@ fn blended_draws_are_sorted_back_to_front_by_mesh_bounds_centre() {
     );
     let view = camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
     let projection = crate::perspective(1., 1., 0.1);
-    let camera = View::camera(ViewUniform {
+    let camera = ViewData::camera(ViewUniform {
         view: view.to_cols_array_2d(),
         projection: projection.to_cols_array_2d(),
         view_projection: (projection * view).to_cols_array_2d(),
@@ -191,7 +191,7 @@ fn culled_blended_draws_keep_each_instance_whole_and_back_to_front() {
             .index()
     });
     let projection = crate::perspective(1., 1., 0.1);
-    let camera = View::camera(ViewUniform {
+    let camera = ViewData::camera(ViewUniform {
         view: Mat4::IDENTITY.to_cols_array_2d(),
         projection: projection.to_cols_array_2d(),
         view_projection: projection.to_cols_array_2d(),

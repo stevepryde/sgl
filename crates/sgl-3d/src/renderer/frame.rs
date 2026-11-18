@@ -263,8 +263,9 @@ pub(super) fn render(
     // the nearest receiver's over the opaque depth.
     let receivers = transparent.encode_receivers(&mut ctx);
     ctx.surface = targets.surface(receivers);
-    // The volume layers both blended draws read.
+    // The volume layers and the mist's order both blended draws read.
     transparent.encode_volumes(&mut ctx);
+    transparent.order_mist(&ctx);
     // Every reflection producer initializes composite before reading it.
     if let Some(post_fx) = post_fx.as_mut() {
         let camera = ctx.views.reflection_camera;

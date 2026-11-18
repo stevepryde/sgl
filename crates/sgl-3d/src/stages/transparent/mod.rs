@@ -68,7 +68,8 @@ pub(crate) enum Beauty<'a> {
 /// blended draws, and the second exit layer's pass the exit layer).
 /// Writes: the surface depth, the receiver layer and the G-buffer's motion
 /// (the receiver pass); its volume layers (copies of the opaque depth with
-/// the volumes' faces drawn over them); its transmission copy; that beauty
+/// the volumes' faces drawn over them); its transmission copy; its mist
+/// positions, ordered from the view's eye; that beauty
 /// in place; the temporal masks while the frame has them; the completed scene in place
 /// (heat) through its own snapshot of it.
 /// Blended surfaces write no other depth, motion or G-buffer.
@@ -229,6 +230,19 @@ impl Transparent {
         self.volumes.encode(ctx, &self.no_reflections)
     }
 
+    /// Orders the scene's mist from the view's eye for the frame's draws
+    /// (`encode`), in a frame that draws it.
+    pub fn order_mist(&mut self, ctx: &FrameContext<'_>) {
+        if ctx.effective.composite.mist {
+            self.mist.order(
+                ctx.device,
+                ctx.queue,
+                &ctx.scene.transient,
+                ctx.input.camera.eye,
+            );
+        }
+    }
+
     /// Rebinds the depth the glow reads, beside the frame's `exposure`.
     pub fn resize(
         &mut self,
@@ -314,7 +328,6 @@ impl Transparent {
             self.mist.encode(
                 ctx.encoder,
                 ctx.bindings.camera_unlit(),
-                &ctx.scene.transient,
                 beauty,
                 &targets.depth,
                 temporal_masks,

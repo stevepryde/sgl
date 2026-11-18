@@ -401,7 +401,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Rule.** A probe-capture face's previous view-projection is its view-projection and its frame data's previous time is its own; shadow views have none. These views write no camera or time motion.
 - **Raised by.** Probe captures and shadow passes.
 - **Stays triggered while.** Nothing.
-- **Source.** SGL3D's own. Code: `view/mod.rs` (`View::probe_face`, `frame_uniform`).
+- **Source.** SGL3D's own. Code: `view/mod.rs` (`ViewData::probe_face`, `frame_uniform`).
 - **Guard.** None.
 - **Status.** Rule.
 

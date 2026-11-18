@@ -394,7 +394,7 @@ impl Renderer {
         list.build(
             &mut instances,
             scene,
-            &crate::view::View::camera(bytemuck::Zeroable::zeroed()),
+            &crate::view::ViewData::camera(bytemuck::Zeroable::zeroed()),
             None,
             Population::ProbeFace,
         );

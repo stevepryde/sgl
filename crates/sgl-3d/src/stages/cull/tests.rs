@@ -11,7 +11,7 @@ use crate::view::culling::tests::{clipped_triangle, mesh};
 use crate::view::draw_list::gpu::camera_cull;
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::population::Population;
-use crate::view::{FrameViews, View};
+use crate::view::{FrameViews, ViewData};
 use crate::{InstanceId, InstanceState, Mobility, ModelId, Scene, test_support};
 use bytemuck::Zeroable;
 use glam::{Mat4, Vec3, camera};
@@ -26,9 +26,9 @@ struct Culled {
 
 /// A camera view with `view`, `projection` and half-NDC `jitter`, as the
 /// prepare stage uploads it.
-fn camera_view(view: Mat4, projection: Mat4, jitter: [f32; 2]) -> View {
+fn camera_view(view: Mat4, projection: Mat4, jitter: [f32; 2]) -> ViewData {
     let view_projection = projection * view;
-    View::camera(ViewUniform {
+    ViewData::camera(ViewUniform {
         view: view.to_cols_array_2d(),
         projection: projection.to_cols_array_2d(),
         view_projection: view_projection.to_cols_array_2d(),
@@ -43,7 +43,7 @@ fn camera_view(view: Mat4, projection: Mat4, jitter: [f32; 2]) -> View {
 fn cull(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     scene: &mut Scene,
-    (camera, size): (View, [u32; 2]),
+    (camera, size): (ViewData, [u32; 2]),
     cascades: &[Mat4],
     mask: u32,
     culling: bool,
@@ -576,7 +576,7 @@ fn gpu_lists_hold_the_cpu_builders_instances_and_meshes() {
     captured.build(
         &mut drawn,
         &scene,
-        &View::shadow_cascade(cascade),
+        &ViewData::shadow_cascade(cascade),
         Some(mask),
         Population::CaptureShadow,
     );

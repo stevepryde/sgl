@@ -64,13 +64,11 @@ fn oversized_transient_updates_keep_accepted_content() {
 
     let position = [1.25, 2.5, 3.75];
     scene.update_mist(&device, &queue, &[position]).unwrap();
-    let mist = scene.transient.mist.clone();
     let refused_mist = vec![[9.; 3]; 21_846];
     assert!(matches!(
         scene.update_mist(&device, &queue, &refused_mist),
         Err(SceneError::DeviceLimit)
     ));
-    assert_eq!(scene.transient.mist, mist);
     assert_eq!(scene.transient.mist_positions, vec![position]);
 
     let glow = Glow {

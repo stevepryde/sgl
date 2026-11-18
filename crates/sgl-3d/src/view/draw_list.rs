@@ -18,7 +18,7 @@
 //! name their object record in the frame's draw instances
 //! (`DrawInstances`), which the vertex stage steps through; no instance is
 //! renumbered, so source identities and motion are those of the instance.
-use super::View;
+use super::ViewData;
 use super::culling::clip_intersects;
 use super::population::{LightReach, Population, moving_caster_reaches, within};
 use crate::content::identity::{Identity, ModelId};
@@ -102,7 +102,7 @@ impl DrawList {
         &mut self,
         drawn: &mut DrawInstances,
         scene: &Scene,
-        view: &View,
+        view: &ViewData,
         visibility_mask: Option<u32>,
         population: Population<'_>,
     ) {
@@ -184,7 +184,7 @@ impl DrawList {
     fn object(
         &mut self,
         scene: &Scene,
-        view: &View,
+        view: &ViewData,
         mask: Option<u32>,
         population: &Population,
         (index, instance, model, rank): (usize, &Instance, &Model, u32),
@@ -263,7 +263,7 @@ impl DrawList {
     fn clusters(
         &mut self,
         scene: &Scene,
-        view: &View,
+        view: &ViewData,
         mask: Option<u32>,
         population: &Population,
         (index, instance, model, rank): (usize, &Instance, &Model, u32),
@@ -337,7 +337,7 @@ impl DrawList {
     fn whole(
         &mut self,
         scene: &Scene,
-        view: &View,
+        view: &ViewData,
         mask: Option<u32>,
         population: &Population,
         (index, instance, model, rank): (usize, &Instance, &Model, u32),
@@ -479,7 +479,7 @@ fn draw_instance(index: usize, word: u32, instance: &Instance, mesh: &Mesh) -> D
 /// `Transparent3d` sort key, the view-space Z of the mesh's world bounds
 /// centre (`TransparentSortingInfo3d::Sorted`), which sorts back to front
 /// ascending.
-fn depth_in<'a>(scene: &'a Scene, view: &View) -> impl Fn(&InstanceDraw) -> f32 + 'a {
+fn depth_in<'a>(scene: &'a Scene, view: &ViewData) -> impl Fn(&InstanceDraw) -> f32 + 'a {
     let view_from_world = Mat4::from_cols_array_2d(&view.uniform.view);
     move |draw| {
         let (Geometry::Mesh { model, mesh } | Geometry::Deformed { model, mesh, .. }) =

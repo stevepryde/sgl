@@ -1,7 +1,7 @@
 //! A shadowed light's faces and its claim on the atlas: the views its faces
 //! take and its screen coverage, which sizes its slots.
 use crate::content::light::{Light, LightShape};
-use crate::view::View;
+use crate::view::ViewData;
 use glam::{Mat4, Vec3};
 
 /// The widest spot cone one face covers: a cube face's. A wider spot casts
@@ -9,7 +9,7 @@ use glam::{Mat4, Vec3};
 const SPOT_FACE_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
 
 /// Each cube face's axis, then the two axes across it, in
-/// `View::local_shadow_face`'s order.
+/// `ViewData::local_shadow_face`'s order.
 const CUBE_AXES: [(Vec3, Vec3, Vec3); 6] = [
     (Vec3::X, Vec3::Y, Vec3::Z),
     (Vec3::NEG_X, Vec3::Y, Vec3::Z),
@@ -22,13 +22,13 @@ const CUBE_AXES: [(Vec3, Vec3, Vec3); 6] = [
 /// How a light's shadow is laid out.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Shape {
-    /// Six faces around the light (`View::local_shadow_face`), of which the
+    /// Six faces around the light (`ViewData::local_shadow_face`), of which the
     /// ones in mask `faces` are drawn: all of a point light's, those a
     /// spot's cone reaches for a spot wider than one face, and those that
     /// see some of the half-space in front of a rectangle, a point shadow
     /// from its centre.
     Cube { faces: u8 },
-    /// One face along a spot's unit direction (`View::spot_shadow`).
+    /// One face along a spot's unit direction (`ViewData::spot_shadow`).
     Spot { direction: Vec3, outer_angle: f32 },
 }
 
@@ -101,13 +101,15 @@ impl LightView {
     }
 
     /// Face `face`'s view.
-    pub fn face(&self, face: usize) -> View {
+    pub fn face(&self, face: usize) -> ViewData {
         match self.shape {
-            Shape::Cube { .. } => View::local_shadow_face(face as u8, self.position, self.range),
+            Shape::Cube { .. } => {
+                ViewData::local_shadow_face(face as u8, self.position, self.range)
+            }
             Shape::Spot {
                 direction,
                 outer_angle,
-            } => View::spot_shadow(self.position, direction, outer_angle, self.range),
+            } => ViewData::spot_shadow(self.position, direction, outer_angle, self.range),
         }
     }
 

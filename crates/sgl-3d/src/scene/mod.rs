@@ -530,13 +530,15 @@ impl Scene {
     }
     /// Replace the ground mist's world positions; empty clears it.
     /// Returns `DeviceLimit` without replacing the positions if they cannot fit.
+    /// Each view uploads them, ordered from its eye, in the frames that
+    /// draw them, so `_queue` is unused.
     pub fn update_mist(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        _queue: &wgpu::Queue,
         positions: &[[f32; 3]],
     ) -> Result<(), SceneError> {
-        self.transient.update_mist(device, queue, positions)
+        self.transient.update_mist(device, positions)
     }
     /// The installed specular probe collection.
     pub(crate) fn specular_probes(&self) -> Option<&probes::UploadedProbes> {

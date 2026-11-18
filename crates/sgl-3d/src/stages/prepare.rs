@@ -2,9 +2,9 @@
 //! the camera's view data and the frame's data (the directional shadow's
 //! cascades, fit from the camera, baked lighting and fog, the
 //! jitter antialiasing chose), uploads them, ends the motion of moving
-//! instances not posed since the last submitted frame, sorts the mist,
-//! updates the scene's ray instances on frames that trace them (world-space
-//! reflections, dynamic GI and ray-traced shadows) and, while
+//! instances not posed since the last submitted frame, updates the scene's
+//! ray instances on frames that trace them (world-space reflections,
+//! dynamic GI and ray-traced shadows) and, while
 //! hardware ray tracing is in effect, chooses those frames'
 //! acceleration-structure builds, which it records after the deform pass
 //! (`encode_acceleration_structures`), clusters the
@@ -20,7 +20,7 @@
 //! Reads: the frame input, the camera history and the scene. Writes:
 //! `FrameViews` (view uniforms, draw lists, their draw instances and
 //! clusters), the frame uniform, the scene's stale object records, draw
-//! candidates, ray instances, acceleration structures and mist order.
+//! candidates, ray instances and acceleration structures.
 //! Honours: the effective local lights, temporal antialiasing (the shadow
 //! filter), atmosphere, baked lighting, culling, world-space reflections,
 //! dynamic GI, hardware ray tracing and ray-traced shadows.
@@ -37,7 +37,7 @@ use crate::view::frame::FrameContext;
 use crate::view::history::HistoryFrame;
 use crate::view::population::Population;
 use crate::view::reflection_camera;
-use crate::view::{FrameShadow, FrameViews, Jitter, View, frame_uniform, lod::LodSelector};
+use crate::view::{FrameShadow, FrameViews, Jitter, ViewData, frame_uniform, lod::LodSelector};
 use crate::{FrameInput, Scene};
 use glam::{Mat4, Vec3};
 
@@ -46,7 +46,7 @@ use glam::{Mat4, Vec3};
 pub(crate) struct CaptureViews {
     /// The frame's `FrameUniform`, with the capture's cascades.
     pub frame: wgpu::Buffer,
-    /// Each face's `ViewUniform` (`View::probe_face`), in cube-face order.
+    /// Each face's `ViewUniform` (`ViewData::probe_face`), in cube-face order.
     pub faces: Vec<wgpu::Buffer>,
     /// Each directional shadow cascade's `ViewUniform`, nearest first; none
     /// without a directional shadow.
@@ -78,7 +78,7 @@ pub(crate) fn set_cascades(
 ) {
     views.cascade_count = clip_from_world.len();
     for (slot, clip_from_world) in views.cascades.iter_mut().zip(clip_from_world) {
-        let view = View::shadow_cascade(clip_from_world);
+        let view = ViewData::shadow_cascade(clip_from_world);
         slot.set(queue, view);
         let started = crate::counters::Moment::now();
         slot.list
@@ -190,9 +190,8 @@ impl Prepare {
         }
         let values = FrameValues { view, frame };
         crate::counters::write_buffer(queue, frame_buffer, 0, bytemuck::bytes_of(&frame));
-        views.camera.set(queue, View::camera(view));
+        views.camera.set(queue, ViewData::camera(view));
         self.attempt = scene.begin_frame(device, queue);
-        scene.transient.sort_mist(queue, camera.eye);
         // Only world-space rays, the dynamic GI volume's and ray-traced
         // shadows read the ray instances and visibility mask. The entries
         // set and static edits made since the last traced frame wait for
@@ -387,7 +386,9 @@ impl Prepare {
         };
         let frame_buffer = uniform("static capture frame", bytemuck::bytes_of(&frame));
         // Each face is a view.
-        let views: Vec<_> = (0..6).map(|face| View::probe_face(center, face)).collect();
+        let views: Vec<_> = (0..6)
+            .map(|face| ViewData::probe_face(center, face))
+            .collect();
         let faces = views
             .iter()
             .map(|view| uniform("static capture camera", bytemuck::bytes_of(&view.uniform)))
@@ -397,7 +398,7 @@ impl Prepare {
             .cascades
             .as_slice()
             .iter()
-            .map(|cascade| View::shadow_cascade(cascade.clip_from_world))
+            .map(|cascade| ViewData::shadow_cascade(cascade.clip_from_world))
             .collect();
         // Every cascade draws the same unculled static content.
         let mut instances = DrawInstances::default();
