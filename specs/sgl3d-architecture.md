@@ -1536,8 +1536,9 @@ last, after everything it may use, and refuses a directive in it.
   there takes the froxel's squared diagonal in its denominator, following
   Unreal's volumetric fog practice, while surfaces keep the physical
   falloff;
-  blends it with its reprojection into the stage's last volume only when
-  `Fog::length` is unchanged, since history uses that range's depth grid; filters
+  blends it with its reprojection into the stage's last volume, placed
+  among that volume's slices by the length they covered, so history
+  carries across a change of `Fog::length`; filters
   each slice across x and y (`Settings::fog_filter`), leaving the volume the
   next frame reprojects unfiltered; a retry after submission without
   `finish_frame` rejects the overwritten filtered volume as history; and

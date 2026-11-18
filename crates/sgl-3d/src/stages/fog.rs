@@ -97,7 +97,8 @@ pub(crate) struct FroxelVolumeUniform {
     temporal_blend: f32,
     ambient: f32,
     volume_count: u32,
-    padding: [u32; 2],
+    previous_length: f32,
+    padding: u32,
 }
 
 /// The layouts this stage mirrors.
@@ -125,6 +126,7 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
             temporal_blend,
             ambient,
             volume_count,
+            previous_length,
         ]
     )]
 }
@@ -359,7 +361,7 @@ impl VolumetricFog {
     pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
         let history = ctx.history;
         let volumes = &mut self.volumes;
-        let Some((index, reprojects)) = volumes
+        let Some((index, previous_length)) = volumes
             .holds
             .frame(&history, ctx.effective.fog.map(|_| ctx.input.fog.length))
         else {
@@ -387,14 +389,15 @@ impl VolumetricFog {
             height: fog.height,
             height_falloff: fog.height_falloff.max(0.),
             anisotropy: fog.anisotropy.clamp(-MAX_ANISOTROPY, MAX_ANISOTROPY),
-            temporal_blend: if reprojects {
+            temporal_blend: if previous_length.is_some() {
                 TEMPORAL_REPROJECT_AMOUNT
             } else {
                 0.
             },
             ambient: fog.ambient.max(0.),
             volume_count: 0,
-            padding: [0; 2],
+            previous_length: previous_length.unwrap_or(fog.length),
+            padding: 0,
         };
         uniform.volume_count = self.reached.write(
             ctx.device,

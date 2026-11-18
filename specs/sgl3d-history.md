@@ -3098,8 +3098,8 @@ scenery, and grazing distant ground loses taps to the 1% depth test (AO-5).
 The fog keeps its last froxel volume, unfiltered, in one of two alternating volumes, and blends
 each froxel with where it was last frame by a fixed 0.9, after Godot. It has no neighbourhood clamp
 or change test, so moving lights and fog volumes trail rather than reject. A continuously running
-game trips its rules mainly by changing `Fog::length` (V-3); otherwise only resets, resizes and
-frames without fog drop it.
+game drops it only by resets, resizes and frames without fog; a changing `Fog::length` keeps it
+(V-3).
 
 ### Froxel history
 
@@ -3118,25 +3118,35 @@ frames without fog drop it.
 #### V-2 A frame without fog ends the history
 
 - **Rule.** A frame reprojects only when the other volume holds the frame whose history count is one
-  less, at the same length; otherwise its whole volume takes no history and no jitter.
+  less, at any length (V-3); otherwise its whole volume takes no history and no jitter.
 - **Raised by.** Fog off for a frame (`Settings::atmosphere`, `FrameInput::atmosphere`).
 - **Stays triggered while.** Nothing: one frame.
 - **Source.** SGL3D's own. Code: `src/stages/fog/volumes.rs` (`Holds::frame`).
 - **Guard.** `a_reset_without_fog_ends_the_froxels_history` (`src/stages/fog/volumes.rs`).
 - **Status.** Rule.
 
-#### V-3 A changed fog length ends the history
+#### V-3 A changed fog length reprojects through the last length
 
-- **Rule.** When `FrameInput::fog.length` differs at all from the last frame's, the frame's whole
-  volume takes no history and samples froxel centres without jitter, since the history's depth grid
-  belongs to the old length. The next frame at an unchanged length reprojects again.
-- **Raised by.** A game animating the fog length, or computing it each frame with rounding noise.
-- **Stays triggered while.** The length changes every frame: fog never reprojects or jitters and
-  shows single centre samples (banding and aliasing, steady rather than flickering).
-- **Source.** SGL3D's own: Godot reprojects with the current length for both grids and never
-  restarts on it. Code: `src/stages/fog/volumes.rs` (`Holds::frame`), `src/stages/fog.rs` (`VolumetricFog::encode`).
-- **Guard.** `changing_fog_range_keeps_a_stationary_volume_in_place` (`src/stages/fog/tests.rs`).
-- **Status.** Open question O-7. Whether an exact equality on `Fog::length` is the right restart, or a game must be told never to animate it, is undecided.
+- **Rule.** A froxel reprojects into the last frame's volume through the length that volume covered:
+  its world point's last view depth is placed among the slices of that length (the stage keeps each
+  volume's length with its history count), so `Fog::length` may differ from the last frame's by any
+  amount and the frame keeps its history and jitter. Points beyond the last length fall outside the
+  last volume and take none (V-6).
+- **Raised by.** Nothing: no length drops history. A longer fog leaves its new far slices without
+  history for one frame (V-6).
+- **Stays triggered while.** Nothing.
+- **Source.** Modified from Godot `volumetric_fog_process.glsl`, which divides the previous view depth
+  by the current length (`prev_view.z /= -params.fog_frustum_end`) and never restarts on a length
+  change, so it reads a stationary medium from the wrong slices while the length changes. Settled
+  O-7, 2026-11-18: SGL3D had rejected history at any change of length, so a game computing its length
+  with rounding noise never accumulated. Code: `src/stages/fog/volumes.rs` (`Holds::frame`),
+  `src/stages/fog.rs` (`VolumetricFog::encode`), `src/stages/fog.wgsl` (`inject`).
+- **Guard.** `a_length_with_rounding_noise_accumulates_as_an_unchanged_one` (a length one f32 step
+  apart on alternate frames converges as the unchanged length's within ten half-float steps;
+  0.021 apart under the old rule, 0 now), `changing_fog_range_keeps_a_stationary_volume_in_place`
+  (the box stays at its depth across a doubled or halved length; Godot's lookup through the current
+  length reads 0.0100 inside it) (`src/stages/fog/tests.rs`).
+- **Status.** Rule.
 
 #### V-4 A new froxel size starts afresh
 

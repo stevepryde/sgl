@@ -338,8 +338,9 @@ before opaque, the fog stage:
   0.9 of it (Godot's default reprojection amount), and samples another
   point of it each frame (Godot's 16 Halton offsets), so shafts and shadow
   edges in the fog resolve over frames; this history restarts with the
-  camera's and whenever `Fog::length` changes, so density does not move
-  when the volume covers a different range;
+  camera's, and carries across a change of `Fog::length`: each froxel
+  finds its point among the last volume's slices of their own length, so
+  density does not move when the volume covers a different range;
 - with `Settings::fog_filter` (on by default, as Godot's `use_filter`),
   blurs each slice with Godot's 7-tap Gaussian across x and then y, which
   smooths what one sample per froxel leaves; the next frame reprojects the
