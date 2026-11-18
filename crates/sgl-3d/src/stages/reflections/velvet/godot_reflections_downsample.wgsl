@@ -4,12 +4,17 @@
 // ed1daf0bf001b61586d9930840f2f1394092c079, 4.7.2-stable), MIT licensed
 // (LICENSE-godot.txt). Modified: translated to WGSL; the odd-size shader
 // variants are branches on the source size; the normal-roughness buffer is
-// RGBA16F.
+// RGBA16F; SGL3D's motion (screen motion, depth motion and its validity) is
+// copied from the same pixel as the depth and normal-roughness, for the
+// temporal pass, so a block that straddles two surfaces takes all of them
+// from the nearer one.
 
 @group(0) @binding(0) var source_depth: texture_2d<f32>;
 @group(0) @binding(1) var source_normal_roughness: texture_2d<f32>;
 @group(0) @binding(2) var dest_depth: texture_storage_2d<r32float, write>;
 @group(0) @binding(3) var dest_normal_roughness: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var source_motion: texture_2d<f32>;
+@group(0) @binding(5) var dest_motion: texture_storage_2d<rgba16float, write>;
 
 fn get_sample(sample_pos: vec2<i32>, depth: ptr<function, f32>, winner_sample_pos: ptr<function, vec2<i32>>) {
 	let sample_depth = textureLoad(source_depth, sample_pos, 0).x;
@@ -56,4 +61,5 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
 	textureStore(dest_depth, pixel_pos, vec4<f32>(depth, 0.0, 0.0, 0.0));
 	textureStore(dest_normal_roughness, pixel_pos, textureLoad(source_normal_roughness, sample_pos, 0));
+	textureStore(dest_motion, pixel_pos, textureLoad(source_motion, sample_pos, 0));
 }

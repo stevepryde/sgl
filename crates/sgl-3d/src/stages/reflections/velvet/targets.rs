@@ -28,6 +28,9 @@ pub(super) struct Targets {
     pub(super) depth: Option<wgpu::TextureView>,
     /// `RB_NORMAL_ROUGHNESS` at half size.
     pub(super) normal_roughness_half: Option<wgpu::TextureView>,
+    /// SGL3D's motion at half size, of the pixel each texel's depth and
+    /// normal-roughness come from.
+    pub(super) motion_half: Option<wgpu::TextureView>,
     /// `RB_HIZ`: all mips, and one view per mip.
     pub(super) hiz: wgpu::TextureView,
     pub(super) hiz_mips: Vec<wgpu::TextureView>,
@@ -111,6 +114,14 @@ impl Targets {
                     "Godot SSR half normal roughness",
                     size,
                     normal_roughness_format,
+                    1,
+                ))
+            }),
+            motion_half: half.then(|| {
+                view(texture(
+                    "Godot SSR half motion",
+                    size,
+                    crate::shading::gbuffer::MOTION,
                     1,
                 ))
             }),

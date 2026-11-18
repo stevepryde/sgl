@@ -125,7 +125,14 @@ The caller supplies Diligent's conventions: a left-handed camera (view space
 +z forward) with a finite far plane, the depth buffer as a depth texture,
 unit world normals (SSR traces a normal that is not unit length as a miss,
 DFX-52), NDC motion vectors (current − previous) and the
-previous frame's depth. Both conventional and reversed depth are supported.
+previous frame's depth. SSR's temporal pass needs four-channel motion
+vectors (such as `Rgba16Float`; it panics on fewer), as motion-adaptive
+TAA does: XY the NDC motion, Z the surface's previous minus current
+camera-space Z, its own and the camera's motion included, and W that depth
+motion's validity (above 0 valid, 0 none). It compares history with the
+depth that motion gives, so a surface the camera follows keeps its
+reflection history, and with the camera's reprojection where W is 0
+(DFX-63). Both conventional and reversed depth are supported.
 SSR stores its resolved reprojection depth in `R32Float` for conventional
 depth, and `R16Float` for reversed depth (DFX-59); neither needs optional
 float filtering features. Changing depth convention recreates SSR's

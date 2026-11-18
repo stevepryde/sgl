@@ -1266,7 +1266,10 @@ last, after everything it may use, and refuses a directive in it.
   before luminance chooses between them, and disocclusion compares both depths
   in the previous camera's space, the receiver's by the G-buffer's depth
   motion, as the ambient occlusion's temporal pass takes it, so a moving
-  receiver keeps its history as a static one does.
+  receiver keeps its history as a static one does. Crystal's temporal pass
+  (`sgl-post-fx`, DFX-63) takes the surface's previous depth from the same
+  depth motion, the camera's reprojection only where it is invalid, and its
+  fallback search tries the reprojected position before its neighbours.
   `reflections/reprojection.wgsl` owns virtual
   hit depth for both traces: extend the normalised view ray by the reflected
   hit distance, as AMD FidelityFX Denoiser d7dfecb's

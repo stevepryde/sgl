@@ -259,8 +259,8 @@ fn every_feature_permutation_executes() {
             let motion = texture(
                 &device,
                 &queue,
-                wgpu::TextureFormat::Rg16Float,
-                &half(&[0.01, 0.0]),
+                wgpu::TextureFormat::Rgba16Float,
+                &half(&[0.01, 0.0, 0.0, 1.0]),
             );
             let context_flags = if reversed {
                 post_fx_context::FeatureFlags::REVERSED_DEPTH
@@ -1202,11 +1202,12 @@ fn ssr_radiance_with_material(
     let normal = texels(device, queue, wgpu::TextureFormat::Rgba16Float, normals);
     let material = texels(device, queue, material.0, material.1);
     let color = texels(device, queue, wgpu::TextureFormat::Rgba16Float, color);
+    // A still scene: no motion, and valid unchanged depth.
     let motion = texture(
         device,
         queue,
-        wgpu::TextureFormat::Rg16Float,
-        &half(&[0.0, 0.0]),
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[0.0, 0.0, 0.0, 1.0]),
     );
     // No fade-in: one execution, whose transition alpha would otherwise be
     // 0 (DFX-24), as SGL3D configures the context.

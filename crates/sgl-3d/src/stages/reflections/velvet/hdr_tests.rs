@@ -168,6 +168,11 @@ fn finite_hdr_survives_trace_filter_storage_and_both_resolves() {
             .create_view(&Default::default());
         let full_depth_view = full_depth.create_view(&Default::default());
         let full_normal_view = full_normal.create_view(&Default::default());
+        // The downsample carries motion the trace does not read.
+        let full_motion = texture(&device, FULL, wgpu::TextureFormat::Rgba16Float, 1)
+            .create_view(&Default::default());
+        let motion = texture(&device, size, wgpu::TextureFormat::Rgba16Float, 1)
+            .create_view(&Default::default());
         // A tilted receiver reflects a nearer opaque target. The same geometry
         // is supplied at full size and downsampled by the actual half pass.
         let make_depth = |size: [u32; 2]| -> Vec<f32> {
@@ -278,6 +283,8 @@ fn finite_hdr_survives_trace_filter_storage_and_both_resolves() {
                         (1, view(&full_normal_view)),
                         (2, view(&depth_views[0])),
                         (3, view(&normal_view)),
+                        (4, view(&full_motion)),
+                        (5, view(&motion)),
                     ],
                     size,
                 );
