@@ -67,7 +67,14 @@ pub struct RenderAttributes<'a, 'p> {
     pub normal_buffer_srv: &'a wgpu::TextureView,
     /// Shader resource view of the source roughness buffer
     pub material_buffer_srv: &'a wgpu::TextureView,
-    /// Shader resource view of the source motion buffer
+    /// Shader resource view of the motion vectors, in four channels (such
+    /// as `Rgba16Float`): NDC motion (current − previous) in XY, Z the
+    /// surface's previous minus current camera-space Z (the cameras' view
+    /// units, positive in front), motion of the surface and the camera
+    /// included, and W its validity (above 0 valid, 0 where there is none).
+    /// The temporal pass compares history with the depth that motion gives
+    /// (PROVENANCE.md DFX-63), and with the camera's reprojection where W
+    /// is 0; it panics on fewer channels.
     pub motion_vectors_srv: &'a wgpu::TextureView,
     /// SSR settings
     pub ssr_attribs: &'a ScreenSpaceReflectionAttribs,
@@ -815,6 +822,7 @@ impl ScreenSpaceReflection {
                         (11, Resource::Sampler { filtering: true }),
                         (12, Resource::Texture),
                         (13, Resource::ConstantBuffer),
+                        (14, Resource::DepthTexture),
                     ],
                     &[RADIANCE_FORMAT, VARIANCE_FORMAT],
                     Some(DEPTH_STENCIL_FORMAT),
@@ -1217,6 +1225,14 @@ impl ScreenSpaceReflection {
     }
 
     fn compute_temporal_accumulation(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {
+        // DFX-63: a two-channel view reads as Z = 0, W = 1 in WGSL: valid,
+        // unmoving depth, which would be wrong rather than absent.
+        let motion_format = render_attribs.motion_vectors_srv.texture().format();
+        assert!(
+            motion_format.components() == 4,
+            "SSR's temporal pass reads depth motion from the motion vectors' Z and W, \
+             which {motion_format:?} lacks"
+        );
         let tech = self.technique(RenderTech::ComputeTemporalAccumulation);
         let r = self.resources();
         let ctx = &*render_attribs.post_fx_context;
@@ -1282,6 +1298,10 @@ impl ScreenSpaceReflection {
                 wgpu::BindGroupEntry {
                     binding: 13,
                     resource: self.history_reset_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: texture(render_attribs.depth_buffer_srv),
                 },
             ],
         );
@@ -1388,6 +1408,10 @@ mod roughness_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "ssr_temporal_neighborhood_tests.rs"]
 mod temporal_neighborhood_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "ssr_followed_surface_tests.rs"]
+mod followed_surface_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "ssr_intersection_tests.rs"]

@@ -122,7 +122,7 @@ pub(super) fn half(values: &[f32]) -> Vec<u8> {
 }
 
 /// A camera 2 m from a plane it faces, reversed or conventional depth.
-fn camera(reversed: bool, frame_index: u32) -> CameraAttribs {
+pub(super) fn camera(reversed: bool, frame_index: u32) -> CameraAttribs {
     camera_with_near(reversed, frame_index, 0.1)
 }
 
@@ -208,8 +208,10 @@ fn rigid(yaw: f32, offset: [f32; 3]) -> [f32; 16] {
 
 /// Where the previous frame's camera stood: at `eye` in this frame's view
 /// space, turned by `yaw` from this frame's camera, with its near plane at
-/// `near`, `depth` throughout its depth buffer, and `motion` (NDC x)
-/// throughout this frame's motion vectors.
+/// `near`, `depth` throughout its depth buffer, and `motion` (NDC x) and
+/// `depth_motion` (previous minus current camera Z, `None` where invalid,
+/// as for a surface behind the previous camera) throughout this frame's
+/// motion vectors.
 #[derive(Clone, Copy)]
 struct Previous {
     eye: [f32; 3],
@@ -217,6 +219,7 @@ struct Previous {
     near: f32,
     depth: f32,
     motion: f32,
+    depth_motion: Option<f32>,
 }
 
 /// `camera` standing at `previous.eye`, turned by `previous.yaw`.
@@ -234,6 +237,22 @@ fn moved(camera: CameraAttribs, previous: Previous) -> CameraAttribs {
         m_view_proj_inv: multiply(world_from_view, camera.m_proj_inv),
         ..camera
     }
+}
+
+/// `camera` standing `distance` further back along its view axis, facing
+/// the same way.
+pub(super) fn standing_behind(camera: CameraAttribs, distance: f32) -> CameraAttribs {
+    moved(
+        camera,
+        Previous {
+            eye: [0., 0., -distance],
+            yaw: 0.,
+            near: 0.,
+            depth: 0.,
+            motion: 0.,
+            depth_motion: None,
+        },
+    )
 }
 
 pub(super) fn read_rgba16f(
@@ -406,8 +425,8 @@ fn departed_reflections_cannot_support_current_dark_history() {
     let motion = texture(
         &device,
         &queue,
-        wgpu::TextureFormat::Rg16Float,
-        &half(&[2.0 / 64.0, 0.0]),
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[2.0 / 64.0, 0.0, 0.0, 1.0]),
     );
     let mut failures = Vec::new();
     for background in [false, true] {
@@ -595,7 +614,11 @@ fn departed_reflections_cannot_support_current_dark_history() {
 }
 
 /// Texels of an R16Float or R32Float view (normal and zero halves only).
-fn read_scalar(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) -> Vec<f32> {
+pub(super) fn read_scalar(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    view: &wgpu::TextureView,
+) -> Vec<f32> {
     let texture = view.texture();
     let texel_bytes = if texture.format() == wgpu::TextureFormat::R32Float {
         4
@@ -700,8 +723,8 @@ fn resolved_depth_is_the_virtual_point_along_the_view_ray() {
             let motion = texture(
                 &device,
                 &queue,
-                wgpu::TextureFormat::Rg16Float,
-                &half(&[0.0, 0.0]),
+                wgpu::TextureFormat::Rgba16Float,
+                &half(&[0.0, 0.0, 0.0, 1.0]),
             );
             let material = texture(&device, &queue, wgpu::TextureFormat::R8Unorm, &[26]);
             let mut encoder = device.create_command_encoder(&Default::default());
@@ -823,8 +846,8 @@ fn missed_rays_do_not_move_the_reflections_virtual_point() {
     let motion = texture(
         &device,
         &queue,
-        wgpu::TextureFormat::Rg16Float,
-        &half(&[0., 0.]),
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[0., 0., 0., 1.]),
     );
     let reconstruct = |flags: FeatureFlags, confidence: f32, miss_distance: f32| {
         let mut ssr = ScreenSpaceReflection::new(&device);
@@ -1069,12 +1092,19 @@ fn denoise_frame_over(
         .map(|(x, y)| if glossy(x, y) { 50 } else { 255 })
         .collect();
     let material = texels(device, queue, wgpu::TextureFormat::R8Unorm, &roughness);
-    // Motion in NDC: 4 is two screens.
+    // Motion in NDC: 4 is two screens. A still camera's surface keeps its
+    // depth, validly.
+    let (motion, depth_motion) = previous.map_or((0.0, Some(0.0)), |p| (p.motion, p.depth_motion));
     let motion = texture(
         device,
         queue,
-        wgpu::TextureFormat::Rg16Float,
-        &half(&[previous.map_or(0.0, |p| p.motion), 0.0]),
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[
+            motion,
+            0.0,
+            depth_motion.unwrap_or(0.0),
+            f32::from(u8::from(depth_motion.is_some())),
+        ]),
     );
     context.prepare_resources(
         device,
@@ -1513,6 +1543,7 @@ fn reflection_hits_behind_the_previous_camera_take_no_history() {
                 near: 0.1,
                 depth: 0.95,
                 motion: 4.0,
+                depth_motion: None,
             }),
             |x, y| index == 0 || checkerboard(x, y),
         );
@@ -1565,6 +1596,7 @@ fn surfaces_behind_the_previous_camera_take_no_history() {
                     near: 0.1,
                     depth: proj[10] + proj[14] / previous_z,
                     motion: 4.0,
+                    depth_motion: None,
                 }),
                 |x, y| index == 0 || checkerboard(x, y),
             );
@@ -1613,6 +1645,7 @@ fn a_changed_near_plane_keeps_history() {
                     near,
                     depth: previous[10] + previous[14] / z,
                     motion: 0.,
+                    depth_motion: Some(0.),
                 }),
                 |_, _| true,
             );
@@ -1672,6 +1705,7 @@ fn offscreen_candidates_cannot_discard_valid_reflection_history() {
                 near: 0.1,
                 depth: 0.95,
                 motion: 0.,
+                depth_motion: None,
             };
             let previous_camera = moved(current, previous);
             // The previous camera faces the surface at the centre. Its depth
@@ -1706,13 +1740,14 @@ fn offscreen_candidates_cannot_discard_valid_reflection_history() {
                 );
                 let material = texture(&device, &queue, wgpu::TextureFormat::R8Unorm, &[0]);
                 // Project the still plane into the previous camera to supply
-                // its actual NDC motion. The third case deliberately supplies
-                // a surface that moved two screens, leaving the hit valid.
+                // its actual NDC and depth motion (clip w is camera Z). The
+                // third case deliberately supplies a surface that moved two
+                // screens at its depth, leaving the hit valid.
                 let motion_data: Vec<u8> = (0..SIZE[1])
                     .flat_map(|y| {
                         (0..SIZE[0]).flat_map(move |x| {
                             if offscreen_surface {
-                                return half(&[4., 0.]);
+                                return half(&[4., 0., 0., 1.]);
                             }
                             let ndc = [
                                 2. * (x as f32 + 0.5) / SIZE[0] as f32 - 1.,
@@ -1732,14 +1767,19 @@ fn offscreen_candidates_cannot_discard_valid_reflection_history() {
                                     })
                                     .sum()
                             });
-                            half(&[ndc[0] - clip[0] / clip[3], ndc[1] - clip[1] / clip[3]])
+                            half(&[
+                                ndc[0] - clip[0] / clip[3],
+                                ndc[1] - clip[1] / clip[3],
+                                clip[3] - surface_z,
+                                1.,
+                            ])
                         })
                     })
                     .collect();
                 let motion = texels(
                     &device,
                     &queue,
-                    wgpu::TextureFormat::Rg16Float,
+                    wgpu::TextureFormat::Rgba16Float,
                     &motion_data,
                 );
                 context.prepare_resources(

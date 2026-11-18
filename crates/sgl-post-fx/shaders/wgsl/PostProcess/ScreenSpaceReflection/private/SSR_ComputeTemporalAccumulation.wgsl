@@ -8,6 +8,10 @@
 // (https://github.com/GPUOpen-Effects/FidelityFX-Denoiser, revision
 // d7dfecbabe7b9523b14e7b067216e06b86e8d189), MIT licensed
 // (LICENSE-amd-fidelityfx-denoiser.txt).
+// DFX-63 takes the surface's previous depth from its depth motion and orders
+// the fallback search from the reprojected position outwards, as AMD's
+// FFX_DNSR_Reflections_PickReprojection (same file) and Wicked Engine's
+// ssr_temporalCS do.
 
 #include "ScreenSpaceReflectionStructures.fxh"
 #include "SSR_Common.fxh"
@@ -46,6 +50,8 @@ struct CameraAttribsPair
 @group(0) @binding(12) var g_TextureDenoiserTiles: texture_2d<f32>;
 // PROVENANCE.md DFX-49: 1 on a frame whose histories were reset (DFX-12).
 @group(0) @binding(13) var<uniform> g_HistoryReset: u32;
+// PROVENANCE.md DFX-63: this frame's depth, which the depth motion starts from.
+@group(0) @binding(14) var g_TextureDepth: texture_depth_2d;
 
 struct ProjectionDesc
 {
@@ -75,6 +81,29 @@ fn LoadMotion(PixelCoord: vec2<i32>) -> vec2<f32>
 fn LoadCurrDepth(PixelCoord: vec2<i32>) -> f32
 {
     return HlslLoad(g_TextureCurrDepth, PixelCoord, 0).x;
+}
+
+// PROVENANCE.md DFX-63: the surface's own depth in the previous camera's
+// device depth. Where the motion's depth motion is valid (W > 0) it is the
+// surface's view Z now plus that motion (previous minus current view Z,
+// NRD's viewZprev = viewZ + motion.z), which holds the surface's own
+// movement as well as the camera's, so a surface the camera follows keeps
+// its depth; on or behind the previous camera's plane it is that camera's
+// near-plane depth, which ComputeReprojection rejects (DFX-32). Elsewhere it
+// is the context's reprojected depth, which moves the surface with the
+// camera alone, as TAA's adaptive test falls back to it.
+fn LoadExpectedPrevDepth(PixelCoord: vec2<i32>) -> f32
+{
+    let DepthMotion = HlslLoad(g_TextureMotion, PixelCoord, 0).zw;
+    if (!(DepthMotion.y > 0.0)) {
+        return LoadCurrDepth(PixelCoord);
+    }
+    let PrevProj = cbCameraAttribs.g_PrevCamera.mProj;
+    let PrevCamZ = DepthToCameraZ(HlslLoadDepth(g_TextureDepth, PixelCoord, 0), cbCameraAttribs.g_CurrCamera.mProj) + DepthMotion.x;
+    if (!(PrevProj[2][3] * PrevCamZ + PrevProj[3][3] > 0.0)) {
+        return cbCameraAttribs.g_PrevCamera.fNearPlaneDepth;
+    }
+    return CameraZToDepth(PrevCamZ, PrevProj);
 }
 
 fn LoadPrevDepth(PixelCoord: vec2<i32>) -> f32
@@ -172,7 +201,8 @@ fn ComputePixelStatistic(PixelCoord: vec2<i32>) -> PixelStatistic
 
 fn ComputeReprojection(PrevPos: vec2<f32>, CurrDepth: f32) -> ProjectionDesc
 {
-    // DFX-43: CurrDepth is the reprojected depth, the previous camera's.
+    // DFX-43, DFX-63: CurrDepth is the surface's expected depth in the
+    // previous camera (LoadExpectedPrevDepth).
     let CurrCamZ = DepthToCameraZ(CurrDepth, cbCameraAttribs.g_PrevCamera.mProj);
 
     var Desc: ProjectionDesc;
@@ -191,40 +221,43 @@ fn ComputeReprojection(PrevPos: vec2<f32>, CurrDepth: f32) -> ProjectionDesc
         var BestFetchCoords = vec4<i32>(0, 0, 0, 0);
         var BestTotalWeight = 0.0;
 
-        const SearchRadius = 1;
+        // PROVENANCE.md DFX-63: the reprojected position first, then its
+        // four edge neighbours, then its corners, and only a strictly better
+        // weight replaces the best so far, so a tie keeps the nearer
+        // position, as AMD's and Wicked's searches keep their reprojected
+        // one. Upstream's rows from -1 took the upper-left neighbour on a
+        // uniform surface. Nine positions: a fixed list, no data extends it.
+        const SearchOffsets = array<vec2<f32>, 9>(
+            vec2<f32>(0.0, 0.0),
+            vec2<f32>(0.0, -1.0), vec2<f32>(-1.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0),
+            vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, 1.0),
+        );
         const BestTotalWeightEarlyExitThreshold = 0.9;
-        for (var y = -SearchRadius; y <= SearchRadius; y++)
+        for (var i = 0; i < 9; i++)
         {
-            for (var x = -SearchRadius; x <= SearchRadius; x++)
+            let Location = PrevPos + SearchOffsets[i];
+
+            var FetchCoords: vec4<i32>;
+            var Weights: vec4<f32>;
+            GetBilinearSamplingInfoUC(Location, DepthDim, &FetchCoords, &Weights);
+
+            let PrevZ00 = DepthToCameraZ(LoadPrevDepth(FetchCoords.xy), cbCameraAttribs.g_PrevCamera.mProj);
+            let PrevZ10 = DepthToCameraZ(LoadPrevDepth(FetchCoords.zy), cbCameraAttribs.g_PrevCamera.mProj);
+            let PrevZ01 = DepthToCameraZ(LoadPrevDepth(FetchCoords.xw), cbCameraAttribs.g_PrevCamera.mProj);
+            let PrevZ11 = DepthToCameraZ(LoadPrevDepth(FetchCoords.zw), cbCameraAttribs.g_PrevCamera.mProj);
+
+            Weights.x *= select(0.0, 1.0, ComputeDisocclusion(CurrCamZ, PrevZ00) > (SSR_DISOCCLUSION_THRESHOLD / 2.0));
+            Weights.y *= select(0.0, 1.0, ComputeDisocclusion(CurrCamZ, PrevZ10) > (SSR_DISOCCLUSION_THRESHOLD / 2.0));
+            Weights.z *= select(0.0, 1.0, ComputeDisocclusion(CurrCamZ, PrevZ01) > (SSR_DISOCCLUSION_THRESHOLD / 2.0));
+            Weights.w *= select(0.0, 1.0, ComputeDisocclusion(CurrCamZ, PrevZ11) > (SSR_DISOCCLUSION_THRESHOLD / 2.0));
+
+            let TotalWeight = dot(Weights, vec4<f32>(1.0, 1.0, 1.0, 1.0));
+            if (TotalWeight > BestTotalWeight)
             {
-                let Location = PrevPos + vec2<f32>(f32(x), f32(y));
-
-                var FetchCoords: vec4<i32>;
-                var Weights: vec4<f32>;
-                GetBilinearSamplingInfoUC(Location, DepthDim, &FetchCoords, &Weights);
-
-                let PrevZ00 = DepthToCameraZ(LoadPrevDepth(FetchCoords.xy), cbCameraAttribs.g_PrevCamera.mProj);
-                let PrevZ10 = DepthToCameraZ(LoadPrevDepth(FetchCoords.zy), cbCameraAttribs.g_PrevCamera.mProj);
-                let PrevZ01 = DepthToCameraZ(LoadPrevDepth(FetchCoords.xw), cbCameraAttribs.g_PrevCamera.mProj);
-                let PrevZ11 = DepthToCameraZ(LoadPrevDepth(FetchCoords.zw), cbCameraAttribs.g_PrevCamera.mProj);
-
-                Weights.x *= select(0.0, 1.0, ComputeDisocclusion(CurrCamZ, PrevZ00) > (SSR_DISOCCLUSION_THRESHOLD / 2.0));
-                Weights.y *= select(0.0, 1.0, ComputeDisocclusion(CurrCamZ, PrevZ10) > (SSR_DISOCCLUSION_THRESHOLD / 2.0));
-                Weights.z *= select(0.0, 1.0, ComputeDisocclusion(CurrCamZ, PrevZ01) > (SSR_DISOCCLUSION_THRESHOLD / 2.0));
-                Weights.w *= select(0.0, 1.0, ComputeDisocclusion(CurrCamZ, PrevZ11) > (SSR_DISOCCLUSION_THRESHOLD / 2.0));
-
-                let TotalWeight = dot(Weights, vec4<f32>(1.0, 1.0, 1.0, 1.0));
-                if (TotalWeight > BestTotalWeight)
-                {
-                    BestTotalWeight = TotalWeight;
-                    BestWeights     = Weights;
-                    BestFetchCoords = FetchCoords;
-                    Desc.PrevCoord  = Location;
-
-                    if (BestTotalWeight > BestTotalWeightEarlyExitThreshold) {
-                        break;
-                    }
-                }
+                BestTotalWeight = TotalWeight;
+                BestWeights     = Weights;
+                BestFetchCoords = FetchCoords;
+                Desc.PrevCoord  = Location;
             }
 
             if (BestTotalWeight > BestTotalWeightEarlyExitThreshold) {
@@ -268,7 +301,6 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     // Secondary reprojection based on ray lengths:
     // https://www.ea.com/seed/news/seed-dd18-presentation-slides-raytracing (Slide 45)
     let PixelStat = ComputePixelStatistic(vec2<i32>(Position.xy));
-    let Depth = LoadCurrDepth(vec2<i32>(Position.xy));
     let HitDepth = LoadHitDepth(vec2<i32>(Position.xy));
     let Motion = LoadMotion(vec2<i32>(Position.xy));
 
@@ -288,7 +320,7 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let HitInside = IsInsideScreen_f2(PrevReflectionHit, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
     let UseIncidentPoint = !HitInside || (IncidentInside && PrevDistanceIncidentPoint < PrevDistanceReflectionHit);
     let PrevCoord = select(PrevReflectionHit, PrevIncidentPoint, UseIncidentPoint);
-    let Reprojection = ComputeReprojection(PrevCoord, Depth);
+    let Reprojection = ComputeReprojection(PrevCoord, LoadExpectedPrevDepth(vec2<i32>(Position.xy)));
 
     // PROVENANCE.md DFX-25: AMD's reflection denoiser keeps the surface
     // (incident point) reprojection only while it lies near the current

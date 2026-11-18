@@ -1926,10 +1926,9 @@ reflections with Wicked Engine's temporal pass) and world-space rays (Wicked's R
 denoiser). Velvet and world rays accumulate through one shared temporal reprojection. No
 reflection path reads a frame-wide or scene-wide motion signal: whole-view restarts come only
 from the renderer's reset, a frame-count gap, a resize or a settings change. A continuously
-running game trips the per-pixel rules: Crystal's camera-only depth test on a surface the camera
-follows (R-10, R-11), roughness-cutoff re-entry under jitter (R-6, R-25), Velvet's
-half-resolution silhouettes (R-23), and the variance resets that keep a blur on wherever a
-rejection repeats (R-16, R-29).
+running game trips the per-pixel rules: roughness-cutoff re-entry under jitter (R-6, R-25),
+Velvet's half-resolution silhouettes (R-23), and the variance resets that keep a blur on wherever
+a rejection repeats (R-16, R-29).
 
 ### Crystal screen-space reflections
 
@@ -2095,48 +2094,58 @@ rejection repeats (R-16, R-29).
 - **Status.** Open question O-3. The discard compares against a variance that is near zero on
   smooth mirror reflections; how often it fires is unmeasured.
 
-#### R-10 Disocclusion by camera-only reprojected depth
+#### R-10 Disocclusion by the surface's own previous depth
 
 - **Rule.** The temporal pass keeps history only when
-  exp(−|Zr − Zp| / max(Zr, Zp)) > `SSR_DISOCCLUSION_THRESHOLD` (0.9), a relative depth
-  difference under 10.54 %, where Zr is this frame's surface point projected through the
-  previous camera (`ComputeReprojectedDepth`, camera motion alone) and Zp the previous depth,
-  point-sampled at the candidate. The G-buffer's depth motion, present in the motion input's
-  z and w, is not read. On failure R-11's search runs; if that fails, all history is discarded
-  (radiance current, variance 1). Per pixel; no recovery while the motion lasts.
-- **Raised by.** A surface that moves with the camera or towards it: one that keeps view depth d
-  while the camera travels s a frame along its axis fails once s > 0.118 d (a craft 6 m ahead
-  at more than 42 m/s at 60 Hz).
-- **Stays triggered while.** A chase or cockpit camera moves fast: every frame, on the whole
-  followed object.
-- **Source.** DiligentFX faithful (`ScreenSpaceReflection.cpp` binds `GetReprojectedDepth`),
-  with DFX-43's projection fix. The shared reprojection (R-21) compares depth motion instead.
-  Code: `SSR_ComputeTemporalAccumulation.wgsl` (`ComputeReprojection`, `ComputeDisocclusion`),
-  `sgl-post-fx/shaders/wgsl/Common/private/ComputeReprojectedDepth.wgsl`.
-- **Guard.** `a_changed_near_plane_keeps_history`, `surfaces_behind_the_previous_camera_take_no_history`
-  (`sgl-post-fx/src/ssr_temporal_neighborhood_tests.rs`); none with a surface that moves with the camera.
-- **Status.** Defect B-5. A surface that moves with the camera loses or drifts its reflection
-  history because depth is reprojected through the camera alone.
+  exp(−|Ze − Zp| / max(Ze, Zp)) > `SSR_DISOCCLUSION_THRESHOLD` (0.9), a relative depth
+  difference under 10.54 %, where Zp is the previous depth, point-sampled at the candidate, and
+  Ze the surface's expected depth in the previous camera (`LoadExpectedPrevDepth`). Where the
+  motion input's W is above 0, Ze is the surface's camera Z now plus the depth motion in Z
+  (previous minus current camera Z, NRD's viewZprev = viewZ + motion.z), which holds the
+  surface's own motion and the camera's; a surface that was on or behind the previous camera's
+  plane takes that camera's near-plane depth (R-13). Where W is 0, Ze is this frame's point
+  projected through the previous camera alone (`ComputeReprojectedDepth`). Both are linearised
+  with the previous projection (R-14). On failure R-11's search runs; if that fails, all history
+  is discarded (radiance current, variance 1). Per pixel, one frame.
+- **Raised by.** Real disocclusion and silhouettes. Static surfaces the camera approaches and
+  surfaces the camera follows both pass. A surface without valid depth motion (behind the
+  previous camera, or a depth change beyond 65504 m) is judged as static.
+- **Stays triggered while.** Nothing in ordinary motion.
+- **Source.** DiligentFX (`ScreenSpaceReflection.cpp` binds `GetReprojectedDepth`), modified
+  (DFX-63, with DFX-43's projection fix): the surface's own depth, as AMD's reflection denoiser
+  and Wicked compare history with this frame's depth, taken from depth motion as TAA's adaptive
+  test (T-15, `AdaptiveMotionExpectedDepth`) and the shared reprojection (R-21) take it.
+  Code: `SSR_ComputeTemporalAccumulation.wgsl` (`LoadExpectedPrevDepth`, `ComputeReprojection`,
+  `ComputeDisocclusion`), `sgl-post-fx/shaders/wgsl/Common/private/ComputeReprojectedDepth.wgsl`.
+- **Guard.** `a_surface_the_camera_follows_keeps_its_reflection_history`
+  (`sgl-post-fx/src/ssr_followed_surface_tests.rs`: a plane 2 m ahead of a camera that travelled
+  10 m along its axis keeps its history at every pixel, under both depth conventions);
+  `a_changed_near_plane_keeps_history`, `surfaces_behind_the_previous_camera_take_no_history`
+  (`sgl-post-fx/src/ssr_temporal_neighborhood_tests.rs`).
+- **Status.** Rule.
 
-#### R-11 Fallback search prefers its first neighbour
+#### R-11 Fallback search from the reprojected position outwards
 
-- **Rule.** When R-10's test fails, the pass searches the 3×3 positions around the candidate,
-  rows from −1 and columns from −1, weighting each position's four bilinear taps by
-  `ComputeDisocclusion` > 0.45 (relative difference under 79.9 %); it stops at the first total
-  weight above 0.9 and succeeds when the best exceeds 0.1. On a uniform surface the first
-  position, one pixel up and left, already weighs 1, so radiance and variance are read there;
-  repeated each frame this drifts the history one pixel diagonally a frame, bounded by the 2σ
-  clamp. Beyond 79.9 % it fails and discards all history.
-- **Raised by.** R-10's camera-following case; silhouettes where the point-sampled test misses;
-  depths changing 10.5–79.9 % a frame.
-- **Stays triggered while.** As R-10: a followed object's reflections smear diagonally for as
-  long as the camera moves fast.
-- **Source.** DiligentFX faithful; Wicked's search (kept in R-21) starts at the centre and moves
-  only to a strictly better candidate. Code: `SSR_ComputeTemporalAccumulation.wgsl`
-  (`ComputeReprojection`).
-- **Guard.** None.
-- **Status.** Defect B-5. The fallback search prefers the first neighbour it tries rather than
-  the reprojected position.
+- **Rule.** When R-10's test fails, the pass searches nine positions around the candidate: the
+  candidate itself, then its four edge neighbours (up, left, right, down), then its four
+  corners, weighting each position's four bilinear taps by `ComputeDisocclusion` > 0.45
+  (relative difference under 79.9 %). A position replaces the best so far only with a strictly
+  greater total weight, so ties keep the nearer position, and the search stops once the best
+  exceeds 0.9. It succeeds when the best exceeds 0.1 and reads radiance from that position's
+  weighted taps and variance there. On a uniform surface the candidate itself wins. Beyond
+  79.9 % at every tap it fails and discards all history.
+- **Raised by.** Silhouettes where the point-sampled test misses; depths 10.5–79.9 % from the
+  expected depth.
+- **Stays triggered while.** A silhouette the motion keeps in place: the history read there moves
+  at most a pixel toward the side that matches, bounded by the 2σ clamp.
+- **Source.** DiligentFX's weighted taps and thresholds, modified (DFX-63): the order of AMD's
+  `FFX_DNSR_Reflections_PickReprojection` and Wicked's `ssr_temporalCS` (kept in R-21), which
+  start at the reprojected position and move only to a strictly better weight. Code:
+  `SSR_ComputeTemporalAccumulation.wgsl` (`ComputeReprojection`).
+- **Guard.** `the_fallback_search_keeps_a_followed_surfaces_history_in_place`
+  (`sgl-post-fx/src/ssr_followed_surface_tests.rs`: a uniform plane whose test fails at every
+  position reads its own pixel's history).
+- **Status.** Rule.
 
 #### R-12 Off-screen history and hits behind the previous camera
 
@@ -2154,13 +2163,13 @@ rejection repeats (R-16, R-29).
 
 #### R-13 Surfaces at or nearer than the previous near plane
 
-- **Rule.** `ComputeReprojectedDepth` writes the previous camera's near-plane depth for a
-  surface on or behind the previous camera's plane, and the temporal pass discards all history
-  where the reprojected depth is at or nearer than that plane (`IsAtOrNearerThanNearPlane`).
-  One frame per pixel.
+- **Rule.** A surface on or behind the previous camera's plane has the previous camera's
+  near-plane depth as its expected depth (R-10): `LoadExpectedPrevDepth` writes it where the
+  depth motion puts the surface there, and `ComputeReprojectedDepth` where W is 0 and the camera
+  does. The temporal pass discards all history where the expected depth is at or nearer than
+  that plane (`IsAtOrNearerThanNearPlane`). One frame per pixel.
 - **Raised by.** A camera that moves and turns so a surface was behind it last frame.
-- **Stays triggered while.** Nothing: it lasts one frame. It judges the surface as static, as
-  R-10 does.
+- **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** SGL3D's own (DFX-32). Code: `ComputeReprojectedDepth.wgsl`,
   `SSR_ComputeTemporalAccumulation.wgsl` (`ComputeReprojection`).
 - **Guard.** `surfaces_behind_the_previous_camera_take_no_history`.

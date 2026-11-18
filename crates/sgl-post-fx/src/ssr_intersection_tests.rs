@@ -130,8 +130,8 @@ fn trace_mirror_floor(
     let motion = texels(
         device,
         queue,
-        wgpu::TextureFormat::Rg16Float,
-        &vec![0; 4 * (SIZE[0] * SIZE[1]) as usize],
+        wgpu::TextureFormat::Rgba16Float,
+        &half(&[0.0, 0.0, 0.0, 1.0].repeat((SIZE[0] * SIZE[1]) as usize)),
     );
     let mut context = PostFXContext::new(
         device,
