@@ -34,6 +34,10 @@ docs and specs the entry links.
   `camera_motion: u32::from(TemporalAntiAliasing::camera_moved(&curr, &prev))`
   and stop raising `rigid_object_motion` for moves whose motion vectors they
   write.
+- `sgl-3d` motion vectors: an unchanged camera and pose now write exactly
+  zero motion at any distance from the render origin (the previous position
+  was composed in another order, leaving about 2e-4 px 100 m out). No
+  game-code changes are needed.
 - `sgl-post-fx` TAA, every flag: a still pixel (motion under 0.01 px on
   both axes) reads its own history instead of reprojecting by that residue,
   so outlines at rest no longer drift past the scene's radiance range far

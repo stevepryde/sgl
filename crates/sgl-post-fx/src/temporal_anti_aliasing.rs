@@ -349,18 +349,36 @@ fn reversed_depth(post_fx_context: &PostFXContext) -> bool {
         .contains(post_fx_context::FeatureFlags::REVERSED_DEPTH)
 }
 
-/// The rounding steps, relative to an element's magnitude (at least 1), by
-/// which a camera's matrices may differ and the camera still be at rest
-/// (`TemporalAntiAliasing::camera_moved`; PROVENANCE.md, "Motion-adaptive
-/// TAA"). A view recomputed each frame from unchanged float state
-/// accumulates a few half-steps per term, so a camera at rest anywhere from
-/// the render origin differs by a few steps; eight covers that. A larger
-/// tolerance is safe because the view-wide camera signal only has to catch
-/// real motion: a camera change that moves any pixel by 0.01 px or more
-/// still arms that pixel through its own motion vector (the still-pixel
-/// threshold, DFX-19), and real camera motion is orders of magnitude above
-/// eight steps.
+/// The rounding steps by which a camera's matrices may differ and the
+/// camera still be at rest (`TemporalAntiAliasing::camera_moved`;
+/// PROVENANCE.md, "Motion-adaptive TAA"), each step taken at the magnitude
+/// the element's rounding scales with (at least 1). A rotation or
+/// projection element is computed from terms of its own size, so its noise
+/// is a few of its own steps. A view translation element is
+/// `-dot(axis, eye)`, a sum of terms of the eye's magnitude that may cancel
+/// to near zero: its noise is a few steps of the camera's distance from the
+/// render origin whatever its own size (7.6e-6 at 100 m on an element of
+/// 0.024 in Hyperdrive's chase camera), so it is judged at that distance.
+/// A view recomputed each frame from float state accumulates a few
+/// half-steps per term; eight covers that. A larger tolerance is safe
+/// because the view-wide camera signal only has to catch real motion: a
+/// camera change that moves any pixel by 0.01 px or more still arms that
+/// pixel through its own motion vector (the still-pixel threshold, DFX-19),
+/// and real camera motion is orders of magnitude above eight steps.
 const CAMERA_REST_STEPS: f32 = 8.;
+
+/// The largest absolute component of the eye position of `view` (columns,
+/// rotation and translation): `-Rᵀ t`.
+fn eye_magnitude(view: &[f32; 16]) -> f32 {
+    (0..3)
+        .map(|axis| {
+            (0..3)
+                .map(|row| view[axis * 4 + row] * view[12 + row])
+                .sum::<f32>()
+                .abs()
+        })
+        .fold(0., f32::max)
+}
 
 /// `proj` (columns) without `jitter`: the inverse of a jitter applied as a
 /// clip-space translation, `T(jitter) * P`, which offsets every column's x
@@ -598,20 +616,31 @@ impl TemporalAntiAliasing {
     /// Each camera's jitter (`f2_jitter`) is removed from its projection
     /// first, so jitter is never motion, and the unjittered projections and
     /// the views are compared element by element: elements `a` and `b`
-    /// agree when `|a - b| <= CAMERA_REST_STEPS * f32::EPSILON * max(1, |a|, |b|)`.
-    /// A camera whose matrices are recomputed each frame from unchanged
-    /// state, anywhere from the render origin, is at rest; any change larger
-    /// than that rounding has moved it.
+    /// agree when `|a - b| <= CAMERA_REST_STEPS * f32::EPSILON * max(1, m)`,
+    /// where `m` is the larger of `|a|` and `|b|`, and for the view's
+    /// translation also the eye's distance from the render origin (its
+    /// largest absolute component, of either camera), whose rounding a
+    /// translation element carries however small it is. A camera whose
+    /// matrices are recomputed each frame from unchanged state, anywhere
+    /// from the render origin, is at rest; any change larger than that
+    /// rounding has moved it.
     pub fn camera_moved(current: &CameraAttribs, previous: &CameraAttribs) -> bool {
         let projection =
             |camera: &CameraAttribs| unjittered_projection(camera.m_proj, camera.f2_jitter);
-        let agree = |a: &[f32; 16], b: &[f32; 16]| {
-            a.iter().zip(b).all(|(&a, &b)| {
-                (a - b).abs() <= CAMERA_REST_STEPS * f32::EPSILON * 1f32.max(a.abs()).max(b.abs())
+        let eye = eye_magnitude(&current.m_view).max(eye_magnitude(&previous.m_view));
+        let agree = |a: &[f32; 16], b: &[f32; 16], translation: f32| {
+            a.iter().zip(b).enumerate().all(|(i, (&a, &b))| {
+                let scale = if (12..15).contains(&i) {
+                    translation
+                } else {
+                    0.
+                };
+                (a - b).abs()
+                    <= CAMERA_REST_STEPS * f32::EPSILON * 1f32.max(a.abs()).max(b.abs()).max(scale)
             })
         };
-        !(agree(&current.m_view, &previous.m_view)
-            && agree(&projection(current), &projection(previous)))
+        !(agree(&current.m_view, &previous.m_view, eye)
+            && agree(&projection(current), &projection(previous), 0.))
     }
 
     /// Computes the jittered projection matrix. `proj` is a Diligent
@@ -1079,15 +1108,16 @@ mod camera_tests {
         }
     }
 
-    // The tolerance is relative to an element's magnitude, so far from the
-    // render origin it admits a translation of up to 8 rounding steps of the
-    // view's translation: 8 * 2^-23 * 5015 m (the farthest camera's largest
-    // translation element) = 4.8 mm. That is at rest for the view-wide
-    // signal only: a surface the translation moves by 0.01 px or more (one
-    // within about 475 m at this view, whose pixel spans 1.01 mrad) arms its
-    // own pixels through its motion vector, and a farther one moved less
-    // than that. The oracle is that bound: 1 mm (0.77 mm along the largest
-    // element) is within it, 1 cm (7.7 mm) beyond it.
+    // The tolerance of a view translation element is 8 rounding steps of the
+    // larger of its own magnitude and the eye's largest component, so far
+    // from the render origin it admits a small translation: here the
+    // farthest camera's largest translation element, 5015 m, gives
+    // 8 * 2^-23 * 5015 m = 4.8 mm. That is at rest for the view-wide signal
+    // only: a surface the translation moves by 0.01 px or more (one within
+    // about 475 m at this view, whose pixel spans 1.01 mrad) arms its own
+    // pixels through its motion vector, and a farther one moved less than
+    // that. The oracle is that bound: 1 mm (0.77 mm along that element) is
+    // within it, 1 cm (7.7 mm) beyond it.
     #[test]
     fn far_from_the_origin_a_translation_within_the_rounding_bound_is_left_to_the_pixels() {
         let projection = projection(FOV_Y);
@@ -1104,6 +1134,78 @@ mod camera_tests {
         assert!(
             TemporalAntiAliasing::camera_moved(&at(0.01), &rest),
             "1 cm at 5 km is beyond the 4.8 mm the rounding tolerance admits there"
+        );
+    }
+
+    /// The yaw of the cameras below, and its view's right axis and forward
+    /// axis in the world: `view`'s first row and its third row negated.
+    const YAW: f32 = 0.7;
+    fn right() -> [f32; 3] {
+        [YAW.cos(), 0., -YAW.sin()]
+    }
+    fn forward() -> [f32; 3] {
+        [-YAW.sin(), 0., -YAW.cos()]
+    }
+
+    /// `distance` along `axis`, 1.7 m up.
+    fn eye_along(axis: [f32; 3], distance: f32) -> [f32; 3] {
+        [axis[0] * distance, 1.7, axis[2] * distance]
+    }
+
+    // Plausible defect: a view translation element judged by its own
+    // magnitude. It is `-dot(axis, eye)`, a sum of terms of the eye's size
+    // that cancels to near zero when the eye lies along another axis, so
+    // a view rebuilt each frame from the same eye position carrying one to
+    // three of its own rounding steps (as a game's chase camera does) moves
+    // it by steps of the eye's magnitude: 7.6e-6 at 100 m, on an element
+    // near 0. The oracle is the requirement that such a camera is at rest:
+    // eyes along the forward axis (the right-axis translation cancels) and
+    // along the right axis (the forward one does), at 100 m and 5 km.
+    #[test]
+    fn a_view_rebuilt_from_a_rounded_eye_has_not_moved() {
+        let projection = projection(FOV_Y);
+        for (axis, name) in [(forward(), "forward"), (right(), "right")] {
+            for distance in [100., 5000.] {
+                let eye = eye_along(axis, distance);
+                let rest = camera(view(eye, YAW), projection, [0.; 2]);
+                for steps in [1, -2, 3, -3, 2, -1] {
+                    let noisy = [
+                        stepped(eye[0], steps),
+                        stepped(eye[1], -steps),
+                        stepped(eye[2], steps),
+                    ];
+                    let current = camera(view(noisy, YAW), projection, [0.; 2]);
+                    assert!(
+                        !TemporalAntiAliasing::camera_moved(&current, &rest),
+                        "an eye {distance} m along the {name} axis, {steps} rounding steps off, moved"
+                    );
+                }
+            }
+        }
+    }
+
+    // At 100 m the eye's rounding admits a translation of 8 steps of its
+    // largest component: with the eye 100 m along the forward axis that is
+    // 76.5 m, so 8 * 2^-23 * 76.5 m = 73 µm along the right axis. A
+    // translation that small moves only surfaces within about 7 m by 0.01
+    // px or more at this view, and those arm their own pixels. The oracle is
+    // that bound: 0.05 mm is within it, 1 mm beyond it.
+    #[test]
+    fn at_100_m_a_translation_beyond_the_eyes_rounding_moves_the_camera() {
+        let projection = projection(FOV_Y);
+        let eye = eye_along(forward(), 100.);
+        let rest = camera(view(eye, YAW), projection, [0.; 2]);
+        let at = |offset: f32| {
+            let [x, y, z] = eye;
+            camera(view([x + offset, y, z], YAW), projection, [0.; 2])
+        };
+        assert!(
+            !TemporalAntiAliasing::camera_moved(&at(0.00005), &rest),
+            "0.05 mm at 100 m is within the 73 µm the eye's rounding admits there"
+        );
+        assert!(
+            TemporalAntiAliasing::camera_moved(&at(0.001), &rest),
+            "1 mm at 100 m is beyond the 73 µm the eye's rounding admits there"
         );
     }
 }

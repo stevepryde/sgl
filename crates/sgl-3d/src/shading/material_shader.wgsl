@@ -64,7 +64,7 @@ fn vertex(object:u32,rest:MaterialVertex,lightmap_uv:vec2<f32>,lightmap_bounds:v
  if motion_vertices {
   previous=material_shaded_vertex(object,previous,true);
  }
- o.previous_clip=view.previous_view_projection*objects[object].previous_model*vec4(previous.position,1);
+ o.previous_clip=view.previous_view_projection*(objects[object].previous_model*vec4(previous.position,1));
  return o;
 }
 // The unit view vector of the pass's view at `world` (pbr_view): toward its

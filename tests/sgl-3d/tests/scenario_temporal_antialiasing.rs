@@ -287,6 +287,67 @@ fn motion_vectors_match_the_script() {
     }
 }
 
+/// Case 1 far from the render origin (M-20, B-12 of the 2026-11-18 history
+/// audit). Plausible defect: the previous clip position composed in another
+/// order than the current one (`(previous view-projection × previous
+/// model) × vertex` against `view-projection × (model × vertex)`), whose
+/// f32 rounding differs where coordinates are large, so a still camera and
+/// still geometry 100 m sideways of the origin wrote 1.9e-4 px of motion.
+/// The oracle is analytic: nothing moved, so every pixel's motion is
+/// exactly 0, the stage's and the sky's, with the camera bit-identical
+/// every frame, at the origin, 100 m sideways and kilometres away (the
+/// stage `FAR` times as far there).
+#[test]
+fn a_still_scene_far_from_the_origin_writes_no_motion() {
+    let Some(gpu) = gpu() else { return };
+    let mut rig: Option<Rig> = None;
+    for ((distance, scale), offset) in [
+        (NEAR, Vec3::ZERO),
+        (NEAR, Vec3::new(100., 0., 0.)),
+        (DISTANT, Vec3::new(3000., 1500., -4000.)),
+    ] {
+        let script = move |f: u32| {
+            stage_poses_at(scale, None)(f)
+                .into_iter()
+                .map(|p| Pose::at(offset).then(p))
+                .collect()
+        };
+        let camera = move |_: u32| Pose::at(offset);
+        let scenario = Scenario {
+            shapes: stage_shapes(scale),
+            camera: &camera,
+            script: &script,
+        };
+        let rig = match &mut rig {
+            Some(rig) => {
+                scenario.restage(rig);
+                rig
+            }
+            None => rig.insert(scenario.rig(&gpu, VIEW, Antialiasing::Taa)),
+        };
+        let mut largest = [0f32; 2];
+        for frame in 0..4 {
+            scenario.render(rig, frame);
+            if frame == 0 {
+                continue;
+            }
+            for texel in &rig.read(DiagnosticTarget::Motion).texels {
+                largest[0] = largest[0].max(texel[0].abs().max(texel[1].abs()));
+                largest[1] = largest[1].max(texel[2].abs());
+            }
+        }
+        eprintln!(
+            "{distance} stage seen from {offset}: largest motion {} px, depth motion {} m",
+            largest[0] * VIEW.size[0] as f32,
+            largest[1]
+        );
+        assert_eq!(
+            largest, [0.; 2],
+            "a still {distance} stage seen from {offset} by a still camera wrote motion"
+        );
+    }
+}
+
 /// Case 2. Plausible defects: jitter of a pixel or more, no jitter (no
 /// resolve converges on coverage), or jitter leaking into the motion
 /// target, which the resolve would read as motion. The oracles: the
@@ -2497,9 +2558,9 @@ mod at_rest_taa_holds_silhouettes_beside_a_rigid_mover_still {
     );
 }
 
-/// The rounding steps by which the camera's view translation is off its
-/// value at each frame of a jitter cycle's half: one to three steps either
-/// way, one or two steps from the last frame's.
+/// The rounding steps by which the camera's eye position is off its value
+/// at each frame of a jitter cycle's half: one to three steps either way,
+/// one or two steps from the last frame's.
 const ROUNDING: [i32; 8] = [0, 1, 3, 2, 0, -1, -3, -2];
 
 /// `value` `steps` f32 rounding steps up (or down, if negative).
@@ -2514,45 +2575,55 @@ fn stepped(mut value: f32, steps: i32) -> f32 {
     value
 }
 
-/// Case 4 with a camera at rest away from the render origin whose view
-/// carries rounding noise (T-20). Plausible defect: the camera test takes
-/// rounding for motion (an absolute threshold of 1e-6 is one rounding step
-/// at a magnitude of 16), so a camera at rest tens of metres or more from
-/// the render origin, its view recomputed each frame as a game's is, keeps
-/// the whole view at full strength (B-2 of the 2026-11-18 history audit).
-/// The fixture: the stage before the sky, seen from a camera at `offset`,
-/// the stage moved with it, whose view's translation elements are each
-/// re-submitted one to three rounding steps off (`ROUNDING`, alternating in
-/// sign between elements) every frame. Near the stage is 4 m ahead; at
-/// kilometres it is `FAR` times as far, because there three steps of the
-/// translation (1.5 mm) are 0.04 px at 4 m, a real motion above the
-/// still-pixel threshold that arms its pixels as it should, and 0.0001 px at
-/// 2 km. The region and oracle are case 4's at the outlines, the bound
-/// (case 12) included.
+/// The yaw of the turned cameras of the far-from-origin case.
+const TURNED: f32 = 0.7;
+
+/// `distance` metres along the turned camera's forward axis (-Z turned by
+/// `TURNED`) when `forward`, else along its right axis (+X turned), and
+/// `up` metres up: an eye at which the view translation element of the
+/// other axis, `-dot(axis, eye)`, cancels to near zero.
+fn turned_eye(forward: bool, distance: f32, up: f32) -> Vec3 {
+    let axis = if forward { -Vec3::Z } else { Vec3::X };
+    sgl_3d::glam::Mat4::from_rotation_y(TURNED).transform_vector3(axis) * distance + Vec3::Y * up
+}
+
+/// Case 4 with a camera at rest away from the render origin whose view a
+/// game rebuilds each frame from an eye position carrying rounding (T-20).
+/// Plausible defect: the camera test takes rounding for motion (an
+/// absolute threshold of 1e-6 is one rounding step at a magnitude of 16; a
+/// tolerance relative to each element's own magnitude rejects a view
+/// translation element that cancels to near zero, whose noise is steps of
+/// the eye's magnitude), so a camera at rest tens of metres or more from the
+/// render origin keeps the whole view at full strength (B-2 of the
+/// 2026-11-18 history audit). The fixture: the stage before the sky, carried
+/// by a camera at `eye` turned by `yaw`, whose eye position each frame is
+/// one to three rounding steps off in each component (`ROUNDING`,
+/// alternating in sign between components) and whose view the rig rebuilds
+/// from it (`Rig::look`). Near the stage is 4 m ahead; at kilometres it is
+/// `FAR` times as far, because there three steps of the eye (1.5 mm) are
+/// 0.04 px at 4 m, a real motion above the still-pixel threshold that arms
+/// its pixels as it should, and 0.0001 px at 2 km. The region and oracle
+/// are case 4's at the outlines, the bound (case 12) included.
 ///
-/// Without `rounding` the camera is bit-identical every frame and the case
-/// guards the still-pixel rule's read position (DFX-19, B-12 of the audit):
-/// 100 m sideways of the origin the static stage's motion carries f32
-/// residue of about 2e-4 px, under the stillness threshold. Reprojecting
-/// history by it puts the Catmull-Rom fetch a fraction of a texel off, whose
-/// small over- and undershoot the relaxed rectification at rest lets
-/// accumulate past the bound; a still pixel reads its own texel instead.
+/// At 100 m the case also guards the still-pixel rule's read position
+/// (DFX-19, B-12 of the audit): the eye's rounding moves the stage by about
+/// 1e-4 px a frame, under the stillness threshold. Reprojecting history by
+/// that put the Catmull-Rom fetch a fraction of a texel off, whose small
+/// over- and undershoot the relaxed rectification at rest let accumulate
+/// past the bound; a still pixel reads its own texel instead.
 fn at_rest_taa_holds_silhouettes_still_far_from_the_origin(
     (distance, scale): (&str, f32),
-    offset: Vec3,
-    rounding: bool,
+    (eye, yaw): (Vec3, f32),
 ) {
     let Some(gpu) = gpu() else { return };
+    let rest = Pose { position: eye, yaw };
     let script = move |f: u32| {
         stage_poses_at(scale, None)(f)
             .into_iter()
-            .map(|p| Pose {
-                position: p.position + offset,
-                ..p
-            })
+            .map(|p| rest.then(p))
             .collect()
     };
-    let camera = move |_: u32| Pose::at(offset);
+    let camera = move |_: u32| rest;
     let scenario = Scenario {
         shapes: stage_shapes(scale),
         camera: &camera,
@@ -2564,22 +2635,22 @@ fn at_rest_taa_holds_silhouettes_still_far_from_the_origin(
         .not();
     let region = scenario.edges(0, &[0, 1]).and(&near_outline);
     let elsewhere = |rig: &mut Rig, frame: u32| {
-        if !rounding {
-            return;
-        }
         let steps = ROUNDING[frame as usize % ROUNDING.len()];
-        let translation = &mut rig.input.camera.view.w_axis;
-        translation.x = stepped(translation.x, steps);
-        translation.y = stepped(translation.y, -steps);
-        translation.z = stepped(translation.z, steps);
+        let noisy = Vec3::new(
+            stepped(eye.x, steps),
+            stepped(eye.y, -steps),
+            stepped(eye.z, steps),
+        );
+        rig.look(Pose {
+            position: noisy,
+            yaw,
+        });
     };
     let mut failures = Failures::default();
     taa_holds_still_at_rest(
         &mut failures,
         &gpu,
-        &format!(
-            "{distance} silhouettes seen from {offset} m from the origin, rounding {rounding}"
-        ),
+        &format!("{distance} silhouettes seen from {eye} m from the origin turned {yaw}"),
         &scenario,
         &region,
         &elsewhere,
@@ -2588,12 +2659,12 @@ fn at_rest_taa_holds_silhouettes_still_far_from_the_origin(
 }
 
 mod at_rest_taa_holds_silhouettes_still_far_from_the_origin {
-    use super::{DISTANT, NEAR};
+    use super::{DISTANT, NEAR, TURNED, turned_eye};
     use sgl_3d::glam::Vec3;
     crate::scenario::temporal::case_tests!(at_rest_taa_holds_silhouettes_still_far_from_the_origin;
-        at_100_m: (NEAR, Vec3::new(80., 40., -50.), true),
-        at_5_km: (DISTANT, Vec3::new(3000., 1500., -4000.), true),
-        at_100_m_sideways_without_rounding: (NEAR, Vec3::new(100., 0., 0.), false),
+        at_100_m: (NEAR, (Vec3::new(80., 40., -50.), 0.)),
+        at_100_m_along_the_forward_axis: (NEAR, (turned_eye(true, 100., 20.), TURNED)),
+        at_5_km_along_the_right_axis: (DISTANT, (turned_eye(false, 5000., 1500.), TURNED)),
     );
 }
 

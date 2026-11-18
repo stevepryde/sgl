@@ -187,8 +187,9 @@ motion's extra channels are never copied into it.
 Set `TemporalAntiAliasingAttribs::camera_motion` from
 `TemporalAntiAliasing::camera_moved(&current, &previous)`, the cameras given
 to the context: it compares the unjittered matrices to within a few f32
-rounding steps of each element, so a camera at rest anywhere from the origin
-is at rest. Set `rigid_object_motion` when content changes without a motion
+rounding steps of each element, the view's translation at the eye's
+distance from the origin, so a camera at rest anywhere from the origin is
+at rest. Set `rigid_object_motion` when content changes without a motion
 vector that describes it: an object appears, leaves, is shown or hidden,
 changes geometry, or moves without writing its motion. Each rearms recovery
 throughout the view. Newly exposed background can have zero current and

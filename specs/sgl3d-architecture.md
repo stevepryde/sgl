@@ -492,8 +492,10 @@ Stages run in one order, written in one place in `renderer`:
    initialized to zero. Camera motion rearms the
    whole view: `PostFx::begin` decides it on the CPU from the unjittered
    views and projections of this frame and the last, element by element
-   within eight f32 rounding steps of each element's magnitude
-   (`TemporalAntiAliasing::camera_moved`), so a camera at rest anywhere from
+   within eight f32 rounding steps of each element's magnitude, and of the
+   eye's distance from the render origin for the view's translation, whose
+   cancelling sums carry that rounding (`TemporalAntiAliasing::camera_moved`),
+   so a camera at rest anywhere from
    the render origin is at rest, and passes it as `camera_motion`.
    `TemporalAntiAliasingAttribs::rigid_object_motion` also rearms the whole
    view, for changes no motion vector describes: the scene retains, until a

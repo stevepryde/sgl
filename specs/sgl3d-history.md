@@ -306,9 +306,9 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 
 - **Rule.** Every frame, geometry measures motion between `stable_view_projection` (this frame's unjittered view-projection) and `previous_view_projection` (the last finished frame's, unjittered); jitter is applied only to the raster position, as a clip-space offset of 2 × jitter × w. Consumers that reproject rasterized data re-apply jitter themselves (the DiligentFX previous camera, the cull pyramid).
 - **Raised by.** Every frame.
-- **Stays triggered while.** Nothing. Motion goes through a precomposed projection-times-view while raster positions apply view then projection, so far from the origin motion carries rounding noise below 1e-5 UV.
+- **Stays triggered while.** Nothing. The current and previous clip positions are evaluated in the same order (the view-projection times the pose-transformed position), so an unchanged camera and pose write exactly zero motion at any distance from the origin; until the 2026-11-18 audit's B-12 the previous one was `(previous view-projection × previous model) × position`, which wrote 1.9e-4 px of motion 100 m sideways of the origin. Motion goes through a precomposed projection-times-view while raster positions apply view then projection, so the raster position and the motion differ by rounding far from the origin.
 - **Source.** Diligent `TemporalAntiAliasing::GetJitteredProjMatrix` and AMD's FSR jitter documentation. Code: `stages/prepare.rs` (`Prepare::run`), `shading/vertex.wgsl` (`scene_raster_clip`), `shading/material_shader.wgsl` (`vertex`).
-- **Guard.** `motion_vectors_match_the_script`, `jitter_is_sub_pixel_and_never_in_the_motion` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`).
+- **Guard.** `motion_vectors_match_the_script`, `a_still_scene_far_from_the_origin_writes_no_motion`, `jitter_is_sub_pixel_and_never_in_the_motion` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`).
 - **Status.** Rule.
 
 #### M-3 A reset frame drops camera and time motion only
@@ -812,7 +812,7 @@ pixel's motion hold is set to 12.
   rest, taking an outline 0.4% below the sky with a camera 100 m sideways of the origin.
   Code: `TAA_ComputeTemporalAccumulation.wgsl` (`ComputeTemporalAccumulationPS`, `ComputeMaxAlpha`).
 - **Guard.** `at_rest_taa_holds_silhouettes_still_far_from_the_origin`
-  (`at_100_m_sideways_without_rounding`, `at_100_m`)
+  (`at_100_m`, `at_100_m_along_the_forward_axis`)
   (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`), the read position;
   `taa_adaptive_static_projection_residue_is_not_surface_motion`
   (`tests/sgl-post-fx/tests/support/adaptive_taa.rs`).
@@ -978,8 +978,15 @@ pixel's motion hold is set to 12.
   frame's and the last finished frame's: each projection with its jitter removed
   (`(f2Jitter, 0, 0) × column.w` subtracted from every column), then the views and the
   unjittered projections compared element by element in f32, never their products.
-  Elements `a` and `b` agree when `|a − b| ≤ 8 × f32::EPSILON × max(1, |a|, |b|)`: eight
-  rounding steps of the element's magnitude, or of 1 below it. When any element of
+  Elements `a` and `b` agree when `|a − b| ≤ 8 × f32::EPSILON × max(1, m)`: eight
+  rounding steps of the magnitude `m` the element's rounding scales with. For rotation
+  and projection elements `m` is `max(|a|, |b|)`. For the view's translation elements it
+  is also the eye's distance from the render origin (the largest absolute component of
+  either camera's eye, derived from its view): a translation element is
+  `−dot(axis, eye)`, a sum of terms of the eye's magnitude that may cancel to near zero,
+  so its noise is steps of the eye's magnitude however small it is (Hyperdrive's chase
+  camera at rest 100 m from the origin: an element of 0.024 changing by 7.6e-6 to
+  1.5e-5 between frames). When any element of
   either matrix disagrees, `camera_motion` is set and the resolve arms the hold at every
   pixel. A reset frame compares a camera with itself and reports no motion. Recovery is
   12 frames after the last frame the camera moved.
@@ -993,26 +1000,30 @@ pixel's motion hold is set to 12.
   still on screen included, stays at full strength. A camera that drifts by more than
   rounding every frame (smoothing that never converges, interpolation between physics
   ticks that leaves a residue) moves.
-- **Known limits.** The tolerance is relative, so far from the origin it admits a small
-  real translation: up to eight steps of the largest view coordinate, 0.48 mm at 500 m
-  and 4.8 mm at 5 km. That is safe for the view-wide signal because a camera change that
-  moves a pixel by 0.01 px or more arms that pixel through its own motion (T-22): a
-  4.8 mm translation moves only surfaces nearer than about 475 m by 0.01 px or more at
-  1080 rows and a one-radian field, and those pixels arm themselves. Rotation elements
-  are below 1 in magnitude, so a turn of a hundredth of a pixel's angle at that view
-  (1e-5 rad) moves the camera anywhere.
+- **Known limits.** The tolerance scales with the distance from the origin, so far from
+  it it admits a small real translation: up to eight steps of the eye's magnitude, about
+  0.1 mm at 100 m (73 µm with the eye's largest component 76.5 m) and 4 to 5 mm at
+  5 km. That is safe for the view-wide signal because a camera change that moves a pixel
+  by 0.01 px or more arms that pixel through its own motion (T-22): at 1080 rows and a
+  one-radian field 73 µm moves only surfaces within about 7 m by 0.01 px or more, and
+  4.8 mm only those within about 475 m, and those pixels arm themselves. Rotation
+  elements are below 1 in magnitude, so a turn of a hundredth of a pixel's angle at that
+  view (1e-5 rad) moves the camera anywhere.
 - **Source.** Filament `PostProcessManager.cpp` (`kCameraStaticThreshold` 1e-6 on the
   unjittered `projection * view`), modified: Filament compares double-precision matrices
   on the CPU with an absolute threshold; SGL3D compares f32 views and projections on the
-  CPU with a tolerance relative to each element's magnitude, since an absolute 1e-6 on
-  f32 is a single rounding step at 16 (2026-11-18 history audit, B-2).
+  CPU with a tolerance relative to the magnitude each element's rounding scales with,
+  since an absolute 1e-6 on f32 is a single rounding step at 16 (2026-11-18 history
+  audit, B-2).
   Code: `crates/sgl-post-fx/src/temporal_anti_aliasing.rs`
   (`TemporalAntiAliasing::camera_moved`, `CAMERA_REST_STEPS`);
   `crates/sgl-3d/src/view/post_fx.rs` (`PostFx::begin`, `camera_attribs`);
   `TAA_ComputeTemporalAccumulation.wgsl` (`ComputeTemporalAccumulationPS`).
 - **Guard.** `a_camera_at_rest_with_rounding_noise_has_not_moved`,
   `the_smallest_real_camera_changes_move_it`,
-  `far_from_the_origin_a_translation_within_the_rounding_bound_is_left_to_the_pixels`
+  `far_from_the_origin_a_translation_within_the_rounding_bound_is_left_to_the_pixels`,
+  `a_view_rebuilt_from_a_rounded_eye_has_not_moved`,
+  `at_100_m_a_translation_beyond_the_eyes_rounding_moves_the_camera`
   (`crates/sgl-post-fx/src/temporal_anti_aliasing.rs`);
   `a_camera_step_rearms_the_whole_view`,
   `the_hold_lasts_its_frames_after_a_camera_step`,
