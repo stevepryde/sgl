@@ -170,7 +170,7 @@ settings SGL3D has today.
    across frames, and library-owned methods keep CPU state and GPU resources in
    sync. A typed camera/frame interface owns GPU-layout packing; the caller owns
    submission and presentation. Previous camera/instance data describes the last
-   submitted frame: previous camera data is renderer history, previous instance
+   submitted frame: previous camera data is view history, previous instance
    data is scene history, both committed by `Renderer::finish_frame` from what
    the frame drew. Resize, scene replacement and camera cuts invalidate
    affected history. Device-bound resources are recreated when the caller

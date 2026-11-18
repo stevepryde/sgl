@@ -3,8 +3,14 @@
 The rendering settings a game chooses: which mode or implementation to use,
 and how much. They are the fields of `settings::Settings`
 ([`src/settings.rs`](../src/settings.rs)), one serde value: store it in the
-game's own settings record and pass it to `Renderer::new`, `resize` and
-`render`. `Settings::default()` is High with every choice at its default. The
+game's own settings record and pass it to `View::new`, `View::resize` and,
+in the view's `ViewFrame`, `Renderer::render`. Each view takes its own: a
+split screen's halves or an inset may choose differently. A scene has one
+of a few things, which the frame's primary view (the first listed) chooses
+for every view: `hardware_ray_tracing`, `dynamic_gi`,
+`anisotropic_filtering` and the diagnostics layers; the `*_in_effect`
+queries for them take the primary view's settings.
+`Settings::default()` is High with every choice at its default. The
 game decides which settings, if any, to show players, and owns the menu, the
 save file and its presets. A setting says which one or how much, never how:
 SGL3D chooses each feature's internals for the value.
@@ -43,7 +49,7 @@ replace every choice with a complete bundle.
 | FSR sharpening | `Settings::fsr_sharpening`, `Settings::fsr_sharpness` | `true`, `false`; 0.8, any of 0..=1 | | AMD's RCAS sharpening of FSR's output, as AMD asks games to offer: 0 sharpens least, 1 most; values outside are clamped, NaN to 0. |
 | SMAA quality | `Settings::smaa_quality` | `Medium`, `Low`, `High`, `Ultra` | | SMAA 2.8's presets: Low and Medium search up to 4 and 8 steps of two pixels each way along an edge; High up to 16 and also smooths diagonal lines and keeps sharp corners; Ultra up to 32 and finds fainter edges. Higher costs more. |
 | Anisotropic filtering | `Settings::anisotropic_filtering` | `X8`, `Off`, `X2`, `X4`, `X16` | | The most samples material textures take where a surface is seen at a grazing angle: sharper floors and walls at a distance, at more texture bandwidth. Off filters trilinearly. |
-| Scene resolution | `Settings::scene_resolution` | `Preset`, `Hd`, `FullHd`, `Full`, `ThreeQuarter`, `Half` | Low: one pixel per logical pixel. High: up to 1.75, never above the output | `Hd` and `FullHd` fit within 1280×720 and 1920×1080. Pass the window's scale factor to `Renderer::new` and `resize`. The game's UI keeps the output size. |
+| Scene resolution | `Settings::scene_resolution` | `Preset`, `Hd`, `FullHd`, `Full`, `ThreeQuarter`, `Half` | Low: one pixel per logical pixel. High: up to 1.75, never above the output | `Hd` and `FullHd` fit within 1280×720 and 1920×1080. Pass the window's scale factor to `View::new` and `resize`. The game's UI keeps the output size. |
 | Spatial upscaling | `Settings::upscaling` | `Off`, `On` | | Opt-in enlargement from scene to output size after tone mapping and SMAA. On uses SGL3D's portable spatial reconstruction and sharpening; Off keeps linear presentation. Set the input size with `SceneResolution`. Equal-size frames bypass it; native FSR remains independent. |
 | Tone mapping | `Settings::tone_mapping` | `KhronosPbrNeutral` (default), `AcesFilmic`, `Agx` | Independent of quality preset | Standard display transforms; neutral grading by default. AgX alone uses `ColorGrading::agx_look`. |
 | Bloom | `Settings::bloom` | `Preset`, `Off`, `On` | Low: Off. High: On | |
@@ -55,7 +61,7 @@ replace every choice with a complete bundle.
 | Hardware ray tracing | `Settings::hardware_ray_tracing` | `false`, `true` | | Opt-in: no preset turns it on. On a device requested with its feature (`graphics_device::ray_tracing_features`), frames that trace rays build acceleration structures over the scene, which cost memory and build time, and world-space reflections', the dynamic GI volume's and ray-traced shadows' rays trace them. On Metal masked models join them, their cut-out texels judged in the hardware's candidate loop; on Vulkan and DX12 they stay on the software BVHs. Those rays then see skinned and morphed instances too. Off frees the structures and traces the software BVHs alone. No feature needs it: without it the software BVHs trace those rays, and the shadow maps stand in for ray-traced shadows. `Renderer::ray_tracing_in_effect` and `ray_tracing_error` say whether it runs, `ray_tracing_stats` what it held. |
 | Ray-traced shadows | `Settings::ray_traced_shadows` | `false`, `true` | | Opt-in: no preset turns it on. While hardware ray tracing is in effect, the camera's opaque surfaces take the shadows of the directional light with cascades and of up to fifteen casting local lights from rays at half resolution instead of from the maps: shadows soft by the light's size (a point or spot light's `radius`, the directional light's `angular_diameter`), the first four denoised by AMD's FidelityFX shadow denoiser (as the quality below says) and the rest temporally blended, that reach as far as the scene, beyond the directional shadow's distance. The fog, blended surfaces, reflections and other lights keep the maps. While it runs (a light holds a slot), the opaque stage takes its two-pass form, a second geometry pass. On an Apple M5 it cost 2.7–3.6 ms a frame natively on Metal at 1920×1080 on the examples' routes, the denoiser 1.9–2.1 ms of it at High. `Renderer::ray_traced_shadows_in_effect` says whether the setting is in effect; the stage then runs on the frames where a light holds a slot. A `baked` light casts no rays at receivers with baked lighting, which it does not light: lights a game bakes cost rays only at moving instances and unbaked static surfaces. Without hardware ray tracing the maps shadow everything: on the software BVHs these rays cost 3–5 times as much with local lights and over 8 ms a frame on a racing game's route, too much to offer. |
 | Ray-traced shadow quality | `Settings::ray_traced_shadow_quality` | `Preset`, `Low`, `High` | Low: Low. High: High | How much of the ray-traced shadows is denoised while they run; without them it has no effect. High denoises the directional light's shadow and those of three of the local lights (the first three slots after it, each kept by the light that holds it). Low denoises the directional light's alone, in fewer passes, and blends those local lights' with the previous frames' as every other local light's: their soft shadows' edges are noisier, in motion most, for about 1 ms a frame less on an Apple M5 at 1920×1080 (the denoiser 0.9–1.1 ms against 1.9–2.1 ms). Where no local light holds one of those places, High denoises the directional light's alone too: the same result within one 8-bit step, for about 0.8 ms less. A change starts the shadows' history afresh. |
-| Occlusion culling | `Settings::occlusion_culling` | `false`, `true` | | Opt-in: no preset turns it on. The camera skips its opaque and masked geometry hidden behind what it draws, tested twice a frame, so nothing visible is lost or shows a frame late. It costs the opaque stage's two-pass form and two depth pyramids a frame, so it pays only where a frame submits much hidden geometry: on an Apple M5 it cost 0.2–0.5 ms a frame natively on Metal on the examples' routes, and saved about 1 ms in Chrome over a large voxel window seen from the ground. Measure the game's own routes. Needs six storage textures a shader stage, else the camera culls by frustum alone. `Renderer::occlusion_culling_in_effect` says whether it runs. |
+| Occlusion culling | `Settings::occlusion_culling` | `false`, `true` | | Opt-in: no preset turns it on. The camera skips its opaque and masked geometry hidden behind what it draws, tested twice a frame, so nothing visible is lost or shows a frame late. It costs the opaque stage's two-pass form and two depth pyramids a frame, so it pays only where a frame submits much hidden geometry: on an Apple M5 it cost 0.2–0.5 ms a frame natively on Metal on the examples' routes, and saved about 1 ms in Chrome over a large voxel window seen from the ground. Measure the game's own routes. Needs six storage textures a shader stage, else the camera culls by frustum alone. `View::occlusion_culling_in_effect` says whether it runs. |
 | Atmosphere | `Settings::atmosphere` | `true`, `false` | | The volumetric fog and mist, while the game turns `FrameInput::atmosphere` on (off by default, as Godot's fog). |
 | Fog quality | `Settings::fog_quality` | `High`, `Low` | | The volumetric fog's froxels: 64 slices, and square froxels, Low 64 (Godot's default) or High 128 across the geometric mean of the frame's sides. Higher resolves sharper shafts and shadow edges in the fog at more cost. Needs a `perspective` camera. |
 | Fog filter | `Settings::fog_filter` | `true`, `false` | | Blurs each slice of the fog's froxels across the frame before integration (Godot's `use_filter`, on by default): smoother fog with softer shafts and shadow edges in it, for two passes over the froxels. |
@@ -68,11 +74,11 @@ replace every choice with a complete bundle.
 ## When changes apply
 
 The preset, scene resolution, antialiasing changes to, from or between FSR2/FSR3 and FSR
-quality size the targets, so they apply at the next `Renderer::resize`, which
+quality size the targets, so they apply at the next `View::resize`, which
 the game calls every frame. The rest apply on the next rendered frame; that
 frame rebuilds SMAA's pipelines after an SMAA quality change, and every
 material's sampler after an anisotropic filtering change.
-`Renderer::antialiasing_in_effect(&settings)` reports what actually runs and
+`View::antialiasing_in_effect(&settings)` reports what actually runs and
 `fsr_error()` why FSR did not; show the effective choice without rewriting
 the saved value.
 

@@ -13,10 +13,10 @@ input, simulation, protocol, save schema, editor, or ECS. It does not depend on
 winit or an input package; wgpu supplies platform graphics dependencies.
 
 FSR frame generation is unsupported. Native and browser clients use the same
-caller-owned `Renderer` submission and presentation workflow. FSR2 and FSR3.1
+caller-owned `Renderer` and `View` submission and presentation workflow. FSR2 and FSR3.1
 temporal upscaling remain available on supported native devices.
-Use `Renderer::output_encodes_srgb()` when matching a directly composed UI to
-the renderer's selected output transfer.
+Use `View::output_encodes_srgb()` when matching a directly composed UI to
+the view's selected output transfer.
 
 ## Reference map
 
@@ -651,7 +651,7 @@ wants, largest first. A light keeps its slots while it is seen, and moves to
 another size only after holding them for half a second at 60 frames per
 second; a light not seen gives up its slots, least recently seen first, to
 lights that need them. Lights the atlas has no room for are lit without a
-shadow. `Renderer::local_shadow_stats` reports how many lights in the view
+shadow. `View::local_shadow_stats` reports how many lights in the view
 have a shadow, how many do not, and what the frame drew. With ray-traced
 shadows the camera's opaque surfaces take up to fifteen of the placed
 lights' shadows from rays instead
@@ -790,7 +790,7 @@ under a receiver, whose result it is, the opaque lobe keeps its environment
 and probe specular, and the receiver composes the result in its blended draw
 by the same formula.
 
-`Renderer::new` builds source completion for its settings' screen-space
+`View::new` builds source completion for its settings' screen-space
 reflections and ambient occlusion, so a first frame from a `perspective`
 camera compiles none of it; turning either on or off later compiles it again
 on the next frame.
@@ -958,8 +958,8 @@ SMAA on Low. They antialias like TAA while upscaling:
 - `Settings::fsr_quality` (`settings::FsrQuality`) sets the render size: Native
   AA renders every scene pixel; Quality, Balanced, Performance and Ultra
   Performance render 1/1.5, 1/1.7, 1/2 and 1/3 of it per dimension.
-  `Renderer::render_size()` is the size of every pass up to antialiasing;
-  `Renderer::scene_size()` stays the `SceneResolution` size, which FSR outputs
+  `View::render_size()` is the size of every pass up to antialiasing;
+  `View::scene_size()` stays the `SceneResolution` size, which FSR outputs
   and bloom and tone mapping use.
 - The frame renders with FSR's jitter sequence and a texture mip bias of
   `log2(render / scene) - 1`. FSR reads the linear HDR frame, the unjittered
@@ -989,13 +989,13 @@ SMAA on Low. They antialias like TAA while upscaling:
   a moving or shaded material). A shader that reads no time, with inputs
   written unchanged, marks nothing.
 - Request `graphics_device::fsr_features(&adapter)` when creating the device.
-  `antialiasing` and `fsr_quality` take effect at the next `Renderer::resize`,
+  `antialiasing` and `fsr_quality` take effect at the next `View::resize`,
   which creates the selected FSR context. Switching versions destroys the
   previous context and resets temporal history, even at the same resolution.
   A failure is retained per version; switching to the other remains possible.
   Where the device lacks the features or the
   context cannot be created, TAA runs at the scene size:
-  `Renderer::antialiasing_in_effect(&settings)` reports it and `fsr_error()`
+  `View::antialiasing_in_effect(&settings)` reports it and `fsr_error()`
   says why. A frame whose FSR dispatch fails is scaled to the scene size
   without it, and TAA runs from the next `resize`, with `fsr_error()`
   saying why.
@@ -1013,7 +1013,7 @@ WebGPU feature and adds no temporal history. Equal-size presentation bypasses
 it; `Off` retains the existing linear presentation filter.
 
 Choose the input size with `Settings::scene_resolution`, for example
-`SceneResolution::ThreeQuarter` or `Half`, and call `Renderer::resize` as
+`SceneResolution::ThreeQuarter` or `Half`, and call `View::resize` as
 usual. UI drawn after SGL3D stays at output resolution. The game chooses
 whether to upscale and the scene resolution; the filter and sharpening
 parameters remain SGL3D's. Measure the combined rendering and upscaling cost
@@ -1074,7 +1074,7 @@ offscreen or thin-occluder visibility; [the pinned XeGTAO catalogue](src/stages/
 details approximations and numerical evidence.
 
 With `diagnostics`,
-`Renderer::diagnostic_target(DiagnosticTarget::AmbientOcclusion)` returns the
+`View::diagnostic_target(DiagnosticTarget::AmbientOcclusion)` returns the
 last frame's R32Uint visibility texture (0..255), or `None` when AO did not
 run. It shares the dimensions and receiver correspondence of the `Depth` and
 `Normal` targets; it does not perform readback.
@@ -1131,8 +1131,9 @@ have no readback-buffer requirement.
 
 For authoring, offline or while a level loads, install the static instances'
 fixed-light atlases, then
-`renderer.capture_specular_probe_async(&device, &queue, &mut scene, &input,
-&settings, center, face_size).await?` (natively also the blocking
+`renderer.capture_specular_probe_async(&device, &queue, &mut scene, &mut view,
+&input, &settings, center, face_size).await?`, which borrows `view`'s shadow
+maps and opaque stage and is not a frame (natively also the blocking
 `capture_specular_probe`) renders six faces of the static capture-visible instances
 and the reflection sky of `input`'s environment with `input`'s lights, and
 GGX-prefilters them with filtered importance sampling. Each face renders at
@@ -1230,7 +1231,7 @@ and `irradiance_volume` examples' routes, though it culled up to 92% of the
 camera's triangles, and saved 0.9–1.4 ms in Chrome over a headroom-sized
 window seen from a walker's eye (#24). It needs six storage textures a shader stage, which `graphics_device::limits`
 requests from the adapter; a device with fewer culls by frustum alone, and
-`Renderer::occlusion_culling_in_effect` reports it. The directional cascades
+`View::occlusion_culling_in_effect` reports it. The directional cascades
 cull by frustum alone.
 
 The CPU-built lists draw instanced: the instances that draw the same mesh
@@ -1948,9 +1949,13 @@ cargo run -p sgl-3d-examples --example skinned -- target/skinned.png
 ## Retained scene and frame lifecycle
 
 A game holds a `Scene` (content: geometry, materials, instances, lights,
-decals, environments and bakes), a `Renderer` (targets, pipelines and histories) and
-its `settings::Settings`. Each frame it describes the camera, the
-authored look and per-frame state in a `FrameInput`.
+decals, environments and bakes), a `Renderer` (what every view of the scene
+shares: the geometry pipelines and bind group layouts, the deform and dynamic
+GI stages and the frame boundary), a `View` for each image of the scene it
+draws (its targets and sizes, its stages and every history kept in screen
+space or fit to its camera) and its `settings::Settings`. Each frame it
+describes each view's camera, the authored look and per-frame state in a
+`FrameInput`.
 
 1. Select an adapter and request the renderer's device requirements:
    `graphics_device::limits` gives its adapter-sized limits,
@@ -2058,7 +2063,7 @@ authored look and per-frame state in a `FrameInput`.
      GI volume (its probes kept) and the ray source. From then on the game gives the camera, the frame input and
      its edits in the new frame. It is not a static edit: moving instances
      keep their motion, static shadow layers stay valid, histories continue
-     (each renderer translates what it keeps), and the directional
+     (each view translates what it keeps), and the directional
      cascades' texel grid stays put. Geometry, bakes and probe captures do
      not change. A translated position rounds once, at its magnitude in the
      new frame, so integer poses such as chunk origins stay exact and a game
@@ -2070,23 +2075,24 @@ authored look and per-frame state in a `FrameInput`.
    the ray source, and slabs that hold every mesh's shadow-caster positions
    and indices from 1 MiB up to 512 MiB each, grown by half again when
    full, so adding, replacing and removing models creates no buffer per
-   mesh. `Renderer::new(&device, &queue,
-   output_format, output_size, device_scale, &settings)` creates the targets
+   mesh. `Renderer::new(&device)` creates what the views share, and
+   `View::new(&renderer, &device, &queue, output_format, output_size,
+   device_scale, &settings)` a view's targets
    for an output of `output_size` physical pixels in a window of
    `device_scale` physical pixels per logical pixel. It writes floating-point
    composition textures (`Rgba16Float`, `Rgba32Float`,
    `Rg11b10Ufloat`) in display-referred linear sRGB on both platforms. An sRGB
    attachment encodes on write; other unorm textures receive encoded sRGB.
    For direct window/canvas presentation use
-   `Renderer::new_surface(&device, &queue, &surface_config, &surface_caps, device_scale, &settings)`:
+   `View::new_surface(&renderer, &device, &queue, &surface_config, &surface_caps, device_scale, &settings)`:
    it reads both the format and colour space. Browser Auto float canvases take
    encoded sRGB; native Auto RGBA16F surfaces take linear sRGB when supported,
    otherwise encoded sRGB. Pass `surface.get_capabilities(&adapter)`
    as `surface_caps` so SGL follows the actual surface. Explicit
    `Srgb`/`ExtendedSrgb` take encoded sRGB, `ExtendedSrgbLinear` linear.
    A linear colour space with an sRGB attachment, or an unsupported colour
-   space, returns `UnsupportedSurfaceOutput`.
-   Recreate the renderer when surface format or colour space changes.
+   space, returns `ViewError::UnsupportedSurfaceOutput`.
+   Recreate the view when surface format or colour space changes.
    Composition samples float outputs as linear and applies its final display
    transfer once; no material or exposure gamma correction is needed.
 4. Each frame, `set_instance` each moving instance with its pose and
@@ -2098,16 +2104,20 @@ authored look and per-frame state in a `FrameInput`.
    again. `set_light` each light that moves or changes. Fixed emitters light
    static surfaces through the [baked lighting](#baked-diffuse-lighting), and
    moving instances through it or as baked lights.
-5. Call `renderer.resize(&device, output_size, device_scale, &settings)`. It
-   does nothing unless the output size, the scale or a size-affecting setting
-   changed, so call it every frame.
-6. Build the frame's `FrameInput` (`FrameInput::new(camera)` holds the
+5. Call `view.resize(&device, output_size, device_scale, &settings)` for
+   each view. It does nothing unless the output size, the scale or a
+   size-affecting setting changed, so call it every frame.
+6. Build each view's `FrameInput` (`FrameInput::new(camera)` holds the
    defaults) and call `renderer.render(&device, &queue, &mut encoder, &mut
-   scene, &input, &settings, &output_view, timing)`. It encodes the whole
-   frame into `output_view`, of the output format and size; the output may be
-   offscreen, so no window or surface is required.
+   scene, &mut [ViewFrame { view: &mut view, input: &input, settings:
+   &settings, output: &output_view, timing }])` once, every view listed, the
+   main view first. It encodes the scene's frame work once and then each
+   view's whole frame into its output view, of that view's output format and
+   size; the output may be offscreen, so no window or surface is required.
+   One `render` call is one frame of the scene: never render the scene twice
+   for one finished frame.
 7. Draw game-owned HUD/UI afterward, submit the encoder, then call
-   `renderer.finish_frame(&mut scene)`: the frame's camera and moving
+   `renderer.finish_frame(&mut scene)`: each view's camera and the moving
    instances' poses and deformations, as the frame drew them, become the
    next frame's history, and the shadow faces it drew become reusable. Do
    not finish a frame that was not submitted; an abandoned encoder leaves
@@ -2119,17 +2129,49 @@ authored look and per-frame state in a `FrameInput`.
    submission, never between them: an edit made after the submission and
    before `finish_frame` belongs to the next frame.
 
-History restarts for `FrameInput::camera_cut`, a resize that changes the
-targets (also one between a frame's `render` and `finish_frame`) and a
-different scene. Submit each encoded frame before rendering the
+A view's history restarts for `FrameInput::camera_cut`, a resize that changes
+its targets (also one between a frame's `render` and `finish_frame`), a
+different scene, and a finished frame of its scene that did not render it:
+the scene keeps one frame of motion history, so list every view that keeps
+temporal history in every frame (a view drawn every other frame should use
+SMAA or no antialiasing). Submit each encoded frame before rendering the
 next one with the same `Scene` and `Renderer`: frame uniforms and upload
 storage are retained, so frames with different inputs cannot be queued in one
 submission. Run probe captures between frames, never between a frame's
 `render` and its `finish_frame`. Skip rendering zero-sized or minimized
 outputs in the game.
-Recreate the scene and renderer after replacing the device. Dropping them
-releases the library's GPU handles; the game still owns its device, queue,
-surface, and asset sources.
+Recreate the scene, renderer and views after replacing the device. Dropping
+them releases the library's GPU handles; the game still owns its device,
+queue, surface, and asset sources.
+
+### Several views
+
+A split screen, an inset, a rear view or an editor's viewports are several
+`View`s of one scene, each listed in the frame's `Renderer::render` with its
+own `FrameInput`, `Settings` and output. The first listed is the frame's
+primary view. The scene's frame work runs once, in its stage order: the
+scene's uploads, its ray instances under the primary's visibility mask, the
+acceleration structures (ordered from its eye, built when any view of the
+frame traces), the deform pass, and the dynamic GI update from the primary's
+lights, environment, time and frustum; every view then binds the probes.
+The primary's settings choose what a scene has one of: `hardware_ray_tracing`,
+`dynamic_gi`, `anisotropic_filtering` and the diagnostics layers, and the
+`Renderer::*_in_effect` queries for them take its settings. Everything else
+is each view's own: its antialiasing and sizes, shadows and their quality,
+reflections, ambient occlusion, fog, exposure, culling and post. Each view
+holds its own targets, FSR context, local-light shadow atlas, static layers
+and cache, so memory and shadow-face draws grow with views, and creating one
+compiles its own stage pipelines. One renderer shows one scene at a time:
+another scene specialises its pipelines again and restarts its dynamic GI,
+so a game showing two scenes at once holds a renderer for each. Known
+limits: rays see the scene under the primary view's visibility mask, and a
+view's output cannot yet be a scene texture (an in-world mirror or portal
+needs a render-texture material first). The
+[views example](../../examples/sgl-3d/examples/views.rs) draws a main view and a rear-view inset:
+
+```sh
+cargo run -p sgl-3d-examples --example views -- target/views.png
+```
 
 The [offscreen example](../../examples/sgl-3d/examples/offscreen.rs) is the loop to copy, with
 procedural geometry, caller-created environments, animation and PNG output:
@@ -2173,7 +2215,9 @@ is taken to render untimed. Each frame:
 for frame in timing.begin_frame(&device, &queue) {
     // frame.frame, frame.total_ms, frame.passes: [PassTime { name, ms }]
 }
-renderer.render(&device, &queue, &mut encoder, &mut scene, &input, &settings, &view, Some(&timing));
+renderer.render(&device, &queue, &mut encoder, &mut scene, &mut [ViewFrame {
+    view: &mut view, input: &input, settings: &settings, output: &output, timing: Some(&timing),
+}]);
 // Game passes may join: `timestamp_writes: timing.render_pass("HUD")`.
 queue.submit([encoder.finish()]);
 timing.submitted(&queue);
@@ -2756,7 +2800,8 @@ with `--ray-traced-shadows`.
 ## Settings and capability fallback
 
 `settings::Settings` holds every rendering setting a game chooses in one serde
-value the game stores and passes to `Renderer::new`, `resize` and `render`;
+value the game stores and passes, per view, to `View::new`, `View::resize`
+and `Renderer::render`;
 `Settings::default()` is High with atmosphere allowed.
 [Settings](docs/settings.md) lists each field. The game owns its settings
 record, file format, controls, defaults, and saving. `settings::FrameRate`
@@ -2807,7 +2852,7 @@ The browser is a first-class target in its own right
 ([D-20](../../specs/decisions.md), [D-27](../../specs/decisions.md),
 [D-48](../../specs/decisions.md)): SGL3D supports there everything WebGPU
 supports, and only a feature or speed-up the web platform cannot run falls
-back or is absent. The same `Scene`, `Renderer` and frame run on the page's
+back or is absent. The same `Scene`, `Renderer`, views and frame run on the page's
 WebGPU device, built for `wasm32-unknown-unknown` (sgl-3d enables wgpu's
 `webgpu` backend). WebGL2 is not supported, since SGL3D needs compute; if
 WebGL is ever added it will be a minimal fallback.
@@ -2835,7 +2880,7 @@ WebGL is ever added it will be a minimal fallback.
   16-bit normalized formats and storage formats beyond WebGPU's core set,
   which wgpu's browser backend does not request: chosen in the browser it
   resolves to TAA,
-  `Renderer::antialiasing_in_effect` reports TAA and `fsr_error()` names the
+  `View::antialiasing_in_effect` reports TAA and `fsr_error()` names the
   missing features. TAA, both screen-space reflection methods, world-space
   reflections, dynamic GI, ambient occlusion, fog, motion blur, bloom and
   SMAA run. For reduced-resolution browser rendering, use an explicit
@@ -3248,7 +3293,8 @@ buffers and the ray-query structure built from its geometry), `src/view/`
 stages: the frame's context, the effective configuration, the shared targets,
 group 0 and DiligentFX's context), `src/stages/` (one module per stage, whose
 documentation states what it reads, writes and honours) and `src/renderer/`
-(`Renderer`, the frame's order in `frame.rs`, the effective configuration's
+(`Renderer` and its shared part in `shared.rs`, `View` in `view.rs`, the
+frame's order in `frame.rs`, the effective configuration's
 resolution in `effective.rs` and the probe capture's order in
 `probe_capture.rs`).
 
@@ -3270,15 +3316,15 @@ retained capture inputs; the ordinary test command does not establish those
 results. Run relevant cases explicitly when changing their boundary. The
 `diagnostics` feature adds `Settings::diagnostics` (`settings::Diagnostics`,
 not serialized: switches that turn a layer off, the numerical frame probe
-and the tone-target capture), `Renderer::diagnostic_target` (the frame's
+and the tone-target capture), `View::diagnostic_target` (the frame's
 targets: depth, normals, motion, source identity, the composite, ambient
 occlusion, the captured tone-mapped target, the exposure, and `Antialiased`,
 the completed linear HDR scene as antialiasing leaves it, before motion blur,
 bloom and tone mapping),
-`Renderer::take_frame_probe_reports` (source-to-black comparisons run only
+`View::take_frame_probe_reports` (source-to-black comparisons run only
 when the actual observed textures have equal dimensions, including FSR
 fallbacks),
-`Renderer::geometry_stats_for_model` (the camera's sections of one model's
+`View::geometry_stats_for_model` (the camera's sections of one model's
 instances, read back with `geometry_stats`), `diagnostics::read_async` (natively
 also the blocking `diagnostics::read`),
 `diagnostics::source_id`, the value the source-identity target holds for an
@@ -3291,10 +3337,10 @@ acceleration-structure builds and compactions; subtract
 two with `Counters::since`, and compare versions by totals since lines move),
 `Scene::diagnostic_resources` (the scene's buffer sizes and BLASes, and the
 draw candidates', sets', level chains' and each GPU-built view's cluster
-list's bytes), `Renderer::diagnostic_draws` (the last frame's camera, blended
+list's bytes), `View::diagnostic_draws` (the last frame's camera, blended
 and cascade draws as encoded: a GPU-built view's one per set and phase,
 and a cascade's second per opaque set, its paired sections' indexed draw),
-`Renderer::diagnostic_view_times` (the CPU time the camera's and each
+`View::diagnostic_view_times` (the CPU time the camera's and each
 cascade's draw list took to build, preparing and encoding its cull, and to
 record), and `Diagnostics::dynamic_gi` with
 `Renderer::take_dynamic_gi_reports` (`diagnostics::DynamicGiReport`: each
@@ -3361,7 +3407,7 @@ not the original triangle IDs. Probes, shadows and scene rays deliberately retai
 the original geometry: this feature reduces primary raster work, not ray geometry
 storage or offscreen capture costs. No LOD registration leaves rendering unchanged.
 
-`Renderer::geometry_stats(&device)` returns static- and moving-instance
+`View::geometry_stats(&device)` returns static- and moving-instance
 (draws, triangles) pairs (`GeometryStats`, summed by `total()`) for the
 primary raster population of the most recent completed frame, after
 visibility, frustum, material and level-of-detail culling and before GPU
@@ -3371,7 +3417,7 @@ requested at `finish_frame`), with its blended surfaces' instanced draws
 from the same frame, a draw per batch and range, whose triangles count once
 per instance. It is `None` until a frame's readback has arrived, a few
 frames after the first. It excludes shadow, probe and ray work. With the
-`diagnostics` feature, `Renderer::geometry_stats_for_model(&device, &scene,
+`diagnostics` feature, `View::geometry_stats_for_model(&device, &scene,
 model)` counts the same frame's sections of one model's instances and the
 blended draws that hold one, with their triangles.
 
