@@ -56,11 +56,13 @@
 //!   render size, written as AMD's FSR sample writes them from its
 //!   translucency pass (`view::targets::mask_targets`): cleared before the camera's
 //!   transparent draws, additive effects marking reactivity as its reactive
-//!   particles do and mist marking transparency and composition as its
-//!   translucent materials do (`glow.wgsl`, `mist.wgsl`). Before them,
-//!   opaque and masked surfaces whose material's normal layers move mark
-//!   transparency and composition 1, as its animated textures do (docs 237
-//!   name animated textures; `view::targets::composition_targets`). After
+//!   particles do, at the frame's exposure, a pixel's reactivity at most 0.9
+//!   (`shading/temporal_masks.wgsl`), and mist marking transparency and
+//!   composition as its translucent materials do (`glow.wgsl`, `mist.wgsl`).
+//!   Before them, opaque and masked surfaces whose shading changes where
+//!   they stand still (`Scene::shading_changes`) mark transparency and
+//!   composition 1, as its animated textures do (docs 237 name animated
+//!   textures; `view::targets::composition_targets`). After
 //!   them all, heat distortion marks its weight where it covers (in front
 //!   of the opaque depth) as transparency and composition, accumulated as
 //!   the translucent draws accumulate theirs, under their condition

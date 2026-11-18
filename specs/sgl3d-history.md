@@ -67,37 +67,20 @@ contract a game follows:
 
 ## Defects
 
-Found by the 2026-11-18 history audit ([audit log](audits.md)). Each is
-described in full at the entries named.
+Found by the 2026-11-18 history audit and in settling its open questions
+([audit log](audits.md)). Each is described in full at the entries named.
 
 | # | Defect | Entries |
 | --- | --- | --- |
-| B-3 | Every opaque or masked material with a game shader is marked transparency and composition 1 on every frame, whether or not its shading changes, and the architecture describes the trigger in two ways. | M-16, T-29, U-11 |
 | B-4 | A frame that is rendered but not finished restarts TAA, Crystal reflections, FSR, ambient occlusion and ray-traced shadows on the next frame. The History contract says an abandoned frame restarts nothing. FSR's context advances on every dispatch, recorded or submitted, so its fix withholds the dispatch or restores that state. | F-3, T-4, U-2, R-2, S-25, AO-10 |
-| B-5 | Crystal's temporal disocclusion test reprojects depth through the camera alone, so a surface that moves with the camera loses or drifts its reflection history, and its fallback search takes the first neighbour it tries. | R-10, R-11 |
-| B-6 | The ray-traced shadow denoiser reprojects depth through the camera alone, so a surface that moves with the camera has its moments rejected every frame. | S-18 |
-| B-7 | The ray-traced shadow temporal blend tests 1 m of linear depth without depth motion, so still scenery loses history when the camera travels more than 1 m a frame. | S-11 |
 | B-8 | A material that gains a game shader evaluates its first frame's vertex motion from all-zero parameters. | M-8 |
-| B-9 | Velvet at half resolution takes depth from the nearest pixel of a block and motion from another. | R-23 |
-| B-10 | The glow's reactive value is computed from HDR radiance without exposure, so it saturates by the game's light units and not by what shows. | M-17b, U-13 |
-| B-11 | A local light that leaves the shadow atlas ranking for one frame restarts its ray-traced shadow history. | S-6 |
+| B-20 | Crystal's surface-history discard measures its tolerance with the 3×3 variance of deterministic mirror rays, near zero on smooth reflection, so under camera motion any change of the reflected radiance discards history, alternating with the jitter and doubling the flicker. | R-9 |
 
 ## Open questions
 
 | # | Question | Entries |
 | --- | --- | --- |
-| O-1 | More than one view a frame: one renderer for two cameras, two renderers on one scene, and edits between render and `finish_frame` are unspecified. | F-12, F-13 |
-| O-2 | TAA's mask hold makes pixels at the jittered edges of still marked content alternate between partial and full strength. The visible cost is unmeasured. | T-25 |
-| O-3 | Crystal's surface-history discard compares against a 3x3 variance that is near zero on smooth mirror reflections. Unmeasured. | R-9 |
-| O-4 | Pixels whose roughness straddles a method's cutoff may leave and re-enter the traced set under jitter. Unmeasured. | R-6, R-25 |
-| O-5 | Whether blended receivers, which write valid motion, should mark reactivity. | U-12 |
-| O-6 | AMD's FSR3 tuning constants and flags are left at their defaults; `VelocityFactor` and the debug view are not exposed. | U-47, U-52 |
-| O-7 | Fog reprojection requires an exactly unchanged `Fog::length`. | V-3 |
-| O-8 | Automatic exposure is metered from the jittered frame, so the exposure FSR and tone mapping take changes slightly in every frame of a still view. | E-3 |
-| O-9 | World-ray texels with no listed ray accumulate zero samples where screen-space reflections were confident. | R-30 |
-| O-10 | Filament's minimum box half-width (0.002) is not ported and not recorded. | T-13 |
-| O-11 | An animated backdrop changes the sky with no motion and no mask. | M-10b |
-| O-12 | FSR's reactive union across draws can exceed AMD's recommended 0.9. | U-10 |
+| O-1 | More than one view a frame: one renderer for two cameras, two renderers on one scene, and edits between render and `finish_frame` are unspecified. The owner requires more than one view a frame; its design is being implemented. | F-12, F-13 |
 
 ## Frame and renderer
 
@@ -233,7 +216,7 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 - **Stays triggered while.** The game keeps rendering more than one view per frame that way.
 - **Source.** SGL3D's own. Code: `renderer/mod.rs` (`Renderer::finish_frame`), `scene/mod.rs` (`Scene::finish_frame`), `scene/instances.rs` (`Instances::finish_frame`).
 - **Guard.** None.
-- **Status.** Open question O-1. Whether more than one view per frame is supported, and how, is undecided.
+- **Status.** Open question O-1. The owner requires more than one view a frame; how each view keeps its history is designed and being implemented, and this entry describes the behaviour until then.
 
 #### F-13 Commit takes the scene as it is at `finish_frame`
 
@@ -1908,7 +1891,10 @@ displacement is zero; FSR uses it as U-26 and U-45).
 - **Source.** AMD `fsr3/accumulate.h` (`ComputeBaseAccumulationWeight`); faithful port (`sp-fidelity`).
 - **Guard.** `following::`, `chase::` in `tests/sgl-3d/tests/scenario_fsr_upscaling.rs` (followed shapes at zero
   motion).
-- **Status.** Open question O-6. `VelocityFactor`, AMD's control for this trade-off, is left at 1 and not exposed.
+- **Status.** Rule. `VelocityFactor`, AMD's control for this trade-off, stays at AMD's 1 and is not exposed: a history
+  weight is SGL3D's to choose, never a game field (S3D-6), and zeroing AMD's velocity factor, shading-change scale and
+  reactiveness scale in Hyperdrive raised the error on a moving craft's flat regions against a supersampled reference
+  from 0.0175 to 0.020, and to 0.055 with all three at zero (O-6, 2026-11-18).
 
 #### U-48 Rectification
 
@@ -1979,8 +1965,10 @@ displacement is zero; FSR uses it as U-26 and U-45).
 - **Source.** AMD `ffx_fsr3upscaler.h` defaults; faithful port (`sp-fidelity: src/fsr3upscaler/component.rs`).
   Code: `crates/sgl-3d/src/stages/antialiasing/fsr.rs` (`Fsr::new`, `Fsr::dispatch`).
 - **Guard.** None.
-- **Status.** Open question O-6. The constants and flags are left at defaults; `VelocityFactor` and the debug view
-  are not exposed.
+- **Status.** Rule. The constants and dispatch flags stay at AMD's defaults and none is exposed: thresholds, history
+  weights and other internals are SGL3D's to choose, never game fields (S3D-6), and zeroing AMD's velocity factor,
+  shading-change scale and reactiveness scale in Hyperdrive raised the error on a moving craft's flat regions against
+  a supersampled reference from 0.0175 to 0.020, and to 0.055 with all three at zero (O-6, 2026-11-18).
 
 ## Reflections
 

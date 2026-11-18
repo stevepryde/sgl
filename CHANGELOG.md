@@ -42,6 +42,61 @@ docs and specs the entry links.
   both axes) reads its own history instead of reprojecting by that residue,
   so outlines at rest no longer drift past the scene's radiance range far
   from the render origin. No code changes are needed.
+- `sgl-3d` temporal masks (FSR's transparency-and-composition mask, TAA's
+  responsive masks): an opaque or masked material with a game shader
+  (`SurfaceMaterial::shader`) was marked on every frame; it is now marked
+  only while its module reads `ctx.time` or `ctx.phase`, or in the frame
+  after `Scene::set_shader_parameters` or `Scene::set_instance_shader_data`
+  changes what it reads (an edited masked material over its whole
+  footprint), so a still shaded surface now reaches TAA's resting stability
+  and FSR's locks. Overlapping blended surfaces and glow could raise a
+  pixel's reactivity above 0.9 (two 0.9 draws gave 0.99); reactivity now
+  combines within AMD's recommended 0.9. No game-code changes are needed;
+  write shader parameters and instance data only when they change
+  (rewriting the same values marks nothing).
+- `sgl-3d` glow (`Scene::update_effects`): its reactive-mask value was its
+  radiance times alpha in the scene's light units; it is now that at the
+  frame's exposure (`FrameInput::exposure`), what the glow adds to the
+  displayed frame. No game-code changes are needed.
+- `sgl-3d`: the sky's motion vectors follow a turn of
+  `Backdrop::Environment`'s `yaw` between finished frames as well as the
+  camera's rotation, so TAA, FSR and motion blur track a rotating backdrop;
+  before, the sky wrote the camera's rotation only. A change of brightness,
+  colour or environment still writes no motion. No game-code changes are
+  needed.
+- `sgl-3d` reflections: Crystal (the default screen-space method) keeps its
+  accumulated history on a surface that moves with the camera, such as a
+  vehicle a chase camera follows; its reflections there drifted by a pixel a
+  frame or flickered while it moved. Velvet at
+  `Settings::screen_space_reflections` Half keeps its history at the
+  silhouettes of moving or camera-followed objects, which were noisy while
+  they moved. No game-code changes are needed.
+- `sgl-3d` ray-traced shadows (`Settings::ray_traced_shadows`): the denoiser
+  and the temporal blend now keep a surface's history when the camera
+  follows it or travels fast toward still scenery (they compared depths
+  through the camera alone and against an absolute metre), and no longer let
+  surfaces under a metre apart far away share history. No game-code changes
+  are needed.
+- `sgl-3d` `FrameInput::fog` (`Fog::length`): changing the fog length no
+  longer restarts the volumetric fog's history and jitter. The fog
+  reprojects through the last frame's length, so a length animated or
+  recomputed every frame keeps accumulating. No game-code changes are
+  needed; a game that held its length constant to keep fog history may now
+  animate it.
+- `sgl-post-fx`: `TemporalAntiAliasing`'s motion-adaptive resolve reads each
+  of `RenderAttributes::responsive_masks` as its largest value over the
+  pixel's 3x3 neighbourhood, as FSR dilates its masks, so the jittered edges
+  of still marked content settle at the mask's strength instead of
+  alternating with full strength; marking now reaches one pixel beyond what
+  the mask covers. No game-code changes are needed.
+- `sgl-post-fx` `screen_space_reflection::RenderAttributes::motion_vectors_srv`:
+  SSR's temporal pass now reads depth motion from the motion vectors' Z
+  (previous minus current camera Z) and W (its validity, above 0 valid) and
+  compares history with the depth that gives, so it requires a four-channel
+  view (such as `Rgba16Float`) and panics on fewer, as motion-adaptive TAA
+  does. Direct `sgl-post-fx` callers pass `[ndc_x, ndc_y, depth_motion,
+  valid]`; a still scene passes `[x, y, 0., 1.]`. SGL3D games need no
+  change.
 
 ## 0.7.1 — 2026-11-18
 
