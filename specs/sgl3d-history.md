@@ -2127,10 +2127,26 @@ rejection repeats (R-16, R-29).
 - **Status.** Defect B-20. The discard's tolerance is the variance of a deterministic signal, so
   it fires on any change of the reflected radiance under motion, not only on parallax, and
   alternates with the jitter. DFX-25 added it because it cut fast-motion smear of bright
-  fixtures' reflections in Hyperdrive (beta 0.014 to 0.009, #80); each narrowing considered
-  (applying it only where the hit candidate is unavailable, as AMD reaches it; taking the hit
-  history instead of discarding; AMD's hit-first order, which misplaces a moving receiver's
-  history) gives back some of that, which needs the game's capture to weigh. Unfixed.
+  fixtures' reflections in Hyperdrive (beta 0.014 to 0.009, #80). Measured 2026-11-18 against
+  that smear, no narrowing removes the misfire and keeps the reduction, so the rule is unchanged
+  and the choice is the owner's. On Hyperdrive's tunnel at 1920×1080, Ultra, Crystal, it fires
+  on about 100 000 road pixels a frame in steady motion, at all of them (in the frames checked)
+  where the hit candidate passes the pass's own disocclusion test. Smear is the least-squares weight of
+  the reflections 2–8 frames old, from the run without history, in each variant's difference
+  from that run, over the pixels Crystal changes (AA off, frames 30–119): 0.215 / 0.183
+  (night / day) without the discard, 0.179 / 0.152 with it. Slow-motion flicker is the mean
+  absolute second difference of linear luminance there under TAA, the camera alone moving
+  0.5 m a frame: 0.0174 / 0.0183 without the discard, 0.0182 / 0.0193 with it (p99 0.294 /
+  0.296 against 0.310 / 0.310); with the camera still every variant measured the same (0.0004 /
+  0.0008). AMD's order (the hit history wherever it passes that test, the surface's tested
+  only where it fails) and taking the hit history in place of the discard
+  remove the misfire (0 discards in the fixture above, flicker 0.0175 / 0.0183) but keep 5 % /
+  3 % and 15 % / 14 % of the smear reduction (0.213 / 0.182, 0.209 / 0.179); discarding only
+  where the hit fails keeps none, because on the road the hit always passes. AMD's radius-4
+  Gaussian window in place of the 3×3 keeps about 40 % of it (0.201 / 0.171) but halves the
+  misfire only (5612 of 10 640 discards in the fixture, flicker 0.0179 / 0.0189); with AMD's
+  order it is AMD's order. A variance floor of the half-float step of the stored radiance does
+  not change the misfire (a 1 % change is far above it). Unfixed.
 
 #### R-10 Disocclusion by the surface's own previous depth
 
