@@ -114,10 +114,12 @@ docs and specs the entry links.
   primary view; its `hardware_ray_tracing`, `dynamic_gi`,
   `anisotropic_filtering`, diagnostics layers and visibility mask (for rays)
   apply to the frame, and dynamic GI follows its camera. A view left out of
-  a finished frame of its scene restarts its history. Each view holds its
-  own targets, FSR context and local-light shadow atlas. One renderer shows
-  one scene at a time. No game-code change beyond the migration above for a
-  single view.
+  a finished frame of its scene restarts its history, and still reads back
+  its statistics for the frames it was in. List every view of a frame in
+  one `render`: two renderers drawing one scene in a frame make the first's
+  views restart every frame. Each view holds its own targets, FSR context
+  and local-light shadow atlas. One renderer shows one scene at a time. No
+  game-code change beyond the migration above for a single view.
 - `sgl-3d` `Renderer::finish_frame`: commits what the frame drew (each
   instance's pose, visibility and shader data, deformations, shader
   parameter blocks, the rigid-change signal and static-edit bounds as they
@@ -125,9 +127,13 @@ docs and specs the entry links.
   `finish_frame` no longer become the finished frame's state (which zeroed
   the next frame's motion) and belong to the next frame. A frame rendered
   and not finished (its encoder dropped, or `finish_frame` omitted), whether
-  or not its commands were submitted, no longer restarts TAA, screen-space
-  (Crystal, Velvet) and world-space reflections, ambient occlusion or
-  ray-traced shadows on the next frame; FSR still restarts. Ray-traced
+  or not its commands were submitted, and then rendered again as the same
+  frame no longer restarts TAA, screen-space (Crystal, Velvet) and
+  world-space reflections, ambient occlusion or ray-traced shadows; FSR
+  still restarts, and filtered fog skips one frame of reprojection. A cut
+  in an unfinished frame holds until a frame is finished (the next frame
+  resets too, whatever its `camera_cut` says), and a stage switched off in
+  the unfinished frame restarts on the next, as after a finished one. Ray-traced
   shadows hold one more reduced-resolution texture while they run. No
   game-code change.
 - `sgl-3d` `Scene::set_shader_parameters`: a material that gains or changes

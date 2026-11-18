@@ -2122,8 +2122,13 @@ describes each view's camera, the authored look and per-frame state in a
    next frame's history, and the shadow faces it drew become reusable. Do
    not finish a frame that was not submitted; an abandoned encoder leaves
    history unchanged and its shadow faces are drawn again. A frame rendered
-   and not finished, submitted or not, restarts nothing but FSR: the next
-   frame continues every other history from the last finished frame.
+   and not finished, submitted or not, then rendered again as the same
+   frame, restarts nothing but FSR and one frame of filtered fog's
+   reprojection: the next frame continues every other history from the
+   last finished frame. A cut in an unfinished frame holds until a frame is
+   finished, and a stage switched off in it (antialiasing, a reflection
+   method, another projection) restarts as it would after a finished frame
+   without it.
    Scene edits upload through the queue, never the frame's encoder, so an
    abandoned frame loses none. Edit the scene before `render` or after the
    submission, never between them: an edit made after the submission and

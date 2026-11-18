@@ -3,8 +3,9 @@
 //! (`FrameInput::elapsed_seconds`), at which a material's vertex function
 //! evaluates the motion it writes, its visibility mask, its backdrop
 //! panorama's yaw, which the sky's motion turns with, and the frames since
-//! the last reset. The renderer owns it; a frame commits to it
-//! only when the caller finishes that frame. It is kept in the render frame
+//! the last reset. Each `View` owns its own; a frame commits to it only
+//! when the caller finishes that frame. Also what a stage keeps to describe
+//! its GPU history as the view's last finished frame left it (`Kept`). It is kept in the render frame
 //! of the scene's origin it was committed at, and a frame whose scene moved
 //! its origin since sees it translated into its own (the architecture's
 //! History contract).
@@ -89,10 +90,12 @@ pub(crate) struct HistoryFrame {
 /// What a stage keeps to describe its GPU history: as the view's last
 /// finished frame left it (none where the stage did not run in that frame),
 /// and what the frame being rendered leaves. A frame rendered and not
-/// finished leaves nothing behind, so the next continues from the last
-/// finished frame (the architecture's History contract, "What a frame
-/// commits"). The renderer settles every stage's once per render, when it
-/// knows whether that render was finished.
+/// finished leaves nothing kept, so the next frame's state derives from the
+/// last finished frame's (the architecture's History contract, "What a
+/// frame commits"). The view settles every stage's once per render, when
+/// it knows whether that render was finished (`View::settle`). It does not
+/// keep the GPU history itself: a stage that releases its targets in a
+/// render without it restarts after that render, finished or not (F-4).
 pub(crate) struct Kept<T> {
     committed: Option<T>,
     rendered: Option<T>,
@@ -446,7 +449,11 @@ mod tests {
     // a stage that did not run in the last finished frame continues from
     // an older one. The oracle is the History contract's table ("What a
     // frame commits"; F-3, F-4): each row below gives a frame's outcome and
-    // the run the contract requires of it, written by hand.
+    // the run the contract requires of it, written by hand. It tests the
+    // kept run alone (`StageHistory` over `CameraHistory`): the view's
+    // reset decision, which holds an unfinished reset (F-1), and which
+    // stages release their targets in a render without them (F-4) lie
+    // above it.
     #[wasm_bindgen_test(unsupported = test)]
     fn kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one() {
         let camera = CameraFrame {
@@ -475,10 +482,18 @@ mod tests {
             // A restart in a frame that is not finished is not kept.
             (false, true, true, Unfinished, Some((0, 0))),
             (false, true, false, Finished, Some((4, 0))),
-            // A cut in a frame that is not finished is not kept either.
+            // A cut's restart in a frame that is not finished is not kept
+            // by the stage either: the run after it derives from the last
+            // finished frame. The view does not draw that next frame as a
+            // continuation: it holds the unfinished reset and renders the
+            // next frame as a reset too (F-1, `View::settle`).
             (true, true, false, Unfinished, Some((0, 1))),
             (false, true, false, Finished, Some((5, 1))),
-            // Skipped in an unfinished frame: the next continues.
+            // Skipped in an unfinished frame: the kept run is unchanged, so
+            // the next run continues from the last finished frame. In the
+            // renderer that holds for a stage that keeps its targets across
+            // such a render (ambient occlusion, the ray-traced shadows); one
+            // whose targets the render released restarts anyway (F-4).
             (false, false, false, Unfinished, None),
             (false, true, false, Finished, Some((6, 0))),
             // Skipped in a finished frame: the next restarts.

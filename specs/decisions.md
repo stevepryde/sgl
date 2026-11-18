@@ -906,16 +906,21 @@ Use the [current specs](README.md) for implementation and the
   use SMAA or Off. The scene records what a frame draws when `render` begins
   it and commits that record at `finish_frame`, so an edit after the
   submission belongs to the next frame (F-13). `finish_frame(scene)` names
-  no views: the renderer and its views share one cell holding the attempt id
-  of the last finished frame. A view settles its pending frame as finished
-  at the start of its first `&mut self` method after that frame was
-  finished, and as unfinished only when it renders again first; a view
-  method called between `render` and `finish_frame` leaves the frame
-  pending. Settling at any `&mut self` method, as designed, would have
-  restarted TAA every frame for a game that queries or resizes a view before
-  finishing. With one cell, a view left out of a finished frame settles its
-  own earlier frame as unfinished; it restarts anyway, losing only that
-  frame's statistics, probe readbacks and local-shadow cache commit.
+  no views: each render's attempt carries a flag that `finish_frame` sets,
+  held by the renderer and by every view the frame rendered with its
+  pending frame. A view settles its pending frame as finished at the start
+  of its first `&mut self` method after that frame was finished, whatever
+  frames followed without it, and as unfinished only when it renders again
+  first; a view method called between `render` and `finish_frame` leaves
+  the frame pending. Settling at any `&mut self` method, as designed, would
+  have restarted TAA every frame for a game that queries or resizes a view
+  before finishing. (A single cell holding the last finished attempt, as
+  first built, made a view left out of the next finished frame settle its
+  own finished frame as unfinished, losing its statistics, probe readbacks,
+  culling pyramid, exposure and local-shadow cache commit.) The frame's
+  views are listed in one `render`: two renderers drawing one scene in a
+  frame is not supported, since the second `render` supersedes the first's
+  attempt and the first renderer's views then reset every frame.
   (`finish_frame(scene, views)` was rejected: a view omitted from the list
   would silently restart every frame.) The local shadow atlas, its static
   layers, cache and ranking are per view, placed by each camera's screen
@@ -948,7 +953,9 @@ Use the [current specs](README.md) for implementation and the
   first drew (O-1, 2026-11-18 history audit).
 - **D-58** Owner direction, 2026-11-18 (the frame contract): a frame that is
   rendered and not finished, whether or not its commands were submitted,
-  commits nothing and restarts nothing, with two named exceptions. Each
+  commits nothing, and when it is rendered again as the same frame (the
+  same views, with the same stages in effect) restarts nothing, with two
+  named exceptions. Each
   stage keeps what describes its GPU history (frame counts, the half of each
   pair it writes, slot assignments, seeds) as the last finished frame left
   it (`view::history::Kept`), so a frame rendered again reads and writes the
@@ -970,6 +977,21 @@ Use the [current specs](README.md) for implementation and the
   slice filter overwrote the volume a retry would reproject, and SGL cannot
   tell an abandoned frame from a submitted one; a third froxel volume would
   buy one frame of fog history on a hitch.
+  Where the unfinished attempt differs in kind from the frame after it,
+  the contract is narrower, by owner direction after the independent
+  review of the frame contract (2026-11-18). A reset holds until a frame
+  is finished: a view whose render was a reset (a cut, a pending resize
+  reset, a frame that does not follow its last finished frame) and was not
+  finished renders its next frame as a reset too, whatever its
+  `camera_cut` says, since the cut was never shown; this extends the
+  view's pending reset, which only a finished frame clears, and spares
+  `sgl-post-fx` an index gap (the unfinished reset ran at index 0) and the
+  retry a continuation from a half the attempt overwrote. A stage that did
+  not run in the unfinished render (antialiasing off, a reflection method
+  off, another projection) restarts on the next frame where that render
+  released its targets, as a finished frame without it would (F-4): the
+  release stays at render, since moving it to settle time is machinery for
+  a frame that is already a hitch.
   Rationale: the History contract already said an abandoned frame commits
   nothing, and engines that record at render and commit at finish
   (Filament's `FrameHistory`, committed per view) do not restart on a

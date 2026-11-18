@@ -95,7 +95,9 @@ scene it draws (its targets, stages and histories) and its rendering
    device), submit, and call `Renderer::finish_frame(&mut scene)`. One
    `render` call is one frame of the scene: never render it twice for one
    finished frame. A frame rendered and
-   not finished restarts no history but FSR's. An abandoned encoder
+   not finished, then rendered again as the same frame, restarts no
+   history but FSR's; a cut in it holds until a frame is finished, and a
+   stage switched off in it restarts. An abandoned encoder
    retains a pending fixed-to-automatic exposure reset. Retrying submitted
    filtered fog without finishing resets the overwritten volume history.
 4. Set `FrameInput::camera_cut` on a camera cut. A view's history restarts
@@ -119,7 +121,9 @@ scene has one of (`hardware_ray_tracing`, `dynamic_gi`,
 `anisotropic_filtering`, the diagnostics layers); everything else is each
 view's own. List every view that keeps temporal history in every frame: a
 view left out of a finished frame restarts, so a view drawn every other frame
-should use SMAA or no antialiasing. Each view holds its own targets, FSR
+should use SMAA or no antialiasing. List every view of a frame in one
+`render`: two renderers drawing one scene in a frame make the first's views
+restart every frame. Each view holds its own targets, FSR
 context and local-light shadow atlas, so memory grows with views. One renderer
 shows one scene at a time; a game showing two scenes at once holds a renderer
 for each. [`examples/views.rs`](../../../examples/sgl-3d/examples/views.rs) draws a main view and

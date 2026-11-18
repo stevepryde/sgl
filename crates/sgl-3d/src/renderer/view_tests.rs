@@ -172,3 +172,114 @@ fn a_view_of_another_renderer_is_refused() {
         "the refusal names the rule"
     );
 }
+
+// Plausible defect: a view settles its pending frame against the renderer's
+// last finished frame rather than its own frame's outcome, so a view left
+// out of the next finished frame (one drawn at half rate, as the guides
+// recommend) settles its own finished frame as unfinished: its statistics
+// and probe readbacks, its culling pyramid, exposure and local shadow cache
+// never commit. The fixture: views A and B with one camera and one
+// instance added before each frame, so each frame draws one more cube
+// than the last; A in every frame, B in even ones, each view's statistics
+// asked for before its render and after the GPU finished the frame before.
+// The oracle is equivalence: B's statistics, once the frame after its own
+// was finished without it, are A's for that same frame, which differ from
+// every other frame's.
+#[test]
+fn a_view_left_out_of_a_frame_reads_back_its_own_finished_frame() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let settings = Settings {
+        occlusion_culling: false,
+        ..Settings::default()
+    };
+    let mut renderer = Renderer::new(&device);
+    let [mut a, mut b] = [(); 2].map(|_| {
+        View::new(
+            &renderer,
+            &device,
+            &queue,
+            crate::shading::gbuffer::COLOR,
+            SIZE,
+            1.,
+            &settings,
+        )
+        .unwrap()
+    });
+    let outputs = [output(&device), output(&device)];
+    let mut scene = Scene::new(&device, &queue);
+    let model = scene
+        .add_asset(&device, &queue, test_support::cube())
+        .unwrap()
+        .model;
+    let wait = || device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    // The statistics of `view`'s last frame, once the GPU finished it.
+    let read = |view: &mut View| {
+        view.geometry_stats(&device);
+        wait();
+        view.geometry_stats(&device)
+    };
+    let input = input();
+    let frames = 7;
+    let mut of_a = Vec::new();
+    let mut of_b = Vec::new();
+    for frame in 0..frames {
+        let x = -3.5 + frame as f32;
+        scene
+            .add_instance(
+                &device,
+                &queue,
+                crate::InstanceState {
+                    pose: glam::Mat4::from_translation(glam::Vec3::new(x, 0., -8.)),
+                    ..crate::InstanceState::new(model)
+                },
+                crate::Mobility::Static,
+            )
+            .unwrap();
+        if frame > 0 {
+            of_a.push(read(&mut a));
+        }
+        let with_b = frame % 2 == 0;
+        if with_b && frame > 0 {
+            of_b.push(read(&mut b));
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let mut list = vec![ViewFrame {
+            view: &mut a,
+            input: &input,
+            settings: &settings,
+            output: &outputs[0],
+            timing: None,
+        }];
+        if with_b {
+            list.push(ViewFrame {
+                view: &mut b,
+                input: &input,
+                settings: &settings,
+                output: &outputs[1],
+                timing: None,
+            });
+        }
+        renderer.render(&device, &queue, &mut encoder, &mut scene, &mut list);
+        drop(list);
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(&mut scene);
+        wait();
+    }
+    // A's frames 0 to 5, and B's frames 0, 2 and 4.
+    assert!(
+        of_a.windows(2)
+            .all(|pair| pair[0].is_some() && pair[0] != pair[1]),
+        "each frame's statistics are its own: {of_a:?}"
+    );
+    for (index, b) in of_b.iter().enumerate() {
+        let frame = 2 * index;
+        assert_eq!(
+            *b,
+            of_a[frame],
+            "B's statistics after its frame {frame}, left out of frame {}",
+            frame + 1
+        );
+    }
+}

@@ -62,7 +62,7 @@ impl Renderer {
         face_size: u32,
     ) -> Result<SpecularProbeRadiance, ProbeError> {
         assert!(
-            std::sync::Arc::ptr_eq(&view.cell, &self.finished),
+            view.renderer == self.id,
             "a view captures with the renderer it was created from (`View::new`)"
         );
         view.settle(false);

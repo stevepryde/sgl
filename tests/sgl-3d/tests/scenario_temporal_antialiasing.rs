@@ -1901,6 +1901,92 @@ fn an_unfinished_frame_restarts_nothing() {
     failures.assert();
 }
 
+/// Case 10c (F-1, F-3: a reset holds until a frame is finished). Plausible
+/// defects: a frame rendered with `camera_cut` and not finished, its encoder
+/// dropped or its commands submitted, is followed by a frame without the cut
+/// that continues history, so the cut the game asked for is never shown: the
+/// retry continues from the frame before the cut through DiligentFX's
+/// index-gap reset with a jittered, accumulated history (the attempt ran at
+/// frame index 0), or, where exactly one frame was finished since the last
+/// reset, continues at index 1 from the half the submitted attempt
+/// overwrote. The oracle is equivalence: the run with the unfinished cut
+/// attempt (from a camera 0.3 m above) and the retry without the cut equals
+/// exactly, from the retry on, the run without the attempt whose frame has
+/// the cut; at rest and in a pan, and with the attempt at frame 1, the
+/// first after the reset frame 0 was finished.
+#[test]
+fn an_unfinished_cut_holds_until_a_frame_is_finished() {
+    let method = Antialiasing::Taa;
+    let Some(gpu) = device(method) else { return };
+    let pan = VIEW.pan(-0.5, DEPTH);
+    let panning = move |f: u32| pan.pose(Pose::at(Vec3::ZERO), f);
+    let resting = |_: u32| Pose::at(Vec3::ZERO);
+    let cases = [
+        ("at rest", &resting as &dyn Fn(u32) -> Pose, 4),
+        ("in a pan", &panning, 4),
+        ("in a pan, one frame after the reset", &panning, 1),
+    ];
+    let mut failures = Failures::default();
+    for (name, camera, attempt) in cases {
+        let scenario = stage(camera);
+        let last = attempt + 1;
+        let run = |unfinished: Option<Unfinished>| {
+            let mut rig = scenario.rig(&gpu, VIEW, method);
+            let mut images = Vec::new();
+            for frame in 0..=last {
+                if frame == attempt {
+                    if let Some(unfinished) = unfinished {
+                        scenario.pose(&mut rig, frame);
+                        rig.look(Pose::at(camera(frame).position + Vec3::Y * 0.3));
+                        rig.views[0].input.camera_cut = true;
+                        match unfinished {
+                            Unfinished::Unsubmitted => rig.render_unsubmitted(frame),
+                            Unfinished::Submitted => rig.render_unfinished(frame),
+                        }
+                    }
+                    // The run without the attempt cuts here; the retry does
+                    // not ask for the cut again.
+                    rig.views[0].input.camera_cut = unfinished.is_none();
+                }
+                scenario.render(&mut rig, frame);
+                if frame >= attempt {
+                    images.push(rig.antialiased());
+                }
+            }
+            (images, rig)
+        };
+        let (cut, cut_rig) = run(None);
+        for unfinished in [Unfinished::Unsubmitted, Unfinished::Submitted] {
+            let (images, rig) = run(Some(unfinished));
+            for (offset, (cut, image)) in cut.iter().zip(&images).enumerate() {
+                let everywhere = Region::from_fn(cut.size, |_| true);
+                let apart = error(cut, image, &everywhere);
+                let differing = cut
+                    .texels
+                    .iter()
+                    .zip(&image.texels)
+                    .filter(|(a, b)| a != b)
+                    .count();
+                eprintln!(
+                    "{name}, {unfinished:?}: frame {} differs from the cut run in {differing} px, by up to {}",
+                    attempt + offset as u32,
+                    apart.max
+                );
+                failures.check(differing == 0, || {
+                    format!(
+                        "{name}, {unfinished:?}: frame {} differs from the run that cut there by up to {} in {differing} px",
+                        attempt + offset as u32,
+                        apart.max
+                    )
+                });
+            }
+            failures.bounded(&rig, format!("{name}, {unfinished:?} unfinished cut"));
+        }
+        failures.bounded(&cut_rig, format!("{name}, cut without an attempt"));
+    }
+    failures.assert();
+}
+
 /// Case 11. Plausible defect: moving the render origin during a pan cuts or
 /// misplaces history (the History contract translates retained state and
 /// restarts nothing). The oracle is equivalence with the run that never

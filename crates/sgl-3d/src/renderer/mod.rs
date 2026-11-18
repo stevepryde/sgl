@@ -39,7 +39,7 @@ use crate::shading::bind::BindingTier;
 use crate::view::pipelines::LayerConstants;
 use shared::Shared;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 pub use view::{View, ViewError, ViewFrame};
 
 /// What every view of a [`Scene`] shares: the geometry pipelines and the
@@ -54,13 +54,12 @@ pub use view::{View, ViewError, ViewFrame};
 pub struct Renderer {
     /// What every view of the scene shares.
     shared: Shared,
-    /// The scene frame attempt of the last `render`, until `finish_frame`
-    /// commits it.
-    rendered: Option<u64>,
-    /// The attempt id of the last finished frame, 0 before one (no attempt
-    /// is 0), which each of the renderer's views holds too: a view settles
-    /// its last render as finished when it is this one.
-    finished: Arc<AtomicU64>,
+    /// The last `render`, until `finish_frame` commits it: its scene frame
+    /// attempt and the flag `finish_frame` sets, which each view the frame
+    /// rendered holds with its pending render.
+    rendered: Option<(u64, Arc<AtomicBool>)>,
+    /// The renderer's identity, which each view it creates holds.
+    pub(crate) id: u64,
 }
 
 impl Renderer {
@@ -72,7 +71,7 @@ impl Renderer {
             // a frame that disables one specialises again.
             shared: Shared::new(device, LayerConstants::ALL),
             rendered: None,
-            finished: Arc::new(AtomicU64::new(0)),
+            id: crate::scene::next_generation(),
         }
     }
 
@@ -84,9 +83,13 @@ impl Renderer {
     /// the primary view: its input and settings steer what a scene has one
     /// of (the architecture's Frame, "Views of one frame"). Nothing happens
     /// for an empty slice. A view's history restarts for a camera cut, after
-    /// a resize that changed its targets, and for a frame that does not
-    /// follow its own last finished frame: its first, one of another scene,
-    /// or one after a finished frame of the scene that did not render it.
+    /// a resize that changed its targets, for a frame that does not follow
+    /// its own last finished frame (its first, one of another scene, or one
+    /// after a finished frame of the scene that did not render it), and
+    /// after a reset it rendered and was not finished: a reset holds until a
+    /// frame is finished. List every view of the frame here: a second
+    /// renderer's `render` of the same scene supersedes this one's frame,
+    /// whose `finish_frame` then commits nothing.
     /// `scene` is mutable for its per-frame GPU mirrors.
     ///
     /// # Panics
@@ -104,13 +107,18 @@ impl Renderer {
             return;
         }
         assert!(
-            views
-                .iter()
-                .all(|frame| Arc::ptr_eq(&frame.view.cell, &self.finished)),
+            views.iter().all(|frame| frame.view.renderer == self.id),
             "every view rendered by a renderer is created from it (`View::new`)"
         );
-        let attempt = frame::render(&mut self.shared, (device, queue, encoder), scene, views);
-        self.rendered = Some(attempt);
+        let finished = Arc::new(AtomicBool::new(false));
+        let attempt = frame::render(
+            &mut self.shared,
+            (device, queue, encoder),
+            scene,
+            views,
+            &finished,
+        );
+        self.rendered = Some((attempt, finished));
     }
 
     /// After the caller submitted the last rendered frame of `scene`: it
@@ -121,15 +129,17 @@ impl Renderer {
     /// another scene, or none: a frame rendered but never finished (an
     /// abandoned encoder) leaves history untouched.
     pub fn finish_frame(&mut self, scene: &mut Scene) {
-        let Some(attempt) = self.rendered else {
+        let Some((attempt, _)) = self.rendered else {
             return;
         };
         if scene.finish_frame(attempt) {
-            self.rendered = None;
+            let Some((_, finished)) = self.rendered.take() else {
+                return;
+            };
             if let Some(dynamic_gi) = &mut self.shared.dynamic_gi {
                 dynamic_gi.finish_frame();
             }
-            self.finished.store(attempt, Ordering::Release);
+            finished.store(true, Ordering::Release);
         }
     }
 

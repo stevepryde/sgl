@@ -22,7 +22,7 @@ use crate::view::post_fx::PostFx;
 use crate::view::targets::{SharedTargets, Sizes};
 use crate::{FrameInput, Scene};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// One view's part of a frame ([`Renderer::render`]): the view, its
 /// camera and frame values, its settings and the texture it renders into,
@@ -107,8 +107,9 @@ pub struct View {
     pub(crate) motion_blur: MotionBlur,
     pub(crate) post: Post,
     pub(crate) history: CameraHistory,
-    /// Targets changed since the last finished frame was rendered: history
-    /// restarts.
+    /// History restarts: the targets changed since the last finished frame
+    /// was rendered, or the view's last render was a reset that was not
+    /// finished. A reset holds until a frame is finished.
     pub(crate) pending_reset: bool,
     /// Counts target changes, so `settle` keeps a reset requested after the
     /// frame it commits was rendered.
@@ -117,8 +118,8 @@ pub struct View {
     pub(crate) finished: Option<u64>,
     /// The last rendered frame, which `settle` commits or drops.
     pub(crate) rendered: Option<Pending>,
-    /// The renderer's last finished attempt (`Renderer::finished`).
-    pub(crate) cell: Arc<AtomicU64>,
+    /// The identity of the renderer that created the view (`Renderer::id`).
+    pub(crate) renderer: u64,
     /// The numerical frame probe, once a frame asked for it.
     #[cfg(feature = "diagnostics")]
     pub(crate) probe: Option<crate::stages::frame_probe::FrameProbe>,
@@ -129,9 +130,11 @@ pub struct View {
 }
 
 /// A rendered frame the view has not settled: the scene frame attempt it
-/// was part of, its history and the targets generation it rendered with.
+/// was part of, the flag `Renderer::finish_frame` sets when that attempt is
+/// finished, its history and the targets generation it rendered with.
 pub(crate) struct Pending {
     pub attempt: u64,
+    pub finished: Arc<AtomicBool>,
     pub history: HistoryFrame,
     pub generation: u64,
 }
@@ -282,7 +285,7 @@ impl View {
             targets_generation: 0,
             finished: None,
             rendered: None,
-            cell: renderer.finished.clone(),
+            renderer: renderer.id,
             #[cfg(feature = "diagnostics")]
             probe: None,
             #[cfg(any(test, feature = "diagnostics"))]
@@ -403,10 +406,10 @@ impl View {
 
     /// Begins the view's frame of `scene` seen as `input` with `settings`:
     /// settles its last render, begins its history (which restarts for a
-    /// camera cut, a resize, and a frame that does not follow its own last
-    /// finished frame), and resolves its effective configuration, holding
-    /// the surface's targets from a scene's first receiver on and the
-    /// temporal masks while a writer can mark them.
+    /// camera cut, a resize, an unfinished reset, and a frame that does not
+    /// follow its own last finished frame), and resolves its effective
+    /// configuration, holding the surface's targets from a scene's first
+    /// receiver on and the temporal masks while a writer can mark them.
     pub(super) fn begin(
         &mut self,
         device: &wgpu::Device,
@@ -436,7 +439,9 @@ impl View {
 
     /// The history of a frame of `scene` seen by `input`'s camera, in the
     /// render frame of the scene's origin. It continues only from the
-    /// scene's last finished frame, when that frame rendered this view.
+    /// scene's last finished frame, when that frame rendered this view, and
+    /// not while a reset is pending (a resize, or a reset rendered and not
+    /// finished).
     pub(crate) fn begin_history(&self, scene: &Scene, input: &FrameInput) -> HistoryFrame {
         let reset = input.camera_cut
             || self.pending_reset
@@ -463,21 +468,23 @@ impl View {
     }
 
     /// Settles the last render, if one is pending, and the view renders
-    /// `again` or it was finished (the renderer's last finished attempt).
-    /// A finished render commits its camera history, its reset, its local
-    /// shadow cache, culling pyramid, exposure, statistics and probe
-    /// readback. Then every stage that keeps what describes its GPU history
-    /// as the last finished frame left it (`view::history::Kept`) settles
-    /// it: exactly once per render, at the start of the view's first
-    /// `&mut self` method after its frame was finished, or as unfinished
-    /// when it renders again first. A method called between `render` and
-    /// `finish_frame` leaves the render pending. The History contract's
-    /// "What a frame commits".
+    /// `again` or it was finished (`Renderer::finish_frame` set its
+    /// attempt's flag, whichever frames came after it). A finished render
+    /// commits its camera history, its reset, its local shadow cache,
+    /// culling pyramid, exposure, statistics and probe readback; an
+    /// unfinished reset holds, so the next render resets too (a cut that
+    /// was never shown has not happened yet). Then every stage that keeps
+    /// what describes its GPU history as the last finished frame left it
+    /// (`view::history::Kept`) settles it: exactly once per render, at the
+    /// start of the view's first `&mut self` method after its frame was
+    /// finished, or as unfinished when it renders again first. A method
+    /// called between `render` and `finish_frame` leaves the render
+    /// pending. The History contract's "What a frame commits".
     pub(crate) fn settle(&mut self, again: bool) {
         let Some(pending) = &self.rendered else {
             return;
         };
-        let finished = pending.attempt == self.cell.load(Ordering::Acquire);
+        let finished = pending.finished.load(Ordering::Acquire);
         if !finished && !again {
             return;
         }
@@ -485,10 +492,14 @@ impl View {
             attempt,
             history,
             generation,
+            ..
         }) = self.rendered.take()
         else {
             return;
         };
+        if !finished && !history.valid {
+            self.pending_reset = true;
+        }
         if finished {
             self.history.finish(history);
             // A resize after the render still restarts the next frame.

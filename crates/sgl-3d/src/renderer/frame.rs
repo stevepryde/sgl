@@ -18,6 +18,8 @@ use crate::view::pipelines::GeometryPipelines;
 use crate::view::post_fx::PostFx;
 use crate::view::targets::SharedTargets;
 use crate::{FrameInput, Scene};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Which view of a frame `render_view` renders. The primary view, the
 /// first, runs the frame's scene work in its stage order: the deform pass,
@@ -62,13 +64,15 @@ fn secondary(effective: Effective, primary: &Effective) -> Effective {
 /// Encodes one frame of `scene` seen by `views`, the first the primary:
 /// the scene's frame begins, each view begins its frame (settling its last
 /// render and beginning its history), the frame's scene work runs once,
-/// steered by the primary view, then each view renders in order. Returns
-/// the scene's frame attempt.
+/// steered by the primary view, then each view renders in order, holding
+/// `finished`, the flag `Renderer::finish_frame` sets for this attempt.
+/// Returns the scene's frame attempt.
 pub(super) fn render(
     shared: &mut Shared,
     (device, queue, encoder): (&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder),
     scene: &mut Scene,
     views: &mut [ViewFrame<'_>],
+    finished: &Arc<AtomicBool>,
 ) -> u64 {
     let attempt = scene.begin_frame(device, queue);
     let primary_settings = *views[0].settings;
@@ -122,6 +126,7 @@ pub(super) fn render(
                     Role::Secondary
                 },
                 attempt,
+                finished,
             ),
         );
     }
@@ -146,7 +151,7 @@ pub(super) fn render_view(
     scene: &Scene,
     drawn: ViewOutput<'_>,
     (mut history, effective): (HistoryFrame, Effective),
-    (role, attempt): (Role, u64),
+    (role, attempt, finished): (Role, u64, &Arc<AtomicBool>),
 ) {
     let ViewOutput {
         input,
@@ -235,6 +240,7 @@ pub(super) fn render_view(
     history.camera.jitter = jitter.map_or([0.; 2], |jitter| jitter.ndc);
     *rendered = Some(Pending {
         attempt,
+        finished: finished.clone(),
         history,
         generation: *targets_generation,
     });
