@@ -37,7 +37,12 @@ THE SOFTWARE.
 // FFX_DNSR_Shadows_ReadPreviousLinearDepth stand in for the reprojection
 // matrix and the previous depth buffer), so FFX_DNSR_Shadows_GetLinearDepth,
 // which only IsDisoccluded calls, is dropped with the inverse projection it
-// reads (FFX_DNSR_Shadows_GetProjectionInverse). The loops' literal bounds
+// reads (FFX_DNSR_Shadows_GetProjectionInverse). The depth the pixel's
+// surface is expected to have had is the caller's, given the pixel, where
+// upstream reprojects its current point through the camera
+// (ReprojectionMatrix), which holds for a still surface alone and rejects
+// the moments of one the camera follows; a surface without one, which the
+// caller gives as 0 (on or behind the previous camera), is disoccluded. The loops' literal bounds
 // are named (AR-12). The caller's lanes (traced_denoise_lanes_*.wgsl: the
 // FfxDnsr* types) are the slots classified together, a lane each, where
 // upstream classifies one light a dispatch: the tile masks, the region's
@@ -147,7 +152,7 @@ fn FFX_DNSR_Shadows_IsDisoccluded(did:vec2<u32>,depth:f32,velocity:vec2<f32>)->b
   z_alignment=pow(z_alignment,8.);
 
   // Calculate the depth difference
-  let linear_depth=FFX_DNSR_Shadows_GetPreviousLinearDepth(world_position); // get linear depth
+  let linear_depth=FFX_DNSR_Shadows_GetPreviousLinearDepth(did,world_position); // get linear depth
 
   let idx=vec2<i32>(previous_uv*vec2<f32>(dims));
   let previous_depth=FFX_DNSR_Shadows_ReadPreviousLinearDepth(idx);
@@ -155,7 +160,7 @@ fn FFX_DNSR_Shadows_IsDisoccluded(did:vec2<u32>,depth:f32,velocity:vec2<f32>)->b
 
   // Resolve into the disocclusion mask
   let depth_tolerance=mix(1e-2,1e-1,z_alignment);
-  is_disoccluded=depth_difference>=depth_tolerance;
+  is_disoccluded=!(linear_depth>0.) || depth_difference>=depth_tolerance;
  }
 
  return is_disoccluded;

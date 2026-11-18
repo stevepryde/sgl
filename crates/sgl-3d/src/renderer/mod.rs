@@ -604,6 +604,13 @@ impl Renderer {
         self.traced_shadows.last()
     }
 
+    /// The ray-traced shadow denoiser's moments the last frame wrote, where
+    /// the stage ran.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn traced_shadow_moments(&self) -> Option<&wgpu::TextureView> {
+        self.traced_shadows.last_moments()
+    }
+
     /// The world-space reflection stage, once a frame ran it.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn world_reflections(

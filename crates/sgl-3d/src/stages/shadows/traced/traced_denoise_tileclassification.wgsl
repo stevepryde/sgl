@@ -16,7 +16,13 @@
 // depth and motion are the G-buffer's at the pixel each tracing pixel
 // stands for (traced_texel_pixel; Wicked's reads at did * 2), its normals the trace's
 // half-resolution copy, as Wicked's (traced_denoise_common.wgsl); the
-// previous depth is the stage's own, linear; a pixel the trace found
+// previous depth is the stage's own, linear, and the depth a pixel's
+// surface is expected to have had there is its own (traced_previous_depth:
+// its linear depth plus the G-buffer's depth motion), where Wicked's
+// reprojects its current point through the camera alone
+// (FFX_DNSR_Shadows_GetReprojectionMatrix), which rejects the moments of a
+// surface the camera follows in every frame it travels along its view
+// axis by more than about 1% of the surface's depth; a pixel the trace found
 // nothing lit at reads as the sky, as the trace records it; AMD's kernel
 // weights are constants (ffx_denoiser_shadows_tileclassification.wgsl);
 // a slot's first frame is the stage's history restarting or the slot's
@@ -62,9 +68,11 @@ fn FFX_DNSR_Shadows_GetEye()->vec3<f32> {
 fn FFX_DNSR_Shadows_GetViewProjectionInverse()->mat4x4<f32> {
  return traced.inverse_view_projection;
 }
-// The linear depth of `world_position` in the last submitted frame's view.
-fn FFX_DNSR_Shadows_GetPreviousLinearDepth(world_position:vec3<f32>)->f32 {
- return -(traced.previous_view*vec4(world_position,1.)).z;
+// The linear depth tracing pixel `did`'s surface, at `world_position`, had
+// from the last submitted frame's view; 0 where it had none.
+fn FFX_DNSR_Shadows_GetPreviousLinearDepth(did:vec2<u32>,world_position:vec3<f32>)->f32 {
+ let motion=textureLoad(denoise_motion,traced_denoise_pixel(did),0);
+ return traced_previous_depth(traced_denoise_linear_depth(did),motion,world_position);
 }
 fn FFX_DNSR_Shadows_ReadPreviousLinearDepth(idx:vec2<i32>)->f32 {
  let last=vec2<i32>(FFX_DNSR_Shadows_GetBufferDimensions())-1;

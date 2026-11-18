@@ -2762,3 +2762,5 @@ fn a_normal_mapped_surface_does_not_shadow_itself() {
         }
     }
 }
+
+mod history;
