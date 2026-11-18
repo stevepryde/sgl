@@ -2026,7 +2026,8 @@ rejection repeats (R-16, R-29).
   one (`last_frame_idx`, `None` before the first execution), except that a repeated index
   repeats that frame, its reset included. A frame rendered again reads and writes the same
   halves: its index is the first rendering's.
-- **Raised by.** A frame without Crystal (F-4, F-6), the view's reset (F-1).
+- **Raised by.** A frame without Crystal (F-4, F-6), a render that rebuilt the post-effect context
+  because its TAA flag changed (F-5), the view's reset (F-1).
 - **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** SGL3D's own (DFX-12, DFX-49). Code: `sgl-3d/src/view/post_fx.rs`
   (`PostFx::prepare`, `PostFx::settle`), `sgl-post-fx/src/screen_space_reflection.rs` (`reset_history`).
