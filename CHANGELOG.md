@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.7.1 — 2026-11-18
+
+Move every SGL crate to `0.7.1` together and commit the updated `Cargo.lock`.
+No game-code changes are needed. Existing baked assets and BC7 exports need
+no regeneration.
+
 - `sgl-3d` reflections: world-space rays and Velvet keep their accumulated
   history on a surface that moves with the camera, such as a vehicle a chase
   camera follows. Its reflections were noisy while it moved and settled only
