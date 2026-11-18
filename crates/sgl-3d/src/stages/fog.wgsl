@@ -10,9 +10,12 @@
 // "Physically Based and Unified Volumetric Rendering in Frostbite".
 //
 // Where it differs from Godot, and why:
-// - A change of covered length rejects the old froxel history (fog/volumes.rs),
-//   as a grid resize does. Godot's reprojection below uses the current range
-//   for both grids; reusing a different range moves stationary fog volumes.
+// - A froxel reprojects into the last frame's volume through that volume's
+//   own length, so history carries across a change of covered length: the
+//   world point's view depth is placed among the slices that length spread
+//   (fog_volume_coordinate). Godot divides the previous view depth by the
+//   current length (prev_view.z /= -params.fog_frustum_end), which reads a
+//   stationary medium from the wrong slice while the length changes.
 // - The froxel volume holds the quality's side across the geometric mean of
 //   the frame's sides (fog.rs froxels): square froxels, as many as Godot's
 //   split (side × r, side / r, r = width / mean side) gives, each side within
@@ -140,6 +143,9 @@ struct FroxelVolume {
  ambient:f32,
  // How many of fog_volume_froxels hold this frame's.
  volume_count:u32,
+ // The view depth in metres the last frame's volume covered, which places
+ // a reprojected point among its slices.
+ previous_length:f32,
 }
 // The most fog volumes a frame's fog sums
 // (stages::fog::volume_froxels::MOST_VOLUMES).
@@ -291,7 +297,7 @@ var<workgroup> fog_ambient_light:vec3<f32>;
   // The last frame's clip w is its view depth.
   if previous.w>0. {
    let previous_uv=vec2(previous.x,-previous.y)/previous.w*.5+vec2(.5);
-   let previous_unit=fog_volume_coordinate(previous_uv,previous.w,1./froxels.length,1./froxels.detail_spread);
+   let previous_unit=fog_volume_coordinate(previous_uv,previous.w,1./froxels.previous_length,1./froxels.detail_spread);
    if all(previous_unit>vec3(0.)) && all(previous_unit<vec3(1.)) {
     reprojected=textureSampleLevel(previous_scattering,history_sampler,previous_unit,0.);
     reproject_amount=froxels.temporal_blend;

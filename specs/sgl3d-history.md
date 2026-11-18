@@ -3109,8 +3109,8 @@ scenery, and grazing distant ground loses taps to the 1% depth test (AO-5).
 The fog keeps its last froxel volume, unfiltered, in one of two alternating volumes, and blends
 each froxel with where it was last frame by a fixed 0.9, after Godot. It has no neighbourhood clamp
 or change test, so moving lights and fog volumes trail rather than reject. A continuously running
-game trips its rules mainly by changing `Fog::length` (V-3); otherwise only resets, resizes and
-frames without fog drop it.
+game drops it only by resets, resizes and frames without fog; a changing `Fog::length` keeps it
+(V-3).
 
 ### Froxel history
 
@@ -3129,25 +3129,35 @@ frames without fog drop it.
 #### V-2 A frame without fog ends the history
 
 - **Rule.** A frame reprojects only when the other volume holds the frame whose history count is one
-  less, at the same length; otherwise its whole volume takes no history and no jitter.
+  less, at any length (V-3); otherwise its whole volume takes no history and no jitter.
 - **Raised by.** Fog off for a frame (`Settings::atmosphere`, `FrameInput::atmosphere`).
 - **Stays triggered while.** Nothing: one frame.
 - **Source.** SGL3D's own. Code: `src/stages/fog/volumes.rs` (`Holds::frame`).
 - **Guard.** `a_reset_without_fog_ends_the_froxels_history` (`src/stages/fog/volumes.rs`).
 - **Status.** Rule.
 
-#### V-3 A changed fog length ends the history
+#### V-3 A changed fog length reprojects through the last length
 
-- **Rule.** When `FrameInput::fog.length` differs at all from the last frame's, the frame's whole
-  volume takes no history and samples froxel centres without jitter, since the history's depth grid
-  belongs to the old length. The next frame at an unchanged length reprojects again.
-- **Raised by.** A game animating the fog length, or computing it each frame with rounding noise.
-- **Stays triggered while.** The length changes every frame: fog never reprojects or jitters and
-  shows single centre samples (banding and aliasing, steady rather than flickering).
-- **Source.** SGL3D's own: Godot reprojects with the current length for both grids and never
-  restarts on it. Code: `src/stages/fog/volumes.rs` (`Holds::frame`), `src/stages/fog.rs` (`VolumetricFog::encode`).
-- **Guard.** `changing_fog_range_keeps_a_stationary_volume_in_place` (`src/stages/fog/tests.rs`).
-- **Status.** Open question O-7. Whether an exact equality on `Fog::length` is the right restart, or a game must be told never to animate it, is undecided.
+- **Rule.** A froxel reprojects into the last frame's volume through the length that volume covered:
+  its world point's last view depth is placed among the slices of that length (the stage keeps each
+  volume's length with its history count), so `Fog::length` may differ from the last frame's by any
+  amount and the frame keeps its history and jitter. Points beyond the last length fall outside the
+  last volume and take none (V-6).
+- **Raised by.** Nothing: no length drops history. A longer fog leaves its new far slices without
+  history for one frame (V-6).
+- **Stays triggered while.** Nothing.
+- **Source.** Modified from Godot `volumetric_fog_process.glsl`, which divides the previous view depth
+  by the current length (`prev_view.z /= -params.fog_frustum_end`) and never restarts on a length
+  change, so it reads a stationary medium from the wrong slices while the length changes. Settled
+  O-7, 2026-11-18: SGL3D had rejected history at any change of length, so a game computing its length
+  with rounding noise never accumulated. Code: `src/stages/fog/volumes.rs` (`Holds::frame`),
+  `src/stages/fog.rs` (`VolumetricFog::encode`), `src/stages/fog.wgsl` (`inject`).
+- **Guard.** `a_length_with_rounding_noise_accumulates_as_an_unchanged_one` (a length one f32 step
+  apart on alternate frames converges as the unchanged length's within ten half-float steps;
+  0.021 apart under the old rule, 0 now), `changing_fog_range_keeps_a_stationary_volume_in_place`
+  (the box stays at its depth across a doubled or halved length; Godot's lookup through the current
+  length reads 0.0100 inside it) (`src/stages/fog/tests.rs`).
+- **Status.** Rule.
 
 #### V-4 A new froxel size starts afresh
 
@@ -3381,8 +3391,8 @@ unsnapped or float-noisy placement (G-2) restarts it every frame.
 Automatic exposure keeps its adapted correction as history and snaps to its target only on a
 renderer reset or a switch from fixed exposure. The other post stages keep no history. Two
 signals cross into other areas: the sky's motion and the temporal masks the transparent stage
-writes, which TAA and FSR consume. A continuously running game sees the exposure move slightly on
-every frame of a still view (E-3).
+writes, which TAA and FSR consume. On a still view the exposure moves only as far as the jitter
+moves the metered frame, below one output code (E-3).
 
 ### Exposure
 
@@ -3413,16 +3423,40 @@ every frame of a still view (E-3).
   `min(speed · dt, delta · min(speed · dt / 1.5, 1))` (darken and brighten speeds, `dt` from
   `frame_time_ms`, invalid speeds replaced by defaults), then clamps it to the authored correction
   range. The target is metered from the jittered, un-antialiased frame at the render size, through a
-  10% to 90% percentile window of a 64-bin histogram.
+  10% to 90% percentile window of a 64-bin histogram (a quarter stop a bin). With an unchanged target
+  the correction lands: its step shrinks until it no longer changes the f32. Under jitter the target
+  moves only where samples cross a bin inside the window, and the correction follows by a share of
+  the move (1/30 a frame brightening, 1/90 darkening, at the default speeds and 60 frames a second).
+  Measured on a still jittered 192 by 108 view after settling (2026-11-18): the suites' stage and an
+  unjittered frame hold the exposure exactly; a frame filled with stripes 1.5 px wide every 4 px
+  moves it at most 0.0005 stops a frame and 0.0009 stops over six jitter cycles turned 0.05 rad off
+  the pixel grid (TAA, FSR2 and FSR3 at Native AA), 0.002 to 0.003 stops at FSR3 Performance's
+  96 by 54, and, aligned exactly with the pixel columns so every column samples in step, 0.007 to
+  0.012 stops a frame and 0.014 to 0.019 stops over the cycles. One 8-bit sRGB output code at
+  white is 0.0128 stops. FSR2 kills a lock when its exposed luma drifts by a 1.88x ratio within the
+  lock's life (0.91 stops; `ffx_fsr2_postprocess_lock_status.h`, `fLuminanceDiff > 0.1` on the
+  sixth root) and lowers its contribution by the sixth root of the ratio, at most 0.2% here; FSR3's
+  shading-change, luma-instability and reactivity tests multiply current and previous luma by the
+  same current exposure, so a change between frames cancels in them. TAA does not read exposure.
 - **Raised by.** Every frame.
-- **Stays triggered while.** Always: the jitter moves the target slightly every frame and the
-  exponential approach never lands, so the exposure given to FSR and tone mapping changes by small
-  amounts on every frame of a still view.
+- **Stays triggered while.** Always, within the bound above. Fine periodic detail filling most of
+  the frame and aligned with the pixel grid, the case that moves it most, can reach about one
+  output code at white over a jitter cycle, never in one frame.
 - **Source.** Bevy `auto_exposure.wesl`, faithful except that the step stops at the remaining delta.
-  Code: `src/stages/exposure.wgsl` (`compute_histogram`, `compute_average`).
-- **Guard.** `correction_adapts_at_the_authored_speeds_within_its_limits`, `a_long_frame_lands_on_the_target`
+  Metered before antialiasing because FSR reads the exposure, as Godot meters its jittered internal
+  texture under FSR2 and AMD's own FSR auto exposure meters its jittered input (both adapt
+  exponentially); Bevy, and Godot under TAA, meter the resolved frame. Settled O-8, 2026-11-18.
+  Metering the antialiased frame instead (measured only, not adopted: the exposure stage moved after
+  antialiasing, FSR reading the last frame's exposure, a change to the frame order) cut the aligned
+  stripes' range to 0.0019 stops and left the turned stripes' at 0.0003 to 0.0006. Code:
+  `src/stages/exposure.wgsl`
+  (`compute_histogram`, `compute_average`).
+- **Guard.** `still_exposure::taa`, `still_exposure::fsr2`, `still_exposure::fsr3`
+  (`tests/sgl-3d/tests/history_misc.rs`: frame step and range under one output code on the turned
+  stripes; with the exponential approach removed they step 0.021 to 0.025 stops and fail);
+  `correction_adapts_at_the_authored_speeds_within_its_limits`, `a_long_frame_lands_on_the_target`
   (`src/stages/exposure/tests.rs`).
-- **Status.** Open question O-8. How much the per-frame exposure change disturbs FSR and TAA on a still view is unmeasured.
+- **Status.** Rule.
 
 ### Signals other areas consume
 

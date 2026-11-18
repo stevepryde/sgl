@@ -8,8 +8,12 @@
 //! before tone mapping. Here FSR needs the frame's exposure before it
 //! runs, so metering reads the frame at the render size before
 //! antialiasing, as Godot reduces luminance on its render-size internal
-//! texture (b130438 `renderer_scene_render_rd.cpp` 570). The histogram sees
-//! the jittered, un-antialiased frame and no bloom. It meters every texel:
+//! texture (b130438 `renderer_scene_render_rd.cpp` 570), which under FSR2
+//! is the jittered frame (under TAA Godot resolves into it first), and as
+//! AMD's own FSR auto exposure meters its jittered input. The histogram
+//! sees the jittered, un-antialiased frame and no bloom; on a still view
+//! the exposure moves less than one output code (E-3 in
+//! `specs/sgl3d-history.md`). It meters every texel:
 //! on Apple's GPUs it overlaps TAA, which does not wait for it, and metering
 //! a strided lattice of 256×256 texels instead changed Hyperdrive's frame
 //! time by nothing measurable (#235).

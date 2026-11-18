@@ -81,10 +81,12 @@ fn render(
 }
 
 // Defect: reprojecting a volume written with a different Fog::length reads
-// density from another world position. The independent oracle is a fixed
-// box at 4..6 m: its interior keeps its authored density and empty space
-// stays empty when only the covered range grows or shrinks. Shader
-// validation cannot detect a valid lookup into the wrong historical grid.
+// density from another world position, as Godot's lookup through the
+// current length does. The frame after the change reprojects its
+// predecessor (V-3), so the independent oracle is a fixed box at 4..6 m:
+// its interior keeps its authored density and empty space stays empty when
+// only the covered range grows or shrinks. Shader validation cannot detect
+// a valid lookup into the wrong historical grid.
 #[test]
 fn changing_fog_range_keeps_a_stationary_volume_in_place() {
     let Some((device, queue)) = test_support::device() else {
@@ -159,6 +161,104 @@ fn changing_fog_range_keeps_a_stationary_volume_in_place() {
             );
         }
     }
+}
+
+// Defect (O-7): a Fog::length that differs at all from the last frame's
+// drops the froxels' history and jitter, so a game that computes its length
+// each frame with rounding noise never accumulates: every froxel shows its
+// centre's single sample. The oracle is equivalence: a length one f32 step
+// apart on alternate frames moves no froxel by more than a millionth of its
+// depth, so its volume must converge as the unchanged length's does. A box
+// whose near face at 5 m crosses a slice, faded over Godot's 0.1 m, makes the
+// froxels there differ between their centre's sample and the mean of their
+// jittered ones. The bound is the half-float store: each frame's froxel is
+// stored to within a step (HALF_STEP relative) and keeps 0.9 of the last,
+// so two runs whose inputs agree differ by at most the steps a 0.9 history
+// sums, 10 steps of the largest density.
+#[test]
+fn a_length_with_rounding_noise_accumulates_as_an_unchanged_one() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    const HALF_STEP: f32 = 1. / 1024.;
+    const DENSITY: f32 = 0.1;
+    const LENGTH: f32 = 20.;
+    let settings = settings(true);
+    // The froxels' extinction after 48 frames, three jitter cycles, with the
+    // length on odd frames `odd`.
+    let run = |odd: f32| {
+        let mut scene = Scene::new(&device, &queue);
+        scene
+            .update_fog_volumes(
+                &device,
+                &queue,
+                &[crate::FogVolume {
+                    center: Vec3::new(0., 0., -6.),
+                    size: Vec3::new(40., 40., 2.),
+                    density: DENSITY,
+                    edge_fade: 0.,
+                    ..Default::default()
+                }],
+            )
+            .unwrap();
+        let mut frame = input(Fog {
+            length: LENGTH,
+            ..Default::default()
+        });
+        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let output =
+            crate::view::targets::target(&device, "fog length noise", SIZE, gbuffer::COLOR);
+        for index in 0..48 {
+            frame.camera_cut = index == 0;
+            frame.fog.length = if index % 2 == 1 { odd } else { LENGTH };
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &frame,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+        }
+        let view = renderer.fog_volumes()[0];
+        texels(&read(&device, &queue, view))
+            .into_iter()
+            .map(|texel| texel[3])
+            .collect::<Vec<_>>()
+    };
+    let steady = run(LENGTH);
+    let noisy = run(LENGTH.next_up());
+    let partial = steady
+        .iter()
+        .filter(|&&d| d > 0.05 * DENSITY && d < 0.95 * DENSITY)
+        .count();
+    assert!(
+        partial > 0,
+        "the box's face must leave froxels partly inside it"
+    );
+    let bound = 10. * HALF_STEP * DENSITY;
+    let (worst, at) = steady
+        .iter()
+        .zip(&noisy)
+        .map(|(a, b)| (a - b).abs())
+        .enumerate()
+        .fold(
+            (0f32, 0),
+            |(worst, at), (i, d)| {
+                if d > worst { (d, i) } else { (worst, at) }
+            },
+        );
+    assert!(
+        worst <= bound,
+        "a length alternating by one f32 step left froxel {at} at {} where the unchanged length's is {} ({worst} apart, bound {bound}; {partial} froxels partly in the box)",
+        noisy[at],
+        steady[at]
+    );
 }
 
 fn texels(bytes: &[u8]) -> Vec<[f32; 4]> {

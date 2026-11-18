@@ -135,23 +135,30 @@ impl Holds {
     /// none when fog does not run. A reset
     /// forgets both volumes, even in a frame without fog, so no later frame
     /// takes one from before it for its predecessor's. A frame that runs
-    /// writes the volume at its count's parity: its index, and whether it
-    /// reprojects the other, which then holds its predecessor's froxels
-    /// on the same depth grid. A changed length starts fresh, as a resized
-    /// volume does; the old texels represent different world positions.
-    pub fn frame(&mut self, history: &HistoryFrame, length: Option<f32>) -> Option<(usize, bool)> {
+    /// writes the volume at its count's parity: its index, and, when the
+    /// other holds its predecessor's froxels, the length that volume's depth
+    /// slices cover, through which the frame reprojects it. Any length
+    /// reprojects: a froxel finds its world point in the predecessor's
+    /// slices of their own length (`fog.wgsl` `inject`).
+    pub fn frame(
+        &mut self,
+        history: &HistoryFrame,
+        length: Option<f32>,
+    ) -> Option<(usize, Option<f32>)> {
         if !history.valid {
             self.frames = [None; 2];
         }
         let length = length?;
         let index = (history.frames % 2) as usize;
-        let reprojects = self.frames[1 - index] == Some((history.frames.wrapping_sub(1), length));
+        let previous = self.frames[1 - index]
+            .filter(|&(frames, _)| frames == history.frames.wrapping_sub(1))
+            .map(|(_, length)| length);
         self.frames[index] = Some((history.frames, length));
         #[cfg(all(test, not(target_arch = "wasm32")))]
         {
             self.last_injected = index;
         }
-        Some((index, reprojects))
+        Some((index, previous))
     }
 
     /// The filter overwrites the other volume too. A retry may follow a
@@ -202,7 +209,7 @@ mod tests {
             let begun = history.begin(camera, reset, DVec3::ZERO, 0., 0);
             let reprojects = holds
                 .frame(&begun, fog.then_some(64.))
-                .map(|(_, reprojects)| reprojects);
+                .map(|(_, previous)| previous.is_some());
             assert_eq!(
                 reprojects, expected,
                 "frame {frame}, count {}",
