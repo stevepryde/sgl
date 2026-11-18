@@ -94,7 +94,7 @@ now stated in `sgl3d-architecture.md`; what tests it is said beside it.
 
 ### Waiting on the owner
 
-- Whether to report the ordering gap behind A-26 to wgpu. SGL works around it. Decided: no fork; a wgpu-only reproduction and a draft report first, for the owner to read before anything is filed ([#817](https://github.com/stevepryde/sgl/issues/817), paused).
+- Whether to report the ordering gap behind A-26 to wgpu. SGL works around it. Decided: neither a report nor a fork. A wgpu-only reproduction shows it on wgpu 30.0.1, 30.0.2 and trunk, so the bug is wgpu's; upstream already tracks it as [gfx-rs/wgpu#9215](https://github.com/gfx-rs/wgpu/issues/9215), and draft [gfx-rs/wgpu#10292](https://github.com/gfx-rs/wgpu/pull/10292) fixes every case the reproduction covers. The workaround measured clean, and the reproduction, its results and SGL's remaining exposure (a BLAS built and traced in one command buffer, reported upstream on M3 and iPhone, never seen on the M5) are on [#817](https://github.com/stevepryde/sgl/issues/817).
 
 ### Left as they are
 
