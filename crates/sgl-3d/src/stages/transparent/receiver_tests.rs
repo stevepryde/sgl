@@ -1,6 +1,6 @@
 //! Blended receivers of screen-space reflections: the receiver pass and the
 //! blended draw that composes the method's result.
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::test_support::{self, half, hdr_texture, read};
 use crate::{AlphaMode, Camera, FrameInput, InstanceState, Mobility, Scene};
@@ -56,7 +56,7 @@ fn middle_row(
         reflection_method: settings::ReflectionMethod::Velvet,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
     let black = crate::asset::Material {
         base: [0., 0., 0., 1.],
@@ -245,7 +245,7 @@ fn reflection_column(
         reflection_method: method,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
     let floor = crate::asset::Material {
         base: [0.2, 0.2, 0.2, 1.],
@@ -373,7 +373,7 @@ fn a_receiver_writes_its_motion_and_the_surface_depth_not_the_opaque_depth() {
         ambient_occlusion: settings::AmbientOcclusionQuality::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let mut scene = Scene::new(&device, &queue);
     test_support::add_static(
         &device,

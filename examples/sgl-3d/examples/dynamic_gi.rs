@@ -33,7 +33,7 @@
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, DynamicGiVolume, FrameInput, HemisphereLight,
-    InstanceState, Light, LightShape, Mobility, Renderer, Scene,
+    InstanceState, Light, LightShape, Mobility, Renderer, Scene, View, ViewFrame,
     asset::{Asset, CpuMesh, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     glam::{Mat4, Vec3},
@@ -395,7 +395,16 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         ..Settings::default()
     };
     settings.diagnostics.dynamic_gi = options.counters;
-    let mut renderer = Renderer::new(&device, &queue, output.format(), size, 1., &settings)?;
+    let mut renderer = Renderer::new(&device);
+    let mut scene_view = View::new(
+        &renderer,
+        &device,
+        &queue,
+        output.format(),
+        size,
+        1.,
+        &settings,
+    )?;
     let projection = sgl_3d::perspective(65f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1);
     let camera_at = |eye: Vec3| Camera {
         view: camera::rh::view::look_at_mat4(eye, eye + Vec3::new(-1., -0.4, -7.6), Vec3::Y),
@@ -465,10 +474,13 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             &queue,
             &mut encoder,
             &mut scene,
-            &frame,
-            &settings,
-            &output_view,
-            timing.as_ref(),
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &frame,
+                settings: &settings,
+                output: &output_view,
+                timing: timing.as_ref(),
+            }],
         );
         queue.submit([encoder.finish()]);
         renderer.finish_frame(&mut scene);

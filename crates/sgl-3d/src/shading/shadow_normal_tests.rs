@@ -2,7 +2,7 @@
 //! whatever the material's normal map makes of the shading normal, observed
 //! in the lit colour of real frames.
 use crate::asset::{Asset, CpuMesh, Image, Material, Vertex};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::view::cascades::SHADOW_PANCAKE_SIZE;
 use crate::{
@@ -111,7 +111,7 @@ fn visibility(gpu: (&wgpu::Device, &wgpu::Queue), tilted: bool, shining: Shining
         ambient_occlusion: settings::AmbientOcclusionQuality::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
     add(
         &mut scene,

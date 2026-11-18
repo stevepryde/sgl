@@ -132,7 +132,7 @@ pub(crate) struct Candidates {
     most_regions: u32,
     /// Each slot's instance's model, which a frame's statistics readback
     /// keeps to attribute its candidates' sections
-    /// (`Renderer::geometry_stats_for_model`); copied on write while a
+    /// (`View::geometry_stats_for_model`); copied on write while a
     /// readback holds it.
     #[cfg(feature = "diagnostics")]
     models: std::sync::Arc<Vec<Option<ModelId>>>,

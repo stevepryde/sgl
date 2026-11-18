@@ -4,7 +4,7 @@
 //! reflects the same irradiance alike whatever holds it; and a sized light's
 //! highlight against the light its sphere or disc gives. Each observes the
 //! production shading on the GPU and integrates or compares in f64.
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::static_lighting::{IrradianceAtlas, Lightmap};
 use crate::{
@@ -357,7 +357,7 @@ fn a_probe_ray_s_hit_takes_no_coat() {
         return;
     };
     let settings = quiet_settings();
-    let mut renderer = Renderer::for_test(&device, &queue, [16, 16], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [16, 16], &settings);
     let mut scene = Scene::new(&device, &queue);
     let mut input = dark_input();
     input.hemisphere_light = HemisphereLight {
@@ -559,7 +559,7 @@ fn one_rule_for_every_indirect_source() {
         return;
     };
     let settings = quiet_settings();
-    let mut renderer = Renderer::for_test(&device, &queue, [16, 16], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [16, 16], &settings);
     let mut scene = Scene::new(&device, &queue);
     // A static square whose material takes the lightmap, and the chart the
     // atlas lights.
@@ -779,7 +779,7 @@ fn disc_reference(view: DVec3, rough: f64, centre: DVec3, radius: f64, radiance:
 /// its cosine). `light` draws the LightSample for a surface `s` in WGSL.
 fn highlight(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
-    renderer: &mut Renderer,
+    renderer: &mut TestRenderer,
     scene: &mut Scene,
     input: &FrameInput,
     rough: f64,
@@ -852,7 +852,7 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
         return;
     };
     let settings = quiet_settings();
-    let mut renderer = Renderer::for_test(&device, &queue, [16, 16], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [16, 16], &settings);
     let within = |ratio: f64, low: f64, high: f64| (low..=high).contains(&ratio);
     for elevation in [0.6f64, 1.0, 1.3] {
         let centre = DVec3::new(elevation.sin(), 0., elevation.cos());
@@ -976,7 +976,7 @@ fn the_directional_light_s_front_skips_no_light_it_gives() {
     const ROWS: usize = 128;
     const COLUMNS: usize = 256;
     let settings = quiet_settings();
-    let mut renderer = Renderer::for_test(&device, &queue, [16, 16], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [16, 16], &settings);
     let mut scene = Scene::new(&device, &queue);
     let mut input = dark_input();
     input.directional_lights[0] = Some(DirectionalLight {
@@ -1109,7 +1109,7 @@ impl Default for Layered {
 pub(super) fn observe_lit(cases: &[Layered]) -> Option<Vec<[DVec3; 3]>> {
     let (device, queue) = test_support::device()?;
     let settings = quiet_settings();
-    let mut renderer = Renderer::for_test(&device, &queue, [16, 16], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [16, 16], &settings);
     let mut scene = Scene::new(&device, &queue);
     let texel: Vec<u8> = [1f32; 4]
         .iter()

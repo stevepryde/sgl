@@ -570,10 +570,6 @@ impl Scene {
     }
 
     /// The attempt id of the scene's last finished frame, none before one.
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "a view's history will follow it")
-    )]
     pub(crate) fn last_finished(&self) -> Option<u64> {
         self.frame.finished
     }

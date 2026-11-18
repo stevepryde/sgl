@@ -6,7 +6,7 @@ use super::{Function, Query};
 use crate::asset::{CpuMesh, Vertex};
 use crate::settings::{self, Settings};
 use crate::shading::RayQueryForm;
-use crate::{Camera, FrameInput, InstanceState, Mobility, Renderer, Scene, test_support};
+use crate::{Camera, FrameInput, InstanceState, Mobility, Scene, TestRenderer, test_support};
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
@@ -191,7 +191,7 @@ fn convex_receiver(gpu: (&wgpu::Device, &wgpu::Queue), form: Option<RayQueryForm
         world_space_reflections: settings::WorldSpaceReflections::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let projection = crate::perspective(1., 1., 0.1);
     let input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
@@ -245,6 +245,7 @@ fn convex_receiver(gpu: (&wgpu::Device, &wgpu::Queue), form: Option<RayQueryForm
         renderer.finish_frame(&mut scene);
         device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         let stats = renderer
+            .view
             .geometry_stats(device)
             .expect("completed GPU/CPU draw counts");
         let expected = if active {

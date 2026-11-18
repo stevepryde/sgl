@@ -1,6 +1,6 @@
 //! Observe the real bake shaders in raster and secondary shading.
 use super::*;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::Settings;
 use crate::view::pipelines::GeometryPass;
 use crate::{
@@ -13,7 +13,7 @@ use glam::{Mat4, Vec3};
 fn receiver(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    renderer: &mut Renderer,
+    renderer: &mut TestRenderer,
     scene: &mut Scene,
     input: &FrameInput,
 ) -> [f32; 4] {
@@ -41,7 +41,7 @@ fn receiver(
 fn observe(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    renderer: &mut Renderer,
+    renderer: &mut TestRenderer,
     scene: &mut Scene,
     input: &FrameInput,
     settings: &Settings,
@@ -133,7 +133,7 @@ fn observe(
 /// describes.
 fn fused_lit_color(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
-    renderer: &mut Renderer,
+    renderer: &mut TestRenderer,
     scene: &mut Scene,
     input: &FrameInput,
     settings: &Settings,
@@ -187,7 +187,7 @@ fn lightmap_is_baked_until_baked_lighting_is_switched_off() {
         let mut scene = Scene::new(&device, &queue);
         let (world, _) =
             test_support::add_static(&device, &queue, &mut scene, test_support::cube());
-        let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &Settings::default());
+        let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &Settings::default());
         let map = Lightmap {
             directionality: vec![],
             size: [2, 2],
@@ -238,7 +238,7 @@ fn lightmap_filters_bilinearly_with_x_clamped_and_y_repeated() {
     };
     let mut scene = Scene::new(&device, &queue);
     let (world, _) = test_support::add_static(&device, &queue, &mut scene, test_support::cube());
-    let mut renderer = Renderer::for_test(&device, &queue, [8, 8], &Settings::default());
+    let mut renderer = TestRenderer::for_test(&device, &queue, [8, 8], &Settings::default());
     const SIZE: usize = 4;
     let texel = |x: usize, y: usize| (1 + x + SIZE * y) as f32;
     // Chart UV = material UV * (0.5, 2) + (0.25, -0.5).
@@ -343,7 +343,7 @@ fn static_atlas_and_moving_cube_transport() {
             .add_asset(&device, &queue, test_support::cube())
             .unwrap()
             .model;
-        let mut renderer = Renderer::for_test(&device, &queue, [8, 8], &Settings::default());
+        let mut renderer = TestRenderer::for_test(&device, &queue, [8, 8], &Settings::default());
         let settings = Settings::default();
         // Analytic irradiance from a unit point source one metre above the plane.
         // The atlas samples actual texel-center positions. A triangle-corner bake
@@ -393,7 +393,7 @@ fn static_atlas_and_moving_cube_transport() {
             projection: Mat4::IDENTITY,
             eye: Vec3::Y * 5.,
         });
-        let sample = |renderer: &mut Renderer,
+        let sample = |renderer: &mut TestRenderer,
                       scene: &mut Scene,
                       input: &FrameInput,
                       origin: Vec3,
@@ -638,7 +638,7 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
         let models =
             [model, mapped].map(|asset| scene.add_asset(&device, &queue, asset).unwrap().model);
         let mut moving = None;
-        let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &Settings::default());
+        let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &Settings::default());
         let settings = Settings::default();
         let mut cube = AmbientCube::default();
         cube.irradiance[0] = [1. / std::f32::consts::PI, 0., 0.];
@@ -781,7 +781,7 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
             )));
         let mut scene = Scene::new(&device, &queue);
         let (world, _) = test_support::add_static(&device, &queue, &mut scene, model);
-        let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &Settings::default());
+        let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &Settings::default());
         let settings = Settings::default();
         // Reference normal +Z sees E/PI=1/PI. The RGBA8-exact lobe
         // w=8*v.xyz-4, a=2*v.w responds with (a+w.n)/PI: about (1+n.x)/PI.
@@ -934,7 +934,7 @@ fn a_coat_dims_baked_diffuse_and_emission_by_its_fresnel() {
         )
         .unwrap();
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
     let fresnel = |cosine: f32| 0.04 + 0.96 * (1. - cosine).powi(5);
     // Head-on, and at a cosine of 0.3 between the square's normal and the
     // camera's backward axis.
@@ -1067,7 +1067,7 @@ fn compressed_static_atlas_shades_as_its_decoded_float_atlas_times_its_scale() {
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::new(
+    let mut renderer = TestRenderer::new(
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8Unorm,
@@ -1254,7 +1254,7 @@ fn lambertian_square(
 /// The square's lit colour at the frame's centre pixel.
 fn square_color(
     gpu: (&wgpu::Device, &wgpu::Queue),
-    renderer: &mut Renderer,
+    renderer: &mut TestRenderer,
     scene: &mut Scene,
     input: &FrameInput,
 ) -> [f32; 3] {
@@ -1290,7 +1290,7 @@ fn a_lightmapped_surface_adds_its_chart_to_the_frames_ambient() {
     let mut scene = Scene::new(&device, &queue);
     let (model, mut input) = lambertian_square(gpu, &mut scene);
     let (world, _) = test_support::add_static(&device, &queue, &mut scene, model);
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &Settings::default());
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &Settings::default());
     let fill = 0.5 / std::f32::consts::PI;
     for (chart, hemisphere, expected) in [
         (0., HemisphereLight::default(), 0.5 * 0.5),
@@ -1343,7 +1343,7 @@ fn a_moving_instances_ambient_cube_adds_to_the_frames_ambient() {
             Mobility::Moving,
         )
         .unwrap();
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &Settings::default());
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &Settings::default());
     input.hemisphere_light = FILL;
     let ambient = 0.5 + 0.5 / std::f32::consts::PI;
     for (cube, expected) in [(None, 0.5 * ambient), (Some(0.25), 0.5 * (0.25 + ambient))] {

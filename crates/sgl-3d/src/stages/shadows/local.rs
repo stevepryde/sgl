@@ -48,7 +48,7 @@ pub(crate) use plan::ShadowFrame;
 use plan::{Face, Work};
 
 /// The last rendered frame's local-light shadows
-/// (`Renderer::local_shadow_stats`).
+/// (`View::local_shadow_stats`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LocalShadowStats {
     /// Lights that cast a shadow, reach the camera's view and have one.

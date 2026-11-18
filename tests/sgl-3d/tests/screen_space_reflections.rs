@@ -3,7 +3,7 @@
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Backdrop, Camera, FrameInput, InstanceState, Mobility, ModelId, Renderer, Scene,
-    SpecularProbeTexels,
+    SpecularProbeTexels, View, ViewFrame,
     asset::{Asset, CpuMesh, Material, Vertex},
     diagnostics::DiagnosticTarget,
     environment::{EnvironmentMap, PmremAtlas},
@@ -203,6 +203,7 @@ struct Frames {
     /// The models the caller places.
     models: Vec<ModelId>,
     renderer: Renderer,
+    view: View,
     settings: Settings,
     input: FrameInput,
     output: wgpu::TextureView,
@@ -265,7 +266,9 @@ impl Frames {
             },
             ..Settings::default()
         };
-        let renderer = Renderer::new(
+        let renderer = Renderer::new(&device);
+        let view = View::new(
+            &renderer,
             &device,
             &queue,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -282,6 +285,7 @@ impl Frames {
             world,
             models,
             renderer,
+            view,
             settings,
             input,
             output,
@@ -292,7 +296,7 @@ impl Frames {
     fn resize(&mut self, size: [u32; 2]) {
         self.size = size;
         self.input.camera.projection = perspective(1., size[0] as f32 / size[1] as f32, 0.1);
-        self.renderer.resize(&self.device, size, 1., &self.settings);
+        self.view.resize(&self.device, size, 1., &self.settings);
         self.output = target(&self.device, size);
     }
 
@@ -313,10 +317,13 @@ impl Frames {
                 &self.queue,
                 &mut encoder,
                 &mut self.scene,
-                &self.input,
-                &self.settings,
-                &self.output,
-                None,
+                &mut [ViewFrame {
+                    view: &mut self.view,
+                    input: &self.input,
+                    settings: &self.settings,
+                    output: &self.output,
+                    timing: None,
+                }],
             );
             self.queue.submit([encoder.finish()]);
             self.renderer.finish_frame(&mut self.scene);
@@ -325,7 +332,7 @@ impl Frames {
 
     /// `target` of the last frame.
     fn target(&self, target: DiagnosticTarget) -> &wgpu::TextureView {
-        self.renderer.diagnostic_target(target).unwrap()
+        self.view.diagnostic_target(target).unwrap()
     }
 
     /// RGB of the HDR composite, row-major.
@@ -562,6 +569,7 @@ fn static_probe_capture_leaves_out_unselected_visibility_groups() {
                 &frames.device,
                 &frames.queue,
                 &mut frames.scene,
+                &mut frames.view,
                 &frames.input,
                 &frames.settings,
                 Vec3::new(0., -0.4, 2.),
@@ -961,10 +969,13 @@ fn keeps_its_history_across_an_unfinished_frame(method: settings::ReflectionMeth
                     &frames.queue,
                     &mut encoder,
                     &mut frames.scene,
-                    &frames.input,
-                    &frames.settings,
-                    &frames.output,
-                    None,
+                    &mut [ViewFrame {
+                        view: &mut frames.view,
+                        input: &frames.input,
+                        settings: &frames.settings,
+                        output: &frames.output,
+                        timing: None,
+                    }],
                 );
                 if submitted {
                     frames.queue.submit([encoder.finish()]);

@@ -20,7 +20,7 @@ pub fn counters() -> Counters {
 }
 
 /// The draws the last frame's camera and directional-cascade views encoded
-/// (`Renderer::diagnostic_draws`): one per instanced draw call of the
+/// (`View::diagnostic_draws`): one per instanced draw call of the
 /// CPU-built blended list, and one per set and phase of the GPU-built
 /// lists, an indirect draw of the sections the GPU appended, with a
 /// cascade's second per opaque set, the indexed draw of its sections whose
@@ -37,7 +37,7 @@ pub struct ViewDraws {
 }
 
 /// The CPU time the last frame's camera and directional-cascade views took
-/// (`Renderer::diagnostic_view_times`): the camera's opaque and masked draw
+/// (`View::diagnostic_view_times`): the camera's opaque and masked draw
 /// list, and each cascade's, nearest first.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ViewTimes {
@@ -127,7 +127,7 @@ pub fn crystal_roughness_threshold() -> f32 {
 }
 
 /// An intermediate target of the last rendered frame
-/// (`Renderer::diagnostic_target`).
+/// (`View::diagnostic_target`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiagnosticTarget {
     /// Depth32Float, reversed-Z.

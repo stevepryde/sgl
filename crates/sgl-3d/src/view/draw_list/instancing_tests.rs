@@ -4,7 +4,7 @@ use crate::asset::{CpuMesh, Vertex};
 use crate::settings::{Antialiasing, Settings};
 use crate::static_lighting::AmbientCube;
 use crate::{
-    Backdrop, Camera, FrameInput, InstanceState, Mobility, Renderer, Scene, diagnostics,
+    Backdrop, Camera, FrameInput, InstanceState, Mobility, Scene, TestRenderer, diagnostics,
     test_support,
 };
 use glam::{Mat4, Vec2, Vec3, Vec4Swizzles};
@@ -140,7 +140,7 @@ fn one_instanced_draw_renders_each_instance_at_its_own_pose() {
         antialiasing: Antialiasing::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, [SIZE; 2], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [SIZE; 2], &settings);
     let camera = Camera {
         view: Mat4::IDENTITY,
         projection: crate::perspective(1., 1., 0.1),
@@ -177,7 +177,10 @@ fn one_instanced_draw_renders_each_instance_at_its_own_pose() {
     // The first frame's draws, read back once it completes: each quad one
     // section of two triangles, by mobility; the hidden instance none.
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let stats = renderer.geometry_stats(&device).expect("a completed frame");
+    let stats = renderer
+        .view
+        .geometry_stats(&device)
+        .expect("a completed frame");
     assert_eq!(stats.moving_instances, (4, 4 * 2), "the moving quads");
     assert_eq!(stats.static_instances, (2, 2 * 2), "the static quads");
     for (&(position, motion), &instance) in placed.iter().zip(&instances) {

@@ -544,7 +544,7 @@ fn a_re_pended_model_is_compacted_once() {
 /// finished unless `abandoned`.
 fn frame(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
-    (renderer, scene): (&mut crate::Renderer, &mut Scene),
+    (renderer, scene): (&mut crate::TestRenderer, &mut Scene),
     settings: &crate::settings::Settings,
     output: &wgpu::TextureView,
     abandoned: bool,
@@ -652,14 +652,14 @@ fn frames_build_the_structures_after_their_deformations() {
         ..Default::default()
     };
     let size = [64, 64];
-    let mut renderer = crate::Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = crate::TestRenderer::for_test(&device, &queue, size, &settings);
     let output = crate::view::targets::target(
         &device,
         "acceleration structure frames",
         size,
         crate::shading::gbuffer::COLOR,
     );
-    let frame = |renderer: &mut crate::Renderer,
+    let frame = |renderer: &mut crate::TestRenderer,
                  scene: &mut Scene,
                  settings: &crate::settings::Settings,
                  abandoned: bool| {
@@ -780,7 +780,7 @@ fn the_renderer_reports_whether_the_hardware_path_traces() {
             .model;
         place(gpu, &mut scene, model, Mat4::IDENTITY, Mobility::Static);
         let size = [16, 16];
-        let mut renderer = crate::Renderer::for_test(&device, &queue, size, &settings);
+        let mut renderer = crate::TestRenderer::for_test(&device, &queue, size, &settings);
         let output = crate::view::targets::target(
             &device,
             "ray tracing reports",

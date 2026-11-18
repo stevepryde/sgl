@@ -111,9 +111,6 @@ pub(crate) struct Prepare {
     /// The last rendered frame asked for the hardware path on a device
     /// that has it.
     hardware_requested: bool,
-    /// The scene's frame attempt the last rendered frame began
-    /// (`Scene::begin_frame`), 0 before one, which no attempt is.
-    attempt: u64,
 }
 
 impl Prepare {
@@ -129,9 +126,9 @@ impl Prepare {
                 || effective.ray_traced_shadows)
     }
 
-    /// The frame's scene part, which its primary view steers with
-    /// `effective` and `input`: begins the scene's frame
-    /// (`Scene::begin_frame`), chooses the acceleration-structure builds
+    /// The frame's scene part, after the scene's frame began
+    /// (`Scene::begin_frame`), which its primary view steers with
+    /// `effective` and `input`: chooses the acceleration-structure builds
     /// while hardware ray tracing is in effect, ordered from `input`'s eye,
     /// and, when the frame is `traced` (`traces`), updates the scene's ray
     /// instances under `input`'s visibility mask.
@@ -144,7 +141,6 @@ impl Prepare {
         input: &FrameInput,
         traced: bool,
     ) {
-        self.attempt = scene.begin_frame(device, queue);
         // The acceleration structures are built on the frames that trace,
         // and freed by a frame with hardware ray tracing off. The portable
         // BVHs then cover what the TLAS does not hold.
@@ -372,12 +368,6 @@ impl Prepare {
     /// device that has it.
     pub fn hardware_requested(&self) -> bool {
         self.hardware_requested
-    }
-
-    /// The scene's frame attempt the last rendered frame began, which
-    /// `Renderer::finish_frame` commits.
-    pub fn attempt(&self) -> u64 {
-        self.attempt
     }
 
     /// The views of a probe capture at `center` with `input`'s lights, the

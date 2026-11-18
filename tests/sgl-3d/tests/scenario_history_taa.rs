@@ -160,14 +160,14 @@ fn a_turning_backdrop_moves_the_sky() {
         let mut rig = Rig::new(&gpu, VIEW, Antialiasing::Taa, SKY);
         for f in 0..=frame {
             rig.look(camera_at(f));
-            rig.input.backdrop = match yaw(f) {
+            rig.views[0].input.backdrop = match yaw(f) {
                 Some(yaw) => Backdrop::Environment {
                     yaw,
                     brightness: 1.,
                 },
                 None => Backdrop::Color([SKY; 3]),
             };
-            rig.input.camera_cut = cut && f == frame;
+            rig.views[0].input.camera_cut = cut && f == frame;
             rig.render(f);
         }
         let motion = rig.read(DiagnosticTarget::Motion);
@@ -235,7 +235,7 @@ fn a_backdrop_that_changes_at_rest_converges_through_the_box() {
     let mut worst = (f32::NEG_INFINITY, 0, 0., 0.);
     for frame in 0..SETTLE + JITTER_CYCLE {
         if frame == SETTLE {
-            rig.input.backdrop = Backdrop::Color([after; 3]);
+            rig.views[0].input.backdrop = Backdrop::Color([after; 3]);
         }
         rig.render(frame);
         let Some(n) = (frame + 1).checked_sub(SETTLE).filter(|&n| n > 0) else {

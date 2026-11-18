@@ -83,8 +83,8 @@ pub(crate) use case_tests;
 /// the AMD SDK port the renderer uses gives it (`8 * (display / render)^2`,
 /// 8 at Native AA).
 pub fn phases(method: Antialiasing, rig: &Rig) -> u32 {
-    let render = rig.renderer.render_size()[0] as i32;
-    let display = rig.renderer.scene_size()[0] as i32;
+    let render = rig.views[0].view.render_size()[0] as i32;
+    let display = rig.views[0].view.scene_size()[0] as i32;
     let count = match method {
         Antialiasing::Taa => return JITTER_CYCLE,
         Antialiasing::Fsr2 => sp_fidelity::fsr2::ffx_fsr2_get_jitter_phase_count(render, display),
@@ -112,8 +112,11 @@ pub enum Edge {
 /// sizes. Without upscaling that is the phases; FSR's
 /// `8 * (display / render)^2` phases make it about 8 at every quality.
 pub fn samples(method: Antialiasing, rig: &Rig) -> f32 {
-    let [render, scene] =
-        [rig.renderer.render_size(), rig.renderer.scene_size()].map(|[w, h]| w as f32 * h as f32);
+    let [render, scene] = [
+        rig.views[0].view.render_size(),
+        rig.views[0].view.scene_size(),
+    ]
+    .map(|[w, h]| w as f32 * h as f32);
     phases(method, rig) as f32 * render / scene
 }
 
@@ -370,8 +373,20 @@ pub fn motion_follows_the_script(
     frame: u32,
     name: &str,
 ) -> Result<[f32; 2], String> {
-    let motion = rig.read(DiagnosticTarget::Motion);
-    let sources = rig.read(DiagnosticTarget::SourceId);
+    motion_follows_the_script_in(rig, 0, scenario, frame, name)
+}
+
+/// [`motion_follows_the_script`] over the last frame of `rig`'s view
+/// `view`, whose camera `scenario` scripts.
+pub fn motion_follows_the_script_in(
+    rig: &Rig,
+    view: usize,
+    scenario: &Scenario,
+    frame: u32,
+    name: &str,
+) -> Result<[f32; 2], String> {
+    let motion = rig.read_view(view, DiagnosticTarget::Motion);
+    let sources = rig.read_view(view, DiagnosticTarget::SourceId);
     let now = VIEW.camera((scenario.camera)(frame));
     let before = VIEW.camera((scenario.camera)(frame - 1));
     let mut worst = [0f32; 2];
@@ -491,7 +506,7 @@ impl Oracles {
             VIEW.aspect(),
             "a render size of the view's aspect"
         );
-        self.single.view = view;
+        self.single.views[0].lens = view;
     }
 
     pub fn restage(&mut self, scenario: &Scenario) {
@@ -535,7 +550,7 @@ impl Failures {
     /// creates radiance an unlit fixture cannot. The oracle is the bound
     /// (`Rig::excursion`), within the rounding of the method's `stores`.
     pub fn bounded(&mut self, rig: &Rig, what: impl std::fmt::Display) {
-        let rounding = stores(rig.settings.antialiasing) * HALF_STEP;
+        let rounding = stores(rig.views[0].settings.antialiasing) * HALF_STEP;
         if let Some((beyond, at)) = rig.excursion(rounding) {
             self.0.push(format!(
                 "{what}: an antialiased value left the fixture's radiance range by {beyond} of the bound it crossed: {at} (case 12)"

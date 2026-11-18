@@ -1,7 +1,7 @@
 //! Which directional light casts the shadow, and what its cascades shadow,
 //! observed in the lit colour of real frames.
 use crate::asset::{CpuMesh, Vertex};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::view::cascades::SHADOW_PANCAKE_SIZE;
 use crate::{
@@ -105,7 +105,7 @@ fn the_first_directional_light_that_casts_takes_the_shadow() {
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = crate::view::targets::target(
         &device,
         "directional shadow output",
@@ -194,7 +194,7 @@ struct Fixture {
     device: wgpu::Device,
     queue: wgpu::Queue,
     scene: Scene,
-    renderer: Renderer,
+    renderer: TestRenderer,
     settings: Settings,
     size: [u32; 2],
 }
@@ -218,7 +218,7 @@ impl Fixture {
         size: [u32; 2],
         settings: Settings,
     ) -> Self {
-        let renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let renderer = TestRenderer::for_test(&device, &queue, size, &settings);
         let scene = Scene::new(&device, &queue);
         Self {
             device,
@@ -878,7 +878,7 @@ fn the_fog_fades_from_casters_within_the_pancake() {
 fn observe_shadow(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    renderer: &Renderer,
+    renderer: &TestRenderer,
     scene: &Scene,
     statement: &str,
 ) -> [f32; 4] {

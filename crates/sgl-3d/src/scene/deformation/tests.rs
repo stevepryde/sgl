@@ -6,7 +6,7 @@ use super::DeformedMesh;
 use crate::asset::{Asset, CpuMesh, Vertex};
 use crate::content::identity::Identity;
 use crate::deformation::{Influence, MeshDeformation, MorphDelta, MorphTarget};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::shading::gbuffer;
 use crate::stages::deform::Deform;
@@ -392,14 +392,17 @@ const SIZE: [u32; 2] = [32, 32];
 
 /// A renderer without antialiasing's jitter or post effects, and a camera
 /// at the origin looking down -Z.
-fn camera_frames(device: &wgpu::Device, queue: &wgpu::Queue) -> (Renderer, Settings, FrameInput) {
+fn camera_frames(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (TestRenderer, Settings, FrameInput) {
     let settings = Settings {
         antialiasing: settings::Antialiasing::Off,
         bloom: settings::Bloom::Off,
         atmosphere: false,
         ..Settings::default()
     };
-    let renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
         projection: crate::perspective(1., 1., 0.1),
@@ -529,7 +532,7 @@ fn deformed_casters_cast_at_their_deformed_depth() {
         view_formats: &[],
     });
     let depth_view = depth.create_view(&Default::default());
-    let mut renderer = Renderer::for_test(&device, &queue, [DEPTH; 2], &Settings::default());
+    let mut renderer = TestRenderer::for_test(&device, &queue, [DEPTH; 2], &Settings::default());
     let mut frame = FrameInput::new(Camera {
         view: Mat4::from_translation(Vec3::X * 100.),
         projection: crate::perspective(1., 1., 0.1),

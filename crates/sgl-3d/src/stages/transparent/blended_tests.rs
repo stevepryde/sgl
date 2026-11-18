@@ -1,6 +1,6 @@
 //! Blended surfaces observed in real frames: what they leave of the opaque
 //! frame's targets.
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::shading::gbuffer;
 use crate::{
@@ -43,7 +43,7 @@ fn frames(device: &wgpu::Device, queue: &wgpu::Queue, shown: bool) -> [Vec<u8>; 
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
     test_support::add_static(device, queue, &mut scene, square(-6., 8.));
     // Authored opaque and made blended by an edit, as a game may.
@@ -151,11 +151,11 @@ fn blended_surfaces_write_fsrs_masks() {
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
-    if renderer.antialiasing_in_effect(&settings) != settings::Antialiasing::Fsr2 {
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
+    if renderer.view.antialiasing_in_effect(&settings) != settings::Antialiasing::Fsr2 {
         eprintln!(
             "skipping: FSR does not run here: {:?}",
-            renderer.fsr_error()
+            renderer.view.fsr_error()
         );
         return;
     }
@@ -261,7 +261,7 @@ fn centre_colours_under(
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
     let (glass, _) = test_support::add_static(device, queue, &mut scene, square(-3., 0.5));
     let authored = scene.material(glass.materials[0]).unwrap();

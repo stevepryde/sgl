@@ -112,6 +112,7 @@ impl Deform {
         if work.is_empty() {
             return;
         }
+        crate::counters::deformed(work.len());
         let size = work.len() as u64 * self.stride;
         if self.records.size() < size {
             self.records = records(device, size.next_power_of_two());

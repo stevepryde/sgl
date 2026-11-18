@@ -2,7 +2,7 @@
 //! camera through them, on a device of either binding tier.
 use crate::asset::{Asset, CpuMesh, Material, Vertex};
 use crate::graphics_device::BindingTier;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::shading::gbuffer;
 use crate::{Camera, FrameInput, InstanceState, Mobility, Scene, test_support};
@@ -116,7 +116,7 @@ fn composed_under(
     input: &FrameInput,
 ) -> (BindingTier, Vec<[f32; 4]>) {
     let settings = settings();
-    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
     for (asset, pose) in content {
         let model = scene.add_asset(device, queue, asset).unwrap().model;
@@ -441,7 +441,7 @@ fn the_frame_is_copied_only_where_a_transmissive_surface_shows() {
         return;
     };
     let settings = settings();
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     if renderer.binding_tier() == BindingTier::Basic {
         eprintln!("skipping: the Basic tier makes no copy");
         return;

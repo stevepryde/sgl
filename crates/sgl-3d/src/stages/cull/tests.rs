@@ -614,7 +614,7 @@ fn an_abandoned_frame_reports_nothing_and_the_next_reports_its_own() {
         antialiasing: crate::settings::Antialiasing::Off,
         ..Default::default()
     };
-    let mut renderer = crate::Renderer::for_test(&device, &queue, [64; 2], &settings);
+    let mut renderer = crate::TestRenderer::for_test(&device, &queue, [64; 2], &settings);
     let input = crate::FrameInput::new(crate::Camera {
         view: Mat4::IDENTITY,
         projection: crate::perspective(1., 1., 0.1),
@@ -622,7 +622,7 @@ fn an_abandoned_frame_reports_nothing_and_the_next_reports_its_own() {
     });
     let output =
         crate::view::targets::target(&device, "output", [64; 2], crate::shading::gbuffer::COLOR);
-    let render = |renderer: &mut crate::Renderer, scene: &mut Scene| {
+    let render = |renderer: &mut crate::TestRenderer, scene: &mut Scene| {
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(
             &device,
@@ -639,12 +639,17 @@ fn an_abandoned_frame_reports_nothing_and_the_next_reports_its_own() {
     // Abandoned: never submitted, never finished.
     drop(render(&mut renderer, &mut scene));
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    assert_eq!(renderer.geometry_stats(&device), None, "no frame completed");
+    assert_eq!(
+        renderer.view.geometry_stats(&device),
+        None,
+        "no frame completed"
+    );
     let encoder = render(&mut renderer, &mut scene);
     queue.submit([encoder.finish()]);
     renderer.finish_frame(&mut scene);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let stats = renderer
+        .view
         .geometry_stats(&device)
         .expect("the submitted frame completed");
     assert_eq!(stats.static_instances, (1, 2));

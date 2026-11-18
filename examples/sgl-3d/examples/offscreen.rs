@@ -22,7 +22,7 @@ use sgl_3d::glam::camera;
 use sgl_3d::{
     AlphaMode, AutoExposure, Camera, CompensationCurve, Decal, DirectionalLight, DirectionalShadow,
     Fog, FogVolume, FrameInput, HemisphereLight, InstanceState, Light, LightShape, Mobility,
-    Renderer, Scene,
+    Renderer, Scene, View, ViewFrame,
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     glam::{Mat4, Quat, Vec3},
@@ -472,7 +472,16 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         ..Settings::default()
     };
     // A window's scale factor goes where the 1 is.
-    let mut renderer = Renderer::new(&device, &queue, output.format(), size, 1., &settings)?;
+    let mut renderer = Renderer::new(&device);
+    let mut scene_view = View::new(
+        &renderer,
+        &device,
+        &queue,
+        output.format(),
+        size,
+        1.,
+        &settings,
+    )?;
     let eye = Vec3::new(6., 4., 7.);
     let view = camera::rh::view::look_at_mat4(eye, Vec3::new(0., 0.7, 0.), Vec3::Y);
     let projection = sgl_3d::perspective(50f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1);
@@ -527,17 +536,20 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         frame.elapsed_seconds = frame_index as f64 / 60.;
         frame.camera_cut = frame_index == 0;
         // Cheap when neither the output size nor the settings changed.
-        renderer.resize(&device, size, 1., &settings);
+        scene_view.resize(&device, size, 1., &settings);
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(
             &device,
             &queue,
             &mut encoder,
             &mut scene,
-            &frame,
-            &settings,
-            &output_view,
-            None,
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &frame,
+                settings: &settings,
+                output: &output_view,
+                timing: None,
+            }],
         );
         queue.submit([encoder.finish()]);
         // After submitting: this frame becomes the next one's history.

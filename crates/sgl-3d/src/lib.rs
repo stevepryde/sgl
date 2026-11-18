@@ -45,7 +45,9 @@ pub use frame_input::{
     MeteringMask, MotionBlurParameters, perspective,
 };
 pub use glam;
-pub use renderer::{Renderer, RendererError};
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use renderer::test_frame::TestRenderer;
+pub use renderer::{Renderer, View, ViewError, ViewFrame};
 pub use scene::irradiance_volume::PreparedIrradianceRegion;
 pub use scene::rays::acceleration::RayTracingStats;
 pub use scene::{PreparedModel, PreparedModelOptions, RayData, Scene, SceneError, SceneOptions};

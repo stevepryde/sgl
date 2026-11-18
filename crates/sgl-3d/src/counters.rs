@@ -2,8 +2,9 @@
 //! on (`diagnostics::counters`): its uploads by call site, the buffers it
 //! creates, the time each step of building a model and each
 //! instance BVH takes, the ray source's and geometry slabs' growths, the
-//! static-edit boxes recorded and merged, and the hardware path's
-//! acceleration-structure builds and compactions. Without the feature every
+//! static-edit boxes recorded and merged, the hardware path's
+//! acceleration-structure builds and compactions, and the deformations
+//! dispatched. Without the feature every
 //! function here is a pass-through and nothing is kept.
 
 /// A step of preparing or placing a model, or of building an instance BVH,
@@ -90,6 +91,9 @@ pub struct Counters {
     /// Models' BLASes compacted, and the vertices they hold.
     pub blas_compactions: u64,
     pub blas_compacted_vertices: u64,
+    /// Deformations the deform pass dispatched, one per deforming
+    /// instance a frame writes.
+    pub deformations: u64,
 }
 
 #[cfg(any(test, feature = "diagnostics"))]
@@ -159,6 +163,7 @@ impl Counters {
             tlas_builds: self.tlas_builds - earlier.tlas_builds,
             blas_compactions: self.blas_compactions - earlier.blas_compactions,
             blas_compacted_vertices: self.blas_compacted_vertices - earlier.blas_compacted_vertices,
+            deformations: self.deformations - earlier.deformations,
         }
     }
 }
@@ -387,6 +392,14 @@ pub(crate) fn blas_build(vertices: u32) {
 pub(crate) fn deformed_blas_build() {
     #[cfg(any(test, feature = "diagnostics"))]
     COUNTERS.with_borrow_mut(|counters| counters.deformed_blas_builds += 1);
+}
+
+/// Counts `count` deformations dispatched into a frame.
+pub(crate) fn deformed(count: usize) {
+    #[cfg(any(test, feature = "diagnostics"))]
+    COUNTERS.with_borrow_mut(|counters| counters.deformations += count as u64);
+    #[cfg(not(any(test, feature = "diagnostics")))]
+    let _ = count;
 }
 
 /// Counts a TLAS built into a frame.

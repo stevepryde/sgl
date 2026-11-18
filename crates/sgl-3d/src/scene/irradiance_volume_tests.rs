@@ -12,7 +12,7 @@
 //! shading and in completion; and the scene refuses placements and regions
 //! it cannot hold, changing nothing.
 use super::PreparedIrradianceRegion;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, DynamicGiQuality, Settings};
 use crate::shading::gbuffer;
 use crate::static_lighting::AmbientCube;
@@ -143,7 +143,7 @@ fn fixture_shaded(s:Surface,receiver:u32,environment_specular:bool)->Shaded {
 /// under the frame's lit group 0, and reads back its `count` outputs.
 fn observe(
     gpu: Gpu,
-    (renderer, scene): (&mut Renderer, &mut Scene),
+    (renderer, scene): (&mut TestRenderer, &mut Scene),
     input: &FrameInput,
     settings: &Settings,
     statements: &str,
@@ -173,7 +173,7 @@ fn observe(
 /// normal): the red of its own light, its sky visibility and its share.
 fn field(
     gpu: Gpu,
-    (renderer, scene): (&mut Renderer, &mut Scene),
+    (renderer, scene): (&mut TestRenderer, &mut Scene),
     input: &FrameInput,
     queries: &[(Vec3, Vec3, Vec3)],
 ) -> Vec<[f32; 3]> {
@@ -207,7 +207,7 @@ fn field(
 /// cell's own light and sky visibility toward +Y, and the volume's share.
 fn floors(
     gpu: Gpu,
-    (renderer, scene): (&mut Renderer, &mut Scene),
+    (renderer, scene): (&mut TestRenderer, &mut Scene),
     volume: IrradianceVolume,
     cells: &[[u32; 3]],
 ) -> Vec<[f32; 3]> {
@@ -235,7 +235,7 @@ fn faced(base: f32) -> IrradianceCell {
 /// floor of the cell.
 fn faces(
     gpu: Gpu,
-    (renderer, scene): (&mut Renderer, &mut Scene),
+    (renderer, scene): (&mut TestRenderer, &mut Scene),
     volume: IrradianceVolume,
     cells: &[[u32; 3]],
 ) -> Vec<[f32; 6]> {
@@ -268,10 +268,10 @@ fn close(actual: f32, expected: f32, tolerance: f32) -> bool {
     (actual - expected).abs() <= tolerance
 }
 
-fn fixture(gpu: Gpu) -> (Renderer, Scene) {
+fn fixture(gpu: Gpu) -> (TestRenderer, Scene) {
     let (device, queue) = gpu;
     (
-        Renderer::for_test(device, queue, SIZE, &settings()),
+        TestRenderer::for_test(device, queue, SIZE, &settings()),
         Scene::new(device, queue),
     )
 }
@@ -731,7 +731,7 @@ fn the_volume_lights_receivers_below_charts_and_above_dynamic_gi_and_ambient_cub
         dynamic_gi: DynamicGiQuality::High,
         ..settings()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let mut scene = Scene::new(&device, &queue);
     let environment = uniform_environment(gpu, &mut scene, 0.5);
     // Its top at y = -0.5, below the receivers and 1.5 m below the probes
@@ -1068,7 +1068,7 @@ fn the_sky_visibility_occludes_the_skys_specular_and_not_a_probes() {
 
 /// The centre texel of `renderer`'s last frame's composite colour (rgb)
 /// and the alpha of its ambient target.
-fn centre(gpu: Gpu, renderer: &Renderer) -> [f32; 4] {
+fn centre(gpu: Gpu, renderer: &TestRenderer) -> [f32; 4] {
     let (device, queue) = gpu;
     let targets = renderer.targets();
     let at = ((SIZE[1] / 2) * SIZE[0] + SIZE[0] / 2) as usize * 8;
@@ -1101,7 +1101,7 @@ fn completion_occludes_the_skys_specular_by_the_visibility_the_opaque_pass_recor
     let gpu = (&device, &queue);
     let settings = settings();
     let frame = |volume: Option<f32>, probes: bool| -> [f32; 4] {
-        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         let mut scene = Scene::new(&device, &queue);
         let environment = uniform_environment(gpu, &mut scene, 0.5);
         let mut wall = test_support::cube();

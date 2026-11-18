@@ -88,7 +88,7 @@ fn ratio(quality: FsrQuality) -> f32 {
 /// Gives `rig` FSR's `quality` and a new scene of `scenario`'s shapes, both
 /// of which restart history, and returns the render size.
 fn at_quality(rig: &mut Rig, scenario: &Scenario, quality: FsrQuality) -> [u32; 2] {
-    rig.settings.fsr_quality = quality;
+    rig.views[0].settings.fsr_quality = quality;
     scenario.restage(rig);
     rig.render_size()
 }
@@ -100,7 +100,10 @@ fn at_quality(rig: &mut Rig, scenario: &Scenario, quality: FsrQuality) -> [u32; 
 /// history fetch the 4x4 history pixels around the reprojected position
 /// (`HistorySample`, Lanczos 2), 2 scene pixels.
 fn reach(rig: &Rig) -> f32 {
-    let [render, scene] = [rig.renderer.render_size(), rig.renderer.scene_size()];
+    let [render, scene] = [
+        rig.views[0].view.render_size(),
+        rig.views[0].view.scene_size(),
+    ];
     let scale = (0..2)
         .map(|i| scene[i] as f32 / render[i] as f32)
         .fold(0., f32::max);
@@ -561,7 +564,7 @@ fn upscaled_restarts(method: Antialiasing) {
     let mut failures = Failures::default();
     let mut runs = [&panned, &held].map(|scenario| {
         let mut rig = scenario.rig(&gpu, VIEW, method);
-        rig.settings.fsr_quality = FsrQuality::Quality;
+        rig.views[0].settings.fsr_quality = FsrQuality::Quality;
         rig
     });
     for frame in 0..=restarts[restarts.len() - 1].0 {
@@ -569,8 +572,8 @@ fn upscaled_restarts(method: Antialiasing) {
         let mut images = Vec::new();
         for (rig, scenario) in runs.iter_mut().zip([&panned, &held]) {
             match restart {
-                Some(Restart::Cut) => rig.input.camera_cut = true,
-                Some(Restart::Quality(quality)) => rig.settings.fsr_quality = quality,
+                Some(Restart::Cut) => rig.views[0].input.camera_cut = true,
+                Some(Restart::Quality(quality)) => rig.views[0].settings.fsr_quality = quality,
                 Some(Restart::Unfinished) => {
                     scenario.pose(rig, frame);
                     rig.render_unfinished(frame);
@@ -587,7 +590,7 @@ fn upscaled_restarts(method: Antialiasing) {
         let apart = error(&images[0], &images[1], &everywhere);
         eprintln!(
             "{method:?} {restart:?} at {:?}: {apart:?} between runs with different pasts",
-            runs[0].renderer.render_size()
+            runs[0].views[0].view.render_size()
         );
         failures.check(apart.max == 0., || {
             format!(
@@ -693,9 +696,9 @@ fn render_size_and_mip_bias(method: Antialiasing) {
     let mut rig = Rig::new(&gpu, VIEW, method, SKY);
     let mut failures = Failures::default();
     for quality in QUALITIES {
-        let display = rig.renderer.scene_size();
+        let display = rig.views[0].view.scene_size();
         let expected = display.map(|d| (d as f32 / ratio(quality)) as u32);
-        rig.settings.fsr_quality = quality;
+        rig.views[0].settings.fsr_quality = quality;
         rig.new_scene();
         rig.add_textured(Vec2::splat(side), lod_ramp(), pose);
         rig.look(still(0));
@@ -780,12 +783,12 @@ fn sharpening(method: Antialiasing, quality: FsrQuality) {
     let Some(gpu) = device(method) else { return };
     let scenario = stage(&still);
     let mut rig = scenario.rig(&gpu, VIEW, method);
-    rig.settings.fsr_sharpening = true;
+    rig.views[0].settings.fsr_sharpening = true;
     let [low, high] = rig.radiance_range();
     let contrast = high - low;
     let mut failures = Failures::default();
     for sharpness in [0.8, 1.] {
-        rig.settings.fsr_sharpness = sharpness;
+        rig.views[0].settings.fsr_sharpness = sharpness;
         let limit = (0.25 - 1. / 16.) * 2f32.powf(-(2. - 2. * sharpness));
         let k = 4. * limit / (1. - 4. * limit);
         let rounding = stores(method) * HALF_STEP * high;

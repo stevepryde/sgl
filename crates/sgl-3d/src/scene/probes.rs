@@ -655,7 +655,7 @@ mod tests {
             dynamic_gi: settings::DynamicGiQuality::Off,
             ..Settings::default()
         };
-        let mut renderer = crate::Renderer::for_test(&device, &queue, [16, 16], &settings);
+        let mut renderer = crate::TestRenderer::for_test(&device, &queue, [16, 16], &settings);
         let input = crate::FrameInput::new(crate::Camera {
             view: Mat4::IDENTITY,
             projection: crate::perspective(1., 1., 0.1),

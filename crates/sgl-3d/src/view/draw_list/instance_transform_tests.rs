@@ -1,6 +1,6 @@
 //! GPU observations of transformed geometry, independent of the normal transform.
 use crate::asset::Vertex;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{RenderPreset, Settings};
 use crate::view::pipelines::GeometryPass;
 use crate::*;
@@ -77,7 +77,7 @@ fn scaled_and_mirrored_instances_preserve_normals_and_material_sides() {
             let mut scene = Scene::new(&device, &queue);
             let ids = scene.add_asset(&device, &queue, asset).unwrap();
             let mut instance = None;
-            let mut renderer = Renderer::for_test(
+            let mut renderer = TestRenderer::for_test(
                 &device,
                 &queue,
                 [SIZE, SIZE],

@@ -18,7 +18,7 @@ mod native {
 
     use super::bistro_scene;
     use sgl_3d::{
-        InstanceState, Mobility, RayData, Renderer, Scene, SceneOptions, asset,
+        InstanceState, Mobility, RayData, Renderer, Scene, SceneOptions, View, ViewFrame, asset,
         environment::{EnvironmentMap, PmremAtlas},
         settings::{Antialiasing, DynamicGiQuality},
         timing::GpuTiming,
@@ -499,7 +499,9 @@ mod native {
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
-        let mut renderer = Renderer::new(
+        let mut renderer = Renderer::new(&device);
+        let mut scene_view = View::new(
+            &renderer,
             &device,
             &queue,
             texture.format(),
@@ -560,12 +562,15 @@ mod native {
                     &queue,
                     &mut encoder,
                     &mut scene,
-                    &frame,
-                    &settings,
-                    &view,
-                    timing.as_ref(),
+                    &mut [ViewFrame {
+                        view: &mut scene_view,
+                        input: &frame,
+                        settings: &settings,
+                        output: &view,
+                        timing: timing.as_ref(),
+                    }],
                 );
-                local_shadows.observe(renderer.local_shadow_stats(), u64::from(index) >= warm_up);
+                local_shadows.observe(scene_view.local_shadow_stats(), u64::from(index) >= warm_up);
                 queue.submit([encoder.finish()]);
                 if let Some(timing) = &mut timing {
                     timing.submitted(&queue);
@@ -628,7 +633,14 @@ mod native {
                         scene.set_material(&queue, id, material)?;
                     }
                     Ok(renderer.capture_specular_probe(
-                        &device, &queue, &mut scene, &frame, &settings, center, face_size,
+                        &device,
+                        &queue,
+                        &mut scene,
+                        &mut scene_view,
+                        &frame,
+                        &settings,
+                        center,
+                        face_size,
                     )?)
                 })();
                 frame.visibility_mask = previous_mask;
@@ -691,10 +703,10 @@ mod native {
                 "environment_yaw":frame.diffuse_environment.yaw,
                 "ambient_occlusion_radius_m":frame.ambient_occlusion_radius,
                 "effective": {
-                    "antialiasing": format!("{:?}",renderer.antialiasing_in_effect(&settings)),
-                    "render_size": renderer.render_size(),
-                    "scene_size": renderer.scene_size(),
-                    "fsr_error": renderer.fsr_error(),
+                    "antialiasing": format!("{:?}",scene_view.antialiasing_in_effect(&settings)),
+                    "render_size": scene_view.render_size(),
+                    "scene_size": scene_view.scene_size(),
+                    "fsr_error": scene_view.fsr_error(),
                     "hardware_ray_tracing": renderer.ray_tracing_in_effect(&settings, &scene),
                     "ray_tracing_error": renderer.ray_tracing_error(),
                     "ray_tracing_stats": format!("{:?}",renderer.ray_tracing_stats()),

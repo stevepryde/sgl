@@ -3,7 +3,7 @@
 //! a real ray hit.
 use crate::asset::{CpuMesh, Image, Vertex};
 use crate::graphics_device::BindingTier;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{
     AmbientOcclusionQuality, ScreenSpaceReflections, Settings, WorldSpaceReflections,
 };
@@ -108,7 +108,7 @@ fn clearcoat_and_iridescence_maps_scale_their_factors() {
         world_space_reflections: WorldSpaceReflections::Moving,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     if renderer.binding_tier() != BindingTier::Extended {
         eprintln!(
             "skipping: the device takes the Basic binding tier, which binds none of these maps"

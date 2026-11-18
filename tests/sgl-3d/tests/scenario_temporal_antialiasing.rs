@@ -1357,8 +1357,8 @@ fn appearance_and_departure_at_rest_resolve_within_the_hold(method: Antialiasing
             match event {
                 Event::Hidden => rig.set_visible(instance.unwrap(), false),
                 Event::Shown => rig.set_visible(instance.unwrap(), true),
-                Event::Masked => rig.input.visibility_mask &= !1,
-                Event::Unmasked => rig.input.visibility_mask |= 1,
+                Event::Masked => rig.views[0].input.visibility_mask &= !1,
+                Event::Unmasked => rig.views[0].input.visibility_mask |= 1,
                 Event::Removed => rig.remove(instance.take().unwrap()),
                 Event::Added => instance = Some(rig.add(&layer, layer_pose, 1)),
             }
@@ -1793,8 +1793,8 @@ fn a_cut_a_resize_and_another_scene_restart_history(method: Antialiasing) {
         let mut images = Vec::new();
         for (rig, scenario) in runs.iter_mut().zip([&panned, &held]) {
             match restart {
-                Some(Restart::Cut) => rig.input.camera_cut = true,
-                Some(Restart::Resize) => rig.view = resized,
+                Some(Restart::Cut) => rig.views[0].input.camera_cut = true,
+                Some(Restart::Resize) => rig.views[0].lens = resized,
                 Some(Restart::Scene) => rig.replace_scene(),
                 None => {}
             }
@@ -1814,7 +1814,7 @@ fn a_cut_a_resize_and_another_scene_restart_history(method: Antialiasing) {
             )
         });
         if method == Antialiasing::Taa {
-            unantialiased.view = runs[0].view;
+            unantialiased.views[0].lens = runs[0].views[0].lens;
             panned.render(&mut unantialiased, frame);
             let off = error(&images[0], &unantialiased.antialiased(), &everywhere);
             failures.check(off.max == 0., || {
@@ -2300,7 +2300,7 @@ fn scrolling_normals_at_rest_keep_their_motion() {
     let series = |antialiasing| {
         let mut rig = Rig::new(&gpu, VIEW, antialiasing, SKY);
         rig.add_model(plane(), Pose::at(Vec3::new(0., 0., -DEPTH)));
-        rig.input.directional_lights[0] = Some(sgl_3d::DirectionalLight {
+        rig.views[0].input.directional_lights[0] = Some(sgl_3d::DirectionalLight {
             direction: Vec3::new(-0.4, -0.3, -1.),
             color: [1.; 3],
             illuminance: 2.,
@@ -2759,7 +2759,7 @@ fn the_sky_changes_after_a_camera_step(gpu: &Gpu, after: u32) -> (f32, f32, f32)
         let x = if frame < ACTS { 0. } else { 0.5 };
         rig.look(Pose::at(Vec3::new(x, 0., 0.)));
         if frame == changed {
-            rig.input.backdrop = sgl_3d::Backdrop::Color([CARD; 3]);
+            rig.views[0].input.backdrop = sgl_3d::Backdrop::Color([CARD; 3]);
         }
         rig.render(frame);
     }

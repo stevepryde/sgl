@@ -6,7 +6,7 @@
 //! two-pass form instead of the fused pass; `--occlusion` turns
 //! `Settings::occlusion_culling` on, which runs the two-pass form. The
 //! examples include this file by path.
-use sgl_3d::Renderer;
+use sgl_3d::View;
 use sgl_3d::diagnostics::ViewTimes;
 use sgl_3d::settings::Settings;
 use sgl_3d::timing::FrameTime;
@@ -43,7 +43,7 @@ impl Options {
 
     /// What the run renders, for its report: occlusion culling as the
     /// renderer ran it (`occluded`, its last measured frame's
-    /// `Renderer::occlusion_culling_in_effect`), since a device without
+    /// `View::occlusion_culling_in_effect`), since a device without
     /// the pyramid's storage textures culls by frustum alone.
     pub fn describe(self, occluded: bool) -> String {
         let form = if self.split || occluded {
@@ -104,7 +104,7 @@ impl Culling {
     /// encoder.
     pub fn frame(
         &mut self,
-        (renderer, settings): (&Renderer, &Settings),
+        (scene_view, settings): (&View, &Settings),
         index: usize,
         measure: bool,
         (render_ms, finish_ms): (f64, f64),
@@ -114,8 +114,8 @@ impl Culling {
         if !measure {
             return;
         }
-        self.occluded = renderer.occlusion_culling_in_effect(settings);
-        self.views.push(renderer.diagnostic_view_times());
+        self.occluded = scene_view.occlusion_culling_in_effect(settings);
+        self.views.push(scene_view.diagnostic_view_times());
         self.render_ms.push(render_ms);
         self.finish_ms.push(finish_ms);
     }

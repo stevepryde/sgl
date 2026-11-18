@@ -1,9 +1,8 @@
 //! One frame: the frame's scene work once (`shared::Shared::run_scene`),
 //! then the one ordered render body for each of its views (`render_view`),
 //! the primary view's order running the scene's GPU work.
-use super::Renderer;
 use super::shared::Shared;
-use super::view::{Pending, View};
+use super::view::{Pending, View, ViewFrame};
 use crate::settings::{ReflectionMethod, Settings};
 use crate::stages::cull::Cull;
 use crate::stages::opaque::Opaque;
@@ -27,10 +26,6 @@ use crate::{FrameInput, Scene};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Role {
     Primary,
-    #[expect(
-        dead_code,
-        reason = "secondary views arrive with the public `View` (views step C2)"
-    )]
     Secondary,
 }
 
@@ -41,37 +36,96 @@ pub(super) struct ViewOutput<'a> {
     pub timing: Option<&'a GpuTiming>,
 }
 
-/// Encodes one frame of `scene` seen as `input` into `output`: the view
-/// begins its frame, the frame's scene work runs, then the view renders.
-#[allow(clippy::too_many_arguments)]
+/// A secondary view's `settings` with what a scene has one of taken from
+/// the frame's `primary` view's: hardware ray tracing, dynamic GI and
+/// anisotropic filtering. The diagnostics layers follow in `secondary`.
+fn scene_wide(settings: &Settings, primary: &Settings) -> Settings {
+    Settings {
+        hardware_ray_tracing: primary.hardware_ray_tracing,
+        dynamic_gi: primary.dynamic_gi,
+        anisotropic_filtering: primary.anisotropic_filtering,
+        ..*settings
+    }
+}
+
+/// A secondary view's `effective` configuration with the primary view's
+/// pipeline layers and material filtering, which the scene and the shared
+/// pipelines have one of.
+fn secondary(effective: Effective, primary: &Effective) -> Effective {
+    Effective {
+        layers: primary.layers,
+        anisotropy: primary.anisotropy,
+        ..effective
+    }
+}
+
+/// Encodes one frame of `scene` seen by `views`, the first the primary:
+/// the scene's frame begins, each view begins its frame (settling its last
+/// render and beginning its history), the frame's scene work runs once,
+/// steered by the primary view, then each view renders in order. Returns
+/// the scene's frame attempt.
 pub(super) fn render(
-    renderer: &mut Renderer,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    encoder: &mut wgpu::CommandEncoder,
+    shared: &mut Shared,
+    (device, queue, encoder): (&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder),
     scene: &mut Scene,
-    input: &FrameInput,
-    settings: &Settings,
-    output: &wgpu::TextureView,
-    timing: Option<&GpuTiming>,
-) {
-    let Renderer { shared, view } = renderer;
-    let (history, effective) = view.begin(device, shared, scene, input, settings);
-    let traced = Prepare::traces(scene, &effective);
-    shared.run_scene((device, queue), scene, &effective, input, traced);
-    render_view(
-        shared,
-        view,
-        (device, queue, encoder),
+    views: &mut [ViewFrame<'_>],
+) -> u64 {
+    let attempt = scene.begin_frame(device, queue);
+    let primary_settings = *views[0].settings;
+    let mut begun: Vec<(HistoryFrame, Effective)> = Vec::with_capacity(views.len());
+    for (index, frame) in views.iter_mut().enumerate() {
+        let settings = match index {
+            0 => primary_settings,
+            _ => scene_wide(frame.settings, &primary_settings),
+        };
+        let (history, effective) = frame
+            .view
+            .begin(device, shared, scene, frame.input, &settings);
+        let effective = match begun.first() {
+            Some((_, primary)) => secondary(effective, primary),
+            None => effective,
+        };
+        begun.push((history, effective));
+    }
+    // The ray instances are updated and the acceleration structures built
+    // when any view of the frame traces; the shadow-mask pipelines exist
+    // once any runs ray-traced shadows.
+    let traced = begun
+        .iter()
+        .any(|(_, effective)| Prepare::traces(scene, effective));
+    let shadow_mask = begun
+        .iter()
+        .any(|(_, effective)| effective.ray_traced_shadows);
+    shared.run_scene(
+        (device, queue),
         scene,
-        ViewOutput {
-            input,
-            output,
-            timing,
-        },
-        (history, effective),
-        Role::Primary,
+        &begun[0].1,
+        views[0].input,
+        (traced, shadow_mask),
     );
+    for (index, (frame, begun)) in views.iter_mut().zip(begun).enumerate() {
+        render_view(
+            shared,
+            frame.view,
+            (device, queue, encoder),
+            scene,
+            ViewOutput {
+                input: frame.input,
+                output: frame.output,
+                timing: frame.timing,
+            },
+            begun,
+            (
+                if index == 0 {
+                    Role::Primary
+                } else {
+                    Role::Secondary
+                },
+                attempt,
+            ),
+        );
+    }
+    attempt
 }
 
 /// Encodes `view`'s frame of `scene` as `drawn` describes it, after the
@@ -92,7 +146,7 @@ pub(super) fn render_view(
     scene: &Scene,
     drawn: ViewOutput<'_>,
     (mut history, effective): (HistoryFrame, Effective),
-    role: Role,
+    (role, attempt): (Role, u64),
 ) {
     let ViewOutput {
         input,
@@ -180,8 +234,8 @@ pub(super) fn render_view(
     // The camera history commits the jitter this frame applies.
     history.camera.jitter = jitter.map_or([0.; 2], |jitter| jitter.ndc);
     *rendered = Some(Pending {
+        attempt,
         history,
-        scene: scene.id,
         generation: *targets_generation,
     });
     // The camera's statistics: those completed so far, and none copied yet

@@ -5,7 +5,7 @@
 //! the adapter has no ray queries.
 use crate::asset::{Asset, CpuMesh, Vertex};
 use crate::content::identity::Identity;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::shading::shadow_mask::{RT_SHADOW_LIGHTS, SHADOW_MASK_DIRECTIONAL, ShadowMaskSlots};
 use crate::{
@@ -234,12 +234,12 @@ impl Observed {
 /// Renders `input` of `scene` with `settings` and reads what it left.
 fn render(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
-    renderer: &mut Renderer,
+    renderer: &mut TestRenderer,
     scene: &mut Scene,
     input: &FrameInput,
     settings: &Settings,
 ) -> Observed {
-    let size = renderer.render_size();
+    let size = renderer.view.render_size();
     let output = crate::view::targets::target(
         device,
         "ray-traced shadow frames",
@@ -492,7 +492,7 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
     let size = [256, 192];
     let camera = camera(eye, Vec3::new(0., 0., -0.5), size);
     let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut input = input(camera, Some(sun));
     let to_sun = -sun.direction.as_dvec3().normalize();
     for cut in [true, false] {
@@ -625,7 +625,7 @@ fn slab_frames(
         ray_traced_shadow_quality: quality,
         ..settings(true)
     };
-    let mut renderer = Renderer::for_test(device, queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, size, &settings);
     let mut input = input(camera, Some(sun));
     [true, false]
         .into_iter()
@@ -781,7 +781,7 @@ fn lit_with_and_without(
     let frames: Vec<_> = [true, false]
         .map(|traced| {
             let settings = settings(traced);
-            let mut renderer = Renderer::for_test(gpu.0, gpu.1, size, &settings);
+            let mut renderer = TestRenderer::for_test(gpu.0, gpu.1, size, &settings);
             let observed = render(gpu, &mut renderer, scene, input, &settings);
             assert_eq!(observed.mask.is_some(), traced);
             observed
@@ -999,7 +999,7 @@ fn a_slot_whose_light_changed_and_a_camera_cut_restart_its_history() {
     let [first, second] = [ids[3], ids[4]];
     let camera = camera(eye, Vec3::ZERO, size);
     let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut input = input(camera, None);
     input.camera_cut = true;
     let mut frame = |scene: &mut Scene, cut: bool, settings: &Settings| {
@@ -1057,7 +1057,7 @@ fn a_slot_whose_light_changed_and_a_camera_cut_restart_its_history() {
     );
     // So does a resize, which reallocates its targets.
     scene.set_light(&queue, second, at(0.3, true)).unwrap();
-    renderer.resize(&device, [120, 120], 1., &settings);
+    renderer.view.resize(&device, [120, 120], 1., &settings);
     let mut input = self::input(camera, None);
     input.camera_cut = false;
     let resized = render(gpu, &mut renderer, &mut scene, &input, &settings);
@@ -1106,7 +1106,7 @@ fn a_denoised_slot_keeps_its_light_s_history_and_restarts_alone() {
     let [first, twin, second] = [ids[0], ids[1], ids[2]].map(|id| id.index() as u32);
     let camera = camera(Vec3::new(0., 9., 3.), Vec3::ZERO, size);
     let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut input = input(camera, None);
     let mut frame = |scene: &mut Scene, cut: bool| {
         input.camera_cut = cut;
@@ -1192,7 +1192,7 @@ fn each_denoised_slot_keeps_its_own_history() {
     let mut runs: Vec<_> = (0..2)
         .map(|_| {
             let (scene, ids) = scene(gpu, 6., &grate(), &lights);
-            let renderer = Renderer::for_test(&device, &queue, size, &settings);
+            let renderer = TestRenderer::for_test(&device, &queue, size, &settings);
             (scene, ids, renderer)
         })
         .collect();
@@ -1289,7 +1289,7 @@ fn the_directional_light_keeps_its_history_across_the_denoiser_s_shapes() {
     // The switching run's light casts in the middle phase alone.
     let (mut switching, ids) = scene(gpu, 6., &grate(), &[light(false)]);
     let (mut reference, _) = scene(gpu, 6., &grate(), &[light(true)]);
-    let mut renderers = [(); 2].map(|_| Renderer::for_test(&device, &queue, size, &settings));
+    let mut renderers = [(); 2].map(|_| TestRenderer::for_test(&device, &queue, size, &settings));
     let mut frame = |switching: &mut Scene, reference: &mut Scene, z: f32, cut: bool| {
         let mut frame_input = input(camera, Some(sun(z)));
         frame_input.camera_cut = cut;
@@ -1404,7 +1404,7 @@ fn history_follows_the_camera_and_odd_pixels_take_the_texels_about_them() {
         eye: Vec3::new(x, height, 0.),
     };
     let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut input = input(looking_down(0.), None);
     input.camera_cut = true;
     let still = render(gpu, &mut renderer, &mut scene, &input, &settings);
@@ -1637,7 +1637,7 @@ fn a_light_with_a_size_softens_its_shadow() {
                   size: [u32; 2]| {
         let (mut scene, ids) = scene(gpu, 8., blocks, lights);
         let settings = settings(true);
-        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
         let mut input = input(camera, sun);
         let mut observed = None;
         for frame in 0..32 {
@@ -1812,7 +1812,7 @@ fn a_rectangle_lights_own_fixture_does_not_shadow_it() {
     let size = [256, 192];
     let camera = camera(eye, Vec3::ZERO, size);
     let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut input = input(camera, None);
     input.camera_cut = true;
     let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
@@ -2004,7 +2004,7 @@ fn a_baked_light_casts_no_ray_at_a_receiver_with_baked_lighting() {
     let size = [256, 192];
     let camera = camera(eye, Vec3::new(0., 0., -0.5), size);
     let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut input = input(camera, None);
     for baked_lighting in [true, false] {
         let label = |what: &str| format!("baked lighting {baked_lighting}: {what}");
@@ -2216,7 +2216,7 @@ fn thin_lit_features_against_the_sky_are_unoccluded() {
             );
             add_box(gpu, &mut scene, wall, |material| material.unlit = true);
         }
-        let mut renderer = Renderer::for_test(&device, &queue, THIN_SIZE, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, THIN_SIZE, &settings);
         let mut input = input(camera, Some(sun));
         for frame in 0..8 {
             input.camera_cut = frame == 0;
@@ -2365,7 +2365,7 @@ fn a_thin_feature_s_history_is_clamped_by_receivers_alone() {
     }
     let key = scene.add_light(&device, &queue, light).unwrap().index() as u32;
     let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, THIN_SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, THIN_SIZE, &settings);
     let mut input = input(camera, None);
     for (frame, block) in [shade, gone].into_iter().enumerate() {
         input.camera_cut = frame == 0;
@@ -2538,7 +2538,7 @@ fn thin_features_take_their_own_shadow_and_leave_the_surface_behind_its() {
             scene.add_light(&device, &queue, decoy).unwrap();
         }
         let key = scene.add_light(&device, &queue, light).unwrap().index() as u32;
-        let mut renderer = Renderer::for_test(&device, &queue, THIN_SIZE, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, THIN_SIZE, &settings);
         let mut input = input(camera, None);
         for frame in 0..4 {
             input.camera_cut = frame == 0;
@@ -2730,7 +2730,7 @@ fn a_normal_mapped_surface_does_not_shadow_itself() {
     for coated in [false, true] {
         let mut scene = Scene::new(&device, &queue);
         test_support::add_static(&device, &queue, &mut scene, tilted_plane(coated));
-        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
         let mut input = input(camera, Some(sun));
         for frame in 0..4 {
             input.camera_cut = frame == 0;
@@ -2801,7 +2801,7 @@ fn the_shadow_mask_survives_an_unfinished_frame() {
     let run = |attempt: Option<bool>| {
         let (mut scene, ids) = scene(gpu, 6., &grate(), &[one, two, three, at(-0.3)]);
         let light = ids[3];
-        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
         let mut input = input(camera, None);
         let mut masks = Vec::new();
         for frame in 0..6 {

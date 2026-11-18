@@ -1,6 +1,6 @@
 //! The renderer accepts every output size, however thin, and restarts
 //! history when its targets change.
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::Settings;
 use crate::{Camera, FrameInput, Scene, test_support};
 use glam::camera;
@@ -33,7 +33,7 @@ fn one_pixel_thin_sizes_render_with_default_settings() {
     for settings in [Settings::default(), half_ssr] {
         for (first, second) in [([64, 1], [1, 64]), ([1, 64], [64, 1])] {
             let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let mut renderer = Renderer::new(
+            let mut renderer = TestRenderer::new(
                 &device,
                 &queue,
                 wgpu::TextureFormat::Rgba8Unorm,
@@ -43,7 +43,7 @@ fn one_pixel_thin_sizes_render_with_default_settings() {
             )
             .unwrap();
             for size in [first, second] {
-                renderer.resize(&device, size, 1., &settings);
+                renderer.view.resize(&device, size, 1., &settings);
                 let output = crate::view::targets::target(
                     &device,
                     "thin",
@@ -115,7 +115,7 @@ fn resize_between_render_and_finish_restarts_history() {
             ..Settings::default()
         };
         let first = [64, 48];
-        let mut renderer = Renderer::new(
+        let mut renderer = TestRenderer::new(
             &device,
             &queue,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -132,43 +132,45 @@ fn resize_between_render_and_finish_restarts_history() {
             continue;
         }
         assert_eq!(
-            renderer.antialiasing_in_effect(&settings),
+            renderer.view.antialiasing_in_effect(&settings),
             before,
             "{:?}",
-            renderer.fsr_error()
+            renderer.view.fsr_error()
         );
-        let render =
-            |renderer: &mut Renderer, scene: &mut Scene, size: [u32; 2], settings: &Settings| {
-                let output = crate::view::targets::target(
-                    &device,
-                    "resize",
-                    size,
-                    wgpu::TextureFormat::Rgba8Unorm,
-                );
-                let eye = glam::Vec3::new(2.4, 2., 3.3);
-                let input = FrameInput::new(Camera {
-                    eye,
-                    view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),
-                    projection: crate::perspective(
-                        55f32.to_radians(),
-                        size[0] as f32 / size[1] as f32,
-                        0.1,
-                    ),
-                });
-                let mut encoder = device.create_command_encoder(&Default::default());
-                renderer.render(
-                    &device,
-                    &queue,
-                    &mut encoder,
-                    scene,
-                    &input,
-                    settings,
-                    &output,
-                    None,
-                );
-                queue.submit([encoder.finish()]);
-                renderer.view.rendered.as_ref().unwrap().history.valid
-            };
+        let render = |renderer: &mut TestRenderer,
+                      scene: &mut Scene,
+                      size: [u32; 2],
+                      settings: &Settings| {
+            let output = crate::view::targets::target(
+                &device,
+                "resize",
+                size,
+                wgpu::TextureFormat::Rgba8Unorm,
+            );
+            let eye = glam::Vec3::new(2.4, 2., 3.3);
+            let input = FrameInput::new(Camera {
+                eye,
+                view: camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Y),
+                projection: crate::perspective(
+                    55f32.to_radians(),
+                    size[0] as f32 / size[1] as f32,
+                    0.1,
+                ),
+            });
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                scene,
+                &input,
+                settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.view.rendered.as_ref().unwrap().history.valid
+        };
         render(&mut renderer, &mut scene, first, &settings);
         renderer.finish_frame(&mut scene);
         assert!(
@@ -176,7 +178,7 @@ fn resize_between_render_and_finish_restarts_history() {
             "history continues"
         );
         settings.antialiasing = after;
-        renderer.resize(&device, second, 1., &settings);
+        renderer.view.resize(&device, second, 1., &settings);
         renderer.finish_frame(&mut scene);
         assert!(
             !render(&mut renderer, &mut scene, second, &settings),
@@ -209,7 +211,7 @@ fn thin_sizes_render_with_fog() {
     };
     for size in [[60, 1900], [1, 8192]] {
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let mut renderer = Renderer::new(
+        let mut renderer = TestRenderer::new(
             &device,
             &queue,
             wgpu::TextureFormat::Rgba8Unorm,

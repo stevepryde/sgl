@@ -1,8 +1,8 @@
 //! What every view of a scene shares: the bind group layouts and the
 //! geometry pipeline cache, prepare's scene part, the deform stage, the
-//! dynamic GI stage with its probes, the device's ray-query form, and the
-//! frame boundary's scene-wide commit. A frame's scene work runs once, in
-//! its primary view's stage order (`frame::render_view`, `Role`).
+//! dynamic GI stage with its probes and the device's ray-query form. A
+//! frame's scene work runs once, in its primary view's stage order
+//! (`frame::render_view`, `Role`).
 use super::effective;
 use crate::FrameInput;
 use crate::Scene;
@@ -15,8 +15,7 @@ use crate::view::trace_paths::DeviceRayForm;
 pub(super) struct Shared {
     pub layouts: Layouts,
     pub pipelines: GeometryPipelines,
-    /// Prepare's scene part: the scene's frame attempt and the frame's
-    /// acceleration structures.
+    /// Prepare's scene part: the frame's acceleration structures.
     pub prepare: Prepare,
     pub deform: Deform,
     /// The dynamic GI stage, on the Extended binding tier alone.
@@ -80,36 +79,22 @@ impl Shared {
     /// The frame's scene work before any view renders, steered by the
     /// primary view's `effective` configuration and `input`: the geometry
     /// pipelines specialised for its layers and the scene, with the
-    /// shadow-mask pipelines once ray-traced shadows run; the scene's
-    /// material sampling filtered as it chooses; and prepare's scene part,
-    /// `traced` when a view of the frame reads the ray instances
-    /// (`Prepare::traces`).
+    /// shadow-mask pipelines once a view runs ray-traced shadows
+    /// (`shadow_mask`); the scene's material sampling filtered as it
+    /// chooses; and prepare's scene part, `traced` when a view of the frame
+    /// reads the ray instances (`Prepare::traces`).
     pub fn run_scene(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
         scene: &mut Scene,
         effective: &Effective,
         input: &FrameInput,
-        traced: bool,
+        (traced, shadow_mask): (bool, bool),
     ) {
-        self.pipelines.specialise(
-            device,
-            effective.layers,
-            scene,
-            effective.ray_traced_shadows,
-        );
+        self.pipelines
+            .specialise(device, effective.layers, scene, shadow_mask);
         scene.materials.set_anisotropy(device, effective.anisotropy);
         self.prepare
             .run_scene(device, queue, scene, effective, input, traced);
-    }
-
-    /// Commits the scene-wide part of the last rendered frame after the
-    /// caller submitted it: the scene's record of what it drew and the
-    /// dynamic GI stage's state.
-    pub fn finish_frame(&mut self, scene: &mut Scene) {
-        scene.finish_frame(self.prepare.attempt());
-        if let Some(dynamic_gi) = &mut self.dynamic_gi {
-            dynamic_gi.finish_frame();
-        }
     }
 }

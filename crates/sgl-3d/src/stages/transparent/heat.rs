@@ -421,7 +421,7 @@ mod tests {
     ) {
         use crate::effects::Glow;
         use crate::settings::{Bloom, FsrQuality, SceneResolution, Settings};
-        use crate::{Camera, FrameInput, Mist, Renderer, Scene};
+        use crate::{Camera, FrameInput, Mist, Scene, TestRenderer};
         use glam::{Mat4, Vec3};
         let mut scene = Scene::new(device, queue);
         // Glow over the whole frame, its red growing to the right.
@@ -485,11 +485,11 @@ mod tests {
                 heat_distortion,
                 ..settings
             };
-            let mut renderer = Renderer::for_test(device, queue, size, &settings);
-            if renderer.antialiasing_in_effect(&settings) != antialiasing {
+            let mut renderer = TestRenderer::for_test(device, queue, size, &settings);
+            if renderer.view.antialiasing_in_effect(&settings) != antialiasing {
                 eprintln!(
                     "skipping {antialiasing:?}: it does not run here: {:?}",
-                    renderer.fsr_error()
+                    renderer.view.fsr_error()
                 );
                 return None;
             }

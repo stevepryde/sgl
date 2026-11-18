@@ -1,6 +1,6 @@
 //! The settings, the frame and the device resolved into the effective
 //! configuration (`view::effective`): once per frame, and the size-affecting
-//! choices at `Renderer::resize`.
+//! choices at `View::resize`.
 use crate::FrameInput;
 use crate::scene::RayData;
 use crate::settings::{
@@ -469,7 +469,7 @@ mod ray_data_tests {
     #[test]
     fn enabled_scene_without_ray_consumers_clears_previous_disabled_reason() {
         use crate::view::history::{CameraFrame, CameraHistory};
-        use crate::{Renderer, Scene, SceneOptions, test_support};
+        use crate::{Scene, SceneOptions, TestRenderer, test_support};
         let Some((device, queue)) = test_support::device() else {
             return;
         };
@@ -478,7 +478,7 @@ mod ray_data_tests {
             dynamic_gi: DynamicGiQuality::Off,
             ..Settings::default()
         };
-        let mut renderer = Renderer::for_test(&device, &queue, [16; 2], &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, [16; 2], &settings);
         let input = FrameInput::new(crate::Camera {
             view: glam::Mat4::IDENTITY,
             projection: crate::perspective(1., 1., 0.1),

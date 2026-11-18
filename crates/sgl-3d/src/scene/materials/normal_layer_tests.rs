@@ -1,7 +1,7 @@
 //! Scrolling normal layers at the frame's time, through the real opaque
 //! stage (the G-buffer normal reflections read) and a real ray hit.
 use crate::asset::{Asset, CpuMesh, Image, Material, Vertex};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{
     AmbientOcclusionQuality, ScreenSpaceReflections, Settings, WorldSpaceReflections,
 };
@@ -113,7 +113,7 @@ fn pixel(projection: Mat4, uv: Vec2) -> (usize, DVec2, Vec3) {
 /// `seconds`.
 fn ray_normals(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
-    (renderer, scene): (&mut Renderer, &mut Scene),
+    (renderer, scene): (&mut TestRenderer, &mut Scene),
     (input, settings): (&FrameInput, &Settings),
     points: &[Vec3],
 ) -> Vec<Vec3> {
@@ -157,7 +157,7 @@ fn fixture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     layers: [NormalLayer; 2],
-) -> (Renderer, Scene, Settings, crate::MaterialId) {
+) -> (TestRenderer, Scene, Settings, crate::MaterialId) {
     let settings = Settings {
         ambient_occlusion: AmbientOcclusionQuality::Off,
         // World-space rays need a screen-space method to fill in.
@@ -165,7 +165,7 @@ fn fixture(
         world_space_reflections: WorldSpaceReflections::Moving,
         ..Settings::default()
     };
-    let renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
     let material = Material {
         base: [0.5, 0.5, 0.5, 1.],

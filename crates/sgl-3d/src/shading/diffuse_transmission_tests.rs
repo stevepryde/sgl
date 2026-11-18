@@ -268,7 +268,7 @@ fn a_probe_ray_s_hit_takes_the_light_behind_it_through() {
         return;
     };
     let settings = super::lighting_model_tests::quiet_settings();
-    let mut renderer = crate::renderer::Renderer::for_test(&device, &queue, [16, 16], &settings);
+    let mut renderer = crate::TestRenderer::for_test(&device, &queue, [16, 16], &settings);
     let mut scene = Scene::new(&device, &queue);
     let mut far = test_support::cube();
     far.materials[0].double_sided = true;

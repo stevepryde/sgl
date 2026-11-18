@@ -4,7 +4,7 @@
 //! through the frame's own lit groups 0: the camera's, and ray hits', which
 //! sample the static layers.
 use crate::asset::{self, Vertex};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::scene::buffer;
 use crate::settings::{Antialiasing, Settings, ShadowQuality};
 use crate::shading;
@@ -87,7 +87,7 @@ fn input() -> FrameInput {
 struct Harness {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    renderer: Renderer,
+    renderer: TestRenderer,
     /// What its frames render with: the defaults, unless a test changes
     /// them.
     settings: Settings,
@@ -124,7 +124,7 @@ impl Harness {
     }
 
     fn on(device: wgpu::Device, queue: wgpu::Queue) -> Self {
-        let renderer = Renderer::for_test(&device, &queue, [64, 64], &Settings::default());
+        let renderer = TestRenderer::for_test(&device, &queue, [64, 64], &Settings::default());
         let output = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("local shadow frames"),
@@ -255,7 +255,7 @@ override other_side:bool=false;
         let encoder = self.encode(scene, input);
         self.queue.submit([encoder.finish()]);
         self.renderer.finish_frame(scene);
-        self.renderer.local_shadow_stats()
+        self.renderer.view.local_shadow_stats()
     }
 
     /// Light `light`'s visibility at `receivers` (positions and normals,

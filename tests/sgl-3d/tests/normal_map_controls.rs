@@ -64,7 +64,7 @@ struct ResultImage {
 fn draw(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    renderer: &mut Renderer,
+    (renderer, view): (&mut Renderer, &mut View),
     output: &wgpu::TextureView,
     texel: [u8; 4],
     mapped: bool,
@@ -124,10 +124,13 @@ fn draw(
         queue,
         &mut encoder,
         &mut scene,
-        &input,
-        &settings,
-        output,
-        None,
+        &mut [ViewFrame {
+            view,
+            input: &input,
+            settings: &settings,
+            output,
+            timing: None,
+        }],
     );
     queue.submit([encoder.finish()]);
     renderer.finish_frame(&mut scene);
@@ -135,7 +138,7 @@ fn draw(
         diagnostics::read(
             device,
             queue,
-            renderer.diagnostic_target(target).unwrap().texture(),
+            view.diagnostic_target(target).unwrap().texture(),
             bpp,
         )
     };
@@ -220,7 +223,9 @@ fn known_normal_maps_match_vertex_normals_with_rotation_and_ao() {
         antialiasing: settings::Antialiasing::Off,
         ..Default::default()
     };
-    let mut renderer = Renderer::new(
+    let mut renderer = Renderer::new(&device);
+    let mut view = View::new(
+        &renderer,
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -255,7 +260,7 @@ fn known_normal_maps_match_vertex_normals_with_rotation_and_ao() {
                     let mapped = draw(
                         &device,
                         &queue,
-                        &mut renderer,
+                        (&mut renderer, &mut view),
                         &output,
                         texel,
                         true,
@@ -266,7 +271,7 @@ fn known_normal_maps_match_vertex_normals_with_rotation_and_ao() {
                     let reference = draw(
                         &device,
                         &queue,
-                        &mut renderer,
+                        (&mut renderer, &mut view),
                         &output,
                         texel,
                         false,

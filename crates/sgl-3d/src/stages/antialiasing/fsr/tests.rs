@@ -1,4 +1,4 @@
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{Antialiasing, FsrQuality, Settings};
 use crate::*;
 use glam::camera;
@@ -38,7 +38,7 @@ fn fsr_renders_each_quality_or_falls_back_to_taa() {
             scene_resolution: settings::SceneResolution::Full,
             ..Settings::default()
         };
-        let mut renderer = Renderer::new(
+        let mut renderer = TestRenderer::new(
             &device,
             &queue,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -65,7 +65,7 @@ fn fsr_renders_each_quality_or_falls_back_to_taa() {
                     wgpu::TextureFormat::Rgba8Unorm,
                 );
                 let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-                renderer.resize(&device, SIZE, 1., &settings);
+                renderer.view.resize(&device, SIZE, 1., &settings);
                 for frame in 0..4 {
                     let eye = glam::Vec3::new(2.4 + frame as f32 * 0.05, 2., 3.3);
                     let mut input = FrameInput::new(Camera {
@@ -106,10 +106,10 @@ fn fsr_renders_each_quality_or_falls_back_to_taa() {
                     .contains(sp_fidelity_wgpu::required_features())
                 {
                     assert_eq!(
-                        renderer.antialiasing_in_effect(&settings),
+                        renderer.view.antialiasing_in_effect(&settings),
                         method,
                         "{:?}",
-                        renderer.fsr_error()
+                        renderer.view.fsr_error()
                     );
                     assert!(renderer.targets().temporal_masks.is_some());
                     assert_eq!(extent(&renderer.targets().color), render, "{quality:?}");
@@ -122,10 +122,10 @@ fn fsr_renders_each_quality_or_falls_back_to_taa() {
                     eprintln!(
                         "{quality:?} with {:?}: TAA, because {}",
                         device.features(),
-                        renderer.fsr_error().unwrap()
+                        renderer.view.fsr_error().unwrap()
                     );
                     assert_eq!(
-                        renderer.antialiasing_in_effect(&settings),
+                        renderer.view.antialiasing_in_effect(&settings),
                         Antialiasing::Taa
                     );
                     assert_eq!(extent(&renderer.targets().color), SIZE, "{quality:?}");
@@ -166,7 +166,7 @@ fn additive_effects_mark_fsr_reactivity_for_their_frame_only_for(method: Antiali
         fsr_quality: FsrQuality::NativeAa,
         ..Settings::default()
     };
-    let mut renderer = Renderer::new(
+    let mut renderer = TestRenderer::new(
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8Unorm,
@@ -176,10 +176,10 @@ fn additive_effects_mark_fsr_reactivity_for_their_frame_only_for(method: Antiali
     )
     .unwrap();
     assert_eq!(
-        renderer.antialiasing_in_effect(&settings),
+        renderer.view.antialiasing_in_effect(&settings),
         method,
         "{:?}",
-        renderer.fsr_error()
+        renderer.view.fsr_error()
     );
     let output = view::targets::target(&device, "FSR frame", SIZE, wgpu::TextureFormat::Rgba8Unorm);
     let eye = glam::Vec3::new(2.4, 2., 3.3);
@@ -294,10 +294,10 @@ fn fsr_runs_below_a_64_pixel_render_size_for(method: Antialiasing) {
         fsr_quality: FsrQuality::NativeAa,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
     for size in [[2, 2], [31, 31], [32, 32], [33, 33], [63, 63]] {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        renderer.resize(&device, size, 1., &settings);
+        renderer.view.resize(&device, size, 1., &settings);
         let output = view::targets::target(&device, "FSR frame", size, shading::gbuffer::COLOR);
         for frame in 0..2 {
             let eye = glam::Vec3::new(2.4 + frame as f32 * 0.05, 2., 3.3);
@@ -327,10 +327,10 @@ fn fsr_runs_below_a_64_pixel_render_size_for(method: Antialiasing) {
             panic!("{size:?}: {error}");
         }
         assert_eq!(
-            renderer.antialiasing_in_effect(&settings),
+            renderer.view.antialiasing_in_effect(&settings),
             method,
             "{size:?}: {:?}",
-            renderer.fsr_error()
+            renderer.view.fsr_error()
         );
     }
 }
@@ -362,7 +362,7 @@ fn fsr_sharpening_follows_its_settings() {
             fsr_sharpness,
             ..Settings::default()
         };
-        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         let output = view::targets::target(&device, "FSR frame", SIZE, shading::gbuffer::COLOR);
         for frame in 0..3 {
             let eye = glam::Vec3::new(2.4 + frame as f32 * 0.05, 2., 3.3);
@@ -388,7 +388,7 @@ fn fsr_sharpening_follows_its_settings() {
             renderer.finish_frame(&mut scene);
         }
         assert_eq!(
-            renderer.antialiasing_in_effect(&settings),
+            renderer.view.antialiasing_in_effect(&settings),
             Antialiasing::Fsr2
         );
         let pixels = test_support::read(&device, &queue, renderer.fsr_output().texture(), 8);
@@ -461,7 +461,7 @@ fn a_failed_fsr_dispatch_completes_the_frame_and_taa_takes_over_for(method: Anti
         fsr_quality: FsrQuality::Quality,
         ..Settings::default()
     };
-    let mut renderer = Renderer::new(
+    let mut renderer = TestRenderer::new(
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8Unorm,
@@ -471,15 +471,15 @@ fn a_failed_fsr_dispatch_completes_the_frame_and_taa_takes_over_for(method: Anti
     )
     .unwrap();
     assert_eq!(
-        renderer.antialiasing_in_effect(&settings),
+        renderer.view.antialiasing_in_effect(&settings),
         method,
         "{:?}",
-        renderer.fsr_error()
+        renderer.view.fsr_error()
     );
-    assert_ne!(renderer.render_size(), SIZE);
+    assert_ne!(renderer.view.render_size(), SIZE);
     renderer.test_fsr().unwrap().output().texture().destroy();
     let output = view::targets::target(&device, "FSR frame", SIZE, wgpu::TextureFormat::Rgba8Unorm);
-    let mut frame = |renderer: &mut Renderer, index: u32, settings: &Settings| {
+    let mut frame = |renderer: &mut TestRenderer, index: u32, settings: &Settings| {
         let eye = glam::Vec3::new(2.4 + index as f32 * 0.05, 2., 3.3);
         let mut input = FrameInput::new(Camera {
             eye,
@@ -489,7 +489,7 @@ fn a_failed_fsr_dispatch_completes_the_frame_and_taa_takes_over_for(method: Anti
         input.camera_cut = index == 0;
         input.environment = Some(environment);
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        renderer.resize(&device, SIZE, 1., settings);
+        renderer.view.resize(&device, SIZE, 1., settings);
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(
             &device,
@@ -516,13 +516,13 @@ fn a_failed_fsr_dispatch_completes_the_frame_and_taa_takes_over_for(method: Anti
         "the frame left its output black"
     );
     assert_eq!(
-        renderer.antialiasing_in_effect(&settings),
+        renderer.view.antialiasing_in_effect(&settings),
         Antialiasing::Taa
     );
-    let reason = renderer.fsr_error().unwrap();
+    let reason = renderer.view.fsr_error().unwrap();
     assert!(reason.contains("destroyed"), "{reason}");
     frame(&mut renderer, 1, &settings);
-    assert_eq!(renderer.render_size(), SIZE);
+    assert_eq!(renderer.view.render_size(), SIZE);
     settings.antialiasing = match method {
         Antialiasing::Fsr2 => Antialiasing::Fsr3,
         Antialiasing::Fsr3 => Antialiasing::Fsr2,
@@ -530,11 +530,11 @@ fn a_failed_fsr_dispatch_completes_the_frame_and_taa_takes_over_for(method: Anti
     };
     frame(&mut renderer, 2, &settings);
     assert_eq!(
-        renderer.antialiasing_in_effect(&settings),
+        renderer.view.antialiasing_in_effect(&settings),
         settings.antialiasing,
         "{:?}",
-        renderer.fsr_error()
+        renderer.view.fsr_error()
     );
-    assert!(renderer.fsr_error().is_none());
-    assert_ne!(renderer.render_size(), SIZE);
+    assert!(renderer.view.fsr_error().is_none());
+    assert_ne!(renderer.view.render_size(), SIZE);
 }

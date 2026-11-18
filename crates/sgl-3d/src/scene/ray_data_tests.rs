@@ -4,7 +4,7 @@ use crate::deformation::{Influence, MeshDeformation};
 use crate::settings::{Antialiasing, DynamicGiQuality, Settings};
 use crate::{
     Camera, DynamicGiVolume, FrameInput, InstanceState, Mobility, PreparedModel,
-    PreparedModelOptions, RayData, Renderer, Scene, SceneError, SceneOptions, test_support,
+    PreparedModelOptions, RayData, Scene, SceneError, SceneOptions, TestRenderer, test_support,
 };
 use glam::{Mat4, Vec3};
 
@@ -257,7 +257,7 @@ fn both_modes_preserve_masked_deformed_raster_and_shadow_depth() {
     };
     let requested = settings;
     let size = [16; 2];
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let output = crate::view::targets::target(
         &device,
         "ray data frames",

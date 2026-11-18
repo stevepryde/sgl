@@ -60,7 +60,7 @@ fn looking_down(height: f32, projection: Mat4) -> Camera {
 
 /// How many tracing texels the denoiser's slot 0 took its previous moments
 /// at in the last frame: those whose temporal sample count exceeds 1.
-fn carried(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &Renderer) -> usize {
+fn carried(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &TestRenderer) -> usize {
     let moments = renderer
         .traced_shadow_moments()
         .expect("the ray-traced shadow stage ran");
@@ -133,7 +133,7 @@ fn a_surface_the_camera_follows_keeps_its_shadow_history() {
     // The camera in the floor's own frame, the same in every frame.
     let local = looking_down(HEIGHT, projection);
     let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut frame = |scene: &mut Scene, index: u32, z: f32| {
         let lift = Vec3::new(0., -TRAVEL * index as f32, 0.);
         for &(id, state) in &parts {
@@ -203,7 +203,7 @@ fn still_scenery_keeps_its_shadow_history_as_the_camera_travels_toward_it() {
         );
         let key = ids[3].index() as u32;
         let settings = settings(true);
-        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
         for (index, height) in [start, start].into_iter().enumerate() {
             let mut input = input(looking_down(height, projection), Some(sun()));
             input.camera_cut = index == 0;
@@ -270,7 +270,7 @@ fn a_surface_revealed_behind_a_near_one_takes_no_history() {
         .unwrap();
     let camera = looking_down(HEIGHT, crate::perspective(0.9, 1., 0.1));
     let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut input = input(camera, None);
     let mut frame = |scene: &mut Scene, cut: bool| {
         input.camera_cut = cut;
@@ -330,7 +330,7 @@ fn a_light_that_leaves_the_view_restarts_its_slot_when_it_returns() {
         }
     };
     let settings = settings(true);
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut frame = |x: f32, cut: bool| {
         let mut input = input(over(x), Some(sun()));
         input.camera_cut = cut;

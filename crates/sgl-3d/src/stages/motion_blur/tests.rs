@@ -1,6 +1,6 @@
 //! Motion blur observed in real frames: an unlit square that moves, or does
 //! not, across a static camera's view of a black backdrop.
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, MotionBlur, Settings};
 use crate::shading::gbuffer;
 use crate::{Backdrop, Camera, FrameInput, InstanceState, Mobility, Scene, test_support};
@@ -81,7 +81,7 @@ fn frames(
         motion_blur: blur,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
     let ids = scene.add_asset(device, queue, square()).unwrap();
     let mut state = InstanceState {

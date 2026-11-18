@@ -1,11 +1,13 @@
-//! The renderer's diagnostic accessors: the last frame's targets, draws and
-//! view times, and the readback reports of its geometry, dynamic GI and
-//! frame probe.
-use super::{Renderer, frame};
+//! The diagnostic accessors: a view's last frame's targets, draws and view
+//! times, and the readback reports of its geometry and frame probe; the
+//! renderer's dynamic GI reports.
+#[cfg(feature = "diagnostics")]
+use super::Renderer;
+use super::{View, frame};
 #[cfg(feature = "diagnostics")]
 use crate::{ModelId, Scene, SceneError};
 
-impl Renderer {
+impl View {
     /// `target` as the last frame left it, at the render size unless the
     /// target says otherwise; `None` when it did not run.
     pub fn diagnostic_target(
@@ -13,19 +15,18 @@ impl Renderer {
         target: crate::diagnostics::DiagnosticTarget,
     ) -> Option<&wgpu::TextureView> {
         use crate::diagnostics::DiagnosticTarget;
-        let targets = &self.view.targets;
+        let targets = &self.targets;
         Some(match target {
             DiagnosticTarget::Depth => &targets.depth,
             DiagnosticTarget::Normal => &targets.normal,
             DiagnosticTarget::Motion => &targets.motion,
             DiagnosticTarget::SourceId => &targets.source_id,
             DiagnosticTarget::Composite => &targets.composite,
-            DiagnosticTarget::AmbientOcclusion => return self.view.opaque.visibility(),
-            DiagnosticTarget::ToneMapped => return self.view.post.captured_tone_mapped(),
-            DiagnosticTarget::Exposure => self.view.exposure.view(),
+            DiagnosticTarget::AmbientOcclusion => return self.opaque.visibility(),
+            DiagnosticTarget::ToneMapped => return self.post.captured_tone_mapped(),
+            DiagnosticTarget::Exposure => self.exposure.view(),
             DiagnosticTarget::Antialiased => {
-                let view = &self.view;
-                frame::completed(view.completed?, &view.post_fx, &view.antialiasing, targets)
+                frame::completed(self.completed?, &self.post_fx, &self.antialiasing, targets)
             }
         })
     }
@@ -35,7 +36,7 @@ impl Renderer {
     /// indirect draws, one per set; local-light shadow faces, probe captures
     /// and full-screen passes are not counted.
     pub fn diagnostic_draws(&self) -> crate::diagnostics::ViewDraws {
-        let views = &self.view.views;
+        let views = &self.views;
         crate::diagnostics::ViewDraws {
             camera: views.camera.list.draws(),
             blended: views.blended.draws(),
@@ -50,7 +51,7 @@ impl Renderer {
     /// opaque and masked draw list and each directional cascade's.
     #[cfg(feature = "diagnostics")]
     pub fn diagnostic_view_times(&self) -> crate::diagnostics::ViewTimes {
-        let views = &self.view.views;
+        let views = &self.views;
         crate::diagnostics::ViewTimes {
             camera: views.camera.cpu_ms(),
             cascades: views.cascades[..views.cascade_count]
@@ -73,23 +74,9 @@ impl Renderer {
         model: ModelId,
     ) -> Result<Option<(usize, u64)>, SceneError> {
         scene.models.get(model)?;
-        self.view.statistics.poll(device);
-        Ok(self.view.statistics.latest_for(model))
-    }
-
-    /// The dynamic GI stage's observed frames (`Diagnostics::dynamic_gi`)
-    /// read back since the last call, oldest first. Readback is
-    /// asynchronous: a frame's report arrives once the device completed it,
-    /// and waits here until taken.
-    #[cfg(feature = "diagnostics")]
-    pub fn take_dynamic_gi_reports(
-        &mut self,
-        device: &wgpu::Device,
-    ) -> Vec<crate::diagnostics::DynamicGiReport> {
-        self.shared
-            .dynamic_gi
-            .as_mut()
-            .map_or_else(Vec::new, |dynamic_gi| dynamic_gi.take_reports(device))
+        self.settle(false);
+        self.statistics.poll(device);
+        Ok(self.statistics.latest_for(model))
     }
 
     /// The numerical frame probe's reports of finished frames read back
@@ -99,9 +86,26 @@ impl Renderer {
     /// taken.
     #[cfg(feature = "diagnostics")]
     pub fn take_frame_probe_reports(&mut self, device: &wgpu::Device) -> Vec<serde_json::Value> {
-        self.view
-            .probe
+        self.settle(false);
+        self.probe
             .as_mut()
             .map_or_else(Vec::new, |probe| probe.take_reports(device))
+    }
+}
+
+#[cfg(feature = "diagnostics")]
+impl Renderer {
+    /// The dynamic GI stage's observed frames (`Diagnostics::dynamic_gi`)
+    /// read back since the last call, oldest first. Readback is
+    /// asynchronous: a frame's report arrives once the device completed it,
+    /// and waits here until taken.
+    pub fn take_dynamic_gi_reports(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Vec<crate::diagnostics::DynamicGiReport> {
+        self.shared
+            .dynamic_gi
+            .as_mut()
+            .map_or_else(Vec::new, |dynamic_gi| dynamic_gi.take_reports(device))
     }
 }
