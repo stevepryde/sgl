@@ -5,8 +5,8 @@
 //
 // Ports Wicked Engine 2ff1d9e's rtshadow_denoise_temporalCS.hlsl (MIT,
 // src/LICENSE-wicked.txt): the current value where the reprojection leaves
-// the screen or the linear depth there differs by more than a metre;
-// otherwise, per slot, a 3×3 neighbourhood's mean and deviation, a
+// the screen or the history's depth shows another surface; otherwise, per
+// slot, a 3×3 neighbourhood's mean and deviation, a
 // response from 0.88 to 1 by how much the value changed, refreshed toward
 // 0.2 by velocity, Unreal's ghosting fix it cites (101–124). Changed: the
 // history is clamped to the neighbourhood's box (the mean within twice
@@ -26,7 +26,14 @@
 // (ShadowMaskSlots.restart), and so does every slot after the stage's
 // history restarts (TracedParams.frame 0); the history is the stage's own
 // linear depth at the tracing resolution, where Wicked reads its
-// full-resolution depth history; the velocity in tracing pixels is the
+// full-resolution depth history, and another surface is told by the test
+// AMD's denoiser applies to slots 0 to 3 (temporal_disoccluded) on the
+// depth the texel's surface is expected to have had
+// (traced_previous_depth), where Wicked's takes a surface more than a
+// metre from this frame's linear depth for another, which rejects still
+// scenery while the camera travels more than a metre a frame along its
+// view axis and lets surfaces under a metre apart far away share history;
+// the velocity in tracing pixels is the
 // motion at the pixel the texel stands for (traced_texel_pixel), and its
 // history the texel whose block holds that pixel's surface at the same
 // place in it last frame; the neighbourhood is read
@@ -47,6 +54,8 @@
 // The trace's half-resolution normals, whose fourth component records the
 // pixel each texel stands for.
 @group(0) @binding(9) var temporal_normal:texture_2d<f32>;
+// The G-buffer's depth, from which the texel's surface is placed.
+@group(0) @binding(10) var temporal_gbuffer_depth:texture_depth_2d;
 
 // Wicked's temporalResponseMin and temporalResponseMax: the history's
 // least and greatest share.
@@ -54,9 +63,11 @@ const TEMPORAL_RESPONSE_MIN:f32=.88;
 const TEMPORAL_RESPONSE_MAX:f32=1.;
 // Wicked's temporalScale: the box's half-width in deviations.
 const TEMPORAL_SCALE:f32=2.;
-// Wicked's disocclusion threshold: linear depths further apart, in metres,
-// are different surfaces.
-const TEMPORAL_DISOCCLUSION:f32=1.;
+// AMD's depth tolerance (FFX_DNSR_Shadows_IsDisoccluded): the share of the
+// expected depth by which the history's may differ for a surface facing
+// the camera, and for one seen edge on.
+const TEMPORAL_DEPTH_TOLERANCE_FACING:f32=1e-2;
+const TEMPORAL_DEPTH_TOLERANCE_EDGE_ON:f32=1e-1;
 // Wicked's velocity refresh: the response at and beyond this many tracing
 // pixels of motion a frame, and that response.
 const TEMPORAL_VELOCITY_PIXELS:f32=100.;
@@ -69,6 +80,21 @@ struct TemporalMoments {
  m1:mat4x4<f32>,
  m2:mat4x4<f32>,
  count:f32,
+}
+
+// Whether the history whose stored linear depth is `stored` holds another
+// surface than the receiver at world `position`, of shading normal
+// `normal`, expected to have had linear depth `expected` (0 for none): AMD's
+// test, as the denoiser's port runs it for slots 0 to 3
+// (ffx_denoiser_shadows_tileclassification.wgsl
+// FFX_DNSR_Shadows_IsDisoccluded): a relative difference of 1%, rising to
+// 10% as the surface turns edge on, where its depth changes fastest across
+// a texel.
+fn temporal_disoccluded(expected:f32,stored:f32,position:vec3<f32>,normal:vec3<f32>)->bool {
+ let view_direction=normalize(traced.eye.xyz-position);
+ let z_alignment=pow(1.-dot(view_direction,normal),8.);
+ let tolerance=mix(TEMPORAL_DEPTH_TOLERANCE_FACING,TEMPORAL_DEPTH_TOLERANCE_EDGE_ON,z_alignment);
+ return !(expected>0.) || abs(stored-expected)/expected>=tolerance;
 }
 
 // Word 0 of the output at tracing texel `texel`: the denoised slots
@@ -99,8 +125,10 @@ fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
  }
  // The texel's surface at the pixel it stands for, where it was last
  // frame.
- let pixel=traced_texel_pixel(id.xy,textureLoad(temporal_normal,id.xy,0));
- let motion=textureLoad(temporal_motion,pixel,0).xy;
+ let normal=textureLoad(temporal_normal,id.xy,0);
+ let pixel=traced_texel_pixel(id.xy,normal);
+ let surface_motion=textureLoad(temporal_motion,pixel,0);
+ let motion=surface_motion.xy;
  let previous=vec2<f32>(pixel)+.5-motion*traced.full.xy;
  if any(previous<vec2(0.)) || any(previous>=traced.full.xy) {
   textureStore(temporal_output,id.xy,temporal_denoised_words(current,id.xy));
@@ -110,7 +138,9 @@ fn temporal_denoised_words(current:vec4<u32>,texel:vec2<u32>)->vec4<u32> {
  // in it (pixel 2q's for pixel 2q).
  let offset=vec2<f32>(pixel-id.xy*2u);
  let previous_texel=min(vec2<u32>(max(floor((previous-offset)*.5+.25),vec2(0.))),reduced-1u);
- if abs(depth-textureLoad(temporal_previous_depth,previous_texel,0).x)>TEMPORAL_DISOCCLUSION {
+ let position=traced_position((vec2<f32>(pixel)+.5)*traced.full.zw,textureLoad(temporal_gbuffer_depth,pixel,0));
+ let expected=traced_previous_depth(depth,surface_motion,position);
+ if temporal_disoccluded(expected,textureLoad(temporal_previous_depth,previous_texel,0).x,position,normal.xyz) {
   textureStore(temporal_output,id.xy,temporal_denoised_words(current,id.xy));
   return;
  }

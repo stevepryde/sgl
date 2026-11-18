@@ -223,6 +223,28 @@ mod tests {
         assert_eq!(none.restart, 0);
     }
 
+    // Plausible defect: a light that leaves the ranking for a frame keeping
+    // its slot's history when it returns (a slot reserved for it without a
+    // restart), although its history stopped when it left and holds nothing
+    // of the surfaces it lights on its return
+    // (`a_light_that_leaves_the_view_restarts_its_slot_when_it_returns`
+    // shows that history on the GPU). The oracle is the rule: a light
+    // absent for a frame frees its slot, returns as a newcomer to the
+    // lowest free slot, its own where none below it is free, and restarts
+    // it, while the lights that stayed keep theirs.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_light_absent_for_a_frame_returns_to_the_lowest_free_slot_and_restarts_it() {
+        let mut slots = Slots::default();
+        let [a, b, c] = [10, 11, 12].map(light);
+        let first = slots.assign(None, &live(&[a, b, c]));
+        let away = slots.assign(None, &live(&[a, c]));
+        assert_eq!(slot_of(&away, b), None);
+        assert_eq!(away.restart, 0);
+        let back = slots.assign(None, &live(&[a, b, c]));
+        assert_eq!(keys(&back), keys(&first));
+        assert_eq!(back.restart, 1 << slot_of(&first, b).unwrap());
+    }
+
     #[wasm_bindgen_test(unsupported = test)]
     fn more_lights_than_slots_fill_them_in_rank_order() {
         let mut slots = Slots::default();

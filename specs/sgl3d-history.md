@@ -2481,9 +2481,8 @@ and for slots 0 to 3 (slot 0 alone at Low) the AMD denoiser's moments and filter
 local-light atlas keeps a cache of shadow faces, which it redraws exactly when what a face shows
 changes, so its rules cost time rather than history. Shadow-map filtering keeps no history but
 relies on the antialiasing to resolve its per-frame rotation. In a continuously running game,
-the rules tripped most are the denoiser's camera-only depth test on a vehicle the camera follows
-(S-18), the temporal blend's 1 m depth test under fast camera travel (S-11), slot churn of local
-lights at the frustum's edge (S-6) and the velocity refresh on streaming scenery (S-13).
+the rules tripped most are the slot restarts of local lights at the frustum's edge (S-6), which
+discard nothing a returning light could use, and the velocity refresh on streaming scenery (S-13).
 
 ### Ray-traced shadows: stage and slot restarts
 
@@ -2556,24 +2555,42 @@ lights at the frustum's edge (S-6) and the velocity refresh on streaming scenery
   (`src/stages/shadows/traced/slots.rs`).
 - **Status.** Rule.
 
-#### S-6 A local light that leaves the ranking loses its slot
+#### S-6 A local light that leaves the ranking frees its slot and restarts on return
 
 - **Rule.** When a local light held in slots 1 to 15 is absent from the local atlas's ranking for a
-  frame, it frees its slot at once; a light without a slot that takes a free slot sets that slot's
-  restart bit and starts with its current trace (and a denoiser first frame in slots 1 to 3). A light
-  leaves the ranking when its range sphere no longer reaches the camera's frustum, the atlas has no
-  room for it, it stops casting or is turned off, its range is at most the local shadow near plane,
-  or its shadow opacity is at most 0.001. Recovery as S-1 for that slot.
-- **Raised by.** The camera turning so a light's range sphere grazes the frustum edge; more than 15
-  casting lights competing; a fading shadow.
+  frame, it frees its slot at once; a light without a slot takes the lowest free slot, sets that
+  slot's restart bit and starts with its current trace (and a denoiser first frame in slots 1 to 3).
+  A light returning after a frame away is such a light: it takes its own slot again where no lower
+  slot is free. A held light leaves the ranking only when its range sphere no longer reaches the
+  camera's frustum, or by a change of the game's: it stops casting or is turned off, its range falls
+  to the local shadow near plane or its shadow opacity to 0.001. Room does not take it out: the atlas
+  keeps a placed light's placement when it finds no other (S-33). The restart on return discards
+  nothing the light could use. A light whose range does not reach the view lights no pixel on
+  screen, so every pixel it lights on its return was off screen or hidden the frame before, and its
+  slot's history there, whether the slot was left empty or kept tracing it while it was away, is
+  another surface's or the screen edge's; after a change of the game's, it records other lighting.
+  Recovery as S-1 for that slot.
+- **Raised by.** The camera turning so a light's range sphere grazes the frustum edge; a fading
+  shadow; the game toggling a light's casting.
 - **Stays triggered while.** A swaying chase camera keeps a light at the frustum edge leaving and
-  re-entering: each re-entry restarts that light's shadow history, possibly in another slot.
-- **Source.** SGL3D's own. Code: `src/stages/shadows/traced/slots.rs` (`Slots::assign`),
-  `src/stages/shadows/local/plan.rs` (`Plan::prepare`, `candidates`).
-- **Guard.** `a_light_keeps_its_slot_while_placed_and_a_freed_slot_goes_to_the_best_ranked`,
+  re-entering: each re-entry restarts its slot, which costs the pixels it lights again nothing they
+  would not lose as disocclusions. It re-enters the lowest free slot, so where another light took
+  its slot meanwhile it may move between the denoised slots and the blended ones.
+- **Source.** SGL3D's own. Godot's shadow atlas (b130438 `light_storage.cpp`,
+  `_shadow_atlas_find_shadow`) keeps an absent light's slot until another light needs it, which
+  serves its maps, whose contents stay valid while the light is away; a screen-space history does
+  not. Measured by the guard below: with the slot kept for the light, traced or empty while it was
+  away, and taken back without a restart, the slot it returned to differed from a camera cut's at
+  5552 of 16384 pixels; with the restart, at none. Code: `src/stages/shadows/traced/slots.rs`
+  (`Slots::assign`), `src/stages/shadows/local/plan.rs` (`Plan::prepare`, `candidates`),
+  `src/stages/shadows/local/atlas.rs` (`Atlas::update`).
+- **Guard.** `a_light_absent_for_a_frame_returns_to_the_lowest_free_slot_and_restarts_it`,
+  `a_light_keeps_its_slot_while_placed_and_a_freed_slot_goes_to_the_best_ranked`,
   `more_lights_than_slots_fill_them_in_rank_order` (`src/stages/shadows/traced/slots.rs`);
+  `a_light_that_leaves_the_view_restarts_its_slot_when_it_returns`
+  (`src/stages/shadows/traced/tests/history.rs`);
   `a_denoised_slot_keeps_its_light_s_history_and_restarts_alone` (`src/stages/shadows/traced/tests.rs`).
-- **Status.** Defect B-11. One frame outside the ranking restarts the slot's history; there is no hysteresis.
+- **Status.** Rule. Settled from B-11 (2026-11-18): the restart it described loses no usable history.
 
 #### S-7 Baked-flag flip restarts a slot
 
@@ -2626,25 +2643,37 @@ lights at the frustum's edge (S-6) and the velocity refresh on streaming scenery
 - **Guard.** None.
 - **Status.** Rule.
 
-#### S-11 Absolute 1 m depth test without depth motion
+#### S-11 The temporal blend's expected-depth test
 
-- **Rule.** When the texel's linear view depth this frame differs by more than 1 m
-  (`TEMPORAL_DISOCCLUSION`) from the stage's own last-frame linear depth at the reprojected texel,
-  the temporal blend discards every non-denoised slot's history over that texel and writes the
-  current trace. The G-buffer's depth motion is not used. Accumulation resumes the first frame the
-  difference is 1 m or less.
-- **Raised by.** Still scenery while the camera travels along its view axis by more than 1 m a
-  frame (60 m/s at 60 fps, 30 m/s at 30 fps); objects moving towards or away from the camera at
-  that relative speed. A surface that moves with the camera keeps its view depth and passes.
-- **Stays triggered while.** The camera keeps that speed: every still receiver ahead loses all
-  accumulation of these slots on every frame, leaving one jittered ray per texel. The fixed metre
-  also lets surfaces less than 1 m apart far away share history.
-- **Source.** Wicked Engine `rtshadow_denoise_temporalCS.hlsl` (`abs(depth_current - depth_history) > 1`),
-  faithful; SGL3D reads its own half-resolution depth. Code:
-  `src/stages/shadows/traced/traced_temporal.wgsl` (`traced_shadow_temporal`).
-- **Guard.** None (`history_follows_the_camera_and_odd_pixels_take_the_texels_about_them` in
-  `src/stages/shadows/traced/tests.rs` moves the camera across its view, depth unchanged).
-- **Status.** Defect B-7. Still scenery loses history when the camera travels more than 1 m a frame, because the test ignores the receiver's depth motion.
+- **Rule.** The temporal blend compares the stage's own last-frame linear depth at the reprojected
+  texel with the linear depth the texel's surface is expected to have had from the last frame's
+  camera: its linear depth now plus the G-buffer's depth motion (M-2), or, under a projection whose
+  clip w is no view depth (orthographic, whose depth motion is 0), the camera's reprojection of its
+  point; none where the depth motion is invalid. Where it has none, or the two differ by at least
+  `mix(0.01, 0.1, (1 − dot(view, N))⁸)` of the expected depth (about 1% for a surface facing the
+  camera, up to 10% edge on), it discards every non-denoised slot's history over that texel and
+  writes the current trace. Accumulation resumes the first frame the test passes.
+- **Raised by.** Disocclusions: a surface revealed behind one more than about 1% of its depth nearer;
+  the background at an occluder's edge, where the nearest texel holds the occluder; a surface on or
+  behind the previous camera. Under an orthographic camera, a surface moving along the view axis.
+- **Stays triggered while.** Nothing in steady play: still scenery under any camera travel and a
+  surface the camera follows keep their history. Depth that changes across a tracing pixel faster
+  than the tolerance (a surface nearly edge on, beyond what the normal term allows) can reject at
+  sub-texel reprojection error.
+- **Source.** Modified from Wicked Engine `rtshadow_denoise_temporalCS.hlsl`
+  (`abs(depth_current - depth_history) > 1`, a metre of this frame's depth, which rejected still
+  scenery while the camera travelled more than a metre a frame along its view and let surfaces under
+  a metre apart share history): the test and tolerance are AMD FidelityFX Denoiser's
+  `FFX_DNSR_Shadows_IsDisoccluded`, which the denoiser applies to slots 0 to 3 (S-18), on the
+  expected depth of NRD's 2.5D motion (`viewZprev = viewZ + motion.z`), as ambient occlusion and the
+  reflections take it. Code: `src/stages/shadows/traced/traced_temporal.wgsl`
+  (`traced_shadow_temporal`, `temporal_disoccluded`), `src/stages/shadows/traced/traced_common.wgsl`
+  (`traced_previous_depth`).
+- **Guard.** `still_scenery_keeps_its_shadow_history_as_the_camera_travels_toward_it`,
+  `a_surface_the_camera_follows_keeps_its_shadow_history`,
+  `a_surface_revealed_behind_a_near_one_takes_no_history`
+  (`src/stages/shadows/traced/tests/history.rs`).
+- **Status.** Rule.
 
 #### S-12 Receivers' 3×3 variance box
 
@@ -2726,31 +2755,35 @@ lights at the frustum's edge (S-6) and the velocity refresh on streaming scenery
 - **Guard.** None.
 - **Status.** Rule.
 
-#### S-18 Camera-only depth reprojection rejects moments
+#### S-18 The denoiser's expected-depth test
 
-- **Rule.** The tile classification reconstructs the pixel's world position from this frame's
-  depth, takes its linear depth in the last frame's view (`FFX_DNSR_Shadows_GetPreviousLinearDepth`
-  through `TracedParams.previous_view`) and compares it with the stage's stored last-frame linear
-  depth at the reprojected pixel. When `|previous − reprojected| / reprojected` is at least
-  `mix(0.01, 0.1, (1 − dot(view, N))⁸)` (about 1% for surfaces facing the camera), it discards the
-  previous moments over that tracing pixel, for every lane: the sample count becomes 1, the variance
-  is boosted fifteenfold, and the blend takes about 94% of the current single ray. Accumulation
-  resumes when the test passes, reaching its 0.05 floor 8 frames later.
-- **Raised by.** A surface that moves with the camera (its stored depth equals its current one,
-  while its point seen from last frame's camera lies farther by the camera's travel): rejected when
-  the travel along the view axis exceeds about 1% of its depth a frame, which for a vehicle 5 m ahead
-  at 60 fps is about 3 m/s. Any object moving towards or away from a still camera faster than 1% of
-  its depth a frame.
-- **Stays triggered while.** A chase camera moves: the followed vehicle's sun shadow and up to three
-  local lights' shadows never accumulate and show the per-frame ray noise (S-26) on every frame.
+- **Rule.** The tile classification compares the stage's stored last-frame linear depth at the
+  reprojected pixel with the depth the pixel's surface is expected to have had from the last
+  frame's camera, as S-11 takes it (its linear depth plus the G-buffer's depth motion; the camera's
+  reprojection of its point under an orthographic projection; none where the depth motion is
+  invalid). Where it has none, or `|stored − expected| / expected` is at least
+  `mix(0.01, 0.1, (1 − dot(view, N))⁸)`, it discards the previous moments over that tracing pixel,
+  for every lane: the sample count becomes 1, the variance is boosted fifteenfold, and the blend
+  takes about 94% of the current single ray. Accumulation resumes when the test passes, reaching its
+  0.05 floor 8 frames later.
+- **Raised by.** Disocclusions, as S-11; the background at a moving occluder's edge (S-19).
+- **Stays triggered while.** Nothing in steady play: a vehicle the camera follows and still scenery
+  under camera travel keep their moments.
 - **Source.** AMD FidelityFX Denoiser `ffx_denoiser_shadows_tileclassification.h`
-  (`FFX_DNSR_Shadows_IsDisoccluded`, through the camera reprojection matrix that Wicked Engine's
-  `rtshadow_denoise_tileclassificationCS.hlsl` supplies), faithful in substance. Code:
+  (`FFX_DNSR_Shadows_IsDisoccluded`), modified: upstream, and Wicked Engine's
+  `rtshadow_denoise_tileclassificationCS.hlsl` through the camera reprojection matrix it supplies,
+  reprojects the pixel's current point through the camera, which holds for a still surface alone and
+  rejected the moments of a surface the camera follows in every frame it travelled along its view by
+  more than about 1% of the surface's depth (a vehicle 5 m ahead at 3 m/s at 60 fps); SGL3D takes the
+  surface's own expected depth, NRD's 2.5D motion, and a surface with none is disoccluded. Code:
   `src/stages/shadows/traced/ffx_denoiser_shadows_tileclassification.wgsl`
   (`FFX_DNSR_Shadows_IsDisoccluded`), `src/stages/shadows/traced/traced_denoise_tileclassification.wgsl`
-  (`FFX_DNSR_Shadows_GetPreviousLinearDepth`).
-- **Guard.** None.
-- **Status.** Defect B-6. The test reprojects depth through the camera alone instead of the G-buffer's depth motion, so a surface the camera follows has its moments rejected.
+  (`FFX_DNSR_Shadows_GetPreviousLinearDepth`), `src/stages/shadows/traced/traced_common.wgsl`
+  (`traced_previous_depth`).
+- **Guard.** `a_surface_the_camera_follows_keeps_its_shadow_history`,
+  `still_scenery_keeps_its_shadow_history_as_the_camera_travels_toward_it`
+  (`src/stages/shadows/traced/tests/history.rs`).
+- **Status.** Rule.
 
 #### S-19 Velocity of the nearest depth in the quad
 

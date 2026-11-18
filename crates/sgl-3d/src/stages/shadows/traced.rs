@@ -52,7 +52,7 @@ struct Params {
     frame: u32,
     seed: u32,
     denoised: u32,
-    padding: u32,
+    depth_motion: u32,
 }
 
 static COMMON: shading::Module = shading::Module {
@@ -365,6 +365,9 @@ impl TracedShadows {
             .previous_camera
             .map_or(history.camera.view, |previous| previous.view);
         let eye = ctx.input.camera.eye;
+        // The G-buffer's depth motion is the change of clip w, the view
+        // depth where the projection's w row is (0, 0, -1, 0).
+        let depth_motion = ctx.input.camera.projection.row(3) == glam::Vec4::new(0., 0., -1., 0.);
         crate::counters::write_buffer(
             ctx.queue,
             &self.params,
@@ -384,7 +387,7 @@ impl TracedShadows {
                 frame: self.history.count,
                 seed: self.seed,
                 denoised: shape.lanes.slots(),
-                padding: 0,
+                depth_motion: u32::from(depth_motion),
             }),
         );
         self.seed = self.seed.wrapping_add(1);
@@ -480,6 +483,7 @@ impl TracedShadows {
                 (7, resource(&targets.temporal[current])),
                 (8, targets.denoise.denoised.as_entire_binding()),
                 (9, resource(&targets.denoise.normal)),
+                (10, resource(&shared.depth)),
             ],
         );
         {
@@ -541,6 +545,12 @@ impl TracedShadows {
         let targets = self.targets.as_ref().filter(|_| self.ran)?;
         Some((&targets.mask, self.table))
     }
+
+    /// The denoiser's moments the last frame wrote, where the stage ran.
+    pub fn last_moments(&self) -> Option<&wgpu::TextureView> {
+        let targets = self.targets.as_ref().filter(|_| self.ran)?;
+        Some(targets.denoise.moments(1 - self.history.current))
+    }
 }
 
 #[cfg(test)]
@@ -558,7 +568,8 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
             eye,
             frame,
             seed,
-            denoised
+            denoised,
+            depth_motion
         ]
     )]
 }

@@ -247,6 +247,15 @@ impl Targets {
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl Targets {
+    /// The moments' half `half` of the pair: a layer a denoised slot, each
+    /// texel its mean, variance and temporal sample count.
+    pub fn moments(&self, half: usize) -> &wgpu::TextureView {
+        &self.moments[half]
+    }
+}
+
 /// What the denoiser reads beyond its own targets.
 pub(super) struct Inputs<'a> {
     /// The G-buffer's depth, which the tile classification reprojects.

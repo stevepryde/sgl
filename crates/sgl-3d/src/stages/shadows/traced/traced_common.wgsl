@@ -27,6 +27,11 @@ struct TracedParams {
  // `Shape`): 4, or 1 for the directional light's alone. The temporal
  // blend takes those from it and blends word 0's others.
  denoised:u32,
+ // 1 where the projection's clip w is the view depth (a perspective
+ // projection), so the G-buffer's depth motion is a receiver's change of
+ // linear depth; 0 where it carries none (an orthographic projection,
+ // whose depth motion is 0).
+ depth_motion:u32,
 }
 // The linear depth a texel the G-buffer drew nothing at records.
 const TRACED_SKY_DEPTH:f32=1e30;
@@ -78,6 +83,23 @@ fn traced_position(uv:vec2<f32>,z:f32)->vec3<f32> {
 // projection.
 fn traced_linear_depth(position:vec3<f32>)->f32 {
  return -(traced.view*vec4(position,1.)).z;
+}
+// The linear depth that the receiver of linear depth `depth` at world
+// `position` had from the last submitted frame's view, which both history
+// passes compare with the stage's own last-frame depth where its history
+// lies: its depth now plus the G-buffer's depth motion `motion`
+// (gbuffer.wgsl; NRD's viewZprev = viewZ + motion.z), which holds the
+// camera's travel and the surface's own, so a surface the camera follows
+// keeps its history as a still one does, as ambient occlusion's temporal
+// pass and the reflections take it; 0, no history, where that depth motion
+// is invalid (on or behind the previous camera). Under a projection whose
+// clip w is no view depth (TracedParams.depth_motion 0, orthographic), the
+// camera's reprojection of `position`, right for still surfaces alone.
+fn traced_previous_depth(depth:f32,motion:vec4<f32>,position:vec3<f32>)->f32 {
+ if traced.depth_motion==0u {
+  return -(traced.previous_view*vec4(position,1.)).z;
+ }
+ return select(0.,depth+motion.z,motion.w>0.);
 }
 // A word's four slots' visibility: word w holds the slots of the mask's
 // layer w (shadow_mask_layer_slots), channel i's in bits 8i to 8i + 7, so
