@@ -131,6 +131,10 @@ struct Frame {
  // (material_shader.wgsl); this frame's after history restarts.
  previous_elapsed_seconds:f32,
  previous_animation_phase:f32,
+ // The last submitted frame's backdrop yaw, which the sky's motion turns
+ // from (sky.wgsl); backdrop_yaw after history restarts or where either
+ // frame's backdrop is a colour.
+ previous_backdrop_yaw:f32,
 }
 // The frame's volumetric fog ran: draws fog themselves from its volume.
 const FRAME_FOG:u32=1u;

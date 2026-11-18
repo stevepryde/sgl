@@ -293,7 +293,9 @@ pub(crate) fn frame_uniform(
         // A frame without history evaluates its motion at its own time.
         previous_elapsed_seconds: input.elapsed_seconds as f32,
         previous_animation_phase: crate::shading::material::animation_phase(input.elapsed_seconds),
-        padding_previous: [0.; 3],
+        // Nor has its sky turned.
+        previous_backdrop_yaw: backdrop_yaw,
+        padding_previous: [0.; 2],
     }
 }
 

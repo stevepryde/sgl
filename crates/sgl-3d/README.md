@@ -161,7 +161,11 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   sky captures record). Bevy's `EnvironmentMapLight` and Filament's
   `IndirectLight` scale both lobes with one intensity; set both fields alike
   for that. `backdrop` is what the camera sees where there is no surface: the
-  environment's panorama or one colour.
+  environment's panorama or one colour. The sky's motion vectors follow a
+  turn of the panorama's yaw between frames, so antialiasing and motion blur
+  track a rotating backdrop; a change of its brightness, colour or
+  environment is a shading change without motion, which antialiasing follows
+  through its neighbourhood clamp.
   Keep its yaw consistent with authored directional lighting and the backdrop.
   An HDR environment containing a bright sun contributes that sun through
   image-based lighting too; a second analytic sun can duplicate energy or

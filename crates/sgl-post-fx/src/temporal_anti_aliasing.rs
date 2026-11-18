@@ -81,10 +81,11 @@ pub struct RenderAttributes<'a, 'p> {
     /// content changes without a motion vector of its own (blended
     /// surfaces, effects, animated shading). Read only under
     /// [`FeatureFlags::MOTION_ADAPTIVE_HISTORY`]: the resolve takes the
-    /// larger and, while a pixel is marked, rectifies and feeds back toward
-    /// full strength in proportion to it; it arms a hold of its own, at full
-    /// strength once the pixel is no longer marked. Empty for none;
-    /// `execute` panics on more than two.
+    /// largest value of either over the pixel's 3x3 neighbourhood, as FSR
+    /// dilates them, and, while a pixel is so marked, rectifies and feeds
+    /// back toward full strength in proportion to it; it arms a hold of its
+    /// own, at full strength once no pixel of the neighbourhood is marked.
+    /// Empty for none; `execute` panics on more than two.
     pub responsive_masks: &'a [&'a wgpu::TextureView],
     /// The motion within reach of each pixel, read only under
     /// [`FeatureFlags::MOTION_ADAPTIVE_HISTORY`]; `None` for none.

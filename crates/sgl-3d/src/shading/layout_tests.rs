@@ -730,6 +730,7 @@ fn rust_mirrors_match_wgsl_layouts() {
                 irradiance_volume_cells,
                 previous_elapsed_seconds,
                 previous_animation_phase,
+                previous_backdrop_yaw,
             ]
         ),
         mirror!(

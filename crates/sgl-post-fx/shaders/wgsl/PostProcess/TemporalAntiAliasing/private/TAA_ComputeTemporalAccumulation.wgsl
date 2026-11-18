@@ -496,16 +496,31 @@ fn AdaptiveDisocclusion(position:vec2<f32>,previous_position:vec2<f32>,motion_pi
     return smoothstep(0.,TAA_ADAPTIVE_DEPTH_THRESHOLD,max(0.,evidence));
 }
 
-// PROVENANCE.md, Motion-adaptive TAA: the larger of the responsive masks at
-// the pixel, 0 without one: how much of its content changes without a
-// motion vector of its own.
+// PROVENANCE.md, Motion-adaptive TAA, responsive inputs: the largest value
+// of the responsive masks over the pixel's 3x3 neighbourhood (clamped to the
+// screen), 0 without one: how much of the content within its neighbourhood
+// changes without a motion vector of its own. AMD's FSR dilates its reactive
+// and transparency-and-composition masks the same way before it uses them
+// (FidelityFX SDK 1.1.4, ffx_fsr3upscaler_prepare_reactivity.h
+// DilateReactiveMasks; ffx_fsr2_depth_clip.h PreProcessReactiveMasks), so a
+// pixel at the jittered edge of still marked content, which its own sample
+// hits on some phases only, sees the content on every phase through a
+// neighbour.
 fn SampleResponsiveMask(PixelCoord: vec2<i32>) -> f32 {
     var mask=0.;
 #if TAA_OPTION_RESPONSIVE_MASKS > 0
-    mask=max(mask,HlslLoad(g_TextureResponsiveMask0,PixelCoord,0).x);
-#endif
+    let Dimension=vec2<i32>(cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
+    // The 3x3 neighbourhood: nine loads of each mask.
+    const DilationRadius=1;
+    for (var y=-DilationRadius;y<=DilationRadius;y++) {
+        for (var x=-DilationRadius;x<=DilationRadius;x++) {
+            let Coord=ClampScreenCoord(PixelCoord+vec2<i32>(x,y),Dimension);
+            mask=max(mask,HlslLoad(g_TextureResponsiveMask0,Coord,0).x);
 #if TAA_OPTION_RESPONSIVE_MASKS > 1
-    mask=max(mask,HlslLoad(g_TextureResponsiveMask1,PixelCoord,0).x);
+            mask=max(mask,HlslLoad(g_TextureResponsiveMask1,Coord,0).x);
+#endif
+        }
+    }
 #endif
     return saturate(mask);
 }

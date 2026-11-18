@@ -214,12 +214,14 @@ it was:
 
 - `RenderAttributes::responsive_masks`: up to two single-channel views at the
   input size in 0..1, such as FSR's reactive and transparency-and-composition
-  masks. The resolve takes the larger: while a pixel is marked it rectifies
-  and feeds back toward full strength (0.12 of the current frame at 0.88)
-  in proportion to it, and it arms a twelve-frame hold of its own at full
-  strength for once the pixel is no longer marked, so blended surfaces,
-  effects and animated shading respond at rest as in motion and leave no
-  trail however dim they were.
+  masks. The resolve takes the largest value of either over the pixel's
+  3x3 neighbourhood, as FSR dilates them, so a pixel at the jittered edge
+  of still marked content is marked on every frame: while a pixel is marked
+  it rectifies and feeds back toward full strength (0.12 of the current
+  frame at 0.88) in proportion to it, and it arms a twelve-frame hold of
+  its own at full strength for once the content has left its neighbourhood,
+  so blended surfaces, effects and animated shading respond at rest as in
+  motion and leave no trail however dim they were.
 - `RenderAttributes::neighborhood_motion` (`NeighborhoodMotion`): a view
   whose texel `pixel / tile_size` holds a motion, in input pixels a frame,
   at least as long as any that reaches that pixel, such as a tile maximum

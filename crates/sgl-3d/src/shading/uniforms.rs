@@ -148,8 +148,12 @@ pub(crate) struct FrameUniform {
     /// frame's after history restarts.
     pub previous_elapsed_seconds: f32,
     pub previous_animation_phase: f32,
+    /// The last submitted frame's backdrop panorama yaw, which the sky's
+    /// motion turns from; `backdrop_yaw` after history restarts or where
+    /// either frame's backdrop is a colour.
+    pub previous_backdrop_yaw: f32,
     /// WGSL rounds `Frame` up to its 16-byte alignment.
-    pub padding_previous: [f32; 3],
+    pub padding_previous: [f32; 2],
 }
 
 /// One instance's record (`Object` in uniforms.wgsl), at its index in the

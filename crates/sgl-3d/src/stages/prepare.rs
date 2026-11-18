@@ -166,6 +166,9 @@ impl Prepare {
         frame.previous_elapsed_seconds = history.previous_elapsed_seconds as f32;
         frame.previous_animation_phase =
             crate::shading::material::animation_phase(history.previous_elapsed_seconds);
+        // The panorama's yaw in the last submitted frame, which the sky's
+        // motion turns from.
+        frame.previous_backdrop_yaw = history.previous_backdrop_yaw;
         views.reflection_camera = reflection_camera::Camera::new(camera.view, camera.projection);
         if let Some(jitter) = jitter {
             // As Diligent's `TemporalAntiAliasing::GetJitteredProjMatrix`
