@@ -2265,6 +2265,51 @@ fn a_frame_commits_what_it_drew() {
     assert_eq!([params[0], previous_params[0]], [2., 1.], "parameters");
 }
 
+// Plausible defect: an edit made after the submission and before
+// `finish_frame` is judged against the last finished frame rather than the
+// frame the scene is about to commit, so a moving instance whose model was
+// swapped for that frame and is swapped back in the window raises nothing:
+// the last finished frame shows the model it now names, but the committed
+// frame drew the other, and the next frame replaces the model with zero
+// motion and no signal. The oracle is M-9 with F-13: a model swap that no
+// motion vector describes raises the rigid-change signal, and one raised
+// after the frame began stays raised for the next frame.
+#[test]
+fn an_edit_in_the_window_is_judged_against_the_frame_it_follows() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let [a, b] = [(); 2].map(|_| {
+        scene
+            .add_asset(&device, &queue, test_support::cube())
+            .unwrap()
+            .model
+    });
+    let pose = Mat4::from_translation(Vec3::new(0., 0., -4.));
+    let mover = scene
+        .add_instance(&device, &queue, state(a, pose), Mobility::Moving)
+        .unwrap();
+    // Frame f-1 draws model A.
+    scene.begin_frame(&device, &queue);
+    scene.finish_open_frame();
+    assert!(
+        !scene.rigid_objects_changed(),
+        "the appearance was retired by the frame that showed it"
+    );
+    // Before frame f: model B. Frame f draws it and retires the swap.
+    scene.set_instance(&queue, mover, state(b, pose)).unwrap();
+    let attempt = scene.begin_frame(&device, &queue);
+    queue.submit([]);
+    // In the window: model A again, which frame f did not draw.
+    scene.set_instance(&queue, mover, state(a, pose)).unwrap();
+    assert!(scene.finish_frame(attempt));
+    assert!(
+        scene.rigid_objects_changed(),
+        "frame f+1 replaces frame f's model B with A, which no motion describes"
+    );
+}
+
 // Plausible defects: beginning a frame commits part of it (its record
 // overwrites what motion is measured from), or a superseded or repeated
 // attempt commits, so a frame rendered and dropped moves the next frame's

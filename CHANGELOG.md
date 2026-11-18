@@ -125,7 +125,9 @@ docs and specs the entry links.
   parameter blocks, the rigid-change signal and static-edit bounds as they
   were when `render` ran); scene edits made after the submission and before
   `finish_frame` no longer become the finished frame's state (which zeroed
-  the next frame's motion) and belong to the next frame. A frame rendered
+  the next frame's motion) and belong to the next frame, judged against
+  what that frame drew (a model swapped back in that window raises the
+  rigid-change signal). A frame rendered
   and not finished (its encoder dropped, or `finish_frame` omitted), whether
   or not its commands were submitted, and then rendered again as the same
   frame no longer restarts TAA, screen-space (Crystal, Velvet) and

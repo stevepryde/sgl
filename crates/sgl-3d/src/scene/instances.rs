@@ -96,6 +96,30 @@ impl Instance {
             | bit(self.deformation.is_some(), OBJECT_DEFORMING)
     }
 
+    /// Whether the next frame measures a moving instance's motion from a
+    /// pose of `model`, however the frame being rendered ends: the last
+    /// finished frame showed it with `model`, and the frame being rendered,
+    /// if one is, draws it shown with `model` too, since finishing that frame
+    /// makes its record the pose motion is measured from (F-13).
+    fn last_pose_applies(&self, model: ModelId) -> bool {
+        self.mobility == Mobility::Moving
+            && self
+                .submitted
+                .is_some_and(|(_, submitted)| submitted == model)
+            && self
+                .rendered
+                .is_none_or(|shown| shown.visible && shown.model == model)
+    }
+
+    /// Whether the last finished frame or the frame being rendered showed
+    /// it with `model`, or it shows `model` now.
+    fn shows(&self, model: ModelId) -> bool {
+        (self.state.model == model && (self.state.visible || self.submitted.is_some()))
+            || self
+                .rendered
+                .is_some_and(|shown| shown.visible && shown.model == model)
+    }
+
     /// The pose motion is measured from: a moving instance's pose in the
     /// last submitted frame while that pose applies, else its current pose,
     /// which writes no motion.
@@ -250,12 +274,11 @@ impl Instances {
 
     /// Geometry replacement, or a material edit that changes what `model`'s
     /// meshes draw, can uncover old pixels without any pose motion.
-    /// Include prior visible users even when the new geometry/position is culled.
+    /// Include prior visible users even when the new geometry/position is
+    /// culled: those the last finished frame or the frame being rendered
+    /// showed, which the next frame follows.
     pub fn geometry_changed(&mut self, model: ModelId) {
-        let changed = self.slots.iter().any(|(_, instance)| {
-            instance.state.model == model
-                && (instance.state.visible || instance.submitted.is_some())
-        });
+        let changed = self.slots.iter().any(|(_, instance)| instance.shows(model));
         raise_rigid(&mut self.rigid, changed);
     }
 
@@ -576,11 +599,9 @@ impl Scene {
         // A moving instance whose last submitted pose applies to the new
         // state writes its move as motion, which TAA follows per pixel; any
         // other change has no motion vector and re-arms the view (M-9).
-        let motion_describes_it = instance.mobility == Mobility::Moving
-            && state.visible
-            && instance
-                .submitted
-                .is_some_and(|(_, model)| model == state.model);
+        // Between a frame's submission and `finish_frame` that pose is the
+        // frame's own record as much as the last finished frame's.
+        let motion_describes_it = state.visible && instance.last_pose_applies(state.model);
         raise_rigid(
             &mut self.instances.rigid,
             (old.visible || state.visible)
