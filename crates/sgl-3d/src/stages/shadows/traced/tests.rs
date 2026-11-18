@@ -2765,20 +2765,18 @@ fn a_normal_mapped_surface_does_not_shadow_itself() {
 
 mod history;
 
-// Plausible defects (B-4 of the 2026-11-18 history audit, S-25): a frame
-// rendered and not finished, its encoder dropped, restarts the shadow
-// mask's history, advances the slots' seed or their assignment, or the
-// frame rendered again writes the half its history is in. The oracle is
-// equivalence: a run with the unfinished attempt, with its light moved
-// elsewhere, equals exactly the run without it, in the mask of the frame
-// rendered again and the one after. The light moves half a stripe before
-// them, so history shows in the blend (the control of
-// `a_slot_whose_light_changed_and_a_camera_cut_restart_its_history`). An
-// unfinished frame whose commands were submitted is not covered: the
-// denoiser's first filter pass writes the next frame's classification
-// history in place (`denoise::Targets::scratch`, as Wicked's
-// `rtshadow.scratch[i][1]`), so the frame rendered again reads the
-// submitted attempt's (mission notes, 2026-11-18).
+// Plausible defects (B-4 and B-27 of the 2026-11-18 history audit, S-25):
+// a frame rendered and not finished, its encoder dropped or its commands
+// submitted, restarts the shadow mask's history, advances the slots' seed
+// or their assignment, or the frame rendered again reads or writes the
+// half its history is in: the temporal blend's, the moments' or the
+// denoiser classification's, which the submitted attempt's first filter
+// pass wrote. The oracle is equivalence: a run with the unfinished
+// attempt, with its light moved elsewhere, equals exactly the run without
+// it, in the mask of the frame rendered again and the ones after. The
+// light moves half a stripe before them, so history shows in the blend
+// (the control of
+// `a_slot_whose_light_changed_and_a_camera_cut_restart_its_history`).
 #[test]
 fn the_shadow_mask_survives_an_unfinished_frame() {
     let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
@@ -2798,8 +2796,9 @@ fn the_shadow_mask_survives_an_unfinished_frame() {
     let [one, two, three] = decoys(eye);
     let camera = camera(eye, Vec3::ZERO, size);
     let settings = settings(true);
-    // With `attempt`, frame 3 is first rendered and its encoder dropped.
-    let run = |attempt: bool| {
+    // With `attempt`, frame 3 is first rendered and its encoder dropped
+    // (false) or submitted (true), and not finished.
+    let run = |attempt: Option<bool>| {
         let (mut scene, ids) = scene(gpu, 6., &grate(), &[one, two, three, at(-0.3)]);
         let light = ids[3];
         let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
@@ -2810,7 +2809,7 @@ fn the_shadow_mask_survives_an_unfinished_frame() {
             if frame == 3 {
                 scene.set_light(&queue, light, at(0.3)).unwrap();
             }
-            if frame == 3 && attempt {
+            if let Some(submitted) = attempt.filter(|_| frame == 3) {
                 scene.set_light(&queue, light, at(1.2)).unwrap();
                 let output = crate::view::targets::target(
                     &device,
@@ -2829,7 +2828,11 @@ fn the_shadow_mask_survives_an_unfinished_frame() {
                     &output,
                     None,
                 );
-                drop(encoder);
+                if submitted {
+                    queue.submit([encoder.finish()]);
+                } else {
+                    drop(encoder);
+                }
                 scene.set_light(&queue, light, at(0.3)).unwrap();
             }
             let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
@@ -2839,27 +2842,29 @@ fn the_shadow_mask_survives_an_unfinished_frame() {
         }
         (masks, light.index() as u32)
     };
-    let (plain, key) = run(false);
+    let (plain, key) = run(None);
     let [_, between, _] = blended(&plain[0], &camera, key);
     assert!(
         between > 100,
         "the moved light's history shows at {between} texels"
     );
-    let (attempted, _) = run(true);
-    for (frame, (plain, attempted)) in plain.iter().zip(&attempted).enumerate() {
-        let [plain, attempted] = [plain, attempted]
-            .map(|observed| observed.mask.as_ref().expect("the stage ran").clone());
-        let differing = plain
-            .0
-            .chunks_exact(4)
-            .zip(attempted.0.chunks_exact(4))
-            .filter(|(a, b)| a != b)
-            .count();
-        assert_eq!(
-            (differing, plain.1 == attempted.1),
-            (0, true),
-            "frame {} after an unfinished attempt: texels that differ from the run without it, and whether the slot tables match",
-            frame + 3
-        );
+    for submitted in [false, true] {
+        let (attempted, _) = run(Some(submitted));
+        for (frame, (plain, attempted)) in plain.iter().zip(&attempted).enumerate() {
+            let [plain, attempted] = [plain, attempted]
+                .map(|observed| observed.mask.as_ref().expect("the stage ran").clone());
+            let differing = plain
+                .0
+                .chunks_exact(4)
+                .zip(attempted.0.chunks_exact(4))
+                .filter(|(a, b)| a != b)
+                .count();
+            assert_eq!(
+                (differing, plain.1 == attempted.1),
+                (0, true),
+                "frame {} after an unfinished attempt (submitted: {submitted}): texels that differ from the run without it, and whether the slot tables match",
+                frame + 3
+            );
+        }
     }
 }

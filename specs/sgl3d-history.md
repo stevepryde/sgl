@@ -131,7 +131,7 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 - **Stays triggered while.** The game never finishes: camera motion is always zero and nothing accumulates.
 - **Source.** SGL3D's own (S3D-4; the History contract's "What a frame commits"). Code: `view/history.rs` (`Kept`, `StageHistory`), `renderer/frame.rs` (`settle`).
 - **Guard.** `an_unfinished_frame_restarts_nothing` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`), `kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one` (`view/history.rs`), and the stages' own: `crystal_keeps_its_history_across_an_unfinished_frame`, `velvet_keeps_its_history_across_an_unfinished_frame`, `world_reflections_keep_their_history_across_an_unfinished_frame`, `accumulated_visibility_survives_an_unfinished_frame`, `the_shadow_mask_survives_an_unfinished_frame`.
-- **Status.** Rule. The ray-traced shadow denoiser's classification history is the exception this rule does not yet cover for a submitted frame (S-25).
+- **Status.** Rule.
 
 #### F-4 A frame in which a stage did not run restarts it
 
@@ -2984,20 +2984,20 @@ discard nothing a returning light could use, and the velocity refresh on streami
   the quality its history was made at and its seed as that frame left them
   (`Kept<TracedKept>`), so a frame rendered again assigns the same slots, draws with the same
   seed and reads and writes the same halves. `Slots::assign` works from the kept copy. A stage
-  that did not run in the last finished frame keeps nothing and restarts as in S-1. Not yet
-  covered: a frame whose commands were submitted overwrote the denoiser's classification history
-  in place (`denoise::Targets::scratch`, written by its first filter pass and read by the next
-  frame's tile classification, as Wicked's `rtshadow.scratch[i][1]`), so the frame rendered
-  again reads the attempt's filtered result there; a dropped encoder leaves it untouched.
+  that did not run in the last finished frame keeps nothing and restarts as in S-1. Every GPU
+  history the stage keeps is a pair indexed by its run: the temporal mask, the denoiser's moments
+  and the denoiser's filter history, which its first filter pass writes and the next frame's tile
+  classification reads (`denoise::Targets::history`, where Wicked keeps one texture,
+  `rtshadow.scratch[i][1]`), so a frame whose commands were submitted and a frame whose encoder
+  was dropped leave the frame rendered again the same history.
 - **Raised by.** A game that renders a frame and abandons or re-renders it.
-- **Stays triggered while.** Nothing for a dropped encoder; one frame of the denoiser's history
-  for a submitted one.
+- **Stays triggered while.** Nothing.
 - **Source.** SGL3D's own. Code: `src/stages/shadows/traced.rs` (`TracedShadows::encode`,
-  `TracedShadows::settle`), `src/view/history.rs` (`Kept`).
+  `TracedShadows::settle`), `src/stages/shadows/traced/denoise.rs` (`Targets`,
+  `Denoiser::encode`), `src/view/history.rs` (`Kept`).
 - **Guard.** `the_shadow_mask_survives_an_unfinished_frame` (`src/stages/shadows/traced/tests.rs`,
-  its encoder dropped).
-- **Status.** Rule for the kept state; the submitted case's denoiser history is reported to the
-  2026-11-18 mission for a decision.
+  its encoder dropped and its commands submitted).
+- **Status.** Rule.
 
 #### S-26 Per-frame ray draw
 

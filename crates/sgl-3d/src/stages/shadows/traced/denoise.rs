@@ -178,8 +178,11 @@ pub(super) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba1
 /// The denoiser's targets at one tracing size: each 8×4 tile's hit masks
 /// and each tracing pixel's shading normal, which the trace writes; each
 /// 8×8 group's metadata; the reprojected and filtered visibility and
-/// variance, packed as two halves (A, then B, which keeps the first filter
-/// pass's result for the next frame); the moments' pair, a layer a denoised
+/// variance, packed as Wicked's two scratch halves (A, and B, which keeps
+/// the first filter pass's result for the next frame's tile
+/// classification), B a pair whose halves alternate with the moments', so
+/// that a frame rendered again reads the history its last finished frame
+/// left (the History contract); the moments' pair, a layer a denoised
 /// slot; and the denoised visibility, a word a tracing pixel, packed as the
 /// trace packs its first word. The masks, metadata and halves hold the four
 /// denoised slots in a texel's channels. Every shape shares them, so slot
@@ -188,7 +191,8 @@ pub(super) struct Targets {
     pub tiles: wgpu::TextureView,
     pub normal: wgpu::TextureView,
     metadata: wgpu::TextureView,
-    scratch: [wgpu::TextureView; 2],
+    scratch: wgpu::TextureView,
+    history: [wgpu::TextureView; 2],
     moments: [wgpu::TextureView; 2],
     pub denoised: wgpu::Buffer,
 }
@@ -212,10 +216,17 @@ impl Targets {
                 1,
                 wgpu::TextureFormat::Rgba32Uint,
             ),
-            scratch: [0, 1].map(|_| {
+            scratch: texture(
+                device,
+                "ray-traced shadow denoise scratch",
+                reduced,
+                1,
+                wgpu::TextureFormat::Rgba32Uint,
+            ),
+            history: [0, 1].map(|_| {
                 texture(
                     device,
-                    "ray-traced shadow denoise scratch",
+                    "ray-traced shadow denoise history",
                     reduced,
                     1,
                     wgpu::TextureFormat::Rgba32Uint,
@@ -267,7 +278,8 @@ pub(super) struct Inputs<'a> {
     pub params: &'a wgpu::Buffer,
     pub slot_table: &'a wgpu::Buffer,
     pub reduced: [u32; 2],
-    /// The halves of the moments' pair this frame writes and reads.
+    /// The half of the moments' and the filtered history's pairs this
+    /// frame writes; it reads the other.
     pub current: usize,
 }
 
@@ -372,7 +384,7 @@ impl Denoiser {
             compute.set_bind_group(0, group, &[]);
             compute.dispatch_workgroups(groups[0], groups[1], groups[2]);
         };
-        let [scratch_a, scratch_b] = &targets.scratch;
+        let (scratch_a, scratch_b) = (&targets.scratch, &targets.history[current]);
         let classification = chain.classification.groups[current].get(
             device,
             "ray-traced shadow tile classification",
@@ -381,7 +393,7 @@ impl Denoiser {
                 (1, resource(&targets.normal)),
                 (2, resource(&targets.tiles)),
                 (3, resource(&targets.moments[previous])),
-                (4, resource(scratch_b)),
+                (4, resource(&targets.history[previous])),
                 (5, resource(inputs.previous_depth)),
                 (6, resource(inputs.motion)),
                 (7, inputs.params.as_entire_binding()),
@@ -398,10 +410,11 @@ impl Denoiser {
             classification,
             "ray-traced shadow tile classification",
         );
-        // Pass 0 filters A into B, which the next frame's classification
-        // reads as its history, and each pass after it the half the one
-        // before wrote into the other, the last into the denoised words,
-        // binding as its history the half it does not write.
+        // Pass 0 filters A into this frame's B, which the next frame's
+        // classification reads as its history, and each pass after it the
+        // half the one before wrote into the other, the last into the
+        // denoised words, binding as its history the half it does not
+        // write.
         for (index, pass) in chain.filters.iter_mut().enumerate() {
             let (input, history) = if index % 2 == 0 {
                 (scratch_a, scratch_b)
