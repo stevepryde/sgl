@@ -427,13 +427,19 @@ impl Renderer {
             projection: input.camera.projection,
             jitter: [0.; 2],
         };
-        self.history.begin(
+        let mut frame = self.history.begin(
             camera,
             reset,
             scene.origin(),
             input.elapsed_seconds,
             input.visibility_mask,
-        )
+        );
+        let yaw = match input.backdrop {
+            crate::Backdrop::Environment { yaw, .. } => Some(yaw),
+            crate::Backdrop::Color(_) => None,
+        };
+        self.history.set_backdrop(&mut frame, yaw);
+        frame
     }
 
     /// The antialiasing that runs for `settings`: their choice resolved for

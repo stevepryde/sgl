@@ -785,6 +785,19 @@ enum Responsive {
     /// A neighbourhood motion of this many pixels along X, in 32-pixel tiles,
     /// the pixel's own motion zero.
     Reach(f32),
+    /// The pixel at the jittered edge of still content marked this value:
+    /// the content wholly covers the pixel to its left, marked on every
+    /// frame, and covers part of the pixel, whose sample hits it on the
+    /// frames `edge_hit` names, when it shows `AFTER` and is marked too,
+    /// and `BEFORE` and unmarked on the others. No step.
+    JitteredEdge(u8),
+}
+
+/// The frames whose jittered sample hits the content beside a
+/// `Responsive::JitteredEdge` pixel: 5 of every 16 phases, irregularly, as
+/// a 16-phase sequence hits a pixel the content covers 5/16 of.
+fn edge_hit(index: u32) -> bool {
+    (index * 7) % 16 < 5
 }
 
 /// The checkerboard's radiances, and the centre pixel's before and after
@@ -816,6 +829,17 @@ fn step_sequence(
         Responsive::Mask(value) => vec![r8(value)],
         Responsive::SecondMask(value) => vec![r8(0), r8(value)],
         Responsive::MaskUntilStep(value) => vec![r8(value), r8(0)],
+        Responsive::JitteredEdge(value) => {
+            let marked = |pixels: &[[u32; 2]]| {
+                let data: Vec<u8> = (0..SIZE[1])
+                    .flat_map(|y| (0..SIZE[0]).map(move |x| [x, y]))
+                    .map(|p| if pixels.contains(&p) { value } else { 0 })
+                    .collect();
+                texels(device, queue, wgpu::TextureFormat::R8Unorm, &data)
+            };
+            let left = [centre[0] - 1, centre[1]];
+            vec![marked(&[left]), marked(&[left, centre])]
+        }
         _ => Vec::new(),
     };
     let tiles = [SIZE[0].div_ceil(32), SIZE[1].div_ceil(32)];
@@ -852,6 +876,7 @@ fn step_sequence(
     let until_step = |index: u32| -> Vec<&wgpu::TextureView> {
         match responsive {
             Responsive::MaskUntilStep(_) => vec![&masks[usize::from(index >= STEP_FRAME)]],
+            Responsive::JitteredEdge(_) => vec![&masks[usize::from(edge_hit(index))]],
             _ => mask_views.clone(),
         }
     };
@@ -862,7 +887,11 @@ fn step_sequence(
         for y in 0..SIZE[1] {
             for x in 0..SIZE[0] {
                 let value = if [x, y] == centre {
-                    if index < STEP_FRAME { BEFORE } else { AFTER }
+                    let after = match responsive {
+                        Responsive::JitteredEdge(_) => edge_hit(index),
+                        _ => index >= STEP_FRAME,
+                    };
+                    if after { AFTER } else { BEFORE }
                 } else {
                     BOARD[((x + y) % 2) as usize]
                 };
@@ -1078,6 +1107,61 @@ fn taa_adaptive_a_neighbourhood_slower_than_the_threshold_changes_nothing() {
             step_sequence(&device, &queue, reversed, Responsive::Reach(0.5)),
             step_sequence(&device, &queue, reversed, Responsive::None),
             "reversed={reversed}"
+        );
+    }
+}
+
+/// B-15 (2026-11-18 history audit, O-2). Defect: a pixel at the jittered
+/// edge of still marked content, which its own sample hits on some phases
+/// only, is unmarked on the others and runs at full strength through the
+/// mask hold, so it alternates between its mask's strength and full and
+/// never relaxes, though its content has not changed. Rule (T-25): the
+/// resolve takes the masks' largest value over the pixel's 3x3
+/// neighbourhood, as AMD's FSR dilates them, so content wholly covering a
+/// neighbour marks the pixel on every phase. Oracle, by hand from the
+/// spec's blend: with the history inside the variance box (the board's,
+/// as `taa_adaptive_a_marked_pixel_follows_a_step_at_full_feedback`), only
+/// feedback acts, so once confidence has reached its cap each resolve moves
+/// the pixel 0.12 (0.3 + 0.7 x 128 / 255) of the way from its last output
+/// to the current sample in the blend space x / (1 + x), whatever that
+/// sample is, within the half-float rounding of the two stores (the
+/// current colour and the output). Full strength would move it 0.12 of the
+/// way: 0.0030 off the model here without the rule.
+#[test]
+fn taa_adaptive_a_pixel_at_the_jittered_edge_of_still_marked_content_keeps_its_strength() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let sdr = |v: f32| v / (1. + v);
+    let weight = 0.12 * (0.3 + 0.7 * 128. / 255.);
+    for reversed in [false, true] {
+        let values = step_sequence(&device, &queue, reversed, Responsive::JitteredEdge(128));
+        // The reset's hold ends at frame 12, and confidence climbs from 0.893
+        // to its cap over the 18 frames after it. The largest excess over
+        // the rounding, with its frame, distance and rounding.
+        let mut worst = (f32::NEG_INFINITY, 0, 0., 0.);
+        for index in 36..values.len() {
+            let current = if edge_hit(index as u32) {
+                AFTER
+            } else {
+                BEFORE
+            };
+            let last = sdr(values[index - 1]);
+            let expected = last + weight * (sdr(current) - last);
+            let off = (sdr(values[index]) - expected).abs();
+            let rounding = 2. * values[index].max(current) / 1024.;
+            if off - rounding > worst.0 {
+                worst = (off - rounding, index, off, rounding);
+            }
+        }
+        let (excess, frame, off, rounding) = worst;
+        eprintln!(
+            "reversed={reversed}: largest distance from the mask's feedback {off} at frame {frame} (rounding {rounding})"
+        );
+        assert!(
+            excess <= 0.,
+            "reversed={reversed}, frame {frame}: {off} off the mask's feedback in the blend \
+             space, above the rounding {rounding}"
         );
     }
 }

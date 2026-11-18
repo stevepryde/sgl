@@ -388,23 +388,24 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 
 ### Sky and views without motion
 
-#### M-10 Sky motion is rotation only
+#### M-10 Sky motion is the camera's rotation and the panorama's turn
 
-- **Rule.** The sky writes the motion of its direction at infinity through both cameras (rotation only, camera translation ignored), encoded as M-1, with depth validity 0; where the current camera gives a direction no positive w (an orthographic camera) it writes zero motion.
-- **Raised by.** Every frame.
-- **Stays triggered while.** Nothing.
-- **Source.** Diligent's `EnvMap.psh` `GetMotionVector`, Bevy's skybox motion vectors. Code: `stages/opaque/sky.wgsl` (`sky_motion`).
-- **Guard.** `a_turn_past_the_view_moves_every_pixel_off_screen_along_the_turn`, `an_orthographic_camera_records_finite_motion` (`stages/opaque/tests.rs`).
+- **Rule.** The sky writes the motion of its direction at infinity through both cameras (rotation only, camera translation ignored), encoded as M-1, with depth validity 0; where the current camera gives a direction no positive w (an orthographic camera) it writes zero motion. Where the frame and the last submitted frame both show a panorama (`Backdrop::Environment`), the previous direction is this frame's turned about +Y by the last frame's yaw less this frame's (`Frame::previous_backdrop_yaw`, from the camera history, F-1): the direction the same point of the panorama lay in, as an object's previous pose carries its vertices. After a reset (F-1), or where either frame's backdrop is a colour, nothing turns. Scope: every sky pixel.
+- **Raised by.** Every frame; a game turning `Backdrop::Environment::yaw` adds the turn.
+- **Stays triggered while.** Nothing. A turning panorama is motion, as a turning camera is: TAA arms the hold where it moves 0.01 px a frame or more (T-22, T-23) and reprojects it, and FSR and motion blur follow it.
+- **Known limits.** The turn is the f32 difference of the two yaws: a yaw the game lets grow without wrapping loses precision in the panorama's sampling and its motion alike.
+- **Source.** Diligent's `EnvMap.psh` `GetMotionVector`, Bevy's background motion vectors (`background_motion_vectors.wesl`) for the camera's rotation; neither turns its environment (Diligent's `g_EnvironmentRotation`, Bevy's `Skybox::rotation`) in the motion, which is SGL3D's own (2026-11-18 history audit, O-11). Code: `stages/opaque/sky.wgsl` (`sky_motion`); `view/history.rs` (`CameraHistory::set_backdrop`); `renderer/mod.rs` (`Renderer::begin_history`).
+- **Guard.** `a_turn_past_the_view_moves_every_pixel_off_screen_along_the_turn`, `an_orthographic_camera_records_finite_motion` (`stages/opaque/tests.rs`); `motion_vectors_match_the_script` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`); `a_turning_backdrop_moves_the_sky` (`tests/sgl-3d/tests/scenario_history_taa.rs`): a still camera under a turning panorama, a camera turning with it, a cut, and a colour replaced by a panorama, against the script.
 - **Status.** Rule.
 
-#### M-10b An animated backdrop has no motion and no mask
+#### M-10b A backdrop's brightness, colour or environment changes without motion or mask
 
-- **Rule.** When the frame's backdrop yaw, brightness, colour or environment changes, the sky's content changes with only its rotation motion (M-10) and no reactive or composition mark.
-- **Raised by.** A game rotating or fading the backdrop over time.
-- **Stays triggered while.** The backdrop keeps animating: TAA and FSR follow it by neighbourhood clamping alone.
-- **Source.** SGL3D's own. Code: `stages/opaque/sky.wgsl` (`sky_color`, `sky_motion`).
-- **Guard.** None.
-- **Status.** Open question O-11. Whether an animated backdrop should mark the masks is undecided.
+- **Rule.** A change of the backdrop's brightness, its colour, the environment its panorama comes from, or between a colour and a panorama is a shading change: the sky writes only M-10's motion and marks neither temporal mask. TAA follows it through its box at the strength the pixel has (at rest each resolve leaves at most (1 − 0.1)(1 − 0.036) = 0.868 of a change where the neighbourhood is uniform); FSR through its own shading-change and luminance tests. A turn of the panorama's yaw is motion (M-10). Scope: the sky's pixels.
+- **Raised by.** A game fading, recolouring or swapping the backdrop.
+- **Stays triggered while.** The backdrop keeps changing: at rest the sky trails a continuous fade by the relaxed blend, about 5 frames to halve a step.
+- **Source.** Diligent's `EnvMap.psh` and Bevy's background motion vectors write the camera's motion only and mark nothing. AMD's FSR documentation (`super-resolution-upscaler.md`, "Transparency and composition mask") offers that mask for shading motion vectors do not match, such as texture animation; SGL3D does not mark the sky: a backdrop change is the same over every neighbourhood of the sky, which the box follows, and FSR detects shading change itself. Settled by the 2026-11-18 history audit (O-11). Code: `stages/opaque/sky.wgsl` (`sky_color`, `sky_motion`).
+- **Guard.** `a_backdrop_that_changes_at_rest_converges_through_the_box` (`tests/sgl-3d/tests/scenario_history_taa.rs`): a colour step at rest converges within the resting blend's bound every frame.
+- **Status.** Rule.
 
 #### M-19 Probe captures and shadow views carry no motion
 
@@ -747,13 +748,18 @@ pixel's motion hold is set to 12.
 - **Source.** Godot `taa_resolve.glsl` (`clip_history_3x3`, `clip_aabb`) and `taa.cpp`
   (`variance_dynamic`); Filament `taa.mat`'s min/max box intersection. Differs from
   Filament: the clip target is the mean, not the filtered centre, and Filament's
-  minimum box half-width of 0.002 is not ported.
+  minimum box half-width of 0.002 (`kMinBoxHalfWidth`) is not ported: it guards
+  Filament's YCoCg clip towards a filtered reconstruction, where a channel flat over
+  the neighbourhood put history noise outside a zero-width box every frame; here a
+  flat channel's history equals its sample at rest, so a zero-width box neither
+  moves it nor clips the other channels, and the floor measured no difference
+  (`sgl-post-fx` PROVENANCE.md, "Minimum box half-width"; 2026-11-18 history audit, O-10).
   Code: `TAA_ComputeTemporalAccumulation.wgsl` (`ComputePixelStatisticYCoCgSDR`,
   `ComputeVarianceGamma`, `ClipToAABB`).
 - **Guard.** `taa_reprojecting_a_step_by_a_fraction_of_a_pixel_stays_within_its_levels`
-  (`tests/sgl-post-fx/tests/execute.rs`).
-- **Status.** Open question O-10. Whether Filament's 0.002 minimum box half-width is
-  needed is undecided and unrecorded.
+  (`tests/sgl-post-fx/tests/execute.rs`); `a_channel_flat_at_rest_leaves_the_others_alone`
+  (`tests/sgl-3d/tests/scenario_history_taa.rs`), a zero-width channel at rest.
+- **Status.** Rule.
 
 #### T-26 Confidence ramp
 
@@ -1126,34 +1132,46 @@ pixel's motion hold is set to 12.
 
 #### T-25 Mask strength and mask hold
 
-- **Rule.** A pixel's mask value `m` is the larger of the two temporal masks (R8, so
-  anything under 1/510 reads 0). While `m > 0`, strength is at least `m` and the mask
-  hold is set to 12; once unmarked, the hold read at its reprojected position counts
-  down by one per frame and strength is full while it is above 0. Scope: pixel.
-  Recovery: 12 frames after the pixel was last marked.
+- **Rule.** A pixel's mask value `m` is the largest value of the two temporal masks over
+  its 3x3 neighbourhood, clamped to the screen (R8, so anything under 1/510 reads 0).
+  While `m > 0`, strength is at least `m` and the mask hold is set to 12; once
+  unmarked, the hold read at its reprojected position counts down by one per frame and
+  strength is full while it is above 0. A pixel at the jittered edge of still marked
+  content is marked through the neighbour the content covers on every phase, so it
+  stays at strength `m`, and the hold begins once the content has left its
+  neighbourhood. Scope: the pixel and its 3x3 neighbourhood. Recovery: 12 frames after
+  the content last lay in the neighbourhood.
 - **Raised by.** The mask writers (T-28).
-- **Stays triggered while.** Marked content's edge is jittered across a pixel: the pixel
-  is marked on some frames and unmarked on others, so it alternates between strength `m`
-  and full strength and never relaxes. This affects the edges of static glows (1-pixel
-  glow lines in particular), mist whose drifting noise drives alpha to 0 in moving
-  cells, and blended-surface edges.
+- **Stays triggered while.** Marked content stays in the neighbourhood: those pixels
+  hold strength `m`. Content narrower than a pixel that no sample of the neighbourhood
+  hits on some jitter phases (the end of a sub-pixel glow line) leaves those phases
+  unmarked, at full strength with a box that holds none of it, so they clip it away as
+  T-13 does any sub-pixel feature at full strength: at the end of a half-pixel glow
+  line of 0.05 over 0.1, a step of 0.0128 in v / (1 + v) against 0.0074 at the mask's
+  strength. Mist whose drifting noise drives alpha to 0 in moving cells is content
+  changing, and holds as it leaves.
 - **Source.** SGL3D's own, with AMD FSR's reactive and transparency-and-composition masks
-  as inputs.
+  as inputs and FSR's 3x3 dilation of them (FidelityFX SDK 1.1.4,
+  `ffx_fsr3upscaler_prepare_reactivity.h` `DilateReactiveMasks`; 2026-11-18 history
+  audit, B-15: read per pixel, the edge of still marked content alternated between `m`
+  and full, at 2.7 times the temporal deviation of the mask's strength for a glow of
+  0.05).
   Code: `TAA_ComputeTemporalAccumulation.wgsl` (`SampleResponsiveMask`,
   `ComputeTemporalAccumulationPS`).
 - **Guard.** `taa_adaptive_a_marked_pixel_follows_a_step_at_full_feedback`,
-  `taa_adaptive_a_pixel_marked_content_left_holds_at_full_strength`
+  `taa_adaptive_a_pixel_marked_content_left_holds_at_full_strength`,
+  `taa_adaptive_a_pixel_at_the_jittered_edge_of_still_marked_content_keeps_its_strength`
   (`tests/sgl-post-fx/tests/support/adaptive_taa.rs`);
   `marked_content_at_rest_responds_and_leaves_no_trail`,
   `at_rest_taa_holds_silhouettes_beside_marked_content_still`
   (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`).
-- **Status.** Open question O-2. Pixels at the jittered edges of static marked content
-  alternate between partial and full strength; the visible cost is unmeasured.
+- **Status.** Rule.
 
 #### T-28 How TAA uses each mask writer
 
 - **Rule.** TAA does not distinguish the reactive mask from the transparency and
-  composition mask: it takes the larger as `m` (T-25). The writers (M-11, M-16, M-17a to M-17c) give:
+  composition mask: it takes the larger over the pixel's 3x3 neighbourhood as `m`
+  (T-25), so each writer's mark reaches a pixel beyond what it covers. The writers (M-11, M-16, M-17a to M-17c) give:
   - Blended and transmissive surfaces (M-11): reactive up to 0.9, composition up to their
     coverage (1 for a transmissive non-blended one), so a near-opaque blended surface
     holds full or near-full strength on and through it every frame.
@@ -1161,8 +1179,8 @@ pixel's motion hold is set to 12.
     pixels are at full strength every frame (see T-29).
   - Glow (M-17): reactive up to 0.9 by `max(r, g, b) × alpha`, so a glow's strength is
     its brightness and its faint tails arm the mask hold.
-  - Mist (M-17): composition equal to its alpha, which drifts with time, so pixels in
-    mist alternate between marked and held.
+  - Mist (M-17): composition equal to its alpha, which drifts with time, so pixels
+    whose neighbourhood the drifting noise leaves unmarked are held.
   - Heat distortion (M-17): composition equal to its weight where it lies in front of
     the opaque depth, including where its displacement is zero.
 
@@ -1199,8 +1217,9 @@ pixel's motion hold is set to 12.
 - T-17 cannot see disocclusions among distant scenery, which is why T-21 stays
   view-wide for changes without a motion vector; what moves faster than T-23's reach
   shares that limit.
-- T-25's plateau with jitter-dependent coverage (T-28) makes the strength at the edges of
-  static marked content alternate between `m` and full from frame to frame.
+- T-25's dilation keeps the jittered edges of still marked content at `m`; only content
+  narrower than a pixel that a whole neighbourhood misses on some phases still meets
+  T-25's plateau at full strength, and T-13 clips it then.
 - T-26's ramp lengthens every hold's recovery by a few frames.
 - T-4 with T-1 makes an abandoned or re-rendered frame a full reset for TAA.
 

@@ -262,6 +262,41 @@ where it stayed inside. This is a departure from Filament, added under
   the content, so its hold may have run down by the time the content's
   edge leaves its 3x3 neighbourhood, and the feedback alone then leaves
   0.0011 of a 0.1 background in case 14 (0.00046 for the card).
+- **Dilation (2026-11-18 history audit, B-15).** The resolve takes each
+  mask's largest value over the pixel's 3x3 neighbourhood, clamped to the
+  screen, as AMD's FSR dilates its reactive and transparency-and-composition
+  masks before it uses them (FidelityFX SDK 1.1.4,
+  `ffx_fsr3upscaler_prepare_reactivity.h` `DilateReactiveMasks` and
+  `DilateTransparencyAndCompositionMasks`, a plain maximum;
+  `ffx_fsr2_depth_clip.h` `PreProcessReactiveMasks`, weighted by colour
+  similarity). FSR3's plain maximum is followed; no AMD code is copied.
+  Read per pixel, a pixel at the jittered edge of still marked content was
+  marked only on the phases its own sample hit the content and held at full
+  strength on the others, so it alternated between the mask's strength and
+  full and never relaxed, though nothing changed there. Its neighbour the
+  content covers wholly is marked on every phase, so dilated it is marked
+  on every phase at the mask's strength, and the plateau begins once the
+  content has left its neighbourhood, which is also when the plateau's
+  purpose begins. Measured (scenario fixtures: a still glow or blended
+  card over a 0.1 wall, the pixels within a pixel of its outline, two
+  jitter cycles after settling; temporal standard deviation and largest
+  step in v / (1 + v)): a glow of 0.05 (mask 13/255), card 0.0022 / 0.0054
+  before, 0.00083 / 0.0017 after; the same as a 1-pixel line 0.0023 /
+  0.0066 before, 0.00082 / 0.0016 after; a blended card of alpha 0.1
+  0.0018 / 0.0043 before, 0.00075 / 0.0016 after. Holding the mask's
+  strength with no plateau at all gave 0.00079 / 0.0017, so the plateau no
+  longer costs still content anything. At the resolve, a pixel at such an
+  edge followed the mask's feedback within 9e-5 after, 0.0030 off it
+  before (`taa_adaptive_a_pixel_at_the_jittered_edge_of_still_marked_content_keeps_its_strength`).
+  Case 14 and the silhouettes beside a moving glow measured the same before
+  and after. Known limit: content narrower than a pixel that no sample of
+  a pixel's 3x3 neighbourhood hits on some phases (the end of a half-pixel
+  line) still meets those phases at full strength with a box that holds
+  none of it, so they clip it away (T-13's sub-pixel limit): at the end of
+  a half-pixel glow line of 0.05 the largest step was 0.0139 before and
+  0.0128 after, against 0.0074 for the mask's strength. Along such a line,
+  and for content a pixel wide or more, the neighbourhood holds the
+  content on every phase.
 - **Neighbourhood motion.** The tile maximum and 3x3 tile neighbourhood
   maximum of McGuire et al. 2012 ("A Reconstruction Filter for Plausible
   Motion Blur"), as Wicked Engine's motion blur computes it, which SGL3D
@@ -373,3 +408,33 @@ little more history at edges in motion. The effects test
 `taa_reprojecting_a_step_by_a_fraction_of_a_pixel_stays_within_its_levels`
 reprojects a step of 0.05 and 0.5 by 0.37 px a frame and requires every
 output within the two levels; before, both rectifications wrote 0.0400.
+
+### Minimum box half-width (not ported, 2026-11-18 history audit, O-10)
+
+Filament floors its clamping box at a half-width of 0.002 about its centre
+(`taa.mat` `kMinBoxHalfWidth`, at the revision above; `taa.md`, "Minimum Box
+Half-Width"). Its reason: with YCoCg and its accurate clip, which casts
+history towards the reconstructed `filtered` colour along all channels at
+once, a channel whose neighbourhood collapses to a point (the chroma of a
+grey surface) puts ordinary history noise outside the box on almost every
+frame, and the clip then pulls every channel to the noisy reconstruction;
+Filament measured 47% more edge flicker than RGB without the floor.
+
+It is not ported. SGL3D's resolve works in RGB, `c / (1 + c)` per channel,
+and clips towards the neighbourhood's mean clamped into the box, from the
+raw samples, not a filtered reconstruction (DFX-14, #792). Where a channel is
+flat over the neighbourhood its history at rest equals its sample after
+the stores' round trip, so a zero-width box neither moves it nor triggers
+the clip that moves the others. Measured in SGL3D's scenario harness: a
+card at rest whose red varies texel to texel at about a pixel a texel, with
+green and blue flat at 0, 128 or 255, resolves red bit-identically at every
+pixel the card fills for 60 frames (temporal standard deviation 0.00115,
+largest step 0.0083 in each); with the floor ported, the same, and the
+resting suites unchanged (edges between surfaces 0.008457, silhouettes
+against the sky 0.012586; case 3's strips 6.8462 times below a single
+sample with it, 6.8434 without). A history round trip off by more than rounding does what
+Filament describes: a deliberately lossy one (`SDRToHDR` with 1e-4 in place
+of its epsilon) changed the red by 0.17 where green and blue were flat at
+128 rather than 0. `a_channel_flat_at_rest_leaves_the_others_alone`
+(`tests/sgl-3d/tests/scenario_history_taa.rs`) holds that equivalence.
+`YCOCG_COLOR_SPACE`, which SGL3D does not set, is not measured.

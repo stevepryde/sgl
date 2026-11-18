@@ -1,7 +1,8 @@
 //! The camera's history: the last submitted frame's unjittered view and
 //! projection, with the jitter antialiasing applied to that frame, its time
 //! (`FrameInput::elapsed_seconds`), at which a material's vertex function
-//! evaluates the motion it writes, its visibility mask, and the frames since
+//! evaluates the motion it writes, its visibility mask, its backdrop
+//! panorama's yaw, which the sky's motion turns with, and the frames since
 //! the last reset. The renderer owns it; a frame commits to it
 //! only when the caller finishes that frame. It is kept in the render frame
 //! of the scene's origin it was committed at, and a frame whose scene moved
@@ -74,6 +75,15 @@ pub(crate) struct HistoryFrame {
     /// appeared or departed without moving, which rearms TAA's rejection
     /// across the view. False after a reset, which restarts every history.
     pub visibility_changed: bool,
+    /// This frame's backdrop panorama yaw (`Backdrop::Environment`), none
+    /// for a colour, which `finish` commits; `CameraHistory::set_backdrop`
+    /// sets it.
+    pub backdrop_yaw: Option<f32>,
+    /// The yaw the panorama had in the last submitted frame: what the sky
+    /// turned from. This frame's own (0 for a colour) after a reset, or
+    /// where either frame's backdrop is a colour, which has no direction to
+    /// turn.
+    pub previous_backdrop_yaw: f32,
 }
 
 /// A stage's temporal history: its frame count since it last restarted (0
@@ -104,6 +114,8 @@ pub(crate) struct CameraHistory {
     elapsed_seconds: f64,
     /// The last submitted frame's visibility mask.
     visibility_mask: u32,
+    /// The last submitted frame's backdrop panorama yaw.
+    backdrop_yaw: Option<f32>,
 }
 
 impl CameraHistory {
@@ -146,7 +158,20 @@ impl CameraHistory {
             },
             visibility_mask,
             visibility_changed: previous.is_some() && visibility_mask != self.visibility_mask,
+            backdrop_yaw: None,
+            previous_backdrop_yaw: 0.,
         }
+    }
+
+    /// Gives `frame` its backdrop panorama's yaw, `None` for a colour, and
+    /// the yaw the last submitted frame's panorama had where the frame
+    /// follows it and both show a panorama.
+    pub fn set_backdrop(&self, frame: &mut HistoryFrame, yaw: Option<f32>) {
+        frame.backdrop_yaw = yaw;
+        frame.previous_backdrop_yaw = match (frame.valid, self.backdrop_yaw, yaw) {
+            (true, Some(previous), Some(_)) => previous,
+            _ => yaw.unwrap_or(0.),
+        };
     }
 
     /// Commits `frame`, which the caller submitted.
@@ -156,6 +181,7 @@ impl CameraHistory {
         self.origin = frame.origin;
         self.elapsed_seconds = frame.elapsed_seconds;
         self.visibility_mask = frame.visibility_mask;
+        self.backdrop_yaw = frame.backdrop_yaw;
     }
 }
 
