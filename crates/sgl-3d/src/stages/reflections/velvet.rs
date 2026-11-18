@@ -422,7 +422,9 @@ impl Velvet {
             ],
             t.full,
         );
-        if let Some(normal_roughness_half) = &t.normal_roughness_half {
+        if let (Some(normal_roughness_half), Some(motion_half)) =
+            (&t.normal_roughness_half, &t.motion_half)
+        {
             dispatch(
                 encoder,
                 &self.downsample,
@@ -433,6 +435,8 @@ impl Velvet {
                     (1, view(&t.normal_roughness)),
                     (2, view(&t.hiz_mips[0])),
                     (3, view(normal_roughness_half)),
+                    (4, view(input.motion)),
+                    (5, view(motion_half)),
                 ],
                 t.size,
             );
@@ -454,6 +458,7 @@ impl Velvet {
             .normal_roughness_half
             .as_ref()
             .unwrap_or(&t.normal_roughness);
+        let motion = t.motion_half.as_ref().unwrap_or(input.motion);
         dispatch(
             encoder,
             &self.trace,
@@ -481,7 +486,7 @@ impl Velvet {
                 (0, view(&t.traced)),
                 (1, view(&t.history[1 - current])),
                 (2, view(&t.reprojection)),
-                (3, view(input.motion)),
+                (3, view(motion)),
                 (4, view(&t.hiz_mips[0])),
                 (5, view(&t.depth_history[1 - current])),
                 (6, view(normal_roughness)),
@@ -615,3 +620,6 @@ mod hdr_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod temporal_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod half_resolution_tests;

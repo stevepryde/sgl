@@ -1927,7 +1927,7 @@ denoiser). Velvet and world rays accumulate through one shared temporal reprojec
 reflection path reads a frame-wide or scene-wide motion signal: whole-view restarts come only
 from the renderer's reset, a frame-count gap, a resize or a settings change. A continuously
 running game trips the per-pixel rules: roughness-cutoff re-entry under jitter (R-6, R-25),
-Velvet's half-resolution silhouettes (R-23), and the variance resets that keep a blur on wherever
+and the variance resets that keep a blur on wherever
 a rejection repeats (R-16, R-29).
 
 ### Crystal screen-space reflections
@@ -2288,7 +2288,7 @@ a rejection repeats (R-16, R-29).
   averaged depth; still below 0.9, no history. Per pixel, one frame.
 - **Raised by.** Real disocclusion and silhouettes. Static surfaces the camera approaches and
   surfaces the camera follows both pass.
-- **Stays triggered while.** Nothing at full resolution; at Velvet half resolution see R-23.
+- **Stays triggered while.** Nothing.
 - **Source.** Wicked `GetDisocclusion` and `SamplePreviousColor`, faithful constants and search;
   modified to compare depth motion and to clamp edge reads. Code: `temporal_reprojection.wgsl`
   (`temporal_disocclusion`, `temporal_previous_color`).
@@ -2311,24 +2311,27 @@ a rejection repeats (R-16, R-29).
 
 ### Velvet
 
-#### R-23 Half resolution takes depth and motion from different pixels
+#### R-23 Half resolution takes depth and motion from one pixel
 
-- **Rule.** At half resolution Velvet's temporal pass takes the receiver depth from the
-  half-resolution hierarchy (the nearest depth of each 2×2 block, or 3×3 at an odd edge) and
-  the motion and depth motion from the block's bottom-right full-resolution pixel. Where a block
-  straddles surfaces with different motion, R-21 compares one surface's depth with the other's
-  depth motion and reads history by the other's motion vector, rejecting or misplacing it. Per
-  block at silhouettes; no recovery while the motion lasts.
-- **Raised by.** A moving or camera-followed object over a background at
-  `Settings::screen_space_reflections` Half: a craft (depth motion near 0) over static background
-  (depth motion +s) fails once s > 0.118 d.
-- **Stays triggered while.** The object moves: its silhouette's reflections lose history every
-  frame, a noisy rim.
-- **Source.** SGL3D's own; Wicked's temporal pass at a downscale reads velocity and depth at the
-  same pixel, as world rays do (R-28). Code: `sgl-3d/src/stages/reflections/velvet/godot_reflections_temporal.wgsl`,
-  `godot_reflections_downsample.wgsl`.
-- **Guard.** None.
-- **Status.** Defect B-9. Depth comes from the nearest pixel of a block and motion from another.
+- **Rule.** At half resolution Velvet's downsample keeps, for each 2×2 block (3×3 at an odd
+  edge), the full-resolution pixel with the nearest depth, and copies that pixel's depth,
+  normal-roughness and motion (screen motion, depth motion and its validity) to the traced size;
+  the temporal pass reads all three there. Where a block straddles surfaces with different
+  motion, R-21 tests the nearer surface by its own depth motion and reads history by its own
+  motion vector. Per block.
+- **Raised by.** Nothing beyond R-21: a silhouette is judged as the nearer surface's interior is.
+- **Stays triggered while.** Nothing.
+- **Source.** Godot's downsample (`screen_space_reflection_downsample.glsl`), which picks the
+  pixel, modified to carry SGL3D's motion with it; world rays likewise read one pixel's depth and
+  motion (R-28). Code: `sgl-3d/src/stages/reflections/velvet/godot_reflections_downsample.wgsl`,
+  `godot_reflections_temporal.wgsl`, `velvet.rs` (`Velvet::encode`), `velvet/targets.rs`
+  (`motion_half`).
+- **Guard.** `a_straddling_block_takes_depth_and_motion_from_one_pixel`
+  (`sgl-3d/src/stages/reflections/velvet/half_resolution_tests.rs`: a craft the camera follows
+  over static background the camera approaches, with the silhouette inside a block, keeps history
+  at every texel; with motion from the block's last pixel the straddling column, 32 texels, kept
+  none).
+- **Status.** Rule.
 
 #### R-24 Velvet restarts
 

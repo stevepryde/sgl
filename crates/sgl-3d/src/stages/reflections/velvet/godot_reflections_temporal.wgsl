@@ -7,8 +7,10 @@
 // shaders/ssr_temporalCS.hlsl, through temporal_reprojection.wgsl, as world
 // rays accumulate. Modified: at Godot's traced size, on its tone-mapped
 // premultiplied colour and confidence; no variance output; receiver depth is
-// Godot's hi-z mip 0 and the pass keeps its own depth history; pixels Godot
-// does not trace (sky, roughness >= ROUGHNESS_CUTOFF) pass through.
+// Godot's hi-z mip 0 and the pass keeps its own depth history; motion is at
+// the traced size, from the pixel whose depth and normal-roughness the
+// downsample kept at half resolution; pixels Godot does not trace (sky,
+// roughness >= ROUGHNESS_CUTOFF) pass through.
 struct TemporalParams {
 	inverse_view_projection: mat4x4<f32>,
 	previous_view_projection: mat4x4<f32>,
@@ -52,9 +54,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 		return;
 	}
 	let view = TemporalView(params.inverse_view_projection, params.previous_view_projection, params.size, params.previous_near, params.near);
-	// SGL3D motion at full size.
-	let motion_scale = vec2<f32>(textureDimensions(motion)) * params.size.zw;
-	let moved = textureLoad(motion, vec2<i32>((vec2<f32>(p) + 0.5) * motion_scale), 0);
+	// SGL3D motion of the pixel whose depth `z` is.
+	let moved = textureLoad(motion, p, 0);
 	let accumulated = temporal_accumulate(view, p, c, moved, textureLoad(reprojection, p, 0).x, z);
 	let result = max(accumulated.color, vec4<f32>(0.0));
 	textureStore(output, p, result);
