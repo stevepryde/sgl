@@ -622,4 +622,4 @@ mod hdr_tests;
 mod temporal_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod half_resolution_tests;
+mod history_tests;

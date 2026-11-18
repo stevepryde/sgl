@@ -1,5 +1,7 @@
-//! Velvet's production downsample and temporal pass at half resolution, at
-//! the silhouette of a surface the camera follows over static background.
+//! Velvet's production temporal pass and the history it keeps: at half
+//! resolution, through the downsample, at the silhouette of a surface the
+//! camera follows over static background; and for pixels that leave the
+//! traced set and return.
 use super::*;
 use glam::Vec3;
 use wgpu::util::DeviceExt;
@@ -334,5 +336,160 @@ fn a_straddling_block_takes_depth_and_motion_from_one_pixel() {
         "{} texels lost their history, first (x, y, output): {:?}",
         lost.len(),
         lost.first()
+    );
+}
+
+/// Three frames of the production temporal pass at full resolution over a
+/// still plane, whose first frame resets to a uniform `before`; in the
+/// second the right half (columns 16 and on) is rough enough to be untraced
+/// (Godot's trace writes it 0), and in the third all of it is traced again.
+/// Returns the third frame's output.
+fn returning(device: &wgpu::Device, queue: &wgpu::Queue, before: f32) -> Vec<[f32; 4]> {
+    let velvet = Velvet::new(device);
+    let projection = crate::perspective(1.2, 1., NEAR);
+    let plane = projection.project_point3(Vec3::new(0., 0., -5.)).z;
+    let grid = || (0..HALF).flat_map(|y| (0..HALF).map(move |x| (x, y)));
+    let r32 = wgpu::TextureFormat::R32Float;
+    let rgba16 = wgpu::TextureFormat::Rgba16Float;
+    let depth = texture(device, queue, HALF, r32, &floats(grid().map(|_| plane)));
+    let motion = texture(
+        device,
+        queue,
+        HALF,
+        rgba16,
+        &halves(grid().flat_map(|_| [0., 0., 0., 1.])),
+    );
+    let empty = |format: wgpu::TextureFormat, texel: usize| {
+        texture(
+            device,
+            queue,
+            HALF,
+            format,
+            &vec![0; texel * (HALF * HALF) as usize],
+        )
+    };
+    let history = [empty(rgba16, 8), empty(rgba16, 8)];
+    let depth_history = [empty(r32, 4), empty(r32, 4)];
+    let output = empty(rgba16, 8);
+    let size = HALF as f32;
+    let view = |t: &wgpu::Texture| t.create_view(&Default::default());
+    for frame in 0..3u32 {
+        let untraced = |x: u32| frame == 1 && x >= HALF / 2;
+        let current = texture(
+            device,
+            queue,
+            HALF,
+            rgba16,
+            &halves(grid().flat_map(|(x, y)| {
+                let value = match frame {
+                    0 => before,
+                    _ if untraced(x) => 0.,
+                    _ => traced(x, y),
+                };
+                [value, value, value, 1.]
+            })),
+        );
+        let normal_roughness = texture(
+            device,
+            queue,
+            HALF,
+            rgba16,
+            &halves(grid().flat_map(|(x, _)| [0., 0., 1., if untraced(x) { 0.8 } else { 0.2 }])),
+        );
+        queue.write_buffer(
+            &velvet.temporal_params,
+            0,
+            bytemuck::bytes_of(&TemporalParams {
+                inverse_view_projection: projection.inverse().to_cols_array_2d(),
+                previous_view_projection: projection.to_cols_array_2d(),
+                size: [size, size, 1. / size, 1. / size],
+                previous_near: NEAR,
+                near: NEAR,
+                flags: if frame == 0 { 0 } else { TEMPORAL_CONTINUES },
+                padding: 0,
+            }),
+        );
+        let write = (frame % 2) as usize;
+        let views = [
+            &current,
+            &history[1 - write],
+            &depth,
+            &motion,
+            &depth_history[1 - write],
+            &normal_roughness,
+            &output,
+            &history[write],
+            &depth_history[write],
+        ]
+        .map(view);
+        let entries: Vec<_> = [0, 1, 2, 3, 5, 6, 9, 10, 11]
+            .into_iter()
+            .zip(&views)
+            .map(|(binding, view)| wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::TextureView(view),
+            })
+            .chain([
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&views[2]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&velvet.linear),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: velvet.temporal_params.as_entire_binding(),
+                },
+            ])
+            .collect();
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &velvet.temporal.get_bind_group_layout(0),
+            entries: &entries,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&velvet.temporal);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(HALF / 8, HALF / 8, 1);
+        }
+        queue.submit([encoder.finish()]);
+    }
+    read(device, queue, &output)
+}
+
+// Plausible defect: a pixel that Godot's trace skips (roughness at or above
+// the cutoff) keeps the history it had when it was last traced, so when it
+// returns it reprojects radiance from before it left, as DiligentFX's
+// temporal pass kept it (PROVENANCE.md DFX-51). Two runs differ only in the
+// history their first frame stores, bright or dark; then the right half is
+// untraced for a frame and traced again. Where it returns, the runs' outputs
+// must be equal (every read of history there lies within the right half,
+// from column 17 on). The left half, traced throughout, must differ, or the
+// comparison proves nothing.
+#[test]
+fn pixels_returning_to_the_traced_set_keep_no_old_radiance() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let bright = returning(&device, &queue, BRIGHT);
+    let dark = returning(&device, &queue, DARK);
+    let differs = |columns: std::ops::Range<u32>| {
+        (0..HALF)
+            .flat_map(|y| columns.clone().map(move |x| (y * HALF + x) as usize))
+            .filter(|&i| bright[i] != dark[i])
+            .count()
+    };
+    assert_eq!(
+        differs(HALF / 2 + 1..HALF),
+        0,
+        "returning pixels kept radiance from before they left"
+    );
+    assert!(
+        differs(0..HALF / 2) > 0,
+        "history made no difference where it was kept"
     );
 }

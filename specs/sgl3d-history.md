@@ -1926,9 +1926,10 @@ reflections with Wicked Engine's temporal pass) and world-space rays (Wicked's R
 denoiser). Velvet and world rays accumulate through one shared temporal reprojection. No
 reflection path reads a frame-wide or scene-wide motion signal: whole-view restarts come only
 from the renderer's reset, a frame-count gap, a resize or a settings change. A continuously
-running game trips the per-pixel rules: roughness-cutoff re-entry under jitter (R-6, R-25),
-and the variance resets that keep a blur on wherever
-a rejection repeats (R-16, R-29).
+running game trips the per-pixel rules: Crystal's surface-history discard under camera motion
+(R-9), roughness-cutoff re-entry under jitter (R-6, R-25), world rays filling in where the
+screen-space method lets go (R-30), and the variance resets that keep a blur on wherever a
+rejection repeats (R-16, R-29).
 
 ### Crystal screen-space reflections
 
@@ -2023,16 +2024,27 @@ a rejection repeats (R-16, R-29).
   Radiance recovers with time constant 20 frames, variance in about 65.
 - **Raised by.** Roughness textures or animation near 0.2, receivers appearing or leaving,
   sky silhouettes of moving objects.
-- **Stays triggered while.** Textured roughness straddling 0.2 under TAA or FSR jitter can put a
-  pixel in and out of the mask on alternate frames, each exit zeroing its history.
+- **Stays triggered while.** Textured roughness straddling 0.2 under TAA or FSR jitter puts
+  pixels in and out of the mask from frame to frame, each exit zeroing their history: in a
+  jittered still view of a mirror floor whose roughness alternates 0.1 and 0.3 or varies
+  0.1–0.3, 4–20 % of its pixels re-entered every frame. Composition fades the method out over
+  the last 0.05 below the cutoff (R-25's `specular_trace_fade`, Bevy's), so a pixel near the
+  cutoff shows little of it; measured through SGL3D's composite under TAA, keeping a pixel's
+  history across its exit instead flickered as much or more (mean second difference 0.024 and
+  0.028, 0.023 and 0.028, 0.051 and 0.104 on three roughness textures, zeroed and kept): the
+  flicker that remains is the jittered roughness crossing the fade, which TAA resolves.
 - **Source.** Threshold faithful to DiligentFX and AMD SSSR; the per-frame clear is SGL3D's
-  (DFX-51) in place of upstream's stale history; eligibility decided once (DFX-62). Code:
+  (DFX-51) in place of upstream's stale history, equivalent to AMD's environment history for
+  pixels without a ray (premultiplied radiance 0 is the environment in composition); eligibility
+  decided once (DFX-62). Wicked passes untraced pixels through as zero with no fade; Bevy and
+  Godot, which keep no reflection history, fade at the cutoff as SGL3D does. Code:
   `sgl-post-fx/shaders/wgsl/PostProcess/ScreenSpaceReflection/private/SSR_ComputeStencilMaskAndExtractRoughness.wgsl`,
-  `sgl-post-fx/src/screen_space_reflection.rs` (`compute_temporal_accumulation`).
+  `sgl-post-fx/src/screen_space_reflection.rs` (`compute_temporal_accumulation`),
+  `sgl-3d/src/shading/specular_lobes.wgsl` (`specular_trace_fade`).
 - **Guard.** `pixels_returning_to_the_mask_keep_no_old_radiance`
-  (`sgl-post-fx/src/ssr_temporal_neighborhood_tests.rs`); `texels_outside_the_mask_do_not_change_their_neighbours`.
-- **Status.** Open question O-4. Whether jittered roughness near the cutoff makes pixels
-  alternate in and out of the traced set visibly is unmeasured.
+  (`sgl-post-fx/src/ssr_temporal_neighborhood_tests.rs`); `texels_outside_the_mask_do_not_change_their_neighbours`;
+  `reflections_are_continuous_across_the_roughness_cutoff` (`tests/sgl-3d/tests/screen_space_reflections.rs`, the fade).
+- **Status.** Rule.
 
 #### R-7 Denoiser tiles without a confident hit
 
@@ -2080,19 +2092,35 @@ a rejection repeats (R-16, R-29).
   variance (`SSR_REPROJECT_SURFACE_DISCARD_VARIANCE_WEIGHT`), the temporal pass discards all
   history at the pixel: radiance is this frame's, variance 1. It recovers the next frame the
   test passes; variance in about 65 frames.
-- **Raised by.** Reflection parallax under camera or object motion; any history more than about
-  1.2σ from the neighbourhood when the incident candidate wins.
-- **Stays triggered while.** With `GGXImportanceSampleBias` 1 (deterministic mirror rays) the
-  3×3 variance of a smooth, evenly lit reflection is near 0, so the threshold nears 0 and any
-  drift of the history (exposure, a slowly changing light) can discard it on every frame the
-  incident candidate wins.
+- **Raised by.** Reflection parallax under camera or object motion, as intended; and, under any
+  camera motion, any change of the reflected radiance over time (a light or emissive changing, a
+  reflected object moving) on smooth reflections, where with `GGXImportanceSampleBias` 1
+  (deterministic mirror rays) the 3×3 variance is near 0 and so is the threshold.
+- **Stays triggered while.** The camera moves and the reflected radiance changes. Measured on
+  Crystal's production passes, a mirror floor (perceptual roughness 0.05) reflecting a textured
+  wall under jitter at 64×48: at rest, no pixel discarded, with or without a light changing
+  1 % a frame; moving 0.02 m a frame, 2–29 of about 1200 mirror pixels a frame, all where the
+  3×3's range is over 90 % of its peak (the mask's first row, the panel's edges); moving and the
+  light brightening 1 % a frame, 125–790 a frame on smooth reflection (3×3 range 1–6 %),
+  alternating with the jitter's phase. That alternation doubles the frame-to-frame flicker
+  (median second difference 0.0137 against 0.0068 without the discard; at roughness 0.15, 0.0125
+  against 0.0075), and where the discard fires at the mask's first row it raises the
+  99th-percentile flicker from 0.17 to 1.87 even with no light change.
 - **Source.** AMD FidelityFX Denoiser `FFX_DNSR_Reflections_PickReprojection`, modified: a 3×3
   box of reconstructed radiance in place of AMD's radius-4 Gaussian window of raw rays, applied
-  whenever luminance prefers the surface (DFX-25). Code: `SSR_ComputeTemporalAccumulation.wgsl`
-  (`ComputeTemporalAccumulationPS`).
+  whenever luminance prefers the surface (DFX-25). AMD measures that window over stochastic
+  rays, whose variance is their noise, tests the surface history only after the hit candidate
+  fails its normal and roughness test (on a flat mirror the hit always passes), and does not
+  denoise mirror reflections at all (`IsMirrorReflection`). Code:
+  `SSR_ComputeTemporalAccumulation.wgsl` (`ComputeTemporalAccumulationPS`).
 - **Guard.** None.
-- **Status.** Open question O-3. The discard compares against a variance that is near zero on
-  smooth mirror reflections; how often it fires is unmeasured.
+- **Status.** Defect B-20. The discard's tolerance is the variance of a deterministic signal, so
+  it fires on any change of the reflected radiance under motion, not only on parallax, and
+  alternates with the jitter. DFX-25 added it because it cut fast-motion smear of bright
+  fixtures' reflections in Hyperdrive (beta 0.014 to 0.009, #80); each narrowing considered
+  (applying it only where the hit candidate is unavailable, as AMD reaches it; taking the hit
+  history instead of discarding; AMD's hit-first order, which misplaces a moving receiver's
+  history) gives back some of that, which needs the game's capture to weigh. Unfixed.
 
 #### R-10 Disocclusion by the surface's own previous depth
 
@@ -2327,7 +2355,7 @@ a rejection repeats (R-16, R-29).
   `godot_reflections_temporal.wgsl`, `velvet.rs` (`Velvet::encode`), `velvet/targets.rs`
   (`motion_half`).
 - **Guard.** `a_straddling_block_takes_depth_and_motion_from_one_pixel`
-  (`sgl-3d/src/stages/reflections/velvet/half_resolution_tests.rs`: a craft the camera follows
+  (`sgl-3d/src/stages/reflections/velvet/history_tests.rs`: a craft the camera follows
   over static background the camera approaches, with the silhouette inside a block, keeps history
   at every texel; with motion from the block's last pixel the straddling column, 32 texels, kept
   none).
@@ -2358,13 +2386,22 @@ a rejection repeats (R-16, R-29).
   pixel, so the depth test can pass and the zero is accepted, clamped up to mean − 2σ. Per pixel;
   time constant 20 frames.
 - **Raised by.** Roughness textures or animation near 0.7; sky silhouettes.
-- **Stays triggered while.** Textured roughness straddling 0.7 under jitter can alternate a
-  pixel between pass-through and accumulation.
-- **Source.** Wicked's pass-through where no reflection is needed. Code:
-  `godot_reflections_temporal.wgsl`, `godot_reflections_cutoff.wgsl`, `godot_reflections_trace.wgsl`.
-- **Guard.** None (`reflections_are_continuous_across_the_roughness_cutoff` covers composition only).
-- **Status.** Open question O-4. Whether jittered roughness near the cutoff makes pixels
-  alternate in and out of the traced set visibly is unmeasured.
+- **Stays triggered while.** Textured roughness straddling 0.7 under jitter alternates pixels
+  between pass-through and accumulation. Composition fades Velvet out over 0.6–0.7 (Godot's
+  forward-pass fade), so they show little of it; measured through SGL3D's composite under TAA
+  on roughness textures alternating or varying across 0.7, keeping their history across the
+  exit instead flickered as much or more (mean second difference 0.0179 and 0.0271, 0.0152 and
+  0.0156, 0.0154 and 0.0159, passed through and kept). R-6 has Crystal's measurement.
+- **Source.** Wicked's pass-through where no reflection is needed; the fade is Godot's
+  (`scene_forward_clustered.glsl`). Code: `godot_reflections_temporal.wgsl`,
+  `godot_reflections_cutoff.wgsl`, `godot_reflections_trace.wgsl`,
+  `sgl-3d/src/shading/specular_lobes.wgsl` (`specular_trace_fade`).
+- **Guard.** `pixels_returning_to_the_traced_set_keep_no_old_radiance`
+  (`sgl-3d/src/stages/reflections/velvet/history_tests.rs`: two runs that differ only in the
+  history before half the plane leaves the traced set for a frame give equal output where it
+  returns; with the old history kept, all 480 checked pixels differed);
+  `reflections_are_continuous_across_the_roughness_cutoff` (the fade).
+- **Status.** Rule.
 
 #### R-26 Velvet hit validity
 
@@ -2431,24 +2468,35 @@ a rejection repeats (R-16, R-29).
 - **Guard.** None.
 - **Status.** Rule.
 
-#### R-30 Traced texels without a listed ray accumulate zero
+#### R-30 Traced texels without a listed ray accumulate what their resolve borrows
 
 - **Rule.** The classification lists a ray only where the screen-space result leaves the
   fallback a share above 0.001 and no receiver covers the pixel; every texel starts as a miss.
-  The resolve gives neighbours without a ray no weight and writes 1e-5 where none has one, and
-  the temporal pass accumulates that as a valid sample wherever the lobe is traced. When the
-  screen-space method then misses there, world rays start against a near-zero history that the
-  box admits while the 3×3 still holds zeros, fading the fill in over a few frames, up to about 20.
+  The resolve gives neighbours without a ray no weight, so a texel without its own ray takes the
+  rays of listed neighbours within its reconstruction reach, and writes 1e-5 where none has one;
+  the temporal pass accumulates either as a valid sample wherever the lobe is traced. When the
+  screen-space method then lets go of the texel, world rays start over that history and fill in
+  over up to about 45 frames.
 - **Raised by.** Screen-space confidence dropping: reflections leaving the screen, the vignette
   band, thin occluders.
-- **Stays triggered while.** Screen-space confidence flickers near full (R-17's vignette band),
-  alternating listed and unlisted rays.
+- **Stays triggered while.** Nothing: each texel fills in once. Measured in SGL3D's renderer
+  (a floor at roughness 0.05 reflecting a bright panel, world rays `All`, 240×160): with the
+  screen-space method confident, 6 of 19808 lit pixels resolved no world ray at all, so the
+  1e-5 history is rare. After a tilt that put the panel's top off screen while its reflection
+  stayed, the composite over the bright region was off its converged value by 0.312 on average
+  the first frame, 0.118 by the twelfth and 0.020 by the forty-fifth. Keeping no history where
+  the texel's own ray was not listed, so the first rays stand whole, changed that to 0.283,
+  0.133 and 0.022; listing a ray at every traced texel, so history was warm, to 0.117, 0.062
+  and 0.018. The fill-in is the cost of the rays the classification saves where the
+  screen-space method is confident, as a disocclusion's is.
 - **Source.** SGL3D's own interaction; AMD SSSR's classification writes environment radiance for
-  pixels without a ray. Code: `world_reflections_classify.wgsl` (`world_needs_ray`),
-  `world_reflections_denoise.wgsl` (`world_resolve`, `world_temporal`).
-- **Guard.** None (`confident_receivers_in_the_roughness_fade_still_trace_world_rays` covers classification only).
-- **Status.** Open question O-9. Zero samples accumulate where screen-space reflections were
-  confident; whether the fade-in shows is unmeasured.
+  pixels without a ray, which is what premultiplied 0 composes to here. Code:
+  `world_reflections_classify.wgsl` (`world_needs_ray`), `world_reflections_denoise.wgsl`
+  (`world_resolve`, `world_temporal`).
+- **Guard.** `confident_receivers_in_the_roughness_fade_still_trace_world_rays`
+  (`sgl-3d/src/stages/reflections/world/tests.rs`: the gate lists rays wherever the screen-space
+  method leaves a share).
+- **Status.** Rule.
 
 ### Receivers
 
