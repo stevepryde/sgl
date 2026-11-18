@@ -2,7 +2,8 @@
 //! this frame's and the last submitted frame's, which its group 2 binds for
 //! its shader's programs (shader_inputs_bound.wgsl), and the CPU copies that
 //! keep the second a submitted frame behind the first (scene history,
-//! S3D-4). A material without a shader binds one shared zero block twice,
+//! S3D-4): the block each frame drew, committed when it is finished. A block
+//! that was in no finished frame has this frame's as its previous. A material without a shader binds one shared zero block twice,
 //! which its programs never read.
 
 /// The bytes a block of `size` bytes takes: a uniform binding's whole
@@ -33,54 +34,87 @@ pub(super) struct ParamBlock {
     pub previous: wgpu::Buffer,
     /// This frame's block.
     bytes: Vec<u8>,
-    /// The last submitted frame's block, which `previous` holds once
-    /// `stale` is clear.
-    committed: Vec<u8>,
+    /// The block the frame being rendered draws (`prepare_frame`), none
+    /// before a frame began with this block.
+    rendered: Option<Vec<u8>>,
+    /// The last submitted frame's block, none until the block was in a
+    /// finished frame; `previous` holds it once `stale` is clear, and
+    /// `bytes` before it.
+    committed: Option<Vec<u8>>,
     stale: bool,
 }
 
 impl ParamBlock {
-    /// Both blocks zero, `size` bytes each: a material that gains a shader
-    /// has no motion from its parameters in its first frame.
+    /// Both blocks zero, `size` bytes each. Until it was in a finished
+    /// frame, `previous` follows `current`, so a material that gains a
+    /// shader or changes it, which gives it a new block, writes no motion
+    /// from its parameters in its first frame, as an instance's shader
+    /// data does before its first.
     pub fn new(device: &wgpu::Device, size: u32) -> Self {
         Self {
             current: block(device, "shader parameters", size),
             previous: block(device, "previous shader parameters", size),
             bytes: vec![0; size as usize],
-            committed: vec![0; size as usize],
+            rendered: None,
+            committed: None,
             stale: false,
         }
     }
 
-    /// This frame's block becomes `bytes`, of its size; returns whether it
+    /// This frame's block becomes `bytes`, of its size, and so the previous
+    /// one too until the block was in a finished frame; returns whether it
     /// changed.
     pub fn set(&mut self, queue: &wgpu::Queue, bytes: &[u8]) -> bool {
         let changed = self.bytes != bytes;
         if changed {
             self.bytes.copy_from_slice(bytes);
             crate::counters::write_buffer(queue, &self.current, 0, bytes);
+            if self.committed.is_none() {
+                crate::counters::write_buffer(queue, &self.previous, 0, bytes);
+            }
         }
         changed
     }
 
-    /// Whether this frame's block differs from the last submitted frame's.
+    /// Whether this frame's block differs from the last submitted frame's;
+    /// false before the block was in one, which has no last submitted
+    /// block.
     pub fn changed(&self) -> bool {
-        self.bytes != self.committed
+        self.committed
+            .as_ref()
+            .is_some_and(|committed| *committed != self.bytes)
     }
 
-    /// Commits a submitted frame: its block becomes the last submitted one.
+    /// Commits a submitted frame: the block it drew becomes the last
+    /// submitted one. A block the frame did not draw commits nothing.
     pub fn finish_frame(&mut self) {
-        if self.committed != self.bytes {
-            self.committed.clone_from(&self.bytes);
-            self.stale = true;
+        let Some(rendered) = &self.rendered else {
+            return;
+        };
+        // What `previous` holds, which a later write keeps current: a
+        // rewrite is due where it changes.
+        let on_gpu = self.committed.as_ref().unwrap_or(&self.bytes);
+        self.stale |= on_gpu != rendered;
+        if self.committed.as_ref() != Some(rendered) {
+            self.committed = Some(rendered.clone());
         }
     }
 
-    /// Before a frame: `previous` holds the last submitted frame's block.
+    /// Before a frame: `previous` holds the last submitted frame's block,
+    /// and the block the frame draws is recorded.
     pub fn prepare_frame(&mut self, queue: &wgpu::Queue) {
         if self.stale {
-            crate::counters::write_buffer(queue, &self.previous, 0, &self.committed);
+            let committed = self
+                .committed
+                .as_ref()
+                .expect("a stale block was committed");
+            crate::counters::write_buffer(queue, &self.previous, 0, committed);
             self.stale = false;
+        }
+        match &mut self.rendered {
+            Some(rendered) if *rendered == self.bytes => {}
+            Some(rendered) => rendered.clone_from(&self.bytes),
+            None => self.rendered = Some(self.bytes.clone()),
         }
     }
 }

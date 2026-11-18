@@ -66,7 +66,7 @@ fn trace(
     receiver: [u32; 2],
     rays: &[[f32; 8]],
 ) -> Vec<[u32; 8]> {
-    scene.prepare_frame(device, queue, Vec3::ZERO);
+    scene.begin_frame(device, queue);
     if let Some(form) = form {
         scene
             .prepare_acceleration_structures(device, queue, Vec3::ZERO, form)
@@ -98,7 +98,7 @@ fn trace(
         rays.len() as u32,
     );
     queue.submit([encoder.finish()]);
-    scene.finish_frame();
+    scene.finish_open_frame();
     test_support::read_words(device, queue, &output)
         .chunks_exact(8)
         .map(|words| words.try_into().unwrap())

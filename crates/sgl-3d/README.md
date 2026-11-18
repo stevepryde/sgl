@@ -2108,12 +2108,14 @@ authored look and per-frame state in a `FrameInput`.
    offscreen, so no window or surface is required.
 7. Draw game-owned HUD/UI afterward, submit the encoder, then call
    `renderer.finish_frame(&mut scene)`: the frame's camera and moving
-   instances' poses and deformations become the next frame's history, and the shadow faces it
-   drew become reusable. Do not finish a frame that was not submitted; an
-   abandoned encoder leaves history unchanged and its shadow faces are drawn
-   again.
+   instances' poses and deformations, as the frame drew them, become the
+   next frame's history, and the shadow faces it drew become reusable. Do
+   not finish a frame that was not submitted; an abandoned encoder leaves
+   history unchanged and its shadow faces are drawn again.
    Scene edits upload through the queue, never the frame's encoder, so an
-   abandoned frame loses none.
+   abandoned frame loses none. Edit the scene before `render` or after the
+   submission, never between them: an edit made after the submission and
+   before `finish_frame` belongs to the next frame.
 
 History restarts for `FrameInput::camera_cut`, a resize that changes the
 targets (also one between a frame's `render` and `finish_frame`) and a

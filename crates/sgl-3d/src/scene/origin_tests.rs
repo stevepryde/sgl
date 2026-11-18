@@ -54,7 +54,7 @@ fn a_move_translates_records_and_keeps_their_motion() {
             Mobility::Moving,
         )
         .unwrap();
-    scene.finish_frame();
+    scene.test_frame(&device, &queue);
     scene
         .set_instance(&queue, moving, at(Vec3::new(4092., 1., -8201.)))
         .unwrap();
@@ -67,7 +67,7 @@ fn a_move_translates_records_and_keeps_their_motion() {
     assert_eq!(record.motion, [2., 0., -1.], "the move kept the motion");
     // The game poses it in the new frame: its motion is measured from the
     // last submitted pose, translated.
-    scene.finish_frame();
+    scene.test_frame(&device, &queue);
     scene
         .set_instance(&queue, moving, at(Vec3::new(-1., 65., -9.)))
         .unwrap();
@@ -240,7 +240,7 @@ fn a_move_holds_what_the_game_would_give_in_the_new_frame() {
     moved.move_origin(&device, &queue, MOVE).unwrap();
     let mut given = content(&device, &queue, MOVE);
     for scene in [&mut moved, &mut given] {
-        scene.prepare_frame(&device, &queue, Vec3::ZERO);
+        scene.begin_frame(&device, &queue);
         scene.update_rays(&device, &queue, !0, false);
     }
     let storage = |scene: &Scene| {

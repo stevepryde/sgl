@@ -147,7 +147,7 @@ fn a_bounded_stream_of_chunks_keeps_bounded_buffers() {
         }
         scene.update_rays(&device, &queue, !0, false);
         queue.submit([]);
-        scene.finish_frame();
+        scene.test_frame(&device, &queue);
         let live_quads: usize = slots.iter().flatten().map(|(_, _, quads)| quads).sum();
         let instances = slots.iter().flatten().count();
         let (end, live) = scene.rays.words_in_use();

@@ -69,6 +69,14 @@ pub struct SceneOptions {
     pub ray_data: RayData,
 }
 
+/// Which frame of a scene was last begun and not yet finished, and which
+/// was last finished, by the attempt ids `Scene::begin_frame` returns.
+#[derive(Clone, Copy, Debug, Default)]
+struct FrameRecord {
+    open: Option<u64>,
+    finished: Option<u64>,
+}
+
 use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::content::instance::Mobility;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -135,6 +143,8 @@ pub struct Scene {
     pub(crate) transient: transient::Transient,
     /// The world bounds static edits touched since the last submitted frame.
     pub(crate) static_edits: static_edits::StaticEdits,
+    /// The frame being rendered and the last finished frame.
+    frame: FrameRecord,
     /// The deformations the frame being rendered writes (the deform stage).
     pub(crate) deformations: Vec<crate::shading::deformation::DeformDispatch>,
     /// Where the render origin lies in the frame the scene was created in
@@ -216,6 +226,7 @@ impl Scene {
             deformation_edits: 0,
             transient: transient::Transient::new(device),
             static_edits: static_edits::StaticEdits::default(),
+            frame: FrameRecord::default(),
             deformations: Vec::new(),
             origin: glam::DVec3::ZERO,
         }
@@ -327,23 +338,27 @@ impl Scene {
         static_edits::grown(model.bounds, self.displacement_of(model))
     }
 
-    /// Before a frame: uploads a decal atlas packed since the last one, the
-    /// draw candidates, sets and chains edits changed and the shader
-    /// parameter blocks the last submitted frame changed, rewrites records
-    /// whose motion the last submitted frame ended, chooses the deformations
-    /// the frame writes and shows, and orders the mist from `eye`.
-    pub(crate) fn prepare_frame(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        eye: glam::Vec3,
-    ) {
+    /// Begins a frame attempt and returns its id, unique across scenes:
+    /// uploads a decal atlas packed since the last one, the draw candidates,
+    /// sets and chains edits changed and the shader parameter blocks the
+    /// last finished frame changed, rewrites records whose motion the last
+    /// finished frame ended, chooses the deformations the frame writes and
+    /// shows, and records what the frame draws (each instance's pose,
+    /// model, visibility and shader data, each deformation, each parameter
+    /// block, and the rigid-change and static-edit marks up to now), which
+    /// `finish_frame` commits. Edits made after it belong to the next frame
+    /// once the frame's commands are submitted; before that they would
+    /// change what it draws, and are not allowed.
+    pub(crate) fn begin_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> u64 {
         self.upload_decals(device, queue);
         self.candidates.upload(device, queue);
         self.materials.prepare_frame(queue);
         self.instances
             .prepare_frame(queue, &self.models, &mut self.deformations);
-        self.transient.sort_mist(queue, eye);
+        self.static_edits.begin_frame();
+        let attempt = next_generation();
+        self.frame.open = Some(attempt);
+        attempt
     }
 
     /// Before a traced frame: uploads the frame's visibility mask and the
@@ -527,17 +542,55 @@ impl Scene {
     pub(crate) fn specular_probes(&self) -> Option<&probes::UploadedProbes> {
         self.baked_specular_probes.as_ref()
     }
-    /// Commits a submitted frame: each moving instance's pose, and each
-    /// instance's shader data and material's shader parameters, become the
-    /// ones its motion is measured from, and its static edits are no longer
-    /// pending. `Renderer::finish_frame` calls it.
-    pub(crate) fn finish_frame(&mut self) {
+    /// Commits frame attempt `attempt` after its commands were submitted,
+    /// when it is the frame last begun and not yet finished: what it drew
+    /// (`begin_frame`) becomes what the next frame's motion is measured
+    /// from (each moving instance's pose and deformation while it was
+    /// visible, each instance's shader data and each material's shader
+    /// parameters), and the rigid changes and static edits recorded before
+    /// it are no longer pending. Edits made since it began are left to the
+    /// next frame. Returns whether it committed: nothing for another
+    /// attempt, one already finished or a frame of another scene.
+    /// `Renderer::finish_frame` calls it.
+    pub(crate) fn finish_frame(&mut self, attempt: u64) -> bool {
+        if self.frame.open != Some(attempt) {
+            return false;
+        }
+        self.frame.open = None;
         self.instances.finish_frame();
         self.materials.finish_frame();
         self.static_edits.finish();
         if let Some(acceleration) = &mut self.acceleration {
             acceleration.finish_frame();
         }
+        self.frame.finished = Some(attempt);
+        true
+    }
+
+    /// The attempt id of the scene's last finished frame, none before one.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "a view's history will follow it")
+    )]
+    pub(crate) fn last_finished(&self) -> Option<u64> {
+        self.frame.finished
+    }
+}
+
+#[cfg(test)]
+impl Scene {
+    /// One frame begun and finished, as a renderer's submitted frame does
+    /// it, for tests that edit the scene between frames.
+    pub(crate) fn test_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let attempt = self.begin_frame(device, queue);
+        assert!(self.finish_frame(attempt));
+    }
+
+    /// Finishes the frame last begun, as a test that began it through a
+    /// renderer's prepare stage does after submitting it.
+    pub(crate) fn finish_open_frame(&mut self) {
+        let attempt = self.frame.open.expect("a frame was begun");
+        assert!(self.finish_frame(attempt));
     }
 }
 

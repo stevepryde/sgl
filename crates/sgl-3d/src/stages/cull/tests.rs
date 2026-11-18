@@ -48,7 +48,7 @@ fn cull(
     mask: u32,
     culling: bool,
 ) -> Culled {
-    scene.prepare_frame(device, queue, Vec3::ZERO);
+    scene.begin_frame(device, queue);
     let mut views = FrameViews::new(device);
     views.camera.set(queue, camera);
     views.camera.list.prepare(

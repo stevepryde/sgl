@@ -697,6 +697,13 @@ impl Rig {
     /// no-op unless the size or settings changed), and `camera_cut` holds
     /// for this frame only.
     pub fn render(&mut self, frame: u32) {
+        self.render_then(frame, |_| {});
+    }
+
+    /// [`Rig::render`], with `edits` made after the frame is submitted and
+    /// before `Renderer::finish_frame`: the next frame's edits, in a loop
+    /// that updates the scene before it finishes the frame it submitted.
+    pub fn render_then(&mut self, frame: u32, edits: impl FnOnce(&mut Rig)) {
         self.frame = frame;
         self.input.elapsed_seconds = f64::from(frame) / FRAME_RATE;
         self.input.frame_time_ms = (1000. / FRAME_RATE) as f32;
@@ -719,8 +726,9 @@ impl Rig {
             None,
         );
         queue.submit([encoder.finish()]);
-        self.renderer.finish_frame(&mut self.scene);
         self.input.camera_cut = false;
+        edits(self);
+        self.renderer.finish_frame(&mut self.scene);
     }
 
     /// `target` of the last frame, decoded.

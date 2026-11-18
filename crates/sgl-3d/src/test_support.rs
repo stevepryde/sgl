@@ -158,7 +158,7 @@ pub(crate) fn observe_ray_hits(
         pass.dispatch_workgroups(1, 1, 1);
     }
     queue.submit([encoder.finish()]);
-    scene.finish_frame();
+    scene.finish_open_frame();
     let words = read_words(device, queue, &output);
     bytemuck::cast_slice::<u32, [f32; 4]>(&words).to_vec()
 }

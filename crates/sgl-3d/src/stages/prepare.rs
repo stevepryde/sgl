@@ -108,6 +108,9 @@ pub(crate) struct Prepare {
     /// The last rendered frame asked for the hardware path on a device
     /// that has it.
     hardware_requested: bool,
+    /// The scene's frame attempt the last rendered frame began
+    /// (`Scene::begin_frame`), 0 before one, which no attempt is.
+    attempt: u64,
 }
 
 impl Prepare {
@@ -188,7 +191,8 @@ impl Prepare {
         let values = FrameValues { view, frame };
         crate::counters::write_buffer(queue, frame_buffer, 0, bytemuck::bytes_of(&frame));
         views.camera.set(queue, View::camera(view));
-        scene.prepare_frame(device, queue, camera.eye);
+        self.attempt = scene.begin_frame(device, queue);
+        scene.transient.sort_mist(queue, camera.eye);
         // Only world-space rays, the dynamic GI volume's and ray-traced
         // shadows read the ray instances and visibility mask. The entries
         // set and static edits made since the last traced frame wait for
@@ -344,6 +348,12 @@ impl Prepare {
     /// device that has it.
     pub fn hardware_requested(&self) -> bool {
         self.hardware_requested
+    }
+
+    /// The scene's frame attempt the last rendered frame began, which
+    /// `Renderer::finish_frame` commits.
+    pub fn attempt(&self) -> u64 {
+        self.attempt
     }
 
     /// The views of a probe capture at `center` with `input`'s lights, the

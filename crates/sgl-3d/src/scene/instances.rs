@@ -40,6 +40,18 @@ pub(crate) struct Instance {
     /// Its written shader data's last submitted frame's is from before the
     /// last submitted frame.
     shader_stale: bool,
+    /// What the frame being rendered draws of it, which a finished frame
+    /// commits; none when it was added since the frame began.
+    rendered: Option<Shown>,
+}
+
+/// What a frame draws of an instance (`Scene::begin_frame`).
+#[derive(Clone, Copy)]
+struct Shown {
+    pose: Mat4,
+    model: ModelId,
+    visible: bool,
+    shader_data: [f32; 4],
 }
 
 impl Instance {
@@ -60,6 +72,7 @@ impl Instance {
             shader_data: [0.; 4],
             submitted_shader_data: None,
             shader_stale: false,
+            rendered: None,
         };
         instance.pose_casters(model);
         instance
@@ -149,17 +162,34 @@ pub(crate) struct Instances {
     pub objects: Objects,
     /// Live static and moving instances.
     counts: [usize; 2],
-    /// Changes since the last submitted frame that no motion vector
-    /// describes (M-9): appearances, departures, showing or hiding, model
-    /// and geometry replacement, a static instance moved, a moving one
-    /// moved where its last submitted pose does not apply, and material
-    /// edits that change what their users draw (`Scene::set_material`). A
-    /// moving instance's move from its submitted pose, deformation and
-    /// vertex functions write motion and do not set it.
-    rigid_changes: bool,
+    /// Changes that no motion vector describes (M-9), counted as raised:
+    /// appearances, departures, showing or hiding, model and geometry
+    /// replacement, a static instance moved, a moving one moved where its
+    /// last submitted pose does not apply, and material edits that change
+    /// what their users draw (`Scene::set_material`). A moving instance's
+    /// move from its submitted pose, deformation and vertex functions write
+    /// motion and do not raise it. The count the frame being rendered saw,
+    /// and the count the last finished frame saw: a finished frame retires
+    /// what was raised before it began.
+    rigid: [u64; 3],
     /// The instances whose shader data was set since the last submitted
-    /// frame (`set_shader_data`), repeats and removed ones included.
+    /// frame (`set_shader_data`), repeats and removed ones included, and
+    /// how many of them the frame being rendered saw.
     shader_edits: Vec<InstanceId>,
+    shader_edits_rendered: usize,
+}
+
+/// `Instances::rigid`'s counts.
+const RAISED: usize = 0;
+const RENDERED: usize = 1;
+const COMMITTED: usize = 2;
+
+/// Raises the rigid-change signal `rigid` (`Instances::rigid`) when
+/// `changed`.
+fn raise_rigid(rigid: &mut [u64; 3], changed: bool) {
+    if changed {
+        rigid[RAISED] = rigid[RAISED].wrapping_add(1);
+    }
 }
 
 /// `Instances::counts`' index of a mobility.
@@ -176,8 +206,9 @@ impl Instances {
             slots: Slots::default(),
             objects: Objects::new(device),
             counts: [0; 2],
-            rigid_changes: false,
+            rigid: [0; 3],
             shader_edits: Vec::new(),
+            shader_edits_rendered: 0,
         }
     }
 
@@ -221,10 +252,11 @@ impl Instances {
     /// meshes draw, can uncover old pixels without any pose motion.
     /// Include prior visible users even when the new geometry/position is culled.
     pub fn geometry_changed(&mut self, model: ModelId) {
-        self.rigid_changes |= self.slots.iter().any(|(_, instance)| {
+        let changed = self.slots.iter().any(|(_, instance)| {
             instance.state.model == model
                 && (instance.state.visible || instance.submitted.is_some())
         });
+        raise_rigid(&mut self.rigid, changed);
     }
 
     /// Rewrites the object records of `model`'s instances.
@@ -294,6 +326,9 @@ impl Instances {
             if let Some((pose, _)) = &mut instance.submitted {
                 *pose = translated(*pose, by);
             }
+            if let Some(shown) = &mut instance.rendered {
+                shown.pose = translated(shown.pose, by);
+            }
             let model = models
                 .slots
                 .get(instance.state.model)
@@ -308,28 +343,35 @@ impl Instances {
         self.objects.write_all(queue, &records);
     }
 
-    /// Commits a submitted frame: each moving instance's pose and
-    /// deformation become the ones its motion is measured from while it was
-    /// visible, and each instance's shader data the one its shaders'
-    /// motion is.
+    /// Commits a submitted frame, as it drew each instance it drew
+    /// (`prepare_frame`): a moving instance's pose and deformation become
+    /// the ones its motion is measured from while it was visible, and its
+    /// shader data the one its shaders' motion is. The rigid changes and
+    /// shader-data edits made before the frame began are retired. An
+    /// instance added since commits nothing, and edits made since stay for
+    /// the next frame.
     pub fn finish_frame(&mut self) {
-        self.rigid_changes = false;
-        self.shader_edits.clear();
+        self.rigid[COMMITTED] = self.rigid[RENDERED];
+        self.shader_edits.drain(..self.shader_edits_rendered);
+        self.shader_edits_rendered = 0;
         for (_, instance) in self.slots.iter_mut() {
-            if instance.submitted_shader_data != Some(instance.shader_data) {
-                instance.shader_stale |= instance.submitted_shader_data.is_some();
-                instance.submitted_shader_data = Some(instance.shader_data);
-            }
+            let Some(shown) = instance.rendered.take() else {
+                continue;
+            };
+            // What the written records hold as previous, which a later
+            // write keeps current: a rewrite is due where it changes.
+            let shader_on_gpu = instance
+                .submitted_shader_data
+                .unwrap_or(instance.shader_data);
+            instance.shader_stale |= shader_on_gpu != shown.shader_data;
+            instance.submitted_shader_data = Some(shown.shader_data);
             if let Some(deformation) = &mut instance.deformation {
-                deformation.finish(instance.state.visible);
+                deformation.finish(shown.visible);
             }
             if instance.mobility == Mobility::Moving {
-                let moved = instance.previous_pose() != instance.state.pose;
-                instance.submitted = instance
-                    .state
-                    .visible
-                    .then_some((instance.state.pose, instance.state.model));
-                instance.stale |= moved;
+                let on_gpu = instance.previous_pose();
+                instance.submitted = shown.visible.then_some((shown.pose, shown.model));
+                instance.stale |= instance.previous_pose() != on_gpu;
             }
         }
     }
@@ -338,7 +380,9 @@ impl Instances {
     /// since the last submitted frame, whose motion it ended, and of
     /// deforming instances, whose deformed vertices this frame shows, and
     /// the shader data of instances whose data the last submitted frame
-    /// changed, and replaces `work` with the deformations the frame writes.
+    /// changed, replaces `work` with the deformations the frame writes,
+    /// and records what the frame draws of each instance, with the rigid
+    /// changes and shader-data edits made so far, for `finish_frame`.
     pub fn prepare_frame(
         &mut self,
         queue: &wgpu::Queue,
@@ -346,6 +390,8 @@ impl Instances {
         work: &mut Vec<crate::shading::deformation::DeformDispatch>,
     ) {
         work.clear();
+        self.rigid[RENDERED] = self.rigid[RAISED];
+        self.shader_edits_rendered = self.shader_edits.len();
         for (id, instance) in self.slots.iter_mut() {
             let deforms = if let Some(deformation) = &mut instance.deformation {
                 let model = models.slots.get(instance.state.model);
@@ -364,6 +410,12 @@ impl Instances {
                 self.objects
                     .write_shader_data(queue, id.index(), &instance.shader_record());
             }
+            instance.rendered = Some(Shown {
+                pose: instance.state.pose,
+                model: instance.state.model,
+                visible: instance.state.visible,
+                shader_data: instance.shader_data,
+            });
         }
     }
 }
@@ -427,7 +479,7 @@ impl Scene {
             .slots
             .insert(Instance::new(state, mobility, model, deformation));
         self.instances.counts[kind(mobility)] += 1;
-        self.instances.rigid_changes |= state.visible;
+        raise_rigid(&mut self.instances.rigid, state.visible);
         self.write_instance(queue, id);
         // Its index may be a removed instance's.
         self.instances.write_shader_data(queue, id);
@@ -449,9 +501,10 @@ impl Scene {
     /// Changes without a motion vector, visible now or before their
     /// departure (M-9). Deliberately conservative across frustum and
     /// occlusion culling: a culled new state can still expose history at
-    /// the old one. Clears only on submit.
+    /// the old one. A finished frame clears what was raised before it
+    /// began.
     pub(crate) fn rigid_objects_changed(&self) -> bool {
-        self.instances.rigid_changes
+        self.instances.rigid[RAISED] != self.instances.rigid[COMMITTED]
     }
 
     /// An instance's current state.
@@ -528,8 +581,11 @@ impl Scene {
             && instance
                 .submitted
                 .is_some_and(|(_, model)| model == state.model);
-        self.instances.rigid_changes |= (old.visible || state.visible)
-            && (old.visible != state.visible || (placed && !motion_describes_it));
+        raise_rigid(
+            &mut self.instances.rigid,
+            (old.visible || state.visible)
+                && (old.visible != state.visible || (placed && !motion_describes_it)),
+        );
         instance.state = state;
         instance.stale = false;
         if placed {
@@ -547,7 +603,10 @@ impl Scene {
             .slots
             .remove(id)
             .ok_or(SceneError::UnknownInstance)?;
-        self.instances.rigid_changes |= instance.state.visible || instance.submitted.is_some();
+        raise_rigid(
+            &mut self.instances.rigid,
+            instance.state.visible || instance.submitted.is_some(),
+        );
         self.candidates.remove(id.index());
         if let Some(deformation) = instance.deformation.take() {
             deformation.free(&mut self.rays);
@@ -628,7 +687,7 @@ mod temporal_recovery_tests {
             scene.rigid_objects_changed(),
             "appearance exposes new temporal content"
         );
-        scene.finish_frame();
+        scene.test_frame(&device, &queue);
         scene.set_instance(&queue, id, state).unwrap();
         assert!(
             !scene.rigid_objects_changed(),
@@ -646,14 +705,14 @@ mod temporal_recovery_tests {
             scene.rigid_objects_changed(),
             "same-ID geometry removal uncovers history even though instance pose and identity are unchanged"
         );
-        scene.finish_frame();
+        scene.test_frame(&device, &queue);
         state.visible = false;
         scene.set_instance(&queue, id, state).unwrap();
         assert!(
             scene.rigid_objects_changed(),
             "hiding a previously visible object is a departure"
         );
-        scene.finish_frame();
+        scene.test_frame(&device, &queue);
         state.pose = Mat4::IDENTITY;
         scene.set_instance(&queue, id, state).unwrap();
         assert!(
@@ -662,13 +721,13 @@ mod temporal_recovery_tests {
         );
         state.visible = true;
         scene.set_instance(&queue, id, state).unwrap();
-        scene.finish_frame();
+        scene.test_frame(&device, &queue);
         scene.remove_instance(id).unwrap();
         assert!(
             scene.rigid_objects_changed(),
             "removal must retain departure evidence after its slot is gone"
         );
-        scene.finish_frame();
+        scene.test_frame(&device, &queue);
         assert!(
             !scene.rigid_objects_changed(),
             "only submission retires departure evidence"
@@ -715,11 +774,11 @@ mod temporal_recovery_tests {
             pose: at(0.5),
             ..shown(model)
         };
-        scene.finish_frame();
+        scene.test_frame(&device, &queue);
         let expect = |scene: &mut Scene, change: InstanceState, id, raised: bool, what: &str| {
             scene.set_instance(&queue, id, change).unwrap();
             assert_eq!(scene.rigid_objects_changed(), raised, "{what}");
-            scene.finish_frame();
+            scene.test_frame(&device, &queue);
             assert!(
                 !scene.rigid_objects_changed(),
                 "{what}: only submission retires it"
@@ -927,7 +986,7 @@ mod temporal_recovery_tests {
         for (name, before, after, draws) in edits {
             for (id, users) in [(shown, "a visible instance"), (hidden, "nothing visible")] {
                 scene.set_material(&queue, id, before).unwrap();
-                scene.finish_frame();
+                scene.test_frame(&device, &queue);
                 scene.set_material(&queue, id, after).unwrap();
                 let expected = draws && id == shown;
                 assert_eq!(
@@ -935,7 +994,7 @@ mod temporal_recovery_tests {
                     expected,
                     "{name} edit of a material {users} draws with"
                 );
-                scene.finish_frame();
+                scene.test_frame(&device, &queue);
                 assert!(
                     !scene.rigid_objects_changed(),
                     "{name}: only submission retires the edit"

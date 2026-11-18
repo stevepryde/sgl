@@ -309,7 +309,7 @@ fn scaled_and_mirrored_instances_preserve_normals_and_material_sides() {
                                 "single-sided stable back must be discarded"
                             );
                         }
-                        scene.finish_frame();
+                        scene.finish_open_frame();
                     }
                 }
             }

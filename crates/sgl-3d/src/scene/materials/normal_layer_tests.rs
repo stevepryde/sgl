@@ -227,7 +227,7 @@ fn layers_move_along_their_velocities_and_add_their_slopes() {
         let fused = renderer.test_fused_supported();
         renderer.encode_test_opaque(&device, &queue, &mut encoder, &scene, &mut frame, fused);
         queue.submit([encoder.finish()]);
-        scene.finish_frame();
+        scene.finish_open_frame();
         let normals = test_support::read(&device, &queue, renderer.targets().normal.texture(), 8);
         let rays = ray_normals(
             (&device, &queue),

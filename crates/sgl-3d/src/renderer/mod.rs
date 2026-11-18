@@ -395,9 +395,10 @@ impl Renderer {
     }
 
     /// After the caller submitted the last rendered frame of `scene`: it
-    /// becomes the history of the next, camera and instances alike. A frame
-    /// rendered but never finished (an abandoned encoder) leaves history
-    /// untouched.
+    /// becomes the history of the next, camera and instances alike, as the
+    /// frame drew them, so an edit made since the submission belongs to the
+    /// next frame. A frame rendered but never finished (an abandoned
+    /// encoder) leaves history untouched.
     pub fn finish_frame(&mut self, scene: &mut Scene) {
         if let Some((frame, scene_id, generation)) = self.rendered.take() {
             self.history.finish(frame);
@@ -406,7 +407,7 @@ impl Renderer {
                 self.pending_reset = false;
             }
             self.last_scene = Some(scene_id);
-            scene.finish_frame();
+            scene.finish_frame(self.prepare.attempt());
             self.shadows.local.finish_frame();
             if let Some(dynamic_gi) = &mut self.dynamic_gi {
                 dynamic_gi.finish_frame();
