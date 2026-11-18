@@ -358,7 +358,9 @@ Environment and probe specular always apply. On top of them:
   in a complete 2×2 block reads its own ray; an unpaired final row or column
   clamps to the ray grid. Roughness widens the reconstruction. Crystal keeps
   valid surface history when the reflection's virtual point leaves the previous
-  viewport, subject to its depth and signal checks.
+  viewport, subject to its depth checks. A moving receiver or reflected
+  object reduces the history weight where the earlier pixel no longer covers
+  the reflection.
   [Reflections](../README.md#reflections) credits each source.
 - **World-space reflections**: rays up to 1000 m from the reflecting
   surface where screen-space reflections miss, through a software BVH or,

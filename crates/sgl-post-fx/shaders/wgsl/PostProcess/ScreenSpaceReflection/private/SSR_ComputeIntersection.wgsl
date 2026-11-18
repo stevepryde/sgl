@@ -18,8 +18,7 @@
 #include "SSR_Common.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
 
-// cbuffer cbCameraAttribs
-@group(0) @binding(0) var<uniform> g_Camera: CameraAttribs;
+#include "SSR_Reprojection.fxh"
 
 // cbuffer cbScreenSpaceReflectionAttribs
 @group(0) @binding(1) var<uniform> g_SSRAttribs: ScreenSpaceReflectionAttribs;
@@ -28,18 +27,17 @@ struct PSOutput
 {
     @location(0) Specular:     vec4<f32>,
     @location(1) DirectionPDF: vec4<f32>,
+    @location(2) SourceMotionDisagreement: f32,
 }
 
 @group(0) @binding(2) var g_TextureRadiance: texture_2d<f32>;
 @group(0) @binding(3) var g_TextureNormal: texture_2d<f32>;
 @group(0) @binding(4) var g_TextureRoughness: texture_2d<f32>;
-#if SSR_OPTION_PREVIOUS_FRAME
-// WGSL: declared only where the host binds it (FEATURE_FLAG_PREVIOUS_FRAME).
 @group(0) @binding(5) var g_TextureMotion: texture_2d<f32>;
-#endif
 
 @group(0) @binding(6) var g_TextureBlueNoise: texture_2d<f32>;
 @group(0) @binding(7) var g_TextureDepthHierarchy: texture_2d<f32>;
+@group(0) @binding(9) var g_TexturePreviousDepth: texture_2d<f32>;
 #if SSR_OPTION_HALF_RESOLUTION
 // PROVENANCE.md DFX-62: the full-resolution eligibility mask, which chooses
 // each block's traced pixel.
@@ -172,8 +170,8 @@ fn IsBehindSurfaceThickness(Position: vec3<f32>, SurfaceDepth: f32) -> bool
     if (!BelowSurface || IsBackground(SurfaceDepth)) {
         return false;
     }
-    let SurfaceVS = ScreenXYDepthToViewSpace(vec3<f32>(Position.xy, SurfaceDepth), g_Camera.mProj);
-    let RayVS = ScreenXYDepthToViewSpace(Position, g_Camera.mProj);
+    let SurfaceVS = ScreenXYDepthToViewSpace(vec3<f32>(Position.xy, SurfaceDepth), cbCameraAttribs.g_CurrCamera.mProj);
+    let RayVS = ScreenXYDepthToViewSpace(Position, cbCameraAttribs.g_CurrCamera.mProj);
     return distance(SurfaceVS, RayVS) * (1.0 / (SurfaceVS.z + FLT_EPS)) >= g_SSRAttribs.DepthBufferThickness;
 }
 
@@ -309,8 +307,8 @@ fn ValidateHit(Hit: vec3<f32>, ScreenCoordUV: vec2<f32>, RayDirectionWS: vec3<f3
         return 0.0;
     }
 
-    let SurfaceVS = ScreenXYDepthToViewSpace(vec3<f32>(Hit.xy, SurfaceDepth), g_Camera.mProj);
-    let HitVS = ScreenXYDepthToViewSpace(Hit, g_Camera.mProj);
+    let SurfaceVS = ScreenXYDepthToViewSpace(vec3<f32>(Hit.xy, SurfaceDepth), cbCameraAttribs.g_CurrCamera.mProj);
+    let HitVS = ScreenXYDepthToViewSpace(Hit, cbCameraAttribs.g_CurrCamera.mProj);
     let Distance = distance(SurfaceVS, HitVS);
 
     // Fade out hits near the screen borders
@@ -381,7 +379,7 @@ fn Miss() -> PSOutput
 fn HalfResolutionPosition(Block: vec2<f32>, SampleIdx: u32) -> vec2<f32>
 {
     // DFX-45: a one-pixel side traces its pixel inside the frame.
-    return min(2.0 * floor(Block) + vec2<f32>(f32(SampleIdx & 1u), f32(SampleIdx >> 1u)) + 0.5, g_Camera.f4ViewportSize.xy - 0.5);
+    return min(2.0 * floor(Block) + vec2<f32>(f32(SampleIdx & 1u), f32(SampleIdx >> 1u)) + 0.5, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy - 0.5);
 }
 
 fn SelectReflectiveHalfResolutionPixel(Block: vec2<f32>) -> vec2<f32>
@@ -402,6 +400,35 @@ fn SelectReflectiveHalfResolutionPixel(Block: vec2<f32>) -> vec2<f32>
 }
 #endif
 
+// The tracer knows the exact source texel, including on a coarse receiver grid.
+// Validate its previous visibility independently of the reflector's depth.
+fn SourceHistoryWeight(Pixel: vec2<i32>, ReceiverWS: vec3<f32>, Normal: vec3<f32>) -> f32
+{
+    let Curr = cbCameraAttribs.g_CurrCamera;
+    let Prev = cbCameraAttribs.g_PrevCamera;
+    let Center = vec2<f32>(Pixel) + 0.5;
+    let SourceDepth = LoadDepthHierarchy(Pixel, 0);
+    let SourceWS = InvProjectPosition(vec3<f32>(Center * Curr.f4ViewportSize.zw, SourceDepth), Curr.mViewProjInv);
+    let Motion = HlslLoad(g_TextureMotion, Pixel, 0);
+    let OldPixel = PreviousMotionPixel(Center, Motion.xy);
+    if (!IsInsideScreen_f2(OldPixel, Prev.f4ViewportSize.xy)) { return 0.0; }
+    // W certifies depth motion only. Retain measured XY and fall back to the
+    // camera-only previous Z when the source supplies no valid depth motion.
+    let ExpectedZ = select((Prev.mView * vec4<f32>(SourceWS, 1.0)).z,
+                           DepthToCameraZ(SourceDepth, Curr.mProj) + Motion.z, Motion.w > 0.0);
+    if (!(Prev.mProj[2][3] * ExpectedZ + Prev.mProj[3][3] > 0.0)) { return 0.0; }
+    let SampledDepth = HlslLoad(g_TexturePreviousDepth, vec2<i32>(OldPixel), 0).r;
+    // Sky never supplied a reflected source. At infinite far its view Z is
+    // unbounded, so exclude it before computing relative depth agreement.
+    if (IsBackground(SampledDepth)) { return 0.0; }
+    let OldZ = DepthToCameraZ(SampledDepth, Prev.mProj);
+    if (!(ComputeDisocclusion(ExpectedZ, OldZ) > SSR_DISOCCLUSION_THRESHOLD)) { return 0.0; }
+
+    let OldSourceWS = InvProjectPosition(vec3<f32>(OldPixel * Prev.f4ViewportSize.zw, CameraZToDepth(ExpectedZ, Prev.mProj)), Prev.mViewProjInv);
+    let ImageWS = ReceiverWS + reflect(SourceWS - ReceiverWS, Normal);
+    return VirtualImageOverlap(ImageWS, reflect(OldSourceWS - SourceWS, Normal), vec2<f32>(0.0));
+}
+
 @fragment
 fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 {
@@ -415,14 +442,14 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let Position = VSOut.f4PixelPos.xy;
 #endif
 
-    let ScreenCoordUV = Position * g_Camera.f4ViewportSize.zw;
+    let ScreenCoordUV = Position * cbCameraAttribs.g_CurrCamera.f4ViewportSize.zw;
     let NormalWS = LoadNormalWS(vec2<i32>(Position));
     // PROVENANCE.md DFX-52: a normal that is not unit length, outside the input contract, has
     // no tangent frame to sample a reflection from (a zero normal's is NaN); it reports a miss.
     if (!(abs(dot(NormalWS, NormalWS) - 1.0) <= SSR_NORMAL_LENGTH_SQ_TOLERANCE)) {
         return Miss();
     }
-    let NormalVS = (g_Camera.mView * vec4<f32>(NormalWS, 0.0)).xyz;
+    let NormalVS = (cbCameraAttribs.g_CurrCamera.mView * vec4<f32>(NormalWS, 0.0)).xyz;
     let Roughness = LoadRoughness(vec2<i32>(Position));
 
     let IsMirror = IsMirrorReflection(Roughness);
@@ -430,28 +457,34 @@ fn ComputeIntersectionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let MipResolution = GetMipResolution(MostDetailedMip);
 
     let RayOriginSS = vec3<f32>(ScreenCoordUV, LoadDepthHierarchy(vec2<i32>(ScreenCoordUV * MipResolution), MostDetailedMip));
-    let RayOriginVS = ScreenXYDepthToViewSpace(RayOriginSS, g_Camera.mProj);
+    let RayOriginVS = ScreenXYDepthToViewSpace(RayOriginSS, cbCameraAttribs.g_CurrCamera.mProj);
 
     let RayDirectionVS = SampleReflectionVector(-normalize(RayOriginVS), NormalVS, Roughness, vec2<i32>(VSOut.f4PixelPos.xy));
-    let RayDirectionSS = ProjectDirection(RayOriginVS, RayDirectionVS.xyz, RayOriginSS, g_Camera.mProj, g_Camera.fNearPlaneZ);
-    let RayDirectionWS = (g_Camera.mViewInv * vec4<f32>(RayDirectionVS.xyz, 0.0)).xyz;
+    let RayDirectionSS = ProjectDirection(RayOriginVS, RayDirectionVS.xyz, RayOriginSS, cbCameraAttribs.g_CurrCamera.mProj, cbCameraAttribs.g_CurrCamera.fNearPlaneZ);
+    let RayDirectionWS = (cbCameraAttribs.g_CurrCamera.mViewInv * vec4<f32>(RayDirectionVS.xyz, 0.0)).xyz;
 
     var ValidHit = false;
-    let SurfaceHitSS = HierarchicalRaymarch(RayOriginSS, RayDirectionSS, g_Camera.f4ViewportSize.xy, MostDetailedMip, g_SSRAttribs.MaxTraversalIntersections, &ValidHit);
-    let SurfaceHitVS = ScreenXYDepthToViewSpace(SurfaceHitSS, g_Camera.mProj);
+    let SurfaceHitSS = HierarchicalRaymarch(RayOriginSS, RayDirectionSS, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy, MostDetailedMip, g_SSRAttribs.MaxTraversalIntersections, &ValidHit);
+    let SurfaceHitVS = ScreenXYDepthToViewSpace(SurfaceHitSS, cbCameraAttribs.g_CurrCamera.mProj);
 
 #if SSR_OPTION_PREVIOUS_FRAME
-    let Motion = LoadMotion(vec2<i32>(g_Camera.f4ViewportSize.xy * SurfaceHitSS.xy));
+    let Motion = LoadMotion(vec2<i32>(cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy * SurfaceHitSS.xy));
     let SurfaceHitSSPrev = SurfaceHitSS.xy - Motion;
-    let Confidence = select(0.0, ValidateHit(SurfaceHitSS, SurfaceHitSSPrev, ScreenCoordUV, RayDirectionWS, g_Camera.f4ViewportSize.xy, g_SSRAttribs.DepthBufferThickness), ValidHit);
-    let ReflectionRadiance = select(vec3<f32>(0.0, 0.0, 0.0), LoadRadiance(vec2<i32>(g_Camera.f4ViewportSize.xy * SurfaceHitSSPrev)), Confidence > 0.0f);
+    let Confidence = select(0.0, ValidateHit(SurfaceHitSS, SurfaceHitSSPrev, ScreenCoordUV, RayDirectionWS, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy, g_SSRAttribs.DepthBufferThickness), ValidHit);
+    let ReflectionRadiance = select(vec3<f32>(0.0, 0.0, 0.0), LoadRadiance(vec2<i32>(cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy * SurfaceHitSSPrev)), Confidence > 0.0f);
 #else
-    let Confidence = select(0.0, ValidateHit(SurfaceHitSS, ScreenCoordUV, RayDirectionWS, g_Camera.f4ViewportSize.xy, g_SSRAttribs.DepthBufferThickness), ValidHit);
-    let ReflectionRadiance = select(vec3<f32>(0.0, 0.0, 0.0), LoadRadiance(vec2<i32>(g_Camera.f4ViewportSize.xy * SurfaceHitSS.xy)), Confidence > 0.0f);
+    let Confidence = select(0.0, ValidateHit(SurfaceHitSS, ScreenCoordUV, RayDirectionWS, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy, g_SSRAttribs.DepthBufferThickness), ValidHit);
+    let ReflectionRadiance = select(vec3<f32>(0.0, 0.0, 0.0), LoadRadiance(vec2<i32>(cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy * SurfaceHitSS.xy)), Confidence > 0.0f);
 #endif
 
     //TODO: Try to store inverse RayDirectionWS for more accuracy.
     var Output: PSOutput;
+    Output.SourceMotionDisagreement = 0.0;
+    if (Confidence > 0.0) {
+        let SourcePixel = vec2<i32>(SurfaceHitSS.xy * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
+        let ReceiverWS = (cbCameraAttribs.g_CurrCamera.mViewInv * vec4<f32>(RayOriginVS, 1.0)).xyz;
+        Output.SourceMotionDisagreement = 1.0 - SourceHistoryWeight(SourcePixel, ReceiverWS, normalize(NormalWS));
+    }
     // DFX-17: radiance premultiplied by confidence, so averages of hits and misses keep both consistent.
     Output.Specular = vec4<f32>(ReflectionRadiance * Confidence, Confidence);
     // PROVENANCE.md DFX-48: a ray that ends at or past the far plane, by the DFX-26 exit's

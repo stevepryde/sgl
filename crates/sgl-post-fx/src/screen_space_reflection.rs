@@ -121,6 +121,7 @@ const DENOISER_BLOCK_SIZE: u32 = DENOISER_TILE_SIZE / 2;
 const DENOISER_TILE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_STENCIL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 const RADIANCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const RESOLVED_VARIANCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const VARIANCE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
 /// `RESOURCE_IDENTIFIER_*` internal resources, created by `prepare_resources`.
@@ -131,6 +132,7 @@ struct Resources {
     roughness: wgpu::TextureView,
     radiance: wgpu::TextureView,
     ray_direction_pdf: wgpu::TextureView,
+    source_motion_disagreement: wgpu::TextureView,
     /// DFX-29: per 4×4 block of pixels, whether a ray in it found a
     /// confident hit.
     denoiser_hits: wgpu::TextureView,
@@ -494,6 +496,14 @@ impl ScreenSpaceReflection {
                 RADIANCE_FORMAT,
                 1,
             )),
+            source_motion_disagreement: view(&texture_2d(
+                device,
+                "ScreenSpaceReflection::SourceMotionDisagreement",
+                trace_width,
+                trace_height,
+                wgpu::TextureFormat::R8Unorm,
+                1,
+            )),
             denoiser_hits: view(&texture_2d(
                 device,
                 "ScreenSpaceReflection::DenoiserHits",
@@ -523,7 +533,7 @@ impl ScreenSpaceReflection {
                 "ScreenSpaceReflection::ResolvedVariance",
                 width,
                 height,
-                VARIANCE_FORMAT,
+                RESOLVED_VARIANCE_FORMAT,
                 1,
             )),
             resolved_depth: view(&texture_2d(
@@ -626,7 +636,6 @@ impl ScreenSpaceReflection {
             ),
             ("SSR_DENOISER_TILE_SIZE", tile_size.as_str()),
         ];
-        let previous_frame = self.feature_flags.contains(FeatureFlags::PREVIOUS_FRAME);
 
         // We clear depth to 0.0 and then write 1.0 to mask pixels with reflection.
         let triangle_depth_05 = [("TRIANGLE_DEPTH", "0.5")];
@@ -707,12 +716,11 @@ impl ScreenSpaceReflection {
                 (2, Resource::Texture),
                 (3, Resource::Texture),
                 (4, Resource::Texture),
+                (5, Resource::Texture),
                 (6, Resource::Texture),
                 (7, Resource::Texture),
+                (9, Resource::Texture),
             ];
-            if previous_frame {
-                layout.push((5, Resource::Texture));
-            }
             if self.feature_flags.contains(FeatureFlags::HALF_RESOLUTION) {
                 // DFX-62: the full-resolution eligibility mask.
                 layout.push((8, Resource::DepthTexture));
@@ -725,7 +733,11 @@ impl ScreenSpaceReflection {
                     &vs(&triangle_depth_05),
                     &ps("SSR_ComputeIntersection.fx", "ComputeIntersectionPS"),
                     &layout,
-                    &[RADIANCE_FORMAT, RADIANCE_FORMAT],
+                    &[
+                        RADIANCE_FORMAT,
+                        RADIANCE_FORMAT,
+                        wgpu::TextureFormat::R8Unorm,
+                    ],
                     Some(DEPTH_STENCIL_FORMAT),
                     DepthStencilStateDesc::EnableDepthNoWrites,
                 );
@@ -789,8 +801,13 @@ impl ScreenSpaceReflection {
                         (5, Resource::Texture),
                         (6, Resource::Texture),
                         (7, Resource::Texture),
+                        (8, Resource::Texture),
                     ],
-                    &[RADIANCE_FORMAT, VARIANCE_FORMAT, resolved_depth_format],
+                    &[
+                        RADIANCE_FORMAT,
+                        RESOLVED_VARIANCE_FORMAT,
+                        resolved_depth_format,
+                    ],
                     Some(DEPTH_STENCIL_FORMAT),
                     DepthStencilStateDesc::EnableDepthNoWrites,
                 );
@@ -823,6 +840,7 @@ impl ScreenSpaceReflection {
                         (12, Resource::Texture),
                         (13, Resource::ConstantBuffer),
                         (14, Resource::DepthTexture),
+                        (15, Resource::Texture),
                     ],
                     &[RADIANCE_FORMAT, VARIANCE_FORMAT],
                     Some(DEPTH_STENCIL_FORMAT),
@@ -1072,6 +1090,10 @@ impl ScreenSpaceReflection {
                 resource: texture(&r.roughness),
             },
             wgpu::BindGroupEntry {
+                binding: 5,
+                resource: texture(render_attribs.motion_vectors_srv),
+            },
+            wgpu::BindGroupEntry {
                 binding: 6,
                 resource: texture(ctx.get_2d_blue_noise_srv(BlueNoiseDimension::Xy)),
             },
@@ -1079,13 +1101,11 @@ impl ScreenSpaceReflection {
                 binding: 7,
                 resource: texture(&r.depth_hierarchy),
             },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: texture(ctx.get_previous_depth()),
+            },
         ];
-        if self.feature_flags.contains(FeatureFlags::PREVIOUS_FRAME) {
-            entries.push(wgpu::BindGroupEntry {
-                binding: 5,
-                resource: texture(render_attribs.motion_vectors_srv),
-            });
-        }
         if self.feature_flags.contains(FeatureFlags::HALF_RESOLUTION) {
             entries.push(wgpu::BindGroupEntry {
                 binding: 8,
@@ -1101,8 +1121,12 @@ impl ScreenSpaceReflection {
         draw_pass(
             render_attribs.device_context,
             "ComputeIntersection",
-            &[&r.radiance, &r.ray_direction_pdf],
-            Some(&[wgpu::Color::TRANSPARENT; 2]),
+            &[
+                &r.radiance,
+                &r.ray_direction_pdf,
+                &r.source_motion_disagreement,
+            ],
+            Some(&[wgpu::Color::TRANSPARENT; 3]),
             Some(DepthStencil::ReadOnly(dsv)),
             tech,
             &group,
@@ -1206,6 +1230,10 @@ impl ScreenSpaceReflection {
                     binding: 7,
                     resource: texture(&r.denoiser_tiles),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: texture(&r.source_motion_disagreement),
+                },
             ],
         );
         draw_pass(
@@ -1306,6 +1334,10 @@ impl ScreenSpaceReflection {
                 wgpu::BindGroupEntry {
                     binding: 14,
                     resource: texture(render_attribs.depth_buffer_srv),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: texture(render_attribs.normal_buffer_srv),
                 },
             ],
         );

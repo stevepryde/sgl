@@ -88,6 +88,67 @@ code matches upstream.
 | DFX-62 | `SSR_ComputeStencilMaskAndExtractRoughness` applies `IsReflectionSample` to the material's roughness and writes the eligibility mask and an `R8Unorm` roughness copy; the half-resolution mask, the half-resolution pass's pixel choice (DFX-58) and bilateral cleanup's neighbor test apply it again to the copy and the depth. Roughness in (0.2, 0.20196) is outside the mask but rounds to 51/255 = 0.2 and passes the later tests, so cleanup averaged that texel's empty result (radiance and confidence 0) into its neighbors and the half-resolution pass could trace from it; a threshold off the 1/255 grid also fails the other way, a roughness under it rounding above it. | Eligibility is decided once, by the full-resolution mask on the material's full-precision roughness and the depth, and the later passes read the mask (`IsMaskedReflectionSample`) instead of re-testing: the half-resolution mask keeps a block where any of its pixels is masked, the half-resolution pass traces from a masked pixel, and cleanup averages masked neighbors, sampling the mask it also has as its read-only depth attachment. The 8-bit copy still supplies roughness for sampling and weights. Applying the predicate to the 8-bit value in the mask instead would admit roughness up to 0.20196 to the mask, and would make each later pass's result at the default threshold, which is the code 51/255 itself, depend on the last bit of the unorm-to-float read-back. Each replaced test reads one 16-bit mask texel in place of a roughness and a depth texel. `texels_outside_the_mask_do_not_change_their_neighbours` sets four isolated texels of a mirror floor at roughness 0.15, one at each position of a 2×2 block, to 0.2005 in one run and 0.3 in another, both outside the mask, and requires every other pixel's output to be identical at full and half resolution under both depth conventions; with the re-tests 32 pixels differed at full resolution and 67 at half (#773). |
 | DFX-63 | `ComputeTemporalAccumulation` (`SSR_ComputeTemporalAccumulation.fx:147-226`, called at `:245`) tests disocclusion against the reprojected depth (`GetReprojectedDepth`, `ComputeReprojectedDepth.fx`), this frame's surface point moved through the previous camera alone, which holds only for a surface at rest. A surface the camera follows along its axis, such as a craft under a chase camera, keeps its view depth while that point recedes by the camera's travel: at view depth d it failed the test once a frame's travel exceeded 0.118 d and, beyond 4 d, the fallback search too, losing its history. Between them the fallback search, which visits rows from −1 and columns from −1 and stops at the first position whose bilinear taps weigh over 0.9, took the upper-left neighbour on any uniform surface, so a followed surface's reflections drifted a pixel diagonally a frame. AMD's reflection denoiser (`FFX_DNSR_Reflections_PickReprojection`, [`ffx_denoiser_reflections_reproject.h:205-234`](https://github.com/GPUOpen-Effects/FidelityFX-Denoiser/blob/d7dfecbabe7b9523b14e7b067216e06b86e8d189/ffx-reflection-dnsr/ffx_denoiser_reflections_reproject.h)) and Wicked Engine's `ssr_temporalCS` compare history with this frame's depth, so they keep a followed surface, and start their search at the reprojected position, moving only to a strictly better weight. | The expected previous depth is the surface's own: its camera-space Z now plus the motion vectors' depth motion (Z, previous minus current camera Z, valid where W > 0; NVIDIA NRD's `viewZprev = viewZ + motion.z`), converted to the previous camera's device depth, as motion-adaptive TAA's `AdaptiveMotionExpectedDepth` and SGL3D's ambient occlusion and reflection reprojection (`temporal_reprojection.wgsl`) take it. A surface on or behind the previous camera's plane takes that camera's near-plane depth, which DFX-32 rejects; where W is 0 the context's reprojected depth is used, as before. The temporal pass binds this frame's depth (binding 14) and requires a four-channel motion view, panicking on fewer, as TAA does under `MOTION_ADAPTIVE_HISTORY`. The fallback search visits the reprojected position, then its four edge neighbours, then its corners, and a position replaces the best only with a strictly greater weight, so ties keep the nearer one; its thresholds and early exit are unchanged. No upstream code is copied. `a_surface_the_camera_follows_keeps_its_reflection_history` runs the production temporal pass over a plane 2 m ahead of a camera that travelled 10 m along its axis, under both depth conventions, and requires every pixel to blend a uniform history under a checkerboard (radiance 0.05 × current + 0.95 × 0.75, variance 0.925); before, all 3072 pixels lost it. `the_fallback_search_keeps_a_followed_surfaces_history_in_place` gives a plane 8 m ahead, the camera 2 m further back the frame before, invalid depth motion and a history ramp in x, and requires the interior to read its own pixel's history; before, all 2484 checked pixels read their left neighbour's (0.2505 for 0.26). Each fails with only the other half of the change. |
 
+## Crystal reflection history (#819)
+
+DFX-25's extra surface-history discard was compensating for an ambiguous
+choice of previous pixel. A lamp elsewhere in the current 3×3 box could make
+stale radiance at the virtual point look plausible. On Hyperdrive's night
+tunnel, frame 70 at (197, 909), the current luminance was 0.056 with confidence
+0.9995. The temporal pass returned 0.669. On the other side of the road, a
+dark surface history suppressed a newly arriving lamp. Resetting variance
+alone changed fast-motion smear by less than 0.00001. The discard also
+rejected valid slowly changing light on a smooth mirror because it compared
+temporal lighting change with the variance across a nearly uniform surface.
+
+The temporal pass now compares both candidates against this pixel's
+confidence-premultiplied radiance. Its 3×3 variance box still limits the
+selected history. A change of illumination across frames has a different
+meaning from a variation of illumination across neighbouring pixels.
+Reflection motion depends on both surfaces: moving the reflected source
+changes where the light appears in the mirror, and translating the reflector
+along its normal moves its virtual image by twice that distance. The
+intersection sees which source pixel its ray hit, including the chosen
+receiver at half resolution. The optical reconstruction weights the motion
+evidence of the rays that produced its current sample. The temporal pass
+uses that evidence with the surface motion, projected in the previous
+camera's pixel grid. The existing accumulated history is sampled on its
+stable grid. [Microsoft's animated planar reflection sample](https://github.com/microsoft/DirectX-Graphics-Samples/tree/master/Samples/Desktop/D3D12Raytracing/src/D3D12RaytracingRealTimeDenoisedAmbientOcclusion).
+
+Hyperdrive's 1920×1080 Ultra tunnel, night / day. Fast motion used AA off.
+Slow motion and rest used TAA. Smear compares against the same run with
+history disabled. Flicker is the mean absolute second difference in luminance.
+
+| Measure | Previous Crystal | Previous Crystal with discard removed | Corrected Crystal |
+| --- | --- | --- | --- |
+| Fast-motion smear | 0.17940 / 0.15221 | 0.21451 / 0.18316 | 0.17820 / 0.14985 |
+| Slow-motion flicker | 0.01816 / 0.01929 | 0.01743 / 0.01832 | 0.01732 / 0.01822 |
+| Flicker at rest | 0.000403 / 0.000829 | 0.000404 / 0.000822 | 0.000401 / 0.000829 |
+
+The smear score does not measure highlight strength. On night frame 70,
+7,050 floor pixels gained more than 0.1 linear luminance from the
+current-frame reflection compared with SSR off. On those pixels, the mean gain
+was 0.249 without history, 0.163 with the previous Crystal and 0.152 after the change.
+
+In consecutive fast-night runs (40 timed frames after 20 warm-up frames),
+median GPU times in milliseconds were 1.735 → 1.832 for intersection,
+0.569 → 0.619 for spatial reconstruction and 0.363 → 0.435 for temporal
+accumulation. Bilateral cleanup measured 0.422 → 0.421. The whole frame
+measured 17.730 → 18.013 on this machine.
+
+The full FidelityFX Reflections Denoiser 1.3 was ported separately from the
+SDK's C++ host and HLSL and evaluated between Crystal's trace and its optical
+reconstruction. Its input is incident radiance with ray length in alpha.
+SSSR supplies environment light on a miss. Crystal retains a separate hit
+confidence and composites world rays, probes or the sky later. The integration
+kept that confidence separate and filled missing lighting from measured
+neighbours. It also exercised confirmed black, partial coverage, both trace
+resolutions and a stationary narrow HDR highlight. At perceptual roughness
+0.051 the same three columns received 4.0 from the tracer on every frame.
+The integrated denoiser returned 0.115 on frame eight. AMD's independently
+compiled original also suppresses thin highlights. On the night tunnel the
+direct integration measured 0.21967 fast-motion smear and 0.01871
+slow-motion flicker. The existing limits were 0.17940 and 0.01743.
+[AMD SDK denoiser](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK/tree/c6efa6bf7f2027b3ec94f28578bb5965eabb9e55/sdk/include/FidelityFX/gpu/denoiser).
 
 ## Motion-adaptive TAA
 

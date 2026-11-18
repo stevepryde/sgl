@@ -15,6 +15,8 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-post-fx` `ScreenSpaceReflection` (SGL3D Crystal) now weights reflection history by the motion of the reflector and the reflected source. Smooth changing light can retain history during camera motion. No game-code changes are needed.
+
 ## 0.8.0 — 2026-11-18
 
 Move every SGL crate to `0.8.0` together and commit the updated `Cargo.lock`.

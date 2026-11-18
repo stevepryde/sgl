@@ -745,9 +745,8 @@ combines passes from several engines, listed with their licences under it.
     history clamp (`ssr_resolveCS.hlsl`, `ssr_temporalCS.hlsl`, DFX-25). MIT,
     `src/LICENSE-wicked.txt`.
   - [AMD's reflection denoiser](https://github.com/GPUOpen-Effects/FidelityFX-Denoiser/blob/d7dfecbabe7b9523b14e7b067216e06b86e8d189/ffx-reflection-dnsr/ffx_denoiser_reflections_reproject.h)'s
-    virtual-point reprojection and its discard of a surface history far from
-    the current neighbourhood, so fast motion does not smear floor reflections
-    (DFX-25). MIT, `sgl-post-fx/LICENSE-amd-fidelityfx-denoiser.txt`.
+    virtual-point reprojection (DFX-25). Crystal accounts for the motion
+    of the receiver and the reflected source when weighting history. MIT, `sgl-post-fx/LICENSE-amd-fidelityfx-denoiser.txt`.
   - [Bevy](https://github.com/bevyengine/bevy/tree/b56fc29d3016e641754765244b5ba3f9cc504671/crates/bevy_pbr/src/ssr)'s
     roughness fade. MIT OR Apache-2.0.
 - `Velvet`: one mirror ray per pixel through a hierarchical depth

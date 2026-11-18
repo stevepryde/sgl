@@ -15,9 +15,8 @@ crates/sgl-post-fx/LICENSE-amd-fidelityfx-denoiser.txt
 
 AMD FidelityFX Denoiser, https://github.com/GPUOpen-Effects/FidelityFX-Denoiser
 Revision d7dfecbabe7b9523b14e7b067216e06b86e8d189, LICENSE.txt. The DiligentFX
-port adds the reflection hit reprojection and surface-reprojection discard of
-ffx-reflection-dnsr/ffx_denoiser_reflections_reproject.h to
-SSR_ComputeSpatialReconstruction.wgsl and SSR_ComputeTemporalAccumulation.wgsl
+port uses the reflection virtual point from ffx-reflection-dnsr/
+ffx_denoiser_reflections_reproject.h in SSR_ComputeSpatialReconstruction.wgsl
 (PROVENANCE.md DFX-25).
 
 Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.

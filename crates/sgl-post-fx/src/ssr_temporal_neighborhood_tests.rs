@@ -263,13 +263,12 @@ pub(super) fn jittered(camera: CameraAttribs, jitter: [f32; 2]) -> CameraAttribs
     }
 }
 
-/// `camera` standing `distance` further back along its view axis, facing
-/// the same way.
-pub(super) fn standing_behind(camera: CameraAttribs, distance: f32) -> CameraAttribs {
+/// `camera` standing at `eye` in the current view, facing the same way.
+pub(super) fn standing_at(camera: CameraAttribs, eye: [f32; 3]) -> CameraAttribs {
     moved(
         camera,
         Previous {
-            eye: [0., 0., -distance],
+            eye,
             yaw: 0.,
             near: 0.,
             depth: 0.,

@@ -64,7 +64,7 @@ fn regression(@builtin(global_invocation_id) id: vec3<u32>) {
             usage: wgpu::BufferUsages::UNIFORM,
         })
     };
-    let camera = uniform(bytemuck::bytes_of(&camera));
+    let camera = uniform(bytemuck::cast_slice(&[camera, camera]));
     let attrs = uniform(bytemuck::bytes_of(&attrs));
     let texture = |format, channels: usize, pixel: &[f32], levels: u32| {
         let data: Vec<f32> = (0..levels)

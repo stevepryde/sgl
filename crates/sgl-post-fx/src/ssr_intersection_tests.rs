@@ -405,7 +405,7 @@ fn glossy_grazing_rays_keep_finite_pdf_and_reconstruction_weight() {
     let (a, b) = projection_scales();
     source.push_str(&format!(
         r#"
-@group(0) @binding(8) var<storage, read_write> measured_weights: array<f32>;
+@group(0) @binding(9) var<storage, read_write> measured_weights: array<f32>;
 @compute @workgroup_size(8, 8)
 fn measure_weight(@builtin(global_invocation_id) id: vec3<u32>) {{
     if (id.x >= {width}u || id.y >= {height}u) {{ return; }}
@@ -451,7 +451,7 @@ fn measure_weight(@builtin(global_invocation_id) id: vec3<u32>) {{
                 resource: wgpu::BindingResource::TextureView(&ssr.resources().ray_direction_pdf),
             },
             wgpu::BindGroupEntry {
-                binding: 8,
+                binding: 9,
                 resource: weights.as_entire_binding(),
             },
         ],
@@ -483,4 +483,320 @@ fn measure_weight(@builtin(global_invocation_id) id: vec3<u32>) {{
         saturated > 0,
         "fixture did not reach the half-float PDF limit"
     );
+}
+
+// The floor is a horizontal mirror at Y = -1. Reflecting a point across
+// that plane leaves X and Z unchanged, so a marking on a front-facing
+// wall moves the same horizontal screen distance as its floor reflection.
+#[derive(Clone, Copy, PartialEq)]
+enum MovingWall {
+    Painted,
+    Slatted,
+    RevealsBackground,
+    AppearsOverSky,
+    Approaching,
+}
+
+fn trace_moving_wall(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    flags: FeatureFlags,
+    scene: MovingWall,
+) -> ScreenSpaceReflection {
+    let mut camera = infinite_reversed_camera();
+    if scene == MovingWall::Approaching {
+        // Place the optical axis at a pixel centre. This point of a rigid
+        // sign translating along its normal has exactly zero XY motion.
+        camera = super::temporal_neighborhood_tests::jittered(
+            camera,
+            [1. / SIZE[0] as f32, -1. / SIZE[1] as f32],
+        );
+    }
+    let mut ssr = ScreenSpaceReflection::new(device);
+    let mut ctx = PostFXContext::new(
+        device,
+        queue,
+        post_fx_context::CreateInfo {
+            transition_duration: 0.,
+        },
+    );
+    let mut previous_depth = None;
+    for index in 0..2 {
+        let shift = 4 * index;
+        let mut depths = Vec::new();
+        let mut normals = Vec::new();
+        let mut materials = Vec::new();
+        let mut velocities = Vec::new();
+        let mut colors = Vec::new();
+        for y in 0..SIZE[1] {
+            let slope = pixel_ray(0, y)[1] as f32 - camera.f2_jitter[1] / camera.m_proj[5];
+            for x in 0..SIZE[0] {
+                let panel = (22 + shift..32 + shift).contains(&x);
+                let wall_z = match scene {
+                    MovingWall::Approaching => {
+                        if index == 0 {
+                            8.
+                        } else {
+                            6.
+                        }
+                    }
+                    MovingWall::AppearsOverSky if index == 0 => f32::INFINITY,
+                    MovingWall::RevealsBackground if panel => 6.,
+                    MovingWall::Slatted if (x + 16 - shift) % 16 < 2 => f32::INFINITY,
+                    _ => 8.,
+                };
+                let floor = slope < -1. / wall_z;
+                let moving = !floor
+                    && wall_z.is_finite()
+                    && index == 1
+                    && scene != MovingWall::AppearsOverSky
+                    && (scene != MovingWall::RevealsBackground || panel);
+                depths.push(if floor { -NEAR * slope } else { NEAR / wall_z });
+                normals.extend(half(&if floor {
+                    [0., 1., 0., 0.]
+                } else {
+                    [0., 0., -1., 0.]
+                }));
+                let mirror = floor
+                    && (scene != MovingWall::Painted
+                        || x < SIZE[0] / 2
+                        || (x % 2 == 1 && y % 2 == 1));
+                materials.push(if !mirror {
+                    255
+                } else if scene == MovingWall::Slatted {
+                    50
+                } else {
+                    0
+                });
+                let motion = if scene == MovingWall::Approaching && moving {
+                    // Previous Z was 8 m, current Z is 6 m. X and Y on a
+                    // rigid sign are fixed in world space, so its old NDC
+                    // coordinates are 6/8 of the current unjittered NDC.
+                    let dx = 2. * (x as f32 - SIZE[0] as f32 * 0.5) / SIZE[0] as f32;
+                    [dx * 0.25, slope * camera.m_proj[5] * 0.25, 2., 1.]
+                } else {
+                    [
+                        if moving { 8. / SIZE[0] as f32 } else { 0. },
+                        0.,
+                        0.,
+                        if !floor
+                            && (scene == MovingWall::AppearsOverSky
+                                || (scene == MovingWall::Painted && x < SIZE[0] / 2))
+                        {
+                            0.
+                        } else {
+                            1.
+                        },
+                    ]
+                };
+                velocities.extend(half(&motion));
+                let illuminated = match scene {
+                    MovingWall::Approaching => (slope * wall_z).abs() < 0.09,
+                    MovingWall::RevealsBackground => panel,
+                    _ => ((x + 8 - shift) / 4).is_multiple_of(2),
+                };
+                let light = if !floor && illuminated { 4. } else { 0. };
+                colors.extend(half(&[light, light, light, 1.]));
+            }
+        }
+        let format = wgpu::TextureFormat::Rgba16Float;
+        let normal = texels(device, queue, format, &normals);
+        let material = texels(device, queue, wgpu::TextureFormat::R8Unorm, &materials);
+        let motion = texels(device, queue, format, &velocities);
+        let color = texels(device, queue, format, &colors);
+        let current = CameraAttribs {
+            ui_frame_index: index,
+            ..camera
+        };
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let depth = depth_values(device, queue, &mut encoder, &depths);
+        ctx.prepare_resources(
+            device,
+            &FrameDesc {
+                index,
+                width: SIZE[0],
+                height: SIZE[1],
+                output_width: SIZE[0],
+                output_height: SIZE[1],
+            },
+            post_fx_context::FeatureFlags::REVERSED_DEPTH,
+        );
+        ssr.prepare_resources(device, &mut encoder, &mut ctx, flags);
+        ctx.execute(&mut post_fx_context::RenderAttributes {
+            device,
+            queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &depth,
+            prev_depth_buffer_srv: previous_depth.as_ref().unwrap_or(&depth),
+            curr_camera: Some(&current),
+            prev_camera: Some(&camera),
+            camera_attribs_cb: None,
+            pass_timestamps: None,
+        });
+        ssr.execute(&mut RenderAttributes {
+            device,
+            queue,
+            device_context: &mut encoder,
+            post_fx_context: &mut ctx,
+            color_buffer_srv: &color,
+            depth_buffer_srv: &depth,
+            normal_buffer_srv: &normal,
+            material_buffer_srv: &material,
+            motion_vectors_srv: &motion,
+            ssr_attribs: &ScreenSpaceReflectionAttribs {
+                ggx_importance_sample_bias: 1.,
+                ..Default::default()
+            },
+            pass_timestamps: None,
+            reset_accumulation: false,
+            frame_time: 1. / 60.,
+        });
+        queue.submit([encoder.finish()]);
+        previous_depth = Some(depth);
+    }
+    ssr
+}
+
+#[test]
+fn a_moving_wall_marking_leaves_no_trail_on_a_stationary_mirror() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        let ssr = trace_moving_wall(&device, &queue, flags, MovingWall::Painted);
+        let image = read_rgba16f(&device, &queue, ssr.get_ssr_radiance_srv());
+        for y in [35, 37, 39] {
+            for x in (21..44).step_by(2) {
+                // On the right half only one receiver per 2×2 block is
+                // glossy. Half resolution must still trace its reflection.
+                let pixel = image[(y * SIZE[0] + x) as usize];
+                let expected = if (x / 4) % 2 == 1 { 4. } else { 0. };
+                assert!(
+                    pixel[3] > 0.5 && (pixel[0] / pixel[3] - expected).abs() < 0.01,
+                    "{flags:?} ({x},{y}) expected {expected} from the wall, got {pixel:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_moving_panel_reveals_the_reflected_background() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        let ssr = trace_moving_wall(&device, &queue, flags, MovingWall::RevealsBackground);
+        let image = read_rgba16f(&device, &queue, ssr.get_ssr_radiance_srv());
+        for y in [35, 37, 39] {
+            for x in [24, 25, 26, 27] {
+                let pixel = image[(y * SIZE[0] + x) as usize];
+                // The panel moved from [22,32) to [26,36). Light at the
+                // vacated pixels now comes from a stationary black wall.
+                let expected = if x < 26 { 0. } else { 4. };
+                assert!(
+                    pixel[3] > 0.5 && (pixel[0] / pixel[3] - expected).abs() < 0.01,
+                    "{flags:?} ({x},{y}) expected {expected} from panel/wall, got {pixel:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn reflections_across_a_gap_follow_the_moving_wall() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        let ssr = trace_moving_wall(&device, &queue, flags, MovingWall::Slatted);
+        let raw = read_rgba16f(&device, &queue, &ssr.resources().radiance);
+        let current = read_rgba16f(&device, &queue, &ssr.resources().resolved_radiance);
+        let history = read_rgba16f(&device, &queue, &ssr.resources().radiance_history[1]);
+        let scale = if flags == FeatureFlags::HALF_RESOLUTION {
+            2
+        } else {
+            1
+        };
+        let mut supported = 0;
+        for y in 35..40 {
+            for x in 12..50 {
+                let i = (y * SIZE[0] + x) as usize;
+                let center = ((y / scale) * (SIZE[0] / scale) + x / scale) as usize;
+                if raw[center][3] == 0. && current[i][3] > 0.1 {
+                    // The centre ray missed. Every nonzero contribution
+                    // to the reconstructed RGB was traced to a moving slat.
+                    supported += 1;
+                    assert!(
+                        (current[i][0] - history[i][0]).abs() < 0.01
+                            && (current[i][3] - history[i][3]).abs() < 0.01,
+                        "{flags:?} ({x},{y}) center missed, reconstructed {:?}, retained {:?}",
+                        current[i],
+                        history[i]
+                    );
+                }
+            }
+        }
+        assert!(
+            supported > 0,
+            "{flags:?}: no reflected slats reached across a miss"
+        );
+    }
+}
+
+// At the luminosity stripe's centre the sign moves towards the camera along
+// its sightline. Its screen position stays fixed while its virtual image,
+// two metres below the optical axis, moves down the mirror.
+#[test]
+fn a_sign_moving_along_the_sightline_moves_in_the_floor_mirror() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        let ssr = trace_moving_wall(&device, &queue, flags, MovingWall::Approaching);
+        let image = read_rgba16f(&device, &queue, ssr.get_ssr_radiance_srv());
+        // The stripe lies on Y=0. Its virtual image is at Y=-2, so its
+        // displacement from the optical axis is 2 × focal length / Z.
+        let focal = projection_scales().1 * SIZE[1] as f32 * 0.5;
+        let pixel = |z: f32| {
+            let y = (SIZE[1] as f32 * 0.5 + 2. * focal / z).round() as u32;
+            image[(y * SIZE[0] + SIZE[0] / 2) as usize]
+        };
+        let old = pixel(8.);
+        let now = pixel(6.);
+        assert!(
+            old[3] > 0.5 && old[0] < 0.01,
+            "{flags:?}: trail at old stripe {old:?}"
+        );
+        assert!(
+            now[3] > 0.5 && (now[0] / now[3] - 4.).abs() < 0.01,
+            "{flags:?}: missing axial reflection {now:?}"
+        );
+    }
+}
+
+// The wall first becomes visible against an empty sky. For an infinite
+// reversed-Z camera the previous wall texel is exactly depth zero. Its old
+// reflected radiance is a miss, while the newly visible stripe is lit.
+#[test]
+fn a_wall_appearing_over_infinite_sky_lights_its_reflection() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    for flags in [FeatureFlags::NONE, FeatureFlags::HALF_RESOLUTION] {
+        let ssr = trace_moving_wall(&device, &queue, flags, MovingWall::AppearsOverSky);
+        let image = read_rgba16f(&device, &queue, ssr.get_ssr_radiance_srv());
+        for y in [37, 39] {
+            for x in [22, 23, 24, 25] {
+                // Below the optical axis the mirror sees the wall above the
+                // horizon. Its stripe ends at x=24; both sides have a hit.
+                let pixel = image[(y * SIZE[0] + x) as usize];
+                let expected = if x < 24 { 4. } else { 0. };
+                assert!(
+                    pixel[3] > 0.5 && (pixel[0] / pixel[3] - expected).abs() < 0.01,
+                    "{flags:?} ({x},{y}) expected {expected} from new wall, got {pixel:?}"
+                );
+            }
+        }
+    }
 }

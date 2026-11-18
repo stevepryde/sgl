@@ -26,7 +26,7 @@
 struct PSOutput
 {
     @location(0) ResolvedRadiance: vec4<f32>,
-    @location(1) ResolvedVariance: f32,
+    @location(1) VarianceAndSourceDisagreement: vec2<f32>,
     @location(2) ResolvedDepth:    f32,
 }
 
@@ -38,6 +38,7 @@ struct PSOutput
 @group(0) @binding(6) var g_TextureIntersectSpecular: texture_2d<f32>;
 // PROVENANCE.md DFX-29: the tiles the denoiser passes work on.
 @group(0) @binding(7) var g_TextureDenoiserTiles: texture_2d<f32>;
+@group(0) @binding(8) var g_SourceMotionDisagreement: texture_2d<f32>;
 
 struct PixelAreaStatistic
 {
@@ -117,6 +118,9 @@ fn ComputeWeightedVariance(Stat: ptr<function, PixelAreaStatistic>, SampleColor:
 // the inverse cosine of the ray's angle from the view axis.
 fn ComputeResolvedDepth(PositionWS: vec3<f32>, Depth: f32, SurfaceHitDistance: f32) -> f32
 {
+    // With no secondary distance, the reflected point is the receiver itself.
+    // Preserve its depth exactly for temporal transport by the receiver's motion.
+    if (SurfaceHitDistance == 0.0) { return Depth; }
     let CameraSurfaceDistance = distance(g_Camera.f4Position.xyz, PositionWS);
     let SurfaceCameraZ = DepthToCameraZ(Depth, g_Camera.mProj);
     return CameraZToDepth(SurfaceCameraZ * (CameraSurfaceDistance + SurfaceHitDistance) / max(CameraSurfaceDistance, 1e-6), g_Camera.mProj);
@@ -146,7 +150,7 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     let PixelCoord = vec2<i32>(Position.xy);
     // DFX-29: every sample here missed, so the reconstruction is zero.
     if (!IsActiveDenoiserTile(g_TextureDenoiserTiles, PixelCoord)) {
-        return PSOutput(vec4<f32>(0.0), 0.0, 0.0);
+        return PSOutput(vec4<f32>(0.0), vec2<f32>(0.0), 0.0);
     }
 
     let ScreenCoordUV = Position.xy * g_Camera.f4ViewportSize.zw;
@@ -170,6 +174,7 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     PixelAreaStat.Mean = 0.0;
 
     var NearestSurfaceHitDistance = 0.0;
+    var SourceDisagreement = 0.0;
 
     // TODO: Try to implement sampling from https://youtu.be/MyTOGHqyquU?t=1043
     for (var SampleIdx = 0; SampleIdx < SSR_SPATIAL_RECONSTRUCTION_SAMPLES; SampleIdx++)
@@ -189,6 +194,10 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
         // confidence shares the weight (DFX-17).
         SampleColor = SampleColor / (1.0 + Luminance(SampleColor.rgb));
         ComputeWeightedVariance(&PixelAreaStat, SampleColor, WeightLength.x);
+        if (SampleColor.a > 0.0) {
+            let Disagreement = textureLoad(g_SourceMotionDisagreement, SampleCoord, 0).r;
+            SourceDisagreement += WeightLength.x * SampleColor.a * Disagreement;
+        }
 
         // DFX-56: misses retain their endpoint length, including HALF_MAX
         // beyond the far plane. Only a confirmed hit supplies the virtual
@@ -203,7 +212,13 @@ fn ComputeSpatialReconstructionPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     // DFX-16: undo the tone mapping. DFX-46: at most HALF_MAX, which rounding
     // past it near luminance 1 would carry to +infinity in the RGBA16F target.
     Output.ResolvedRadiance = min(Output.ResolvedRadiance / (1.0 - Luminance(Output.ResolvedRadiance.rgb)), vec4<f32>(HALF_MAX));
-    Output.ResolvedVariance = PixelAreaStat.Variance / max(PixelAreaStat.WeightSum, 1e-6f);
+    // The contributors are the same BRDF-, luminance- and confidence-weighted
+    // taps as optical reconstruction. A black hit is measured; a miss adds no weight.
+    var RelativeDisagreement = 0.0;
+    if (PixelAreaStat.ColorSum.a > 0.0) {
+        RelativeDisagreement = saturate(SourceDisagreement / PixelAreaStat.ColorSum.a);
+    }
+    Output.VarianceAndSourceDisagreement = vec2<f32>(PixelAreaStat.Variance / max(PixelAreaStat.WeightSum, 1e-6f), RelativeDisagreement);
     Output.ResolvedDepth = ComputeResolvedDepth(PositionWS, Depth, NearestSurfaceHitDistance);
     return Output;
 }

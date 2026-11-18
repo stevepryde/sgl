@@ -34,6 +34,7 @@ const MODULES: &[(&str, &str)] = modules![
     "PostProcess/Common/src/PostFXContext_CopyTexturePS.wgsl",
     "PostProcess/ScreenSpaceReflection/public/ScreenSpaceReflectionStructures.wgsl",
     "PostProcess/ScreenSpaceReflection/private/SSR_Common.wgsl",
+    "PostProcess/ScreenSpaceReflection/private/SSR_Reprojection.wgsl",
     "PostProcess/ScreenSpaceReflection/private/SSR_ComputeHierarchicalDepthBuffer.wgsl",
     "PostProcess/ScreenSpaceReflection/private/SSR_ComputeStencilMaskAndExtractRoughness.wgsl",
     "PostProcess/ScreenSpaceReflection/private/SSR_ComputeDownsampledStencilMask.wgsl",

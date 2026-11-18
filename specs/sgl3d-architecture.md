@@ -1288,6 +1288,10 @@ last, after everything it may use, and refuses a directive in it.
   (`sgl-post-fx`, DFX-63) takes the surface's previous depth from the same
   depth motion, the camera's reprojection only where it is invalid, and its
   fallback search tries the reprojected position before its neighbours.
+  Crystal's intersection pass measures motion and previous visibility at the
+  reflected source. Spatial reconstruction combines that evidence across the
+  contributing rays. Temporal accumulation uses it with the receiver's motion
+  to weight the selected history.
   `reflections/reprojection.wgsl` owns virtual
   hit depth for both traces: extend the normalised view ray by the reflected
   hit distance, as AMD FidelityFX Denoiser d7dfecb's

@@ -3,14 +3,9 @@
 // f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b). Copyright Diligent Graphics LLC,
 // licensed under the Apache License, Version 2.0 (vendor/DiligentFX/License.txt).
 // Modified: translated from HLSL to WGSL; see crates/sgl-post-fx/README.md.
-// DFX-25 adds the surface-reprojection discard of AMD's reflection denoiser,
-// ffx-reflection-dnsr/ffx_denoiser_reflections_reproject.h
-// (https://github.com/GPUOpen-Effects/FidelityFX-Denoiser, revision
-// d7dfecbabe7b9523b14e7b067216e06b86e8d189), MIT licensed
-// (LICENSE-amd-fidelityfx-denoiser.txt).
 // DFX-63 takes the surface's previous depth from its depth motion and orders
 // the fallback search from the reprojected position outwards, as AMD's
-// FFX_DNSR_Reflections_PickReprojection (same file) and Wicked Engine's
+// FFX_DNSR_Reflections_PickReprojection (FidelityFX-Denoiser d7dfecb, MIT) and Wicked Engine's
 // ssr_temporalCS do.
 
 #include "ScreenSpaceReflectionStructures.fxh"
@@ -19,15 +14,7 @@
 #include "BasicStructures.fxh"
 #include "FullScreenTriangleVSOutput.fxh"
 
-// WGSL: one uniform holds the constant buffer's two cameras, so the upstream
-// g_CurrCamera and g_PrevCamera read as cbCameraAttribs.g_CurrCamera and
-// cbCameraAttribs.g_PrevCamera.
-struct CameraAttribsPair
-{
-    g_CurrCamera: CameraAttribs,
-    g_PrevCamera: CameraAttribs,
-}
-@group(0) @binding(0) var<uniform> cbCameraAttribs: CameraAttribsPair;
+#include "SSR_Reprojection.fxh"
 
 // cbuffer cbScreenSpaceReflectionAttribs
 @group(0) @binding(1) var<uniform> g_SSRAttribs: ScreenSpaceReflectionAttribs;
@@ -52,6 +39,7 @@ struct CameraAttribsPair
 @group(0) @binding(13) var<uniform> g_HistoryReset: u32;
 // PROVENANCE.md DFX-63: this frame's depth, which the depth motion starts from.
 @group(0) @binding(14) var g_TextureDepth: texture_depth_2d;
+@group(0) @binding(15) var g_TextureNormal: texture_2d<f32>;
 
 struct ProjectionDesc
 {
@@ -71,11 +59,6 @@ struct PSOutput
 {
     @location(0) Radiance: vec4<f32>,
     @location(1) Variance: f32,
-}
-
-fn LoadMotion(PixelCoord: vec2<i32>) -> vec2<f32>
-{
-    return HlslLoad(g_TextureMotion, PixelCoord, 0).xy * F3NDC_XYZ_TO_UVD_SCALE.xy;
 }
 
 fn LoadCurrDepth(PixelCoord: vec2<i32>) -> f32
@@ -148,32 +131,9 @@ fn SamplePrevVarianceLinear(PixelCoord: vec2<f32>) -> f32
     return textureSampleLevel(g_TexturePrevVariance, g_TexturePrevVariance_sampler, Texcoord, 0.0).x;
 }
 
-fn ComputeReflectionHitPosition(PixelCoord: vec2<i32>, Depth: f32) -> vec2<f32>
-{
-    let Texcoord = (vec2<f32>(PixelCoord) + 0.5) * cbCameraAttribs.g_CurrCamera.f4ViewportSize.zw + F3NDC_XYZ_TO_UVD_SCALE.xy * cbCameraAttribs.g_CurrCamera.f2Jitter;
-    let PositionWS = InvProjectPosition(vec3<f32>(Texcoord, Depth), cbCameraAttribs.g_CurrCamera.mViewProjInv);
-    // PROVENANCE.md DFX-31: a point on or behind the previous camera's plane
-    // was not on its screen. It lies a screen off, where ComputeReprojection
-    // rejects it, rather than mirrored onto the screen by ProjectPosition's
-    // division by its negative w.
-    if (IsOnOrBehindCameraPlane(PositionWS, cbCameraAttribs.g_PrevCamera.mViewProj)) {
-        return -cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
-    }
-    let PrevCoordUV = ProjectPosition(PositionWS, cbCameraAttribs.g_PrevCamera.mViewProj);
-    return (PrevCoordUV.xy - F3NDC_XYZ_TO_UVD_SCALE.xy * cbCameraAttribs.g_PrevCamera.f2Jitter) * cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy;
-}
-
 // TODO: Use normals to compute disocclusion
-fn ComputeDisocclusion(CurrCameraZ_: f32, PrevCameraZ_: f32) -> f32
-{
-    // WGSL: parameters are immutable; the upstream in-parameters are copied.
-    let CurrCameraZ = abs(CurrCameraZ_);
-    let PrevCameraZ = abs(PrevCameraZ_);
-    return exp(-abs(CurrCameraZ - PrevCameraZ) / max(max(CurrCameraZ, PrevCameraZ), 1e-6));
-}
-
 // Welford's online algorithm:
-//  https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
+// https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance
 fn ComputePixelStatistic(PixelCoord: vec2<i32>) -> PixelStatistic
 {
     var Desc: PixelStatistic;
@@ -285,6 +245,27 @@ fn ComputeReprojection(PrevPos: vec2<f32>, CurrDepth: f32) -> ProjectionDesc
     return Desc;
 }
 
+// The previous plane is measured at the history sample that passed depth
+// testing. A mirror image translates twice the plane's offset along N.
+// A plane sliding tangentially remains the same plane.
+fn VirtualPlaneSupport(Position: vec2<f32>, Depth: f32, HitDepth: f32, RasterHit: vec2<f32>, SampleOffset: vec2<f32>) -> f32
+{
+    let Curr = cbCameraAttribs.g_CurrCamera;
+    let Prev = cbCameraAttribs.g_PrevCamera;
+    let SamplePixel = vec2<i32>(RasterHit);
+    let OldDepth = LoadPrevDepth(SamplePixel);
+    let N = HlslLoad(g_TextureNormal, vec2<i32>(Position), 0).xyz;
+    if (IsBackground(OldDepth) || !(abs(dot(N, N) - 1.0) <= SSR_NORMAL_LENGTH_SQ_TOLERANCE)) { return 0.0; }
+    let UV = Position * Curr.f4ViewportSize.zw;
+    let CurrentWS = InvProjectPosition(vec3<f32>(UV, Depth), Curr.mViewProjInv);
+    let OldUV = (vec2<f32>(SamplePixel) + 0.5) * Prev.f4ViewportSize.zw;
+    let OldWS = InvProjectPosition(vec3<f32>(OldUV, OldDepth), Prev.mViewProjInv);
+    let Normal = normalize(N);
+    let Translation = 2.0 * dot(OldWS - CurrentWS, Normal) * Normal;
+    let VirtualWS = InvProjectPosition(vec3<f32>(UV, HitDepth), Curr.mViewProjInv);
+    return VirtualImageOverlap(VirtualWS, Translation, SampleOffset);
+}
+
 @fragment
 fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
 {
@@ -302,48 +283,83 @@ fn ComputeTemporalAccumulationPS(VSOut: FullScreenTriangleVSOutput) -> PSOutput
     // https://www.ea.com/seed/news/seed-dd18-presentation-slides-raytracing (Slide 45)
     let PixelStat = ComputePixelStatistic(vec2<i32>(Position.xy));
     let HitDepth = LoadHitDepth(vec2<i32>(Position.xy));
-    let Motion = LoadMotion(vec2<i32>(Position.xy));
-
-    let PrevIncidentPoint = Position.xy - Motion * vec2<f32>(cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
-    let PrevReflectionHit = ComputeReflectionHitPosition(vec2<i32>(Position.xy), HitDepth);
+    let Pixel = vec2<i32>(Position.xy);
+    let Current = LoadCurrRadiance(Pixel);
+    let CurrentLuminance = Luminance(Current.rgb);
+    let Motion = HlslLoad(g_TextureMotion, Pixel, 0);
+    let Curr = cbCameraAttribs.g_CurrCamera;
+    let Prev = cbCameraAttribs.g_PrevCamera;
+    let NdcToPixels = F3NDC_XYZ_TO_UVD_SCALE.xy * Curr.f4ViewportSize.xy;
+    // Both bilinear history reads use the stable Diligent history grid. For
+    // projection, add the current jitter before unprojecting and remove the
+    // previous jitter when returning to that grid.
+    let PrevIncidentPoint = Position.xy - Motion.xy * NdcToPixels;
+    let PrevReflectionHit = PreviousCameraPixel(Position.xy + Curr.f2Jitter * NdcToPixels, HitDepth)
+                            - Prev.f2Jitter * NdcToPixels;
 
     let PrevColorIncidentPoint = SamplePrevRadianceLinear(PrevIncidentPoint);
     let PrevColorReflectionHit = SamplePrevRadianceLinear(PrevReflectionHit);
 
-    let PrevDistanceIncidentPoint = abs(Luminance(PrevColorIncidentPoint.rgb) - Luminance(PixelStat.Mean.rgb));
-    let PrevDistanceReflectionHit = abs(Luminance(PrevColorReflectionHit.rgb) - Luminance(PixelStat.Mean.rgb));
+    let PrevDistanceIncidentPoint = abs(Luminance(PrevColorIncidentPoint.rgb) - CurrentLuminance);
+    let PrevDistanceReflectionHit = abs(Luminance(PrevColorReflectionHit.rgb) - CurrentLuminance);
 
     // PROVENANCE.md DFX-57: a clamp-to-edge sample outside the previous
     // viewport is not a candidate, even when its luminance fits better.
     // This also excludes DFX-31's behind-camera sentinel.
     let IncidentInside = IsInsideScreen_f2(PrevIncidentPoint, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
     let HitInside = IsInsideScreen_f2(PrevReflectionHit, cbCameraAttribs.g_CurrCamera.f4ViewportSize.xy);
-    let UseIncidentPoint = !HitInside || (IncidentInside && PrevDistanceIncidentPoint < PrevDistanceReflectionHit);
+    let SurfaceDepth = HlslLoadDepth(g_TextureDepth, Pixel, 0);
+    // A zero or unresolvable secondary distance puts the virtual image at
+    // the receiver's stored depth. Prefer its measured motion when on-screen.
+    // Compare in the format used for the virtual depth (DFX-59).
+#if SSR_OPTION_INVERTED_DEPTH
+    let HasSeparateHit = quantizeToF16(HitDepth) != quantizeToF16(SurfaceDepth);
+#else
+    let HasSeparateHit = HitDepth != SurfaceDepth;
+#endif
+    let UseIncidentPoint = !HitInside || (IncidentInside && (!HasSeparateHit || PrevDistanceIncidentPoint < PrevDistanceReflectionHit));
     let PrevCoord = select(PrevReflectionHit, PrevIncidentPoint, UseIncidentPoint);
-    let Reprojection = ComputeReprojection(PrevCoord, LoadExpectedPrevDepth(vec2<i32>(Position.xy)));
-
-    // PROVENANCE.md DFX-25: AMD's reflection denoiser keeps the surface
-    // (incident point) reprojection only while it lies near the current
-    // neighbourhood; otherwise the reflection moved by its own parallax and the
-    // history is rejected (FFX_DNSR_Reflections_PickReprojection).
-    let IncidentOffset = PrevColorIncidentPoint.rgb - PixelStat.Mean.rgb;
-    let IncidentAgrees = dot(IncidentOffset, IncidentOffset) < SSR_REPROJECT_SURFACE_DISCARD_VARIANCE_WEIGHT * length(PixelStat.Variance.rgb);
+    let ExpectedPrevDepth = LoadExpectedPrevDepth(Pixel);
+    let Reprojection = ComputeReprojection(PrevCoord, ExpectedPrevDepth);
 
     var Output: PSOutput;
     // PROVENANCE.md DFX-49: a reset history is no history, as where reprojection fails: the
     // frame takes the current radiance, as TAA's resolve does on a reset.
-    if (g_HistoryReset == 0u && Reprojection.IsSuccess && (!UseIncidentPoint || IncidentAgrees))
+    if (g_HistoryReset == 0u && Reprojection.IsSuccess)
     {
         let ColorMin = PixelStat.Mean - SSR_TEMPORAL_VARIANCE_GAMMA * PixelStat.StdDev;
         let ColorMax = PixelStat.Mean + SSR_TEMPORAL_VARIANCE_GAMMA * PixelStat.StdDev;
         let PrevRadiance = clamp(Reprojection.Color, ColorMin, ColorMax);
         let PrevVariance = SamplePrevVarianceLinear(Reprojection.PrevCoord);
-        Output.Radiance = mix(LoadCurrRadiance(vec2<i32>(Position.xy)), PrevRadiance, g_SSRAttribs.TemporalRadianceStabilityFactor);
+        // A moving receiver can still carry valid history when its reflected
+        // image follows it. Otherwise measure how much of the previous pixel the
+        // camera alone would have covered. An offscreen alternative supplies no
+        // competing correspondence; keep the candidate that passed depth testing.
+        var ReceiverWeight = 1.0;
+        if (HasSeparateHit && IncidentInside && HitInside) {
+            // The measured depth belongs to the raster pixel. Both sides of
+            // this comparison must include the same jitter displacement.
+            let StaticSurface = PreviousCameraPixel(Position.xy, SurfaceDepth);
+            let MeasuredSurface = PreviousMotionPixel(Position.xy, Motion.xy);
+            ReceiverWeight = max(PixelFootprintOverlap(MeasuredSurface, StaticSurface),
+                                 PixelFootprintOverlap(PrevIncidentPoint, PrevReflectionHit));
+            if (!UseIncidentPoint && Motion.w > 0.0 && ReceiverWeight < 1.0) {
+                let RasterHit = Reprojection.PrevCoord + Prev.f2Jitter * NdcToPixels;
+                if (IsInsideScreen_f2(RasterHit, Prev.f4ViewportSize.xy)) {
+                    let PlaneSupport = VirtualPlaneSupport(Position.xy, SurfaceDepth, HitDepth, RasterHit,
+                                                          Reprojection.PrevCoord - PrevReflectionHit);
+                    ReceiverWeight = max(ReceiverWeight, PlaneSupport);
+                }
+            }
+        }
+        let SourceWeight = 1.0 - HlslLoad(g_TextureCurrVariance, Pixel, 0).g;
+        Output.Radiance = mix(Current, PrevRadiance,
+                              g_SSRAttribs.TemporalRadianceStabilityFactor * ReceiverWeight * SourceWeight);
         Output.Variance = mix(LoadCurrVariance(vec2<i32>(Position.xy)), PrevVariance, g_SSRAttribs.TemporalVarianceStabilityFactor);
     }
     else
     {
-        Output.Radiance = LoadCurrRadiance(vec2<i32>(Position.xy));
+        Output.Radiance = Current;
         Output.Variance = 1.0f;
     }
     return Output;

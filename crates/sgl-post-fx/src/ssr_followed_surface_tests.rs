@@ -6,8 +6,8 @@
 //! point through the previous camera alone places it the camera's travel
 //! further away.
 use super::temporal_neighborhood_tests::{
-    SIZE, camera, depth, device, half, jittered, read_rgba16f, read_scalar, standing_behind,
-    texels, texture,
+    SIZE, camera, depth, device, half, jittered, read_rgba16f, read_scalar, standing_at, texels,
+    texture,
 };
 use super::*;
 use crate::{CameraAttribs, post_fx_context::FrameDesc};
@@ -22,8 +22,10 @@ fn device_depth(camera: &CameraAttribs, z: f32) -> f32 {
 pub(super) struct Followed {
     pub reversed: bool,
     pub z: f32,
-    /// How far the camera travelled along its axis since the previous frame.
-    pub travel: f32,
+    /// The previous eye in current view space, with unchanged orientation.
+    pub previous_eye: [f32; 3],
+    /// Camera Z of the virtual reflection image.
+    pub virtual_z: f32,
     /// The previous and this frame's projection jitter (NDC).
     pub jitter: [[f32; 2]; 2],
     /// The motion texel everywhere: NDC motion, depth motion, validity.
@@ -36,10 +38,8 @@ pub(super) struct Followed {
 
 /// Two frames of the production temporal pass, every denoiser tile active:
 /// frame 0 resets and stores `history`; at frame 1 the camera had stood
-/// `travel` m further back, the plane `z` m ahead of it then too. The
-/// reflection's virtual point is the plane's own point, so the hit
-/// reprojection is the camera's. Returns frame 1's radiance and variance
-/// histories.
+/// at `previous_eye`, with the plane `z` m ahead of it in both frames.
+/// Returns frame 1's radiance and variance histories.
 pub(super) fn followed(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -60,7 +60,7 @@ pub(super) fn followed(
             current
         } else {
             jittered(
-                standing_behind(camera(f.reversed, 0), f.travel),
+                standing_at(camera(f.reversed, 0), f.previous_eye),
                 f.jitter[0],
             )
         };
@@ -122,7 +122,7 @@ pub(super) fn followed(
             device,
             queue,
             wgpu::TextureFormat::R32Float,
-            &plane.to_le_bytes(),
+            &device_depth(&current, f.virtual_z).to_le_bytes(),
         );
         resources.denoiser_tiles = texture(device, queue, wgpu::TextureFormat::R8Unorm, &[255]);
         let attribs = ScreenSpaceReflectionAttribs::default();
@@ -190,7 +190,8 @@ fn a_surface_the_camera_follows_keeps_its_reflection_history() {
             &Followed {
                 reversed,
                 z: 2.,
-                travel: 10.,
+                previous_eye: [0., 0., -10.],
+                virtual_z: 2.,
                 jitter: [[0.; 2]; 2],
                 motion: [0., 0., 0., 1.],
                 history: |_, _| 0.75,
@@ -244,7 +245,8 @@ fn the_fallback_search_keeps_a_followed_surfaces_history_in_place() {
         &Followed {
             reversed: false,
             z: 8.,
-            travel: 2.,
+            previous_eye: [0., 0., -2.],
+            virtual_z: 8.,
             jitter: [[0.; 2]; 2],
             motion: [0., 0., 0., 0.],
             history: ramp,

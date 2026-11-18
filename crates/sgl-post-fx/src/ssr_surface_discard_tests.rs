@@ -1,93 +1,110 @@
-//! PROVENANCE.md DFX-25 and the SGL3D temporal history register's R-9:
-//! Crystal's production temporal pass discards all history at a pixel where
-//! it takes the surface's (incident point) reprojection and that history's
-//! squared distance from the 3x3 mean of this frame's radiance reaches 1.5
-//! times the length of the neighbourhood's variance. A pixel that discards
-//! stores this frame's radiance and variance 1; one that keeps history
-//! stores variance 0.1 × 0.25 + 0.9 × 1 = 0.925 here (the fixture's current
-//! variance is 0.25 and the reset frame's 1).
-use super::followed_surface_tests::{Followed, checkerboard, followed};
-use super::temporal_neighborhood_tests::{SIZE, device};
+//! Crystal's temporal resolve on a plane mirror. The reflected image moves
+//! with the virtual light behind the mirror as the camera translates.
+use super::followed_surface_tests::{Followed, followed};
+use super::temporal_neighborhood_tests::{SIZE, camera, device};
 
-/// Variance a pixel that kept its history stores; one that discarded it
-/// stores 1. Binary16 steps near these values are under 0.001.
-const KEPT: f32 = 0.925;
-
-// Plausible defects: the discard applies whichever candidate the pass takes,
-// or ties between the candidates go to the surface's, so a smooth mirror at
-// rest restarts wherever the reflected light changes. At rest the surface's
-// and the reflection's reprojections land on the same previous point, the
-// jitter of each frame removed (`ComputeReflectionHitPosition`), so their
-// luminance ties and the pass takes the reflection's, which the discard does
-// not test: R-9's measured "at rest, no pixel discarded, with or without a
-// light changing". The fixture: a mirror plane 2 m ahead, the camera still
-// and jittered by different offsets in the two frames, the reflected light
-// dimming from a gradient of 0.5 to 1.13 to a uniform 0.25, which the
-// discard would reject at every pixel (the variance is 0). The oracle: every
-// pixel keeps history, under both depth conventions.
+// Jitter moves the sample grid while the mirror and its virtual light
+// remain stationary. The current gradient admits either previous light
+// under neighbourhood clipping; changing only that light must change RGB.
 #[test]
 fn a_still_mirror_under_jitter_discards_no_history() {
     let Some((device, queue)) = device() else {
         return;
     };
     for reversed in [false, true] {
-        let (_, variance) = followed(
-            &device,
-            &queue,
-            &Followed {
-                reversed,
-                z: 2.,
-                travel: 0.,
-                jitter: [
-                    [0.3 / SIZE[0] as f32, -0.2 / SIZE[1] as f32],
-                    [-0.4 / SIZE[0] as f32, 0.35 / SIZE[1] as f32],
-                ],
-                motion: [0., 0., 0., 1.],
-                history: |x, _| 0.5 + 0.01 * x as f32,
-                current: |_, _| 0.25,
-            },
-        );
-        let discarded = variance
-            .iter()
-            .filter(|&&v| (v - KEPT).abs() > 0.002)
-            .count();
-        assert_eq!(
-            discarded, 0,
-            "reversed={reversed}: {discarded} pixels of a still mirror lost their history"
-        );
+        let run = |history| {
+            followed(
+                &device,
+                &queue,
+                &Followed {
+                    reversed,
+                    z: 2.,
+                    previous_eye: [0.; 3],
+                    virtual_z: 4.,
+                    jitter: [
+                        [0.3 / SIZE[0] as f32, -0.2 / SIZE[1] as f32],
+                        [-0.4 / SIZE[0] as f32, 0.35 / SIZE[1] as f32],
+                    ],
+                    motion: [0., 0., 0., 1.],
+                    history,
+                    current: |x, _| light(x as f32),
+                },
+            )
+        };
+        let (dim, variance) = run(|x, _| light(x as f32) * 0.99);
+        let (bright, _) = run(|x, _| light(x as f32) * 1.01);
+        for (p, ((a, b), v)) in dim.iter().zip(&bright).zip(variance).enumerate() {
+            assert!(
+                b[0] > a[0] + 0.001 && v < 1.,
+                "reversed={reversed} pixel={p} lost history: {a:?} vs {b:?}, variance {v}"
+            );
+        }
     }
 }
 
-/// The history's columns in blocks of `SLIDE` pixels: a highlight of 1.5 in
-/// even blocks, a brighter one of 4 in odd blocks.
-const SLIDE: u32 = 4;
-fn highlights(x: u32, _: u32) -> f32 {
-    if (x / SLIDE).is_multiple_of(2) {
-        1.5
-    } else {
-        4.
-    }
+/// Camera translation for a stationary virtual image at Z = 4 m to move
+/// right by `pixels`: screen displacement is focal length × travel / Z.
+/// The mirror at Z = 2 m therefore moves twice as far on screen.
+fn previous_eye(pixels: f32) -> [f32; 3] {
+    let focal_length_pixels = camera(true, 0).m_proj[0] * SIZE[0] as f32 / 2.;
+    [4. * pixels / focal_length_pixels, 0., 0.]
 }
 
-// Plausible defect: the surface's history is kept wherever the luminance
-// choice prefers it, so a reflected highlight that the surface carried
-// away, and that is no longer at the pixel, smears over the frames that
-// follow (DFX-25's reason: bright fixtures' reflections smearing in fast
-// motion). The fixture: a mirror sliding in its own plane `SLIDE` pixels a
-// frame under a still camera, so its motion vectors place the surface's
-// history `SLIDE` pixels back while its reflection stays where it was (the
-// reflection's reprojection is the pixel itself). The history holds
-// highlights of 1.5 and 4 in alternate blocks of `SLIDE` columns; this
-// frame's radiance is a checkerboard of 0 and 1 (mean 4/9 to 5/9, variance
-// about 0.25 a channel), where neither highlight is. In an odd block the
-// surface's history (1.5) is nearer the mean than the reflection's (4), so
-// the pass takes it, and it lies beyond the discard's tolerance (squared
-// distance at least 2.7 against at most 0.65): the pixel discards, storing
-// this frame's radiance. In an even block the pass takes the reflection's
-// history (1.5 against the surface's 4), which the discard does not test,
-// and keeps it.
+fn stripes(x: u32, _: u32) -> f32 {
+    if matches!(x, 30 | 32 | 34) { 4. } else { 0. }
+}
+
+// Three narrow parallel lights reflected in a mirror. After a lateral camera
+// step the same light fills the next pixel, while the mirror itself slides
+// two pixels. At the middle light's old location both neighbours are now
+// bright, so the 3x3 mean favours a bright history. At its new location both
+// neighbours are dark and the mean favours darkness. The known light positions
+// give the correct answer in both cases independently of the denoiser.
 #[test]
-fn a_highlight_the_surface_carried_away_is_discarded() {
+fn a_reflected_highlight_moves_by_its_own_parallax() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let (radiance, _) = followed(
+        &device,
+        &queue,
+        &Followed {
+            reversed: true,
+            z: 2.,
+            previous_eye: previous_eye(1.),
+            virtual_z: 4.,
+            jitter: [[0.; 2]; 2],
+            motion: [4. / SIZE[0] as f32, 0., 0., 1.],
+            history: stripes,
+            current: |x, y| stripes(x.saturating_sub(1), y),
+        },
+    );
+    let row = (SIZE[1] / 2 * SIZE[0]) as usize;
+    // The translation is a whole pixel, so the same texel footprint is
+    // fully lit at the new location and fully dark at the old one.
+    assert!(
+        radiance[row + 32][0] < 0.005,
+        "trail {:?}",
+        radiance[row + 32]
+    );
+    assert!(
+        radiance[row + 33][0] > 3.995,
+        "missing light {:?}",
+        radiance[row + 33]
+    );
+}
+
+fn light(x: f32) -> f32 {
+    0.75 - x / 256.
+}
+
+// The camera now moves an eighth of a reflected texel. A smooth light
+// gradient brightens by one percent. The extra eighth of a texel between
+// surface and virtual motion makes the surface history slightly brighter,
+// but the lighting change still exceeds the local spatial variation. The
+// old discard treated this as disocclusion and returned the current frame.
+#[test]
+fn a_slowly_moving_mirror_keeps_history_as_the_light_changes() {
     let Some((device, queue)) = device() else {
         return;
     };
@@ -97,38 +114,69 @@ fn a_highlight_the_surface_carried_away_is_discarded() {
         &Followed {
             reversed: true,
             z: 2.,
-            travel: 0.,
-            jitter: [[0.; 2]; 2],
-            // NDC motion: SLIDE pixels to the right since the last frame.
-            motion: [2. * SLIDE as f32 / SIZE[0] as f32, 0., 0., 1.],
-            history: highlights,
-            current: checkerboard,
+            previous_eye: previous_eye(0.125),
+            virtual_z: 4.,
+            jitter: [
+                [0.3 / SIZE[0] as f32, -0.2 / SIZE[1] as f32],
+                [-0.4 / SIZE[0] as f32, 0.35 / SIZE[1] as f32],
+            ],
+            motion: [0.5 / SIZE[0] as f32, 0., 0., 1.],
+            history: |x, _| light(x as f32),
+            current: |x, _| light(x as f32 - 0.125) * 1.01,
         },
     );
-    let mut wrong = Vec::new();
-    for y in 0..SIZE[1] {
-        for x in 0..SIZE[0] {
-            let pixel = (y * SIZE[0] + x) as usize;
-            let discards = !(x / SLIDE).is_multiple_of(2);
-            let ok = if discards {
-                variance[pixel] == 1. && radiance[pixel][0] == checkerboard(x, y)
-            } else {
-                (variance[pixel] - KEPT).abs() <= 0.002
-            };
-            if !ok {
-                wrong.push((x, y, discards, radiance[pixel][0], variance[pixel]));
-            }
-        }
+    let row = (SIZE[1] / 2 * SIZE[0]) as usize;
+    for x in 8..SIZE[0] - 8 {
+        let pixel = row + x as usize;
+        let this_frame = light(x as f32 - 0.125) * 1.01;
+        // Beyond the binary16 storage step, the previous (dimmer) light
+        // still contributes. A reset stores this frame and variance 1.
+        assert!(
+            variance[pixel] < 1.
+                && (light(x as f32 - 0.125) - 0.001..this_frame - 0.001)
+                    .contains(&radiance[pixel][0]),
+            "column {x}, current {this_frame}, resolved {:?}, variance {}",
+            radiance[pixel],
+            variance[pixel]
+        );
     }
-    assert!(
-        wrong.is_empty(),
-        "{} pixels where the discard should{} have fired, first (x, y, should discard, radiance, variance): {:?}",
-        wrong.len(),
-        if wrong.first().is_some_and(|w| w.2) {
-            ""
-        } else {
-            " not"
-        },
-        wrong.first()
-    );
+}
+
+// Sliding an unbounded flat mirror sideways in its own plane changes which
+// material point we see, while its plane and the virtual light remain fixed.
+// A slow change in the light must therefore accumulate at the stationary
+// reflection position even as measured receiver motion crosses whole pixels.
+#[test]
+fn a_mirror_sliding_in_its_plane_keeps_the_stationary_lights_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let run = |old_light| {
+        followed(
+            &device,
+            &queue,
+            &Followed {
+                reversed: true,
+                z: 2.,
+                previous_eye: [0.; 3],
+                virtual_z: 4.,
+                jitter: [[0.; 2]; 2],
+                motion: [8. / SIZE[0] as f32, 0., 0., 1.],
+                history: old_light,
+                current: |x, _| light(x as f32),
+            },
+        )
+        .0
+    };
+    let steady = run(|x, _| light(x as f32));
+    let brightened = run(|x, _| light(x as f32) * 0.99);
+    for x in 8..SIZE[0] - 8 {
+        let i = (SIZE[1] / 2 * SIZE[0] + x) as usize;
+        assert!(
+            steady[i][0] > brightened[i][0] + 0.001,
+            "column {x} retained no previous light: steady {:?}, brightened {:?}",
+            steady[i],
+            brightened[i]
+        );
+    }
 }

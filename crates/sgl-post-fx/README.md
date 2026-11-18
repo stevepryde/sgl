@@ -49,9 +49,10 @@ licences, source revisions and the blue-noise table source it reads.
   pass reprojects by the reflection's virtual point as AMD's reflection
   denoiser places it. Only confirmed hits with non-negligible BRDF weight
   set that distance; an all-miss sample kernel reprojects the surface
-  (DFX-56). It rejects a surface history far from the current
-  neighbourhood as AMD's does, and clamps to Wicked Engine's 2-deviation box
-  (DFX-25). Only candidates inside the previous viewport enter its luminance
+  (DFX-56). It compares the current pixel with the previous surface and hit candidates
+  and reduces the radiance history's influence where the receiver or reflected
+  source moves independently. Its existing Wicked Engine 2-deviation box
+  limits the resulting history. Only candidates inside the previous viewport enter this
   comparison (DFX-57): an off-screen virtual point, including one behind the
   previous camera (DFX-31), leaves a valid surface candidate available. A
   surface that was behind the previous camera finds no history, in SSR and

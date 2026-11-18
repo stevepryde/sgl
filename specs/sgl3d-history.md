@@ -1991,7 +1991,7 @@ reflections with Wicked Engine's temporal pass) and world-space rays (Wicked's R
 denoiser). Velvet and world rays accumulate through one shared temporal reprojection. No
 reflection path reads a frame-wide or scene-wide motion signal: whole-view restarts come only
 from the view's reset, a frame the stage did not run in, a resize or a settings change. A continuously
-running game trips the per-pixel rules: Crystal's surface-history discard under camera motion
+running game trips the per-pixel rules: Crystal's reduced history weight where the receiver or the reflected source moves
 (R-9), roughness-cutoff re-entry under jitter (R-6, R-25), world rays filling in where the
 screen-space method lets go (R-30), and the variance resets that keep a blur on wherever a
 rejection repeats (R-16, R-29).
@@ -2139,80 +2139,54 @@ rejection repeats (R-16, R-29).
   its motion vector) or at the reflection's virtual point (the hit distance beyond the surface
   along the view ray, projected through the previous camera alone; a point on or behind the
   previous camera's plane goes a viewport off screen). An off-screen candidate loses; otherwise
-  the candidate whose luminance is strictly nearer the 3×3 mean wins, ties going to the hit.
+  the candidate whose confidence-premultiplied luminance is nearer the current pixel wins,
+  with ties going to the hit. The history lookups use stable pixel coordinates. Motion validation compares camera and surface positions on the previous raster grid, including the change of jitter.
   Per pixel, every frame.
 - **Raised by.** Any motion or jitter.
 - **Stays triggered while.** Nothing by itself: it selects, it does not reject (R-9 and R-10 do).
 - **Source.** Wicked Engine `ssr_temporalCS` and SEED DD18 through DiligentFX, faithful;
   modified by DFX-57 (in-bounds first), DFX-25 (AMD virtual point) and DFX-31 (behind-camera).
-  Code: `SSR_ComputeTemporalAccumulation.wgsl` (`ComputeReflectionHitPosition`,
-  `ComputeTemporalAccumulationPS`).
+  Code: `SSR_Reprojection.wgsl` and `SSR_ComputeTemporalAccumulation.wgsl`.
 - **Guard.** `offscreen_candidates_cannot_discard_valid_reflection_history`,
   `reflection_hits_behind_the_previous_camera_take_no_history`,
   `resolved_depth_is_the_virtual_point_along_the_view_ray`
   (`sgl-post-fx/src/ssr_temporal_neighborhood_tests.rs`).
 - **Status.** Rule.
 
-#### R-9 Surface-history discard
+#### R-9 Reflection history follows the moving receiver and reflected source
 
-- **Rule.** When the incident-point candidate is chosen and its squared distance from the 3×3
-  mean of this frame's resolved radiance is at least 1.5 × the length of that neighbourhood's
-  variance (`SSR_REPROJECT_SURFACE_DISCARD_VARIANCE_WEIGHT`), the temporal pass discards all
-  history at the pixel: radiance is this frame's, variance 1. It recovers the next frame the
-  test passes; variance in about 65 frames.
-- **Raised by.** Reflection parallax under camera or object motion, as intended; and, under any
-  camera motion, any change of the reflected radiance over time (a light or emissive changing, a
-  reflected object moving) on smooth reflections, where with `GGXImportanceSampleBias` 1
-  (deterministic mirror rays) the 3×3 variance is near 0 and so is the threshold.
-- **Stays triggered while.** The camera moves and the reflected radiance changes. Measured on
-  Crystal's production passes, a mirror floor (perceptual roughness 0.05) reflecting a textured
-  wall under jitter at 64×48: at rest, no pixel discarded, with or without a light changing
-  1 % a frame; moving 0.02 m a frame, 2–29 of about 1200 mirror pixels a frame, all where the
-  3×3's range is over 90 % of its peak (the mask's first row, the panel's edges); moving and the
-  light brightening 1 % a frame, 125–790 a frame on smooth reflection (3×3 range 1–6 %),
-  alternating with the jitter's phase. That alternation doubles the frame-to-frame flicker
-  (median second difference 0.0137 against 0.0068 without the discard; at roughness 0.15, 0.0125
-  against 0.0075), and where the discard fires at the mask's first row it raises the
-  99th-percentile flicker from 0.17 to 1.87 even with no light change.
-- **Source.** AMD FidelityFX Denoiser `FFX_DNSR_Reflections_PickReprojection`, modified: a 3×3
-  box of reconstructed radiance in place of AMD's radius-4 Gaussian window of raw rays, applied
-  whenever luminance prefers the surface (DFX-25). AMD measures that window over stochastic
-  rays, whose variance is their noise, tests the surface history only after the hit candidate
-  fails its normal and roughness test (on a flat mirror the hit always passes), and does not
-  denoise mirror reflections at all (`IsMirrorReflection`). Code:
-  `SSR_ComputeTemporalAccumulation.wgsl` (`ComputeTemporalAccumulationPS`).
-- **Guard.** `a_still_mirror_under_jitter_discards_no_history` (at rest under jitter both
-  reprojections tie and the pass takes the reflection's, which the discard does not test, so a
-  reflected light that changes discards no pixel) and `a_highlight_the_surface_carried_away_is_discarded`
-  (a mirror sliding in its plane under a still camera: where the luminance choice takes the
-  surface's history and it lies beyond the tolerance it is discarded, where it takes the
-  reflection's it is kept), on Crystal's production temporal pass
-  (`crates/sgl-post-fx/src/ssr_surface_discard_tests.rs`).
-- **Status.** Rule. A workaround whose replacement is tracked in [#819](https://github.com/stevepryde/sgl/issues/819): the cause of the streaks it reduces is not established. Kept by measurement as a trade-off, not a fault with a free fix (settled
-  from B-20 by the 2026-11-18 history audit); the choice is the owner's to revisit. The discard's tolerance is the variance of a
-  deterministic signal, so it fires on any change of the reflected radiance under motion, not only
-  on parallax, and alternates with the jitter. DFX-25 added it because it cut fast-motion smear of
-  bright fixtures' reflections in Hyperdrive (beta 0.014 to 0.009, #80). On Hyperdrive's tunnel at
-  1920×1080, Ultra, Crystal, it fires on about 100 000 road pixels a frame in steady motion, at
-  all of them (in the frames checked) where the hit candidate passes the pass's own disocclusion
-  test, and never with the camera still. Smear is the least-squares weight of the reflections 2–8
-  frames old, from the run without history, in each variant's difference from that run, over the
-  pixels Crystal changes (AA off, frames 30–119): 0.215 / 0.183 (night / day) without the
-  discard, 0.179 / 0.152 with it, so the discard removes 16–17 % of the smear. Slow-motion flicker
-  is the mean absolute second difference of linear luminance there under TAA, the camera alone
-  moving 0.5 m a frame: 0.0174 / 0.0183 without the discard, 0.0182 / 0.0193 with it, about 5 %
-  more (p99 0.294 / 0.296 against 0.310 / 0.310); with the camera still every variant measured
-  the same (0.0004 / 0.0008). Every narrowing that removes the misfire gives most of that smear
-  reduction back: AMD's order (the hit history wherever it passes that test, the surface's
-  tested only where it fails) and taking the hit history in place of the discard remove the
-  misfire (0 discards in the fixture above, flicker 0.0175 / 0.0183) but keep 5 % / 3 % and
-  15 % / 14 % of the smear reduction (0.213 / 0.182, 0.209 / 0.179); discarding only where the
-  hit fails keeps none, because on the road the hit always passes. AMD's radius-4 Gaussian
-  window in place of the 3×3 keeps about 40 % of it (0.201 / 0.171) but halves the misfire only
-  (5612 of 10 640 discards in the fixture, flicker 0.0179 / 0.0189); with AMD's order it is
-  AMD's order. A variance floor of the half-float step of the stored radiance does not change
-  the misfire (a 1 % change is far above it). AMD's own hit test needs normal and roughness
-  history, which Crystal does not keep; keeping it is the faithful alternative not yet measured.
+- **Rule.** Judge how much of a previous pixel can represent this reflection using the overlap
+  of two unit pixel footprints. Coincident centres have full overlap. A one-pixel separation
+  along either axis leaves none. At the receiver, compare the observed surface motion with
+  camera-only motion and with the virtual-point reprojection. Their greater overlap gives the
+  support available from either explanation. If the virtual point supplied the history,
+  the previous geometry depth at the accepted raster address, including the fallback
+  search offset, gives another estimate of the reflecting plane.
+  Translating a plane along its normal moves a stationary object's mirror image by twice
+  that distance. A tangential translation leaves it in place.
+  At each confirmed source hit, motion XY and valid depth motion reconstruct the source's
+  previous position. Without depth motion its previous camera-space depth comes from the
+  camera. Previous sky or a depth mismatch removes that ray's history support.
+  Otherwise Crystal reflects the source displacement across the receiver's tangent plane
+  and measures overlap in the previous camera's image. Reconstruction averages this evidence
+  over the contributing measured rays with the same BRDF, tone-map and confidence weights.
+  Receiver and source support scale the radiance weight. R-10 still tests the receiver depth.
+- **Raised by.** A reflector moving independently of the camera where the reflection has its
+  own parallax, or a reflected object moving independently at the hit. A change in incident
+  light on a stationary surface can retain history even when the local spatial variance is zero.
+- **Stays triggered while.** The motion leaves the two footprints disjoint. The next frame
+  measures its own overlap.
+- **Source.** Crystal's temporal pass and hit validation. The distinction between motion of
+  the reflector and motion of the reflected object also underlies Microsoft's animated planar
+  reflection example. [DirectX ray-tracing sample](https://github.com/microsoft/DirectX-Graphics-Samples/tree/master/Samples/Desktop/D3D12Raytracing/src/D3D12RaytracingRealTimeDenoisedAmbientOcclusion).
+- **Guard.** `a_reflected_highlight_moves_by_its_own_parallax`,
+  `a_slowly_moving_mirror_keeps_history_as_the_light_changes`,
+  `a_mirror_sliding_in_its_plane_keeps_the_stationary_lights_history`,
+  `a_moving_panel_reveals_the_reflected_background`,
+  `a_wall_appearing_over_infinite_sky_lights_its_reflection` and
+  `a_sign_moving_along_the_sightline_moves_in_the_floor_mirror` in `sgl-post-fx`.
+- **Status.** Rule. The rejected surface-history workaround and the comparison with AMD’s
+  denoiser are recorded in the [port notes](../crates/sgl-post-fx/PROVENANCE.md#crystal-reflection-history-819).
 
 #### R-10 Disocclusion by the surface's own previous depth
 
@@ -2310,13 +2284,13 @@ rejection repeats (R-16, R-29).
 
 - **Rule.** Every accepted history is clamped to the 3×3 mean ± 2σ (`SSR_TEMPORAL_VARIANCE_GAMMA`)
   of this frame's resolved radiance, per channel including confidence, then mixed at
-  `TemporalRadianceStabilityFactor` 0.95; variance mixes at `TemporalVarianceStabilityFactor` 0.9.
-  There is no sample-count ramp: the first history after a reset already weighs 0.95.
-  Neighbours outside the mask or in skipped tiles contribute 0 to the box. Continuous, time
-  constant 20 frames.
+  up to `TemporalRadianceStabilityFactor` 0.95, scaled by the receiver and source
+  support in R-9. Variance mixes at `TemporalVarianceStabilityFactor` 0.9.
+  The first supported history after a reset can already weigh 0.95. Neighbours
+  outside the mask or in skipped tiles contribute 0 to the box.
 - **Raised by.** Every frame.
-- **Stays triggered while.** It always applies; at mask edges the zero neighbours let a darker
-  history survive.
+- **Stays triggered while.** Reprojection succeeds. At mask edges the zero neighbours
+  can admit a darker history into the box.
 - **Source.** Wicked `ssr_temporalCS` constants through DiligentFX (DFX-23, DFX-25, DFX-49).
   Code: `SSR_ComputeTemporalAccumulation.wgsl` (`ComputePixelStatistic`).
 - **Guard.** `departed_reflections_cannot_support_current_dark_history`.
@@ -2329,7 +2303,7 @@ rejection repeats (R-16, R-29).
   (`SSS_BILATERAL_VARIANCE_ESTIMATE_THRESHOLD`) and runs at all above 0.00005, truncated to
   i32(min(2σ, radius)), so 3×3 at perceptual roughness 1/16 or more. Variance decays by 0.9 a
   frame: about 65 frames.
-- **Raised by.** R-1, R-2, R-6, R-7, R-9, R-10/R-11 failures, R-12, R-13.
+- **Raised by.** R-1, R-2, R-6, R-7, R-10/R-11 failures, R-12, R-13.
 - **Stays triggered while.** Any of those repeats at a pixel: the blur never turns off there,
   read as softness or shimmer rather than rejection.
 - **Source.** DiligentFX faithful (`Output.Variance = 1.0f`). Code:
@@ -2390,7 +2364,7 @@ rejection repeats (R-16, R-29).
   point through the previous camera alone (`temporal_reprojection_uv`, w ≤ 0 off screen). When
   both lie off screen it keeps no history; otherwise the in-bounds candidate whose luminance is
   nearer the 3×3 mean wins, and history is mixed only if the position after the vicinity search
-  lies on screen. There is no surface discard as in Crystal (R-9). Per pixel.
+  lies on screen. This selection uses its own depth and signal checks (compare Crystal, R-9). Per pixel.
 - **Raised by.** Screen-edge disocclusion; hits behind the previous camera.
 - **Stays triggered while.** Nothing beyond the edge band a moving camera uncovers.
 - **Source.** Wicked `ssr_temporalCS`, faithful selection, modified: in-bounds first and the
