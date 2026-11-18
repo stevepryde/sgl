@@ -1,7 +1,8 @@
 //! Exercises the production temporal pass: on a still view whose traced hits
 //! move between neighbouring pixels every frame, as TAA's jitter moves hits on
 //! thin bright geometry, and after a turn that puts the reflections' hits
-//! behind the previous camera, and when the near plane changes.
+//! behind the previous camera, when the near plane changes, and over a
+//! receiver the camera follows.
 use super::*;
 use glam::Vec3;
 
@@ -22,6 +23,18 @@ fn value(bits: u16) -> f32 {
 /// nonnegative values.
 fn motion_half(value: f32) -> u16 {
     crate::test_support::to_half(value.abs()) | (u16::from(value.is_sign_negative()) << 15)
+}
+
+/// The G-buffer's motion texel (gbuffer.wgsl) of a surface that moved by
+/// `uv` (current minus previous) and whose view depth was `depth` metres
+/// more from the previous camera than it is from this one.
+fn moved(uv: [f32; 2], depth: f32) -> [u16; 4] {
+    [
+        motion_half(uv[0]),
+        motion_half(uv[1]),
+        motion_half(depth),
+        ONE,
+    ]
 }
 
 fn texture(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::Texture {
@@ -103,7 +116,7 @@ fn hits(frame: u32) -> Vec<u16> {
 }
 
 /// The production temporal pass over a still receiver plane at depth 0.5,
-/// traced (roughness 0.2), with no motion and its two history slots.
+/// traced (roughness 0.2), at rest and its two history slots.
 struct Pass {
     pipeline: Velvet,
     current: wgpu::Texture,
@@ -133,7 +146,12 @@ impl Pass {
         };
         upload(queue, &pass.depth, bytemuck::cast_slice(&PLANE), 4);
         upload(queue, &pass.reprojection, bytemuck::cast_slice(&PLANE), 4);
-        upload(queue, &pass.motion, &[0; (SIZE * SIZE * 8) as usize], 8);
+        upload(
+            queue,
+            &pass.motion,
+            bytemuck::cast_slice(&moved([0.; 2], 0.).repeat((SIZE * SIZE) as usize)),
+            8,
+        );
         let normals = [HALF, HALF, ONE, ROUGHNESS].repeat((SIZE * SIZE) as usize);
         upload(
             queue,
@@ -215,8 +233,9 @@ fn still(continues: bool) -> TemporalParams {
         previous_view_projection: Mat4::IDENTITY.to_cols_array_2d(),
         size: [size, size, 1. / size, 1. / size],
         previous_near: 0.1,
+        near: 0.1,
         flags: if continues { TEMPORAL_CONTINUES } else { 0 },
-        padding: [0; 2],
+        padding: 0,
     }
 }
 
@@ -274,8 +293,8 @@ fn jittered_hits_settle_and_a_reset_passes_through() {
 // was nowhere on its screen. After a half turn every hit point ahead of the
 // camera, on the plane 5 m deep (view z = -5), lies behind the previous one,
 // where dividing by its negative clip w would mirror it onto the screen; the
-// surface's motion is two screens long, as for a surface behind the previous
-// camera. With no valid history the pass must return this frame's hits
+// surface's motion is two screens long and its depth motion invalid, as for
+// a surface behind the previous camera. With no valid history the pass must return this frame's hits
 // exactly. History taken from the mirrored position, a uniform 1 at the
 // plane's depth, would pull every pixel toward 1, inside its neighbourhood's
 // colour box.
@@ -297,7 +316,7 @@ fn hits_behind_the_previous_camera_take_no_history() {
         bytemuck::cast_slice(&vec![hit_depth; texels]),
         4,
     );
-    // Motion (2, 0): two screens.
+    // Motion (2, 0): two screens, with no valid depth motion.
     upload(
         &queue,
         &pass.motion,
@@ -325,8 +344,9 @@ fn hits_behind_the_previous_camera_take_no_history() {
             previous_view_projection: previous_view_projection.to_cols_array_2d(),
             size: [size, size, 1. / size, 1. / size],
             previous_near: 0.1,
+            near: 0.1,
             flags: TEMPORAL_CONTINUES,
-            padding: [0; 2],
+            padding: 0,
         },
         1,
     );
@@ -395,8 +415,9 @@ fn a_changed_near_plane_keeps_history() {
             previous_view_projection: (previous_projection * view).to_cols_array_2d(),
             size: [size, size, 1. / size, 1. / size],
             previous_near,
+            near,
             flags: TEMPORAL_CONTINUES,
-            padding: [0; 2],
+            padding: 0,
         },
         1,
     );
@@ -447,11 +468,11 @@ fn the_left_edge_fallback_reads_the_edge_texel() {
         bytemuck::cast_slice(&[HALF, HALF, HALF, ONE].repeat(texels)),
         8,
     );
-    // Motion (1/128, 0), a quarter texel: binary16 0x2000.
+    // Motion (1/128, 0), a quarter texel, at the same depth.
     upload(
         &queue,
         &pass.motion,
-        bytemuck::cast_slice(&[0x2000u16, 0, 0, 0].repeat(texels)),
+        bytemuck::cast_slice(&moved([1. / 128., 0.], 0.).repeat(texels)),
         8,
     );
     let size = SIZE as f32;
@@ -465,8 +486,9 @@ fn the_left_edge_fallback_reads_the_edge_texel() {
             previous_view_projection: previous_view_projection.to_cols_array_2d(),
             size: [size, size, 1. / size, 1. / size],
             previous_near: 0.1,
+            near: 0.1,
             flags: TEMPORAL_CONTINUES,
-            padding: [0; 2],
+            padding: 0,
         },
         1,
     );
@@ -524,13 +546,14 @@ fn an_offscreen_candidate_cannot_discard_valid_history() {
             (zoom * view, 0.21875, 0.01)
         } else {
             // Virtual hit stays at this pixel; motion points two screens
-            // left, where the history sampler clamps to the left edge.
+            // left, where the history sampler clamps to the left edge. Both
+            // receivers keep their 2 m of depth.
             (projection, 2., 0.05)
         };
         upload(
             &queue,
             &pass.motion,
-            bytemuck::cast_slice(&[crate::test_support::to_half(motion), 0, 0, 0].repeat(texels)),
+            bytemuck::cast_slice(&moved([motion, 0.], 0.).repeat(texels)),
             8,
         );
         upload(
@@ -547,8 +570,9 @@ fn an_offscreen_candidate_cannot_discard_valid_history() {
                 previous_view_projection: previous.to_cols_array_2d(),
                 size: [size, size, 1. / size, 1. / size],
                 previous_near: 0.1,
+                near: 0.1,
                 flags: TEMPORAL_CONTINUES,
-                padding: [0; 2],
+                padding: 0,
             },
             1,
         );
@@ -580,7 +604,7 @@ fn an_offscreen_candidate_cannot_discard_valid_history() {
     upload(
         &queue,
         &pass.motion,
-        bytemuck::cast_slice(&[motion_half(-0.2421875), 0, 0, 0].repeat(texels)),
+        bytemuck::cast_slice(&moved([-0.2421875, 0.], 0.).repeat(texels)),
         8,
     );
     let previous = Mat4::from_translation(Vec3::new(0.484375, 0., 0.)) * projection;
@@ -592,8 +616,9 @@ fn an_offscreen_candidate_cannot_discard_valid_history() {
             previous_view_projection: previous.to_cols_array_2d(),
             size: [size, size, 1. / size, 1. / size],
             previous_near: 0.1,
+            near: 0.1,
             flags: TEMPORAL_CONTINUES,
-            padding: [0; 2],
+            padding: 0,
         },
         1,
     );
@@ -647,7 +672,8 @@ fn a_camera_dolly_keeps_a_stationary_planes_history() {
         bytemuck::cast_slice(&[HALF, HALF, HALF, ONE].repeat(texels)),
         8,
     );
-    // The public motion contract is unjittered current minus previous UV.
+    // The public motion contract is unjittered current minus previous UV,
+    // and previous minus current view depth.
     let motion: Vec<u16> = (0..SIZE * SIZE)
         .flat_map(|i| {
             let uv = glam::Vec2::new((i % SIZE) as f32 + 0.5, (i / SIZE) as f32 + 0.5) / size;
@@ -658,7 +684,8 @@ fn a_camera_dolly_keeps_a_stationary_planes_history() {
             let now = (projection * view).project_point3(point);
             let old = old_projection.project_point3(point);
             let delta = (now - old) * Vec3::new(0.5, -0.5, 0.);
-            [motion_half(delta.x), motion_half(delta.y), 0, 0]
+            let depth = view.transform_point3(point).z - point.z;
+            moved([delta.x, delta.y], depth)
         })
         .collect();
     upload(&queue, &pass.motion, bytemuck::cast_slice(&motion), 8);
@@ -670,8 +697,9 @@ fn a_camera_dolly_keeps_a_stationary_planes_history() {
             previous_view_projection: previous.to_cols_array_2d(),
             size: [size, size, 1. / size, 1. / size],
             previous_near: 0.3,
+            near: 0.1,
             flags: TEMPORAL_CONTINUES,
-            padding: [0; 2],
+            padding: 0,
         },
         1,
     );
@@ -683,6 +711,64 @@ fn a_camera_dolly_keeps_a_stationary_planes_history() {
                 "stationary plane lost history at ({x},{y}): {texel:?}"
             );
         }
+    }
+}
+
+// Plausible defect: the receiver's depth from the previous camera is taken
+// by reprojecting its current point through that camera, which holds only
+// for a surface at rest. The independent scene is a plane the camera
+// follows: both moved 2 m along the view axis, so the plane was 8 m from the
+// previous camera and is 8 m from this one, at the same place on screen, and
+// its motion says so (no screen motion, no depth motion). Its current point
+// lies 10 m from the previous camera, and the old depth is 8 m everywhere,
+// so searching neighbours cannot repair a comparison with 10 m
+// (exp(-2/10) < 0.9). The plane's uniform 0.5 history must carry over.
+#[test]
+fn a_receiver_the_camera_follows_keeps_its_history() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let pass = Pass::new(&device, &queue);
+    let texels = (SIZE * SIZE) as usize;
+    let size = SIZE as f32;
+    let near = 0.1;
+    let projection = crate::perspective(1.2, 1., near);
+    // The camera, now 2 m further along -z than it was, at the origin.
+    let view = Mat4::from_translation(Vec3::new(0., 0., 2.));
+    let depth = projection.project_point3(Vec3::new(0., 0., -8.)).z;
+    for texture in [&pass.depth, &pass.reprojection, &pass.depth_history[0]] {
+        upload(
+            &queue,
+            texture,
+            bytemuck::cast_slice(&vec![depth; texels]),
+            4,
+        );
+    }
+    upload(
+        &queue,
+        &pass.history[0],
+        bytemuck::cast_slice(&[HALF, HALF, HALF, ONE].repeat(texels)),
+        8,
+    );
+    let output = pass.run(
+        (&device, &queue),
+        &hits(0),
+        TemporalParams {
+            inverse_view_projection: (projection * view).inverse().to_cols_array_2d(),
+            previous_view_projection: projection.to_cols_array_2d(),
+            size: [size, size, 1. / size, 1. / size],
+            previous_near: near,
+            near,
+            flags: TEMPORAL_CONTINUES,
+            padding: 0,
+        },
+        1,
+    );
+    for (i, texel) in output.iter().enumerate() {
+        assert!(
+            (texel[0] - value(HALF)).abs() < 0.05,
+            "pixel {i} of the followed plane lost its history: {texel:?}"
+        );
     }
 }
 

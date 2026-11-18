@@ -140,8 +140,9 @@ struct TemporalParams {
     previous_view_projection: [[f32; 4]; 4],
     size: [f32; 4],
     previous_near: f32,
+    near: f32,
     flags: u32,
-    padding: [u32; 2],
+    padding: u32,
 }
 /// `TemporalParams::flags`: history continues; clear, it resets.
 const TEMPORAL_CONTINUES: u32 = 1;
@@ -340,8 +341,9 @@ impl Velvet {
                 previous_view_projection: previous.to_cols_array_2d(),
                 size: [width, height, 1. / width, 1. / height],
                 previous_near,
+                near,
                 flags: if continues { TEMPORAL_CONTINUES } else { 0 },
-                padding: [0; 2],
+                padding: 0,
             }),
         );
         // Godot's projection with its depth correction flips y into
@@ -576,6 +578,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 4] {
                 previous_view_projection,
                 size,
                 previous_near,
+                near,
                 flags,
                 padding,
             ]

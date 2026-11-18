@@ -1373,7 +1373,8 @@ fn temporal_output(
                 })
                 .collect::<Vec<_>>(),
         );
-        // Current minus previous UV, a frame's move, under the receiver.
+        // Current minus previous UV, a frame's move, under the receiver;
+        // every surface keeps its view depth, validly (gbuffer.wgsl).
         let motion = test_support::hdr_texture(
             device,
             queue,
@@ -1382,9 +1383,9 @@ fn temporal_output(
                 .flat_map(|y| (0..size[0]).map(move |x| (x, y)))
                 .map(|(x, y)| {
                     if covered(frame.receiver, x, y) {
-                        [2. / w, 0., 0., 0.]
+                        [2. / w, 0., 0., 1.]
                     } else {
-                        [0.; 4]
+                        [0., 0., 0., 1.]
                     }
                 })
                 .collect::<Vec<_>>(),

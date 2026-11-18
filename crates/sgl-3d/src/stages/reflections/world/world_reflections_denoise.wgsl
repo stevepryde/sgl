@@ -303,10 +303,9 @@ fn world_temporal(@builtin(global_invocation_id) id:vec3<u32>,@builtin(workgroup
   textureStore(temporal_variance_output,p,vec4(0.,record));
   return;
  }
- let view=TemporalView(world.inverse_view_projection,world.previous_view_projection,world.reduced,world.previous_near);
- // SGL3D motion (current minus previous), negated into Wicked's.
- let velocity=-textureLoad(world_motion,p*downscale,0).xy;
- let accumulated=temporal_accumulate(view,p,current,velocity,textureLoad(temporal_reprojection,p,0).x,receiver.depth);
+ let view=TemporalView(world.inverse_view_projection,world.previous_view_projection,world.reduced,world.previous_near,world.eye.w);
+ let motion=textureLoad(world_motion,p*downscale,0);
+ let accumulated=temporal_accumulate(view,p,current,motion,textureLoad(temporal_reprojection,p,0).x,receiver.depth);
  var current_variance=textureLoad(temporal_variance_current,p,0).x;
  var response=VARIANCE_TEMPORAL_RESPONSE;
  if accumulated.disocclusion<DISOCCLUSION_THRESHOLD || !temporal_saturated(accumulated.uv) {

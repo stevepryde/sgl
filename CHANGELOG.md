@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` reflections: world-space rays and Velvet keep their accumulated
+  history on a surface that moves with the camera, such as a vehicle a chase
+  camera follows. Its reflections were noisy while it moved and settled only
+  at rest; they are now as steady in motion. No game-code changes are
+  needed.
+
 ## 0.7.0 — 2026-11-17
 
 Move every SGL crate to `0.7.0` together and commit the updated `Cargo.lock`.

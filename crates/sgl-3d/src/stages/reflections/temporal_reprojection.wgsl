@@ -15,10 +15,16 @@
 // device depth, is linearised with the near plane it was written under; the
 // bilinear fallback floors its base texel where Wicked's uint2 truncates, so
 // within half a texel of the top or left edge the weights land on the edge
-// texel; only on-screen candidates may win the history selection; receiver
-// depth is reprojected to the previous camera before disocclusion, as
-// DiligentFX f26cfe5b901bf180c4a3c9bbd4d5df0b96536d4b's
-// Shaders/Common/private/ComputeReprojectedDepth.fx does (no code copied).
+// texel; only on-screen candidates may win the history selection; the
+// disocclusion test compares the history's depth with the receiver's depth
+// from the previous camera, where Wicked's (GetDisocclusion, also at
+// 4323a33) and AMD's reflection denoiser (FidelityFX SDK c6efa6b,
+// ffx_denoiser_reflections_reproject.h) compare it with this frame's, which
+// rejects a static plane the camera approaches. That depth is the
+// receiver's depth now plus the G-buffer's depth motion (NRD's
+// viewZprev = viewZ + motion.z, as the ambient occlusion's temporal pass
+// takes it), which holds the camera's movement and the surface's own, so a
+// surface the camera follows keeps its history, as it does in Wicked's.
 // Reads `temporal_current`, `temporal_history`, `temporal_depth_history` and
 // `linear_sampler`.
 const TEMPORAL_RESPONSE:f32=.95;
@@ -34,6 +40,8 @@ struct TemporalView {
  // The previous reversed-Z infinite projection's near plane, which wrote
  // the depth history.
  previous_near:f32,
+ // This frame's near plane, which wrote the receiver's depth.
+ near:f32,
 }
 fn temporal_saturated(uv:vec2<f32>)->bool {
  return all(uv==clamp(uv,vec2(0.),vec2(1.)));
@@ -65,12 +73,13 @@ fn temporal_reprojection_uv(view:TemporalView,uv:vec2<f32>,depth:f32)->vec2<f32>
  }
  return previous.xy/previous.w*vec2(.5,-.5)+vec2(.5);
 }
-// Both depths belong to the previous camera. Comparing current-camera
-// depth instead rejects a static plane when the camera moves toward it.
+// Both depths belong to the previous camera: `depth` the receiver's view
+// depth from it in metres, `history` the device depth it stored. Comparing
+// current-camera depth instead rejects a static plane when the camera moves
+// toward it.
 fn temporal_disocclusion(view:TemporalView,depth:f32,history:f32)->f32 {
- let current=linear_depth(view.previous_near,depth);
  let previous=linear_depth(view.previous_near,history);
- return exp(-abs(previous-current)/current*DISOCCLUSION_DEPTH_WEIGHT);
+ return exp(-abs(previous-depth)/depth*DISOCCLUSION_DEPTH_WEIGHT);
 }
 fn temporal_history_depth(view:TemporalView,uv:vec2<f32>)->f32 {
  let q=clamp(vec2<i32>(floor(uv*view.size.xy)),vec2(0),vec2<i32>(view.size.xy)-vec2(1));
@@ -126,10 +135,12 @@ fn temporal_previous_color(view:TemporalView,previous_uv:vec2<f32>,depth:f32)->T
  return TemporalHistory(color,disocclusion,uv);
 }
 // Accumulates `current`, the colour at traced pixel `p` whose receiver is at
-// `depth`, over the history the better of its two reprojections finds. The
-// result is not yet clamped to zero; its disocclusion and UV are the
-// history's.
-fn temporal_accumulate(view:TemporalView,p:vec2<i32>,current:vec4<f32>,velocity:vec2<f32>,reprojection_depth:f32,depth:f32)->TemporalHistory {
+// device depth `depth` and moved by the G-buffer's `motion` (gbuffer.wgsl:
+// xy current minus previous UV, z previous minus current view depth, w above
+// 0 where that depth motion is valid), over the history the better of its
+// two reprojections finds. The result is not yet clamped to zero; its
+// disocclusion and UV are the history's.
+fn temporal_accumulate(view:TemporalView,p:vec2<i32>,current:vec4<f32>,motion:vec4<f32>,reprojection_depth:f32,depth:f32)->TemporalHistory {
  // Welford's online algorithm over the 3x3 neighbourhood.
  var m1=vec4(0.);
  var m2=vec4(0.);
@@ -145,14 +156,20 @@ fn temporal_accumulate(view:TemporalView,p:vec2<i32>,current:vec4<f32>,velocity:
  let stddev=sqrt(max(m2/9.-mean*mean,vec4(0.)));
  // Secondary reprojection based on ray lengths (SEED DD18, slide 45).
  let uv=(vec2<f32>(p)+.5)*view.size.zw;
- let previous_surface=temporal_previous_clip(view,uv,depth);
- // A surface on/behind the previous camera or nearer than its near plane
- // supplied no history. Infinite reversed-Z has near=1 and far=0.
- if previous_surface.w<=0. || previous_surface.z>=previous_surface.w || previous_surface.z<=0. {
+ // The receiver's view depth from the previous camera: its depth now and
+ // the depth motion its geometry rasterized. Reprojecting its current point
+ // through the previous camera instead holds only for a surface at rest:
+ // one the camera follows keeps its depth while that point recedes by the
+ // camera's travel, and fails the test below once a frame's travel exceeds
+ // a tenth of its depth. A surface on or behind the previous camera
+ // (no valid depth motion) or nearer than its near plane supplied no
+ // history.
+ let previous_depth=linear_depth(view.near,depth)+motion.z;
+ if motion.w<=0. || previous_depth<=view.previous_near {
   return TemporalHistory(current,0.,vec2(-1.));
  }
- let previous_depth=previous_surface.z/previous_surface.w;
- let by_velocity=uv+velocity;
+ // SGL3D motion (current minus previous), negated into Wicked's velocity.
+ let by_velocity=uv-motion.xy;
  let by_hit=temporal_reprojection_uv(view,uv,reprojection_depth);
  let velocity_inside=temporal_saturated(by_velocity);
  let hit_inside=temporal_saturated(by_hit);

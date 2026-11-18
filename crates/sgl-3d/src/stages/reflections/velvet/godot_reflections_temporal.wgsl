@@ -16,9 +16,11 @@ struct TemporalParams {
 	size: vec4<f32>,
 	// The previous reversed-Z infinite projection's near plane.
 	previous_near: f32,
+	// This frame's near plane.
+	near: f32,
 	// TEMPORAL_CONTINUES while history continues; clear, it resets.
 	flags: u32,
-	padding: vec2<u32>,
+	padding: u32,
 }
 const TEMPORAL_CONTINUES: u32 = 1u;
 @group(0) @binding(0) var temporal_current: texture_2d<f32>;
@@ -49,11 +51,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 		textureStore(history_output, p, c);
 		return;
 	}
-	let view = TemporalView(params.inverse_view_projection, params.previous_view_projection, params.size, params.previous_near);
-	// SGL3D motion (current minus previous) at full size, negated into Wicked's.
+	let view = TemporalView(params.inverse_view_projection, params.previous_view_projection, params.size, params.previous_near, params.near);
+	// SGL3D motion at full size.
 	let motion_scale = vec2<f32>(textureDimensions(motion)) * params.size.zw;
-	let velocity = -textureLoad(motion, vec2<i32>((vec2<f32>(p) + 0.5) * motion_scale), 0).xy;
-	let accumulated = temporal_accumulate(view, p, c, velocity, textureLoad(reprojection, p, 0).x, z);
+	let moved = textureLoad(motion, vec2<i32>((vec2<f32>(p) + 0.5) * motion_scale), 0);
+	let accumulated = temporal_accumulate(view, p, c, moved, textureLoad(reprojection, p, 0).x, z);
 	let result = max(accumulated.color, vec4<f32>(0.0));
 	textureStore(output, p, result);
 	textureStore(history_output, p, result);

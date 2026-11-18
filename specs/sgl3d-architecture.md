@@ -1213,7 +1213,10 @@ last, after everything it may use, and refuses a directive in it.
 - **Reflections.** Velvet and world rays share
   `stages/reflections/temporal_reprojection.wgsl`: candidates must be in bounds
   before luminance chooses between them, and disocclusion compares both depths
-  in the previous camera's space. `reflections/reprojection.wgsl` owns virtual
+  in the previous camera's space, the receiver's by the G-buffer's depth
+  motion, as the ambient occlusion's temporal pass takes it, so a moving
+  receiver keeps its history as a static one does.
+  `reflections/reprojection.wgsl` owns virtual
   hit depth for both traces: extend the normalised view ray by the reflected
   hit distance, as AMD FidelityFX Denoiser d7dfecb's
   `FFX_DNSR_Reflections_GetHitPositionReprojection` does; Euclidean hit length
