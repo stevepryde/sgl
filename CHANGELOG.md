@@ -83,6 +83,59 @@ docs and specs the entry links.
   recomputed every frame keeps accumulating. No game-code changes are
   needed; a game that held its length constant to keep fog history may now
   animate it.
+- `sgl-3d` `Renderer`, `View`, `ViewFrame`, `ViewError`: a renderer now
+  draws several views of one scene in one frame. `Renderer::new(&device)`
+  takes only the device; each camera is a `View::new(&renderer, …)` or
+  `View::new_surface(&renderer, …)` taking the old `Renderer::new` and
+  `Renderer::new_surface` arguments after the renderer. `resize` and the
+  per-camera queries (`render_size`, `scene_size`, `output_encodes_srgb`,
+  `antialiasing_in_effect`, `fsr_error`, `geometry_stats`,
+  `local_shadow_stats`, `occlusion_culling_in_effect`, and with
+  `diagnostics` `diagnostic_target`, `diagnostic_draws`,
+  `diagnostic_view_times`, `geometry_stats_for_model`,
+  `take_frame_probe_reports`) move to `View`; `render` takes
+  `&mut [ViewFrame { view, input, settings, output, timing }]`;
+  `finish_frame(&mut scene)` is unchanged; `RendererError` is `ViewError`;
+  `capture_specular_probe` and `capture_specular_probe_async` take the
+  `&mut View` whose shadow maps they borrow, after `scene`. Game code must
+  change; a single view:
+
+  ```rust
+  let mut renderer = Renderer::new(&device);
+  let mut view = View::new(&renderer, &device, &queue, format, size, scale, &settings)?;
+  // each frame, after editing the scene:
+  view.resize(&device, size, scale, &settings);
+  renderer.render(&device, &queue, &mut encoder, &mut scene,
+      &mut [ViewFrame { view: &mut view, input: &input, settings: &settings, output: &target, timing: None }]);
+  queue.submit([encoder.finish()]);
+  renderer.finish_frame(&mut scene);
+  ```
+- `sgl-3d` several views: the first listed `ViewFrame` is the frame's
+  primary view; its `hardware_ray_tracing`, `dynamic_gi`,
+  `anisotropic_filtering`, diagnostics layers and visibility mask (for rays)
+  apply to the frame, and dynamic GI follows its camera. A view left out of
+  a finished frame of its scene restarts its history. Each view holds its
+  own targets, FSR context and local-light shadow atlas. One renderer shows
+  one scene at a time. No game-code change beyond the migration above for a
+  single view.
+- `sgl-3d` `Renderer::finish_frame`: commits what the frame drew (each
+  instance's pose, visibility and shader data, deformations, shader
+  parameter blocks, the rigid-change signal and static-edit bounds as they
+  were when `render` ran); scene edits made after the submission and before
+  `finish_frame` no longer become the finished frame's state (which zeroed
+  the next frame's motion) and belong to the next frame. A frame rendered
+  and not finished (its encoder dropped, or `finish_frame` omitted), whether
+  or not its commands were submitted, no longer restarts TAA, screen-space
+  (Crystal, Velvet) and world-space reflections, ambient occlusion or
+  ray-traced shadows on the next frame; FSR still restarts. Ray-traced
+  shadows hold one more reduced-resolution texture while they run. No
+  game-code change.
+- `sgl-3d` `Scene::set_shader_parameters`: a material that gains or changes
+  its shader no longer writes one frame of motion from all-zero parameters;
+  its first frame measures from its own block. No game-code change.
+- `sgl-3d` `diagnostics::Counters`: gains `deformations`, the deformations
+  the deform pass dispatched. A game that builds `Counters` with a struct
+  literal adds the field.
 - `sgl-post-fx`: `TemporalAntiAliasing`'s motion-adaptive resolve reads each
   of `RenderAttributes::responsive_masks` as its largest value over the
   pixel's 3x3 neighbourhood, as FSR dilates its masks, so the jittered edges
@@ -97,6 +150,9 @@ docs and specs the entry links.
   does. Direct `sgl-post-fx` callers pass `[ndc_x, ndc_y, depth_motion,
   valid]`; a still scene passes `[x, y, 0., 1.]`. SGL3D games need no
   change.
+- `sgl-post-fx` `TemporalAntiAliasing`, `ScreenSpaceReflection`: executing
+  the same frame index again repeats that frame, its reset included, instead
+  of restarting history. No change for callers that advance the index.
 
 ## 0.7.1 — 2026-11-18
 

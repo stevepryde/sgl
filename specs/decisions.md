@@ -873,3 +873,105 @@ Use the [current specs](README.md) for implementation and the
   one would otherwise take no indirect light at all.
   Rationale: the code, the tests and the existing bakes were already
   additive, and the records that read as exclusive were wrong (#779).
+- **D-57** Owner direction, 2026-11-18 (more than one view a frame is
+  required): a game draws several views of one scene in one frame through
+  three objects. `Scene` is content. `Renderer` is what every view of a
+  scene shares: the geometry pipeline cache and bind group layouts, the
+  deform stage, the dynamic GI stage with its probes, the device's ray-query
+  form and the frame boundary. `View` is one camera's frame: its targets and
+  sizes, its stages with their state, group 0's bindings, and every history
+  kept in screen space or fit to a camera (camera history, DiligentFX's
+  context, FSR's context, Velvet, world rays, ambient occlusion, ray-traced
+  shadows, the local-light shadow atlas, its static layers, cache and
+  ranking, the directional cascades, fog, exposure, the cull pyramid and
+  draw lists, statistics). One `Renderer::render(scene, &mut [ViewFrame])`
+  is one frame of the scene and exactly one frame attempt: there is no
+  begin-without-end state, the scene step sees every view (so ray structures
+  are built when any view traces), and borrowing makes one view with two
+  cameras in a frame unrepresentable; the cost is that a game cannot
+  interleave its own passes between views in the encoder. `views[0]` is the
+  primary view: its `FrameInput` gives the rays' visibility mask, the eye
+  the acceleration-structure builds are ordered from, and dynamic GI's
+  lights, environment, time and frustum; its `Settings` give
+  `hardware_ray_tracing`, `dynamic_gi`, `anisotropic_filtering` and the
+  diagnostics layers, which a secondary view takes from it in place of its
+  own. Dynamic GI stays in the stage order and runs in the primary's render
+  with its group 0; other views bind its probes. A view's history continues
+  only from the scene's last finished frame: a view resets on its first
+  frame, on another scene, and after a finished frame of its scene that did
+  not render it, since the scene keeps one frame of motion history (a
+  skipped view would mix a two-frame camera delta with one-frame object
+  motion; per-view object history is built by none of the cited engines); a
+  view drawn at half rate therefore has no temporal accumulation and should
+  use SMAA or Off. The scene records what a frame draws when `render` begins
+  it and commits that record at `finish_frame`, so an edit after the
+  submission belongs to the next frame (F-13). `finish_frame(scene)` names
+  no views: the renderer and its views share one cell holding the attempt id
+  of the last finished frame. A view settles its pending frame as finished
+  at the start of its first `&mut self` method after that frame was
+  finished, and as unfinished only when it renders again first; a view
+  method called between `render` and `finish_frame` leaves the frame
+  pending. Settling at any `&mut self` method, as designed, would have
+  restarted TAA every frame for a game that queries or resizes a view before
+  finishing. With one cell, a view left out of a finished frame settles its
+  own earlier frame as unfinished; it restarts anyway, losing only that
+  frame's statistics, probe readbacks and local-shadow cache commit.
+  (`finish_frame(scene, views)` was rejected: a view omitted from the list
+  would silently restart every frame.) The local shadow atlas, its static
+  layers, cache and ranking are per view, placed by each camera's screen
+  coverage, as Filament's shadow maps are per view; the cost is atlas memory
+  and face draws per view (a shared fixed-size map per light, Bevy's shape,
+  would redesign the atlas). Stage pipelines stay with their stage, so per
+  view; only the geometry pipeline cache, deform and dynamic GI are shared,
+  since splitting about fourteen stages into programs and state is not
+  justified by a one-time creation cost (about 22 ms for a second view).
+  Rejected: one `Renderer` per view (dynamic GI, deform and the pipeline
+  cache need an owner that changes when a renderer is dropped, and
+  call-order misuse states appear, a secondary rendered before its primary);
+  renderer-held views behind `ViewId`s (ownership and drop become implicit).
+  One renderer shows one scene at a time: another scene specialises its
+  pipelines again and restarts dynamic GI, so a game showing two scenes at
+  once holds a renderer for each. Known limits, no issue filed yet: L1, rays
+  see the scene under the primary view's visibility mask (the mask lives in
+  the scene's ray source header), and a view's output cannot yet be a scene
+  texture; L2, each view compiles its own stage pipelines and holds its own
+  local shadow atlases; L3, FSR restarts after an unfinished frame (D-58).
+  Rationale: it follows Filament ef1a133 (`FView` owns `FrameHistory`,
+  committed per view in `FView::commitFrameHistory`; the scene is shared),
+  Wicked 4323a33 (one `RenderPath3D` per view with its own
+  `camera_previous`; scene update, acceleration structures and DDGI gated on
+  one path), Bevy 9d12036 (global `PreviousGlobalTransform`, per-camera
+  `PreviousViewData`) and Godot b130438 (per-instance `prev_transform` keyed
+  on the global frame). Before it, one renderer drawing two cameras
+  reprojected each through the other's matrices with no reset, and a second
+  renderer on one scene saw zero object motion or committed the frame the
+  first drew (O-1, 2026-11-18 history audit).
+- **D-58** Owner direction, 2026-11-18 (the frame contract): a frame that is
+  rendered and not finished, whether or not its commands were submitted,
+  commits nothing and restarts nothing, with two named exceptions. Each
+  stage keeps what describes its GPU history (frame counts, the half of each
+  pair it writes, slot assignments, seeds) as the last finished frame left
+  it (`view::history::Kept`), so a frame rendered again reads and writes the
+  same halves. The ray-traced shadow denoiser's filter history, which Wicked
+  keeps in one texture, is a pair like its moments, so it needs no exception
+  (B-27). `sgl-post-fx`'s TAA and SSR treat an index executed again as a
+  repeat of that frame, its reset included: a repeat of a frame that reset
+  resets again, and one of a frame that continued reads the same history
+  (DFX-12, DFX-50), where DiligentFX restarts on any index that is not the
+  last plus one. FSR restarts: AMD's context advances its frame state
+  (`first_execution`, its resource frame index, the previous jitter offset
+  and its constants) inside dispatch at record time
+  (`sp-fidelity-0.3.2/src/fsr2/component.rs:1510, 1669, 1700, 1933`), that
+  state is private to sp-fidelity, and AMD's SDK has no snapshot or restore.
+  sp-fidelity gains no snapshot API: AMD's SDK has none to follow, it would
+  need a cross-repository release and an inventory of FSR3's in-place
+  resources, and it buys continuity only on a frame that is already a hitch.
+  Filtered fog does not reproject for one frame (V-5): a submitted frame's
+  slice filter overwrote the volume a retry would reproject, and SGL cannot
+  tell an abandoned frame from a submitted one; a third froxel volume would
+  buy one frame of fog history on a hitch.
+  Rationale: the History contract already said an abandoned frame commits
+  nothing, and engines that record at render and commit at finish
+  (Filament's `FrameHistory`, committed per view) do not restart on a
+  repeated frame; restarting every temporal stage on a hitch made the hitch
+  visible for a second frame (B-4, 2026-11-18 history audit).

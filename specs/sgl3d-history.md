@@ -13,7 +13,9 @@ A rule is in one of three states:
   behaviour SGL3D ships faithfully from an upstream engine.
 - **Defect B-n.** Behaviour that is not intended. It stays listed, described as
   it is today, until its fix lands; the fix replaces the entry with the rule
-  that is intended and removes the row from [Defects](#defects).
+  that is intended and removes the row from [Defects](#defects). A defect that
+  a measurement shows to be a trade-off with no better alternative becomes a
+  rule that states the trade-off.
 - **Open question O-n.** Behaviour that is undecided or unmeasured. It is
   settled by a decision or a measurement, and then becomes a rule or a defect.
 
@@ -48,11 +50,15 @@ volumetric fog, `G` dynamic GI, `E` exposure, `X` other stages.
 The rules below that a game most often raises without meaning to, as the
 contract a game follows:
 
-- Call `Renderer::finish_frame` once for every frame it renders and submits,
-  and render no frame twice (F-3). Render every view that keeps temporal
-  history in every frame of its scene (F-12). Edit the scene before `render`
-  or after the submission, never in between; an edit made after the
-  submission and before `finish_frame` belongs to the next frame (F-13).
+- Render each frame of a scene with one `Renderer::render` call that lists
+  every view drawn in it, and call `Renderer::finish_frame` once for every
+  frame it renders and submits (F-3, F-12, F-13). A frame rendered and not
+  finished restarts FSR (U-2) and leaves filtered fog unreprojected for one
+  frame (V-5); every other history continues. Render every view that keeps
+  temporal history in every frame of its scene: a view left out of a finished
+  frame restarts (F-1, F-12). Edit the scene before `render` or after the
+  submission, never in between; an edit made after the submission and before
+  `finish_frame` belongs to the next frame (F-13).
 - Set `FrameInput::camera_cut` when the camera jumps, and only then (F-1).
 - Give moving objects `Mobility::Moving` and pose them every frame; a static
   instance that is moved writes no motion and re-arms antialiasing across
@@ -70,24 +76,19 @@ contract a game follows:
 
 ## Defects
 
-Found by the 2026-11-18 history audit and in settling its open questions
-([audit log](audits.md)). Each is described in full at the entries named.
-
-| # | Defect | Entries |
-| --- | --- | --- |
-| B-4 | A frame that is rendered but not finished restarts TAA, Crystal reflections, FSR, ambient occlusion and ray-traced shadows on the next frame. The History contract says an abandoned frame restarts nothing. FSR's context advances on every dispatch, recorded or submitted, so its fix withholds the dispatch or restores that state. | F-3, T-4, U-2, R-2, S-25, AO-10 |
-| B-8 | A material that gains a game shader evaluates its first frame's vertex motion from all-zero parameters. | M-8 |
-| B-20 | Crystal's surface-history discard measures its tolerance with the 3×3 variance of deterministic mirror rays, near zero on smooth reflection, so under camera motion any change of the reflected radiance discards history, alternating with the jitter and doubling the flicker. | R-9 |
+None is open as of the fixes of the 2026-11-18 history audit
+([audit log](audits.md)). A defect found later is listed here, with the
+entries that describe it, until its fix lands.
 
 ## Open questions
 
-| # | Question | Entries |
-| --- | --- | --- |
-| O-1 | More than one view a frame: one renderer for two cameras, two renderers on one scene, and edits between render and `finish_frame` are unspecified. The owner requires more than one view a frame; its design is being implemented. | F-12, F-13 |
+None is open as of the fixes of the 2026-11-18 history audit. A question
+found later is listed here, with the entries it concerns, until a decision or
+a measurement settles it.
 
 ## Frame and renderer
 
-Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`): its last finished frame's unjittered view and projection, its jitter, its time, its visibility mask, the render origin it is expressed in, and the frames since the last reset. It issues the one reset every one of its stages follows, and each stage keeps what describes its GPU history as the view's last finished frame left it (`view::history::Kept`), so a stage restarts when it did not run in that frame and a frame rendered again continues as the first rendering did. The scene keeps the motion history (submitted poses, deformation slots, shader data, parameter blocks) and the rigid-change signal, committed by `Renderer::finish_frame`. A continuously running game most often trips the visibility-mask signal (F-10) and the scene's rigid-change signal where it spawns, hides or swaps models (M-9); a frame that was rendered but not finished restarts FSR alone (F-3, U-2).
+Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`): its last finished frame's unjittered view and projection, its jitter, its time, its visibility mask, the render origin it is expressed in, and the frames since the last reset. It issues the one reset every one of its stages follows, and each stage keeps what describes its GPU history as the view's last finished frame left it (`view::history::Kept`), so a stage restarts when it did not run in that frame and a frame rendered again continues as the first rendering did. The scene keeps the motion history (submitted poses, deformation slots, shader data, parameter blocks) and the rigid-change signal, committed by `Renderer::finish_frame`. A continuously running game most often trips the visibility-mask signal (F-10) and the scene's rigid-change signal where it spawns, hides or swaps models (M-9); a frame that was rendered but not finished restarts FSR (F-3, U-2) and leaves filtered fog unreprojected for one frame (V-5).
 
 ### Signals
 
@@ -1437,7 +1438,7 @@ See M-11, M-16 and M-17a to M-17c (the first writer of a frame clears both masks
 - **Guard.** `a_receiver_marks_the_masks_as_a_blended_surface_does` in
   `crates/sgl-3d/src/stages/transparent/composition_tests.rs`; `blended_surfaces_write_fsrs_masks` in
   `crates/sgl-3d/src/stages/transparent/blended_tests.rs`.
-- **Status.** Rule. Settles O-5.
+- **Status.** Rule (settled from O-5 by the 2026-11-18 history audit).
 
 #### U-13 Glow reactivity by its displayed light
 
@@ -2173,29 +2174,31 @@ rejection repeats (R-16, R-29).
   denoise mirror reflections at all (`IsMirrorReflection`). Code:
   `SSR_ComputeTemporalAccumulation.wgsl` (`ComputeTemporalAccumulationPS`).
 - **Guard.** None.
-- **Status.** Defect B-20. The discard's tolerance is the variance of a deterministic signal, so
-  it fires on any change of the reflected radiance under motion, not only on parallax, and
-  alternates with the jitter. DFX-25 added it because it cut fast-motion smear of bright
-  fixtures' reflections in Hyperdrive (beta 0.014 to 0.009, #80). Measured 2026-11-18 against
-  that smear, no narrowing removes the misfire and keeps the reduction, so the rule is unchanged
-  and the choice is the owner's. On Hyperdrive's tunnel at 1920×1080, Ultra, Crystal, it fires
-  on about 100 000 road pixels a frame in steady motion, at all of them (in the frames checked)
-  where the hit candidate passes the pass's own disocclusion test. Smear is the least-squares weight of
-  the reflections 2–8 frames old, from the run without history, in each variant's difference
-  from that run, over the pixels Crystal changes (AA off, frames 30–119): 0.215 / 0.183
-  (night / day) without the discard, 0.179 / 0.152 with it. Slow-motion flicker is the mean
-  absolute second difference of linear luminance there under TAA, the camera alone moving
-  0.5 m a frame: 0.0174 / 0.0183 without the discard, 0.0182 / 0.0193 with it (p99 0.294 /
-  0.296 against 0.310 / 0.310); with the camera still every variant measured the same (0.0004 /
-  0.0008). AMD's order (the hit history wherever it passes that test, the surface's tested
-  only where it fails) and taking the hit history in place of the discard
-  remove the misfire (0 discards in the fixture above, flicker 0.0175 / 0.0183) but keep 5 % /
-  3 % and 15 % / 14 % of the smear reduction (0.213 / 0.182, 0.209 / 0.179); discarding only
-  where the hit fails keeps none, because on the road the hit always passes. AMD's radius-4
-  Gaussian window in place of the 3×3 keeps about 40 % of it (0.201 / 0.171) but halves the
-  misfire only (5612 of 10 640 discards in the fixture, flicker 0.0179 / 0.0189); with AMD's
-  order it is AMD's order. A variance floor of the half-float step of the stored radiance does
-  not change the misfire (a 1 % change is far above it). Unfixed.
+- **Status.** Rule. Kept by measurement as a trade-off, not a fault with a free fix (settled
+  from B-20 by the 2026-11-18 history audit); the choice is the owner's to revisit. The discard's tolerance is the variance of a
+  deterministic signal, so it fires on any change of the reflected radiance under motion, not only
+  on parallax, and alternates with the jitter. DFX-25 added it because it cut fast-motion smear of
+  bright fixtures' reflections in Hyperdrive (beta 0.014 to 0.009, #80). On Hyperdrive's tunnel at
+  1920×1080, Ultra, Crystal, it fires on about 100 000 road pixels a frame in steady motion, at
+  all of them (in the frames checked) where the hit candidate passes the pass's own disocclusion
+  test, and never with the camera still. Smear is the least-squares weight of the reflections 2–8
+  frames old, from the run without history, in each variant's difference from that run, over the
+  pixels Crystal changes (AA off, frames 30–119): 0.215 / 0.183 (night / day) without the
+  discard, 0.179 / 0.152 with it, so the discard removes 16–17 % of the smear. Slow-motion flicker
+  is the mean absolute second difference of linear luminance there under TAA, the camera alone
+  moving 0.5 m a frame: 0.0174 / 0.0183 without the discard, 0.0182 / 0.0193 with it, about 5 %
+  more (p99 0.294 / 0.296 against 0.310 / 0.310); with the camera still every variant measured
+  the same (0.0004 / 0.0008). Every narrowing that removes the misfire gives most of that smear
+  reduction back: AMD's order (the hit history wherever it passes that test, the surface's
+  tested only where it fails) and taking the hit history in place of the discard remove the
+  misfire (0 discards in the fixture above, flicker 0.0175 / 0.0183) but keep 5 % / 3 % and
+  15 % / 14 % of the smear reduction (0.213 / 0.182, 0.209 / 0.179); discarding only where the
+  hit fails keeps none, because on the road the hit always passes. AMD's radius-4 Gaussian
+  window in place of the 3×3 keeps about 40 % of it (0.201 / 0.171) but halves the misfire only
+  (5612 of 10 640 discards in the fixture, flicker 0.0179 / 0.0189); with AMD's order it is
+  AMD's order. A variance floor of the half-float step of the stored radiance does not change
+  the misfire (a 1 % change is far above it). AMD's own hit test needs normal and roughness
+  history, which Crystal does not keep; keeping it is the faithful alternative not yet measured.
 
 #### R-10 Disocclusion by the surface's own previous depth
 
