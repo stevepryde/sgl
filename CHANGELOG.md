@@ -15,6 +15,15 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.8.0 — 2026-11-18
+
+Move every SGL crate to `0.8.0` together and commit the updated `Cargo.lock`.
+Game code must change: a renderer is now a `Renderer` and one `View` per
+camera, `Scene::update_mist` loses its queue argument and
+`Renderer::ray_traced_shadows_in_effect` takes the primary view's settings;
+the entries below give each migration. Direct `sgl-post-fx` callers follow
+its entries too. Existing baked assets and BC7 exports need no regeneration.
+
 - `sgl-3d` TAA: a moving instance posed from its last submitted pose no
   longer re-arms full rejection across the whole view (its motion vectors
   re-arm only the pixels it covers and leaves), and a camera at rest away
