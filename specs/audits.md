@@ -234,3 +234,26 @@ alone then changed nothing.
 - FSR's velocity-based history weights (U-28, U-47), its shading-change and lock rules (U-31, U-43, U-44): AMD's, listed with what a game sees.
 - The motion reach's limits (M-14, T-23): surfaces within a tile of motion of a pixel a frame lose resting stability while it moves, by design.
 - Surfaces under blended materials, glow, mist and heat distortion are marked every frame and stay at the strength their mask gives (M-11, M-17a to M-17c).
+
+## 2026-11-18 — independent review of the views and frame contract
+
+A fresh-context review of the renderer and view split (D-57) and the frame
+contract (D-58), with a standalone program driving the public API. It found
+no defect in the supported loop: one `render` listing every view, submitted,
+then `finish_frame`. Each finding below was fixed with a guard that fails
+on the code before the fix.
+
+| Finding | Cause | Fix, and what guards it |
+| --- | --- | --- |
+| An unfinished frame with `camera_cut`, rendered again without it, continued history (TAA: 243 of 6144 px off the run without the attempt); where exactly one frame was finished since the last reset, the retry continued from the half the submitted attempt overwrote. | The cut lived only in the frame input; `sgl-post-fx` records its frame index at execute time, so the retry met an index gap from the attempt's 0, or continued at index 1. | A reset holds until a frame is finished: an unfinished reset raises the view's pending reset (F-1). `an_unfinished_cut_holds_until_a_frame_is_finished` (equivalence with the run that cut there; before the fix 222 to 306 px differed at the retry at rest and in a pan, and every pixel one frame after a reset). |
+| The contract said an unfinished frame restarts nothing but FSR and fog's reprojection; an unfinished frame with antialiasing off, then TAA, differed by 257 px. | Stages release their targets at render when a frame runs without them. | Specified rather than changed (D-58, F-3, F-4): the contract covers a frame rendered again as the same frame; a stage switched off in the unfinished frame restarts. |
+| A view left out of the next finished frame read back no statistics (0 of 12 asks at half rate) and committed no culling pyramid, exposure or local shadow cache. | One shared cell named the last finished attempt, which a later frame replaced. | Each attempt carries its own flag (F-12). `a_view_left_out_of_a_frame_reads_back_its_own_finished_frame`; `a_view_that_skips_a_frame_restarts`'s FSR cases can now fail for a view continuing over the gap. |
+| A model swapped for a frame and swapped back between its submission and `finish_frame` raised no rigid-change signal. | `set_instance` judged the motion against the last finished frame, not the frame being finished. | Judged against both (M-9, F-13). `an_edit_in_the_window_is_judged_against_the_frame_it_follows`. |
+| `each_view_draws_only_its_own_shadow_faces` passed with a shared atlas; `shared_work_runs_once_a_frame` claimed to judge work only a secondary view asks for. | Two nearby cameras placed one light alike; both views had one set of settings. | The shadow guard gives the views different placements over 18 frames (a shared atlas redraws six faces at frame 15); `scene_work_follows_any_view_that_traces` guards the any-view union. |
+| R-9 had no guard. | — | `a_still_mirror_under_jitter_discards_no_history`, `a_highlight_the_surface_carried_away_is_discarded`. |
+
+### Records that were wrong
+
+- Docs and comments named `Renderer::new_surface`, `Renderer::resize`, `Renderer::local_shadow_stats` and `Scene::prepare_frame`, or said the renderer owns the camera history, group 0, the post-effect context or the surface targets; corrected to the view.
+- `Renderer::ray_traced_shadows_in_effect` said it answers under the primary view's hardware ray tracing but read the view's own setting; it now takes the primary's settings.
+- Two renderers drawing one scene in a frame were not stated as unsupported (the second supersedes the first's attempt); the Shape text, F-12 and the guide now say so.
