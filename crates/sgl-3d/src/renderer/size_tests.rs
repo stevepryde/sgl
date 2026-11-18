@@ -167,7 +167,7 @@ fn resize_between_render_and_finish_restarts_history() {
                     None,
                 );
                 queue.submit([encoder.finish()]);
-                renderer.rendered.as_ref().unwrap().0.valid
+                renderer.view.rendered.as_ref().unwrap().history.valid
             };
         render(&mut renderer, &mut scene, first, &settings);
         renderer.finish_frame(&mut scene);

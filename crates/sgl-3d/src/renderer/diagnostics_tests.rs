@@ -244,7 +244,7 @@ fn a_fsr_fallback_does_not_compare_different_sized_frame_targets() {
         "the emitter was rendered: {report}"
     );
     assert_eq!(
-        renderer.probe.as_ref().unwrap().last_params.get()[..2],
+        renderer.view.probe.as_ref().unwrap().last_params.get()[..2],
         [4, 0],
         "different-sized textures must not be compared",
     );

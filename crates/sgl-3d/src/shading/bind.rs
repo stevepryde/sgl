@@ -360,6 +360,7 @@ fn layout(
 /// Lit group 0's layout and the binding tier it is of, whose lit provider
 /// every program that binds it and composes `SURFACE` composes
 /// (`shading::lit_provider`).
+#[derive(Clone)]
 pub(crate) struct LitLayout {
     pub layout: wgpu::BindGroupLayout,
     pub tier: BindingTier,

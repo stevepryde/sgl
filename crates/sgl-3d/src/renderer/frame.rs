@@ -1,27 +1,48 @@
-//! One frame: the one ordered render body.
+//! One frame: the frame's scene work once (`shared::Shared::run_scene`),
+//! then the one ordered render body for each of its views (`render_view`),
+//! the primary view's order running the scene's GPU work.
 use super::Renderer;
+use super::shared::Shared;
+use super::view::{Pending, View};
 use crate::settings::{ReflectionMethod, Settings};
 use crate::stages::cull::Cull;
 use crate::stages::opaque::Opaque;
+use crate::stages::prepare::Prepare;
 use crate::stages::shadows::traced::TracedShadows;
 use crate::stages::shadows::traced::slots::SlotLights;
 use crate::timing::GpuTiming;
 use crate::view::draw_list::gpu::Phase;
+use crate::view::effective::Effective;
 use crate::view::frame::{Completed, FrameContext, HardwareRays};
+use crate::view::history::HistoryFrame;
 use crate::view::pipelines::GeometryPipelines;
 use crate::view::post_fx::PostFx;
 use crate::view::targets::SharedTargets;
 use crate::{FrameInput, Scene};
 
-/// Encodes one frame of `scene` seen as `input` into `output`: prepare (with
-/// its deformation, acceleration structures and the cull stage's early
-/// phase), dynamic GI, shadows, volumetric fog, opaque (with the cull
-/// stage's late phase and pyramid while occlusion culling runs, and the
-/// ray-traced shadows between its G-buffer and lighting while they run),
-/// the transparent stage's receivers and volume layers, reflections with
-/// the transparent
-/// stage drawn into their input (while a screen-space method traces it) and
-/// onto their result, heat, exposure, antialiasing, motion blur, then post.
+/// Which view of a frame `render_view` renders. The primary view, the
+/// first, runs the frame's scene work in its stage order: the deform pass,
+/// the acceleration-structure builds and the dynamic GI update. Every view
+/// binds the dynamic GI probes it left.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Role {
+    Primary,
+    #[expect(
+        dead_code,
+        reason = "secondary views arrive with the public `View` (views step C2)"
+    )]
+    Secondary,
+}
+
+/// What a view draws in a frame: its input, its output and its timing.
+pub(super) struct ViewOutput<'a> {
+    pub input: &'a FrameInput,
+    pub output: &'a wgpu::TextureView,
+    pub timing: Option<&'a GpuTiming>,
+}
+
+/// Encodes one frame of `scene` seen as `input` into `output`: the view
+/// begins its frame, the frame's scene work runs, then the view renders.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render(
     renderer: &mut Renderer,
@@ -34,24 +55,68 @@ pub(super) fn render(
     output: &wgpu::TextureView,
     timing: Option<&GpuTiming>,
 ) {
-    // A render that `finish_frame` did not follow was not finished.
-    if renderer.rendered.take().is_some() {
-        settle(renderer, false);
-    }
-    // History restarts for a camera cut, a resize or another scene.
-    let mut history = renderer.begin_history(scene, input);
-    let Renderer {
+    let Renderer { shared, view } = renderer;
+    let (history, effective) = view.begin(device, shared, scene, input, settings);
+    let traced = Prepare::traces(scene, &effective);
+    shared.run_scene((device, queue), scene, &effective, input, traced);
+    render_view(
+        shared,
+        view,
+        (device, queue, encoder),
+        scene,
+        ViewOutput {
+            input,
+            output,
+            timing,
+        },
+        (history, effective),
+        Role::Primary,
+    );
+}
+
+/// Encodes `view`'s frame of `scene` as `drawn` describes it, after the
+/// frame's scene work, with its begun history and effective
+/// configuration: prepare's view part (and in the primary view the
+/// deformation and acceleration structures, then the cull stage's early
+/// phase), dynamic GI in the primary view, shadows, volumetric fog, opaque
+/// (with the cull stage's late phase and pyramid while occlusion culling
+/// runs, and the ray-traced shadows between its G-buffer and lighting while
+/// they run), the transparent stage's receivers and volume layers,
+/// reflections with the transparent stage drawn into their input (while a
+/// screen-space method traces it) and onto their result, heat, exposure,
+/// antialiasing, motion blur, then post.
+pub(super) fn render_view(
+    shared: &mut Shared,
+    view: &mut View,
+    (device, queue, encoder): (&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder),
+    scene: &Scene,
+    drawn: ViewOutput<'_>,
+    (mut history, effective): (HistoryFrame, Effective),
+    role: Role,
+) {
+    let ViewOutput {
+        input,
+        output,
+        timing,
+    } = drawn;
+    let primary = role == Role::Primary;
+    let Shared {
+        pipelines,
+        prepare,
+        deform,
+        dynamic_gi,
+        ray_form,
+        ..
+    } = shared;
+    let pipelines: &GeometryPipelines = pipelines;
+    let View {
         sizes,
         targets,
         views,
         bindings,
-        pipelines,
         post_fx,
-        prepare,
-        deform,
         cull,
         statistics,
-        dynamic_gi,
         shadows,
         traced_shadows,
         fog,
@@ -64,39 +129,13 @@ pub(super) fn render(
         post,
         rendered,
         targets_generation,
-        ray_form,
         #[cfg(feature = "diagnostics")]
         probe,
         #[cfg(any(test, feature = "diagnostics"))]
             completed: diagnostic_completed,
         ..
-    } = renderer;
-    // The surface's own targets, from a scene's first receiver on.
-    if scene.materials.holds_receivers() {
-        targets.hold_surface(device);
-    }
-    let effective = super::effective::resolve(
-        settings,
-        input,
-        super::effective::SceneContent::of(scene),
-        super::effective::Device {
-            fsr_running: antialiasing.fsr_running(),
-            fused_supported: pipelines.fused_supported,
-            occlusion_supported: cull.occlusion_supported(),
-            ray_queries: ray_form.as_ref().map(|form| form.form()),
-            tier: pipelines.tier,
-        },
-    );
-    targets.set_temporal_masks(device, effective.temporal_masks);
+    } = view;
     let targets: &SharedTargets = targets;
-    pipelines.specialise(
-        device,
-        effective.layers,
-        scene,
-        effective.ray_traced_shadows,
-    );
-    let pipelines: &GeometryPipelines = pipelines;
-    scene.materials.set_anisotropy(device, effective.anisotropy);
     #[cfg(feature = "diagnostics")]
     let mut probe =
         crate::stages::frame_probe::FrameProbe::for_frame(probe, device, effective.frame_probe);
@@ -140,12 +179,16 @@ pub(super) fn render(
     );
     // The camera history commits the jitter this frame applies.
     history.camera.jitter = jitter.map_or([0.; 2], |jitter| jitter.ndc);
-    *rendered = Some((history, scene.id, *targets_generation));
+    *rendered = Some(Pending {
+        history,
+        scene: scene.id,
+        generation: *targets_generation,
+    });
     // The camera's statistics: those completed so far, and none copied yet
     // this frame.
     statistics.poll(device);
     statistics.begin();
-    let values = prepare.run(
+    let values = Prepare::run_view(
         device,
         queue,
         scene,
@@ -174,7 +217,7 @@ pub(super) fn render(
     // Every list the frame draws is built.
     views.instances.upload(device, queue);
     fog.prepare(device, effective.fog, sizes.render);
-    if let Some(dynamic_gi) = dynamic_gi.as_mut() {
+    if let Some(dynamic_gi) = dynamic_gi.as_mut().filter(|_| primary) {
         dynamic_gi.prepare(device, scene, &effective);
     }
     // The ray-traced shadows run where the frame's rays trace in hardware
@@ -206,7 +249,7 @@ pub(super) fn render(
         sizes: *sizes,
         targets,
         surface: targets.surface(false),
-        scene: &*scene,
+        scene,
         values: &values,
         input,
         views: &*views,
@@ -221,13 +264,16 @@ pub(super) fn render(
         ),
     };
     // Prepare's GPU steps, before any pass draws scene geometry or traces:
-    // the deformations, then the acceleration structures over them, then
-    // the cull stage's early phase for every GPU-built view.
-    deform.encode(&mut ctx);
-    prepare.encode_acceleration_structures(&mut ctx);
+    // the deformations, then the acceleration structures over them, in the
+    // primary view, then the cull stage's early phase for every GPU-built
+    // view.
+    if primary {
+        deform.encode(&mut ctx);
+        prepare.encode_acceleration_structures(&mut ctx);
+    }
     cull.encode_early(&mut ctx);
     // First after prepare: every pass that shades reads the probes.
-    if let Some(dynamic_gi) = dynamic_gi.as_mut() {
+    if let Some(dynamic_gi) = dynamic_gi.as_mut().filter(|_| primary) {
         dynamic_gi.encode(&mut ctx);
     }
     // The stage order's: the local-light atlas, then the directional cascades.
@@ -359,20 +405,6 @@ pub(super) fn render(
         );
         probe.finish(ctx.encoder);
     }
-}
-
-/// Settles the last render, `finished` or not, in every stage that keeps
-/// what describes its GPU history as the last finished frame left it
-/// (`view::history::Kept`): exactly once per render, before the next render
-/// or after `finish_frame`. The History contract's "What a frame commits".
-pub(super) fn settle(renderer: &mut Renderer, finished: bool) {
-    if let Some(post_fx) = &mut renderer.post_fx {
-        post_fx.settle(finished);
-    }
-    renderer.antialiasing.settle(finished);
-    renderer.reflections.settle(finished);
-    renderer.opaque.settle(finished);
-    renderer.traced_shadows.settle(finished);
 }
 
 /// The opaque stage in the stage order's named parts: the G-buffer, then,

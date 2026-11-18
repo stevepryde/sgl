@@ -506,17 +506,22 @@ mod ray_data_tests {
                 input.visibility_mask,
             );
             let before = crate::counters::snapshot();
-            renderer.prepare.run(
+            let traced = crate::stages::prepare::Prepare::traces(&scene, &effective);
+            renderer
+                .shared
+                .prepare
+                .run_scene(&device, &queue, &mut scene, &effective, &input, traced);
+            crate::stages::prepare::Prepare::run_view(
                 &device,
                 &queue,
-                &mut scene,
+                &scene,
                 &input,
                 history,
                 &effective,
                 None,
                 [16; 2],
-                &mut renderer.views,
-                &renderer.bindings.frame,
+                &mut renderer.view.views,
+                &renderer.view.bindings.frame,
             );
             assert_eq!(
                 renderer.ray_tracing_error().is_some(),

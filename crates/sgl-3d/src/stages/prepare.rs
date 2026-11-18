@@ -15,7 +15,10 @@
 //! directional shadow cascade, which the cull stage builds after the
 //! deform pass (`stages::cull`). The local-light shadow atlas places its own faces
 //! (`shadows::local`). For a probe capture it builds the capture's own
-//! views, cascades and light and decal list (`capture`).
+//! views, cascades and light and decal list (`capture`). Its scene part
+//! (`run_scene`: the scene's frame, ray instances and acceleration
+//! structures) runs once a frame, steered by the frame's primary view; its
+//! view part (`run_view`: everything else) runs for each view.
 //!
 //! Reads: the frame input, the camera history and the scene. Writes:
 //! `FrameViews` (view uniforms, draw lists, their draw instances and
@@ -114,15 +117,78 @@ pub(crate) struct Prepare {
 }
 
 impl Prepare {
-    /// Uploads the view and frame data of `input` seen with `history` and
-    /// `jitter` at `render_size`, and builds the frame's views. `history`'s
-    /// camera carries `jitter`'s offset. Returns the data as uploaded.
-    #[allow(clippy::too_many_arguments)]
-    pub fn run(
+    /// Whether a frame of `scene` under `effective` reads the ray instances
+    /// and visibility mask: world-space rays, the dynamic GI volume's and
+    /// ray-traced shadows do. The entries set and static edits made since
+    /// the last traced frame wait for the next, so the frames that skip it
+    /// leave it nothing stale.
+    pub fn traces(scene: &Scene, effective: &Effective) -> bool {
+        scene.ray_data() == crate::RayData::Enabled
+            && (effective.world_space != WorldSpaceReflections::Off
+                || (effective.dynamic_gi.is_some() && scene.dynamic_gi_placement().is_some())
+                || effective.ray_traced_shadows)
+    }
+
+    /// The frame's scene part, which its primary view steers with
+    /// `effective` and `input`: begins the scene's frame
+    /// (`Scene::begin_frame`), chooses the acceleration-structure builds
+    /// while hardware ray tracing is in effect, ordered from `input`'s eye,
+    /// and, when the frame is `traced` (`traces`), updates the scene's ray
+    /// instances under `input`'s visibility mask.
+    pub fn run_scene(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         scene: &mut Scene,
+        effective: &Effective,
+        input: &FrameInput,
+        traced: bool,
+    ) {
+        self.attempt = scene.begin_frame(device, queue);
+        // The acceleration structures are built on the frames that trace,
+        // and freed by a frame with hardware ray tracing off. The portable
+        // BVHs then cover what the TLAS does not hold.
+        self.ray_tracing = RayTracingStats::default();
+        self.hardware_rays = false;
+        self.hardware_requested =
+            matches!(effective.hardware_ray_tracing, HardwareRayTracing::On(_));
+        match effective.hardware_ray_tracing {
+            HardwareRayTracing::Off
+            | HardwareRayTracing::Unsupported
+            | HardwareRayTracing::DisabledByScene => {
+                scene.free_acceleration_structures();
+                self.ray_tracing_error = match effective.hardware_ray_tracing {
+                    HardwareRayTracing::Unsupported => Some(NO_RAY_QUERIES),
+                    HardwareRayTracing::DisabledByScene => Some(NO_RAY_DATA),
+                    _ => None,
+                };
+            }
+            HardwareRayTracing::On(form) if traced => {
+                let prepared =
+                    scene.prepare_acceleration_structures(device, queue, input.camera.eye, form);
+                self.hardware_rays = prepared.is_some();
+                self.ray_tracing = prepared.unwrap_or_default();
+                self.ray_tracing_error = prepared.is_none().then_some(NO_MEMORY);
+            }
+            HardwareRayTracing::On(_) => {
+                scene.skip_acceleration_structures();
+                self.ray_tracing_error = None;
+            }
+        }
+        if traced {
+            scene.update_rays(device, queue, input.visibility_mask, self.hardware_rays);
+        }
+    }
+
+    /// A view's part: uploads the view and frame data of `input` seen with
+    /// `history` and `jitter` at `render_size`, and builds the view's
+    /// lists. `history`'s camera carries `jitter`'s offset. Returns the
+    /// data as uploaded.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_view(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
         input: &FrameInput,
         history: HistoryFrame,
         effective: &Effective,
@@ -191,48 +257,7 @@ impl Prepare {
         let values = FrameValues { view, frame };
         crate::counters::write_buffer(queue, frame_buffer, 0, bytemuck::bytes_of(&frame));
         views.camera.set(queue, ViewData::camera(view));
-        self.attempt = scene.begin_frame(device, queue);
-        // Only world-space rays, the dynamic GI volume's and ray-traced
-        // shadows read the ray instances and visibility mask. The entries
-        // set and static edits made since the last traced frame wait for
-        // the next, so the frames that skip it leave it nothing stale.
         let world_space = effective.world_space != WorldSpaceReflections::Off;
-        let traced = scene.ray_data() == crate::RayData::Enabled
-            && (world_space || volume.is_some() || effective.ray_traced_shadows);
-        // The acceleration structures are built on the frames that trace,
-        // and freed by a frame with hardware ray tracing off. The portable
-        // BVHs then cover what the TLAS does not hold.
-        self.ray_tracing = RayTracingStats::default();
-        self.hardware_rays = false;
-        self.hardware_requested =
-            matches!(effective.hardware_ray_tracing, HardwareRayTracing::On(_));
-        match effective.hardware_ray_tracing {
-            HardwareRayTracing::Off
-            | HardwareRayTracing::Unsupported
-            | HardwareRayTracing::DisabledByScene => {
-                scene.free_acceleration_structures();
-                self.ray_tracing_error = match effective.hardware_ray_tracing {
-                    HardwareRayTracing::Unsupported => Some(NO_RAY_QUERIES),
-                    HardwareRayTracing::DisabledByScene => Some(NO_RAY_DATA),
-                    _ => None,
-                };
-            }
-            HardwareRayTracing::On(form) if traced => {
-                let prepared =
-                    scene.prepare_acceleration_structures(device, queue, camera.eye, form);
-                self.hardware_rays = prepared.is_some();
-                self.ray_tracing = prepared.unwrap_or_default();
-                self.ray_tracing_error = prepared.is_none().then_some(NO_MEMORY);
-            }
-            HardwareRayTracing::On(_) => {
-                scene.skip_acceleration_structures();
-                self.ray_tracing_error = None;
-            }
-        }
-        if traced {
-            scene.update_rays(device, queue, frame.visibility_mask, self.hardware_rays);
-        }
-        let scene = &*scene;
         views.clusters.cluster(
             device,
             queue,

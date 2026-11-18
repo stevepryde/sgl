@@ -70,7 +70,7 @@ impl Renderer {
             .materials
             .set_anisotropy(device, settings.anisotropic_filtering.clamp());
         let scene = &*scene;
-        self.pipelines.specialise(
+        self.shared.pipelines.specialise(
             device,
             LayerConstants::new(&settings.diagnostics_in_effect().disable),
             scene,
@@ -82,17 +82,18 @@ impl Renderer {
         });
         // The capture draws into the frame's shadow maps, at the settings'
         // quality, and its groups bind them.
-        self.shadows.resize(device, settings.shadow_quality);
-        self.bindings.shadow_maps = self.shadows.maps();
+        self.view.shadows.resize(device, settings.shadow_quality);
+        self.view.bindings.shadow_maps = self.view.shadows.maps();
         // The volume the committed probes light, and those probes: what the
         // last submitted frame left, never a fresher frame's abandoned ones,
         // while dynamic GI is in effect.
         let dynamic_gi = self
+            .shared
             .dynamic_gi
             .as_ref()
             .and_then(|dynamic_gi| dynamic_gi.lights(scene))
             .filter(|_| self.dynamic_gi_in_effect(settings, scene).rays().is_some());
-        let mut views = self.prepare.capture(
+        let mut views = self.shared.prepare.capture(
             device,
             queue,
             scene,
@@ -104,10 +105,10 @@ impl Renderer {
         );
         // Their lights' shadows sample static layers placed for the capture.
         // They draw at the capture's time, from its frame uniform.
-        let local = self.shadows.local.plan_capture(
+        let local = self.view.shadows.local.plan_capture(
             device,
             queue,
-            &self.bindings,
+            &self.view.bindings,
             (scene, &mut views.instances),
             (center, &views.frame),
             crate::stages::shadows::local::ShadowFrame {
@@ -122,50 +123,55 @@ impl Renderer {
         let cascades: Vec<_> = views
             .cascades
             .iter()
-            .map(|view| self.bindings.shadow_group(device, view, &views.frame))
+            .map(|view| self.view.bindings.shadow_group(device, view, &views.frame))
             .collect();
-        self.shadows.directional.encode_capture(
+        self.view.shadows.directional.encode_capture(
             &mut encoder,
             scene,
-            &self.pipelines,
+            &self.shared.pipelines,
             (&views.casters, &views.instances),
             &cascades,
         );
-        self.shadows.local.encode_capture(
+        self.view.shadows.local.encode_capture(
             &mut encoder,
             &local,
-            (scene, &self.pipelines),
+            (scene, &self.shared.pipelines),
             &views.instances,
         );
         // Surfaces here sample the installed probes (surface.wgsl).
         let probes = scene
             .specular_probes()
-            .unwrap_or(&self.bindings.empty_probes);
+            .unwrap_or(&self.view.bindings.empty_probes);
         // Each face renders at the capture size and is averaged into the
         // cube in its own submission, so no command buffer holds the GPU for
         // the whole capture.
         for (index, view) in (0..).zip(&views.faces) {
-            let lit = self.bindings.lit_group(
+            let lit = self.view.bindings.lit_group(
                 device,
                 scene,
                 input.environment,
                 [view, &views.frame],
                 probes,
                 views.clusters.buffer(),
-                self.bindings.static_local_shadows(&local.records),
+                self.view.bindings.static_local_shadows(&local.records),
                 dynamic_gi.map(|(_, probes)| probes).or_else(|| {
-                    self.dynamic_gi
+                    self.shared
+                        .dynamic_gi
                         .as_ref()
                         .map(crate::stages::dynamic_gi::DynamicGi::stand_in)
                 }),
             );
-            let sky =
-                self.bindings
-                    .unlit_group(device, scene, input.environment, view, &views.frame);
-            self.opaque.encode_capture(
+            let sky = self.view.bindings.unlit_group(
+                device,
+                scene,
+                input.environment,
+                view,
+                &views.frame,
+            );
+            self.view.opaque.encode_capture(
                 &mut encoder,
                 scene,
-                &self.pipelines,
+                &self.shared.pipelines,
                 (&views.list, &views.instances),
                 &prefilter.face(),
                 &sky,
@@ -181,7 +187,7 @@ impl Renderer {
             queue.submit([face.finish()]);
         }
         // Commit the submitted capture's shadow layers before fallible readback.
-        self.shadows.local.finish_capture();
+        self.view.shadows.local.finish_capture();
         prefilter.encode(device, &mut encoder);
         let rgba16 = prefilter.read(device, queue, encoder).await?;
         Ok(SpecularProbeRadiance {
