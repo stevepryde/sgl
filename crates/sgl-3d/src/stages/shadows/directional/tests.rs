@@ -600,7 +600,7 @@ fn ray_hits_take_the_cascade_that_holds_them() {
             "output[0]=vec4(directional_shadow_visibility(0u,vec3(0.,0.,10.),vec3(0.,1.,0.),vec2(0.),SHADOW_RECEIVER_CAPTURE),\
              directional_shadow_visibility(0u,vec3(0.,0.,10.),vec3(0.,1.,0.),vec2(0.),SHADOW_RECEIVER_CAMERA),0.,0.);",
         );
-        fixture.scene.finish_frame();
+        fixture.scene.finish_open_frame();
         [observed[0], observed[1]]
     };
     let [hit, camera] = observe(&mut fixture);
@@ -684,7 +684,7 @@ fn casters_within_the_pancake_keep_their_own_depth() {
          output[0]=metres;"
     );
     let metres = observe_shadow(device, queue, &fixture.renderer, &fixture.scene, &statement);
-    fixture.scene.finish_frame();
+    fixture.scene.finish_open_frame();
     for ((depth, height), metres) in points.into_iter().zip(metres) {
         let expected = HEIGHT - height;
         assert!(
@@ -739,7 +739,7 @@ fn medium_light(fixture: &mut Fixture, input: &FrameInput, points: &[Vec3]) -> V
             .take(chunk.len())
         })
         .collect();
-    fixture.scene.finish_frame();
+    fixture.scene.finish_open_frame();
     observed
 }
 

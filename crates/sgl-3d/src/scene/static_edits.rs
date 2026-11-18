@@ -1,10 +1,12 @@
 //! The world bounds that static edits touched since the last submitted frame
 //! (the architecture's "Edits and frames"): adding, removing or changing a
 //! static instance, and replacing the geometry of a model one uses. A cache
-//! of static content marks what each of them reaches as stale. They are kept
-//! until `finish_frame`, so an abandoned frame leaves them for the next: each
-//! edit's own bounds, merged conservatively only past `MAX_BOXES`, far more
-//! than a streaming frame records. A cache rebuilt whole, which no frame need
+//! of static content marks what each of them reaches as stale. A finished
+//! frame retires those recorded before it began, so an abandoned frame
+//! leaves them for the next and an edit made after a frame was submitted
+//! and before it was finished stays for the next: each edit's own bounds,
+//! merged conservatively only past `MAX_BOXES`, far more than a streaming
+//! frame records. A cache rebuilt whole, which no frame need
 //! show the bounds to (the static instance BVH), counts the edits instead.
 use glam::{BVec3, DVec3, Mat4, Vec3};
 
@@ -133,6 +135,10 @@ fn halve(boxes: &mut Vec<[Vec3; 2]>) -> usize {
 #[derive(Default)]
 pub(crate) struct StaticEdits {
     pending: Vec<[Vec3; 2]>,
+    /// How many of `pending` the frame being rendered saw, and whether they
+    /// were merged since, which reorders them.
+    rendered: usize,
+    merged: bool,
     /// Frames finished so far.
     finished: u64,
     /// Static edits recorded so far.
@@ -148,6 +154,7 @@ impl StaticEdits {
             return;
         }
         let merged = if self.pending.len() == MAX_BOXES {
+            self.merged = true;
             halve(&mut self.pending)
         } else {
             0
@@ -184,9 +191,21 @@ impl StaticEdits {
         }
     }
 
-    /// Commits a submitted frame: its edits are no longer pending.
+    /// Begins a frame, which sees the bounds pending now.
+    pub fn begin_frame(&mut self) {
+        self.rendered = self.pending.len();
+        self.merged = false;
+    }
+
+    /// Commits a submitted frame: the edits recorded before it began are no
+    /// longer pending. After a merge since, which mixed them with later
+    /// ones, all stay pending for one more frame, which costs a cache a
+    /// redraw at most.
     pub fn finish(&mut self) {
-        self.pending.clear();
+        if !self.merged {
+            self.pending.drain(..self.rendered);
+        }
+        self.rendered = 0;
         self.finished += 1;
     }
 }

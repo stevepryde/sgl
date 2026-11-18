@@ -336,10 +336,11 @@ pub(crate) struct InstanceDeformation {
     /// The slot motion is measured from: `written` while it was visible in
     /// the last submitted frame.
     motion: Option<u32>,
-    /// Set since the last submitted frame.
+    /// Set since the deformation the last submitted frame wrote.
     changed: bool,
-    /// The frame being rendered's slot, and whether the frame writes it.
-    frame: Option<(u32, bool)>,
+    /// The frame being rendered's slot, whether the frame writes it, and
+    /// the revision it shows.
+    frame: Option<(u32, bool, u64)>,
     /// Its object record's deformed position, previous position and normal
     /// words this frame.
     pub record: [u32; 3],
@@ -443,7 +444,7 @@ impl InstanceDeformation {
             Some(written) => (1 - written, true),
             None => (0, true),
         };
-        self.frame = Some((slot, writes));
+        self.frame = Some((slot, writes, self.revision));
         let positions = self.slot_word(model, slot);
         let normals = self.slot_word(model, 2);
         self.record = [
@@ -473,12 +474,13 @@ impl InstanceDeformation {
         self.record[0] + model.meshes[mesh].first_vertex * DEFORMED_POSITION_WORDS
     }
 
-    /// Commits a submitted frame in which the instance was `visible`.
+    /// Commits a submitted frame in which the instance was `visible`: a
+    /// deformation set since the frame began is still to write.
     pub fn finish(&mut self, visible: bool) {
-        if let Some((slot, writes)) = self.frame.take() {
+        if let Some((slot, writes, revision)) = self.frame.take() {
             if writes {
                 self.written = Some(slot);
-                self.changed = false;
+                self.changed = self.revision != revision;
             }
             self.motion = self.written.filter(|_| visible);
         }

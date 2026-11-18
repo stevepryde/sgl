@@ -8,9 +8,10 @@
 //! them, `scenario_fsr_upscaling` FSR at its upscaling qualities and every
 //! method under rotation.
 use super::geometry::{Pose, View, coverage};
-use super::image::{Image, Region};
+use super::image::{Image, Region, centre};
 use super::rig::{Gpu, HALF_STEP, Rig, Shape, fsr_gpu, gpu};
 use sgl_3d::Camera;
+use sgl_3d::diagnostics::{self, DiagnosticTarget};
 use sgl_3d::glam::{Vec2, Vec3};
 use sgl_3d::settings::Antialiasing;
 
@@ -335,6 +336,103 @@ fn beyond_near(camera: &Camera, corners: &[Vec3]) -> Vec<Vec3> {
         }
     }
     kept
+}
+
+/// A fifth of TAA's still-pixel classification (`TAA_STILL_MOTION_PIXELS`,
+/// 0.01 px, DFX-19 in `sgl-post-fx`'s PROVENANCE.md) at `VIEW`'s width, in
+/// UV: motion the resolve could mistake for movement exceeds it.
+pub const STILL_UV: f32 = 0.01 / 5. / VIEW.size[0] as f32;
+/// Depth motion beside its half-float step (`HALF_STEP` of the value): the
+/// f32 rounding of two view depths of a few metres differenced, far below
+/// the slowest scripted depth motion, 0.05 m a frame.
+pub const STILL_DEPTH: f32 = 1e-4;
+
+/// The square's corners of `pixel`.
+fn corners(pixel: [u32; 2]) -> [Vec2; 4] {
+    [(0., 0.), (1., 0.), (0., 1.), (1., 1.)]
+        .map(|(x, y)| Vec2::new(pixel[0] as f32 + x, pixel[1] as f32 + y))
+}
+
+/// Case 1's analytic oracle (`scenario_temporal_antialiasing`,
+/// `motion_vectors_match_the_script`) over `rig`'s last frame, `frame`, of
+/// `scenario` at `VIEW`: each shape's interior (its source id's pixels
+/// eroded by one) wrote the current-minus-previous UV and
+/// previous-minus-current view depth that the script's poses at `frame - 1`
+/// and `frame` give through the cameras at those frames, unjittered at the
+/// pixel's centre, with depth validity; the sky wrote the motion of the
+/// camera's rotation alone, without it. The tolerance is the truth's spread
+/// over the pixel's corners, a half-float step of the value, and
+/// `STILL_UV` or `STILL_DEPTH`. Returns the largest errors, in UV and
+/// metres, or the first failure, labelled `name`.
+pub fn motion_follows_the_script(
+    rig: &Rig,
+    scenario: &Scenario,
+    frame: u32,
+    name: &str,
+) -> Result<[f32; 2], String> {
+    let motion = rig.read(DiagnosticTarget::Motion);
+    let sources = rig.read(DiagnosticTarget::SourceId);
+    let now = VIEW.camera((scenario.camera)(frame));
+    let before = VIEW.camera((scenario.camera)(frame - 1));
+    let mut worst = [0f32; 2];
+    for (i, (shape, id)) in scenario.shapes.iter().zip(rig.instances()).enumerate() {
+        let [current, previous] = [frame, frame - 1].map(|f| (scenario.script)(f)[i].matrix());
+        let truth = |pixel: Vec2| {
+            VIEW.surface_motion(
+                &now,
+                &before,
+                shape.quads[0].corners,
+                current,
+                previous,
+                pixel,
+            )
+            .expect("the surface under its own pixel")
+        };
+        let interior = sources.region_of(diagnostics::source_id(id)).eroded(1);
+        if interior.is_empty() {
+            return Err(format!("{name}: instance {i} drew no interior"));
+        }
+        for pixel in interior.iter() {
+            let expected = truth(centre(pixel));
+            let spread = corners(pixel)
+                .iter()
+                .map(|&c| (truth(c) - expected).abs())
+                .fold(Vec3::ZERO, Vec3::max);
+            let [r, g, b, a] = motion.at(pixel);
+            let off = (Vec3::new(r, g, b) - expected).abs();
+            let tolerance =
+                spread + expected.abs() * HALF_STEP + Vec3::new(STILL_UV, STILL_UV, STILL_DEPTH);
+            worst = [worst[0].max(off.x.max(off.y)), worst[1].max(off.z)];
+            if !(off.cmple(tolerance).all() && a == 1.) {
+                return Err(format!(
+                    "{name}: instance {i} at {pixel:?} wrote motion {:?} where the script gives {expected} ± {tolerance}",
+                    [r, g, b, a]
+                ));
+            }
+        }
+    }
+    let sky = sources.region_of(0).eroded(1);
+    for pixel in sky.iter() {
+        let expected = VIEW.sky_motion(&now, &before, centre(pixel));
+        let spread = corners(pixel)
+            .iter()
+            .map(|&c| (VIEW.sky_motion(&now, &before, c) - expected).abs())
+            .fold(Vec2::ZERO, Vec2::max);
+        let [r, g, _, a] = motion.at(pixel);
+        let off = (Vec2::new(r, g) - expected).abs();
+        worst[0] = worst[0].max(off.x.max(off.y));
+        if !(off
+            .cmple(spread + expected.abs() * HALF_STEP + STILL_UV)
+            .all()
+            && a == 0.)
+        {
+            return Err(format!(
+                "{name}: the sky at {pixel:?} wrote motion {:?} where the camera's rotation gives {expected}",
+                motion.at(pixel)
+            ));
+        }
+    }
+    Ok(worst)
 }
 
 /// The poses of the stage most cases share: the card and the grating side

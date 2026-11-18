@@ -171,7 +171,8 @@ settings SGL3D has today.
    sync. A typed camera/frame interface owns GPU-layout packing; the caller owns
    submission and presentation. Previous camera/instance data describes the last
    submitted frame: previous camera data is renderer history, previous instance
-   data is scene history. Resize, scene replacement and camera cuts invalidate
+   data is scene history, both committed by `Renderer::finish_frame` from what
+   the frame drew. Resize, scene replacement and camera cuts invalidate
    affected history. Device-bound resources are recreated when the caller
    replaces the device, and rendering into a caller-provided texture needs no
    window. Caches become reusable only after the caller submits the frame and

@@ -543,12 +543,12 @@ fn two_level_traversal_matches_brute_force_over_edited_instances() {
         }
     }
     let placed = kept;
-    scene.finish_frame();
+    scene.test_frame(&device, &queue);
     receivers(&assets, &placed, &mut rays);
     let observed = observer.observe(&device, &queue, &mut scene, &rays);
     compare("replaced", &assets, &placed, &rays, &observed);
     // A traced frame with no edits shows the same.
-    scene.finish_frame();
+    scene.test_frame(&device, &queue);
     let observed = observer.observe(&device, &queue, &mut scene, &rays);
     compare("unchanged", &assets, &placed, &rays, &observed);
 }
@@ -600,7 +600,7 @@ fn reused_identities_never_hit_earlier_geometry() {
         )
         .unwrap();
     assert_eq!(second.index(), first.index(), "the index is reused");
-    scene.finish_frame();
+    scene.test_frame(&device, &queue);
     let observed = observer.observe(&device, &queue, &mut scene, &rays);
     let hit = |observed: &Observed| {
         (
@@ -752,7 +752,7 @@ fn entries_set_over_untraced_frames_stay_one_per_instance() {
                 .set_instance(&queue, id, state(model, at(instance, depth), true))
                 .unwrap();
         }
-        scene.finish_frame();
+        scene.test_frame(&device, &queue);
     }
     assert!(
         scene.ray_instances.pending() <= instances.len(),
@@ -819,7 +819,7 @@ fn rays_meet_the_same_geometry_after_a_render_origin_move() {
     let before = observer.observe(&device, &queue, &mut scene, &rays(Vec3::ZERO));
     let by = Vec3::new(1024.75, 0., -512.);
     scene.move_origin(&device, &queue, by).unwrap();
-    scene.finish_frame();
+    scene.test_frame(&device, &queue);
     let after = observer.observe(&device, &queue, &mut scene, &rays(by));
     for (index, (before, after)) in before.iter().zip(&after).enumerate() {
         assert_eq!(

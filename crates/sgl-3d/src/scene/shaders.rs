@@ -87,8 +87,11 @@ impl Scene {
     /// Replaces the parameter block of `material`'s shader (its
     /// `ShaderParams`, as `shader_parameters_layout` lays it out), which
     /// starts as zeros. It is an edit: the queue uploads it, and the frame
-    /// after the next submitted one evaluates its motion from it. Time
-    /// comes from the frame, so most blocks are set once.
+    /// after the next submitted one evaluates its motion from it; until the
+    /// block was in a finished frame, a frame evaluates its motion from its
+    /// own block, so a material that gains or changes its shader writes no
+    /// motion from its parameters in its first frame. Time comes from the
+    /// frame, so most blocks are set once.
     pub fn set_shader_parameters(
         &mut self,
         queue: &wgpu::Queue,

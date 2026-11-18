@@ -148,7 +148,7 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
         2,
         "the models fill two slabs"
     );
-    scene.prepare_frame(&device, &queue, Vec3::ZERO);
+    scene.begin_frame(&device, &queue);
 
     // A light shining straight down onto all four, the cascade's x across
     // 40 m and depth across 20 m.

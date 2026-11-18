@@ -75,7 +75,7 @@ fn deformed(
     instance: InstanceId,
     vertices: u32,
 ) -> Vec<(Vec3, Vec3, Vec4)> {
-    scene.prepare_frame(device, queue, Vec3::ZERO);
+    scene.begin_frame(device, queue);
     let mut encoder = device.create_command_encoder(&Default::default());
     Deform::new(device).dispatch(device, queue, &mut encoder, scene, None);
     queue.submit([encoder.finish()]);

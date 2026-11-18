@@ -682,7 +682,7 @@ fn instance_motion_uses_last_submitted_model_after_abandoned_updates() {
             .add_instance(&device, &queue, at(a, 1.), Mobility::Moving)
             .unwrap();
         queue.submit([]);
-        scene.finish_frame();
+        scene.test_frame(&device, &queue);
         scene.set_instance(&queue, id, at(b, 3.)).unwrap();
         // This model-B frame is abandoned; a second update must still compare to A.
         scene.set_instance(&queue, id, at(b, 5.)).unwrap();
@@ -697,7 +697,7 @@ fn instance_motion_uses_last_submitted_model_after_abandoned_updates() {
             uploaded_record(&device, &queue, &scene, id).motion,
             [6., 0., 0.]
         );
-        scene.finish_frame();
+        scene.test_frame(&device, &queue);
         scene.set_instance(&queue, id, at(a, 9.)).unwrap();
         assert_eq!(
             uploaded_record(&device, &queue, &scene, id).motion,
@@ -728,7 +728,7 @@ fn static_instances_write_no_motion_and_moving_ones_measure_from_the_last_submit
     let moving = scene
         .add_instance(&device, &queue, at(1.), Mobility::Moving)
         .unwrap();
-    scene.finish_frame();
+    scene.test_frame(&device, &queue);
     for id in [fixed, moving] {
         scene.set_instance(&queue, id, at(4.)).unwrap();
     }
@@ -751,8 +751,8 @@ fn static_instances_write_no_motion_and_moving_ones_measure_from_the_last_submit
     );
     assert_eq!(motion(&scene, moving), [3., 0., 0.]);
     // Submitted, then not posed again: the next frame shows it still.
-    scene.finish_frame();
-    scene.prepare_frame(&device, &queue, Vec3::ZERO);
+    scene.test_frame(&device, &queue);
+    scene.begin_frame(&device, &queue);
     assert_eq!(
         motion(&scene, moving),
         [0.; 3],
@@ -769,7 +769,7 @@ fn static_instances_write_no_motion_and_moving_ones_measure_from_the_last_submit
             },
         )
         .unwrap();
-    scene.finish_frame();
+    scene.test_frame(&device, &queue);
     scene.set_instance(&queue, moving, at(8.)).unwrap();
     assert_eq!(motion(&scene, moving), [0.; 3]);
 }
@@ -885,7 +885,7 @@ fn reused_indices_show_no_earlier_geometry_record_or_motion() {
             },
         )
         .unwrap();
-    scene.finish_frame();
+    scene.test_frame(&device, &queue);
     assert_eq!(
         trace(&device, &queue, &mut scene, Vec3::ZERO),
         [2., 0.25, 1., 0.]
@@ -2021,4 +2021,300 @@ fn lightmap_rejects_nonfinite_charts_without_replacing_the_bake() {
         0.,
         "the rejected map changed material eligibility"
     );
+}
+
+/// What the GPU holds of an instance's shader data and its material's
+/// parameter block, as shading reads them: the instance's data this frame
+/// and as previous, and the block's second 16 bytes (`TestShaderParams`'
+/// amplitude first) this frame and as previous.
+fn uploaded_shading(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &Scene,
+    instance: InstanceId,
+    material: MaterialId,
+) -> [[f32; 4]; 4] {
+    let [current, previous] = scene
+        .materials
+        .parameter_blocks(material)
+        .expect("a material with a shader");
+    let values = dispatch(
+        device,
+        queue,
+        String::new(),
+        &r#"
+@group(0) @binding(0) var<storage,read_write> result:array<vec4<f32>,4>;
+@group(1) @binding(0) var<storage,read> data:array<vec4<f32>>;
+@group(1) @binding(1) var<uniform> current:array<vec4<f32>,2>;
+@group(1) @binding(2) var<uniform> previous:array<vec4<f32>,2>;
+@compute @workgroup_size(1) fn observe() {
+ result[0]=data[INDEX*2u];
+ result[1]=data[INDEX*2u+1u];
+ result[2]=current[1];
+ result[3]=previous[1];
+}
+"#
+        .replace("INDEX", &format!("{}u", instance.index())),
+        4,
+        |pipeline| {
+            let layout = pipeline.get_bind_group_layout(1);
+            fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+                wgpu::BindGroupEntry {
+                    binding,
+                    resource: buffer.as_entire_binding(),
+                }
+            }
+            Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &layout,
+                entries: &[
+                    entry(0, scene.instances.objects.shader_data()),
+                    entry(1, current),
+                    entry(2, previous),
+                ],
+            }))
+        },
+    );
+    values.try_into().unwrap()
+}
+
+/// A scene for the frame-record tests: a moving instance of a cube drawn
+/// with a material through the test shader, another moving instance, a
+/// static one and a skinned deforming one, with a frame finished.
+struct Recorded {
+    scene: Scene,
+    material: MaterialId,
+    mover: InstanceId,
+    hider: InstanceId,
+    fixed: InstanceId,
+    skin: InstanceId,
+    model: ModelId,
+}
+
+fn recorded(device: &wgpu::Device, queue: &wgpu::Queue) -> Recorded {
+    let mut scene = Scene::new(device, queue);
+    let shader = test_support::add_test_shader(&mut scene);
+    let ids = scene
+        .add_asset(device, queue, test_support::cube())
+        .unwrap();
+    let material = ids.materials[0];
+    test_support::set_shader(&mut scene, queue, material, (shader, 0.));
+    let plain = scene
+        .add_asset(device, queue, test_support::cube())
+        .unwrap()
+        .model;
+    let mut skinned = test_support::cube();
+    for mesh in &mut skinned.meshes {
+        mesh.deformation = crate::deformation::MeshDeformation {
+            influences: vec![
+                crate::deformation::Influence {
+                    joints: [0; 4],
+                    weights: [1., 0., 0., 0.],
+                };
+                mesh.vertices.len()
+            ],
+            morph_targets: Vec::new(),
+        };
+    }
+    let skinned = scene.add_asset(device, queue, skinned).unwrap().model;
+    let at = |model, x: f32| state(model, Mat4::from_translation(Vec3::X * x));
+    let mut add = |model, x, mobility| {
+        scene
+            .add_instance(device, queue, at(model, x), mobility)
+            .unwrap()
+    };
+    let mover = add(ids.model, 1., Mobility::Moving);
+    let hider = add(plain, 1., Mobility::Moving);
+    let fixed = add(plain, 0., Mobility::Static);
+    let skin = add(skinned, 0., Mobility::Moving);
+    scene.test_frame(device, queue);
+    Recorded {
+        scene,
+        material,
+        mover,
+        hider,
+        fixed,
+        skin,
+        model: plain,
+    }
+}
+
+fn test_params(amplitude: f32) -> test_support::TestShaderParams {
+    test_support::TestShaderParams {
+        amplitude,
+        ..Default::default()
+    }
+}
+
+fn joint(x: f32) -> [Mat4; 1] {
+    [Mat4::from_translation(Vec3::X * x)]
+}
+
+// Plausible defects: `finish_frame` commits the scene as it is when it runs
+// rather than what the frame drew, so an edit made after the submission
+// (S3D-4's next frame) becomes the submitted state: a moving instance's next
+// frame writes zero motion, a hide-and-show loses its motion, the shader
+// data and parameters measure from the edited values, a deformation set
+// since is never written, and the rigid-change signal and static-edit
+// bounds raised since are retired unseen. Or a parameter block's first
+// frame measures from zeros (B-8). The oracles are the fixture's poses and
+// values, read from what the GPU holds for the next frame, and the
+// architecture's "Edits and frames" rule for the signal, the bounds and the
+// deform work.
+#[test]
+fn a_frame_commits_what_it_drew() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let Recorded {
+        mut scene,
+        material,
+        mover,
+        hider,
+        fixed,
+        skin,
+        model,
+    } = recorded(&device, &queue);
+    let at = |model, x: f32| state(model, Mat4::from_translation(Vec3::X * x));
+    let shading = |scene: &Scene| uploaded_shading(&device, &queue, scene, mover, material);
+    // A block that was in no finished frame measures from this frame's: a
+    // material that gains a shader gets a new block.
+    let shader = test_support::add_test_shader(&mut scene);
+    test_support::set_shader(&mut scene, &queue, material, (shader, 0.));
+    test_support::set_test_params(&mut scene, &queue, material, test_params(0.5));
+    scene.begin_frame(&device, &queue);
+    let [_, _, current, previous] = shading(&scene);
+    assert_eq!(current[0], 0.5, "the frame's parameters");
+    assert_eq!(previous, current, "a block's first frame writes no motion");
+    scene.finish_open_frame();
+
+    // The frame draws: the mover at 2 with data 1 and amplitude 1, the hider
+    // shown at 1, the skin posed, the static instance moved from 0 to 10.
+    let mover_model = scene.instance(mover).unwrap().model;
+    scene
+        .set_instance(&queue, mover, at(mover_model, 2.))
+        .unwrap();
+    scene
+        .set_instance_shader_data(&queue, mover, [1., 0., 0., 0.])
+        .unwrap();
+    test_support::set_test_params(&mut scene, &queue, material, test_params(1.));
+    scene
+        .set_instance_deformation(&queue, skin, &joint(0.25), &[])
+        .unwrap();
+    scene.set_instance(&queue, fixed, at(model, 10.)).unwrap();
+    let attempt = scene.begin_frame(&device, &queue);
+    queue.submit([]);
+    // After the submission: the next frame's edits.
+    scene
+        .set_instance(&queue, mover, at(mover_model, 5.))
+        .unwrap();
+    scene
+        .set_instance_shader_data(&queue, mover, [2., 0., 0., 0.])
+        .unwrap();
+    test_support::set_test_params(&mut scene, &queue, material, test_params(2.));
+    scene
+        .set_instance(
+            &queue,
+            hider,
+            InstanceState {
+                visible: false,
+                ..at(model, 1.5)
+            },
+        )
+        .unwrap();
+    scene
+        .set_instance_deformation(&queue, skin, &joint(0.5), &[])
+        .unwrap();
+    scene.set_instance(&queue, fixed, at(model, 20.)).unwrap();
+    assert!(scene.finish_frame(attempt));
+    assert_eq!(scene.last_finished(), Some(attempt));
+
+    assert!(
+        scene.rigid_objects_changed(),
+        "a static move after the frame began is the next frame's"
+    );
+    let centres: Vec<f32> = scene
+        .static_edits
+        .pending()
+        .iter()
+        .map(|bounds| (bounds[0].x + bounds[1].x) / 2.)
+        .collect();
+    assert_eq!(
+        centres.len(),
+        2,
+        "the move from 10 to 20 stays pending, the one before the frame does not: {centres:?}"
+    );
+    for (centre, x) in centres.iter().zip([10., 20.]) {
+        assert!((centre - x).abs() < 0.01, "{centres:?}");
+    }
+    scene.set_instance(&queue, hider, at(model, 3.)).unwrap();
+    scene.begin_frame(&device, &queue);
+    assert!(
+        !scene.deformations.is_empty(),
+        "a deformation set after the frame began is written in the next"
+    );
+    let motion = |id| uploaded_record(&device, &queue, &scene, id).motion;
+    assert_eq!(motion(mover), [3., 0., 0.], "from the drawn pose at 2 to 5");
+    assert_eq!(
+        motion(hider),
+        [2., 0., 0.],
+        "the frame drew it visible at 1: hidden after it, shown at 3"
+    );
+    let [data, previous_data, params, previous_params] = shading(&scene);
+    assert_eq!([data[0], previous_data[0]], [2., 1.], "shader data");
+    assert_eq!([params[0], previous_params[0]], [2., 1.], "parameters");
+}
+
+// Plausible defects: beginning a frame commits part of it (its record
+// overwrites what motion is measured from), or a superseded or repeated
+// attempt commits, so a frame rendered and dropped moves the next frame's
+// history. The oracle is the architecture's "Edits and frames" rule: the
+// next frame measures from the last finished frame and sees the same
+// pending marks.
+#[test]
+fn an_unfinished_frame_commits_nothing() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let Recorded {
+        mut scene,
+        material,
+        mover,
+        fixed,
+        skin,
+        model,
+        ..
+    } = recorded(&device, &queue);
+    let at = |model, x: f32| state(model, Mat4::from_translation(Vec3::X * x));
+    let finished = scene.last_finished();
+    let mover_model = scene.instance(mover).unwrap().model;
+    scene
+        .set_instance(&queue, mover, at(mover_model, 2.))
+        .unwrap();
+    scene
+        .set_instance_shader_data(&queue, mover, [1., 0., 0., 0.])
+        .unwrap();
+    test_support::set_test_params(&mut scene, &queue, material, test_params(1.));
+    scene
+        .set_instance_deformation(&queue, skin, &joint(0.25), &[])
+        .unwrap();
+    scene.set_instance(&queue, fixed, at(model, 10.)).unwrap();
+    let dropped = scene.begin_frame(&device, &queue);
+    let retried = scene.begin_frame(&device, &queue);
+    assert!(!scene.finish_frame(dropped), "a superseded attempt");
+    assert_eq!(scene.last_finished(), finished);
+    assert!(scene.rigid_objects_changed());
+    assert_eq!(scene.static_edits.pending().len(), 2);
+    assert!(!scene.deformations.is_empty());
+    let motion = uploaded_record(&device, &queue, &scene, mover).motion;
+    assert_eq!(motion, [1., 0., 0.], "from the finished frame's pose at 1");
+    let [data, previous_data, params, previous_params] =
+        uploaded_shading(&device, &queue, &scene, mover, material);
+    assert_eq!([data[0], previous_data[0]], [1., 0.], "shader data");
+    assert_eq!([params[0], previous_params[0]], [1., 0.], "parameters");
+    assert!(scene.finish_frame(retried));
+    assert!(!scene.finish_frame(retried), "an attempt finishes once");
+    assert_eq!(scene.last_finished(), Some(retried));
+    assert!(!scene.rigid_objects_changed());
+    assert!(scene.static_edits.pending().is_empty());
 }

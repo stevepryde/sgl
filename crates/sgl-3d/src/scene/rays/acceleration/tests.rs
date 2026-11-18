@@ -81,7 +81,7 @@ fn build_in(
     let mut encoder = device.create_command_encoder(&Default::default());
     scene.encode_acceleration_structures(&mut encoder);
     queue.submit([encoder.finish()]);
-    scene.finish_frame();
+    scene.test_frame(device, queue);
     stats
 }
 

@@ -118,7 +118,7 @@ fn observe(
     }
     encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 16);
     queue.submit([encoder.finish()]);
-    scene.finish_frame();
+    scene.finish_open_frame();
     let (send, recv) = std::sync::mpsc::channel();
     readback.map_async(wgpu::MapMode::Read, .., move |r| send.send(r).unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -174,7 +174,7 @@ fn fused_lit_color(
         renderer.draw_test_camera(scene, &mut pass, GeometryPass::Fused);
     }
     queue.submit([encoder.finish()]);
-    scene.finish_frame();
+    scene.finish_open_frame();
     test_support::read(device, queue, targets[4].texture(), 8)
 }
 

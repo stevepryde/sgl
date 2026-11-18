@@ -197,7 +197,10 @@ string or a boxed error. `Scene::set_shader_parameters` replaces a
 material's shader parameter block, of its shader's `ShaderParams` size,
 zeros when the material gains the shader: an edit under the rule below and
 not a static edit, which uploads through the queue, records no bounds and
-cuts no history.
+cuts no history. Its motion is measured from the block of the last
+submitted frame, this frame's for a block that was in none, so a material
+that gains or changes its shader, which gives it a new block, writes no
+motion from its parameters in its first frame.
 
 **Prepared geometry.** A model's geometry reaches `add_model` and
 `set_model` prepared, a model at a time, since its BVH's leaves name a mesh
@@ -274,8 +277,15 @@ submitted frame, this frame's for an instance that was in none. For a
 static instance a change is a static edit, as its pose's would be, since
 its local-light shadow layers hold the displacement its shader gave it.
 
-**Edits and frames.** The game edits the scene before `Renderer::render`, and
-not again until that frame is finished or abandoned. A frame draws the edited
+**Edits and frames.** The game edits the scene before `Renderer::render`,
+and not again until that frame's commands are submitted or dropped: an edit
+uploads through the queue, so one made in between would change what that
+frame draws. `render` records what the frame draws (each instance's pose,
+model, visibility and shader data, each deformation, each parameter block,
+and the rigid-change and static-edit marks up to it), and `finish_frame`
+commits that record, so an edit made after the submission and before
+`finish_frame` belongs to the next frame and changes nothing of the
+finished one's. A frame draws the edited
 scene in every view, shadow and ray alike: an edit updates bounds, culling
 hierarchies, object records and the ray source together. It uploads what it
 changed and, apart from moving content when a buffer grows or the decal atlas
@@ -289,7 +299,8 @@ the next frame builds them again
 
 A static edit (adding, removing or changing a static instance, or replacing
 the geometry of a model one uses) also records the world bounds it touched.
-The scene keeps each edit's bounds pending until `finish_frame`, merging
+The scene keeps each edit's bounds pending until a frame that began after
+it is finished, merging
 them conservatively (spatial neighbours in pairs) only past a cap far above
 a streaming frame's edits. A cache of static content marks what each kept
 box reaches as stale, never what a union of them would, in any frame that
@@ -300,9 +311,9 @@ lights' shadows when it changes (b130438 `renderer_scene_cull.cpp`,
 frame starts over. The static instance BVH, rebuilt whole, counts the edits
 instead. Static-edit bounds are the scene's part; what else makes a cache
 stale (its light, the visibility mask, a material's caster values, another
-`Scene`) is its owner's. An abandoned frame commits nothing: the next frame
-measures motion from the last submitted frame and sees the same pending
-bounds.
+`Scene`) is its owner's. A frame that is not finished commits nothing: the
+next frame measures motion from the last finished frame and sees the same
+pending bounds, with any recorded since.
 
 **Render origin.** Every position at the boundary is `f32` in the scene's
 render frame. A game whose world is larger than `f32` renders precisely keeps

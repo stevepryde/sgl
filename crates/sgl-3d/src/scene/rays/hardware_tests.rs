@@ -431,7 +431,7 @@ fn frame(
     batches: &[Batch<'_>],
 ) -> Vec<Vec<[u32; 8]>> {
     let eye = Vec3::new(0., 0., 10.);
-    scene.prepare_frame(device, queue, eye);
+    scene.begin_frame(device, queue);
     scene
         .prepare_acceleration_structures(device, queue, eye, form)
         .expect("the device holds a TLAS");
@@ -483,7 +483,7 @@ fn frame(
         })
         .collect();
     queue.submit([encoder.finish()]);
-    scene.finish_frame();
+    scene.finish_open_frame();
     for readback in &readbacks {
         readback.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
     }

@@ -256,7 +256,7 @@ impl Materials {
     }
 
     /// Before a frame: each shader parameter block's last submitted copy is
-    /// uploaded where it changed.
+    /// uploaded where it changed, and the block the frame draws recorded.
     pub fn prepare_frame(&mut self, queue: &wgpu::Queue) {
         for (_, material) in self.slots.iter_mut() {
             if let Some(params) = &mut material.params {
@@ -265,8 +265,8 @@ impl Materials {
         }
     }
 
-    /// Commits a submitted frame: each shader parameter block becomes the
-    /// one its next frame's motion is measured from.
+    /// Commits a submitted frame: each shader parameter block as the frame
+    /// drew it becomes the one its next frame's motion is measured from.
     pub fn finish_frame(&mut self) {
         for (_, material) in self.slots.iter_mut() {
             if let Some(params) = &mut material.params {
@@ -725,6 +725,16 @@ impl Scene {
         self.materials.remove(&mut self.rays, id)?;
         self.shaders.count(shader.map(|shader| shader.shader), -1);
         Ok(())
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+impl Materials {
+    /// `id`'s shader parameter blocks, this frame's and the previous one,
+    /// while it has a shader.
+    pub fn parameter_blocks(&self, id: MaterialId) -> Option<[&wgpu::Buffer; 2]> {
+        let params = self.slots.get(id)?.params.as_ref()?;
+        Some([&params.current, &params.previous])
     }
 }
 
