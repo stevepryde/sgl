@@ -704,6 +704,30 @@ impl Rig {
     /// before `Renderer::finish_frame`: the next frame's edits, in a loop
     /// that updates the scene before it finishes the frame it submitted.
     pub fn render_then(&mut self, frame: u32, edits: impl FnOnce(&mut Rig)) {
+        let encoder = self.encode(frame);
+        self.gpu.queue.submit([encoder.finish()]);
+        self.input.camera_cut = false;
+        edits(self);
+        self.renderer.finish_frame(&mut self.scene);
+    }
+
+    /// Renders frame `frame` as [`Rig::render`] does and drops its encoder
+    /// unsubmitted, without `finish_frame`: an abandoned frame.
+    /// `camera_cut` holds for the next.
+    pub fn render_unsubmitted(&mut self, frame: u32) {
+        drop(self.encode(frame));
+    }
+
+    /// Renders and submits frame `frame` as [`Rig::render`] does, without
+    /// `finish_frame`: a frame the game rendered and did not finish.
+    /// `camera_cut` holds for the next.
+    pub fn render_unfinished(&mut self, frame: u32) {
+        let encoder = self.encode(frame);
+        self.gpu.queue.submit([encoder.finish()]);
+    }
+
+    /// Frame `frame` encoded at `view.size`, after `resize`.
+    fn encode(&mut self, frame: u32) -> wgpu::CommandEncoder {
         self.frame = frame;
         self.input.elapsed_seconds = f64::from(frame) / FRAME_RATE;
         self.input.frame_time_ms = (1000. / FRAME_RATE) as f32;
@@ -725,10 +749,7 @@ impl Rig {
             &self.output.0,
             None,
         );
-        queue.submit([encoder.finish()]);
-        self.input.camera_cut = false;
-        edits(self);
-        self.renderer.finish_frame(&mut self.scene);
+        encoder
     }
 
     /// `target` of the last frame, decoded.

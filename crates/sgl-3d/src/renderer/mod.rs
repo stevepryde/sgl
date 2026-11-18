@@ -419,6 +419,7 @@ impl Renderer {
             if let Some(probe) = &mut self.probe {
                 probe.submitted();
             }
+            frame::settle(self, true);
         }
     }
 

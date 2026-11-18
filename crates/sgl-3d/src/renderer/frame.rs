@@ -34,6 +34,10 @@ pub(super) fn render(
     output: &wgpu::TextureView,
     timing: Option<&GpuTiming>,
 ) {
+    // A render that `finish_frame` did not follow was not finished.
+    if renderer.rendered.take().is_some() {
+        settle(renderer, false);
+    }
     // History restarts for a camera cut, a resize or another scene.
     let mut history = renderer.begin_history(scene, input);
     let Renderer {
@@ -354,6 +358,20 @@ pub(super) fn render(
         );
         probe.finish(ctx.encoder);
     }
+}
+
+/// Settles the last render, `finished` or not, in every stage that keeps
+/// what describes its GPU history as the last finished frame left it
+/// (`view::history::Kept`): exactly once per render, before the next render
+/// or after `finish_frame`. The History contract's "What a frame commits".
+pub(super) fn settle(renderer: &mut Renderer, finished: bool) {
+    if let Some(post_fx) = &mut renderer.post_fx {
+        post_fx.settle(finished);
+    }
+    renderer.antialiasing.settle(finished);
+    renderer.reflections.settle(finished);
+    renderer.opaque.settle(finished);
+    renderer.traced_shadows.settle(finished);
 }
 
 /// The opaque stage in the stage order's named parts: the G-buffer, then,

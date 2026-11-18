@@ -135,6 +135,14 @@ impl Opaque {
         }
     }
 
+    /// Settles the last render's ambient occlusion history: see
+    /// `Kept::settle`.
+    pub fn settle(&mut self, finished: bool) {
+        if let Some(ambient_occlusion) = &mut self.ambient_occlusion {
+            ambient_occlusion.settle(finished);
+        }
+    }
+
     /// This frame's ambient visibility, when ambient occlusion ran.
     pub fn visibility(&self) -> Option<&wgpu::TextureView> {
         self.ambient_occlusion

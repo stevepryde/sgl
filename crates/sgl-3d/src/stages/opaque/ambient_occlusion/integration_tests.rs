@@ -1036,3 +1036,104 @@ fn gtao_temporal_accumulation_restarts_on_camera_cuts() {
         );
     }
 }
+
+// Plausible defects (B-4 of the 2026-11-18 history audit, AO-10): a frame
+// rendered and not finished, its encoder dropped or submitted, restarts the
+// accumulated visibility, or leaves its own as the next frame's history, or
+// the frame rendered again writes the half its history is in. The oracle is
+// equivalence: a run with the unfinished attempt, from a camera half a
+// metre aside, equals exactly the run without it, in the accumulated
+// visibility of the frame rendered again and the one after. The camera
+// moves a little each frame, so the accumulation reprojects history.
+#[test]
+fn accumulated_visibility_survives_an_unfinished_frame() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let settings = Settings {
+        scene_resolution: settings::SceneResolution::Full,
+        antialiasing: settings::Antialiasing::Off,
+        screen_space_reflections: settings::ScreenSpaceReflections::Off,
+        atmosphere: false,
+        bloom: settings::Bloom::Off,
+        ambient_occlusion: Quality::Medium,
+        ..Settings::default()
+    };
+    let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
+    let run = |attempt: Option<bool>| {
+        let (mut scene, _, mut input) = box_on_floor(&device, &queue, None);
+        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let eye = input.camera.eye;
+        let mut visibility = Vec::new();
+        for frame in 0..7 {
+            input.camera_cut = frame == 0;
+            let at = eye + Vec3::X * 0.02 * frame as f32;
+            input.camera.eye = at;
+            input.camera.view = camera::rh::view::look_at_mat4(at, Vec3::new(0., 0.3, 0.), Vec3::Y);
+            if frame == 4
+                && let Some(submitted) = attempt
+            {
+                let mut stray = input;
+                stray.camera.eye += Vec3::X * 0.5;
+                stray.camera.view = camera::rh::view::look_at_mat4(
+                    stray.camera.eye,
+                    Vec3::new(0., 0.3, 0.),
+                    Vec3::Y,
+                );
+                let mut encoder = device.create_command_encoder(&Default::default());
+                renderer.render(
+                    &device,
+                    &queue,
+                    &mut encoder,
+                    &mut scene,
+                    &stray,
+                    &settings,
+                    &output,
+                    None,
+                );
+                if submitted {
+                    queue.submit([encoder.finish()]);
+                }
+            }
+            render(
+                &device,
+                &queue,
+                &mut scene,
+                &mut renderer,
+                &settings,
+                &input,
+                &output,
+                Quality::Medium,
+            );
+            if frame >= 4 {
+                visibility.push(read(
+                    &device,
+                    &queue,
+                    renderer
+                        .diagnostic_target(diagnostics::DiagnosticTarget::AmbientOcclusion)
+                        .expect("ambient occlusion ran")
+                        .texture(),
+                    4,
+                ));
+            }
+        }
+        visibility
+    };
+    let plain = run(None);
+    for submitted in [false, true] {
+        let attempted = run(Some(submitted));
+        for (frame, (plain, attempted)) in plain.iter().zip(&attempted).enumerate() {
+            let differing = plain
+                .chunks_exact(4)
+                .zip(attempted.chunks_exact(4))
+                .filter(|(a, b)| a != b)
+                .count();
+            assert_eq!(
+                differing,
+                0,
+                "frame {} after an unfinished attempt (submitted: {submitted}): {differing} texels differ from the run without it",
+                frame + 4
+            );
+        }
+    }
+}

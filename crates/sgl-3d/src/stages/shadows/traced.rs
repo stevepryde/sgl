@@ -32,7 +32,7 @@ use crate::shading::RayQueryForm;
 use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
 use crate::view::frame::{FrameContext, ShadowMask};
-use crate::view::history::StageHistory;
+use crate::view::history::{Kept, StageRun};
 use crate::view::trace_paths::{TracePath, TracePaths};
 use std::collections::HashMap;
 
@@ -210,23 +210,30 @@ pub(crate) struct TracedShadows {
     upsample: Pass,
     /// AMD's shadow denoiser over the first slots.
     denoiser: denoise::Denoiser,
-    /// The quality the history was made at; another restarts it.
-    quality: Option<RayTracedShadowQuality>,
     params: wgpu::Buffer,
     /// The slot table, which the lighting pass reads too.
     slot_table: wgpu::Buffer,
-    slots: slots::Slots,
-    /// The last frame's slot table, and whether the stage ran in it.
+    /// The last frame's slot table, the half of each history pair it
+    /// wrote, and whether the stage ran in it.
     table: shadow_mask::ShadowMaskSlots,
+    written: usize,
     ran: bool,
     targets: Option<Targets>,
-    /// Frames since the history last restarted, and the half of each
-    /// history pair the frame writes.
-    history: StageHistory,
-    /// Turns the rays' draws on the lights each frame the stage runs.
+    /// The history as the last finished frame left it.
+    history: Kept<TracedKept>,
+}
+
+/// What the ray-traced shadow stage keeps to describe its history: the
+/// run (frames since it last restarted, and the half of each history pair
+/// the frame writes), the slots' lights, the quality the history was made
+/// at, which another restarts, and the seed that turns the rays' draws on
+/// the lights each frame the stage runs.
+#[derive(Clone)]
+struct TracedKept {
+    run: StageRun,
+    slots: slots::Slots,
+    quality: RayTracedShadowQuality,
     seed: u32,
-    /// The camera history's frame count of the last frame the stage ran.
-    previous_frame: Option<u32>,
 }
 
 impl TracedShadows {
@@ -287,7 +294,6 @@ impl TracedShadows {
             temporal: Pass::new(device, &TEMPORAL, TEMPORAL_ENTRY, &[]),
             upsample: Pass::new(device, &UPSAMPLE, UPSAMPLE_ENTRY, &[]),
             denoiser: denoise::Denoiser::default(),
-            quality: None,
             params: uniform_buffer(
                 "ray-traced shadow parameters",
                 std::mem::size_of::<Params>() as u64,
@@ -296,18 +302,21 @@ impl TracedShadows {
                 "ray-traced shadow slots",
                 std::mem::size_of::<shadow_mask::ShadowMaskSlots>() as u64,
             ),
-            slots: slots::Slots::default(),
             table: shadow_mask::ShadowMaskSlots::new(
                 [shadow_mask::SHADOW_MASK_EMPTY; shadow_mask::RT_SHADOW_LIGHTS],
                 0,
                 0,
             ),
+            written: 0,
             ran: false,
             targets: None,
-            history: StageHistory::default(),
-            seed: 0,
-            previous_frame: None,
+            history: Kept::default(),
         }
+    }
+
+    /// Settles the last render's history: see `Kept::settle`.
+    pub fn settle(&mut self, finished: bool) {
+        self.history.settle(finished);
     }
 
     /// Traces, blends and upsamples the shadows of the frame's slots: slot
@@ -322,11 +331,6 @@ impl TracedShadows {
         lights: &slots::SlotLights,
     ) -> Option<ShadowMask<'s>> {
         self.ran = false;
-        // A reset ends the history even in a frame the stage does not run,
-        // so no later frame takes one from before it for its predecessor.
-        if !ctx.history.valid {
-            self.previous_frame = None;
-        }
         let hardware = ctx
             .hardware_rays
             .filter(|_| ctx.effective.ray_traced_shadows)?;
@@ -335,23 +339,27 @@ impl TracedShadows {
         if resized {
             self.targets = Some(Targets::new(ctx.device, size));
             self.denoiser.forget_groups();
+            self.history.forget();
         }
-        // History continues across consecutive valid frames the stage runs
-        // in, as the world-space reflection denoiser's does.
+        // History continues from the last finished frame where the stage
+        // ran (F-4, S-25), as the world-space reflection denoiser's does. A
+        // change of quality changes which slots the denoiser keeps a
+        // history for. The slots and the seed continue from that frame too,
+        // so a frame rendered again assigns and draws as it did.
         let history = ctx.history;
-        let continuous = history.valid
-            && self
-                .previous_frame
-                .is_some_and(|previous| history.frames == previous.wrapping_add(1));
-        // A change of quality changes which slots the denoiser keeps a
-        // history for.
         let quality = ctx.effective.ray_traced_shadow_quality;
-        if resized || !continuous || self.quality != Some(quality) {
-            self.history.count = 0;
-        }
-        self.quality = Some(quality);
-        self.previous_frame = Some(history.frames);
-        let table = self.slots.assign(lights.directional, &lights.local);
+        let last = self.history.last();
+        let continues = history.valid && last.is_some_and(|last| last.quality == quality);
+        let run = StageRun::after(last.map(|last| &last.run), continues);
+        let mut slots = last.map(|last| last.slots.clone()).unwrap_or_default();
+        let seed = last.map_or(0, |last| last.seed.wrapping_add(1));
+        let table = slots.assign(lights.directional, &lights.local);
+        self.history.leave(TracedKept {
+            run,
+            slots,
+            quality,
+            seed,
+        });
         self.table = table;
         self.denoiser.prepare(ctx.device, quality);
         let shape = denoise::Shape::of(quality, table.lights[0]);
@@ -384,14 +392,13 @@ impl TracedShadows {
                     1. / reduced_height,
                 ],
                 eye: [eye.x, eye.y, eye.z, 1.],
-                frame: self.history.count,
-                seed: self.seed,
+                frame: run.count,
+                seed,
                 denoised: shape.lanes.slots(),
                 depth_motion: u32::from(depth_motion),
             }),
         );
-        self.seed = self.seed.wrapping_add(1);
-        let current = self.history.current;
+        let current = run.current;
         let previous = 1 - current;
         let shared = ctx.targets;
         let resource = wgpu::BindingResource::TextureView;
@@ -529,7 +536,7 @@ impl TracedShadows {
             pass.set_bind_group(0, upsample_group, &[]);
             pass.dispatch_workgroups(targets.full[0].div_ceil(8), targets.full[1].div_ceil(8), 1);
         }
-        self.history.advance();
+        self.written = current;
         self.ran = true;
         Some(ShadowMask {
             mask: &targets.mask,
@@ -549,7 +556,7 @@ impl TracedShadows {
     /// The denoiser's moments the last frame wrote, where the stage ran.
     pub fn last_moments(&self) -> Option<&wgpu::TextureView> {
         let targets = self.targets.as_ref().filter(|_| self.ran)?;
-        Some(targets.denoise.moments(1 - self.history.current))
+        Some(targets.denoise.moments(self.written))
     }
 }
 

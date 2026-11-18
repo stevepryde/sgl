@@ -1510,6 +1510,93 @@ fn a_reset_frame_takes_the_current_radiance() {
     }
 }
 
+// PROVENANCE.md DFX-12. Plausible defects: an index executed again resets
+// the histories (SGL3D renders a frame again with the same index when the
+// one before was not finished), the repeat takes the first execution's
+// radiance as its history, or a repeat of a frame that reset continues from
+// the histories the reset cleared. The oracle is equivalence: a run that
+// executes an index twice, the first time with every ray hitting, equals
+// exactly the run that executes it once, from the repeat on, in output,
+// radiance and variance; the frames' hits alternate between a checkerboard
+// and its inverse, so history shows.
+#[test]
+fn a_repeated_frame_index_keeps_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let inverse = |x: u32, y: u32| !checkerboard(x, y);
+    let pattern = |which: u8| {
+        move |x: u32, y: u32| match which {
+            0 => checkerboard(x, y),
+            1 => inverse(x, y),
+            _ => true,
+        }
+    };
+    let run = |frames: &[(u32, u8)]| {
+        let mut ssr = ScreenSpaceReflection::new(&device);
+        let mut context = PostFXContext::new(
+            &device,
+            &queue,
+            post_fx_context::CreateInfo {
+                transition_duration: 0.0,
+            },
+        );
+        frames
+            .iter()
+            .map(|&(index, which)| {
+                denoise_frame(
+                    &device,
+                    &queue,
+                    &mut ssr,
+                    &mut context,
+                    FeatureFlags::NONE,
+                    DEFAULT_FILTER,
+                    index,
+                    false,
+                    None,
+                    pattern(which),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    // Frame 2 is the first to continue; frame 4 follows a skipped index 3,
+    // so it resets, and so does its repeat.
+    let once = run(&[(0, 0), (1, 1), (2, 0), (4, 1), (5, 0)]);
+    let twice = run(&[(0, 0), (1, 1), (2, 2), (2, 0), (4, 2), (4, 1), (5, 0)]);
+    let took_history = |frame: &Denoised| {
+        frame
+            .radiance_history
+            .iter()
+            .zip(&frame.resolved_radiance)
+            .any(|(history, current)| history != current)
+    };
+    assert!(took_history(&once[2]), "frame 2 must take history");
+    assert!(!took_history(&once[3]), "frame 4 must reset");
+    for (index, once, twice) in [
+        (2, &once[2], &twice[3]),
+        (4, &once[3], &twice[5]),
+        (5, &once[4], &twice[6]),
+    ] {
+        let differ =
+            |a: &[[f32; 4]], b: &[[f32; 4]]| a.iter().zip(b).filter(|(a, b)| a != b).count();
+        let variance = once
+            .variance_history
+            .iter()
+            .zip(&twice.variance_history)
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(
+            (
+                differ(&once.output, &twice.output),
+                differ(&once.radiance_history, &twice.radiance_history),
+                variance
+            ),
+            (0, 0, 0),
+            "frame {index}: pixels of output, radiance and variance that differ from the run without the repeat"
+        );
+    }
+}
+
 // PROVENANCE.md DFX-31: a reflection's virtual point on or behind the
 // previous camera's plane was nowhere on its screen. One frame of hits
 // everywhere fills the histories with white; then the camera is found to

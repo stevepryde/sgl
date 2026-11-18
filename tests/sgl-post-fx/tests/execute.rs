@@ -2989,3 +2989,145 @@ fn context_tracks_output_only_resizes_without_rebuilding_depths() {
 
 #[path = "support/adaptive_taa.rs"]
 mod adaptive_taa;
+
+/// TAA's output after each of `frames`, each an index and a uniform
+/// colour, executed and submitted in order by one effect over a still
+/// camera.
+fn taa_run(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frames: &[(u32, [f32; 4])],
+) -> Vec<Vec<[f32; 4]>> {
+    let motion = texture(
+        device,
+        queue,
+        wgpu::TextureFormat::Rg16Float,
+        &half(&[0.0, 0.0]),
+    );
+    let mut context = PostFXContext::new(device, queue, Default::default());
+    let mut taa = TemporalAntiAliasing::new(device);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    let current_depth = depth(device, &mut encoder, 0.95);
+    let previous_depth = depth(device, &mut encoder, 0.95);
+    let mut outputs = Vec::new();
+    for &(index, colour) in frames {
+        let color = texture(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba16Float,
+            &half(&colour),
+        );
+        let camera = camera(false, index);
+        let frame = FrameDesc {
+            index,
+            width: SIZE[0],
+            height: SIZE[1],
+            output_width: SIZE[0],
+            output_height: SIZE[1],
+        };
+        context.prepare_resources(device, &frame, post_fx_context::FeatureFlags::NONE);
+        taa.prepare_resources(
+            device,
+            &mut encoder,
+            &context,
+            temporal_anti_aliasing::FeatureFlags::NONE,
+            0,
+        );
+        context.execute(&mut RenderAttributes {
+            device,
+            queue,
+            device_context: &mut encoder,
+            curr_depth_buffer_srv: &current_depth,
+            prev_depth_buffer_srv: &previous_depth,
+            curr_camera: Some(&camera),
+            prev_camera: Some(&camera),
+            camera_attribs_cb: None,
+            pass_timestamps: None,
+        });
+        taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
+            device,
+            queue,
+            device_context: &mut encoder,
+            post_fx_context: &mut context,
+            color_buffer_srv: &color,
+            depth_buffer_srv: &current_depth,
+            motion_vectors_srv: &motion,
+            responsive_masks: &[],
+            neighborhood_motion: None,
+            taa_attribs: &TemporalAntiAliasingAttribs::default(),
+            accumulation_buffer_idx: 0,
+            pass_timestamps: None,
+        });
+        queue.submit([std::mem::replace(
+            &mut encoder,
+            device.create_command_encoder(&Default::default()),
+        )
+        .finish()]);
+        outputs.push(read_rgba16f(
+            device,
+            queue,
+            taa.get_accumulated_frame_srv(false, 0),
+        ));
+    }
+    outputs
+}
+
+// PROVENANCE.md DFX-12, DFX-50. Plausible defects: an index executed again
+// restarts history (SGL3D renders a frame again with the same index when
+// the one before was not finished), the repeat takes the first execution's
+// output as its history, or a repeat of a frame that reset continues from
+// the history the reset discarded. The oracle is equivalence: a run that
+// executes an index twice, the first time with another colour, equals
+// exactly the run that executes it once, from the repeat on; frames 0, 1
+// and 3 are each a different colour, so history shows.
+#[test]
+fn a_repeated_frame_index_keeps_history() {
+    let Some((device, queue)) = device() else {
+        return;
+    };
+    let [a, b, c, d, stray] = [
+        [1.0f32, 0.5, 0.25, 1.0],
+        [0.25, 1.0, 0.5, 1.0],
+        [0.5, 0.25, 1.0, 1.0],
+        [0.75, 0.75, 0.25, 1.0],
+        [8.0, 8.0, 8.0, 1.0],
+    ];
+    // Frame 2 is the first to continue; frame 4 follows a skipped index 3,
+    // so it resets, and so does its repeat.
+    let once = taa_run(&device, &queue, &[(0, a), (1, b), (2, c), (4, d), (5, a)]);
+    let twice = taa_run(
+        &device,
+        &queue,
+        &[
+            (0, a),
+            (1, b),
+            (2, stray),
+            (2, c),
+            (4, stray),
+            (4, d),
+            (5, a),
+        ],
+    );
+    // A reset frame takes the current colour (alpha 0.5, as in
+    // `taa_a_resize_resets_accumulation`): frame 2 must not, frame 4 must.
+    let current = |colour: [f32; 4]| [colour[0], colour[1], colour[2], 0.5];
+    assert!(
+        once[2].iter().all(|&texel| texel != current(c)),
+        "frame 2 must take history"
+    );
+    assert!(
+        once[3].iter().all(|&texel| texel == current(d)),
+        "frame 4 follows a skipped index and must reset"
+    );
+    for (index, once, twice) in [
+        (2, &once[2], &twice[3]),
+        (4, &once[3], &twice[5]),
+        (5, &once[4], &twice[6]),
+    ] {
+        let differing = once.iter().zip(twice).filter(|(a, b)| a != b).count();
+        assert_eq!(
+            differing, 0,
+            "frame {index}: {differing} pixels differ from the run without the repeat"
+        );
+    }
+}

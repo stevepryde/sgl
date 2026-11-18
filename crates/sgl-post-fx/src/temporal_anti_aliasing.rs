@@ -305,11 +305,17 @@ impl AccumulationBufferInfo {
         attribs: &TemporalAntiAliasingAttribs,
     ) {
         // No history on the first frame, after the buffers' recreation, nor
-        // if frames were skipped (PROVENANCE.md DFX-50, DFX-53).
-        let reset_accumulation = self
-            .last_frame_idx
-            .is_none_or(|last| self.current_frame_idx != last.wrapping_add(1))
-            || attribs.reset_accumulation != 0; // Reset history if requested
+        // if frames were skipped (PROVENANCE.md DFX-50, DFX-53). A repeated
+        // index repeats that frame, its reset included: it reads the same
+        // history and writes the same buffer (DFX-12). `shader_attribs`
+        // holds the last execution's reset.
+        let reset_accumulation = match self.last_frame_idx {
+            Some(last) if self.current_frame_idx == last => {
+                self.shader_attribs.reset_accumulation != 0
+            }
+            Some(last) => self.current_frame_idx != last.wrapping_add(1),
+            None => true,
+        } || attribs.reset_accumulation != 0; // Reset history if requested
 
         let update_required = reset_accumulation != (self.shader_attribs.reset_accumulation != 0)
             || bytemuck::bytes_of(&self.shader_attribs) != bytemuck::bytes_of(attribs);

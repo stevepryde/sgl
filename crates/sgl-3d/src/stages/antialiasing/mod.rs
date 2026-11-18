@@ -14,8 +14,9 @@
 //! Honours: the antialiasing in effect, FSR and its quality (the effective
 //! sizing), FSR's sharpening, the TAA and FSR diagnostics layers.
 //! Timing groups: `TAA`, `TAA motion reach`, `FSR2`, `FSR3`.
-//! History: FSR's context, which restarts on SGL3D's history loss; TAA's
-//! lives in the post-effect context.
+//! History: FSR's context, which restarts on SGL3D's history loss and after
+//! a frame it ran in that was not finished (U-2); TAA's lives in the
+//! post-effect context.
 pub(crate) mod fsr;
 pub(crate) mod reach;
 
@@ -98,12 +99,6 @@ impl Antialiasing {
         post_fx: Option<&mut PostFx>,
         context_jitter: Option<[f32; 2]>,
     ) -> Option<Jitter> {
-        // A reset ends FSR's history even in a frame it does not run.
-        if !history.valid
-            && let Some(upscaler) = self.fsr.as_mut()
-        {
-            upscaler.forget_history();
-        }
         if effective.taa {
             Some(Jitter {
                 ndc: context_jitter.expect("TAA runs in the post-effect context"),
@@ -112,7 +107,7 @@ impl Antialiasing {
         } else if effective.fsr {
             let upscaler = self.fsr.as_mut().unwrap();
             let jitter = Jitter {
-                ndc: upscaler.prepare(sizes.render, history.frames, history.valid),
+                ndc: upscaler.prepare(sizes.render, history.valid),
                 mip_bias: fsr::mip_bias(sizes.render, sizes.scene),
             };
             if let Some(post_fx) = post_fx {
@@ -121,6 +116,13 @@ impl Antialiasing {
             Some(jitter)
         } else {
             None
+        }
+    }
+
+    /// Settles the last render's FSR history: see `Fsr::settle`.
+    pub fn settle(&mut self, finished: bool) {
+        if let Some(fsr) = &mut self.fsr {
+            fsr.settle(finished);
         }
     }
 

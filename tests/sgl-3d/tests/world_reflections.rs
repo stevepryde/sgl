@@ -591,17 +591,13 @@ fn max_difference(a: &[[f32; 4]], b: &[[f32; 4]]) -> f32 {
 // Defect: old world histories survive discontinuities although motion vectors
 // describe only the preceding frame. Independent oracle: a new effect rendering
 // the same scene. The glossy reflected model's edges make stale accumulation
-// observable in actual HDR output, beyond shader/type validation.
+// observable in actual HDR output, beyond shader/type validation. A frame
+// rendered and not finished is no discontinuity: see
+// `world_reflections_keep_their_history_across_an_unfinished_frame`.
 #[test]
 fn world_history_restarts_after_discontinuities() {
     let mut failed = Vec::new();
-    for transition in [
-        "camera cut",
-        "abandoned encode then retry",
-        "SSR off",
-        "world off",
-        "resize",
-    ] {
+    for transition in ["camera cut", "SSR off", "world off", "resize"] {
         let Some(mut dirty) = Frames::history() else {
             return;
         };
@@ -614,9 +610,6 @@ fn world_history_restarts_after_discontinuities() {
         dirty.move_camera(0.15);
         fresh.move_camera(0.15);
         match transition {
-            "abandoned encode then retry" => {
-                drop(dirty.encode_frame(false));
-            }
             "SSR off" => {
                 dirty.settings.screen_space_reflections = settings::ScreenSpaceReflections::Off;
                 dirty.frame(false);
@@ -646,6 +639,52 @@ fn world_history_restarts_after_discontinuities() {
         failed.is_empty(),
         "world history survived discontinuities: {failed:?}"
     );
+}
+
+// Plausible defects (B-4 of the 2026-11-18 history audit, R-27): a frame
+// rendered and not finished, its encoder dropped or its commands submitted,
+// restarts the world rays' history, leaves its own as the next frame's
+// history, or the frame rendered again writes the half its history is in.
+// The oracle is equivalence: while the camera and the reflected model move,
+// a run with an unfinished attempt from a camera a metre aside equals
+// exactly the run without it, in the HDR composite of the frame rendered
+// again and the two after.
+#[test]
+fn world_reflections_keep_their_history_across_an_unfinished_frame() {
+    let run = |attempt: Option<bool>| {
+        let mut frames = Frames::history()?;
+        let mut composites = Vec::new();
+        for frame in 0..11 {
+            let x = 0.02 * frame as f32;
+            frames.move_offscreen_model(x);
+            if frame == 8
+                && let Some(submitted) = attempt
+            {
+                frames.move_camera(x + 1.);
+                let encoder = frames.encode_frame(false);
+                if submitted {
+                    frames.queue.submit([encoder.finish()]);
+                }
+            }
+            frames.move_camera(x);
+            frames.frame(frame == 0);
+            if frame >= 8 {
+                composites.push(frames.composite());
+            }
+        }
+        Some(composites)
+    };
+    let Some(plain) = run(None) else { return };
+    for submitted in [false, true] {
+        let attempted = run(Some(submitted)).unwrap();
+        for (frame, (plain, attempted)) in plain.iter().zip(&attempted).enumerate() {
+            let difference = max_difference(plain, attempted);
+            assert_eq!(
+                difference, 0.,
+                "frame {frame} from the unfinished attempt (submitted: {submitted}) differs from the run without it by {difference}"
+            );
+        }
+    }
 }
 
 // Defect: after a resize, a world reflection pass keeps a group that binds

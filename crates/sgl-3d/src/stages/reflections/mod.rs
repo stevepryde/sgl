@@ -62,9 +62,9 @@ static TEMPORAL_REPROJECTION: crate::shading::Module = crate::shading::Module {
 /// (Crystal, through the context), `Godot SSR *` (Velvet), `world reflection
 /// classify`, `world reflection rays`, `world reflection denoise`,
 /// `reflection composition`.
-/// History: Velvet's and world rays' accumulation, each continuing across
-/// consecutive valid frames and dropped while it does not run; Crystal's is
-/// in the context.
+/// History: Velvet's and world rays' accumulation, each continuing from the
+/// view's last finished frame where it ran in it, and dropped while it does
+/// not run; Crystal's is in the context.
 pub(crate) struct Reflections {
     /// Probe culling, source completion and composition.
     source: source::ReflectionSource,
@@ -175,6 +175,16 @@ impl Reflections {
         let inputs = source_inputs(ctx, probes, fog, &self.environment_parameters, &visibility);
         self.source
             .encode(ctx.encoder, ctx.device, ctx.queue, inputs, ctx.timing);
+    }
+
+    /// Settles the last render's histories: see `Kept::settle`.
+    pub fn settle(&mut self, finished: bool) {
+        if let Some(velvet) = &mut self.velvet {
+            velvet.settle(finished);
+        }
+        if let Some(world) = &mut self.world {
+            world.settle(finished);
+        }
     }
 
     /// After the transparent stage drew into the incident radiance: the

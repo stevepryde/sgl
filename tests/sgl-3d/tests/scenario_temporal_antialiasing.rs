@@ -1832,6 +1832,75 @@ fn a_cut_a_resize_and_another_scene_restart_history(method: Antialiasing) {
 }
 every_method!(a_cut_a_resize_and_another_scene_restart_history);
 
+/// How case 10b leaves a frame unfinished.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Unfinished {
+    /// Its encoder dropped (`Rig::render_unsubmitted`).
+    Unsubmitted,
+    /// Its commands submitted (`Rig::render_unfinished`).
+    Submitted,
+}
+
+/// Case 10b (F-3; B-4 of the 2026-11-18 history audit). Plausible defects: a
+/// frame rendered and not finished, its encoder dropped or its commands
+/// submitted, restarts TAA's history (the History contract restarts
+/// nothing for it but FSR), leaves its camera or its accumulation as the
+/// next frame's history, or the frame rendered again writes the half of a
+/// pair its history is in. The oracle is equivalence: during a pan, the run
+/// with an unfinished attempt at frame 6, from a camera 0.3 m above, equals
+/// exactly the run without it, in every frame from the one rendered again
+/// on.
+#[test]
+fn an_unfinished_frame_restarts_nothing() {
+    let method = Antialiasing::Taa;
+    let Some(gpu) = device(method) else { return };
+    let pan = VIEW.pan(-0.5, DEPTH);
+    let panning = move |f: u32| pan.pose(Pose::at(Vec3::ZERO), f);
+    let scenario = stage(&panning);
+    let attempt = 6;
+    let last = attempt + 3;
+    let run = |unfinished: Option<Unfinished>| {
+        let mut rig = scenario.rig(&gpu, VIEW, method);
+        let mut images = Vec::new();
+        for frame in 0..=last {
+            if frame == attempt
+                && let Some(unfinished) = unfinished
+            {
+                scenario.pose(&mut rig, frame);
+                rig.look(Pose::at(panning(frame).position + Vec3::Y * 0.3));
+                match unfinished {
+                    Unfinished::Unsubmitted => rig.render_unsubmitted(frame),
+                    Unfinished::Submitted => rig.render_unfinished(frame),
+                }
+            }
+            scenario.render(&mut rig, frame);
+            if frame >= attempt {
+                images.push(rig.antialiased());
+            }
+        }
+        (images, rig)
+    };
+    let (plain, plain_rig) = run(None);
+    let mut failures = Failures::default();
+    for unfinished in [Unfinished::Unsubmitted, Unfinished::Submitted] {
+        let (images, rig) = run(Some(unfinished));
+        for (offset, (plain, image)) in plain.iter().zip(&images).enumerate() {
+            let everywhere = Region::from_fn(plain.size, |_| true);
+            let apart = error(plain, image, &everywhere);
+            failures.check(apart.max == 0., || {
+                format!(
+                    "{unfinished:?}: frame {} differs from the run without the unfinished attempt by up to {}",
+                    attempt + offset as u32,
+                    apart.max
+                )
+            });
+        }
+        failures.bounded(&rig, format!("{unfinished:?} unfinished attempt"));
+    }
+    failures.bounded(&plain_rig, "without an unfinished attempt");
+    failures.assert();
+}
+
 /// Case 11. Plausible defect: moving the render origin during a pan cuts or
 /// misplaces history (the History contract translates retained state and
 /// restarts nothing). The oracle is equivalence with the run that never
