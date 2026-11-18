@@ -126,6 +126,8 @@ docs and specs the entry links.
   read the view's own, which was wrong for a secondary view. For one view
   pass its settings twice: `ray_traced_shadows_in_effect(&settings,
   &settings, &scene)`.
+- `sgl-3d` `Scene::update_mist`: drops its unused `queue` argument. Game
+  code changes: `scene.update_mist(&device, &positions)`.
 - `sgl-3d` `Renderer::finish_frame`: commits what the frame drew (each
   instance's pose, visibility and shader data, deformations, shader
   parameter blocks, the rigid-change signal and static-edit bounds as they

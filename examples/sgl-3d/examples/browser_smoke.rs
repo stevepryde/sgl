@@ -670,7 +670,7 @@ fn add_content(
         )
         .map_err(|e| format!("update_heat_distortion: {e}"))?;
     scene
-        .update_mist(device, queue, &[[-3., 0.3, 1.], [-2.5, 0.3, 1.5]])
+        .update_mist(device, &[[-3., 0.3, 1.], [-2.5, 0.3, 1.5]])
         .map_err(|e| format!("update_mist: {e}"))?;
     scene
         .update_fog_volumes(

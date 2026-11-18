@@ -162,7 +162,6 @@ fn content(device: &wgpu::Device, queue: &wgpu::Queue, shift: Vec3) -> Scene {
     scene
         .update_mist(
             device,
-            queue,
             &[(Vec3::new(4097.1, 0.2, -8195.7) - shift).to_array()],
         )
         .unwrap();

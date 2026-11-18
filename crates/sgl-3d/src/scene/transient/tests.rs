@@ -63,10 +63,10 @@ fn oversized_transient_updates_keep_accepted_content() {
     });
 
     let position = [1.25, 2.5, 3.75];
-    scene.update_mist(&device, &queue, &[position]).unwrap();
+    scene.update_mist(&device, &[position]).unwrap();
     let refused_mist = vec![[9.; 3]; 21_846];
     assert!(matches!(
-        scene.update_mist(&device, &queue, &refused_mist),
+        scene.update_mist(&device, &refused_mist),
         Err(SceneError::DeviceLimit)
     ));
     assert_eq!(scene.transient.mist_positions, vec![position]);
