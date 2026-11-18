@@ -176,10 +176,9 @@ pub(crate) struct WorldReflections {
     sampler: wgpu::Sampler,
     params: wgpu::Buffer,
     targets: Targets,
-    /// Frames since history last reset (0 resets it), and the half written.
+    /// Frames since history last reset (0 resets it), and the half written,
+    /// as the last finished frame left them.
     history: StageHistory,
-    /// Scene frame last encoded, matching the TAA/SSR continuity rule.
-    previous_scene_frame: Option<u32>,
 }
 
 pub(crate) static COMMON: shading::Module = shading::Module {
@@ -310,8 +309,12 @@ impl WorldReflections {
             ),
             targets: Targets::new(device, size),
             history: StageHistory::default(),
-            previous_scene_frame: None,
         }
+    }
+
+    /// Settles the last render's history: see `Kept::settle`.
+    pub fn settle(&mut self, finished: bool) {
+        self.history.settle(finished);
     }
 
     /// Premultiplied radiance of what each receiver's traced lobe reflects
@@ -381,23 +384,18 @@ impl WorldReflections {
         let resized = self.targets.full != size;
         if resized {
             self.targets = Targets::new(device, size);
+            self.history.forget();
         }
         // DiligentFX TemporalAntiAliasing::AccumulationBufferInfo::UpdateConstantBuffer
-        // and PostFx::prepare: use history only across consecutive valid scene
-        // frames. A camera cut or missed encode makes receiver motion insufficient.
-        let continuous = history.valid
-            && self
-                .previous_scene_frame
-                .is_some_and(|previous| history.frames == previous.wrapping_add(1));
-        if resized || !continuous {
-            self.history.count = 0;
-        }
-        self.previous_scene_frame = Some(history.frames);
+        // and PostFx::prepare: use history only across valid frames. A camera
+        // cut makes receiver motion insufficient; history continues from the
+        // last finished frame where the stage ran in it (F-4).
+        let run = self.history.begin(&history, resized);
         // The renderer's camera history is the previous camera, as it
         // rasterized; a new history reprojects through this frame's.
         let near = input.camera.proj[3][2];
         let (previous, previous_near) = match history.previous_camera {
-            Some(camera) if self.history.count > 0 => (
+            Some(camera) if run.count > 0 => (
                 camera.jittered_view_projection(),
                 camera.projection.w_axis.z,
             ),
@@ -421,7 +419,7 @@ impl WorldReflections {
                 eye: [eye[0], eye[1], eye[2], near],
                 full: [w, h, 1. / w, 1. / h],
                 reduced: [rw, rh, 1. / rw, 1. / rh],
-                frame: self.history.count,
+                frame: run.count,
                 rays: 0,
                 traced: input.traced,
                 range: RANGE,
@@ -430,7 +428,7 @@ impl WorldReflections {
                 padding: [0; 2],
             }),
         );
-        let current = self.history.current;
+        let current = run.current;
         let history = 1 - current;
         let view = wgpu::BindingResource::TextureView;
         let receivers = [
@@ -563,7 +561,6 @@ impl WorldReflections {
             t.full,
             encoder,
         );
-        self.history.advance();
     }
 }
 

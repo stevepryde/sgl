@@ -101,14 +101,14 @@ described in full at the entries named.
 
 ## Frame and renderer
 
-The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the last finished frame's unjittered view and projection, its jitter, its time, its visibility mask, the render origin it is expressed in, and the frames since the last reset. It issues the one reset every stage follows, and each stage that keys on frame continuity restarts when a frame number is skipped or repeated. The scene keeps the motion history (submitted poses, deformation slots, shader data, parameter blocks) and the rigid-change signal, committed by `Renderer::finish_frame`. A continuously running game most often trips the visibility-mask signal (F-10), the scene's rigid-change signal where it spawns, hides or swaps models (M-9), and the whole-stage restarts after a frame that was rendered but not finished (F-3).
+The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the last finished frame's unjittered view and projection, its jitter, its time, its visibility mask, the render origin it is expressed in, and the frames since the last reset. It issues the one reset every stage follows, and each stage keeps what describes its GPU history as the view's last finished frame left it (`view::history::Kept`), so a stage restarts when it did not run in that frame and a frame rendered again continues as the first rendering did. The scene keeps the motion history (submitted poses, deformation slots, shader data, parameter blocks) and the rigid-change signal, committed by `Renderer::finish_frame`. A continuously running game most often trips the visibility-mask signal (F-10) and the scene's rigid-change signal where it spawns, hides or swaps models (M-9); a frame that was rendered but not finished restarts FSR alone (F-3, U-2).
 
 ### Signals
 
 | Signal | Raised by | When | Cleared / committed | Consumed by |
 |---|---|---|---|---|
 | `HistoryFrame::valid` (false is a reset) | `Renderer::begin_history`, `CameraHistory::begin` | `FrameInput::camera_cut`; a pending reset from `Renderer::resize`; a scene other than the last finished frame's; the first frame | the next frame after a finished one is valid unless raised again | DiligentFX context (TAA, Crystal SSR), FSR, exposure, motion blur, world-space reflections, ray-traced shadows, ambient occlusion's temporal filter, fog, the cull stage's early phase |
-| `HistoryFrame::frames` (frames since the reset) | `CameraHistory` | advanced only by `Renderer::finish_frame` | 0 on a reset | every "this frame follows the last" test: DiligentFX context, FSR, world-space reflections, ray-traced shadows, ambient occlusion, fog; also noise seeds (shadow filter, ambient occlusion, motion blur, fog) |
+| `HistoryFrame::frames` (frames since the reset) | `CameraHistory` | advanced only by `Renderer::finish_frame` | 0 on a reset | the DiligentFX context's frame index (its pairs' halves by parity, and its continuity test against the last finished frame's), fog; also noise seeds (shadow filter, ambient occlusion, motion blur, fog) |
 | `HistoryFrame::previous_camera` and `previous` | `CameraHistory::begin` | none, and previous = this frame's view-projection, after a reset; otherwise translated by any render-origin move | committed at `finish_frame` | the view's `previous_view_projection` (all motion), the DiligentFX previous camera, Velvet, world-space reflections, ray-traced shadows, ambient occlusion, fog, the cull stage's early phase |
 | `HistoryFrame::previous_elapsed_seconds` | `CameraHistory::begin` | this frame's time after a reset | committed at `finish_frame` | `Frame.previous_elapsed_seconds` and `previous_animation_phase`, at which vertex functions evaluate motion |
 | `HistoryFrame::visibility_changed` | `CameraHistory::begin` | `FrameInput::visibility_mask` differs from the last finished frame's and history is valid | when a frame with the new mask is finished | TAA's `rigid_object_motion` only; FSR never sees it |
@@ -139,22 +139,22 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 - **Guard.** `resize_between_render_and_finish_restarts_history` (`renderer/size_tests.rs`); `upscaled_restarts` (`tests/sgl-3d/tests/scenario_fsr_upscaling.rs`); `a_cut_a_resize_and_another_scene_restart_history`.
 - **Status.** Rule.
 
-#### F-3 A frame rendered but not finished restarts frame-continuity stages
+#### F-3 A frame rendered but not finished restarts nothing but FSR
 
-- **Rule.** The camera history's `frames` advances only in `Renderer::finish_frame`, but the DiligentFX context records the frame it executed in `PostFx::begin` and FSR in `Fsr::prepare`, both at render time. When a second `render` follows without `finish_frame` (an abandoned encoder, or the same frame rendered twice), its `frames` equals the recorded one rather than one more, so TAA and Crystal SSR reset their accumulation (previous depth cleared to far, previous camera equal to the current, no jitter: F-7) and FSR resets, over the whole view. Ambient occlusion, ray-traced shadows, world-space reflections and fog record their frame the same way. Accumulation resumes the frame after the next finished frame.
-- **Raised by.** Dropping an encoded frame on a lost or outdated surface; rendering one frame twice (a capture or stream copy through the same renderer); omitting `finish_frame`.
-- **Stays triggered while.** The game renders more than once per finished frame, or never calls `finish_frame`: every frame restarts and camera motion is always zero.
-- **Source.** DiligentFX TAA's frame-index rule (`sgl-post-fx` PROVENANCE DFX-12, DFX-50); recording at render time is SGL3D's. Code: `view/post_fx.rs` (`PostFx::prepare`, `PostFx::begin`), `stages/antialiasing/fsr.rs` (`Fsr::prepare`).
-- **Guard.** None.
-- **Status.** Defect B-4. The History contract says an abandoned frame commits nothing, but these stages restart after one.
+- **Rule.** When a frame is rendered and `finish_frame` does not follow, the next render begins with the same `frames`, previous camera and previous time, and every stage continues from the state its last finished frame left (`view::history::Kept`): the DiligentFX context (TAA, Crystal SSR) from its last finished frame index, Velvet, world-space rays, ambient occlusion's temporal pass and the ray-traced shadows from their kept run (frame count and the half of each pair it writes), the shadows' slots, quality and seed too. A frame rendered again therefore reads and writes the same halves of every pair as the first rendering did. The scene commits nothing. Two exceptions: FSR restarts (U-2), and filtered fog does not reproject for one frame (V-5). The renderer settles every stage's kept state once per render (`renderer/frame.rs`, `settle`): finished from `Renderer::finish_frame`, unfinished at the start of the next `render`.
+- **Raised by.** Dropping an encoded frame; rendering a frame twice; omitting `finish_frame`.
+- **Stays triggered while.** The game never finishes: camera motion is always zero and nothing accumulates.
+- **Source.** SGL3D's own (S3D-4; the History contract's "What a frame commits"). Code: `view/history.rs` (`Kept`, `StageHistory`), `renderer/frame.rs` (`settle`).
+- **Guard.** `an_unfinished_frame_restarts_nothing` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`), `kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one` (`view/history.rs`), and the stages' own: `crystal_keeps_its_history_across_an_unfinished_frame`, `velvet_keeps_its_history_across_an_unfinished_frame`, `world_reflections_keep_their_history_across_an_unfinished_frame`, `accumulated_visibility_survives_an_unfinished_frame`, `the_shadow_mask_survives_an_unfinished_frame`.
+- **Status.** Rule. The ray-traced shadow denoiser's classification history is the exception this rule does not yet cover for a submitted frame (S-25).
 
 #### F-4 A frame in which a stage did not run restarts it
 
-- **Rule.** When a frame follows one in which the DiligentFX context or FSR did not run (its last recorded frame is not this frame's `frames` less one), that stage resets its history over the whole view. A reset also ends FSR's history in a frame FSR does not run (`Fsr::forget_history`). Accumulation resumes on the next continuous frame.
-- **Raised by.** A frame with a projection other than `perspective`'s infinite reversed-Z (TAA, Crystal SSR and FSR then do not run), diagnostics layers that disable TAA or FSR.
+- **Rule.** When the view's last finished frame did not run a stage (the DiligentFX context, FSR, Velvet, world-space rays, ambient occlusion's temporal pass, the ray-traced shadows), the stage's kept state is none and it resets its history over the whole view; a reset in a frame the stage does not run needs nothing more, since after that frame is finished the stage keeps none. Accumulation resumes on the next frame. A frame that is not finished changes nothing kept, so a stage skipped only in an unfinished frame continues.
+- **Raised by.** A frame with a projection other than `perspective`'s infinite reversed-Z (TAA, Crystal SSR and FSR then do not run), diagnostics layers that disable TAA or FSR, a setting that switches the stage off for a frame.
 - **Stays triggered while.** Nothing: it lasts one frame after each gap.
-- **Source.** DiligentFX (DFX-12); the FSR side is SGL3D's adaptation of AMD's reset guidance. Code: `view/post_fx.rs` (`PostFx::prepare`), `stages/antialiasing/fsr.rs` (`Fsr::prepare`), `stages/antialiasing/mod.rs` (`Antialiasing::prepare`).
-- **Guard.** None.
+- **Source.** DiligentFX (DFX-12), applied to the last finished frame; the FSR side is SGL3D's adaptation of AMD's reset guidance. Code: `view/history.rs` (`Kept::settle`, `StageHistory::begin`), `view/post_fx.rs` (`PostFx::prepare`), `stages/antialiasing/fsr.rs` (`Fsr::prepare`).
+- **Guard.** `kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one` (`view/history.rs`).
 - **Status.** Rule.
 
 ### Antialiasing context and jitter
@@ -179,7 +179,7 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 
 #### F-7 TAA withholds jitter on its reset frames
 
-- **Rule.** When the DiligentFX context resets its accumulation (F-1, F-3, F-4, F-5), `PostFx::prepare` returns zero jitter, so that frame rasterizes unjittered (TAA's mip bias of -0.5 still applies) and the camera history records zero jitter. FSR jitters every frame, reset or not. Jitter resumes on the next frame.
+- **Rule.** When the DiligentFX context resets its accumulation (F-1, F-4, F-5), `PostFx::prepare` returns zero jitter, so that frame rasterizes unjittered (TAA's mip bias of -0.5 still applies) and the camera history records zero jitter. FSR jitters every frame, reset or not. Jitter resumes on the next frame.
 - **Raised by.** Any TAA reset.
 - **Stays triggered while.** Nothing beyond the resets that cause it.
 - **Source.** Hydrogent `HnPostProcessTask::Prepare`, faithful. Code: `view/post_fx.rs` (`PostFx::prepare`), `renderer/frame.rs` (`render`).
@@ -188,10 +188,10 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 
 #### F-8 Reset flags handed to FSR
 
-- **Rule.** FSR resets when the frame's history is invalid, when its last prepared frame is not this frame's `frames` less one, when the render size differs from its last prepared one, or when its context is new; the antialiasing stage ends FSR's history on any reset even in a frame FSR does not run. FSR receives neither `rigid_objects_changed` nor `visibility_changed`. See U-1 to U-4 for what FSR does with the reset.
+- **Rule.** FSR resets when the frame's history is invalid, when it did not run in the view's last finished frame, when a render that ran it was not finished (U-2), when the render size differs from that frame's, or when its context is new. FSR receives neither `rigid_objects_changed` nor `visibility_changed`. See U-1 to U-4 for what FSR does with the reset.
 - **Raised by.** F-1 to F-4, a change of FSR quality.
-- **Stays triggered while.** Only as long as F-3 does.
-- **Source.** AMD FSR integration guidance (reset on cuts). Code: `stages/antialiasing/fsr.rs` (`Fsr::prepare`), `stages/antialiasing/mod.rs` (`Antialiasing::prepare`).
+- **Stays triggered while.** The game leaves frames unfinished (U-2).
+- **Source.** AMD FSR integration guidance (reset on cuts). Code: `stages/antialiasing/fsr.rs` (`Fsr::prepare`, `Fsr::settle`).
 - **Guard.** `upscaled_restarts` (`tests/sgl-3d/tests/scenario_fsr_upscaling.rs`).
 - **Status.** Rule.
 
@@ -596,26 +596,27 @@ pixel's motion hold is set to 12.
 
 #### T-4 SGL3D's reset decision
 
-- **Rule.** When the renderer's history is not valid (T-5), or the frame's
-  `HistoryFrame::frames` is not the frame count of the last frame whose `PostFx::begin`
-  ran plus one, `PostFx::prepare` asks TAA (and Crystal SSR) to reset (T-1), renders the
-  frame without jitter, clears the previous effect depth to the far plane and uses the
-  current camera as the previous one, over the whole view.
-- **Raised by.** Camera cuts, resizes and scene changes (T-5); and any frame that is
-  rendered but not finished with `Renderer::finish_frame` (an abandoned encoder, a frame
-  rendered again), because the frame count advances only at `finish_frame` while
-  `PostFx` records it at `begin`.
-- **Stays triggered while.** A game that regularly abandons or re-renders frames (for
-  example on frequent surface `Outdated` or `Timeout` errors) resets TAA at that rate;
-  one that never calls `finish_frame` resets every frame and never jitters.
+- **Rule.** When the renderer's history is not valid (T-5), or the DiligentFX context
+  did not run in the view's last finished frame (its kept frame index is not this
+  frame's `HistoryFrame::frames` less one, or none), `PostFx::prepare` asks TAA (and
+  Crystal SSR) to reset (T-1), renders the frame without jitter, clears the previous
+  effect depth to the far plane and uses the current camera as the previous one, over
+  the whole view. A frame rendered again reads and writes the same halves: its
+  `frames` is the first rendering's, and the halves follow its parity. TAA's own rule
+  (`sgl-post-fx`, DFX-12, DFX-50) repeats a repeated index's reset.
+- **Raised by.** Camera cuts, resizes and scene changes (T-5); a frame after one in
+  which the context did not run (F-4, F-5).
+- **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** SGL3D's own, after Hydrogent's `HnPostProcessTask::Prepare`.
-  Code: `crates/sgl-3d/src/view/post_fx.rs` (`PostFx::prepare`, `PostFx::begin`).
-- **Guard.** `a_cut_a_resize_and_another_scene_restart_history`
+  Code: `crates/sgl-3d/src/view/post_fx.rs` (`PostFx::prepare`, `PostFx::settle`),
+  `crates/sgl-post-fx/src/temporal_anti_aliasing.rs` (`update_constant_buffer`).
+- **Guard.** `a_cut_a_resize_and_another_scene_restart_history`,
+  `an_unfinished_frame_restarts_nothing`
   (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`);
   `consecutive_frames_continue_across_the_frame_count_s_wrap`
-  (`crates/sgl-3d/src/view/history.rs`). None for an abandoned frame.
-- **Status.** Defect B-4. A frame rendered but not finished restarts TAA on the next
-  frame, which the History contract says does not happen.
+  (`crates/sgl-3d/src/view/history.rs`); `a_repeated_frame_index_keeps_history`
+  (`tests/sgl-post-fx/tests/execute.rs`).
+- **Status.** Rule.
 
 #### T-5 Renderer resets
 
@@ -1274,30 +1275,35 @@ units, with `view_space_to_meters_factor` 1. AMD file names abbreviate
   (`upscaled_restarts`) in `tests/sgl-3d/tests/scenario_fsr_upscaling.rs`.
 - **Status.** Rule.
 
-#### U-2 Reset after a frame FSR did not see
+#### U-2 FSR restarts after a frame it did not see, and after one that was not finished
 
-- **Rule.** When the history frame counter `prepare` receives is not exactly one more than the one it received
-  last, the FSR adapter resets AMD's context for the whole view (as U-1). `prepare` records the counter before
-  the frame is submitted, and the renderer advances it only in `finish_frame`. Recovery as U-1.
-- **Raised by.** Frames in which FSR did not run (a camera other than `perspective`, U-6; the `disable.fsr`
-  diagnostics layer; TAA running in its place); a frame rendered but never finished; a second render before
-  `finish_frame`, which sees the same counter.
-- **Stays triggered while.** A game that renders more than once per `finish_frame` resets on every extra render,
-  and its next frame continues from the last dispatch's history, whichever camera that was.
-- **Source.** SGL3D's own. Code: `crates/sgl-3d/src/stages/antialiasing/fsr.rs` (`Fsr::prepare`),
-  `crates/sgl-3d/src/view/history.rs` (`CameraHistory::finish`).
-- **Guard.** None.
-- **Status.** Defect B-4. A frame rendered but not finished restarts FSR on the next frame, which the History
-  contract says does not happen.
+- **Rule.** FSR continues only from the view's last finished frame, and only when FSR ran in it at
+  this render size (`Kept<FsrRun>`); otherwise the adapter resets AMD's context for the whole view
+  (as U-1). A render that ran FSR and was not finished, whether or not its commands were submitted,
+  ends the kept state when it is settled (`Fsr::settle`), so the next frame resets. This is the
+  History contract's first exception (D-58): AMD's context advances its own frame state
+  (`first_execution`, its resource frame index, the previous jitter offset and its constants) inside
+  dispatch, when the commands are recorded (`sp-fidelity-0.3.2/src/fsr2/component.rs:1510, 1669,
+  1700, 1933`), that state is private to sp-fidelity, and AMD's SDK offers no way to take it back.
+  Recovery as U-1.
+- **Raised by.** Frames in which FSR did not run (a camera other than `perspective`, U-6; the
+  `disable.fsr` diagnostics layer; TAA running in its place); a frame rendered and not finished
+  (dropped, rendered again, or `finish_frame` omitted).
+- **Stays triggered while.** The game leaves frames unfinished: each restarts FSR once.
+- **Source.** SGL3D's own. Code: `crates/sgl-3d/src/stages/antialiasing/fsr.rs` (`Fsr::prepare`,
+  `Fsr::settle`), `crates/sgl-3d/src/view/history.rs` (`Kept`).
+- **Guard.** `upscaled_restarts` with `Restart::Unfinished`
+  (`tests/sgl-3d/tests/scenario_fsr_upscaling.rs`).
+- **Status.** Rule.
 
 #### U-3 A reset ends FSR's history in a frame FSR does not run
 
-- **Rule.** When a frame's history is invalid and FSR does not run in it, the antialiasing stage drops the
-  adapter's recorded history, so the next FSR frame resets (as U-1).
+- **Rule.** When a frame's history is invalid and FSR does not run in it, that frame leaves FSR no
+  kept state, so after it is finished the next FSR frame resets (as U-1). It follows from U-2's rule;
+  no separate step drops the history.
 - **Raised by.** A reset during a frame whose antialiasing is not FSR.
 - **Stays triggered while.** Nothing: U-2 already resets after such a frame.
-- **Source.** SGL3D's own. Code: `crates/sgl-3d/src/stages/antialiasing/mod.rs` (`Antialiasing::prepare`),
-  `crates/sgl-3d/src/stages/antialiasing/fsr.rs` (`Fsr::forget_history`).
+- **Source.** SGL3D's own. Code: `crates/sgl-3d/src/view/history.rs` (`Kept::settle`).
 - **Guard.** None.
 - **Status.** Rule.
 
@@ -1989,7 +1995,7 @@ Three reflection paths keep temporal history: Crystal (DiligentFX screen-space r
 reflections with Wicked Engine's temporal pass) and world-space rays (Wicked's RT reflection
 denoiser). Velvet and world rays accumulate through one shared temporal reprojection. No
 reflection path reads a frame-wide or scene-wide motion signal: whole-view restarts come only
-from the renderer's reset, a frame-count gap, a resize or a settings change. A continuously
+from the renderer's reset, a frame the stage did not run in, a resize or a settings change. A continuously
 running game trips the per-pixel rules: Crystal's surface-history discard under camera motion
 (R-9), roughness-cutoff re-entry under jitter (R-6, R-25), world rays filling in where the
 screen-space method lets go (R-30), and the variance resets that keep a blur on wherever a
@@ -2017,21 +2023,23 @@ rejection repeats (R-16, R-29).
   `a_reset_frame_takes_the_current_radiance` (`sgl-post-fx/src/ssr_temporal_neighborhood_tests.rs`).
 - **Status.** Rule.
 
-#### R-2 Crystal restarts after a frame-count gap
+#### R-2 Crystal restarts after a frame it did not run in
 
-- **Rule.** When the frame index is not the last one plus one (`PostFx::prepare` against its
-  own last frame, and `ScreenSpaceReflection::reset_history` against `last_frame_idx`, `None`
-  before the first execution), Crystal resets exactly as R-1. `HistoryFrame::frames` advances
-  only in `Renderer::finish_frame`, so in SGL3D the gap arises when a frame is rendered and not
-  finished (abandoned, or rendered again).
-- **Raised by.** An abandoned encoder, re-rendering a frame, any render without `finish_frame`.
-- **Stays triggered while.** Every render that is not finished restarts the next frame: a game
-  that renders twice per finished frame resets Crystal every frame.
+- **Rule.** When the stage did not run in the view's last finished frame (`PostFx::prepare`
+  against its kept frame index), Crystal resets exactly as R-1. In `sgl-post-fx`,
+  `ScreenSpaceReflection::reset_history` resets when the frame index is not the last one plus
+  one (`last_frame_idx`, `None` before the first execution), except that a repeated index
+  repeats that frame, its reset included. A frame rendered again reads and writes the same
+  halves: its index is the first rendering's.
+- **Raised by.** A frame without Crystal (F-4, F-6), the renderer's reset (F-1).
+- **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** SGL3D's own (DFX-12, DFX-49). Code: `sgl-3d/src/view/post_fx.rs`
-  (`PostFx::prepare`), `sgl-post-fx/src/screen_space_reflection.rs` (`reset_history`).
-- **Guard.** `a_reset_frame_takes_the_current_radiance` (frames 0, 1, 3).
-- **Status.** Defect B-4. The History contract says an abandoned frame commits nothing and
-  restarts nothing, yet the next frame sees a gap and restarts.
+  (`PostFx::prepare`, `PostFx::settle`), `sgl-post-fx/src/screen_space_reflection.rs` (`reset_history`).
+- **Guard.** `a_reset_frame_takes_the_current_radiance` (frames 0, 1, 3);
+  `a_repeated_frame_index_keeps_history` (`sgl-post-fx`, `ssr_temporal_neighborhood_tests.rs`);
+  `crystal_keeps_its_history_across_an_unfinished_frame`
+  (`tests/sgl-3d/tests/screen_space_reflections.rs`).
+- **Status.** Rule.
 
 #### R-3 Crystal recreates its histories on a size, half-resolution or depth-convention change
 
@@ -2428,18 +2436,20 @@ rejection repeats (R-16, R-29).
 #### R-24 Velvet restarts
 
 - **Rule.** When Velvet's targets are reallocated (render size or half resolution changed),
-  when `HistoryFrame::valid` is false, when the frame count is not its last plus one, or after
-  the stage was dropped (method not Velvet, SSR off), its count is 0 and the temporal pass writes
-  this frame's trace to output and history. Whole stage; accumulation resumes the next frame at
-  0.95. A frame rendered and not finished also breaks the count (R-2, Defect B-4).
+  when `HistoryFrame::valid` is false, when the stage did not run in the view's last finished
+  frame, or after the stage was dropped (method not Velvet, SSR off), its count is 0 and the
+  temporal pass writes this frame's trace to output and history. Whole stage; accumulation
+  resumes the next frame at 0.95. A frame rendered again reads and writes the same halves.
 - **Raised by.** The renderer's reset, frames without screen-space reflections, setting changes,
   resizes.
 - **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** SGL3D's own, the DiligentFX TAA continuity rule. Code:
-  `sgl-3d/src/stages/reflections/velvet.rs` (`Velvet::encode`),
+  `sgl-3d/src/stages/reflections/velvet.rs` (`Velvet::encode`), `sgl-3d/src/view/history.rs`
+  (`StageHistory`),
   `sgl-3d/src/stages/reflections/mod.rs` (`Reflections::resolve`), `godot_reflections_temporal.wgsl`.
 - **Guard.** `jittered_hits_settle_and_a_reset_passes_through`; `resize_restarts_at_the_new_size`,
-  `content_edits_keep_history` (`tests/sgl-3d/tests/screen_space_reflections.rs`, both methods).
+  `content_edits_keep_history` (`tests/sgl-3d/tests/screen_space_reflections.rs`, both methods);
+  `velvet_keeps_its_history_across_an_unfinished_frame`.
 - **Status.** Rule.
 
 #### R-25 Untraced pixels pass through
@@ -2486,21 +2496,22 @@ rejection repeats (R-16, R-29).
 
 #### R-27 World-ray restarts, and settings that do not restart them
 
-- **Rule.** When the render size changes, `HistoryFrame::valid` is false, the frame count is not
-  the stage's last plus one (including frames in which the screen-space method was off, which
-  skip the stage), or `Settings::world_space_reflections` was Off, the stage's count is 0: its
+- **Rule.** When the render size changes, `HistoryFrame::valid` is false, the stage did not run
+  in the view's last finished frame (including frames in which the screen-space method was off,
+  which skip the stage), or `Settings::world_space_reflections` was Off, the stage's count is 0: its
   temporal pass stores this frame's resolve and its current variance, and its jitter and hashes
   restart. A `Moving` <-> `All` change, the hardware or portable path, and a Crystal <-> Velvet
   switch restart nothing: earlier accumulation blends into the new configuration over about
-  20 frames. A frame rendered and not finished also breaks the count (R-2, Defect B-4).
+  20 frames. A frame rendered again reads and writes the same halves.
 - **Raised by.** The renderer's reset, resizes, toggling SSR or world rays.
 - **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** SGL3D's own; Wicked writes only colour on its first frame. Code:
   `sgl-3d/src/stages/reflections/world.rs` (`WorldReflections::encode`),
   `world/world_reflections_denoise.wgsl` (`world_temporal`).
-- **Guard.** `world_history_restarts_after_discontinuities` (requires the restart after an
-  abandoned encode too), `world_frames_after_a_resize_equal_a_new_effect`,
-  `consecutive_world_frames_keep_accumulation` (`tests/sgl-3d/tests/world_reflections.rs`).
+- **Guard.** `world_history_restarts_after_discontinuities`,
+  `world_frames_after_a_resize_equal_a_new_effect`, `consecutive_world_frames_keep_accumulation`,
+  `world_reflections_keep_their_history_across_an_unfinished_frame`
+  (`tests/sgl-3d/tests/world_reflections.rs`).
 - **Status.** Rule.
 
 #### R-28 Texels without rays and under blended receivers
@@ -2980,16 +2991,27 @@ discard nothing a returning light could use, and the velocity refresh on streami
 - **Guard.** None.
 - **Status.** Rule.
 
-#### S-25 A frame not finished restarts the stage
+#### S-25 A frame not finished leaves the stage's history as its last finished frame left it
 
-- **Rule.** The stage records a frame as run when it encodes it; a frame encoded but not finished
-  does not advance the history count, so the next frame's count is not one more and the stage
-  restarts as in S-1.
+- **Rule.** A frame not finished leaves the stage's history as its last finished frame left it:
+  the stage keeps its run (frame count and the half of each pair it writes), its slots' lights,
+  the quality its history was made at and its seed as that frame left them
+  (`Kept<TracedKept>`), so a frame rendered again assigns the same slots, draws with the same
+  seed and reads and writes the same halves. `Slots::assign` works from the kept copy. A stage
+  that did not run in the last finished frame keeps nothing and restarts as in S-1. Not yet
+  covered: a frame whose commands were submitted overwrote the denoiser's classification history
+  in place (`denoise::Targets::scratch`, written by its first filter pass and read by the next
+  frame's tile classification, as Wicked's `rtshadow.scratch[i][1]`), so the frame rendered
+  again reads the attempt's filtered result there; a dropped encoder leaves it untouched.
 - **Raised by.** A game that renders a frame and abandons or re-renders it.
-- **Stays triggered while.** The game abandons frames; each one costs a restart.
-- **Source.** SGL3D's own. Code: `src/stages/shadows/traced.rs` (`TracedShadows::encode`).
-- **Guard.** None.
-- **Status.** Defect B-4. The History contract says an abandoned frame commits nothing, but here it restarts the next frame's history.
+- **Stays triggered while.** Nothing for a dropped encoder; one frame of the denoiser's history
+  for a submitted one.
+- **Source.** SGL3D's own. Code: `src/stages/shadows/traced.rs` (`TracedShadows::encode`,
+  `TracedShadows::settle`), `src/view/history.rs` (`Kept`).
+- **Guard.** `the_shadow_mask_survives_an_unfinished_frame` (`src/stages/shadows/traced/tests.rs`,
+  its encoder dropped).
+- **Status.** Rule for the kept state; the submitted case's denoiser history is reported to the
+  2026-11-18 mission for a decision.
 
 #### S-26 Per-frame ray draw
 
@@ -3240,15 +3262,20 @@ scenery, and grazing distant ground loses taps to the 1% depth test (AO-5).
 - **Guard.** None.
 - **Status.** Rule.
 
-#### AO-10 A frame not finished restarts accumulation
+#### AO-10 A frame not finished leaves the accumulation as its last finished frame left it
 
-- **Rule.** The temporal pass records a frame as run when it encodes it; a frame encoded but not
-  finished does not advance the history count, so the next frame restarts as in AO-1.
+- **Rule.** A frame not finished leaves the stage's history as its last finished frame left it:
+  the temporal pass keeps its run (count and the half of its pair it writes), quality and radius
+  as that frame left them (`Kept`), so a frame rendered again reads and writes the same halves.
+  The pass restarts as in AO-1 when it did not run in that frame, or on a resize or a quality or
+  radius change.
 - **Raised by.** A game that renders a frame and abandons or re-renders it.
-- **Stays triggered while.** The game abandons frames.
-- **Source.** SGL3D's own. Code: `src/stages/opaque/ambient_occlusion/temporal.rs` (`Temporal::encode`).
-- **Guard.** None.
-- **Status.** Defect B-4. The History contract says an abandoned frame commits nothing, but here it restarts the next frame's accumulation.
+- **Stays triggered while.** Nothing.
+- **Source.** SGL3D's own. Code: `src/stages/opaque/ambient_occlusion/temporal.rs`
+  (`Temporal::encode`, `Temporal::settle`).
+- **Guard.** `accumulated_visibility_survives_an_unfinished_frame`
+  (`src/stages/opaque/ambient_occlusion/integration_tests.rs`).
+- **Status.** Rule.
 
 ## Volumetric fog
 
@@ -3319,7 +3346,8 @@ game drops it only by resets, resizes and frames without fog; a changing `Fog::l
 
 - **Rule.** When the slice filter runs it overwrites the other volume, which is then recorded as
   holding this frame, so a frame retried after submission without `finish_frame` does not take it as
-  its predecessor.
+  its predecessor. This is the History contract's second exception, named in the History contract
+  ("What a frame commits").
 - **Raised by.** A submitted frame retried without `finish_frame`.
 - **Stays triggered while.** Nothing: one frame.
 - **Source.** SGL3D's own. Code: `src/stages/fog.rs` (`VolumetricFog::encode`), `src/stages/fog/volumes.rs` (`Holds::filtered`).
@@ -3556,7 +3584,9 @@ moves the metered frame, below one output code (E-3).
 #### E-2 A switch from fixed exposure snaps, pending until finished
 
 - **Rule.** When automatic exposure follows a frame of fixed exposure, it snaps as in E-1, and the
-  switch stays pending until a frame is finished.
+  switch stays pending until a frame is finished. The adapted value advances in place on the GPU,
+  so after a submitted frame that was not finished it may be one step ahead, which the History
+  contract ("What a frame commits") names and no frame reads as a discontinuity.
 - **Raised by.** The game switching `Exposure::automatic` on.
 - **Stays triggered while.** Nothing: until one frame is finished.
 - **Source.** SGL3D's own. Code: `src/stages/exposure.rs` (`Exposure::encode`, `Exposure::finish_frame`).

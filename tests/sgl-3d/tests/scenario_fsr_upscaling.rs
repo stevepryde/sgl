@@ -514,6 +514,9 @@ upscaling!(following, upscaled_following);
 enum Restart {
     Cut,
     Quality(FsrQuality),
+    /// The frame was rendered and submitted once before, without
+    /// `finish_frame` (U-2).
+    Unfinished,
 }
 
 /// Case U5. Plausible defect: history survives a camera cut at an
@@ -525,7 +528,10 @@ enum Restart {
 /// restart in the same frame, render it exactly alike. The run starts at
 /// Quality, cuts there, then steps through every other quality and back, a
 /// hold apart, building history in between: one test per version, since
-/// the case is the change between qualities.
+/// the case is the change between qualities. Last, a frame rendered and
+/// submitted without `finish_frame` restarts FSR when it is rendered again,
+/// the History contract's exception for AMD's context, which advanced when
+/// the attempt's dispatch was recorded (U-2, D-58).
 fn upscaled_restarts(method: Antialiasing) {
     let Some(gpu) = device(method) else { return };
     let restarts = [
@@ -535,6 +541,7 @@ fn upscaled_restarts(method: Antialiasing) {
         (4 * HOLD, Restart::Quality(FsrQuality::UltraPerformance)),
         (5 * HOLD, Restart::Quality(FsrQuality::NativeAa)),
         (6 * HOLD, Restart::Quality(FsrQuality::Quality)),
+        (7 * HOLD, Restart::Unfinished),
     ];
     let pan = VIEW
         .pan(-0.5, DEPTH)
@@ -564,6 +571,10 @@ fn upscaled_restarts(method: Antialiasing) {
             match restart {
                 Some(Restart::Cut) => rig.input.camera_cut = true,
                 Some(Restart::Quality(quality)) => rig.settings.fsr_quality = quality,
+                Some(Restart::Unfinished) => {
+                    scenario.pose(rig, frame);
+                    rig.render_unfinished(frame);
+                }
                 None => {}
             }
             scenario.render(rig, frame);

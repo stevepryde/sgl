@@ -14,7 +14,7 @@ mod inputs;
 pub(crate) use inputs::{FS_MAIN_ENTRY, INPUTS};
 use inputs::{Inputs, MATERIAL_FORMAT, MOTION_FORMAT, NORMAL_FORMAT};
 
-use super::history::CameraFrame;
+use super::history::{CameraFrame, Kept};
 use super::targets::{SharedTargets, Surface};
 use crate::shading;
 use glam::{Mat4, Vec4};
@@ -82,17 +82,14 @@ pub(crate) struct Responsive<'a> {
     pub reach: &'a wgpu::TextureView,
 }
 
-/// The frame the effects' history refers to.
-struct History {
-    frame_index: u32,
-}
-
 pub(crate) struct PostFx {
     context: PostFXContext,
     /// Created when SSR first runs and dropped when it is switched off.
     ssr: Option<ScreenSpaceReflection>,
     taa: Option<TemporalAntiAliasing>,
-    history: Option<History>,
+    /// The frame index of the view's last finished frame, which the
+    /// effects' history refers to.
+    history: Kept<u32>,
     inputs: Option<Inputs>,
     prepare: wgpu::RenderPipeline,
     /// The inputs pass's near and far planes.
@@ -205,7 +202,7 @@ impl PostFx {
             ),
             ssr: None,
             taa: taa.then(|| TemporalAntiAliasing::new(device)),
-            history: None,
+            history: Kept::default(),
             inputs: None,
             prepare: device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("DiligentFX inputs from the G-buffer"),
@@ -268,8 +265,10 @@ impl PostFx {
     /// returns its NDC jitter, zero without TAA or when history restarts (as
     /// Hydrogent's `HnPostProcessTask::Prepare` publishes it).
     /// `history_valid` is false after a reset, resize or camera cut;
-    /// `frame_index` counts frames since that reset, so a gap means the
-    /// effects missed frames.
+    /// `frame_index` counts frames since that reset. History continues from
+    /// the view's last finished frame, so a frame rendered again has its
+    /// index and reads and writes the same halves of the effects' pairs,
+    /// which the index's parity selects.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -278,14 +277,15 @@ impl PostFx {
         frame_index: u32,
         history_valid: bool,
     ) -> [f32; 2] {
-        // History continues only while SGL3D's does and no frame was missed,
-        // the rule DiligentFX's TAA applies (DFX-12 in sgl-post-fx's
-        // PROVENANCE.md).
+        // History continues only while SGL3D's does and follows the last
+        // finished frame, the rule DiligentFX's TAA applies (DFX-12 in
+        // sgl-post-fx's PROVENANCE.md).
         self.reset_accumulation = !history_valid
             || self
                 .history
-                .as_ref()
-                .is_none_or(|history| frame_index != history.frame_index.wrapping_add(1));
+                .last()
+                .is_none_or(|&last| frame_index != last.wrapping_add(1));
+        self.history.leave(frame_index);
         self.frame_index = frame_index;
         self.context.prepare_resources(
             device,
@@ -445,13 +445,13 @@ impl PostFx {
                 ..Default::default()
             });
         }
-        let previous_camera = match (&self.history, previous) {
-            (Some(history), Some(previous)) if !reset_accumulation => camera_attribs(
+        let previous_camera = match (self.history.last(), previous) {
+            (Some(&last), Some(previous)) if !reset_accumulation => camera_attribs(
                 previous.view,
                 previous.jittered_projection(),
                 previous.jitter,
                 size,
-                history.frame_index,
+                last,
             ),
             _ => camera,
         };
@@ -470,9 +470,11 @@ impl PostFx {
                 camera_attribs_cb: None,
                 pass_timestamps: Some(&timestamps),
             });
-        self.history = Some(History {
-            frame_index: self.frame_index,
-        });
+    }
+
+    /// Settles the last render's history: see `Kept::settle`.
+    pub fn settle(&mut self, finished: bool) {
+        self.history.settle(finished);
     }
 
     /// DiligentFX SSR of `radiance` after `begin`: for each traced receiver,

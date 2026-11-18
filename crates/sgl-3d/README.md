@@ -2111,7 +2111,9 @@ authored look and per-frame state in a `FrameInput`.
    instances' poses and deformations become the next frame's history, and the shadow faces it
    drew become reusable. Do not finish a frame that was not submitted; an
    abandoned encoder leaves history unchanged and its shadow faces are drawn
-   again.
+   again. A frame rendered and not finished, submitted or not, restarts
+   nothing but FSR: the next frame continues every other history from the
+   last finished frame.
    Scene edits upload through the queue, never the frame's encoder, so an
    abandoned frame loses none.
 

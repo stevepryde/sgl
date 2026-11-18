@@ -86,21 +86,114 @@ pub(crate) struct HistoryFrame {
     pub previous_backdrop_yaw: f32,
 }
 
-/// A stage's temporal history: its frame count since it last restarted (0
-/// restarts it), and the half of each history pair the frame writes, the
-/// other holding the last frame's. The half alternates every frame the
-/// stage runs, apart from the count, so the count skipping 0 as it wraps
-/// never writes one half twice in a row.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct StageHistory {
+/// What a stage keeps to describe its GPU history: as the view's last
+/// finished frame left it (none where the stage did not run in that frame),
+/// and what the frame being rendered leaves. A frame rendered and not
+/// finished leaves nothing behind, so the next continues from the last
+/// finished frame (the architecture's History contract, "What a frame
+/// commits"). The renderer settles every stage's once per render, when it
+/// knows whether that render was finished.
+pub(crate) struct Kept<T> {
+    committed: Option<T>,
+    rendered: Option<T>,
+}
+
+impl<T> Default for Kept<T> {
+    fn default() -> Self {
+        Self {
+            committed: None,
+            rendered: None,
+        }
+    }
+}
+
+impl<T> Kept<T> {
+    /// As the last finished frame left it; none where the stage did not
+    /// run in that frame.
+    pub fn last(&self) -> Option<&T> {
+        self.committed.as_ref()
+    }
+
+    /// What the frame being rendered leaves, until it is settled.
+    pub fn left(&self) -> Option<&T> {
+        self.rendered.as_ref()
+    }
+
+    /// The frame being rendered leaves `state`.
+    pub fn leave(&mut self, state: T) {
+        self.rendered = Some(state);
+    }
+
+    /// Settles the last render: a finished one's state becomes the last
+    /// finished frame's (none where it left none: the stage did not run in
+    /// it); an unfinished one's is dropped.
+    pub fn settle(&mut self, finished: bool) {
+        let rendered = self.rendered.take();
+        if finished {
+            self.committed = rendered;
+        }
+    }
+
+    /// Forgets both: the GPU history they describe is gone.
+    pub fn forget(&mut self) {
+        self.committed = None;
+        self.rendered = None;
+    }
+}
+
+/// A stage's run of temporal history in one frame: its frame count since
+/// it last restarted (0 restarts it), and the half of each history pair
+/// the frame writes, the other holding the last frame's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StageRun {
     pub count: u32,
     pub current: usize,
 }
 
+impl StageRun {
+    /// The run of a frame after the last finished frame's run `last` (none
+    /// where the stage did not run in it): the next count, never 0, and the
+    /// other half where it `continues` from `last`, else a restart (count
+    /// 0). The half alternates from `last` either way, so the count
+    /// skipping 0 as it wraps never writes one half twice in a row.
+    pub fn after(last: Option<&StageRun>, continues: bool) -> StageRun {
+        let current = last.map_or(0, |last| 1 - last.current);
+        match last {
+            Some(last) if continues => StageRun {
+                count: last.count.wrapping_add(1).max(1),
+                current,
+            },
+            _ => StageRun { count: 0, current },
+        }
+    }
+}
+
+/// A stage's temporal history, kept as the last finished frame left it.
+#[derive(Default)]
+pub(crate) struct StageHistory {
+    kept: Kept<StageRun>,
+}
+
 impl StageHistory {
-    pub fn advance(&mut self) {
-        self.count = self.count.wrapping_add(1).max(1);
-        self.current = 1 - self.current;
+    /// The frame's run: it continues the last finished frame's run unless
+    /// `!frame.valid || restart` or the stage did not run in that frame:
+    /// count + 1 (never 0) and the other half; else count 0. Leaves it as
+    /// the frame's. A frame rendered again gets the same run, so it reads
+    /// and writes the same halves.
+    pub fn begin(&mut self, frame: &HistoryFrame, restart: bool) -> StageRun {
+        let run = StageRun::after(self.kept.last(), frame.valid && !restart);
+        self.kept.leave(run);
+        run
+    }
+
+    /// See [`Kept::settle`].
+    pub fn settle(&mut self, finished: bool) {
+        self.kept.settle(finished);
+    }
+
+    /// See [`Kept::forget`]: the stage's history targets were recreated.
+    pub fn forget(&mut self) {
+        self.kept.forget();
     }
 }
 
@@ -328,21 +421,86 @@ mod tests {
 
     #[wasm_bindgen_test(unsupported = test)]
     fn the_history_halves_alternate_across_the_frame_count_s_wrap() {
-        let mut frame = StageHistory {
+        let mut run = StageRun {
             count: u32::MAX - 2,
             current: 1,
         };
-        let mut written = vec![frame.current];
+        let mut written = vec![run.current];
         for _ in 0..6 {
-            frame.advance();
-            assert_ne!(frame.count, 0, "only a restart sets the count to 0");
-            written.push(frame.current);
+            run = StageRun::after(Some(&run), true);
+            assert_ne!(run.count, 0, "only a restart sets the count to 0");
+            written.push(run.current);
         }
         for pair in written.windows(2) {
             assert_ne!(
                 pair[0], pair[1],
                 "consecutive frames wrote one half: {written:?}"
             );
+        }
+    }
+
+    // Plausible defects: a stage's history restarts after a frame that was
+    // rendered and not finished (B-4 of the 2026-11-18 history audit), a
+    // frame rendered again writes the other half and so overwrites the
+    // history it reads, an unfinished frame's restart or skip is kept, or
+    // a stage that did not run in the last finished frame continues from
+    // an older one. The oracle is the History contract's table ("What a
+    // frame commits"; F-3, F-4): each row below gives a frame's outcome and
+    // the run the contract requires of it, written by hand.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one() {
+        let camera = CameraFrame {
+            view: Mat4::IDENTITY,
+            projection: crate::perspective(1.1, 1.5, 0.1),
+            jitter: [0.; 2],
+        };
+        let mut history = CameraHistory::default();
+        let mut stage = StageHistory::default();
+        #[derive(Clone, Copy, PartialEq)]
+        enum Outcome {
+            Finished,
+            Unfinished,
+        }
+        use Outcome::{Finished, Unfinished};
+        // (camera cut, the stage runs, restart asked, outcome, the run
+        // required where the stage runs).
+        let rows = [
+            (true, true, false, Finished, Some((0, 0))),
+            (false, true, false, Finished, Some((1, 1))),
+            (false, true, false, Finished, Some((2, 0))),
+            // Rendered and dropped, then rendered again: the same run.
+            (false, true, false, Unfinished, Some((3, 1))),
+            (false, true, false, Unfinished, Some((3, 1))),
+            (false, true, false, Finished, Some((3, 1))),
+            // A restart in a frame that is not finished is not kept.
+            (false, true, true, Unfinished, Some((0, 0))),
+            (false, true, false, Finished, Some((4, 0))),
+            // A cut in a frame that is not finished is not kept either.
+            (true, true, false, Unfinished, Some((0, 1))),
+            (false, true, false, Finished, Some((5, 1))),
+            // Skipped in an unfinished frame: the next continues.
+            (false, false, false, Unfinished, None),
+            (false, true, false, Finished, Some((6, 0))),
+            // Skipped in a finished frame: the next restarts.
+            (false, false, false, Finished, None),
+            (false, true, false, Finished, Some((0, 0))),
+            (false, true, false, Finished, Some((1, 1))),
+            // A cut finished in a frame the stage skips ends the history.
+            (true, false, false, Finished, None),
+            (false, true, false, Finished, Some((0, 0))),
+        ];
+        for (row, (cut, runs, restart, outcome, required)) in rows.into_iter().enumerate() {
+            let frame = history.begin(camera, cut, DVec3::ZERO, 0., 0);
+            let run = runs.then(|| stage.begin(&frame, restart));
+            assert_eq!(
+                run.map(|run| (run.count, run.current)),
+                required,
+                "row {row}"
+            );
+            if outcome == Finished {
+                history.finish(frame);
+            }
+            stage.settle(outcome == Finished);
         }
     }
 }

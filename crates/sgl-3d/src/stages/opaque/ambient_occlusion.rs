@@ -96,6 +96,10 @@ impl AmbientOcclusion {
             timing,
         );
     }
+    /// Settles the last render's accumulation: see `Kept::settle`.
+    pub(crate) fn settle(&mut self, finished: bool) {
+        self.temporal.settle(finished);
+    }
     /// The last encoded frame's denoised visibility.
     pub(crate) fn output(&self) -> Option<&wgpu::TextureView> {
         self.temporal

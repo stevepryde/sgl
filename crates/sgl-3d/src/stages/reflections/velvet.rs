@@ -192,10 +192,9 @@ pub(crate) struct Velvet {
     temporal_params: wgpu::Buffer,
     targets: Option<Targets>,
     groups: Option<Groups>,
-    /// Frames since history last reset (0 resets it), and the half written.
+    /// Frames since history last reset (0 resets it), and the half written,
+    /// as the last finished frame left them.
     history: StageHistory,
-    /// Scene frame last encoded, matching the TAA/SSR continuity rule.
-    previous_scene_frame: Option<u32>,
 }
 
 impl Velvet {
@@ -255,8 +254,12 @@ impl Velvet {
             targets: None,
             groups: None,
             history: StageHistory::default(),
-            previous_scene_frame: None,
         }
+    }
+
+    /// Settles the last render's history: see `Kept::settle`.
+    pub fn settle(&mut self, finished: bool) {
+        self.history.settle(finished);
     }
 
     /// Empty groups for targets with `mipmaps` mips, at half resolution with
@@ -302,22 +305,16 @@ impl Velvet {
             let targets = Targets::new(device, size, half);
             self.groups = Some(self.groups(targets.mipmaps, half));
             self.targets = Some(targets);
+            self.history.forget();
         }
-        // As with world rays, history continues only across consecutive
-        // valid scene frames.
-        let continuous = input.frame.valid
-            && self
-                .previous_scene_frame
-                .is_some_and(|previous| input.frame.frames == previous.wrapping_add(1));
-        if resized || !continuous {
-            self.history.count = 0;
-        }
-        self.previous_scene_frame = Some(input.frame.frames);
+        // As with world rays, history continues from the last finished
+        // frame where the stage ran in it (F-4).
+        let run = self.history.begin(&input.frame, resized);
         // The renderer's camera history is the previous camera, as it
         // rasterized; a new history reprojects through this frame's.
         let near = input.camera.proj[3][2];
         let (previous, previous_near) = match input.frame.previous_camera {
-            Some(camera) if self.history.count > 0 => (
+            Some(camera) if run.count > 0 => (
                 camera.jittered_view_projection(),
                 camera.projection.w_axis.z,
             ),
@@ -327,9 +324,8 @@ impl Velvet {
                 near,
             ),
         };
-        let current = self.history.current;
-        let continues = self.history.count > 0;
-        self.history.advance();
+        let current = run.current;
+        let continues = run.count > 0;
         let t = self.targets.as_ref().unwrap();
         let [width, height] = t.size.map(|v| v as f32);
         crate::counters::write_buffer(

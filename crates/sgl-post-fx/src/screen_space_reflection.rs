@@ -871,11 +871,15 @@ impl ScreenSpaceReflection {
     /// takes the current frame, as TAA's resolve does on a reset.
     fn reset_history(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {
         let current_frame_idx = render_attribs.post_fx_context.get_frame_desc().index;
-        let reset_accumulation = self.last_frame_idx.is_none_or(|last| {
-            // No history on the first frame or after the histories were
-            // recreated (None); reset if frames were skipped.
-            current_frame_idx != last.wrapping_add(1)
-        }) || render_attribs.reset_accumulation; // Reset history if requested
+        // No history on the first frame or after the histories were
+        // recreated (None); reset if frames were skipped. A repeated index
+        // repeats that frame, its reset included (`history_reset`, the last
+        // execution's): the reset cleared the histories it would read.
+        let reset_accumulation = match self.last_frame_idx {
+            Some(last) if current_frame_idx == last => self.history_reset,
+            Some(last) => current_frame_idx != last.wrapping_add(1),
+            None => true,
+        } || render_attribs.reset_accumulation; // Reset history if requested
         self.last_frame_idx = Some(current_frame_idx);
         if reset_accumulation != self.history_reset {
             self.history_reset = reset_accumulation;

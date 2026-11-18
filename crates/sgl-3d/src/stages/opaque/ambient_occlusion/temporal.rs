@@ -1,7 +1,10 @@
 //! DiligentFX SSAO temporal accumulation; private to the opaque stage.
 use crate::{
     settings::AmbientOcclusionQuality,
-    view::{cached_group::CachedGroup, history::HistoryFrame},
+    view::{
+        cached_group::CachedGroup,
+        history::{HistoryFrame, Kept, StageRun},
+    },
 };
 
 #[repr(C)]
@@ -23,8 +26,9 @@ pub(super) struct Temporal {
     groups: [CachedGroup; 2],
     params: wgpu::Buffer,
     targets: Option<Targets>,
-    last: Option<(u32, AmbientOcclusionQuality, f32)>,
-    current: usize,
+    /// The run, quality and radius of the last finished frame's
+    /// accumulation; another quality or radius restarts it.
+    history: Kept<(StageRun, AmbientOcclusionQuality, f32)>,
 }
 impl Temporal {
     pub fn new(device: &wgpu::Device) -> Self {
@@ -54,9 +58,12 @@ impl Temporal {
                 },
             ),
             targets: None,
-            last: None,
-            current: 0,
+            history: Kept::default(),
         }
+    }
+    /// Settles the last render's history: see `Kept::settle`.
+    pub fn settle(&mut self, finished: bool) {
+        self.history.settle(finished);
     }
     pub fn output(&self) -> Option<&wgpu::TextureView> {
         self.targets.as_ref().map(|t| &t.output)
@@ -94,12 +101,16 @@ impl Temporal {
                 }),
                 output: make("AO accumulated visibility", wgpu::TextureFormat::R32Uint),
             });
+            self.history.forget();
         }
-        let reset = resized
-            || !history.valid
-            || self.last.is_none_or(|(frame, q, r)| {
-                frame.wrapping_add(1) != history.frames || q != quality || r != radius
-            });
+        // History continues from the last finished frame where the pass ran
+        // at this quality and radius (F-4, AO-10).
+        let last = self.history.last();
+        let continues = history.valid && last.is_some_and(|&(_, q, r)| q == quality && r == radius);
+        let run = StageRun::after(last.map(|(run, ..)| run), continues);
+        self.history.leave((run, quality, radius));
+        let reset = run.count == 0;
+        let current = run.current;
         let previous = history.previous_camera.unwrap_or(history.camera);
         let params = Params {
             size,
@@ -116,7 +127,7 @@ impl Temporal {
         };
         crate::counters::write_buffer(queue, &self.params, 0, bytemuck::bytes_of(&params));
         let t = self.targets.as_ref().unwrap();
-        let group = self.groups[self.current].get(
+        let group = self.groups[current].get(
             device,
             "AO temporal accumulation",
             &[
@@ -124,8 +135,8 @@ impl Temporal {
                 super::texture_entry(1, ao),
                 super::texture_entry(2, depth),
                 super::texture_entry(3, motion),
-                super::texture_entry(4, &t.history[1 - self.current]),
-                super::texture_entry(5, &t.history[self.current]),
+                super::texture_entry(4, &t.history[1 - current]),
+                super::texture_entry(5, &t.history[current]),
                 super::texture_entry(6, &t.output),
             ],
         );
@@ -136,7 +147,5 @@ impl Temporal {
             size.map(|s| s.div_ceil(8)),
             timing,
         );
-        self.last = Some((history.frames, quality, radius));
-        self.current = 1 - self.current;
     }
 }

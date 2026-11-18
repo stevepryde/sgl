@@ -76,8 +76,9 @@
 //!   1.1.4's `ffxFsr2ContextGenerateReactiveMask` schedules nothing, and the
 //!   docs prefer masks rendered from materials to generated ones.
 //! - Reset on SGL3D history loss: an invalid temporal frame (a camera cut, a
-//!   resize or another scene), a missed frame or a new render size; the docs
-//!   (447–451) reset for camera jump cuts. Content and lighting changes keep
+//!   resize or another scene), a frame after one FSR did not run in or that
+//!   was not finished (U-2), or a new render size; the docs (447–451) reset
+//!   for camera jump cuts. Content and lighting changes keep
 //!   history: FSR2's shading change detection handles them (docs 720, 777).
 //!
 //! The context's pipelines are created with it; an error there (for example a
@@ -86,6 +87,7 @@
 //! reports through `take_job_error`, since `ffxFsr2ContextDispatch` ignores
 //! its jobs' result.
 use crate::settings::{FsrQuality, FsrVersion};
+use crate::view::history::Kept;
 use sp_fidelity::fsr2::{
     FFX_FSR2_ENABLE_DEPTH_INFINITE, FFX_FSR2_ENABLE_DEPTH_INVERTED,
     FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE, FfxFsr2Context, FfxFsr2ContextDescription,
@@ -180,9 +182,9 @@ fn validation_error(scope: wgpu::ErrorScopeGuard) -> Option<wgpu::Error> {
     }
 }
 
-/// The history FSR2's accumulation continues from.
-struct History {
-    frames: u32,
+/// What FSR's accumulation continues from: the render size of a frame it
+/// ran in.
+struct FsrRun {
     render_size: [u32; 2],
 }
 
@@ -213,7 +215,8 @@ pub(crate) struct Fsr {
     jitter: [f32; 2],
     render_size: [u32; 2],
     reset: bool,
-    history: Option<History>,
+    /// The run of the view's last finished frame, where FSR ran in it.
+    history: Kept<FsrRun>,
 }
 
 impl Fsr {
@@ -365,7 +368,7 @@ impl Fsr {
             jitter: [0.; 2],
             render_size: display_size,
             reset: true,
-            history: None,
+            history: Kept::default(),
         };
         match (created, error) {
             (Ok(()), None) => Ok(fsr),
@@ -396,23 +399,32 @@ impl Fsr {
         &self.output
     }
 
-    /// Ends the history, so the next `prepare` restarts it: a reset in a
-    /// frame FSR2 does not run in.
-    pub fn forget_history(&mut self) {
-        self.history = None;
+    /// Settles the last render (U-2): a finished frame FSR ran in is the
+    /// one its accumulation continues from; one it did not run in ends the
+    /// accumulation. A frame FSR ran in that is not finished ends it too:
+    /// AMD's context advanced its own frame state (`first_execution`, its
+    /// frame index, previous jitter and constants) when the dispatch was
+    /// recorded, and has no way to take that back (the History contract's
+    /// first exception, D-58).
+    pub fn settle(&mut self, finished: bool) {
+        let ran = self.history.left().is_some();
+        self.history.settle(finished);
+        if ran && !finished {
+            self.history.forget();
+        }
     }
 
     /// Before the frame's geometry: decides whether history continues and
-    /// returns the frame's projection jitter in NDC.
-    pub fn prepare(&mut self, render_size: [u32; 2], frames: u32, history_valid: bool) -> [f32; 2] {
+    /// returns the frame's projection jitter in NDC. It continues from the
+    /// view's last finished frame where FSR ran at this render size, unless
+    /// `history_valid` is false.
+    pub fn prepare(&mut self, render_size: [u32; 2], history_valid: bool) -> [f32; 2] {
         self.reset = !history_valid
-            || self.history.as_ref().is_none_or(|history| {
-                frames != history.frames.wrapping_add(1) || history.render_size != render_size
-            });
-        self.history = Some(History {
-            frames,
-            render_size,
-        });
+            || self
+                .history
+                .last()
+                .is_none_or(|history| history.render_size != render_size);
+        self.history.leave(FsrRun { render_size });
         self.render_size = render_size;
         let [width, height] = render_size.map(|v| i32::try_from(v).unwrap_or(i32::MAX));
         let display_width = i32::try_from(self.display_size[0]).unwrap_or(i32::MAX);

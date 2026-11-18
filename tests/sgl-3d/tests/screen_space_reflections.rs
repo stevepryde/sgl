@@ -928,6 +928,79 @@ fn resize_to_the_same_render_size_binds_the_new_shared_targets() {
     }
 }
 
+/// Plausible defects (B-4 of the 2026-11-18 history audit, R-2, R-24): a
+/// frame rendered and not finished, its encoder dropped or its commands
+/// submitted, restarts `method`'s history, leaves its own as the next
+/// frame's history, or the frame rendered again writes the half of a pair
+/// its history is in. The oracle is equivalence: while the camera pans, a
+/// run with an unfinished attempt from a camera half a metre aside equals
+/// exactly the run without it, in the HDR composite of the frame rendered
+/// again and the two after.
+fn keeps_its_history_across_an_unfinished_frame(method: settings::ReflectionMethod) {
+    let size = [96, 64];
+    let start = || {
+        let mut frames = Frames::new(world(smooth_metal(), 4.), environment(0.25), true, size)?;
+        frames.settings.reflection_method = method;
+        frames.settings.antialiasing = settings::Antialiasing::Off;
+        frames.resize(size);
+        Some(frames)
+    };
+    let run = |attempt: Option<bool>| {
+        let mut frames = start()?;
+        let mut composites = Vec::new();
+        for frame in 0..FRAMES + 3 {
+            let x = 0.03 * frame as f32;
+            if frame == FRAMES
+                && let Some(submitted) = attempt
+            {
+                frames.look_from(x + 0.5);
+                frames.input.camera_cut = false;
+                let mut encoder = frames.device.create_command_encoder(&Default::default());
+                frames.renderer.render(
+                    &frames.device,
+                    &frames.queue,
+                    &mut encoder,
+                    &mut frames.scene,
+                    &frames.input,
+                    &frames.settings,
+                    &frames.output,
+                    None,
+                );
+                if submitted {
+                    frames.queue.submit([encoder.finish()]);
+                }
+            }
+            frames.look_from(x);
+            frames.render(1, frame == 0);
+            if frame >= FRAMES {
+                composites.push(frames.composite());
+            }
+        }
+        Some(composites)
+    };
+    let Some(plain) = run(None) else { return };
+    for submitted in [false, true] {
+        let attempted = run(Some(submitted)).unwrap();
+        for (frame, (plain, attempted)) in plain.iter().zip(&attempted).enumerate() {
+            let difference = max_difference(plain, attempted);
+            assert_eq!(
+                difference, 0.,
+                "{method:?}: frame {frame} from the unfinished attempt (submitted: {submitted}) differs from the run without it by {difference}"
+            );
+        }
+    }
+}
+
+#[test]
+fn crystal_keeps_its_history_across_an_unfinished_frame() {
+    keeps_its_history_across_an_unfinished_frame(settings::ReflectionMethod::Crystal);
+}
+
+#[test]
+fn velvet_keeps_its_history_across_an_unfinished_frame() {
+    keeps_its_history_across_an_unfinished_frame(settings::ReflectionMethod::Velvet);
+}
+
 // A camera cut (a history reset without a resize) discards the effect's
 // history: frames after it equal those of a pipeline started at the new view.
 #[test]

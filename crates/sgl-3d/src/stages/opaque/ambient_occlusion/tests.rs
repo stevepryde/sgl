@@ -953,6 +953,7 @@ fn temporal_visibility_accumulates_and_rejects_invalid_history() {
                 queue.submit([encoder.finish()]);
             }
             camera_history.finish(history);
+            temporal.settle(true);
             if skip {
                 return Vec::new();
             }
@@ -1106,6 +1107,7 @@ fn temporal_visibility_keeps_history_when_the_receiver_follows_the_camera() {
         );
         queue.submit([encoder.finish()]);
         camera_history.finish(history);
+        temporal.settle(true);
     }
     let values =
         crate::test_support::read(&device, &queue, temporal.output().unwrap().texture(), 4);

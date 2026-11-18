@@ -158,6 +158,10 @@ SSR and TAA discard their history:
 - when SSR's `RenderAttributes::reset_accumulation` or
   `TemporalAntiAliasingAttribs::reset_accumulation` asks.
 
+Executing the same frame index again repeats that frame, its reset included:
+it reads the same history and writes the same halves, so a caller can render
+a frame again after one it did not submit or finish (DFX-12, DFX-50).
+
 TAA's first frame for a new feature set writes the current RGB with reset
 history confidence, independent of input alpha (DFX-47). Its following
 resolve ramps up history weight as after an explicit reset.
