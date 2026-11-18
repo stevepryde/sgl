@@ -31,17 +31,23 @@
 //! 12 render pixels, the grating's strips stay below a render pixel, and
 //! the outline and strip regions hold some hundreds of pixels each.
 //!
+//! An object the camera follows is covered over a still, far background
+//! (U4) and with near scenery streaming past it under fast forward travel
+//! (U9).
+//!
 //! Not covered at the upscaling qualities yet: an object moving along the
 //! view, an appearance or a departure, a resize and an origin move, which
 //! the first suite covers at Native AA; RCAS's effect on the reference
-//! (it moves edges away from their coverage on purpose); and rotation about
-//! any axis but +Y.
+//! (it moves edges away from their coverage on purpose); rotation about
+//! any axis but +Y; a followed object with near scenery streaming past
+//! under sideways travel; and scenery passing nearer than a followed
+//! object, where AMD's previous depth flags it disoccluded (see `WALL`).
 #![cfg(not(target_arch = "wasm32"))]
 mod scenario;
 
 use scenario::geometry::{Motion, Pose, View, coverage};
 use scenario::image::{Image, Region, error, error_to};
-use scenario::rig::{Dump, HALF_STEP, Rig};
+use scenario::rig::{Dump, HALF_STEP, Quad, Rig, Shape};
 use scenario::temporal::{
     BACKGROUND, CARD, DEPTH, Edge, Failures, HOLD, Oracles, SETTLE, SKY, Scenario, VIEW, ahead,
     background, bar, card, device, grating, phases, px, samples, stage, still, stores, vacated,
@@ -885,3 +891,245 @@ every_quality!(
         super::turning(Antialiasing::Taa, FsrQuality::NativeAa)
     }
 );
+
+/// Case U9's camera travel a frame: a racer's 96 m/s at 60 frames a second.
+const TRAVEL: f32 = 1.6;
+/// Where case U9's road lies about the camera's path: its floor 0.9 m
+/// beneath it, 6 cm below the followed card's lowest corner, its walls 4 m
+/// either side, and their tops 0.6 m above, from 10 m behind the camera's
+/// start to 1 km ahead.
+///
+/// The walls stand where AMD's previous depth is exact for the followed
+/// shapes. `ReconstructPrevDepth` writes each render pixel's current depth
+/// at its previous position, so scenery that is nearer than a followed
+/// surface now and was behind it on screen a frame ago lands its depth on
+/// that surface and flags it disoccluded, with correct inputs. A wall point
+/// nearer than the shapes' 3 m was at most 3 m + `TRAVEL` away a frame
+/// ago, where it lay inside their 1.7 m reach from the axis only if the
+/// wall is within 1.7 × (3 + `TRAVEL`) / 3 = 2.6 m of it. The floor's such
+/// points land on the shapes' lowest 0.25 m, within `reach` of their
+/// outlines, which oracle 1 does not judge.
+const FLOOR: f32 = -0.9;
+const WALL: f32 = 4.;
+const TOP: f32 = 0.6;
+const ROAD: [f32; 2] = [10., -1000.];
+
+/// Case U9's floor and walls, of `BACKGROUND`, each its own shape, since
+/// `Scenario::outline_edges` takes a shape's later quads for strips.
+fn road() -> [Shape; 3] {
+    let [near, far] = ROAD;
+    let quad = |corners: [[f32; 3]; 4]| Shape {
+        quads: vec![Quad {
+            corners: corners.map(Vec3::from),
+            radiance: BACKGROUND,
+        }],
+        blend: None,
+    };
+    let wall = |x: f32| {
+        quad([
+            [x, FLOOR, near],
+            [x, FLOOR, far],
+            [x, TOP, far],
+            [x, TOP, near],
+        ])
+    };
+    [
+        quad([
+            [-WALL, FLOOR, near],
+            [WALL, FLOOR, near],
+            [WALL, FLOOR, far],
+            [-WALL, FLOOR, far],
+        ]),
+        wall(-WALL),
+        wall(WALL),
+    ]
+}
+
+/// Case U9 (the chase camera at speed). Plausible defects: history taken
+/// from a followed surface because the scenery beside and beneath it moves
+/// fast, which U4's far, nearly still background cannot show: FSR's
+/// previous depth, which it scatters from each render pixel along its
+/// motion (`ReconstructPrevDepth`), landing the near floor's or walls'
+/// depth on the followed surface and flagging it disoccluded where SGL's
+/// depth, motion scale or sign, or the inverted or infinite depth flags
+/// are wrong; the motion divergence (`ComputeMotionDivergence`) or the
+/// reactive and disocclusion masks, which FSR samples bilinearly at the
+/// render size, carrying the neighbours' motion into the surface; or a
+/// dilation or mask SGL writes from neighbouring motion bleeding onto it.
+///
+/// The card and the grating are rigidly attached 3 m ahead of a camera
+/// travelling `TRAVEL` forward a frame down a road, a floor that passes
+/// just beneath them and two walls beside them (`road`). The floor beneath the
+/// card's lowest corner moves 19.4 scene pixels a frame, from 12.9 render
+/// pixels at Quality to 6.5 at Ultra Performance; the walls beside the
+/// shapes and the floor nearer the camera move faster. The case first
+/// checks that the scenery within `reach` of the shapes really streams:
+/// at the frame oracle 1 judges, the fastest motion the `Motion` target
+/// holds there (current minus previous unjittered UV, in render pixels) is
+/// at least the script's for that floor point. The followed shapes keep
+/// their screen position and depth, so the oracles are U4's and U2's:
+///
+/// 1. Equivalence with a closeness bound, U4's: the followed grating's
+///    interior is sampled exactly as at rest, so a resolve that keeps its
+///    history converges there on the still run's picture. After a hold
+///    and a whole cycle, on the strips `reach` inside its outline, the
+///    travelling run is at least U1's strip `bar` times closer to the
+///    still run than the enlarged single sample is.
+/// 2. Reference, U2's: at every frame of `MEASURED` after the settle, the
+///    RMSE over the followed shapes' outlines, against the streaming
+///    scenery and the sky, against that frame's supersampled reference is
+///    never above the enlarged single sample's.
+fn upscaled_chase(method: Antialiasing, quality: FsrQuality) {
+    let Some(gpu) = device(method) else { return };
+    let road = road();
+    let travel = Motion::translate(Vec3::new(0., 0., -TRAVEL));
+    let moving = move |f: u32| travel.pose(Pose::at(Vec3::ZERO), f);
+    // The card left of the grating, as on the stage.
+    let followed =
+        |camera: Pose| [-0.9, 0.9].map(|x| ahead(camera, 3.).then(Pose::at(Vec3::new(x, 0., 0.))));
+    let script_of = |camera: &dyn Fn(u32) -> Pose, f: u32| {
+        let mut poses = vec![Pose::at(Vec3::ZERO); road.len()];
+        poses.extend(followed(camera(f)));
+        poses
+    };
+    let moving_script = move |f: u32| script_of(&moving, f);
+    let still_script = move |f: u32| script_of(&still, f);
+    let shapes: Vec<Shape> = road.iter().cloned().chain([card(), grating()]).collect();
+    let [card_shape, grating_shape] = [road.len(), road.len() + 1];
+    let resting = Scenario {
+        shapes: shapes.clone(),
+        camera: &still,
+        script: &still_script,
+    };
+    let chasing = Scenario {
+        shapes,
+        camera: &moving,
+        script: &moving_script,
+    };
+    let mut rig = resting.rig(&gpu, VIEW, method);
+    let render = at_quality(&mut rig, &resting, quality);
+    let last = HOLD + phases(method, &rig) - 1;
+    let reach = reach(&rig);
+    let interior = chasing
+        .strip_edges(last, grating_shape)
+        .and(&chasing.inside(last, grating_shape, reach));
+    assert!(
+        !interior.is_empty(),
+        "{quality:?}: no strip lies {reach} px inside the grating"
+    );
+    let name = format!("{method:?} {quality:?} chase");
+    let mut failures = Failures::default();
+
+    // The script's motion, in render pixels, of the floor point beneath
+    // the card's lowest corner at `last`.
+    let render_px = Vec2::new(render[0] as f32, render[1] as f32);
+    let [now, before] = [last, last - 1].map(|f| VIEW.camera(moving(f)));
+    let corner = lowest_corner(&chasing, card_shape, last);
+    let beneath = Vec3::new(corner.x, FLOOR, corner.z);
+    let (at, _) = VIEW.project(&now, beneath).expect("the floor ahead");
+    let identity = Pose::at(Vec3::ZERO).matrix();
+    let floor_motion = VIEW
+        .surface_motion(
+            &now,
+            &before,
+            road[0].quads[0].corners,
+            identity,
+            identity,
+            at,
+        )
+        .expect("the floor under its own point");
+    let streaming = (floor_motion.truncate() * render_px).length();
+
+    let still_image = {
+        for frame in 0..=last {
+            resting.render(&mut rig, frame);
+        }
+        rig.antialiased()
+    };
+    at_quality(&mut rig, &chasing, quality);
+    let mut oracles = Oracles::new(&chasing, &gpu);
+    oracles.set_render_size(render);
+    let mut moving_worst = Moving::default();
+    let mut chase_image = None;
+    for frame in 0..(last + 1).max(SETTLE + MEASURED) {
+        chasing.render(&mut rig, frame);
+        let measured = (SETTLE..SETTLE + MEASURED).contains(&frame);
+        if frame != last && !measured {
+            continue;
+        }
+        let resolved = rig.antialiased();
+        if measured {
+            let truth = oracles.reference(&chasing, frame);
+            let single = oracles.single(&chasing, frame);
+            let outline = chasing.outline_edges(frame, &[card_shape, grating_shape]);
+            moving_worst.edges(frame, &resolved, &truth, &single, &outline);
+        }
+        if frame == last {
+            // The scenery within `reach` of the followed shapes.
+            let motion = rig.read(DiagnosticTarget::Motion).enlarged(VIEW.size);
+            let polygons = chasing.polygons(frame);
+            let outlines = [&polygons[card_shape][0], &polygons[grating_shape][0]];
+            let beside = Region::from_fn(VIEW.size, |p| {
+                outlines.iter().any(|o| coverage(o, p, reach) > 0.)
+                    && outlines.iter().all(|o| coverage(o, p, 0.) == 0.)
+                    && motion.at(p)[3] == 1.
+            });
+            let (fastest, pixel) = beside
+                .iter()
+                .map(|p| {
+                    let [r, g, _, _] = motion.at(p);
+                    ((Vec2::new(r, g) * render_px).length(), p)
+                })
+                .fold((0., [0; 2]), |a, b| if b.0 > a.0 { b } else { a });
+            eprintln!(
+                "{name} at {render:?}: the scenery within {reach} px of the followed shapes ({} pixels) moves up to {fastest} render px a frame (pixel {pixel:?}); the script's floor beneath the card {streaming} ({} scene px)",
+                beside.len(),
+                (floor_motion.truncate() * Vec2::new(VIEW.size[0] as f32, VIEW.size[1] as f32))
+                    .length()
+            );
+            failures.check(fastest >= streaming * (1. - HALF_STEP), || {
+                format!(
+                    "{name}: the scenery beside the followed shapes moves at most {fastest} render px a frame, below the script's {streaming} for the floor beneath the card"
+                )
+            });
+            chase_image = Some(resolved);
+        }
+    }
+    let chase_image = chase_image.expect("the frame oracle 1 judges");
+    let single = oracles.single(&chasing, last);
+    let ours = error(&chase_image, &still_image, &interior).rmse;
+    let theirs = error(&single, &still_image, &interior).rmse;
+    let bar = bar(method, &rig, Edge::Strips);
+    eprintln!(
+        "{name} interior ({} pixels): {ours} from the still run, the enlarged sample {theirs}, {} times closer against the bar {bar}",
+        interior.len(),
+        theirs / ours
+    );
+    failures.check(ours * bar <= theirs, || {
+        format!(
+            "{name}: the followed grating is {ours} from its still resolve, not {bar} times below the enlarged sample's {theirs}"
+        )
+    });
+    eprintln!(
+        "{name} outlines: RMSE at most {} of the enlarged sample's (frame {})",
+        moving_worst.ratio.0, moving_worst.ratio.1
+    );
+    failures.check(moving_worst.ratio.0 <= 1., || {
+        format!(
+            "{name} outlines: RMSE {} times the enlarged sample's at frame {}",
+            moving_worst.ratio.0, moving_worst.ratio.1
+        )
+    });
+    failures.bounded(&rig, &name);
+    failures.assert();
+}
+upscaling!(chase, upscaled_chase);
+
+/// The lowest corner of `shape`'s outline at `frame`, in world space.
+fn lowest_corner(scenario: &Scenario, shape: usize, frame: u32) -> Vec3 {
+    let pose = (scenario.script)(frame)[shape];
+    scenario.shapes[shape].quads_at(pose)[0]
+        .into_iter()
+        .min_by(|a, b| a.y.total_cmp(&b.y))
+        .unwrap()
+}

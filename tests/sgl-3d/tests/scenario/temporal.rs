@@ -10,6 +10,7 @@
 use super::geometry::{Pose, View, coverage};
 use super::image::{Image, Region};
 use super::rig::{Gpu, HALF_STEP, Rig, Shape, fsr_gpu, gpu};
+use sgl_3d::Camera;
 use sgl_3d::glam::{Vec2, Vec3};
 use sgl_3d::settings::Antialiasing;
 
@@ -228,7 +229,9 @@ impl Scenario<'_> {
         rig.render(frame);
     }
 
-    /// Each shape's quads, projected at `frame`.
+    /// Each shape's quads, projected at `frame`: the part of each that lies
+    /// beyond the near plane, which is what the frame draws of a surface
+    /// passing beneath or beside the camera.
     pub fn polygons(&self, frame: u32) -> Vec<Vec<Vec<Vec2>>> {
         let camera = VIEW.camera((self.camera)(frame));
         self.shapes
@@ -238,7 +241,10 @@ impl Scenario<'_> {
                 shape
                     .quads_at(pose)
                     .iter()
-                    .map(|quad| VIEW.project_polygon(&camera, quad).unwrap())
+                    .map(|quad| {
+                        VIEW.project_polygon(&camera, &beyond_near(&camera, quad))
+                            .unwrap()
+                    })
                     .collect()
             })
             .collect()
@@ -305,6 +311,25 @@ impl Scenario<'_> {
                 .all(|quads| coverage(&quads[0], pixel, margin) == 0.)
         })
     }
+}
+
+/// The world polygon `corners` (convex) clipped to `VIEW`'s near plane
+/// from `camera` (Sutherland–Hodgman): unchanged where it lies wholly
+/// beyond it, empty where wholly before it.
+fn beyond_near(camera: &Camera, corners: &[Vec3]) -> Vec<Vec3> {
+    let beyond = |p: Vec3| -camera.view.transform_point3(p).z - VIEW.near;
+    let mut kept = Vec::with_capacity(corners.len() + 1);
+    for (i, &a) in corners.iter().enumerate() {
+        let b = corners[(i + 1) % corners.len()];
+        let (da, db) = (beyond(a), beyond(b));
+        if da >= 0. {
+            kept.push(a);
+        }
+        if (da >= 0.) != (db >= 0.) {
+            kept.push(a + (b - a) * (da / (da - db)));
+        }
+    }
+    kept
 }
 
 /// The poses of the stage most cases share: the card and the grating side
