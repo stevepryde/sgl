@@ -97,7 +97,10 @@ scene it draws (its targets, stages and histories) and its rendering
    finished frame. A frame rendered and
    not finished, then rendered again as the same frame, restarts no
    history but FSR's; a cut in it holds until a frame is finished, and a
-   stage switched off in it restarts. An abandoned encoder
+   stage switched off in it (antialiasing, a reflection method, another
+   projection) restarts as after a finished frame without it; ambient
+   occlusion and ray-traced shadows continue, as FSR does when it did not
+   run in it. An abandoned encoder
    retains a pending fixed-to-automatic exposure reset. Retrying submitted
    filtered fog without finishing resets the overwritten volume history.
 4. Set `FrameInput::camera_cut` on a camera cut. A view's history restarts

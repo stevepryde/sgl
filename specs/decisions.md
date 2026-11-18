@@ -989,9 +989,11 @@ Use the [current specs](README.md) for implementation and the
   retry a continuation from a half the attempt overwrote. A stage that did
   not run in the unfinished render (antialiasing off, a reflection method
   off, another projection) restarts on the next frame where that render
-  released its targets, as a finished frame without it would (F-4): the
-  release stays at render, since moving it to settle time is machinery for
-  a frame that is already a hitch.
+  released its targets, as a finished frame without it would (F-4), and
+  TAA and Crystal restart where that render rebuilt their context for a
+  different TAA flag (F-5): the release and the rebuild stay at render,
+  since moving them to settle time is machinery for a frame that is
+  already a hitch.
   Rationale: the History contract already said an abandoned frame commits
   nothing, and engines that record at render and commit at finish
   (Filament's `FrameHistory`, committed per view) do not restart on a

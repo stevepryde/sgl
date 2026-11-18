@@ -257,3 +257,4 @@ on the code before the fix.
 - Docs and comments named `Renderer::new_surface`, `Renderer::resize`, `Renderer::local_shadow_stats` and `Scene::prepare_frame`, or said the renderer owns the camera history, group 0, the post-effect context or the surface targets; corrected to the view.
 - `Renderer::ray_traced_shadows_in_effect` said it answers under the primary view's hardware ray tracing but read the view's own setting; it now takes the primary's settings.
 - Two renderers drawing one scene in a frame were not stated as unsupported (the second supersedes the first's attempt); the Shape text, F-12 and the guide now say so.
+- The delta review of these fixes found nothing that must be fixed; its wording points were corrected: the context rebuilt for a different TAA flag (F-5) in F-3, F-4, D-58 and the History row, which stages continue after an unfinished render, F-12's two-renderer orders, and what M-9's `shows` tests.

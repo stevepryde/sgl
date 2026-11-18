@@ -143,7 +143,10 @@ docs and specs the entry links.
   still restarts, and filtered fog skips one frame of reprojection. A cut
   in an unfinished frame holds until a frame is finished (the next frame
   resets too, whatever its `camera_cut` says), and a stage switched off in
-  the unfinished frame restarts on the next, as after a finished one. Ray-traced
+  the unfinished frame (antialiasing, a reflection method, another
+  projection) restarts on the next, as after a finished one; ambient
+  occlusion and ray-traced shadows continue, as FSR does when it did not
+  run in the unfinished frame. Ray-traced
   shadows hold one more reduced-resolution texture while they run. No
   game-code change.
 - `sgl-3d` `Scene::set_shader_parameters`: a material that gains or changes

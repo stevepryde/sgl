@@ -111,8 +111,12 @@ impl Instance {
                 .is_none_or(|shown| shown.visible && shown.model == model)
     }
 
-    /// Whether the last finished frame or the frame being rendered showed
-    /// it with `model`, or it shows `model` now.
+    /// Whether it names `model` now and is visible or has a submitted
+    /// record (a moving instance visible in the last finished frame), or
+    /// the frame being rendered showed it with `model`. The submitted
+    /// record's model is not compared: a swap that made it differ already
+    /// raised the signal, which only a finished frame that began after the
+    /// swap, and so drew the new model, retires.
     fn shows(&self, model: ModelId) -> bool {
         (self.state.model == model && (self.state.visible || self.submitted.is_some()))
             || self
