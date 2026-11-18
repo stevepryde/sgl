@@ -1892,9 +1892,7 @@ displacement is zero; FSR uses it as U-26 and U-45).
 - **Guard.** `following::`, `chase::` in `tests/sgl-3d/tests/scenario_fsr_upscaling.rs` (followed shapes at zero
   motion).
 - **Status.** Rule. `VelocityFactor`, AMD's control for this trade-off, stays at AMD's 1 and is not exposed: a history
-  weight is SGL3D's to choose, never a game field (S3D-6), and zeroing AMD's velocity factor, shading-change scale and
-  reactiveness scale in Hyperdrive raised the error on a moving craft's flat regions against a supersampled reference
-  from 0.0175 to 0.020, and to 0.055 with all three at zero (O-6, 2026-11-18).
+  weight is SGL3D's to choose, never a game field (S3D-6), and zeroing AMD's velocity factor in Hyperdrive raised the error on a moving craft's flat regions against a supersampled reference from 0.0175 to 0.020, zeroing its shading-change and reactiveness scales as well left it there, and with exhaust effects in view all three at zero raised it from 0.018 to 0.055 (O-6, 2026-11-18).
 
 #### U-48 Rectification
 
@@ -1966,9 +1964,7 @@ displacement is zero; FSR uses it as U-26 and U-45).
   Code: `crates/sgl-3d/src/stages/antialiasing/fsr.rs` (`Fsr::new`, `Fsr::dispatch`).
 - **Guard.** None.
 - **Status.** Rule. The constants and dispatch flags stay at AMD's defaults and none is exposed: thresholds, history
-  weights and other internals are SGL3D's to choose, never game fields (S3D-6), and zeroing AMD's velocity factor,
-  shading-change scale and reactiveness scale in Hyperdrive raised the error on a moving craft's flat regions against
-  a supersampled reference from 0.0175 to 0.020, and to 0.055 with all three at zero (O-6, 2026-11-18).
+  weights and other internals are SGL3D's to choose, never game fields (S3D-6), and zeroing AMD's velocity factor in Hyperdrive raised the error on a moving craft's flat regions against a supersampled reference from 0.0175 to 0.020, zeroing its shading-change and reactiveness scales as well left it there, and with exhaust effects in view all three at zero raised it from 0.018 to 0.055 (O-6, 2026-11-18).
 
 ## Reflections
 

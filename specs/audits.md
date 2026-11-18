@@ -202,7 +202,7 @@ alone then changed nothing.
 
 - O-1: whether one renderer may draw more than one view a frame, and what two renderers of one scene see. Decided: the owner requires more than one view a frame; designed and being implemented.
 - O-5: whether blended receivers mark reactivity. Settled as a rule (U-12): AMD's FSR documentation (`super-resolution-upscaler.md` 172) asks every alpha-blended object to write its alpha into the reactive mask besides its motion, since what shows through it follows another motion; guarded by `a_receiver_marks_the_masks_as_a_blended_surface_does`.
-- O-6: whether FSR3's `VelocityFactor` or its debug view is exposed. Settled as a rule (U-47, U-52): the constants and dispatch flags stay at AMD's defaults, unexposed, since internals are never game fields (S3D-6), and zeroing AMD's velocity factor, shading-change scale and reactiveness scale in Hyperdrive raised the error on a moving craft's flat regions against a supersampled reference from 0.0175 to 0.020, and to 0.055 with all three at zero.
+- O-6: whether FSR3's `VelocityFactor` or its debug view is exposed. Settled as a rule (U-47, U-52): the constants and dispatch flags stay at AMD's defaults, unexposed, since internals are never game fields (S3D-6), and zeroing AMD's velocity factor in Hyperdrive raised the error on a moving craft's flat regions against a supersampled reference from 0.0175 to 0.020, zeroing its shading-change and reactiveness scales as well left it there, and with exhaust effects in view all three at zero raised it from 0.018 to 0.055.
 
 ### Unmeasured, since settled
 
