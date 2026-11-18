@@ -37,7 +37,7 @@ use sgl_3d::{
     DynamicGiVolume, EnvironmentId, Fog, FogVolume, FrameInput, HemisphereLight, InstanceId,
     InstanceState, IrradianceCell, IrradianceVolume, Light, LightShape, MaterialShader, Mist,
     Mobility, ModelMesh, PreparedIrradianceRegion, PreparedModel, Renderer, Scene, ShaderSource,
-    SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels, SurfaceMaterial,
+    SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels, SurfaceMaterial, View, ViewFrame,
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
     deformation::{
         Influence, Joint, MeshDeformation, MorphDelta, MorphTarget, MorphWeight, Node, Rig,
@@ -813,7 +813,9 @@ async fn probe_capture(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Str
         .add_instance(device, queue, InstanceState::new(model), Mobility::Static)
         .map_err(|e| format!("add_instance: {e}"))?;
     let settings = Settings::default();
-    let mut renderer = Renderer::new(
+    let mut renderer = Renderer::new(device);
+    let mut scene_view = View::new(
+        &renderer,
         device,
         queue,
         wgpu::TextureFormat::Rgba8Unorm,
@@ -821,13 +823,14 @@ async fn probe_capture(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Str
         1.,
         &settings,
     )
-    .map_err(|e| format!("Renderer::new: {e}"))?;
+    .map_err(|e| format!("View::new: {e}"))?;
     let input = FrameInput::new(camera());
     {
         let mut abandoned = std::pin::pin!(renderer.capture_specular_probe_async(
             device,
             queue,
             &mut scene,
+            &mut scene_view,
             &input,
             &settings,
             Vec3::ZERO,
@@ -845,6 +848,7 @@ async fn probe_capture(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Str
             device,
             queue,
             &mut scene,
+            &mut scene_view,
             &input,
             &settings,
             Vec3::ZERO,
@@ -967,8 +971,17 @@ async fn render(
         view_formats: &[],
     });
     let view = output.create_view(&Default::default());
-    let mut renderer = Renderer::new(device, queue, output.format(), SIZE, 1., settings)
-        .map_err(|e| format!("Renderer::new: {e}"))?;
+    let mut renderer = Renderer::new(device);
+    let mut scene_view = View::new(
+        &renderer,
+        device,
+        queue,
+        output.format(),
+        SIZE,
+        1.,
+        settings,
+    )
+    .map_err(|e| format!("View::new: {e}"))?;
     let mut frame = FrameInput::new(camera());
     frame.environment = Some(content.environment);
     frame.atmosphere = atmosphere;
@@ -1019,17 +1032,20 @@ async fn render(
             .map_err(|e| format!("set_instance_deformation: {e}"))?;
         frame.camera_cut = index == 0;
         frame.elapsed_seconds = index as f64 / 60.;
-        renderer.resize(device, SIZE, 1., settings);
+        scene_view.resize(device, SIZE, 1., settings);
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(
             device,
             queue,
             &mut encoder,
             scene,
-            &frame,
-            settings,
-            &view,
-            timing.as_ref(),
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &frame,
+                settings: settings,
+                output: &view,
+                timing: timing.as_ref(),
+            }],
         );
         queue.submit([encoder.finish()]);
         if let Some(timing) = timing.as_mut() {
@@ -1039,8 +1055,8 @@ async fn render(
     }
     Ok(Rendered {
         pixels: sgl_3d::diagnostics::read_async(device, queue, &output, 4).await,
-        antialiasing: renderer.antialiasing_in_effect(settings),
-        fsr_error: renderer.fsr_error().map(str::to_owned),
+        antialiasing: scene_view.antialiasing_in_effect(settings),
+        fsr_error: scene_view.fsr_error().map(str::to_owned),
         volume_paths: renderer.volume_paths_in_effect(settings),
         timed_frames,
     })
@@ -1103,13 +1119,30 @@ async fn color_outputs(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(),
     };
     // Keep retained GPU owners on the heap: this async fixture otherwise
     // exhausts the debug WASM stack during the nested renderer constructor.
-    let mut texture_renderer = Box::new(
-        Renderer::new(device, queue, float.format(), size, 1., &settings)
-            .map_err(|e| e.to_string())?,
+    let mut renderer = Box::new(Renderer::new(device));
+    let mut texture_view = Box::new(
+        View::new(
+            &renderer,
+            device,
+            queue,
+            float.format(),
+            size,
+            1.,
+            &settings,
+        )
+        .map_err(|e| e.to_string())?,
     );
-    let mut surface_renderer = Box::new(
-        Renderer::new_surface(device, queue, &config, &capabilities, 1., &settings)
-            .map_err(|e| e.to_string())?,
+    let mut surface_view = Box::new(
+        View::new_surface(
+            &renderer,
+            device,
+            queue,
+            &config,
+            &capabilities,
+            1.,
+            &settings,
+        )
+        .map_err(|e| e.to_string())?,
     );
     let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor { label:Some("game composition fixture"),source:wgpu::ShaderSource::Wgsl("
         @group(0) @binding(0) var source:texture_2d<f32>;
@@ -1145,15 +1178,15 @@ async fn color_outputs(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(),
         settings.tone_mapping = mapper;
         for (patch, expected) in [[0.1875; 3], [1., 0., 0.]].into_iter().zip(expected) {
             frame.backdrop = sgl_3d::Backdrop::Color(patch);
-            for (name, renderer, format) in [
+            for (name, scene_view, format) in [
                 (
                     "offscreen float",
-                    texture_renderer.as_mut(),
+                    texture_view.as_mut(),
                     wgpu::TextureFormat::Rgba8UnormSrgb,
                 ),
                 (
                     "browser Auto float surface",
-                    surface_renderer.as_mut(),
+                    surface_view.as_mut(),
                     wgpu::TextureFormat::Rgba8Unorm,
                 ),
             ] {
@@ -1192,17 +1225,20 @@ async fn color_outputs(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(),
                         resource: wgpu::BindingResource::TextureView(&float_view),
                     }],
                 });
-                renderer.resize(device, size, 1., &settings);
+                scene_view.resize(device, size, 1., &settings);
                 let mut encoder = device.create_command_encoder(&Default::default());
                 renderer.render(
                     device,
                     queue,
                     &mut encoder,
                     &mut scene,
-                    &frame,
-                    &settings,
-                    &float_view,
-                    None,
+                    &mut [ViewFrame {
+                        view: scene_view,
+                        input: &frame,
+                        settings: &settings,
+                        output: &float_view,
+                        timing: None,
+                    }],
                 );
                 {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1364,9 +1400,18 @@ async fn compressed_materials(
                     antialiasing: Antialiasing::Off,
                     ..Default::default()
                 };
-                let mut renderer = Box::new(
-                    Renderer::new(device, queue, target.format(), size, 1., &settings)
-                        .map_err(|e| e.to_string())?,
+                let mut renderer = Box::new(Renderer::new(device));
+                let mut scene_view = Box::new(
+                    View::new(
+                        &renderer,
+                        device,
+                        queue,
+                        target.format(),
+                        size,
+                        1.,
+                        &settings,
+                    )
+                    .map_err(|e| e.to_string())?,
                 );
                 let eye = Vec3::new(0., 0., 3.);
                 let frame = FrameInput::new(Camera {
@@ -1380,10 +1425,13 @@ async fn compressed_materials(
                     queue,
                     &mut encoder,
                     &mut scene,
-                    &frame,
-                    &settings,
-                    &target.create_view(&Default::default()),
-                    None,
+                    &mut [ViewFrame {
+                        view: &mut scene_view,
+                        input: &frame,
+                        settings: &settings,
+                        output: &target.create_view(&Default::default()),
+                        timing: None,
+                    }],
                 );
                 queue.submit([encoder.finish()]);
                 renderer.finish_frame(&mut scene);

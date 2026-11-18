@@ -27,7 +27,7 @@ use crate::view::culling::clip_intersects;
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::pipelines::LayerConstants;
 use crate::view::population::{Casters, LightReach, Population, moving_caster_reaches, within};
-use crate::view::{LOCAL_SHADOW_NEAR, View};
+use crate::view::{LOCAL_SHADOW_NEAR, ViewData};
 use crate::{Mobility, Scene};
 use glam::{Mat4, Vec3};
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ pub(super) struct Face {
     /// Its slot's top-left texel and size.
     pub origin: [u32; 2],
     pub size: u32,
-    pub view: View,
+    pub view: ViewData,
     /// Its static casters, or every caster for `Work::Full`.
     pub casters: DrawList,
     /// Its moving casters.
@@ -453,7 +453,7 @@ impl Plan {
     }
 
     /// The next face this frame draws, reusing an earlier frame's lists.
-    fn face(&mut self, work: Work, origin: [u32; 2], size: u32, view: View) -> &mut Face {
+    fn face(&mut self, work: Work, origin: [u32; 2], size: u32, view: ViewData) -> &mut Face {
         if self.faces.len() == self.drawn {
             self.faces.push(Face {
                 work,

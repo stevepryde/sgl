@@ -66,7 +66,7 @@ impl Reach {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use crate::renderer::Renderer;
+    use crate::renderer::test_frame::TestRenderer;
     use crate::settings::{self, Antialiasing, RenderPreset, Settings};
     use crate::{Camera, FrameInput, Scene, test_support};
 
@@ -92,7 +92,7 @@ mod tests {
             preset: RenderPreset::Low,
             ..high
         };
-        let mut renderer = Renderer::for_test(&device, &queue, size, &high);
+        let mut renderer = TestRenderer::for_test(&device, &queue, size, &high);
         let mut scene = Scene::new(&device, &queue);
         test_support::add_static(&device, &queue, &mut scene, test_support::cube());
         let output = crate::view::targets::target(
@@ -107,7 +107,7 @@ mod tests {
             projection: crate::perspective(1., size[0] as f32 / size[1] as f32, 0.1),
         });
         for settings in [high, low, high, low] {
-            renderer.resize(&device, size, 1., &settings);
+            renderer.view.resize(&device, size, 1., &settings);
             let mut encoder = device.create_command_encoder(&Default::default());
             renderer.render(
                 &device,

@@ -1,5 +1,5 @@
 //! The diagnostics configuration through the real frame.
-use super::Renderer;
+use super::test_frame::TestRenderer;
 use crate::diagnostics::DiagnosticTarget;
 use crate::settings::{Antialiasing, Bloom, Settings};
 use crate::test_support::{self, half, read};
@@ -56,14 +56,14 @@ fn diagnostics_switch_layers_between_frames_and_return_probe_reports() {
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = crate::view::targets::target(
         &device,
         "frame output",
         SIZE,
         crate::shading::gbuffer::COLOR,
     );
-    let frame = |renderer: &mut Renderer, scene: &mut Scene, settings: &Settings| {
+    let frame = |renderer: &mut TestRenderer, scene: &mut Scene, settings: &Settings| {
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(
             &device,
@@ -78,6 +78,7 @@ fn diagnostics_switch_layers_between_frames_and_return_probe_reports() {
         queue.submit([encoder.finish()]);
         renderer.finish_frame(scene);
         let composite = renderer
+            .view
             .diagnostic_target(DiagnosticTarget::Composite)
             .unwrap();
         read(&device, &queue, composite.texture(), 8)
@@ -90,6 +91,7 @@ fn diagnostics_switch_layers_between_frames_and_return_probe_reports() {
     assert!(center(&emitting) > 1., "{}", center(&emitting));
     assert!(
         renderer
+            .view
             .diagnostic_target(DiagnosticTarget::ToneMapped)
             .is_none(),
         "the tone-mapped target was not captured"
@@ -103,15 +105,16 @@ fn diagnostics_switch_layers_between_frames_and_return_probe_reports() {
     assert!(restored == emitting, "re-enabled emission differs");
     assert!(
         renderer
+            .view
             .diagnostic_target(DiagnosticTarget::ToneMapped)
             .is_some()
     );
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let reports = renderer.take_frame_probe_reports(&device);
+    let reports = renderer.view.take_frame_probe_reports(&device);
     assert_eq!(reports.len(), 1, "{reports:?}");
     assert_eq!(reports[0]["frame"], 0);
     assert_eq!(reports[0]["lit_scene"]["observed"], true);
-    assert!(renderer.take_frame_probe_reports(&device).is_empty());
+    assert!(renderer.view.take_frame_probe_reports(&device).is_empty());
 }
 
 // Plausible defect: a probed frame abandoned before `finish_frame` leaves its
@@ -134,7 +137,7 @@ fn an_abandoned_probed_frame_reports_nothing() {
         antialiasing: Antialiasing::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = crate::view::targets::target(
         &device,
         "frame output",
@@ -160,7 +163,7 @@ fn an_abandoned_probed_frame_reports_nothing() {
         }
     }
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let reports = renderer.take_frame_probe_reports(&device);
+    let reports = renderer.view.take_frame_probe_reports(&device);
     assert!(reports.is_empty(), "{reports:?}");
 }
 
@@ -204,8 +207,8 @@ fn a_fsr_fallback_does_not_compare_different_sized_frame_targets() {
     };
     settings.diagnostics.disable.fsr = true;
     settings.diagnostics.frame_probe = true;
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
-    if renderer.antialiasing_in_effect(&settings) != Antialiasing::Fsr2 {
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
+    if renderer.view.antialiasing_in_effect(&settings) != Antialiasing::Fsr2 {
         return;
     }
     let output = crate::view::targets::target(
@@ -228,7 +231,7 @@ fn a_fsr_fallback_does_not_compare_different_sized_frame_targets() {
     queue.submit([encoder.finish()]);
     renderer.finish_frame(&mut scene);
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    let reports = renderer.take_frame_probe_reports(&device);
+    let reports = renderer.view.take_frame_probe_reports(&device);
     assert_eq!(reports.len(), 1, "{reports:?}");
     let report = &reports[0];
     assert_ne!(
@@ -244,7 +247,7 @@ fn a_fsr_fallback_does_not_compare_different_sized_frame_targets() {
         "the emitter was rendered: {report}"
     );
     assert_eq!(
-        renderer.probe.as_ref().unwrap().last_params.get()[..2],
+        renderer.view.probe.as_ref().unwrap().last_params.get()[..2],
         [4, 0],
         "different-sized textures must not be compared",
     );

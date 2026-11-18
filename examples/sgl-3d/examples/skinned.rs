@@ -10,7 +10,7 @@
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceState, Light,
-    LightShape, Mobility, Renderer, Scene,
+    LightShape, Mobility, Renderer, Scene, View, ViewFrame,
     asset::{self, Asset, CpuMesh, Material, Vertex},
     deformation::{Channel, ChannelValues, Clip, Interpolation, Rig},
     glam::{Mat4, Quat, Vec3},
@@ -421,7 +421,16 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::new(&device, &queue, output.format(), size, 1., &settings)?;
+    let mut renderer = Renderer::new(&device);
+    let mut scene_view = View::new(
+        &renderer,
+        &device,
+        &queue,
+        output.format(),
+        size,
+        1.,
+        &settings,
+    )?;
     let eye = Vec3::new(0., 1.8, 5.);
     let mut input = FrameInput::new(Camera {
         view: camera::rh::view::look_at_mat4(eye, Vec3::new(0., 1., 0.), Vec3::Y),
@@ -457,17 +466,20 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
         }
         input.elapsed_seconds = f64::from(seconds);
         input.camera_cut = frame == 0;
-        renderer.resize(&device, size, 1., &settings);
+        scene_view.resize(&device, size, 1., &settings);
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(
             &device,
             &queue,
             &mut encoder,
             &mut scene,
-            &input,
-            &settings,
-            &output_view,
-            None,
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &input,
+                settings: &settings,
+                output: &output_view,
+                timing: None,
+            }],
         );
         queue.submit([encoder.finish()]);
         renderer.finish_frame(&mut scene);

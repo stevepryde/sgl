@@ -1,6 +1,7 @@
-//! The native rig: a device, renderer, scene and output target driven one
-//! frame at a time through the public API, fixtures whose radiance is known
-//! by construction, typed readback of the frame's targets, and opt-in dumps.
+//! The native rig: a device, renderer, scene and views, each with its
+//! output target, driven one frame at a time through the public API,
+//! fixtures whose radiance is known by construction, typed readback of the
+//! frame's targets, and opt-in dumps.
 use super::geometry::{FRAME_RATE, Pose, View};
 use super::image::Image;
 use sgl_3d::asset::{Asset, CpuMesh, Material, Vertex};
@@ -10,7 +11,8 @@ use sgl_3d::glam::{Mat4, Vec2, Vec3};
 use sgl_3d::settings::{self, Settings};
 use sgl_3d::{
     AlphaMode, Backdrop, Exposure, FrameInput, InstanceId, InstanceState, MaterialId,
-    MaterialShader, Mobility, Renderer, Scene, ShaderId, SurfaceMaterial,
+    MaterialShader, Mobility, Renderer, Scene, ShaderId, SurfaceMaterial, View as SceneView,
+    ViewFrame,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -54,6 +56,14 @@ pub fn fsr_gpu() -> Option<Gpu> {
     })
 }
 
+/// A device with hardware ray tracing's feature too where the adapter has
+/// it (`graphics_device::ray_tracing_features`), accepting wgpu's
+/// experimental ray queries as a game that requests them does; otherwise
+/// [`gpu`]'s.
+pub fn ray_gpu() -> Option<Gpu> {
+    device(|adapter| features(adapter) | sgl_3d::graphics_device::ray_tracing_features(adapter))
+}
+
 fn device<F, R>(features: F) -> Option<Gpu>
 where
     F: FnOnce(&wgpu::Adapter) -> R,
@@ -76,9 +86,17 @@ where
         eprintln!("skipping: the adapter lacks FSR's features");
         return None;
     };
+    let experimental_features = if features.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
+        // SAFETY: the scenarios that ask for ray queries accept wgpu's
+        // experimental ray tracing, as a game that requests it does.
+        unsafe { wgpu::ExperimentalFeatures::enabled() }
+    } else {
+        wgpu::ExperimentalFeatures::disabled()
+    };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: features,
         required_limits: sgl_3d::graphics_device::limits(&adapter),
+        experimental_features,
         ..Default::default()
     }))
     .expect("a device the adapter offers");
@@ -282,23 +300,33 @@ struct Placed {
     mobility: Mobility,
 }
 
-/// A renderer, its scene and its output at `view.size`, driven frame by
-/// frame. Scripts set the camera with [`Rig::look`] and edit the scene and
-/// `input`; [`Rig::render`] derives the clock from the frame index.
+/// One of the rig's views: the renderer's view, the lens it sees through
+/// at `lens.size`, its camera, input and settings, and its output.
+pub struct RigView {
+    pub view: SceneView,
+    pub lens: View,
+    pub input: FrameInput,
+    pub settings: Settings,
+    /// The camera's pose (world).
+    camera: Pose,
+    output: (wgpu::TextureView, [u32; 2]),
+}
+
+/// A renderer, its scene and its views, driven frame by frame. Scripts set
+/// each view's camera with [`Rig::look_view`] ([`Rig::look`] for the first)
+/// and edit the scene and each view's `input`; [`Rig::render`] derives the
+/// clock from the frame index. The single-view methods act on view 0.
 pub struct Rig {
     pub gpu: Gpu,
-    pub view: View,
     pub scene: Scene,
     pub renderer: Renderer,
-    pub settings: Settings,
-    pub input: FrameInput,
-    output: (wgpu::TextureView, [u32; 2]),
+    /// The views, view 0 first; a frame lists them in this order unless
+    /// [`Rig::render_order`] says otherwise.
+    pub views: Vec<RigView>,
     placed: Vec<Placed>,
     /// The render origin's sum of moves, which scripts' world positions
     /// are translated by.
     origin: Vec3,
-    /// The camera's pose (world).
-    camera: Pose,
     /// The lowest and highest radiance the rig's fixtures had: the sky's and
     /// every shape's it held, departed ones included, since history may
     /// still hold them.
@@ -311,47 +339,55 @@ pub struct Rig {
 }
 
 impl Rig {
-    /// A rig whose backdrop is the grey `sky`, with `antialiasing` in effect:
-    /// it fails if the renderer would replace it (FSR falling back to TAA).
-    pub fn new(gpu: &Gpu, view: View, antialiasing: settings::Antialiasing, sky: f32) -> Rig {
-        let settings = fixture_settings(antialiasing);
-        let renderer = Renderer::new(
-            &gpu.device,
-            &gpu.queue,
-            wgpu::TextureFormat::Rgba8Unorm,
-            view.size,
-            1.,
-            &settings,
-        )
-        .expect("a renderer");
-        assert_eq!(
-            renderer.antialiasing_in_effect(&settings),
-            antialiasing,
-            "the antialiasing under test must run: {:?}",
-            renderer.fsr_error()
-        );
-        let mut input = FrameInput::new(view.camera(Pose::at(Vec3::ZERO)));
+    /// A rig of one view through `lens` whose backdrop is the grey `sky`,
+    /// with `antialiasing` in effect: it fails if the renderer would replace
+    /// it (FSR falling back to TAA).
+    pub fn new(gpu: &Gpu, lens: View, antialiasing: settings::Antialiasing, sky: f32) -> Rig {
+        let mut input = FrameInput::new(lens.camera(Pose::at(Vec3::ZERO)));
         input.backdrop = Backdrop::Color([sky; 3]);
         input.exposure = Exposure {
             stops: 0.,
             automatic: None,
         };
         input.visibility_mask = 0x00ff_ffff;
+        let renderer = Renderer::new(&gpu.device);
+        let view = rig_view(gpu, &renderer, lens, fixture_settings(antialiasing), input);
         Rig {
-            output: (target(&gpu.device, view.size), view.size),
             scene: Scene::new(&gpu.device, &gpu.queue),
             gpu: gpu.clone(),
-            view,
             renderer,
-            settings,
-            input,
+            views: vec![view],
             placed: Vec::new(),
             origin: Vec3::ZERO,
-            camera: Pose::at(Vec3::ZERO),
             range: [sky; 2],
             excursion: RefCell::new(None),
             frame: 0,
         }
+    }
+
+    /// Adds a view through `lens` with `antialiasing` in effect, its input
+    /// as view 0's was when the rig was made (backdrop, exposure and
+    /// visibility mask), its camera at the origin until [`Rig::look_view`].
+    /// Returns its index.
+    pub fn add_view(&mut self, lens: View, antialiasing: settings::Antialiasing) -> usize {
+        let mut input = self.views[0].input;
+        input.camera_cut = false;
+        let view = rig_view(
+            &self.gpu,
+            &self.renderer,
+            lens,
+            fixture_settings(antialiasing),
+            input,
+        );
+        self.views.push(view);
+        let index = self.views.len() - 1;
+        self.look_view(index, Pose::at(Vec3::ZERO));
+        index
+    }
+
+    /// Drops view `index`; the views after it move down one.
+    pub fn remove_view(&mut self, index: usize) {
+        self.views.remove(index);
     }
 
     /// Adds `shape` at `pose` as a moving instance in visibility `group`.
@@ -652,11 +688,18 @@ impl Rig {
         self.placed.iter().map(|p| p.id).collect()
     }
 
-    /// The camera at `pose` (world, before any origin move).
+    /// View 0's camera at `pose` (world, before any origin move).
     pub fn look(&mut self, pose: Pose) {
-        self.camera = pose;
-        self.input.camera = self.view.camera(Pose {
-            position: pose.position - self.origin,
+        self.look_view(0, pose);
+    }
+
+    /// View `index`'s camera at `pose` (world, before any origin move).
+    pub fn look_view(&mut self, index: usize, pose: Pose) {
+        let origin = self.origin;
+        let view = &mut self.views[index];
+        view.camera = pose;
+        view.input.camera = view.lens.camera(Pose {
+            position: pose.position - origin,
             ..pose
         });
     }
@@ -669,7 +712,9 @@ impl Rig {
             .move_origin(device, queue, by)
             .expect("a finite origin");
         self.origin += by;
-        self.look(self.camera);
+        for index in 0..self.views.len() {
+            self.look_view(index, self.views[index].camera);
+        }
     }
 
     fn render_pose(&self, pose: Pose) -> Mat4 {
@@ -682,31 +727,41 @@ impl Rig {
         self.range
     }
 
-    /// Sizes the renderer for the rig's view and settings, as `render` does
-    /// first, and returns the size its passes up to antialiasing render at
-    /// (`Renderer::render_size`): FSR's render size while it upscales.
+    /// Sizes view 0 for its lens and settings, as `render` does first, and
+    /// returns the size its passes up to antialiasing render at
+    /// (`View::render_size`): FSR's render size while it upscales.
     pub fn render_size(&mut self) -> [u32; 2] {
         let Gpu { device, .. } = &self.gpu;
-        self.renderer
-            .resize(device, self.view.size, 1., &self.settings);
-        self.renderer.render_size()
+        let view = &mut self.views[0];
+        view.view.resize(device, view.lens.size, 1., &view.settings);
+        view.view.render_size()
     }
 
-    /// Renders and submits frame `frame` at `view.size`: `elapsed_seconds`
-    /// and `frame_time_ms` come from the index, `resize` runs first (a
-    /// no-op unless the size or settings changed), and `camera_cut` holds
-    /// for this frame only.
+    /// Renders and submits frame `frame` of every view, in order, each at
+    /// its lens's size: `elapsed_seconds` and `frame_time_ms` come from the
+    /// index, each view's `resize` runs first (a no-op unless its size or
+    /// settings changed), and `camera_cut` holds for this frame only.
     pub fn render(&mut self, frame: u32) {
         self.render_then(frame, |_| {});
+    }
+
+    /// [`Rig::render`] of the views `order` lists, in that order, the first
+    /// the frame's primary view: a view left out is not in the frame.
+    pub fn render_order(&mut self, frame: u32, order: &[usize]) {
+        let encoder = self.encode(frame, order);
+        self.gpu.queue.submit([encoder.finish()]);
+        self.end_cuts(order);
+        self.renderer.finish_frame(&mut self.scene);
     }
 
     /// [`Rig::render`], with `edits` made after the frame is submitted and
     /// before `Renderer::finish_frame`: the next frame's edits, in a loop
     /// that updates the scene before it finishes the frame it submitted.
     pub fn render_then(&mut self, frame: u32, edits: impl FnOnce(&mut Rig)) {
-        let encoder = self.encode(frame);
+        let order = self.every_view();
+        let encoder = self.encode(frame, &order);
         self.gpu.queue.submit([encoder.finish()]);
-        self.input.camera_cut = false;
+        self.end_cuts(&order);
         edits(self);
         self.renderer.finish_frame(&mut self.scene);
     }
@@ -715,47 +770,76 @@ impl Rig {
     /// unsubmitted, without `finish_frame`: an abandoned frame.
     /// `camera_cut` holds for the next.
     pub fn render_unsubmitted(&mut self, frame: u32) {
-        drop(self.encode(frame));
+        let order = self.every_view();
+        drop(self.encode(frame, &order));
     }
 
     /// Renders and submits frame `frame` as [`Rig::render`] does, without
     /// `finish_frame`: a frame the game rendered and did not finish.
     /// `camera_cut` holds for the next.
     pub fn render_unfinished(&mut self, frame: u32) {
-        let encoder = self.encode(frame);
+        let order = self.every_view();
+        let encoder = self.encode(frame, &order);
         self.gpu.queue.submit([encoder.finish()]);
     }
 
-    /// Frame `frame` encoded at `view.size`, after `resize`.
-    fn encode(&mut self, frame: u32) -> wgpu::CommandEncoder {
+    fn every_view(&self) -> Vec<usize> {
+        (0..self.views.len()).collect()
+    }
+
+    fn end_cuts(&mut self, order: &[usize]) {
+        for &index in order {
+            self.views[index].input.camera_cut = false;
+        }
+    }
+
+    /// Frame `frame` of the views `order` lists, encoded in that order,
+    /// each at its lens's size after its `resize`.
+    fn encode(&mut self, frame: u32, order: &[usize]) -> wgpu::CommandEncoder {
         self.frame = frame;
-        self.input.elapsed_seconds = f64::from(frame) / FRAME_RATE;
-        self.input.frame_time_ms = (1000. / FRAME_RATE) as f32;
-        if self.output.1 != self.view.size {
-            self.output = (target(&self.gpu.device, self.view.size), self.view.size);
-            self.look(self.camera);
+        for &index in order {
+            let view = &mut self.views[index];
+            view.input.elapsed_seconds = f64::from(frame) / FRAME_RATE;
+            view.input.frame_time_ms = (1000. / FRAME_RATE) as f32;
+            if view.output.1 != view.lens.size {
+                view.output = (target(&self.gpu.device, view.lens.size), view.lens.size);
+                let camera = view.camera;
+                self.look_view(index, camera);
+            }
+            let view = &mut self.views[index];
+            view.view
+                .resize(&self.gpu.device, view.lens.size, 1., &view.settings);
         }
         let Gpu { device, queue } = &self.gpu;
-        self.renderer
-            .resize(device, self.view.size, 1., &self.settings);
         let mut encoder = device.create_command_encoder(&Default::default());
-        self.renderer.render(
-            device,
-            queue,
-            &mut encoder,
-            &mut self.scene,
-            &self.input,
-            &self.settings,
-            &self.output.0,
-            None,
-        );
+        let mut views: Vec<Option<&mut RigView>> = self.views.iter_mut().map(Some).collect();
+        let mut frames: Vec<ViewFrame<'_>> = order
+            .iter()
+            .map(|&index| {
+                let view = views[index].take().expect("each view listed once");
+                ViewFrame {
+                    view: &mut view.view,
+                    input: &view.input,
+                    settings: &view.settings,
+                    output: &view.output.0,
+                    timing: None,
+                }
+            })
+            .collect();
+        self.renderer
+            .render(device, queue, &mut encoder, &mut self.scene, &mut frames);
         encoder
     }
 
-    /// `target` of the last frame, decoded.
+    /// `target` of view 0's last frame, decoded.
     pub fn read(&self, target: DiagnosticTarget) -> Image {
-        let view = self
-            .renderer
+        self.read_view(0, target)
+    }
+
+    /// `target` of view `index`'s last frame, decoded.
+    pub fn read_view(&self, index: usize, target: DiagnosticTarget) -> Image {
+        let view = self.views[index]
+            .view
             .diagnostic_target(target)
             .unwrap_or_else(|| panic!("{target:?} did not run"));
         read(&self.gpu, view.texture())
@@ -801,6 +885,41 @@ impl Rig {
             .borrow()
             .clone()
             .filter(|(beyond, _)| *beyond > rounding)
+    }
+}
+
+/// A view of the rig's renderer through `lens` with `settings` and `input`,
+/// whose antialiasing must run.
+fn rig_view(
+    gpu: &Gpu,
+    renderer: &Renderer,
+    lens: View,
+    settings: Settings,
+    input: FrameInput,
+) -> RigView {
+    let view = SceneView::new(
+        renderer,
+        &gpu.device,
+        &gpu.queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        lens.size,
+        1.,
+        &settings,
+    )
+    .expect("a view");
+    assert_eq!(
+        view.antialiasing_in_effect(&settings),
+        settings.antialiasing,
+        "the antialiasing under test must run: {:?}",
+        view.fsr_error()
+    );
+    RigView {
+        view,
+        output: (target(&gpu.device, lens.size), lens.size),
+        lens,
+        input,
+        settings,
+        camera: Pose::at(Vec3::ZERO),
     }
 }
 

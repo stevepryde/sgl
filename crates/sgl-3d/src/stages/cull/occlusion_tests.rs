@@ -3,7 +3,7 @@
 //! the depth pyramid, read back against geometric oracles.
 use crate::asset::Asset;
 use crate::content::identity::Identity;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{AmbientOcclusionQuality, Settings};
 use crate::shading::gbuffer;
 use crate::shading::vertex::DrawInstance;
@@ -45,7 +45,7 @@ fn input() -> FrameInput {
 
 /// A renderer and its output, which renders whole frames.
 struct Frames {
-    renderer: Renderer,
+    renderer: TestRenderer,
     output: wgpu::TextureView,
     size: [u32; 2],
 }
@@ -58,8 +58,8 @@ impl Frames {
 
     /// `new` at `size`.
     fn at(device: &wgpu::Device, queue: &wgpu::Queue, size: [u32; 2]) -> Option<Self> {
-        let renderer = Renderer::for_test(device, queue, size, &settings());
-        if !renderer.occlusion_culling_in_effect(&settings()) {
+        let renderer = TestRenderer::for_test(device, queue, size, &settings());
+        if !renderer.view.occlusion_culling_in_effect(&settings()) {
             eprintln!(
                 "skipping occlusion culling: the device binds {} storage textures a stage",
                 device.limits().max_storage_textures_per_shader_stage
@@ -512,8 +512,8 @@ fn the_pyramid_holds_the_farthest_depth_each_texel_covers() {
     // A size whose pyramid needs both passes (256×256, nine levels) and
     // whose virtual source (512×512) is larger than the depth.
     const SIZE: [u32; 2] = [300, 260];
-    let renderer = Renderer::for_test(&device, &queue, SIZE, &settings());
-    if !renderer.occlusion_culling_in_effect(&settings()) {
+    let renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings());
+    if !renderer.view.occlusion_culling_in_effect(&settings()) {
         return;
     }
     let mut frames = Frames {

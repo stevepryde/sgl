@@ -9,7 +9,7 @@ the code. They are kept current with every feature change; the code and the
 - [Settings](settings.md): every rendering setting a game can choose, with
   values, defaults and preset behaviour.
 
-For UI composed into the renderer's output, `Renderer::output_encodes_srgb()`
+For UI composed into a view's output, `View::output_encodes_srgb()`
 reports whether its shader should emit encoded sRGB or linear values.
 
 ## What SGL3D is
@@ -27,8 +27,10 @@ or asset pipeline, and none should be added around it.
 
 ## A frame
 
-A game holds three values: a `Scene` (content), a `Renderer` (the frame) and
-its rendering `settings::Settings`.
+A game holds a `Scene` (content), a `Renderer` (what its views share: the
+pipelines, dynamic GI and the frame boundary), a `View` for each image of the
+scene it draws (its targets, stages and histories) and its rendering
+`settings::Settings`.
 
 1. Device: request `graphics_device::limits(&adapter)`,
    `graphics_device::features(&adapter)` and
@@ -60,12 +62,13 @@ its rendering `settings::Settings`.
    `add_decal_image` and `add_decal`, environments with
    `add_environment`, an irradiance volume with `set_irradiance_volume`
    (its cells written by region with `write_irradiance_cells`), and a
-   dynamic GI volume with `set_dynamic_gi_volume`. `Renderer::new` takes the output
-   format, the output size in physical pixels, the window's scale factor and
-   the settings. Float composition textures stay linear on both platforms.
-   Use `Renderer::new_surface` with the actual surface configuration for direct
-   window/canvas presentation; it owns the display transfer. See the package
-   README's frame workflow.
+   dynamic GI volume with `set_dynamic_gi_volume`. `Renderer::new` takes the
+   device; `View::new` takes the renderer, the output format, the output size
+   in physical pixels, the window's scale factor and the settings. Float
+   composition textures stay linear on both platforms. Use `View::new_surface`
+   with the actual surface configuration for direct window/canvas
+   presentation; it owns the display transfer. See the package README's frame
+   workflow.
    Import caps remain conservative by default. For a measured larger workload,
    use `asset::LoadOptions::budget` with checked `asset::LoadBudget::new` and
    `load_slice_with_options` or `load_with_options`; source and decoded caps
@@ -82,23 +85,45 @@ its rendering `settings::Settings`.
 3. Each frame: `Scene::set_instance` per moving instance (pose, `visible`,
    `capture_visible`), `set_instance_deformation` per deforming one (its
    joint matrices and morph weights), `set_light` per changed light and
-   `set_decal` per moved decal; `Renderer::resize` (nothing happens unless the size, the scale or a
+   `set_decal` per moved decal; `View::resize` (nothing happens unless the size, the scale or a
    setting that [applies at resize](settings.md#when-changes-apply) changed);
    a `FrameInput` with the camera, the authored look and the presentation
    time in seconds (`elapsed_seconds`, an `f64`, which moves materials'
-   normal layers, their shaders and the mist); `Renderer::render`
-   into the output view. Draw the game's UI (`sgl-2d` can, on the same
-   device), submit, and call `Renderer::finish_frame`. A frame rendered and
+   normal layers, their shaders and the mist); `Renderer::render` with
+   `&mut [ViewFrame { view, input, settings, output, timing }]`
+   into the output texture. Draw the game's UI (`sgl-2d` can, on the same
+   device), submit, and call `Renderer::finish_frame(&mut scene)`. One
+   `render` call is one frame of the scene: never render it twice for one
+   finished frame. A frame rendered and
    not finished restarts no history but FSR's. An abandoned encoder
    retains a pending fixed-to-automatic exposure reset. Retrying submitted
    filtered fog without finishing resets the overwritten volume history.
-4. Set `FrameInput::camera_cut` on a camera cut. History restarts itself then,
-   after a resize that changes the targets and for a different scene.
+4. Set `FrameInput::camera_cut` on a camera cut. A view's history restarts
+   itself then, after a resize that changes its targets, for a different
+   scene, and after a finished frame of its scene that did not render it.
    `Fog::length` may change every frame; the fog keeps its history.
 5. A large world: keep the game's own coordinates and call
    `Scene::move_origin` to keep what it renders near the render origin
    (chunk-aligned in a streamed world); then give the camera and edits in
    the new frame. Nothing restarts or redraws.
+
+### Several views
+
+A split screen, an inset, a rear view or an editor's viewports are several
+`View`s of one `Scene`, each from `View::new(&renderer, …)` with its own
+output, sizes and settings, listed in one `Renderer::render`; dropping a view
+releases what it held. The first listed is the frame's primary view: its
+`FrameInput` steers the scene's frame work (dynamic GI's lights, environment,
+time and frustum, the rays' visibility mask) and its settings choose what a
+scene has one of (`hardware_ray_tracing`, `dynamic_gi`,
+`anisotropic_filtering`, the diagnostics layers); everything else is each
+view's own. List every view that keeps temporal history in every frame: a
+view left out of a finished frame restarts, so a view drawn every other frame
+should use SMAA or no antialiasing. Each view holds its own targets, FSR
+context and local-light shadow atlas, so memory grows with views. One renderer
+shows one scene at a time; a game showing two scenes at once holds a renderer
+for each. [`examples/views.rs`](../../../examples/sgl-3d/examples/views.rs) draws a main view and
+a rear-view inset.
 
 The examples live in the repository, not the published crate:
 <https://github.com/stevepryde/sgl/tree/main/examples/sgl-3d/examples>.
@@ -141,7 +166,7 @@ and an asynchronous readback.
 | Rendering rules and roadmap | [SGL3D spec](../../../specs/sgl3d.md) |
 | How SGL3D's code is structured, for changing SGL3D itself | [SGL3D architecture](../../../specs/sgl3d-architecture.md), [code structure](../README.md#code-structure) |
 | Why something is the way it is | [Decisions](../../../specs/decisions.md) |
-| Public types | `src/lib.rs` (the public surface), `src/scene/mod.rs` (`Scene`), `src/renderer/mod.rs` (`Renderer`), `src/frame_input.rs` (`Camera`, `FrameInput`), `src/settings.rs` (`Settings`), `src/content/` (content types) |
+| Public types | `src/lib.rs` (the public surface), `src/scene/mod.rs` (`Scene`), `src/renderer/mod.rs` (`Renderer`), `src/renderer/view.rs` (`View`, `ViewFrame`), `src/frame_input.rs` (`Camera`, `FrameInput`), `src/settings.rs` (`Settings`), `src/content/` (content types) |
 
 ## Steering
 
@@ -175,7 +200,7 @@ and an asynchronous readback.
   environment lighting, materials, exposure and the post-processing
   parameters). In a `const`, use `..DirectionalShadow::DEFAULT`.
 - Report the effective state honestly:
-  `Renderer::antialiasing_in_effect(&settings)` and `fsr_error()` say when
+  `View::antialiasing_in_effect(&settings)` and `fsr_error()` say when
   the device fell back (FSR always does in the browser). To reduce browser
   rendering resolution, choose `SceneResolution` explicitly and opt into
   `Settings::upscaling` for portable spatial enlargement to the output.

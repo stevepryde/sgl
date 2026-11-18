@@ -2,7 +2,7 @@
 //! checks catch whole-image AO, baked-visibility duplication, stale AO after
 //! disabling it, and completion skipping or misapplying the occlusion. The
 //! independent hemisphere oracle lives in the algorithm tests.
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::Settings;
 use crate::static_lighting::IrradianceAtlas;
 use crate::{
@@ -27,7 +27,7 @@ fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene: &mut Scene,
-    renderer: &mut Renderer,
+    renderer: &mut TestRenderer,
     settings: &Settings,
     input: &FrameInput,
     output: &wgpu::TextureView,
@@ -155,7 +155,7 @@ fn gtao_primary_lighting_ownership_and_disable_restore() {
         bloom: settings::Bloom::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::new(
+    let mut renderer = TestRenderer::new(
         &device,
         &queue,
         wgpu::TextureFormat::Rgba8Unorm,
@@ -342,9 +342,9 @@ fn completion_occludes_ambient_diffuse_by_the_frames_visibility() {
         bloom: settings::Bloom::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
-    let frame = |scene: &mut Scene, renderer: &mut Renderer, quality| {
+    let frame = |scene: &mut Scene, renderer: &mut TestRenderer, quality| {
         render(
             &device, &queue, scene, renderer, &settings, &input, &output, quality,
         )
@@ -354,6 +354,7 @@ fn completion_occludes_ambient_diffuse_by_the_frames_visibility() {
         &device,
         &queue,
         renderer
+            .view
             .diagnostic_target(diagnostics::DiagnosticTarget::AmbientOcclusion)
             .expect("ambient occlusion ran")
             .texture(),
@@ -422,7 +423,7 @@ fn a_radius_outside_its_range_occludes_as_its_nearer_end() {
         bloom: settings::Bloom::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
     let mut visibility = |radius: f32| {
         input.ambient_occlusion_radius = radius;
@@ -437,6 +438,7 @@ fn a_radius_outside_its_range_occludes_as_its_nearer_end() {
             Quality::Medium,
         );
         let target = renderer
+            .view
             .diagnostic_target(diagnostics::DiagnosticTarget::AmbientOcclusion)
             .unwrap_or_else(|| panic!("radius {radius} turned ambient occlusion off"));
         read(&device, &queue, target.texture(), 4)
@@ -489,7 +491,7 @@ fn a_packed_occlusion_map_occludes_ambient_diffuse() {
         bloom: settings::Bloom::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
     let rgb = |bytes: &[u8], pixel: usize| -> [f32; 3] {
         std::array::from_fn(|c| half(&bytes[pixel * 8 + c * 2..]))
@@ -526,6 +528,7 @@ fn a_packed_occlusion_map_occludes_ambient_diffuse() {
                 );
                 let pixels = SIZE[0] as usize * SIZE[1] as usize;
                 let ambient: Vec<f32> = match renderer
+                    .view
                     .diagnostic_target(diagnostics::DiagnosticTarget::AmbientOcclusion)
                 {
                     Some(target) => read(&device, &queue, target.texture(), 4)
@@ -641,7 +644,7 @@ fn a_packed_occlusion_map_occludes_environment_specular() {
         bloom: settings::Bloom::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
     let mut composite = |strength: f32| -> Vec<f32> {
         let mut values = scene.material(material).unwrap();
@@ -715,7 +718,7 @@ fn a_packed_occlusion_map_occludes_lightmapped_diffuse() {
         bloom: settings::Bloom::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
     let mut composite = |strength: f32, quality| -> Vec<f32> {
         let mut values = scene.material(material).unwrap();
@@ -782,7 +785,7 @@ fn occluded_metal(
         bloom: settings::Bloom::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
     Some(METAL_STRENGTHS.map(|strength| {
         let mut values = scene.material(material).unwrap();
@@ -955,7 +958,7 @@ fn gtao_temporal_accumulation_restarts_on_camera_cuts() {
             bloom: settings::Bloom::Off,
             ..Settings::default()
         };
-        let mut renderer = Renderer::new(
+        let mut renderer = TestRenderer::new(
             &device,
             &queue,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -990,6 +993,7 @@ fn gtao_temporal_accumulation_restarts_on_camera_cuts() {
                     &device,
                     &queue,
                     renderer
+                        .view
                         .diagnostic_target(DiagnosticTarget::AmbientOcclusion)
                         .unwrap()
                         .texture(),
@@ -998,7 +1002,7 @@ fn gtao_temporal_accumulation_restarts_on_camera_cuts() {
                 snapshots.push((snapshot, ao));
             }
         }
-        let effective = renderer.antialiasing_in_effect(&settings);
+        let effective = renderer.view.antialiasing_in_effect(&settings);
         assert!(
             snapshots[1].0.geometry == snapshots[2].0.geometry,
             "raster repeat did not hold for {aa:?}/{preset:?}, effective {effective:?}",
@@ -1018,6 +1022,7 @@ fn gtao_temporal_accumulation_restarts_on_camera_cuts() {
             &device,
             &queue,
             renderer
+                .view
                 .diagnostic_target(DiagnosticTarget::AmbientOcclusion)
                 .unwrap()
                 .texture(),
@@ -1062,7 +1067,7 @@ fn accumulated_visibility_survives_an_unfinished_frame() {
     let output = view::targets::target(&device, "AO output", SIZE, shading::gbuffer::COLOR);
     let run = |attempt: Option<bool>| {
         let (mut scene, _, mut input) = box_on_floor(&device, &queue, None);
-        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         let eye = input.camera.eye;
         let mut visibility = Vec::new();
         for frame in 0..7 {
@@ -1110,6 +1115,7 @@ fn accumulated_visibility_survives_an_unfinished_frame() {
                     &device,
                     &queue,
                     renderer
+                        .view
                         .diagnostic_target(diagnostics::DiagnosticTarget::AmbientOcclusion)
                         .expect("ambient occlusion ran")
                         .texture(),

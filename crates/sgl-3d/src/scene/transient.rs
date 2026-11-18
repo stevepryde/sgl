@@ -26,9 +26,10 @@ pub(crate) struct Transient {
     pub heat_count: u32,
     /// The heat triangles as the game gave them.
     heat_vertices: Vec<HeatDistortion>,
-    /// Mist positions, back to front from the last sorted eye.
+    /// Mist positions as the game gave them, in the render frame; each
+    /// view's mist pass orders and uploads them from its eye
+    /// (`stages::transparent::mist::Mist::order`).
     pub mist_positions: Vec<[f32; 3]>,
-    pub mist: wgpu::Buffer,
     /// Fog volume records; the first `fog_volume_corners.len()` are the
     /// scene's.
     pub fog_volumes: wgpu::Buffer,
@@ -65,7 +66,6 @@ impl Transient {
             ),
             heat_count: 0,
             heat_vertices: Vec::new(),
-            mist: mist_buffer(device, 1),
             mist_positions: Vec::new(),
             fog_volumes: fog_volume_buffer(device, 1),
             fog_volume_corners: Vec::new(),
@@ -121,21 +121,14 @@ impl Transient {
         self.fog_volume_list = volumes.to_vec();
     }
 
-    /// Replaces the mist's positions, growing the retained buffer as needed.
+    /// Replaces the mist's positions, which a view's buffer of the device's
+    /// largest size must hold.
     pub fn update_mist(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
         positions: &[[f32; 3]],
     ) -> Result<(), SceneError> {
         record_bytes::<[f32; 3]>(positions.len(), device.limits().max_buffer_size)?;
-        let bytes = bytemuck::cast_slice(positions);
-        if bytes.len() as u64 > self.mist.size() {
-            self.mist = mist_buffer(device, positions.len() as u64);
-        }
-        if !bytes.is_empty() {
-            crate::counters::write_buffer(queue, &self.mist, 0, bytes);
-        }
         self.mist_positions = positions.to_vec();
         Ok(())
     }
@@ -234,36 +227,6 @@ impl Transient {
         }
         self.write_fog_volumes(queue, &volumes);
     }
-
-    /// Orders the mist back to front from `eye`, as Three.js orders
-    /// transparent objects, and uploads it.
-    pub fn sort_mist(&mut self, queue: &wgpu::Queue, eye: Vec3) {
-        self.mist_positions.sort_by(|a, b| {
-            Vec3::from_array(*b)
-                .distance_squared(eye)
-                .total_cmp(&Vec3::from_array(*a).distance_squared(eye))
-        });
-        if !self.mist_positions.is_empty() {
-            crate::counters::write_buffer(
-                queue,
-                &self.mist,
-                0,
-                bytemuck::cast_slice(&self.mist_positions),
-            );
-        }
-    }
-}
-
-fn mist_buffer(device: &wgpu::Device, positions: u64) -> wgpu::Buffer {
-    crate::counters::buffer(
-        device,
-        &wgpu::BufferDescriptor {
-            label: Some("retained mist positions"),
-            size: positions * std::mem::size_of::<[f32; 3]>() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        },
-    )
 }
 
 fn fog_volume_buffer(device: &wgpu::Device, volumes: u64) -> wgpu::Buffer {

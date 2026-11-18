@@ -2,7 +2,7 @@
 //! content edits.
 use crate::asset::Asset;
 use crate::content::identity::Identity;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{RenderPreset, Settings};
 use crate::view::pipelines::GeometryPass;
 use crate::*;
@@ -479,7 +479,7 @@ fn directional_casters_respect_enabled_groups_and_explicit_policy() {
             view_formats: &[],
         });
         let depth_view = depth.create_view(&Default::default());
-        let mut renderer = Renderer::for_test(
+        let mut renderer = TestRenderer::for_test(
             &device,
             &queue,
             [64, 64],
@@ -600,7 +600,7 @@ fn directional_casters_cast_front_faces_at_unbiased_depth() {
             view_formats: &[],
         });
         let depth_view = depth.create_view(&Default::default());
-        let mut renderer = Renderer::for_test(&device, &queue, [SIZE; 2], &Settings::default());
+        let mut renderer = TestRenderer::for_test(&device, &queue, [SIZE; 2], &Settings::default());
         let mut frame = FrameInput::new(Camera {
             view: Mat4::from_translation(Vec3::X * 100.),
             projection: crate::perspective(1., 1., 0.1),
@@ -1306,7 +1306,7 @@ fn content_survives_buffer_growth() {
         antialiasing: settings::Antialiasing::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
         projection: crate::perspective(1., 1., 0.1),
@@ -1400,7 +1400,7 @@ fn each_frame_draws_its_environment_and_an_ended_one_is_black() {
         )
         .unwrap();
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let mut input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
         projection: crate::perspective(1., 1., 0.1),
@@ -1438,7 +1438,7 @@ fn lod_fused_source_preserves_pixels_and_uses_alternative_identity() {
         let alternative = scene
             .add_asset(&device, &queue, test_support::cube())
             .unwrap();
-        let mut renderer = Renderer::for_test(
+        let mut renderer = TestRenderer::for_test(
             &device,
             &queue,
             [64, 64],
@@ -1768,7 +1768,7 @@ fn anisotropic_filtering_keeps_a_receding_textures_detail() {
         antialiasing: settings::Antialiasing::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let eye = Vec3::new(0., 1., 0.);
     let input = FrameInput::new(Camera {
         eye,

@@ -1,7 +1,7 @@
 //! World-space reflection rays observed in the reflection composite of real
 //! frames, and the classification's ray list over fixture receivers.
 use crate::asset::{CpuMesh, Vertex};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::WorldSpaceReflections::{All, Moving};
 use crate::settings::{self, Settings};
 use crate::shading::RayQueryForm;
@@ -216,7 +216,7 @@ fn wall() -> crate::asset::Asset {
 }
 
 /// The reflection composite's red at every pixel.
-fn composite(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &Renderer) -> Vec<f32> {
+fn composite(device: &wgpu::Device, queue: &wgpu::Queue, renderer: &TestRenderer) -> Vec<f32> {
     let texels = test_support::read(device, queue, renderer.targets().composite.texture(), 8);
     texels.chunks_exact(8).map(test_support::half).collect()
 }
@@ -289,7 +289,7 @@ fn reflected_wall(
         hardware_ray_tracing: hardware,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(device, queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     let mut scene = Scene::new(device, queue);
     test_support::add_static(device, queue, &mut scene, floor());
     let asset = if wall.deforms {
@@ -696,7 +696,7 @@ fn mirror_scene((device, queue): (&wgpu::Device, &wgpu::Queue), size: [u32; 2]) 
 /// Renders `frame`'s scene once through `renderer` at `size`.
 fn render_mirror(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
-    renderer: &mut Renderer,
+    renderer: &mut TestRenderer,
     frame: &mut MirrorScene,
     settings: &Settings,
     size: [u32; 2],
@@ -765,7 +765,7 @@ fn every_tracing_pixel_over_the_mirror_hits_and_every_mirror_pixel_reflects() {
     let mut reduced = [0; 2];
     for reach in [settings::WorldSpaceReflections::Off, Moving] {
         let settings = mirror_settings(reach);
-        let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
         let mut frame = mirror_scene(gpu, size);
         frame.input.camera_cut = true;
         render_mirror(gpu, &mut renderer, &mut frame, &settings, size);

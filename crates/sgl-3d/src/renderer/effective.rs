@@ -1,6 +1,6 @@
 //! The settings, the frame and the device resolved into the effective
 //! configuration (`view::effective`): once per frame, and the size-affecting
-//! choices at `Renderer::resize`.
+//! choices at `View::resize`.
 use crate::FrameInput;
 use crate::scene::RayData;
 use crate::settings::{
@@ -469,7 +469,7 @@ mod ray_data_tests {
     #[test]
     fn enabled_scene_without_ray_consumers_clears_previous_disabled_reason() {
         use crate::view::history::{CameraFrame, CameraHistory};
-        use crate::{Renderer, Scene, SceneOptions, test_support};
+        use crate::{Scene, SceneOptions, TestRenderer, test_support};
         let Some((device, queue)) = test_support::device() else {
             return;
         };
@@ -478,7 +478,7 @@ mod ray_data_tests {
             dynamic_gi: DynamicGiQuality::Off,
             ..Settings::default()
         };
-        let mut renderer = Renderer::for_test(&device, &queue, [16; 2], &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, [16; 2], &settings);
         let input = FrameInput::new(crate::Camera {
             view: glam::Mat4::IDENTITY,
             projection: crate::perspective(1., 1., 0.1),
@@ -506,17 +506,22 @@ mod ray_data_tests {
                 input.visibility_mask,
             );
             let before = crate::counters::snapshot();
-            renderer.prepare.run(
+            let traced = crate::stages::prepare::Prepare::traces(&scene, &effective);
+            renderer
+                .shared
+                .prepare
+                .run_scene(&device, &queue, &mut scene, &effective, &input, traced);
+            crate::stages::prepare::Prepare::run_view(
                 &device,
                 &queue,
-                &mut scene,
+                &scene,
                 &input,
                 history,
                 &effective,
                 None,
                 [16; 2],
-                &mut renderer.views,
-                &renderer.bindings.frame,
+                &mut renderer.view.views,
+                &renderer.view.bindings.frame,
             );
             assert_eq!(
                 renderer.ray_tracing_error().is_some(),

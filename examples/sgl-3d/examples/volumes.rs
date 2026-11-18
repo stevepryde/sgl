@@ -36,7 +36,7 @@ use sgl_3d::glam::{Mat4, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight,
     InstanceState, MaterialId, MaterialShader, Mobility, ModelMesh, PreparedModel, Renderer, Scene,
-    ShaderSource, SurfaceMaterial,
+    ShaderSource, SurfaceMaterial, View, ViewFrame,
     asset::{Asset, CpuMesh, Image, Material, Vertex},
     settings::{Antialiasing, Settings},
     timing::GpuTiming,
@@ -495,7 +495,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let texture = output(&device, size);
     let view = texture.create_view(&Default::default());
-    let mut renderer = Renderer::new(&device, &queue, texture.format(), size, 1., &settings)?;
+    let mut renderer = Renderer::new(&device);
+    let mut scene_view = View::new(
+        &renderer,
+        &device,
+        &queue,
+        texture.format(),
+        size,
+        1.,
+        &settings,
+    )?;
     let mut timing = GpuTiming::new(&device, &queue);
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/volumes-example")
@@ -562,10 +571,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &queue,
                 &mut encoder,
                 &mut scene,
-                &input,
-                &settings,
-                &view,
-                timing.as_ref(),
+                &mut [ViewFrame {
+                    view: &mut scene_view,
+                    input: &input,
+                    settings: &settings,
+                    output: &view,
+                    timing: timing.as_ref(),
+                }],
             );
             let submission = queue.submit([encoder.finish()]);
             if let Some(timing) = &mut timing {

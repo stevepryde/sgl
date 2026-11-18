@@ -1,7 +1,8 @@
-//! Fixture access to the renderer's stages: a frame prepared as `render`
+//! Fixture access to the renderer's stages: a renderer with its one view
+//! driven one frame at a time as before views, a frame prepared as `render`
 //! prepares it, then single stage operations, for tests that observe one
 //! stage's output.
-use super::Renderer;
+use super::{Renderer, View, ViewError, ViewFrame};
 use crate::settings::Settings;
 use crate::shading::uniforms::FrameValues;
 use crate::view::draw_list::{DrawInstances, DrawList};
@@ -21,27 +22,47 @@ macro_rules! context {
             encoder: $encoder,
             timing: None,
             effective: &$frame.effective,
-            sizes: $renderer.sizes,
-            targets: &$renderer.targets,
-            surface: $renderer.targets.surface(false),
+            sizes: $renderer.view.sizes,
+            targets: &$renderer.view.targets,
+            surface: $renderer.view.targets.surface(false),
             scene: $scene,
             values: &$frame.values,
             input: &$frame.input,
-            views: &$renderer.views,
-            bindings: &mut $renderer.bindings,
-            pipelines: &$renderer.pipelines,
+            views: &$renderer.view.views,
+            bindings: &mut $renderer.view.bindings,
+            pipelines: &$renderer.renderer.shared.pipelines,
             history: $frame.history,
             hardware_rays: crate::view::frame::HardwareRays::of(
                 &$frame.effective,
                 $scene,
-                $renderer.prepare.hardware_rays(),
-                $renderer.ray_form.as_ref(),
+                $renderer.renderer.shared.prepare.hardware_rays(),
+                $renderer.renderer.shared.ray_form.as_ref(),
             ),
         }
     };
 }
 
-/// A frame prepared by `Renderer::prepare_test_frame`.
+/// A renderer and its one view, for tests that render one camera: the
+/// renderer's methods through `Deref`, and the single-view frame.
+pub(crate) struct TestRenderer {
+    pub renderer: Renderer,
+    pub view: View,
+}
+
+impl std::ops::Deref for TestRenderer {
+    type Target = Renderer;
+    fn deref(&self) -> &Renderer {
+        &self.renderer
+    }
+}
+
+impl std::ops::DerefMut for TestRenderer {
+    fn deref_mut(&mut self) -> &mut Renderer {
+        &mut self.renderer
+    }
+}
+
+/// A frame prepared by `TestRenderer::prepare_test_frame`.
 pub(crate) struct TestFrame {
     effective: Effective,
     /// The lights its ray-traced shadow slots may hold.
@@ -51,7 +72,131 @@ pub(crate) struct TestFrame {
     history: HistoryFrame,
 }
 
-impl Renderer {
+impl TestRenderer {
+    /// A renderer and a view of `output_format` at `output_size` physical
+    /// pixels (`View::new`).
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        output_format: wgpu::TextureFormat,
+        output_size: [u32; 2],
+        device_scale: f32,
+        settings: &Settings,
+    ) -> Result<Self, ViewError> {
+        let renderer = Renderer::new(device);
+        let view = View::new(
+            &renderer,
+            device,
+            queue,
+            output_format,
+            output_size,
+            device_scale,
+            settings,
+        )?;
+        Ok(Self { renderer, view })
+    }
+
+    /// One frame of `scene` seen by the view alone (`Renderer::render`).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn render(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &mut Scene,
+        input: &FrameInput,
+        settings: &Settings,
+        output: &wgpu::TextureView,
+        timing: Option<&crate::timing::GpuTiming>,
+    ) {
+        self.renderer.render(
+            device,
+            queue,
+            encoder,
+            scene,
+            &mut [ViewFrame {
+                view: &mut self.view,
+                input,
+                settings,
+                output,
+                timing,
+            }],
+        );
+    }
+
+    /// `Renderer::capture_specular_probe` with the view's shadow maps.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn capture_specular_probe(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &mut Scene,
+        input: &FrameInput,
+        settings: &Settings,
+        center: glam::Vec3,
+        face_size: u32,
+    ) -> Result<crate::SpecularProbeRadiance, crate::ProbeError> {
+        self.renderer.capture_specular_probe(
+            device,
+            queue,
+            scene,
+            &mut self.view,
+            input,
+            settings,
+            center,
+            face_size,
+        )
+    }
+
+    pub(crate) fn targets(&self) -> &crate::view::targets::SharedTargets {
+        &self.view.targets
+    }
+
+    /// The fog's froxels the last frame wrote, the froxels it integrated
+    /// and its integrated volume.
+    pub(crate) fn fog_volumes(&self) -> [&wgpu::TextureView; 3] {
+        self.view.fog.test_volumes()
+    }
+
+    /// The last frame's ray-traced shadow mask and slot table, where the
+    /// stage ran.
+    pub(crate) fn traced_shadows(
+        &self,
+    ) -> Option<(
+        &wgpu::TextureView,
+        crate::shading::shadow_mask::ShadowMaskSlots,
+    )> {
+        self.view.traced_shadows.last()
+    }
+
+    /// The ray-traced shadow denoiser's moments the last frame wrote, where
+    /// the stage ran.
+    pub(crate) fn traced_shadow_moments(&self) -> Option<&wgpu::TextureView> {
+        self.view.traced_shadows.last_moments()
+    }
+
+    /// The world-space reflection stage, once a frame ran it.
+    pub(crate) fn world_reflections(
+        &self,
+    ) -> Option<&crate::stages::reflections::world::WorldReflections> {
+        self.view.reflections.world()
+    }
+
+    /// FSR's upscaled frame of the last frame it ran.
+    pub(crate) fn fsr_output(&self) -> &wgpu::TextureView {
+        self.view.antialiasing.output()
+    }
+
+    /// The motion reach's cached bind group sets, while TAA runs.
+    pub(crate) fn reach_groups(&self) -> Option<usize> {
+        self.view.antialiasing.reach_groups()
+    }
+
+    /// The motion-blurred frame, once motion blur has run.
+    pub(crate) fn motion_blurred(&self) -> Option<&wgpu::TextureView> {
+        self.view.motion_blur.output()
+    }
+
     /// A renderer of HDR output at `size` for `settings`.
     pub(crate) fn for_test(
         device: &wgpu::Device,
@@ -83,26 +228,27 @@ impl Renderer {
         settings: &Settings,
     ) -> TestFrame {
         let input = *input;
+        let Self { renderer, view } = self;
+        let shared = &mut renderer.shared;
         let effective = super::effective::resolve(
             settings,
             &input,
             super::effective::SceneContent::of(scene),
-            super::effective::Device {
-                fsr_running: None,
-                fused_supported: self.pipelines.fused_supported,
-                occlusion_supported: self.cull.occlusion_supported(),
-                ray_queries: self.ray_form.as_ref().map(|form| form.form()),
-                tier: self.pipelines.tier,
-            },
+            shared.device(None, view.cull.occlusion_supported()),
         );
-        self.pipelines.specialise(
+        shared.pipelines.specialise(
             device,
             effective.layers,
             scene,
             effective.ray_traced_shadows,
         );
-        let history = self.begin_history(scene, &input);
-        let values = self.prepare.run(
+        let history = view.begin_history(scene, &input);
+        let traced = crate::stages::prepare::Prepare::traces(scene, &effective);
+        scene.begin_frame(device, queue);
+        shared
+            .prepare
+            .run_scene(device, queue, scene, &effective, &input, traced);
+        let values = crate::stages::prepare::Prepare::run_view(
             device,
             queue,
             scene,
@@ -110,19 +256,20 @@ impl Renderer {
             history,
             &effective,
             None,
-            self.sizes.render,
-            &mut self.views,
-            &self.bindings.frame,
+            view.sizes.render,
+            &mut view.views,
+            &view.bindings.frame,
         );
         if scene.materials.holds_receivers() {
-            self.targets.hold_surface(device);
+            view.targets.hold_surface(device);
         }
-        self.shadows.resize(device, effective.shadow_quality);
-        self.shadows.local.prepare(
+        let view = &mut self.view;
+        view.shadows.resize(device, effective.shadow_quality);
+        view.shadows.local.prepare(
             device,
             queue,
-            &self.bindings,
-            (scene, &mut self.views.instances),
+            &view.bindings,
+            (scene, &mut view.views.instances),
             (input.camera.view, input.camera.projection),
             crate::stages::shadows::local::ShadowFrame {
                 mask: values.frame.visibility_mask,
@@ -131,28 +278,34 @@ impl Renderer {
             },
             effective.local_lights,
         );
-        self.views.instances.upload(device, queue);
-        self.fog.prepare(device, effective.fog, self.sizes.render);
-        if let Some(dynamic_gi) = self.dynamic_gi.as_mut() {
+        view.views.instances.upload(device, queue);
+        view.fog.prepare(device, effective.fog, view.sizes.render);
+        if let Some(dynamic_gi) = self.renderer.shared.dynamic_gi.as_mut() {
             dynamic_gi.prepare(device, scene, &effective);
         }
         self.cull_test_views(device, queue, scene);
+        let Self { renderer, view } = self;
+        let shared = &renderer.shared;
         let slot_lights = crate::stages::shadows::traced::slots::SlotLights::of(
             &input,
             &values.frame,
             scene,
-            self.shadows.local.ranking(),
+            view.shadows.local.ranking(),
         );
-        let effective =
-            super::effective::traced_shadows(effective, self.prepare.hardware_rays(), &slot_lights);
-        self.bindings.refresh(
+        let effective = super::effective::traced_shadows(
+            effective,
+            shared.prepare.hardware_rays(),
+            &slot_lights,
+        );
+        view.bindings.refresh(
             device,
             scene,
             input.environment,
-            &self.views,
-            self.shadows.maps(),
-            self.fog.volume(),
-            self.dynamic_gi
+            &view.views,
+            view.shadows.maps(),
+            view.fog.volume(),
+            shared
+                .dynamic_gi
                 .as_ref()
                 .map(crate::stages::dynamic_gi::DynamicGi::probes),
         );
@@ -180,7 +333,7 @@ impl Renderer {
         crate::stages::prepare::set_cascades(
             gpu,
             scene,
-            &mut self.views,
+            &mut self.view.views,
             frame.values.frame.visibility_mask,
             std::iter::once(clip_from_world),
         );
@@ -196,10 +349,12 @@ impl Renderer {
         scene: &Scene,
     ) {
         let mut encoder = device.create_command_encoder(&Default::default());
-        self.deform
+        self.shared
+            .deform
             .dispatch(device, queue, &mut encoder, scene, None);
-        self.cull
-            .encode(device, &mut encoder, scene, &self.views, None);
+        self.view
+            .cull
+            .encode(device, &mut encoder, scene, &self.view.views, None);
         queue.submit([encoder.finish()]);
     }
 
@@ -216,13 +371,13 @@ impl Renderer {
         target: Option<&wgpu::TextureView>,
     ) {
         let layer = target.map(|target| {
-            std::mem::replace(&mut self.shadows.directional.layers[0], target.clone())
+            std::mem::replace(&mut self.view.shadows.directional.layers[0], target.clone())
         });
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
-        self.shadows.encode_local(&mut ctx);
-        self.shadows.encode_directional(&mut ctx);
+        self.view.shadows.encode_local(&mut ctx);
+        self.view.shadows.encode_directional(&mut ctx);
         if let Some(layer) = layer {
-            self.shadows.directional.layers[0] = layer;
+            self.view.shadows.directional.layers[0] = layer;
         }
     }
 
@@ -241,9 +396,9 @@ impl Renderer {
         frame.effective.fused = fused;
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
         super::frame::encode_opaque(
-            &mut self.opaque,
-            &mut self.cull,
-            &mut self.traced_shadows,
+            &mut self.view.opaque,
+            &mut self.view.cull,
+            &mut self.view.traced_shadows,
             &frame.slot_lights,
             &mut ctx,
         );
@@ -261,8 +416,9 @@ impl Renderer {
         beauty: &wgpu::TextureView,
     ) {
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
-        self.transparent.encode_volumes(&mut ctx);
-        self.transparent.encode(
+        self.view.transparent.encode_volumes(&mut ctx);
+        self.view.transparent.order_mist(&ctx);
+        self.view.transparent.encode(
             &mut ctx,
             crate::stages::transparent::Beauty::Incident(beauty),
         );
@@ -282,10 +438,11 @@ impl Renderer {
         reflections: Option<&wgpu::TextureView>,
     ) {
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
-        let drew = self.transparent.encode_receivers(&mut ctx);
-        ctx.surface = self.targets.surface(drew);
-        self.transparent.encode_volumes(&mut ctx);
-        self.transparent.encode(
+        let drew = self.view.transparent.encode_receivers(&mut ctx);
+        ctx.surface = self.view.targets.surface(drew);
+        self.view.transparent.encode_volumes(&mut ctx);
+        self.view.transparent.order_mist(&ctx);
+        self.view.transparent.encode(
             &mut ctx,
             crate::stages::transparent::Beauty::Composite { reflections },
         );
@@ -301,33 +458,37 @@ impl Renderer {
         kind: GeometryPass,
     ) {
         if kind == GeometryPass::Forward {
-            self.opaque.draw_sky(pass, self.bindings.camera_unlit());
+            self.view
+                .opaque
+                .draw_sky(pass, self.view.bindings.camera_unlit());
         }
-        pass.set_bind_group(0, self.bindings.camera_lit(), &[]);
-        self.views
+        pass.set_bind_group(0, self.view.bindings.camera_lit(), &[]);
+        self.view
+            .views
             .camera
             .list
-            .draw(scene, &self.pipelines, pass, kind);
+            .draw(scene, &self.renderer.shared.pipelines, pass, kind);
     }
 
     /// The camera's lit group 0, as the frame binds it.
     pub(crate) fn test_camera_lit(&self) -> &wgpu::BindGroup {
-        self.bindings.camera_lit()
+        self.view.bindings.camera_lit()
     }
 
     /// World-space ray hits' lit group 0, as the frame binds it.
     pub(crate) fn test_ray_hit_lit(&self) -> &wgpu::BindGroup {
-        self.bindings.ray_hit_lit()
+        self.view.bindings.ray_hit_lit()
     }
 
     pub(crate) fn test_dynamic_gi(&self) -> &crate::stages::dynamic_gi::DynamicGi {
-        self.dynamic_gi
+        self.shared
+            .dynamic_gi
             .as_ref()
             .expect("the dynamic GI stage, on the Extended binding tier")
     }
 
     pub(crate) fn test_lit_layout(&self) -> &wgpu::BindGroupLayout {
-        &self.bindings.lit.layout
+        &self.view.bindings.lit.layout
     }
 
     /// What each phase of the last frame appended to the camera's sets: the
@@ -338,45 +499,45 @@ impl Renderer {
         queue: &wgpu::Queue,
         scene: &Scene,
     ) -> [Vec<crate::shading::vertex::DrawInstance>; 2] {
-        crate::view::draw_list::gpu::read_phases(&self.views.camera.list, device, queue, scene)
+        crate::view::draw_list::gpu::read_phases(&self.view.views.camera.list, device, queue, scene)
     }
 
     /// The cull stage's depth pyramid, once a frame culled occlusion.
     pub(crate) fn test_pyramid(&self) -> Option<&wgpu::Texture> {
-        self.cull.pyramid()
+        self.view.cull.pyramid()
     }
 
     /// Whether this device writes the G-buffer and lighting in one pass.
     /// The shader modules and pipelines it holds for game shaders.
     pub(crate) fn test_shader_programs(&self) -> (usize, usize) {
-        self.pipelines.shader_programs()
+        self.renderer.shared.pipelines.shader_programs()
     }
 
     pub(crate) fn test_fused_supported(&self) -> bool {
-        self.pipelines.fused_supported
+        self.renderer.shared.pipelines.fused_supported
     }
 
     /// Whether the G-buffer pass writes anisotropy itself.
     pub(crate) fn test_anisotropy_inline(&self) -> bool {
-        self.pipelines.anisotropy_inline
+        self.renderer.shared.pipelines.anisotropy_inline
     }
 
     /// The reflections stage.
     pub(crate) fn test_reflections(&self) -> &crate::stages::reflections::Reflections {
-        &self.reflections
+        &self.view.reflections
     }
 
     /// The last frame's FSR context.
     pub(crate) fn test_fsr(&self) -> Option<&crate::stages::antialiasing::fsr::Fsr> {
-        self.antialiasing.fsr()
+        self.view.antialiasing.fsr()
     }
 
     /// Marks the prepared camera view as a probe capture face's, so surfaces
     /// shade as captures shade them.
     pub(crate) fn test_view_as_capture(&mut self, queue: &wgpu::Queue) {
-        let mut view = self.views.camera.view;
+        let mut view = self.view.views.camera.view;
         view.uniform.flags |= crate::shading::uniforms::VIEW_PROBE_CAPTURE;
-        self.views.camera.set(queue, view);
+        self.view.views.camera.set(queue, view);
     }
 
     /// Draws the static capture-visible instances, whole and double-sided, into a
@@ -394,15 +555,15 @@ impl Renderer {
         list.build(
             &mut instances,
             scene,
-            &crate::view::View::camera(bytemuck::Zeroable::zeroed()),
+            &crate::view::ViewData::camera(bytemuck::Zeroable::zeroed()),
             None,
             Population::ProbeFace,
         );
-        pass.set_bind_group(0, self.bindings.camera_lit(), &[]);
+        pass.set_bind_group(0, self.view.bindings.camera_lit(), &[]);
         instances.upload(device, queue);
         list.draw(
             scene,
-            &self.pipelines,
+            &self.renderer.shared.pipelines,
             &instances,
             pass,
             GeometryPass::Forward,
@@ -425,7 +586,7 @@ fn abandoned_automatic_exposure_still_snaps_then_adapts_after_finish() {
         ..Default::default()
     };
     let size = [16, 16];
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut scene = Scene::new(&device, &queue);
     let output = crate::view::targets::target(
         &device,
@@ -472,7 +633,7 @@ fn abandoned_automatic_exposure_still_snaps_then_adapts_after_finish() {
             let multiplier: f32 = bytemuck::pod_read_unaligned(&crate::test_support::read(
                 &device,
                 &queue,
-                renderer.exposure.texture(),
+                renderer.view.exposure.texture(),
                 4,
             ));
             assert!(

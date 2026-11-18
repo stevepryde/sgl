@@ -1,4 +1,5 @@
 use super::*;
+use crate::TestRenderer;
 use crate::settings::ShadowQuality;
 use glam::camera;
 
@@ -71,7 +72,7 @@ fn camera_surfaces_exclude_specular_ibl_and_keep_diffuse_and_emission() {
     input.reflection_environment = input.diffuse_environment;
     input.environment = Some(environment);
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let target = |label, format| crate::view::targets::target(&device, label, size, format);
     let mut observations = Vec::new();
     let mut metal = Vec::new();
@@ -209,7 +210,7 @@ fn captures_shade_scene_lights_by_the_ownership_rule() {
         eye: Vec3::ZERO,
     });
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
     let mut captured = |scene: &mut Scene| -> f32 {
         let radiance = renderer
             .capture_specular_probe(&device, &queue, scene, &input, &settings, Vec3::ZERO, 64)
@@ -387,7 +388,7 @@ fn a_frame_after_a_capture_renders_as_without_it() {
                 },
             )
             .unwrap();
-        let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
         let output = crate::view::targets::target(
             &device,
             "frame around the capture",
@@ -430,6 +431,7 @@ fn a_frame_after_a_capture_renders_as_without_it() {
             renderer.finish_frame(&mut scene);
         }
         let composite = renderer
+            .view
             .diagnostic_target(DiagnosticTarget::Composite)
             .unwrap()
             .texture();
@@ -518,7 +520,7 @@ fn floor_under_occluder(
         ..Settings::default()
     };
     let settings = quality(capture);
-    let mut renderer = Renderer::for_test(
+    let mut renderer = TestRenderer::for_test(
         &device,
         &queue,
         [64, 64],
@@ -646,7 +648,7 @@ fn a_capture_shadows_scene_lights_from_static_layers_it_places() {
         eye: Vec3::new(1000., 0., 0.),
     });
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
     let face_size = 64;
     let mut floor = |scene: &mut Scene| {
         let radiance = renderer
@@ -770,7 +772,7 @@ fn a_capture_shadows_scene_lights_from_casters_at_its_own_time() {
         })
     };
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
     let output = crate::view::targets::target(
         &device,
         "frame before the capture",
@@ -878,7 +880,7 @@ fn captured_floor<const N: usize>(
         intensity: 1.,
     };
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
     Some(strengths.map(|strength| {
         let mut values = scene.material(ids.materials[0]).unwrap();
         values.occlusion_strength = strength;
@@ -1026,7 +1028,7 @@ fn a_capture_stores_a_sub_texel_emitter_at_its_solid_angle() {
         eye: Vec3::ZERO,
     });
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
     // Each channel's stored energy, sum of radiance x solid angle over mip 0.
     let mut energy = |emission: f32| -> [f64; 3] {
         let mut values = scene.material(ids.materials[0]).unwrap();
@@ -1103,7 +1105,7 @@ fn capture_rejects_faces_past_the_readback_buffer_limit() {
     }))
     .unwrap();
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, [64, 64], &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
     let mut scene = Scene::new(&device, &queue);
     let input = FrameInput::new(crate::Camera {
         view: glam::Mat4::IDENTITY,

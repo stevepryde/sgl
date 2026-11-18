@@ -26,7 +26,8 @@ mod voxel_world;
 
 use sgl_3d::glam::{IVec3, Mat4};
 use sgl_3d::{
-    InstanceState, Mobility, ModelMesh, PreparedModel, Renderer, Scene, timing::GpuTiming,
+    InstanceState, Mobility, ModelMesh, PreparedModel, Renderer, Scene, View, ViewFrame,
+    timing::GpuTiming,
 };
 use std::fmt::Write as _;
 use voxel_world::{CHUNK, Mesher, SIZE, World};
@@ -181,8 +182,17 @@ async fn measured(
         view_formats: &[],
     });
     let view = output.create_view(&Default::default());
-    let mut renderer = Renderer::new(&device, &queue, output.format(), SIZE, 1., &settings)
-        .map_err(|e| e.to_string())?;
+    let mut renderer = Renderer::new(&device);
+    let mut scene_view = View::new(
+        &renderer,
+        &device,
+        &queue,
+        output.format(),
+        SIZE,
+        1.,
+        &settings,
+    )
+    .map_err(|e| e.to_string())?;
     let mut timing = GpuTiming::new(&device, &queue);
     let mut draws = Vec::new();
     let mut in_flight = None;
@@ -216,10 +226,13 @@ async fn measured(
             &queue,
             &mut encoder,
             &mut scene,
-            &input,
-            &settings,
-            &view,
-            timing.as_ref(),
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &input,
+                settings: &settings,
+                output: &view,
+                timing: timing.as_ref(),
+            }],
         );
         let rendered = now() - started;
         let commands = encoder.finish();
@@ -237,9 +250,14 @@ async fn measured(
         }
         renderer.finish_frame(&mut scene);
         let measure = index >= WARM_UP;
-        culling.frame((&renderer, &settings), index, measure, (rendered, finished));
+        culling.frame(
+            (&scene_view, &settings),
+            index,
+            measure,
+            (rendered, finished),
+        );
         if measure {
-            draws.push(renderer.diagnostic_draws());
+            draws.push(scene_view.diagnostic_draws());
         }
     }
     if let Some(earlier) = in_flight.take() {

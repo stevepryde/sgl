@@ -3,7 +3,7 @@
 //! tier's threshold on that tier.
 use crate::asset::{Asset, Image};
 use crate::graphics_device::BindingTier;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, DynamicGiQuality, Settings};
 use crate::shading::gbuffer;
 use crate::{
@@ -90,7 +90,7 @@ fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality
         ..Settings::default()
     };
     let size = [32, 32];
-    let mut renderer = Renderer::for_test(&device, &queue, size, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let mut scene = Scene::new(&device, &queue);
     // A game's shader, whose programs the tier's validation composed, on
     // the masked wall's casters and G-buffer and the bump glass's blended

@@ -2,9 +2,9 @@
 //! the camera's view data and the frame's data (the directional shadow's
 //! cascades, fit from the camera, baked lighting and fog, the
 //! jitter antialiasing chose), uploads them, ends the motion of moving
-//! instances not posed since the last submitted frame, sorts the mist,
-//! updates the scene's ray instances on frames that trace them (world-space
-//! reflections, dynamic GI and ray-traced shadows) and, while
+//! instances not posed since the last submitted frame, updates the scene's
+//! ray instances on frames that trace them (world-space reflections,
+//! dynamic GI and ray-traced shadows) and, while
 //! hardware ray tracing is in effect, chooses those frames'
 //! acceleration-structure builds, which it records after the deform pass
 //! (`encode_acceleration_structures`), clusters the
@@ -15,12 +15,15 @@
 //! directional shadow cascade, which the cull stage builds after the
 //! deform pass (`stages::cull`). The local-light shadow atlas places its own faces
 //! (`shadows::local`). For a probe capture it builds the capture's own
-//! views, cascades and light and decal list (`capture`).
+//! views, cascades and light and decal list (`capture`). Its scene part
+//! (`run_scene`: the scene's frame, ray instances and acceleration
+//! structures) runs once a frame, steered by the frame's primary view; its
+//! view part (`run_view`: everything else) runs for each view.
 //!
 //! Reads: the frame input, the camera history and the scene. Writes:
 //! `FrameViews` (view uniforms, draw lists, their draw instances and
 //! clusters), the frame uniform, the scene's stale object records, draw
-//! candidates, ray instances, acceleration structures and mist order.
+//! candidates, ray instances and acceleration structures.
 //! Honours: the effective local lights, temporal antialiasing (the shadow
 //! filter), atmosphere, baked lighting, culling, world-space reflections,
 //! dynamic GI, hardware ray tracing and ray-traced shadows.
@@ -37,7 +40,7 @@ use crate::view::frame::FrameContext;
 use crate::view::history::HistoryFrame;
 use crate::view::population::Population;
 use crate::view::reflection_camera;
-use crate::view::{FrameShadow, FrameViews, Jitter, View, frame_uniform, lod::LodSelector};
+use crate::view::{FrameShadow, FrameViews, Jitter, ViewData, frame_uniform, lod::LodSelector};
 use crate::{FrameInput, Scene};
 use glam::{Mat4, Vec3};
 
@@ -46,7 +49,7 @@ use glam::{Mat4, Vec3};
 pub(crate) struct CaptureViews {
     /// The frame's `FrameUniform`, with the capture's cascades.
     pub frame: wgpu::Buffer,
-    /// Each face's `ViewUniform` (`View::probe_face`), in cube-face order.
+    /// Each face's `ViewUniform` (`ViewData::probe_face`), in cube-face order.
     pub faces: Vec<wgpu::Buffer>,
     /// Each directional shadow cascade's `ViewUniform`, nearest first; none
     /// without a directional shadow.
@@ -78,7 +81,7 @@ pub(crate) fn set_cascades(
 ) {
     views.cascade_count = clip_from_world.len();
     for (slot, clip_from_world) in views.cascades.iter_mut().zip(clip_from_world) {
-        let view = View::shadow_cascade(clip_from_world);
+        let view = ViewData::shadow_cascade(clip_from_world);
         slot.set(queue, view);
         let started = crate::counters::Moment::now();
         slot.list
@@ -108,21 +111,80 @@ pub(crate) struct Prepare {
     /// The last rendered frame asked for the hardware path on a device
     /// that has it.
     hardware_requested: bool,
-    /// The scene's frame attempt the last rendered frame began
-    /// (`Scene::begin_frame`), 0 before one, which no attempt is.
-    attempt: u64,
 }
 
 impl Prepare {
-    /// Uploads the view and frame data of `input` seen with `history` and
-    /// `jitter` at `render_size`, and builds the frame's views. `history`'s
-    /// camera carries `jitter`'s offset. Returns the data as uploaded.
-    #[allow(clippy::too_many_arguments)]
-    pub fn run(
+    /// Whether a frame of `scene` under `effective` reads the ray instances
+    /// and visibility mask: world-space rays, the dynamic GI volume's and
+    /// ray-traced shadows do. The entries set and static edits made since
+    /// the last traced frame wait for the next, so the frames that skip it
+    /// leave it nothing stale.
+    pub fn traces(scene: &Scene, effective: &Effective) -> bool {
+        scene.ray_data() == crate::RayData::Enabled
+            && (effective.world_space != WorldSpaceReflections::Off
+                || (effective.dynamic_gi.is_some() && scene.dynamic_gi_placement().is_some())
+                || effective.ray_traced_shadows)
+    }
+
+    /// The frame's scene part, after the scene's frame began
+    /// (`Scene::begin_frame`), which its primary view steers with
+    /// `effective` and `input`: chooses the acceleration-structure builds
+    /// while hardware ray tracing is in effect, ordered from `input`'s eye,
+    /// and, when the frame is `traced` (`traces`), updates the scene's ray
+    /// instances under `input`'s visibility mask.
+    pub fn run_scene(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         scene: &mut Scene,
+        effective: &Effective,
+        input: &FrameInput,
+        traced: bool,
+    ) {
+        // The acceleration structures are built on the frames that trace,
+        // and freed by a frame with hardware ray tracing off. The portable
+        // BVHs then cover what the TLAS does not hold.
+        self.ray_tracing = RayTracingStats::default();
+        self.hardware_rays = false;
+        self.hardware_requested =
+            matches!(effective.hardware_ray_tracing, HardwareRayTracing::On(_));
+        match effective.hardware_ray_tracing {
+            HardwareRayTracing::Off
+            | HardwareRayTracing::Unsupported
+            | HardwareRayTracing::DisabledByScene => {
+                scene.free_acceleration_structures();
+                self.ray_tracing_error = match effective.hardware_ray_tracing {
+                    HardwareRayTracing::Unsupported => Some(NO_RAY_QUERIES),
+                    HardwareRayTracing::DisabledByScene => Some(NO_RAY_DATA),
+                    _ => None,
+                };
+            }
+            HardwareRayTracing::On(form) if traced => {
+                let prepared =
+                    scene.prepare_acceleration_structures(device, queue, input.camera.eye, form);
+                self.hardware_rays = prepared.is_some();
+                self.ray_tracing = prepared.unwrap_or_default();
+                self.ray_tracing_error = prepared.is_none().then_some(NO_MEMORY);
+            }
+            HardwareRayTracing::On(_) => {
+                scene.skip_acceleration_structures();
+                self.ray_tracing_error = None;
+            }
+        }
+        if traced {
+            scene.update_rays(device, queue, input.visibility_mask, self.hardware_rays);
+        }
+    }
+
+    /// A view's part: uploads the view and frame data of `input` seen with
+    /// `history` and `jitter` at `render_size`, and builds the view's
+    /// lists. `history`'s camera carries `jitter`'s offset. Returns the
+    /// data as uploaded.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_view(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
         input: &FrameInput,
         history: HistoryFrame,
         effective: &Effective,
@@ -190,50 +252,8 @@ impl Prepare {
         }
         let values = FrameValues { view, frame };
         crate::counters::write_buffer(queue, frame_buffer, 0, bytemuck::bytes_of(&frame));
-        views.camera.set(queue, View::camera(view));
-        self.attempt = scene.begin_frame(device, queue);
-        scene.transient.sort_mist(queue, camera.eye);
-        // Only world-space rays, the dynamic GI volume's and ray-traced
-        // shadows read the ray instances and visibility mask. The entries
-        // set and static edits made since the last traced frame wait for
-        // the next, so the frames that skip it leave it nothing stale.
+        views.camera.set(queue, ViewData::camera(view));
         let world_space = effective.world_space != WorldSpaceReflections::Off;
-        let traced = scene.ray_data() == crate::RayData::Enabled
-            && (world_space || volume.is_some() || effective.ray_traced_shadows);
-        // The acceleration structures are built on the frames that trace,
-        // and freed by a frame with hardware ray tracing off. The portable
-        // BVHs then cover what the TLAS does not hold.
-        self.ray_tracing = RayTracingStats::default();
-        self.hardware_rays = false;
-        self.hardware_requested =
-            matches!(effective.hardware_ray_tracing, HardwareRayTracing::On(_));
-        match effective.hardware_ray_tracing {
-            HardwareRayTracing::Off
-            | HardwareRayTracing::Unsupported
-            | HardwareRayTracing::DisabledByScene => {
-                scene.free_acceleration_structures();
-                self.ray_tracing_error = match effective.hardware_ray_tracing {
-                    HardwareRayTracing::Unsupported => Some(NO_RAY_QUERIES),
-                    HardwareRayTracing::DisabledByScene => Some(NO_RAY_DATA),
-                    _ => None,
-                };
-            }
-            HardwareRayTracing::On(form) if traced => {
-                let prepared =
-                    scene.prepare_acceleration_structures(device, queue, camera.eye, form);
-                self.hardware_rays = prepared.is_some();
-                self.ray_tracing = prepared.unwrap_or_default();
-                self.ray_tracing_error = prepared.is_none().then_some(NO_MEMORY);
-            }
-            HardwareRayTracing::On(_) => {
-                scene.skip_acceleration_structures();
-                self.ray_tracing_error = None;
-            }
-        }
-        if traced {
-            scene.update_rays(device, queue, frame.visibility_mask, self.hardware_rays);
-        }
-        let scene = &*scene;
         views.clusters.cluster(
             device,
             queue,
@@ -350,12 +370,6 @@ impl Prepare {
         self.hardware_requested
     }
 
-    /// The scene's frame attempt the last rendered frame began, which
-    /// `Renderer::finish_frame` commits.
-    pub fn attempt(&self) -> u64 {
-        self.attempt
-    }
-
     /// The views of a probe capture at `center` with `input`'s lights, the
     /// directional shadow's cascades about `center` in maps of
     /// `cascade_size` texels and, when `local_lights`, the scene's lights,
@@ -387,7 +401,9 @@ impl Prepare {
         };
         let frame_buffer = uniform("static capture frame", bytemuck::bytes_of(&frame));
         // Each face is a view.
-        let views: Vec<_> = (0..6).map(|face| View::probe_face(center, face)).collect();
+        let views: Vec<_> = (0..6)
+            .map(|face| ViewData::probe_face(center, face))
+            .collect();
         let faces = views
             .iter()
             .map(|view| uniform("static capture camera", bytemuck::bytes_of(&view.uniform)))
@@ -397,7 +413,7 @@ impl Prepare {
             .cascades
             .as_slice()
             .iter()
-            .map(|cascade| View::shadow_cascade(cascade.clip_from_world))
+            .map(|cascade| ViewData::shadow_cascade(cascade.clip_from_world))
             .collect();
         // Every cascade draws the same unculled static content.
         let mut instances = DrawInstances::default();

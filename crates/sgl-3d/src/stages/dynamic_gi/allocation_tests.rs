@@ -9,7 +9,7 @@ use super::DynamicGi;
 use super::buffers::{Allocation, Convergence, STRIDES, VolumeUniform, budget, dispatch};
 use super::frame::{frustum, rotation};
 use super::pipelines::ALLOCATE;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{DynamicGiQuality, Settings};
 use crate::shading::dynamic_gi as layout;
 use crate::{DynamicGiVolume, test_support};
@@ -50,7 +50,7 @@ fn allocate(
         dynamic_gi: DynamicGiQuality::High,
         ..Settings::default()
     };
-    let renderer = Renderer::for_test(&device, &queue, [16, 16], &settings);
+    let renderer = TestRenderer::for_test(&device, &queue, [16, 16], &settings);
     let stage: &DynamicGi = renderer.test_dynamic_gi();
     let count = placement.probes.iter().product::<u32>();
     let storage = |label, contents: &[u8]| {

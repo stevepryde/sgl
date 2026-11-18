@@ -9,7 +9,7 @@
 //! light's shadow opacity blends its shadow toward unshadowed on surfaces
 //! and in the medium alike.
 use super::froxels;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, FogQuality, Settings};
 use crate::shading::gbuffer;
 use crate::{
@@ -57,8 +57,8 @@ fn render(
     input: &FrameInput,
     settings: &Settings,
     frames: usize,
-) -> Renderer {
-    let mut renderer = Renderer::for_test(device, queue, SIZE, settings);
+) -> TestRenderer {
+    let mut renderer = TestRenderer::for_test(device, queue, SIZE, settings);
     let output = crate::view::targets::target(device, "fog frames", SIZE, gbuffer::COLOR);
     for frame in 0..frames {
         let mut input = *input;
@@ -205,7 +205,7 @@ fn a_length_with_rounding_noise_accumulates_as_an_unchanged_one() {
             length: LENGTH,
             ..Default::default()
         });
-        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         let output =
             crate::view::targets::target(&device, "fog length noise", SIZE, gbuffer::COLOR);
         for index in 0..48 {
@@ -403,7 +403,7 @@ fn an_empty_medium_leaves_the_frame_as_no_fog_does() {
         intensity: 1.,
     };
     frame.backdrop = Backdrop::Color([0.2, 0.3, 0.45]);
-    let composite = |renderer: &Renderer| read(&device, &queue, &renderer.targets().composite);
+    let composite = |renderer: &TestRenderer| read(&device, &queue, &renderer.targets().composite);
     let unfogged = composite(&render(
         &device,
         &queue,
@@ -648,7 +648,7 @@ fn a_still_point_light_holds_its_froxel_steady_over_the_jitter_cycle() {
             )
             .unwrap();
         let settings = settings(true);
-        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         let output = crate::view::targets::target(&device, "fog frames", SIZE, gbuffer::COLOR);
         let at = ((index[2] * size[1] + index[1]) * size[0] + index[0]) as usize;
         let mut light = Vec::new();
@@ -1806,7 +1806,7 @@ fn a_submitted_filtered_frame_is_not_reprojected_as_previous_on_retry() {
         ground_color: [1.; 3],
         intensity: 1.,
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = crate::view::targets::target(&device, "fog retry", SIZE, gbuffer::COLOR);
     for step in 0..3 {
         frame.fog.albedo = if step == 1 { [1.; 3] } else { [0.; 3] };

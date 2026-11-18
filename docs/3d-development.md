@@ -24,7 +24,8 @@ for ray-traced shadows.
 In the browser, fetch asset bytes and load them with `asset::load_slice` or
 `asset::load_slice_with_options`, pass the measured frame time in
 `FrameInput::frame_time_ms`, and await readbacks, which WebGPU cannot block
-on: `Renderer::capture_specular_probe_async` captures a specular probe, as
+on: `Renderer::capture_specular_probe_async` captures a specular probe with
+a `View`'s shadow maps, as
 `capture_specular_probe` does natively.
 
 Keep metres, +Y up, and a right-handed camera looking along local -Z. Adapt
@@ -34,9 +35,9 @@ vectors and matrices can cross the UI/3D boundary directly. Use the wgpu
 dependency specified by the [workspace manifest](../Cargo.toml) when sharing
 the game-owned device and queue. All dependency versions live in that manifest;
 package manifests select features. Linear light values and HDR buffers must remain
-linear until final presentation conversion. `Renderer::new` writes float
+linear until final presentation conversion. `View::new` writes float
 composition textures in display-referred linear sRGB on either platform;
-`Renderer::new_surface` takes the actual surface configuration and capabilities for direct
+`View::new_surface` takes the actual surface configuration and capabilities for direct
 window/canvas presentation. Choose `Settings::tone_mapping` independently
 of the quality preset: Khronos PBR Neutral is the default, with ACES Filmic
 and AgX also available.
@@ -48,16 +49,18 @@ bring their rig and clips as plain data (`Asset::rig`); the game samples and
 blends clips and poses each deforming instance every frame with
 `Scene::set_instance_deformation`. Do not maintain a second glTF
 decoder for embedded models or portraits. Portraits can compose the same
-imported assets with a `Scene` and a `Renderer` under a game-owned studio camera.
+imported assets with a `Scene`, a `Renderer` and a `View` under a game-owned studio camera.
 Matching Blender images also requires matching lighting and color management.
 
-Each rendered frame, update retained instances, call `Renderer::resize` and
-`Renderer::render` with that frame's `FrameInput`, submit, then call
+Each rendered frame, update retained instances, call `View::resize` for each
+view and `Renderer::render` once with every view's `ViewFrame` (its
+`FrameInput`, settings and output), the main view first, submit, then call
 `Renderer::finish_frame`. The game owns interpolation; SGL3D records previous
 rendered poses for motion and reflections, and `finish_frame` advances that
-history once the frame is submitted. History restarts itself on
-`FrameInput::camera_cut`, a resize that changes the targets and a different
-scene. Do not advance simulation from the renderer. To choose a game's
+history once the frame is submitted. A view's history restarts itself on
+`FrameInput::camera_cut`, a resize that changes its targets, a different
+scene and a finished frame of its scene that did not render it. Do not
+advance simulation from the renderer. To choose a game's
 physics, see [Physics](README.md#physics).
 
 Persist `settings::Settings` inside the game's own settings record. Keep an

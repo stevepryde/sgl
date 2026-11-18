@@ -7,7 +7,7 @@ use crate::view::draw_list::gpu::camera_cull;
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::pipelines::{GeometryPass, GeometryPipelines, LayerConstants};
 use crate::view::population::Population;
-use crate::view::{FrameViews, View};
+use crate::view::{FrameViews, ViewData};
 use crate::{InstanceState, Mobility, Scene, test_support};
 use bytemuck::Zeroable;
 use glam::{Mat4, Vec3, camera};
@@ -158,7 +158,7 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
     let mut views = FrameViews::new(&device);
     // The cull stage encodes the camera's list with the cascades': a camera
     // over the same ground, whose list nothing here draws.
-    let camera = View::camera(ViewUniform {
+    let camera = ViewData::camera(ViewUniform {
         view: light.to_cols_array_2d(),
         projection: crate::perspective(1., 1., 0.1).to_cols_array_2d(),
         ..ViewUniform::zeroed()
@@ -255,7 +255,7 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
     captured.build(
         &mut instances,
         &scene,
-        &View::shadow_cascade(cascade),
+        &ViewData::shadow_cascade(cascade),
         Some(mask),
         Population::CaptureShadow,
     );

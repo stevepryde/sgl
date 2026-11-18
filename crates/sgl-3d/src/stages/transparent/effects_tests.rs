@@ -1,5 +1,5 @@
 //! Measured GPU radiance against independently positioned planes.
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{RenderPreset, Settings};
 use crate::{Camera, FrameInput, Scene};
 use glam::Mat4;
@@ -27,7 +27,7 @@ fn soft_intersection_metric_depth_and_clear_background() {
                 size,
                 crate::shading::gbuffer::COLOR,
             );
-            let mut renderer = Renderer::for_test(
+            let mut renderer = TestRenderer::for_test(
                 &device,
                 &queue,
                 size,

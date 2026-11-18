@@ -502,7 +502,7 @@ fn first_frame_keeps_the_source_completion_built_for_the_settings() {
             reflection_method,
             ..Settings::default()
         };
-        let mut renderer = crate::Renderer::for_test(&device, &queue, size, &settings);
+        let mut renderer = crate::TestRenderer::for_test(&device, &queue, size, &settings);
         let created = renderer
             .test_reflections()
             .source

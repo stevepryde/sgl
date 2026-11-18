@@ -51,7 +51,8 @@ use sgl_3d::glam::{IVec3, Mat4, Vec3, camera};
 use sgl_3d::{
     Backdrop, Camera, DirectionalLight, DirectionalShadow, EnvironmentId, Exposure, FrameInput,
     HemisphereLight, InstanceId, InstanceState, IrradianceCell, IrradianceVolume, MaterialId,
-    Mobility, ModelId, ModelMesh, PreparedIrradianceRegion, PreparedModel, Renderer, Scene,
+    Mobility, ModelId, ModelMesh, PreparedIrradianceRegion, PreparedModel, Renderer, Scene, View,
+    ViewFrame,
     asset::{CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     settings::{
@@ -1105,7 +1106,16 @@ fn walk(
     let mut game = Game::new(&mut scene, gpu, with_volume, night)?;
     let texture = output(device);
     let view = texture.create_view(&Default::default());
-    let mut renderer = Renderer::new(device, queue, texture.format(), SIZE, 1., &settings)?;
+    let mut renderer = Renderer::new(device);
+    let mut scene_view = View::new(
+        &renderer,
+        device,
+        queue,
+        texture.format(),
+        SIZE,
+        1.,
+        &settings,
+    )?;
     let mut timing = GpuTiming::new(device, queue);
     let mut times = Vec::new();
     let mut in_flight = None;
@@ -1137,10 +1147,13 @@ fn walk(
             queue,
             &mut encoder,
             &mut scene,
-            &input,
-            &settings,
-            &view,
-            timing.as_ref(),
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &input,
+                settings: &settings,
+                output: &view,
+                timing: timing.as_ref(),
+            }],
         );
         let rendered = ms(started);
         let commands = encoder.finish();
@@ -1159,7 +1172,7 @@ fn walk(
         // Inside the cave: past the cliff, after the warm-up.
         let inside = frame >= WARM_UP as usize && Game::eye(seconds).z >= CLIFF as f32;
         culling.frame(
-            (&renderer, &settings),
+            (&scene_view, &settings),
             frame,
             with_volume && inside,
             (rendered, finished),

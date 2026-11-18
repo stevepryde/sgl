@@ -22,7 +22,7 @@ pub(crate) enum ShadowFilter {
     Temporal,
 }
 
-/// The size-affecting choices `Renderer::resize` resolves: what the stages'
+/// The size-affecting choices `View::resize` resolves: what the stages'
 /// targets are made for.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Sizing {

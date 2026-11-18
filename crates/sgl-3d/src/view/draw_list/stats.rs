@@ -1,4 +1,4 @@
-//! The camera's submitted geometry, which `Renderer::geometry_stats`
+//! The camera's submitted geometry, which `View::geometry_stats`
 //! reports.
 use crate::Mobility;
 use std::ops::Range;

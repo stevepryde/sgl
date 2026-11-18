@@ -3,7 +3,7 @@
 //! hit.
 use crate::asset::{Asset, CpuMesh, Image, Vertex};
 use crate::graphics_device::BindingTier;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{AmbientOcclusionQuality, Settings};
 use crate::{Backdrop, Camera, DirectionalLight, FrameInput, Scene, perspective, test_support};
 use glam::{Mat4, Vec3};
@@ -168,7 +168,7 @@ fn sheen_and_diffuse_transmission_maps_scale_their_factors() {
     for mapped in [true, false] {
         let mut scene = Scene::new(&device, &queue);
         test_support::add_static(&device, &queue, &mut scene, square_asset(mapped));
-        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         if renderer.binding_tier() != BindingTier::Extended {
             eprintln!(
                 "skipping: the device takes the Basic binding tier, which binds none of these maps"

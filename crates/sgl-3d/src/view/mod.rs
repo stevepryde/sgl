@@ -1,6 +1,6 @@
 //! Views and what they see. The main camera, each directional shadow
 //! cascade, each local-light shadow face and each probe-capture face is a
-//! `View` with its own `ViewUniform`; its draw list holds its culled,
+//! `ViewData` with its own `ViewUniform`; its draw list holds its culled,
 //! LOD-selected draws: GPU-built for the camera's opaque and masked surfaces
 //! and the cascades (`draw_list::gpu`), CPU-built and instanced for the rest
 //! (`DrawList`); `Clusters` the scene lights and decals that reach each part
@@ -310,11 +310,11 @@ pub(crate) struct Jitter {
 /// One view: the view data it renders and culls with. Each kind of view has
 /// its constructor.
 #[derive(Clone, Copy)]
-pub(crate) struct View {
+pub(crate) struct ViewData {
     pub uniform: ViewUniform,
 }
 
-impl View {
+impl ViewData {
     /// The main camera, with the view data its frame uploaded.
     pub fn camera(uniform: ViewUniform) -> Self {
         Self { uniform }
@@ -417,7 +417,7 @@ impl View {
 /// build (preparing it, and encoding its cull) and its passes since took to
 /// record its draws, in milliseconds (diagnostics; zero without them).
 pub(crate) struct ViewSlot {
-    pub view: View,
+    pub view: ViewData,
     pub buffer: wgpu::Buffer,
     pub list: draw_list::gpu::GpuList,
     #[cfg_attr(not(feature = "diagnostics"), allow(dead_code))]
@@ -427,7 +427,7 @@ pub(crate) struct ViewSlot {
 
 impl ViewSlot {
     fn new(device: &wgpu::Device, label: &str) -> Self {
-        let view = View {
+        let view = ViewData {
             uniform: ViewUniform::zeroed(),
         };
         Self {
@@ -477,7 +477,7 @@ impl ViewSlot {
     }
 
     /// Sets this slot's view and uploads its uniform.
-    pub fn set(&mut self, queue: &wgpu::Queue, view: View) {
+    pub fn set(&mut self, queue: &wgpu::Queue, view: ViewData) {
         self.view = view;
         crate::counters::write_buffer(queue, &self.buffer, 0, bytemuck::bytes_of(&view.uniform));
     }

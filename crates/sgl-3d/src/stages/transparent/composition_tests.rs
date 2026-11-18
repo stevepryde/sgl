@@ -2,7 +2,7 @@
 //! shading moves where their geometry stands still, and under heat
 //! distortion, and the reactive mask glow writes, observed in real frames.
 use crate::asset::{Asset, Image};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::shading::gbuffer;
 use crate::{
@@ -103,7 +103,7 @@ fn glass() -> Asset {
 }
 
 /// A renderer running FSR at the scene size, or `None` where it cannot.
-fn fsr_renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(Renderer, Settings)> {
+fn fsr_renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(TestRenderer, Settings)> {
     temporal_renderer(device, queue, settings::Antialiasing::Fsr2)
 }
 
@@ -113,7 +113,7 @@ fn temporal_renderer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     antialiasing: settings::Antialiasing,
-) -> Option<(Renderer, Settings)> {
+) -> Option<(TestRenderer, Settings)> {
     let settings = Settings {
         antialiasing,
         fsr_quality: settings::FsrQuality::NativeAa,
@@ -121,11 +121,11 @@ fn temporal_renderer(
         atmosphere: false,
         ..Settings::default()
     };
-    let renderer = Renderer::for_test(device, queue, SIZE, &settings);
-    if renderer.antialiasing_in_effect(&settings) != antialiasing {
+    let renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
+    if renderer.view.antialiasing_in_effect(&settings) != antialiasing {
         eprintln!(
             "skipping: {antialiasing:?} does not run here: {:?}",
-            renderer.fsr_error()
+            renderer.view.fsr_error()
         );
         return None;
     }
@@ -138,7 +138,7 @@ fn temporal_renderer(
 fn masks(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    (renderer, settings): (&mut Renderer, &Settings),
+    (renderer, settings): (&mut TestRenderer, &Settings),
     scene: &mut Scene,
     elapsed_seconds: f64,
 ) -> [Vec<f32>; 2] {
@@ -155,7 +155,7 @@ fn masks(
 fn exposed_masks(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    (renderer, settings): (&mut Renderer, &Settings),
+    (renderer, settings): (&mut TestRenderer, &Settings),
     scene: &mut Scene,
     (elapsed_seconds, stops): (f64, f32),
 ) -> [Vec<f32>; 2] {
@@ -674,7 +674,7 @@ fn a_shader_surface_marks_composition_only_in_frames_its_shading_changes() {
         [0.; 4],
     );
     let mut time = 0.;
-    let mut frame = |renderer: &mut Renderer, scene: &mut Scene| {
+    let mut frame = |renderer: &mut TestRenderer, scene: &mut Scene| {
         time += 1.;
         masks(&device, &queue, (renderer, &settings), scene, time)
     };

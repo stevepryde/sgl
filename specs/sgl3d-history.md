@@ -3,7 +3,7 @@
 Every rule in SGL3D that discards temporal history, weakens it, withholds
 jitter, restarts a stage, or zeroes, replaces or disregards a motion vector.
 The [History contract](sgl3d-architecture.md#shared-contracts) says who owns
-history and when the renderer resets it; this register lists what each owner
+history and when a view resets it; this register lists what each owner
 then does with it, rule by rule, so that an artefact can be traced to the rule
 behind it and no rule exists only in code.
 
@@ -38,7 +38,7 @@ A rule is in one of three states:
    or a scenario that fails when the rule changes, under
    [Testing](testing.md). "None" in an entry's guard is work owed.
 
-Identifiers are stable. Their prefixes: `F` the frame and renderer, `M` motion
+Identifiers are stable. Their prefixes: `F` the frame, the renderer and its views, `M` motion
 vectors and the temporal masks' writers, `T` temporal antialiasing, `U` FSR
 upscaling, `R` reflections, `S` shadows, `AO` ambient occlusion, `V`
 volumetric fog, `G` dynamic GI, `E` exposure, `X` other stages.
@@ -48,10 +48,11 @@ volumetric fog, `G` dynamic GI, `E` exposure, `X` other stages.
 The rules below that a game most often raises without meaning to, as the
 contract a game follows:
 
-- Call `Renderer::finish_frame` once for every frame it renders and submits
-  (F-3). Edit the scene before `render` or after the submission, never in
-  between; an edit made after the submission and before `finish_frame`
-  belongs to the next frame (F-13).
+- Call `Renderer::finish_frame` once for every frame it renders and submits,
+  and render no frame twice (F-3). Render every view that keeps temporal
+  history in every frame of its scene (F-12). Edit the scene before `render`
+  or after the submission, never in between; an edit made after the
+  submission and before `finish_frame` belongs to the next frame (F-13).
 - Set `FrameInput::camera_cut` when the camera jumps, and only then (F-1).
 - Give moving objects `Mobility::Moving` and pose them every frame; a static
   instance that is moved writes no motion and re-arms antialiasing across
@@ -86,14 +87,14 @@ Found by the 2026-11-18 history audit and in settling its open questions
 
 ## Frame and renderer
 
-The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the last finished frame's unjittered view and projection, its jitter, its time, its visibility mask, the render origin it is expressed in, and the frames since the last reset. It issues the one reset every stage follows, and each stage keeps what describes its GPU history as the view's last finished frame left it (`view::history::Kept`), so a stage restarts when it did not run in that frame and a frame rendered again continues as the first rendering did. The scene keeps the motion history (submitted poses, deformation slots, shader data, parameter blocks) and the rigid-change signal, committed by `Renderer::finish_frame`. A continuously running game most often trips the visibility-mask signal (F-10) and the scene's rigid-change signal where it spawns, hides or swaps models (M-9); a frame that was rendered but not finished restarts FSR alone (F-3, U-2).
+Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`): its last finished frame's unjittered view and projection, its jitter, its time, its visibility mask, the render origin it is expressed in, and the frames since the last reset. It issues the one reset every one of its stages follows, and each stage keeps what describes its GPU history as the view's last finished frame left it (`view::history::Kept`), so a stage restarts when it did not run in that frame and a frame rendered again continues as the first rendering did. The scene keeps the motion history (submitted poses, deformation slots, shader data, parameter blocks) and the rigid-change signal, committed by `Renderer::finish_frame`. A continuously running game most often trips the visibility-mask signal (F-10) and the scene's rigid-change signal where it spawns, hides or swaps models (M-9); a frame that was rendered but not finished restarts FSR alone (F-3, U-2).
 
 ### Signals
 
 | Signal | Raised by | When | Cleared / committed | Consumed by |
 |---|---|---|---|---|
-| `HistoryFrame::valid` (false is a reset) | `Renderer::begin_history`, `CameraHistory::begin` | `FrameInput::camera_cut`; a pending reset from `Renderer::resize`; a scene other than the last finished frame's; the first frame | the next frame after a finished one is valid unless raised again | DiligentFX context (TAA, Crystal SSR), FSR, exposure, motion blur, world-space reflections, ray-traced shadows, ambient occlusion's temporal filter, fog, the cull stage's early phase |
-| `HistoryFrame::frames` (frames since the reset) | `CameraHistory` | advanced only by `Renderer::finish_frame` | 0 on a reset | the DiligentFX context's frame index (its pairs' halves by parity, and its continuity test against the last finished frame's), fog; also noise seeds (shadow filter, ambient occlusion, motion blur, fog) |
+| `HistoryFrame::valid` (false is a reset) | `View::begin_history` (`renderer/view.rs`), `CameraHistory::begin` | `FrameInput::camera_cut`; a pending reset from `View::resize`; a frame that does not follow the view's last finished frame (its first, another scene's, or one after a finished frame of the scene that did not render it) | advanced only when a frame of the view is finished: the next frame is valid unless raised again | DiligentFX context (TAA, Crystal SSR), FSR, exposure, motion blur, world-space reflections, ray-traced shadows, ambient occlusion's temporal filter, fog, the cull stage's early phase |
+| `HistoryFrame::frames` (frames since the reset) | `CameraHistory` | advanced only when a frame of the view is finished (`View::settle` after `Renderer::finish_frame`) | 0 on a reset | the DiligentFX context's frame index (its pairs' halves by parity, and its continuity test against the last finished frame's), fog; also noise seeds (shadow filter, ambient occlusion, motion blur, fog) |
 | `HistoryFrame::previous_camera` and `previous` | `CameraHistory::begin` | none, and previous = this frame's view-projection, after a reset; otherwise translated by any render-origin move | committed at `finish_frame` | the view's `previous_view_projection` (all motion), the DiligentFX previous camera, Velvet, world-space reflections, ray-traced shadows, ambient occlusion, fog, the cull stage's early phase |
 | `HistoryFrame::previous_elapsed_seconds` | `CameraHistory::begin` | this frame's time after a reset | committed at `finish_frame` | `Frame.previous_elapsed_seconds` and `previous_animation_phase`, at which vertex functions evaluate motion |
 | `HistoryFrame::visibility_changed` | `CameraHistory::begin` | `FrameInput::visibility_mask` differs from the last finished frame's and history is valid | when a frame with the new mask is finished | TAA's `rigid_object_motion` only; FSR never sees it |
@@ -106,32 +107,32 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 
 ### Camera history and resets
 
-#### F-1 The renderer's one reset
+#### F-1 A view's one reset
 
-- **Rule.** When `FrameInput::camera_cut` is set, a reset is pending from `Renderer::resize` (F-2), or the scene's identity differs from the last finished frame's (including the first frame), the camera history begins without a previous frame: no previous camera, `valid` false, `frames` 0, the previous view-projection equal to this frame's, the previous time equal to this frame's, `visibility_changed` false. Every stage that reads `valid` or `frames` restarts over the whole view. The frame after the next finished frame continues normally.
-- **Raised by.** A cut flag, a target-changing resize, the first frame, a different `Scene`.
-- **Stays triggered while.** The game leaves `camera_cut` set, or alternates two scenes through one renderer: every frame resets.
-- **Source.** SGL3D's own (S3D-4). Code: `renderer/mod.rs` (`Renderer::begin_history`), `view/history.rs` (`CameraHistory::begin`).
-- **Guard.** `a_cut_a_resize_and_another_scene_restart_history` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`); `a_moved_origin_reprojects_the_same_world_point` (`view/history.rs`); `a_camera_cut_frame_is_not_blurred` (`stages/motion_blur/tests.rs`).
+- **Rule.** When `FrameInput::camera_cut` is set, a reset is pending from `View::resize` (F-2), or the frame does not follow the view's last finished frame (its first frame, a frame of another `Scene`, or one after a finished frame of the scene that did not render the view, F-12), the view's camera history begins without a previous frame: no previous camera, `valid` false, `frames` 0, the previous view-projection equal to this frame's, the previous time equal to this frame's, `visibility_changed` false. Every stage of the view that reads `valid` or `frames` restarts over the whole view. The frame after the next finished frame continues normally.
+- **Raised by.** A cut flag, a target-changing resize, the view's first frame, a different `Scene`, a finished frame of the scene without the view.
+- **Stays triggered while.** The game leaves `camera_cut` set, alternates two scenes through one view, or leaves the view out of every other frame: every frame of it resets.
+- **Source.** SGL3D's own (S3D-4). Code: `renderer/view.rs` (`View::begin_history`, `View::settle`), `view/history.rs` (`CameraHistory::begin`), `scene/mod.rs` (`Scene::last_finished`).
+- **Guard.** `a_cut_a_resize_and_another_scene_restart_history` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`); `a_view_that_skips_a_frame_restarts` (`tests/sgl-3d/tests/scenario_views.rs`); `a_moved_origin_reprojects_the_same_world_point` (`view/history.rs`); `a_camera_cut_frame_is_not_blurred` (`stages/motion_blur/tests.rs`).
 - **Status.** Rule.
 
-#### F-2 Pending reset from `Renderer::resize`
+#### F-2 Pending reset from `View::resize`
 
-- **Rule.** When `Renderer::resize` recreates or drops the FSR context (FSR selected with no context, a context of another display size or version, or FSR deselected while one exists), or when the render, scene or output size changes, or bloom's target size changes (`RenderPreset::High` against `Low`), the renderer recreates its shared targets and raises a pending reset (F-1) for every stage. The pending reset clears only when a frame rendered with the current targets is finished.
+- **Rule.** When `View::resize` recreates or drops the view's FSR context (FSR selected with no context, a context of another display size or version, or FSR deselected while one exists), or when the view's render, scene or output size changes, or bloom's target size changes (`RenderPreset::High` against `Low`), the view recreates its shared targets and raises a pending reset (F-1) for every one of its stages; other views are untouched. The pending reset clears only when a frame rendered with the current targets is finished.
 - **Raised by.** Window resizes, device scale, `SceneResolution`, FSR mode, version or quality, the preset.
 - **Stays triggered while.** Nothing: it needs a size or setting change. A preset change at an unchanged render size restarts every history although no stage's history lives in the shared targets.
-- **Source.** SGL3D's own. Code: `renderer/mod.rs` (`Renderer::resize`, `Renderer::finish_frame`), `stages/antialiasing/mod.rs` (`Antialiasing::resize`).
-- **Guard.** `resize_between_render_and_finish_restarts_history` (`renderer/size_tests.rs`); `upscaled_restarts` (`tests/sgl-3d/tests/scenario_fsr_upscaling.rs`); `a_cut_a_resize_and_another_scene_restart_history`.
+- **Source.** SGL3D's own. Code: `renderer/view.rs` (`View::resize`, `View::settle`), `stages/antialiasing/mod.rs` (`Antialiasing::resize`).
+- **Guard.** `resize_between_render_and_finish_restarts_history` (`renderer/size_tests.rs`); `upscaled_restarts` (`tests/sgl-3d/tests/scenario_fsr_upscaling.rs`); `a_cut_a_resize_and_another_scene_restart_history`; `a_view_keeps_its_history_while_another_appears_resizes_and_leaves` (`tests/sgl-3d/tests/scenario_views.rs`).
 - **Status.** Rule.
 
 #### F-3 A frame rendered but not finished restarts nothing but FSR
 
-- **Rule.** When a frame is rendered and `finish_frame` does not follow, the next render begins with the same `frames`, previous camera and previous time, and every stage continues from the state its last finished frame left (`view::history::Kept`): the DiligentFX context (TAA, Crystal SSR) from its last finished frame index, Velvet, world-space rays, ambient occlusion's temporal pass and the ray-traced shadows from their kept run (frame count and the half of each pair it writes), the shadows' slots, quality and seed too. A frame rendered again therefore reads and writes the same halves of every pair as the first rendering did. The scene commits nothing. Two exceptions: FSR restarts (U-2), and filtered fog does not reproject for one frame (V-5). The renderer settles every stage's kept state once per render (`renderer/frame.rs`, `settle`): finished from `Renderer::finish_frame`, unfinished at the start of the next `render`.
+- **Rule.** When a frame is rendered and `finish_frame` does not follow, the next render begins with the same `frames`, previous camera and previous time, and every stage continues from the state its last finished frame left (`view::history::Kept`): the DiligentFX context (TAA, Crystal SSR) from its last finished frame index, Velvet, world-space rays, ambient occlusion's temporal pass and the ray-traced shadows from their kept run (frame count and the half of each pair it writes), the shadows' slots, quality and seed too. A frame rendered again therefore reads and writes the same halves of every pair as the first rendering did. The scene commits nothing. Two exceptions: FSR restarts (U-2), and filtered fog does not reproject for one frame (V-5). Each view settles every stage's kept state once per render (`View::settle`): finished at the view's first `&mut self` method after `Renderer::finish_frame` committed that frame (the renderer and its views share the last finished attempt), unfinished when the view renders again first. A view method called between `render` and `finish_frame` leaves the render pending.
 - **Raised by.** Dropping an encoded frame; rendering a frame twice; omitting `finish_frame`.
 - **Stays triggered while.** The game never finishes: camera motion is always zero and nothing accumulates.
-- **Source.** SGL3D's own (S3D-4; the History contract's "What a frame commits"). Code: `view/history.rs` (`Kept`, `StageHistory`), `renderer/frame.rs` (`settle`).
+- **Source.** SGL3D's own (S3D-4; the History contract's "What a frame commits"). Code: `view/history.rs` (`Kept`, `StageHistory`), `renderer/view.rs` (`View::settle`).
 - **Guard.** `an_unfinished_frame_restarts_nothing` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`), `kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one` (`view/history.rs`), and the stages' own: `crystal_keeps_its_history_across_an_unfinished_frame`, `velvet_keeps_its_history_across_an_unfinished_frame`, `world_reflections_keep_their_history_across_an_unfinished_frame`, `accumulated_visibility_survives_an_unfinished_frame`, `the_shadow_mask_survives_an_unfinished_frame`.
-- **Status.** Rule. The ray-traced shadow denoiser's classification history is the exception this rule does not yet cover for a submitted frame (S-25).
+- **Status.** Rule.
 
 #### F-4 A frame in which a stage did not run restarts it
 
@@ -146,10 +147,10 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 
 #### F-5 The DiligentFX context follows the TAA flag
 
-- **Rule.** When `Effective::taa` changes, the renderer creates a new DiligentFX context, which starts without history; when neither TAA nor Crystal SSR runs it drops the context. A new context discards TAA's accumulation and closest-motion history, its previous depth and Crystal SSR's histories, and its first frame is unjittered (F-7). TAA and Crystal SSR ramp up from the next frame.
+- **Rule.** When `Effective::taa` changes, the view creates a new DiligentFX context, which starts without history; when neither TAA nor Crystal SSR runs it drops the context. A new context discards TAA's accumulation and closest-motion history, its previous depth and Crystal SSR's histories, and its first frame is unjittered (F-7). TAA and Crystal SSR ramp up from the next frame.
 - **Raised by.** The antialiasing setting, TAA taking over while FSR is chosen but not running or after an FSR failure, a non-`perspective` projection, the TAA diagnostics layer.
 - **Stays triggered while.** Nothing: it needs a setting or projection change. Turning TAA on or off also restarts Crystal SSR, whose inputs did not change.
-- **Source.** SGL3D's own (one context shared as in Hydrogent). Code: `renderer/frame.rs` (`render`), `view/post_fx.rs` (`PostFx::new`).
+- **Source.** SGL3D's own (one context shared as in Hydrogent). Code: `renderer/frame.rs` (`render_view`), `view/post_fx.rs` (`PostFx::new`).
 - **Guard.** None.
 - **Status.** Rule.
 
@@ -158,7 +159,7 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 - **Rule.** When a frame's screen-space method is not Crystal (SSR off, Velvet chosen, or a non-`perspective` projection), the DiligentFX context drops its SSR effect; the next Crystal frame starts a new effect with no history.
 - **Raised by.** Settings, projection changes.
 - **Stays triggered while.** Nothing: it needs a setting or projection change.
-- **Source.** SGL3D's own; a new effect resets as DFX-49 describes. Code: `renderer/frame.rs` (`render`), `view/post_fx.rs` (`PostFx::release_screen_space_reflections`).
+- **Source.** SGL3D's own; a new effect resets as DFX-49 describes. Code: `renderer/frame.rs` (`render_view`), `view/post_fx.rs` (`PostFx::release_screen_space_reflections`).
 - **Guard.** None.
 - **Status.** Rule.
 
@@ -167,7 +168,7 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 - **Rule.** When the DiligentFX context resets its accumulation (F-1, F-4, F-5), `PostFx::prepare` returns zero jitter, so that frame rasterizes unjittered (TAA's mip bias of -0.5 still applies) and the camera history records zero jitter. FSR jitters every frame, reset or not. Jitter resumes on the next frame.
 - **Raised by.** Any TAA reset.
 - **Stays triggered while.** Nothing beyond the resets that cause it.
-- **Source.** Hydrogent `HnPostProcessTask::Prepare`, faithful. Code: `view/post_fx.rs` (`PostFx::prepare`), `renderer/frame.rs` (`render`).
+- **Source.** Hydrogent `HnPostProcessTask::Prepare`, faithful. Code: `view/post_fx.rs` (`PostFx::prepare`), `renderer/frame.rs` (`render_view`).
 - **Guard.** None.
 - **Status.** Rule.
 
@@ -211,14 +212,14 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 
 ### More than one view
 
-#### F-12 One camera history per renderer, one motion history per scene
+#### F-12 A view's history follows its scene's frames
 
-- **Rule.** A `Renderer` holds one camera history and a `Scene` one motion history. The scene records what a frame draws when a renderer's `render` begins it (`Scene::begin_frame`) and commits that record when that renderer's `finish_frame` follows, provided no other frame of the scene began since (F-13). One renderer drawing two cameras reprojects each through the other's matrices, with no reset. With two renderers on one scene, a second `render` before the first renderer's `finish_frame` begins the scene's frame again, so the first `finish_frame` commits nothing of the scene and the second commits the frame both drew; a second renderer whose `render` follows the first's `finish_frame` sees every instance's previous pose equal to its pose (no object motion) and the rigid-change signal already cleared. One renderer alternating two scenes resets every frame (F-1).
-- **Raised by.** Split screen, mirrors, insets, minimaps through a shared renderer or scene.
-- **Stays triggered while.** The game keeps rendering more than one view per frame that way.
-- **Source.** SGL3D's own. Code: `renderer/mod.rs` (`Renderer::finish_frame`), `scene/mod.rs` (`Scene::begin_frame`, `Scene::finish_frame`), `scene/instances.rs` (`Instances::finish_frame`).
-- **Guard.** None.
-- **Status.** Open question O-1. The owner requires more than one view a frame; how each view keeps its history is designed and being implemented, and this entry describes the behaviour until then.
+- **Rule.** A `View` holds one camera history and a `Scene` one motion history. A frame's views all measure object motion from the scene's last finished frame. A view continues only when that frame rendered it; otherwise F-1 resets it. The scene records what a frame draws once, when `Renderer::render` begins its frame (`Scene::begin_frame`), and commits that record at `finish_frame` (F-13); the renderer and its views share the attempt id of the last finished frame, which a view compares with its last render's when it settles it.
+- **Raised by.** A view rendered less often than its scene; a view shown again after being left out.
+- **Stays triggered while.** The view skips frames: it never accumulates.
+- **Source.** Filament (per-view history, `FView::commitFrameHistory`), Bevy and Godot (one-frame scene history: `PreviousGlobalTransform`, the per-instance previous transform). Code: `renderer/mod.rs` (`Renderer::render`, `Renderer::finish_frame`), `renderer/view.rs` (`View::settle`, `View::begin_history`), `scene/mod.rs` (`Scene::begin_frame`, `Scene::finish_frame`, `Scene::last_finished`).
+- **Guard.** `views_match_their_solo_runs`, `a_view_that_skips_a_frame_restarts` (`tests/sgl-3d/tests/scenario_views.rs`); `finish_frame_of_another_scene_commits_nothing`, `a_view_used_between_render_and_finish_keeps_its_history` (`renderer/view_tests.rs`).
+- **Status.** Rule.
 
 #### F-13 Commit takes what the frame drew
 
@@ -242,7 +243,7 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 
 #### F-15 The temporal masks exist only while a writer can mark them
 
-- **Rule.** The renderer holds the reactive and transparency-and-composition masks (R8, render size) when FSR runs, or when TAA runs and the scene holds a blended, transmissive or moving-surface material or draws glow, mist or heat (`Effective::temporal_masks`); otherwise it releases them and TAA binds no responsive masks. The masks keep no history: the first writer of each frame clears them.
+- **Rule.** Each view holds the reactive and transparency-and-composition masks (R8, render size) when FSR runs, or when TAA runs and the scene holds a blended, transmissive or moving-surface material or draws glow, mist or heat (`Effective::temporal_masks`); otherwise it releases them and TAA binds no responsive masks. The masks keep no history: the first writer of each frame clears them.
 - **Raised by.** The scene's content, decided scene-wide rather than by what the frame draws.
 - **Stays triggered while.** Nothing: no history lives in the masks.
 - **Source.** AMD's FSR sample for formats and blends; the allocation policy is SGL3D's own. Code: `renderer/effective.rs` (`resolve`), `view/targets.rs` (`SharedTargets::set_temporal_masks`), `stages/transparent/mod.rs` (`Transparent::encode`).
@@ -254,7 +255,7 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 - **Rule.** A change of antialiasing choice, FSR version or quality, scene resolution or preset restarts every history (F-2); turning TAA on or off restarts TAA and Crystal SSR (F-5); leaving Crystal restarts Crystal SSR (F-6); `occlusion_culling` affects only the cull stage's early phase (F-14); turning world-space reflections on clears the camera cull's LOD selection and the blended list's, switching geometry to its base level with no history signal (M-13). Ray-traced shadow quality restarts that stage (shadows area).
 - **Raised by.** A settings menu.
 - **Stays triggered while.** Nothing: each needs a setting change.
-- **Source.** SGL3D's own. Code: `renderer/mod.rs` (`Renderer::resize`), `renderer/frame.rs` (`render`), `stages/prepare.rs` (`Prepare::run`).
+- **Source.** SGL3D's own. Code: `renderer/view.rs` (`View::resize`), `renderer/frame.rs` (`render_view`), `stages/prepare.rs` (`Prepare::run_view`).
 - **Guard.** As listed under F-2, F-5, F-6, F-14.
 - **Status.** Rule.
 
@@ -269,7 +270,7 @@ The renderer keeps the camera history (`view/history.rs`, `CameraHistory`): the 
 
 ## Motion vectors
 
-Geometry, the sky and blended receivers write unjittered motion into the G-buffer's motion target: current minus previous UV (+y down) in RG, previous minus current view depth in B and its validity in A. Motion is measured against the scene's motion history (each moving instance's pose, deformation slot and shader data in the last finished frame, each material's parameter block then) and the renderer's camera and time history. Where content changes without a motion vector, the transparent stage writes the reactive and transparency-and-composition masks instead. A continuously running game most often trips the rigid-change signal (M-9, raised by every moving instance), the composition mark on every material with a game shader (M-16), and the per-pixel marks of blended surfaces and effects (M-11, M-17a–c).
+Geometry, the sky and blended receivers write unjittered motion into the G-buffer's motion target: current minus previous UV (+y down) in RG, previous minus current view depth in B and its validity in A. Motion is measured against the scene's motion history (each moving instance's pose, deformation slot and shader data in the last finished frame, each material's parameter block then) and each view's camera and time history. Where content changes without a motion vector, the transparent stage writes the reactive and transparency-and-composition masks instead. A continuously running game most often trips the rigid-change signal (M-9, raised by every moving instance), the composition mark on every material with a game shader (M-16), and the per-pixel marks of blended surfaces and effects (M-11, M-17a–c).
 
 ### Encoding
 
@@ -296,7 +297,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Rule.** Every frame, geometry measures motion between `stable_view_projection` (this frame's unjittered view-projection) and `previous_view_projection` (the last finished frame's, unjittered); jitter is applied only to the raster position, as a clip-space offset of 2 × jitter × w. Consumers that reproject rasterized data re-apply jitter themselves (the DiligentFX previous camera, the cull pyramid).
 - **Raised by.** Every frame.
 - **Stays triggered while.** Nothing. The current and previous clip positions are evaluated in the same order (the view-projection times the pose-transformed position), so an unchanged camera and pose write exactly zero motion at any distance from the origin; until the 2026-11-18 audit's B-12 the previous one was `(previous view-projection × previous model) × position`, which wrote 1.9e-4 px of motion 100 m sideways of the origin. Motion goes through a precomposed projection-times-view while raster positions apply view then projection, so the raster position and the motion differ by rounding far from the origin.
-- **Source.** Diligent `TemporalAntiAliasing::GetJitteredProjMatrix` and AMD's FSR jitter documentation. Code: `stages/prepare.rs` (`Prepare::run`), `shading/vertex.wgsl` (`scene_raster_clip`), `shading/material_shader.wgsl` (`vertex`).
+- **Source.** Diligent `TemporalAntiAliasing::GetJitteredProjMatrix` and AMD's FSR jitter documentation. Code: `stages/prepare.rs` (`Prepare::run_view`), `shading/vertex.wgsl` (`scene_raster_clip`), `shading/material_shader.wgsl` (`vertex`).
 - **Guard.** `motion_vectors_match_the_script`, `a_still_scene_far_from_the_origin_writes_no_motion`, `jitter_is_sub_pixel_and_never_in_the_motion` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`).
 - **Status.** Rule.
 
@@ -371,7 +372,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Rule.** The camera's GPU cull and the blended list choose each candidate's level every frame, the coarsest whose projected error is at most 0.5 px (`LOD_PIXELS`), with no hysteresis; a switch changes the triangles drawn while motion is measured on the new level, and raises neither the rigid-change signal nor a mask. While world-space reflections run, both use the base level only.
 - **Raised by.** Camera distance or field-of-view changes, moving objects, toggling world-space reflections.
 - **Stays triggered while.** An object or camera holds near a threshold distance and flips level every frame; the change is bounded to half a pixel of error.
-- **Source.** SGL3D's own error metric over Bevy's meshlet culling form. Code: `stages/cull.wgsl` (`cull_level`), `view/lod.rs` (`LodSelector`), `stages/prepare.rs` (`Prepare::run`).
+- **Source.** SGL3D's own error metric over Bevy's meshlet culling form. Code: `stages/cull.wgsl` (`cull_level`), `view/lod.rs` (`LodSelector`), `stages/prepare.rs` (`Prepare::run_view`).
 - **Guard.** `gpu_lod_is_never_coarser_than_the_cpu_admits` (`stages/cull/tests.rs`) guards selection only.
 - **Status.** Rule.
 
@@ -383,7 +384,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Raised by.** Every frame; a game turning `Backdrop::Environment::yaw` adds the turn.
 - **Stays triggered while.** Nothing. A turning panorama is motion, as a turning camera is: TAA arms the hold where it moves 0.01 px a frame or more (T-22, T-23) and reprojects it, and FSR and motion blur follow it.
 - **Known limits.** The turn is the f32 difference of the two yaws: a yaw the game lets grow without wrapping loses precision in the panorama's sampling and its motion alike.
-- **Source.** Diligent's `EnvMap.psh` `GetMotionVector`, Bevy's background motion vectors (`background_motion_vectors.wesl`) for the camera's rotation; neither turns its environment (Diligent's `g_EnvironmentRotation`, Bevy's `Skybox::rotation`) in the motion, which is SGL3D's own (2026-11-18 history audit, O-11). Code: `stages/opaque/sky.wgsl` (`sky_motion`); `view/history.rs` (`CameraHistory::set_backdrop`); `renderer/mod.rs` (`Renderer::begin_history`).
+- **Source.** Diligent's `EnvMap.psh` `GetMotionVector`, Bevy's background motion vectors (`background_motion_vectors.wesl`) for the camera's rotation; neither turns its environment (Diligent's `g_EnvironmentRotation`, Bevy's `Skybox::rotation`) in the motion, which is SGL3D's own (2026-11-18 history audit, O-11). Code: `stages/opaque/sky.wgsl` (`sky_motion`); `view/history.rs` (`CameraHistory::set_backdrop`); `renderer/view.rs` (`View::begin_history`).
 - **Guard.** `a_turn_past_the_view_moves_every_pixel_off_screen_along_the_turn`, `an_orthographic_camera_records_finite_motion` (`stages/opaque/tests.rs`); `motion_vectors_match_the_script` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`); `a_turning_backdrop_moves_the_sky` (`tests/sgl-3d/tests/scenario_history_taa.rs`): a still camera under a turning panorama, a camera turning with it, a cut, and a colour replaced by a panorama, against the script.
 - **Status.** Rule.
 
@@ -401,7 +402,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Rule.** A probe-capture face's previous view-projection is its view-projection and its frame data's previous time is its own; shadow views have none. These views write no camera or time motion.
 - **Raised by.** Probe captures and shadow passes.
 - **Stays triggered while.** Nothing.
-- **Source.** SGL3D's own. Code: `view/mod.rs` (`View::probe_face`, `frame_uniform`).
+- **Source.** SGL3D's own. Code: `view/mod.rs` (`ViewData::probe_face`, `frame_uniform`).
 - **Guard.** None.
 - **Status.** Rule.
 
@@ -445,7 +446,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 
 #### M-17b Glow marks reactivity by the light it adds to the displayed frame
 
-- **Rule.** While the frame has the temporal masks, additive glow writes reactive = max(r, g, b) × a, capped at 0.9, of its soft-faded radiance times the frame's exposure multiplier, and transparency and composition 0, accumulated as the blended draws accumulate theirs (M-11). The multiplier is the one the tone map and FSR apply: the fixed exposure's in a frame of fixed exposure; with automatic exposure, the one the last rendered frame adapted to, since this frame's is metered from the frame the glow is drawn onto (it differs by one frame's adaptation step, and in a renderer's first frame of automatic exposure it is 0, so that frame's glow marks nothing; that frame restarts history anyway).
+- **Rule.** While the frame has the temporal masks, additive glow writes reactive = max(r, g, b) × a, capped at 0.9, of its soft-faded radiance times the frame's exposure multiplier, and transparency and composition 0, accumulated as the blended draws accumulate theirs (M-11). The multiplier is the one the tone map and FSR apply: the fixed exposure's in a frame of fixed exposure; with automatic exposure, the one the last rendered frame adapted to, since this frame's is metered from the frame the glow is drawn onto (it differs by one frame's adaptation step, and in a view's first frame of automatic exposure it is 0, so that frame's glow marks nothing; that frame restarts history anyway).
 - **Raised by.** Glow effects (`Scene::update_effects`), unless the effects diagnostics layer is off.
 - **Stays triggered while.** The glow is on screen, every frame by design; a glow whose displayed light, brightest channel times alpha, reaches 0.9 marks its pixels at the cap.
 - **Source.** AMD FidelityFX SDK 1.1.4 sample `particlerender.hlsl` 249–254 (reactivity max(r, g, b) × alpha of its particle colour, at the sample's exposure of 1); FSR multiplies its input by the exposure before every comparison (`ffx_fsr2_common.h` `PrepareRgb`); the 0.9 cap per AMD's documentation. Code: `stages/transparent/glow.wgsl` (`glow_soft_masked_fs`), `stages/transparent/effects.rs` (`Effects::depth_group`), `stages/exposure.rs` (`Exposure::view`).
@@ -581,7 +582,7 @@ pixel's motion hold is set to 12.
 
 #### T-4 SGL3D's reset decision
 
-- **Rule.** When the renderer's history is not valid (T-5), or the DiligentFX context
+- **Rule.** When the view's history is not valid (T-5), or the DiligentFX context
   did not run in the view's last finished frame (its kept frame index is not this
   frame's `HistoryFrame::frames` less one, or none), `PostFx::prepare` asks TAA (and
   Crystal SSR) to reset (T-1), renders the frame without jitter, clears the previous
@@ -605,7 +606,7 @@ pixel's motion hold is set to 12.
 
 #### T-5 Renderer resets
 
-- **Rule.** When `FrameInput::camera_cut` is set, a `Renderer::resize` changed the targets
+- **Rule.** When `FrameInput::camera_cut` is set, a `View::resize` changed the targets
   (any size, the High preset's bloom targets, or FSR started, stopped or recreated), or
   the scene differs from the last finished frame's, the frame's history is not valid and
   TAA resets through T-4 (the sources are F-1 and F-2) over the whole view.
@@ -613,14 +614,14 @@ pixel's motion hold is set to 12.
 - **Stays triggered while.** Nothing: each is one frame. A preset change between Low and
   High resets TAA even at an unchanged size.
 - **Source.** SGL3D's own.
-  Code: `crates/sgl-3d/src/renderer/mod.rs` (`Renderer::resize`, `begin_history`).
+  Code: `crates/sgl-3d/src/renderer/view.rs` (`View::resize`, `View::begin_history`).
 - **Guard.** `a_cut_a_resize_and_another_scene_restart_history`
   (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`).
 - **Status.** Rule.
 
 #### T-6 TAA dropped with the post-effect context
 
-- **Rule.** When a frame runs neither TAA nor Crystal SSR, the renderer drops its
+- **Rule.** When a frame runs neither TAA nor Crystal SSR, the view drops its
   post-effect context; when the frame's TAA choice differs from the context's, it
   recreates it. Either discards TAA's history over the whole view; the new context
   starts with T-3 and T-4.
@@ -1227,7 +1228,7 @@ pixel's motion hold is set to 12.
 
 FSR keeps its history in AMD's context: the upscaled colour, per-pixel locks, FSR2's temporal reactive factor and
 FSR3's accumulation counter, all reprojected by the surface depth and motion at the render size. SGL3D restarts it
-on the renderer's one reset, on any frame FSR did not see, and on a new render size, version or scene size;
+on the view's one reset, on any frame FSR did not see, and on a new render size, version or scene size;
 everything else is AMD's own rejection, shipped as a faithful port (`sp-fidelity`, FidelityFX SDK 1.1.4). A
 chase-camera racing game trips most: AMD's reconstructed previous depth marking the followed vehicle's lowest band
 disoccluded at speed (U-17, U-40), the motion weights that keep moving scenery on a few frames of history (U-28,
@@ -1243,9 +1244,9 @@ units, with `view_space_to_meters_factor` 1. AMD file names abbreviate
 
 ### SGL3D's integration
 
-#### U-1 Reset on the renderer's history reset
+#### U-1 Reset on the view's history reset
 
-- **Rule.** When the renderer resets history (`FrameInput::camera_cut`, a `Renderer::resize` that changed the
+- **Rule.** When the view resets history (`FrameInput::camera_cut`, a `View::resize` that changed the
   targets or restarted FSR, or a different `Scene`), the FSR adapter dispatches with `reset` set, and AMD discards
   every pixel's history, locks and luminance over the whole view (U-21, U-38). FSR2 reaches full accumulation
   weight after about 9 frames (U-27); FSR3 shows two frames without history and full weight on the fourth (U-46).
@@ -1253,7 +1254,7 @@ units, with `view_space_to_meters_factor` 1. AMD file names abbreviate
 - **Stays triggered while.** Nothing: it lasts one frame, unless the game sets `camera_cut` or changes its
   sizes every frame.
 - **Source.** SGL3D's own; AMD's documentation asks for a reset on camera jump cuts.
-  Code: `crates/sgl-3d/src/renderer/mod.rs` (`begin_history`), `crates/sgl-3d/src/stages/antialiasing/fsr.rs`
+  Code: `crates/sgl-3d/src/renderer/view.rs` (`View::begin_history`), `crates/sgl-3d/src/stages/antialiasing/fsr.rs`
   (`Fsr::prepare`, `Fsr::dispatch`).
 - **Guard.** `a_cut_a_resize_and_another_scene_restart_history` (fsr2, fsr3) in
   `tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`; `restarts::fsr2`, `restarts::fsr3`
@@ -1296,14 +1297,14 @@ units, with `view_space_to_meters_factor` 1. AMD file names abbreviate
 
 - **Rule.** When the render size differs from the last FSR frame's, the adapter resets; when the scene size or the
   FSR version changes, the stage destroys the context and creates a new one, whose first dispatch is AMD's first
-  execution, and the renderer resets every history. A version change resets even at equal sizes. Recovery as U-1.
+  execution, and the view resets every history. A version change resets even at equal sizes. Recovery as U-1.
 - **Raised by.** `Settings::fsr_quality`, the output size, device scale, `SceneResolution`, the preset's scene
   cap, `Antialiasing::Fsr2`/`Fsr3`.
 - **Stays triggered while.** Nothing, unless a game changes resolution every frame: there is no dynamic-resolution
   path, and every render-size change resets.
 - **Source.** SGL3D's own, as AMD's sample recreates its context (`UpdateFSRContext`).
   Code: `crates/sgl-3d/src/stages/antialiasing/mod.rs` (`Antialiasing::resize`),
-  `crates/sgl-3d/src/renderer/mod.rs` (`Renderer::resize`).
+  `crates/sgl-3d/src/renderer/view.rs` (`View::resize`).
 - **Guard.** `restarts::fsr2`, `restarts::fsr3` (`upscaled_restarts`, quality changes) in
   `tests/sgl-3d/tests/scenario_fsr_upscaling.rs`.
 - **Status.** Rule.
@@ -1311,11 +1312,11 @@ units, with `view_space_to_meters_factor` 1. AMD file names abbreviate
 #### U-5 Failure falls back to TAA
 
 - **Rule.** When FSR's context creation or a dispatch fails, the stage drops the context and its history and
-  remembers the failure for that version for the renderer's life; that frame presents the render-size composite
+  remembers the failure for that version for the view's life; that frame presents the render-size composite
   without antialiasing, TAA runs from then on with a new context, and the next `resize` changes the targets and
   resets every history.
 - **Raised by.** Device or driver errors.
-- **Stays triggered while.** The renderer lives: the failed version never runs again.
+- **Stays triggered while.** The view lives: the failed version never runs again in it.
 - **Source.** SGL3D's own. Code: `crates/sgl-3d/src/stages/antialiasing/mod.rs` (`Antialiasing::resize`,
   `Antialiasing::encode`), `crates/sgl-3d/src/renderer/effective.rs` (`antialiasing`).
 - **Guard.** `a_failed_fsr_dispatch_completes_the_frame_and_taa_takes_over` and
@@ -1981,7 +1982,7 @@ Three reflection paths keep temporal history: Crystal (DiligentFX screen-space r
 reflections with Wicked Engine's temporal pass) and world-space rays (Wicked's RT reflection
 denoiser). Velvet and world rays accumulate through one shared temporal reprojection. No
 reflection path reads a frame-wide or scene-wide motion signal: whole-view restarts come only
-from the renderer's reset, a frame the stage did not run in, a resize or a settings change. A continuously
+from the view's reset, a frame the stage did not run in, a resize or a settings change. A continuously
 running game trips the per-pixel rules: Crystal's surface-history discard under camera motion
 (R-9), roughness-cutoff re-entry under jitter (R-6, R-25), world rays filling in where the
 screen-space method lets go (R-30), and the variance resets that keep a blur on wherever a
@@ -1989,9 +1990,9 @@ rejection repeats (R-16, R-29).
 
 ### Crystal screen-space reflections
 
-#### R-1 Crystal restarts on the renderer's reset
+#### R-1 Crystal restarts on the view's reset
 
-- **Rule.** When `HistoryFrame::valid` is false (a camera cut, a `Renderer::resize` that
+- **Rule.** When `HistoryFrame::valid` is false (a camera cut, a `View::resize` that
   changed the targets, FSR starting or stopping, or a different `Scene`), `PostFx::prepare`
   raises `reset_accumulation`; `ScreenSpaceReflection::reset_history` clears the radiance and
   variance histories to 0 and the temporal pass (`g_HistoryReset` = 1) outputs this frame's
@@ -2017,7 +2018,7 @@ rejection repeats (R-16, R-29).
   one (`last_frame_idx`, `None` before the first execution), except that a repeated index
   repeats that frame, its reset included. A frame rendered again reads and writes the same
   halves: its index is the first rendering's.
-- **Raised by.** A frame without Crystal (F-4, F-6), the renderer's reset (F-1).
+- **Raised by.** A frame without Crystal (F-4, F-6), the view's reset (F-1).
 - **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** SGL3D's own (DFX-12, DFX-49). Code: `sgl-3d/src/view/post_fx.rs`
   (`PostFx::prepare`, `PostFx::settle`), `sgl-post-fx/src/screen_space_reflection.rs` (`reset_history`).
@@ -2045,15 +2046,15 @@ rejection repeats (R-16, R-29).
 #### R-4 Crystal is dropped with its context
 
 - **Rule.** When the effective method is not Crystal or screen-space reflections are off, the
-  renderer drops Crystal (`PostFx::release_screen_space_reflections`); when `effective.post_fx`
-  (TAA or Crystal) turns off or `effective.taa` differs from the living context's, the renderer
+  view drops Crystal (`PostFx::release_screen_space_reflections`); when `effective.post_fx`
+  (TAA or Crystal) turns off or `effective.taa` differs from the living context's, the view
   recreates the whole `PostFx`. Either way Crystal's next frame has no history (R-2). Whole
   stage; one frame.
 - **Raised by.** Changing the reflection method, turning SSR off, switching antialiasing between
   TAA and SMAA, Off or FSR (including the effective fallback to TAA when FSR does not run).
 - **Stays triggered while.** Nothing: it needs a setting change. A game sees reflections restart
   when the player changes antialiasing, although Crystal's history does not depend on TAA.
-- **Source.** SGL3D's own. Code: `sgl-3d/src/renderer/frame.rs` (`render`),
+- **Source.** SGL3D's own. Code: `sgl-3d/src/renderer/frame.rs` (`render_view`),
   `sgl-3d/src/view/post_fx.rs` (`PostFx::new`, `release_screen_space_reflections`).
 - **Guard.** `switching_off_discards_history` (`tests/sgl-3d/tests/screen_space_reflections.rs`).
   The TAA toggle: None.
@@ -2442,7 +2443,7 @@ rejection repeats (R-16, R-29).
   frame, or after the stage was dropped (method not Velvet, SSR off), its count is 0 and the
   temporal pass writes this frame's trace to output and history. Whole stage; accumulation
   resumes the next frame at 0.95. A frame rendered again reads and writes the same halves.
-- **Raised by.** The renderer's reset, frames without screen-space reflections, setting changes,
+- **Raised by.** The view's reset, frames without screen-space reflections, setting changes,
   resizes.
 - **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** SGL3D's own, the DiligentFX TAA continuity rule. Code:
@@ -2505,7 +2506,7 @@ rejection repeats (R-16, R-29).
   restart. A `Moving` <-> `All` change, the hardware or portable path, and a Crystal <-> Velvet
   switch restart nothing: earlier accumulation blends into the new configuration over about
   20 frames. A frame rendered again reads and writes the same halves.
-- **Raised by.** The renderer's reset, resizes, toggling SSR or world rays.
+- **Raised by.** The view's reset, resizes, toggling SSR or world rays.
 - **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** SGL3D's own; Wicked writes only colour on its first frame. Code:
   `sgl-3d/src/stages/reflections/world.rs` (`WorldReflections::encode`),
@@ -2614,7 +2615,7 @@ discard nothing a returning light could use, and the velocity refresh on streami
 
 #### S-1 Renderer reset restarts the stage
 
-- **Rule.** When the frame's history is not valid (the renderer's one reset: `camera_cut`, a
+- **Rule.** When the frame's history is not valid (the view's one reset: `camera_cut`, a
   resize that changed the targets, another `Scene`), the ray-traced shadow stage sets its frame
   count to 0, so every slot takes its current trace in the temporal blend and every denoised lane
   starts with zero moments and its current value as history, over the whole stage. The previous
@@ -2649,7 +2650,7 @@ discard nothing a returning light could use, and the velocity refresh on streami
 
 - **Rule.** When the render size differs from the size the stage's targets were made at, the stage
   makes new targets, forgets its bind groups and restarts as in S-1.
-- **Raised by.** Resize, FSR quality or scene-resolution changes (which also raise the renderer reset).
+- **Raised by.** Resize, FSR quality or scene-resolution changes (which also raise the view's reset).
 - **Stays triggered while.** Nothing: it needs a size change.
 - **Source.** SGL3D's own. Code: `src/stages/shadows/traced.rs` (`TracedShadows::encode`).
 - **Guard.** None.
@@ -3000,20 +3001,20 @@ discard nothing a returning light could use, and the velocity refresh on streami
   the quality its history was made at and its seed as that frame left them
   (`Kept<TracedKept>`), so a frame rendered again assigns the same slots, draws with the same
   seed and reads and writes the same halves. `Slots::assign` works from the kept copy. A stage
-  that did not run in the last finished frame keeps nothing and restarts as in S-1. Not yet
-  covered: a frame whose commands were submitted overwrote the denoiser's classification history
-  in place (`denoise::Targets::scratch`, written by its first filter pass and read by the next
-  frame's tile classification, as Wicked's `rtshadow.scratch[i][1]`), so the frame rendered
-  again reads the attempt's filtered result there; a dropped encoder leaves it untouched.
+  that did not run in the last finished frame keeps nothing and restarts as in S-1. Every GPU
+  history the stage keeps is a pair indexed by its run: the temporal mask, the denoiser's moments
+  and the denoiser's filter history, which its first filter pass writes and the next frame's tile
+  classification reads (`denoise::Targets::history`, where Wicked keeps one texture,
+  `rtshadow.scratch[i][1]`), so a frame whose commands were submitted and a frame whose encoder
+  was dropped leave the frame rendered again the same history.
 - **Raised by.** A game that renders a frame and abandons or re-renders it.
-- **Stays triggered while.** Nothing for a dropped encoder; one frame of the denoiser's history
-  for a submitted one.
+- **Stays triggered while.** Nothing.
 - **Source.** SGL3D's own. Code: `src/stages/shadows/traced.rs` (`TracedShadows::encode`,
-  `TracedShadows::settle`), `src/view/history.rs` (`Kept`).
+  `TracedShadows::settle`), `src/stages/shadows/traced/denoise.rs` (`Targets`,
+  `Denoiser::encode`), `src/view/history.rs` (`Kept`).
 - **Guard.** `the_shadow_mask_survives_an_unfinished_frame` (`src/stages/shadows/traced/tests.rs`,
-  its encoder dropped).
-- **Status.** Rule for the kept state; the submitted case's denoiser history is reported to the
-  2026-11-18 mission for a decision.
+  its encoder dropped and its commands submitted).
+- **Status.** Rule.
 
 #### S-26 Per-frame ray draw
 
@@ -3404,7 +3405,7 @@ game drops it only by resets, resizes and frames without fog; a changing `Fog::l
 
 The dynamic GI stage keeps world-space probe state: each probe's irradiance estimators, depth
 moments, offset and class, stored at its lattice coordinate plus the volume's scroll. It takes no
-renderer reset; it restarts for another scene or lattice and after a finished frame without it,
+view reset; it restarts for another scene or lattice and after a finished frame without it,
 clears the planes a scroll brings in, and otherwise follows changes through Wicked's multiscale mean
 estimator. A continuously running game trips its scroll clearing (G-4) while travelling, and an
 unsnapped or float-noisy placement (G-2) restarts it every frame.
@@ -3565,7 +3566,7 @@ unsnapped or float-noisy placement (G-2) restarts it every frame.
 ## Exposure and other stages
 
 Automatic exposure keeps its adapted correction as history and snaps to its target only on a
-renderer reset or a switch from fixed exposure. The other post stages keep no history. Two
+view's reset or a switch from fixed exposure. The other post stages keep no history. Two
 signals cross into other areas: the sky's motion and the temporal masks the transparent stage
 writes, which TAA and FSR consume. On a still view the exposure moves only as far as the jitter
 moves the metered frame, below one output code (E-3).

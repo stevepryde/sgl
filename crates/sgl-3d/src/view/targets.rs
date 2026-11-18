@@ -216,7 +216,7 @@ impl SharedTargets {
 }
 
 /// One probe-capture face's attachments, which the capture's opaque pass
-/// writes; its view is `View::probe_face`.
+/// writes; its view is `ViewData::probe_face`.
 pub(crate) struct CaptureFace {
     pub color: wgpu::TextureView,
     pub motion: wgpu::TextureView,

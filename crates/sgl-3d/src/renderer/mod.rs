@@ -1,16 +1,23 @@
-//! The renderer: it owns the stages, selects and orders them each frame from
-//! the effective configuration (`frame.rs`, resolved in `effective.rs`), and
-//! owns and lends them what they share (`view`): the frame's targets and
-//! sizes, group 0's bindings, the geometry pipeline cache, the frame's views,
-//! the camera history and DiligentFX's post-effect context. A probe capture
-//! (`probe_capture.rs`) orders the prepare, shadow and opaque stages and the
-//! probe prefilter over its own views. It holds no pipelines or shaders of
-//! its own.
+//! The renderer and its views. `Renderer` (`shared.rs`) is what every view
+//! of a scene shares: the bind group layouts, the geometry pipeline cache,
+//! prepare's scene part, the deform and dynamic GI stages, the device's
+//! ray-query form and the frame boundary. `View` (`view.rs`) is one
+//! camera's frame: its targets and sizes, group 0's bindings, its views,
+//! its camera history, DiligentFX's post-effect context and every other
+//! stage. A frame (`frame.rs`) runs the scene's frame work once, then
+//! orders each view's stages from its effective configuration (resolved in
+//! `effective.rs`). A probe capture (`probe_capture.rs`) orders the
+//! prepare, shadow and opaque stages and the probe prefilter over its own
+//! views. It holds no pipelines or shaders of its own.
+#[cfg(any(test, feature = "diagnostics"))]
+mod diagnostics;
 pub(crate) mod effective;
 pub(crate) mod frame;
 pub(crate) mod probe_capture;
+mod shared;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod test_frame;
+mod view;
 
 #[cfg(all(test, feature = "diagnostics", not(target_arch = "wasm32")))]
 mod diagnostics_tests;
@@ -21,437 +28,109 @@ mod shader_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod size_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod view_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod volume_path_tests;
 
+use crate::Scene;
 use crate::scene::rays::acceleration::RayTracingStats;
-use crate::settings::{Antialiasing, DynamicGiQuality, Settings};
+use crate::settings::{DynamicGiQuality, Settings};
 use crate::shading::bind::BindingTier;
-use crate::stages::shadows::local::LocalShadowStats;
-use crate::stages::{
-    antialiasing, cull::Cull, deform::Deform, dynamic_gi::DynamicGi, exposure::Exposure,
-    fog::VolumetricFog, motion_blur::MotionBlur, opaque::Opaque, post::Post, prepare::Prepare,
-    reflections::Reflections, shadows::Shadows, shadows::traced::TracedShadows,
-    transparent::Transparent,
-};
-use crate::view::FrameViews;
-use crate::view::bindings::FrameBindings;
-use crate::view::draw_list::GeometryStats;
-use crate::view::draw_list::readback::StatisticsReadback;
-use crate::view::history::{CameraFrame, CameraHistory, HistoryFrame};
-use crate::view::pipelines::{GeometryPipelines, LayerConstants};
-use crate::view::post_fx::PostFx;
-use crate::view::targets::{SharedTargets, Sizes};
-use crate::{FrameInput, Scene};
-#[cfg(feature = "diagnostics")]
-use crate::{ModelId, SceneError};
+use crate::view::pipelines::LayerConstants;
+use shared::Shared;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+pub use view::{View, ViewError, ViewFrame};
 
-/// Renders a [`Scene`] into a caller's texture, one frame at a time: call
-/// `resize` (cheap when nothing changed), then `render` into an encoder, and
-/// `finish_frame` after submitting it. It owns every target, pipeline and
-/// history; the scene owns content.
+/// What every view of a [`Scene`] shares: the geometry pipelines and the
+/// bind group layouts, the deform stage, the dynamic GI stage with its
+/// probes, the device's ray-query form, and the frame boundary. Each frame,
+/// after editing the scene: [`View::resize`] each view (cheap when nothing
+/// changed), [`Renderer::render`] the scene's views into an encoder, submit
+/// it, then [`Renderer::finish_frame`]. It reads the scene and does not
+/// change its content. It shows one scene at a time: another scene
+/// specialises its pipelines again and restarts its dynamic GI, so a game
+/// that shows two scenes at once holds a renderer for each.
 pub struct Renderer {
-    output_encodes_srgb: bool,
-    sizes: Sizes,
-    /// Whether the post stage's bloom targets were made full size.
-    bloom_targets: bool,
-    targets: SharedTargets,
-    views: FrameViews,
-    bindings: FrameBindings,
-    pipelines: GeometryPipelines,
-    /// DiligentFX's post-effect context, while TAA or Crystal SSR runs.
-    post_fx: Option<PostFx>,
-    prepare: Prepare,
-    deform: Deform,
-    cull: Cull,
-    /// The camera's geometry statistics, read back without blocking.
-    statistics: StatisticsReadback,
-    /// The dynamic GI stage, on the Extended binding tier alone.
-    dynamic_gi: Option<DynamicGi>,
-    shadows: Shadows,
-    traced_shadows: TracedShadows,
-    fog: VolumetricFog,
-    opaque: Opaque,
-    reflections: Reflections,
-    transparent: Transparent,
-    exposure: Exposure,
-    antialiasing: antialiasing::Antialiasing,
-    motion_blur: MotionBlur,
-    post: Post,
-    history: CameraHistory,
-    /// The device traces rays in hardware, in this form.
-    ray_form: Option<crate::view::trace_paths::DeviceRayForm>,
-    /// Targets changed since the last finished frame was rendered: history
-    /// restarts.
-    pending_reset: bool,
-    /// Counts target changes, so `finish_frame` keeps a reset requested
-    /// after the frame it commits was rendered.
-    targets_generation: u64,
-    /// The scene of the last finished frame.
-    last_scene: Option<u64>,
-    /// The last rendered frame's history, scene and targets generation,
-    /// which `finish_frame` commits.
-    rendered: Option<(HistoryFrame, u64, u64)>,
-    /// The numerical frame probe, once a frame asked for it.
-    #[cfg(feature = "diagnostics")]
-    probe: Option<crate::stages::frame_probe::FrameProbe>,
-    /// Which view completed the last rendered frame's scene
-    /// (`DiagnosticTarget::Antialiased`).
-    #[cfg(any(test, feature = "diagnostics"))]
-    completed: Option<crate::view::frame::Completed>,
-}
-
-/// Why a renderer could not be created.
-#[derive(Debug)]
-pub enum RendererError {
-    /// SMAA's lookup textures did not decode.
-    LookupTextures(image::ImageError),
-    /// The surface requires an unsupported transfer or format/colour-space pair.
-    UnsupportedSurfaceOutput {
-        format: wgpu::TextureFormat,
-        color_space: wgpu::SurfaceColorSpace,
-    },
-}
-
-impl std::fmt::Display for RendererError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::LookupTextures(error) => write!(f, "SMAA lookup textures: {error}"),
-            Self::UnsupportedSurfaceOutput {
-                format,
-                color_space,
-            } => {
-                write!(
-                    f,
-                    "unsupported SGL3D surface output: {format:?} in {color_space:?}"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for RendererError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::LookupTextures(error) => Some(error),
-            Self::UnsupportedSurfaceOutput { .. } => None,
-        }
-    }
+    /// What every view of the scene shares.
+    shared: Shared,
+    /// The scene frame attempt of the last `render`, until `finish_frame`
+    /// commits it.
+    rendered: Option<u64>,
+    /// The attempt id of the last finished frame, 0 before one (no attempt
+    /// is 0), which each of the renderer's views holds too: a view settles
+    /// its last render as finished when it is this one.
+    finished: Arc<AtomicU64>,
 }
 
 impl Renderer {
-    /// Whether shaders must write sRGB-encoded values into this renderer's
-    /// output. Use the same transfer for UI composed directly over the scene;
-    /// false means linear values (including hardware sRGB attachment encoding).
-    pub fn output_encodes_srgb(&self) -> bool {
-        self.output_encodes_srgb
-    }
-
-    /// Renders into a composition texture at `output_size` physical pixels.
-    /// Float textures hold display-referred linear sRGB on both platforms.
-    /// An sRGB attachment performs its transfer; other unorm outputs receive
-    /// sRGB-encoded colour. Use [`Self::new_surface`] for direct presentation.
-    pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output_format: wgpu::TextureFormat,
-        output_size: [u32; 2],
-        device_scale: f32,
-        settings: &Settings,
-    ) -> Result<Self, RendererError> {
-        Self::with_output(
-            device,
-            queue,
-            crate::stages::post::Output::texture(output_format),
-            output_size,
-            device_scale,
-            settings,
-        )
-    }
-
-    /// Renders directly to a surface configured with `config`. Its format and
-    /// colour space determine the display transfer, including browser float
-    /// canvases. Supports Auto, sRGB, extended sRGB and extended linear sRGB.
-    /// Pass `surface.get_capabilities(&adapter)` from the configured surface so
-    /// native Auto float output follows its actual linear/sRGB capability.
-    /// Recreate the renderer when the surface format or colour space changes.
-    pub fn new_surface(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        config: &wgpu::SurfaceConfiguration,
-        capabilities: &wgpu::SurfaceCapabilities,
-        device_scale: f32,
-        settings: &Settings,
-    ) -> Result<Self, RendererError> {
-        let output = crate::stages::post::Output::surface(
-            config,
-            capabilities,
-            device.adapter_info().backend,
-        )
-        .ok_or(RendererError::UnsupportedSurfaceOutput {
-            format: config.format,
-            color_space: config.color_space,
-        })?;
-        Self::with_output(
-            device,
-            queue,
-            output,
-            [config.width, config.height],
-            device_scale,
-            settings,
-        )
-    }
-
-    fn with_output(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        output: crate::stages::post::Output,
-        output_size: [u32; 2],
-        device_scale: f32,
-        settings: &Settings,
-    ) -> Result<Self, RendererError> {
-        let scene = effective::scene_size(
-            output_size,
-            settings.preset,
-            settings.scene_resolution,
-            device_scale,
-        );
-        let sizing = effective::sizing(settings);
-        let mut antialiasing = antialiasing::Antialiasing::default();
-        let (render, _) = antialiasing.resize(device, scene, sizing.fsr);
-        let sizes = Sizes {
-            render,
-            scene,
-            output: output_size,
-        };
-        let views = FrameViews::new(device);
-        let shadows = Shadows::new(device, settings.shadow_quality);
-        let lit = crate::shading::bind::lit(device, BindingTier::of(&device.limits()));
-        let fog = VolumetricFog::new(device, &lit.layout);
-        let scene_layout = crate::shading::bind::scene(device);
-        let dynamic_gi = (lit.tier == BindingTier::Extended)
-            .then(|| DynamicGi::new(device, &lit, &scene_layout));
-        let bindings = FrameBindings::new(
-            device,
-            lit,
-            &views,
-            shadows.maps(),
-            fog.volume(),
-            dynamic_gi.as_ref().map(DynamicGi::probes),
-        );
-        let layers = LayerConstants::new(&settings.diagnostics_in_effect().disable);
-        let pipelines = GeometryPipelines::new(
-            device,
-            &bindings.lit,
-            [
-                &bindings.shadow,
-                &bindings.scene,
-                &bindings.blended,
-                &bindings.shadow_mask,
-                &bindings.caster_positions,
-            ],
-            layers,
-        );
-        let targets = SharedTargets::new(device, render, false);
-        // The form recorded for the device's backend
-        // (`shading::scene_rays::METAL_FORM`, `LOWERED_FORM`).
-        let ray_form = crate::scene::rays::acceleration::supported(device).then(|| {
-            crate::view::trace_paths::DeviceRayForm::new(crate::shading::RayQueryForm::of_backend(
-                device.adapter_info().backend,
-            ))
-        });
-        let cull = Cull::new(device);
-        let exposure = Exposure::new(device);
-        let first_frame = effective::first_frame(
-            settings,
-            effective::Device {
-                fsr_running: antialiasing.fsr_running(),
-                fused_supported: pipelines.fused_supported,
-                occlusion_supported: cull.occlusion_supported(),
-                ray_queries: ray_form.as_ref().map(|form| form.form()),
-                tier: pipelines.tier,
-            },
-        );
-        Ok(Self {
-            output_encodes_srgb: output.encodes_srgb,
-            opaque: Opaque::new(device, &bindings.unlit, &bindings.shadow_mask),
-            traced_shadows: TracedShadows::new(device, &bindings.lit, &bindings.scene),
-            reflections: Reflections::new(device, queue, render, &first_frame),
-            transparent: Transparent::new(
-                device,
-                &bindings.unlit,
-                &bindings.blended,
-                &targets,
-                exposure.view(),
-                bindings.lit.tier,
-            ),
-            exposure,
-            antialiasing,
-            motion_blur: MotionBlur::new(device),
-            post: Post::new(
-                device,
-                queue,
-                output,
-                sizes,
-                sizing.bloom_targets,
-                settings.smaa_quality,
-            )
-            .map_err(RendererError::LookupTextures)?,
-            prepare: Prepare::default(),
-            deform: Deform::new(device),
-            cull,
-            statistics: StatisticsReadback::default(),
-            dynamic_gi,
-            sizes,
-            bloom_targets: sizing.bloom_targets,
-            targets,
-            views,
-            bindings,
-            pipelines,
-            post_fx: None,
-            shadows,
-            fog,
-            history: CameraHistory::default(),
-            ray_form,
-            pending_reset: false,
-            targets_generation: 0,
-            last_scene: None,
+    /// The shared part of rendering on `device`. Views of its scenes are
+    /// [`View::new`] or [`View::new_surface`] with it.
+    pub fn new(device: &wgpu::Device) -> Self {
+        Self {
+            // Every frame without diagnostics specialises for all layers;
+            // a frame that disables one specialises again.
+            shared: Shared::new(device, LayerConstants::ALL),
             rendered: None,
-            #[cfg(feature = "diagnostics")]
-            probe: None,
-            #[cfg(any(test, feature = "diagnostics"))]
-            completed: None,
-        })
+            finished: Arc::new(AtomicU64::new(0)),
+        }
     }
 
-    /// Sizes the targets for an output of `output_size` physical pixels at
-    /// `device_scale` and the size-affecting settings, and starts or stops
-    /// FSR. Cheap when nothing changed, so a game calls it every frame;
-    /// when the targets change, history restarts.
-    pub fn resize(
-        &mut self,
-        device: &wgpu::Device,
-        output_size: [u32; 2],
-        device_scale: f32,
-        settings: &Settings,
-    ) {
-        let scene = effective::scene_size(
-            output_size,
-            settings.preset,
-            settings.scene_resolution,
-            device_scale,
-        );
-        let sizing = effective::sizing(settings);
-        let (render, restarted) = self.antialiasing.resize(device, scene, sizing.fsr);
-        if restarted {
-            self.pending_reset = true;
-            self.targets_generation = self.targets_generation.wrapping_add(1);
-            self.post.forget_inputs();
-            self.motion_blur.forget_inputs();
-            self.antialiasing.forget_inputs();
-        }
-        let sizes = Sizes {
-            render,
-            scene,
-            output: output_size,
-        };
-        if self.sizes == sizes && self.bloom_targets == sizing.bloom_targets {
-            return;
-        }
-        self.targets = SharedTargets::new(device, render, self.targets.surface.is_some());
-        self.exposure.forget_inputs();
-        self.motion_blur.forget_inputs();
-        self.antialiasing.forget_inputs();
-        self.post.resize(device, sizes, sizing.bloom_targets);
-        self.transparent
-            .resize(device, &self.targets, self.exposure.view());
-        self.reflections.resize(device, render);
-        self.sizes = sizes;
-        self.bloom_targets = sizing.bloom_targets;
-        self.pending_reset = true;
-        self.targets_generation = self.targets_generation.wrapping_add(1);
-    }
-
-    /// Encodes one frame of `scene` as `input` describes it into `output`, a
-    /// view of the output format and size (offscreen or a surface's):
-    /// prepare, shadows, fog, opaque, reflections and transparent, exposure,
-    /// antialiasing, motion blur, post. History restarts for a camera cut, after a resize that changed
-    /// the targets and for another scene. `scene` is mutable for its
-    /// per-frame GPU mirrors.
-    #[allow(clippy::too_many_arguments)]
+    /// Encodes one frame of `scene`: its frame work once (its uploads, the
+    /// acceleration structures, the deform pass and the dynamic GI update),
+    /// then each view in order, each as its `ViewFrame` describes it, into
+    /// its output: prepare, shadows, fog, opaque, reflections and
+    /// transparent, exposure, antialiasing, motion blur, post. `views[0]` is
+    /// the primary view: its input and settings steer what a scene has one
+    /// of (the architecture's Frame, "Views of one frame"). Nothing happens
+    /// for an empty slice. A view's history restarts for a camera cut, after
+    /// a resize that changed its targets, and for a frame that does not
+    /// follow its own last finished frame: its first, one of another scene,
+    /// or one after a finished frame of the scene that did not render it.
+    /// `scene` is mutable for its per-frame GPU mirrors.
+    ///
+    /// # Panics
+    ///
+    /// For a view created from another renderer.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         scene: &mut Scene,
-        input: &FrameInput,
-        settings: &Settings,
-        output: &wgpu::TextureView,
-        timing: Option<&crate::timing::GpuTiming>,
+        views: &mut [ViewFrame<'_>],
     ) {
-        frame::render(
-            self, device, queue, encoder, scene, input, settings, output, timing,
+        if views.is_empty() {
+            return;
+        }
+        assert!(
+            views
+                .iter()
+                .all(|frame| Arc::ptr_eq(&frame.view.cell, &self.finished)),
+            "every view rendered by a renderer is created from it (`View::new`)"
         );
+        let attempt = frame::render(&mut self.shared, (device, queue, encoder), scene, views);
+        self.rendered = Some(attempt);
     }
 
     /// After the caller submitted the last rendered frame of `scene`: it
     /// becomes the history of the next, camera and instances alike, as the
     /// frame drew them, so an edit made since the submission belongs to the
-    /// next frame. A frame rendered but never finished (an abandoned
-    /// encoder) leaves history untouched.
+    /// next frame; each view the frame rendered commits its histories the
+    /// next time it is used. Does nothing if the last `render` was of
+    /// another scene, or none: a frame rendered but never finished (an
+    /// abandoned encoder) leaves history untouched.
     pub fn finish_frame(&mut self, scene: &mut Scene) {
-        if let Some((frame, scene_id, generation)) = self.rendered.take() {
-            self.history.finish(frame);
-            // A resize after the render still restarts the next frame.
-            if generation == self.targets_generation {
-                self.pending_reset = false;
-            }
-            self.last_scene = Some(scene_id);
-            scene.finish_frame(self.prepare.attempt());
-            self.shadows.local.finish_frame();
-            if let Some(dynamic_gi) = &mut self.dynamic_gi {
+        let Some(attempt) = self.rendered else {
+            return;
+        };
+        if scene.finish_frame(attempt) {
+            self.rendered = None;
+            if let Some(dynamic_gi) = &mut self.shared.dynamic_gi {
                 dynamic_gi.finish_frame();
             }
-            self.cull.finish_frame();
-            self.exposure.finish_frame();
-            self.statistics.submitted();
-            #[cfg(feature = "diagnostics")]
-            if let Some(probe) = &mut self.probe {
-                probe.submitted();
-            }
-            frame::settle(self, true);
+            self.finished.store(attempt, Ordering::Release);
         }
-    }
-
-    /// The history of a frame of `scene` seen by `input`'s camera, in the
-    /// render frame of the scene's origin.
-    fn begin_history(&self, scene: &Scene, input: &FrameInput) -> HistoryFrame {
-        let reset = input.camera_cut || self.pending_reset || self.last_scene != Some(scene.id);
-        let camera = CameraFrame {
-            view: input.camera.view,
-            projection: input.camera.projection,
-            jitter: [0.; 2],
-        };
-        let mut frame = self.history.begin(
-            camera,
-            reset,
-            scene.origin(),
-            input.elapsed_seconds,
-            input.visibility_mask,
-        );
-        let yaw = match input.backdrop {
-            crate::Backdrop::Environment { yaw, .. } => Some(yaw),
-            crate::Backdrop::Color(_) => None,
-        };
-        self.history.set_backdrop(&mut frame, yaw);
-        frame
-    }
-
-    /// The antialiasing that runs for `settings`: their choice resolved for
-    /// the preset, with TAA where FSR is chosen but not running (see
-    /// `fsr_error`, or awaiting `resize`). The saved choice is unchanged.
-    pub fn antialiasing_in_effect(&self, settings: &Settings) -> Antialiasing {
-        effective::antialiasing(settings, self.antialiasing.fsr_running())
     }
 
     /// The device's binding tier: `Extended` where it binds 48 or more
@@ -462,20 +141,20 @@ impl Renderer {
     /// to its factors. Fixed for the device; `graphics_device::limits` requests
     /// the adapter's.
     pub fn binding_tier(&self) -> BindingTier {
-        self.pipelines.tier
+        self.shared.pipelines.tier
     }
 
-    /// The dynamic GI quality that runs for `settings` where the scene holds
-    /// a volume: their choice on the Extended binding tier with ray data,
-    /// `Off` on Basic or a scene created with `RayData::Disabled`.
-    /// The saved choice is unchanged.
+    /// The dynamic GI quality that runs for the primary view's `settings`
+    /// where the scene holds a volume: their choice on the Extended binding
+    /// tier with ray data, `Off` on Basic or a scene created with
+    /// `RayData::Disabled`. The saved choice is unchanged.
     pub fn dynamic_gi_in_effect(&self, settings: &Settings, scene: &Scene) -> DynamicGiQuality {
         effective::dynamic_gi(settings, self.binding_tier(), scene.ray_data())
     }
 
-    /// The world-space reflection choice for this scene, while its camera
-    /// supports screen-space reflections. Off without ray data or SSR.
-    /// The saved choice is unchanged.
+    /// The world-space reflection choice for this scene, while a view's
+    /// camera supports screen-space reflections. Off without ray data or
+    /// SSR. The saved choice is unchanged.
     pub fn world_space_reflections_in_effect(
         &self,
         settings: &Settings,
@@ -496,41 +175,6 @@ impl Renderer {
         effective::volume_paths(settings, self.binding_tier())
     }
 
-    /// Why the FSR version selected at the last `resize` is unavailable.
-    /// Failures are retained independently for FSR2 and FSR3.
-    pub fn fsr_error(&self) -> Option<&str> {
-        self.antialiasing.error()
-    }
-
-    /// The size every pass up to antialiasing renders at: the scene size,
-    /// or FSR's render size while it upscales.
-    pub fn render_size(&self) -> [u32; 2] {
-        self.sizes.render
-    }
-
-    /// The size motion blur, bloom, SMAA and tone mapping run at
-    /// (`SceneResolution`).
-    pub fn scene_size(&self) -> [u32; 2] {
-        self.sizes.scene
-    }
-
-    /// The camera's submitted geometry in the most recent completed frame:
-    /// its opaque and masked surfaces counted on the GPU and read back
-    /// without blocking, the map requested at `finish_frame`, with its
-    /// blended surfaces' counts from the same frame. None until a frame's
-    /// readback has arrived, which takes a few frames.
-    pub fn geometry_stats(&mut self, device: &wgpu::Device) -> Option<GeometryStats> {
-        self.statistics.poll(device);
-        self.statistics.latest()
-    }
-
-    /// The last rendered frame's local-light shadows: how many casting
-    /// lights in the camera's view have a shadow, how many the atlas had no
-    /// room for, and what the frame drew.
-    pub fn local_shadow_stats(&self) -> LocalShadowStats {
-        self.shadows.local.stats()
-    }
-
     /// What the last rendered frame's hardware ray tracing held: how many
     /// capture-visible instances the scene's TLAS held, how many that do not
     /// deform it did not hold, which the portable BVHs cover, and how many
@@ -539,41 +183,31 @@ impl Renderer {
     /// (`graphics_device::ray_tracing_features`), with
     /// `Settings::hardware_ray_tracing` off, or tracing no rays.
     pub fn ray_tracing_stats(&self) -> RayTracingStats {
-        self.prepare.ray_tracing_stats()
+        self.shared.prepare.ray_tracing_stats()
     }
 
-    /// Whether the hardware path traces the scene's rays for `settings`:
-    /// `Settings::hardware_ray_tracing` is on, the device has ray queries
-    /// (`graphics_device::ray_tracing_features`) and nothing stopped it
-    /// and this scene retains ray data. Nothing stopped it
+    /// Whether the hardware path traces the scene's rays for the primary
+    /// view's `settings`: `Settings::hardware_ray_tracing` is on, the device
+    /// has ray queries (`graphics_device::ray_tracing_features`) and nothing
+    /// stopped it and this scene retains ray data. Nothing stopped it
     /// (`ray_tracing_error`, but for a fall back to the baseline form,
     /// which still traces). Otherwise the portable BVHs trace them. The
     /// saved choice is unchanged. No ray path is available without ray data.
     pub fn ray_tracing_in_effect(&self, settings: &Settings, scene: &Scene) -> bool {
         scene.ray_data() == crate::RayData::Enabled
             && settings.hardware_ray_tracing
-            && self.ray_form.is_some()
-            && self.prepare.ray_tracing_error().is_none()
+            && self.shared.ray_form.is_some()
+            && self.shared.prepare.ray_tracing_error().is_none()
     }
 
-    /// Whether ray-traced shadows are in effect for `settings`:
+    /// Whether ray-traced shadows are in effect for a view's `settings`
+    /// under the primary view's hardware ray tracing:
     /// `Settings::ray_traced_shadows` is on and hardware ray tracing is in
-    /// effect (`ray_tracing_in_effect`). The camera's opaque surfaces then
+    /// effect (`ray_tracing_in_effect`). The view's opaque surfaces then
     /// take them on the frames where a light holds a slot; otherwise the
     /// shadow maps shadow them. The saved choice is unchanged.
     pub fn ray_traced_shadows_in_effect(&self, settings: &Settings, scene: &Scene) -> bool {
         settings.ray_traced_shadows && self.ray_tracing_in_effect(settings, scene)
-    }
-
-    /// Whether `Settings::occlusion_culling` runs for `settings`: it is on,
-    /// the device binds the depth pyramid's six storage textures a stage
-    /// (`graphics_device::limits` requests the adapter's) and, with the
-    /// `diagnostics` feature, the culling layer is on. Otherwise the camera
-    /// culls by frustum alone. The saved choice is unchanged.
-    pub fn occlusion_culling_in_effect(&self, settings: &Settings) -> bool {
-        settings.occlusion_culling
-            && self.cull.occlusion_supported()
-            && !settings.diagnostics_in_effect().disable.culling
     }
 
     /// Why the hardware path did not trace the last rendered frame's rays
@@ -583,167 +217,13 @@ impl Renderer {
     /// is enabled. Also reports why the device fell back from
     /// the candidate form to the baseline form, which traced them.
     pub fn ray_tracing_error(&self) -> Option<&str> {
-        self.prepare.ray_tracing_error().or_else(|| {
-            self.prepare
+        let shared = &self.shared;
+        shared.prepare.ray_tracing_error().or_else(|| {
+            shared
+                .prepare
                 .hardware_requested()
-                .then(|| self.ray_form.as_ref()?.failure())
+                .then(|| shared.ray_form.as_ref()?.failure())
                 .flatten()
         })
-    }
-
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn targets(&self) -> &SharedTargets {
-        &self.targets
-    }
-
-    /// The fog's froxels the last frame wrote, the froxels it integrated
-    /// and its integrated volume.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn fog_volumes(&self) -> [&wgpu::TextureView; 3] {
-        self.fog.test_volumes()
-    }
-
-    /// The last frame's ray-traced shadow mask and slot table, where the
-    /// stage ran.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn traced_shadows(
-        &self,
-    ) -> Option<(
-        &wgpu::TextureView,
-        crate::shading::shadow_mask::ShadowMaskSlots,
-    )> {
-        self.traced_shadows.last()
-    }
-
-    /// The ray-traced shadow denoiser's moments the last frame wrote, where
-    /// the stage ran.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn traced_shadow_moments(&self) -> Option<&wgpu::TextureView> {
-        self.traced_shadows.last_moments()
-    }
-
-    /// The world-space reflection stage, once a frame ran it.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn world_reflections(
-        &self,
-    ) -> Option<&crate::stages::reflections::world::WorldReflections> {
-        self.reflections.world()
-    }
-
-    /// FSR's upscaled frame of the last frame it ran.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn fsr_output(&self) -> &wgpu::TextureView {
-        self.antialiasing.output()
-    }
-
-    /// The motion reach's cached bind group sets, while TAA runs.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn reach_groups(&self) -> Option<usize> {
-        self.antialiasing.reach_groups()
-    }
-
-    /// The motion-blurred frame, once motion blur has run.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub(crate) fn motion_blurred(&self) -> Option<&wgpu::TextureView> {
-        self.motion_blur.output()
-    }
-}
-
-#[cfg(any(test, feature = "diagnostics"))]
-impl Renderer {
-    /// `target` as the last frame left it, at the render size unless the
-    /// target says otherwise; `None` when it did not run.
-    pub fn diagnostic_target(
-        &self,
-        target: crate::diagnostics::DiagnosticTarget,
-    ) -> Option<&wgpu::TextureView> {
-        use crate::diagnostics::DiagnosticTarget;
-        let targets = &self.targets;
-        Some(match target {
-            DiagnosticTarget::Depth => &targets.depth,
-            DiagnosticTarget::Normal => &targets.normal,
-            DiagnosticTarget::Motion => &targets.motion,
-            DiagnosticTarget::SourceId => &targets.source_id,
-            DiagnosticTarget::Composite => &targets.composite,
-            DiagnosticTarget::AmbientOcclusion => return self.opaque.visibility(),
-            DiagnosticTarget::ToneMapped => return self.post.captured_tone_mapped(),
-            DiagnosticTarget::Exposure => self.exposure.view(),
-            DiagnosticTarget::Antialiased => {
-                frame::completed(self.completed?, &self.post_fx, &self.antialiasing, targets)
-            }
-        })
-    }
-
-    /// The draws the last frame's camera, blended and directional-cascade
-    /// views encoded: a CPU-built list's draws, and a GPU-built list's
-    /// indirect draws, one per set; local-light shadow faces, probe captures
-    /// and full-screen passes are not counted.
-    pub fn diagnostic_draws(&self) -> crate::diagnostics::ViewDraws {
-        let views = &self.views;
-        crate::diagnostics::ViewDraws {
-            camera: views.camera.list.draws(),
-            blended: views.blended.draws(),
-            cascades: views.cascades[..views.cascade_count]
-                .iter()
-                .map(|cascade| cascade.list.draws())
-                .collect(),
-        }
-    }
-
-    /// The CPU time the last frame took building and recording its camera's
-    /// opaque and masked draw list and each directional cascade's.
-    #[cfg(feature = "diagnostics")]
-    pub fn diagnostic_view_times(&self) -> crate::diagnostics::ViewTimes {
-        let views = &self.views;
-        crate::diagnostics::ViewTimes {
-            camera: views.camera.cpu_ms(),
-            cascades: views.cascades[..views.cascade_count]
-                .iter()
-                .map(crate::view::ViewSlot::cpu_ms)
-                .collect(),
-        }
-    }
-
-    /// The camera's submitted geometry of `scene`'s instances of `model` in
-    /// the most recent completed frame (`geometry_stats`): the sections its
-    /// instances' candidates appended and their triangles, read back from
-    /// the GPU, with the blended draws that hold one and the triangles they
-    /// submit for them. None until a frame's readback has arrived.
-    #[cfg(feature = "diagnostics")]
-    pub fn geometry_stats_for_model(
-        &mut self,
-        device: &wgpu::Device,
-        scene: &Scene,
-        model: ModelId,
-    ) -> Result<Option<(usize, u64)>, SceneError> {
-        scene.models.get(model)?;
-        self.statistics.poll(device);
-        Ok(self.statistics.latest_for(model))
-    }
-
-    /// The dynamic GI stage's observed frames (`Diagnostics::dynamic_gi`)
-    /// read back since the last call, oldest first. Readback is
-    /// asynchronous: a frame's report arrives once the device completed it,
-    /// and waits here until taken.
-    #[cfg(feature = "diagnostics")]
-    pub fn take_dynamic_gi_reports(
-        &mut self,
-        device: &wgpu::Device,
-    ) -> Vec<crate::diagnostics::DynamicGiReport> {
-        self.dynamic_gi
-            .as_mut()
-            .map_or_else(Vec::new, |dynamic_gi| dynamic_gi.take_reports(device))
-    }
-
-    /// The numerical frame probe's reports of finished frames read back
-    /// since the last call, one JSON object per frame, oldest first
-    /// (`Diagnostics::frame_probe`). Readback is asynchronous: a frame's
-    /// report arrives once the device completed it. Reports wait here until
-    /// taken.
-    #[cfg(feature = "diagnostics")]
-    pub fn take_frame_probe_reports(&mut self, device: &wgpu::Device) -> Vec<serde_json::Value> {
-        self.probe
-            .as_mut()
-            .map_or_else(Vec::new, |probe| probe.take_reports(device))
     }
 }

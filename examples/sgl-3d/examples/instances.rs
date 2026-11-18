@@ -10,7 +10,7 @@
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceState, Light,
-    LightShape, Mobility, Renderer, Scene,
+    LightShape, Mobility, Renderer, Scene, View, ViewFrame,
     asset::{Asset, CpuMesh, Material, Vertex},
     glam::{Mat4, Vec3},
     settings::{RenderPreset, Settings},
@@ -272,7 +272,16 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::new(&device, &queue, output.format(), size, 1., &settings)?;
+    let mut renderer = Renderer::new(&device);
+    let mut scene_view = View::new(
+        &renderer,
+        &device,
+        &queue,
+        output.format(),
+        size,
+        1.,
+        &settings,
+    )?;
     let eye = Vec3::new(6., 4., 7.);
     let mut frame = FrameInput::new(Camera {
         view: camera::rh::view::look_at_mat4(eye, Vec3::new(0., 0.7, 0.), Vec3::Y),
@@ -305,7 +314,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         }
         frame.elapsed_seconds = frame_index as f64 / 60.;
         frame.camera_cut = frame_index == 0;
-        renderer.resize(&device, size, 1., &settings);
+        scene_view.resize(&device, size, 1., &settings);
         let mut encoder = device.create_command_encoder(&Default::default());
         let started = std::time::Instant::now();
         renderer.render(
@@ -313,10 +322,13 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             &queue,
             &mut encoder,
             &mut scene,
-            &frame,
-            &settings,
-            &output_view,
-            None,
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &frame,
+                settings: &settings,
+                output: &output_view,
+                timing: None,
+            }],
         );
         let commands = encoder.finish();
         if frame_index >= 2 {
@@ -342,7 +354,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     )?;
     // The last frame's statistics, read back once it completed.
     let _ = device.poll(wgpu::PollType::wait_indefinitely());
-    let stats = renderer.geometry_stats(&device).unwrap_or_default();
+    let stats = scene_view.geometry_stats(&device).unwrap_or_default();
     recording.sort_by(f64::total_cmp);
     println!(
         "{} props: camera sections static {} / moving {}, triangles {}; recording CPU median {:.3} ms over {} frames; {}",

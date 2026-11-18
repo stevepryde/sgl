@@ -1,6 +1,6 @@
 //! Scene lights observed in the lit colour of real frames.
 use crate::asset::{CpuMesh, Vertex};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::{
     Camera, FrameInput, InstanceState, Light, LightShape, Mobility, Scene, SceneError, test_support,
@@ -129,7 +129,7 @@ fn scene_lights_light_what_they_own() {
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = crate::view::targets::target(
         &device,
         "scene light output",

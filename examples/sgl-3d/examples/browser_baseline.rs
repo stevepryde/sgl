@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight,
-    InstanceState, Light, LightShape, Mobility, Renderer, Scene,
+    InstanceState, Light, LightShape, Mobility, Renderer, Scene, View, ViewFrame,
     asset::{Asset, CpuMesh, Image, Material, Rgba8MipChain, Vertex},
     glam::{Mat4, Vec3, camera},
     settings::{
@@ -379,9 +379,18 @@ async fn measured(
     });
     let view = output.create_view(&Default::default());
     let renderer_start = now();
-    let mut renderer = Box::new(
-        Renderer::new(&device, &queue, output.format(), SIZE, 1., &settings)
-            .map_err(|e| e.to_string())?,
+    let mut renderer = Box::new(Renderer::new(&device));
+    let mut scene_view = Box::new(
+        View::new(
+            &renderer,
+            &device,
+            &queue,
+            output.format(),
+            SIZE,
+            1.,
+            &settings,
+        )
+        .map_err(|e| e.to_string())?,
     );
     let renderer_cpu_ms = now() - renderer_start;
     let mut timing = GpuTiming::new(&device, &queue);
@@ -494,10 +503,13 @@ async fn measured(
             &queue,
             &mut encoder,
             &mut scene,
-            &frame,
-            &settings,
-            &view,
-            timing.as_ref(),
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &frame,
+                settings: &settings,
+                output: &view,
+                timing: timing.as_ref(),
+            }],
         );
         let commands = encoder.finish();
         let encode_ms = now() - encode_start;
@@ -513,8 +525,8 @@ async fn measured(
         if (WARMUP..WARMUP + frames).contains(&index) {
             cpu.push(encode_ms);
             wall.push(now() - frame_start);
-            draws.push(renderer.diagnostic_draws().camera as f64);
-            blended_draws.push(renderer.diagnostic_draws().blended as f64);
+            draws.push(scene_view.diagnostic_draws().camera as f64);
+            blended_draws.push(scene_view.diagnostic_draws().blended as f64);
         } else if index >= WARMUP + frames {
             streamed_frame_wall.push(now() - frame_start);
         }

@@ -29,7 +29,7 @@ use crate::shading::culling::{
     CullStatistics, CullView, DrawCommand, PAIRED_INDICES, dispatch_side, late_entries, words,
 };
 use crate::shading::vertex::{DRAW_INSTANCE_SLOT, DrawInstance};
-use crate::view::View;
+use crate::view::ViewData;
 use crate::view::culling::Frustum;
 use crate::view::pipelines::{Alpha, GeometryPass, GeometryPipelines, Variant};
 use crate::view::population::camera_variant;
@@ -517,7 +517,7 @@ pub(crate) struct CullBuffers<'a> {
 /// its population, its clip volume with the near plane (unless `culling`,
 /// the diagnostics layer, is off), its level of detail where it has pixels
 /// and, with diagnostics, its candidates' statistics.
-pub(crate) fn camera_cull(view: &View, size: [u32; 2], mask: u32, culling: bool) -> CullView {
+pub(crate) fn camera_cull(view: &ViewData, size: [u32; 2], mask: u32, culling: bool) -> CullView {
     let camera = Mat4::from_cols_array_2d(&view.uniform.view);
     let projection = Mat4::from_cols_array_2d(&view.uniform.projection);
     let (planes, plane_errors) = Frustum::planes(camera, projection, view.uniform.jitter);
@@ -555,7 +555,7 @@ pub(crate) fn camera_cull(view: &View, size: [u32; 2], mask: u32, culling: bool)
 /// caster between the light and the cascade casts into it (Bevy pushes a
 /// cascade frustum's near plane to infinity), at level 0, since shadows
 /// keep the original geometry, its paired sections drawn indexed.
-pub(crate) fn cascade_cull(view: &View, mask: u32) -> CullView {
+pub(crate) fn cascade_cull(view: &ViewData, mask: u32) -> CullView {
     let (planes, plane_errors) = Frustum::planes(
         Mat4::from_cols_array_2d(&view.uniform.view),
         Mat4::from_cols_array_2d(&view.uniform.projection),

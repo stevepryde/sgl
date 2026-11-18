@@ -9,7 +9,7 @@ Native (Metal, Vulkan, DX12) and the browser (WASM + WebGPU) run the same
 features, with these exceptions. FSR2 and FSR3 need texture atomics, which
 WebGPU lacks, and subgroup operations and storage formats that wgpu's
 browser backend does not request, so the browser runs TAA in their place
-and `Renderer::fsr_error` says why. Hardware ray tracing needs ray queries, which
+and `View::fsr_error` says why. Hardware ray tracing needs ray queries, which
 WebGPU does not have: there, as on any device without them, rays trace the
 software BVHs. WebGL2 is not a target: SGL3D needs compute.
 [Browser](../README.md#browser-wasm--webgpu).
@@ -114,6 +114,13 @@ them through unrefracted. A probe captured on an
   ([limits](../README.md#asset-and-environment-limits)).
   Buffers grow as content is added; content in use cannot be removed.
   [Lifecycle](../README.md#retained-scene-and-frame-lifecycle).
+- **Views**: several images of one scene in a frame (a split screen, an
+  inset, a rear view, editor viewports): a `View` each, listed in one
+  `Renderer::render`, each with its own camera, settings, output, targets
+  and temporal history. The first listed steers what the scene has one of
+  (dynamic GI, ray tracing, material filtering). A view left out of a
+  finished frame restarts its history.
+  [Several views](README.md#several-views), `examples/views.rs`.
 - **Instances**: model placements (`InstanceState`; `InstanceState::new(model)`
   is at the origin and shown in every view), static or moving. Static
   instances are what bakes and probe captures contain and write no motion;
@@ -263,7 +270,8 @@ them through unrefracted. A probe captured on an
   [Point, spot and rectangle lights](../README.md#point-spot-and-rectangle-lights).
 - **Local-light shadows**: lights with `casts_shadow` share one shadow atlas,
   sized and chosen by screen coverage; lights beyond its room are lit without
-  a shadow (`Renderer::local_shadow_stats` counts them). A closed or unrepresentably
+  a shadow (`View::local_shadow_stats` counts them). Each view has its own
+  atlas, placed for its camera. A closed or unrepresentably
   narrow spot cone remains valid scene content and releases its shadow slots
   until its projection is finite. Static casters are
   cached per face, so a frame redraws a light's shadow only where something
@@ -332,8 +340,9 @@ them through unrefracted. A probe captured on an
   [Dynamic GI](../README.md#dynamic-diffuse-gi).
 - **Baked specular probes**: parallax-corrected reflection cubes with blended
   influence boxes (`Scene::set_baked_specular_probes`), captured offline or
-  while a level loads with `Renderer::capture_specular_probe_async` (natively
-  also blocking, `capture_specular_probe`).
+  while a level loads with `Renderer::capture_specular_probe_async`, which
+  borrows a `View`'s shadow maps (natively also blocking,
+  `capture_specular_probe`).
   [Probes](../README.md#baked-specular-probes).
 
 ## Reflections
@@ -452,7 +461,7 @@ size, and record counts must fit `u32`.
 
 - **GPU timing** per pass: `timing::GpuTiming`.
   [Pass timing](../README.md#gpu-pass-timing).
-- **Geometry counts**: `Renderer::geometry_stats`, the camera's draws and
+- **Geometry counts**: `View::geometry_stats`, the camera's draws and
   triangles in the most recent completed frame, read back without blocking
   (`None` until one completes), and, with diagnostics,
   `geometry_stats_for_model`.
@@ -460,10 +469,10 @@ size, and record counts must fit `u32`.
   `obstructed_distance`.
 - **Diagnostics** feature: `Settings::diagnostics` turns layers off (culling
   among them), runs the frame probe and captures the tone-mapped target;
-  `Renderer::diagnostic_target` (among its targets `Antialiased`, the linear
+  `View::diagnostic_target` (among its targets `Antialiased`, the linear
   HDR scene as antialiasing leaves it), `take_frame_probe_reports`,
-  `diagnostic_draws`, `diagnostic_view_times` and
-  `take_dynamic_gi_reports` (`Diagnostics::dynamic_gi`: the dynamic GI
+  `diagnostic_draws` and `diagnostic_view_times`, and
+  `Renderer::take_dynamic_gi_reports` (`Diagnostics::dynamic_gi`: the dynamic GI
   volume's probes, rays, BVH visits and budget stride, by frame) return what
   they observed; `diagnostics::read_async` reads a target back (natively
   also blocking, `diagnostics::read`). Configuration only:

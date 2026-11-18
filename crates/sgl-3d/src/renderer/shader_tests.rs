@@ -7,7 +7,7 @@
 //! instance's, so the displaced quad is a plane the CPU intersects each
 //! pixel's ray with.
 use crate::asset::{self, Vertex};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::test_support::{self, TestShaderParams, add_test_shader, read, set_test_params};
 use crate::{
@@ -45,7 +45,7 @@ fn receiving() -> Settings {
 pub(super) struct Harness {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    pub renderer: Renderer,
+    pub renderer: TestRenderer,
     pub settings: Settings,
     pub output: wgpu::TextureView,
     pub scene: Scene,
@@ -57,7 +57,7 @@ impl Harness {
     }
 
     pub fn on((device, queue): (wgpu::Device, wgpu::Queue), settings: Settings) -> Self {
-        let renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         let output = crate::view::targets::target(
             &device,
             "shader frames",

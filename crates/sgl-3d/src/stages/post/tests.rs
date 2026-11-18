@@ -274,8 +274,15 @@ fn scene_resolution_budgets_resize_targets_without_stretching_or_upscaling() {
     pollster::block_on(async {
         use crate::settings::SceneResolution;
         let mut settings = crate::settings::Settings::default();
-        let mut renderer =
-            crate::renderer::Renderer::new(&device, &queue, HDR, [64, 64], 2., &settings).unwrap();
+        let mut renderer = crate::renderer::test_frame::TestRenderer::new(
+            &device,
+            &queue,
+            HDR,
+            [64, 64],
+            2.,
+            &settings,
+        )
+        .unwrap();
         for display in [[2560, 1440], [2560, 1080], [1200, 1600], [800, 600]] {
             for (resolution, bounds) in [
                 (SceneResolution::Hd, [1280, 720]),
@@ -283,7 +290,7 @@ fn scene_resolution_budgets_resize_targets_without_stretching_or_upscaling() {
                 (SceneResolution::Full, display),
             ] {
                 settings.scene_resolution = resolution;
-                renderer.resize(&device, display, 2., &settings);
+                renderer.view.resize(&device, display, 2., &settings);
                 let extent = renderer.targets().color.texture().size();
                 let scene = [extent.width, extent.height];
                 for axis in 0..2 {
@@ -308,6 +315,7 @@ fn scene_resolution_budgets_resize_targets_without_stretching_or_upscaling() {
                 }
                 assert!(
                     renderer
+                        .view
                         .diagnostic_target(crate::diagnostics::DiagnosticTarget::ToneMapped)
                         .is_none(),
                     "resizing must not allocate a diagnostic-only output target"

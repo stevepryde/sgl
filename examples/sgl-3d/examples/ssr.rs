@@ -26,7 +26,8 @@
 //!   excluded from timing and jump statistics.
 use sgl_3d::glam::camera;
 use sgl_3d::{
-    Camera, DirectionalLight, Exposure, FrameInput, InstanceState, Mobility, Renderer, Scene,
+    Camera, DirectionalLight, Exposure, FrameInput, InstanceState, Mobility, Renderer, Scene, View,
+    ViewFrame,
     asset::{Asset, CpuMesh, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     glam::Vec3,
@@ -301,7 +302,16 @@ fn run(
         screen_space_reflections: ssr.unwrap_or_default(),
         ..Settings::default()
     };
-    let mut renderer = Renderer::new(&device, &queue, output.format(), SIZE, 1., &settings)?;
+    let mut renderer = Renderer::new(&device);
+    let mut scene_view = View::new(
+        &renderer,
+        &device,
+        &queue,
+        output.format(),
+        SIZE,
+        1.,
+        &settings,
+    )?;
     let mut timing = GpuTiming::new(&device, &queue).filter(|_| mode == Mode::Timing);
     let projection = sgl_3d::perspective(55f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1);
     let mut result = Run::default();
@@ -339,10 +349,13 @@ fn run(
             &queue,
             &mut encoder,
             &mut scene,
-            &input,
-            &settings,
-            &output_view,
-            timing.as_ref(),
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &input,
+                settings: &settings,
+                output: &output_view,
+                timing: timing.as_ref(),
+            }],
         );
         let submission = queue.submit([encoder.finish()]);
         if let Some(timing) = &mut timing {

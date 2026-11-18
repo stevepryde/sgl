@@ -39,7 +39,7 @@ semantics remain unchanged so existing shader sidedness, normal maps and inverse
 transpose normals preserve their authored meaning. Runtime material edits select
 the corresponding pipeline on the next draw.
 
-`Renderer::geometry_stats` reports the camera's submitted sections and
+`View::geometry_stats` reports the camera's submitted sections and
 triangles counted on the GPU, read back a few frames later, and its blended
 draws, after visibility and culling, before fixed-function backface
 rejection. In a diagnostics build, turning the culling layer off in

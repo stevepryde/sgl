@@ -1,8 +1,10 @@
 //! Group 0 for every view the renderer draws: the lit, unlit and shadow
 //! layouts, the frame's `FrameUniform` buffer, neutral stand-ins, and the
 //! groups built from them, which the renderer owns and stages borrow. The
-//! scene layout (group 1) matches the scene's own groups; group 2's is the
-//! geometry pipelines' (`view::pipelines`), of the device's binding tier.
+//! layouts are made once (`Layouts`) and shared by every view's groups and
+//! the geometry pipelines. The scene layout (group 1) matches the scene's
+//! own groups; group 2's is the geometry pipelines' (`view::pipelines`), of
+//! the device's binding tier.
 use super::FrameViews;
 use crate::EnvironmentId;
 use crate::scene::probes::UploadedProbes;
@@ -76,6 +78,41 @@ struct SceneGroups {
     camera_unlit: wgpu::BindGroup,
 }
 
+/// The bind group layouts the geometry pipelines are made with and every
+/// view's groups are made from, made once for the device.
+pub(crate) struct Layouts {
+    /// Lit group 0's layout, of the device's binding tier.
+    pub lit: LitLayout,
+    pub unlit: wgpu::BindGroupLayout,
+    pub shadow: wgpu::BindGroupLayout,
+    /// Group 1's layout (`shading::bind::scene`).
+    pub scene: wgpu::BindGroupLayout,
+    /// The blended pipelines' group 3 (`shading::bind::blended`).
+    pub blended: wgpu::BindGroupLayout,
+    /// The lighting pass's group 3 while ray-traced shadows run
+    /// (`shading::bind::shadow_mask`).
+    pub shadow_mask: wgpu::BindGroupLayout,
+    /// The GPU-built cascades' casters' group 3
+    /// (`shading::bind::caster_positions`).
+    pub caster_positions: wgpu::BindGroupLayout,
+}
+
+impl Layouts {
+    /// The layouts of `device`'s binding tier.
+    pub fn new(device: &wgpu::Device) -> Self {
+        let lit = shading::bind::lit(device, shading::bind::BindingTier::of(&device.limits()));
+        Self {
+            unlit: shading::bind::unlit(device),
+            shadow: shading::bind::shadow(device),
+            scene: shading::bind::scene(device),
+            blended: shading::bind::blended(device, lit.tier),
+            shadow_mask: shading::bind::shadow_mask(device),
+            caster_positions: shading::bind::caster_positions(device),
+            lit,
+        }
+    }
+}
+
 pub(crate) struct FrameBindings {
     /// Lit group 0's layout, of the device's binding tier.
     pub lit: LitLayout,
@@ -89,10 +126,6 @@ pub(crate) struct FrameBindings {
     /// The lighting pass's group 3 while ray-traced shadows run
     /// (`shading::bind::shadow_mask`), which the opaque stage binds.
     pub shadow_mask: wgpu::BindGroupLayout,
-    /// The GPU-built cascades' casters' group 3
-    /// (`shading::bind::caster_positions`), which the scene's positions
-    /// slabs bind (`scene::geometry`).
-    pub caster_positions: wgpu::BindGroupLayout,
     /// The frame's `FrameUniform`, shared by every view of the frame.
     pub frame: wgpu::Buffer,
     /// No specular probes: lit groups bind this while the scene has none
@@ -112,20 +145,18 @@ pub(crate) struct FrameBindings {
 }
 
 impl FrameBindings {
-    /// Group 0 for `views` over the lit layout `lit`
-    /// (`shading::bind::lit`), binding `shadow_maps`, `fog` and the
-    /// `dynamic_gi` probes until a frame refreshes them, and the layouts of
-    /// groups 1 and 3.
+    /// Group 0 for `views` over `layouts`, binding `shadow_maps`, `fog`
+    /// and the `dynamic_gi` probes until a frame refreshes them, with the
+    /// layouts of groups 1 and 3.
     pub fn new(
         device: &wgpu::Device,
-        lit: LitLayout,
+        layouts: &Layouts,
         views: &FrameViews,
         shadow_maps: ShadowMaps,
         fog: FogVolume<'_>,
         dynamic_gi: Option<&wgpu::TextureView>,
     ) -> Self {
-        let shadow = shading::bind::shadow(device);
-        let tier = lit.tier;
+        let shadow = layouts.shadow.clone();
         let frame = crate::scene::buffer(
             device,
             "camera frame",
@@ -143,13 +174,12 @@ impl FrameBindings {
             shadow_group("directional shadow cascade", &views.cascades[index].buffer)
         });
         Self {
-            lit,
-            unlit: shading::bind::unlit(device),
+            lit: layouts.lit.clone(),
+            unlit: layouts.unlit.clone(),
             shadow,
-            scene: shading::bind::scene(device),
-            blended: shading::bind::blended(device, tier),
-            shadow_mask: shading::bind::shadow_mask(device),
-            caster_positions: shading::bind::caster_positions(device),
+            scene: layouts.scene.clone(),
+            blended: layouts.blended.clone(),
+            shadow_mask: layouts.shadow_mask.clone(),
             frame,
             empty_probes: UploadedProbes::empty(device),
             shadow_maps,

@@ -64,7 +64,7 @@ fn still_exposure(method: Antialiasing) {
     let Some(gpu) = device(method) else { return };
     let scenario = stripes();
     let mut rig = scenario.rig(&gpu, VIEW, method);
-    rig.input.exposure = Exposure {
+    rig.views[0].input.exposure = Exposure {
         stops: 0.,
         automatic: Some(AutoExposure::default()),
     };

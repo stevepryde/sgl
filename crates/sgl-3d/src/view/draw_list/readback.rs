@@ -3,7 +3,7 @@
 //! diagnostics, its candidates' appended sections) for readback; once the
 //! game submits the frame, `finish_frame` requests the map, which is never
 //! waited on; a frame whose readback has arrived becomes what
-//! `Renderer::geometry_stats` describes, with its blended list's CPU
+//! `View::geometry_stats` describes, with its blended list's CPU
 //! counts. An abandoned frame's copy never ran, so every frame starts with
 //! nothing copied. A frame whose map fails reports nothing.
 use super::GeometryStats;

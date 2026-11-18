@@ -2,7 +2,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 use sgl_3d::glam::camera;
 use sgl_3d::{
-    Camera, FrameInput, InstanceId, InstanceState, Mobility, Renderer, Scene,
+    Camera, FrameInput, InstanceId, InstanceState, Mobility, Renderer, Scene, View, ViewFrame,
     asset::{Asset, CpuMesh, Material, Vertex},
     diagnostics::DiagnosticTarget,
     environment::{EnvironmentMap, PmremAtlas},
@@ -169,6 +169,7 @@ struct Frames {
     /// The offscreen model, which only reflections show.
     offscreen_model: InstanceId,
     renderer: Renderer,
+    view: View,
     settings: Settings,
     input: FrameInput,
     output: wgpu::TextureView,
@@ -263,7 +264,9 @@ impl Frames {
             antialiasing: settings::Antialiasing::Off,
             ..Settings::default()
         };
-        let renderer = Renderer::new(
+        let renderer = Renderer::new(&device);
+        let view = View::new(
+            &renderer,
             &device,
             &queue,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -279,6 +282,7 @@ impl Frames {
             scene,
             offscreen_model,
             renderer,
+            view,
             settings,
             input,
             output,
@@ -323,17 +327,20 @@ impl Frames {
             &self.queue,
             &mut encoder,
             &mut self.scene,
-            &self.input,
-            &self.settings,
-            &self.output,
-            None,
+            &mut [ViewFrame {
+                view: &mut self.view,
+                input: &self.input,
+                settings: &self.settings,
+                output: &self.output,
+                timing: None,
+            }],
         );
         encoder
     }
     /// The last frame's HDR composite.
     fn composite(&self) -> Vec<[f32; 4]> {
         self.rgba(
-            self.renderer
+            self.view
                 .diagnostic_target(DiagnosticTarget::Composite)
                 .unwrap(),
         )
@@ -366,7 +373,7 @@ impl Frames {
     fn resize(&mut self, size: [u32; 2]) {
         self.size = size;
         self.input.camera.projection = perspective(1., size[0] as f32 / size[1] as f32, 0.1);
-        self.renderer.resize(&self.device, size, 1., &self.settings);
+        self.view.resize(&self.device, size, 1., &self.settings);
         self.output = target(&self.device, size);
     }
     /// Texels of an RGBA16F target, row-major.

@@ -8,7 +8,7 @@ use crate::baked_specular_probe::{
     BakedSpecularProbe, SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels,
 };
 use crate::content::transient::{FogVolume, Glow, GlowKind, HeatDistortion};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::Settings;
 use crate::*;
 use glam::{Mat4, Quat, Vec3};
@@ -294,7 +294,7 @@ const SIZE: u32 = 32;
 /// the frame unless it is `abandoned`.
 fn frame(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
-    renderer: &mut Renderer,
+    renderer: &mut TestRenderer,
     scene: &mut Scene,
     camera: Camera,
     output: &wgpu::TextureView,
@@ -338,7 +338,7 @@ fn a_still_camera_sees_no_motion_across_a_move() {
             .add_instance(&device, &queue, state(model, pose), Mobility::Static)
             .unwrap();
     }
-    let mut renderer = Renderer::for_test(&device, &queue, [SIZE; 2], &Settings::default());
+    let mut renderer = TestRenderer::for_test(&device, &queue, [SIZE; 2], &Settings::default());
     let output = device
         .create_texture(&wgpu::TextureDescriptor {
             label: Some("origin move frames"),

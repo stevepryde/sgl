@@ -74,7 +74,7 @@ use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3};
 use sgl_3d::settings::RayTracedShadowQuality;
 use sgl_3d::{
     EnvironmentId, FrameInput, InstanceId, InstanceState, LightId, MaterialId, Mobility, ModelId,
-    ModelMesh, PreparedModel, RayTracingStats, Renderer, Scene, SceneError,
+    ModelMesh, PreparedModel, RayTracingStats, Renderer, Scene, SceneError, View, ViewFrame,
     timing::{FrameTime, GpuTiming},
 };
 use std::collections::{BTreeMap, VecDeque};
@@ -1091,7 +1091,9 @@ fn render(
     let mut scene = Scene::new(device, queue);
     let mut game = Game::new(run, &mut scene, gpu)?;
     let (texture, output) = output(device);
-    let mut renderer = Renderer::new(
+    let mut renderer = Renderer::new(device);
+    let mut scene_view = View::new(
+        &renderer,
         device,
         queue,
         wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -1154,10 +1156,13 @@ fn render(
             queue,
             &mut encoder,
             &mut scene,
-            &input,
-            &settings,
-            &output,
-            timing.as_ref(),
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &input,
+                settings: &settings,
+                output: &output,
+                timing: timing.as_ref(),
+            }],
         );
         let rendered = started.elapsed().as_secs_f64() * 1e3;
         let commands = encoder.finish();
@@ -1174,7 +1179,7 @@ fn render(
         }
         renderer.finish_frame(&mut scene);
         culling.frame(
-            (&renderer, &settings),
+            (&scene_view, &settings),
             index,
             step.is_some(),
             (rendered, recording - rendered),
@@ -1188,12 +1193,12 @@ fn render(
             m.given_bytes.push(given as f64);
             m.uploaded_bytes.push(frame.uploaded_bytes() as f64);
             m.buffers_created.push(frame.buffers_created as f64);
-            m.draws.push(renderer.diagnostic_draws());
+            m.draws.push(scene_view.diagnostic_draws());
             // The newest frame read back so far: a few frames before this.
-            if let Some(stats) = renderer.geometry_stats(device) {
+            if let Some(stats) = scene_view.geometry_stats(device) {
                 m.triangles.push(stats.total().1 as f64);
             }
-            let shadows = renderer.local_shadow_stats();
+            let shadows = scene_view.local_shadow_stats();
             m.faces.push(shadows.faces_drawn as f64);
             m.layers.push(shadows.layers_drawn as f64);
             m.shadow_draws.push(shadows.draws as f64);
@@ -1233,10 +1238,10 @@ fn render(
 
 /// The largest motion, in UV, the last frame's motion target holds.
 fn largest_motion(
-    renderer: &Renderer,
+    scene_view: &View,
     (device, queue): (&wgpu::Device, &wgpu::Queue),
 ) -> Result<f32, Box<dyn Error>> {
-    let motion = renderer
+    let motion = scene_view
         .diagnostic_target(DiagnosticTarget::Motion)
         .ok_or("no motion target")?;
     let bytes = sgl_3d::diagnostics::read(device, queue, motion.texture(), 8);
@@ -1279,7 +1284,9 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue), tracing: Tracing) -> Result<(), Box
         scene.set_instance(queue, creature, state)?;
     }
     let (_, output) = output(device);
-    let mut renderer = Renderer::new(
+    let mut renderer = Renderer::new(device);
+    let mut scene_view = View::new(
+        &renderer,
         device,
         queue,
         wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -1287,17 +1294,23 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue), tracing: Tracing) -> Result<(), Box
         1.,
         &settings,
     )?;
-    let frame = |renderer: &mut Renderer, scene: &mut Scene, game: &Game, submit: bool| {
+    let frame = |(renderer, scene_view): (&mut Renderer, &mut View),
+                 scene: &mut Scene,
+                 game: &Game,
+                 submit: bool| {
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(
             device,
             queue,
             &mut encoder,
             scene,
-            &game.input(),
-            &settings,
-            &output,
-            None,
+            &mut [ViewFrame {
+                view: scene_view,
+                input: &game.input(),
+                settings: &settings,
+                output: &output,
+                timing: None,
+            }],
         );
         if submit {
             queue.submit([encoder.finish()]);
@@ -1309,7 +1322,7 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue), tracing: Tracing) -> Result<(), Box
     for _ in 0..STREAM_IN_LIMIT {
         game.stream(&mut scene)?;
         game.arrive(&mut scene, gpu)?;
-        frame(&mut renderer, &mut scene, &game, true);
+        frame((&mut renderer, &mut scene_view), &mut scene, &game, true);
         settled = if streamed_in(&game) { settled + 1 } else { 0 };
         if settled == 30 {
             break;
@@ -1322,10 +1335,10 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue), tracing: Tracing) -> Result<(), Box
         let to = IVec3::new(by, 0, -by);
         scene.move_origin(device, queue, to.as_vec3())?;
         game.origin += to;
-        frame(&mut renderer, &mut scene, &game, false);
-        frame(&mut renderer, &mut scene, &game, true);
-        let motion = largest_motion(&renderer, gpu)?;
-        let shadows = renderer.local_shadow_stats();
+        frame((&mut renderer, &mut scene_view), &mut scene, &game, false);
+        frame((&mut renderer, &mut scene_view), &mut scene, &game, true);
+        let motion = largest_motion(&scene_view, gpu)?;
+        let shadows = scene_view.local_shadow_stats();
         println!(
             "origin moved by {label}: largest static motion {motion:e} UV, {} local shadow faces of {} lights redrawn",
             shadows.faces_drawn, shadows.shadowed
@@ -1354,11 +1367,11 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue), tracing: Tracing) -> Result<(), Box
         game.remesh(chunk, [true, false]);
     }
     game.remesh_all(&mut scene, gpu)?;
-    frame(&mut renderer, &mut scene, &game, false);
-    frame(&mut renderer, &mut scene, &game, true);
-    let edited = renderer.local_shadow_stats();
-    frame(&mut renderer, &mut scene, &game, true);
-    let next = renderer.local_shadow_stats();
+    frame((&mut renderer, &mut scene_view), &mut scene, &game, false);
+    frame((&mut renderer, &mut scene_view), &mut scene, &game, true);
+    let edited = scene_view.local_shadow_stats();
+    frame((&mut renderer, &mut scene_view), &mut scene, &game, true);
+    let next = scene_view.local_shadow_stats();
     println!(
         "remeshed chunks holding shadowed torches: {} static shadow layers redrawn, then {}",
         edited.layers_drawn, next.layers_drawn

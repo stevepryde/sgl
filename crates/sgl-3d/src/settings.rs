@@ -16,7 +16,7 @@ pub enum RenderPreset {
 /// history before bloom and tone mapping. FSR2 and FSR3 are mutually exclusive
 /// AMD temporal upscalers, using the
 /// [`FsrQuality`] render size; TAA replaces it where the device cannot run
-/// it ([`Renderer::antialiasing_in_effect`](crate::Renderer::antialiasing_in_effect)).
+/// it ([`View::antialiasing_in_effect`](crate::View::antialiasing_in_effect)).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Antialiasing {
     #[default]
@@ -395,7 +395,7 @@ pub enum Upscaling {
 
 /// Every rendering setting the renderer resolves into its effective
 /// configuration each frame. Size-affecting choices (preset, scene
-/// resolution, FSR and its quality) take effect at `Renderer::resize`.
+/// resolution, FSR and its quality) take effect at `View::resize`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -455,7 +455,7 @@ pub struct Settings {
     /// runs the opaque stage's G-buffer and lighting as two passes and
     /// builds two depth pyramids a frame, which pays only where a frame
     /// submits much hidden geometry; a device without six storage textures
-    /// a stage culls by frustum alone (`Renderer::occlusion_culling_in_effect`).
+    /// a stage culls by frustum alone (`View::occlusion_culling_in_effect`).
     pub occlusion_culling: bool,
     /// The volumetric fog and mist, while the frame turns its atmosphere on
     /// (`FrameInput::atmosphere`, off by default); this allows them, and is
@@ -561,8 +561,8 @@ mod diagnostics {
     /// Debug and test tooling's renderer configuration (feature
     /// `diagnostics`): layers switched off to isolate the others, and frame
     /// observations. The default switches nothing off and observes nothing.
-    /// A game reads the observations through `Renderer::diagnostic_target`
-    /// and `Renderer::take_frame_probe_reports`.
+    /// A game reads the observations through `View::diagnostic_target`
+    /// and `View::take_frame_probe_reports`.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct Diagnostics {
         pub disable: DisabledLayers,

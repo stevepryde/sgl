@@ -2,7 +2,7 @@
 //! it records.
 use crate::asset::{CpuMesh, Vertex};
 use crate::diagnostics::DiagnosticTarget;
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{AmbientOcclusionQuality, Antialiasing, Settings};
 use crate::shading::gbuffer;
 use crate::test_support;
@@ -76,7 +76,7 @@ fn fused_and_split_opaque_write_the_same_targets() {
             &test_support::environment([40, 60, 90, 255], &[0]),
         )
         .unwrap();
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &Settings::default());
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &Settings::default());
     if !renderer.test_fused_supported() {
         let limits = device.limits();
         eprintln!(
@@ -110,6 +110,7 @@ fn fused_and_split_opaque_write_the_same_targets() {
             renderer.encode_test_opaque(&device, &queue, &mut encoder, &scene, &mut frame, fused);
             queue.submit([encoder.finish()]);
             let visibility = renderer
+                .view
                 .diagnostic_target(DiagnosticTarget::AmbientOcclusion)
                 .map(|view| test_support::read(&device, &queue, view.texture(), 4));
             assert_eq!(
@@ -197,7 +198,7 @@ fn masked_surfaces_are_cut_out_in_both_opaque_forms() {
         &mut scene,
         test_support::masked(masked, 0.5),
     );
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &Settings::default());
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &Settings::default());
     let projection = perspective(1., 1., 0.1);
     let input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
@@ -290,7 +291,7 @@ fn motion_after_turn(
         antialiasing: Antialiasing::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(device, queue, TURN_SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(device, queue, TURN_SIZE, &settings);
     let output = crate::view::targets::target(device, "turn", TURN_SIZE, gbuffer::COLOR);
     let mut input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
@@ -443,7 +444,7 @@ fn gbuffer_f0_is_fresnel_at_the_materials_ior() {
     let (ids, _) = test_support::add_static(&device, &queue, &mut scene, asset);
     let material = ids.materials[0];
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
         projection: perspective(1., 1., 0.1),
@@ -533,7 +534,7 @@ fn a_dielectric_without_specular_reflects_as_lambert_alone() {
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = crate::view::targets::target(&device, "lambert", SIZE, gbuffer::COLOR);
     // The +Y and +X faces lie near grazing from here.
     let eye = Vec3::new(0.25, 0.65, 3.);
@@ -622,7 +623,7 @@ fn gbuffer_f90_is_the_specular_strength_mixed_toward_one_by_metallic() {
     let (ids, _) = test_support::add_static(&device, &queue, &mut scene, asset);
     let material = ids.materials[0];
     let settings = Settings::default();
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
         projection: perspective(1., 1., 0.1),
@@ -711,7 +712,7 @@ fn the_environment_scale_reaches_completion_on_every_attachment_budget() {
             atmosphere: false,
             ..Settings::default()
         };
-        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         assert_eq!(
             renderer.test_anisotropy_inline(),
             budget == largest && largest > 32,
@@ -870,7 +871,7 @@ fn an_anisotropic_metal_completes_opaque_as_it_shades_blended() {
             atmosphere: false,
             ..Settings::default()
         };
-        let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+        let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         assert_eq!(
             renderer.test_anisotropy_inline(),
             budget == largest && largest > 32,
@@ -976,7 +977,7 @@ fn an_orthographic_camera_shades_every_surface_along_its_axis() {
         atmosphere: false,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let output = crate::view::targets::target(&device, "orthographic", SIZE, gbuffer::COLOR);
     // Reversed-Z from 10 m before the eye to 5 m behind it.
     let mut input = FrameInput::new(Camera {

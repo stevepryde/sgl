@@ -31,7 +31,7 @@ use sgl_3d::glam::{Mat4, Quat, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameInput, InstanceId,
     InstanceState, MaterialId, MaterialShader, Mobility, ModelMesh, MotionBlurParameters,
-    NormalLayer, PreparedModel, Renderer, Scene, ShaderSource, SurfaceMaterial,
+    NormalLayer, PreparedModel, Renderer, Scene, ShaderSource, SurfaceMaterial, View, ViewFrame,
     asset::{Asset, CpuMesh, Image, Material, Vertex},
     deformation::{MeshDeformation, MorphDelta, MorphTarget},
     environment::{EnvironmentMap, PmremAtlas},
@@ -1044,7 +1044,16 @@ fn render(
     let environment = scene.add_environment(device, queue, &sky())?;
     let mut size = options.size;
     let mut texture = output(device, size);
-    let mut renderer = Renderer::new(device, queue, texture.format(), size, 1., &run.settings)?;
+    let mut renderer = Renderer::new(device);
+    let mut scene_view = View::new(
+        &renderer,
+        device,
+        queue,
+        texture.format(),
+        size,
+        1.,
+        &run.settings,
+    )?;
     let mut timing = GpuTiming::new(device, queue);
     let mut in_flight = None;
     let mut origin = Vec3::ZERO;
@@ -1060,7 +1069,7 @@ fn render(
             scene.move_origin(device, queue, ORIGIN_MOVE)?;
             origin += ORIGIN_MOVE;
         }
-        renderer.resize(device, size, 1., &run.settings);
+        scene_view.resize(device, size, 1., &run.settings);
         let seconds = match run.waves {
             Waves::Still => 0.,
             _ => index as f64 / 60.,
@@ -1113,10 +1122,13 @@ fn render(
             queue,
             &mut encoder,
             &mut scene,
-            &input,
-            &run.settings,
-            &view,
-            timing.as_ref(),
+            &mut [ViewFrame {
+                view: &mut scene_view,
+                input: &input,
+                settings: &run.settings,
+                output: &view,
+                timing: timing.as_ref(),
+            }],
         );
         let submission = queue.submit([encoder.finish()]);
         if let Some(timing) = &mut timing {
@@ -1146,7 +1158,7 @@ fn render(
             }
         }
     }
-    if let Some(error) = renderer.fsr_error() {
+    if let Some(error) = scene_view.fsr_error() {
         println!("{}: FSR does not run here ({error}); TAA ran", run.name);
     }
     Ok(times)

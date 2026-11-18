@@ -1,7 +1,7 @@
 //! Decals through the real opaque stage, which writes what reflections
 //! read, and through a real ray hit.
 use crate::asset::{CpuMesh, Image, Vertex};
-use crate::renderer::Renderer;
+use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{
     AmbientOcclusionQuality, ScreenSpaceReflections, Settings, WorldSpaceReflections,
 };
@@ -182,7 +182,7 @@ fn decals_change_base_colour_normal_and_roughness_inside_their_box_alone() {
         world_space_reflections: WorldSpaceReflections::Moving,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let mut frame = renderer.prepare_test_frame(&device, &queue, &mut scene, &input, &settings);
     assert!(!scene.decals.packing(), "the frame uploaded the atlas");
     let forms = if renderer.test_fused_supported() {
@@ -340,7 +340,7 @@ fn a_decal_out_of_view_leaves_the_frame_as_without_decals() {
         bloom: Bloom::Off,
         ..Settings::default()
     };
-    let mut renderer = Renderer::for_test(&device, &queue, SIZE, &settings);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
         projection: perspective(1., 1., 0.1),

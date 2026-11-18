@@ -86,7 +86,7 @@ pub(crate) fn octahedral(v: glam::Vec3) -> [f32; 2] {
 pub(crate) fn observe_ray_hits(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    renderer: &mut crate::Renderer,
+    renderer: &mut crate::TestRenderer,
     scene: &mut crate::Scene,
     input: &crate::FrameInput,
     settings: &crate::settings::Settings,
