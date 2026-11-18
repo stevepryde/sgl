@@ -20,8 +20,8 @@ use sgl_3d::diagnostics::{self, BuildStep, DiagnosticTarget};
 use sgl_3d::glam::{Vec2, Vec3};
 use sgl_3d::settings::{self, Antialiasing, Settings};
 use sgl_3d::{
-    DirectionalLight, DynamicGiVolume, Fog, HemisphereLight, InstanceId, InstanceState, Light,
-    MaterialShader, ShaderSource, SurfaceMaterial,
+    DirectionalLight, DirectionalShadow, DynamicGiVolume, Fog, HemisphereLight, InstanceId,
+    InstanceState, Light, MaterialShader, ShaderSource, SurfaceMaterial,
 };
 
 /// Where `image` and `oracle` first differ, texel by texel over every
@@ -741,9 +741,10 @@ fn shared_work(gpu: &Gpu, two: bool, frames: u32, hardware: bool) -> Shared {
     }
 }
 
-/// D-57 (guard 5). Plausible defects: the scene's frame work runs per view
-/// rather than once a frame, or not at all for a frame whose first view
-/// does not ask for it. The fixture: the lit stage with a dynamic GI volume
+/// D-57 (guard 5). Plausible defect: the scene's frame work runs per view
+/// rather than once a frame. Both views have the same settings, so this
+/// does not judge work only a secondary view asks for (guard 5b does). The
+/// fixture: the lit stage with a dynamic GI volume
 /// and a morphing card, three frames seen by two views and by one, on the
 /// portable ray path and, where the device has ray queries, the hardware
 /// one. The oracles are the contract's: the moving instance BVH is built
@@ -815,14 +816,140 @@ fn shared_work_runs_once_a_frame() {
     failures.assert();
 }
 
+/// What guard 5b turns on in view B alone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Traced {
+    /// World-space reflection rays.
+    WorldRays,
+    /// Ray-traced shadows, which trace in hardware only.
+    Shadows,
+}
+
+/// B's composites over three frames of the lit stage with `traced` on in B
+/// alone, with `hardware` ray tracing, B listed after a view A that traces
+/// nothing (or, with `with_a` false, alone), and the frames' counters.
+fn traced_by_b(
+    gpu: &Gpu,
+    traced: Traced,
+    hardware: bool,
+    with_a: bool,
+) -> (Vec<Image>, diagnostics::Counters) {
+    let mut rig = Rig::new(gpu, VIEW, Antialiasing::Taa, 0.05);
+    let b = if with_a {
+        rig.add_view(VIEW, Antialiasing::Taa)
+    } else {
+        0
+    };
+    let card = light_the_stage(&mut rig);
+    for view in &mut rig.views {
+        view.settings.hardware_ray_tracing = hardware;
+    }
+    let settings = &mut rig.views[b].settings;
+    match traced {
+        Traced::WorldRays => Feature::WorldRays.on(settings),
+        Traced::Shadows => {
+            // Its slot 0 holds the directional light, which casts a shadow.
+            settings.ray_traced_shadows = true;
+            for view in &mut rig.views {
+                if let Some(light) = &mut view.input.directional_lights[0] {
+                    light.shadow = Some(DirectionalShadow {
+                        distance: 20.,
+                        cascades: 2,
+                    });
+                }
+            }
+        }
+    }
+    let before = diagnostics::counters();
+    let images = (0..3)
+        .map(|frame| {
+            if with_a {
+                rig.look(panning(frame));
+            }
+            rig.look_view(b, turning(frame));
+            place_lit_card(&mut rig, card, frame);
+            rig.render(frame);
+            rig.read_view(b, DiagnosticTarget::Composite)
+        })
+        .collect();
+    (images, diagnostics::counters().since(&before))
+}
+
+/// D-57 (guard 5b). Plausible defects: the scene's frame work is steered by
+/// the primary view alone where the contract takes the union over the
+/// frame's views, so a secondary view that traces while the primary does
+/// not reads acceleration structures that were not built that frame, or
+/// draws ray-traced shadows with pipelines specialised without the shadow
+/// mask. The fixture: the lit stage with its card moving, view A tracing
+/// nothing and view B turning with world-space rays (on the portable path,
+/// and on the hardware path where the device has ray queries) or with
+/// ray-traced shadows (hardware only). The oracles: the contract's, the
+/// moving instance BVH built once a frame on the portable path and the TLAS
+/// on the hardware one; and equivalence, each of B's composites equal,
+/// texel for texel, to B rendered alone.
+fn scene_work_follows_any_view_that_traces(traced: Traced, hardware: bool) {
+    let Some(gpu) = ray_gpu() else { return };
+    if hardware {
+        let rig = Rig::new(&gpu, VIEW, Antialiasing::Taa, 0.05);
+        let mut settings = rig.views[0].settings;
+        settings.hardware_ray_tracing = true;
+        if !rig.renderer.ray_tracing_in_effect(&settings, &rig.scene) {
+            eprintln!(
+                "unsupported: the device has no ray queries; the hardware path is not judged"
+            );
+            return;
+        }
+    }
+    let mut failures = Failures::default();
+    let (together, counted) = traced_by_b(&gpu, traced, hardware, true);
+    let (alone, _) = traced_by_b(&gpu, traced, hardware, false);
+    let builds = if hardware {
+        counted.tlas_builds
+    } else {
+        counted.step(BuildStep::MovingInstanceBvh).calls
+    };
+    eprintln!("{traced:?}, hardware {hardware}: {builds} builds in 3 frames");
+    failures.check(builds == 3, || {
+        format!("{traced:?}, hardware {hardware}: built {builds} times in 3 frames")
+    });
+    for (frame, (together, alone)) in together.iter().zip(&alone).enumerate() {
+        let differs = apart(together, alone);
+        failures.check(differs.is_none(), || {
+            let (pixel, by) = differs.unwrap();
+            format!(
+                "{traced:?}, hardware {hardware}: B's composite {frame} differs from B alone at {pixel:?} by {by}"
+            )
+        });
+    }
+    failures.assert();
+}
+
+mod scene_work_follows_any_view_that_traces {
+    use super::Traced::*;
+    crate::scenario::temporal::case_tests!(
+        scene_work_follows_any_view_that_traces;
+        portable_world_rays: (WorldRays, false),
+        hardware_world_rays: (WorldRays, true),
+        hardware_shadows: (Shadows, true),
+    );
+}
+
 /// D-57, D9 (guard 6). Plausible defect: the local-light shadow atlas, its
-/// static layers or its cache are shared between views, so each view
-/// overwrites the faces another placed for its camera and every frame
-/// redraws them. The fixture: views A and B of the stage, both still, under
-/// a point light that casts shadows over both. The oracle is the rule a
-/// frame in which nothing a face shows changed draws nothing (the
-/// architecture's local-light shadows): from the second frame on, neither
-/// view draws a face or a static layer.
+/// static layers or its cache are shared between views, so a light's place
+/// follows whichever view placed it last and the faces another view drew
+/// are redrawn. Two nearby cameras place one light alike, so the fixture
+/// gives the views different placements: view A at the origin and view B
+/// 10 m behind it, both still, looking at the stage; light 1 just before
+/// the card, whose screen coverage wants the atlas's largest slot from A
+/// and a quarter of it from B; light 2 behind A's camera, which only B's
+/// view reaches. Godot's atlas keeps a light's slots for 30 of its plans
+/// before moving it to another size (`atlas::REALLOCATION_FRAMES`), so a
+/// shared atlas, planned twice a frame, would move light 1 to B's size by
+/// frame 15 and redraw its faces; the run is 18 frames. The oracles are the
+/// rules: each view shadows the lights whose range reaches its frustum (A
+/// one, B two, by construction), and a frame in which nothing a face shows
+/// changed draws nothing (the architecture's local-light shadows), so from
+/// the second frame on neither view draws a face or a static layer.
 #[test]
 fn each_view_draws_only_its_own_shadow_faces() {
     let Some(gpu) = gpu() else { return };
@@ -833,28 +960,35 @@ fn each_view_draws_only_its_own_shadow_faces() {
     };
     let mut rig = a.rig(&gpu, VIEW, Antialiasing::Taa);
     rig.add_view(VIEW, Antialiasing::Taa);
-    rig.look_view(1, Pose::at(Vec3::new(0.3, 0.2, 0.5)));
-    rig.scene
-        .add_light(
-            &gpu.device,
-            &gpu.queue,
-            Light {
-                position: Vec3::new(0.2, 0.8, -DEPTH + 1.5),
-                range: 6.,
-                casts_shadow: true,
-                ..Default::default()
-            },
-        )
-        .expect("a shadowed light");
+    rig.look_view(1, Pose::at(Vec3::new(0.3, 0.2, 10.)));
+    for (position, range) in [
+        (Vec3::new(0.2, 0.3, -DEPTH + 0.8), 1.2),
+        (Vec3::new(0., 0., 6.), 1.),
+    ] {
+        rig.scene
+            .add_light(
+                &gpu.device,
+                &gpu.queue,
+                Light {
+                    position,
+                    range,
+                    casts_shadow: true,
+                    ..Default::default()
+                },
+            )
+            .expect("a shadowed light");
+    }
     let mut failures = Failures::default();
-    for frame in 0..4 {
+    for frame in 0..18 {
         a.pose(&mut rig, frame);
         rig.render(frame);
-        for (view, name) in [(0, "A"), (1, "B")] {
+        for (view, name, lights) in [(0, "A", 1), (1, "B", 2)] {
             let stats = rig.views[view].view.local_shadow_stats();
-            eprintln!("frame {frame}, view {name}: {stats:?}");
-            failures.check(stats.shadowed == 1, || {
-                format!("frame {frame}: view {name} shadowed no light: {stats:?}")
+            if frame < 2 {
+                eprintln!("frame {frame}, view {name}: {stats:?}");
+            }
+            failures.check(stats.shadowed == lights && stats.unshadowed == 0, || {
+                format!("frame {frame}: view {name} shadowed {stats:?}, not its {lights} lights")
             });
             if frame > 0 {
                 failures.check(stats.faces_drawn == 0 && stats.layers_drawn == 0, || {
