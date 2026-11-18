@@ -239,6 +239,30 @@ fn moved(camera: CameraAttribs, previous: Previous) -> CameraAttribs {
     }
 }
 
+/// `camera` with its projection jittered by `jitter` (NDC), as a jittered
+/// frame rasterizes: the matrices carry the jitter and `f2_jitter` states
+/// it.
+pub(super) fn jittered(camera: CameraAttribs, jitter: [f32; 2]) -> CameraAttribs {
+    let shift = |by: [f32; 2]| {
+        let mut m = [
+            1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+        ];
+        m[12] = by[0];
+        m[13] = by[1];
+        m
+    };
+    let proj = multiply(shift(jitter), camera.m_proj);
+    let proj_inv = multiply(camera.m_proj_inv, shift(jitter.map(|j| -j)));
+    CameraAttribs {
+        f2_jitter: jitter,
+        m_proj: proj,
+        m_proj_inv: proj_inv,
+        m_view_proj: multiply(proj, camera.m_view),
+        m_view_proj_inv: multiply(camera.m_view_inv, proj_inv),
+        ..camera
+    }
+}
+
 /// `camera` standing `distance` further back along its view axis, facing
 /// the same way.
 pub(super) fn standing_behind(camera: CameraAttribs, distance: f32) -> CameraAttribs {

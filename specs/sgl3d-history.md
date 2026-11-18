@@ -2178,7 +2178,13 @@ rejection repeats (R-16, R-29).
   fails its normal and roughness test (on a flat mirror the hit always passes), and does not
   denoise mirror reflections at all (`IsMirrorReflection`). Code:
   `SSR_ComputeTemporalAccumulation.wgsl` (`ComputeTemporalAccumulationPS`).
-- **Guard.** None.
+- **Guard.** `a_still_mirror_under_jitter_discards_no_history` (at rest under jitter both
+  reprojections tie and the pass takes the reflection's, which the discard does not test, so a
+  reflected light that changes discards no pixel) and `a_highlight_the_surface_carried_away_is_discarded`
+  (a mirror sliding in its plane under a still camera: where the luminance choice takes the
+  surface's history and it lies beyond the tolerance it is discarded, where it takes the
+  reflection's it is kept), on Crystal's production temporal pass
+  (`crates/sgl-post-fx/src/ssr_surface_discard_tests.rs`).
 - **Status.** Rule. Kept by measurement as a trade-off, not a fault with a free fix (settled
   from B-20 by the 2026-11-18 history audit); the choice is the owner's to revisit. The discard's tolerance is the variance of a
   deterministic signal, so it fires on any change of the reflected radiance under motion, not only

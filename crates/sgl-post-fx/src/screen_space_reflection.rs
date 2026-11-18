@@ -1418,5 +1418,9 @@ mod temporal_neighborhood_tests;
 mod followed_surface_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "ssr_surface_discard_tests.rs"]
+mod surface_discard_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "ssr_intersection_tests.rs"]
 mod intersection_tests;

@@ -6,7 +6,8 @@
 //! point through the previous camera alone places it the camera's travel
 //! further away.
 use super::temporal_neighborhood_tests::{
-    SIZE, camera, depth, device, half, read_rgba16f, read_scalar, standing_behind, texels, texture,
+    SIZE, camera, depth, device, half, jittered, read_rgba16f, read_scalar, standing_behind,
+    texels, texture,
 };
 use super::*;
 use crate::{CameraAttribs, post_fx_context::FrameDesc};
@@ -18,17 +19,19 @@ fn device_depth(camera: &CameraAttribs, z: f32) -> f32 {
 }
 
 /// A glossy plane `z` m ahead of the camera, and the previous frame.
-struct Followed {
-    reversed: bool,
-    z: f32,
+pub(super) struct Followed {
+    pub reversed: bool,
+    pub z: f32,
     /// How far the camera travelled along its axis since the previous frame.
-    travel: f32,
+    pub travel: f32,
+    /// The previous and this frame's projection jitter (NDC).
+    pub jitter: [[f32; 2]; 2],
     /// The motion texel everywhere: NDC motion, depth motion, validity.
-    motion: [f32; 4],
+    pub motion: [f32; 4],
     /// The history radiance (grey) at pixel `(x, y)`, which frame 0 stores.
-    history: fn(u32, u32) -> f32,
+    pub history: fn(u32, u32) -> f32,
     /// This frame's resolved radiance (grey) at pixel `(x, y)`.
-    current: fn(u32, u32) -> f32,
+    pub current: fn(u32, u32) -> f32,
 }
 
 /// Two frames of the production temporal pass, every denoiser tile active:
@@ -37,7 +40,11 @@ struct Followed {
 /// reflection's virtual point is the plane's own point, so the hit
 /// reprojection is the camera's. Returns frame 1's radiance and variance
 /// histories.
-fn followed(device: &wgpu::Device, queue: &wgpu::Queue, f: &Followed) -> (Vec<[f32; 4]>, Vec<f32>) {
+pub(super) fn followed(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    f: &Followed,
+) -> (Vec<[f32; 4]>, Vec<f32>) {
     let mut ssr = ScreenSpaceReflection::new(device);
     let mut context = PostFXContext::new(device, queue, Default::default());
     let context_flags = if f.reversed {
@@ -45,14 +52,17 @@ fn followed(device: &wgpu::Device, queue: &wgpu::Queue, f: &Followed) -> (Vec<[f
     } else {
         post_fx_context::FeatureFlags::NONE
     };
-    let current = camera(f.reversed, 0);
+    let current = jittered(camera(f.reversed, 0), f.jitter[1]);
     let plane = device_depth(&current, f.z);
     let mut histories = None;
     for index in 0..2 {
         let previous = if index == 0 {
             current
         } else {
-            standing_behind(current, f.travel)
+            jittered(
+                standing_behind(camera(f.reversed, 0), f.travel),
+                f.jitter[0],
+            )
         };
         let mut encoder = device.create_command_encoder(&Default::default());
         let scene_depth = depth(device, &mut encoder, plane);
@@ -146,7 +156,7 @@ fn followed(device: &wgpu::Device, queue: &wgpu::Queue, f: &Followed) -> (Vec<[f
     histories.unwrap()
 }
 
-fn checkerboard(x: u32, y: u32) -> f32 {
+pub(super) fn checkerboard(x: u32, y: u32) -> f32 {
     ((x + y) % 2) as f32
 }
 
@@ -181,6 +191,7 @@ fn a_surface_the_camera_follows_keeps_its_reflection_history() {
                 reversed,
                 z: 2.,
                 travel: 10.,
+                jitter: [[0.; 2]; 2],
                 motion: [0., 0., 0., 1.],
                 history: |_, _| 0.75,
                 current: |x, y| checkerboard(x, y),
@@ -234,6 +245,7 @@ fn the_fallback_search_keeps_a_followed_surfaces_history_in_place() {
             reversed: false,
             z: 8.,
             travel: 2.,
+            jitter: [[0.; 2]; 2],
             motion: [0., 0., 0., 0.],
             history: ramp,
             current: ramp,
