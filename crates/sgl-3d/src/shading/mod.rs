@@ -306,6 +306,13 @@ pub(crate) static FRAME_FOG: Module = Module {
     source: include_str!("frame_fog.wgsl"),
     deps: &[&UNIFORMS, &FOG],
 };
+/// The temporal masks' reactive value, which every draw that writes the
+/// reactive mask outputs (`view::targets::mask_targets`).
+pub(crate) static TEMPORAL_MASKS: Module = Module {
+    name: "temporal_masks",
+    source: include_str!("temporal_masks.wgsl"),
+    deps: &[],
+};
 /// Linear view depth under `perspective`'s projection.
 pub(crate) static DEPTH: Module = Module {
     name: "depth",

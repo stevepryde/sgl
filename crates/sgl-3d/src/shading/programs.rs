@@ -91,6 +91,7 @@ pub(crate) static GEOMETRY: Module = Module {
         &super::SURFACE,
         &super::SURFACE_RASTER,
         &super::FRAME_FOG,
+        &super::TEMPORAL_MASKS,
         &super::TRANSMISSION,
         &super::MATERIAL_SHADER,
     ],

@@ -202,8 +202,8 @@ pub(super) struct SceneContent {
     pub dynamic_gi_volume: bool,
     /// Blended or transmissive materials.
     pub blended: bool,
-    /// An opaque or masked material whose shading moves
-    /// (`Material::surface_moves`).
+    /// An opaque or masked material whose shading may change where its
+    /// geometry stands still (`Materials::holds_moving_surfaces`).
     pub moving_surfaces: bool,
     /// Glow, mist and heat distortion to draw.
     pub glow: bool,

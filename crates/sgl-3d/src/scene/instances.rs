@@ -157,6 +157,9 @@ pub(crate) struct Instances {
     /// moving instance's move from its submitted pose, deformation and
     /// vertex functions write motion and do not set it.
     rigid_changes: bool,
+    /// The instances whose shader data was set since the last submitted
+    /// frame (`set_shader_data`), repeats and removed ones included.
+    shader_edits: Vec<InstanceId>,
 }
 
 /// `Instances::counts`' index of a mobility.
@@ -174,6 +177,7 @@ impl Instances {
             objects: Objects::new(device),
             counts: [0; 2],
             rigid_changes: false,
+            shader_edits: Vec::new(),
         }
     }
 
@@ -195,7 +199,22 @@ impl Instances {
     /// Sets instance `id`'s shader data and writes it.
     pub fn set_shader_data(&mut self, queue: &wgpu::Queue, id: InstanceId, data: [f32; 4]) {
         self.slots.get_mut(id).expect("a live instance").shader_data = data;
+        self.shader_edits.push(id);
         self.write_shader_data(queue, id);
+    }
+
+    /// The live instances whose shader data differs from the last
+    /// submitted frame's, each once or more; none that was in no submitted
+    /// frame, which has no last submitted data.
+    pub fn shader_data_edited(&self) -> impl Iterator<Item = &Instance> + '_ {
+        self.shader_edits
+            .iter()
+            .filter_map(|&id| self.slots.get(id))
+            .filter(|instance| {
+                instance
+                    .submitted_shader_data
+                    .is_some_and(|submitted| submitted != instance.shader_data)
+            })
     }
 
     /// Geometry replacement, or a material edit that changes what `model`'s
@@ -295,6 +314,7 @@ impl Instances {
     /// motion is.
     pub fn finish_frame(&mut self) {
         self.rigid_changes = false;
+        self.shader_edits.clear();
         for (_, instance) in self.slots.iter_mut() {
             if instance.submitted_shader_data != Some(instance.shader_data) {
                 instance.shader_stale |= instance.submitted_shader_data.is_some();

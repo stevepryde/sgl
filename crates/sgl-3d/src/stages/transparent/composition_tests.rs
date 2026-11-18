@@ -1,6 +1,6 @@
 //! FSR's transparency and composition mask over opaque surfaces whose
 //! shading moves where their geometry stands still, and under heat
-//! distortion, observed in real frames.
+//! distortion, and the reactive mask glow writes, observed in real frames.
 use crate::asset::{Asset, Image};
 use crate::renderer::Renderer;
 use crate::settings::{self, Settings};
@@ -142,6 +142,23 @@ fn masks(
     scene: &mut Scene,
     elapsed_seconds: f64,
 ) -> [Vec<f32>; 2] {
+    exposed_masks(
+        device,
+        queue,
+        (renderer, settings),
+        scene,
+        (elapsed_seconds, 0.),
+    )
+}
+
+/// `masks` at a fixed exposure of `stops`.
+fn exposed_masks(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    (renderer, settings): (&mut Renderer, &Settings),
+    scene: &mut Scene,
+    (elapsed_seconds, stops): (f64, f32),
+) -> [Vec<f32>; 2] {
     let mut input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
         projection: crate::perspective(1., 1., 0.1),
@@ -149,6 +166,10 @@ fn masks(
     });
     input.camera_cut = true;
     input.elapsed_seconds = elapsed_seconds;
+    input.exposure = crate::Exposure {
+        stops,
+        automatic: None,
+    };
     let output = crate::view::targets::target(device, "FSR masks frame", SIZE, gbuffer::COLOR);
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.render(
@@ -527,6 +548,411 @@ fn heat_distortion_marks_the_composition_mask_under(
             ((48, 48), [0., 0.], "heat of weight 0"),
             ((4, 32), [0., 0.], "the floor beside the heat"),
             ((60, 4), [0., 0.], "the floor beside the heat"),
+        ],
+    );
+}
+
+/// A game's shader that reads no time: its surface function cuts out the
+/// fragments left of `uv.x` = its parameters' `cut` or its instance's
+/// data's x, whichever is larger (a masked material's coverage; an opaque
+/// one ignores alpha).
+const CUTTING_SHADER: &str = r#"
+struct ShaderParams {
+ cut:f32,
+ unused:f32,
+ unused2:vec2<f32>,
+}
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {
+ return v;
+}
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {
+ var out=s;
+ out.base_color.a=select(s.base_color.a,0.,ctx.uv.x<max(params.cut,ctx.instance.x));
+ return out;
+}
+"#;
+
+/// A game's shader that reads the frame's time, without changing what it
+/// draws by it.
+const TIMED_SHADER: &str = r#"
+struct ShaderParams {
+ unused:vec4<f32>,
+}
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,params:ShaderParams)->MaterialVertex {
+ return v;
+}
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->MaterialSurface {
+ var out=s;
+ out.emission=s.emission*select(1.,1.,ctx.time>0.);
+ return out;
+}
+"#;
+
+/// `wgsl`, a game's shader, added to `scene`.
+fn add_shader(scene: &mut Scene, wgsl: &str) -> crate::ShaderId {
+    scene
+        .add_shader(crate::ShaderSource {
+            wgsl: wgsl.into(),
+            label: "composition".into(),
+        })
+        .unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// `asset` placed as `place` places it, drawn through `shader` with the
+/// parameters `params`; its material and instance.
+fn shaded(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    scene: &mut Scene,
+    (asset, offset): (Asset, Vec3),
+    shader: crate::ShaderId,
+    params: [f32; 4],
+) -> (crate::MaterialId, InstanceId) {
+    let (ids, instance, _) = place(device, queue, scene, asset, offset);
+    let material = ids.materials[0];
+    test_support::set_shader(scene, queue, material, (shader, 0.));
+    scene
+        .set_shader_parameters(queue, material, bytemuck::bytes_of(&params))
+        .unwrap();
+    (material, instance)
+}
+
+// Plausible defects (B-3 in specs/sgl3d-history.md, M-16): an opaque or
+// masked material marks the transparency and composition mask for having a
+// game's shader, in frames where nothing its shader reads changed; or it
+// stays unmarked in a frame where its parameter block or its instance's
+// data changed, or while its shader reads the time; or a write of the same
+// parameters marks it; or an edit that cuts texels out of a masked
+// material leaves the texels it removed unmarked. The oracle is the rule
+// of M-16, from AMD's FSR documentation (super-resolution-upscaler.md 131,
+// 192: the mask is for areas whose motion vectors do not match the change
+// in shading): a material's shading changes where its geometry stands
+// still only when its normal layers move, its shader reads the time, or
+// what its shader reads (its parameters, its instances' data) differs from
+// the last submitted frame's; in an edit's frame a masked material's whole
+// footprint in front of the opaque depth is marked, its cut-out texels
+// included. So the still shader's squares read (0, 0) in a frame after no
+// edit, (0, 1) in the frame after an edit of their parameters or instance
+// data and (0, 0) the frame after that; the masked square's half its edit
+// cut out reads (0, 1) in the edit's frame, over the floor, and (0, 0)
+// after it. A shader that reads the time is
+// `a_shader_reading_the_time_marks_composition_every_frame`'s.
+//
+// Geometry as in `moving_opaque_surfaces_mark_fsrs_composition_mask`:
+// squares 0.8 m wide at 3 m, centred 1.2 m apart, span 15.6 texels about
+// columns 8.6 and 32 and rows 20.3 and 43.7. The masked square's left half,
+// u < 0.5, spans columns 24.2 to 32.
+#[test]
+fn a_shader_surface_marks_composition_only_in_frames_its_shading_changes() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let Some((mut renderer, settings)) =
+        temporal_renderer(&device, &queue, settings::Antialiasing::Taa)
+    else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, square(-6., 8.));
+    let gpu = (&device, &queue);
+    let shader = add_shader(&mut scene, CUTTING_SHADER);
+    let top = 0.6;
+    let bottom = -0.6;
+    let (opaque, instance) = shaded(
+        gpu,
+        &mut scene,
+        (square(-3., 0.4), Vec3::new(-1.2, top, 0.)),
+        shader,
+        [0.; 4],
+    );
+    let mut cut = square(-3., 0.4);
+    cut.materials[0].alpha = AlphaMode::Mask { cutoff: 0.5 };
+    let (masked, _) = shaded(
+        gpu,
+        &mut scene,
+        (cut, Vec3::new(0., bottom, 0.)),
+        shader,
+        [0.; 4],
+    );
+    let mut time = 0.;
+    let mut frame = |renderer: &mut Renderer, scene: &mut Scene| {
+        time += 1.;
+        masks(&device, &queue, (renderer, &settings), scene, time)
+    };
+    let states = |opaque: f32, masked: f32| {
+        [
+            ((8, 20), [0., opaque], "the still shader's opaque square"),
+            ((20, 20), [0., 0.], "the floor"),
+            ((27, 44), [0., masked], "the masked square's left half"),
+            ((37, 44), [0., masked], "the masked square's right half"),
+        ]
+    };
+    // The frame that takes the parameters first set, then one after it.
+    frame(&mut renderer, &mut scene);
+    assert_masks(&frame(&mut renderer, &mut scene), &states(0., 0.));
+    let set = |scene: &mut Scene, material, cut: f32| {
+        scene
+            .set_shader_parameters(&queue, material, bytemuck::bytes_of(&[cut, 0., 0., 0.]))
+            .unwrap();
+    };
+    // Parameters edited: the opaque square's (what it draws is unchanged)
+    // and the masked square's, which cuts out its left half.
+    set(&mut scene, opaque, 0.25);
+    set(&mut scene, masked, 0.5);
+    assert_masks(&frame(&mut renderer, &mut scene), &states(1., 1.));
+    assert_masks(&frame(&mut renderer, &mut scene), &states(0., 0.));
+    // The same parameters written again.
+    set(&mut scene, opaque, 0.25);
+    set(&mut scene, masked, 0.5);
+    assert_masks(&frame(&mut renderer, &mut scene), &states(0., 0.));
+    // The opaque square's instance's data edited.
+    scene
+        .set_instance_shader_data(&queue, instance, [0.1, 0., 0., 0.])
+        .unwrap();
+    assert_masks(&frame(&mut renderer, &mut scene), &states(1., 0.));
+    assert_masks(&frame(&mut renderer, &mut scene), &states(0., 0.));
+}
+
+// Plausible defect (B-3, M-16): a material whose shader reads the frame's
+// time, and may change what it draws with it in any frame, goes unmarked in
+// the frames between edits. The oracle is M-16's rule, as in
+// `a_shader_surface_marks_composition_only_in_frames_its_shading_changes`:
+// its square reads (0, 1) in every frame, the floor beside it (0, 0).
+#[test]
+fn a_shader_reading_the_time_marks_composition_every_frame() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let Some((mut renderer, settings)) =
+        temporal_renderer(&device, &queue, settings::Antialiasing::Taa)
+    else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, square(-6., 8.));
+    let shader = add_shader(&mut scene, TIMED_SHADER);
+    shaded(
+        (&device, &queue),
+        &mut scene,
+        (square(-3., 0.4), Vec3::new(0., 0.6, 0.)),
+        shader,
+        [0.; 4],
+    );
+    for time in 1..=3 {
+        let masks = masks(
+            &device,
+            &queue,
+            (&mut renderer, &settings),
+            &mut scene,
+            f64::from(time),
+        );
+        assert_masks(
+            &masks,
+            &[
+                ((32, 20), [0., 1.], "the timed shader's square"),
+                ((20, 20), [0., 0.], "the floor"),
+            ],
+        );
+    }
+}
+
+// Plausible defect (B-10 in specs/sgl3d-history.md, M-17b): glow computes
+// its reactivity from its radiance in the game's light units, so the same
+// glow on screen is marked differently at another exposure, and a scene lit
+// in brighter units marks every glow pixel at the cap. The oracle is M-17b's
+// rule, AMD's particle reactivity, max(r, g, b) times alpha
+// (particlerender.hlsl 249-254), of the glow's light as the frame shows it:
+// its radiance times the frame's exposure multiplier, 2^stops, which FSR
+// and the tone map apply. A glow of (0.2, 0.1, 0.05) at alpha 0.5 and
+// stops 0, and one of 4 times that at stops -2, add the same light to the
+// displayed frame, and both read reactive 0.2 x 0.5 = 0.1 and transparency
+// and composition 0; a glow of 0.5 at alpha 1 and stops 1 reads the cap,
+// 0.9. A quad at 3 m covers the whole view, over the floor at 6 m.
+#[test]
+fn glow_marks_reactivity_by_what_it_adds_to_the_displayed_frame() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let Some((mut renderer, settings)) =
+        temporal_renderer(&device, &queue, settings::Antialiasing::Taa)
+    else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, square(-6., 8.));
+    let cases = [
+        ([0.2, 0.1, 0.05, 0.5], 0., 0.1),
+        ([0.8, 0.4, 0.2, 0.5], -2., 0.1),
+        ([0.5, 0.5, 0.5, 1.], 1., 0.9),
+    ];
+    for (index, (color, stops, reactive)) in cases.into_iter().enumerate() {
+        let glow = [[-200., -200., -3.], [600., -200., -3.], [-200., 600., -3.]].map(|position| {
+            crate::effects::Glow {
+                position,
+                color,
+                kind: crate::effects::GlowKind::Uniform,
+                soft_distance: 0.,
+            }
+        });
+        scene.update_effects(&device, &queue, &glow).unwrap();
+        let masks = exposed_masks(
+            &device,
+            &queue,
+            (&mut renderer, &settings),
+            &mut scene,
+            (index as f64, stops),
+        );
+        assert_masks(
+            &masks,
+            &[(
+                (32, 32),
+                [reactive, 0.],
+                &format!("glow {color:?} at {stops} stops"),
+            )],
+        );
+    }
+}
+
+/// A blended square of `alpha` at `z`, `half` metres from its centre to
+/// each side, whose reactivity is its alpha (it does not keep its
+/// specular).
+fn pane(z: f32, half: f32, alpha: f32) -> Asset {
+    let mut pane = square(z, half);
+    pane.materials[0].base = [0.2, 0.9, 0.3, alpha];
+    pane.materials[0].alpha = AlphaMode::Blend {
+        receives_screen_space_reflections: false,
+        keeps_specular: false,
+    };
+    pane
+}
+
+// Plausible defect (B-13 in specs/sgl3d-history.md, U-10): overlapping
+// reactive writers raise a pixel's reactivity above the 0.9 AMD's FSR
+// documentation recommends as its maximum ("Reactive mask": a value near 1
+// does not give good results), though each draw is capped (two panes of
+// 0.9 gave 0.99). The oracle is that cap and the union of AMD's FSR sample
+// (fsrapirendermodule.cpp, `m (1 - mask) + mask`), taken in units of the
+// cap, U-10's rule: reactivity r over a pixel's s gives r + s (1 - r / 0.9).
+// Two panes of alpha 0.9 read 0.9; two of 0.5 read 0.5 + 0.5 (1 - 0.5 /
+// 0.9) = 0.722; a pane of 0.9 before a glow at the cap reads 0.9. Their
+// transparency and composition keep AMD's union: 0.99, 0.75 and the pane's
+// 0.9 (glow writes none).
+//
+// The camera at the origin looks down -Z with cot(0.5) = 1.830: a square
+// `half` metres from its centre at 2 m, centred at (x, y), and one 1.25
+// times as large and as far out at 2.5 m cover the same texels, centred at
+// column 32 + 29.3 x and row 32 - 29.3 y, 5.9 texels from their centre to
+// each side: the pairs at (-0.6, 0.4) and (0.6, 0.4) about (14.4, 20.3)
+// and (49.6, 20.3). The pane at (0, -0.5) spans columns 26.1 to 37.9 and
+// rows 40.8 to 52.5; the glow behind it at 3 m, x from -0.3 to 0.3 and y
+// from -1.2 to -0.3, columns 26.1 to 37.9 and rows 37.9 to 55.4.
+#[test]
+fn overlapping_reactive_writers_stay_within_amds_cap() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let Some((mut renderer, settings)) =
+        temporal_renderer(&device, &queue, settings::Antialiasing::Taa)
+    else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, square(-6., 8.));
+    for (x, y, alpha) in [(-0.6, 0.4, 0.9), (0.6, 0.4, 0.5)] {
+        place(
+            &device,
+            &queue,
+            &mut scene,
+            pane(-2., 0.2, alpha),
+            Vec3::new(x, y, 0.),
+        );
+        place(
+            &device,
+            &queue,
+            &mut scene,
+            pane(-2.5, 0.25, alpha),
+            Vec3::new(1.25 * x, 1.25 * y, 0.),
+        );
+    }
+    place(
+        &device,
+        &queue,
+        &mut scene,
+        pane(-2., 0.2, 0.9),
+        Vec3::new(0., -0.5, 0.),
+    );
+    let glow = [
+        (-0.3, -1.2),
+        (0.3, -1.2),
+        (0.3, -0.3),
+        (-0.3, -1.2),
+        (0.3, -0.3),
+        (-0.3, -0.3),
+    ]
+    .map(|(x, y)| crate::effects::Glow {
+        position: [x, y, -3.],
+        color: [2., 2., 2., 1.],
+        kind: crate::effects::GlowKind::Uniform,
+        soft_distance: 0.,
+    });
+    scene.update_effects(&device, &queue, &glow).unwrap();
+    let masks = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 1.);
+    assert_masks(
+        &masks,
+        &[
+            ((14, 20), [0.9, 0.99], "two panes of alpha 0.9"),
+            (
+                (50, 20),
+                [0.5 + 0.5 * (1. - 0.5 / 0.9), 0.75],
+                "two panes of alpha 0.5",
+            ),
+            (
+                (32, 46),
+                [0.9, 0.9],
+                "a pane of alpha 0.9 before a glow at the cap",
+            ),
+            ((32, 32), [0., 0.], "the floor"),
+        ],
+    );
+}
+
+// Settles O-5 (specs/sgl3d-history.md, U-12). Plausible defect: a blended
+// receiver of screen-space reflections, which writes its own depth and
+// motion (M-12), is exempted from the reactive mask, or marks it otherwise
+// than a blended surface that writes none. The oracle is AMD's FSR
+// documentation (super-resolution-upscaler.md 172): alpha-blended objects
+// should write their motion vectors and, besides, store their alpha in the
+// reactive mask, since what shows through them follows another motion; and
+// its sample's translucency writes alpha as transparency and composition.
+// A receiver of alpha 0.4 and a plain blended square of alpha 0.4 both read
+// (0.4, 0.4). Geometry as in `overlapping_reactive_writers_stay_within_amds_cap`:
+// squares 0.2 m from their centre at 2 m, centred at (-0.6, 0.4) and
+// (0.6, 0.4), about columns 14.4 and 49.6 and row 20.3.
+#[test]
+fn a_receiver_marks_the_masks_as_a_blended_surface_does() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let Some((mut renderer, settings)) =
+        temporal_renderer(&device, &queue, settings::Antialiasing::Taa)
+    else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, square(-6., 8.));
+    for (x, receives) in [(-0.6, true), (0.6, false)] {
+        let mut asset = pane(-2., 0.2, 0.4);
+        asset.materials[0].alpha = AlphaMode::Blend {
+            receives_screen_space_reflections: receives,
+            keeps_specular: false,
+        };
+        place(&device, &queue, &mut scene, asset, Vec3::new(x, 0.4, 0.));
+    }
+    let masks = masks(&device, &queue, (&mut renderer, &settings), &mut scene, 1.);
+    assert_masks(
+        &masks,
+        &[
+            ((14, 20), [0.4, 0.4], "a receiver of alpha 0.4"),
+            ((50, 20), [0.4, 0.4], "a blended square of alpha 0.4"),
         ],
     );
 }

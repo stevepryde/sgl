@@ -211,10 +211,10 @@ impl PipelineKey {
     /// layers), and for the
     /// blended passes whether transmission is compiled in.
     pub(super) fn constants(self) -> Vec<(&'static str, f64)> {
-        let masked = (
-            "alpha_mask",
-            f64::from(u8::from(self.variant.alpha == Alpha::Mask)),
-        );
+        // The temporal composition's footprint marks cut-out texels too.
+        let discards = self.variant.alpha == Alpha::Mask
+            && self.pass != (GeometryPass::TemporalComposition { footprint: true });
+        let masked = ("alpha_mask", f64::from(u8::from(discards)));
         let deformed = (
             "deformed_vertices",
             f64::from(u8::from(self.variant.deformed)),
@@ -228,7 +228,7 @@ impl PipelineKey {
             constants.extend(self.lit.constants());
             let motion = !matches!(
                 self.pass,
-                GeometryPass::Blended { .. } | GeometryPass::TemporalComposition
+                GeometryPass::Blended { .. } | GeometryPass::TemporalComposition { .. }
             ) && !self.pass.volume();
             constants.push(("motion_vertices", f64::from(u8::from(motion))));
         }

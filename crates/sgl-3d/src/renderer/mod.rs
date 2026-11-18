@@ -260,6 +260,7 @@ impl Renderer {
             ))
         });
         let cull = Cull::new(device);
+        let exposure = Exposure::new(device);
         let first_frame = effective::first_frame(
             settings,
             effective::Device {
@@ -280,9 +281,10 @@ impl Renderer {
                 &bindings.unlit,
                 &bindings.blended,
                 &targets,
+                exposure.view(),
                 bindings.lit.tier,
             ),
-            exposure: Exposure::new(device),
+            exposure,
             antialiasing,
             motion_blur: MotionBlur::new(device),
             post: Post::new(
@@ -360,7 +362,8 @@ impl Renderer {
         self.motion_blur.forget_inputs();
         self.antialiasing.forget_inputs();
         self.post.resize(device, sizes, sizing.bloom_targets);
-        self.transparent.resize(device, &self.targets);
+        self.transparent
+            .resize(device, &self.targets, self.exposure.view());
         self.reflections.resize(device, render);
         self.sizes = sizes;
         self.bloom_targets = sizing.bloom_targets;

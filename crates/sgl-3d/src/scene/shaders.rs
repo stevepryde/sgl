@@ -140,3 +140,76 @@ impl Scene {
         Ok(self.instances.get(id)?.shader_data)
     }
 }
+
+/// Whether an opaque or masked material's shading differs in this frame
+/// from the last submitted frame's where its geometry stands still
+/// (`Scene::shading_changes`), which the temporal composition marks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShadingChange {
+    /// It does not: no normal layer moves, and it has no shader or one that
+    /// reads no time and whose parameters and instance data are the last
+    /// submitted frame's.
+    None,
+    /// It changes from frame to frame: its normal layers move
+    /// (`Material::record_moves`) or its shader reads the time
+    /// (`Shader::reads_time`).
+    Continuous,
+    /// An edit since the last submitted frame changed what its shader
+    /// reads: its parameter block (`Scene::set_shader_parameters`) or the
+    /// shader data of an instance of a model drawn with it
+    /// (`Scene::set_instance_shader_data`).
+    Edited,
+}
+
+/// The frame's shading changes (`Scene::shading_changes`): the materials
+/// whose instances' shader data was edited since the last submitted frame.
+pub(crate) struct ShadingChanges {
+    edited: Vec<MaterialId>,
+}
+
+impl ShadingChanges {
+    /// How `id`'s shading changes in `scene`'s frame. An edit takes
+    /// precedence over a continuous change.
+    pub fn of(&self, scene: &Scene, id: MaterialId) -> ShadingChange {
+        let material = scene.drawn_material(id);
+        let Some(shader) = material.values.shader else {
+            return if material.record_moves() {
+                ShadingChange::Continuous
+            } else {
+                ShadingChange::None
+            };
+        };
+        if material.parameters_changed() || self.edited.contains(&id) {
+            ShadingChange::Edited
+        } else if material.record_moves()
+            || scene
+                .shaders
+                .get(shader.shader)
+                .is_ok_and(|shader| shader.reads_time)
+        {
+            ShadingChange::Continuous
+        } else {
+            ShadingChange::None
+        }
+    }
+}
+
+impl Scene {
+    /// The frame's shading changes: per material, whether its shading
+    /// differs from the last submitted frame's where its geometry stands
+    /// still (`ShadingChanges::of`). An instance's edited shader data counts
+    /// for every material its model draws with, and so for every instance
+    /// drawn with those materials.
+    pub(crate) fn shading_changes(&self) -> ShadingChanges {
+        let mut edited = Vec::new();
+        for instance in self.instances.shader_data_edited() {
+            let model = self.drawn_model(instance.state.model);
+            for mesh in &model.meshes {
+                if !edited.contains(&mesh.material) {
+                    edited.push(mesh.material);
+                }
+            }
+        }
+        ShadingChanges { edited }
+    }
+}

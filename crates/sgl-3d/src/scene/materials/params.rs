@@ -63,6 +63,11 @@ impl ParamBlock {
         changed
     }
 
+    /// Whether this frame's block differs from the last submitted frame's.
+    pub fn changed(&self) -> bool {
+        self.bytes != self.committed
+    }
+
     /// Commits a submitted frame: its block becomes the last submitted one.
     pub fn finish_frame(&mut self) {
         if self.committed != self.bytes {
