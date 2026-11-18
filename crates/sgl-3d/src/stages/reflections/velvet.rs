@@ -310,7 +310,7 @@ impl Velvet {
         // As with world rays, history continues from the last finished
         // frame where the stage ran in it (F-4).
         let run = self.history.begin(&input.frame, resized);
-        // The renderer's camera history is the previous camera, as it
+        // The view's camera history is the previous camera, as it
         // rasterized; a new history reprojects through this frame's.
         let near = input.camera.proj[3][2];
         let (previous, previous_near) = match input.frame.previous_camera {

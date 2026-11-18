@@ -120,6 +120,12 @@ docs and specs the entry links.
   views restart every frame. Each view holds its own targets, FSR context
   and local-light shadow atlas. One renderer shows one scene at a time. No
   game-code change beyond the migration above for a single view.
+- `sgl-3d` `Renderer::ray_traced_shadows_in_effect`: takes the frame's
+  primary view's settings after the view's (`(&settings, &primary,
+  &scene)`), whose `hardware_ray_tracing` every view of the frame takes; it
+  read the view's own, which was wrong for a secondary view. For one view
+  pass its settings twice: `ray_traced_shadows_in_effect(&settings,
+  &settings, &scene)`.
 - `sgl-3d` `Renderer::finish_frame`: commits what the frame drew (each
   instance's pose, visibility and shader data, deformations, shader
   parameter blocks, the rigid-change signal and static-edit bounds as they

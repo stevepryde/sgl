@@ -8,7 +8,8 @@
 //! `frame_uniform` builds the frame data every view of a frame shares,
 //! including the cascades.
 //!
-//! The types stages share, which the renderer owns and lends them, are
+//! The types stages share, which the renderer and its views own and lend
+//! them, are
 //! here too: the frame's context (`frame`), the effective configuration
 //! (`effective`), the sizes and shared targets (`targets`), group 0
 //! (`bindings`), DiligentFX's post-effect context (`post_fx`), the bind

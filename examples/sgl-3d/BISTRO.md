@@ -374,7 +374,7 @@ static-layer draws, face draws and total draw operations. The first frame is
 reported separately from measured-frame min/max/totals, so warm-cache timings
 do not hide cache population. Counts cover visible shadow-casting lights, not
 all authored lights; atlas overflow remains lit without shadows. They use the
-existing `Renderer::local_shadow_stats` accessor, without enabling GPU
+existing `View::local_shadow_stats` accessor, without enabling GPU
 readbacks or changing the renderer.
 
 For a matched shadow-cost comparison, copy the descriptor and set each

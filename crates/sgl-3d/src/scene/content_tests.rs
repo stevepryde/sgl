@@ -1374,7 +1374,7 @@ fn content_survives_buffer_growth() {
     );
 }
 
-// Plausible defects: the renderer keeps group 0 built for the first frame's
+// Plausible defects: a view keeps group 0 built for the first frame's
 // environment, or binds a removed environment's textures. The oracle is the
 // sky each frame draws from its environment's panorama: red, then blue,
 // then the black stand-in.

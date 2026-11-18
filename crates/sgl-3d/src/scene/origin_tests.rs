@@ -1,6 +1,6 @@
 //! Moving the render origin (`Scene::move_origin`): what the scene holds
 //! becomes what the game would have given it in the new frame, motion and
-//! the renderer's camera history carry across the move, and nothing is
+//! each view's camera history carry across the move, and nothing is
 //! translated twice by an abandoned frame.
 use super::content_tests::uploaded_record;
 use crate::asset::Image;
@@ -317,7 +317,7 @@ fn frame(
     }
 }
 
-// Plausible defects: the renderer's camera history kept in the old render
+// Plausible defects: a view's camera history kept in the old render
 // frame (a frame in which all static content moves by the move), translated
 // the wrong way, translated again by a frame that was abandoned, or cut by
 // the move. The oracle is a camera that stays where it was in the world:

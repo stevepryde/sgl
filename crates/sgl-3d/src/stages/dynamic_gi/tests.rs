@@ -2219,7 +2219,7 @@ fn a_restart_starts_the_probes_nearest_the_camera_first() {
 }
 
 // Once started, the probes continue through a camera cut and a resize,
-// which reset the renderer's history but not theirs, and through a frame
+// which reset the view's history but not theirs, and through a frame
 // rendered for a scroll that would start them all and abandoned; another
 // placement, another scene and a frame that does not run them start them
 // afresh, the far probes not in the first frame.

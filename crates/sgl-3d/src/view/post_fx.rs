@@ -1,6 +1,6 @@
 //! SGL post effects (`sgl-post-fx`) in SGL3D: the one place
-//! SGL3D-specific adaptation of the effects library exists. The renderer owns the
-//! context and lends it to Crystal SSR and TAA.
+//! SGL3D-specific adaptation of the effects library exists. Each view owns
+//! its context and lends it to Crystal SSR and TAA.
 //!
 //! Per frame, as in Diligent's Hydrogent renderer (`HnPostProcessTask`):
 //! `prepare` before any geometry decides whether history continues and, with
@@ -334,7 +334,7 @@ impl PostFx {
     /// `surface` over the G-buffer into DiligentFX's inputs and executes the
     /// post-effect context. `view` is right-handed and `projection` is
     /// `perspective`'s infinite reversed-Z form with the frame's jitter
-    /// applied; `previous` is the renderer's camera history, the previous
+    /// applied; `previous` is the view's camera history, the previous
     /// camera.
     #[allow(clippy::too_many_arguments)]
     pub fn begin(

@@ -525,7 +525,7 @@ enum Restart {
 /// Case U5. Plausible defect: history survives a camera cut at an
 /// upscaling quality, or a change of quality, which changes the render
 /// size and with it the targets, so the History contract restarts it
-/// (`Renderer::resize`; FSR resets on a new render size), and the restarted
+/// (`View::resize`; FSR resets on a new render size), and the restarted
 /// frame opens with a ghost of the old. The oracle is equivalence, as case
 /// 10's: a run that panned and a run held still elsewhere, given the same
 /// restart in the same frame, render it exactly alike. The run starts at

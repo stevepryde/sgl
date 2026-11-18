@@ -710,7 +710,7 @@ mod native {
                     "hardware_ray_tracing": renderer.ray_tracing_in_effect(&settings, &scene),
                     "ray_tracing_error": renderer.ray_tracing_error(),
                     "ray_tracing_stats": format!("{:?}",renderer.ray_tracing_stats()),
-                    "ray_traced_shadows": renderer.ray_traced_shadows_in_effect(&settings, &scene),
+                    "ray_traced_shadows": renderer.ray_traced_shadows_in_effect(&settings, &settings, &scene),
                     "dynamic_gi_quality": format!("{:?}",renderer.dynamic_gi_in_effect(&settings, &scene)),
                     "dynamic_gi_enabled": gi_volume.is_some() && renderer.dynamic_gi_in_effect(&settings, &scene) != DynamicGiQuality::Off,
                 }}));

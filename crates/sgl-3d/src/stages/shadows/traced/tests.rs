@@ -499,7 +499,7 @@ fn the_mask_matches_a_cpu_oracle_of_occlusion() {
         let frame = if cut { "cut" } else { "still" };
         input.camera_cut = cut;
         let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
-        assert!(renderer.ray_traced_shadows_in_effect(&settings, &scene));
+        assert!(renderer.ray_traced_shadows_in_effect(&settings, &settings, &scene));
         let mut held: Vec<usize> = std::iter::once(SHADOW_MASK_DIRECTIONAL)
             .chain(ids.iter().map(|id| id.index() as u32))
             .map(|key| observed.slot(key))
@@ -2221,7 +2221,7 @@ fn thin_lit_features_against_the_sky_are_unoccluded() {
         for frame in 0..8 {
             input.camera_cut = frame == 0;
             let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
-            assert!(renderer.ray_traced_shadows_in_effect(&settings, &scene));
+            assert!(renderer.ray_traced_shadows_in_effect(&settings, &settings, &scene));
             let label = format!(
                 "frame {frame}, {}",
                 if unlit_behind {
@@ -2735,7 +2735,7 @@ fn a_normal_mapped_surface_does_not_shadow_itself() {
         for frame in 0..4 {
             input.camera_cut = frame == 0;
             let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
-            assert!(renderer.ray_traced_shadows_in_effect(&settings, &scene));
+            assert!(renderer.ray_traced_shadows_in_effect(&settings, &settings, &scene));
             let mut shadowed = Vec::new();
             let mut on_plane = 0;
             for y in 0..size[1] {

@@ -1,6 +1,6 @@
 //! A storage buffer of records the scene keeps on the CPU and mirrors to the
 //! GPU: an edit changes records and marks them, and the frame's prepare
-//! (`Scene::prepare_frame`) uploads the marked ones through the queue, or
+//! (`Scene::begin_frame`) uploads the marked ones through the queue, or
 //! every record into a new buffer when they outgrew it. Nothing goes through
 //! a frame's encoder, so an abandoned frame loses no edit.
 use bytemuck::Pod;

@@ -155,9 +155,9 @@ settings SGL3D has today.
    spot cone is valid content and releases its shadow slots until its projection
    is finite.
    Colour inputs state their linear/sRGB interpretation; HDR lighting stays linear
-   until presentation. `Renderer::new` writes floating-point composition
+   until presentation. `View::new` writes floating-point composition
    textures in display-referred linear sRGB on both platforms.
-   `Renderer::new_surface` takes the actual surface configuration and
+   `View::new_surface` takes the actual surface configuration and
    capabilities and owns its display transfer; games never compensate with gamma in materials.
    The tone mapper is an explicit artistic choice in `Settings::tone_mapping`:
    Khronos PBR Neutral by default, Three.js ACES Filmic, or Filament AgX with its look.

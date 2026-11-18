@@ -1,7 +1,7 @@
-//! Group 0 for every view the renderer draws: the lit, unlit and shadow
-//! layouts, the frame's `FrameUniform` buffer, neutral stand-ins, and the
-//! groups built from them, which the renderer owns and stages borrow. The
-//! layouts are made once (`Layouts`) and shared by every view's groups and
+//! Group 0 of one view: the lit, unlit and shadow layouts, the frame's
+//! `FrameUniform` buffer, neutral stand-ins, and the groups built from
+//! them, which the view owns and stages borrow. The layouts are made once
+//! (`Layouts`, which the renderer holds) and shared by every view's groups and
 //! the geometry pipelines. The scene layout (group 1) matches the scene's
 //! own groups; group 2's is the geometry pipelines' (`view::pipelines`), of
 //! the device's binding tier.

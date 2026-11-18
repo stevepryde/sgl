@@ -2790,8 +2790,9 @@ hardware.
   lighting pass), so the setting costs the second geometry pass besides
   the rays. The volumetric fog, blended surfaces, probe captures,
   reflections' ray hits and the lights beyond those sixteen keep the maps,
-  which are still drawn. `Renderer::ray_traced_shadows_in_effect(&settings, &scene)`
-  says whether the setting is in effect; they then run on the frames where
+  which are still drawn. `Renderer::ray_traced_shadows_in_effect(&settings, &primary, &scene)`
+  says whether the setting is in effect for a view whose frame's primary
+  view has `primary` (whose hardware ray tracing the frame takes); they then run on the frames where
   a light holds a slot. Without hardware ray tracing in effect the maps
   shadow everything: SGL3D has no software path for these rays, since on
   its software BVHs they cost 3–5 times the hardware's with local lights

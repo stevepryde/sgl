@@ -384,7 +384,7 @@ fn both_modes_preserve_masked_deformed_raster_and_shadow_depth() {
                 DynamicGiQuality::Off
             );
             assert!(!renderer.ray_tracing_in_effect(&settings, scene));
-            assert!(!renderer.ray_traced_shadows_in_effect(&settings, scene));
+            assert!(!renderer.ray_traced_shadows_in_effect(&settings, &settings, scene));
             assert!(
                 renderer
                     .ray_tracing_error()

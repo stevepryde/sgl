@@ -210,14 +210,21 @@ impl Renderer {
             && self.shared.prepare.ray_tracing_error().is_none()
     }
 
-    /// Whether ray-traced shadows are in effect for a view's `settings`
-    /// under the primary view's hardware ray tracing:
-    /// `Settings::ray_traced_shadows` is on and hardware ray tracing is in
-    /// effect (`ray_tracing_in_effect`). The view's opaque surfaces then
-    /// take them on the frames where a light holds a slot; otherwise the
-    /// shadow maps shadow them. The saved choice is unchanged.
-    pub fn ray_traced_shadows_in_effect(&self, settings: &Settings, scene: &Scene) -> bool {
-        settings.ray_traced_shadows && self.ray_tracing_in_effect(settings, scene)
+    /// Whether ray-traced shadows are in effect for a view's `settings` in
+    /// a frame whose primary view's settings are `primary` (the same
+    /// settings for the primary view itself), whose hardware ray tracing
+    /// every view of the frame takes: `settings.ray_traced_shadows` is on
+    /// and hardware ray tracing is in effect for `primary`
+    /// (`ray_tracing_in_effect`). The view's opaque surfaces then take them
+    /// on the frames where a light holds a slot; otherwise the shadow maps
+    /// shadow them. The saved choices are unchanged.
+    pub fn ray_traced_shadows_in_effect(
+        &self,
+        settings: &Settings,
+        primary: &Settings,
+        scene: &Scene,
+    ) -> bool {
+        settings.ray_traced_shadows && self.ray_tracing_in_effect(primary, scene)
     }
 
     /// Why the hardware path did not trace the last rendered frame's rays
