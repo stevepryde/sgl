@@ -9,9 +9,8 @@ pub use look::{
     CompensationCurve, CompensationCurveError, Exposure, MeteringMask, MotionBlurParameters,
 };
 
-use crate::content::identity::EnvironmentId;
 use crate::content::lighting::{
-    Backdrop, DirectionalLight, EnvironmentLight, HemisphereLight, Mist,
+    Backdrop, DirectionalLight, EnvironmentLight, FrameEnvironment, HemisphereLight, Mist,
 };
 use glam::camera;
 use glam::{Mat4, Vec3};
@@ -105,11 +104,14 @@ pub struct FrameInput {
     /// Enabled material visibility groups: a material draws while every bit
     /// of its `visibility_group` is set here.
     pub visibility_mask: u32,
-    /// The scene's environment that lights the frame, draws its sky and
-    /// backs its reflections; with none, or one the scene no longer has, no
-    /// environment does.
-    pub environment: Option<EnvironmentId>,
-    /// Up to two directional lights; `None` is no light.
+    /// What surrounds the frame: one of the scene's environment maps,
+    /// which lights the frame, draws its sky and backs its reflections, or
+    /// a procedural sky lit by `directional_lights`; with `None`, or a map
+    /// the scene no longer has, no environment does.
+    pub environment: FrameEnvironment,
+    /// Up to two directional lights; `None` is no light. Under a
+    /// procedural sky (`FrameEnvironment::Sky`) each is its light above the
+    /// air, which reaches the scene through it.
     pub directional_lights: [Option<DirectionalLight>; 2],
     pub hemisphere_light: HemisphereLight,
     /// How `environment` lights surfaces' diffuse lobe. Their specular
@@ -153,7 +155,7 @@ impl FrameInput {
             elapsed_seconds: 0.,
             frame_time_ms: 1000. / 60.,
             visibility_mask: 0,
-            environment: None,
+            environment: FrameEnvironment::None,
             directional_lights: [None; 2],
             hemisphere_light: HemisphereLight::default(),
             diffuse_environment: EnvironmentLight::default(),

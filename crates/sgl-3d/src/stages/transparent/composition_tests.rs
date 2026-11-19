@@ -469,7 +469,7 @@ fn removing_the_last_moving_material_renders_on() {
 // weight is 0, outside its triangle, or where an opaque surface in front
 // hides it; writes the reactive mask; or replaces what a blended surface
 // marked at a pixel it also covers with less. The oracle is the rule of
-// Frame item 8 (specs/sgl3d-architecture.md): heat distortion marks its
+// Frame item 9 (specs/sgl3d-architecture.md): heat distortion marks its
 // weight as transparency and composition where it lies in front of the
 // opaque depth, accumulated as the transparent draws accumulate theirs,
 // AMD's `m (1 - mask) + mask` (fsrapirendermodule.cpp). Heat of weight 0.6

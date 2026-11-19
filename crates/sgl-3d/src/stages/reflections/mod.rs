@@ -172,7 +172,14 @@ impl Reflections {
             .use_variant(ctx.device, source_variant(ctx.effective));
         let visibility = ambient_occlusion.unwrap_or(&self.full_visibility).clone();
         let fog = ctx.bindings.fog();
-        let inputs = source_inputs(ctx, probes, fog, &self.environment_parameters, &visibility);
+        let sky = ctx.bindings.environment().pmrem.clone();
+        let inputs = source_inputs(
+            ctx,
+            probes,
+            (fog, &sky),
+            &self.environment_parameters,
+            &visibility,
+        );
         self.source
             .encode(ctx.encoder, ctx.device, ctx.queue, inputs, ctx.timing);
     }
@@ -298,7 +305,14 @@ impl Reflections {
             .unwrap_or(&ctx.bindings.empty_probes);
         let visibility = ambient_occlusion.unwrap_or(&self.full_visibility).clone();
         let fog = ctx.bindings.fog();
-        let inputs = source_inputs(ctx, probes, fog, &self.environment_parameters, &visibility);
+        let sky = ctx.bindings.environment().pmrem.clone();
+        let inputs = source_inputs(
+            ctx,
+            probes,
+            (fog, &sky),
+            &self.environment_parameters,
+            &visibility,
+        );
         self.source.compose(
             ctx.encoder,
             ctx.device,
@@ -331,12 +345,13 @@ fn traced(ctx: &FrameContext<'_>) -> (f32, f32) {
 }
 
 /// Source completion's and composition's inputs: `probes`, the frame's
-/// `fog` volume and `parameters` (`source::ReflectionEnvironment`) with
-/// the frame's targets, scene and camera, occluded by `visibility`.
+/// `fog` volume, the frame environment's PMREM atlas (`sky`, as group 0
+/// binds it) and `parameters` (`source::ReflectionEnvironment`) with the
+/// frame's targets, scene and camera, occluded by `visibility`.
 fn source_inputs<'a: 'p, 'p>(
     ctx: &FrameContext<'a>,
     probes: &'p UploadedProbes,
-    fog: FogVolume<'p>,
+    (fog, sky): (FogVolume<'p>, &'p wgpu::TextureView),
     parameters: &'p wgpu::Buffer,
     visibility: &'p wgpu::TextureView,
 ) -> source::Inputs<'p> {
@@ -362,7 +377,7 @@ fn source_inputs<'a: 'p, 'p>(
         lookup_tables: &scene.lookup_tables,
         ambient_occlusion: visibility,
         environment: source::Environment {
-            sky: &environments.frame(ctx.input.environment).pmrem,
+            sky,
             sampler: &environments.sampler,
             parameters,
             material: &t.material,

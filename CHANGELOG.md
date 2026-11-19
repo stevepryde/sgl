@@ -35,6 +35,7 @@ docs and specs the entry links.
   its environment specular is now occluded by the sky the probes see, so
   shaded and enclosed surfaces stop reflecting the sky at full strength. No
   game-code changes are needed.
+- `sgl-3d` `FrameInput::environment` is now `FrameEnvironment` (`None`, `Map(id)`, `Sky(Sky)`), was `Option<EnvironmentId>`: write `FrameEnvironment::Map(id)` for `Some(id)` and `FrameEnvironment::None` for `None`. `Sky` is a new procedural sky lit by the frame's directional lights, whose `illuminance` and `color` are then their light above the air; it gives no environment light yet.
 
 ## 0.8.1 — 2026-11-19
 

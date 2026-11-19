@@ -294,7 +294,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Rule.** `gbuffer_encode_velocity` writes previous minus current view depth (clip w) in B and 1 in A only when the previous w is above 0 and the depth change is at most 65504 m; otherwise B and A are 0. The sky always writes 0 and 0. Ambient occlusion rejects its history where A is 0; TAA's depth test then uses the camera reprojection alone. An orthographic camera gives B 0 and A 1, and no consumer of depth motion runs with one.
 - **Raised by.** Points behind the previous camera, the sky.
 - **Stays triggered while.** On the sky, every frame, by design.
-- **Source.** NRD's 2.5D motion convention. Code: `shading/gbuffer.wgsl` (`gbuffer_encode_velocity`), `stages/opaque/sky.wgsl` (`sky_fs`).
+- **Source.** NRD's 2.5D motion convention. Code: `shading/gbuffer.wgsl` (`gbuffer_encode_velocity`), `stages/opaque/backdrop.wgsl` (`backdrop_fs`).
 - **Guard.** `temporal_visibility_accumulates_and_rejects_invalid_history` (`stages/opaque/ambient_occlusion/tests.rs`).
 - **Status.** Rule.
 
@@ -390,7 +390,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Raised by.** Every frame; a game turning `Backdrop::Environment::yaw` adds the turn.
 - **Stays triggered while.** Nothing. A turning panorama is motion, as a turning camera is: TAA arms the hold where it moves 0.01 px a frame or more (T-22, T-23) and reprojects it, and FSR and motion blur follow it.
 - **Known limits.** The turn is the f32 difference of the two yaws: a yaw the game lets grow without wrapping loses precision in the panorama's sampling and its motion alike.
-- **Source.** Diligent's `EnvMap.psh` `GetMotionVector`, Bevy's background motion vectors (`background_motion_vectors.wesl`) for the camera's rotation; neither turns its environment (Diligent's `g_EnvironmentRotation`, Bevy's `Skybox::rotation`) in the motion, which is SGL3D's own (2026-11-18 history audit, O-11). Code: `stages/opaque/sky.wgsl` (`sky_motion`); `view/history.rs` (`CameraHistory::set_backdrop`); `renderer/view.rs` (`View::begin_history`).
+- **Source.** Diligent's `EnvMap.psh` `GetMotionVector`, Bevy's background motion vectors (`background_motion_vectors.wesl`) for the camera's rotation; neither turns its environment (Diligent's `g_EnvironmentRotation`, Bevy's `Skybox::rotation`) in the motion, which is SGL3D's own (2026-11-18 history audit, O-11). Code: `stages/opaque/backdrop.wgsl` (`sky_motion`); `view/history.rs` (`CameraHistory::set_backdrop`); `renderer/view.rs` (`View::begin_history`), with `view::backdrop_yaw`, which takes a procedural sky as yaw 0.
 - **Guard.** `a_turn_past_the_view_moves_every_pixel_off_screen_along_the_turn`, `an_orthographic_camera_records_finite_motion` (`stages/opaque/tests.rs`); `motion_vectors_match_the_script` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`); `a_turning_backdrop_moves_the_sky` (`tests/sgl-3d/tests/scenario_history_taa.rs`): a still camera under a turning panorama, a camera turning with it, a cut, and a colour replaced by a panorama, against the script.
 - **Status.** Rule.
 
@@ -399,7 +399,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Rule.** A change of the backdrop's brightness, its colour, the environment its panorama comes from, or between a colour and a panorama is a shading change: the sky writes only M-10's motion and marks neither temporal mask. TAA follows it through its box at the strength the pixel has (at rest each resolve leaves at most (1 − 0.1)(1 − 0.036) = 0.868 of a change where the neighbourhood is uniform); FSR through its own shading-change and luminance tests. A turn of the panorama's yaw is motion (M-10). Scope: the sky's pixels.
 - **Raised by.** A game fading, recolouring or swapping the backdrop.
 - **Stays triggered while.** The backdrop keeps changing: at rest the sky trails a continuous fade by the relaxed blend, about 5 frames to halve a step.
-- **Source.** Diligent's `EnvMap.psh` and Bevy's background motion vectors write the camera's motion only and mark nothing. AMD's FSR documentation (`super-resolution-upscaler.md`, "Transparency and composition mask") offers that mask for shading motion vectors do not match, such as texture animation; SGL3D does not mark the sky: a backdrop change is the same over every neighbourhood of the sky, which the box follows, and FSR detects shading change itself. Settled by the 2026-11-18 history audit (O-11). Code: `stages/opaque/sky.wgsl` (`sky_color`, `sky_motion`).
+- **Source.** Diligent's `EnvMap.psh` and Bevy's background motion vectors write the camera's motion only and mark nothing. AMD's FSR documentation (`super-resolution-upscaler.md`, "Transparency and composition mask") offers that mask for shading motion vectors do not match, such as texture animation; SGL3D does not mark the sky: a backdrop change is the same over every neighbourhood of the sky, which the box follows, and FSR detects shading change itself. Settled by the 2026-11-18 history audit (O-11). Code: `stages/opaque/backdrop.wgsl` (`backdrop_color`, `sky_motion`).
 - **Guard.** `a_backdrop_that_changes_at_rest_converges_through_the_box` (`tests/sgl-3d/tests/scenario_history_taa.rs`): a colour step at rest converges within the resting blend's bound every frame.
 - **Status.** Rule.
 
@@ -3641,10 +3641,11 @@ moves the metered frame, below one output code (E-3).
 - **Rule.** The sky writes motion for its direction through both cameras (rotation only), zero where
   the current projection gives the direction no positive w, and no depth motion (validity 0); consumers
   that require depth motion (AO-3) take no history at the sky, and ray-traced shadows treat it as no
-  receiver (S-9). The full entry is M-10.
+  receiver (S-9). The full entry is M-10. A procedural sky is not turned (its backdrop yaw is 0 in both
+  frames) and its change with the lights writes no motion.
 - **Raised by.** Sky pixels.
 - **Stays triggered while.** Always at the sky.
-- **Source.** Diligent `EnvMap.psh` and Bevy's skybox motion vectors, faithful. Code: `src/stages/opaque/sky.wgsl` (`sky_motion`).
+- **Source.** Diligent `EnvMap.psh` and Bevy's skybox motion vectors, faithful. Code: `src/stages/opaque/backdrop.wgsl` (`sky_motion`).
 - **Guard.** None.
 - **Status.** Rule.
 
@@ -3665,6 +3666,15 @@ See M-11, M-16 and M-17a to M-17c.
 - **Guard.** None.
 - **Status.** Rule.
 
+#### X-4 Sky tables
+
+- **Rule.** The sky stage's tables keep no history: each holds a function of its inputs and is computed again in any frame whose inputs differ from those it was computed from. What a table holds is recorded when the frame that computed it is finished. Each table is one copy, which a render overwrites whether or not its frame is finished, so an unfinished render that computed a table leaves its contents unknown, and the next frame computes it again whatever its inputs, a return to the last finished frame's included.
+- **Raised by.** A change of `Sky`'s medium fields; for the sky-view table also a change of a directional light or of the camera's height above `Sky::ground_height`; for any table, an unfinished render that computed it.
+- **Stays triggered while.** The inputs keep changing, and until a frame that computed the table is finished.
+- **Source.** SGL3D's own; Bevy 9d12036 computes every table every frame (`atmosphere/node.rs`). Code: `src/stages/sky.rs`.
+- **Guard.** The stage's encode-count test.
+- **Status.** Rule.
+
 ### Stages without history
 
 - Directional shadow cascades: every layer is cleared and redrawn each frame; texel snapping is stabilisation, not reuse.
@@ -3676,5 +3686,5 @@ See M-11, M-16 and M-17a to M-17c.
 - Post inputs and output: bind-group caches only.
 - Probe prefilter: one pass per capture.
 - Frame probe: diagnostics readback only.
-- Sky: per frame (its motion is X-1).
+- Backdrop draw: per frame (its motion is X-1).
 - Transparent receivers, volume layers, transmission copy and heat snapshot: rebuilt every frame they run.

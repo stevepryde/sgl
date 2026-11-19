@@ -34,7 +34,7 @@
 //! `geometry`, `geometry late` (occlusion culling), `sky`,
 //! `opaque lighting`; then `ambient occlusion`.
 pub(crate) mod ambient_occlusion;
-pub(crate) mod sky;
+pub(crate) mod backdrop;
 
 use crate::counters::Moment;
 use crate::view::cached_group::CachedGroup;
@@ -45,7 +45,7 @@ use crate::view::pipelines::{GeometryPass, GeometryPipelines};
 use crate::view::targets::{CaptureFace, attachment};
 
 pub(crate) struct Opaque {
-    sky: sky::Sky,
+    backdrop: backdrop::BackdropDraw,
     ambient_occlusion: Option<ambient_occlusion::AmbientOcclusion>,
     /// Whether ambient occlusion ran this frame.
     ambient_occlusion_ran: bool,
@@ -63,7 +63,7 @@ impl Opaque {
         shadow_mask: &wgpu::BindGroupLayout,
     ) -> Self {
         Self {
-            sky: sky::Sky::new(device, unlit),
+            backdrop: backdrop::BackdropDraw::new(device, unlit),
             ambient_occlusion: None,
             ambient_occlusion_ran: false,
             shadow_mask: CachedGroup::new(shadow_mask.clone()),
@@ -169,7 +169,7 @@ impl Opaque {
                 timestamp_writes: ctx.timing.and_then(|t| t.render_pass("sky")),
                 ..Default::default()
             });
-            self.sky.draw(&mut pass, ctx.bindings.camera_unlit());
+            self.backdrop.draw(&mut pass, ctx.bindings.camera_unlit());
         }
         let views = [
             &targets.normal,
@@ -333,7 +333,7 @@ impl Opaque {
                 timestamp_writes: ctx.timing.and_then(|t| t.render_pass("sky")),
                 ..Default::default()
             });
-            self.sky.draw(&mut pass, ctx.bindings.camera_unlit());
+            self.backdrop.draw(&mut pass, ctx.bindings.camera_unlit());
         }
         let colors = [
             &targets.color,
@@ -427,8 +427,8 @@ impl Opaque {
     /// The sky under `unlit`, in the caller's pass, as a probe capture face
     /// draws it first.
     #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub fn draw_sky(&self, pass: &mut wgpu::RenderPass<'_>, unlit: &wgpu::BindGroup) {
-        self.sky.draw(pass, unlit);
+    pub fn draw_backdrop(&self, pass: &mut wgpu::RenderPass<'_>, unlit: &wgpu::BindGroup) {
+        self.backdrop.draw(pass, unlit);
     }
 
     /// A probe capture face: the sky, then `list`'s lit colour and motion
@@ -443,7 +443,7 @@ impl Opaque {
         unlit: &wgpu::BindGroup,
         lit: &wgpu::BindGroup,
     ) {
-        self.sky.draw(pass, unlit);
+        self.backdrop.draw(pass, unlit);
         pass.set_bind_group(0, lit, &[]);
         list.draw(scene, pipelines, drawn, pass, GeometryPass::Forward);
     }

@@ -6,7 +6,8 @@
 //! own groups; group 2's is the geometry pipelines' (`view::pipelines`), of
 //! the device's binding tier.
 use super::FrameViews;
-use crate::EnvironmentId;
+use crate::FrameEnvironment;
+use crate::scene::environments::Environments;
 use crate::scene::probes::UploadedProbes;
 use crate::shading;
 use crate::shading::bind::{LitLayout, group0};
@@ -43,13 +44,49 @@ pub(crate) struct LocalShadows<'a> {
     pub records: &'a wgpu::Buffer,
 }
 
+/// What group 0 binds for the frame's environment: the backdrop (unlit
+/// group 0's `backdrop_map`) and the PMREM atlas (`environment_map`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct EnvironmentViews {
+    pub backdrop: wgpu::TextureView,
+    pub pmrem: wgpu::TextureView,
+}
+
+impl EnvironmentViews {
+    /// The one resolver of what group 0 binds for `environment`: a live
+    /// map's panorama and atlas; for a procedural sky, the view's
+    /// `sky_view` table (the sky stage's) as the backdrop and the black
+    /// stand-in's atlas, since a sky gives no environment light yet; the
+    /// black stand-in for none or an ended map (or a sky whose stage holds
+    /// no table).
+    pub fn resolve(
+        environments: &Environments,
+        environment: &FrameEnvironment,
+        sky_view: Option<&wgpu::TextureView>,
+    ) -> Self {
+        let neutral = environments.frame(None);
+        let (backdrop, pmrem) = match environment {
+            FrameEnvironment::None => (&neutral.backdrop, &neutral.pmrem),
+            FrameEnvironment::Map(id) => {
+                let map = environments.frame(Some(*id));
+                (&map.backdrop, &map.pmrem)
+            }
+            FrameEnvironment::Sky(_) => (sky_view.unwrap_or(&neutral.backdrop), &neutral.pmrem),
+        };
+        Self {
+            backdrop: backdrop.clone(),
+            pmrem: pmrem.clone(),
+        }
+    }
+}
+
 /// The groups that bind one scene's resources, the frame's environment and
 /// the views' clusters.
 struct SceneGroups {
     /// `Scene::resources` they were built from.
     resources: u64,
-    /// The environment they bind, while the scene has it.
-    environment: Option<EnvironmentId>,
+    /// The environment's textures they bind.
+    environment: EnvironmentViews,
     /// The camera's clusters, the ray hits' lists and the volume's probe
     /// hits' lists they bind.
     clusters: [wgpu::Buffer; 3],
@@ -192,16 +229,17 @@ impl FrameBindings {
     }
 
     /// Rebuilds the camera's groups when `scene` is another scene, has
-    /// replaced a resource they bind, `environment` (the frame's) binds
-    /// other textures, `views` replaced a cluster buffer, `shadows`
-    /// replaced a map or its local-light shadow records, `fog` its volume,
-    /// or the dynamic GI stage its probes (`dynamic_gi`).
+    /// replaced a resource they bind, `environment` (the frame's, resolved
+    /// by `EnvironmentViews::resolve`) binds other textures, `views`
+    /// replaced a cluster buffer, `shadows` replaced a map or its
+    /// local-light shadow records, `fog` its volume, or the dynamic GI stage
+    /// its probes (`dynamic_gi`).
     #[allow(clippy::too_many_arguments)]
     pub fn refresh(
         &mut self,
         device: &wgpu::Device,
         scene: &Scene,
-        environment: Option<EnvironmentId>,
+        environment: EnvironmentViews,
         views: &FrameViews,
         shadows: ShadowMaps,
         fog: FogVolume<'_>,
@@ -210,7 +248,6 @@ impl FrameBindings {
         self.shadow_maps = shadows;
         self.fog = (fog.view.clone(), fog.sampler.clone());
         self.dynamic_gi = dynamic_gi.cloned();
-        let environment = scene.environments.live(environment);
         let clusters = [
             views.clusters.buffer().clone(),
             views.ray_lists.buffer().clone(),
@@ -238,7 +275,7 @@ impl FrameBindings {
         let camera_lit = self.lit_group(
             device,
             scene,
-            environment,
+            &environment,
             [&self.camera_view, &self.frame],
             probes,
             &clusters[0],
@@ -248,7 +285,7 @@ impl FrameBindings {
         let ray_hit_lit = self.lit_group(
             device,
             scene,
-            environment,
+            &environment,
             [&self.camera_view, &self.frame],
             probes,
             &clusters[1],
@@ -258,7 +295,7 @@ impl FrameBindings {
         let volume_lit = self.lit_group(
             device,
             scene,
-            environment,
+            &environment,
             [&self.camera_view, &self.frame],
             probes,
             &clusters[2],
@@ -266,7 +303,7 @@ impl FrameBindings {
             self.dynamic_gi.as_ref(),
         );
         let camera_unlit =
-            self.unlit_group(device, scene, environment, &self.camera_view, &self.frame);
+            self.unlit_group(device, scene, &environment, &self.camera_view, &self.frame);
         self.groups = Some(SceneGroups {
             resources: scene.resources,
             environment,
@@ -305,6 +342,11 @@ impl FrameBindings {
         &self.groups().camera_unlit
     }
 
+    /// The frame environment's textures the groups bind.
+    pub fn environment(&self) -> &EnvironmentViews {
+        &self.groups().environment
+    }
+
     /// The fog volume every group 0 binds.
     pub fn fog(&self) -> FogVolume<'_> {
         FogVolume {
@@ -336,8 +378,8 @@ impl FrameBindings {
     }
 
     /// A lit group 0 of the lit layout's binding tier: `view` and `frame`,
-    /// the scene's lighting, decals, irradiance volume and `environment`,
-    /// `probes`, the view's `clusters`, the `local` shadows its lights take,
+    /// the scene's lighting, decals, irradiance volume and `environment`'s
+    /// atlas, `probes`, the view's `clusters`, the `local` shadows its lights take,
     /// the fog volume and the `dynamic_gi` volume's probes, of which it
     /// binds those its tier binds (`group0::tier`).
     #[allow(clippy::too_many_arguments)]
@@ -345,7 +387,7 @@ impl FrameBindings {
         &self,
         device: &wgpu::Device,
         scene: &Scene,
-        environment: Option<EnvironmentId>,
+        environment: &EnvironmentViews,
         [view, frame]: [&wgpu::Buffer; 2],
         probes: &UploadedProbes,
         clusters: &wgpu::Buffer,
@@ -383,10 +425,7 @@ impl FrameBindings {
                 binding: group0::SHADOW_SAMPLER,
                 resource: wgpu::BindingResource::Sampler(&self.shadow_maps.sampler),
             },
-            texture(
-                group0::ENVIRONMENT_MAP,
-                &environments.frame(environment).pmrem,
-            ),
+            texture(group0::ENVIRONMENT_MAP, &environment.pmrem),
             wgpu::BindGroupEntry {
                 binding: group0::ENVIRONMENT_SAMPLER,
                 resource: wgpu::BindingResource::Sampler(&environments.sampler),
@@ -433,18 +472,17 @@ impl FrameBindings {
         })
     }
 
-    /// An unlit group 0: `view` and `frame` with the panorama and PMREM
+    /// An unlit group 0: `view` and `frame` with the backdrop and PMREM
     /// atlas of `environment` and the fog volume.
     pub fn unlit_group(
         &self,
         device: &wgpu::Device,
         scene: &Scene,
-        environment: Option<EnvironmentId>,
+        environment: &EnvironmentViews,
         view: &wgpu::Buffer,
         frame: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         let environments = &scene.environments;
-        let environment = environments.frame(environment);
         let texture = |binding, view| wgpu::BindGroupEntry {
             binding,
             resource: wgpu::BindingResource::TextureView(view),

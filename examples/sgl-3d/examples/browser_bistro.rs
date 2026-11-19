@@ -629,7 +629,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
             .as_u64()
             .and_then(|n| u32::try_from(n).ok()),
     )?;
-    frame.environment = Some(environment);
+    frame.environment = sgl_3d::FrameEnvironment::Map(environment);
     let sun = &camera_spec["sun"];
     let shadow = frame.directional_lights[0].unwrap().shadow;
     let mut effective_sun = sun.clone();

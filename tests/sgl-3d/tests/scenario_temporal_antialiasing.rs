@@ -14,7 +14,7 @@
 //! device lacks its features. Each test renders its own oracles. A case
 //! that runs TAA alone is one test, or one per variant.
 //!
-//! Each rule of TAA's motion-adaptive resolve (Frame item 10) has a test
+//! Each rule of TAA's motion-adaptive resolve (Frame item 11) has a test
 //! that fails with that rule alone removed (#816): the camera test
 //! (`a_camera_step_rearms_the_whole_view`), the hold carried over its
 //! frames (`the_hold_lasts_its_frames_after_a_camera_step`), the rigid
@@ -469,7 +469,7 @@ type Elsewhere<'a> = &'a dyn Fn(&mut Rig, u32);
 /// history at rest, so edges shimmer; or does so where depth is far, the
 /// sky's included, so far detail and every outline against the sky or a far
 /// surface shimmer (#791). The oracle is the requirement of
-/// Frame item 10: at rest TAA keeps partial rectification and blends in the
+/// Frame item 11: at rest TAA keeps partial rectification and blends in the
 /// current frame at 1 - 0.88 times Filament's alpha floor 0.3, its variance
 /// box at Filament's floor 0.1 (`sgl-post-fx` PROVENANCE.md,
 /// "Motion-adaptive TAA"), in its blend space v / (1 + v), whatever the
@@ -845,7 +845,7 @@ every_method!(a_surface_the_camera_follows_keeps_its_history);
 /// approaching a still camera. A grating centred ahead comes 3 mm a frame
 /// closer from 0.6 m: past 0.55 m its depth changes by 0.1 x 0.003 / z^2 of
 /// normalized depth a frame, above the adaptive depth threshold 0.001 (Frame
-/// item 10), throughout its interior, where every depth around a pixel is
+/// item 11), throughout its interior, where every depth around a pixel is
 /// the grating's (at its outline the neighbourhood holds the background's
 /// depth too, and the depth test cannot reject there). Its strips are 0.4 px
 /// wide where it ends. The oracle is the reference, on the strips whose
@@ -942,7 +942,7 @@ every_method!(a_surface_moving_along_the_view_keeps_its_history);
 /// vertex by its parameters' `velocity` metres a second from `start`
 /// seconds on and rests before: a surface that starts moving from rest with
 /// no pose change, so nothing sets the scene's view-wide rigid signal
-/// (Frame item 10: procedural material deformation does not), while its
+/// (Frame item 11: procedural material deformation does not), while its
 /// motion, measured from the function's evaluation at the last submitted
 /// frame (`VertexContext::previous`), is in the motion target.
 const DEPARTING_SHADER: &str = r#"
@@ -1171,7 +1171,7 @@ const DEPARTURE_FRAMES: (u32, u32) = (HOLD + 1, HOLD + 1 + 3 * HOLD);
 /// #802 at `rate` pixels a frame, over the sky, a wall at 4 km and a wall
 /// at 8 m behind the card at `DEPTH`: faster than the 3x3 closest-motion
 /// search reaches, so under TAA only the reach of the moving card (Frame
-/// item 10) re-arms the hold on what it uncovers, and FSR2 and FSR3 resolve
+/// item 11) re-arms the hold on what it uncovers, and FSR2 and FSR3 resolve
 /// it with their own reprojection and locks. FSR2's radiance bound at 4 px
 /// a frame, where the card leaves the frame at its edge, guards #808. The
 /// oracle is `departures`'.
@@ -1214,7 +1214,7 @@ mod a_surface_its_vertex_function_moves_from_rest_at_4_px_a_frame {
 
 /// #802's departure at 1.5 px a frame over the sky, its card moved by a
 /// morph target (#816). Plausible defect: the motion reach does not arm the
-/// hold at a pixel a frame (Frame item 10: "Where that is at least the
+/// hold at a pixel a frame (Frame item 11: "Where that is at least the
 /// speed its own closest-motion search covers (a pixel a frame), it arms
 /// the recovery hold"), so the band the card leaves in its first frame of
 /// motion, beyond the closest-motion search and held by nothing while the
@@ -1249,7 +1249,7 @@ fn thin_card() -> Shape {
 /// pixels a moving instance's pose change vacates keep its ghost, because
 /// its own motion does not arm them: the closest-motion search below a pixel
 /// a frame, the motion reach from a pixel to a tile (32 px) a frame (Frame
-/// item 10). The fixtures: `card()` and the thin strip, moving from rest
+/// item 11). The fixtures: `card()` and the thin strip, moving from rest
 /// after the hold has expired at speeds the search covers (0.5 px a frame)
 /// and the reach covers (1.5 to 16 px a frame), over the sky, a wall at
 /// 4 km and a wall at 8 m behind them, and `FAR` times as far over the 4 km
@@ -1308,7 +1308,7 @@ enum Event {
 /// view-wide re-arm can. Against the sky, near and far, nothing else
 /// restores rejection either now that depth's magnitude does not (#791).
 /// The oracle is analytic with the spec's rule that appearances,
-/// departures and visibility changes re-arm the view (Frame item 10): the
+/// departures and visibility changes re-arm the view (Frame item 11): the
 /// hold after each event, the pixels whose box grown by 2 px lies wholly
 /// inside the card show their new truth (what lies behind, or the card)
 /// within the method's `stores`. Each event follows the last by the
@@ -1491,7 +1491,7 @@ enum Edit {
 /// adds or removes what its users draw, at rest after the hold has
 /// expired, fades over many frames because nothing re-arms rejection, as
 /// an instance's appearance or departure would without it. The fixtures,
-/// truth, oracle and epsilon are case 9's: Frame item 10 re-arms the view
+/// truth, oracle and epsilon are case 9's: Frame item 11 re-arms the view
 /// for material edits that change what is drawn, so the hold after each
 /// edit the pixels whose box grown by 2 px lies wholly inside the card show
 /// their new truth within the method's `stores`. The card's base alpha is
@@ -1612,8 +1612,8 @@ enum Dissolve {
 /// shader cuts its texels out by a parameter or its instance's data, edited
 /// at rest after the hold has expired, fades over many frames because
 /// nothing re-arms rejection where the texels vanish or return: neither
-/// write is a material edit, sets the view-wide signal (Frame item 10) or
-/// moves anything. Frame item 10's rule for content that changes without a
+/// write is a material edit, sets the view-wide signal (Frame item 11) or
+/// moves anything. Frame item 11's rule for content that changes without a
 /// motion vector of its own covers it: a shaded material's surface marks
 /// the transparency-and-composition mask wherever it is drawn, so a texel
 /// cut out was marked the frame before and is held at full strength. The
@@ -2042,7 +2042,7 @@ fn moving_the_origin_during_a_pan_changes_nothing(method: Antialiasing) {
 }
 every_method!(moving_the_origin_during_a_pan_changes_nothing);
 
-/// The motion-adaptive resolve's blend (Frame item 10; `sgl-post-fx`
+/// The motion-adaptive resolve's blend (Frame item 11; `sgl-post-fx`
 /// PROVENANCE.md, "Motion-adaptive TAA"): the current frame's weight at
 /// full strength, 1 - 0.88, and Filament's floors at rest, 0.3 of that
 /// weight and 0.1 of the variance box's rectification.
@@ -2056,7 +2056,7 @@ const BOX_FLOOR: f32 = 0.1;
 /// no extent, so rectification moves history `BOX_FLOOR + (1 - BOX_FLOOR)
 /// strength` of the way to the current sample, and the blend keeps `1 -
 /// FEEDBACK (FEEDBACK_FLOOR + (1 - FEEDBACK_FLOOR) strength)` of what
-/// remains. Frame item 10 sets both at full strength in proportion to the
+/// remains. Frame item 11 sets both at full strength in proportion to the
 /// mask; at rest unmarked, 0.9 x 0.964 = 0.868 survives, the "13% a frame"
 /// of #795.
 fn survives(strength: f32) -> f32 {
@@ -2069,7 +2069,7 @@ fn sdr(v: f32) -> f32 {
     v / (1. + v)
 }
 
-/// What marks the temporal masks in cases 14 and 15 (Frame item 8).
+/// What marks the temporal masks in cases 14 and 15 (Frame item 9).
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Marked {
     /// Additive glow of this grey radiance at alpha 1.
@@ -2087,7 +2087,7 @@ impl Marked {
         }
     }
 
-    /// The larger of the masks item 8 has it write where it covers a pixel,
+    /// The larger of the masks item 9 has it write where it covers a pixel,
     /// AMD's values: a glow's reactivity is its largest channel times its
     /// alpha, a blended surface's its own share of the pixel (an unlit
     /// one's alpha), each capped at 0.9, and a blended surface's
@@ -2162,7 +2162,7 @@ const MARKED_RATE: f32 = 1.5;
 /// by 2 px lies over one radiance behind the card, where every value the
 /// resolve blends lies between that radiance and the card over it, so a
 /// pixel is never further from either than the step between them. The
-/// oracles are analytic, with the spec's blend and hold (Frame item 10):
+/// oracles are analytic, with the spec's blend and hold (Frame item 11):
 /// (1) arriving: at a pixel whose box grown by 2 px has lain wholly inside
 /// the card for n frames, the 3x3 neighbourhood is uniform and marked, so
 /// the resolve is within `survives(mask)^n` of the step, plus a store's
@@ -2368,7 +2368,7 @@ fn scrolling_plane(repeats: f32, velocity: f32) -> sgl_3d::asset::Asset {
 /// highlights away once the camera has stopped. The fixture: the plane
 /// under one directional light, its wave about 6 px long scrolling 0.3 px a
 /// frame, with the camera still from the start. The oracle is the
-/// requirement of Frame item 10 that a marked pixel feeds back at full
+/// requirement of Frame item 11 that a marked pixel feeds back at full
 /// strength: over the plane's interior, the mean temporal standard
 /// deviation (in the blend space) under TAA is at least what a filter
 /// keeping 0.88 of its last value and taking 0.12 of each new one leaves of
@@ -2490,7 +2490,7 @@ fn at_rest_taa_holds_silhouettes_beside_marked_content_still() {
     failures.assert();
 }
 
-/// The motion reach's tile (Frame item 10: "a tile (32 pixels)").
+/// The motion reach's tile (Frame item 11: "a tile (32 pixels)").
 const REACH_TILE: u32 = 32;
 
 /// Case 4 beyond the motion reach (#802). Plausible defect: the reach
@@ -2562,7 +2562,7 @@ fn at_rest_taa_holds_silhouettes_beyond_the_reach_of_motion_still() {
 /// 0.5 px a frame across the view below it. The region: case 4's
 /// silhouettes in the 3x3 tile neighbourhood of a tile the moving card
 /// touches, less every pixel within 2 px of it at any frame. The oracle is
-/// case 4's bound, under Frame item 10's rule that slower motion is the
+/// case 4's bound, under Frame item 11's rule that slower motion is the
 /// search's.
 #[test]
 fn at_rest_taa_holds_silhouettes_within_the_reach_of_slow_motion_still() {
@@ -2867,7 +2867,7 @@ fn the_sky_changes_after_a_camera_step(gpu: &Gpu, after: u32) -> (f32, f32, f32)
 /// only pixels whose own motion is non-zero, so content that changes where
 /// nothing moves on screen while the camera moves (here the sky) is
 /// resolved at the resting blend. The oracle is the requirement of Frame
-/// item 10, "Camera motion rearms the whole view", with the resolve's blend
+/// item 11, "Camera motion rearms the whole view", with the resolve's blend
 /// at full strength: in the frame the camera steps, the sky changes; its
 /// neighbourhood is uniform, so the error left is `survives(1)` = 0 of the
 /// step, plus the stores' rounding. At the resting blend `survives(0)`,
@@ -2890,7 +2890,7 @@ fn a_camera_step_rearms_the_whole_view() {
 /// frame (it lasts the frame that armed it), so a change soon after a
 /// re-arming event with nothing re-arming it since, here half a hold after
 /// the camera stopped, is resolved at the resting blend. The oracle is the
-/// spec's hold (Frame item 10, "a twelve-frame recovery hold"; `HOLD`),
+/// spec's hold (Frame item 11, "a twelve-frame recovery hold"; `HOLD`),
 /// which ramps from full strength down over its frames (`sgl-post-fx`
 /// PROVENANCE.md, "Motion-adaptive TAA", Responsive inputs: "where the
 /// other holds ramp"): `HOLD / 2` frames after the step the hold left is
@@ -2988,7 +2988,7 @@ fn a_deformation_jumps_beyond_the_reach(
 /// normalized depth, above the depth threshold 0.001 (`sgl-post-fx`
 /// PROVENANCE.md, "Motion-adaptive TAA"), and their previous 3x3 depth
 /// neighbourhood held the card alone. The oracle is analytic with Frame
-/// item 10's full rejection on depth disocclusion: in the frame the card
+/// item 11's full rejection on depth disocclusion: in the frame the card
 /// leaves, the pixels it covered show the wall within TAA's `stores`.
 #[test]
 fn depth_disocclusion_rejects_beyond_the_reach() {
@@ -3002,13 +3002,13 @@ fn depth_disocclusion_rejects_beyond_the_reach() {
 }
 
 /// #816. Plausible defect: the sky is not a categorical disocclusion where
-/// a surface leaves it (Frame item 10: sky "where no texel of the previous
+/// a surface leaves it (Frame item 11: sky "where no texel of the previous
 /// neighbourhood was"), so a far surface that leaves a pixel faster than
 /// the motion reach covers, from rest, leaves its ghost on the sky: at
 /// `FAR` times as far, 2 km, the card's normalized depth (4e-5) differs
 /// from the sky's (0) by less than the depth threshold 0.001, and nothing
 /// else restores rejection (`a_deformation_jumps_beyond_the_reach`). The
-/// oracle is analytic with Frame item 10's categorical sky: in the frame
+/// oracle is analytic with Frame item 11's categorical sky: in the frame
 /// the card leaves, the pixels it covered show the sky within TAA's
 /// `stores`.
 #[test]

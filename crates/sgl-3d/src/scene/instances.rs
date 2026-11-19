@@ -890,7 +890,7 @@ mod temporal_recovery_tests {
     // Plausible defect: a material edit that adds or removes what its
     // users draw, with nothing moving, leaves the view-wide signal down, so
     // the camera at rest fades the change in over many frames. The expected
-    // values are Frame item 10's rule: an edit raises the signal, until a
+    // values are Frame item 11's rule: an edit raises the signal, until a
     // submitted frame, exactly when it changes what a visible instance's
     // meshes draw; shading alone, or a material nothing visible draws with,
     // does not.

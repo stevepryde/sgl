@@ -44,6 +44,7 @@ mod rect_light_tests;
 mod scene_ray_valid_tests;
 mod scene_rays;
 pub(crate) mod shader;
+pub(crate) mod sky;
 pub(crate) use scene_rays::{RayQueryForm, SCENE_RAYS, SCENE_RAYS_PREDICATE, ray_trace_root};
 #[cfg(test)]
 pub(crate) use scene_rays::{SCENE_RAYS_PORTABLE, SCENE_RAYS_QUERY_OPAQUE};

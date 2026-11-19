@@ -1096,7 +1096,7 @@ fn render(
         let mut input = FrameInput::new(camera(index, run.orbit, size, origin));
         input.camera_cut = index == 0 || (run.resize_and_cut && index == 2 * frames / 3);
         input.elapsed_seconds = seconds;
-        input.environment = Some(environment);
+        input.environment = sgl_3d::FrameEnvironment::Map(environment);
         // A fixed exposure keeps runs comparable.
         input.exposure = Exposure {
             stops: 0.,

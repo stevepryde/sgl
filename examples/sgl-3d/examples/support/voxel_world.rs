@@ -526,7 +526,7 @@ pub fn camera(eye: Vec3) -> Camera {
 pub fn input(camera: Camera, seconds: f64, sky: EnvironmentId, shadow_distance: f32) -> FrameInput {
     let mut input = FrameInput::new(camera);
     input.elapsed_seconds = seconds;
-    input.environment = Some(sky);
+    input.environment = sgl_3d::FrameEnvironment::Map(sky);
     input.exposure = Exposure {
         stops: 0.,
         automatic: None,

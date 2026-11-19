@@ -216,7 +216,12 @@ Bevy Engine, https://github.com/bevyengine/bevy
 Revision b56fc29d3016e641754765244b5ba3f9cc504671, LICENSE-MIT (Bevy is dual
 licensed MIT OR Apache-2.0; SGL3D uses it under the MIT terms below). The DFG
 table SGL3D embeds (src/scene/dfg.rg16) is Bevy 9d12036's
-(crates/bevy_pbr/src/environment_map/dfg.ktx2).
+(crates/bevy_pbr/src/environment_map/dfg.ktx2). SGL3D ports Bevy 9d12036's
+atmosphere (crates/bevy_pbr/src/atmosphere/functions.wesl, transmittance_lut.wesl,
+multiscattering_lut.wesl, sky_view_lut.wesl and render_sky.wesl's sun disc, with
+fast_acos, fast_acos_4, fast_atan2 and ray_sphere_intersect from
+crates/bevy_render/src/maths.wesl) to shading/sky.wgsl, stages/sky/ and
+stages/opaque/backdrop.wgsl.
 
 MIT License
 
@@ -656,6 +661,44 @@ For details on the specific licenses please refer to the provided links.
 - RTXDI: https://github.com/NVIDIAGameWorks/RTXDI/blob/main/LICENSE.txt
 - NRD: https://github.com/NVIDIAGameWorks/RayTracingDenoiser/blob/master/LICENSE.txt
 
+--- Precomputed Atmospheric Scattering
+Sources:
+crates/sgl-3d/src/LICENSE-bruneton.txt
+
+Precomputed Atmospheric Scattering, https://github.com/ebruneton/precomputed_atmospheric_scattering
+Revision 34f14e745cff948f4ca3157d1b62a445ffa7286f, LICENSE. SGL3D carries its
+transmittance mapping and ray-sphere distances, as Bevy 9d12036's
+crates/bevy_pbr/src/atmosphere/bruneton_functions.wesl ports them with the 2008
+INRIA notice, in shading/sky_bruneton.wgsl.
+
+Copyright (c) 2017 Eric Bruneton
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 --- SMAA (code and lookup textures)
 Sources:
 crates/sgl-3d/src/stages/post/smaa/LICENSE-smaa.txt
@@ -767,7 +810,10 @@ and octahedral helpers of globals.hlsli in WickedEngine/shaders/, and
 wiRenderer.cpp's DDGI) in shading/dynamic_gi*.wgsl, shading/surface_ray.wgsl
 and stages/dynamic_gi/, with the irradiance map of revision
 95e357f73f28d24e70ce7a1ab8f9fb954de457e4 (ShaderInterop_DDGI.h and
-ddgi_updateCS.hlsl).
+ddgi_updateCS.hlsl). The procedural sky's Earth (its radii and its media's
+coefficients and profiles) is ShaderInterop_Weather.h's, as shading/sky.wgsl's
+constants, and its ground term and texel centres follow skyAtmosphere.hlsli,
+skyAtmosphere_multiScatteredLuminanceLutCS.hlsl and skyAtmosphere_skyViewLutCS.hlsl.
 
 The MIT License (MIT)
 

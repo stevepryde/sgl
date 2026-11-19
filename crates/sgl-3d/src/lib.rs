@@ -30,7 +30,8 @@ pub use content::instance::{InstanceState, Mobility};
 pub use content::irradiance_volume::{IrradianceCell, IrradianceVolume};
 pub use content::light::{Light, LightCookie, LightShape};
 pub use content::lighting::{
-    Backdrop, DirectionalLight, DirectionalShadow, EnvironmentLight, HemisphereLight, Mist,
+    Backdrop, DirectionalLight, DirectionalShadow, EnvironmentLight, FrameEnvironment,
+    HemisphereLight, Mist, Sky,
 };
 pub use content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 pub use content::model::{AssetIds, ModelMesh};

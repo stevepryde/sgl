@@ -249,7 +249,7 @@ impl Frames {
             view: Mat4::IDENTITY,
             projection: perspective(1., 1., 0.1),
         });
-        input.environment = Some(
+        input.environment = sgl_3d::FrameEnvironment::Map(
             scene
                 .add_environment(&device, &queue, &environment(0.25))
                 .unwrap(),

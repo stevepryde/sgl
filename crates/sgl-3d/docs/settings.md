@@ -115,6 +115,13 @@ is done (its algorithm and internal parameters) is SGL3D's.
   default, at most 0.001 leaves it out. Its `shadow_opacity`, as a scene
   light's (`Light::shadow_opacity`), is how dark its shadow is on surfaces
   and in the fog: 1 by default, at most 0.001 draws none.
+- `environment` (`FrameEnvironment`): `None` by default (black); `Map`, one
+  of the scene's environment maps; or `Sky(Sky)`, a procedural sky lit by
+  `directional_lights`, which are then their light above the air. `Sky` is
+  Earth by default: the ground at Y 0 (`ground_height`), the air's
+  `rayleigh`, `mie` and `ozone` densities at 1 (scales of Earth's; 0
+  removes one), `ground_albedo` 0.3 and `sun_disc` 1 (0 draws no discs).
+  `backdrop`'s brightness scales the sky; no yaw turns it.
 - `baked_lighting`: `false` turns baked lighting off.
 - `atmosphere`: the volumetric fog and mist, off by default as Godot's
   (`volumetric_fog_enabled` and `fog_enabled`); `true` turns them on where

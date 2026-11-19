@@ -94,11 +94,6 @@ impl Environments {
         }
     }
 
-    /// `id` while it is in the scene.
-    pub fn live(&self, id: Option<EnvironmentId>) -> Option<EnvironmentId> {
-        id.filter(|&id| self.slots.get(id).is_some())
-    }
-
     /// The environment a frame naming `id` binds: the black stand-in for
     /// none or an ended identity.
     pub fn frame(&self, id: Option<EnvironmentId>) -> &Environment {

@@ -1017,3 +1017,30 @@ Use the [current specs](README.md) for implementation and the
   irradiance volume's path already takes, and costs no tap (the alpha of
   the texel the irradiance tap reads) and no memory (the estimator's spare
   half).
+- **D-60** Decision, 2026-11-19 (#832): the procedural sky. The frame's
+  environment is one enum, `FrameEnvironment` (`None`, `Map(EnvironmentId)`,
+  `Sky(Sky)`), not a map field beside an overriding sky field: a frame names
+  one thing that surrounds it, and no combination needs a precedence rule.
+  The sun's colour through the air is resolved once per light on the CPU, at
+  the camera's height, by `view::directional_light` with the Rust twin of
+  the transmittance table's integral, not per lit fragment from the table as
+  Bevy (`render/pbr_lighting.wesl` 927-945) and Wicked Engine
+  (`GetAtmosphericLightTransmittance`) do: sampling the table per fragment
+  would bind it to every lit fragment stage, and Basic's blended stage has
+  no sampled texture left; resolved once, every consumer of the frame's
+  lights (surfaces, shadows, the fog, probe captures, ray hits, the dynamic
+  GI volume) takes one sun colour, and a light wholly below the horizon is
+  off and casts no shadow. The medium is analytic and its numbers are
+  SGL3D's constants (Hillaire's Earth as Wicked Engine 4323a33 holds it),
+  with the game's scales of its three densities, not Bevy's medium textures
+  or fields a game sets: Bevy 9d12036's `ScatteringMedium::earth` swaps the
+  Mie pair and its falloffs are 13.3 km and 2 km. The transmittance integral
+  samples uniform steps at their midpoints: Bevy's right-endpoint sum at 0.3
+  of each step overstates Earth's transmittance at 40 samples by 0.9, 1.8
+  and 4.0 % (red, green, blue) at the zenith and 4.7, 9.1 and 21.3 % at 10°
+  elevation; the midpoint form is within 0.10, 0.13 and 0.19 % and 0.42,
+  0.51 and 0.78 % (f64, against a 400,000-step integral). No `Settings`
+  level: the tables cost nothing per frame once computed (a light or the
+  camera's height changing recomputes the sky view, about 0.11 ms on an
+  Apple M5), so a quality level would have no trade-off to offer (S3D-6);
+  the environment's variant is the on/off control.

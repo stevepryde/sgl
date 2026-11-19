@@ -1,7 +1,8 @@
 //! Static specular probe capture, a renderer operation for authoring: the
-//! prepare stage builds the capture's six face views, the shadow and opaque
-//! stages render the scene's static content, sky and lights into them, and
-//! the probe prefilter GGX-prefilters the cube and reads it back.
+//! prepare stage builds the capture's six face views, a sky stage of its own
+//! computes a procedural sky's tables for its position, the shadow and
+//! opaque stages render the scene's static content, sky and lights into
+//! them, and the probe prefilter GGX-prefilters the cube and reads it back.
 use super::{Renderer, View};
 use crate::baked_specular_probe::{ProbeError, SpecularProbeRadiance, SpecularProbeTexels};
 use crate::scene::probes::validate_face_size;
@@ -146,6 +147,20 @@ impl Renderer {
             (scene, &self.shared.pipelines),
             &views.instances,
         );
+        // A sky stage of the capture's own computes its tables for its
+        // position, which its faces' unlit group binds as the backdrop. The
+        // capture's backdrop draw reads the reflection sky, the environment's
+        // atlas, instead (`VIEW_PROBE_CAPTURE` in backdrop.wgsl), which is
+        // the black stand-in under a procedural sky: its captured sky is
+        // black.
+        let mut sky = crate::stages::sky::Sky::default();
+        sky.prepare(device, &input.environment);
+        sky.encode_from((queue, &mut encoder), input, center, None);
+        let environment = crate::view::bindings::EnvironmentViews::resolve(
+            &scene.environments,
+            &input.environment,
+            sky.sky_view(),
+        );
         // Surfaces here sample the installed probes (surface.wgsl).
         let probes = scene
             .specular_probes()
@@ -157,7 +172,7 @@ impl Renderer {
             let lit = view.bindings.lit_group(
                 device,
                 scene,
-                input.environment,
+                &environment,
                 [face, &views.frame],
                 probes,
                 views.clusters.buffer(),
@@ -169,16 +184,16 @@ impl Renderer {
                         .map(crate::stages::dynamic_gi::DynamicGi::stand_in)
                 }),
             );
-            let sky =
-                view.bindings
-                    .unlit_group(device, scene, input.environment, face, &views.frame);
+            let unlit = view
+                .bindings
+                .unlit_group(device, scene, &environment, face, &views.frame);
             view.opaque.encode_capture(
                 &mut encoder,
                 scene,
                 &self.shared.pipelines,
                 (&views.list, &views.instances),
                 &prefilter.face(),
-                &sky,
+                &unlit,
                 &lit,
             );
             prefilter.resolve_face(device, &mut encoder, index);

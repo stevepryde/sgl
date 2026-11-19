@@ -169,6 +169,7 @@ and an asynchronous readback.
 | Lightmaps, irradiance atlases and ambient cubes | [Baked diffuse lighting](../README.md#baked-diffuse-lighting) |
 | Light the game computes, relit by region (a voxel world's sky and block light) | [Irradiance volume](../README.md#irradiance-volume) |
 | Bounce light without a bake | [Dynamic diffuse GI](../README.md#dynamic-diffuse-gi) |
+| A sky and sun colour for any time of day, without a panorama | [Procedural sky](../README.md#procedural-sky) |
 | A feature's API, data format and limits | Its section in the [package README](../README.md) |
 | Rendering rules and roadmap | [SGL3D spec](../../../specs/sgl3d.md) |
 | How SGL3D's code is structured, for changing SGL3D itself | [SGL3D architecture](../../../specs/sgl3d-architecture.md), [code structure](../README.md#code-structure) |

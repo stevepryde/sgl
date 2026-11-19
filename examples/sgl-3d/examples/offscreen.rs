@@ -508,7 +508,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         projection,
         eye,
     });
-    frame.environment = Some(environment);
+    frame.environment = sgl_3d::FrameEnvironment::Map(environment);
     // The sun casts the scene's shadow in two cascades, which SGL3D fits
     // to the camera's view out to 20 m.
     frame.directional_lights[0] = Some(DirectionalLight {

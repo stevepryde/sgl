@@ -40,9 +40,12 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 32] = [
+    let roots: [&'static super::Module; 35] = [
         &crate::shading::PACKED_VERTEX,
-        &crate::stages::opaque::sky::SKY,
+        &crate::stages::opaque::backdrop::BACKDROP,
+        &crate::stages::sky::TRANSMITTANCE,
+        &crate::stages::sky::MULTISCATTERING,
+        &crate::stages::sky::SKY_VIEW,
         &crate::stages::transparent::effects::GLOW,
         &crate::stages::transparent::mist::MIST,
         &crate::stages::fog::VOLUMETRIC_FOG,
@@ -169,10 +172,11 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use crate::shading::programs as view;
     use crate::stages::cull::{self, pyramid};
     use crate::stages::dynamic_gi::pipelines as gi;
-    use crate::stages::opaque::{ambient_occlusion as ao, sky};
+    use crate::stages::opaque::{ambient_occlusion as ao, backdrop};
     use crate::stages::post::{bloom, inputs, smaa, tone_map};
     use crate::stages::reflections::{probe_culling, source, velvet, world};
     use crate::stages::shadows::{local, traced, traced::denoise};
+    use crate::stages::sky;
     use crate::stages::transparent::{effects, heat, mist, transmission};
     use crate::stages::{deform, exposure, fog, motion_blur, probe_prefilter};
     use crate::view::post_fx;
@@ -226,7 +230,13 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         ("caster_shader_basic", caster.clone()),
         ("caster_basic", caster.clone()),
         (view::CASTER.name, caster),
-        (sky::SKY.name, vec![sky::SKY_VS_ENTRY, sky::SKY_FS_ENTRY]),
+        (
+            backdrop::BACKDROP.name,
+            vec![backdrop::BACKDROP_VS_ENTRY, backdrop::BACKDROP_FS_ENTRY],
+        ),
+        (sky::TRANSMITTANCE.name, vec![sky::TRANSMITTANCE_ENTRY]),
+        (sky::MULTISCATTERING.name, vec![sky::MULTISCATTERING_ENTRY]),
+        (sky::SKY_VIEW.name, vec![sky::SKY_VIEW_ENTRY]),
         (
             effects::GLOW.name,
             vec![
@@ -731,6 +741,8 @@ fn rust_mirrors_match_wgsl_layouts() {
                 previous_elapsed_seconds,
                 previous_animation_phase,
                 previous_backdrop_yaw,
+                sky_camera_radius,
+                sky_discs,
             ]
         ),
         mirror!(
@@ -838,7 +850,9 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::post::bloom::mirrors())
     .chain(crate::stages::post::tone_map::mirrors())
     .chain(super::shadow_mask::mirrors())
-    .chain(crate::stages::shadows::traced::mirrors());
+    .chain(crate::stages::shadows::traced::mirrors())
+    .chain(super::sky::mirrors())
+    .chain(crate::stages::sky::mirrors());
     let programs = programs();
     let module = |label: &str| {
         let (_, source) = programs
@@ -906,6 +920,7 @@ fn rust_mirrors_match_wgsl_layouts() {
         ("FRAME_HARDWARE_SHADOW_FILTER", FRAME_HARDWARE_SHADOW_FILTER),
         ("FRAME_DYNAMIC_GI", FRAME_DYNAMIC_GI),
         ("FRAME_IRRADIANCE_VOLUME", FRAME_IRRADIANCE_VOLUME),
+        ("FRAME_BACKDROP_SKY", FRAME_BACKDROP_SKY),
         ("MATERIAL_UNLIT", super::material::MATERIAL_UNLIT),
         (
             "MATERIAL_DOUBLE_SIDED",
@@ -1446,7 +1461,9 @@ fn rust_constants_match_wgsl_twins() {
     .chain(crate::stages::opaque::ambient_occlusion::constants())
     .chain(crate::stages::fog::constants())
     .chain(super::shadow_mask::constants())
-    .chain(crate::stages::shadows::traced::denoise::constants());
+    .chain(crate::stages::shadows::traced::denoise::constants())
+    .chain(super::sky::constants())
+    .chain(crate::stages::sky::constants());
     let programs = programs();
     for constant in constants {
         let (label, source) = programs
@@ -1459,5 +1476,31 @@ fn rust_constants_match_wgsl_twins() {
             "{}",
             constant.name
         );
+    }
+    for (program, name, value) in super::sky::vector_constants() {
+        let (label, source) = programs
+            .iter()
+            .find(|(label, _)| *label == program)
+            .unwrap_or_else(|| panic!("no program {program}"));
+        let module = parse(label, source);
+        let (_, constant) = module
+            .constants
+            .iter()
+            .find(|(_, constant)| constant.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("no constant {name}"));
+        let naga::Expression::Compose { ref components, .. } =
+            module.global_expressions[constant.init]
+        else {
+            panic!("{name} is not a vector of literals");
+        };
+        let components: Vec<_> = components
+            .iter()
+            .map(|&component| module.global_expressions[component].clone())
+            .collect();
+        let expected: Vec<_> = value
+            .iter()
+            .map(|&value| naga::Expression::Literal(naga::Literal::F32(value)))
+            .collect();
+        assert_eq!(components, expected, "{name}");
     }
 }

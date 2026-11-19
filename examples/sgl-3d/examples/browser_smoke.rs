@@ -983,7 +983,7 @@ async fn render(
     )
     .map_err(|e| format!("View::new: {e}"))?;
     let mut frame = FrameInput::new(camera());
-    frame.environment = Some(content.environment);
+    frame.environment = sgl_3d::FrameEnvironment::Map(content.environment);
     frame.atmosphere = atmosphere;
     frame.directional_lights[0] = Some(DirectionalLight {
         direction: SUN.normalize(),

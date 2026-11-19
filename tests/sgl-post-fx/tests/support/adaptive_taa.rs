@@ -984,7 +984,7 @@ fn step_shares(values: &[f32]) -> Vec<f32> {
 /// #795. Defect: content the caller marks as changing without a motion
 /// vector (a responsive mask) is resolved at rest with the relaxed blend,
 /// or the mask changes an unmarked pixel. Oracle, by hand from the spec's
-/// blend (Frame item 10): at rest after the hold, with the history inside
+/// blend (Frame item 11): at rest after the hold, with the history inside
 /// the variance box, a pixel takes 1 - 0.88 x 0.3 = 0.036 of the current
 /// frame unmarked, so n frames after a step it has made 1 - 0.964^n of it;
 /// fully marked it takes 0.12, and has made 1 - 0.88^n, whichever of two
@@ -1066,7 +1066,7 @@ fn taa_adaptive_a_still_pixel_within_reach_of_motion_follows_a_step_at_full_feed
 
 /// #795. Defect: a pixel whose content has just left it relaxes at once, or
 /// holds only in proportion to the mask it had, so dim content leaves a
-/// trail. Oracle, by hand from the spec's rule (Frame item 10): a marked
+/// trail. Oracle, by hand from the spec's rule (Frame item 11): a marked
 /// pixel arms the twelve-frame hold in full, and once it is no longer
 /// marked the hold's remaining frames are at full strength, whatever its
 /// mask was; with the history inside the variance box only feedback acts,
@@ -1094,7 +1094,7 @@ fn taa_adaptive_a_pixel_marked_content_left_holds_at_full_strength() {
 /// #802. Defect: a neighbourhood motion slower than the motion threshold
 /// (a pixel a frame, the radius the resolve's own closest-motion search
 /// covers) changes the resolve, costing slowly deforming surfaces' surroundings
-/// their resting stability. Oracle, equivalence (Frame item 10: slower
+/// their resting stability. Oracle, equivalence (Frame item 11: slower
 /// motion is the search's): a neighbourhood moving 0.5 px a frame gives
 /// exactly the values of no neighbourhood motion.
 #[test]

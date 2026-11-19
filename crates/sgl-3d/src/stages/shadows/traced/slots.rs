@@ -46,7 +46,7 @@ impl SlotLights {
         scene: &crate::Scene,
         ranked: &[LightId],
     ) -> Self {
-        let directional = crate::view::directional_shadow(input)
+        let directional = crate::view::directional_shadow(input, input.camera.eye)
             .map(|(index, _)| index)
             .filter(|&index| {
                 frame.directional_lights[index].shadow_opacity > SHADOW_OPACITY_CUTOFF

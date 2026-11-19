@@ -1,9 +1,96 @@
 //! The frame's lights and authored look, as the game describes them in
-//! `FrameInput`: directional lights, the hemisphere fill, the environment's
-//! lighting and backdrop, and the mist. Metres, radians
-//! about +Y and linear RGB. Point and spot lights are scene content
-//! (`Light`); SGL3D packs all of these into its frame data itself.
+//! `FrameInput`: directional lights, the hemisphere fill, the environment
+//! (a map or a procedural sky) with its lighting and backdrop, and the mist.
+//! Metres, radians about +Y and linear RGB. Point and spot lights are scene
+//! content (`Light`); SGL3D packs all of these into its frame data itself.
+use super::identity::EnvironmentId;
 use glam::Vec3;
+
+/// What surrounds the frame: what its backdrop shows and its environment light comes from.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum FrameEnvironment {
+    /// No environment: black.
+    #[default]
+    None,
+    /// One of the scene's environment maps; an ended identity is `None`.
+    Map(EnvironmentId),
+    /// A procedural sky lit by `FrameInput::directional_lights`.
+    Sky(Sky),
+}
+
+/// A procedural, physically based sky (Hillaire 2020, as Bevy's atmosphere
+/// ports it): the air of an Earth-like planet whose surface lies
+/// `ground_height` below the camera, lit by the frame's directional lights,
+/// whose `illuminance` and `color` are then their light above the air and
+/// whose `angular_diameter` sizes their discs. SGL3D owns the model: the
+/// planet's radii, the media's coefficients and profiles, the tables'
+/// sizes and the sample counts. The game says what and how much: the
+/// densities as scales of Earth's, the ground's albedo and the discs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sky {
+    /// World Y of the planet's surface below the camera, in the scene's render frame, metres.
+    pub ground_height: f32,
+    /// Density of the air's molecules (Rayleigh), as a scale of Earth's. Default 1.
+    pub rayleigh: f32,
+    /// Density of haze (Mie aerosols), as a scale of a clear Earth day's. Default 1.
+    pub mie: f32,
+    /// Density of ozone, as a scale of Earth's. Default 1.
+    pub ozone: f32,
+    /// Linear RGB albedo of the planet's ground, 0..=1. Default 0.3.
+    pub ground_albedo: [f32; 3],
+    /// Scales each directional light's disc in the backdrop; 0 draws none. Default 1.
+    pub sun_disc: f32,
+}
+
+impl Default for Sky {
+    /// Earth, as Wicked Engine and Hillaire's sample hold it: the ground at
+    /// world Y 0, clear air of Earth's densities over ground of albedo 0.3,
+    /// and the lights' discs at their own size and radiance.
+    fn default() -> Self {
+        Self {
+            ground_height: 0.,
+            rayleigh: 1.,
+            mie: 1.,
+            ozone: 1.,
+            ground_albedo: [0.3; 3],
+            sun_disc: 1.,
+        }
+    }
+}
+
+impl Sky {
+    /// As the sky stage takes it: a negative or non-finite density or disc
+    /// scale is 0, each albedo channel is clamped to 0..=1 (NaN as 0), and
+    /// a non-finite ground height is 0.
+    pub(crate) fn resolved(&self) -> Self {
+        let scale = |value: f32| {
+            if value.is_finite() && value > 0. {
+                value
+            } else {
+                0.
+            }
+        };
+        let albedo = |value: f32| {
+            if value.is_nan() {
+                0.
+            } else {
+                value.clamp(0., 1.)
+            }
+        };
+        Self {
+            ground_height: if self.ground_height.is_finite() {
+                self.ground_height
+            } else {
+                0.
+            },
+            rayleigh: scale(self.rayleigh),
+            mie: scale(self.mie),
+            ozone: scale(self.ozone),
+            ground_albedo: self.ground_albedo.map(albedo),
+            sun_disc: scale(self.sun_disc),
+        }
+    }
+}
 
 /// A light at infinity, such as the sun or the moon (Bevy's
 /// `DirectionalLight`, Godot's `DirectionalLight3D`, Filament's directional
@@ -141,6 +228,7 @@ pub struct HemisphereLight {
 
 /// The frame environment's map turned about +Y and scaled where it lights
 /// one lobe: `FrameInput::diffuse_environment` or `reflection_environment`.
+/// No yaw turns a procedural sky, which its lights place.
 /// Bevy's `EnvironmentMapLight` and Filament's `IndirectLight` carry the same
 /// rotation and intensity but scale diffuse and specular together.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -168,7 +256,8 @@ impl Default for EnvironmentLight {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Backdrop {
     /// The frame environment's panorama (Bevy's `Skybox`), turned `yaw`
-    /// radians about +Y, its radiance scaled by `brightness`.
+    /// radians about +Y, its radiance scaled by `brightness`; or its
+    /// procedural sky, scaled by `brightness`, which `yaw` does not turn.
     Environment { yaw: f32, brightness: f32 },
     /// One linear RGB colour.
     Color([f32; 3]),

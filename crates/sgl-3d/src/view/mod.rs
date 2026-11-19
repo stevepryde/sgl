@@ -35,14 +35,14 @@ pub(crate) mod trace_paths;
 
 use crate::FrameInput;
 use crate::content::irradiance_volume::IrradianceVolume;
-use crate::content::lighting::{Backdrop, DirectionalLight, DirectionalShadow};
+use crate::content::lighting::{Backdrop, DirectionalLight, DirectionalShadow, FrameEnvironment};
 use crate::scene::dynamic_gi::ProbePlacement;
 use crate::scene::static_lighting::StaticLighting;
 use crate::shading::uniforms::{
-    DIRECTIONAL_LIGHT_SHADOW, DirectionalLightUniform, FRAME_BACKDROP_COLOR, FRAME_BAKED_LIGHTING,
-    FRAME_DYNAMIC_GI, FRAME_FOG, FRAME_HARDWARE_SHADOW_FILTER, FRAME_IRRADIANCE_ATLAS,
-    FRAME_IRRADIANCE_VOLUME, FRAME_TEMPORAL_SHADOW_FILTER, FrameUniform, ShadowCascadeUniform,
-    VIEW_PROBE_CAPTURE, ViewUniform,
+    DIRECTIONAL_LIGHT_SHADOW, DirectionalLightUniform, FRAME_BACKDROP_COLOR, FRAME_BACKDROP_SKY,
+    FRAME_BAKED_LIGHTING, FRAME_DYNAMIC_GI, FRAME_FOG, FRAME_HARDWARE_SHADOW_FILTER,
+    FRAME_IRRADIANCE_ATLAS, FRAME_IRRADIANCE_VOLUME, FRAME_TEMPORAL_SHADOW_FILTER, FrameUniform,
+    ShadowCascadeUniform, VIEW_PROBE_CAPTURE, ViewUniform,
 };
 use bytemuck::Zeroable;
 use cascades::{Cascades, MAX_SHADOW_CASCADES};
@@ -75,31 +75,115 @@ fn flag(on: bool, flag: u32) -> u32 {
     if on { flag } else { 0 }
 }
 
-/// The radius at unit distance of a disc spanning `angular_diameter`
-/// radians, clamped to 0..=π/2 (NaN as 0).
-fn disc_radius(angular_diameter: f32) -> f32 {
-    let angle = if angular_diameter.is_nan() {
+/// `angular_diameter` clamped to 0..=π/2 (NaN as 0).
+fn angular_diameter(angular_diameter: f32) -> f32 {
+    if angular_diameter.is_nan() {
         0.
     } else {
         angular_diameter.clamp(0., std::f32::consts::FRAC_PI_2)
+    }
+}
+
+/// The radius at unit distance of a disc spanning `angular_diameter`
+/// radians, clamped to 0..=π/2 (NaN as 0).
+fn disc_radius(diameter: f32) -> f32 {
+    (angular_diameter(diameter) * 0.5).tan()
+}
+
+/// How `light` reaches a camera at `eye` through the air of `sky`: the
+/// air's transmittance toward it from the camera's height as the sky's
+/// transmittance table gives it (its Rust twin; for a centre below the
+/// horizon, the horizon's), and the share of its disc the planet's horizon
+/// leaves in sight (Bevy's `calculate_visible_sun_ratio`).
+fn through_sky(sky: &crate::Sky, light: &DirectionalLight, eye: Vec3) -> (Vec3, f32) {
+    use crate::shading::sky;
+    let r = sky::camera_radius(sky, eye);
+    let mu = (-light.direction.normalize()).y;
+    let atmosphere = sky::SkyAtmosphereUniform::of(sky);
+    (
+        sky::transmittance(&atmosphere, r, mu),
+        sky::visible_sun_ratio(r, mu, angular_diameter(light.angular_diameter)),
+    )
+}
+
+/// Directional light `index` of `input` as it reaches a camera at `eye`,
+/// unless it is absent, off or, under a procedural sky, wholly below the
+/// horizon: the one resolver of the frame's directional lights, so
+/// surfaces, shadows, the fog, probe captures, ray hits and the dynamic GI
+/// volume take one light. Under a procedural sky (`FrameEnvironment::Sky`)
+/// its colour is its colour above the air times the air's transmittance
+/// toward it from the camera's height and the share of its disc above the
+/// horizon (the architecture's Sky).
+fn directional_light(input: &FrameInput, index: usize, eye: Vec3) -> Option<DirectionalLight> {
+    let light = input.directional_lights[index].filter(DirectionalLight::is_on)?;
+    let FrameEnvironment::Sky(sky) = &input.environment else {
+        return Some(light);
     };
-    (angle * 0.5).tan()
+    let (transmittance, visible) = through_sky(sky, &light, eye);
+    if visible <= 0. {
+        return None;
+    }
+    let color = Vec3::from(light.color) * transmittance * visible;
+    Some(DirectionalLight {
+        color: color.to_array(),
+        ..light
+    })
 }
 
-/// Directional light `index` of `input`, unless it is absent or off.
-fn directional_light(input: &FrameInput, index: usize) -> Option<DirectionalLight> {
-    input.directional_lights[index].filter(DirectionalLight::is_on)
-}
-
-/// The directional light that casts the frame's shadow, by its index in
-/// `FrameInput::directional_lights`, with its shadow: the first light that
-/// is on and has one.
-pub(crate) fn directional_shadow(input: &FrameInput) -> Option<(usize, DirectionalShadow)> {
+/// The directional light that casts the frame's shadow for a camera at
+/// `eye`, by its index in `FrameInput::directional_lights`, with its
+/// shadow: the first light that reaches the camera (`directional_light`)
+/// and has one.
+pub(crate) fn directional_shadow(
+    input: &FrameInput,
+    eye: Vec3,
+) -> Option<(usize, DirectionalShadow)> {
     (0..input.directional_lights.len()).find_map(|index| {
-        directional_light(input, index)?
+        directional_light(input, index, eye)?
             .shadow
             .map(|shadow| (index, shadow))
     })
+}
+
+/// The yaw `input`'s backdrop is turned by, `None` for a colour: a
+/// procedural sky is not turned (its lights place it), so it is 0.
+pub(crate) fn backdrop_yaw(input: &FrameInput) -> Option<f32> {
+    match input.backdrop {
+        Backdrop::Environment { yaw, .. } => Some(match input.environment {
+            FrameEnvironment::Sky(_) => 0.,
+            _ => yaw,
+        }),
+        Backdrop::Color(_) => None,
+    }
+}
+
+/// The procedural sky's backdrop values for a camera at `eye` (`Frame`'s
+/// `sky_camera_radius` and `sky_discs`): with no sky, zero. Each disc is its
+/// light's colour times its illuminance times the air's transmittance
+/// toward it over the disc's solid angle, times `Sky::sun_disc` (without
+/// the share above the horizon, which the backdrop masks per pixel), and
+/// its angular radius; black for a light that does not reach the camera.
+fn sky_backdrop(input: &FrameInput, eye: Vec3) -> (f32, [[f32; 4]; 2]) {
+    let FrameEnvironment::Sky(sky) = &input.environment else {
+        return (0., [[0.; 4]; 2]);
+    };
+    let discs = std::array::from_fn(|index| {
+        let Some(light) = input.directional_lights[index]
+            .filter(|_| directional_light(input, index, eye).is_some())
+        else {
+            return [0.; 4];
+        };
+        let diameter = angular_diameter(light.angular_diameter);
+        let solid_angle = crate::shading::sky::disc_solid_angle(diameter);
+        if solid_angle <= 0. {
+            return [0.; 4];
+        }
+        let (transmittance, _) = through_sky(sky, &light, eye);
+        let radiance = Vec3::from(light.color) * light.illuminance * transmittance / solid_angle
+            * sky.resolved().sun_disc;
+        radiance.extend(diameter * 0.5).to_array()
+    });
+    (crate::shading::sky::camera_radius(sky, eye), discs)
 }
 
 /// The directional shadow of one frame's views: the light that casts it and
@@ -125,7 +209,7 @@ impl FrameShadow {
         origin: glam::DVec3,
     ) -> Self {
         let camera = input.camera;
-        let (light, cascades) = Self::fit(input, |direction, shadow| {
+        let (light, cascades) = Self::fit(input, camera.eye, |direction, shadow| {
             Cascades::camera(
                 camera.view,
                 camera.projection,
@@ -150,7 +234,7 @@ impl FrameShadow {
     /// cascades of `map_size` texels, in the render frame of the scene's
     /// `origin`.
     pub fn capture(input: &FrameInput, center: Vec3, map_size: u32, origin: glam::DVec3) -> Self {
-        Self::fit(input, |direction, shadow| {
+        Self::fit(input, center, |direction, shadow| {
             Cascades::capture(center, direction, shadow, map_size, origin)
         })
         .map_or_else(Self::default, |(light, cascades)| Self {
@@ -160,25 +244,29 @@ impl FrameShadow {
         })
     }
 
-    /// The casting light's index and its cascades, fit by `fit` from its
-    /// direction and shadow.
+    /// The casting light for a camera at `eye`, by its index, and its
+    /// cascades, fit by `fit` from its direction and shadow.
     fn fit(
         input: &FrameInput,
+        eye: Vec3,
         fit: impl FnOnce(Vec3, &DirectionalShadow) -> Cascades,
     ) -> Option<(usize, Cascades)> {
-        let (light, shadow) = directional_shadow(input)?;
+        let (light, shadow) = directional_shadow(input, eye)?;
         let direction = input.directional_lights[light]?.direction;
         Some((light, fit(direction, &shadow)))
     }
 }
 
-/// The frame data of `input` for a scene with `baked` diffuse lighting and
-/// `irradiance_volume`, which lights the frame with baked lighting, with the
-/// directional `shadow`; `fog` is whether the frame's volumetric fog ran, so
-/// draws fog from its volume, and `dynamic_gi` the dynamic GI volume whose
-/// probes group 0 binds, which then lights the frame.
+/// The frame data of `input` seen from `eye` for a scene with `baked`
+/// diffuse lighting and `irradiance_volume`, which lights the frame with
+/// baked lighting, with the directional `shadow`; `fog` is whether the
+/// frame's volumetric fog ran, so draws fog from its volume, and
+/// `dynamic_gi` the dynamic GI volume whose probes group 0 binds, which then
+/// lights the frame. Its directional lights are as they reach `eye`
+/// (`directional_light`).
 pub(crate) fn frame_uniform(
     input: &FrameInput,
+    eye: Vec3,
     (baked, irradiance_volume): (&StaticLighting, Option<IrradianceVolume>),
     shadow: &FrameShadow,
     fog: bool,
@@ -187,7 +275,7 @@ pub(crate) fn frame_uniform(
     let irradiance_volume = irradiance_volume.filter(|_| input.baked_lighting);
     let cascades = shadow.cascades.as_slice();
     let directional_lights = std::array::from_fn(|index| {
-        directional_light(input, index).map_or(DirectionalLightUniform::zeroed(), |light| {
+        directional_light(input, index, eye).map_or(DirectionalLightUniform::zeroed(), |light| {
             DirectionalLightUniform {
                 direction_to_light: (-light.direction).to_array(),
                 flags: flag(shadow.light == Some(index), DIRECTIONAL_LIGHT_SHADOW),
@@ -224,10 +312,15 @@ pub(crate) fn frame_uniform(
                     }
                 })
         });
-    let (backdrop_color, backdrop_yaw, backdrop_brightness) = match input.backdrop {
-        Backdrop::Environment { yaw, brightness } => ([0.; 3], yaw, brightness),
-        Backdrop::Color(color) => (color, 0., 0.),
+    let (backdrop_color, backdrop_brightness) = match input.backdrop {
+        Backdrop::Environment { brightness, .. } => ([0.; 3], brightness),
+        Backdrop::Color(color) => (color, 0.),
     };
+    let backdrop_yaw = backdrop_yaw(input).unwrap_or(0.);
+    let sky = matches!(input.environment, FrameEnvironment::Sky(_));
+    // No yaw turns a procedural sky.
+    let environment_yaw = |yaw: f32| if sky { 0. } else { yaw };
+    let (sky_camera_radius, sky_discs) = sky_backdrop(input, eye);
     let hemisphere = input.hemisphere_light;
     let mist = input.mist;
     FrameUniform {
@@ -236,7 +329,7 @@ pub(crate) fn frame_uniform(
         hemisphere_sky_color: hemisphere.sky_color,
         hemisphere_intensity: hemisphere.intensity,
         hemisphere_ground_color: hemisphere.ground_color,
-        diffuse_environment_yaw: input.diffuse_environment.yaw,
+        diffuse_environment_yaw: environment_yaw(input.diffuse_environment.yaw),
         backdrop_color,
         diffuse_environment_intensity: input.diffuse_environment.intensity,
         mist_thin_color: mist.thin_color,
@@ -248,7 +341,7 @@ pub(crate) fn frame_uniform(
         backdrop_brightness,
         fog_inverse_length: input.fog.length.recip(),
         fog_inverse_detail_spread: crate::shading::fog::DETAIL_SPREAD.recip(),
-        reflection_yaw: input.reflection_environment.yaw,
+        reflection_yaw: environment_yaw(input.reflection_environment.yaw),
         reflection_intensity: input.reflection_environment.intensity,
         elapsed_seconds: input.elapsed_seconds as f32,
         fixed_irradiance_scale: baked.atlas_scale,
@@ -260,6 +353,10 @@ pub(crate) fn frame_uniform(
             | flag(
                 matches!(input.backdrop, Backdrop::Color(_)),
                 FRAME_BACKDROP_COLOR,
+            )
+            | flag(
+                sky && matches!(input.backdrop, Backdrop::Environment { .. }),
+                FRAME_BACKDROP_SKY,
             )
             | flag(
                 shadow.filter == ShadowFilter::Temporal,
@@ -296,7 +393,9 @@ pub(crate) fn frame_uniform(
         previous_animation_phase: crate::shading::material::animation_phase(input.elapsed_seconds),
         // Nor has its sky turned.
         previous_backdrop_yaw: backdrop_yaw,
-        padding_previous: [0.; 2],
+        sky_camera_radius,
+        padding_sky: 0.,
+        sky_discs,
     }
 }
 
@@ -529,3 +628,6 @@ impl FrameViews {
         }
     }
 }
+
+#[cfg(test)]
+mod sky_tests;

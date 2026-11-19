@@ -137,9 +137,9 @@ pub(super) fn render(
 /// frame's scene work, with its begun history and effective
 /// configuration: prepare's view part (and in the primary view the
 /// deformation and acceleration structures, then the cull stage's early
-/// phase), dynamic GI in the primary view, shadows, volumetric fog, opaque
-/// (with the cull stage's late phase and pyramid while occlusion culling
-/// runs, and the ray-traced shadows between its G-buffer and lighting while
+/// phase), the sky's tables, dynamic GI in the primary view, shadows,
+/// volumetric fog, opaque (with the cull stage's late phase and pyramid
+/// while occlusion culling runs, and the ray-traced shadows between its G-buffer and lighting while
 /// they run), the transparent stage's receivers and volume layers,
 /// reflections with the transparent stage drawn into their input (while a
 /// screen-space method traces it) and onto their result, heat, exposure,
@@ -175,6 +175,7 @@ pub(super) fn render_view(
         bindings,
         post_fx,
         cull,
+        sky,
         statistics,
         shadows,
         traced_shadows,
@@ -286,13 +287,21 @@ pub(super) fn render_view(
     let slot_lights = SlotLights::of(input, &values.frame, scene, shadows.local.ranking());
     let effective =
         super::effective::traced_shadows(effective, prepare.hardware_rays(), &slot_lights);
-    // After prepare, the local shadows', the fog's and dynamic GI's, which
-    // may replace a light cluster buffer, a shadow map, the shadow records,
-    // the fog volume or the probes group 0 binds.
+    // The sky stage's tables, made on its first sky frame and dropped on a
+    // frame without one, which the environment's resolver binds.
+    sky.prepare(device, &input.environment);
+    // After prepare, the local shadows', the fog's, dynamic GI's and the
+    // sky's, which may replace a light cluster buffer, a shadow map, the
+    // shadow records, the fog volume, the probes or the sky-view table group
+    // 0 binds.
     bindings.refresh(
         device,
         scene,
-        input.environment,
+        crate::view::bindings::EnvironmentViews::resolve(
+            &scene.environments,
+            &input.environment,
+            sky.sky_view(),
+        ),
         views,
         shadows.maps(),
         fog.volume(),
@@ -332,7 +341,10 @@ pub(super) fn render_view(
         prepare.encode_acceleration_structures(&mut ctx);
     }
     cull.encode_early(&mut ctx);
-    // First after prepare: every pass that shades reads the probes.
+    // First after prepare: the sky's tables, which everything that lights or
+    // draws the environment reads.
+    sky.encode(&mut ctx);
+    // Then dynamic GI: every pass that shades reads the probes.
     if let Some(dynamic_gi) = dynamic_gi.as_mut().filter(|_| primary) {
         dynamic_gi.encode(&mut ctx);
     }

@@ -105,7 +105,7 @@ fn middle_row(
         projection: crate::perspective(1., 1., 0.1),
         eye: Vec3::ZERO,
     });
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let reflections = reflections.map(|texel| {
         hdr_texture(
             device,

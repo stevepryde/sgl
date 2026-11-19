@@ -14,7 +14,7 @@ pub(super) struct Inputs {
     edits: u64,
     deformation_edits: Option<u64>,
     frame: crate::shading::uniforms::FrameUniform,
-    environment: Option<crate::EnvironmentId>,
+    environment: crate::FrameEnvironment,
     max_rays: u32,
     local_lights: bool,
 }
@@ -68,6 +68,11 @@ impl Inputs {
             frame.animation_phase = 0.;
         }
         frame.previous_animation_phase = frame.animation_phase;
+        // The procedural sky's backdrop values, which only the backdrop draw
+        // reads and which change with the camera's height; the lights'
+        // colour through the air, which also does, is the hits' light.
+        frame.sky_camera_radius = 0.;
+        frame.sky_discs = [[0.; 4]; 2];
         Self {
             edits: ctx.scene.edits,
             deformation_edits: ctx.hardware_rays.map(|_| ctx.scene.deformation_edits),

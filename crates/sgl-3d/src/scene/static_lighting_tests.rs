@@ -1247,7 +1247,7 @@ fn lambertian_square(
         view: camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
         projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
     });
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     (model, input)
 }
 

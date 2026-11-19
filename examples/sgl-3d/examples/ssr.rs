@@ -330,7 +330,7 @@ fn run(
             stops: 0.,
             automatic: None,
         };
-        input.environment = Some(environment);
+        input.environment = sgl_3d::FrameEnvironment::Map(environment);
         input.directional_lights[0] = Some(DirectionalLight {
             direction: Vec3::new(0.3, -1., -0.4),
             color: [0.5, 0.55, 0.7],

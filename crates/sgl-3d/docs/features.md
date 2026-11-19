@@ -288,12 +288,20 @@ them through unrefracted. A probe captured on an
   time advances. [Local-light shadows](../README.md#local-light-shadows).
 - **Image-based lighting**: environment panoramas with prefiltered atlases
   (`environment::EnvironmentMap`, `Scene::add_environment`);
-  `FrameInput::environment` picks the frame's, `diffuse_environment` and
+  `FrameInput::environment` picks the frame's (`FrameEnvironment::Map`), `diffuse_environment` and
   `reflection_environment` (`EnvironmentLight`, unturned at intensity 1 by
   default) turn and scale its diffuse and specular light,
   and `backdrop` (`Backdrop`) shows its panorama or a colour behind
   everything; turning its yaw moves the sky's motion vectors with it. Probe captures whose padded readback exceeds `max_buffer_size`
   return `ProbeError::InvalidDimensions` before rendering.
+- **Procedural sky**: `FrameInput::environment = FrameEnvironment::Sky(Sky)`
+  in place of a map: a physically based sky (Hillaire 2020) lit by the
+  frame's directional lights, which are then their light above the air and
+  reach every surface, shadow, the fog and the GI volume reddened by the air
+  and off below the horizon; the backdrop shows the sky and the lights'
+  discs. `Sky` scales the air's densities, sets the ground's height and
+  albedo and the discs. It gives no environment light or distance haze yet.
+  [Procedural sky](../README.md#procedural-sky).
 - **Baked diffuse**, authored and baked by the game: a lightmap for chosen
   materials of static instances (`Scene::set_lightmap`) and a static
   irradiance atlas, BC6H/BC7-compressed for shipping

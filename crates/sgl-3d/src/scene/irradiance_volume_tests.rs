@@ -818,7 +818,7 @@ fn the_volume_lights_receivers_below_charts_and_above_dynamic_gi_and_ambient_cub
     );
     for baked_lighting in [true, false] {
         let mut input = input();
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         input.baked_lighting = baked_lighting;
         let output = crate::view::targets::target(&device, "frame", SIZE, gbuffer::COLOR);
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -960,7 +960,7 @@ fn a_receiver_takes_the_volumes_light_and_the_ambient_its_sky_visibility_lets_th
         cases.map(|c| format!("{:?}", c.1)).join(","),
     );
     let mut input = input();
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let answers = observe(
         gpu,
         (&mut renderer, &mut scene),
@@ -987,7 +987,7 @@ fn a_receiver_takes_the_volumes_light_and_the_ambient_its_sky_visibility_lets_th
         answers[2][1]
     );
     // The hemisphere fill alone.
-    input.environment = None;
+    input.environment = crate::FrameEnvironment::None;
     input.hemisphere_light = HemisphereLight {
         sky_color: [1.; 3],
         ground_color: [1.; 3],
@@ -1064,7 +1064,7 @@ fn the_sky_visibility_occludes_the_skys_specular_and_not_a_probes() {
         vec3s([beyond, unwritten, dark]),
     );
     let mut input = input();
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     input.diffuse_environment.intensity = 0.;
     let mut observe = |scene: &mut Scene| {
         observe(
@@ -1169,7 +1169,7 @@ fn completion_occludes_the_skys_specular_by_the_visibility_the_opaque_pass_recor
         // No diffuse environment, so the opaque pass adds nothing: the
         // wall's light is what completion adds.
         let mut input = input();
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         input.diffuse_environment.intensity = 0.;
         let output = crate::view::targets::target(&device, "frame", SIZE, gbuffer::COLOR);
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -1288,7 +1288,7 @@ fn completion_occludes_the_skys_specular_by_the_visibility_the_dynamic_gi_volume
         // No diffuse environment, so the frame's ambient adds nothing where
         // the volume does not light the wall.
         let mut input = input();
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         input.diffuse_environment.intensity = 0.;
         let output = crate::view::targets::target(&device, "frame", SIZE, gbuffer::COLOR);
         for _ in 0..4 {

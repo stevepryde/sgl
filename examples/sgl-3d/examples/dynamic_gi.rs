@@ -412,7 +412,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         eye,
     };
     let mut frame = FrameInput::new(camera_at(eye_at(0)));
-    frame.environment = Some(environment);
+    frame.environment = sgl_3d::FrameEnvironment::Map(environment);
     // The sun shines in through the window, onto the floor and the green
     // wall.
     frame.directional_lights[0] = Some(DirectionalLight {

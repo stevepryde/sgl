@@ -24,7 +24,7 @@ Start with the [agent guide](docs/README.md) for a short integration path.
 This page is the detailed reference:
 
 - [Frame lifecycle](#retained-scene-and-frame-lifecycle), [data conventions](#dependencies-and-data-conventions), [browser differences](#browser-wasm--webgpu)
-- [Lights and look](#frame-lights-and-look), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
+- [Lights and look](#frame-lights-and-look), [procedural sky](#procedural-sky), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
 - [Reflections](#reflections), [TAA, SMAA and FSR](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
@@ -80,7 +80,11 @@ enabling a group does not silently disable its shadows.
 ## Frame lights and look
 
 ```rust,ignore
-use sgl_3d::{Backdrop, DirectionalLight, DirectionalShadow, EnvironmentLight, HemisphereLight};
+use sgl_3d::{
+    Backdrop, DirectionalLight, DirectionalShadow, EnvironmentLight, FrameEnvironment,
+    HemisphereLight,
+};
+frame.environment = FrameEnvironment::Map(environment); // from scene.add_environment
 frame.directional_lights[0] = Some(DirectionalLight {
     direction: Vec3::new(0.4, -1., -0.5), // where it shines
     color: [1., 0.85, 0.7],               // linear RGB
@@ -184,6 +188,54 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   drifts them slowly up and to the left); both draw while
   `FrameInput::atmosphere` (off by default, as Godot's fog) and
   `Settings::atmosphere` (which allows them, on by default) are on.
+
+## Procedural sky
+
+```rust,ignore
+use sgl_3d::{DirectionalLight, FrameEnvironment, Sky};
+frame.environment = FrameEnvironment::Sky(Sky {
+    ground_height: -2., // world Y of the planet's surface below the camera
+    ..Sky::default()     // Earth: Rayleigh, Mie and ozone at 1, albedo 0.3
+});
+frame.directional_lights[0] = Some(DirectionalLight {
+    direction: -sun_direction, // the game owns time of day
+    illuminance: 100_000.,     // lux above the air
+    ..Default::default()
+});
+```
+
+- `FrameInput::environment` is a `FrameEnvironment`: `None` (black), `Map`
+  (one of the scene's environment maps; an ended one is `None`) or `Sky`, a
+  physically based sky (Hillaire 2020, ported from Bevy's atmosphere) lit by
+  the frame's directional lights. No asset and no setting: the variant is
+  the control, and `None` is the default.
+- Under a sky a directional light's `color` and `illuminance` are its light
+  above the air. Every consumer (surfaces, shadows, the fog, probe captures,
+  ray hits, the dynamic GI volume) takes it as it reaches the camera: times
+  the air's transmittance toward it from the camera's height, so the sun
+  reddens and dims as it sets, and times the share of its disc above the
+  horizon, so a sun below the horizon is off and casts no shadow. The
+  backdrop shows the sky and each light's disc, sized by its
+  `angular_diameter` and scaled by `Sky::sun_disc` (0 draws none).
+- `Sky` is the game's look: `ground_height` (the camera stands at least
+  1 m above it), `rayleigh`, `mie` and `ozone` (each medium's density as a
+  scale of Earth's; 0 removes it), `ground_albedo` (the planet's ground,
+  which also lights the sky) and `sun_disc`. Negative or non-finite scales
+  are 0 and the albedo is clamped to 0..=1. The planet's radii, the media's
+  coefficients and profiles and the tables are SGL3D's.
+- `Backdrop::Environment`'s `brightness` scales the sky; its `yaw`, and the
+  yaws of `diffuse_environment` and `reflection_environment`, do not turn
+  it (its lights place it). `Backdrop::Color` still replaces it. The sky's
+  motion vectors are the camera's rotation alone.
+- Not yet: the sky gives no environment light (no diffuse or specular image
+  lighting, and probe captures record a black sky), so light the scene's
+  shade with `hemisphere_light`; and no distance haze. Up is +Y and the
+  ground is flat around the camera.
+- Cost: three small tables per view (about 0.9 MB), computed on the first
+  sky frame and again only when their inputs change: `sky view` when a light
+  or the camera's height changes, all three when a `Sky` density or the
+  albedo does. A frame at rest pays only the backdrop's one table sample.
+  Timing groups `sky transmittance`, `sky multiscattering` and `sky view`.
 
 ## Exposure, bloom and colour grading
 
@@ -2072,8 +2124,9 @@ describes each view's camera, the authored look and per-frame state in a
    - `add_decal_image` keeps an image for decals and `add_decal` projects
      images through a box onto surfaces ([Decals](#decals)).
    - `add_environment` adds a panorama and its PMREM atlas;
-     `FrameInput::environment` names the one that lights a frame. With none,
-     or a removed one, the frame has a black environment.
+     `FrameInput::environment` names the one that lights a frame
+     (`FrameEnvironment::Map`), or a [procedural sky](#procedural-sky). With
+     none, or a removed map, the frame has a black environment.
    - `set_material`, `set_model`, `set_instance`, `set_light` and `set_decal`
      replace values, geometry, state and descriptions; `remove_…` ends an identity, and its index is reused under a
      new one. Content that other content uses (a material by a model, a model
@@ -2277,6 +2330,8 @@ stage (each stage's documentation lists its own), are:
 
 - prepare: `deform` (the frame's skinning and morphing, while an instance's
   deformation changed) and `cull` (the GPU-built lists' early phase);
+- sky: `sky transmittance`, `sky multiscattering` and `sky view`, in a frame
+  whose procedural sky's inputs changed;
 - dynamic GI: `dynamic GI allocation`, `dynamic GI rays` and `dynamic GI
   blend`, while the scene holds a volume and `Settings::dynamic_gi` runs it;
 - shadows: `directional shadow cascade 0` to `directional shadow cascade 3`
@@ -3320,7 +3375,7 @@ coat lighting and the traced coat lobe, including when SSR is off.
 
 `environment::EnvironmentMap` holds a caller-selected panorama and its matching
 Three-compatible prefiltered PMREM atlas; `Scene::add_environment` adds one,
-and `FrameInput::environment` names the frame's. PMREM data is RGBA16F with
+and `FrameInput::environment` names the frame's (`FrameEnvironment::Map`). PMREM data is RGBA16F with
 explicit width/height; the library uploads supplied data rather than reading
 game paths or requiring a browser at runtime. Environment authoring/export remains with the
 game. The current representation is an extracted renderer boundary, not a

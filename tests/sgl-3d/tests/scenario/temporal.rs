@@ -38,7 +38,7 @@ pub const STRIPS: f32 = 0.5;
 /// `TemporalAntiAliasing::get_jitter_offset`), in which every jitter
 /// position contributes once a cycle.
 pub const JITTER_CYCLE: u32 = 16;
-/// The recovery hold of `specs/sgl3d-architecture.md` Frame item 10 ("a
+/// The recovery hold of `specs/sgl3d-architecture.md` Frame item 11 ("a
 /// twelve-frame recovery hold"): after a reset, motion or a re-arming
 /// change, rejection is restored for that long.
 pub const HOLD: u32 = 12;

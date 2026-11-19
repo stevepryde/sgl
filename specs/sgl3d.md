@@ -263,7 +263,9 @@ The code's structure follows the
      changed files.
    - Allowed: Bevy (MIT/Apache-2.0), Wicked Engine (MIT), Godot (MIT), Three.js
      (MIT), Filament and Diligent (Apache-2.0), O3DE (Apache-2.0 or MIT), AMD
-     FidelityFX and Intel XeGTAO (MIT), selfshadow/ltc_code (BSD-2-Clause), and
+     FidelityFX and Intel XeGTAO (MIT), selfshadow/ltc_code (BSD-2-Clause),
+     Eric Bruneton's Precomputed Atmospheric Scattering (BSD-3-Clause), whose
+     transmittance mapping Bevy's and Wicked Engine's atmospheres carry, and
      MIT-licensed Unity samples such as VolumetricLighting.
      Check each file's header: engines embed code from other projects.
    - Prohibited: Unity's Graphics repository (HDRP, URP and SRP Core, under the
@@ -388,6 +390,11 @@ current capabilities and limits.
 - **Effects:** motion blur (9) and volumetric fog with light shafts (10).
   See [motion blur](../crates/sgl-3d/README.md#motion-blur) and
   [fog](../crates/sgl-3d/README.md#volumetric-fog).
+- **Procedural sky ([#832](https://github.com/stevepryde/sgl/issues/832)):**
+  a physically based sky a game names as its frame's environment in place of
+  a map (`FrameEnvironment::Sky`): Hillaire 2020's tables from the frame's
+  directional lights, its backdrop, and the lights' colour through the air
+  ([Sky](sgl3d-architecture.md#designs-that-span-stages)).
 - **Dynamic diffuse GI (11,
   [#21](https://github.com/stevepryde/sgl/issues/21)):** a volume of probes
   the game places lights surfaces with bounce light alongside game-authored

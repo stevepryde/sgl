@@ -22,6 +22,9 @@ pub(crate) const FRAME_HARDWARE_SHADOW_FILTER: u32 = 32;
 pub(crate) const FRAME_DYNAMIC_GI: u32 = 64;
 /// `Frame::flags`: the irradiance volume lights the frame.
 pub(crate) const FRAME_IRRADIANCE_VOLUME: u32 = 128;
+/// `Frame::flags`: the backdrop is the procedural sky (`FrameEnvironment::Sky`):
+/// the sky-view table and the lights' discs.
+pub(crate) const FRAME_BACKDROP_SKY: u32 = 256;
 /// `Object::flags`: a static instance; a moving one has the bit clear.
 pub(crate) const OBJECT_STATIC: u32 = 1;
 /// `Object::flags`: the main camera draws it (`InstanceState::visible`).
@@ -152,8 +155,14 @@ pub(crate) struct FrameUniform {
     /// motion turns from; `backdrop_yaw` after history restarts or where
     /// either frame's backdrop is a colour.
     pub previous_backdrop_yaw: f32,
-    /// WGSL rounds `Frame` up to its 16-byte alignment.
-    pub padding_previous: [f32; 2],
+    /// With `FRAME_BACKDROP_SKY`, the camera's distance from the planet's
+    /// centre, metres.
+    pub sky_camera_radius: f32,
+    pub padding_sky: f32,
+    /// With `FRAME_BACKDROP_SKY`, each directional light's disc: its
+    /// radiance through the air (rgb) and its angular radius (a); black for
+    /// a light that is off.
+    pub sky_discs: [[f32; 4]; 2],
 }
 
 /// One instance's record (`Object` in uniforms.wgsl), at its index in the

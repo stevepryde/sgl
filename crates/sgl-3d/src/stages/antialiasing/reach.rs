@@ -1,4 +1,4 @@
-//! TAA's motion reach (Frame item 10): for each 32-pixel tile of the frame,
+//! TAA's motion reach (Frame item 11): for each 32-pixel tile of the frame,
 //! the largest motion, in render pixels a frame, in its 3x3 tile
 //! neighbourhood, which TAA takes as the least speed of the tile's pixels
 //! for its rejection and recovery hold, so a pixel that a surface moving up

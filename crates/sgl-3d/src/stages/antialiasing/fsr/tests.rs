@@ -78,7 +78,7 @@ fn fsr_renders_each_quality_or_falls_back_to_taa() {
                         ),
                     });
                     input.camera_cut = frame == 0;
-                    input.environment = Some(environment);
+                    input.environment = crate::FrameEnvironment::Map(environment);
                     let mut encoder = device.create_command_encoder(&Default::default());
                     renderer.render(
                         &device,
@@ -210,7 +210,7 @@ fn additive_effects_mark_fsr_reactivity_for_their_frame_only_for(method: Antiali
             projection: perspective(55f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1),
         });
         input.camera_cut = index == 0;
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.render(
             &device,
@@ -307,7 +307,7 @@ fn fsr_runs_below_a_64_pixel_render_size_for(method: Antialiasing) {
                 projection: perspective(55f32.to_radians(), 1., 0.1),
             });
             input.camera_cut = frame == 0;
-            input.environment = Some(environment);
+            input.environment = crate::FrameEnvironment::Map(environment);
             let mut encoder = device.create_command_encoder(&Default::default());
             renderer.render(
                 &device,
@@ -372,7 +372,7 @@ fn fsr_sharpening_follows_its_settings() {
                 projection: perspective(55f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1),
             });
             input.camera_cut = frame == 0;
-            input.environment = Some(environment);
+            input.environment = crate::FrameEnvironment::Map(environment);
             let mut encoder = device.create_command_encoder(&Default::default());
             renderer.render(
                 &device,
@@ -487,7 +487,7 @@ fn a_failed_fsr_dispatch_completes_the_frame_and_taa_takes_over_for(method: Anti
             projection: perspective(55f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1),
         });
         input.camera_cut = index == 0;
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         renderer.view.resize(&device, SIZE, 1., settings);
         let mut encoder = device.create_command_encoder(&Default::default());

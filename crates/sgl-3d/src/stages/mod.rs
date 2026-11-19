@@ -21,4 +21,5 @@ pub(crate) mod prepare;
 pub(crate) mod probe_prefilter;
 pub(crate) mod reflections;
 pub(crate) mod shadows;
+pub(crate) mod sky;
 pub(crate) mod transparent;

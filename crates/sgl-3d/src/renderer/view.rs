@@ -10,7 +10,7 @@ use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
     antialiasing, cull::Cull, exposure::Exposure, fog::VolumetricFog, motion_blur::MotionBlur,
     opaque::Opaque, post::Post, reflections::Reflections, shadows::Shadows,
-    shadows::traced::TracedShadows, transparent::Transparent,
+    shadows::traced::TracedShadows, sky::Sky, transparent::Transparent,
 };
 use crate::view::FrameViews;
 use crate::view::bindings::FrameBindings;
@@ -94,6 +94,8 @@ pub struct View {
     /// DiligentFX's post-effect context, while TAA or Crystal SSR runs.
     pub(crate) post_fx: Option<PostFx>,
     pub(crate) cull: Cull,
+    /// The procedural sky's tables, while its frames name one.
+    pub(crate) sky: Sky,
     /// The camera's geometry statistics, read back without blocking.
     pub(crate) statistics: StatisticsReadback,
     pub(crate) shadows: Shadows,
@@ -271,6 +273,7 @@ impl View {
             )
             .map_err(ViewError::LookupTextures)?,
             cull,
+            sky: Sky::default(),
             statistics: StatisticsReadback::default(),
             sizes,
             bloom_targets: sizing.bloom_targets,
@@ -459,11 +462,8 @@ impl View {
             input.elapsed_seconds,
             input.visibility_mask,
         );
-        let yaw = match input.backdrop {
-            crate::Backdrop::Environment { yaw, .. } => Some(yaw),
-            crate::Backdrop::Color(_) => None,
-        };
-        self.history.set_backdrop(&mut frame, yaw);
+        self.history
+            .set_backdrop(&mut frame, crate::view::backdrop_yaw(input));
         frame
     }
 
@@ -520,6 +520,7 @@ impl View {
             post_fx.settle(finished);
         }
         self.antialiasing.settle(finished);
+        self.sky.settle(finished);
         self.reflections.settle(finished);
         self.opaque.settle(finished);
         self.traced_shadows.settle(finished);

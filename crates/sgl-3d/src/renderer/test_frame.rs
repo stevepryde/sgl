@@ -217,8 +217,9 @@ impl TestRenderer {
 
     /// Prepares the frame of `scene` that `input` describes as `render`
     /// does, without antialiasing's jitter: group 0, the views, their draw
-    /// lists and uniforms, and, in a submission of its own, the cull
-    /// stage's early phase, which builds the GPU-built lists.
+    /// lists and uniforms, and, in submissions of their own, the cull
+    /// stage's early phase, which builds the GPU-built lists, and the sky
+    /// stage's tables.
     pub(crate) fn prepare_test_frame(
         &mut self,
         device: &wgpu::Device,
@@ -296,10 +297,19 @@ impl TestRenderer {
             shared.prepare.hardware_rays(),
             &slot_lights,
         );
+        view.sky.prepare(device, &input.environment);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        view.sky
+            .encode_from((queue, &mut encoder), &input, input.camera.eye, None);
+        queue.submit([encoder.finish()]);
         view.bindings.refresh(
             device,
             scene,
-            input.environment,
+            crate::view::bindings::EnvironmentViews::resolve(
+                &scene.environments,
+                &input.environment,
+                view.sky.sky_view(),
+            ),
             &view.views,
             view.shadows.maps(),
             view.fog.volume(),
@@ -461,7 +471,7 @@ impl TestRenderer {
         if kind == GeometryPass::Forward {
             self.view
                 .opaque
-                .draw_sky(pass, self.view.bindings.camera_unlit());
+                .draw_backdrop(pass, self.view.bindings.camera_unlit());
         }
         pass.set_bind_group(0, self.view.bindings.camera_lit(), &[]);
         self.view

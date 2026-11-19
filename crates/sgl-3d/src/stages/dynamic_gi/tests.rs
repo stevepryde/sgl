@@ -353,7 +353,7 @@ fn an_open_volume_holds_a_uniform_environments_radiance() {
     let environment = uniform_environment(&device, &queue, &mut scene, radiance);
     scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
     let mut input = input(Vec3::new(0., 0., 8.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     render(
@@ -403,7 +403,7 @@ fn an_open_volume_of_wide_spacing_keeps_finite_depth_moments() {
     };
     scene.set_dynamic_gi_volume(&device, Some(volume)).unwrap();
     let mut input = input(Vec3::new(0., 0., 8.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     render(
@@ -907,7 +907,7 @@ fn an_inward_facing_room_keeps_the_sky_outside() {
         )
         .unwrap();
     let mut input = input(Vec3::new(0., 0., 1.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     render(
@@ -986,7 +986,7 @@ fn a_floor_under_an_open_sky_takes_all_of_it() {
         )
         .unwrap();
     let mut input = input(Vec3::new(0., 1.5, 1.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     render(
@@ -1057,7 +1057,7 @@ fn a_closed_room_holds_no_light_from_the_sky_beyond_it() {
         )
         .unwrap();
     let mut input = input(Vec3::new(0., 0., 1.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     render(
@@ -1133,7 +1133,7 @@ fn a_probe_records_the_share_of_its_rays_that_reach_the_sky() {
         )
         .unwrap();
     let mut input = input(Vec3::new(0., 1.5, 1.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     render(
@@ -1185,7 +1185,7 @@ fn a_closed_room_records_no_sky_and_an_open_volume_all_of_it() {
         }
         scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
         let mut input = input(Vec3::new(0., 0., 4.));
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         let settings = settings(DynamicGiQuality::High);
         let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         render(
@@ -1244,7 +1244,7 @@ fn probes_inside_closed_geometry_trace_the_fewest_rays() {
         )
         .unwrap();
     let mut input = input(Vec3::new(0., 0., 6.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let mut rays = || {
@@ -1318,7 +1318,7 @@ fn a_probes_class_holds_still_while_what_it_sees_does() {
         )
         .unwrap();
     let mut input = input(Vec3::new(0., 0., 1.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     // The first frame starts every probe, and each takes its second turn
@@ -1394,7 +1394,7 @@ fn a_static_receiver_by_a_rooms_edge_takes_nothing_from_beyond_its_walls() {
         )
         .unwrap();
     let mut input = input(Vec3::new(0., 0., 1.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let queries = [
@@ -1446,7 +1446,7 @@ fn a_moving_instance_in_open_space_is_lit_from_its_first_frame() {
     let environment = uniform_environment(&device, &queue, &mut scene, [0.5; 3]);
     scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
     let mut input = input(Vec3::new(0., 0., 8.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     render(
@@ -1532,7 +1532,7 @@ fn dormant_probes_trace_the_fewest_rays_but_about_a_moving_instance() {
             )
             .unwrap();
         let mut input = input(Vec3::new(0., 0., 10.));
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         let settings = settings(DynamicGiQuality::High);
         let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
         let mut rays = || {
@@ -1618,7 +1618,7 @@ fn floor_scene(
         )
         .unwrap();
     let mut input = input(Vec3::new(0., 0.5, 3.5));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     input.directional_lights[0] = Some(crate::DirectionalLight {
         direction: Vec3::new(0.3, -1., 0.2),
         illuminance: 3.,
@@ -1864,7 +1864,7 @@ fn a_volume_does_not_pause_while_probes_have_yet_to_start() {
     };
     scene.set_dynamic_gi_volume(&device, Some(volume)).unwrap();
     let mut input = input(Vec3::new(0., 0., 18.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     render(
@@ -1919,7 +1919,7 @@ fn a_volume_pauses_only_once_every_active_probe_has_taken_its_windows_turns() {
     };
     scene.set_dynamic_gi_volume(&device, Some(volume)).unwrap();
     let mut input = input(Vec3::new(0., 0.5, 1.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     let active = |index: usize| (index / 2).is_multiple_of(2);
@@ -2053,7 +2053,7 @@ fn the_volumes_share_fades_over_the_spacing_past_its_extent() {
     let environment = uniform_environment(&device, &queue, &mut scene, [0.5; 3]);
     scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
     let mut input = input(Vec3::new(0., 0., 8.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     render(
@@ -2139,7 +2139,7 @@ fn the_volume_lights_receivers_below_charts_and_above_ambient_cubes() {
     let beyond = Vec3::new(0., 0., 6.);
     for baked_lighting in [true, false] {
         let mut input = input(Vec3::new(0., 0., 8.));
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         input.baked_lighting = baked_lighting;
         render(
             &device,
@@ -2284,7 +2284,7 @@ fn large_scene(device: &wgpu::Device, queue: &wgpu::Queue) -> (Scene, FrameInput
     let environment = uniform_environment(device, queue, &mut scene, [0.5; 3]);
     scene.set_dynamic_gi_volume(device, Some(LARGE)).unwrap();
     let mut input = input(EYE);
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     (scene, input)
 }
 
@@ -2714,7 +2714,7 @@ fn a_scroll_starts_only_the_probes_that_enter() {
         .set_dynamic_gi_volume(&device, Some(SCROLLED))
         .unwrap();
     let mut input = input(Vec3::new(0., 0., 6.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     // Installs the volume with its origin at `origin`, renders one frame,
@@ -2832,7 +2832,7 @@ fn a_scroll_keeps_each_probe_where_it_lies() {
     };
     scene.set_dynamic_gi_volume(&device, Some(volume)).unwrap();
     let mut input = input(Vec3::new(0., 0.5, 6.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
     render(
@@ -3105,7 +3105,7 @@ fn room_probes(
     }
     scene.set_dynamic_gi_volume(device, Some(VOLUME)).unwrap();
     let mut input = input(Vec3::new(0., 0., 4.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = settings(DynamicGiQuality::High);
     let mut renderer = TestRenderer::for_test(device, queue, SIZE, &settings);
     render(
@@ -3216,7 +3216,7 @@ fn reports_number_their_frames_and_count_those_skipped() {
     let environment = uniform_environment(&device, &queue, &mut scene, [0.5; 3]);
     scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
     let mut input = input(Vec3::new(0., 0., 8.));
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let mut settings = settings(DynamicGiQuality::High);
     settings.diagnostics.dynamic_gi = true;
     let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
@@ -3342,7 +3342,7 @@ fn the_clock_changes_the_probes_inputs_only_where_a_surface_moves() {
         test_support::add_static(&device, &queue, &mut scene, cube);
         scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
         let mut input = input(Vec3::new(0., 0., 8.));
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         for elapsed_seconds in [0., 1.] {
             input.elapsed_seconds = elapsed_seconds;
             render(

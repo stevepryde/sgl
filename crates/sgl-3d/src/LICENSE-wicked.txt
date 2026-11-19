@@ -17,7 +17,10 @@ and octahedral helpers of globals.hlsli in WickedEngine/shaders/, and
 wiRenderer.cpp's DDGI) in shading/dynamic_gi*.wgsl, shading/surface_ray.wgsl
 and stages/dynamic_gi/, with the irradiance map of revision
 95e357f73f28d24e70ce7a1ab8f9fb954de457e4 (ShaderInterop_DDGI.h and
-ddgi_updateCS.hlsl).
+ddgi_updateCS.hlsl). The procedural sky's Earth (its radii and its media's
+coefficients and profiles) is ShaderInterop_Weather.h's, as shading/sky.wgsl's
+constants, and its ground term and texel centres follow skyAtmosphere.hlsli,
+skyAtmosphere_multiScatteredLuminanceLutCS.hlsl and skyAtmosphere_skyViewLutCS.hlsl.
 
 The MIT License (MIT)
 

@@ -132,9 +132,15 @@ struct Frame {
  previous_elapsed_seconds:f32,
  previous_animation_phase:f32,
  // The last submitted frame's backdrop yaw, which the sky's motion turns
- // from (sky.wgsl); backdrop_yaw after history restarts or where either
+ // from (backdrop.wgsl); backdrop_yaw after history restarts or where either
  // frame's backdrop is a colour.
  previous_backdrop_yaw:f32,
+ // With FRAME_BACKDROP_SKY, the procedural sky's backdrop (backdrop.wgsl):
+ // the camera's distance from the planet's centre, and each directional
+ // light's disc, its radiance through the air (rgb, black for a light that
+ // is off) and its angular radius (a).
+ sky_camera_radius:f32,
+ sky_discs:array<vec4<f32>,FRAME_DIRECTIONAL_LIGHTS>,
 }
 // The frame's volumetric fog ran: draws fog themselves from its volume.
 const FRAME_FOG:u32=1u;
@@ -152,6 +158,9 @@ const FRAME_DYNAMIC_GI:u32=64u;
 // The irradiance volume lights the frame: the scene holds one and baked
 // lighting is on, and group 0 binds its cells.
 const FRAME_IRRADIANCE_VOLUME:u32=128u;
+// The backdrop is the procedural sky (FrameEnvironment::Sky): the sky-view
+// table, which unlit group 0's backdrop_map holds, and the lights' discs.
+const FRAME_BACKDROP_SKY:u32=256u;
 // One instance's record, at its index in the scene's object buffer. That
 // index plus one is the source identity the G-buffer stores.
 struct Object {

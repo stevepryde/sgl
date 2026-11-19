@@ -58,7 +58,10 @@ pub(crate) fn metadata(
     history: HistoryFrame,
 ) -> serde_json::Value {
     use crate::content::identity::Identity;
-    let environment_index = input.environment.map(Identity::index);
+    let environment_index = match input.environment {
+        crate::FrameEnvironment::Map(id) => Some(id.index()),
+        crate::FrameEnvironment::None | crate::FrameEnvironment::Sky(_) => None,
+    };
     serde_json::json!({"size":sizes.render,"output_size":sizes.output,"environment_index":environment_index,"temporal_valid":history.valid,"temporal_frames":history.frames})
 }
 pub(crate) struct FrameProbe {

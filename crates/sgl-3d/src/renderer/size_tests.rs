@@ -61,7 +61,7 @@ fn one_pixel_thin_sizes_render_with_default_settings() {
                             0.1,
                         ),
                     });
-                    input.environment = Some(environment);
+                    input.environment = crate::FrameEnvironment::Map(environment);
                     let mut encoder = device.create_command_encoder(&Default::default());
                     renderer.render(
                         &device,

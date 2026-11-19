@@ -307,7 +307,7 @@ pub(super) fn resolve(
     };
     let motion_blur = motion_blur(settings, input).filter(|_| post_fx_camera);
     // What draws onto the composite, each of which marks the temporal
-    // masks while the frame has them (Frame item 8). TAA reads the masks
+    // masks while the frame has them (Frame item 9). TAA reads the masks
     // only in a frame one of them can mark; FSR's dispatch binds them in
     // every frame.
     let composite = CompositeDraws {

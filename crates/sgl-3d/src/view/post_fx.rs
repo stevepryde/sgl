@@ -71,7 +71,7 @@ const TAA_FEATURE_FLAGS: temporal_anti_aliasing::FeatureFlags =
     );
 
 /// What changes in a TAA frame without a motion vector of its own at the
-/// pixel, which raises its rejection there (Frame item 10).
+/// pixel, which raises its rejection there (Frame item 11).
 #[derive(Clone, Copy)]
 pub(crate) struct Responsive<'a> {
     /// The reactive and the transparency and composition masks (R8, the

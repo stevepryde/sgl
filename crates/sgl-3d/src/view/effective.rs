@@ -70,7 +70,7 @@ pub(crate) struct AmbientOcclusion {
     pub radius: f32,
 }
 
-/// What the frame draws onto the composite (Frame item 8), each of which
+/// What the frame draws onto the composite (Frame item 9), each of which
 /// marks the temporal masks while the frame has them: the one condition
 /// each draw and the masks' allocation read.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -107,7 +107,7 @@ pub(crate) struct Effective {
     pub taa: bool,
     pub fsr: bool,
     /// The temporal masks are drawn and read: while FSR runs, and while TAA
-    /// runs and the frame can mark them (Frame item 8).
+    /// runs and the frame can mark them (Frame item 9).
     pub temporal_masks: bool,
     /// FSR's RCAS sharpness in 0..=1, while it sharpens.
     pub fsr_sharpness: Option<f32>,

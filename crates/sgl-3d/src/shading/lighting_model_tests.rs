@@ -675,7 +675,7 @@ fn one_rule_for_every_indirect_source() {
     for (name, lit_by_environment, filled, position, lightmapped, charted, moving) in sources {
         let mut input = dark_input();
         if lit_by_environment {
-            input.environment = Some(environment);
+            input.environment = crate::FrameEnvironment::Map(environment);
         }
         if filled {
             input.hemisphere_light = HemisphereLight {
@@ -1123,7 +1123,7 @@ pub(super) fn observe_lit(cases: &[Layered]) -> Option<Vec<[DVec3; 3]>> {
         )
         .unwrap();
     let mut input = dark_input();
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let v3 = |v: [f64; 3]| {
         format!(
             "vec3({:?},{:?},{:?})",

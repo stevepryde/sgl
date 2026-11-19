@@ -92,7 +92,7 @@ fn fused_and_split_opaque_write_the_same_targets() {
         projection: perspective(1., 1., 0.1),
         eye,
     });
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     input.ambient_occlusion_radius = 0.5;
     // Off after Medium: a frame without ambient occlusion reports none,
     // not the earlier frame's.
@@ -544,7 +544,7 @@ fn a_dielectric_without_specular_reflects_as_lambert_alone() {
         eye,
     });
     input.backdrop = Backdrop::Color([0.; 3]);
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     input.reflection_environment = EnvironmentLight {
         yaw: 0.,
         intensity: 1.,
@@ -726,7 +726,7 @@ fn the_environment_scale_reaches_completion_on_every_attachment_budget() {
             eye,
         });
         input.backdrop = Backdrop::Color([0.; 3]);
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         input.diffuse_environment.intensity = 0.;
         input.reflection_environment = EnvironmentLight {
             yaw: 0.,
@@ -885,7 +885,7 @@ fn an_anisotropic_metal_completes_opaque_as_it_shades_blended() {
             eye,
         });
         input.backdrop = Backdrop::Color([0.; 3]);
-        input.environment = Some(environment);
+        input.environment = crate::FrameEnvironment::Map(environment);
         input.diffuse_environment.intensity = 0.;
         input.reflection_environment = EnvironmentLight {
             yaw: 0.,
@@ -986,7 +986,7 @@ fn an_orthographic_camera_shades_every_surface_along_its_axis() {
         eye: Vec3::ZERO,
     });
     input.backdrop = Backdrop::Color([0.; 3]);
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     input.reflection_environment = EnvironmentLight {
         yaw: 0.,
         intensity: 1.,

@@ -1415,12 +1415,13 @@ fn each_frame_draws_its_environment_and_an_ended_one_is_black() {
         let pixels = test_support::read(&device, &queue, renderer.targets().color.texture(), 8);
         [0, 2, 4].map(|channel| test_support::half(&pixels[channel..]))
     };
-    let [r, _, b] = sky(&mut scene, Some(red));
+    use crate::FrameEnvironment::{Map, None};
+    let [r, _, b] = sky(&mut scene, Map(red));
     assert!(r > 0.5 && b == 0., "red sky: {r} {b}");
-    let [r, _, b] = sky(&mut scene, Some(blue));
+    let [r, _, b] = sky(&mut scene, Map(blue));
     assert!(r == 0. && b > 0.5, "blue sky: {r} {b}");
     scene.remove_environment(blue).unwrap();
-    assert_eq!(sky(&mut scene, Some(blue)), [0.; 3]);
+    assert_eq!(sky(&mut scene, Map(blue)), [0.; 3]);
     assert_eq!(sky(&mut scene, None), [0.; 3]);
 }
 

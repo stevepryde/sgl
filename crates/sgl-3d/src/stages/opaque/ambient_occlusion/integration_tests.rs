@@ -138,7 +138,7 @@ fn box_on_floor(
     };
     input.diffuse_environment.intensity = 0.;
     input.camera_cut = true;
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     input.ambient_occlusion_radius = 0.5;
     (scene, world.materials[0], input)
 }

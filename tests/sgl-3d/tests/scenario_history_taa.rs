@@ -218,7 +218,7 @@ fn a_turning_backdrop_moves_the_sky() {
 /// trusts the sky's history more, or holds it), so a backdrop fade or swap
 /// trails for seconds. The fixture: the camera still before a colour
 /// backdrop alone, which steps from `SKY` to 0.2 once the hold has expired.
-/// The oracle is analytic, with the spec's resting blend (Frame item 10):
+/// The oracle is analytic, with the spec's resting blend (Frame item 11):
 /// every pixel's 3x3 neighbourhood is uniform, so its box has no extent
 /// and each resolve leaves at most (1 - 0.1)(1 - 0.12 x 0.3) of the step
 /// in the blend space v / (1 + v) (case 14's `survives(0)`), plus the

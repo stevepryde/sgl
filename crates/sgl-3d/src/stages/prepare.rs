@@ -221,6 +221,7 @@ impl Prepare {
             .filter(|_| effective.dynamic_gi.is_some());
         let mut frame = frame_uniform(
             input,
+            camera.eye,
             (&scene.static_lighting, scene.irradiance_volume()),
             &shadow,
             effective.fog.is_some(),
@@ -391,6 +392,7 @@ impl Prepare {
         let shadow = FrameShadow::capture(input, center, cascade_size, scene.origin());
         let frame = frame_uniform(
             input,
+            center,
             (&scene.static_lighting, scene.irradiance_volume()),
             &shadow,
             false,

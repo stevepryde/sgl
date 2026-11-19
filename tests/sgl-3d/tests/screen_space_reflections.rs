@@ -250,7 +250,7 @@ impl Frames {
             projection: perspective(1., size[0] as f32 / size[1] as f32, 0.1),
         });
         input.backdrop = Backdrop::Color([0.; 3]);
-        input.environment = Some(
+        input.environment = sgl_3d::FrameEnvironment::Map(
             scene
                 .add_environment(&device, &queue, &environment)
                 .unwrap(),

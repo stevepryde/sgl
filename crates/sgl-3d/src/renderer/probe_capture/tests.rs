@@ -70,7 +70,7 @@ fn camera_surfaces_exclude_specular_ibl_and_keep_diffuse_and_emission() {
         intensity: 1.,
     };
     input.reflection_environment = input.diffuse_environment;
-    input.environment = Some(environment);
+    input.environment = crate::FrameEnvironment::Map(environment);
     let settings = Settings::default();
     let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
     let target = |label, format| crate::view::targets::target(&device, label, size, format);

@@ -1025,7 +1025,7 @@ impl Game {
             eye: eye - origin,
         });
         input.elapsed_seconds = seconds;
-        input.environment = Some(self.sky);
+        input.environment = sgl_3d::FrameEnvironment::Map(self.sky);
         input.exposure = Exposure {
             stops: 0.,
             automatic: None,
