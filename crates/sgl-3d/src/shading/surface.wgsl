@@ -76,7 +76,8 @@ struct Surface {
  emission:vec3<f32>,
  environment_scale:f32,
  // The share of ambient light its material lets reach it
- // (material_occlusion; occlusion.wgsl).
+ // (material_occlusion; occlusion.wgsl), which also micro-shadows its
+ // direct light (occlusion_micro_shadow).
  occlusion:f32,
  // The share of its diffuse light that light transmitted through it from
  // behind replaces (KHR_materials_transmission; transmission.wgsl), which
@@ -334,23 +335,28 @@ fn surface_ibl_weights(surface:Surface,reflectance:SurfaceReflectance)->PbrIblWe
 }
 // The light one sample brings to a surface, as Filament's
 // surfaceShading(PixelParams, Light), its front lobes at the sample's
-// visibility and its transmitted lobe at its back side's
-// (LightSample.transmitted_visibility); a rectangle's integrated over its
-// face (surface_rect_light, surface_rect_light_transmitted).
+// visibility times the micro-shadowing its material's occlusion casts at
+// the direction to the light (occlusion_micro_shadow, on the mapped normal,
+// toward a rectangle's centre), as Filament scales its whole visibility,
+// and its transmitted lobe, lit from the other side, at its back side's
+// visibility alone (LightSample.transmitted_visibility); a rectangle's
+// integrated over its face (surface_rect_light,
+// surface_rect_light_transmitted).
 fn surface_direct_light(surface:Surface,reflectance:SurfaceReflectance,light:LightSample)->vec3<f32> {
  var lit=vec3(0.);
+ let front=light.visibility*occlusion_micro_shadow(saturate(dot(surface.normal,light.direction)),surface.occlusion);
  if light.rect!=NO_RECT_LIGHT {
   let rect=lights[light.rect];
-  if light.visibility>0. {
-   lit+=surface_rect_light(surface,reflectance,rect,light.direction,light.specular)*light.visibility;
+  if front>0. {
+   lit+=surface_rect_light(surface,reflectance,rect,light.direction,light.specular)*front;
   }
   if light.transmitted_visibility>0. {
    lit+=surface_rect_light_transmitted(surface,reflectance,rect,light.direction,light.specular)*light.transmitted_visibility;
   }
   return lit*light.radiance;
  }
- if light.visibility>0. {
-  lit+=surface_direct_brdf(surface,reflectance,light.direction,light.size,light.specular)*light.visibility;
+ if front>0. {
+  lit+=surface_direct_brdf(surface,reflectance,light.direction,light.size,light.specular)*front;
  }
  if light.transmitted_visibility>0. {
   lit+=surface_transmitted_brdf(surface,reflectance,light.direction,light.specular)*light.transmitted_visibility;

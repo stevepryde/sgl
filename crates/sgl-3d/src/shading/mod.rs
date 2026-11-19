@@ -30,6 +30,8 @@ mod lighting_model_tests;
 pub(crate) mod lights;
 pub(crate) mod lod;
 pub(crate) mod material;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod micro_shadow_tests;
 pub(crate) mod motion_tiles;
 pub(crate) mod pmrem_filter;
 pub(crate) mod tiers;

@@ -1170,3 +1170,21 @@ Use the [current specs](README.md) for implementation and the
   quantum alone, and with the fog 0.066 ms median without aerial
   perspective and 0.20 ms with it (0.33 and 0.52 ms p95); `blended` 0.85
   and 1.11 ms median without the fog and with it, either way.
+- **D-66** Decision, 2026-11-19 (#827): a material's occlusion also shadows
+  direct light. Every light's front lobes are scaled by Filament ef1a133's
+  `computeMicroShadowing` (Chan 2018, "Material Advances in Call of Duty:
+  WWII"): saturate(N·L / √(1 − occlusion))², on the mapped normal, the share
+  of a cosine-weighted cone of that visibility that a light at N·L reaches.
+  glTF 2.0 says its occlusion leaves direct lighting alone, and D-32 takes
+  material meaning from glTF; this departs from it, as Filament does for its
+  glTF materials, because the cavities a normal map draws cast no shadow of
+  their own and neither the shadow maps nor a depth march resolve them.
+  Filament applies it to directional lights only; SGL3D applies it to every
+  light, a rectangle's at the direction to its centre, and in every view
+  (raster, probe captures, ray hits, dynamic GI probe hits), so one material
+  is lit alike whatever lights or shows it (S3D-5). It is the shading model,
+  not a setting (S3D-6): a material without an occlusion map, or with
+  `occlusion_strength` 0, takes none. Uncharted 4's form (Brinck and Maximov
+  2016, saturate(|N·L| + 2·occlusion² − 1)) was not taken: it is an artist's
+  fit that returns N·L itself at an occlusion of 0.71 and black below N·L 0.5
+  at 0.5, where Chan's follows from the cone the occlusion value stands for.

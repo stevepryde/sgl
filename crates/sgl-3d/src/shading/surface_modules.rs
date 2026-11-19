@@ -47,8 +47,9 @@ pub(crate) static SPECULAR_LOBES: Module = Module {
 };
 /// Ambient occlusion of a receiver's ambient light and environment
 /// specular, by the lesser of its material's occlusion and the frame's
-/// ambient occlusion: one owner for source completion, composition and lit
-/// shading.
+/// ambient occlusion, and the micro-shadowing its material's occlusion
+/// casts on its direct light: one owner for source completion, composition
+/// and lit shading.
 pub(crate) static OCCLUSION: Module = Module {
     name: "occlusion",
     source: include_str!("occlusion.wgsl"),

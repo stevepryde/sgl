@@ -1,12 +1,15 @@
 // Ambient occlusion of a receiver's ambient light: the visibility it takes,
 // and how that occludes its ambient diffuse, the specular multiple
 // scattering its indirect light carries, and each specular lobe's
-// environment. Direct light and emission are not occluded; glTF's occlusion
-// is of indirect light. Baked light takes the material's occlusion alone, in
-// lit shading (surface.wgsl). Screen-space and world-space hits are visible
-// surfaces and stay unoccluded, as in Filament. Source completion occludes
-// the camera's opaque surfaces (stages/reflections/source.wgsl); lit shading
-// (surface.wgsl) every other view's by its material's occlusion alone.
+// environment; and the micro-shadowing its material's occlusion casts on
+// its direct light (occlusion_micro_shadow). Emission is not occluded, and
+// the frame's ambient occlusion occludes no direct light. Baked light takes
+// the material's occlusion alone, in lit shading (surface.wgsl).
+// Screen-space and world-space hits are visible surfaces and stay
+// unoccluded, as in Filament. Source completion occludes the camera's
+// opaque surfaces' ambient light (stages/reflections/source.wgsl); lit
+// shading (surface.wgsl) every other view's by its material's occlusion
+// alone.
 
 // A receiver's visibility: the lesser of its material's occlusion
 // (material_occlusion) and the frame's ambient occlusion, as Filament
@@ -79,4 +82,22 @@ fn occlusion_multiscatter(nv:f32,roughness:f32,visibility:f32,f0:vec3<f32>)->vec
   return vec3(1.);
  }
  return specular_occlusion(nv,roughness,false,visibility,f0);
+}
+// The share of a direct light that a surface's material occlusion
+// `visibility` lets reach it, at cosine `nl` between its mapped normal and
+// the direction to the light: Filament ef1a133's computeMicroShadowing
+// (shaders/src/surface_lighting.fs 86-91; Apache-2.0, see
+// LICENSE-filament.txt. Modified: translated to WGSL, and full visibility
+// returns 1 unevaluated), Chan 2018, "Material Advances in Call of Duty:
+// WWII". A cosine-weighted cone of visibility v has cos² of its half-angle
+// 1 − v, so a light reaches the surface where N·L exceeds √(1 − v), fading
+// in quadratically below that. glTF's occlusion leaves direct light alone;
+// SGL3D departs from it as Filament does, for every light (D-66).
+fn occlusion_micro_shadow(nl:f32,visibility:f32)->f32 {
+ if visibility>=1. {
+  return 1.;
+ }
+ let aperture=inverseSqrt(1.-min(visibility,.9999));
+ let micro_shadow=saturate(nl*aperture);
+ return micro_shadow*micro_shadow;
 }

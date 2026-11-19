@@ -50,6 +50,22 @@ Allow several GiB of RAM. Everything downloaded/generated stays in ignored
   Base colour and emission resize in linear light with premultiplied alpha.
 - Textures are limited to 1024 pixels by default, with no geometry reduction.
   Authored geometry, transforms, UVs, alpha and transmission are retained.
+- `--occlusion derived` (default `none`) adds occlusion this export derives,
+  not source data, for tiled surface materials only. A material qualifies
+  when it has a normal map and a metallic-roughness map paired with each
+  other in every material that uses either, both repeat, some primitive's
+  `TEXCOORD_0` leaves [0, 1], and both exported images have power-of-two
+  sides; atlas-unwrapped props do not, since their normal maps are no height
+  field. The exported normal map's slopes (times `normalTexture.scale`) are
+  integrated to a periodic height in texels (Frankot and Chellappa 1988); a
+  map whose height's normals differ from its own by more than 5° RMS is not
+  integrable and is skipped. Visibility is the height's cosine-weighted
+  visibility about its base plane: the mean over 16 azimuths of cos² of the
+  highest horizon within the example's chosen reach, 1/64 of the image's
+  width. It is written to the metallic-roughness image's red channel and bound
+  as `occlusionTexture` at strength 1, so it occludes those materials' ambient
+  light as well as shadowing their direct light. The export lists each
+  material it derived or skipped, with the reason and RMS angle.
 - The supplied `san_giuseppe_bridge_4k.hdr` is filtered by Three's actual
   common/WebGPU `PMREMGenerator`, whose inverted-Y render-target convention
   SGL's PMREMNode-based sampler already implements. The WebGL generator
@@ -57,11 +73,12 @@ Allow several GiB of RAM. Everything downloaded/generated stays in ignored
   HDR lighting; only the separate RGBA8 display panorama is clipped to its
   storage range. A browser is needed for this explicit export, never at runtime.
 
-Choose another export resolution/directory explicitly:
+Choose another export resolution, directory or occlusion explicitly:
 
 ```sh
 bun scripts/prepare-bistro.ts --max-texture 2048 --output target/bistro-2048
 cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-2048/prepared/BistroExterior.gltf --output target/bistro-2048/captures
+bun scripts/prepare-bistro.ts --occlusion derived --output target/bistro-occlusion
 ```
 
 Source files already present are reused. Re-running preparation explicitly

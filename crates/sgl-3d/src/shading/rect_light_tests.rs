@@ -178,6 +178,7 @@ struct Case { n:vec4<f32>,v:vec4<f32>,p:vec4<f32>,f:vec4<f32>,t:vec4<f32> }
  surface.coat_roughness=c.v.w;
  surface.dielectric_f0=vec3(c.f.x);
  surface.specular=1.;
+ surface.occlusion=1.;
  surface.diffuse_transmission=select(0.,1.,c.t.x>0.);
  var reflectance:SurfaceReflectance;
  reflectance.transmitted=vec3(c.t.x);

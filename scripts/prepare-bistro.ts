@@ -11,6 +11,7 @@ const root = resolve(import.meta.dir, "..");
 let output = resolve(root, "target/bistro");
 let ktx = "ktx";
 let maximum = 1024;
+let occlusion = "none";
 let fetchOnly = false;
 const args = Bun.argv.slice(2);
 for (let index = 0; index < args.length; index++) {
@@ -24,11 +25,13 @@ for (let index = 0; index < args.length; index++) {
     case "--output": output = resolve(value()); break;
     case "--ktx": ktx = value(); break;
     case "--max-texture": maximum = Number(value()); break;
+    case "--occlusion": occlusion = value(); break;
     case "--fetch-only": fetchOnly = true; break;
-    default: throw new Error("usage: bun scripts/prepare-bistro.ts [--ktx PATH] [--max-texture N] [--output DIR] [--fetch-only]");
+    default: throw new Error("usage: bun scripts/prepare-bistro.ts [--ktx PATH] [--max-texture N] [--occlusion none|derived] [--output DIR] [--fetch-only]");
   }
 }
 if (!Number.isInteger(maximum) || maximum < 1 || maximum > 16384) throw new Error("invalid --max-texture (1..16384)");
+if (occlusion !== "none" && occlusion !== "derived") throw new Error("invalid --occlusion (none|derived)");
 const source = resolve(output, "source");
 if (!fetchOnly) await assertSeparateExportOutput(resolve(output, "prepared"), [source]);
 
@@ -75,7 +78,7 @@ if (fetchOnly) process.exit(0);
 const result = Bun.spawnSync([
   "cargo", "run", "--release", "-p", "sgl-3d-examples", "--example", "bistro_prepare", "--",
   "--source", source, "--output", resolve(output, "prepared"), "--ktx", ktx,
-  "--max-texture", String(maximum),
+  "--max-texture", String(maximum), "--occlusion", occlusion,
 ], { cwd: root, stdout: "inherit", stderr: "inherit" });
 if (result.exitCode !== 0) process.exit(result.exitCode ?? 1);
 const environment = Bun.spawnSync([

@@ -38,8 +38,10 @@ them through unrefracted. A probe captured on an
   dynamic GI than to the camera: its strength is per pixel in raster, as
   three.js's, and per metre at ray hits, [D-45](../../../specs/decisions.md)), an
   occlusion map packed in the metallic-roughness image's red channel
-  (ORM), `KHR_materials_clearcoat` (its clearcoat, roughness and normal
-  maps on the `Extended` binding tier), emission, unlit,
+  (ORM), which also shadows direct light (micro-shadowing,
+  [D-66](../../../specs/decisions.md)), `KHR_materials_clearcoat` (its
+  clearcoat, roughness and normal maps on the `Extended` binding tier),
+  emission, unlit,
   `KHR_materials_anisotropy`, `KHR_materials_iridescence` (a thin film
   over the base, its maps on `Extended`), `KHR_materials_sheen` (cloth) and
   `KHR_materials_diffuse_transmission` (leaves and paper lit from behind),

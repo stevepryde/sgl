@@ -61,7 +61,9 @@ struct VertexContext {
 // already evaluated at the fragment. `base_color` is linear RGB, the
 // record's base times its base map and the vertex colour, its alpha the
 // fragment's coverage; `roughness` perceptual; `normal` unit, in the render
-// frame's world space on the shaded side, the mapped normal; `specular`
+// frame's world space on the shaded side, the mapped normal; `occlusion` the
+// material's visibility, 1 for none, which occludes ambient light and
+// micro-shadows direct light (D-66); `specular`
 // KHR_materials_specular's strength; `transmission` KHR_materials_
 // transmission's share; `thickness` KHR_materials_volume's, in the mesh's
 // units; `attenuation` the Beer-Lambert coefficient per metre, finite and

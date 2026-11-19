@@ -1254,8 +1254,9 @@ direct/bounced irradiance retain their existing ownership. Probe captures and
 secondary rays do not consume camera-space AO. There are no substitute contact
 shadows. A material's occlusion map joins it: each opaque receiver takes the
 lesser of the two visibilities, as Filament and Bevy take them, and every
-other view its material's alone; baked diffuse takes the material's alone
-([asset limits](#asset-and-environment-limits)).
+other view its material's alone; baked diffuse takes the material's alone.
+The map also shadows direct light, which the frame's ambient occlusion does
+not ([asset limits](#asset-and-environment-limits)).
 
 The radius is clamped to 0.01–10000 m (XeGTAO's expected minimum and its
 settings' maximum); `Settings::ambient_occlusion`
@@ -3284,8 +3285,13 @@ KHR_materials_specular, Filament and three.js define it, so `specular` 0 turns
 a dielectric's reflection off whole. The occlusion map's red channel, at
 `occlusion_strength` (glTF's lerp), occludes a surface's ambient light, the
 baked light of its lightmap, atlas chart or ambient cube (their specular
-multiple scattering by specular occlusion) and its environment specular, never
-direct light or emission, as three.js and Godot occlude a light map; with
+multiple scattering by specular occlusion) and its environment specular, as
+three.js and Godot occlude a light map, never emission. It also shadows the
+surface's direct light where a light arrives outside the cone the occlusion
+leaves open (micro-shadowing, Filament's `computeMicroShadowing`), from every
+light and in every view, so the cracks a normal map draws shadow under a
+raking light; light passed through to a surface's other side takes none
+([D-66](../../specs/decisions.md)). With
 `Settings::ambient_occlusion` the camera's opaque surfaces take the lesser of
 it and the frame's ambient occlusion for their ambient light and environment
 specular, as Filament and Bevy do, while a bake keeps its own.

@@ -110,6 +110,7 @@ fn case_surface(c:Case)->Surface {
  surface.coat=c.t.w;
  surface.coat_roughness=.21;
  surface.anisotropy=vec4(c.t.xyz,c.v.w);
+ surface.occlusion=1.;
  return surface;
 }
 @compute @workgroup_size(64) fn observe(@builtin(global_invocation_id) id:vec3<u32>) {
@@ -239,6 +240,7 @@ struct Case { n:vec4<f32>,tangent:vec4<f32> }
  surface.view=normalize(n+frame[0]*.4);
  surface.roughness=.3;
  surface.anisotropy=axis;
+ surface.occlusion=1.;
  let reflectance=surface_reflectance(surface,vec2(.8,.025));
  let light=LightSample(normalize(n-frame[1]*.5),vec3(1.),1.,0.,1.,NO_RECT_LIGHT,0.);
  result[id.x*4u]=vec4(frame[0],0.);
