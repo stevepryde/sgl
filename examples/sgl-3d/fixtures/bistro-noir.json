@@ -60,7 +60,7 @@
   ],
   "warmup_frames": 720,
   "exposure_stops": 0.6,
-  "lighting": "Bistro Noir: night relight of the bike camera. Sun reduced to faint moonlight, diffuse environment fill cut while reflections keep the quality profile intensity, no practical point lights. A warm LTC strip rakes the scooter cowl, a cool spot rims it from behind through a small fog volume that shows its beam, and one warm spot lights a single patch of cobbles. Explicit authoring, not imported lights.",
+  "lighting": "Bistro Noir: night relight of the bike camera. Sun reduced to faint moonlight, diffuse environment fill cut while reflections keep the quality profile intensity, no practical point lights. A warm LTC strip rakes the scooter cowl, a cool spot rims it from behind through a small fog volume that shows its beam, and one warm spot casts a window's panes onto a patch of cobbles (a cookie). Explicit authoring, not imported lights.",
   "settings": {
     "ambient_occlusion": "Medium",
     "anisotropic_filtering": "X16",
@@ -139,12 +139,12 @@
         2.6
       ],
       "direction": [
-        0.3,
+        0.9,
         -4.63,
-        -0.3
+        -0.6
       ],
-      "inner_angle_degrees": 12,
-      "outer_angle_degrees": 22,
+      "inner_angle_degrees": 19,
+      "outer_angle_degrees": 21,
       "color": [
         1,
         0.75,
@@ -153,7 +153,15 @@
       "intensity": 70,
       "range": 9,
       "casts_shadow": true,
-      "fog_energy": 0
+      "fog_energy": 0,
+      "cookie": {
+        "pattern": "window",
+        "up": [
+          0,
+          0,
+          -1
+        ]
+      }
     }
   ],
   "rect_lights": [

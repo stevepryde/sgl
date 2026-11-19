@@ -123,6 +123,12 @@ struct ShadeContext {
  // specular: a blended receiver's where it is the surface at its pixel,
  // else untraced_reflection().
  traced:TracedReflection,
+ // The surface position's footprint, which selects the level of a spot's
+ // cookie (light_cookie): its screen derivatives under the view's mip bias
+ // in raster (raster_position_dx), zero at a ray hit, which samples the
+ // first level.
+ position_dx:vec3<f32>,
+ position_dy:vec3<f32>,
 }
 // A shaded surface's outgoing radiance; the ambient light within it before
 // any occlusion, from the environment's diffuse light and the hemisphere
@@ -784,7 +790,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
    end+=lights.baked;
   }
   for (var at=lights.first;at<end;at++) {
-   let light=scene_light_sample(cluster_item(at),s.position,n,coat_n,s.geometry_normal,context.pixel,context.receiver,transmits,back,0.);
+   let light=scene_light_sample(cluster_item(at),s.position,n,coat_n,s.geometry_normal,context.pixel,context.receiver,transmits,back,0.,context.position_dx,context.position_dy);
    if light.visibility>0. || light.transmitted_visibility>0. {
     color+=surface_direct_light(s,reflectance,light);
    }

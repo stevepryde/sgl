@@ -22,6 +22,8 @@ pub(crate) mod iridescence_tests;
 #[cfg(test)]
 pub(crate) mod layout_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod light_cookie_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod light_reach_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod lighting_model_tests;
@@ -450,15 +452,24 @@ pub(crate) static LIGHT_REACH: Module = Module {
     source: include_str!("light_reach.wgsl"),
     deps: &[&LIGHT_RECORDS],
 };
+/// A spot light's cookie: the image it projects from the decal atlas,
+/// which scales its radiance. Reads `decal_atlas` and `decal_sampler`.
+pub(crate) static LIGHT_COOKIE: Module = Module {
+    name: "light_cookie",
+    source: include_str!("light_cookie.wgsl"),
+    deps: &[&LIGHT_RECORDS],
+};
 /// The scene lights that reach a point, each as a `LightSample`. Reads
-/// `view`, `lights`, `clusters` and the local-light shadows, and calls the
-/// program's mask provider (`camera_shadow_mask`).
+/// `view`, `lights`, `clusters`, the local-light shadows and the decal
+/// atlas (a spot's cookie), and calls the program's mask provider
+/// (`camera_shadow_mask`).
 pub(crate) static LIGHTS: Module = Module {
     name: "lights",
     source: include_str!("lights.wgsl"),
     deps: &[
         &LIGHT_RECORDS,
         &LIGHT_REACH,
+        &LIGHT_COOKIE,
         &CLUSTERS,
         &LIGHT_SAMPLE,
         &LOCAL_SHADOW,

@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--baseline | --bistro] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
+  "measure-browser [--baseline | --bistro] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
 
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
@@ -300,6 +300,7 @@ async function measureBrowser(args: string[]): Promise<void> {
     else if (args[at] === "--compressed-manifest" && at+1<args.length) sceneOptions.compressed_manifest=args[++at];
     else if (args[at] === "--motion") sceneOptions.motion=true;
     else if (args[at] === "--rect-light") sceneOptions.rect=true;
+    else if (args[at] === "--no-cookies") sceneOptions.no_cookies=true;
     else if (args[at] === "--size" && at+1<args.length) {
       const dimensions=args[++at].split("x").map(Number);
       if (dimensions.length!==2||!dimensions.every(n=>Number.isInteger(n)&&n>0&&n<=4096)) throw new Error("--size needs WxH within 1..4096");

@@ -285,7 +285,7 @@ struct BlendedColor {
 }
 fn blended_color(i:Fragment,raster_front:bool)->BlendedColor {
  let front=object_front_face(i,raster_front);
- let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i));
+ let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i),raster_position_dx(i),raster_position_dy(i));
  let m=raster_material(i,front);
  var s=raster_surface(i,front,m,context.clusters);
  let coverage=select(1.,s.base.a,(material.flags&MATERIAL_ALPHA_BLEND)!=0u);

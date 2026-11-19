@@ -46,7 +46,9 @@ impl Scene {
             .move_origin(queue, to, &self.models, &mut self.ray_instances);
         self.ray_instances.rebuild_statics();
         self.static_edits.move_origin(to);
-        self.lights.move_origin(queue, to);
+        let decals = &self.decals;
+        self.lights
+            .move_origin(queue, to, &super::lights::cookie_rects(decals));
         self.decals.move_origin(to);
         self.transient.move_origin(queue, to);
         if let Some(probes) = &mut self.baked_specular_probes {

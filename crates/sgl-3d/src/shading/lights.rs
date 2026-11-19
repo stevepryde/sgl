@@ -1,6 +1,7 @@
 //! Rust mirrors of light_records.wgsl: a scene light's record and a light's
 //! shadow in the local-light shadow atlas.
-use crate::content::light::{Light, LightShape};
+use crate::content::light::{Light, LightCookie, LightShape};
+use glam::Vec3;
 
 /// One scene light as shading reads it (`Light` in light_records.wgsl), at
 /// its identity's index in the scene's light buffer.
@@ -36,8 +37,17 @@ pub(crate) struct LightRecord {
     /// A point or spot light's radius in metres, which sizes its highlights
     /// and its rays' ends (`LightShape`); zero for a rectangle.
     pub radius: f32,
-    /// WGSL rounds `Light` up to its 16-byte alignment.
+    /// WGSL aligns `cookie_rect` to 16 bytes.
     pub padding: f32,
+    /// A spot's cookie's place in the decal atlas, in atlas UV (offset in
+    /// xy, size in zw); all zero for a light without one.
+    pub cookie_rect: [f32; 4],
+    /// A cookied spot's unit right axis: its direction crossed with the
+    /// cookie's up (`LightCookie::up`); zero without a cookie.
+    pub cookie_right: [f32; 3],
+    /// A cookied spot's outer cone's cotangent, which scales its projector
+    /// square to the cone; zero without a cookie.
+    pub cookie_cotangent: f32,
 }
 
 /// `LightRecord::shape`: a point or spot light.
@@ -56,8 +66,10 @@ impl LightRecord {
     /// Filament's `getAngleAttenuation` takes; a point light's and a
     /// rectangle's leave it whole. A rectangle's luminance is its intensity
     /// over its area, as Bevy's `extract_lights` divides its flux by its
-    /// area and π.
-    pub fn new(light: &Light) -> Self {
+    /// area and π. `cookie_rect` is the place of its cookie's image in the
+    /// decal atlas the record is read with; it is ignored for a light
+    /// without a cookie.
+    pub fn new(light: &Light, cookie_rect: [f32; 4]) -> Self {
         let mut color = light.color.map(|channel| channel * light.intensity);
         let (shape, direction, half_width, half_height, spot_scale, spot_offset) = match light.shape
         {
@@ -122,7 +134,51 @@ impl LightRecord {
                 LightShape::Rect { .. } => 0.,
             },
             padding: 0.,
+            ..cookie(light, cookie_rect)
         }
+    }
+}
+
+/// A cookie's frame on a light of `shape`: its unit right axis and its
+/// outer cone's cotangent, which fit its projector square to the cone
+/// (`light_cookie.wgsl`); none unless the light is a spot whose outer
+/// angle and the part of the cookie's `up` across its direction give
+/// finite ones. The right axis is the spot's direction crossed with up, as
+/// Bevy 9d12036 projects a spot's texture through the light's transform
+/// (`extract_spot_light_textures`, crates/bevy_pbr/src/decal/clustered.rs
+/// 346–372), whose +X is its up crossed with its back.
+pub(crate) fn cookie_frame(cookie: &LightCookie, shape: &LightShape) -> Option<(Vec3, f32)> {
+    let LightShape::Spot {
+        direction,
+        outer_angle,
+        ..
+    } = *shape
+    else {
+        return None;
+    };
+    let direction = direction.normalize();
+    let right = direction
+        .cross(cookie.up.reject_from_normalized(direction))
+        .normalize();
+    let cotangent = 1. / outer_angle.tan();
+    (outer_angle > 0. && right.is_finite() && cotangent.is_finite()).then_some((right, cotangent))
+}
+
+/// The record's cookie rows: its image's place in the atlas and its frame
+/// (`cookie_frame`), or zero without a cookie.
+fn cookie(light: &Light, rect: [f32; 4]) -> LightRecord {
+    let zeroed = bytemuck::Zeroable::zeroed();
+    let Some((right, cotangent)) = light
+        .cookie
+        .and_then(|cookie| cookie_frame(&cookie, &light.shape))
+    else {
+        return zeroed;
+    };
+    LightRecord {
+        cookie_rect: rect,
+        cookie_right: right.to_array(),
+        cookie_cotangent: cotangent,
+        ..zeroed
     }
 }
 
@@ -213,6 +269,9 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
                 shadow_opacity,
                 flags,
                 radius,
+                cookie_rect,
+                cookie_right,
+                cookie_cotangent,
             ]
         ),
         mirror!(

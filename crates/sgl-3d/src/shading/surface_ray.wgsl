@@ -261,7 +261,7 @@ fn probe_hit_light(s:Surface,list:ClusterRange,random:vec3<f32>)->vec3<f32> {
  } else {
   let index=cluster_item(list.first+pick-directional_count);
   // A probe hit takes diffuse light alone, which its base normal bounds.
-  sample=scene_light_sample(index,s.position,s.normal,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT,transmits,back,0.);
+  sample=scene_light_sample(index,s.position,s.normal,s.normal,s.geometry_normal,vec2(0.),SHADOW_RECEIVER_PROBE_HIT,transmits,back,0.,vec3(0.),vec3(0.));
   if sample.visibility<=0. && sample.transmitted_visibility<=0. {
    return vec3(0.);
   }
@@ -325,7 +325,7 @@ fn shade_ray_hit(hit:SceneHit,outgoing:vec3<f32>,receiver:u32,random:vec3<f32>)-
  if unlit {
   return shade_unlit(unlit_surface(base,emission)).color;
  }
- let context=ShadeContext(vec2(0.),receiver,!probe_hit,true,cluster_range(hit.position,vec2(0.)),untraced_reflection());
+ let context=ShadeContext(vec2(0.),receiver,!probe_hit,true,cluster_range(hit.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.));
  let s=ray_surface(hit,material,base,emission,outgoing,context.clusters);
  var color=shade_lit(s,context).color;
  if probe_hit {

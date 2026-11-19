@@ -181,7 +181,7 @@ requested unavailable feature is not mistaken for active rendering.
 
 Controls include `--asset-dir DIR`, `--view street|bike|overview|bevy`,
 `--size WxH`, `--warmup N`, `--exposure STOPS`, `--cascades 1..4`,
-`--aa taa|smaa|fsr|off`, `--rect-light`, and `--settings FILE` for a complete
+`--aa taa|smaa|fsr|off`, `--rect-light`, `--no-cookies`, and `--settings FILE` for a complete
 serialized settings bundle. `--skip-build` repeats the saved release module;
 the module hash and its saved build provenance distinguish it from current
 checkout source. As with the native example, lighting changes are explicit
@@ -499,13 +499,22 @@ night with existing renderer features only: the sun reduced to faint
 moonlight, diffuse environment fill cut to 0.04 while reflections keep 0.7,
 no practical point lights, a warm rectangle strip raking the scooter's cowl,
 a cool spot rimming it from behind through a small fog volume, and one warm
-spot lighting a single patch of cobbles. Exposure stays at the quality
-profile's fixed +0.6. Capture the control and the relight with the same
-camera, size, frames and warm-up:
+spot casting a window's panes onto a patch of cobbles through a cookie.
+Exposure stays at the quality profile's fixed +0.6. Capture the control and
+the relight with the same camera, size, frames and warm-up:
 
 ```sh
 cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-quality.json --view bike --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-noir/baseline
 cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-noir.json --view bike --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-noir/relight
+```
+
+`--no-cookies` (the browser runner's too) leaves the fixture's spots
+without their cookies, for cookie-on and cookie-off captures and per-pass
+timings of one fixture; add `--split` to time the opaque lighting pass on
+its own:
+
+```sh
+cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-noir.json --view bike --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-noir/cookie-off --no-cookies
 ```
 
 The recipe uses these optional fixture keys, which native and browser runs
@@ -525,6 +534,11 @@ share; a fixture without them renders as before:
   positive `width`/`height` in metres; `intensity` is candela along its normal.
 - Optional `fog_energy` on any light (default 1) scales its share of the fog;
   0 leaves it out.
+- Optional `cookie` on a spot light: `pattern` (`"window"`, a window's panes
+  the examples generate in code) and `up` (the direction of the image's
+  top, not parallel to `direction`). The pattern fills the square twice the
+  outer angle across, so keep the inner angle near the outer for a
+  hard-edged window.
 - Top-level `fog_volumes`: axis-aligned boxes with `center`, positive `size`
   (metres), `density` (extinction per metre) and optional `edge_fade`
   (default 0.1).

@@ -1,5 +1,6 @@
 //! A scene's point, spot and rectangle lights, as the game describes them to
 //! `Scene::add_light` and `Scene::set_light`. Metres, radians and linear RGB.
+use super::identity::DecalImageId;
 use glam::Vec3;
 
 /// Where a light shines.
@@ -47,6 +48,28 @@ impl LightShape {
     /// Wicked Engine's default light radius, in metres
     /// (`LightComponent::radius`).
     pub const DEFAULT_RADIUS: f32 = 0.025;
+}
+
+/// An image a spot light projects (a cookie or gobo: Godot's spot
+/// `light_projector`, Wicked Engine's light mask). It fills the light's
+/// projector square, which spans twice the outer cone angle about the
+/// spot's direction, so the cone's circle is inscribed in it, with the
+/// image's top toward `up`. The light's radiance is multiplied by the
+/// image's linear colour times its alpha (the image sampled as sRGB colour)
+/// wherever the light reaches: on surfaces, at reflections' and the dynamic
+/// GI volume's ray hits, and in the volumetric fog, whether or not the
+/// light casts a shadow. A white opaque image leaves the light as it was; a
+/// black or transparent one stops it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightCookie {
+    /// The image, from `Scene::add_decal_image`: it shares the decal atlas,
+    /// and cannot be removed while a light projects it.
+    pub image: DecalImageId,
+    /// The direction of the image's top: any vector not parallel to the
+    /// spot's direction, whose part across the direction is used, as
+    /// `LightShape::Rect`'s `width_axis`. The image's right is the spot's
+    /// direction crossed with it.
+    pub up: Vec3,
 }
 
 /// A point, spot or rectangle light: scene content, added with
@@ -99,6 +122,10 @@ pub struct Light {
     /// casters, 0.4 lets 0.6 of it through, and at most 0.001 (Godot's
     /// cutoff) draws no shadow and skips the lookup.
     pub shadow_opacity: f32,
+    /// The image a spot light projects (`LightCookie`); a point or
+    /// rectangle light takes none. A `baked` light's pattern must be in the
+    /// game's bake too, which holds that light.
+    pub cookie: Option<LightCookie>,
 }
 
 impl Default for Light {
@@ -106,9 +133,9 @@ impl Default for Light {
     /// point light of 2.5 cm (`LightShape::DEFAULT_RADIUS`) at the origin, of
     /// π candela (its light energy of 1, which its renderer scales by π),
     /// reaching 5 metres, live, physical specular (its `light_specular` of
-    /// 0.5, which its renderer doubles), fog energy 1 and no shadow, at
-    /// opacity 1 when cast. Set what differs and take the rest with
-    /// `..Default::default()`.
+    /// 0.5, which its renderer doubles), fog energy 1, no shadow, at
+    /// opacity 1 when cast, and no cookie. Set what differs and take the
+    /// rest with `..Default::default()`.
     fn default() -> Self {
         Self {
             position: Vec3::ZERO,
@@ -123,6 +150,7 @@ impl Default for Light {
             fog_energy: 1.,
             casts_shadow: false,
             shadow_opacity: 1.,
+            cookie: None,
         }
     }
 }

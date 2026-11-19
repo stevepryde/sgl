@@ -64,7 +64,7 @@ struct Case { n:vec4<f32>,coat:vec4<f32>,v:vec4<f32>,f:vec4<f32> }
  reflectance.f90=select(0.,1.,c.f.y>0.);
  reflectance.multiscatter=vec3(1.);
  reflectance.coat_fresnel=.04*c.coat.w;
- let light=scene_light_sample(index,surface.position,surface.normal,surface.coat_normal,surface.geometry_normal,vec2(0.),SHADOW_RECEIVER_CAMERA,false,surface.position,0.);
+ let light=scene_light_sample(index,surface.position,surface.normal,surface.coat_normal,surface.geometry_normal,vec2(0.),SHADOW_RECEIVER_CAMERA,false,surface.position,0.,vec3(0.),vec3(0.));
  result[id.x]=vec4(surface_direct_light(surface,reflectance,light),0.);
 }
 "#;

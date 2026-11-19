@@ -232,6 +232,18 @@ pub(crate) fn observe_surface(
             group0::SHADOW_SAMPLER,
             wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
         ),
+        (
+            group0::DECAL_ATLAS,
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+        ),
+        (
+            group0::DECAL_SAMPLER,
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        ),
     ];
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("surface observations"),
@@ -310,6 +322,8 @@ pub(crate) fn observe_surface(
         wgpu::BindingResource::Sampler(&scene.environments.sampler),
         wgpu::BindingResource::TextureView(&atlas),
         wgpu::BindingResource::Sampler(&shadow_sampler),
+        wgpu::BindingResource::TextureView(&scene.decals.atlas.view),
+        wgpu::BindingResource::Sampler(&scene.decals.sampler),
     ];
     let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,

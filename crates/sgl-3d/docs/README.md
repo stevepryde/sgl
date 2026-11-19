@@ -136,7 +136,7 @@ The examples live in the repository, not the published crate:
 <https://github.com/stevepryde/sgl/tree/main/examples/sgl-3d/examples>.
 [`examples/offscreen.rs`](../../../examples/sgl-3d/examples/offscreen.rs) is the loop to copy
 (`--decals` adds decals, `--motion-blur` motion blur, `--fog` volumetric
-fog);
+fog, `--cookie` a spot light's cookie);
 [`examples/skinned.rs`](../../../examples/sgl-3d/examples/skinned.rs) adds a skinned, morphed glTF
 and the game's side of animating it,
 [`examples/instances.rs`](../../../examples/sgl-3d/examples/instances.rs) many instances of a few

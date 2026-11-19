@@ -431,7 +431,7 @@ fn decal_images_stay_while_a_decal_uses_them() {
         base_color: other,
         ..decal
     };
-    scene.set_decal(&device, &queue, second, moved).unwrap();
+    scene.set_decal(&queue, second, moved).unwrap();
     assert_eq!(scene.decal(second).unwrap(), &moved);
     assert!(matches!(
         scene.remove_decal_image(shared),
@@ -439,7 +439,6 @@ fn decal_images_stay_while_a_decal_uses_them() {
     ));
     scene
         .set_decal(
-            &device,
             &queue,
             second,
             Decal {

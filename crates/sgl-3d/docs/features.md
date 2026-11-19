@@ -191,7 +191,8 @@ them through unrefracted. A probe captured on an
   inside them, changing base colour and, with their maps, normal, roughness
   and metallic before lighting, so reflections and SSR see them
   (`Scene::add_decal_image`, `add_decal`, `Decal`). Godot's clustered decals:
-  clustered with the lights, sampled from one atlas SGL3D packs; probe
+  clustered with the lights, sampled from one atlas SGL3D packs, which
+  spot lights' cookies share; probe
   captures and world-space ray hits take them too. Unlit materials take
   none. Keep boxes shallow: everything inside one takes the decal.
   `Decal::new(image)` has Godot's decal defaults. The lit pipelines apply
@@ -267,6 +268,13 @@ them through unrefracted. A probe captured on an
   nearby, a spot of the same intensity far away. It costs more per pixel
   than a spot (one integral for diffuse, one more per specular lobe); the
   lit pipelines shade rectangles only while the scene holds one.
+  A spot's `cookie` (`LightCookie`) projects an image (a window's panes, a
+  gobo) from the decal atlas over the square twice its outer angle across,
+  its top toward `up`, multiplying the light by the image's colour times
+  its alpha (sampled as sRGB) on surfaces, reflections' and GI's ray hits
+  and in the fog, whatever its shadow; a `baked` light's pattern belongs in
+  the game's bake. The lit pipelines sample cookies only while the scene
+  holds one.
   [Point, spot and rectangle lights](../README.md#point-spot-and-rectangle-lights).
 - **Local-light shadows**: lights with `casts_shadow` share one shadow atlas,
   sized and chosen by screen coverage; lights beyond its room are lit without
@@ -434,9 +442,10 @@ Environment and probe specular always apply. On top of them:
   denser boxes of it (`Scene::update_fog_volumes`, `FogVolume`, by default
   Godot's; the first 1,024 that reach the frame), lit by the
   directional lights through their cascades, the clustered point, spot and
-  rectangle lights through their shadows, each scaled by its `fog_energy`,
-  and that share of the ambient light, so light shafts form where openings
-  let a shadowed light through. Opaque surfaces, the sky, blended surfaces,
+  rectangle lights through their shadows, each scaled by its `fog_energy`
+  and a spot's by its cookie, and that share of the ambient light, so light
+  shafts form where openings let a shadowed light through, or carry a
+  cookie's pattern. Opaque surfaces, the sky, blended surfaces,
   glow and mist all fog from one volume (glow dimmed by it, adding none of
   its scattered light), the sky by `Fog::sky_affect`
   (all of it by default, as Godot's). `Fog::length` sets its reach,

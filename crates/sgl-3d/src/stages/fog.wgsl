@@ -256,14 +256,16 @@ fn fog_volume_density(volume:FogVolumeRecord,position:vec3<f32>)->f32 {
 }
 // What scene light `index` scatters toward the camera, along `view_ray`,
 // per unit of scattering at a point in the medium of a froxel whose squared
-// diagonal is `froxel_square`: none, without a shadow lookup, at a fog
-// energy Godot skips.
-fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f32>,froxel_square:f32)->vec3<f32> {
+// diagonal is `froxel_square` and whose extent across the frame is
+// `froxel_dx` and `froxel_dy` (world metres), which select a spot cookie's
+// level as a surface's screen derivatives do: none, without a shadow
+// lookup, at a fog energy Godot skips.
+fn fog_scene_light(index:u32,position:vec3<f32>,view_ray:vec3<f32>,pixel:vec2<f32>,froxel_square:f32,froxel_dx:vec3<f32>,froxel_dy:vec3<f32>)->vec3<f32> {
  let fog_energy=lights[index].fog_energy;
  if fog_energy<=FOG_ENERGY_CUTOFF {
   return vec3(0.);
  }
- let sample=scene_light_sample(index,position,vec3(0.),vec3(0.),vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM,false,position,froxel_square);
+ let sample=scene_light_sample(index,position,vec3(0.),vec3(0.),vec3(0.),pixel,SHADOW_RECEIVER_MEDIUM,false,position,froxel_square,froxel_dx,froxel_dy);
  if sample.visibility<=0. {
   return vec3(0.);
  }
@@ -350,10 +352,16 @@ var<workgroup> fog_ambient_light:vec3<f32>;
   let low=min(min(n0*z0,n0*z1),min(n1*z0,n1*z1));
   let lateral=(high-low)/froxels.projection.xy;
   let froxel_square=dot(lateral,lateral)+(z1-z0)*(z1-z0);
+  // Its extent across the frame at the point's depth, along the view's
+  // right and up, in the world: a spot cookie's footprint, so the level it
+  // samples matches the froxel.
+  let extent=abs(n1-n0)*fog_slice_depth(unit.z,froxels.length,froxels.detail_spread)/froxels.projection.xy;
+  let froxel_dx=(froxels.world_from_view*vec4(extent.x,0.,0.,0.)).xyz;
+  let froxel_dy=(froxels.world_from_view*vec4(0.,extent.y,0.,0.)).xyz;
   let range=cluster_range(position,pixel);
   let end=range.first+range.live+range.baked;
   for(var at=range.first;at<end;at++) {
-   light+=fog_scene_light(cluster_item(at),position,view_ray,pixel,froxel_square);
+   light+=fog_scene_light(cluster_item(at),position,view_ray,pixel,froxel_square,froxel_dx,froxel_dy);
   }
  }
  var froxel=vec4(light*albedo,density);

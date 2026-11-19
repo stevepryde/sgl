@@ -15,14 +15,19 @@
 //! ground in front of the cube. `--motion-blur` blurs the moving cube along
 //! its motion, `MotionBlur::Full` over the default shutter.
 //! `--fog` fills the view with haze that the sun and lights scatter, denser
-//! in a box over the cubes.
+//! in a box over the cubes. `--cookie` makes the overhead spot project a
+//! window's panes (`LightCookie`, a pattern generated in code) onto the
+//! ground and, with `--fog`, through the haze.
 //! Printed pixel measurements are diagnostics,
 //! not image QA.
+#[path = "support/window_panes.rs"]
+mod window_panes;
+
 use sgl_3d::glam::camera;
 use sgl_3d::{
     AlphaMode, AutoExposure, Camera, CompensationCurve, Decal, DirectionalLight, DirectionalShadow,
-    Fog, FogVolume, FrameInput, HemisphereLight, InstanceState, Light, LightShape, Mobility,
-    Renderer, Scene, View, ViewFrame,
+    Fog, FogVolume, FrameInput, HemisphereLight, InstanceState, Light, LightCookie, LightShape,
+    Mobility, Renderer, Scene, View, ViewFrame,
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     glam::{Mat4, Quat, Vec3},
@@ -40,6 +45,7 @@ struct Options {
     decals: bool,
     motion_blur: bool,
     fog: bool,
+    cookie: bool,
 }
 impl Options {
     fn parse() -> Result<Self, Box<dyn Error>> {
@@ -53,6 +59,7 @@ impl Options {
             decals: false,
             motion_blur: false,
             fog: false,
+            cookie: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -82,9 +89,10 @@ impl Options {
                 "--decals" => options.decals = true,
                 "--motion-blur" => options.motion_blur = true,
                 "--fog" => options.fog = true,
+                "--cookie" => options.cookie = true,
                 "--help" | "-h" => {
                     println!(
-                        "offscreen [output.png] [--frames N] [--light F] [--emission F] [--anisotropy F] [--alpha] [--decals] [--motion-blur] [--fog]"
+                        "offscreen [output.png] [--frames N] [--light F] [--emission F] [--anisotropy F] [--alpha] [--decals] [--motion-blur] [--fog] [--cookie]"
                     );
                     std::process::exit(0);
                 }
@@ -387,7 +395,16 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let environment = scene.add_environment(&device, &queue, &neutral_environment())?;
     // Point, spot and rectangle lights are content too: the post's light and
     // a lamp overhead, both casting the moving cube's shadow, and a strip
-    // panel beside the ground.
+    // panel beside the ground. With `--cookie` the lamp shines through a
+    // window: its image is a decal image, the window's top toward -Z.
+    let cookie = if options.cookie {
+        Some(LightCookie {
+            image: scene.add_decal_image(Image::Rgba8(window_panes::window_panes()))?,
+            up: Vec3::NEG_Z,
+        })
+    } else {
+        None
+    };
     scene.add_light(
         &device,
         &queue,
@@ -422,6 +439,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             baked: false,
             specular: 1.,
             casts_shadow: true,
+            cookie,
             ..Default::default()
         },
     )?;

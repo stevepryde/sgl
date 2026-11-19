@@ -28,7 +28,7 @@ pub use content::identity::{
 };
 pub use content::instance::{InstanceState, Mobility};
 pub use content::irradiance_volume::{IrradianceCell, IrradianceVolume};
-pub use content::light::{Light, LightShape};
+pub use content::light::{Light, LightCookie, LightShape};
 pub use content::lighting::{
     Backdrop, DirectionalLight, DirectionalShadow, EnvironmentLight, HemisphereLight, Mist,
 };

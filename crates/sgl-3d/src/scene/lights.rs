@@ -3,6 +3,13 @@
 //! operations that add, read, change and remove them. A removed light's
 //! record stays until its index is reused, or until the render origin moves
 //! while a light of a higher index lives, which zeroes it; no view lists it.
+//!
+//! A spot's cookie is an image in the decal atlas (`decals`): a cookied
+//! light uses its image as a decal does, so the atlas packs it, and its
+//! record names the image's place in the layout the next upload binds, as
+//! a decal's does; an upload that packs the atlas anew rewrites every
+//! cookied light's record with the decals' (`Scene::upload_decals`).
+use super::decal_atlas::Sampling;
 use super::slots::Slots;
 use super::{Scene, SceneError};
 use crate::content::identity::{Identity, LightId};
@@ -16,6 +23,8 @@ pub(crate) struct Lights {
     buffer: wgpu::Buffer,
     /// How many of `slots` are rectangles.
     rects: usize,
+    /// How many of `slots` project a cookie.
+    cookies: usize,
 }
 
 impl Lights {
@@ -25,6 +34,7 @@ impl Lights {
             slots: Slots::default(),
             buffer: light_buffer(device, 1),
             rects: 0,
+            cookies: 0,
         }
     }
 
@@ -44,6 +54,24 @@ impl Lights {
         self.rects > 0
     }
 
+    /// Whether the scene holds a cookied light: the lit pipelines sample
+    /// cookies only while it does.
+    pub fn holds_cookie(&self) -> bool {
+        self.cookies > 0
+    }
+
+    /// The decal atlas's images the lights project, other than `except`'s,
+    /// as the atlas packs them (`Scene::place_atlas`).
+    pub fn cookie_keys(
+        &self,
+        except: Option<LightId>,
+    ) -> impl Iterator<Item = super::decal_atlas::AtlasKey> + '_ {
+        self.slots
+            .iter()
+            .filter(move |(id, _)| Some(*id) != except)
+            .filter_map(|(_, light)| cookie_key(light))
+    }
+
     pub fn get(&self, id: LightId) -> Result<&Light, SceneError> {
         self.slots.get(id).ok_or(SceneError::UnknownLight)
     }
@@ -56,13 +84,31 @@ impl Lights {
             .filter(|(_, light)| light.intensity > 0. && light.color.iter().any(|&c| c > 0.))
     }
 
-    fn write(&self, queue: &wgpu::Queue, index: usize, light: &Light) {
+    /// Writes `light`'s record at `index`, its cookie at the place
+    /// `cookie_rect` gives (`Decals::cookie_rect`).
+    fn write(
+        &self,
+        queue: &wgpu::Queue,
+        index: usize,
+        light: &Light,
+        cookie_rect: &impl Fn(&Light) -> [f32; 4],
+    ) {
         crate::counters::write_buffer(
             queue,
             &self.buffer,
             index as u64 * RECORD,
-            bytemuck::bytes_of(&LightRecord::new(light)),
+            bytemuck::bytes_of(&LightRecord::new(light, cookie_rect(light))),
         );
+    }
+
+    /// Rewrites every cookied light's record, its cookie at the place
+    /// `cookie_rect` gives: after the atlas is packed anew.
+    pub fn write_cookied(&self, queue: &wgpu::Queue, cookie_rect: &impl Fn(&Light) -> [f32; 4]) {
+        for (id, light) in self.slots.iter() {
+            if light.cookie.is_some() {
+                self.write(queue, id.index(), light, cookie_rect);
+            }
+        }
     }
 
     /// Room for `count` records, rewriting every record when the buffer is
@@ -72,6 +118,7 @@ impl Lights {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         count: usize,
+        cookie_rect: &impl Fn(&Light) -> [f32; 4],
     ) -> Result<bool, SceneError> {
         let capacity = self.buffer.size() / RECORD;
         if count as u64 <= capacity {
@@ -87,7 +134,7 @@ impl Lights {
         }
         self.buffer = light_buffer(device, (count as u64).max(capacity * 2).min(limit));
         for (id, light) in self.slots.iter() {
-            self.write(queue, id.index(), light);
+            self.write(queue, id.index(), light, cookie_rect);
         }
         Ok(true)
     }
@@ -99,14 +146,19 @@ impl Lights {
     /// writes the instances', rather than one write a light. The write
     /// zeroes the records of removed indices below the highest live one,
     /// which no view lists.
-    pub fn move_origin(&mut self, queue: &wgpu::Queue, by: glam::Vec3) {
+    pub fn move_origin(
+        &mut self,
+        queue: &wgpu::Queue,
+        by: glam::Vec3,
+        cookie_rect: &impl Fn(&Light) -> [f32; 4],
+    ) {
         let mut records = Vec::new();
         for (id, light) in self.slots.iter_mut() {
             light.position -= by;
             if records.len() <= id.index() {
                 records.resize(id.index() + 1, bytemuck::Zeroable::zeroed());
             }
-            records[id.index()] = LightRecord::new(light);
+            records[id.index()] = LightRecord::new(light, cookie_rect(light));
         }
         if !records.is_empty() {
             crate::counters::write_buffer(queue, &self.buffer, 0, bytemuck::cast_slice(&records));
@@ -130,11 +182,32 @@ fn is_rect(light: &Light) -> bool {
     matches!(light.shape, LightShape::Rect { .. })
 }
 
+/// The decal atlas's image `light` projects, sampled as colour.
+pub(crate) fn cookie_key(light: &Light) -> Option<super::decal_atlas::AtlasKey> {
+    light.cookie.map(|cookie| (cookie.image, Sampling::Color))
+}
+
+/// A cookie a record can hold: one with a frame (`cookie_frame`), on a
+/// spot of a positive outer angle with an `up` that has a finite part
+/// across the spot's direction.
+fn valid_cookie(light: &Light) -> bool {
+    light
+        .cookie
+        .is_none_or(|cookie| crate::shading::lights::cookie_frame(&cookie, &light.shape).is_some())
+}
+
+/// Each light's cookie's place in the layout `decals`' records name
+/// (`Decals::cookie_rect`), for the record writers.
+pub(crate) fn cookie_rects(decals: &super::decals::Decals) -> impl Fn(&Light) -> [f32; 4] + '_ {
+    move |light| decals.cookie_rect(cookie_key(light))
+}
+
 /// A light a record can hold: finite, nonnegative colour, intensity,
 /// specular scale and fog energy, a shadow opacity in 0..=1, a positive
 /// range, a spot's nonzero direction and ordered angles below a right angle
-/// (Bevy's limit), and a rectangle's nonzero direction, a width axis not
-/// parallel to it, and a positive size.
+/// (Bevy's limit), a rectangle's nonzero direction, a width axis not
+/// parallel to it, and a positive size, and a cookie only on a spot
+/// (`valid_cookie`).
 fn validate(light: &Light) -> Result<(), SceneError> {
     let nonnegative = |value: f32| value.is_finite() && value >= 0.;
     let valid = light.position.is_finite()
@@ -181,7 +254,8 @@ fn validate(light: &Light) -> Result<(), SceneError> {
                     && height > 0.
                     && (light.intensity / (width * height)).is_finite()
             }
-        };
+        }
+        && valid_cookie(light);
     if valid {
         Ok(())
     } else {
@@ -190,7 +264,39 @@ fn validate(light: &Light) -> Result<(), SceneError> {
 }
 
 impl Scene {
-    /// Adds a point, spot or rectangle light.
+    /// `light` is valid and its cookie's image is in the scene, and the
+    /// decal atlas's layout that it needs, if the atlas lacks its cookie,
+    /// beside the images the decals and the lights other than `replacing`
+    /// use.
+    fn light_layout(
+        &self,
+        light: &Light,
+        replacing: Option<LightId>,
+    ) -> Result<Option<super::decal_atlas::AtlasLayout>, SceneError> {
+        validate(light)?;
+        let adding: Vec<_> = cookie_key(light).into_iter().collect();
+        self.decals.validate_images(&adding)?;
+        self.place_atlas(&adding, None, replacing)
+    }
+
+    /// Counts `light` among the lights, once more or once less.
+    fn count_light(&mut self, light: &Light, more: bool) {
+        let count = |counter: &mut usize, counted: bool| {
+            if counted && more {
+                *counter += 1;
+            } else if counted {
+                *counter -= 1;
+            }
+        };
+        count(&mut self.lights.rects, is_rect(light));
+        count(&mut self.lights.cookies, light.cookie.is_some());
+        if let Some(cookie) = light.cookie {
+            self.decals.count_image(cookie.image, more);
+        }
+    }
+
+    /// Adds a point, spot or rectangle light. One whose cookie the decal
+    /// atlas lacks packs the atlas anew before the next frame.
     pub fn add_light(
         &mut self,
         device: &wgpu::Device,
@@ -198,14 +304,21 @@ impl Scene {
         light: Light,
     ) -> Result<LightId, SceneError> {
         self.edited();
-        validate(&light)?;
+        let layout = self.light_layout(&light, None)?;
         let count = self.lights.slots.next_index() + 1;
-        if self.lights.reserve(device, queue, count)? {
+        let decals = &self.decals;
+        if self
+            .lights
+            .reserve(device, queue, count, &cookie_rects(decals))?
+        {
             self.resources = super::next_generation();
         }
+        self.decals.repack(layout);
         let id = self.lights.slots.insert(light);
-        self.lights.rects += usize::from(is_rect(&light));
-        self.lights.write(queue, id.index(), &light);
+        self.count_light(&light, true);
+        let decals = &self.decals;
+        self.lights
+            .write(queue, id.index(), &light, &cookie_rects(decals));
         Ok(id)
     }
 
@@ -214,7 +327,8 @@ impl Scene {
         self.lights.get(id)
     }
 
-    /// Replaces a light's description.
+    /// Replaces a light's description. One whose cookie the decal atlas
+    /// lacks packs the atlas anew before the next frame.
     pub fn set_light(
         &mut self,
         queue: &wgpu::Queue,
@@ -225,11 +339,14 @@ impl Scene {
         if old != light {
             self.edited();
         }
-        validate(&light)?;
-        self.lights.rects =
-            self.lights.rects + usize::from(is_rect(&light)) - usize::from(is_rect(&old));
+        let layout = self.light_layout(&light, Some(id))?;
+        self.decals.repack(layout);
+        self.count_light(&old, false);
+        self.count_light(&light, true);
         *self.lights.slots.get_mut(id).unwrap() = light;
-        self.lights.write(queue, id.index(), &light);
+        let decals = &self.decals;
+        self.lights
+            .write(queue, id.index(), &light, &cookie_rects(decals));
         Ok(())
     }
 
@@ -241,7 +358,7 @@ impl Scene {
             .slots
             .remove(id)
             .ok_or(SceneError::UnknownLight)?;
-        self.lights.rects -= usize::from(is_rect(&light));
+        self.count_light(&light, false);
         Ok(())
     }
 }

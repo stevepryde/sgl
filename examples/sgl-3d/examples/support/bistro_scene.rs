@@ -2,8 +2,8 @@
 use serde_json::{Value, json};
 use sgl_3d::{
     Backdrop, BakedSpecularProbe, Camera, DirectionalLight, DirectionalShadow, DynamicGiVolume,
-    EnvironmentLight, Exposure, Fog, FogVolume, FrameInput, Light, LightShape, SpecularProbeBox,
-    SpecularProbeRadiance, SpecularProbeTexels, asset,
+    EnvironmentLight, Exposure, Fog, FogVolume, FrameInput, Light, LightCookie, LightId,
+    LightShape, Scene, SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels, asset,
     glam::{Mat4, Vec3, camera},
     settings::{
         AmbientOcclusionQuality, AnisotropicFiltering, Antialiasing, Bloom, DynamicGiQuality,
@@ -11,6 +11,9 @@ use sgl_3d::{
         ScreenSpaceReflections, Settings, ShadowQuality, SmaaQuality, WorldSpaceReflections,
     },
 };
+
+#[path = "window_panes.rs"]
+mod window_panes;
 
 pub const SCENE: &str = "amazon-bistro-exterior-v1";
 pub const CAMERAS: [(&str, Vec3, Vec3); 4] = [
@@ -358,11 +361,84 @@ impl Fields<'_> {
     }
 }
 
+/// A pattern a fixture's spot projects as its cookie, generated in code.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CookiePattern {
+    /// `"window"`: a window's panes (`window_panes`).
+    Window,
+}
+
+impl CookiePattern {
+    fn image(self) -> asset::Image {
+        match self {
+            Self::Window => asset::Image::Rgba8(window_panes::window_panes()),
+        }
+    }
+}
+
+/// An authored spot's cookie: its pattern and the direction of its top.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AuthoredCookie {
+    pub pattern: CookiePattern,
+    pub up: Vec3,
+}
+
+/// An authored light and, for a spot, the pattern it projects.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AuthoredLight {
+    pub light: Light,
+    pub cookie: Option<AuthoredCookie>,
+}
+
+/// Adds the fixture's local lights to `scene`, each spot's cookie with it
+/// unless `cookies` is false (for cookie-on and cookie-off captures of one
+/// fixture), each pattern added once as a decal image. Returns the lights'
+/// identities.
+pub fn add_local_lights(
+    scene: &mut Scene,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    descriptor: &Value,
+    cookies: bool,
+) -> Result<Vec<LightId>, String> {
+    let mut images = Vec::new();
+    let mut ids = Vec::new();
+    for authored in local_lights_from_json(descriptor)? {
+        let mut light = authored.light;
+        if let Some(cookie) = authored.cookie.filter(|_| cookies) {
+            let image = match images
+                .iter()
+                .find(|(pattern, _)| *pattern == cookie.pattern)
+            {
+                Some(&(_, image)) => image,
+                None => {
+                    let image = scene
+                        .add_decal_image(cookie.pattern.image())
+                        .map_err(|e| e.to_string())?;
+                    images.push((cookie.pattern, image));
+                    image
+                }
+            };
+            light.cookie = Some(LightCookie {
+                image,
+                up: cookie.up,
+            });
+        }
+        ids.push(
+            scene
+                .add_light(device, queue, light)
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    Ok(ids)
+}
+
 /// Example-owned authored point, spot and rectangle lights, in world-space
-/// metres, degrees and linear RGB. Absent lists preserve fixtures without
-/// them. This is not an emissive-material conversion: the author chooses
-/// which geometry emits light and where each light shines.
-pub fn local_lights_from_json(descriptor: &Value) -> Result<Vec<Light>, String> {
+/// metres, degrees and linear RGB, a spot's with the pattern it projects.
+/// Absent lists preserve fixtures without them. This is not an
+/// emissive-material conversion: the author chooses which geometry emits
+/// light and where each light shines.
+pub fn local_lights_from_json(descriptor: &Value) -> Result<Vec<AuthoredLight>, String> {
     let mut lights = Vec::new();
     for (key, kind) in [
         ("point_lights", "point light"),
@@ -425,15 +501,38 @@ pub fn local_lights_from_json(descriptor: &Value) -> Result<Vec<Light>, String> 
                 v.as_bool()
                     .ok_or_else(|| format!("{kind} casts_shadow must be boolean"))
             })?;
-            lights.push(Light {
-                position: fields.vector("position")?,
-                shape,
-                color: fields.color("color")?,
-                intensity: fields.number("intensity", None)?,
-                range,
-                casts_shadow,
-                fog_energy: fields.number("fog_energy", Some(Light::default().fog_energy))?,
-                ..Default::default()
+            let cookie = match value.get("cookie") {
+                None => None,
+                Some(_) if key != "spot_lights" => {
+                    return Err(format!("{kind} cannot project a cookie"));
+                }
+                Some(cookie) => {
+                    let fields = Fields {
+                        value: cookie,
+                        kind: "spot light cookie",
+                    };
+                    let pattern = match cookie["pattern"].as_str() {
+                        Some("window") => CookiePattern::Window,
+                        _ => return Err("spot light cookie pattern must be \"window\"".into()),
+                    };
+                    Some(AuthoredCookie {
+                        pattern,
+                        up: fields.direction("up")?,
+                    })
+                }
+            };
+            lights.push(AuthoredLight {
+                light: Light {
+                    position: fields.vector("position")?,
+                    shape,
+                    color: fields.color("color")?,
+                    intensity: fields.number("intensity", None)?,
+                    range,
+                    casts_shadow,
+                    fog_energy: fields.number("fog_energy", Some(Light::default().fog_energy))?,
+                    ..Default::default()
+                },
+                cookie,
             });
         }
     }
@@ -935,12 +1034,12 @@ mod tests {
             "intensity":8.,"range":5.,"radius":0.07,"casts_shadow":true});
         let parsed = local_lights_from_json(&json!({"point_lights":[light.clone()]})).unwrap();
         assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].position, Vec3::new(-1.8, 3.87, -7.52));
-        assert_eq!(parsed[0].shape, LightShape::Point { radius: 0.07 });
-        assert_eq!(parsed[0].intensity, 8.);
-        assert_eq!(parsed[0].range, 5.);
-        assert_eq!(parsed[0].color, [1., 0.72, 0.45]);
-        assert!(parsed[0].casts_shadow);
+        assert_eq!(parsed[0].light.position, Vec3::new(-1.8, 3.87, -7.52));
+        assert_eq!(parsed[0].light.shape, LightShape::Point { radius: 0.07 });
+        assert_eq!(parsed[0].light.intensity, 8.);
+        assert_eq!(parsed[0].light.range, 5.);
+        assert_eq!(parsed[0].light.color, [1., 0.72, 0.45]);
+        assert!(parsed[0].light.casts_shadow);
         for (field, invalid) in [
             ("position", json!([0., 1.])),
             ("color", json!([-1., 1., 1.])),
@@ -964,9 +1063,9 @@ mod tests {
         defaults.as_object_mut().unwrap().remove("radius");
         defaults.as_object_mut().unwrap().remove("casts_shadow");
         let defaults = local_lights_from_json(&json!({"point_lights":[defaults]})).unwrap();
-        assert!(!defaults[0].casts_shadow);
+        assert!(!defaults[0].light.casts_shadow);
         assert_eq!(
-            defaults[0].shape,
+            defaults[0].light.shape,
             LightShape::Point {
                 radius: LightShape::DEFAULT_RADIUS
             }

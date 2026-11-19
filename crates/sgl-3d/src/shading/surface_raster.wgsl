@@ -1,3 +1,12 @@
+// A fragment's position's screen derivatives under the view's mip bias, as
+// material samples follow their UVs': the footprint along which decals and
+// spot cookies select the decal atlas's level.
+fn raster_position_dx(i:Fragment)->vec3<f32> {
+ return dpdx(i.world)*exp2(view.mip_bias);
+}
+fn raster_position_dy(i:Fragment)->vec3<f32> {
+ return dpdy(i.world)*exp2(view.mip_bias);
+}
 // A rasterized fragment's Surface: its evaluated material, decals and
 // geometry-filtered roughness, shared by every camera and capture pass.
 // Its decals are those of `clusters`, the cluster that holds it; its
@@ -6,11 +15,8 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
  let object=fragment_object(i);
  let geometry_normal=surface_geometry_normal(i,front);
  let unlit=(material.flags&MATERIAL_UNLIT)!=0u;
- // The atlas's mips follow the position's derivatives under the view's mip
- // bias, as material samples follow their UVs'.
- let bias=exp2(view.mip_bias);
- let position_dx=dpdx(i.world)*bias;
- let position_dy=dpdy(i.world)*bias;
+ let position_dx=raster_position_dx(i);
+ let position_dy=raster_position_dy(i);
  var decaled=DecalSurface(m.base_color.rgb,m.normal,m.roughness,m.metallic);
  if !unlit {
   decaled=decal_surface(decaled,clusters,i.world,geometry_normal,position_dx,position_dy);
@@ -87,5 +93,5 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
 // and occludes by its material's occlusion itself.
 fn raster_context(i:Fragment)->ShadeContext {
  let capture=(view.flags&VIEW_PROBE_CAPTURE)!=0u;
- return ShadeContext(i.clip.xy,select(SHADOW_RECEIVER_CAMERA,SHADOW_RECEIVER_CAPTURE,capture),capture,capture,cluster_range(i.world,i.clip.xy),untraced_reflection());
+ return ShadeContext(i.clip.xy,select(SHADOW_RECEIVER_CAMERA,SHADOW_RECEIVER_CAPTURE,capture),capture,capture,cluster_range(i.world,i.clip.xy),untraced_reflection(),raster_position_dx(i),raster_position_dy(i));
 }

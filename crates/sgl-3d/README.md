@@ -461,9 +461,10 @@ let lamp = scene.add_light(&device, &queue, Light {
 
 `Light::default()` is Godot's `Light3D`: a white point light at the origin
 of π candela (its light energy of 1, which it scales by π) reaching 5 m,
-live, physical specular, fog energy 1 and no shadow (opacity 1 when cast),
-with Wicked Engine's radius of 2.5 cm (`LightShape::DEFAULT_RADIUS`). Set
-what differs and take the rest with `..Default::default()`.
+live, physical specular, fog energy 1, no shadow (opacity 1 when cast) and
+no cookie, with Wicked Engine's radius of 2.5 cm
+(`LightShape::DEFAULT_RADIUS`). Set what differs and take the rest with
+`..Default::default()`.
 
 A point or spot light's `radius` (metres) is the size of the sphere it
 shines from. Its specular highlights spread over the sphere's reflection
@@ -530,6 +531,34 @@ sun on water shows a disc.
   for bounced light. 1, the default, is the whole shadow; at most 0.001
   draws none and skips the shadow lookup, as Godot does, though the light
   still takes its room in the atlas. The directional lights take it too.
+- `cookie` projects an image from a spot (a cookie or gobo: a window's
+  panes, leaves, a stage pattern), as Godot's spot projector and Wicked
+  Engine's light mask. The image comes from `Scene::add_decal_image` and
+  shares the [decal atlas](#decals); it fills the spot's projector square,
+  twice its outer angle across (the cone's circle is inscribed in it), its
+  top toward `up` (any vector not parallel to the direction; its part
+  across it is used) and its right the direction crossed with that. The
+  light's radiance is multiplied by the image's linear colour times its
+  alpha, the image sampled as sRGB colour: white leaves the light whole,
+  black stops it, a colour tints it. Every receiver takes it: surfaces,
+  probe captures, reflections' and the dynamic GI volume's ray hits and the
+  volumetric fog, whose shafts carry the pattern; a shadow, if the light
+  casts one, is unaffected. Its image's level follows the receiver's
+  footprint as a decal's does. A `baked` light's pattern must be in the
+  game's bake too, which holds that light. A cookie on a point or rectangle
+  light, or with an `up` along the direction, is refused with
+  `SceneError::InvalidLight`, and an image a light projects cannot be
+  removed (`SceneError::DecalImageInUse`). The lit pipelines sample cookies
+  only while the scene holds a cookied light, so the first one added, or
+  the last removed, compiles the other set.
+
+  ```rust,ignore
+  let panes = scene.add_decal_image(Image::Rgba8(window_pattern))?;
+  scene.set_light(&queue, lamp, Light {
+      cookie: Some(LightCookie { image: panes, up: Vec3::NEG_Z }),
+      ..*scene.light(lamp)?
+  })?;
+  ```
 - Each frame the renderer assigns the lights, with the
   [decals](#decals), to clusters of the camera's view on the CPU, as Bevy's
   clustered forward rendering does: a grid of render-target tiles and depth
@@ -545,9 +574,11 @@ sun on water shows a disc.
   probe ray's that of the whole volume, so for them this is a limit on the
   scene.
 - Values must be finite, colour, intensity, specular and fog energy
-  nonnegative, the range positive, a spot's direction nonzero, and a
+  nonnegative, the range positive, a spot's direction nonzero, a
   rectangle's direction nonzero, its width axis not parallel to it and its
-  size positive; anything else is refused with `SceneError::InvalidLight`. A light with zero intensity costs nothing.
+  size positive, and a cookie only on a spot of a positive outer angle;
+  anything else is refused with `SceneError::InvalidLight`. A light with
+  zero intensity costs nothing.
 
 ## Decals
 
@@ -557,8 +588,9 @@ by the game instead of authored into every texture. They are scene content.
 `Scene::add_decal_image` keeps an image (`asset::Image`; a compressed one's
 level 0 is decoded) and returns a `DecalImageId`; `Scene::add_decal` returns a
 `DecalId`, `set_decal` replaces a decal's description (a moving decal is set
-when it moves) and `remove_decal` ends it. An image a decal uses cannot be
-removed (`SceneError::DecalImageInUse`).
+when it moves) and `remove_decal` ends it. An image a decal or a spot
+light's [cookie](#point-spot-and-rectangle-lights) uses cannot be removed
+(`SceneError::DecalImageInUse`).
 
 ```rust,ignore
 use sgl_3d::{asset::Image, Decal};
@@ -618,15 +650,16 @@ and no normal fade.
   (9d12036, whose `CLUSTERED_DECALS_ARE_USABLE` follows the device)
   specialises on decals; a game that adds its first decal mid-play and
   cannot afford that compile adds its decals at load.
-- The scene packs every image its decals use into one atlas of linear
-  16-bit texels with five mips, as Godot packs its decal atlas: each image
-  once for each colour space its maps sample it in, with a border that keeps
-  images apart at every mip. A decal that brings in an image, or a colour
-  space, the atlas lacks places a new layout; the next frame (or probe
-  capture) packs the atlas anew and uploads every image once, however many
-  decals brought images in, as Godot packs its atlas once per frame. Add
-  images and decals at load. A removed decal's images stay in the atlas
-  until it next packs. A decal whose layout would be larger than the
+- The scene packs every image its decals and spot lights' cookies use into
+  one atlas of linear 16-bit texels with five mips, as Godot packs its decal
+  atlas with its projectors: each image once for each colour space it is
+  sampled in, with a border that keeps images apart at every mip. A decal
+  or light that brings in an image, or a colour space, the atlas lacks
+  places a new layout; the next frame (or probe capture) packs the atlas
+  anew and uploads every image once, however many brought images in, as
+  Godot packs its atlas once per frame. Add images, decals and cookies at
+  load. A removed decal's images stay in the atlas until it next packs. A
+  decal or light whose layout would be larger than the
   device's textures, or take more memory to build than the target can
   allocate, is refused when it is added, with `SceneError::DeviceLimit`.
   SGL3D builds the atlas on the CPU at 8 bytes a texel, with its mips a

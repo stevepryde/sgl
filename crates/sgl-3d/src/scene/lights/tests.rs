@@ -3,7 +3,8 @@ use crate::asset::{CpuMesh, Vertex};
 use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::{
-    Camera, FrameInput, InstanceState, Light, LightShape, Mobility, Scene, SceneError, test_support,
+    Camera, FrameInput, InstanceState, Light, LightCookie, LightShape, Mobility, Scene, SceneError,
+    test_support,
 };
 use glam::{Mat4, Vec3};
 
@@ -348,4 +349,106 @@ fn scene_lights_light_what_they_own() {
     assert_eq!(observe(&mut scene, &input), before);
     assert!(lit(before[1], dark[1]));
     scene.remove_light(first).unwrap();
+}
+
+// Plausible defects: a cookie accepted on a light that has no projector
+// square (a point or rectangle light, or a spot of no outer angle), or with
+// an `up` that leaves no image top (zero, not finite, or along the spot's
+// direction); an image no longer in the scene accepted; an image a light
+// projects removed from under it, or one no light projects any longer kept
+// from removal, through a light's replacement or its removal. The oracle is
+// the scene contract (`LightCookie`, `Scene::remove_decal_image`).
+#[test]
+fn cookies_need_a_spot_and_keep_their_images() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let white =
+        || crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(8, 8, image::Rgba([255; 4])));
+    let image = scene.add_decal_image(white()).unwrap();
+    let spot = Light {
+        shape: LightShape::Spot {
+            direction: Vec3::NEG_Y,
+            inner_angle: 0.2,
+            outer_angle: 0.4,
+            radius: 0.,
+        },
+        cookie: Some(LightCookie {
+            image,
+            up: Vec3::NEG_Z,
+        }),
+        ..light(Vec3::Y)
+    };
+    let with = |shape, up| Light {
+        shape,
+        cookie: Some(LightCookie { image, up }),
+        ..spot
+    };
+    let point = LightShape::Point { radius: 0. };
+    let rect = LightShape::Rect {
+        direction: Vec3::NEG_Y,
+        width_axis: Vec3::X,
+        width: 1.,
+        height: 1.,
+    };
+    let narrow = LightShape::Spot {
+        direction: Vec3::NEG_Y,
+        inner_angle: 0.,
+        outer_angle: 0.,
+        radius: 0.,
+    };
+    let id = scene.add_light(&device, &queue, spot).unwrap();
+    for invalid in [
+        with(point, Vec3::NEG_Z),
+        with(rect, Vec3::NEG_Z),
+        with(narrow, Vec3::NEG_Z),
+        with(spot.shape, Vec3::ZERO),
+        with(spot.shape, Vec3::new(0., -2., 0.)),
+        with(spot.shape, Vec3::new(f32::NAN, 0., -1.)),
+    ] {
+        assert!(matches!(
+            scene.add_light(&device, &queue, invalid),
+            Err(SceneError::InvalidLight)
+        ));
+        assert!(matches!(
+            scene.set_light(&queue, id, invalid),
+            Err(SceneError::InvalidLight)
+        ));
+    }
+    // An `up` leaning along the direction keeps its part across it.
+    scene
+        .set_light(&queue, id, with(spot.shape, Vec3::new(0., 3., -1.)))
+        .unwrap();
+    assert!(matches!(
+        scene.remove_decal_image(image),
+        Err(SceneError::DecalImageInUse)
+    ));
+    // A second light shares the image; replacing the first with an
+    // uncookied light leaves the image the second's.
+    let second = scene.add_light(&device, &queue, spot).unwrap();
+    scene
+        .set_light(
+            &queue,
+            id,
+            Light {
+                cookie: None,
+                ..spot
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        scene.remove_decal_image(image),
+        Err(SceneError::DecalImageInUse)
+    ));
+    scene.remove_light(second).unwrap();
+    scene.remove_decal_image(image).unwrap();
+    assert!(matches!(
+        scene.add_light(&device, &queue, spot),
+        Err(SceneError::UnknownDecalImage)
+    ));
+    assert!(matches!(
+        scene.set_light(&queue, id, spot),
+        Err(SceneError::UnknownDecalImage)
+    ));
 }

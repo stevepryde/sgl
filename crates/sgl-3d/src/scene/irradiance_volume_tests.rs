@@ -134,7 +134,7 @@ fn fixture_surface(position:vec3<f32>,normal:vec3<f32>,metal:bool,environment_sc
  return s;
 }
 fn fixture_shaded(s:Surface,receiver:u32,environment_specular:bool)->Shaded {
- let context=ShadeContext(vec2(0.),receiver,environment_specular,true,cluster_range(s.position,vec2(0.)),untraced_reflection());
+ let context=ShadeContext(vec2(0.),receiver,environment_specular,true,cluster_range(s.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.));
  return shade_lit(s,context);
 }
 "#;

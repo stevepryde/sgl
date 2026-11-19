@@ -3,7 +3,9 @@
 // shadow atlas (group 0's `local_shadows`). Rust mirrors: shading/lights.rs;
 // the layout test compares the two.
 // One point, spot or rectangle light. A point or spot light's shading reads
-// its first four rows and, for its shadow, its last; a rectangle's all six.
+// its first four rows and, for its shadow, its sixth; a rectangle's the
+// first six. A spot's cookie (light_cookie.wgsl) reads its last two, which
+// are zero for a light without one.
 struct Light {
  position:vec3<f32>,
  // Filament's falloff: one over the squared range.
@@ -39,6 +41,15 @@ struct Light {
  // light ends at a point of it; zero for a rectangle, whose rays end on its
  // face.
  radius:f32,
+ // A spot's cookie's place in the decal atlas, in atlas UV: offset in xy,
+ // size in zw; all zero for a light without one.
+ cookie_rect:vec4<f32>,
+ // A cookied spot's unit right axis: its direction crossed with the
+ // cookie's up (LightCookie::up).
+ cookie_right:vec3<f32>,
+ // A cookied spot's outer cone's cotangent, which fits its projector square
+ // to the cone.
+ cookie_cotangent:f32,
 }
 // A rectangle's half height along its height's axis: its width's axis
 // crossed with its normal (Bevy's RectLight up).

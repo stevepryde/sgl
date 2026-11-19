@@ -97,6 +97,11 @@ pub(crate) struct LitConstants {
     /// light through, as Bevy compiles it only into a material that does
     /// (`STANDARD_MATERIAL_DIFFUSE_TRANSMISSION`).
     pub diffuse_transmission: bool,
+    /// Spot lights' cookies (`light_cookies_enabled` in light_cookie.wgsl),
+    /// sampled only while the scene holds a cookied light, as Godot
+    /// specialises its forward pipelines on `use_light_projector` (for each
+    /// drawn element a projector reaches, where this follows the scene).
+    pub light_cookies: bool,
 }
 
 impl LitConstants {
@@ -108,10 +113,11 @@ impl LitConstants {
             films: scene.materials.holds_films(),
             sheens: scene.materials.holds_sheens(),
             diffuse_transmission: scene.materials.holds_diffuse_transmission(),
+            light_cookies: scene.lights.holds_cookie(),
         }
     }
 
-    pub fn constants(self) -> [(&'static str, f64); 5] {
+    pub fn constants(self) -> [(&'static str, f64); 6] {
         [
             ("rect_lights_enabled", f64::from(u8::from(self.rect_lights))),
             ("decals_enabled", f64::from(u8::from(self.decals))),
@@ -120,6 +126,10 @@ impl LitConstants {
             (
                 "diffuse_transmission_enabled",
                 f64::from(u8::from(self.diffuse_transmission)),
+            ),
+            (
+                "light_cookies_enabled",
+                f64::from(u8::from(self.light_cookies)),
             ),
         ]
     }

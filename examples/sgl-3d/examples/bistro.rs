@@ -33,6 +33,7 @@ mod native {
         view: String,
         exposure: Option<f32>,
         rect: bool,
+        cookies: bool,
         normal_maps: bool,
         split: bool,
         max_quality: bool,
@@ -56,6 +57,7 @@ mod native {
                 view: "all".into(),
                 exposure: None,
                 rect: false,
+                cookies: true,
                 normal_maps: true,
                 split: false,
                 max_quality: false,
@@ -133,11 +135,12 @@ mod native {
                     "--no-gi" => options.no_gi = true,
                     "--no-ray-shadows" => options.no_ray_shadows = true,
                     "--rect-light" => options.rect = true,
+                    "--no-cookies" => options.cookies = false,
                     "--no-normal-maps" => options.normal_maps = false,
                     "--split" => options.split = true,
                     "--help" => {
                         println!(
-                            "bistro [--asset FILE] [--output DIR] [--view all|CAMERA_ID] [--size WxH] [--frames N] [--warmup N] [--exposure STOPS] [--rect-light] [--no-normal-maps] [--split] [--max-quality] [--aa taa|fsr2|fsr3|smaa|off] [--no-gi] [--no-ray-shadows] [--settings FILE] [--gi-volume FILE] [--fixture FILE] [--cascades 1..4] [--capture-probe FILE]"
+                            "bistro [--asset FILE] [--output DIR] [--view all|CAMERA_ID] [--size WxH] [--frames N] [--warmup N] [--exposure STOPS] [--rect-light] [--no-cookies] [--no-normal-maps] [--split] [--max-quality] [--aa taa|fsr2|fsr3|smaa|off] [--no-gi] [--no-ray-shadows] [--settings FILE] [--gi-volume FILE] [--fixture FILE] [--cascades 1..4] [--capture-probe FILE]"
                         );
                         std::process::exit(0);
                     }
@@ -457,9 +460,13 @@ mod native {
         }
         let mut local_light_ids = Vec::new();
         if let Some(descriptor) = fixture.as_ref() {
-            for light in bistro_scene::local_lights_from_json(descriptor)? {
-                local_light_ids.push(scene.add_light(&device, &queue, light)?);
-            }
+            local_light_ids.extend(bistro_scene::add_local_lights(
+                &mut scene,
+                &device,
+                &queue,
+                descriptor,
+                options.cookies,
+            )?);
             scene.update_fog_volumes(
                 &device,
                 &queue,

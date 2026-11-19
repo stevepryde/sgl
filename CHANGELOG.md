@@ -15,6 +15,16 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Light` gains `cookie: Option<LightCookie>` (default `None`): a
+  spot projects a decal image (`LightCookie { image, up }`) that multiplies
+  its light by the image's colour times alpha on surfaces, ray hits and the
+  fog; an image a light projects cannot be removed, and `add_light` and
+  `set_light` can now return `UnknownDecalImage` and `DeviceLimit`. A `Light` literal that
+  names every field adds `cookie: None`; one built with
+  `..Default::default()` needs no change.
+- `sgl-3d` `Scene::set_decal` no longer takes the device, as `set_light`:
+  `scene.set_decal(&queue, id, decal)`.
+
 ## 0.8.1 — 2026-11-19
 
 Move every SGL crate to `0.8.1` together and commit the updated `Cargo.lock`.
