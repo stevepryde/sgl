@@ -29,9 +29,10 @@ const EXTENDED_SAMPLED_TEXTURES: u32 = 48;
 // (transmissive, dispersive blended receivers of screen-space reflections
 // that between them carry every material map, one through a game's shader
 // that reads the scene depth, a masked wall through the same shader,
-// world-space reflections, ambient occlusion, fog under a procedural sky
-// with aerial perspective, and TAA, over an irradiance volume and a dynamic
-// GI volume) on a device of
+// world-space reflections, ambient occlusion, screen-space indirect light,
+// whose second frame binds its kept result, fog under a procedural sky with
+// aerial perspective, and TAA, over an irradiance volume and a dynamic GI
+// volume) on a device of
 // those limits and no optional feature raise no validation error, the
 // device reports the Basic tier, and dynamic GI is reported off.
 #[test]
@@ -87,6 +88,7 @@ fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality
         world_space_reflections: settings::WorldSpaceReflections::Moving,
         dynamic_gi: DynamicGiQuality::High,
         ambient_occlusion: settings::AmbientOcclusionQuality::High,
+        screen_space_indirect: settings::ScreenSpaceIndirect::High,
         atmosphere: true,
         ..Settings::default()
     };

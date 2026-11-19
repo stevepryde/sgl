@@ -1542,7 +1542,13 @@ fn lod_fused_source_preserves_pixels_and_uses_alternative_identity() {
                     }),
                     ..Default::default()
                 });
-                renderer.draw_test_camera(&scene, &mut pass, GeometryPass::Fused);
+                renderer.draw_test_camera(
+                    &scene,
+                    &mut pass,
+                    GeometryPass::Fused {
+                        screen_indirect: false,
+                    },
+                );
             }
             queue.submit([encoder.finish()]);
             evidence.push(

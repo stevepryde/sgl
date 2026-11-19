@@ -742,6 +742,7 @@ mod native {
                 "environment_intensity": frame.diffuse_environment.intensity,
                 "environment_yaw":frame.diffuse_environment.yaw,
                 "ambient_occlusion_radius_m":frame.ambient_occlusion_radius,
+                "screen_space_indirect_radius_m":frame.screen_space_indirect_radius,
                 "effective": {
                     "antialiasing": format!("{:?}",scene_view.antialiasing_in_effect(&settings)),
                     "render_size": scene_view.render_size(),

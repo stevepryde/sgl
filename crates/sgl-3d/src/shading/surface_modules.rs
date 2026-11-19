@@ -79,6 +79,7 @@ pub(crate) static SURFACE: Module = Module {
         &DIRECTIONAL_SHADOW,
         &LIGHTS,
         &DECALS,
+        &SCREEN_INDIRECT,
     ],
 };
 /// Light transmitted through a surface from the frame behind it, across its

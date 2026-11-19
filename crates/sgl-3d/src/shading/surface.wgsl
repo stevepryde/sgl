@@ -130,6 +130,11 @@ struct ShadeContext {
  // first level.
  position_dx:vec3<f32>,
  position_dy:vec3<f32>,
+ // The frame's screen-space indirect light at the surface
+ // (screen_indirect.wgsl): the camera's opaque surfaces' while the opaque
+ // stage's pass has a kept result, read at the fragment's previous
+ // position; none in every other view and context (screen_indirect_none).
+ screen_indirect:ScreenIndirect,
 }
 // A shaded surface's outgoing radiance; the ambient light within it before
 // any occlusion, from the environment's diffuse light and the hemisphere
@@ -750,7 +755,18 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
  let multi=select(ibl.multi*base_share,vec3(0.),probe_hit);
  let diffuse=ibl.diffuse*base_share+sheen;
  let response=diffuse+multi;
- let irradiance=surface_irradiance(s,n,reflectance.coat_fresnel,probe_hit);
+ var irradiance=surface_irradiance(s,n,reflectance.coat_fresnel,probe_hit);
+ // The frame's screen-space indirect light (the architecture's Screen-space
+ // indirect light) covers the share of the indirect diffuse light its
+ // coverage says nearby surfaces hide, the baked light included, as Godot
+ // b130438's forward pass scales its ambient light by one less its SSIL's
+ // coverage (scene_forward_clustered.glsl 2278; MIT, src/LICENSE-godot.txt),
+ // and adds their own light in its place, as baked light: by the one rule,
+ // beneath the coat and the material's occlusion, outside the ambient light
+ // ambient occlusion occludes, for it is the occluders' own light.
+ let bounce=context.screen_indirect;
+ irradiance.open*=1.-bounce.coverage;
+ irradiance.baked=irradiance.baked*(1.-bounce.coverage)+bounce.light*(1.-reflectance.coat_fresnel);
  var color=response*irradiance.open;
  // The ambient light that ambient occlusion occludes: the environment's and
  // hemisphere fill's, or the volumes' irradiance in their place, its

@@ -1,5 +1,6 @@
 // XeGTAO, Copyright (C) 2016-2021 Intel Corporation, SPDX-License-Identifier: MIT.
 // FP32 scalar-visibility port; exact authority and platform differences: ambient_occlusion/README.md.
+// Its kernels shared with screen-space indirect light: xegtao_kernels.wgsl.
 struct Params {
     view: mat4x4<f32>,
     size: vec2<u32>,
@@ -120,15 +121,8 @@ fn prefilter_depth4(@builtin(global_invocation_id) id:vec3<u32>) {
     let d=vec4(textureLoad(input_depth,bounded(s,size3),0).x,textureLoad(input_depth,bounded(s+vec2(1,0),size3),0).x,textureLoad(input_depth,bounded(s+vec2(0,1),size3),0).x,textureLoad(input_depth,bounded(s+vec2(1,1),size3),0).x);
     textureStore(output_depth4,id.xy,vec4(filter_depth(d),0.0,0.0,0.0));
 }
-fn fast_acos(v:f32)->f32 {
-    let x=abs(v);
-    let root=bitcast<f32>(0x1fbd1df5i+(bitcast<i32>(1.0-x)>>1u));
-    let result=(-0.156583*x+1.570796)*root;
-    return select(3.141593-result,result,v>=0.0);
-}
 fn noise(q:vec2<u32>)->vec2<f32> {
-    let index=textureLoad(hilbert_lut,q%vec2(HILBERT_WIDTH),0).x+288u*(p.noise_index%64u);
-    return fract(vec2(0.5)+f32(index)*vec2(0.75487766624669276005,0.5698402909980532659114));
+    return xegtao_noise(textureLoad(hilbert_lut,q%vec2(HILBERT_WIDTH),0).x,p.noise_index);
 }
 fn sample_depth(uv:vec2<f32>,level:f32)->f32 {
     let mip=u32(clamp(floor(level+0.5),0.0,4.0));
@@ -140,11 +134,8 @@ fn main_pass(@builtin(global_invocation_id) id:vec3<u32>) {
     if any(id.xy>=p.size) { return; }
     let q=vec2<i32>(id.xy);
     var z=depth_at(q,0u);
-    var edges=vec4(depth_at(q+vec2(-1,0),0u),depth_at(q+vec2(1,0),0u),depth_at(q+vec2(0,-1),0u),depth_at(q+vec2(0,1),0u))-vec4(z);
-    let slopes=vec2(edges.y-edges.x,edges.w-edges.z)*0.5;
-    edges=min(abs(edges),abs(edges+vec4(slopes.x,-slopes.x,slopes.y,-slopes.y)));
-    edges=sat4(vec4(1.25)-edges/(z*0.011));
-    let packed=dot(round(edges*2.9),vec4(64.0,16.0,4.0,1.0));
+    let edges=xegtao_edges(z,vec4(depth_at(q+vec2(-1,0),0u),depth_at(q+vec2(1,0),0u),depth_at(q+vec2(0,-1),0u),depth_at(q+vec2(0,1),0u)));
+    let packed=xegtao_pack_edges(edges);
     z*=0.99999;
     let uv=(vec2<f32>(id.xy)+0.5)*p.pixel_size;
     let center=position(uv,z);
@@ -199,7 +190,7 @@ fn main_pass(@builtin(global_invocation_id) id:vec3<u32>) {
         visibility+=projected_length*(arc0+arc1);
     }
     visibility=max(0.03,pow(visibility/f32(slices),2.2));
-    textureStore(output_ao,q,vec4(pack_working(u32(sat(visibility/1.5)*255.0+0.5),u32(packed)),0u,0u,0u));
+    textureStore(output_ao,q,vec4(pack_working(u32(sat(visibility/1.5)*255.0+0.5),packed),0u,0u,0u));
 }
 fn working_at(q:vec2<i32>)->u32 { return textureLoad(input_ao,bounded(q,p.size),0).x; }
 // XeGTAO's R8 working visibility and R8 packed edges in one R32Uint word:
@@ -207,8 +198,7 @@ fn working_at(q:vec2<i32>)->u32 { return textureLoad(input_ao,bounded(q,p.size),
 const WORKING_EDGES_SHIFT: u32 = 8u;
 fn pack_working(visibility:u32,packed_edges:u32)->u32 { return visibility|(packed_edges<<WORKING_EDGES_SHIFT); }
 fn unpack_edges(word:u32)->vec4<f32> {
-    let packed=(word>>WORKING_EDGES_SHIFT)&255u;
-    return vec4<f32>((vec4(packed)>>vec4(6u,4u,2u,0u))&vec4(3u))/3.0;
+    return xegtao_unpack_edges((word>>WORKING_EDGES_SHIFT)&255u);
 }
 fn unpack_visibility(words:vec4<u32>)->vec4<f32> { return vec4<f32>(words&vec4((1u<<WORKING_EDGES_SHIFT)-1u))/255.0; }
 // Four cardinal neighbors and four diagonal neighbors, each summed once (AR-12).
@@ -218,10 +208,9 @@ const DENOISE_NEIGHBORS: u32 = 4u;
 // left, right, top, bottom, then the corners top-left, top-right,
 // bottom-left, bottom-right).
 fn denoise_pixel(center:vec4<f32>,left:vec4<f32>,right:vec4<f32>,top:vec4<f32>,bottom:vec4<f32>,ao:f32,cardinal:vec4<f32>,corners:vec4<f32>)->u32 {
-    var edges=center*vec4(left.y,right.x,top.w,bottom.z);
-    let edginess=sat(1.5-dot(edges,vec4(1.0)))/1.5*0.5;
-    edges=sat4(edges+edginess);
-    let diagonal=0.425*vec4(edges.x*left.z+edges.z*top.x,edges.z*top.y+edges.y*right.z,edges.w*bottom.x+edges.x*left.w,edges.y*right.w+edges.w*bottom.y);
+    let weights=xegtao_denoise_weights(center,left,right,top,bottom);
+    let edges=weights.cardinal;
+    let diagonal=weights.corners;
     var sum=ao*1.2;
     var weight=1.2;
     // Keep upstream accumulation order.

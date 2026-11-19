@@ -227,7 +227,9 @@ fn scaled_and_mirrored_instances_preserve_normals_and_material_sides() {
                                 _ => renderer.draw_test_camera(
                                     &scene,
                                     &mut pass,
-                                    GeometryPass::Fused,
+                                    GeometryPass::Fused {
+                                        screen_indirect: false,
+                                    },
                                 ),
                             }
                         }

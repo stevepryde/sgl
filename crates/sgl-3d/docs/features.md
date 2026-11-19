@@ -431,6 +431,11 @@ Environment and probe specular always apply. On top of them:
   before lighting composition in every antialiasing mode; depth motion keeps
   moving receivers eligible for history.
   [Ambient occlusion](../README.md#ambient-occlusion).
+- **Screen-space indirect light**: opt-in diffuse bounce between nearby
+  surfaces on screen, a lit wall onto the floor beside it, gathered at half
+  resolution after ambient occlusion and lit one frame late as baked light;
+  light whose source is off screen, hidden or facing away is absent.
+  [Screen-space indirect light](../README.md#screen-space-indirect-light).
 - **Antialiasing**: SGL's DiligentFX-derived TAA in `sgl-post-fx`, SMAA at
   SMAA 2.8's Low, Medium, High or Ultra preset, or AMD FSR2/FSR3.1 temporal upscaling (no frame generation).
   [Temporal anti-aliasing](../README.md#temporal-anti-aliasing).

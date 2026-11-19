@@ -375,7 +375,7 @@ fn a_probe_ray_s_hit_takes_no_coat() {
         r#"{}
 @group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
 @compute @workgroup_size(1) fn observe() {{
- let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_PROBE_HIT,false,true,cluster_range(vec3(0.),vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.));
+ let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_PROBE_HIT,false,true,cluster_range(vec3(0.),vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.),screen_indirect_none());
  for (var coat=0u;coat<2u;coat++) {{
   var s=case_surface(normalize(vec3(-.6,0.,.8)),.5,vec3(.8),0.);
   s.lightmap_uv=vec2(-1.);
@@ -703,7 +703,7 @@ fn one_rule_for_every_indirect_source() {
   for (var face=0u;face<6u;face++) {{
    s.baked_irradiance[face]=vec4({IRRADIANCE:?});
   }}
-  let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_CAMERA,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.));
+  let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_CAMERA,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.),screen_indirect_none());
   output[metal]=vec4(shade_lit(s,context).color,0.);
  }}
 }}
@@ -928,7 +928,7 @@ fn a_sized_light_spreads_its_highlight_over_its_sphere_or_disc() {
                 &input,
                 rough,
                 mirror,
-                "directional_light_sample(0u,s.position,s.normal,s.coat_normal,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.)),false,s.position)",
+                "directional_light_sample(0u,s.position,s.normal,s.coat_normal,s.geometry_normal,ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.),screen_indirect_none()),false,s.position)",
             );
             let angular = 0.05f64;
             let expected = disc_reference(
@@ -1010,7 +1010,7 @@ fn the_directional_light_s_front_skips_no_light_it_gives() {
    s.coat=1.;
    s.coat_roughness=.3;
    let reflectance=case_reflectance(s);
-   let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.));
+   let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,false,false,cluster_range(s.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.),screen_indirect_none());
    let sampled=surface_direct_light(s,reflectance,directional_light_sample(0u,s.position,s.normal,s.coat_normal,s.geometry_normal,context,false,s.position));
    let full=surface_direct_light(s,reflectance,LightSample(l,light.color*light.illuminance,1.,0.,1.,NO_RECT_LIGHT,light.disc_radius));
    if any(abs(sampled-full)>full*1e-4+1e-12) {{
@@ -1191,7 +1191,7 @@ fn layered(c:Layered)->Surface {{
    output[(index*THETA_STEPS+row)*2u+1u]=vec4(below,0.);
   }}
   if thread==0u {{
-   let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,true,true,cluster_range(s.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.));
+   let context=ShadeContext(vec2(0.),SHADOW_RECEIVER_CAPTURE,true,true,cluster_range(s.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.),screen_indirect_none());
    output[{count}u*THETA_STEPS*2u+index]=vec4(shade_lit(s,context).color,0.);
   }}
  }}

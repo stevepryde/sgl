@@ -222,7 +222,9 @@ recorded separately from serializable settings. It is not a material repair.
 `sun.shadow: false` in a camera removes its directional shadow maps without
 removing direct sunlight, useful for separating direct shadows from AO/GI.
 Each camera can set `ambient_occlusion_radius` in metres (default 0.5),
-independently of quality/sample count; reports retain its actual value.
+independently of quality/sample count, and `screen_space_indirect_radius`
+(default 5), which a fixture's `settings.screen_space_indirect` (`Off` unless
+set) turns on; reports retain their actual values.
 A fixture may set `local_exposure: { "highlight_contrast": f,
 "shadow_contrast": f }`, each 0..=1 and 1 where left out
 (`FrameInput::local_exposure`); a fixture without it renders without local

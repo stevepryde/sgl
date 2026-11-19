@@ -5,15 +5,16 @@ use crate::FrameInput;
 use crate::scene::RayData;
 use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, FogQuality, FsrVersion,
-    ReflectionMethod, RenderPreset, SceneResolution, ScreenSpaceReflections, Settings,
-    ShadowQuality, Sharpening, Upscaling, WorldSpaceReflections,
+    ReflectionMethod, RenderPreset, SceneResolution, ScreenSpaceIndirect, ScreenSpaceReflections,
+    Settings, ShadowQuality, Sharpening, Upscaling, WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
 use crate::shading::bind::BindingTier;
 use crate::stages::reflections::velvet;
 use crate::view::effective::CompositeDraws;
 use crate::view::effective::{
-    AmbientOcclusion, Effective, HardwareRayTracing, ScreenSpace, ShadowFilter, Sizing,
+    AmbientOcclusion, Effective, HardwareRayTracing, ScreenIndirect, ScreenSpace, ShadowFilter,
+    Sizing,
 };
 use crate::view::pipelines::LayerConstants;
 
@@ -305,6 +306,24 @@ pub(super) fn resolve(
             quality: settings.ambient_occlusion,
             radius: input.ambient_occlusion_radius,
         });
+    // Screen-space indirect light reconstructs its rays and reprojects as
+    // XeGTAO does, under the same cameras.
+    let screen_indirect = (settings.screen_space_indirect != ScreenSpaceIndirect::Off
+        && p[3][3] == 0.
+        && p[2][3] == -1.
+        && p[2][0] == 0.
+        && p[2][1] == 0.
+        && p[2][2] >= 0.
+        && p[3][2] > 0.)
+        .then(|| {
+            let radius =
+                crate::stages::opaque::screen_indirect::radius(input.screen_space_indirect_radius);
+            ScreenIndirect {
+                level: settings.screen_space_indirect,
+                radius,
+                pyramid_radius: ambient_occlusion.map_or(radius, |occlusion| occlusion.radius),
+            }
+        });
     // DiligentFX's and FSR's camera inputs are for `perspective`'s
     // infinite reversed-Z projection; with other cameras SSR is off and
     // SMAA replaces TAA, and FSR's render-size frame is presented as it
@@ -378,6 +397,7 @@ pub(super) fn resolve(
         shadow_quality: settings.shadow_quality,
         shadow_filter,
         ambient_occlusion,
+        screen_indirect,
         screen_space,
         world_space: world_space(settings, content.ray_data, screen_space.is_some()),
         hardware_ray_tracing,

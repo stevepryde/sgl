@@ -325,7 +325,7 @@ fn shade_ray_hit(hit:SceneHit,outgoing:vec3<f32>,receiver:u32,random:vec3<f32>)-
  if unlit {
   return shade_unlit(unlit_surface(base,emission)).color;
  }
- let context=ShadeContext(vec2(0.),receiver,!probe_hit,true,cluster_range(hit.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.));
+ let context=ShadeContext(vec2(0.),receiver,!probe_hit,true,cluster_range(hit.position,vec2(0.)),untraced_reflection(),vec3(0.),vec3(0.),screen_indirect_none());
  let s=ray_surface(hit,material,base,emission,outgoing,context.clusters);
  var color=shade_lit(s,context).color;
  if probe_hit {

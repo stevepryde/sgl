@@ -1120,6 +1120,7 @@ pub fn frame_from_json(
         automatic: None,
     };
     frame.ambient_occlusion_radius = number(&spec["ambient_occlusion_radius"], 0.5)?;
+    frame.screen_space_indirect_radius = number(&spec["screen_space_indirect_radius"], 5.)?;
     Ok(frame)
 }
 
@@ -1176,7 +1177,8 @@ pub fn frame_metadata(frame: &FrameInput) -> Value {
         "reflection_environment":{"intensity":frame.reflection_environment.intensity,"yaw":frame.reflection_environment.yaw},
         "backdrop":backdrop,"exposure_stops":frame.exposure.stops,
         "local_exposure":{"highlight_contrast":frame.local_exposure.highlight_contrast,"shadow_contrast":frame.local_exposure.shadow_contrast},
-        "ambient_occlusion_radius_m":frame.ambient_occlusion_radius,"baked_lighting":frame.baked_lighting,
+        "ambient_occlusion_radius_m":frame.ambient_occlusion_radius,
+        "screen_space_indirect_radius_m":frame.screen_space_indirect_radius,"baked_lighting":frame.baked_lighting,
         "visibility_mask":frame.visibility_mask,"elapsed_seconds":frame.elapsed_seconds,"frame_time_ms":frame.frame_time_ms})
 }
 
@@ -1190,6 +1192,7 @@ pub fn fixture() -> Value {
         let frame = frame(name, *eye, *look_at, [1280,720], 0., false);
         let sun = frame.directional_lights[0].unwrap();
         json!({"id":name,"eye":eye.to_array(),"look_at":look_at.to_array(),"fov_y_degrees":55.,"near":0.1,"ambient_occlusion_radius":frame.ambient_occlusion_radius,
+            "screen_space_indirect_radius":frame.screen_space_indirect_radius,
             "sun":{"direction":sun.direction.to_array(),"color":sun.color,"illuminance":sun.illuminance,"shadow_distance":60.,"shadow_cascades":3},
             "environment_intensity":frame.diffuse_environment.intensity,"environment_yaw":0.,"backdrop_brightness":1.})
     }).collect();

@@ -403,6 +403,38 @@ pub(crate) static SHADOW_MASK_NONE: Module = Module {
     source: include_str!("shadow_mask_none.wgsl"),
     deps: &[&LIGHTS, &DIRECTIONAL_SHADOW],
 };
+/// Screen-space indirect light's kept result: its layout, the similarity
+/// test and the read, which the opaque stage's pass and the lit programs
+/// both compose. Binds nothing.
+pub(crate) static SCREEN_INDIRECT: Module = Module {
+    name: "screen_indirect",
+    source: include_str!("screen_indirect.wgsl"),
+    deps: &[&GBUFFER],
+};
+/// The opaque stage's fused and lighting passes' group 3 while
+/// screen-space indirect light has a kept result: the kept result and the
+/// view it was kept in.
+pub(crate) static BIND_SCREEN_INDIRECT: Module = Module {
+    name: "bind_screen_indirect",
+    source: include_str!("bind_screen_indirect.wgsl"),
+    deps: &[&SCREEN_INDIRECT],
+};
+/// The screen-space indirect light provider of the opaque stage's fused
+/// and lighting passes while the pass has a kept result:
+/// `camera_screen_indirect` reads it. A program composes it or
+/// `CAMERA_SCREEN_INDIRECT_NONE`, exactly one.
+pub(crate) static CAMERA_SCREEN_INDIRECT: Module = Module {
+    name: "camera_screen_indirect",
+    source: include_str!("camera_screen_indirect.wgsl"),
+    deps: &[&SCREEN_INDIRECT, &BIND_SCREEN_INDIRECT],
+};
+/// The screen-space indirect light provider of every other lit program:
+/// `camera_screen_indirect` gives none.
+pub(crate) static CAMERA_SCREEN_INDIRECT_NONE: Module = Module {
+    name: "camera_screen_indirect_none",
+    source: include_str!("camera_screen_indirect_none.wgsl"),
+    deps: &[&SCREEN_INDIRECT],
+};
 /// A light as it reaches a receiver point: what each light builds and
 /// `surface_direct_light` shades.
 pub(crate) static LIGHT_SAMPLE: Module = Module {

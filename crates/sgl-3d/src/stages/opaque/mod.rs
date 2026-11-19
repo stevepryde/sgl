@@ -1,6 +1,8 @@
 //! Opaque: the sky, the G-buffer and lit colour (direct, baked, emitted and
 //! ambient light) over one depth, then ambient occlusion over the G-buffer's
-//! depth and normals. Where the device has the colour attachments for it, the
+//! depth and normals, then, while it runs, screen-space indirect light over
+//! ambient occlusion's depth pyramid, the G-buffer's normals and the lit
+//! colour, kept for the next frame's lighting, which binds it at its group 3. Where the device has the colour attachments for it, the
 //! G-buffer and lighting are one fused pass; otherwise a G-buffer pass and a
 //! lighting pass at its depth write the same targets. Lit colour keeps its
 //! ambient light whole and records it apart, with the multiple scattering's
@@ -11,7 +13,9 @@
 //! (`encode_gbuffer`), per phase of the camera's draw list, which leaves
 //! the G-buffer complete; the lighting (`encode_lighting`), the sky and the
 //! lighting pass at its depth over every phase's sets; then ambient
-//! occlusion (`encode_ambient_occlusion`). The fused form's pass is its
+//! occlusion (`encode_ambient_occlusion`), which builds the depth pyramid
+//! while either it or screen-space indirect light runs; then screen-space
+//! indirect light (`encode_screen_indirect`). The fused form's pass is its
 //! G-buffer part, and its lighting part encodes nothing. While occlusion
 //! culling runs, the stage takes its two-pass form, and the renderer encodes
 //! the cull stage's late phase between the early and late G-buffer passes,
@@ -26,15 +30,20 @@
 //! while they run; for a probe capture face (`encode_capture`), the
 //! capture's draw list and the face's groups.
 //! Writes: the shared G-buffer, colour, ambient light, source identity and
-//! depth; its own ambient occlusion targets.
-//! Honours: ambient occlusion (quality and radius), the fused form (device
-//! capability, diagnostics), the diagnostics layers compiled into the
-//! geometry pipelines.
+//! depth; its own ambient occlusion and screen-space indirect light
+//! targets.
+//! Honours: ambient occlusion (quality and radius), screen-space indirect
+//! light (level and radius), the fused form (device capability,
+//! diagnostics), the diagnostics layers compiled into the geometry
+//! pipelines.
 //! Timing groups: fused `sky`, `opaque geometry + lighting`; split
 //! `geometry`, `geometry late` (occlusion culling), `sky`,
-//! `opaque lighting`; then `ambient occlusion`.
+//! `opaque lighting`; then `ambient occlusion` (with the depth pyramid
+//! while it runs) and `screen-space indirect` (with the pyramid while
+//! ambient occlusion is off).
 pub(crate) mod ambient_occlusion;
 pub(crate) mod backdrop;
+pub(crate) mod screen_indirect;
 
 use crate::counters::Moment;
 use crate::view::cached_group::CachedGroup;
@@ -49,25 +58,102 @@ pub(crate) struct Opaque {
     ambient_occlusion: Option<ambient_occlusion::AmbientOcclusion>,
     /// Whether ambient occlusion ran this frame.
     ambient_occlusion_ran: bool,
+    /// Screen-space indirect light, made the first frame it runs.
+    screen_indirect: Option<screen_indirect::ScreenIndirect>,
+    /// Whether the frame's camera lighting takes the last finished frame's
+    /// screen-space indirect light (`ScreenIndirect::begin`).
+    screen_indirect_read: bool,
     /// The lighting pass's group 3 while ray-traced shadows run
     /// (`shading::bind::shadow_mask`).
     shadow_mask: CachedGroup,
+    /// The fused and lighting passes' group 3 while they take screen-space
+    /// indirect light, without and with the shadow mask
+    /// (`shading::bind::screen_indirect`,
+    /// `shading::bind::shadow_mask_screen_indirect`), for each half of its
+    /// pair they read.
+    screen_indirect_groups: [[CachedGroup; 2]; 2],
 }
 
 impl Opaque {
-    /// The stage over `unlit` group 0 for its sky and the `shadow_mask`
-    /// group 3 layout of its lighting pass while ray-traced shadows run.
+    /// The stage over `unlit` group 0 for its sky, and the group 3 layouts
+    /// of its camera lighting: the lighting pass's while ray-traced shadows
+    /// run (`shadow_mask`), and the fused and lighting passes' while they
+    /// take screen-space indirect light (`screen_indirect`), and the
+    /// lighting pass's with both (`both`).
     pub fn new(
         device: &wgpu::Device,
         unlit: &wgpu::BindGroupLayout,
-        shadow_mask: &wgpu::BindGroupLayout,
+        [shadow_mask, screen_indirect, both]: [&wgpu::BindGroupLayout; 3],
     ) -> Self {
         Self {
             backdrop: backdrop::BackdropDraw::new(device, unlit),
             ambient_occlusion: None,
             ambient_occlusion_ran: false,
+            screen_indirect: None,
+            screen_indirect_read: false,
             shadow_mask: CachedGroup::new(shadow_mask.clone()),
+            screen_indirect_groups: [screen_indirect, both]
+                .map(|layout| std::array::from_fn(|_| CachedGroup::new(layout.clone()))),
         }
+    }
+
+    /// Begins the frame's screen-space indirect light, before any pass
+    /// lights a surface: whether the camera lighting takes the last
+    /// finished frame's (SI-1, SI-2).
+    fn begin_screen_indirect(&mut self, ctx: &FrameContext<'_>) {
+        let settings = ctx.effective.screen_indirect;
+        if settings.is_none() && self.screen_indirect.is_none() {
+            self.screen_indirect_read = false;
+            return;
+        }
+        let stage = self
+            .screen_indirect
+            .get_or_insert_with(|| screen_indirect::ScreenIndirect::new(ctx.device));
+        self.screen_indirect_read = stage.begin(
+            ctx.device,
+            ctx.queue,
+            settings,
+            ctx.sizes.render,
+            &ctx.history,
+        );
+    }
+
+    /// The fused or lighting pass's group 3 while it takes the last
+    /// finished frame's screen-space indirect light, with `shadow_mask`
+    /// where the lighting pass takes the ray-traced shadow mask too.
+    fn screen_indirect_group(
+        &mut self,
+        device: &wgpu::Device,
+        shadow_mask: Option<ShadowMask<'_>>,
+    ) -> Option<&wgpu::BindGroup> {
+        if !self.screen_indirect_read {
+            return None;
+        }
+        let read = self.screen_indirect.as_ref()?.read()?;
+        let mut entries = vec![
+            (
+                crate::shading::bind::screen_indirect::KEPT,
+                wgpu::BindingResource::TextureView(read.kept),
+            ),
+            (
+                crate::shading::bind::screen_indirect::VIEW,
+                read.view.as_entire_binding(),
+            ),
+        ];
+        if let Some(mask) = shadow_mask {
+            entries.extend([
+                (
+                    crate::shading::bind::shadow_mask::MASK,
+                    wgpu::BindingResource::TextureView(mask.mask),
+                ),
+                (
+                    crate::shading::bind::shadow_mask::SLOTS,
+                    mask.slots.as_entire_binding(),
+                ),
+            ]);
+        }
+        let groups = &mut self.screen_indirect_groups[usize::from(shadow_mask.is_some())];
+        Some(groups[read.half].get(device, "screen-space indirect light", &entries))
     }
 
     /// The G-buffer part of `phase`: the sky and the fused pass, which
@@ -76,6 +162,9 @@ impl Opaque {
     /// cannot write anisotropy in it, the anisotropy fallback at `Equal`
     /// over every phase's. The fused form has the early phase alone.
     pub fn encode_gbuffer(&mut self, ctx: &mut FrameContext<'_>, phase: Phase) {
+        if phase == Phase::Early {
+            self.begin_screen_indirect(ctx);
+        }
         if ctx.effective.fused {
             if phase == Phase::Early {
                 self.encode_fused(ctx);
@@ -101,19 +190,43 @@ impl Opaque {
     }
 
     /// Ambient occlusion over the G-buffer's depth and normals, where the
-    /// settings run it.
+    /// settings run it, after the depth pyramid, which it builds at its
+    /// radius, or at screen-space indirect light's where only that runs.
     pub fn encode_ambient_occlusion(&mut self, ctx: &mut FrameContext<'_>) {
         self.ambient_occlusion_ran = ctx.effective.ambient_occlusion.is_some();
+        let pyramid = match (
+            ctx.effective.ambient_occlusion,
+            ctx.effective.screen_indirect,
+        ) {
+            (Some(settings), _) => (settings.radius, ambient_occlusion::TIMING_GROUP),
+            (None, Some(settings)) => (settings.pyramid_radius, screen_indirect::TIMING_GROUP),
+            (None, None) => {
+                // Release the pyramid and the stage when only screen-space
+                // indirect light made them; ambient occlusion keeps its own.
+                if self.ambient_occlusion.as_ref().is_some_and(|ao| !ao.ran()) {
+                    self.ambient_occlusion = None;
+                }
+                return;
+            }
+        };
+        let targets = ctx.targets;
+        let ao = self
+            .ambient_occlusion
+            .get_or_insert_with(|| ambient_occlusion::AmbientOcclusion::new(ctx.device, ctx.queue));
+        ao.encode_depth_pyramid(
+            ctx.device,
+            ctx.queue,
+            ctx.encoder,
+            &targets.depth,
+            &ctx.views.camera.view.uniform,
+            pyramid.0,
+            (ctx.timing, pyramid.1),
+        );
         if let Some(settings) = ctx.effective.ambient_occlusion {
-            let targets = ctx.targets;
-            let ao = self.ambient_occlusion.get_or_insert_with(|| {
-                ambient_occlusion::AmbientOcclusion::new(ctx.device, ctx.queue)
-            });
-            ao.encode(
+            ao.encode_visibility(
                 ctx.device,
                 ctx.queue,
                 ctx.encoder,
-                &targets.depth,
                 &targets.normal,
                 &ctx.views.camera.view.uniform,
                 settings.quality,
@@ -135,12 +248,62 @@ impl Opaque {
         }
     }
 
-    /// Settles the last render's ambient occlusion history: see
-    /// `Kept::settle`.
+    /// Screen-space indirect light over ambient occlusion's depth pyramid,
+    /// the G-buffer and the lit colour, kept for the next frame's lighting,
+    /// where the settings run it.
+    pub fn encode_screen_indirect(&mut self, ctx: &mut FrameContext<'_>) {
+        let Some(settings) = ctx.effective.screen_indirect else {
+            return;
+        };
+        let ao = self
+            .ambient_occlusion
+            .as_ref()
+            .expect("the frame built the depth pyramid");
+        let targets = ctx.targets;
+        let inputs = screen_indirect::Inputs {
+            depth_pyramid: ao.depth_view().expect("the frame built the depth pyramid"),
+            hilbert: ao.hilbert(),
+            depth: &targets.depth,
+            normals: &targets.normal,
+            color: &targets.color,
+            motion: &targets.motion,
+        };
+        self.screen_indirect
+            .as_mut()
+            .expect("the frame began screen-space indirect light")
+            .encode(
+                ctx.device,
+                ctx.queue,
+                ctx.encoder,
+                &inputs,
+                &ctx.views.camera.view.uniform,
+                &ctx.history,
+                settings,
+                ctx.timing,
+            );
+    }
+
+    /// Settles the last render's ambient occlusion and screen-space
+    /// indirect light histories: see `Kept::settle`.
     pub fn settle(&mut self, finished: bool) {
         if let Some(ambient_occlusion) = &mut self.ambient_occlusion {
             ambient_occlusion.settle(finished);
         }
+        if let Some(screen_indirect) = &mut self.screen_indirect {
+            screen_indirect.settle(finished);
+        }
+    }
+
+    /// Whether it holds ambient occlusion's stage (its depth pyramid among
+    /// it) and screen-space indirect light's targets.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn holds_occlusion_and_bounce(&self) -> (bool, bool) {
+        (
+            self.ambient_occlusion.is_some(),
+            self.screen_indirect
+                .as_ref()
+                .is_some_and(screen_indirect::ScreenIndirect::holds_targets),
+        )
     }
 
     /// This frame's ambient visibility, when ambient occlusion ran.
@@ -208,10 +371,18 @@ impl Opaque {
                 ..Default::default()
             });
             pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
-            ctx.views
-                .camera
-                .list
-                .draw(ctx.scene, ctx.pipelines, &mut pass, GeometryPass::Fused);
+            let screen_indirect = self.screen_indirect_group(ctx.device, None);
+            if let Some(group) = screen_indirect {
+                pass.set_bind_group(3, group, &[]);
+            }
+            ctx.views.camera.list.draw(
+                ctx.scene,
+                ctx.pipelines,
+                &mut pass,
+                GeometryPass::Fused {
+                    screen_indirect: screen_indirect.is_some(),
+                },
+            );
         }
         ctx.views.camera.recorded_since(started);
     }
@@ -365,7 +536,11 @@ impl Opaque {
             ..Default::default()
         });
         pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
-        if let Some(shadow_mask) = shadow_mask {
+        let screen_indirect = self.screen_indirect_group(ctx.device, shadow_mask);
+        let takes_screen_indirect = screen_indirect.is_some();
+        if let Some(group) = screen_indirect {
+            pass.set_bind_group(3, group, &[]);
+        } else if let Some(shadow_mask) = shadow_mask {
             let group = self.shadow_mask.get(
                 ctx.device,
                 "ray-traced shadow mask",
@@ -388,6 +563,7 @@ impl Opaque {
             &mut pass,
             GeometryPass::Lighting {
                 shadow_mask: shadow_mask.is_some(),
+                screen_indirect: takes_screen_indirect,
             },
         );
         drop(pass);
@@ -449,5 +625,7 @@ impl Opaque {
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod test_geometry;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

@@ -40,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 38] = [
+    let roots: [&'static super::Module; 39] = [
         &crate::shading::PACKED_VERTEX,
         &crate::stages::opaque::backdrop::BACKDROP,
         &crate::stages::sky::TRANSMITTANCE,
@@ -54,6 +54,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::transparent::heat::HEAT,
         &crate::stages::transparent::transmission::COPY,
         &crate::stages::opaque::ambient_occlusion::XE_GTAO,
+        &crate::stages::opaque::screen_indirect::SCREEN_INDIRECT_PASS,
         &crate::view::post_fx::INPUTS,
         &crate::stages::reflections::source::COMPLETION,
         &crate::stages::reflections::probe_culling::PROBE_CULLING,
@@ -90,7 +91,9 @@ fn programs() -> Vec<(&'static str, String)> {
         .map(|root| (root.name, compose(&[root])))
         .collect();
     // The geometry program with each shadow-mask provider (exactly one, the
-    // mask's for the lighting pass while ray-traced shadows run) and each
+    // mask's for the lighting pass while ray-traced shadows run), each
+    // screen-space indirect light provider (exactly one, the kept result's
+    // for the camera lighting while it has one), and each
     // binding tier's material-map provider, and the caster program, each
     // with the default shader provider and with a game's module (a fixture
     // that reads every part of the contract), the blended draws' with its
@@ -98,21 +101,42 @@ fn programs() -> Vec<(&'static str, String)> {
     {
         use crate::shading::bind::BindingTier::{Basic, Extended};
         use crate::shading::programs::{
-            GeometryForm::{Blended, Plain, ShadowMask},
+            GeometryForm::{Blended, Camera, Plain},
             ProgramShader::{Default, Game},
             caster_program, geometry_program,
         };
         let game = Game(crate::shading::shader::tests::FIXTURE);
+        let camera = |shadow_mask, screen_indirect| Camera {
+            shadow_mask,
+            screen_indirect,
+        };
+        let shadow_mask = camera(true, false);
         programs.extend([
             ("geometry", geometry_program(Plain, Extended, Default)),
             ("geometry_basic", geometry_program(Plain, Basic, Default)),
             (
                 "geometry_shadow_mask",
-                geometry_program(ShadowMask, Extended, Default),
+                geometry_program(shadow_mask, Extended, Default),
             ),
             (
                 "geometry_shadow_mask_basic",
-                geometry_program(ShadowMask, Basic, Default),
+                geometry_program(shadow_mask, Basic, Default),
+            ),
+            (
+                "geometry_screen_indirect",
+                geometry_program(camera(false, true), Extended, Default),
+            ),
+            (
+                "geometry_screen_indirect_basic",
+                geometry_program(camera(false, true), Basic, Default),
+            ),
+            (
+                "geometry_shadow_mask_screen_indirect_basic",
+                geometry_program(camera(true, true), Basic, Default),
+            ),
+            (
+                "geometry_shader_screen_indirect",
+                geometry_program(camera(true, true), Extended, game),
             ),
             ("caster", caster_program(Extended, Default)),
             ("caster_basic", caster_program(Basic, Default)),
@@ -123,7 +147,7 @@ fn programs() -> Vec<(&'static str, String)> {
             ),
             (
                 "geometry_shader_shadow_mask",
-                geometry_program(ShadowMask, Extended, game),
+                geometry_program(shadow_mask, Extended, game),
             ),
             (
                 "geometry_shader_blended",
@@ -175,7 +199,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use crate::shading::programs as view;
     use crate::stages::cull::{self, pyramid};
     use crate::stages::dynamic_gi::pipelines as gi;
-    use crate::stages::opaque::{ambient_occlusion as ao, backdrop};
+    use crate::stages::opaque::{ambient_occlusion as ao, backdrop, screen_indirect as si};
     use crate::stages::post::{bloom, inputs, local_exposure, smaa, tone_map};
     use crate::stages::reflections::{probe_culling, source, velvet, world};
     use crate::stages::shadows::{local, traced, traced::denoise};
@@ -228,6 +252,13 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         ("geometry_shader", geometry.clone()),
         ("geometry_shader_basic", geometry.clone()),
         ("geometry_shader_shadow_mask", geometry.clone()),
+        ("geometry_screen_indirect", geometry.clone()),
+        ("geometry_screen_indirect_basic", geometry.clone()),
+        (
+            "geometry_shadow_mask_screen_indirect_basic",
+            geometry.clone(),
+        ),
+        ("geometry_shader_screen_indirect", geometry.clone()),
         ("geometry_shader_blended", geometry),
         ("caster_shader", caster.clone()),
         ("caster_shader_basic", caster.clone()),
@@ -294,6 +325,15 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
                 ao::PREFILTER_MIP4_ENTRY,
                 ao::MAIN_PASS_ENTRY,
                 ao::DENOISE_ENTRY,
+            ],
+        ),
+        (
+            si::SCREEN_INDIRECT_PASS.name,
+            vec![
+                si::PREFILTER_ENTRY,
+                si::GATHER_ENTRY,
+                si::DENOISE_ENTRY,
+                si::ACCUMULATE_ENTRY,
             ],
         ),
         (
@@ -866,6 +906,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::reflections::world::classify::mirrors())
     .chain(crate::stages::reflections::velvet::mirrors())
     .chain(crate::stages::opaque::ambient_occlusion::mirrors())
+    .chain(crate::stages::opaque::screen_indirect::mirrors())
     .chain(crate::stages::exposure::mirrors())
     .chain(crate::stages::motion_blur::mirrors())
     .chain(super::motion_tiles::mirrors())
@@ -1190,7 +1231,9 @@ fn declared_bindings(label: &str, source: &str, group: u32) -> Vec<(String, u32)
 // numbers come from naga's parse of the WGSL.
 #[wasm_bindgen_test(unsupported = test)]
 fn rust_binding_names_match_wgsl_bindings() {
-    use super::bind::{self, blended, caster, group0, group1, group2, hardware, shadow_mask};
+    use super::bind::{
+        self, blended, caster, group0, group1, group2, hardware, screen_indirect, shadow_mask,
+    };
     let named = [
         (0, "view", group0::VIEW),
         (0, "frame", group0::FRAME),
@@ -1275,6 +1318,8 @@ fn rust_binding_names_match_wgsl_bindings() {
         (3, "scene_tlas", hardware::SCENE_TLAS),
         (3, "shadow_mask", shadow_mask::MASK),
         (3, "shadow_mask_slots", shadow_mask::SLOTS),
+        (3, "screen_indirect_kept", screen_indirect::KEPT),
+        (3, "screen_indirect_view", screen_indirect::VIEW),
     ];
     let numbers = |entries: &[wgpu::BindGroupLayoutEntry]| -> Vec<u32> {
         entries.iter().map(|entry| entry.binding).collect()
@@ -1370,6 +1415,12 @@ fn rust_binding_names_match_wgsl_bindings() {
             &[&super::BIND_SHADOW_MASK],
             3,
             numbers(&bind::shadow_mask_entries()),
+        ),
+        (
+            "bind_screen_indirect",
+            &[&super::BIND_SCREEN_INDIRECT],
+            3,
+            numbers(&bind::screen_indirect_entries()),
         ),
     ];
     let mut used = vec![false; named.len()];
@@ -1490,6 +1541,7 @@ fn rust_constants_match_wgsl_twins() {
     .chain(crate::stages::exposure::constants())
     .chain(crate::stages::post::local_exposure::constants())
     .chain(crate::stages::opaque::ambient_occlusion::constants())
+    .chain(crate::stages::opaque::screen_indirect::constants())
     .chain(crate::stages::fog::constants())
     .chain(super::shadow_mask::constants())
     .chain(crate::stages::shadows::traced::denoise::constants())

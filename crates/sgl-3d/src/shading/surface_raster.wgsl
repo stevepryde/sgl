@@ -93,5 +93,5 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
 // and occludes by its material's occlusion itself.
 fn raster_context(i:Fragment)->ShadeContext {
  let capture=(view.flags&VIEW_PROBE_CAPTURE)!=0u;
- return ShadeContext(i.clip.xy,select(SHADOW_RECEIVER_CAMERA,SHADOW_RECEIVER_CAPTURE,capture),capture,capture,cluster_range(i.world,i.clip.xy),untraced_reflection(),raster_position_dx(i),raster_position_dy(i));
+ return ShadeContext(i.clip.xy,select(SHADOW_RECEIVER_CAMERA,SHADOW_RECEIVER_CAPTURE,capture),capture,capture,cluster_range(i.world,i.clip.xy),untraced_reflection(),raster_position_dx(i),raster_position_dy(i),screen_indirect_none());
 }

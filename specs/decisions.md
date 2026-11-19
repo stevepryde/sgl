@@ -1170,6 +1170,30 @@ Use the [current specs](README.md) for implementation and the
   quantum alone, and with the fog 0.066 ms median without aerial
   perspective and 0.20 ms with it (0.33 and 0.52 ms p95); `blended` 0.85
   and 1.11 ms median without the fog and with it, either way.
+- **D-65** Decision, 2026-11-19 (#830): screen-space indirect light is
+  gathered in one frame and added in the next frame's forward shading by
+  reprojection, and its sectors take GTAO's slice measure within a hard
+  reach. No depth prepass exists to gather before shading (#393), and the
+  G-buffer holds no diffuse colour for completion to weight a bounce by,
+  with no colour target to spare. The paper's and SSRT3's weight, a uniform
+  sector count times two cosines, is made up for by a gain (SSRT3's
+  `GIIntensity` defaults to 10), which S3D-5 rules out, and its search has
+  no falloff, so a sample beyond the radius is cut, as XeGTAO fades its own.
+  The search spans that radius: it projects the radius whole, as Bevy's and
+  XeGTAO's searches do, where SSRT3's `_HalfProjScale` halves it, so its
+  march spans half its radius across the view; measured on the plane-and-
+  wall fixture at a 1 m radius, the halved march leaves the wall's bounce
+  short beyond 0.5 m, its High level's light 0.161 from the hemisphere
+  integral on average, past the 0.16 budget, against 0.116 with the radius
+  whole. Its horizon
+  angles take an exact arc cosine, where SSRT3's `GTAOFastAcos` errs by up
+  to 0.008 rad, which leaves a receiver's own tangent plane covering a
+  sliver of its horizon off the view axis. It is a pass of its own beside
+  XeGTAO, whose radius and resolution differ; XeGTAO is not replaced by the
+  bitmask search, whose published form does not weight by cosine.
+  Rationale: the cheapest arrangement that leaves the fused pass and ambient
+  occlusion's visibility untouched, and an estimator whose energy an
+  analytic test can hold.
 - **D-66** Decision, 2026-11-19 (#827): a material's occlusion also shadows
   direct light. Every light's front lobes are scaled by Filament ef1a133's
   `computeMicroShadowing` (Chan 2018, "Material Advances in Call of Duty:

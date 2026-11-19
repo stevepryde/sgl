@@ -252,7 +252,15 @@ impl View {
         );
         Ok(Self {
             output_encodes_srgb: output.encodes_srgb,
-            opaque: Opaque::new(device, &bindings.unlit, &bindings.shadow_mask),
+            opaque: Opaque::new(
+                device,
+                &bindings.unlit,
+                [
+                    &bindings.shadow_mask,
+                    &bindings.screen_indirect,
+                    &bindings.shadow_mask_screen_indirect,
+                ],
+            ),
             traced_shadows: Box::new(TracedShadows::new(device, &bindings.lit, &bindings.scene)),
             reflections: Box::new(Reflections::new(device, queue, render, &first_frame)),
             transparent: Transparent::new(

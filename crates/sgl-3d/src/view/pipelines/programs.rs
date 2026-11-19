@@ -15,6 +15,15 @@ pub(super) enum Program {
     Caster,
 }
 
+/// The camera lighting's program slots: one for each combination of the
+/// providers `GeometryForm::Camera` composes.
+const CAMERA_SLOTS: usize = 4;
+
+/// The camera lighting program's slot for its providers, a bit each.
+fn camera_slot(shadow_mask: bool, screen_indirect: bool) -> usize {
+    usize::from(shadow_mask) | usize::from(screen_indirect) << 1
+}
+
 /// One material shader's programs: SGL3D's default provider's, or a game's
 /// module's.
 pub(super) struct ProgramSet {
@@ -22,7 +31,9 @@ pub(super) struct ProgramSet {
     source: Option<String>,
     label: String,
     geometry: Option<wgpu::ShaderModule>,
-    shadow_masked: Option<wgpu::ShaderModule>,
+    /// The camera lighting's, one for each combination of what it binds
+    /// at group 3, indexed by `camera_slot`.
+    camera: [Option<wgpu::ShaderModule>; CAMERA_SLOTS],
     blended: Option<wgpu::ShaderModule>,
     caster: Option<wgpu::ShaderModule>,
 }
@@ -34,7 +45,7 @@ impl ProgramSet {
             source: None,
             label: "SGL material".into(),
             geometry: None,
-            shadow_masked: None,
+            camera: std::array::from_fn(|_| None),
             blended: None,
             caster: None,
         }
@@ -78,7 +89,7 @@ impl ProgramSet {
             source,
             label,
             geometry,
-            shadow_masked,
+            camera,
             blended,
             caster,
         } = self;
@@ -87,8 +98,17 @@ impl ProgramSet {
             .map_or(ProgramShader::Default, ProgramShader::Game);
         let (slot, name) = match program {
             Program::Geometry(GeometryForm::Plain) => (geometry, "geometry"),
-            Program::Geometry(GeometryForm::ShadowMask) => {
-                (shadow_masked, "geometry with the shadow mask")
+            Program::Geometry(GeometryForm::Camera {
+                shadow_mask,
+                screen_indirect,
+            }) => {
+                let name = match (shadow_mask, screen_indirect) {
+                    (false, false) => "camera geometry",
+                    (true, false) => "geometry with the shadow mask",
+                    (false, true) => "geometry with screen-space indirect light",
+                    (true, true) => "geometry with the shadow mask and screen-space indirect light",
+                };
+                (&mut camera[camera_slot(shadow_mask, screen_indirect)], name)
             }
             Program::Geometry(GeometryForm::Blended) => (blended, "blended geometry"),
             Program::Caster => (caster, "casters"),
@@ -108,14 +128,10 @@ impl ProgramSet {
     /// How many modules it holds.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn modules(&self) -> usize {
-        [
-            &self.geometry,
-            &self.shadow_masked,
-            &self.blended,
-            &self.caster,
-        ]
-        .into_iter()
-        .filter(|module| module.is_some())
-        .count()
+        [&self.geometry, &self.blended, &self.caster]
+            .into_iter()
+            .chain(&self.camera)
+            .filter(|module| module.is_some())
+            .count()
     }
 }

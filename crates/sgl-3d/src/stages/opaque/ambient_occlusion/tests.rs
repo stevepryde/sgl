@@ -1,21 +1,5 @@
 //! Numerical acceptance is declared in ambient_occlusion/README.md before execution.
-/// Independent cosine-weighted hemisphere ray integral. The receiver is on
-/// z=-3 with normal +Z; the only occluder is the wall x=0.6, z>=-3.
-fn wall_visibility(distance: f64, radius: f64) -> f64 {
-    let mut visible = 0usize;
-    for radial in 0..256 {
-        let r = ((radial as f64 + 0.5) / 256.0).sqrt();
-        for angular in 0..256 {
-            let phi = (angular as f64 + 0.5) / 256.0 * std::f64::consts::TAU;
-            let ray_x = r * phi.cos();
-            let hit_distance = distance / ray_x;
-            if ray_x <= 0.0 || hit_distance > radius {
-                visible += 1;
-            }
-        }
-    }
-    visible as f64 / (256 * 256) as f64
-}
+use crate::stages::opaque::test_geometry::wall_visibility;
 
 #[test]
 fn ambient_occlusion_matches_independent_hemisphere_integral() {
@@ -478,6 +462,8 @@ fn read_mip(
         .collect()
 }
 
+/// The shared plane-and-wall fixture's depth and normals
+/// (`test_geometry::plane_and_wall`), unlit.
 fn analytic_geometry(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -487,138 +473,27 @@ fn analytic_geometry(
     rotated: bool,
     plate: Option<std::ops::Range<u32>>,
 ) -> (wgpu::TextureView, wgpu::TextureView) {
-    // Rasterize analytical primary-ray/plane intersections. This fixture does
-    // not use any AO reconstruction, horizon search, noise, or filtering logic.
-    let fragment = format!(
-        r#"
- let uv=pixel.xy/vec2({width}.0,{height}.0);
- let ray=vec3((uv.x*2.-1.)/{px},(1.-uv.y*2.)/{py},-1.);
- var t=3.; var n=vec3(0.,0.,1.);
- if {wall} && ray.x>0. {{ let wt=0.6/ray.x; if wt<t {{ t=wt; n=vec3(-1.,0.,0.); }} }}
- if pixel.y>={plate_top}. && pixel.y<{plate_bottom}. {{ t=1.; n=vec3(0.,0.,1.); }}
- let z=ray.z*t;
- if {rotated} {{ n=vec3(-n.x,n.y,-n.z); }}
- var o:Output; o.normal=gbuffer_encode_normals(n,n); o.depth=({pz}*z+{pw})/(-z); return o;
-"#,
-        width = size[0],
-        height = size[1],
-        px = projection.x_axis.x,
-        py = projection.y_axis.y,
-        pz = projection.z_axis.z,
-        pw = projection.w_axis.z,
-        rotated = rotated,
-        wall = wall,
-        plate_top = plate.as_ref().map_or(0, |rows| rows.start),
-        plate_bottom = plate.as_ref().map_or(0, |rows| rows.end),
-    );
-    rasterize(device, queue, size, &fragment)
+    use crate::stages::opaque::test_geometry::{PlaneAndWall, Wall, plane_and_wall};
+    let fixture = PlaneAndWall {
+        wall: wall.then_some(Wall::Facing([0.; 3])),
+        rotated,
+        plate,
+        ..PlaneAndWall::plane()
+    };
+    let [depth, normals, _] = plane_and_wall(device, queue, size, projection, &fixture);
+    (depth, normals)
 }
 
-/// The depth and normal targets a full-screen triangle writes, `fragment`
-/// being the body of a fragment shader that takes the pixel's position and
-/// returns an `Output` of its encoded normals and device depth.
+/// The depth and normal targets a full-screen triangle writes
+/// (`test_geometry::rasterize`).
 fn rasterize(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     size: [u32; 2],
     fragment: &str,
 ) -> (wgpu::TextureView, wgpu::TextureView) {
-    let source = format!(
-        r#"
-@vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32> {{
- let v=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.)); return vec4(v[i],0.,1.);
-}}
-struct Output {{ @location(0) normal:vec4<f32>, @builtin(frag_depth) depth:f32 }}
-@fragment fn fs(@builtin(position) pixel:vec4<f32>)->Output {{{fragment}}}
-"#
-    );
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("analytic AO geometry"),
-        source: wgpu::ShaderSource::Wgsl(
-            format!(
-                "{}\n{source}",
-                crate::shading::compose(&[&crate::shading::GBUFFER])
-            )
-            .into(),
-        ),
-    });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("analytic AO geometry"),
-        layout: None,
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vs"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        primitive: Default::default(),
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: Default::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::TextureFormat::Rgba16Float.into())],
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
-    let texture = |format| {
-        device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("analytic AO input"),
-                size: wgpu::Extent3d {
-                    width: size[0],
-                    height: size[1],
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&Default::default())
-    };
-    let depth = texture(wgpu::TextureFormat::Depth32Float);
-    let normals = texture(wgpu::TextureFormat::Rgba16Float);
-    let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("analytic AO input"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &normals,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        pass.set_pipeline(&pipeline);
-        pass.draw(0..3, 0..1);
-    }
-    queue.submit([encoder.finish()]);
+    let [depth, normals, _] =
+        crate::stages::opaque::test_geometry::rasterize(device, queue, size, fragment);
     (depth, normals)
 }
 

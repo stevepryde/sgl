@@ -5,11 +5,18 @@ use crate::{
     view::cached_group::CachedGroup,
 };
 
+/// XeGTAO's pure kernels, which ambient occlusion and screen-space
+/// indirect light both take.
+pub(crate) static XE_GTAO_KERNELS: crate::shading::Module = crate::shading::Module {
+    name: "xegtao_kernels",
+    source: include_str!("xegtao_kernels.wgsl"),
+    deps: &[],
+};
 /// XeGTAO's passes.
 pub(crate) static XE_GTAO: crate::shading::Module = crate::shading::Module {
     name: "ambient_occlusion",
     source: include_str!("ambient_occlusion.wgsl"),
-    deps: &[&crate::shading::GBUFFER],
+    deps: &[&crate::shading::GBUFFER, &XE_GTAO_KERNELS],
 };
 /// The entry points XeGTAO's pipelines are created with.
 pub(crate) const PREFILTER_ENTRY: &str = "prefilter_depths";
@@ -33,7 +40,7 @@ const MOST_STEPS: u32 = 3;
 const DEPTH_MIPS: usize = 5;
 /// The Hilbert curve's tile, texels across (`XE_HILBERT_WIDTH`), over which
 /// the main pass's noise repeats.
-const HILBERT_WIDTH: u32 = 64;
+pub(crate) const HILBERT_WIDTH: u32 = 64;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -50,10 +57,16 @@ struct Params {
     noise_index: u32,
     padding: [u32; 2],
 }
-struct Targets {
+/// The working depth's pyramid, which ambient occlusion and screen-space
+/// indirect light both read.
+struct Pyramid {
     size: [u32; 2],
     depth: wgpu::TextureView,
     mips: [wgpu::TextureView; DEPTH_MIPS],
+}
+/// Ambient occlusion's own targets.
+struct Targets {
+    size: [u32; 2],
     working: wgpu::TextureView,
     output: wgpu::TextureView,
 }
@@ -64,8 +77,13 @@ pub(crate) struct AmbientOcclusion {
     denoise: wgpu::ComputePipeline,
     /// One group per pass, retaining its inferred layout and bound identities.
     groups: [CachedGroup; 4],
+    /// The prefilter's parameters, apart from the main pass's so the
+    /// pyramid can be built for screen-space indirect light alone, at its
+    /// radius, in a frame whose ambient occlusion is off.
+    pyramid_params: wgpu::Buffer,
     params: wgpu::Buffer,
     hilbert_lut: wgpu::TextureView,
+    pyramid: Option<Pyramid>,
     targets: Option<Targets>,
     temporal: temporal::Temporal,
 }
@@ -112,7 +130,21 @@ impl AmbientOcclusion {
     }
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn depth_pyramid(&self) -> Option<&wgpu::Texture> {
-        self.targets.as_ref().map(|t| t.depth.texture())
+        self.pyramid.as_ref().map(|p| p.depth.texture())
+    }
+    /// The last encoded frame's working depth: view depth in metres, its
+    /// five mips filtered as XeGTAO filters them (`encode_depth_pyramid`).
+    pub(crate) fn depth_view(&self) -> Option<&wgpu::TextureView> {
+        self.pyramid.as_ref().map(|p| &p.depth)
+    }
+    /// Whether ambient occlusion has run here: its own targets exist, not
+    /// only the depth pyramid another pass asked for.
+    pub(crate) fn ran(&self) -> bool {
+        self.targets.is_some()
+    }
+    /// The Hilbert index table the searches' noise reads (`hilbert_lut`).
+    pub(crate) fn hilbert(&self) -> &wgpu::TextureView {
+        &self.hilbert_lut
     }
 
     pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
@@ -142,20 +174,17 @@ impl AmbientOcclusion {
             main,
             denoise,
             groups,
-            params: crate::counters::buffer(
-                device,
-                &wgpu::BufferDescriptor {
-                    label: Some("XeGTAO constants"),
-                    size: std::mem::size_of::<Params>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                },
-            ),
+            pyramid_params: params_buffer(device, "XeGTAO depth prefilter constants"),
+            params: params_buffer(device, "XeGTAO constants"),
             hilbert_lut: hilbert_lut(device, queue),
+            pyramid: None,
             targets: None,
             temporal: temporal::Temporal::new(device),
         }
     }
+    /// The depth pyramid and visibility of a frame, as the opaque stage
+    /// encodes them in turn (`encode_depth_pyramid`, `encode_visibility`).
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode(
         &mut self,
@@ -170,7 +199,110 @@ impl AmbientOcclusion {
         noise_index: u32,
         timing: Option<&crate::timing::GpuTiming>,
     ) -> &wgpu::TextureView {
+        self.encode_depth_pyramid(
+            device,
+            queue,
+            encoder,
+            depth,
+            view,
+            radius,
+            (timing, TIMING_GROUP),
+        );
+        self.encode_visibility(
+            device,
+            queue,
+            encoder,
+            normals,
+            view,
+            quality,
+            radius,
+            noise_index,
+            timing,
+        )
+    }
+
+    /// XeGTAO_PrefilterDepths16x16 over `depth`, seen by `view`, its mips
+    /// filtered for a search of `radius` metres: once a frame, for ambient
+    /// occlusion at its radius, or for screen-space indirect light at its
+    /// own where ambient occlusion is off, timed in that pass's group
+    /// (`timing_group`).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_depth_pyramid(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        depth: &wgpu::TextureView,
+        view: &ViewUniform,
+        radius: f32,
+        (timing, timing_group): (Option<&crate::timing::GpuTiming>, &'static str),
+    ) {
         let size = [depth.texture().width(), depth.texture().height()];
+        if self.pyramid.as_ref().is_none_or(|p| p.size != size) {
+            self.pyramid = Some(Pyramid::new(device, size));
+        }
+        let params = params(size, view, AmbientOcclusionQuality::Off, radius, 0);
+        crate::counters::write_buffer(queue, &self.pyramid_params, 0, bytemuck::bytes_of(&params));
+        let pyramid = self.pyramid.as_ref().unwrap();
+        let group = self.groups[0].get(
+            device,
+            "XeGTAO depth mips 0-3",
+            &[
+                (0, self.pyramid_params.as_entire_binding()),
+                texture_entry(1, depth),
+                texture_entry(3, &pyramid.mips[0]),
+                texture_entry(7, &pyramid.mips[1]),
+                texture_entry(8, &pyramid.mips[2]),
+                texture_entry(9, &pyramid.mips[3]),
+            ],
+        );
+        // An 8x8 group filters a 16x16 tile.
+        dispatch_in(
+            encoder,
+            &self.prefilter,
+            group,
+            [size[0].div_ceil(16), size[1].div_ceil(16)],
+            (timing, timing_group),
+        );
+        let group = self.groups[1].get(
+            device,
+            "XeGTAO depth mip 4",
+            &[
+                (0, self.pyramid_params.as_entire_binding()),
+                texture_entry(2, &pyramid.mips[3]),
+                texture_entry(10, &pyramid.mips[4]),
+            ],
+        );
+        dispatch_in(
+            encoder,
+            &self.prefilter_mip4,
+            group,
+            size.map(|extent| (extent >> (DEPTH_MIPS - 1)).max(1).div_ceil(8)),
+            (timing, timing_group),
+        );
+    }
+
+    /// XeGTAO's horizon integration and denoise over the depth pyramid this
+    /// frame built (`encode_depth_pyramid`, at the same `radius`) and
+    /// `normals`, seen by `view`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_visibility(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        normals: &wgpu::TextureView,
+        view: &ViewUniform,
+        quality: AmbientOcclusionQuality,
+        radius: f32,
+        noise_index: u32,
+        timing: Option<&crate::timing::GpuTiming>,
+    ) -> &wgpu::TextureView {
+        let pyramid = self
+            .pyramid
+            .as_ref()
+            .expect("the frame built the depth pyramid");
+        let size = pyramid.size;
         if self
             .targets
             .as_ref()
@@ -179,87 +311,14 @@ impl AmbientOcclusion {
             self.targets = Some(Targets::new(device, size));
         }
         let targets = self.targets.as_ref().unwrap();
-        let (slices, steps) = match quality {
-            AmbientOcclusionQuality::Off | AmbientOcclusionQuality::Low => (1, 2),
-            AmbientOcclusionQuality::Medium => (2, 2),
-            AmbientOcclusionQuality::High => (3, 3),
-            AmbientOcclusionQuality::Ultra => (MOST_SLICES, MOST_STEPS),
-        };
-        let projection = view.projection;
-        let mul = -projection[3][2];
-        let mut add = projection[2][2];
-        if mul * add < 0.0 {
-            add = -add;
-        }
-        let tan_half = [1.0 / projection[0][0], 1.0 / projection[1][1]];
-        let radius = if radius.is_nan() {
-            MIN_RADIUS
-        } else {
-            radius.clamp(MIN_RADIUS, MAX_RADIUS)
-        };
-        let params = Params {
-            view: view.view,
-            size,
-            pixel_size: [1.0 / size[0] as f32, 1.0 / size[1] as f32],
-            depth_unpack: [mul, add],
-            ndc_mul: [2.0 * tan_half[0], -2.0 * tan_half[1]],
-            // Depth and normals rasterize with the view's subpixel offset.
-            // Undo that offset before reconstructing their view-space rays,
-            // as a full inverse projection does (also post-fx's DFX-15).
-            // ViewUniform::jitter stores half the NDC translation.
-            ndc_add: [
-                -tan_half[0] * (1.0 + 2.0 * view.jitter[0]),
-                tan_half[1] * (1.0 - 2.0 * view.jitter[1]),
-            ],
-            radius,
-            slices,
-            steps,
-            noise_index,
-            padding: [0; 2],
-        };
+        let params = params(size, view, quality, radius, noise_index);
         crate::counters::write_buffer(queue, &self.params, 0, bytemuck::bytes_of(&params));
-        let group = self.groups[0].get(
-            device,
-            "XeGTAO depth mips 0-3",
-            &[
-                (0, self.params.as_entire_binding()),
-                texture_entry(1, depth),
-                texture_entry(3, &targets.mips[0]),
-                texture_entry(7, &targets.mips[1]),
-                texture_entry(8, &targets.mips[2]),
-                texture_entry(9, &targets.mips[3]),
-            ],
-        );
-        // An 8x8 group filters a 16x16 tile.
-        dispatch(
-            encoder,
-            &self.prefilter,
-            group,
-            [size[0].div_ceil(16), size[1].div_ceil(16)],
-            timing,
-        );
-        let group = self.groups[1].get(
-            device,
-            "XeGTAO depth mip 4",
-            &[
-                (0, self.params.as_entire_binding()),
-                texture_entry(2, &targets.mips[3]),
-                texture_entry(10, &targets.mips[4]),
-            ],
-        );
-        dispatch(
-            encoder,
-            &self.prefilter_mip4,
-            group,
-            size.map(|extent| (extent >> (DEPTH_MIPS - 1)).max(1).div_ceil(8)),
-            timing,
-        );
         let group = self.groups[2].get(
             device,
             "XeGTAO horizon integration",
             &[
                 (0, self.params.as_entire_binding()),
-                texture_entry(2, &targets.depth),
+                texture_entry(2, &pyramid.depth),
                 texture_entry(4, normals),
                 texture_entry(5, &targets.working),
                 texture_entry(11, &self.hilbert_lut),
@@ -285,6 +344,67 @@ impl AmbientOcclusion {
             timing,
         );
         &targets.output
+    }
+}
+/// A uniform buffer holding one `Params`.
+fn params_buffer(device: &wgpu::Device, label: &str) -> wgpu::Buffer {
+    crate::counters::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some(label),
+            size: std::mem::size_of::<Params>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    )
+}
+/// The passes' parameters for a frame of `size` seen by `view`, at
+/// `quality`, with a search radius of `radius` metres, clamped to the radii
+/// XeGTAO takes.
+fn params(
+    size: [u32; 2],
+    view: &ViewUniform,
+    quality: AmbientOcclusionQuality,
+    radius: f32,
+    noise_index: u32,
+) -> Params {
+    let (slices, steps) = match quality {
+        AmbientOcclusionQuality::Off | AmbientOcclusionQuality::Low => (1, 2),
+        AmbientOcclusionQuality::Medium => (2, 2),
+        AmbientOcclusionQuality::High => (3, 3),
+        AmbientOcclusionQuality::Ultra => (MOST_SLICES, MOST_STEPS),
+    };
+    let projection = view.projection;
+    let mul = -projection[3][2];
+    let mut add = projection[2][2];
+    if mul * add < 0.0 {
+        add = -add;
+    }
+    let tan_half = [1.0 / projection[0][0], 1.0 / projection[1][1]];
+    let radius = if radius.is_nan() {
+        MIN_RADIUS
+    } else {
+        radius.clamp(MIN_RADIUS, MAX_RADIUS)
+    };
+    Params {
+        view: view.view,
+        size,
+        pixel_size: [1.0 / size[0] as f32, 1.0 / size[1] as f32],
+        depth_unpack: [mul, add],
+        ndc_mul: [2.0 * tan_half[0], -2.0 * tan_half[1]],
+        // Depth and normals rasterize with the view's subpixel offset.
+        // Undo that offset before reconstructing their view-space rays,
+        // as a full inverse projection does (also post-fx's DFX-15).
+        // ViewUniform::jitter stores half the NDC translation.
+        ndc_add: [
+            -tan_half[0] * (1.0 + 2.0 * view.jitter[0]),
+            tan_half[1] * (1.0 - 2.0 * view.jitter[1]),
+        ],
+        radius,
+        slices,
+        steps,
+        noise_index,
+        padding: [0; 2],
     }
 }
 /// XeGTAO_Denoise's final pass from `working` into `output`, both
@@ -371,6 +491,8 @@ fn hilbert_lut(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView 
 fn texture_entry(binding: u32, view: &wgpu::TextureView) -> (u32, wgpu::BindingResource<'_>) {
     (binding, wgpu::BindingResource::TextureView(view))
 }
+/// Ambient occlusion's timing group.
+pub(crate) const TIMING_GROUP: &str = "ambient occlusion";
 fn dispatch(
     encoder: &mut wgpu::CommandEncoder,
     pipeline: &wgpu::ComputePipeline,
@@ -378,35 +500,52 @@ fn dispatch(
     workgroups: [u32; 2],
     timing: Option<&crate::timing::GpuTiming>,
 ) {
+    dispatch_in(encoder, pipeline, group, workgroups, (timing, TIMING_GROUP));
+}
+/// `dispatch`, timed in `timing_group`.
+fn dispatch_in(
+    encoder: &mut wgpu::CommandEncoder,
+    pipeline: &wgpu::ComputePipeline,
+    group: &wgpu::BindGroup,
+    workgroups: [u32; 2],
+    (timing, timing_group): (Option<&crate::timing::GpuTiming>, &'static str),
+) {
     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
         label: Some("XeGTAO"),
-        timestamp_writes: timing.and_then(|t| t.compute_pass("ambient occlusion")),
+        timestamp_writes: timing.and_then(|t| t.compute_pass(timing_group)),
     });
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, group, &[]);
     pass.dispatch_workgroups(workgroups[0], workgroups[1], 1);
 }
-impl Targets {
+fn make_texture(
+    device: &wgpu::Device,
+    label: &str,
+    extent: [u32; 2],
+    format: wgpu::TextureFormat,
+    mip_level_count: u32,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: extent[0],
+            height: extent[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+impl Pyramid {
     fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
-        let make_texture = |label, extent: [u32; 2], format, mip_level_count| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: extent[0],
-                    height: extent[1],
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::STORAGE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            })
-        };
         let depth = make_texture(
+            device,
             "XeGTAO depth pyramid",
             [size[0].max(16), size[1].max(16)],
             wgpu::TextureFormat::R32Float,
@@ -423,15 +562,21 @@ impl Targets {
             size,
             depth: depth.create_view(&Default::default()),
             mips,
-            working: make_texture(
+        }
+    }
+}
+impl Targets {
+    fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
+        let make = |label, format| {
+            make_texture(device, label, size, format, 1).create_view(&Default::default())
+        };
+        Self {
+            size,
+            working: make(
                 "XeGTAO packed working visibility",
-                size,
                 wgpu::TextureFormat::R32Uint,
-                1,
-            )
-            .create_view(&Default::default()),
-            output: make_texture("XeGTAO visibility", size, wgpu::TextureFormat::R32Uint, 1)
-                .create_view(&Default::default()),
+            ),
+            output: make("XeGTAO visibility", wgpu::TextureFormat::R32Uint),
         }
     }
 }

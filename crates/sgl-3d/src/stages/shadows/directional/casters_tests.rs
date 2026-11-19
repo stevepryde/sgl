@@ -190,11 +190,13 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
             &crate::shading::bind::scene(&device),
             &crate::shading::bind::blended(&device, tier),
             &crate::shading::bind::shadow_mask(&device),
+            &crate::shading::bind::screen_indirect(&device),
+            &crate::shading::bind::shadow_mask_screen_indirect(&device),
             &crate::shading::bind::caster_positions(&device),
         ],
         LayerConstants::ALL,
     );
-    pipelines.specialise(&device, LayerConstants::ALL, &scene, false);
+    pipelines.specialise(&device, LayerConstants::ALL, &scene, (false, false));
     let frame = crate::scene::buffer(
         &device,
         "frame",

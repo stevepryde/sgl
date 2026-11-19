@@ -93,19 +93,23 @@ pub(super) fn render(
     }
     // The ray instances are updated and the acceleration structures built
     // when any view of the frame traces; the shadow-mask pipelines exist
-    // once any runs ray-traced shadows.
+    // once any runs ray-traced shadows, and screen-space indirect light's
+    // once any runs it.
     let traced = begun
         .iter()
         .any(|(_, effective)| Prepare::traces(scene, effective));
     let shadow_mask = begun
         .iter()
         .any(|(_, effective)| effective.ray_traced_shadows);
+    let screen_indirect = begun
+        .iter()
+        .any(|(_, effective)| effective.screen_indirect.is_some());
     shared.run_scene(
         (device, queue),
         scene,
         &begun[0].1,
         views[0].input,
-        (traced, shadow_mask),
+        (traced, (shadow_mask, screen_indirect)),
     );
     for (index, (frame, begun)) in views.iter_mut().zip(begun).enumerate() {
         render_view(
@@ -493,7 +497,8 @@ pub(super) fn render_view(
 /// The opaque stage in the stage order's named parts: the G-buffer, then,
 /// while they run, the ray-traced shadows of the frame's slots, which may
 /// hold `slot_lights`, the lighting at its depth, which takes their mask,
-/// then ambient occlusion over it. While occlusion culling runs, the
+/// then ambient occlusion over it, then screen-space indirect light. While
+/// occlusion culling runs, the
 /// G-buffer part runs per phase with the cull stage between them: the
 /// G-buffer over the early set, the cull stage's late phase (the pyramid
 /// from that depth, then the late cull), the G-buffer over the late set,
@@ -515,6 +520,7 @@ pub(super) fn encode_opaque(
     let shadow_mask = traced_shadows.encode(ctx, slot_lights);
     opaque.encode_lighting(ctx, shadow_mask);
     opaque.encode_ambient_occlusion(ctx);
+    opaque.encode_screen_indirect(ctx);
 }
 
 /// The view holding `kind`.

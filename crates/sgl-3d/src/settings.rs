@@ -216,6 +216,22 @@ pub enum AmbientOcclusionQuality {
     Ultra,
 }
 
+/// Screen-space indirect light: diffuse light bouncing between nearby
+/// surfaces on screen, which the dynamic GI volume's probes are too far
+/// apart to hold, gathered at half the render size within
+/// `FrameInput::screen_space_indirect_radius` and lit one frame late. Off
+/// by default and in no preset; it runs only under a `perspective` camera.
+/// Light whose source is off screen, hidden or facing away is absent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScreenSpaceIndirect {
+    #[default]
+    Off,
+    /// 24 samples a half-size pixel.
+    Low,
+    /// 48 samples a half-size pixel.
+    High,
+}
+
 /// The resolution of the volumetric fog's froxel volume: Godot's
 /// `volumetric_fog/volume_size` across the geometric mean of the frame's
 /// sides, in square froxels, with its default `volume_depth` of 64 slices.
@@ -461,6 +477,9 @@ pub struct Settings {
     /// Diffuse sky and fill visibility, and the specular occlusion of
     /// environment and probe reflections (not screen-space hits).
     pub ambient_occlusion: AmbientOcclusionQuality,
+    /// Diffuse bounce between nearby on-screen surfaces, off by default and
+    /// in no preset.
+    pub screen_space_indirect: ScreenSpaceIndirect,
     pub screen_space_reflections: ScreenSpaceReflections,
     pub reflection_method: ReflectionMethod,
     /// Traces what screen-space reflections miss through the scene's ray
@@ -555,6 +574,7 @@ impl Default for Settings {
             shadow_quality: ShadowQuality::default(),
             soft_shadows: SoftShadows::default(),
             ambient_occlusion: AmbientOcclusionQuality::default(),
+            screen_space_indirect: ScreenSpaceIndirect::Off,
             screen_space_reflections: ScreenSpaceReflections::default(),
             reflection_method: ReflectionMethod::default(),
             world_space_reflections: WorldSpaceReflections::Off,

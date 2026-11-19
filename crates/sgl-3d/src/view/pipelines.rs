@@ -8,7 +8,10 @@
 //! Extended binding tier alone. The lighting pass while ray-traced
 //! shadows run composes the shadow mask's provider (`shading::SHADOW_MASK`)
 //! and binds the mask at its group 3; every other pass composes the
-//! provider that holds no slot (`shading::SHADOW_MASK_NONE`). Every program
+//! provider that holds no slot (`shading::SHADOW_MASK_NONE`). The fused and
+//! lighting passes while screen-space indirect light has a kept result
+//! compose its provider (`shading::CAMERA_SCREEN_INDIRECT`) and bind it at
+//! their group 3 too; every other pass composes the one that gives none. Every program
 //! composes the lit and material-map providers of the device's binding tier
 //! (`shading::lit_provider`, `shading::material_provider`), and every
 //! pipeline layout takes group 0's and group 2's layouts of that tier, fixed
@@ -122,6 +125,10 @@ pub(crate) struct GeometryPipelines {
     blended: wgpu::PipelineLayout,
     /// `lit`'s, then the shadow mask's group 3.
     shadow_masked: wgpu::PipelineLayout,
+    /// `lit`'s, then screen-space indirect light's group 3, without and
+    /// with the shadow mask's bindings.
+    lit_screen_indirect: wgpu::PipelineLayout,
+    shadow_masked_screen_indirect: wgpu::PipelineLayout,
     /// Group 0 shadow, then scene and material.
     shadow: wgpu::PipelineLayout,
     /// `shadow`'s, then the caster positions group 3, for the GPU-built
@@ -150,6 +157,9 @@ pub(crate) struct GeometryPipelines {
     /// Whether `get` returns the lighting pipelines that take the shadow
     /// mask, prepared once ray-traced shadows run.
     shadow_mask: bool,
+    /// Whether `get` returns the fused and lighting pipelines that take
+    /// screen-space indirect light, prepared once it has a kept result.
+    screen_indirect: bool,
     /// Whether `GBuffer` writes anisotropy itself; otherwise
     /// `GBufferAnisotropy` does.
     pub anisotropy_inline: bool,
@@ -168,11 +178,20 @@ impl GeometryPipelines {
     /// `layers`, over group 0's `lit` layout, on the device's binding tier,
     /// whose providers every program composes, and `shadow` layout, the
     /// scene's, a material's of that tier (`shading::bind::material`), and
-    /// the blended, shadow-mask and caster positions group 3 layouts.
+    /// the blended, shadow-mask, screen-space indirect light (without and
+    /// with the mask's) and caster positions group 3 layouts.
     pub fn new(
         device: &wgpu::Device,
         lit: &LitLayout,
-        [shadow, scene, blended, shadow_mask, positions]: [&wgpu::BindGroupLayout; 5],
+        [
+            shadow,
+            scene,
+            blended,
+            shadow_mask,
+            screen_indirect,
+            shadow_mask_screen_indirect,
+            positions,
+        ]: [&wgpu::BindGroupLayout; 7],
         layers: LayerConstants,
     ) -> Self {
         let tier = lit.tier;
@@ -193,6 +212,14 @@ impl GeometryPipelines {
                 "shadow-masked scene lighting",
                 &[lit, scene, material, shadow_mask],
             ),
+            lit_screen_indirect: layout(
+                "scene lighting with screen-space indirect light",
+                &[lit, scene, material, screen_indirect],
+            ),
+            shadow_masked_screen_indirect: layout(
+                "shadow-masked scene lighting with screen-space indirect light",
+                &[lit, scene, material, shadow_mask_screen_indirect],
+            ),
             shadow: layout("shadow casters", &[shadow, scene, material]),
             pulled_shadow: layout(
                 "GPU-built cascade casters",
@@ -207,8 +234,17 @@ impl GeometryPipelines {
             previous: None,
             shaders: Vec::new(),
             shadow_mask: false,
+            screen_indirect: false,
             anisotropy_inline: attachments_fit(&limits, &targets(GeometryPass::GBuffer, true)),
-            fused_supported: attachments_fit(&limits, &targets(GeometryPass::Fused, true)),
+            fused_supported: attachments_fit(
+                &limits,
+                &targets(
+                    GeometryPass::Fused {
+                        screen_indirect: false,
+                    },
+                    true,
+                ),
+            ),
             unclipped_depth: device
                 .features()
                 .contains(wgpu::Features::DEPTH_CLIP_CONTROL),
@@ -223,7 +259,9 @@ impl GeometryPipelines {
     /// and for the alpha modes its materials use and its deforming models,
     /// and for each shader its materials name, created here on first use,
     /// with the lighting pipelines that take the shadow mask once
-    /// `shadow_mask` (ray-traced shadows run). A shader no material names
+    /// `shadow_mask` (ray-traced shadows run) and the fused and lighting
+    /// pipelines that take screen-space indirect light once
+    /// `screen_indirect` (it has a kept result). A shader no material names
     /// any longer loses its programs and pipelines. The pipelines of the
     /// current and the previous specialisation (layers, lit constants and
     /// transmission) stay, each with the alpha modes, deformed variants,
@@ -234,7 +272,7 @@ impl GeometryPipelines {
         device: &wgpu::Device,
         layers: LayerConstants,
         scene: &Scene,
-        shadow_mask: bool,
+        (shadow_mask, screen_indirect): (bool, bool),
     ) {
         let lit_constants = LitConstants::of(scene);
         let content = Content::of(scene);
@@ -244,19 +282,26 @@ impl GeometryPipelines {
             Vec::new()
         };
         let shadow_mask = self.shadow_mask || shadow_mask;
+        let screen_indirect = self.screen_indirect || screen_indirect;
         if (
             self.layers,
             self.lit_constants,
             self.content,
-            self.shadow_mask,
+            (self.shadow_mask, self.screen_indirect),
             &self.shaders,
-        ) != (layers, lit_constants, content, shadow_mask, &shaders)
-        {
+        ) != (
+            layers,
+            lit_constants,
+            content,
+            (shadow_mask, screen_indirect),
+            &shaders,
+        ) {
             let current = self.specialisation();
             self.layers = layers;
             self.lit_constants = lit_constants;
             self.content = content;
             self.shadow_mask = shadow_mask;
+            self.screen_indirect = screen_indirect;
             if self.specialisation() != current {
                 self.previous = Some(current);
             }
@@ -288,7 +333,10 @@ impl GeometryPipelines {
         let mut passes = vec![
             GeometryPass::Forward,
             GeometryPass::GBuffer,
-            GeometryPass::Lighting { shadow_mask: false },
+            GeometryPass::Lighting {
+                shadow_mask: false,
+                screen_indirect: false,
+            },
             GeometryPass::DirectionalShadow,
             GeometryPass::PairedShadow,
             GeometryPass::CaptureShadow,
@@ -304,10 +352,22 @@ impl GeometryPipelines {
             passes.push(GeometryPass::GBufferAnisotropy);
         }
         if self.fused_supported {
-            passes.push(GeometryPass::Fused);
+            passes.push(GeometryPass::Fused {
+                screen_indirect: false,
+            });
         }
-        if self.shadow_mask {
-            passes.push(GeometryPass::Lighting { shadow_mask: true });
+        for (shadow_mask, screen_indirect) in [(true, false), (false, true), (true, true)] {
+            if (self.shadow_mask || !shadow_mask) && (self.screen_indirect || !screen_indirect) {
+                passes.push(GeometryPass::Lighting {
+                    shadow_mask,
+                    screen_indirect,
+                });
+            }
+        }
+        if self.screen_indirect && self.fused_supported {
+            passes.push(GeometryPass::Fused {
+                screen_indirect: true,
+            });
         }
         let content = self.content;
         let mut alphas = vec![Alpha::Opaque];
@@ -487,10 +547,33 @@ impl GeometryPipelines {
                 &self.blended,
                 "second exit volume layer",
             ),
-            Lighting { shadow_mask: true } => (
-                Program::Geometry(GeometryForm::ShadowMask),
-                &self.shadow_masked,
-                "shadow-masked scene lighting",
+            Lighting {
+                shadow_mask,
+                screen_indirect,
+            } => (
+                Program::Geometry(GeometryForm::Camera {
+                    shadow_mask,
+                    screen_indirect,
+                }),
+                match (shadow_mask, screen_indirect) {
+                    (false, false) => &self.lit,
+                    (true, false) => &self.shadow_masked,
+                    (false, true) => &self.lit_screen_indirect,
+                    (true, true) => &self.shadow_masked_screen_indirect,
+                },
+                "scene lighting",
+            ),
+            Fused { screen_indirect } => (
+                Program::Geometry(GeometryForm::Camera {
+                    shadow_mask: false,
+                    screen_indirect,
+                }),
+                if screen_indirect {
+                    &self.lit_screen_indirect
+                } else {
+                    &self.lit
+                },
+                "fused scene geometry and lighting",
             ),
             _ => (
                 Program::Geometry(GeometryForm::Plain),
@@ -565,7 +648,7 @@ impl GeometryPipelines {
             GBuffer => (SOURCE_VS_ENTRY, Some(STABLE_LEGACY_FS_ENTRY)),
             GBufferAnisotropy => (SOURCE_VS_ENTRY, Some(ANISOTROPY_FS_ENTRY)),
             Lighting { .. } => (SOURCE_VS_ENTRY, Some(SOURCE_FS_ENTRY)),
-            Fused => (SOURCE_VS_ENTRY, Some(FUSED_OPAQUE_FS_ENTRY)),
+            Fused { .. } => (SOURCE_VS_ENTRY, Some(FUSED_OPAQUE_FS_ENTRY)),
             CaptureShadow if !self.unclipped_depth => {
                 (SHADOW_UNCLIPPED_VS_ENTRY, Some(SHADOW_UNCLIPPED_FS_ENTRY))
             }

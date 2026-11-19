@@ -39,6 +39,8 @@ impl Shared {
                 &layouts.scene,
                 &layouts.blended,
                 &layouts.shadow_mask,
+                &layouts.screen_indirect,
+                &layouts.shadow_mask_screen_indirect,
                 &layouts.caster_positions,
             ],
             layers,
@@ -79,8 +81,9 @@ impl Shared {
     /// The frame's scene work before any view renders, steered by the
     /// primary view's `effective` configuration and `input`: the geometry
     /// pipelines specialised for its layers and the scene, with the
-    /// shadow-mask pipelines once a view runs ray-traced shadows
-    /// (`shadow_mask`); the scene's material sampling filtered as it
+    /// shadow-mask pipelines once a view runs ray-traced shadows and the
+    /// screen-space indirect light pipelines once a view runs it
+    /// (`group3`); the scene's material sampling filtered as it
     /// chooses; and prepare's scene part, `traced` when a view of the frame
     /// reads the ray instances (`Prepare::traces`).
     pub fn run_scene(
@@ -89,10 +92,10 @@ impl Shared {
         scene: &mut Scene,
         effective: &Effective,
         input: &FrameInput,
-        (traced, shadow_mask): (bool, bool),
+        (traced, group3): (bool, (bool, bool)),
     ) {
         self.pipelines
-            .specialise(device, effective.layers, scene, shadow_mask);
+            .specialise(device, effective.layers, scene, group3);
         scene.materials.set_anisotropy(device, effective.anisotropy);
         self.prepare
             .run_scene(device, queue, scene, effective, input, traced);

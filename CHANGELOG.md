@@ -31,6 +31,15 @@ docs and specs the entry links.
 - `sgl-3d` `View` now creates volumetric fog and occlusion-culling pipelines
   on first use and keeps them for later frames. No game-code changes are needed.
 
+- `sgl-3d` `Settings::screen_space_indirect` (new, `Off`) and
+  `FrameInput::screen_space_indirect_radius` (new, 5.0 m): opt-in diffuse
+  bounce between nearby on-screen surfaces. Add both fields to exhaustive
+  literals or use `..`. Game shaders may now call `pack2x16float`,
+  `unpack2x16float` and `quantizeToF16`, and `Scene::add_shader` refuses a
+  module that declares `ScreenIndirect`, `ScreenIndirectView`,
+  `ScreenIndirectTaps`, `ScreenIndirectKept`, `camera_screen_indirect`,
+  `raster_screen_indirect` or a `screen_indirect_*` or `SCREEN_INDIRECT_*`
+  name: rename any such declaration; no other game-code change is needed.
 - `sgl-3d` `Light` gains `cookie: Option<LightCookie>` (default `None`): a
   spot projects a decal image (`LightCookie { image, up }`) that multiplies
   its light by the image's colour times alpha on surfaces, ray hits and the

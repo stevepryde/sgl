@@ -16,13 +16,19 @@ pub(crate) enum GeometryPass {
     GBufferAnisotropy,
     /// Lit colour, its ambient light, motion and source identity over the
     /// G-buffer's depth; with `shadow_mask`, the camera's surfaces take the
-    /// lights the ray-traced shadow mask holds from it, bound at group 3
-    /// (`shading::bind::shadow_mask`).
+    /// lights the ray-traced shadow mask holds from it, and with
+    /// `screen_indirect` the screen-space indirect light the last finished
+    /// frame kept, both bound at group 3 (`shading::bind::shadow_mask`,
+    /// `shading::bind::screen_indirect`).
     Lighting {
         shadow_mask: bool,
+        screen_indirect: bool,
     },
-    /// `GBuffer` and `Lighting` in one pass.
-    Fused,
+    /// `GBuffer` and `Lighting` in one pass, with `screen_indirect` as
+    /// `Lighting`'s.
+    Fused {
+        screen_indirect: bool,
+    },
     /// A GPU-built directional cascade's casters, pulled as the camera's
     /// are, their positions from the positions slab their set binds.
     DirectionalShadow,
@@ -157,7 +163,7 @@ pub(crate) fn depth(pass: GeometryPass) -> (bool, wgpu::CompareFunction) {
         | GeometryPass::VolumeEntry
         | GeometryPass::VolumeExit
         | GeometryPass::VolumeSecondExit => (true, Greater),
-        GeometryPass::GBuffer | GeometryPass::Fused => (true, GreaterEqual),
+        GeometryPass::GBuffer | GeometryPass::Fused { .. } => (true, GreaterEqual),
         GeometryPass::GBufferAnisotropy
         | GeometryPass::Lighting { .. }
         | GeometryPass::TemporalComposition { footprint: false } => (false, Equal),
@@ -192,7 +198,7 @@ pub(super) fn targets(pass: GeometryPass, anisotropy_inline: bool) -> Vec<wgpu::
             gbuffer::MOTION,
             gbuffer::SOURCE_ID,
         ],
-        Fused => vec![
+        Fused { .. } => vec![
             gbuffer::NORMAL,
             gbuffer::MATERIAL,
             gbuffer::MOTION,

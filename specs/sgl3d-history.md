@@ -42,8 +42,9 @@ A rule is in one of three states:
 
 Identifiers are stable. Their prefixes: `F` the frame, the renderer and its views, `M` motion
 vectors and the temporal masks' writers, `T` temporal antialiasing, `U` FSR
-upscaling, `R` reflections, `S` shadows, `AO` ambient occlusion, `V`
-volumetric fog, `G` dynamic GI, `E` exposure, `X` other stages.
+upscaling, `R` reflections, `S` shadows, `AO` ambient occlusion, `SI`
+screen-space indirect light, `V` volumetric fog, `G` dynamic GI, `E` exposure, `X` other
+stages.
 
 ## What a game does to keep history
 
@@ -137,16 +138,16 @@ Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`):
 - **Raised by.** Dropping an encoded frame; rendering a frame twice; omitting `finish_frame`.
 - **Stays triggered while.** The game never finishes: camera motion is always zero and nothing accumulates.
 - **Source.** SGL3D's own (S3D-4; the History contract's "What a frame commits"). Code: `view/history.rs` (`Kept`, `StageHistory`), `renderer/view.rs` (`View::settle`).
-- **Guard.** `an_unfinished_frame_restarts_nothing`, `an_unfinished_cut_holds_until_a_frame_is_finished` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`), `kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one` (`view/history.rs`), and the stages' own: `crystal_keeps_its_history_across_an_unfinished_frame`, `velvet_keeps_its_history_across_an_unfinished_frame`, `world_reflections_keep_their_history_across_an_unfinished_frame`, `accumulated_visibility_survives_an_unfinished_frame`, `the_shadow_mask_survives_an_unfinished_frame`.
+- **Guard.** `an_unfinished_frame_restarts_nothing`, `an_unfinished_cut_holds_until_a_frame_is_finished` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`), `kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one` (`view/history.rs`), and the stages' own: `crystal_keeps_its_history_across_an_unfinished_frame`, `velvet_keeps_its_history_across_an_unfinished_frame`, `world_reflections_keep_their_history_across_an_unfinished_frame`, `accumulated_visibility_survives_an_unfinished_frame`, `the_shadow_mask_survives_an_unfinished_frame`, `the_kept_result_survives_an_unfinished_frame`.
 - **Status.** Rule.
 
 #### F-4 A frame in which a stage did not run restarts it
 
-- **Rule.** When the view's last finished frame did not run a stage (the DiligentFX context, FSR, Velvet, world-space rays, ambient occlusion's temporal pass, the ray-traced shadows), the stage's kept state is none and it resets its history over the whole view; a reset in a frame the stage does not run needs nothing more, since after that frame is finished the stage keeps none. Accumulation resumes on the next frame. A frame that is not finished changes nothing kept, but a render in which a stage does not run releases some stages' GPU history at render, as a finished frame without them would, and those restart on the next frame although the render was not finished: the DiligentFX context (TAA and Crystal SSR) when the render ran neither TAA nor Crystal, and Crystal's histories alone when it ran TAA without Crystal (`renderer/frame.rs`, `render_view`); Velvet and world-space rays when their method was off (`Reflections::resolve`). Whether or not they ran, the whole DiligentFX context, Crystal's histories with it, is rebuilt at any render, finished or not, whose TAA flag differs from the context's (F-5): after a finished frame with TAA and Crystal, an unfinished render with antialiasing off or SMAA and Crystal on rebuilds it, the retry with TAA on rebuilds it again, and Crystal restarts although it ran in both. Stages that keep their objects across a render without them continue from their kept run: ambient occlusion's temporal pass and the ray-traced shadows; FSR too, since `Fsr::settle` ends its kept state only after an unfinished render that ran it (U-2). This follows the stages' own rule that a method that does not run keeps no history; moving the release to settle time would add machinery for a frame that is already a hitch.
+- **Rule.** When the view's last finished frame did not run a stage (the DiligentFX context, FSR, Velvet, world-space rays, ambient occlusion's temporal pass, the ray-traced shadows, screen-space indirect light), the stage's kept state is none and it resets its history over the whole view; a reset in a frame the stage does not run needs nothing more, since after that frame is finished the stage keeps none. Accumulation resumes on the next frame. A frame that is not finished changes nothing kept, but a render in which a stage does not run releases some stages' GPU history at render, as a finished frame without them would, and those restart on the next frame although the render was not finished: the DiligentFX context (TAA and Crystal SSR) when the render ran neither TAA nor Crystal, and Crystal's histories alone when it ran TAA without Crystal (`renderer/frame.rs`, `render_view`); Velvet and world-space rays when their method was off (`Reflections::resolve`); screen-space indirect light when its setting is off or the camera cannot run it (`ScreenIndirect::begin`), and with it, where ambient occlusion has not run, the ambient occlusion stage and depth pyramid it made (`Opaque::encode_ambient_occlusion`), which hold no history (SI-1). Whether or not they ran, the whole DiligentFX context, Crystal's histories with it, is rebuilt at any render, finished or not, whose TAA flag differs from the context's (F-5): after a finished frame with TAA and Crystal, an unfinished render with antialiasing off or SMAA and Crystal on rebuilds it, the retry with TAA on rebuilds it again, and Crystal restarts although it ran in both. Stages that keep their objects across a render without them continue from their kept run: ambient occlusion's temporal pass and the ray-traced shadows; FSR too, since `Fsr::settle` ends its kept state only after an unfinished render that ran it (U-2). This follows the stages' own rule that a method that does not run keeps no history; moving the release to settle time would add machinery for a frame that is already a hitch.
 - **Raised by.** A frame, finished or not, with a projection other than `perspective`'s infinite reversed-Z (TAA, Crystal SSR and FSR then do not run), diagnostics layers that disable TAA or FSR, a setting that switches the stage off for a frame.
 - **Stays triggered while.** Nothing: it lasts one frame after each gap.
 - **Source.** DiligentFX (DFX-12), applied to the last finished frame; the FSR side is SGL3D's adaptation of AMD's reset guidance. Code: `view/history.rs` (`Kept::settle`, `StageHistory::begin`), `view/post_fx.rs` (`PostFx::prepare`), `stages/antialiasing/fsr.rs` (`Fsr::prepare`).
-- **Guard.** `kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one` (`view/history.rs`) guards the kept run; none guards which stages release their targets in an unfinished render.
+- **Guard.** `kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one` (`view/history.rs`) guards the kept run; `turning_the_bounce_off_releases_what_it_made` (`stages/opaque/screen_indirect/tests.rs`) that screen-space indirect light releases what it made in a render without it; none guards which stages release their targets in an unfinished render.
 - **Status.** Rule.
 
 ### Antialiasing context and jitter
@@ -3271,6 +3272,91 @@ scenery, and grazing distant ground loses taps to the 1% depth test (AO-5).
   (`Temporal::encode`, `Temporal::settle`).
 - **Guard.** `accumulated_visibility_survives_an_unfinished_frame`
   (`src/stages/opaque/ambient_occlusion/integration_tests.rs`).
+- **Status.** Rule.
+
+## Screen-space indirect light
+
+The pass keeps, at half the render size, the accumulated light and coverage, a frame count of at
+most 16, and each receiver's depth and normal. It reprojects with the G-buffer's motion; the next
+frame's lighting reprojects again, per fragment.
+
+#### SI-1 Stage restart
+
+- **Rule.** When the render size changed, the frame's history is not valid, the last finished
+  frame of the view's scene did not run the pass, or its level, its radius or the radius its
+  depth pyramid is filtered for (ambient occlusion's where that runs, its own otherwise) differs
+  from that frame's, nothing is kept: the frame's lighting takes no light and no coverage, and
+  accumulation starts at count 1.
+- **Raised by.** Camera cuts, resizes, scene switches, the setting turned on, a level or radius
+  change, ambient occlusion turned on or off or its radius changed.
+- **Stays triggered while.** Nothing: it needs an event.
+- **Source.** SGL3D's own, as AO-1. Code: `src/stages/opaque/screen_indirect.rs`
+  (`ScreenIndirect::begin`).
+- **Guard.** `the_bounce_is_one_frame_late_and_restarts_on_a_cut_and_a_resize`
+  (`tests/sgl-3d/tests/scenario_screen_space_indirect.rs`).
+- **Status.** Rule.
+
+#### SI-2 The bounce is one frame late
+
+- **Rule.** A frame's lighting takes the result its last finished frame kept, never its own.
+- **Raised by.** Every frame.
+- **Stays triggered while.** Always.
+- **Source.** SGL3D's own (D-65). Code: `src/shading/screen_indirect.wgsl`
+  (`screen_indirect_read`).
+- **Guard.** As SI-1.
+- **Status.** Rule.
+
+#### SI-3 Similarity test
+
+- **Rule.** A kept texel is a tap only where its count is above 0, its normal does not oppose the
+  receiver's, and its point lies within 0.003 of the receiver's view depth from the receiver's
+  tangent plane at its previous position. It applies to the pass's own reprojection and to each
+  fragment's read.
+- **Raised by.** Disocclusion; edges between surfaces at half size.
+- **Stays triggered while.** Nothing in a still picture.
+- **Source.** Bevy `bevy_solari` `pixel_dissimilar`, faithful, evaluated in the previous view's
+  space. Code: `src/shading/screen_indirect.wgsl` (`screen_indirect_similar`).
+- **Guard.** `a_fragment_reads_the_light_kept_at_its_previous_position_and_none_across_an_edge`
+  (`src/stages/opaque/screen_indirect/tests.rs`), `a_revealed_surface_takes_none_of_what_hid_it`
+  (`tests/sgl-3d/tests/scenario_screen_space_indirect.rs`).
+- **Status.** Rule.
+
+#### SI-4 No valid tap
+
+- **Rule.** Where the previous position is behind the previous camera or off screen, or the
+  passing taps' weights sum to 0.01 or less, the pass takes no history and a fragment takes no
+  light and no coverage.
+- **Raised by.** Disocclusion, the frame's edges under camera motion.
+- **Stays triggered while.** The camera moves: a band at the leading edge has no bounce for one
+  frame.
+- **Source.** DiligentFX (`TotalWeight > 0.01`), as AO-6. Code: `src/shading/screen_indirect.wgsl`
+  (`screen_indirect_taps`, `screen_indirect_read`), `src/stages/opaque/screen_indirect.wgsl`
+  (`accumulate`).
+- **Guard.** As SI-3, for a fragment's read; none guards the pass's own off-screen test.
+- **Status.** Rule.
+
+#### SI-5 Count capped at 16
+
+- **Rule.** The count is capped at 16, so at least 1/16 of the current gather enters every frame;
+  there is no variance gate. A change in what lights a surface is followed at that rate: 2% of a
+  removed source's bounce remains after 64 frames.
+- **Raised by.** Lighting changes, moving emitters.
+- **Stays triggered while.** Always once converged.
+- **Source.** DiligentFX (`SSAO_MAX_HISTORY_LENGTH` 16), as AO-7. Code:
+  `src/stages/opaque/screen_indirect.wgsl` (`accumulate`).
+- **Guard.** `the_bounce_fades_after_its_source_leaves`
+  (`tests/sgl-3d/tests/scenario_screen_space_indirect.rs`).
+- **Status.** Rule.
+
+#### SI-6 A frame not finished leaves the kept result as its last finished frame left it
+
+- **Rule.** As AO-10: a frame rendered again reads and writes the same halves of the pair.
+- **Raised by.** A game that renders a frame and abandons or re-renders it.
+- **Stays triggered while.** Nothing.
+- **Source.** SGL3D's own. Code: `src/stages/opaque/screen_indirect.rs` (`ScreenIndirect::begin`,
+  `ScreenIndirect::settle`).
+- **Guard.** `the_kept_result_survives_an_unfinished_frame`
+  (`src/stages/opaque/screen_indirect/tests.rs`).
 - **Status.** Rule.
 
 ## Volumetric fog

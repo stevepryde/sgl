@@ -95,11 +95,15 @@ const VOLUME_PATH: &str = "scene_volume_path";
 
 /// The validator wgpu creates modules with (`ValidationFlags::all()`), with
 /// the capabilities SGL3D's programs need and nothing more, so a game's
-/// module reaches no feature a device may lack.
+/// module reaches no feature a device may lack: cube array textures, and
+/// WGSL's core `pack2x16float` and `unpack2x16float`, which screen-space
+/// indirect light's kept result packs with and which wgpu grants every
+/// WebGPU-compliant adapter (`DownlevelFlags::SHADER_F16_IN_F32`).
 pub(crate) fn validator() -> naga::valid::Validator {
     naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
-        naga::valid::Capabilities::CUBE_ARRAY_TEXTURES,
+        naga::valid::Capabilities::CUBE_ARRAY_TEXTURES
+            | naga::valid::Capabilities::SHADER_FLOAT16_IN_FLOAT32,
     )
 }
 
@@ -228,7 +232,36 @@ pub(crate) fn programs(
         ),
         (
             "geometry with the shadow mask",
-            geometry_program(GeometryForm::ShadowMask, tier, shader),
+            geometry_program(
+                GeometryForm::Camera {
+                    shadow_mask: true,
+                    screen_indirect: false,
+                },
+                tier,
+                shader,
+            ),
+        ),
+        (
+            "geometry with screen-space indirect light",
+            geometry_program(
+                GeometryForm::Camera {
+                    shadow_mask: false,
+                    screen_indirect: true,
+                },
+                tier,
+                shader,
+            ),
+        ),
+        (
+            "geometry with the shadow mask and screen-space indirect light",
+            geometry_program(
+                GeometryForm::Camera {
+                    shadow_mask: true,
+                    screen_indirect: true,
+                },
+                tier,
+                shader,
+            ),
         ),
     ];
     if GeometryForm::Blended.distinct(tier, shader) {

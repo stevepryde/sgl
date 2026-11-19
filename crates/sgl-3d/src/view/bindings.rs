@@ -131,6 +131,12 @@ pub(crate) struct Layouts {
     /// The lighting pass's group 3 while ray-traced shadows run
     /// (`shading::bind::shadow_mask`).
     pub shadow_mask: wgpu::BindGroupLayout,
+    /// The fused and lighting passes' group 3 while screen-space indirect
+    /// light has a kept result (`shading::bind::screen_indirect`), and the
+    /// lighting pass's with the shadow mask too
+    /// (`shading::bind::shadow_mask_screen_indirect`).
+    pub screen_indirect: wgpu::BindGroupLayout,
+    pub shadow_mask_screen_indirect: wgpu::BindGroupLayout,
     /// The GPU-built cascades' casters' group 3
     /// (`shading::bind::caster_positions`).
     pub caster_positions: wgpu::BindGroupLayout,
@@ -146,6 +152,8 @@ impl Layouts {
             scene: shading::bind::scene(device),
             blended: shading::bind::blended(device, lit.tier),
             shadow_mask: shading::bind::shadow_mask(device),
+            screen_indirect: shading::bind::screen_indirect(device),
+            shadow_mask_screen_indirect: shading::bind::shadow_mask_screen_indirect(device),
             caster_positions: shading::bind::caster_positions(device),
             lit,
         }
@@ -165,6 +173,11 @@ pub(crate) struct FrameBindings {
     /// The lighting pass's group 3 while ray-traced shadows run
     /// (`shading::bind::shadow_mask`), which the opaque stage binds.
     pub shadow_mask: wgpu::BindGroupLayout,
+    /// The fused and lighting passes' group 3 while screen-space indirect
+    /// light has a kept result, without and with the shadow mask, which the
+    /// opaque stage binds.
+    pub screen_indirect: wgpu::BindGroupLayout,
+    pub shadow_mask_screen_indirect: wgpu::BindGroupLayout,
     /// The frame's `FrameUniform`, shared by every view of the frame.
     pub frame: wgpu::Buffer,
     /// No specular probes: lit groups bind this while the scene has none
@@ -219,6 +232,8 @@ impl FrameBindings {
             scene: layouts.scene.clone(),
             blended: layouts.blended.clone(),
             shadow_mask: layouts.shadow_mask.clone(),
+            screen_indirect: layouts.screen_indirect.clone(),
+            shadow_mask_screen_indirect: layouts.shadow_mask_screen_indirect.clone(),
             frame,
             empty_probes: UploadedProbes::empty(device),
             shadow_maps,

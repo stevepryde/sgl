@@ -42,6 +42,12 @@
     "prefix": "Bevy Engine, https://github.com/bevyengine/bevy\nRevision 92a29e701a6b0bf8846484c3999c2ba97d90dd06, LICENSE-MIT (Bevy is dual\nlicensed MIT OR Apache-2.0; sgl-post-fx uses it under the MIT terms below).\n\n"
   },
   {
+    "component": "CDRIN SSRT3",
+    "path": "crates/sgl-3d/src/LICENSE-ssrt3.txt",
+    "url": "https://raw.githubusercontent.com/cdrinmatane/SSRT3/b38d82140acf646ee485f9ab16a5fa84906f2231/LICENSE",
+    "prefix": "CDRIN SSRT3, https://github.com/cdrinmatane/SSRT3\nRevision b38d82140acf646ee485f9ab16a5fa84906f2231, LICENSE. SGL3D ports the\nvisibility-bitmask horizon search of HDRP/Shaders/Resources/SSRTCS.compute\n(CSMain's slice loop, HorizonSampling and ComputeOccludedBitfield) at the\ndefaults of HDRP/Scripts/SSRT_HDRP.cs to\nstages/opaque/screen_indirect.wgsl. Nothing from the Unity HDRP headers it\nincludes, nor its denoiser or fallback, is ported.\n\n"
+  },
+  {
     "component": "Filament",
     "path": "crates/sgl-3d/src/LICENSE-filament.txt",
     "url": "https://raw.githubusercontent.com/google/filament/ef1a133d6777299ad971a0f9612adf4aad281f46/LICENSE",

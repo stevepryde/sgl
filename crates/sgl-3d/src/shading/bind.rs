@@ -133,6 +133,15 @@ pub(crate) mod shadow_mask {
     pub(crate) const SLOTS: u32 = 9;
 }
 
+/// The opaque stage's fused and lighting passes' group 3 while screen-space
+/// indirect light has a kept result, as bind_screen_indirect.wgsl declares
+/// it: numbers clear of the blended group 3's and the shadow mask's, which
+/// the same program declares.
+pub(crate) mod screen_indirect {
+    pub(crate) const KEPT: u32 = 10;
+    pub(crate) const VIEW: u32 = 11;
+}
+
 /// The screen-space method's cutoff and fade the blended draw composes its
 /// result with, and whether the transmission copy and the volume layers
 /// hold the frame; matches `BlendedTrace` in bind_blended.wgsl.
@@ -533,6 +542,58 @@ pub(crate) fn shadow_mask_entries() -> [wgpu::BindGroupLayoutEntry; 2] {
         },
         wgpu::BindGroupLayoutEntry {
             binding: shadow_mask::SLOTS,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        },
+    ]
+}
+
+/// The fused and lighting passes' group 3 while screen-space indirect
+/// light has a kept result: bind_screen_indirect.wgsl's kept result and its
+/// view.
+pub(crate) fn screen_indirect(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    layout(
+        device,
+        "screen-space indirect light",
+        &screen_indirect_entries(),
+    )
+}
+
+/// The lighting pass's group 3 while ray-traced shadows run and
+/// screen-space indirect light has a kept result: both providers'
+/// bindings.
+pub(crate) fn shadow_mask_screen_indirect(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let entries: Vec<_> = shadow_mask_entries()
+        .into_iter()
+        .chain(screen_indirect_entries())
+        .collect();
+    layout(
+        device,
+        "ray-traced shadow mask and screen-space indirect light",
+        &entries,
+    )
+}
+
+/// Group 3's entries for screen-space indirect light's kept result.
+pub(crate) fn screen_indirect_entries() -> [wgpu::BindGroupLayoutEntry; 2] {
+    [
+        wgpu::BindGroupLayoutEntry {
+            binding: screen_indirect::KEPT,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Uint,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: screen_indirect::VIEW,
             visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,

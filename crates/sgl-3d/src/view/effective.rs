@@ -4,7 +4,8 @@
 use super::pipelines::LayerConstants;
 use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, FogQuality, FsrQuality, FsrVersion,
-    RayTracedShadowQuality, ReflectionMethod, ShadowQuality, SmaaQuality, WorldSpaceReflections,
+    RayTracedShadowQuality, ReflectionMethod, ScreenSpaceIndirect, ShadowQuality, SmaaQuality,
+    WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
 
@@ -73,6 +74,17 @@ pub(crate) struct AmbientOcclusion {
     pub radius: f32,
 }
 
+/// Screen-space indirect light that runs: the level and the frame's reach
+/// in world metres, clamped to the radii the pass takes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ScreenIndirect {
+    pub level: ScreenSpaceIndirect,
+    pub radius: f32,
+    /// The radius the depth pyramid it reads is filtered for: ambient
+    /// occlusion's where that runs, which builds it, else its own.
+    pub pyramid_radius: f32,
+}
+
 /// What the frame draws onto the composite (Frame item 9), each of which
 /// marks the temporal masks while the frame has them: the one condition
 /// each draw and the masks' allocation read.
@@ -121,6 +133,9 @@ pub(crate) struct Effective {
     /// The camera's shadow filter: the quality's, for the antialiasing.
     pub shadow_filter: ShadowFilter,
     pub ambient_occlusion: Option<AmbientOcclusion>,
+    /// Screen-space indirect light, under a centred reversed-Z perspective
+    /// projection.
+    pub screen_indirect: Option<ScreenIndirect>,
     pub screen_space: Option<ScreenSpace>,
     /// What world-space rays reach where they fill the screen-space
     /// method's misses: Off without a method.

@@ -25,7 +25,7 @@ This page is the detailed reference:
 
 - [Frame lifecycle](#retained-scene-and-frame-lifecycle), [data conventions](#dependencies-and-data-conventions), [browser differences](#browser-wasm--webgpu)
 - [Lights and look](#frame-lights-and-look), [procedural sky](#procedural-sky), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
-- [Reflections](#reflections), [TAA, SMAA and FSR](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion)
+- [Reflections](#reflections), [TAA, SMAA and FSR](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion), [screen-space indirect light](#screen-space-indirect-light)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
 - [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [programmable surfaces](#programmable-surfaces), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
@@ -1281,6 +1281,54 @@ last frame's R32Uint visibility texture (0..255), or `None` when AO did not
 run. It shares the dimensions and receiver correspondence of the `Depth` and
 `Normal` targets; it does not perform readback.
 
+## Screen-space indirect light
+
+```rust,ignore
+use sgl_3d::settings::ScreenSpaceIndirect;
+settings.screen_space_indirect = ScreenSpaceIndirect::Low; // Settings: Off, Low or High
+input.screen_space_indirect_radius = 5.; // FrameInput: reach in metres, 1–25
+```
+
+Off by default and in no preset. Diffuse light bouncing between nearby
+surfaces on screen, a lit wall onto the floor beside it, a coloured surface
+onto its neighbour: the scale the dynamic GI volume's probes are too far
+apart to hold. After ambient occlusion the opaque stage searches each
+half-size pixel's horizon (Low 24 samples, High 48) over ambient occlusion's
+depth pyramid, the G-buffer's normals and the frame's lit colour, which
+holds the last frame's bounce, so further bounces converge; denoises; and
+accumulates up to 16 frames. The next frame's opaque surfaces take that
+light as baked light, beneath their material's occlusion and outside the
+ambient light ambient occlusion occludes, and the share of their indirect
+diffuse light it covers (the environment's, the fill's, a bake's and the GI
+volumes') gives way to it, so no bounce is counted twice
+([Screen-space indirect light](../../specs/sgl3d-architecture.md#designs-that-span-stages),
+[D-65](../../specs/decisions.md)).
+
+Its limits are part of what it is:
+
+- It is screen-space. Light whose source is off screen, hidden or facing
+  away from the receiver is absent, and appears and fades as the source
+  enters and leaves the frame.
+- The bounce is one frame late and follows a lighting change over about
+  16 frames.
+- It reads lit colour, so an emissive fixture whose light a scene light
+  stands for (`emits_into_gi: false`) still lights what is near it, as
+  Godot's SSIL does.
+
+Blended surfaces, probe captures and ray hits take none. It needs a centred
+reversed-Z perspective camera, as ambient occlusion does; any other camera
+leaves it off. A camera cut, a resize, a level or radius change and a frame
+without it restart it (its history: [SI-1 to SI-6](../../specs/sgl3d-history.md)).
+It holds no targets while off, and while on 16 bytes a render pixel at half
+size, with ambient occlusion's depth pyramid (about 5 bytes a render pixel)
+where ambient occlusion is off. On an Apple M5 at 1920×1080 on Bistro (`bistro-golden`,
+the least-contended of several runs on a shared machine) its passes took
+2.2–2.9 ms at Low and 3.7–5.1 ms at High natively, the depth pyramid
+included, against 2.2–2.7 ms for ambient occlusion at Medium, and the fused
+opaque pass took about 1.1 ms longer to read the kept result; in Chrome the
+passes took 2.7–3.2 and 3.4–4.2 ms. Measure the game's own routes.
+[The port's provenance and departures](src/stages/opaque/screen_indirect/README.md).
+
 ## Baked specular probes
 
 Receivers outside screen-space reflections, and rays SSR misses, take their
@@ -2460,7 +2508,9 @@ stage (each stage's documentation lists its own), are:
   `opaque lighting` where the device lacks the fused pass's colour
   attachments or occlusion culling or ray-traced shadows run; while
   occlusion culling runs, `depth pyramid` (twice), `cull late` and
-  `geometry late` between `geometry` and `sky`; then `ambient occlusion`;
+  `geometry late` between `geometry` and `sky`; then `ambient occlusion`
+  (with the depth pyramid while it runs) and `screen-space indirect` (with
+  the depth pyramid while ambient occlusion is off);
 - ray-traced shadows, after the opaque stage's G-buffer passes and their
   culling and before `sky` while they run: `ray-traced shadow rays`, the
   denoiser's `ray-traced shadow tile classification` and
@@ -3026,7 +3076,10 @@ with `--ray-traced-shadows`.
 `settings::Settings` holds every rendering setting a game chooses in one serde
 value the game stores and passes, per view, to `View::new`, `View::resize`
 and `Renderer::render`;
-`Settings::default()` is High with atmosphere allowed.
+`Settings::default()` is High with atmosphere allowed. Opt-in features no
+preset turns on (hardware ray tracing, ray-traced shadows, occlusion culling,
+screen-space indirect light) stay as the game sets them; screen-space
+indirect light runs on every device, so it has no `*_in_effect` query.
 [Settings](docs/settings.md) lists each field. The game owns its settings
 record, file format, controls, defaults, and saving. `settings::FrameRate`
 describes presentation cadence; the renderer does not run a frame limiter.
@@ -3106,7 +3159,8 @@ WebGL is ever added it will be a minimal fallback.
   resolves to TAA,
   `View::antialiasing_in_effect` reports TAA and `fsr_error()` names the
   missing features. TAA, both screen-space reflection methods, world-space
-  reflections, dynamic GI, ambient occlusion, fog, motion blur, bloom and
+  reflections, dynamic GI, ambient occlusion, screen-space indirect light,
+  fog, motion blur, bloom and
   SMAA run. For reduced-resolution browser rendering, use an explicit
   `SceneResolution` and opt into [spatial upscaling](#portable-spatial-upscaling).
 - **Inputs, not clocks or files.** Fetch asset bytes and load them with

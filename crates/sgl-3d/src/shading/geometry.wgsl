@@ -84,13 +84,25 @@ fn shade_surface(i:Fragment,raster_front:bool)->ShadedFragment {
   material_alpha_discard(alpha);
   shaded=shade_unlit(unlit_surface(m.base_color,raster_emission(i,m.emission)));
  } else {
-  let context=raster_context(i);
+  var context=raster_context(i);
   let s=raster_surface(i,front,raster_material(i,front),context.clusters);
   alpha=s.base.a;
   material_alpha_discard(alpha);
+  context.screen_indirect=raster_screen_indirect(i,s.normal);
   shaded=shade_lit(s,context);
  }
  return ShadedFragment(shaded,alpha,gbuffer_encode_velocity(i.current_clip,i.previous_clip));
+}
+// The frame's screen-space indirect light at a camera fragment whose
+// surface's normal is `normal`, from the program's provider
+// (camera_screen_indirect): the kept result's in the opaque stage's fused
+// and lighting passes while the pass has one, else none. A probe capture,
+// which composes the same programs, takes none.
+fn raster_screen_indirect(i:Fragment,normal:vec3<f32>)->ScreenIndirect {
+ if (view.flags&VIEW_PROBE_CAPTURE)!=0u {
+  return screen_indirect_none();
+ }
+ return camera_screen_indirect(i.previous_clip,normal);
 }
 // Probe captures, which keep their ambient light, occluded by their
 // material's occlusion, in color.
@@ -167,7 +179,7 @@ struct FusedOpaqueOutput {
 }
 @fragment fn fused_opaque_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->FusedOpaqueOutput {
  let front=object_front_face(i,raster_front);
- let context=raster_context(i);
+ var context=raster_context(i);
  let s=raster_surface(i,front,raster_material(i,front),context.clusters);
  material_alpha_discard(s.base.a);
  let stable=stable_surface(i,s);
@@ -175,6 +187,7 @@ struct FusedOpaqueOutput {
  if s.unlit {
   shaded=shade_unlit(s);
  } else {
+  context.screen_indirect=raster_screen_indirect(i,s.normal);
   shaded=shade_lit(s,context);
  }
  return FusedOpaqueOutput(stable.normal,stable.material,stable.motion,stable.f0,camera_color(shaded),camera_ambient(shaded),i.source_id,stable.anisotropy);
@@ -285,7 +298,7 @@ struct BlendedColor {
 }
 fn blended_color(i:Fragment,raster_front:bool)->BlendedColor {
  let front=object_front_face(i,raster_front);
- let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i),raster_position_dx(i),raster_position_dy(i));
+ let context=ShadeContext(i.clip.xy,SHADOW_RECEIVER_CAMERA,true,true,cluster_range(i.world,i.clip.xy),blended_traced_reflection(i),raster_position_dx(i),raster_position_dy(i),screen_indirect_none());
  let m=raster_material(i,front);
  var s=raster_surface(i,front,m,context.clusters);
  let coverage=select(1.,s.base.a,(material.flags&MATERIAL_ALPHA_BLEND)!=0u);

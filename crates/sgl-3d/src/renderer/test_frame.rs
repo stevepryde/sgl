@@ -237,7 +237,10 @@ impl TestRenderer {
             device,
             effective.layers,
             scene,
-            effective.ray_traced_shadows,
+            (
+                effective.ray_traced_shadows,
+                effective.screen_indirect.is_some(),
+            ),
         );
         let history = view.begin_history(scene, &input);
         let traced = crate::stages::prepare::Prepare::traces(scene, &effective);

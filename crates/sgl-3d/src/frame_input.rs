@@ -166,6 +166,10 @@ pub struct FrameInput {
     /// (NaN to 0.01). `Settings::ambient_occlusion` turns ambient occlusion
     /// off.
     pub ambient_occlusion_radius: f32,
+    /// How far screen-space indirect light reaches, in world metres,
+    /// clamped to 1..=25 (NaN to 5). `Settings::screen_space_indirect`
+    /// turns it on.
+    pub screen_space_indirect_radius: f32,
 }
 
 impl FrameInput {
@@ -173,8 +177,9 @@ impl FrameInput {
     /// or environment; the environment's diffuse lighting, reflections and
     /// backdrop unturned at intensity 1; baked lighting on and atmosphere
     /// off; a 60 Hz frame time; a fixed exposure of 0 stops and no local
-    /// exposure; and the default bloom, motion blur, colour grading and
-    /// ambient occlusion radius.
+    /// exposure; and the default bloom, motion blur and colour grading, an
+    /// ambient occlusion radius of 0.5 m and a screen-space indirect light
+    /// radius of 5 m.
     pub fn new(camera: Camera) -> Self {
         Self {
             camera,
@@ -201,6 +206,7 @@ impl FrameInput {
             motion_blur: MotionBlurParameters::default(),
             color_grading: ColorGrading::default(),
             ambient_occlusion_radius: 0.5,
+            screen_space_indirect_radius: 5.,
         }
     }
 }
