@@ -21,7 +21,7 @@ const bistroAssets = resolve(values['bistro-assets']);
 const sponzaAssets = resolve(values['sponza-assets']);
 const bistro = {
   assets: bistroAssets,
-  fixture: resolve(root, 'examples/sgl-3d/fixtures/bistro-quality.json'),
+  fixture: resolve(root, 'examples/sgl-3d/fixtures/bistro-daylight.json'),
 };
 const comparisonSize = '1920x1080';
 const inputs = new Map([
@@ -34,6 +34,26 @@ const inputs = new Map([
     overviewSize: comparisonSize,
   }],
 ]);
+// Showcase renders are single stills, so quality is at its highest: frame
+// rate does not matter. Applied over each scene fixture's own settings for
+// every capture, the baseline and each feature-off comparison alike, so a
+// comparison still differs by its one setting. Each entry was kept from a
+// matched browser capture (#845); what was tried and left out is beside it.
+const showcaseQuality: Record<string, unknown> = {
+  ambient_occlusion: 'Ultra', // finer occlusion under chairs and planters
+  dynamic_gi: 'High',
+  shadow_quality: 'High',
+  soft_shadows: 'On',
+  anisotropic_filtering: 'X16',
+  sharpening: 'On',
+  contact_shadows: 'Long', // grounds hedge bases, lamp posts and the kickstand; Medium reaches less
+  screen_space_reflections: 'Full',
+  reflection_method: 'Crystal', // Velvet looked the same in matched captures
+  world_space_reflections: 'All', // static surfaces reflect as they stand; Moving is a subset
+  fog_quality: 'High',
+  // Left out: screen_space_indirect High darkened Bistro and darkened and
+  // desaturated Sponza. FSR and hardware ray tracing do not run in the browser.
+};
 const featureSettings = new Map([
   ['ao', 'ambient_occlusion'],
   ['gi', 'dynamic_gi'],
@@ -82,7 +102,7 @@ try {
   for (const scene of catalog.scenes) {
     const input = inputs.get(scene.id);
     if (!input) throw new Error(`Missing showcase capture input for ${scene.id}`);
-    const { settings } = await Bun.file(input.fixture).json();
+    const settings = { ...(await Bun.file(input.fixture).json()).settings, ...showcaseQuality };
     const baseline = scene.features[0];
     await capture(input, settings, comparisonSize, { image: baseline.on, report: baseline.onReport });
     if (scene.hero !== baseline.on) {

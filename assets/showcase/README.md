@@ -3,10 +3,12 @@
 The [showcase website](https://sgl.inspiredjourneys.dev) hosts these images and
 matched feature comparisons on Cloudflare. Render binaries are not tracked in
 Git. See [showcase authoring and deployment](../../showcase/README.md) to add
-scenes or capture pairs. The notes below describe the original overview images.
+scenes or capture pairs. The notes below describe the original overview images,
+which stay published at their URLs, and the current Bistro capture.
 
-These are unretouched PNG captures from SGL3D's real WebGPU renderer on
-8 November 2026. The original capture pixels and resolution are preserved;
+These are unretouched PNG captures from SGL3D's real WebGPU renderer: the
+original overview images on 8 November 2026, the current captures by the
+showcase harness. The original capture pixels and resolution are preserved;
 there is no AI image generation, compositing, or post-capture colour adjustment.
 The images demonstrate authored scenes and settings, not library defaults or
 a claim of performance on every device. No meshes, textures, HDR environments,
@@ -26,6 +28,18 @@ cast shadows in this capture. It was captured at frame 839 after 720 warm-up
 frames. This capture does not use hardware ray tracing, SSR, or world-space
 reflections. See the [Bistro example guide](../../examples/sgl-3d/BISTRO.md)
 to run the scene.
+
+The showcase's current Bistro terrace and motorcycle captures (19 November
+2026) use the [Bistro Daylight recipe](../../examples/sgl-3d/fixtures/bistro-daylight.json)
+instead: the sun 78 degrees above the horizon so the street, terrace and
+scooter are in direct sun, haze only beyond 40 m, translucent foliage,
+half-resolution Crystal SSR in the recipe and four locally captured
+reflection probes. Over the recipe's settings the capture harness applies its
+showcase quality overlay (Ultra AO, High GI, High soft shadows, 16×
+anisotropic filtering, sharpening, Long contact shadows, full-resolution SSR
+and world-space reflections of the whole scene), because each is a single
+still. Each report under `/renders/current/` records the requested and
+effective settings.
 
 Scene: **Amazon Lumberyard Bistro**, Amazon, distributed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).

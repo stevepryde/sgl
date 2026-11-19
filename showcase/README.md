@@ -40,8 +40,15 @@ output.
 Use the [browser setup](../CONTRIBUTING.md#setup) on a WebGPU-capable machine and
 install `cwebp`. Prepare the [Bistro quality package](../examples/sgl-3d/BISTRO.md)
 at `target/bistro-quality` and the [Sponza gallery package](../examples/sgl-3d/SPONZA.md)
-at `.cache/sponza/prepared`. The Sponza package must include `sponza-gallery.json`
-and its local reflection probe. Run from the repository root.
+at `.cache/sponza/prepared`. The Bistro scenes use the
+[Bistro Daylight recipe](../examples/sgl-3d/BISTRO.md#bistro-daylight), whose four
+local reflection probes are generated content: capture them into the Bistro
+package first with the probe command in its
+[reflections section](../examples/sgl-3d/BISTRO.md#bistro-daylight-reflections),
+and again whenever the recipe changes. The Sponza package must include
+`sponza-gallery.json` and its local reflection probe; regenerate both with
+`bun scripts/prepare-sponza-gallery.ts` if the fixture still carries the old
+`specular_probe` key. Run from the repository root.
 
 ```sh
 bun scripts/showcase-capture.ts
@@ -49,12 +56,21 @@ bun scripts/showcase-capture.ts
 
 Use `--bistro-assets DIR` and `--sponza-assets DIR` when the prepared packages
 are elsewhere. The harness builds the release WebGPU example once, then uses
-the authored Bistro terrace, motorcycle, and Sponza gallery views. It renders
-each 1920 × 1080 baseline and AO/GI/bloom/TAA-off comparison with 720 warm-up
-frames and 60 measured frames. The Bistro terrace also gets a 3840 × 2160
-overview. The harness writes the PNGs, WebP thumbnails, and JSON reports to
-the assembled site under `target/showcase/site/renders/current/`. Failed runs
-keep their output and logs under `target/showcase/capture-*/`.
+the Bistro terrace (`bevy`) and motorcycle (`bike`) views of
+`bistro-daylight.json` and the Sponza gallery view. Over each fixture's own
+settings it applies one showcase quality overlay, set at the top of the
+harness: showcase renders are single stills, so every quality level is at
+its highest and every feature that improved matched browser captures is on
+(Ultra AO, High GI, High soft shadows, 16× anisotropic filtering, sharpening,
+Long contact shadows, full-resolution Crystal SSR and world-space reflections
+of the whole scene). Features that degraded a still, or that the browser
+cannot run, are listed there as left out. The overlay applies to the baseline
+and to each comparison, so a comparison still differs by its one setting. It
+renders each 1920 × 1080 baseline and AO/GI/bloom/TAA-off comparison with 720
+warm-up frames and 60 measured frames. The Bistro terrace also gets a
+3840 × 2160 overview. The harness writes the PNGs, WebP thumbnails, and JSON
+reports to the assembled site under `target/showcase/site/renders/current/`.
+Failed runs keep their output and logs under `target/showcase/capture-*/`.
 
 ## Add a scene or comparison
 
