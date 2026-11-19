@@ -16,6 +16,11 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-3d` `FrameEnvironment::Sky` now gives diffuse and specular environment light, scaled by `diffuse_environment.intensity` and `reflection_environment.intensity`, and lights the dynamic GI volume, the fog's ambient share and probe captures. Lower `hemisphere_light` where it stood in for sky light. No code changes are needed.
+- `sgl-3d` adds `FrameInput::local_exposure` (`LocalExposure`, both
+  contrasts 1 by default, which changes nothing); below 1 it draws large
+  bright or dark regions toward middle grey before the tone map and keeps
+  local detail. Timing group `local exposure` is new. No game-code changes
+  are needed.
 - `sgl-3d` `View::geometry_stats_by_model` polls once and borrows one
   completed frame's per-model counts for multiple lookups. Existing
   `geometry_stats_for_model` calls need no changes.

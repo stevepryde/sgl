@@ -1,5 +1,5 @@
-//! The frame's authored image: exposure, bloom, motion blur and colour
-//! grading. Values and defaults are Bevy 9d12036's (`bevy_post_process`
+//! The frame's authored image: exposure, local exposure, bloom, motion blur
+//! and colour grading. Values and defaults are Bevy 9d12036's (`bevy_post_process`
 //! `AutoExposure`, `AutoExposureCompensationCurve`, `Bloom` and `MotionBlur`,
 //! `bevy_render` `ColorGrading`).
 
@@ -149,6 +149,45 @@ impl Default for BloomParameters {
     /// Bevy's `Bloom::NATURAL`.
     fn default() -> Self {
         Self { intensity: 0.15 }
+    }
+}
+
+/// Local exposure: large bright and dark regions drawn toward middle grey
+/// (0.18 after the frame's exposure) before the tone map, local detail
+/// kept. Each pixel's base, a blend of a bilateral grid and a wide Gaussian
+/// of the frame's log2 luminance, has its contrast about middle grey scaled
+/// by the side's contrast; the pixel's detail over that base is unchanged.
+/// At 1, 1, the default, nothing runs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LocalExposure {
+    /// 0..=1: the contrast regions brighter than middle grey keep. 1 leaves
+    /// them. Clamped; non-finite is 1.
+    pub highlight_contrast: f32,
+    /// 0..=1: the contrast regions darker than middle grey keep. 1 leaves
+    /// them. Clamped; non-finite is 1.
+    pub shadow_contrast: f32,
+}
+
+impl Default for LocalExposure {
+    /// No local exposure.
+    fn default() -> Self {
+        Self {
+            highlight_contrast: 1.,
+            shadow_contrast: 1.,
+        }
+    }
+}
+
+impl LocalExposure {
+    /// The highlight and shadow contrasts in 0..=1, non-finite as 1, or
+    /// `None` at 1, 1, where nothing runs.
+    pub(crate) fn contrasts(self) -> Option<[f32; 2]> {
+        let contrast = |c: f32| if c.is_finite() { c.clamp(0., 1.) } else { 1. };
+        let contrasts = [
+            contrast(self.highlight_contrast),
+            contrast(self.shadow_contrast),
+        ];
+        (contrasts != [1., 1.]).then_some(contrasts)
     }
 }
 

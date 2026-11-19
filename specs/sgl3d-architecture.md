@@ -590,7 +590,21 @@ Stages run in one order, written in one place in `renderer`:
    `view::motion_tiles`), which TAA's motion reach runs too, on its own
    targets at the render size before antialiasing (item 11).
 13. **Post**: bloom, then the selected tone mapping with exposure and colour
-   grading, dithered to the output. The post stage owns output encoding:
+   grading, dithered to the output. Between bloom and the tone map, while
+   `FrameInput::local_exposure` asks for it, post computes the frame's local
+   exposure from the image the tone map is about to read, at the frame's
+   exposure: a base layer of its log2 luminance in stops about middle grey
+   (0.18), 40% from a bilateral grid (64 cells along the frame's longer side
+   and square cells along the shorter, 13 slices over ±8 stops, filled from
+   every texel and blurred by five taps an axis) and 60% from a wide
+   Gaussian of the cells' mean (radius 13 cells, upsampled four times by a
+   cubic B-spline). The tone map multiplies each pixel, after the exposure
+   and before grading, by 2^((c − 1) × B), B the base at the pixel and c the
+   authored highlight contrast where B is above middle grey and the shadow
+   contrast below: the base's contrast is scaled and the detail, the
+   pixel's luminance over its base, is kept whole. It keeps no history, and
+   at contrasts of 1 it runs no pass, holds no target and takes no sample.
+   The post stage owns output encoding:
    floating-point composition textures stay linear on every platform; actual
    surfaces use their configured transfer and capability-dependent Auto
    resolution (browser Auto is sRGB; native Auto RGBA16F is linear when

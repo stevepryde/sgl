@@ -582,6 +582,9 @@ mod native {
                 shadow.cascades = cascades;
             }
             frame.environment = sgl_3d::FrameEnvironment::Map(environment);
+            if let Some(fixture) = &fixture {
+                frame.local_exposure = bistro_scene::local_exposure_from_json(fixture)?;
+            }
             let mut timing = GpuTiming::new(&device, &queue);
             let mut times: BTreeMap<&'static str, Vec<f64>> = BTreeMap::new();
             let mut local_shadows = bistro_scene::LocalShadowMeasurements::default();

@@ -40,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 36] = [
+    let roots: [&'static super::Module; 37] = [
         &crate::shading::PACKED_VERTEX,
         &crate::stages::opaque::backdrop::BACKDROP,
         &crate::stages::sky::TRANSMITTANCE,
@@ -62,6 +62,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::probe_prefilter::PREFILTER,
         &crate::stages::post::bloom::BLOOM,
         &crate::stages::post::tone_map::TONE_MAP,
+        &crate::stages::post::local_exposure::LOCAL_EXPOSURE_PASSES,
         &crate::stages::exposure::EXPOSURE,
         &crate::stages::deform::DEFORM,
         &crate::stages::cull::CULL,
@@ -174,7 +175,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use crate::stages::cull::{self, pyramid};
     use crate::stages::dynamic_gi::pipelines as gi;
     use crate::stages::opaque::{ambient_occlusion as ao, backdrop};
-    use crate::stages::post::{bloom, inputs, smaa, tone_map};
+    use crate::stages::post::{bloom, inputs, local_exposure, smaa, tone_map};
     use crate::stages::reflections::{probe_culling, source, velvet, world};
     use crate::stages::shadows::{local, traced, traced::denoise};
     use crate::stages::sky;
@@ -365,6 +366,15 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
                 tone_map::DECODE_ENTRY,
                 tone_map::DECODE_DIRECT_ENTRY,
                 "fsr1_easu",
+            ],
+        ),
+        (
+            local_exposure::LOCAL_EXPOSURE_PASSES.name,
+            vec![
+                local_exposure::BUILD_ENTRY,
+                local_exposure::BLUR_GRID_ENTRY,
+                local_exposure::GAUSSIAN_ENTRY,
+                local_exposure::UPSAMPLE_ENTRY,
             ],
         ),
         (
@@ -861,6 +871,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(super::fog::mirrors())
     .chain(crate::stages::post::bloom::mirrors())
     .chain(crate::stages::post::tone_map::mirrors())
+    .chain(crate::stages::post::local_exposure::mirrors())
     .chain(super::shadow_mask::mirrors())
     .chain(crate::stages::shadows::traced::mirrors())
     .chain(super::sky::mirrors())
@@ -1471,6 +1482,7 @@ fn rust_constants_match_wgsl_twins() {
     .chain(crate::stages::reflections::world::classify::constants())
     .chain(crate::stages::reflections::velvet::constants())
     .chain(crate::stages::exposure::constants())
+    .chain(crate::stages::post::local_exposure::constants())
     .chain(crate::stages::opaque::ambient_occlusion::constants())
     .chain(crate::stages::fog::constants())
     .chain(super::shadow_mask::constants())

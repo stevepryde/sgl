@@ -205,6 +205,12 @@ recorded separately from serializable settings. It is not a material repair.
 removing direct sunlight, useful for separating direct shadows from AO/GI.
 Each camera can set `ambient_occlusion_radius` in metres (default 0.5),
 independently of quality/sample count; reports retain its actual value.
+A fixture may set `local_exposure: { "highlight_contrast": f,
+"shadow_contrast": f }`, each 0..=1 and 1 where left out
+(`FrameInput::local_exposure`); a fixture without it renders without local
+exposure. Patry's typical in-game values are 0.75 and 1.0; no committed
+fixture sets the key, and `bistro-quality` stays without it as the control.
+Native and browser runs apply it alike.
 
 Native `--fixture FILE` applies the same camera/light/settings/GI and environment
 recipe, positive instance scale and named camera; `--settings`, `--exposure`

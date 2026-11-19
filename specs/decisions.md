@@ -1089,3 +1089,33 @@ Use the [current specs](README.md) for implementation and the
   ms p95), nothing at rest; in Chrome 149's WebGPU on the same machine, the
   whole cycle 2.36 ms median (3.34 ms p95) and a step below Chrome's 0.066
   ms timestamp quantum at the median (0.20 ms p95).
+- **D-63** Decision, 2026-11-19 (#831): local exposure is built from
+  published technique, not a port. No engine RD-2 allows has one: Bevy
+  9d12036, Godot b130438, Filament ef1a133, Wicked Engine 4323a33, DiligentFX
+  f26cfe5 and O3DE hold no local exposure, local tone mapping or bilateral
+  grid (file names at those revisions and code search). It follows Jasmin
+  Patry, "Real-Time Samurai Cinema: Lighting, Atmosphere, and Tonemapping in
+  Ghost of Tsushima" (SIGGRAPH 2021 Advances in Real-Time Rendering, slides
+  130 to 146): a bilateral grid of log luminance filled with linear slice
+  weights, `Io = c × (B − M) + d × (Ii − B) + M`, and a base of 40%
+  bilateral and 60% wide Gaussian (radius 13 on 64 cells, cubic B-spline
+  upsample) against the bilateral filter's ringing on smooth gradients. The
+  talk does not give its grid's blur or luminance range, so the grid is
+  Chen, Paris and Durand's (SIGGRAPH 2007, sections 3.1 and 5.3: sampling
+  rates equal to the kernel widths, a five-tap blur an axis) at Durand and
+  Dorsey's (SIGGRAPH 2002) sizes: 64 cells for a spatial sigma near 2% of
+  the image, slices 4/3 stop apart for a range sigma of 0.4 log10. SGL3D's
+  own choices: the ±8 stop range (auto exposure's), middle grey 0.18 after
+  exposure as the pivot, detail strength fixed at 1 (the talk used more
+  sparingly; Unreal's documentation advises 1), separate highlight and
+  shadow contrasts selected by the base's side of the pivot (the talk and
+  Unreal's documentation both author the two separately; neither states
+  the selection), a Gaussian sigma of a third of the stated radius, and the
+  binomial five-tap kernel. Exposure fusion (Wronski 2022, public-domain
+  demo; NVIDIA dxvk-remix, MIT) was not taken: three synthetic exposures
+  through Laplacian pyramids cost many more passes, and neither source is
+  on RD-2's list. Unreal's source was not read. The build departs from the
+  plan's one invocation a cell: a workgroup of 32 invocations shares each
+  cell and adds their sums in a tree, which took the pass at 1920x1080 on
+  an Apple M5 from 0.69 ms to 0.32-0.38 ms (64 invocations gave 0.44 ms,
+  128 gave 7.5 ms).

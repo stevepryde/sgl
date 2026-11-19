@@ -44,6 +44,7 @@ pub(super) fn look(exposure: &wgpu::TextureView) -> Look<'_> {
         bloom: &BLOOM,
         grading: &GRADING,
         tone_mapping: crate::settings::ToneMapping::default(),
+        local_exposure: crate::LocalExposure::default(),
     }
 }
 
@@ -1144,6 +1145,7 @@ fn infinite_scene_texels_present_finite_as_each_curves_white() {
                             bloom: &bloom,
                             grading: &grading,
                             tone_mapping,
+                            local_exposure: crate::LocalExposure::default(),
                         },
                         &output,
                         None,

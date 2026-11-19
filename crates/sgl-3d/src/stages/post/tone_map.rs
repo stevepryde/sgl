@@ -24,6 +24,7 @@ pub(crate) static TONE_MAP: crate::shading::Module = crate::shading::Module {
         &crate::shading::LUMINANCE,
         &crate::shading::SRGB,
         &super::fsr1::FSR1,
+        &super::local_exposure::LOCAL_EXPOSURE,
     ],
 };
 /// The entry points tone mapping's pipelines are created with, beside
@@ -214,8 +215,15 @@ pub(super) struct ToneMap {
     look_layout: wgpu::BindGroupLayout,
     /// `ColorGradingUniform`.
     grading: wgpu::Buffer,
-    /// The exposure view and grading, made for the first exposure view.
-    look: Option<(wgpu::TextureView, wgpu::BindGroup)>,
+    /// `local_exposure::LocalExposureUniform`.
+    local_exposure: wgpu::Buffer,
+    /// Local exposure's grid and base while it runs, else 1-texel
+    /// placeholders the lookup never samples.
+    local_views: [wgpu::TextureView; 2],
+    local_placeholders: [wgpu::TextureView; 2],
+    /// The look group for the exposure view and local exposure's views it
+    /// binds, made for the first of each.
+    look: Option<([wgpu::TextureView; 3], wgpu::BindGroup)>,
     tone_mapped: Option<wgpu::TextureView>,
     output_size: [u32; 2],
     /// The last frame wrote `tone_mapped`.
@@ -236,9 +244,46 @@ impl ToneMap {
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&TONE_MAP]).into()),
         });
         let look_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("tone map exposure and grading"),
-            entries: &[sampled(0, false), uniform_entry(1)],
+            label: Some("tone map exposure, grading and local exposure"),
+            entries: &[
+                sampled(0, false),
+                uniform_entry(1),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                sampled(4, true),
+                uniform_entry(5),
+            ],
         });
+        let placeholder = |label, depth, dimension| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: depth,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension,
+                    format: HDR,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
+        };
+        let local_placeholders = [
+            placeholder("no local exposure grid", 1, wgpu::TextureDimension::D3),
+            placeholder("no local exposure base", 1, wgpu::TextureDimension::D2),
+        ];
         let sharpening_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sharpening"),
             entries: &[uniform_entry(2)],
@@ -316,6 +361,18 @@ impl ToneMap {
                 },
             ),
             look_layout,
+            local_exposure: crate::counters::buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("local exposure"),
+                    contents: bytemuck::bytes_of(
+                        &super::local_exposure::LocalExposureUniform::new(None),
+                    ),
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                },
+            ),
+            local_views: local_placeholders.clone(),
+            local_placeholders,
             look: None,
             tone_mapped: None,
             output_size,
@@ -326,6 +383,11 @@ impl ToneMap {
 
     pub fn resize(&mut self, _device: &wgpu::Device, output_size: [u32; 2]) {
         self.tone_mapped = None;
+        // Local exposure's targets are released at resize too: drop the
+        // views and the group that hold them until the next frame binds
+        // its own.
+        self.local_views = self.local_placeholders.clone();
+        self.look = None;
         self.output_size = output_size;
         #[cfg(any(test, feature = "diagnostics"))]
         {
@@ -370,15 +432,44 @@ impl ToneMap {
         }
     }
 
-    /// The group binding `exposure` and the grading, made once per view.
+    /// Whether the lookup binds local exposure's views (not placeholders).
+    #[cfg(test)]
+    pub(super) fn binds_local_exposure(&self) -> bool {
+        self.local_views != self.local_placeholders
+    }
+
+    /// Local exposure's lookup for the next tone mapping: its blurred grid
+    /// and base at `contrasts` (highlight, shadow), or off.
+    pub fn set_local_exposure(
+        &mut self,
+        queue: &wgpu::Queue,
+        lookup: Option<(wgpu::TextureView, wgpu::TextureView, [f32; 2])>,
+    ) {
+        let (views, contrasts) = match lookup {
+            Some((grid, base, contrasts)) => ([grid, base], Some(contrasts)),
+            None => (self.local_placeholders.clone(), None),
+        };
+        self.local_views = views;
+        crate::counters::write_buffer(
+            queue,
+            &self.local_exposure,
+            0,
+            bytemuck::bytes_of(&super::local_exposure::LocalExposureUniform::new(contrasts)),
+        );
+    }
+
+    /// The group binding `exposure`, the grading and local exposure's
+    /// views, made once per set of views.
     fn look(&mut self, device: &wgpu::Device, exposure: &wgpu::TextureView) -> wgpu::BindGroup {
-        if let Some((view, group)) = &self.look
-            && view == exposure
+        let [grid, base] = &self.local_views;
+        let views = [exposure.clone(), grid.clone(), base.clone()];
+        if let Some((held, group)) = &self.look
+            && *held == views
         {
             return group.clone();
         }
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("tone map exposure and grading"),
+            label: Some("tone map exposure, grading and local exposure"),
             layout: &self.look_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -389,9 +480,21 @@ impl ToneMap {
                     binding: 1,
                     resource: self.grading.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(grid),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(base),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.local_exposure.as_entire_binding(),
+                },
             ],
         });
-        self.look = Some((exposure.clone(), group.clone()));
+        self.look = Some((views, group.clone()));
         group
     }
 

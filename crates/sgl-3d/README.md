@@ -253,7 +253,7 @@ frame.directional_lights[0] = Some(DirectionalLight {
 ## Exposure, bloom and colour grading
 
 ```rust,ignore
-use sgl_3d::{AgxLook, AutoExposure, BloomParameters, ColorGrading, CompensationCurve, Exposure, ToneMapping};
+use sgl_3d::{AgxLook, AutoExposure, BloomParameters, ColorGrading, CompensationCurve, Exposure, LocalExposure, ToneMapping};
 frame.exposure = Exposure {
     stops: 0., // applied before tone mapping; +1 doubles the light
     automatic: Some(AutoExposure {
@@ -263,6 +263,10 @@ frame.exposure = Exposure {
         correction_max: 2.,  // the most it brightens
         ..Default::default() // Bevy's speeds and an even mask
     }),
+};
+frame.local_exposure = LocalExposure {
+    highlight_contrast: 0.75, // default 1: regions above middle grey keep 75% of their contrast
+    shadow_contrast: 1.,      // default 1: shadows unchanged
 };
 frame.bloom = BloomParameters { intensity: 0.1 };
 settings.tone_mapping = ToneMapping::Agx; // default: KhronosPbrNeutral; also AcesFilmic
@@ -293,6 +297,20 @@ frame.color_grading = ColorGrading {
   another scene or a switch from a fixed exposure sets it to its target.
   An abandoned encoder retains that switch for the next submitted frame.
   Timing group `exposure`.
+- Local exposure (`FrameInput::local_exposure`) draws large bright and dark
+  regions toward middle grey (0.18 after the frame's exposure) before the
+  tone map and keeps their detail, after Patry's Ghost of Tsushima
+  tonemapping ([D-63](../../specs/decisions.md)). From the image the tone
+  map reads, at the frame's exposure, it builds a base of log2 luminance:
+  40% a bilateral grid (64 cells along the longer side, 13 slices over ±8
+  stops) and 60% a wide Gaussian of the cells' means. The tone map scales
+  the base's distance from middle grey by `highlight_contrast` above it and
+  `shadow_contrast` below; each pixel keeps its luminance over the base.
+  Cost: one compute pass reading every scene texel once and six small
+  passes over the grid (timing group `local exposure`), under 1 MB of
+  targets, and two filtered samples a pixel in the tone map (`tone map`).
+  At 1 and 1, the default, nothing runs and no target exists. It keeps no
+  history.
 - Bloom is Bevy's energy-conserving bloom: a mip chain 512 texels high (a
   scene too wide for that, such as a window one pixel tall, takes the
   device's widest texture instead), 13-tap downsamples (the first with a

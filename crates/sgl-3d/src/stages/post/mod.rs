@@ -1,5 +1,6 @@
-//! Post: bloom, then tone mapping with the frame's exposure and colour
-//! grading, dithered to the output; where SMAA runs (or stands in for TAA
+//! Post: bloom, then local exposure's base where the frame asks for it
+//! (`local_exposure`), then tone mapping with the frame's exposure, local
+//! exposure and colour grading, dithered to the output; where SMAA runs (or stands in for TAA
 //! that did not run), tone mapping at the scene size, SMAA, then the
 //! antialiased scene resampled and dithered to the output. Opt-in spatial
 //! upscaling reconstructs a smaller scene with AMD FSR1 EASU. Where
@@ -13,7 +14,8 @@
 //! blur ran (`stages::motion_blur`), within `shading::SCENE_COLOR`'s bound
 //! (`inputs`), which antialiasing completed it (`Completed`), and the
 //! frame's exposure (`stages::exposure`).
-//! Writes: its own bloom chain, combined HDR, SMAA, tone-mapped scene,
+//! Writes: its own bloom chain, local exposure's grid and base while it
+//! runs, combined HDR, SMAA, tone-mapped scene,
 //! antialiased and tone-mapped targets, the optional spatial reconstruction
 //! target, the sharpening input, and the output. The diagnostic output-size
 //! tone-mapped target exists only while capture is enabled, and holds the
@@ -24,18 +26,20 @@
 //! without SMAA's or EASU's output at the output size to read, and released
 //! the first that does not.
 //! Honours: bloom (and the frame's authored bloom parameters, and the
-//! effective sizing's bloom targets), the frame's colour grading, the
+//! effective sizing's bloom targets), the frame's local exposure and colour
+//! grading, the
 //! antialiasing in effect and SMAA's quality, spatial upscaling, the
 //! sharpness, the bloom and SMAA diagnostics layers and the diagnostics
 //! tone-map capture.
-//! Timing groups: `bloom`, `SMAA`, `tone map`, `spatial upscale`,
-//! `sharpening`. While SMAA runs, `tone map` also times the resample after
+//! Timing groups: `bloom`, `local exposure`, `SMAA`, `tone map`, `spatial
+//! upscale`, `sharpening`. `tone map` includes local exposure's lookup. While SMAA runs, `tone map` also times the resample after
 //! it, so its passes are not consecutive; the group sums them. `spatial
 //! upscale` times EASU; `sharpening` times the final pass where it runs
 //! RCAS, and `tone map` the final pass otherwise.
 pub(crate) mod bloom;
 pub(crate) mod fsr1;
 pub(crate) mod inputs;
+pub(crate) mod local_exposure;
 mod output;
 pub(crate) mod smaa;
 pub(crate) mod tone_map;
@@ -70,6 +74,7 @@ struct Look<'a> {
     bloom: &'a crate::BloomParameters,
     grading: &'a crate::ColorGrading,
     tone_mapping: crate::settings::ToneMapping,
+    local_exposure: crate::LocalExposure,
 }
 
 /// Tone mapping's scene-size output for SMAA or spatial upscaling, and
@@ -96,6 +101,9 @@ pub(crate) struct Post {
     scene_size: [u32; 2],
     output_size: [u32; 2],
     fsr1: fsr1::Fsr1,
+    /// Boxed, off the stack `View::new` builds the post stage on, which a
+    /// debug WASM build nearly fills (#839).
+    local_exposure: Box<local_exposure::LocalExposure>,
     /// SMAA's targets, from the first frame SMAA runs at `scene_size`.
     smaa_targets: Option<SmaaTargets>,
     /// The display-referred image RCAS reads at the output size, where
@@ -130,6 +138,7 @@ impl Post {
             scene_size: sizes.scene,
             output_size: sizes.output,
             fsr1: fsr1::Fsr1::new(device, &inputs),
+            local_exposure: Box::new(local_exposure::LocalExposure::new(device)),
             smaa_targets: None,
             sharpening_input: None,
             tone_map: tone_map::ToneMap::new(device, &inputs, output, sizes.output),
@@ -144,6 +153,7 @@ impl Post {
         self.scene_size = sizes.scene;
         self.output_size = sizes.output;
         self.fsr1.release();
+        self.local_exposure.release();
         self.smaa_targets = None;
         self.sharpening_input = None;
         self.smaa.forget_inputs();
@@ -192,6 +202,7 @@ impl Post {
             bloom: &ctx.input.bloom,
             grading: &ctx.input.color_grading,
             tone_mapping: ctx.effective.tone_mapping,
+            local_exposure: ctx.input.local_exposure,
         };
         self.present(
             ctx.device,
@@ -237,6 +248,23 @@ impl Post {
         } else {
             completed
         };
+        // Local exposure's base, from the image the tone map is about to
+        // read, at the frame's exposure.
+        let lookup = look.local_exposure.contrasts().map(|contrasts| {
+            let (grid, base) = self.local_exposure.encode(
+                device,
+                encoder,
+                combined,
+                look.exposure,
+                self.scene_size,
+                timing,
+            );
+            (grid, base, contrasts)
+        });
+        if lookup.is_none() {
+            self.local_exposure.release();
+        }
+        self.tone_map.set_local_exposure(queue, lookup);
         // SMAA after tone mapping and before the resample to the output, as
         // Godot (`_render_buffers_post_process_and_tonemap`) and Bevy order
         // them: its thresholds are for display colour.

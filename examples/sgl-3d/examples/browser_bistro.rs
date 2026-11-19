@@ -635,6 +635,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
             .and_then(|n| u32::try_from(n).ok()),
     )?;
     frame.environment = sgl_3d::FrameEnvironment::Map(environment);
+    frame.local_exposure = bistro_scene::local_exposure_from_json(&fixture)?;
     let sun = &camera_spec["sun"];
     let shadow = frame.directional_lights[0].unwrap().shadow;
     let mut effective_sun = sun.clone();

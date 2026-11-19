@@ -3695,6 +3695,7 @@ See M-11, M-16 and M-17a to M-17c.
 - Directional shadow cascades: every layer is cleared and redrawn each frame; texel snapping is stabilisation, not reuse.
 - Ray-traced shadow upsample: reads only this frame's temporal result.
 - Bloom: a per-frame mip chain.
+- Local exposure: a per-frame grid and blur of the image the tone map reads.
 - Tone mapping and deband dither: per frame; the dither is screen-space and static.
 - SMAA: three per-frame passes with no temporal state or jitter.
 - FSR1 EASU and sharpening (RCAS): per-frame spatial.

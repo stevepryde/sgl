@@ -439,6 +439,11 @@ Environment and probe specular always apply. On top of them:
   position the outlier filter but do not lower the average. FSR and the tone map
   take the same exposure.
   [Exposure, bloom and colour grading](../README.md#exposure-bloom-and-colour-grading).
+- **Local exposure** (`FrameInput::local_exposure`): large bright and dark
+  regions drawn toward middle grey before the tone map, local detail kept,
+  so sunlit and shaded areas stay readable; separate highlight and shadow
+  contrasts, off by default.
+  [Exposure, bloom and colour grading](../README.md#exposure-bloom-and-colour-grading).
 - **Bloom** (`FrameInput::bloom`): energy-conserving, through a mip chain;
   bright light scatters, with no threshold.
 - **Motion blur** (`Settings::motion_blur`, `FrameInput::motion_blur`): the

@@ -52,6 +52,11 @@ struct ColorGrading {
 // The frame's exposure multiplier (`stages::exposure`).
 @group(1) @binding(0) var exposure:texture_2d<f32>;
 @group(1) @binding(1) var<uniform> grading:ColorGrading;
+// Local exposure's blurred grid and upsampled base (`local_exposure.wgsl`),
+// 1-texel placeholders while it is off, and whether it is on.
+@group(1) @binding(3) var local_exposure_grid:texture_3d<f32>;
+@group(1) @binding(4) var local_exposure_base:texture_2d<f32>;
+@group(1) @binding(5) var<uniform> local_exposure:LocalExposure;
 const FRAC_PI_3:f32=1.0471975512;
 const PI_2:f32=6.283185307179586;
 // Half the crossfade between shadows and midtones and between midtones and
@@ -238,9 +243,14 @@ fn aces_filmic(color:vec3<f32>)->vec3<f32> {
  let b=v*(.983729*v+.4329510)+.238081;
  return clamp(output_matrix*(a/b),vec3(0.),vec3(1.));
 }
-// The exposed, graded and tone-mapped colour of linear HDR `hdr`.
-fn tone_map(hdr:vec3<f32>)->vec3<f32> {
+// The exposed, locally exposed, graded and tone-mapped colour of linear
+// HDR `hdr` at `uv`.
+fn tone_map(hdr:vec3<f32>,uv:vec2<f32>)->vec3<f32> {
  var color=max(hdr,vec3(0.))*textureLoad(exposure,vec2(0),0).r;
+ if local_exposure.enabled!=0u {
+  color*=local_exposure_multiplier(
+   local_exposure_grid,local_exposure_base,linear_sampler,uv,color,local_exposure);
+ }
  if grading.hue!=0. {
   var hsv=rgb_to_hsv(color);
   hsv.r=(hsv.r+grading.hue)%PI_2;
@@ -307,10 +317,10 @@ fn hdr_scene(uv:vec2<f32>)->vec3<f32> {
  return finite_filtered(scene,textureSample(scene,linear_sampler,uv),uv,vec2(0)).rgb;
 }
 @fragment fn present(i:Output)->@location(0) vec4<f32> {
- return vec4(tone_map(hdr_scene(i.uv)),1.);
+ return vec4(tone_map(hdr_scene(i.uv),i.uv),1.);
 }
 @fragment fn present_direct(i:Output)->@location(0) vec4<f32> {
- return present_rounded(tone_map(hdr_scene(i.uv)),i.position.xy);
+ return present_rounded(tone_map(hdr_scene(i.uv),i.uv),i.position.xy);
 }
 // The antialiased tone-mapped scene, at the scene size, resampled to the
 // tone-mapped target.

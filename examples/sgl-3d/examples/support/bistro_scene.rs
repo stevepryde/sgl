@@ -3,8 +3,8 @@ use serde_json::{Value, json};
 use sgl_3d::{
     Backdrop, BakedSpecularProbe, Camera, Decal, DecalId, DecalImageId, DirectionalLight,
     DirectionalShadow, DynamicGiVolume, EnvironmentLight, Exposure, Fog, FogVolume, FrameInput,
-    Light, LightCookie, LightId, LightShape, Scene, SpecularProbeBox, SpecularProbeRadiance,
-    SpecularProbeTexels, asset,
+    Light, LightCookie, LightId, LightShape, LocalExposure, Scene, SpecularProbeBox,
+    SpecularProbeRadiance, SpecularProbeTexels, asset,
     glam::{Mat4, Quat, Vec3, camera},
     settings::{
         AmbientOcclusionQuality, AnisotropicFiltering, Antialiasing, Bloom, DynamicGiQuality,
@@ -1122,6 +1122,30 @@ pub fn frame_from_json(
     Ok(frame)
 }
 
+/// The fixture's optional `local_exposure`,
+/// `{ "highlight_contrast": f, "shadow_contrast": f }`, each 0..=1 and 1
+/// where left out; without the key, none.
+pub fn local_exposure_from_json(descriptor: &Value) -> Result<LocalExposure, String> {
+    let Some(value) = descriptor.get("local_exposure") else {
+        return Ok(LocalExposure::default());
+    };
+    let fields = Fields {
+        value,
+        kind: "local_exposure",
+    };
+    let contrast = |name| {
+        let c = fields.number(name, Some(1.))?;
+        if c > 1. {
+            return Err(format!("local_exposure {name} must be within 0..=1"));
+        }
+        Ok(c)
+    };
+    Ok(LocalExposure {
+        highlight_contrast: contrast("highlight_contrast")?,
+        shadow_contrast: contrast("shadow_contrast")?,
+    })
+}
+
 /// The frame's applied fog: null while its atmosphere is off.
 pub fn fog_report(frame: &FrameInput) -> Value {
     if !frame.atmosphere {
@@ -1150,6 +1174,7 @@ pub fn frame_metadata(frame: &FrameInput) -> Value {
         "diffuse_environment":{"intensity":frame.diffuse_environment.intensity,"yaw":frame.diffuse_environment.yaw},
         "reflection_environment":{"intensity":frame.reflection_environment.intensity,"yaw":frame.reflection_environment.yaw},
         "backdrop":backdrop,"exposure_stops":frame.exposure.stops,
+        "local_exposure":{"highlight_contrast":frame.local_exposure.highlight_contrast,"shadow_contrast":frame.local_exposure.shadow_contrast},
         "ambient_occlusion_radius_m":frame.ambient_occlusion_radius,"baked_lighting":frame.baked_lighting,
         "visibility_mask":frame.visibility_mask,"elapsed_seconds":frame.elapsed_seconds,"frame_time_ms":frame.frame_time_ms})
 }
@@ -1386,9 +1411,11 @@ mod tests {
             include_str!("../../fixtures/sponza-lamps.json"),
             include_str!("../../fixtures/bistro-noir.json"),
             include_str!("../../fixtures/bistro-golden.json"),
+            include_str!("../../fixtures/bistro-quality.json"),
         ] {
             let recipe: Value = serde_json::from_str(source).unwrap();
             resolve_settings(settings(false, false), Some(&recipe), None, None).unwrap();
+            local_exposure_from_json(&recipe).unwrap();
             local_lights_from_json(&recipe).unwrap();
             fog_volumes_from_json(&recipe).unwrap();
             decals_from_json(&recipe).unwrap();

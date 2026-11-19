@@ -6,7 +6,8 @@ mod look;
 
 pub use look::{
     AgxLook, AutoExposure, BloomParameters, ColorGrading, ColorGradingGlobal, ColorGradingSection,
-    CompensationCurve, CompensationCurveError, Exposure, MeteringMask, MotionBlurParameters,
+    CompensationCurve, CompensationCurveError, Exposure, LocalExposure, MeteringMask,
+    MotionBlurParameters,
 };
 
 use crate::content::lighting::{
@@ -132,6 +133,8 @@ pub struct FrameInput {
     /// ray hits' environment specular, and the sky probe captures record.
     pub reflection_environment: EnvironmentLight,
     pub exposure: Exposure,
+    /// Off (1, 1) by default.
+    pub local_exposure: LocalExposure,
     pub bloom: BloomParameters,
     /// While `Settings::motion_blur` is on.
     pub motion_blur: MotionBlurParameters,
@@ -146,8 +149,9 @@ impl FrameInput {
     /// `camera` with no lights, fog medium, mist, visibility groups
     /// or environment; the environment's diffuse lighting, reflections and
     /// backdrop unturned at intensity 1; baked lighting on and atmosphere
-    /// off; a 60 Hz frame time; a fixed exposure of 0 stops; and the default
-    /// bloom, motion blur, colour grading and ambient occlusion radius.
+    /// off; a 60 Hz frame time; a fixed exposure of 0 stops and no local
+    /// exposure; and the default bloom, motion blur, colour grading and
+    /// ambient occlusion radius.
     pub fn new(camera: Camera) -> Self {
         Self {
             camera,
@@ -169,6 +173,7 @@ impl FrameInput {
             mist: Mist::default(),
             reflection_environment: EnvironmentLight::default(),
             exposure: Exposure::default(),
+            local_exposure: LocalExposure::default(),
             bloom: BloomParameters::default(),
             motion_blur: MotionBlurParameters::default(),
             color_grading: ColorGrading::default(),

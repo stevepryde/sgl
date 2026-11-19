@@ -95,6 +95,11 @@ is done (its algorithm and internal parameters) is SGL3D's.
 - `exposure`: fixed stops, or automatic exposure with its brightening and
   darkening speeds, limits, compensation curve and metering mask. SGL3D
   keeps Bevy's histogram range, outlier filter and exponential blend.
+- `local_exposure`: highlight and shadow contrasts, 0..=1, 1 and 1 (off) by
+  default: how much of their contrast about middle grey large bright and
+  dark regions keep before the tone map, local detail kept. Patry's typical
+  in-game values are 0.75 and 1. SGL3D owns the grid, blurs, blend and
+  pivot. At 1 and 1 nothing runs; a cheaper tier authors 1 and 1.
 - `bloom`: intensity; SGL3D shapes the halo as Bevy's natural bloom.
 - `motion_blur`: the shutter angle, the share of each frame's motion that
   blurs (0.5 by default).
