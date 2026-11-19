@@ -31,11 +31,11 @@ test("gallery export publishes payload and provenance with a usable derived reci
       expect(args).toContain("--capture-probe");
       const work = args.at(-1)!;
       await writeFile(join(work, "sponza-back-gallery-probe.rgba16"), "captured HDR payload");
-      await writeFile(join(work, "specular-probe.json"), JSON.stringify({ capture: "retained actual recipe" }));
+      await writeFile(join(work, "sponza-back-gallery-probe.json"), JSON.stringify({ capture: "retained actual recipe" }));
     });
     for (const name of sourceNames) expect(await readFile(join(prepared, name), "utf8")).toBe(`original ${name}`);
     const recipe = JSON.parse(await readFile(join(prepared, "sponza-gallery.json"), "utf8"));
-    expect(recipe.specular_probe.rgba16).toBe("sponza-back-gallery-probe.rgba16");
+    expect(recipe.specular_probes.map((probe: { rgba16: string }) => probe.rgba16)).toEqual(["sponza-back-gallery-probe.rgba16"]);
     expect(recipe.notices).toContain("sponza-gallery-probe.json");
     expect(recipe.dynamic_gi_volume.probes).toEqual([21, 13, 15]);
     expect(JSON.parse(await readFile(join(prepared, "sponza-gallery-probe.json"), "utf8")).capture).toBe("retained actual recipe");

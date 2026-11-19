@@ -35,9 +35,9 @@ export async function prepareSponzaGallery(
     await runCommand(["cargo", "run", "--release", "-p", "sgl-3d-examples", "--example", "bistro", "--",
       "--asset", join(prepared, "Sponza.glb"), "--fixture", fixturePath, "--view", "hero",
       "--size", "640x360", "--frames", "721", "--warmup", "720", "--capture-probe", probePath, "--output", work]);
-    await rename(join(work, "specular-probe.json"), join(work, "sponza-gallery-probe.json"));
+    await rename(join(work, "sponza-back-gallery-probe.json"), join(work, "sponza-gallery-probe.json"));
     fixture.scene = "intel-sponza-curtains-sunlit-gallery-v1";
-    fixture.specular_probe = placement;
+    fixture.specular_probes = [placement];
     fixture.lighting += " A locally captured specular probe replaces outdoor sky reflections inside the covered back gallery; it does not darken diffuse light or change materials.";
     fixture.notices.push("sponza-gallery-probe.json");
     await writeFile(join(work, "sponza-gallery.json"), JSON.stringify(fixture, null, 2) + "\n");

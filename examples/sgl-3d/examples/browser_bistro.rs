@@ -515,6 +515,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
             &bistro_scene::fog_volumes_from_json(&fixture)?,
         )
         .map_err(|e| e.to_string())?;
+    let decal_ids = bistro_scene::add_decals(&mut scene, &device, &queue, &fixture)?;
     if options["rect"].as_bool() == Some(true) {
         local_light_ids.push(
             scene
@@ -570,24 +571,28 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
     queue.submit([]);
     completed(&queue).await?;
     let environment_upload_complete_ms = now() - start;
-    phase("install authored specular probe");
+    phase("install authored specular probes");
     let start = now();
     let mut probe_bytes = 0;
-    if let Some(spec) = fixture
-        .get("specular_probe")
-        .filter(|value| !value.is_null())
-    {
-        bistro_scene::probe_shape(spec)?;
-        let payload = bytes(file(spec, "rgba16")?).await?;
-        probe_bytes = payload.len();
-        let probe = bistro_scene::probe_from_json(spec, &payload)?;
+    let mut probes = Vec::new();
+    let mut probe_names = Vec::new();
+    for spec in bistro_scene::specular_probe_placements(&fixture)? {
+        let name = bistro_scene::probe_payload_name(spec)?;
+        let payload = bytes(name).await?;
+        probe_bytes += payload.len();
+        probes.push(bistro_scene::probe_from_json(spec, &payload)?);
+        probe_names.push(name);
+    }
+    if !probes.is_empty() {
         scene
-            .set_baked_specular_probes(&device, &queue, &[probe])
+            .set_baked_specular_probes(&device, &queue, &probes)
             .map_err(|e| e.to_string())?;
         queue.submit([]);
         completed(&queue).await?;
     }
-    let specular_probe_fetch_upload_ms = now() - start;
+    let specular_probes = bistro_scene::specular_probe_report(&probe_names, &probes);
+    drop(probes);
+    let specular_probes_fetch_upload_ms = now() - start;
     phase("renderer initialization");
     let start = now();
     let output = device.create_texture(&wgpu::TextureDescriptor {
@@ -808,10 +813,11 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
         "view":camera_id,"camera":camera_spec,"final_eye":if motion {(eye+Vec3::new((((warmup+frames-1) as f32/60.)*0.7).sin()*0.35,0.,0.)).to_array()}else{eye.to_array()},"size":size,"frames":frames,"warmup_frames":warmup,
         "motion":{"enabled":motion,"route":"shared eye/target x += sin(t*0.7)*0.35 metres","fixed_step_seconds":1./60.,"capture_frame":warmup+frames-1},"exposure_stops":exposure,
         "settings":settings,"diagnostics":{"normal_maps_disabled":settings.diagnostics.disable.normal_maps,"split_opaque":settings.diagnostics.disable.fused_opaque},"lighting":{"local_lights":bistro_scene::local_light_report(&scene, &local_light_ids)?,"local_shadows":local_shadows.report(),"sun":effective_sun,"fog":bistro_scene::fog_report(&frame),"environment_intensity":frame.diffuse_environment.intensity,"ambient_occlusion_radius_m":frame.ambient_occlusion_radius,"rect":options["rect"].as_bool().unwrap_or(false),"cookies":options["no_cookies"].as_bool() != Some(true)},
+        "reflections":{"specular_probes":specular_probes,"decals":bistro_scene::decal_report(&scene, &decal_ids)?},
         "adapter":{"name":info.name,"backend":format!("{:?}",info.backend),"device_type":format!("{:?}",info.device_type),"available_features":adapter_features,"requested_features":format!("{:?}",device.features()),"adapter_limits":adapter_limits,"device_limits":limits(&device.limits())},
-        "content":{"glb_bytes":glb_bytes,"triangles":triangles,"vertices":vertices,"material_batches":mesh_count,"model_scale":model_scale,"materials":materials,"material_authoring":material_authoring,"images":images,"decoded_image_bytes":image_bytes,"compression":compression,"specular_probe_bytes":probe_bytes,"panorama_source_bytes":panorama_bytes,"pmrem_bytes":pmrem_bytes,"ignored":ignored},
+        "content":{"glb_bytes":glb_bytes,"triangles":triangles,"vertices":vertices,"material_batches":mesh_count,"model_scale":model_scale,"materials":materials,"material_authoring":material_authoring,"images":images,"decoded_image_bytes":image_bytes,"compression":compression,"specular_probes_bytes":probe_bytes,"panorama_source_bytes":panorama_bytes,"pmrem_bytes":pmrem_bytes,"ignored":ignored},
         "load_budget":{"source_bytes":budget.source_bytes(),"decoded_bytes":budget.decoded_bytes(),"target_maximum_bytes":asset::LoadBudget::maximum_bytes(),"explicit":fixture.get("load_budget").is_some(),"scope":"Same caps passed to KTX2 parsers and glTF import; not a total heap, network-transfer or GPU-memory limit"},
-        "startup":{"device_ms":device_ms,"compressed_manifest_ms":compressed_manifest_ms,"compressed_image_fetch_parse_ms":compressed_image_fetch_parse_ms,"fetch_glb_ms":fetch_glb_ms,"decode_glb_ms":decode_ms,"prepare_upload_cpu_ms":upload_cpu_ms,"prepare_upload_complete_ms":upload_complete_ms,"environment_fetch_decode_ms":environment_fetch_decode_ms,"environment_upload_complete_ms":environment_upload_complete_ms,"specular_probe_fetch_upload_ms":specular_probe_fetch_upload_ms,"renderer_cpu_ms":renderer_cpu_ms,"first_frame_complete_ms":first_frame_ms},
+        "startup":{"device_ms":device_ms,"compressed_manifest_ms":compressed_manifest_ms,"compressed_image_fetch_parse_ms":compressed_image_fetch_parse_ms,"fetch_glb_ms":fetch_glb_ms,"decode_glb_ms":decode_ms,"prepare_upload_cpu_ms":upload_cpu_ms,"prepare_upload_complete_ms":upload_complete_ms,"environment_fetch_decode_ms":environment_fetch_decode_ms,"environment_upload_complete_ms":environment_upload_complete_ms,"specular_probes_fetch_upload_ms":specular_probes_fetch_upload_ms,"renderer_cpu_ms":renderer_cpu_ms,"first_frame_complete_ms":first_frame_ms},
         "effective":{"antialiasing":format!("{:?}",scene_view.antialiasing_in_effect(&settings)),"render_size":scene_view.render_size(),"scene_size":scene_view.scene_size(),"binding_tier":format!("{:?}",renderer.binding_tier()),"fsr_error":scene_view.fsr_error(),"ray_data":format!("{ray_data:?}"),"hardware_ray_tracing":renderer.ray_tracing_in_effect(&settings,&scene),"ray_tracing_error":renderer.ray_tracing_error(),"ray_tracing_stats":format!("{:?}",renderer.ray_tracing_stats()),"ray_traced_shadows":renderer.ray_traced_shadows_in_effect(&settings,&settings,&scene),"world_space_reflections":format!("{:?}",renderer.world_space_reflections_in_effect(&settings,&scene)),"dynamic_gi_quality":format!("{:?}",renderer.dynamic_gi_in_effect(&settings,&scene)),"dynamic_gi_volume":gi_volume.is_some(),"dynamic_gi_enabled":gi_volume.is_some() && renderer.dynamic_gi_in_effect(&settings,&scene)!=DynamicGiQuality::Off,"occlusion_culling":scene_view.occlusion_culling_in_effect(&settings)},
         "gi_observation":{"enabled":settings.diagnostics.dynamic_gi,"frames":gi_reports.len(),"last":gi_reports.last(),"reports":gi_reports,"timing_caveat":"GI observation writes per-ray costs and performs reduction/readback; instrumented runs are separate from clean performance runs"},
         "cpu_encode":summary(&cpu),"frame_complete_wall":summary(&wall),"camera_draws":{"min":draws.iter().copied().fold(f64::INFINITY,f64::min),"max":draws.iter().copied().fold(0.,f64::max)},

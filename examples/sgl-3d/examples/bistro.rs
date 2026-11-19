@@ -140,7 +140,7 @@ mod native {
                     "--split" => options.split = true,
                     "--help" => {
                         println!(
-                            "bistro [--asset FILE] [--output DIR] [--view all|CAMERA_ID] [--size WxH] [--frames N] [--warmup N] [--exposure STOPS] [--rect-light] [--no-cookies] [--no-normal-maps] [--split] [--max-quality] [--aa taa|fsr2|fsr3|smaa|off] [--no-gi] [--no-ray-shadows] [--settings FILE] [--gi-volume FILE] [--fixture FILE] [--cascades 1..4] [--capture-probe FILE]"
+                            "bistro [--asset FILE] [--output DIR] [--view all|CAMERA_ID] [--size WxH] [--frames N] [--warmup N] [--exposure STOPS] [--rect-light] [--no-cookies] [--no-normal-maps] [--split] [--max-quality] [--aa taa|fsr2|fsr3|smaa|off] [--no-gi] [--no-ray-shadows] [--settings FILE] [--gi-volume FILE] [--fixture FILE] [--cascades 1..4] [--capture-probe PLACEMENT_OR_FIXTURE]"
                         );
                         std::process::exit(0);
                     }
@@ -204,6 +204,33 @@ mod native {
         if fixture.as_ref().is_some_and(|f| f["schema"] != 1) {
             return Err("unknown fixture schema".into());
         }
+        // One placement, or a fixture whose every `specular_probes` placement
+        // is captured in turn.
+        let capture_specs: Vec<serde_json::Value> = match &options.capture_probe {
+            None => Vec::new(),
+            Some(path) => {
+                let source: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+                let specs: Vec<_> = if source.get("specular_probes").is_some() {
+                    bistro_scene::specular_probe_placements(&source)?
+                        .into_iter()
+                        .cloned()
+                        .collect()
+                } else {
+                    bistro_scene::probe_shape(&source)?;
+                    vec![source]
+                };
+                let mut names = std::collections::BTreeSet::new();
+                for spec in &specs {
+                    if !names.insert(bistro_scene::probe_payload_name(spec)?.to_owned()) {
+                        return Err("captured probes need distinct rgba16 names".into());
+                    }
+                }
+                if specs.is_empty() {
+                    return Err("--capture-probe fixture has no specular_probes".into());
+                }
+                specs
+            }
+        };
         let exposure = options.exposure.unwrap_or_else(|| {
             fixture
                 .as_ref()
@@ -440,25 +467,27 @@ mod native {
                 fixture.as_ref().map(|f| &f["environment"]),
             )?,
         )?;
-        if let Some(spec) = fixture
-            .as_ref()
-            .and_then(|f| f.get("specular_probe"))
-            .filter(|v| !v.is_null())
-        {
-            bistro_scene::probe_shape(spec)?;
-            let payload = std::fs::read(bistro_scene::asset_path(
-                directory,
-                spec["rgba16"]
-                    .as_str()
-                    .ok_or("probe rgba16 basename missing")?,
-            )?)?;
-            scene.set_baked_specular_probes(
-                &device,
-                &queue,
-                &[bistro_scene::probe_from_json(spec, &payload)?],
-            )?;
+        // A capture run installs none: it must not depend on the payloads it
+        // writes, nor reflect them in its own faces.
+        let placements = match fixture.as_ref() {
+            Some(descriptor) if options.capture_probe.is_none() => {
+                bistro_scene::specular_probe_placements(descriptor)?
+            }
+            _ => Vec::new(),
+        };
+        let mut probes = Vec::new();
+        let mut probe_names = Vec::new();
+        for spec in &placements {
+            let name = bistro_scene::probe_payload_name(spec)?;
+            let payload = std::fs::read(bistro_scene::asset_path(directory, name)?)?;
+            probes.push(bistro_scene::probe_from_json(spec, &payload)?);
+            probe_names.push(name);
         }
+        scene.set_baked_specular_probes(&device, &queue, &probes)?;
+        let specular_probes = bistro_scene::specular_probe_report(&probe_names, &probes);
+        drop(probes);
         let mut local_light_ids = Vec::new();
+        let mut decal_ids = Vec::new();
         if let Some(descriptor) = fixture.as_ref() {
             local_light_ids.extend(bistro_scene::add_local_lights(
                 &mut scene,
@@ -467,6 +496,7 @@ mod native {
                 descriptor,
                 options.cookies,
             )?);
+            decal_ids = bistro_scene::add_decals(&mut scene, &device, &queue, descriptor)?;
             scene.update_fog_volumes(
                 &device,
                 &queue,
@@ -611,8 +641,7 @@ mod native {
             )?;
             // Explicit native authoring after the measured frames. Capture-only
             // material exclusions are restored on both success and failure.
-            if let Some(path) = &options.capture_probe {
-                let mut spec: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+            for mut spec in capture_specs.iter().cloned() {
                 let (face_size, expected_bytes) = bistro_scene::probe_shape(&spec)?;
                 let center =
                     sgl_3d::glam::Vec3::from_array(serde_json::from_value(spec["center"].clone())?);
@@ -673,15 +702,8 @@ mod native {
                 if payload.len() != expected_bytes {
                     return Err("native probe capture payload length mismatch".into());
                 }
-                let basename = spec["rgba16"]
-                    .as_str()
-                    .filter(|n| {
-                        !n.is_empty()
-                            && n.bytes()
-                                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-                    })
-                    .ok_or("probe rgba16 must be a basename")?;
-                std::fs::write(options.output.join(basename), &payload)?;
+                let basename = bistro_scene::probe_payload_name(&spec)?.to_owned();
+                std::fs::write(options.output.join(&basename), &payload)?;
                 spec["capture"] = serde_json::json!({"view":name,"after_frames":options.frames,"warmup_frames":warm_up,
                     "settings":settings,"normal_maps":options.normal_maps,"split_opaque":options.split,"rect_light":options.rect,"ray_data":format!("{ray_data:?}"),
                     "applied_frame":applied_capture_frame,"camera_unused_for_capture":true,
@@ -689,8 +711,10 @@ mod native {
                     "dynamic_gi_in_effect":format!("{:?}",renderer.dynamic_gi_in_effect(&settings,&scene)),
                     "model_scale":model_scale,"run_arguments":std::env::args().skip(1).collect::<Vec<_>>(),
                     "fixture":fixture,"excluded_from_frame_timings":true,"payload_bytes":payload.len(),"static_content_only":true});
+                // Beside its payload: NAME.rgba16's recipe is NAME.json.
+                let stem = basename.strip_suffix(".rgba16").unwrap_or(&basename);
                 std::fs::write(
-                    options.output.join("specular-probe.json"),
+                    options.output.join(format!("{stem}.json")),
                     serde_json::to_vec_pretty(&spec)?,
                 )?;
             }
@@ -732,10 +756,10 @@ mod native {
             options.output.join("measurements.json"),
             serde_json::to_vec_pretty(&serde_json::json!({
                 "adapter":format!("{} / {:?}",info.name,info.backend),"device_features":format!("{:?}",device.features()),"asset":options.asset,"model_scale":model_scale,"triangles":triangles,"vertices":vertices,"material_batches":mesh_count,"materials":material_count,"material_authoring":material_authoring,"decoded_image_bytes":image_bytes,"load_ms":load_ms,"prepare_upload_ms":upload_ms,"ignored":ignored,"ray_data":format!("{ray_data:?}"),"load_budget":{"source_bytes":budget.source_bytes(),"decoded_bytes":budget.decoded_bytes()},"owned_supplied_image_bytes":allowance.used,"compressed_manifest":manifest,
-                "size":options.size,"frames_per_view":options.frames,"local_lights":bistro_scene::local_light_report(&scene, &local_light_ids)?,"warm_up_frames":warm_up,"exposure_stops":exposure,"rect_light":options.rect,"normal_maps":options.normal_maps,"split_opaque":options.split,"views":reports,"fixture":fixture,
+                "size":options.size,"frames_per_view":options.frames,"local_lights":bistro_scene::local_light_report(&scene, &local_light_ids)?,"specular_probes":specular_probes,"decals":bistro_scene::decal_report(&scene, &decal_ids)?,"warm_up_frames":warm_up,"exposure_stops":exposure,"rect_light":options.rect,"normal_maps":options.normal_maps,"split_opaque":options.split,"views":reports,"fixture":fixture,
                 "settings": settings, "max_quality": options.max_quality,
                 "gi_volume": gi_volume.map(|volume| serde_json::json!({"origin":volume.origin.to_array(),"spacing":volume.spacing.to_array(),"probes":volume.probes})),
-                "lighting":"Explicit supplied HDRI/PMREM and authored lights, recorded per view and in the optional fixture; optional LTC rectangle, dynamic GI and authored local specular probe; no reference-renderer parity claim"
+                "lighting":"Explicit supplied HDRI/PMREM and authored lights, recorded per view and in the optional fixture; optional LTC rectangle, dynamic GI, authored local specular probes and decals; no reference-renderer parity claim"
             }))?,
         )?;
         let asset_directory = options

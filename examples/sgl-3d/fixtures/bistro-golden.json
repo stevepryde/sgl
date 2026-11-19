@@ -166,7 +166,7 @@
     "provenance_metadata": "ENVIRONMENT-PROCESSING.json"
   },
   "exposure_stops": 0.6,
-  "lighting": "Bistro Golden: low-sun daylight relight of the quality profile with today's renderer. Analytical sun lowered to 32 degrees and swung to azimuth 220 degrees so it reaches the terrace and rakes along the street, with the sun-reduced San Giuseppe Bridge sky yaw-rotated to match. Measured sun color/strength retained. Light uniform volumetric fog, diffuse transmission on the named leaf materials. Practical point lights, exposure, GI volume and cameras as bistro-quality.",
+  "lighting": "Bistro Golden: low-sun daylight relight of the quality profile with today's renderer. Analytical sun lowered to 32 degrees and swung to azimuth 220 degrees so it reaches the terrace and rakes along the street, with the sun-reduced San Giuseppe Bridge sky yaw-rotated to match. Measured sun color/strength retained. Light uniform volumetric fog, diffuse transmission on the named leaf materials. Half-resolution Crystal screen-space reflections, four captured local specular probes and two generated puddles on the road. Practical point lights, exposure, GI volume and cameras as bistro-quality.",
   "notices": [
     "LICENSE.txt",
     "SGL-ATTRIBUTION.txt",
@@ -205,7 +205,7 @@
     "ray_traced_shadows": false,
     "reflection_method": "Crystal",
     "scene_resolution": "Full",
-    "screen_space_reflections": "Off",
+    "screen_space_reflections": "Half",
     "shadow_quality": "High",
     "sharpening": "On",
     "sharpness": 0.800000011920929,
@@ -2158,7 +2158,8 @@
     "gi_coverage": "2592 probes, origin[-18,-1,-16], 3m spacing, [18,8,18] probes, bounds[-18,-1,-16] to[33,20,35]. Covers the main courtyard and visible right facades; not the full asset. Earlier 840-probe volume ended at z10, leaving right facades at z19-27 on unoccluded sky fallback.",
     "sun_azimuth_degrees": 220,
     "fog_note": "Uniform medium at 0.007/m extinction, anisotropy 0.3, 64 m froxel length, lit by the sun only (Fog ambient 0). Chosen between captures at 0.005 (depth barely visible), 0.01 and 0.02 (haze over the street-view foreground).",
-    "foliage_note": "diffuse_transmission_materials gives the five leaf materials (named exactly, found from the glTF material list; trunks, branches and flowers excluded) KHR_materials_diffuse_transmission factor 0.5, its color taken from each leaf's own base-color map and factor. The asset has no transmission maps."
+    "foliage_note": "diffuse_transmission_materials gives the five leaf materials (named exactly, found from the glTF material list; trunks, branches and flowers excluded) KHR_materials_diffuse_transmission factor 0.5, its color taken from each leaf's own base-color map and factor. The asset has no transmission maps.",
+    "reflections_note": "Screen-space reflections at half resolution with Crystal, chosen over Velvet from matched street/bike captures: the two looked alike on these receivers (window glass, scooter chrome, puddles) and Crystal's passes cost about half. Probes are captured natively from this recipe after 720 GI warm-up frames (bistro --capture-probe on this fixture) and sit in the open: street (the square between the bistro corner and the west buildings, scooter excluded from its capture), terrace (south terrace and the bistro's south glass), arch (under the archway at the terrace's far end) and facades (the street in front of the west buildings' east facades). Influences overlap by their 2 m blends; no proxy boxes, since the street is open. Two puddles on the road, where the street and bike views see them at a grazing angle and they mirror the sunlit west facades, awnings and the sky gap at the street end: within the generated mask the surface turns level (water fills the joints), roughness goes to 0.03 and base colour darkens by up to 0.25, the stone relief returning over a soft shore. Nearer puddles (in front of the scooter, on the sunlit corner cobbles) were tried and dropped: at their steeper view the water reflects only a few percent, or it mirrors the dark green facade, and they read as faint stains."
   },
   "diffuse_transmission_materials": {
     "names": [
@@ -2174,5 +2175,178 @@
       1,
       1
     ]
-  }
+  },
+  "specular_probes": [
+    {
+      "name": "street",
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 256,
+      "rgba16": "bistro-golden-street-probe.rgba16",
+      "center": [
+        -9,
+        1.6,
+        -1
+      ],
+      "influence": {
+        "min": [
+          -17,
+          -1,
+          -12
+        ],
+        "max": [
+          -0.5,
+          12,
+          8
+        ]
+      },
+      "blend": [
+        2,
+        2,
+        2
+      ],
+      "proxy": null,
+      "exclude_materials": [
+        "Vespa_Headlight",
+        "Vespa_Odometer_Glass",
+        "Vespa",
+        "Vespa_Odometer"
+      ]
+    },
+    {
+      "name": "terrace",
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 256,
+      "rgba16": "bistro-golden-terrace-probe.rgba16",
+      "center": [
+        6,
+        1.6,
+        13
+      ],
+      "influence": {
+        "min": [
+          -3,
+          -1,
+          6
+        ],
+        "max": [
+          17,
+          10,
+          19
+        ]
+      },
+      "blend": [
+        2,
+        2,
+        2
+      ],
+      "proxy": null,
+      "exclude_materials": []
+    },
+    {
+      "name": "arch",
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 256,
+      "rgba16": "bistro-golden-arch-probe.rgba16",
+      "center": [
+        16,
+        3,
+        20.5
+      ],
+      "influence": {
+        "min": [
+          11,
+          -1,
+          16
+        ],
+        "max": [
+          23,
+          10,
+          27
+        ]
+      },
+      "blend": [
+        2,
+        2,
+        2
+      ],
+      "proxy": null,
+      "exclude_materials": []
+    },
+    {
+      "name": "facades",
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 256,
+      "rgba16": "bistro-golden-facades-probe.rgba16",
+      "center": [
+        -9.5,
+        3,
+        13
+      ],
+      "influence": {
+        "min": [
+          -20,
+          -1,
+          4
+        ],
+        "max": [
+          -6,
+          16,
+          22
+        ]
+      },
+      "blend": [
+        2,
+        2,
+        2
+      ],
+      "proxy": null,
+      "exclude_materials": []
+    }
+  ],
+  "decals": [
+    {
+      "name": "road-near",
+      "pattern": "puddle",
+      "position": [
+        -10.5,
+        0.3,
+        -3
+      ],
+      "size": [
+        3.6,
+        0.6,
+        6
+      ],
+      "yaw_degrees": 5,
+      "roughness": 0.03,
+      "darken": 0.25,
+      "normal_fade": 0.3
+    },
+    {
+      "name": "road-far",
+      "pattern": "puddle",
+      "position": [
+        -9.3,
+        0.3,
+        -9.5
+      ],
+      "size": [
+        4.5,
+        0.6,
+        6
+      ],
+      "yaw_degrees": 10,
+      "roughness": 0.03,
+      "darken": 0.25,
+      "normal_fade": 0.3
+    }
+  ]
 }

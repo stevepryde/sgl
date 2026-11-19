@@ -13,7 +13,7 @@ test("practical shadow recipe keeps light placement/energy and source untouched"
     expect(authored.settings).toEqual(source.settings);
     expect(authored.cameras).toEqual(source.cameras);
     expect(authored.exposure_stops).toEqual(source.exposure_stops);
-    expect(authored.specular_probe).toBeUndefined();
+    expect(authored.specular_probes).toBeUndefined();
     expect(authored.transmissive_materials).not.toContain("Streetlight_Metal");
   }
 });

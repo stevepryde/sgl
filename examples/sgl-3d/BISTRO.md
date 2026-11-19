@@ -215,21 +215,28 @@ Native `--frames` remains total frames; `--warmup` selects the excluded prefix,
 whereas browser `--frames` selects measured frames in addition to `--warmup`.
 For a matched 360+120-frame comparison, use native `--frames 480 --warmup 360`.
 
-One optional `specular_probe` loads an explicitly authored outdoor local
-reflection: schema 1, encoding `rgba16f-le`, seven levels, face_size 64/128/256,
-center, world-space influence min/max, blend vector, optional proxy min/max,
-and `rgba16` payload basename. Payload size/version are validated before u16
-expansion; the public scene API checks placement/radiance. Native
-`--capture-probe FILE` accepts that placement descriptor plus exact
-`exclude_materials` names, captures after the measured frames, and writes
-the payload and capture recipe beside its output. Capture-only exclusions
+Optional `specular_probes` loads explicitly authored local reflections, all
+uploaded together through `Scene::set_baked_specular_probes`. Each entry has
+schema 1, encoding `rgba16f-le`, seven levels and one face_size shared by all
+entries (64/128/256), plus center, world-space influence min/max, blend
+vector, optional proxy min/max, and `rgba16` payload basename. Payload
+size/version are validated before u16 expansion; the public scene API checks
+placement/radiance and blends overlapping influences by their weights.
+Native `--capture-probe FILE` accepts one placement descriptor, or a fixture
+whose every `specular_probes` placement it captures in turn, each with its
+exact `exclude_materials` names (an empty list excludes nothing). It captures
+after the measured frames and writes each payload, and its recipe as the
+payload's name with `.json` for `.rgba16`, beside its output. A capture run
+installs none of the fixture's probes, so it never depends on, or reflects,
+the payloads it writes. Capture-only exclusions
 are restored on success or failure. The sidecar separates the requested fixture
 from applied frame lights/environments/mask and records exact CLI arguments
 and the normal-map diagnostic override. The browser only uploads the authored
 result; capture is blocking native asset authoring, never a runtime loop.
 Regenerate deliberately when its scene or lighting changes. Inspect influence
 boundaries, motion and self-reflection; a local probe is not correct for every
-receiver in an open street.
+receiver in an open street. Reports list the uploaded probes under
+`specular_probes` (browser: `reflections.specular_probes`).
 
 The PNG contains exact asynchronous display-output readback, not browser
 chrome. It is read after measured frames and timestamp draining. `--motion`
@@ -436,8 +443,8 @@ SGL's existing transmission limitations still apply: these surfaces cast no
 shadows, rays pass through and probe captures omit them; no colored glass
 shadow attenuation is added. This is suitable only for explicitly authored
 light-transmitting shells, never for opaque fixture frames. The generated
-recipe removes any existing static specular probe rather than silently reuse
-a bake of another light/material rig. Capture a new probe explicitly if needed.
+recipe removes any existing static specular probes rather than silently reuse
+bakes of another light/material rig. Capture new probes explicitly if needed.
 Compare matched controls without that probe and with the same GI choice;
 separate initial shadow population from warm-cache cost. Inspect lit pools,
 wall/fixture shadows and bulb appearance, not just the total GPU time.
@@ -481,7 +488,7 @@ contact occlusion, and can also be uploaded by a raster-only scene:
 ```sh
 cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-quality.json --view bevy --size 1920x1080 --frames 840 --warmup 720 --capture-probe examples/sgl-3d/fixtures/bistro-local-probe.json --output target/bistro-probe-authoring
 cp target/bistro-probe-authoring/bistro-local-probe.rgba16 target/bistro-quality/
-bun -e 'const f=await Bun.file("examples/sgl-3d/fixtures/bistro-quality.json").json(); f.specular_probe=await Bun.file("examples/sgl-3d/fixtures/bistro-local-probe.json").json(); await Bun.write("target/bistro-quality-with-probe.json",JSON.stringify(f,null,2));'
+bun -e 'const f=await Bun.file("examples/sgl-3d/fixtures/bistro-quality.json").json(); f.specular_probes=[await Bun.file("examples/sgl-3d/fixtures/bistro-local-probe.json").json()]; await Bun.write("target/bistro-quality-with-probe.json",JSON.stringify(f,null,2));'
 bun scripts/tasks.ts measure-browser --fixture target/bistro-quality-with-probe.json --asset-dir target/bistro-quality --view bike --frames 120 --capture target/bistro-probe-runs/bike.png --output target/bistro-probe-runs/bike.json
 ```
 
@@ -582,6 +589,52 @@ ambiguous or duplicate name, or a malformed value, fails before any material
 changes. Reports list the applied materials under `material_authoring`
 (browser: `content.material_authoring`). The applied fog appears beside the
 sun in each native view and under browser `lighting`.
+
+### Bistro Golden reflections
+
+`bistro-golden` also turns on the reflection features, so windows, chrome and
+the street reflect the street rather than only the sky panorama:
+
+- Half-resolution Crystal screen-space reflections. Velvet was compared on
+  the same views; it looked alike on these receivers and its passes cost
+  about twice as much.
+- Four `specular_probes`, placed in the open: `street` (the square between
+  the bistro corner and the west buildings), `terrace` (the south terrace and
+  the bistro's south glass), `arch` (under the archway at the terrace's far
+  end) and `facades` (the street before the west buildings' east facades).
+  Their influences overlap by their 2 m blends. The street probe excludes
+  the scooter from its capture.
+- Two `decals`: puddles on the road, where the `street` and `bike` views see
+  them at a grazing angle and they mirror the sunlit facades and the sky at
+  the street's end. Puddles nearer the cameras reflect too little at their
+  steeper view, or mirror the dark bistro facade, and read as stains.
+
+`lighting_authoring.reflections_note` records each choice. The probe
+payloads are generated content, not in Git. Capture all four from the
+fixture itself, which writes `bistro-golden-NAME-probe.rgba16` and its
+recipe for each, then copy the payloads into the asset directory:
+
+```sh
+cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-golden.json --capture-probe examples/sgl-3d/fixtures/bistro-golden.json --view street --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-golden/probes
+cp target/bistro-golden/probes/bistro-golden-*-probe.rgba16 target/bistro-quality/
+```
+
+Recapture after changing the placements, the lighting or the puddles.
+For matched comparisons, copy the fixture and remove `specular_probes` or
+`decals`, or set `settings.screen_space_reflections` to `Off`, keeping
+everything else.
+
+Fixture `decals` are puddles: decal boxes that project one irregular puddle
+the examples generate in code. Within it the surface turns level, as water
+filling the joints between stones, its roughness falls to `roughness` and
+its base colour darkens toward black by `darken`; over its soft shore the
+stone's own relief, roughness and colour return. Each takes `pattern`
+(`"puddle"`), `position` and positive `size` (metres; the box projects down
+its height), optional `yaw_degrees` about +Y, `roughness` and `darken`
+(0..=1), and optional `upper_fade`, `lower_fade` and `normal_fade` as
+`Decal` has them.
+Reports read the registered decals back from the scene under `decals`
+(browser: `reflections.decals`). Decals need the scene's ray data.
 
 ## Attribution and distribution
 

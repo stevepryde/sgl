@@ -33,7 +33,7 @@ export function practicalShadowRecipe(source: any): any {
   };
   // A static room probe from the opaque/unshadowed rig does not describe this
   // lighting. Do not silently present it as a matching bake of the variant.
-  if (fixture.specular_probe) delete fixture.specular_probe;
+  delete fixture.specular_probes;
   return fixture;
 }
 

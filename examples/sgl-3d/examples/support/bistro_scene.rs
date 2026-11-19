@@ -1,10 +1,11 @@
 //! Example-owned content shared by the native and WebGPU Bistro consumers.
 use serde_json::{Value, json};
 use sgl_3d::{
-    Backdrop, BakedSpecularProbe, Camera, DirectionalLight, DirectionalShadow, DynamicGiVolume,
-    EnvironmentLight, Exposure, Fog, FogVolume, FrameInput, Light, LightCookie, LightId,
-    LightShape, Scene, SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels, asset,
-    glam::{Mat4, Vec3, camera},
+    Backdrop, BakedSpecularProbe, Camera, Decal, DecalId, DecalImageId, DirectionalLight,
+    DirectionalShadow, DynamicGiVolume, EnvironmentLight, Exposure, Fog, FogVolume, FrameInput,
+    Light, LightCookie, LightId, LightShape, Scene, SpecularProbeBox, SpecularProbeRadiance,
+    SpecularProbeTexels, asset,
+    glam::{Mat4, Quat, Vec3, camera},
     settings::{
         AmbientOcclusionQuality, AnisotropicFiltering, Antialiasing, Bloom, DynamicGiQuality,
         FsrQuality, RayTracedShadowQuality, ReflectionMethod, SceneResolution,
@@ -12,6 +13,8 @@ use sgl_3d::{
     },
 };
 
+#[path = "puddle_mask.rs"]
+mod puddle_mask;
 #[path = "window_panes.rs"]
 mod window_panes;
 
@@ -620,6 +623,168 @@ pub fn fog_volumes_from_json(descriptor: &Value) -> Result<Vec<FogVolume>, Strin
         .collect()
 }
 
+/// An authored puddle (`decals`): a decal box over the ground, turned `yaw`
+/// radians about +Y, that projects the generated puddle mask
+/// (`puddle_mask`) down onto what it covers. Where the mask covers a
+/// surface, its normal turns level (the water fills the joints between
+/// stones), its roughness moves toward `roughness` and its base colour
+/// darkens toward black by `darken`, all in proportion to the coverage, so
+/// the stone's relief returns over the puddle's soft shore.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WetPatch {
+    pub position: Vec3,
+    pub size: Vec3,
+    pub yaw: f32,
+    pub roughness: f32,
+    pub darken: f32,
+    /// `None` takes `Decal::new`'s.
+    pub upper_fade: Option<f32>,
+    pub lower_fade: Option<f32>,
+    pub normal_fade: f32,
+}
+
+impl WetPatch {
+    fn decal(&self, mask: DecalImageId, flat: DecalImageId, roughness: DecalImageId) -> Decal {
+        let defaults = Decal::new(mask);
+        Decal {
+            position: self.position,
+            rotation: Quat::from_rotation_y(self.yaw),
+            size: self.size,
+            normal: Some(flat),
+            metallic_roughness: Some(roughness),
+            base_color_mix: self.darken,
+            upper_fade: self.upper_fade.unwrap_or(defaults.upper_fade),
+            lower_fade: self.lower_fade.unwrap_or(defaults.lower_fade),
+            normal_fade: self.normal_fade,
+            ..defaults
+        }
+    }
+}
+
+/// The fixture's puddles, `decals`, in world-space metres and degrees.
+/// Each has `pattern` `"puddle"`, `position`, positive `size`, optional
+/// `yaw_degrees` (default 0), `roughness` and `darken` in 0..=1, and
+/// optional `upper_fade`/`lower_fade` (default `Decal::new`'s) and
+/// `normal_fade` in 0..1 (default 0). An absent list adds none.
+pub fn decals_from_json(descriptor: &Value) -> Result<Vec<WetPatch>, String> {
+    let Some(values) = descriptor.get("decals") else {
+        return Ok(Vec::new());
+    };
+    values
+        .as_array()
+        .ok_or("decals must be an array")?
+        .iter()
+        .map(|value| {
+            let fields = Fields {
+                value,
+                kind: "decal",
+            };
+            if value["pattern"] != "puddle" {
+                return Err("decal pattern must be \"puddle\"".into());
+            }
+            let size = fields.vector("size")?;
+            if size.min_element() <= 0. {
+                return Err("decal size must be positive".into());
+            }
+            let yaw = match value.get("yaw_degrees") {
+                None => 0.,
+                Some(v) => v
+                    .as_f64()
+                    .map(|n| n as f32)
+                    .filter(|n| n.is_finite())
+                    .ok_or("decal yaw_degrees must be a finite number")?
+                    .to_radians(),
+            };
+            let unit = |name: &str, fallback: Option<f32>| -> Result<f32, String> {
+                let n = fields.number(name, fallback)?;
+                if n > 1. {
+                    return Err(format!("decal {name} must be within 0..=1"));
+                }
+                Ok(n)
+            };
+            let normal_fade = unit("normal_fade", Some(0.))?;
+            if normal_fade >= 1. {
+                return Err("decal normal_fade must be below 1".into());
+            }
+            Ok(WetPatch {
+                position: fields.vector("position")?,
+                size,
+                yaw,
+                roughness: unit("roughness", None)?,
+                darken: unit("darken", None)?,
+                upper_fade: value
+                    .get("upper_fade")
+                    .map(|_| fields.number("upper_fade", None))
+                    .transpose()?,
+                lower_fade: value
+                    .get("lower_fade")
+                    .map(|_| fields.number("lower_fade", None))
+                    .transpose()?,
+                normal_fade,
+            })
+        })
+        .collect()
+}
+
+/// Adds the fixture's puddles to `scene` as decals: the puddle mask and the
+/// flat normal once, and one uniform roughness image per distinct roughness. Returns the
+/// decals' identities.
+pub fn add_decals(
+    scene: &mut Scene,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    descriptor: &Value,
+) -> Result<Vec<DecalId>, String> {
+    let patches = decals_from_json(descriptor)?;
+    if patches.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mask = scene
+        .add_decal_image(asset::Image::Rgba8(puddle_mask::puddle_mask()))
+        .map_err(|e| e.to_string())?;
+    let flat = scene
+        .add_decal_image(asset::Image::Rgba8(puddle_mask::flat_normal()))
+        .map_err(|e| e.to_string())?;
+    let mut roughness_images: Vec<(u32, DecalImageId)> = Vec::new();
+    let mut ids = Vec::new();
+    for patch in patches {
+        let key = patch.roughness.to_bits();
+        let roughness = match roughness_images.iter().find(|(k, _)| *k == key) {
+            Some(&(_, image)) => image,
+            None => {
+                let image = scene
+                    .add_decal_image(asset::Image::Rgba8(puddle_mask::wet_roughness(
+                        patch.roughness,
+                    )))
+                    .map_err(|e| e.to_string())?;
+                roughness_images.push((key, image));
+                image
+            }
+        };
+        ids.push(
+            scene
+                .add_decal(device, queue, patch.decal(mask, flat, roughness))
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    Ok(ids)
+}
+
+/// Read back the decals the scene holds rather than report the fixture's.
+pub fn decal_report(scene: &Scene, ids: &[DecalId]) -> Result<Value, String> {
+    let decals = ids
+        .iter()
+        .map(|&id| {
+            let decal = scene.decal(id).map_err(|e| e.to_string())?;
+            Ok(json!({"position":decal.position.to_array(),"size":decal.size.to_array(),
+                "yaw_degrees":decal.rotation.to_euler(sgl_3d::glam::EulerRot::YXZ).0.to_degrees(),
+                "base_color_mix":decal.base_color_mix,"metallic_roughness_map":decal.metallic_roughness.is_some(),
+                "normal_map":decal.normal.is_some(),"upper_fade":decal.upper_fade,"lower_fade":decal.lower_fade,"normal_fade":decal.normal_fade}))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(json!({"registered":decals.len(),"decals":decals}))
+}
+
 /// Read back retained light state rather than report the requested JSON count.
 pub fn local_light_report(scene: &sgl_3d::Scene, ids: &[sgl_3d::LightId]) -> Result<Value, String> {
     let mut active = 0;
@@ -742,6 +907,47 @@ pub fn probe_from_json(value: &Value, rgba16: &[u8]) -> Result<BakedSpecularProb
             ),
         },
     })
+}
+
+/// The fixture's authored specular probe placements, `specular_probes`, in
+/// order, each with a valid shape. An absent list authors none.
+pub fn specular_probe_placements(descriptor: &Value) -> Result<Vec<&Value>, String> {
+    let Some(values) = descriptor.get("specular_probes") else {
+        return Ok(Vec::new());
+    };
+    let values = values
+        .as_array()
+        .ok_or("specular_probes must be an array")?;
+    for value in values {
+        probe_shape(value)?;
+        probe_payload_name(value)?;
+    }
+    Ok(values.iter().collect())
+}
+
+/// A placement's `rgba16` payload basename.
+pub fn probe_payload_name(value: &Value) -> Result<&str, String> {
+    value["rgba16"]
+        .as_str()
+        .filter(|n| {
+            !n.is_empty()
+                && !n.starts_with('.')
+                && n.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        })
+        .ok_or_else(|| "probe rgba16 must be a basename".into())
+}
+
+/// The probes a scene accepted from `Scene::set_baked_specular_probes`, with
+/// their payload basenames: the scene keeps no accessor for them, so this
+/// reports the uploaded values, not the fixture's text.
+pub fn specular_probe_report(names: &[&str], probes: &[BakedSpecularProbe]) -> Value {
+    let probes: Vec<_> = names.iter().zip(probes).map(|(name, probe)| {
+        let bounds = |b: &SpecularProbeBox| json!({"min":b.min.to_array(),"max":b.max.to_array()});
+        json!({"rgba16":name,"center":probe.center.to_array(),"influence":bounds(&probe.influence),
+            "blend":probe.blend.to_array(),"proxy":probe.proxy.as_ref().map(bounds),"face_size":probe.radiance.face_size})
+    }).collect();
+    json!({"registered":probes.len(),"probes":probes})
 }
 
 pub fn probe_shape(value: &Value) -> Result<(u32, usize), String> {
@@ -1185,6 +1391,8 @@ mod tests {
             resolve_settings(settings(false, false), Some(&recipe), None, None).unwrap();
             local_lights_from_json(&recipe).unwrap();
             fog_volumes_from_json(&recipe).unwrap();
+            decals_from_json(&recipe).unwrap();
+            specular_probe_placements(&recipe).unwrap();
             let cameras = selected_cameras(Some(&recipe), "all").unwrap();
             assert!(!cameras.is_empty());
             let default = recipe["default_camera"].as_str().unwrap();
