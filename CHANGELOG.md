@@ -24,6 +24,10 @@ docs and specs the entry links.
   `..Default::default()` needs no change.
 - `sgl-3d` `Scene::set_decal` no longer takes the device, as `set_light`:
   `scene.set_decal(&queue, id, decal)`.
+- `sgl-3d` dynamic GI: where the volume lights a surface, the sky's share of
+  its environment specular is now occluded by the sky the probes see, so
+  shaded and enclosed surfaces stop reflecting the sky at full strength. No
+  game-code changes are needed.
 
 ## 0.8.1 — 2026-11-19
 

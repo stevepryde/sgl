@@ -5,7 +5,8 @@
 //! their bounces, damped, while light outside the room reaches no probe
 //! inside but through its shadow opacity or as a light that casts none, and
 //! the backs of single-sided walls keep the sky out of a room seen from
-//! within and an inside-out box's light in; a material that does not emit
+//! within and an inside-out box's light in; the probes record the share of
+//! their rays that reach the sky; a material that does not emit
 //! into GI gives the probes none of its own light, yet blocks their rays and
 //! reflects a lamp's light; its share fades over the spacing past its
 //! extent; the one determination puts it below charts and above ambient
@@ -126,13 +127,53 @@ enum Receiver {
 }
 
 /// `dynamic_gi_irradiance` at each (position, normal, view toward the
-/// viewer) of `queries` as `receiver` takes it.
+/// viewer) of `queries` as `receiver` takes it: irradiance / PI in rgb, the
+/// volume's share in a.
 fn irradiance_seen(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     renderer: &TestRenderer,
     queries: &[(Vec3, Vec3, Vec3)],
     receiver: Receiver,
+) -> Vec<[f32; 4]> {
+    sample(device, queue, renderer, queries, receiver, "light_of")
+}
+
+/// `dynamic_gi_irradiance` at each (position, normal) of `queries`, seen
+/// from above, as a moving receiver takes it: its sky visibility and its
+/// share.
+fn sky_visibility(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &TestRenderer,
+    queries: &[(Vec3, Vec3)],
+) -> Vec<[f32; 2]> {
+    let queries: Vec<_> = queries
+        .iter()
+        .map(|&(position, normal)| (position, normal, Vec3::Y))
+        .collect();
+    sample(
+        device,
+        queue,
+        renderer,
+        &queries,
+        Receiver::Moving,
+        "sky_of",
+    )
+    .iter()
+    .map(|answer| [answer[0], answer[1]])
+    .collect()
+}
+
+/// `dynamic_gi_irradiance` at each of `queries` as `receiver` takes it,
+/// through `INDIRECT`'s `of` (`light_of` or `sky_of`).
+fn sample(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    renderer: &TestRenderer,
+    queries: &[(Vec3, Vec3, Vec3)],
+    receiver: Receiver,
+    of: &str,
 ) -> Vec<[f32; 4]> {
     let moving = matches!(receiver, Receiver::Moving);
     observe(
@@ -141,7 +182,7 @@ fn irradiance_seen(
         renderer,
         queries,
         &format!(
-            "dynamic_gi_irradiance(queries[id.x].position.xyz,normalize(queries[id.x].normal.xyz),normalize(queries[id.x].view.xyz),false,{moving})"
+            "{of}(dynamic_gi_irradiance(queries[id.x].position.xyz,normalize(queries[id.x].normal.xyz),normalize(queries[id.x].view.xyz),false,{moving}))"
         ),
     )
 }
@@ -241,8 +282,15 @@ struct Query {{ position:vec4<f32>, normal:vec4<f32>, view:vec4<f32>, answer:vec
         .collect()
 }
 
-/// The fixtures' surfaces for `indirect`.
+/// The fixtures' surfaces for `indirect`, and the sample's light and sky
+/// visibility for `sample`.
 const INDIRECT: &str = r#"
+fn light_of(light:VolumeLight)->vec4<f32> {
+ return vec4(light.light,light.share);
+}
+fn sky_of(light:VolumeLight)->vec4<f32> {
+ return vec4(light.sky_visibility,light.share,0.,0.);
+}
 fn indirect_of(position:vec3<f32>,moving:bool,lightmapped:bool)->vec4<f32> {
  var s:Surface;
  s.position=position;
@@ -1041,6 +1089,125 @@ fn a_closed_room_holds_no_light_from_the_sky_beyond_it() {
             answer[..3].iter().all(|&channel| channel < 1e-3),
             "{query:?}: {answer:?}"
         );
+    }
+}
+
+// Plausible defects: the probes record no sky visibility (1 everywhere),
+// count hits as sky or weigh the rays otherwise than the irradiance, or the
+// sample reads it from another texel than the irradiance's. The oracle is
+// the geometry's: from a probe above an infinite ground plane under an open
+// sky, the cosine-weighted share of the hemisphere about a direction n that
+// lies above the plane is (1 + n.y) / 2, so a receiver just above the floor
+// takes 1 facing up, 0.5 facing sideways and 0 facing down. The floor is
+// 200 metres across, a metre below the probes above it, so what passes its
+// edge is under 0.01 of any texel; the tolerance of 0.05 covers that, the
+// rays' quadrature and the octahedral texels' spread about the normal. A
+// visibility that is not recorded misses the sideways case by 0.5.
+#[test]
+fn a_probe_records_the_share_of_its_rays_that_reach_the_sky() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let environment = uniform_environment(&device, &queue, &mut scene, [1.; 3]);
+    let mut slab = test_support::cube();
+    slab.materials[0].base = [0., 0., 0., 1.];
+    slab.materials[0].metallic = 0.;
+    // Its top at y = 0; probes at -1, 1 and 3.
+    add_static(
+        &device,
+        &queue,
+        &mut scene,
+        slab,
+        Mat4::from_translation(Vec3::new(0., -0.1, 0.))
+            * Mat4::from_scale(Vec3::new(200., 0.2, 200.)),
+    );
+    scene
+        .set_dynamic_gi_volume(
+            &device,
+            Some(DynamicGiVolume {
+                origin: Vec3::new(-4., -1., -4.),
+                spacing: Vec3::splat(2.),
+                probes: [5, 3, 5],
+            }),
+        )
+        .unwrap();
+    let mut input = input(Vec3::new(0., 1.5, 1.));
+    input.environment = Some(environment);
+    let settings = settings(DynamicGiQuality::High);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
+    render(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &settings,
+        3,
+    );
+    let normals = [Vec3::Y, Vec3::X, Vec3::NEG_Z, Vec3::NEG_Y];
+    let queries: Vec<_> = [
+        Vec3::new(0.3, 0.05, 0.1),
+        Vec3::new(-1.3, 0.05, 1.1),
+        Vec3::new(1.7, 0.05, -0.6),
+    ]
+    .into_iter()
+    .flat_map(|point| normals.map(|normal| (point, normal)))
+    .collect();
+    for (query, answer) in queries
+        .iter()
+        .zip(sky_visibility(&device, &queue, &renderer, &queries))
+    {
+        assert_eq!(answer[1], 1., "{query:?}: {answer:?}");
+        let expected = (1. + query.1.y) / 2.;
+        assert!(
+            close(answer[0], expected, 0.05),
+            "{query:?}: {answer:?}, expected {expected}"
+        );
+    }
+}
+
+// Plausible defects: a probe records sky where its rays hit, or none where
+// they all miss; a texel keeps the 1 it starts with though rays reach it.
+// The oracle: inside a closed room every ray of every probe hits a wall, so
+// the volume's sky visibility is 0 throughout; with no geometry none does,
+// and it is 1.
+#[test]
+fn a_closed_room_records_no_sky_and_an_open_volume_all_of_it() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    for (room, expected) in [(true, 0.), (false, 1.)] {
+        let mut scene = Scene::new(&device, &queue);
+        let environment = uniform_environment(&device, &queue, &mut scene, [1.; 3]);
+        if room {
+            add_room(&device, &queue, &mut scene);
+        }
+        scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
+        let mut input = input(Vec3::new(0., 0., 4.));
+        input.environment = Some(environment);
+        let settings = settings(DynamicGiQuality::High);
+        let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
+        render(
+            &device,
+            &queue,
+            &mut renderer,
+            &mut scene,
+            &input,
+            &settings,
+            3,
+        );
+        for (query, answer) in
+            queries()
+                .iter()
+                .zip(sky_visibility(&device, &queue, &renderer, &queries()))
+        {
+            assert_eq!(answer[1], 1., "room {room}, {query:?}: {answer:?}");
+            assert!(
+                close(answer[0], expected, 1e-3),
+                "room {room}, {query:?}: {answer:?}"
+            );
+        }
     }
 }
 

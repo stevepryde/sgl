@@ -9,7 +9,8 @@
 //! charts and above the dynamic GI volume and ambient cubes, takes the
 //! frame's ambient by its sky visibility in place of the environment and
 //! the fill, and occludes the sky's specular but not a probe's, in lit
-//! shading and in completion; and the scene refuses placements and regions
+//! shading and in completion, as the dynamic GI volume's sky visibility
+//! does in completion; and the scene refuses placements and regions
 //! it cannot hold, changing nothing.
 use super::PreparedIrradianceRegion;
 use crate::renderer::test_frame::TestRenderer;
@@ -720,7 +721,13 @@ fn the_share_fades_over_the_cell_past_each_face() {
 // with baked lighting off, the irradiance volume and the cube give way to
 // the dynamic GI volume. A floor below the receivers gives the dynamic GI
 // probes about them a surface, as a static receiver's own surface gives its
-// probes, so the static receivers take that volume too.
+// probes, so the static receivers take that volume too. A ceiling above the
+// probes that glows as the sky does hides most of the sky from them and
+// leaves their light as it was. A receiver's sky visibility is each
+// volume's a(n) by its share and 1 in the share neither takes: the
+// irradiance volume's installed 0.5 and the dynamic GI volume's, read from
+// its sample at the receiver, which the ceiling holds well below 1, so a
+// determination that left the dynamic GI volume's out would give 1.
 #[test]
 fn the_volume_lights_receivers_below_charts_and_above_dynamic_gi_and_ambient_cubes() {
     let Some((device, queue)) = test_support::device() else {
@@ -740,20 +747,29 @@ fn the_volume_lights_receivers_below_charts_and_above_dynamic_gi_and_ambient_cub
     floor.materials[0].base = [0.5, 0.5, 0.5, 1.];
     floor.materials[0].metallic = 0.;
     let floor = scene.add_asset(&device, &queue, floor).unwrap().model;
-    scene
-        .add_instance(
-            &device,
-            &queue,
-            InstanceState {
-                model: floor,
-                pose: Mat4::from_translation(Vec3::new(0., -1., 0.))
-                    * Mat4::from_scale(Vec3::new(20., 1., 20.)),
-                visible: true,
-                capture_visible: true,
-            },
-            Mobility::Static,
-        )
-        .unwrap();
+    // Its underside at y = 4.5, 1.5 m above the highest probes, glowing at
+    // the sky's radiance.
+    let mut ceiling = test_support::cube();
+    ceiling.materials[0].base = [0., 0., 0., 1.];
+    ceiling.materials[0].metallic = 0.;
+    ceiling.materials[0].emissive = [0.5; 3];
+    let ceiling = scene.add_asset(&device, &queue, ceiling).unwrap().model;
+    for (model, y) in [(floor, -1.), (ceiling, 5.)] {
+        scene
+            .add_instance(
+                &device,
+                &queue,
+                InstanceState {
+                    model,
+                    pose: Mat4::from_translation(Vec3::new(0., y, 0.))
+                        * Mat4::from_scale(Vec3::new(20., 1., 20.)),
+                    visible: true,
+                    capture_visible: true,
+                },
+                Mobility::Static,
+            )
+            .unwrap();
+    }
     scene
         .set_dynamic_gi_volume(
             &device,
@@ -792,8 +808,9 @@ fn the_volume_lights_receivers_below_charts_and_above_dynamic_gi_and_ambient_cub
   s.moving=moving[i];
   s.baked=lightmapped[i];
   let indirect=surface_indirect_diffuse(s,s.normal,false);
+  let dynamic_gi=dynamic_gi_irradiance(s.position,s.normal,s.view,false,s.moving);
   output[2u*i]=vec4(indirect.baked.r,indirect.field.r,indirect.dynamic_gi.r,indirect.dynamic_gi.a);
-  output[2u*i+1u]=vec4(indirect.ambient,indirect.sky_visibility,0.,0.);
+  output[2u*i+1u]=vec4(indirect.ambient,indirect.sky_visibility,dynamic_gi.sky_visibility,0.);
  }}"#,
         vec3s(surfaces.iter().map(|s| s.0)),
         surfaces.map(|s| s.1.to_string()).join(","),
@@ -825,36 +842,42 @@ fn the_volume_lights_receivers_below_charts_and_above_dynamic_gi_and_ambient_cub
             &statements,
             2 * count,
         );
-        // (baked, field, dynamic GI's share, ambient, sky visibility); the
-        // dynamic GI volume holds 0.5 wherever it has a share.
-        let expected: [[f32; 5]; 6] = if baked_lighting {
+        // (baked, field, dynamic GI's share, ambient); the dynamic GI volume
+        // holds 0.5 wherever it has a share.
+        let expected: [[f32; 4]; 6] = if baked_lighting {
             [
-                [0., 3., 0., 0.5, 0.5],
-                [0., 3., 0., 0.5, 0.5],
-                [0., 0., 0., 1., 1.],
-                [0., 0., 1., 0., 1.],
-                [0., 1.5, 0.5, 0.25, 0.75],
-                [0.25, 0., 0., 1., 1.],
+                [0., 3., 0., 0.5],
+                [0., 3., 0., 0.5],
+                [0., 0., 0., 1.],
+                [0., 0., 1., 0.],
+                [0., 1.5, 0.5, 0.25],
+                [0.25, 0., 0., 1.],
             ]
         } else {
             [
-                [0., 0., 1., 0., 1.],
-                [0., 0., 1., 0., 1.],
-                [0., 0., 1., 0., 1.],
-                [0., 0., 1., 0., 1.],
-                [0., 0., 1., 0., 1.],
-                [0., 0., 0., 1., 1.],
+                [0., 0., 1., 0.],
+                [0., 0., 1., 0.],
+                [0., 0., 1., 0.],
+                [0., 0., 1., 0.],
+                [0., 0., 1., 0.],
+                [0., 0., 0., 1.],
             ]
         };
+        // Past the irradiance volume, the dynamic GI volume's alone.
+        let open = answers[2 * 3 + 1][2];
+        assert!(open < 0.5, "the ceiling hides most of the sky: {open}");
         for (i, expected) in expected.iter().enumerate() {
             let [baked, field, dynamic_gi, share] = answers[2 * i];
-            let [ambient, sky_visibility, _, _] = answers[2 * i + 1];
+            let [ambient, sky_visibility, dynamic_gi_sky, _] = answers[2 * i + 1];
+            // The irradiance volume's light 3 and sky visibility 0.5 by its
+            // share, the dynamic GI volume's by its share, 1 in the rest.
+            let field_share = expected[1] / 3.;
+            let sky =
+                field_share * 0.5 + expected[2] * dynamic_gi_sky + (1. - field_share - expected[2]);
+            let expected = [expected[0], expected[1], expected[2], expected[3], sky];
             let actual = [baked, field, share, ambient, sky_visibility];
             assert!(
-                actual
-                    .iter()
-                    .zip(expected)
-                    .all(|(a, e)| close(*a, *e, 1e-4)),
+                actual.iter().zip(expected).all(|(a, e)| close(*a, e, 1e-4)),
                 "baked lighting {baked_lighting}, {:?}: {actual:?}, expected {expected:?}",
                 surfaces[i]
             );
@@ -1180,6 +1203,127 @@ fn completion_occludes_the_skys_specular_by_the_visibility_the_opaque_pass_recor
         probe[0..3],
         "the probe's specular was occluded"
     );
+}
+
+// Plausible defects: the dynamic GI volume's sky visibility never reaches
+// the ambient target's alpha, so completion reflects the sky in full inside
+// a closed room; or it occludes a probe's specular too. The oracle is
+// Lagarde's occlusion at visibility 0, which is 0 for any lobe: a glossy
+// black wall in a closed, unlit room under a bright sky, whose probes see
+// no sky, reflects nothing once they have blended, where without the volume
+// it reflects the sky; with a specular probe about it, it reflects the
+// probe as without the volume. Its black base and the unlit room leave its
+// light its environment specular alone.
+#[test]
+fn completion_occludes_the_skys_specular_by_the_visibility_the_dynamic_gi_volume_records() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let quality = |dynamic_gi| Settings {
+        dynamic_gi,
+        ..settings()
+    };
+    // One renderer for each quality, each frame a scene of its own.
+    let mut without = TestRenderer::for_test(&device, &queue, SIZE, &settings());
+    let mut with = TestRenderer::for_test(&device, &queue, SIZE, &quality(DynamicGiQuality::High));
+    let mut frame = |dynamic_gi: DynamicGiQuality, probes: bool| -> [f32; 4] {
+        let settings = quality(dynamic_gi);
+        let renderer = if dynamic_gi == DynamicGiQuality::Off {
+            &mut without
+        } else {
+            &mut with
+        };
+        let mut scene = Scene::new(&device, &queue);
+        let environment = uniform_environment(gpu, &mut scene, 4.);
+        // A closed grey room ten metres across about the camera, and a
+        // wall within it facing the camera, its face at z = -2.
+        let mut room = test_support::cube();
+        room.materials[0].base = [0.5, 0.5, 0.5, 1.];
+        room.materials[0].metallic = 0.;
+        let mut wall = test_support::cube();
+        let material = &mut wall.materials[0];
+        material.base = [0., 0., 0., 1.];
+        material.metallic = 0.;
+        material.roughness = 0.1;
+        for (asset, pose) in [
+            (room, Mat4::from_scale(Vec3::splat(10.))),
+            (
+                wall,
+                Mat4::from_translation(Vec3::new(0., 0., -2.3))
+                    * Mat4::from_scale(Vec3::new(4., 4., 0.6)),
+            ),
+        ] {
+            let ids = scene.add_asset(&device, &queue, asset).unwrap();
+            scene
+                .add_instance(
+                    &device,
+                    &queue,
+                    InstanceState {
+                        model: ids.model,
+                        pose,
+                        visible: true,
+                        capture_visible: true,
+                    },
+                    Mobility::Static,
+                )
+                .unwrap();
+        }
+        if probes {
+            scene
+                .set_baked_specular_probes(&device, &queue, &[probe(8.)])
+                .unwrap();
+        }
+        // Probes at -3, -1, 1 and 3 on each axis, all within the room.
+        scene
+            .set_dynamic_gi_volume(
+                &device,
+                Some(DynamicGiVolume {
+                    origin: Vec3::splat(-3.),
+                    spacing: Vec3::splat(2.),
+                    probes: [4, 4, 4],
+                }),
+            )
+            .unwrap();
+        // No diffuse environment, so the frame's ambient adds nothing where
+        // the volume does not light the wall.
+        let mut input = input();
+        input.environment = Some(environment);
+        input.diffuse_environment.intensity = 0.;
+        let output = crate::view::targets::target(&device, "frame", SIZE, gbuffer::COLOR);
+        for _ in 0..4 {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &input,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+        }
+        centre(gpu, renderer)
+    };
+    let open = frame(DynamicGiQuality::Off, false);
+    assert!(open[0] > 0.05 && open[3] == 1., "{open:?}");
+    let dark = frame(DynamicGiQuality::High, false);
+    assert!(
+        dark[0..3].iter().all(|&c| c.abs() < 1e-3) && dark[3] < 1e-3,
+        "{dark:?}"
+    );
+    let probe = frame(DynamicGiQuality::Off, true);
+    assert!(probe[0] > open[0], "{probe:?}");
+    let probe_dark = frame(DynamicGiQuality::High, true);
+    for channel in 0..3 {
+        assert!(
+            close(probe_dark[channel], probe[channel], probe[channel] * 1e-3),
+            "the probe's specular was occluded: {probe_dark:?}, {probe:?}"
+        );
+    }
 }
 
 // Plausible defects: a placement or region the scene cannot hold is taken,

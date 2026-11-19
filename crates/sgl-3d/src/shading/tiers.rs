@@ -2,7 +2,10 @@
 //! blended group 3's bindings of the Extended tier, and each group's two
 //! providers, of which a program composes the one of the device's tier
 //! (`lit_provider`, `material_provider`, `transmission_provider`).
-use super::{BIND_BLENDED, BIND_LIT, BIND_MATERIAL, DYNAMIC_GI_SAMPLE, Module, bind::BindingTier};
+use super::{
+    BIND_BLENDED, BIND_LIT, BIND_MATERIAL, DYNAMIC_GI_SAMPLE, Module, VOLUME_SHARE,
+    bind::BindingTier,
+};
 
 /// Lit group 0's bindings of the Extended binding tier alone.
 pub(crate) static BIND_LIT_EXTENDED: Module = Module {
@@ -21,7 +24,7 @@ pub(crate) static LIT_EXTENDED: Module = Module {
 pub(crate) static LIT_BASIC: Module = Module {
     name: "lit_basic",
     source: include_str!("lit_basic.wgsl"),
-    deps: &[],
+    deps: &[&VOLUME_SHARE],
 };
 /// The lit provider a program that composes `SURFACE` composes on a device
 /// of `tier`.

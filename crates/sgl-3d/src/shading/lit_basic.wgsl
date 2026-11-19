@@ -10,6 +10,6 @@ fn baked_lightmap_direction(uv:vec2<f32>,layer:i32)->vec4<f32> {
 fn baked_atlas_direction(uv:vec2<f32>,layer:i32)->vec4<f32> {
  return vec4(0.);
 }
-fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,probe_hit:bool,moving:bool)->vec4<f32> {
- return vec4(0.);
+fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,probe_hit:bool,moving:bool)->VolumeLight {
+ return VolumeLight(vec3(0.),1.,0.);
 }

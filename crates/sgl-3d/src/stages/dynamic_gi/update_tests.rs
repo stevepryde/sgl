@@ -1,6 +1,9 @@
 //! Sparse probe updates at the production blend boundary. Four rays toward
 //! +Z leave the opposite octahedral hemisphere unobserved; its existing
-//! light and visibility must remain, rather than treating no sample as zero.
+//! light, visibility and sky visibility must remain, rather than treating no
+//! sample as zero, and a fresh probe's must start at max-distance moments,
+//! no light and the whole sky (G-7). The four rays hit, so the texels they
+//! reach see no sky: a fresh probe takes that share whole (G-5).
 use super::buffers::{Convergence, VolumeUniform};
 use super::pipelines::UPDATE;
 use super::volume::{Layouts, texture};
@@ -97,7 +100,8 @@ fn four_ray_updates_keep_unobserved_depth_and_irradiance_history() {
             half2(1., 1.),
             half2(1., 1.),
             half2(1., 1.),
-            half2(1., 0.),
+            // The inconsistency, and the sky visibility in the spare half.
+            half2(1., 0.25),
         ];
         let variance_words: Vec<u32> = old_variance.into_iter().cycle().take(6 * 6 * 6).collect();
         let variance = storage(bytemuck::cast_slice(&variance_words));
@@ -157,6 +161,11 @@ fn four_ray_updates_keep_unobserved_depth_and_irradiance_history() {
                     [0; 5],
                     "fresh irradiance corner {index} retained old light"
                 );
+                assert_eq!(
+                    words[5] >> 16,
+                    u32::from(test_support::to_half(1.)),
+                    "fresh irradiance corner {index} retained old sky visibility"
+                );
             }
         }
         // The texture and its copied borders are what receivers sample;
@@ -178,15 +187,31 @@ fn four_ray_updates_keep_unobserved_depth_and_irradiance_history() {
             );
         }
         let expected_color = test_support::to_half(if blended { 1. } else { 0. });
+        let expected_sky = test_support::to_half(if blended { 0.25 } else { 1. });
         for [x, y] in [[1, 19], [6, 24], [0, 25], [7, 18]] {
             assert_eq!(
-                texel(x, y)[..3],
-                [expected_color; 3],
+                texel(x, y),
+                [expected_color, expected_color, expected_color, expected_sky],
                 "unobserved irradiance texture ({x},{y})"
             );
         }
-        // The central +Z texels do receive rays and still update.
+        // The central +Z texels do receive rays and still update: the sky
+        // visibility toward the fresh probe's hits is 0, and a blended
+        // probe's falls from 0.25 at the depth maps' rate, 0.02 a turn.
         assert_ne!(depths[7 * 16 + 7], old_depth);
-        assert_ne!(variance[2 * 6 * 6 + 2 * 6], old_variance[0]);
+        let central = (2 * 6 + 2) * 6;
+        assert_ne!(variance[central], old_variance[0]);
+        let sky = test_support::half(&(variance[central + 5] >> 16).to_le_bytes()[..2]);
+        let expected = if blended { 0.25 * 0.98 } else { 0. };
+        assert!(
+            (sky - expected).abs() <= 1e-3,
+            "blended={blended}, central sky visibility {sky}"
+        );
+        let [_, _, _, alpha] = texel(3, 21);
+        assert_eq!(
+            alpha,
+            test_support::to_half(sky),
+            "blended={blended}, central sky visibility in the texture"
+        );
     }
 }

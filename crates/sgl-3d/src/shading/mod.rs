@@ -273,8 +273,9 @@ pub(crate) static DYNAMIC_GI: Module = Module {
     source: include_str!("dynamic_gi.wgsl"),
     deps: &[],
 };
-/// A volume's share of a receiver by where it lies on its lattice: the
-/// dynamic GI volume's and the irradiance volume's.
+/// A volume's share of a receiver by where it lies on its lattice, and the
+/// light it gives the receiver: the dynamic GI volume's and the irradiance
+/// volume's.
 pub(crate) static VOLUME_SHARE: Module = Module {
     name: "volume_share",
     source: include_str!("volume_share.wgsl"),

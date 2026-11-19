@@ -1080,7 +1080,10 @@ base lobe's specular occlusion. Environment and baked-probe specular
 (including SSR's fallback where its rays miss) takes Filament's desktop
 specular occlusion: Lagarde's specular AO from the visibility, with GTAO
 multi-bounce on the base lobe's F0, so bright metals keep most of their
-reflection. Screen-space reflection hits, direct light, emission and baked
+reflection. Ambient occlusion reaches only its radius; beyond it, where the
+irradiance volume or the dynamic GI volume lights a surface, the volume's
+sky visibility multiplies the visibility for the sky's share of that
+specular alone. Screen-space reflection hits, direct light, emission and baked
 direct/bounced irradiance retain their existing ownership. Probe captures and
 secondary rays do not consume camera-space AO. There are no substitute contact
 shadows. A material's occlusion map joins it: each opaque receiver takes the
@@ -2553,9 +2556,19 @@ scales the environment, not the volume. Beyond its extent the volume's share
 fades out over one spacing; ambient cubes stay the moving instances'
 fallback there, with `Settings::dynamic_gi` at `Off`, and without a volume.
 
-Sparse turns keep a probe texel's light and depth history when no ray
-contributes to it. A fresh unobserved depth texel starts at the maximum
-ray distance; its irradiance starts at zero until observed.
+Each probe also records how much of the sky its rays reach about each
+direction, a sky visibility from 1 under open sky to 0 in a closed room.
+Where the volume lights a surface it darkens the sky's share of the
+surface's environment specular by its share, as the irradiance volume's
+[sky visibility](#irradiance-volume) does, so shade under an awning or
+inside an arch stops reflecting the sky at full strength; specular probes
+keep their reflections. It follows geometry over about 50 of a probe's
+turns, as its depths do, and resolves at the probe spacing.
+
+Sparse turns keep a probe texel's light, sky visibility and depth history
+when no ray contributes to it. A fresh unobserved depth texel starts at the
+maximum ray distance; its irradiance starts at zero and its sky visibility
+at 1 until observed.
 
 Placement:
 

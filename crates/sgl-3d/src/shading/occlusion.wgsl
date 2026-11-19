@@ -51,8 +51,8 @@ fn specular_occlusion(nv:f32,roughness:f32,coat:bool,visibility:f32,f0:vec3<f32>
 }
 // A lobe's environment specular, its probes' share `probes` and the sky's
 // `sky`, occluded (specular_occlusion): the probes' by the receiver's
-// `visibility`, the sky's by that times the irradiance volume's sky
-// visibility a(n), `sky_visibility` (irradiance_volume.wgsl), as
+// `visibility`, the sky's by that times the volumes' sky visibility a(n),
+// `sky_visibility` (surface_indirect_diffuse), as
 // Frostbite's sky visibility and Unreal's baked sky occlusion occlude their
 // sky light and not reflection captures. Full visibility occludes nothing:
 // the multi-bounce fit would raise a white metal's by 1e-4.

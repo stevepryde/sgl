@@ -5,8 +5,7 @@ use wgpu::TextureFormat;
 /// scattering's share of the ambient light, which source completion reads.
 pub(crate) const COLOR: TextureFormat = TextureFormat::Rgba16Float;
 /// Unoccluded ambient light (its diffuse share and the specular multiple
-/// scattering it carries), linear HDR, and the irradiance volume's sky
-/// visibility.
+/// scattering it carries), linear HDR, and the volumes' sky visibility.
 pub(crate) const AMBIENT: TextureFormat = TextureFormat::Rgba16Float;
 /// Signed octahedral base and coat normals.
 pub(crate) const NORMAL: TextureFormat = TextureFormat::Rgba16Float;

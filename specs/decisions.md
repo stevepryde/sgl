@@ -999,3 +999,21 @@ Use the [current specs](README.md) for implementation and the
   (Filament's `FrameHistory`, committed per view) do not restart on a
   repeated frame; restarting every temporal stage on a hitch made the hitch
   visible for a second frame (B-4, 2026-11-18 history audit).
+- **D-59** Decision, 2026-11-19 (#826): the sky's share of environment
+  specular is occluded by a sky visibility the GI volumes record, never by
+  normalising it against the indirect diffuse light a surface receives. The
+  dynamic GI volume's probes record the share of their rays that reach the
+  sky and give a receiver the a(n) the irradiance volume gives. Not taken:
+  environment-map normalisation (Lazarov, SIGGRAPH 2013) and Godot's
+  occlusion from ambient luminance (b130438 `scene_forward_clustered.glsl`
+  2260–2267). Under D-56 a chart adds to the frame's ambient, so its ratio
+  to the sky's irradiance never falls below one; in the dynamic GI volume
+  the ratio counts bounce as sky, so shade beside a sunlit street keeps the
+  sky's reflection; and a luminance threshold has no meaning in light
+  exposed after shading. XeGTAO's bent normals are not taken either: they
+  act within ambient occlusion's radius, and cost a wider working term, a
+  second history and a second specular occlusion formula.
+  Rationale: a visibility depends on geometry alone, is the quantity the
+  irradiance volume's path already takes, and costs no tap (the alpha of
+  the texel the irradiance tap reads) and no memory (the estimator's spare
+  half).

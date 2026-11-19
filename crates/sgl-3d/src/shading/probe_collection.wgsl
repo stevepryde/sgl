@@ -73,8 +73,8 @@ fn collection_bucket(sum:ProbeSum,bucket:u32,bucket_bits:u32,world:vec3<f32>,dir
  return result;
 }
 // A lobe's environment specular at a receiver, each share times `scale`:
-// the probes' and the sky's beyond them, which the irradiance volume's sky
-// visibility occludes apart (specular_occlusion).
+// the probes' and the sky's beyond them, which the volumes' sky visibility
+// occludes apart (specular_occlusion).
 struct EnvironmentSpecular {
  probes:vec3<f32>,
  sky:vec3<f32>,

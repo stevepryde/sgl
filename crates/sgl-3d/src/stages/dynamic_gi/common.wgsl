@@ -9,7 +9,8 @@
 // 390–443) and wiRenderer.cpp (DDGI_BLEND_SPEED 144), MIT
 // (src/LICENSE-wicked.txt). Changed: f32 in place of half, a ray packed as
 // halves into four words and an estimator into six, values clamped to the
-// half range they are packed into.
+// half range they are packed into. Added: each texel's sky visibility beside
+// its estimator, in the sixth word's spare half (D-59).
 // How far probes keep from surfaces, in their rays' greatest distance.
 const DDGI_KEEP_DISTANCE:f32=.1;
 // Each frame's share in a depth map: Wicked's 0.02.
@@ -167,13 +168,17 @@ fn ddgi_unpack_ray(data:vec4<u32>)->DdgiRay {
  let radiance=vec4(unpack2x16float(data.z),unpack2x16float(data.w));
  return DdgiRay(direction_depth.xyz,direction_depth.w,radiance.rgb,radiance.w>0.);
 }
-// One irradiance texel's estimator: Wicked's DDGIVarianceData.
+// One irradiance texel's estimator: Wicked's DDGIVarianceData, and the
+// texel's sky visibility, which the estimator leaves alone: the share of the
+// probe's rays about the texel's direction that met nothing, by the weights
+// its irradiance takes, blended at DDGI_DEPTH_BLEND (update_irradiance).
 struct DdgiVariance {
  mean:vec3<f32>,
  short_mean:vec3<f32>,
  vbbr:f32,
  variance:vec3<f32>,
  inconsistency:f32,
+ sky_visibility:f32,
 }
 // Its six words in the stage's estimator buffer.
 const DDGI_VARIANCE_WORDS:u32=6u;
@@ -187,7 +192,7 @@ fn ddgi_pack_variance(data:DdgiVariance)->array<u32,6> {
   ddgi_pack_half2(data.short_mean.g,data.short_mean.b),
   ddgi_pack_half2(data.variance.r,data.variance.g),
   ddgi_pack_half2(data.variance.b,data.vbbr),
-  ddgi_pack_half2(data.inconsistency,0.),
+  ddgi_pack_half2(data.inconsistency,data.sky_visibility),
  );
 }
 fn ddgi_unpack_variance(words:array<u32,6>)->DdgiVariance {
@@ -197,7 +202,7 @@ fn ddgi_unpack_variance(words:array<u32,6>)->DdgiVariance {
  let d=unpack2x16float(words[3]);
  let e=unpack2x16float(words[4]);
  let f=unpack2x16float(words[5]);
- return DdgiVariance(vec3(a,b.x),vec3(b.y,c),e.y,vec3(d,e.x),f.x);
+ return DdgiVariance(vec3(a,b.x),vec3(b.y,c),e.y,vec3(d,e.x),f.x,f.y);
 }
 // A probe's state in the stage's probe buffer: its relocated offset in half
 // spacings, whether it has been blended since the volume restarted, the

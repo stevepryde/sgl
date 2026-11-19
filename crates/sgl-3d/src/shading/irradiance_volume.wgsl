@@ -20,17 +20,11 @@
 // in place of Bevy's falloff; the sampler is `baked_sampler`, which the
 // clamp keeps within each face's slab.
 //
-// The volume's light at a receiver: its own light rgb(n), irradiance / PI;
-// the share of the frame's ambient that reaches it, a(n); and the volume's
-// share of the receiver's indirect diffuse light, 0 where the volume does
-// not light the frame or reach the receiver.
-struct IrradianceVolumeLight {
- light:vec3<f32>,
- sky_visibility:f32,
- share:f32,
-}
-fn irradiance_volume_light(position:vec3<f32>,geometry_normal:vec3<f32>,N:vec3<f32>)->IrradianceVolumeLight {
- var light=IrradianceVolumeLight(vec3(0.),1.,0.);
+// The volume's light at a receiver (VolumeLight): its own light rgb(n),
+// irradiance / PI; the share of the frame's ambient that reaches it, a(n),
+// its sky visibility; and the volume's share.
+fn irradiance_volume_light(position:vec3<f32>,geometry_normal:vec3<f32>,N:vec3<f32>)->VolumeLight {
+ var light=VolumeLight(vec3(0.),1.,0.);
  if !baked_lighting_enabled || (frame.flags&FRAME_IRRADIANCE_VOLUME)==0u {
   return light;
  }

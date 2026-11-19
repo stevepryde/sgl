@@ -332,7 +332,9 @@ them through unrefracted. A probe captured on an
   from the frame's and the scene's lights, emitters and the sky, shadowed
   by rays where the lights cast shadows, on static surfaces without a bake
   and on moving instances in place of their ambient cubes and the frame's
-  ambient, fading out over one spacing past the volume. A new placement
+  ambient, fading out over one spacing past the volume. The probes also
+  record how much sky they see, which darkens the sky's share of those
+  surfaces' environment specular in shade and enclosed spaces. A new placement
   starts its probes over a few frames, nearest the camera first; one moved
   by whole spacings scrolls, keeping the probes that stay. Probes inside
   geometry or behind walls light nothing and cost little; those with no
@@ -404,8 +406,9 @@ Environment and probe specular always apply. On top of them:
 
 - **Ambient occlusion**: XeGTAO after opaque shading, which occludes ambient
   light (its diffuse share, and the specular multiple scattering a rough
-  metal reflects most of) and environment and probe reflections; turning it
-  on draws no geometry again. Spatial and AO-owned temporal filtering run
+  metal reflects most of) and environment and probe reflections, and the
+  volumes' sky visibility occludes the sky's reflection beyond its reach;
+  turning it on draws no geometry again. Spatial and AO-owned temporal filtering run
   before lighting composition in every antialiasing mode; depth motion keeps
   moving receivers eligible for history.
   [Ambient occlusion](../README.md#ambient-occlusion).

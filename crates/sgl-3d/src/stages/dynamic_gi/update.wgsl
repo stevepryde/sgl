@@ -22,6 +22,11 @@
 // unobserved texel starts with max-distance moments and zero irradiance.
 // Wicked and RTXGI blend zero when no ray contributes, appropriate for their
 // denser ray sets, but that erodes the sparse probe's visibility here.
+// Added (D-59): each irradiance texel's sky visibility, the share of its
+// rays that met nothing by the weights its irradiance takes, in the texel's
+// alpha, blended at the depth maps' rate from the estimator's spare half; a
+// probe's first blend takes its turn's share whole, and a texel no ray
+// contributes to keeps what it holds, 1 on a first blend.
 // Added: the scroll pass, which clears the planes
 // of probes that enter a scrolled volume, as NVIDIA RTXGI's probe blending
 // clears the planes its scroll offsets bring in (DDGIClearScrolledPlane;
@@ -218,7 +223,8 @@ const IRRADIANCE_THREADS:u32=8u;
 const IRRADIANCE_CACHE:u32=IRRADIANCE_THREADS*IRRADIANCE_THREADS;
 var<workgroup> irradiance_ray_count:u32;
 var<workgroup> irradiance_cache:array<DdgiRay,IRRADIANCE_CACHE>;
-var<workgroup> shared_texels:array<vec3<f32>,IRRADIANCE_CACHE>;
+// Each texel's mean irradiance in rgb and its sky visibility in a.
+var<workgroup> shared_texels:array<vec4<f32>,IRRADIANCE_CACHE>;
 @compute @workgroup_size(IRRADIANCE_THREADS,IRRADIANCE_THREADS)
 fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_id) thread:vec3<u32>,@builtin(local_invocation_index) group_index:u32) {
  let probe_index=traced_probe(group);
@@ -238,6 +244,8 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
  let texel_direction=ddgi_decode_oct(((vec2<f32>(thread.xy%DDGI_COLOR_RESOLUTION)+.5)/f32(DDGI_COLOR_RESOLUTION))*2.-1.);
  var result=vec3(0.);
  var total_weight=0.;
+ // The weight of the rays that met nothing.
+ var sky_weight=0.;
  var remaining_rays=ray_count;
  var offset=0u;
  while remaining_rays>0u {
@@ -252,6 +260,7 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
    if weight>DDGI_WEIGHT_EPSILON {
     result+=ray.radiance*weight;
     total_weight+=weight;
+    sky_weight+=select(0.,weight,ray.depth<0.);
    }
   }
   workgroupBarrier();
@@ -265,10 +274,12 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
   let index=probe_index*DDGI_COLOR_RESOLUTION*DDGI_COLOR_RESOLUTION+thread.x+thread.y*DDGI_COLOR_RESOLUTION;
   var data=ddgi_load_variance(index);
   if !probe.blended {
-   data=DdgiVariance(result,result,0.,vec3(0.),1.);
+   data=DdgiVariance(result,result,0.,vec3(0.),1.,1.);
   }
   let previous_mean=data.mean;
   if total_weight>DDGI_WEIGHT_EPSILON {
+   let sky=sky_weight/total_weight;
+   data.sky_visibility=select(sky,mix(data.sky_visibility,sky,DDGI_DEPTH_BLEND),probe.blended);
    multiscale_mean_estimator(result,&data,DDGI_BLEND_SPEED);
   }
   ddgi_store_variance(index,data);
@@ -282,7 +293,7 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
    variation=sqrt(max(spread,0.))/luminance;
   }
   atomicAdd(&probe_variability,u32(min(variation,DDGI_MOST_VARIABILITY)*DDGI_VARIABILITY_UNIT));
-  shared_texels[(1u+thread.x)+(1u+thread.y)*DDGI_COLOR_TEXELS]=data.mean;
+  shared_texels[(1u+thread.x)+(1u+thread.y)*DDGI_COLOR_TEXELS]=vec4(data.mean,data.sky_visibility);
  }
  workgroupBarrier();
  // Copy the colour borders.
@@ -292,7 +303,7 @@ fn update_irradiance(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invoc
  }
  workgroupBarrier();
  let tile=ddgi_probe_color_pixel(probe_coord,volume.probes)-vec2(1u);
- textureStore(probes_out,tile+thread.xy,vec4(shared_texels[group_index],1.));
+ textureStore(probes_out,tile+thread.xy,shared_texels[group_index]);
  // An active probe's mean over its texels joins the volume's.
  if group_index==0u && ddgi_probe_active(probe) && probe.surfaced {
   atomicAdd(&convergence.variability,atomicLoad(&probe_variability)/(DDGI_COLOR_RESOLUTION*DDGI_COLOR_RESOLUTION));

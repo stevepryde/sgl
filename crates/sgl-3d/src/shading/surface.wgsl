@@ -136,9 +136,9 @@ struct ShadeContext {
 // (`ambient`), with its sheen's lobe, and the specular multiple scattering
 // it carries (`multi`), but not its transmitted lobe's light, which no
 // occlusion occludes (surface_transmitted_ambient);
-// and the irradiance volume's sky visibility a(n) at it, 1 where the volume
-// does not light it. Source completion occludes the main view's ambient
-// light by its visibility, the diffuse share linearly and the multiple
+// and the volumes' sky visibility a(n) at it, each volume's by its share, 1
+// in the share neither takes. Source completion occludes the main view's
+// ambient light by its visibility, the diffuse share linearly and the multiple
 // scattering by its specular occlusion (occlusion_ambient), and its sky
 // specular by a(n) too (shading/gbuffer.wgsl, occlusion.wgsl); every other
 // view's radiance holds its ambient light occluded so by its material's
@@ -168,7 +168,7 @@ fn shade_unlit(s:Surface)->Shaded {
 // interreflection; a ray hit ends its path in them, as Unreal's and HDRP's
 // ray-traced reflections take reflection probes at the last bounce. The
 // probes' and the sky's shares come apart (EnvironmentSpecular), for the
-// irradiance volume's sky visibility occludes the sky's alone.
+// volumes' sky visibility occludes the sky's alone.
 fn probe_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32)->EnvironmentSpecular {
  let rotation=frame.reflection_yaw;
  let strength=frame.reflection_intensity;
@@ -595,7 +595,9 @@ fn directional_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,coat_n
 // zero where no probe about the hit weighs), and in the share both leave
 // the frame's ambient, to which a moving instance adds its ambient cube.
 // Each volume takes its share and leaves the rest to what follows it, so a
-// receiver hands over at its border without a seam.
+// receiver hands over at its border without a seam. Its sky visibility is
+// each volume's a(n) by its share and 1 in the share neither takes (D-59);
+// a charted receiver's is 1, as a chart holds no sky (D-56).
 struct IndirectDiffuse {
  // The chart's irradiance / PI, or the cube's times the share the volumes
  // leave it.
@@ -608,7 +610,8 @@ struct IndirectDiffuse {
  // The share of the frame's ambient the receiver takes: a(n) of the
  // irradiance volume's share, and whatever neither volume takes.
  ambient:f32,
- // The irradiance volume's sky visibility a(n), 1 beyond its share.
+ // The volumes' sky visibility a(n), each's by its share, 1 in the share
+ // neither takes.
  sky_visibility:f32,
 }
 fn surface_indirect_diffuse(s:Surface,normal:vec3<f32>,probe_hit:bool)->IndirectDiffuse {
@@ -621,17 +624,19 @@ fn surface_indirect_diffuse(s:Surface,normal:vec3<f32>,probe_hit:bool)->Indirect
  // The irradiance volume steps half a cell along the geometry normal.
  let field=irradiance_volume_light(s.position,s.geometry_normal,normal);
  let rest=1.-field.share;
- var dynamic_gi=vec4(0.);
+ var dynamic_gi=VolumeLight(vec3(0.),1.,0.);
  if rest>0. {
   dynamic_gi=dynamic_gi_irradiance(s.position,normal,s.view,probe_hit,s.moving);
-  dynamic_gi.a*=rest;
+  dynamic_gi.share*=rest;
  }
- let fallback=rest-dynamic_gi.a;
+ let fallback=rest-dynamic_gi.share;
  indirect.baked=baked*fallback;
  indirect.field=field.light*field.share;
- indirect.dynamic_gi=dynamic_gi;
+ indirect.dynamic_gi=vec4(dynamic_gi.light,dynamic_gi.share);
  indirect.ambient=field.sky_visibility*field.share+fallback;
- indirect.sky_visibility=mix(1.,field.sky_visibility,field.share);
+ // Clamped: the sum of the three shares can round one ulp below 1 under open
+ // sky, which occlusion_environment's full-visibility early-out must still take.
+ indirect.sky_visibility=min(field.sky_visibility*field.share+dynamic_gi.sky_visibility*dynamic_gi.share+fallback,1.);
  return indirect;
 }
 // The share of the dynamic GI volume's last frame a probe hit reflects
@@ -647,8 +652,8 @@ const DYNAMIC_GI_BOUNCE:f32=.95;
 // irradiance / PI beneath its coat (`coat_fresnel`): the environment's and
 // hemisphere fill's, and the volumes' in their place, in `open`, which
 // ambient occlusion occludes; its baked chart's or ambient cube's in
-// `baked`, which its material's occlusion alone does; and the irradiance
-// volume's sky visibility a(n). A probe hit takes the dynamic GI volume's
+// `baked`, which its material's occlusion alone does; and the volumes' sky
+// visibility a(n). A probe hit takes the dynamic GI volume's
 // last frame damped, as Wicked's bounce is, and no coat: it takes diffuse
 // light alone, beneath neither layer, as it takes no sheen. Neither
 // volume's irradiance takes environment_scale.
@@ -804,7 +809,7 @@ fn shade_lit(s:Surface,context:ShadeContext)->Shaded {
     continue;
    }
    // The material's occlusion occludes the probes' and the sky's shares,
-   // the irradiance volume's sky visibility the sky's alone
+   // the volumes' sky visibility the sky's alone
    // (occlusion_environment).
    let resolved=probe_environment(s.position,lobes[lobe].direction,lobes[lobe].roughness);
    let occluded=occlusion_environment(lobes[lobe],lobe==SPECULAR_COAT,resolved.probes,resolved.sky,visibility,irradiance.sky_visibility,base_lobe.f0);

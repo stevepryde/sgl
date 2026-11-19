@@ -1,6 +1,6 @@
-// The dynamic GI volume's irradiance at a receiver, which the one
-// determination of indirect diffuse light takes (surface.wgsl). Reads
-// `frame`, `dynamic_gi_probes` and `baked_sampler`.
+// The dynamic GI volume's irradiance and sky visibility at a receiver, which
+// the one determination of indirect diffuse light takes (surface.wgsl).
+// Reads `frame`, `dynamic_gi_probes` and `baked_sampler`.
 //
 // Ports Wicked Engine df44c3db4c4927492bc9c791eac715d98d7ed091's
 // ddgi_sample_irradiance (WickedEngine/shaders/ShaderInterop_DDGI.h
@@ -10,6 +10,8 @@
 // weight floored and crushed), reading irradiance by the normal from
 // revision 95e357f73f28d24e70ce7a1ab8f9fb954de457e4's colour map (251–257)
 // in place of its spherical harmonics, MIT (src/LICENSE-wicked.txt).
+// Added: the colour tap's alpha, the probe's sky visibility, blended by the
+// weights that blend its irradiance (D-59).
 // Changed: a probe not yet blended weighs nothing, nor does an inactive one,
 // as NVIDIA RTXGI's sample skips its inactive probes (RTXGI-DDGI
 // f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6, rtxgi-sdk/shaders/ddgi/
@@ -57,19 +59,22 @@
 const DDGI_SELF_SHADOW_BIAS:f32=.3;
 // The probes at the corners of a receiver's cell, which it blends.
 const DDGI_CELL_PROBES:u32=8u;
-// The volume's irradiance / PI at `position` along `normal`, seen from
-// `view` (toward the viewer), in rgb, and in a its share of the receiver's
-// indirect diffuse: 1 within the volume's extent, fading to 0 over the one
-// spacing past it; 0 where the volume does not light the frame. Where no
+// The volume's light at `position` along `normal`, seen from `view` (toward
+// the viewer): its irradiance / PI; its sky visibility a(n), the alpha of the
+// irradiance tap blended by the weights that blend the irradiance (D-59), 1
+// where it has no share; and its share of the receiver's indirect diffuse: 1
+// within the volume's extent, fading to 0 over the one spacing past it; 0
+// where the volume does not light the frame. Where no
 // probe about the receiver weighs (none blended and active), a `probe_hit`,
 // a dynamic GI probe ray's hit, takes the volume's own zero at that share,
 // as Wicked's and RTXGI's hits sample their volumes, so the probes' bounce
 // starts from their own light and never from the sky's fallback; any other
 // receiver keeps its fallback, its share 0. A `moving` receiver, on a
 // moving instance, weighs dormant probes too.
-fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,probe_hit:bool,moving:bool)->vec4<f32> {
+fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,probe_hit:bool,moving:bool)->VolumeLight {
+ var light=VolumeLight(vec3(0.),1.,0.);
  if (frame.flags&FRAME_DYNAMIC_GI)==0u {
-  return vec4(0.);
+  return light;
  }
  let origin=frame.dynamic_gi_origin;
  let spacing=frame.dynamic_gi_spacing;
@@ -78,7 +83,7 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,prob
  let last=vec3<f32>(probes-vec3(1u));
  let share=volume_share(cells,last);
  if share<=0. {
-  return vec4(0.);
+  return light;
  }
  let size=vec2<f32>(textureDimensions(dynamic_gi_probes));
  let base_grid_coord=vec3<u32>(clamp(floor(cells),vec3(0.),last));
@@ -90,6 +95,7 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,prob
  // weights above are the receiver's own.
  let bias=(normal*.2+view*.8)*(.75*min(spacing.x,min(spacing.y,spacing.z)))*DDGI_SELF_SHADOW_BIAS;
  var sum_irradiance=vec3(0.);
+ var sum_sky_visibility=0.;
  var sum_weight=0.;
  for (var i=0u;i<DDGI_CELL_PROBES;i++) {
   let offset=vec3(i,i>>1u,i>>2u)&vec3(1u);
@@ -124,7 +130,7 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,prob
   // Avoid zero weight.
   weight=max(.000001,weight);
   let color_uv=ddgi_probe_uv(ddgi_probe_color_pixel(stored,probes),DDGI_COLOR_RESOLUTION,normal,size);
-  let probe_irradiance=textureSampleLevel(dynamic_gi_probes,baked_sampler,color_uv,0.).rgb;
+  let probe_irradiance=textureSampleLevel(dynamic_gi_probes,baked_sampler,color_uv,0.);
   // Crush tiny weights but keep the curve continuous, before the
   // trilinear weights.
   let crush_threshold=.2;
@@ -132,11 +138,13 @@ fn dynamic_gi_irradiance(position:vec3<f32>,normal:vec3<f32>,view:vec3<f32>,prob
    weight*=weight*weight/(crush_threshold*crush_threshold);
   }
   weight*=trilinear.x*trilinear.y*trilinear.z;
-  sum_irradiance+=weight*probe_irradiance;
+  sum_irradiance+=weight*probe_irradiance.rgb;
+  sum_sky_visibility+=weight*probe_irradiance.a;
   sum_weight+=weight;
  }
  if sum_weight<=0. {
-  return vec4(0.,0.,0.,select(0.,share,probe_hit));
+  light.share=select(0.,share,probe_hit);
+  return light;
  }
- return vec4(sum_irradiance/sum_weight,share);
+ return VolumeLight(sum_irradiance/sum_weight,sum_sky_visibility/sum_weight,share);
 }

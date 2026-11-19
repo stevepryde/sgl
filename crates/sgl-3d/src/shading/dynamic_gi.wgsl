@@ -8,7 +8,9 @@
 //  spacing (ddgi_depth_unit), in rg, at column (x + y nx) 18 and row z 18, as
 //  Wicked's depth texture lays them out;
 // irradiance: each probe's bordered 8x8 octahedral map of irradiance / PI,
-//  in rgb, two slabs of the lattice's z to each band of eight rows: slab z's
+//  in rgb, and of the sky's visibility, the share of its rays about each
+//  direction that met nothing (stages/dynamic_gi/update.wgsl), in a, two
+//  slabs of the lattice's z to each band of eight rows: slab z's
 //  tile at column ((z % 2) nx ny + x + y nx) 8 and row 18 nz + (z / 2) 8;
 // data: one texel per probe, eighteen slabs to a row: its relocated offset
 //  in half spacings in rgb, and in a 0 until it has been blended or while it

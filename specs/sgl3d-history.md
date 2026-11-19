@@ -3459,8 +3459,9 @@ unsnapped or float-noisy placement (G-2) restarts it every frame.
 #### G-5 A probe's first blend starts afresh
 
 - **Rule.** When a probe that has not been blended traces, its irradiance estimators start at the
-  turn's result, its depth moments at the result (maximum distance where no ray contributes), its
-  offset at 0 and its class from the turn's rays.
+  turn's result, its sky visibility at the turn's share (1 where no ray contributes), its depth
+  moments at the result (maximum distance where no ray contributes), its offset at 0 and its class
+  from the turn's rays.
 - **Raised by.** G-1 to G-4.
 - **Stays triggered while.** Nothing: one turn per probe.
 - **Source.** Modified: Wicked Engine starts every probe on its first frame. Code:
@@ -3485,22 +3486,27 @@ unsnapped or float-noisy placement (G-2) restarts it every frame.
 
 #### G-7 An unobserved texel keeps its history
 
-- **Rule.** A texel to which no ray contributes (weight at most 1e-4) keeps its estimator or depth
-  moments unchanged, where Wicked and RTXGI blend zero.
+- **Rule.** A texel to which no ray contributes (weight at most 1e-4) keeps its estimator, sky
+  visibility or depth moments unchanged, where Wicked and RTXGI blend zero.
 - **Raised by.** Few rays on dormant or inactive probes.
 - **Stays triggered while.** Not a rejection.
 - **Source.** SGL3D's own. Code: `src/stages/dynamic_gi/update.wgsl` (`update_irradiance`, `update_depth`).
 - **Guard.** `four_ray_updates_keep_unobserved_depth_and_irradiance_history` (`src/stages/dynamic_gi/update_tests.rs`).
 - **Status.** Rule.
 
-#### G-8 Fixed depth and relocation blends
+#### G-8 Fixed depth, sky visibility and relocation blends
 
-- **Rule.** Depth moments blend at 0.02 and the probe offset at 0.01 a turn, the offset clamped to
-  half a spacing; neither has a rejection.
+- **Rule.** Depth moments and the sky visibility blend at 0.02 and the probe offset at 0.01 a turn,
+  the offset clamped to half a spacing; none has a rejection.
 - **Raised by.** Every turn.
-- **Stays triggered while.** Not a rejection: geometry changes reach the depth maps over about 50 turns.
-- **Source.** Wicked Engine `ddgi_updateCS.hlsl`, faithful. Code: `src/stages/dynamic_gi/update.wgsl` (`update_depth`).
-- **Guard.** None.
+- **Stays triggered while.** Not a rejection: geometry changes reach the depth maps and the sky
+  visibility over about 50 turns.
+- **Source.** Wicked Engine `ddgi_updateCS.hlsl`, faithful; the sky visibility is SGL3D's own, at
+  the depth blend's rate ([D-59](decisions.md)). Code: `src/stages/dynamic_gi/update.wgsl`
+  (`update_irradiance`, `update_depth`).
+- **Guard.** `four_ray_updates_keep_unobserved_depth_and_irradiance_history`
+  (`src/stages/dynamic_gi/update_tests.rs`), which holds the sky visibility's blend to 0.02 a turn;
+  `a_probe_records_the_share_of_its_rays_that_reach_the_sky` (`src/stages/dynamic_gi/tests.rs`).
 - **Status.** Rule.
 
 #### G-9 Probe classification

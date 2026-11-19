@@ -48,7 +48,7 @@ fn source_lobes(normals:vec4<f32>,material:GBufferMaterial,f0:vec4<f32>,anisotro
 }
 // A lobe's environment and probe specular at `world` along `lobe`, occluded
 // (occlusion_environment): the probes' by the receiver's `visibility`
-// (source_visibility), the sky's by that times the irradiance volume's
+// (source_visibility), the sky's by that times the volumes'
 // `sky_visibility` a(n).
 fn source_occluded_environment(world:vec3<f32>,lobe:SpecularLobe,coat:bool,environment_scale:f32,tile:u32,visibility:f32,sky_visibility:f32,f0:vec3<f32>)->vec3<f32> {
  let environment=source_environment(world,lobe.direction,lobe.roughness,environment_scale,tile);
@@ -85,7 +85,7 @@ struct CompletedSource {
 // environment specular here; the method's composition adds it by
 // confidence. Incident radiance includes both lobes so another receiver
 // sees the fully lit source, independently of tracing. The ambient light's
-// `sky_visibility` is the irradiance volume's a(n) at it. An opaque
+// `sky_visibility` is the volumes' a(n) at it. An opaque
 // receiver's alpha is 1, as glTF's OPAQUE and MASK modes ignore its
 // material's, where lit colour's alpha held its multiple scattering's share;
 // the sky keeps `alpha`.
@@ -179,7 +179,7 @@ fn source_visibility(id:vec2<u32>,f0:vec4<f32>)->f32 {
 }
 @group(0) @binding(14) var incident_output:texture_storage_2d<rgba16float,write>;
 // The ambient light within source_scene before occlusion, and in alpha the
-// irradiance volume's sky visibility; source_scene's alpha holds its
+// volumes' sky visibility; source_scene's alpha holds its
 // multiple scattering's share (shading/gbuffer.wgsl). Completion takes what
 // each lit receiver's visibility hides out of the beauty
 // (complete_source), before adding specular.
