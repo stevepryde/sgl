@@ -49,6 +49,7 @@ pub(crate) static VOLUMETRIC_FOG: crate::shading::Module = crate::shading::Modul
         &crate::shading::RECT_LIGHT,
         &crate::shading::FOG,
         &crate::shading::FINITE,
+        &crate::shading::sky::SKY,
     ],
 };
 /// The entry points the fog's pipelines are created with.
@@ -99,6 +100,9 @@ pub(crate) struct FroxelVolumeUniform {
     volume_count: u32,
     previous_length: f32,
     padding: u32,
+    volume_layout: crate::shading::fog::FogLayout,
+    /// WGSL rounds `FroxelVolume` up to its 16-byte alignment.
+    padding_layout: [u32; 3],
 }
 
 /// The layouts this stage mirrors.
@@ -127,6 +131,7 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
             ambient,
             volume_count,
             previous_length,
+            volume_layout,
         ]
     )]
 }
@@ -163,6 +168,9 @@ struct Pipelines {
 
 pub(crate) struct VolumetricFog {
     pipelines: Option<Pipelines>,
+    /// The aerial volume the integration binds while aerial perspective is
+    /// not in effect, which it then does not sample.
+    no_aerial: wgpu::TextureView,
     inject_layout: wgpu::BindGroupLayout,
     filter_layout: wgpu::BindGroupLayout,
     integrate_layout: wgpu::BindGroupLayout,
@@ -299,7 +307,18 @@ impl VolumetricFog {
         });
         let integrate_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("volumetric fog integration"),
-            entries: &[uniform, texture(4, false), storage(5)],
+            entries: &[
+                uniform,
+                texture(4, false),
+                storage(5),
+                texture(10, true),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
         let uniform = crate::counters::buffer(
             device,
@@ -316,9 +335,26 @@ impl VolumetricFog {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let volumes = Volumes::new(device, &filter_layout, &integrate_layout, &uniform, [1; 3]);
+        let volumes = Volumes::new(device, &filter_layout, &uniform, ([1; 3], [1; 3]));
+        let no_aerial = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("no aerial perspective"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D3,
+                format: FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
         Self {
             pipelines: None,
+            no_aerial,
             inject_layout,
             filter_layout,
             integrate_layout,
@@ -330,27 +366,70 @@ impl VolumetricFog {
     }
 
     /// Sizes the volumes for `quality`, the effective fog's, at the render
-    /// size `render`; without fog they stay as they are. A new size starts
-    /// the volumes' history over.
+    /// size `render`, and the integrated volume for the frame's fog volume,
+    /// with the aerial slices while aerial perspective is in effect
+    /// (`aerial`): without the fog, no froxel volume, and an integrated one
+    /// as wide as the aerial volume. A new froxel size starts the volumes'
+    /// history over; a new integrated size alone (aerial perspective coming
+    /// into or out of effect) keeps it. With neither, the froxels stay as
+    /// they are, and the stage lets go of the aerial volume and of an
+    /// integrated volume made for aerial perspective alone.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
-        quality: Option<FogQuality>,
+        (quality, aerial): (Option<FogQuality>, bool),
         render: [u32; 2],
     ) {
-        let Some(quality) = quality else {
-            return;
+        let layout = crate::shading::fog::FogLayout::new(
+            quality.map(|quality| (quality.volume().1, 1.)),
+            aerial,
+        );
+        let (size, integrated_size) = match quality {
+            Some(quality) => {
+                let size = froxels(quality, render, device.limits().max_texture_dimension_3d);
+                (size, [size[0], size[1], layout.slices()])
+            }
+            None if aerial => {
+                let side = crate::shading::sky::AERIAL_SIDE;
+                ([1; 3], [side, side, layout.slices()])
+            }
+            None => {
+                let volumes = &mut self.volumes;
+                volumes.integrate = None;
+                if volumes.size == [1; 3] && volumes.integrated_size != [1; 3] {
+                    *volumes =
+                        Volumes::new(device, &self.filter_layout, &self.uniform, ([1; 3], [1; 3]));
+                }
+                return;
+            }
         };
-        let size = froxels(quality, render, device.limits().max_texture_dimension_3d);
         if self.volumes.size != size {
             self.volumes = Volumes::new(
                 device,
                 &self.filter_layout,
-                &self.integrate_layout,
                 &self.uniform,
-                size,
+                (size, integrated_size),
+            );
+        } else if self.volumes.integrated_size != integrated_size {
+            self.volumes.resize_integrated(
+                device,
+                &self.filter_layout,
+                &self.uniform,
+                integrated_size,
             );
         }
+    }
+
+    /// Whether the stage holds an aerial volume (bound to its integration)
+    /// or an integrated volume made for aerial perspective alone.
+    #[cfg(test)]
+    pub fn holds_aerial(&self) -> bool {
+        let volumes = &self.volumes;
+        volumes
+            .integrate
+            .as_ref()
+            .is_some_and(|(bound, _)| *bound != self.no_aerial)
+            || (volumes.size == [1; 3] && volumes.integrated_size != [1; 3])
     }
 
     /// The integrated volume and its sampler, which group 0 binds.
@@ -374,16 +453,20 @@ impl VolumetricFog {
         ]
     }
 
-    /// Lights and integrates the frame's volume while the frame has fog.
-    pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
+    /// Lights and integrates the frame's volume while the frame has fog,
+    /// and composes it over the sky stage's `aerial` volume into the
+    /// frame's one fog volume while aerial perspective is in effect, the
+    /// integration alone without the fog.
+    pub fn encode(&mut self, ctx: &mut FrameContext<'_>, aerial: Option<&wgpu::TextureView>) {
         let history = ctx.history;
         let volumes = &mut self.volumes;
-        let Some((index, previous_length)) = volumes
+        let held = volumes
             .holds
-            .frame(&history, ctx.effective.fog.map(|_| ctx.input.fog.length))
-        else {
+            .frame(&history, ctx.effective.fog.map(|_| ctx.input.fog.length));
+        let Some(layout) = ctx.effective.fog_layout(ctx.input) else {
             return;
         };
+        let aerial = aerial.filter(|_| layout.aerial_slices > 0);
         let pipelines = self.pipelines.get_or_insert_with(|| {
             Pipelines::new(
                 ctx.device,
@@ -395,17 +478,15 @@ impl VolumetricFog {
         });
         let fog = ctx.input.fog;
         let camera = ctx.input.camera;
-        let projection = camera.projection;
+        let [width, height, _] = volumes.integrated_size;
         let mut uniform = FroxelVolumeUniform {
             world_from_view: camera.view.inverse().to_cols_array_2d(),
             previous_clip_from_world: history.previous.to_cols_array_2d(),
-            projection: [
-                projection.x_axis.x,
-                projection.y_axis.y,
-                projection.z_axis.x,
-                projection.z_axis.y,
-            ],
-            size: volumes.size,
+            projection: crate::shading::fog::froxel_projection(camera.projection),
+            size: match held {
+                Some(_) => volumes.size,
+                None => [width, height, 0],
+            },
             frame: history.frames % TEMPORAL_FRAMES,
             albedo: fog.albedo,
             density: fog.density.max(0.),
@@ -415,15 +496,48 @@ impl VolumetricFog {
             height: fog.height,
             height_falloff: fog.height_falloff.max(0.),
             anisotropy: fog.anisotropy.clamp(-MAX_ANISOTROPY, MAX_ANISOTROPY),
-            temporal_blend: if previous_length.is_some() {
+            temporal_blend: if held.is_some_and(|(_, previous)| previous.is_some()) {
                 TEMPORAL_REPROJECT_AMOUNT
             } else {
                 0.
             },
             ambient: fog.ambient.max(0.),
             volume_count: 0,
-            previous_length: previous_length.unwrap_or(fog.length),
+            previous_length: held
+                .and_then(|(_, previous)| previous)
+                .unwrap_or(fog.length),
             padding: 0,
+            volume_layout: layout,
+            padding_layout: [0; 3],
+        };
+        volumes.bind_aerial(
+            ctx.device,
+            &self.integrate_layout,
+            &self.uniform,
+            (aerial.unwrap_or(&self.no_aerial), &self.sampler),
+        );
+        let Some((index, _)) = held else {
+            // Aerial perspective alone: no froxels to light or filter.
+            crate::counters::write_buffer(
+                ctx.queue,
+                &self.uniform,
+                0,
+                bytemuck::bytes_of(&uniform),
+            );
+            let mut pass = ctx
+                .encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("volumetric fog integration"),
+                    timestamp_writes: ctx.timing.and_then(|t| t.compute_pass("fog integration")),
+                });
+            pass.set_pipeline(&pipelines.integrate);
+            pass.set_bind_group(1, volumes.integrate_group(0), &[]);
+            pass.dispatch_workgroups(
+                width.div_ceil(INTEGRATE_GROUP),
+                height.div_ceil(INTEGRATE_GROUP),
+                1,
+            );
+            return;
         };
         uniform.volume_count = self.reached.write(
             ctx.device,
@@ -529,7 +643,7 @@ impl VolumetricFog {
                 timestamp_writes: ctx.timing.and_then(|t| t.compute_pass("fog integration")),
             });
         pass.set_pipeline(&pipelines.integrate);
-        pass.set_bind_group(1, &volumes.integrate[volumes.integrated_from], &[]);
+        pass.set_bind_group(1, volumes.integrate_group(volumes.integrated_from), &[]);
         pass.dispatch_workgroups(x.div_ceil(INTEGRATE_GROUP), y.div_ceil(INTEGRATE_GROUP), 1);
     }
 }

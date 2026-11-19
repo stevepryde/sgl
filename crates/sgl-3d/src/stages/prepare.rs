@@ -224,7 +224,7 @@ impl Prepare {
             camera.eye,
             (&scene.static_lighting, scene.irradiance_volume()),
             &shadow,
-            effective.fog.is_some(),
+            effective.fog_layout(input),
             volume.as_ref(),
         );
         // The last submitted frame's time, at which materials' vertex
@@ -395,7 +395,7 @@ impl Prepare {
             center,
             (&scene.static_lighting, scene.irradiance_volume()),
             &shadow,
-            false,
+            None,
             dynamic_gi,
         );
         let uniform = |label, bytes: &[u8]| {

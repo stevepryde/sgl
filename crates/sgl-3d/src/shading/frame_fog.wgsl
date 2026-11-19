@@ -12,6 +12,6 @@ fn frame_fog_premultiplied(color:vec3<f32>,alpha:f32,pixel:vec2<f32>,view_depth:
  if (frame.flags&FRAME_FOG)==0u {
   return color;
  }
- let coordinate=fog_volume_coordinate(pixel/view.viewport,view_depth,frame.fog_inverse_length,frame.fog_inverse_detail_spread);
+ let coordinate=fog_volume_coordinate(pixel/view.viewport,view_depth,frame.fog);
  return fog_composite_premultiplied(color,alpha,textureSampleLevel(fog_volume,fog_sampler,coordinate,0.));
 }

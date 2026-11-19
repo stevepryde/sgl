@@ -259,8 +259,9 @@ impl FrameShadow {
 
 /// The frame data of `input` seen from `eye` for a scene with `baked`
 /// diffuse lighting and `irradiance_volume`, which lights the frame with
-/// baked lighting, with the directional `shadow`; `fog` is whether the
-/// frame's volumetric fog ran, so draws fog from its volume, and
+/// baked lighting, with the directional `shadow`; `fog` is the layout of
+/// the frame's fog volume while it has one (its fog or its sky's aerial
+/// perspective ran), from which draws then fog, and
 /// `dynamic_gi` the dynamic GI volume whose probes group 0 binds, which then
 /// lights the frame. Its directional lights are as they reach `eye`
 /// (`directional_light`).
@@ -269,7 +270,7 @@ pub(crate) fn frame_uniform(
     eye: Vec3,
     (baked, irradiance_volume): (&StaticLighting, Option<IrradianceVolume>),
     shadow: &FrameShadow,
-    fog: bool,
+    fog: Option<crate::shading::fog::FogLayout>,
     dynamic_gi: Option<&ProbePlacement>,
 ) -> FrameUniform {
     let irradiance_volume = irradiance_volume.filter(|_| input.baked_lighting);
@@ -339,15 +340,14 @@ pub(crate) fn frame_uniform(
         mist_size: [mist.width, mist.height],
         mist_drift: mist.drift,
         backdrop_brightness,
-        fog_inverse_length: input.fog.length.recip(),
-        fog_inverse_detail_spread: crate::shading::fog::DETAIL_SPREAD.recip(),
         reflection_yaw: environment_yaw(input.reflection_environment.yaw),
         reflection_intensity: input.reflection_environment.intensity,
         elapsed_seconds: input.elapsed_seconds as f32,
         fixed_irradiance_scale: baked.atlas_scale,
         visibility_mask: input.visibility_mask,
+        padding_chart: [0.; 2],
         lightmap_chart: baked.lightmap_chart,
-        flags: flag(fog, FRAME_FOG)
+        flags: flag(fog.is_some(), FRAME_FOG)
             | flag(input.baked_lighting, FRAME_BAKED_LIGHTING)
             | flag(baked.atlas_installed, FRAME_IRRADIANCE_ATLAS)
             | flag(
@@ -396,6 +396,8 @@ pub(crate) fn frame_uniform(
         sky_camera_radius,
         padding_sky: 0.,
         sky_discs,
+        fog: fog.unwrap_or_else(|| crate::shading::fog::FogLayout::new(None, false)),
+        padding_fog: [0; 3],
     }
 }
 

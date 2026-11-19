@@ -87,6 +87,15 @@ const SKY_VIEW_HEIGHT:u32=200u;
 // loop's cap (AR-12). Rust twin: shading::sky.
 const SKY_TRANSMITTANCE_SAMPLES:u32=40u;
 
+// The aerial volume over the camera's frustum (stages/sky/aerial_view_lut.wgsl):
+// its columns across and down (Bevy's aerial_view_lut_size.xy), its depth
+// slices (Bevy's aerial_view_lut_size.z) and how far along the view ray the
+// last ends, metres (Bevy's aerial_view_lut_max_distance). Rust twins:
+// shading::sky.
+const AERIAL_SIDE:u32=32u;
+const AERIAL_SLICES:u32=32u;
+const AERIAL_REACH:f32=32000.;
+
 // The game's sky as the stage takes it (Sky::resolved): the planet ground's
 // linear albedo and the three media's densities as scales of Earth's.
 struct SkyAtmosphere {
@@ -347,4 +356,36 @@ fn ray_optical_depth(atm:SkyAtmosphere,r:f32,mu:f32)->vec3<f32> {
   optical_depth+=extinction*dt;
  }
  return optical_depth;
+}
+
+// THE AERIAL VOLUME'S MAPPING (the writer, stages/sky/aerial_view_lut.wgsl,
+// and the reader, the fog's integration, both take it)
+
+// How far along the view ray slice `slice` of the aerial volume ends, metres:
+// AERIAL_REACH × ((slice + 1) / AERIAL_SLICES)², slices spaced by the square
+// as Wicked Engine 4323a33 spaces its camera volume
+// (WickedEngine/shaders/skyAtmosphere.hlsli GetAerialPerspectiveTransmittance,
+// w = sqrt(slice / AP_SLICE_COUNT), MIT, src/LICENSE-wicked.txt). Slice 0
+// ends 31.25 m out; Bevy's linear slices end every kilometre.
+fn aerial_slice_distance(slice:f32)->f32 {
+ let end=(slice+1.)/f32(AERIAL_SLICES);
+ return AERIAL_REACH*end*end;
+}
+// The volume's depth coordinate of `distance` metres along the view ray: each
+// texel holds what lies between the camera and its slice's end, so a slice's
+// end falls at its texel's centre (Bevy's half-slice offset in
+// sample_aerial_view_lut). Beyond the reach it is past the last texel's centre,
+// which a clamped sampler holds.
+fn aerial_coordinate(distance:f32)->f32 {
+ return sqrt(max(distance,0.)/AERIAL_REACH)-.5/f32(AERIAL_SLICES);
+}
+// What lies between the camera and `distance` metres along the ray through
+// `uv` on the frame: the in-scattered radiance (rgb) and mean transmittance
+// (a) the aerial volume `volume` holds, faded linearly to nothing over the
+// first slice, as Bevy and Wicked Engine fade theirs (their first slice holds
+// its whole length).
+fn sample_aerial_volume(volume:texture_3d<f32>,volume_sampler:sampler,uv:vec2<f32>,distance:f32)->vec4<f32> {
+ let air=textureSampleLevel(volume,volume_sampler,vec3(uv,aerial_coordinate(distance)),0.);
+ let fade=saturate(distance/aerial_slice_distance(0.));
+ return vec4(air.rgb*fade,mix(1.,air.a,fade));
 }

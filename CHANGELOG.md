@@ -15,6 +15,7 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Sky::aerial_perspective` (new, default 1): under a procedural sky, distant opaque and blended surfaces, glow and mist take the air's haze through the fog volume. Set 0 for none. Frames without a sky are unchanged; no code changes are needed.
 - `sgl-3d` `FrameEnvironment::Sky` now gives diffuse and specular environment light, scaled by `diffuse_environment.intensity` and `reflection_environment.intensity`, and lights the dynamic GI volume, the fog's ambient share and probe captures. Lower `hemisphere_light` where it stood in for sky light. No code changes are needed.
 - `sgl-3d` adds `FrameInput::local_exposure` (`LocalExposure`, both
   contrasts 1 by default, which changes nothing); below 1 it draws large

@@ -277,7 +277,11 @@ pub(super) fn render_view(
     );
     // Every list the frame draws is built.
     views.instances.upload(device, queue);
-    fog.prepare(device, effective.fog, sizes.render);
+    fog.prepare(
+        device,
+        (effective.fog, effective.aerial_perspective),
+        sizes.render,
+    );
     if let Some(dynamic_gi) = dynamic_gi.as_mut().filter(|_| primary) {
         dynamic_gi.prepare(device, scene, &effective);
     }
@@ -289,7 +293,12 @@ pub(super) fn render_view(
         super::effective::traced_shadows(effective, prepare.hardware_rays(), &slot_lights);
     // The sky stage's tables, made on its first sky frame and dropped on a
     // frame without one, which the environment's resolver binds.
-    sky.prepare(device, input, input.camera.eye, !history.valid);
+    sky.prepare(
+        device,
+        input,
+        input.camera.eye,
+        (!history.valid, effective.aerial_perspective),
+    );
     // After prepare, the local shadows', the fog's, dynamic GI's and the
     // sky's, which may replace a light cluster buffer, a shadow map, the
     // shadow records, the fog volume, the probes or the sky-view table group
@@ -352,7 +361,8 @@ pub(super) fn render_view(
     // The stage order's: the local-light atlas, then the directional cascades.
     shadows.encode_local(&mut ctx);
     shadows.encode_directional(&mut ctx);
-    fog.encode(&mut ctx);
+    // The fog over the sky stage's aerial volume, which the renderer lends.
+    fog.encode(&mut ctx, sky.aerial_volume());
     encode_opaque(opaque, cull, traced_shadows, &slot_lights, &mut ctx);
     // The camera's statistics, once both phases have appended to its sets.
     statistics.copy(

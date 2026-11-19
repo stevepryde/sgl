@@ -203,8 +203,14 @@ fn infinite_lit_colour_completes_as_the_scene_colour_bound() {
                 sampler: &no_fog.1,
             },
             frame_fog: case.fog.map(|_| SourceFog {
-                inverse_length: 1. / 100.,
-                inverse_detail_spread: 1.,
+                // A 100 m fog of slices spaced evenly, without aerial slices.
+                layout: crate::shading::fog::FogLayout {
+                    inverse_length: 1. / 100.,
+                    inverse_detail_spread: 1.,
+                    aerial_reach: 0.,
+                    fog_slices: 1,
+                    aerial_slices: 0,
+                },
                 sky_affect: 1.,
             }),
             camera: reflection_camera,

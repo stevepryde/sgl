@@ -1119,3 +1119,48 @@ Use the [current specs](README.md) for implementation and the
   cell and adds their sums in a tree, which took the pass at 1920x1080 on
   an Apple M5 from 0.69 ms to 0.32-0.38 ms (64 invocations gave 0.44 ms,
   128 gave 7.5 ms).
+- **D-64** Decision, 2026-11-19 (#834): a procedural sky's aerial
+  perspective is folded into the frame's one fog volume, not applied by
+  Bevy 9d12036's full-screen pass (`aerial_view_lut.wesl` read by
+  `render_sky.wesl`, dual-source blended, which blended surfaces never see)
+  or Wicked Engine 4323a33's per-draw lookup of its camera volume
+  (`skyAtmosphere.hlsli`, bindless in every forward shader), since Basic's
+  blended fragment stage has no sampled texture left and one sample a draw
+  is cheaper than two. The sky stage computes the aerial volume (Bevy's,
+  32×32×32 RGBA16F over the camera's frustum, ten steps a slice) with
+  Wicked's squared slices to 32 km, linear radiance and the mean
+  transmittance in alpha, and march distances, positions and steps alike,
+  scaled by `Sky::aerial_perspective`: distance scaling, as Unreal documents
+  its Aerial Perspective View Distance Scale, so the air at each sample is as
+  far and as high as the scaled distance puts it. That departs from Wicked's
+  `aerialPerspectiveScale`, which multiplies only each step's optical depth
+  (`skyAtmosphere.hlsli` 650) at unscaled positions and so thickens the air
+  at the camera's height. The fog's integration composes the
+  fog over it, as Wicked's `aerialPerspectiveCS.hlsl` composes its fog over
+  its aerial perspective: each fog slice holds `(I_fog + T_fog × I_air,
+  T_fog × T_air)`, 32 slices follow from the fog's length to 32 km of view
+  depth, spaced by the square, and a last slice holds the fog alone for the
+  sky, whose sky-view table already holds the air. Within the fog's length
+  this is Wicked's approximation, the fog treated as lying wholly in front
+  of the air, where the two share the path: the fog's in-scatter is not
+  dimmed by the air in front of it, and the air's in-scatter there is dimmed
+  by the whole fog to that depth, a relative error of at most about
+  1 - T_air(length), 0.2 to 0.4 % for a fog 100 to 200 m long at strength
+  1. `shading/fog.wgsl`'s
+  `FogLayout` (in `Frame`, `FroxelVolume` and `SourceCamera`) owns the layout
+  and the one mapping from a depth to a slice; without aerial slices the
+  volume and every frame are as before. With the fog off the integration
+  runs alone on a 32×32 volume of those slices, so aerial perspective is
+  independent of `Settings::atmosphere` and `FrameInput::atmosphere`.
+  Measured on an Apple M5 (release, 1920×1080, `Settings::default()`, a
+  procedural sky, a shared machine): `aerial perspective` 0.24 to 0.29 ms
+  median (0.49 ms p95); `fog integration` 0.025 ms median alone (0.18 ms
+  p95), and with the fog on 0.07 ms median without aerial perspective and
+  0.13 ms with it (0.22 and 0.48 ms p95); `blended` and `reflection source
+  completion` unchanged within the machine's noise. In Chrome 149's WebGPU
+  on the same machine (the 1280×720 browser baseline under the sky):
+  `aerial perspective` 0.066 ms median alone and 0.13 ms with the fog (0.13
+  and 0.26 ms p95); `fog integration` below Chrome's 0.066 ms timestamp
+  quantum alone, and with the fog 0.066 ms median without aerial
+  perspective and 0.20 ms with it (0.33 and 0.52 ms p95); `blended` 0.85
+  and 1.11 ms median without the fog and with it, either way.

@@ -273,6 +273,8 @@ Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`):
 - TAA motion reach: computed from the frame's motion every frame TAA runs; dropped when TAA stops.
 - Motion blur: keeps only the frame count for its noise.
 - Sky: draws colour and motion from the frame's camera alone.
+- Aerial volume: computed whole every frame it is in effect, so a cut, a resize, a new device or an
+  unfinished frame needs nothing of it.
 
 ## Motion vectors
 
@@ -3277,7 +3279,9 @@ The fog keeps its last froxel volume, unfiltered, in one of two alternating volu
 each froxel with where it was last frame by a fixed 0.9, after Godot. It has no neighbourhood clamp
 or change test, so moving lights and fog volumes trail rather than reject. A continuously running
 game drops it only by resets, resizes and frames without fog; a changing `Fog::length` keeps it
-(V-3).
+(V-3). Under a procedural sky the integrated volume also holds aerial perspective (the fog over the
+air, and the fog alone for the sky); the integration composes it afresh each frame from that
+frame's aerial volume, so its aerial slices are never reprojected and only the froxels keep history.
 
 ### Froxel history
 
@@ -3329,11 +3333,15 @@ game drops it only by resets, resizes and frames without fog; a changing `Fog::l
 #### V-4 A new froxel size starts afresh
 
 - **Rule.** When the fog quality or the render size changes the froxel count, the fog makes new
-  zeroed volumes and forgets their history.
+  zeroed volumes and forgets their history. Aerial perspective coming into or out of effect changes
+  only the integrated volume's slices: the fog makes that volume anew and keeps its froxels and their
+  history.
 - **Raised by.** Fog-quality changes, resizes.
 - **Stays triggered while.** Nothing: it needs a size or setting change.
-- **Source.** SGL3D's own. Code: `src/stages/fog.rs` (`VolumetricFog::prepare`, `froxels`).
-- **Guard.** None.
+- **Source.** SGL3D's own. Code: `src/stages/fog.rs` (`VolumetricFog::prepare`, `froxels`),
+  `src/stages/fog/volumes.rs` (`Volumes::resize_integrated`).
+- **Guard.** `aerial_perspective_coming_into_effect_keeps_the_froxels_history`
+  (`src/stages/fog/tests.rs`), for the integrated volume alone.
 - **Status.** Rule.
 
 #### V-5 A retried frame does not reproject the filtered volume

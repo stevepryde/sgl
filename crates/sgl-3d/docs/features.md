@@ -302,10 +302,13 @@ them through unrefracted. A probe captured on an
   discs. It lights the frame as an environment map does (diffuse and
   specular, the GI volume's misses, the fog's ambient share, probe captures),
   following a changing sky within 16 frames for reflections and 31 for
-  diffuse light. `Sky` scales the air's
-  densities, sets the ground's height and albedo and the discs. No distance
-  haze yet.
-  [Procedural sky](../README.md#procedural-sky).
+  diffuse light. Distant surfaces take the air's haze (aerial
+  perspective, `Sky::aerial_perspective`, 1 by default, 0 none): negligible
+  at tens of metres, building over kilometres to 32 km, on opaque and
+  blended surfaces, glow and mist through the fog volume, whether or not
+  `FrameInput::atmosphere` is on; not in probe captures or ray hits.
+  `Sky` scales the air's densities, sets the ground's height and albedo and
+  the discs. [Procedural sky](../README.md#procedural-sky).
 - **Baked diffuse**, authored and baked by the game: a lightmap for chosen
   materials of static instances (`Scene::set_lightmap`) and a static
   irradiance atlas, BC6H/BC7-compressed for shipping
@@ -471,7 +474,9 @@ Environment and probe specular always apply. On top of them:
   cookie's pattern. Opaque surfaces, the sky, blended surfaces,
   glow and mist all fog from one volume (glow dimmed by it, adding none of
   its scattered light), the sky by `Fog::sky_affect`
-  (all of it by default, as Godot's). `Fog::length` sets its reach,
+  (all of it by default, as Godot's). Under a procedural sky the volume also
+  carries its aerial perspective, the fog over the air; the sky takes the
+  fog alone. `Fog::length` sets its reach,
   `Settings::fog_quality` its resolution and `Settings::fog_filter` its
   blur; SGL3D spaces its slices and weights its history.
   [Volumetric fog](../README.md#volumetric-fog).

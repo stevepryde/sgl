@@ -106,9 +106,14 @@ pub(crate) struct Inputs<'a> {
 struct SourceCamera {
     inverse: [[f32; 4]; 4],
     eye: [f32; 4],
-    fog: [f32; 4],
     forward: [f32; 3],
     flags: u32,
+    sky_affect: f32,
+    /// WGSL aligns `fog` to 16 bytes.
+    padding: [f32; 3],
+    fog: crate::shading::fog::FogLayout,
+    /// WGSL rounds `SourceCamera` up to its 16-byte alignment.
+    padding_fog: [u32; 3],
 }
 /// `SourceCamera::flags`: completion and composition apply the fog.
 const SOURCE_FOG: u32 = 1;
@@ -118,12 +123,11 @@ const SOURCE_FOG: u32 = 1;
 /// test.
 const SOURCE_ORTHOGRAPHIC: u32 = 2;
 
-/// The frame's fog as completion and composition apply it.
+/// The frame's fog volume as completion and composition apply it.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SourceFog {
-    /// One over the fog volume's length and over its detail spread.
-    pub inverse_length: f32,
-    pub inverse_detail_spread: f32,
+    /// The volume's slices (the frame's `FogLayout`).
+    pub layout: crate::shading::fog::FogLayout,
     /// The share of its fog the sky takes, 0..=1 (`Fog::sky_affect`).
     pub sky_affect: f32,
 }
@@ -137,15 +141,14 @@ impl SourceCamera {
         Self {
             inverse: camera.inverse_view_proj,
             eye: camera.camera_position,
-            fog: fog.map_or([0.; 4], |fog| {
-                [
-                    fog.inverse_length,
-                    fog.inverse_detail_spread,
-                    fog.sky_affect,
-                    0.,
-                ]
-            }),
             forward: forward.to_array(),
+            sky_affect: fog.map_or(0., |fog| fog.sky_affect),
+            padding: [0.; 3],
+            fog: fog.map_or_else(
+                || crate::shading::fog::FogLayout::new(None, false),
+                |fog| fog.layout,
+            ),
+            padding_fog: [0; 3],
             flags: if fog.is_some() { SOURCE_FOG } else { 0 }
                 | if camera.proj[2][3] == 0. {
                     SOURCE_ORTHOGRAPHIC
@@ -483,7 +486,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
             "reflection_source",
             "SourceCamera",
             SourceCamera,
-            [inverse, eye, fog, forward, flags]
+            [inverse, eye, forward, flags, sky_affect, fog]
         ),
         mirror!(
             "reflection_source",

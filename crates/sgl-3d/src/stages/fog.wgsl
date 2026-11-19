@@ -146,6 +146,8 @@ struct FroxelVolume {
  // The view depth in metres the last frame's volume covered, which places
  // a reprojected point among its slices.
  previous_length:f32,
+ // The integrated volume's slices (shading/fog.wgsl), last.
+ @align(16) volume_layout:FogLayout,
 }
 // The most fog volumes a frame's fog sums
 // (stages::fog::volume_froxels::MOST_VOLUMES).
@@ -169,9 +171,14 @@ const FOG_MOST_SLICES:u32=512u;
 @group(1) @binding(7) var source_map:texture_3d<f32>;
 @group(1) @binding(8) var dest_map:texture_storage_3d<rgba16float,write>;
 override filter_axis:u32=0u;
-// Integration: this frame's froxels and the volume it integrates them into.
+// Integration: this frame's froxels and the volume it integrates them into,
+// and the sky stage's aerial volume (stages/sky/aerial_view_lut.wgsl) and its
+// sampler, which it composes the fog over while aerial perspective is in
+// effect.
 @group(1) @binding(4) var integrate_scattering:texture_3d<f32>;
 @group(1) @binding(5) var integrated:texture_storage_3d<rgba16float,write>;
+@group(1) @binding(10) var aerial_volume:texture_3d<f32>;
+@group(1) @binding(11) var aerial_sampler:sampler;
 
 // Godot's halton_map: where in its froxel each frame samples while the
 // froxel reprojects.
@@ -203,19 +210,14 @@ fn henyey_greenstein(cos_theta:f32,g:f32)->f32 {
  let k=.0795774715459;
  return k*(1.-g*g)/pow(1.+g*g-2.*g*cos_theta,1.5);
 }
-// The frame position of a froxel's unit x and y, with y down the frame.
-// It and froxel_view_position have their Rust inverse in
-// stages/fog/volume_froxels.rs, which bounds the fog volumes' froxels.
-fn froxel_ndc(unit:vec2<f32>)->vec2<f32> {
- return vec2(unit.x*2.-1.,1.-unit.y*2.);
-}
+// shading/fog.wgsl's column ray through this frame's projection.
 fn froxel_view_position(ndc:vec2<f32>,depth:f32)->vec3<f32> {
- return vec3((ndc+froxels.projection.zw)*depth/froxels.projection.xy,-depth);
+ return fog_froxel_view_position(froxels.projection,ndc,depth);
 }
 // The world position at a froxel's unit coordinates.
 fn froxel_world(unit:vec3<f32>)->vec3<f32> {
  let depth=fog_slice_depth(unit.z,froxels.length,froxels.detail_spread);
- return (froxels.world_from_view*vec4(froxel_view_position(froxel_ndc(unit.xy),depth),1.)).xyz;
+ return (froxels.world_from_view*vec4(froxel_view_position(fog_froxel_ndc(unit.xy),depth),1.)).xyz;
 }
 // The frame's ambient light that an isotropic medium scatters: the mean of
 // the radiance from every direction. The hemisphere fill and environment
@@ -299,7 +301,7 @@ var<workgroup> fog_ambient_light:vec3<f32>;
   // The last frame's clip w is its view depth.
   if previous.w>0. {
    let previous_uv=vec2(previous.x,-previous.y)/previous.w*.5+vec2(.5);
-   let previous_unit=fog_volume_coordinate(previous_uv,previous.w,1./froxels.previous_length,1./froxels.detail_spread);
+   let previous_unit=fog_froxel_coordinate(previous_uv,previous.w,1./froxels.previous_length,1./froxels.detail_spread);
    if all(previous_unit>vec3(0.)) && all(previous_unit<vec3(1.)) {
     reprojected=textureSampleLevel(previous_scattering,history_sampler,previous_unit,0.);
     reproject_amount=froxels.temporal_blend;
@@ -346,8 +348,8 @@ var<workgroup> fog_ambient_light:vec3<f32>;
   // its axis, so the bias is as large wherever the froxel lies on screen.
   let z0=fog_slice_depth(f32(id.z)/size.z,froxels.length,froxels.detail_spread);
   let z1=fog_slice_depth(f32(id.z+1u)/size.z,froxels.length,froxels.detail_spread);
-  let n0=froxel_ndc(vec2<f32>(id.xy)/size.xy)+froxels.projection.zw;
-  let n1=froxel_ndc(vec2<f32>(id.xy+vec2(1u))/size.xy)+froxels.projection.zw;
+  let n0=fog_froxel_ndc(vec2<f32>(id.xy)/size.xy)+froxels.projection.zw;
+  let n1=fog_froxel_ndc(vec2<f32>(id.xy+vec2(1u))/size.xy)+froxels.projection.zw;
   let high=max(max(n0*z0,n0*z1),max(n1*z0,n1*z1));
   let low=min(min(n0*z0,n0*z1),min(n1*z0,n1*z1));
   let lateral=(high-low)/froxels.projection.xy;
@@ -446,17 +448,36 @@ fn filter_gauss(t0:vec4<f32>,t1:vec4<f32>,t2:vec4<f32>,t3:vec4<f32>,t4:vec4<f32>
 
 // Each column's light scattered toward the camera (rgb) and transmittance
 // (a) from the camera to each slice's centre.
+// The fog composed over the air: `fog` (in-scatter rgb, transmittance a)
+// lies nearer the camera than all of `air`, as Wicked Engine 4323a33 places
+// its fog over its aerial perspective (WickedEngine/shaders/
+// aerialPerspectiveCS.hlsl 82-83, MIT, src/LICENSE-wicked.txt):
+// (I_fog + T_fog × I_air, T_fog × T_air).
+fn fog_over_air(fog:vec4<f32>,air:vec4<f32>)->vec4<f32> {
+ return vec4(fog.rgb+fog.a*air.rgb,fog.a*air.a);
+}
+// One slice of the integrated volume, bounded as the volume stores it.
+fn store_integrated(position:vec3<u32>,value:vec4<f32>) {
+ textureStore(integrated,position,select(vec4(0.),clamp(value,vec4(0.),vec4(65504.)),all_finite(value)));
+}
+// Each column front to back into the frame's one fog volume (shading/fog.wgsl
+// FogLayout): the fog's slices, each the fog to its depth, and while aerial
+// perspective is in effect the fog over the air to it; then the aerial
+// slices, the whole fog over the air to each; then the fog alone, which the
+// sky takes. Without aerial slices the fog's slices are as they always were.
 @compute @workgroup_size(8,8,1) fn integrate(@builtin(global_invocation_id) id:vec3<u32>) {
  if any(id.xy>=froxels.size.xy) {
   return;
  }
  let unit=(vec2<f32>(id.xy)+vec2(.5))/vec2<f32>(froxels.size.xy);
  // Metres along the column's view ray per metre of depth.
- let ray_scale=length(froxel_view_position(froxel_ndc(unit),1.));
+ let ray_scale=length(froxel_view_position(fog_froxel_ndc(unit),1.));
+ let volume_layout=froxels.volume_layout;
+ let aerial=volume_layout.aerial_slices>0u;
  var accumulated=vec4(0.,0.,0.,1.);
  var previous_depth=0.;
  // At most FOG_MOST_SLICES and the volume's own, so the loop ends whatever
- // the size says (AR-12).
+ // the size says (AR-12); none while the fog does not run.
  let slices=min(min(froxels.size.z,FOG_MOST_SLICES),textureDimensions(integrate_scattering).z);
  for(var z=0u;z<slices;z++) {
   let position=vec3(id.xy,z);
@@ -467,6 +488,21 @@ fn filter_gauss(t0:vec4<f32>,t1:vec4<f32>,t2:vec4<f32>,t3:vec4<f32>,t4:vec4<f32>
   let transmittance=exp(-(depth-previous_depth)*ray_scale*froxel.a);
   accumulated=vec4(accumulated.rgb+(froxel.rgb-froxel.rgb*transmittance)/max(froxel.a,.00001)*accumulated.a,accumulated.a*transmittance);
   previous_depth=depth;
-  textureStore(integrated,position,select(vec4(0.),clamp(accumulated,vec4(0.),vec4(65504.)),all_finite(accumulated)));
+  if aerial {
+   store_integrated(position,fog_over_air(accumulated,sample_aerial_volume(aerial_volume,aerial_sampler,unit,depth*ray_scale)));
+  } else {
+   store_integrated(position,accumulated);
+  }
  }
+ if !aerial {
+  return;
+ }
+ // The aerial slices, at most AERIAL_SLICES (AR-12), then the fog alone.
+ let aerial_slices=min(volume_layout.aerial_slices,AERIAL_SLICES);
+ for(var k=0u;k<aerial_slices;k++) {
+  let depth=fog_layout_aerial_depth(k,volume_layout);
+  let air=sample_aerial_volume(aerial_volume,aerial_sampler,unit,depth*ray_scale);
+  store_integrated(vec3(id.xy,slices+k),fog_over_air(accumulated,air));
+ }
+ store_integrated(vec3(id.xy,slices+aerial_slices),accumulated);
 }

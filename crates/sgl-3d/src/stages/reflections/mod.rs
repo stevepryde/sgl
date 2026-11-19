@@ -357,15 +357,16 @@ fn source_inputs<'a: 'p, 'p>(
 ) -> source::Inputs<'p> {
     let t: &'a SharedTargets = ctx.targets;
     let scene: &'a crate::Scene = ctx.scene;
-    let frame = &ctx.values.frame;
     let environments = &scene.environments;
     source::Inputs {
         fog,
-        frame_fog: ctx.effective.fog.map(|_| source::SourceFog {
-            inverse_length: frame.fog_inverse_length,
-            inverse_detail_spread: frame.fog_inverse_detail_spread,
-            sky_affect: ctx.input.fog.sky_affect.clamp(0., 1.),
-        }),
+        frame_fog: ctx
+            .effective
+            .fog_layout(ctx.input)
+            .map(|layout| source::SourceFog {
+                layout,
+                sky_affect: ctx.input.fog.sky_affect.clamp(0., 1.),
+            }),
         camera: ctx.views.reflection_camera,
         scene: &t.color,
         ambient: &t.ambient,

@@ -42,7 +42,7 @@ fn texels(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -
 /// The tables of `input`'s sky computed by a stage of their own.
 fn tables(device: &wgpu::Device, queue: &wgpu::Queue, input: &FrameInput) -> Sky {
     let mut sky = Sky::default();
-    sky.prepare(device, input, input.camera.eye, true);
+    sky.prepare(device, input, input.camera.eye, (true, false));
     let mut encoder = device.create_command_encoder(&Default::default());
     sky.encode_planned((queue, &mut encoder), None);
     queue.submit([encoder.finish()]);
@@ -111,7 +111,7 @@ fn multiple_scattering_is_finite_and_non_negative_from_empty_to_dense_air() {
                     ..SkyLook::default()
                 };
                 let input = sky_input(look, Vec3::Y, 0.3);
-                sky.prepare(&device, &input, Vec3::Y, true);
+                sky.prepare(&device, &input, Vec3::Y, (true, false));
                 let mut encoder = device.create_command_encoder(&Default::default());
                 sky.encode_planned((&queue, &mut encoder), None);
                 queue.submit([encoder.finish()]);
@@ -177,7 +177,9 @@ fn with_every_light_off_the_sky_view_table_and_the_backdrop_are_black() {
 // frame's, so a return to that frame's inputs shows the unfinished one's.
 // The oracle is the contract (X-4): each table is computed exactly when its
 // inputs differ from those of the last finished frame that computed it, or
-// a frame that was not finished computed it since.
+// a frame that was not finished computed it since. And the aerial volume
+// lives exactly while aerial perspective is in effect: neither the sky
+// stage nor the fog stage, which integrates it, holds it after.
 #[test]
 fn each_table_is_computed_when_its_inputs_change_and_a_frame_is_unfinished() {
     let Some((device, queue)) = test_support::device() else {
@@ -293,13 +295,34 @@ fn each_table_is_computed_when_its_inputs_change_and_a_frame_is_unfinished() {
         none,
         "once it was finished"
     );
-    // A frame without a sky drops the tables; the next sky frame computes
-    // them all again.
+    // Aerial perspective runs here without the fog (the frame's atmosphere
+    // is off): the fog stage integrates the sky's aerial volume alone, and
+    // lets go of it and of that integrated volume once aerial perspective
+    // is out of effect, at strength 0 (which no table depends on) as
+    // without a sky.
+    let holds = |renderer: &TestRenderer| {
+        (
+            renderer.view.sky.aerial_volume().is_some(),
+            renderer.view.fog.holds_aerial(),
+        )
+    };
+    assert_eq!(holds(&renderer), (true, true), "aerial perspective");
+    let mut clear = hazy;
+    if let FrameEnvironment::Sky(sky) = &mut clear.environment {
+        sky.aerial_perspective = 0.;
+    }
+    assert_eq!(frame(&mut renderer, &clear, true), none, "strength 0");
+    assert_eq!(holds(&renderer), (false, false), "strength 0");
+    assert_eq!(frame(&mut renderer, &hazy, true), none, "strength 1");
+    assert_eq!(holds(&renderer), (true, true), "strength 1");
+    // A frame without a sky drops the tables and the aerial volume; the
+    // next sky frame computes them all again.
     let mut mapless = hazy;
     mapless.environment = FrameEnvironment::None;
     mapless.backdrop = Backdrop::Color([0.; 3]);
     assert_eq!(frame(&mut renderer, &mapless, true), none, "no sky");
     assert!(renderer.view.sky.tables().is_none(), "no sky, no tables");
+    assert_eq!(holds(&renderer), (false, false), "no sky");
     assert_eq!(frame(&mut renderer, &hazy, true), all, "the sky again");
 }
 
@@ -364,4 +387,94 @@ fn every_filtered_level_is_a_mean_of_the_sharp_level() {
             );
         }
     }
+}
+
+/// The aerial volume of `look` over a camera 1 m up whose middle row of
+/// columns (row 15 of 32) lies level, so their rays run along the ground.
+fn level_aerial(device: &wgpu::Device, queue: &wgpu::Queue, look: SkyLook) -> Vec<[f32; 4]> {
+    let mut input = sky_input(look, Vec3::Y, 1.);
+    let projection = input.camera.projection;
+    let row = crate::shading::sky::AERIAL_SLICES / 2 - 1;
+    let ndc_y = 1. - 2. * (row as f32 + 0.5) / crate::shading::sky::AERIAL_SLICES as f32;
+    let tilt = (ndc_y / projection.y_axis.y).atan();
+    input.camera.view = glam::camera::rh::view::look_to_mat4(
+        Vec3::Y,
+        Vec3::new(0., -tilt.sin(), -tilt.cos()),
+        Vec3::Y,
+    );
+    let mut sky = Sky::default();
+    sky.prepare(device, &input, input.camera.eye, (true, true));
+    let mut encoder = device.create_command_encoder(&Default::default());
+    sky.encode_planned((queue, &mut encoder), None);
+    queue.submit([encoder.finish()]);
+    texels(device, queue, sky.aerial_texture().expect("aerial volume"))
+}
+
+/// The level column's texel at the end of `slice`.
+fn level_texel(volume: &[[f32; 4]], slice: u32) -> [f32; 4] {
+    let side = crate::shading::sky::AERIAL_SLICES;
+    volume[((slice * side + side / 2 - 1) * side + side / 2) as usize]
+}
+
+/// The closed-form mean transmittance of `metres` of Earth's ground-level
+/// air: Rayleigh's scattering and Mie's extinction coefficients at sea level
+/// (Hillaire 2020's Earth, as Wicked Engine's ShaderInterop_Weather.h lists
+/// them); ozone's tent is empty below 10 km.
+fn ground_transmittance(metres: f64) -> f64 {
+    let rayleigh = [5.802e-6, 13.558e-6, 33.1e-6];
+    let mie = 4.440e-6;
+    rayleigh
+        .iter()
+        .map(|r| (-(r + mie) * metres).exp())
+        .sum::<f64>()
+        / 3.
+}
+
+// Plausible defects: the slices' distances in kilometres where the march
+// takes metres (or the reverse), slices spaced linearly where the reader
+// takes them squared, a mis-scaled step, or Mie's extinction missing. The
+// oracle is analytic: the closed-form transmittance of a level path through
+// ground-level air (ground_transmittance), never the march, at the ends of
+// slices 0, 11 and 31, which the spec's squared spacing puts at 31.25 m,
+// 4.5 km and 32 km. The path rises with the planet's curvature (80 m at
+// 32 km), which thins Mie's air by under 0.5 % of the optical depth; 1 % is
+// the spec's agreement.
+#[test]
+fn aerial_volume_meets_the_closed_form_along_the_ground() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let volume = level_aerial(&device, &queue, SkyLook::default());
+    for (slice, metres) in [(0, 31.25), (11, 4500.), (31, 32_000.)] {
+        let held = f64::from(level_texel(&volume, slice)[3]);
+        let expected = ground_transmittance(metres);
+        assert!(
+            (held / expected - 1.).abs() < 0.01,
+            "slice {slice} ({metres} m): the volume holds {held}, the closed form {expected}"
+        );
+    }
+}
+
+// Plausible defects: the game's strength ignored or applied twice. The
+// oracle is the contract: strength s counts each metre of view distance as s
+// metres of air, so at strength 4 slice 5's end (32 km × (6/32)² = 1125 m)
+// holds the closed form of 4.5 km. On this level ray the air is uniform, so
+// scaling only the steps or only the sample positions gives the same
+// transmittance: the test cannot tell those apart.
+#[test]
+fn aerial_strength_counts_each_metre_as_that_many() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let look = SkyLook {
+        aerial_perspective: 4.,
+        ..SkyLook::default()
+    };
+    let volume = level_aerial(&device, &queue, look);
+    let held = f64::from(level_texel(&volume, 5)[3]);
+    let expected = ground_transmittance(4500.);
+    assert!(
+        (held / expected - 1.).abs() < 0.01,
+        "the volume holds {held}, the closed form {expected}"
+    );
 }

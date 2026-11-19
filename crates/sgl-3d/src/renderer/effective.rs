@@ -111,6 +111,17 @@ fn fog(
     (atmosphere(settings, input) && medium && volume && perspective).then_some(settings.fog_quality)
 }
 
+/// Whether the air's aerial perspective is in effect: under a procedural
+/// sky whose `aerial_perspective` is above 0, seen by a `perspective` camera,
+/// the fog's own requirement. It is independent of `FrameInput::atmosphere`
+/// and `Settings::atmosphere`, which are the fog's and the mist's.
+fn aerial_perspective(input: &FrameInput, perspective: bool) -> bool {
+    let crate::FrameEnvironment::Sky(sky) = &input.environment else {
+        return false;
+    };
+    perspective && sky.resolved().aerial_perspective > 0.
+}
+
 /// Motion blur's shutter: the frame's authored one scaled by the setting,
 /// while that is positive and finite. It also needs `perspective`'s
 /// projection, whose depth it linearises.
@@ -370,6 +381,7 @@ pub(super) fn resolve(
             p[3][3] == 0. && p[2][3] == -1.,
         ),
         fog_filter: settings.fog_filter,
+        aerial_perspective: aerial_perspective(input, p[3][3] == 0. && p[2][3] == -1.),
         dynamic_gi: dynamic_gi(settings, tier, content.ray_data)
             .rays()
             .filter(|_| content.dynamic_gi_volume),

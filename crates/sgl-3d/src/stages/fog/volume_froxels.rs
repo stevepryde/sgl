@@ -126,8 +126,8 @@ fn bounds(
             (Vec3::INFINITY, Vec3::NEG_INFINITY),
             |(low, high), (point, depth)| {
                 // The point's frame position as unit coordinates:
-                // stages/fog.wgsl's froxel_view_position and froxel_ndc
-                // inverted.
+                // shading/fog.wgsl's fog_froxel_view_position and
+                // fog_froxel_ndc inverted.
                 let ndc = point.truncate() * scale / depth - offset;
                 let unit = Vec3::new((ndc.x + 1.) * 0.5, (1. - ndc.y) * 0.5, slice(depth));
                 (low.min(unit), high.max(unit))

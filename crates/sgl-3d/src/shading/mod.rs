@@ -117,7 +117,7 @@ pub(crate) fn compose(roots: &[&'static Module]) -> String {
 pub(crate) static UNIFORMS: Module = Module {
     name: "uniforms",
     source: include_str!("uniforms.wgsl"),
-    deps: &[],
+    deps: &[&FOG],
 };
 pub(crate) static BIND_LIT: Module = Module {
     name: "bind_lit",

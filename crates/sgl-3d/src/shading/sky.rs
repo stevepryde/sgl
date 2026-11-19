@@ -40,6 +40,11 @@ pub(crate) const SKY_OZONE_PEAK: f32 = 25_000.;
 pub(crate) const SKY_OZONE_HALF_WIDTH: f32 = 15_000.;
 /// The transmittance integral's steps.
 pub(crate) const SKY_TRANSMITTANCE_SAMPLES: u32 = 40;
+/// The aerial volume's columns across and down, its depth slices, and how
+/// far along the view ray the last ends, metres.
+pub(crate) const AERIAL_SIDE: u32 = 32;
+pub(crate) const AERIAL_SLICES: u32 = 32;
+pub(crate) const AERIAL_REACH: f32 = 32_000.;
 /// How far above the ground the camera stands at least, metres (Bevy's
 /// `clamp_to_surface` epsilon). No shader reads it: the CPU places the
 /// camera (`camera_radius`), and the shaders take its radius.
@@ -203,6 +208,17 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SKY_TRANSMITTANCE_SAMPLES",
             naga::Literal::U32(SKY_TRANSMITTANCE_SAMPLES),
         ),
+        Constant::new(
+            "sky_transmittance",
+            "AERIAL_SIDE",
+            naga::Literal::U32(AERIAL_SIDE),
+        ),
+        Constant::new(
+            "sky_transmittance",
+            "AERIAL_SLICES",
+            naga::Literal::U32(AERIAL_SLICES),
+        ),
+        f("AERIAL_REACH", AERIAL_REACH),
     ]
 }
 

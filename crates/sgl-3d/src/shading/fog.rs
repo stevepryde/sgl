@@ -10,6 +10,59 @@ use crate::content::transient::FogVolume;
 /// bounds.
 pub(crate) const DETAIL_SPREAD: f32 = 2.;
 
+/// `projection`'s x and y scales and x and y offsets, as fog.wgsl's
+/// `fog_froxel_view_position` takes them: the froxel columns' rays, which
+/// the fog's froxels and the sky's aerial volume both follow.
+pub(crate) fn froxel_projection(projection: glam::Mat4) -> [f32; 4] {
+    [
+        projection.x_axis.x,
+        projection.y_axis.y,
+        projection.z_axis.x,
+        projection.z_axis.y,
+    ]
+}
+
+/// `FogLayout` in fog.wgsl: the frame's one fog volume's slices, which
+/// `Frame`, the fog stage's integration and source completion hold.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct FogLayout {
+    /// One over the fog's length (0 while the fog does not run) and over
+    /// its detail spread.
+    pub inverse_length: f32,
+    pub inverse_detail_spread: f32,
+    /// How far the aerial slices reach, metres of view depth.
+    pub aerial_reach: f32,
+    pub fog_slices: u32,
+    pub aerial_slices: u32,
+}
+
+impl FogLayout {
+    /// The volume of a frame whose fog runs with `fog` slices over `length`
+    /// metres (none while it does not), with the aerial volume's slices to
+    /// its reach while aerial perspective is in effect (`aerial`).
+    pub fn new(fog: Option<(u32, f32)>, aerial: bool) -> Self {
+        Self {
+            inverse_length: fog.map_or(0., |(_, length)| length.recip()),
+            inverse_detail_spread: DETAIL_SPREAD.recip(),
+            aerial_reach: super::sky::AERIAL_REACH,
+            fog_slices: fog.map_or(0, |(slices, _)| slices),
+            aerial_slices: if aerial { super::sky::AERIAL_SLICES } else { 0 },
+        }
+    }
+
+    /// The volume's slices: the fog's, then the aerial slices and the fog
+    /// alone.
+    pub fn slices(&self) -> u32 {
+        self.fog_slices
+            + if self.aerial_slices > 0 {
+                self.aerial_slices + 1
+            } else {
+                0
+            }
+    }
+}
+
 /// `FogVolumeRecord` in fog.wgsl: a box's frame, size and medium.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
@@ -60,20 +113,34 @@ fn world_from_local(volume: &FogVolume) -> glam::Mat4 {
 
 /// The layouts this module mirrors.
 #[cfg(test)]
-pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 1] {
+pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
     use crate::shading::layout_tests::mirror;
-    [mirror!(
-        "volumetric_fog",
-        "FogVolumeRecord",
-        FogVolumeRecord,
-        [
-            local_from_world,
-            half_size,
-            density,
-            albedo,
-            edge_fade,
-            center,
-            radius_squared
-        ]
-    )]
+    [
+        mirror!(
+            "volumetric_fog",
+            "FogLayout",
+            FogLayout,
+            [
+                inverse_length,
+                inverse_detail_spread,
+                aerial_reach,
+                fog_slices,
+                aerial_slices
+            ]
+        ),
+        mirror!(
+            "volumetric_fog",
+            "FogVolumeRecord",
+            FogVolumeRecord,
+            [
+                local_from_world,
+                half_size,
+                density,
+                albedo,
+                edge_fade,
+                center,
+                radius_squared
+            ]
+        ),
+    ]
 }

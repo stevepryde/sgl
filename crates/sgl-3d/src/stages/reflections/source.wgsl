@@ -4,16 +4,17 @@
 // screen-space method's reflections over it.
 
 // Source-completion camera. With SOURCE_FOG, the frame's fog volume fogs
-// what completion and composition write; `fog` holds one over its length and
-// over its detail spread (fog.wgsl), and the share of its fog the sky takes.
+// what completion and composition write; `fog` holds its slices (fog.wgsl's
+// FogLayout, last) and `sky_affect` the share of its fog the sky takes.
 // SOURCE_ORTHOGRAPHIC marks an orthographic projection
 // (projection_perspective false).
 struct SourceCamera {
  inverse:mat4x4<f32>,
  eye:vec4<f32>,
- fog:vec4<f32>,
  forward:vec3<f32>,
  flags:u32,
+ sky_affect:f32,
+ @align(16) fog:FogLayout,
 }
 const SOURCE_FOG:u32=1u;
 const SOURCE_ORTHOGRAPHIC:u32=2u;
@@ -67,8 +68,23 @@ fn source_fog(view_depth:f32,id:vec2<u32>,size:vec2<u32>,camera:SourceCamera)->v
   return vec4(0.,0.,0.,1.);
  }
  let uv=(vec2<f32>(id)+vec2(.5))/vec2<f32>(size);
- let coordinate=fog_volume_coordinate(uv,view_depth,camera.fog.x,camera.fog.y);
+ let coordinate=fog_volume_coordinate(uv,view_depth,camera.fog);
  return textureSampleLevel(source_fog_volume,source_fog_sampler,coordinate,0.);
+}
+// The fog over the sky at pixel `id` of `size`: the volume's fog alone,
+// never the air's aerial perspective, which the sky-view table already holds,
+// taken by Fog::sky_affect: Godot b130438's mix(sky, fogged sky,
+// volumetric_fog_sky_affect)
+// (servers/rendering/renderer_rd/shaders/environment/sky.glsl), MIT
+// (src/LICENSE-godot.txt), as one mix of the fog with no fog. None without
+// SOURCE_FOG.
+fn source_sky_fog(id:vec2<u32>,size:vec2<u32>,camera:SourceCamera)->vec4<f32> {
+ if (camera.flags&SOURCE_FOG)==0u {
+  return vec4(0.,0.,0.,1.);
+ }
+ let uv=(vec2<f32>(id)+vec2(.5))/vec2<f32>(size);
+ let fog=textureSampleLevel(source_fog_volume,source_fog_sampler,fog_sky_coordinate(uv,camera.fog),0.);
+ return mix(vec4(0.,0.,0.,1.),fog,camera.sky_affect);
 }
 // The view depth of a receiver at `world`.
 fn source_view_depth(world:vec3<f32>,camera:SourceCamera)->f32 {
@@ -94,8 +110,7 @@ fn complete_source(scene:vec3<f32>,alpha:f32,ambient:GBufferAmbient,normals:vec4
  var incident=scene;
  let sky_visibility=ambient.sky_visibility;
  var completed_alpha=alpha;
- // The sky lies beyond the fog volume.
- var view_depth=3.4e38;
+ var fog=source_sky_fog(id,size,camera);
  if z>0. {
   completed_alpha=1.;
   let world=source_world(z,id,size,camera);
@@ -119,15 +134,7 @@ fn complete_source(scene:vec3<f32>,alpha:f32,ambient:GBufferAmbient,normals:vec4
     }
    }
   }
-  view_depth=source_view_depth(world,camera);
- }
- var fog=source_fog(view_depth,id,size,camera);
- if z<=0. {
-  // The sky takes its sky affect of the fog: Godot b130438's
-  // mix(sky, fogged sky, volumetric_fog_sky_affect)
-  // (servers/rendering/renderer_rd/shaders/environment/sky.glsl), MIT
-  // (src/LICENSE-godot.txt), as one mix of the fog with no fog.
-  fog=mix(vec4(0.,0.,0.,1.),fog,camera.fog.z);
+  fog=source_fog(source_view_depth(world,camera),id,size,camera);
  }
  return CompletedSource(vec4(fog_composite(incoming,fog),completed_alpha),vec4(fog_composite(incident,fog),completed_alpha));
 }

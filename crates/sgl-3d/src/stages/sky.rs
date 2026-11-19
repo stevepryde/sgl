@@ -35,15 +35,22 @@
 //! opaque stage's backdrop draw shows (unlit group 0's backdrop binding),
 //! and the atlas what group 0 binds as the frame's environment.
 //! Honours: `FrameEnvironment::Sky` (its only control: no setting).
+//! While aerial perspective is in effect (`Sky::aerial_perspective` above 0
+//! under a perspective camera), it also computes the view's aerial volume
+//! (`aerial`) every frame, which the renderer lends the fog's integration.
+//!
 //! Timing groups: `sky transmittance`, `sky multiscattering`, `sky view`,
-//! `sky environment`.
-//! History: the atlas's cycle (X-5); the tables keep none (X-4).
+//! `aerial perspective`, `sky environment`.
+//! History: the atlas's cycle (X-5); the tables keep none (X-4), nor does
+//! the aerial volume, computed whole each frame it is in effect.
+pub(crate) mod aerial;
 pub(crate) mod environment;
 
 use crate::FrameInput;
 use crate::content::lighting::{DirectionalLight, FrameEnvironment, Sky as SkyLook};
 use crate::shading::sky::SkyAtmosphereUniform;
 use crate::view::frame::FrameContext;
+use aerial::{AerialPipeline, AerialVolume, SkyAerialUniform};
 use environment::{AtlasCycle, EnvironmentAtlas, EnvironmentPipelines};
 use glam::Vec3;
 use std::ops::Range;
@@ -258,6 +265,9 @@ struct Tables {
     #[cfg_attr(not(test), allow(dead_code))]
     sky_view: wgpu::Texture,
     sky_view_view: wgpu::TextureView,
+    /// The transmittance and multiple-scattering tables as the aerial
+    /// volume's march samples them.
+    table_views: [wgpu::TextureView; 2],
     groups: [wgpu::BindGroup; 3],
     /// The environment atlas, which the capture fills from the sky view.
     environment: EnvironmentAtlas,
@@ -356,6 +366,7 @@ impl Tables {
             multiscattering,
             sky_view,
             sky_view_view,
+            table_views: [transmittance_view, multiscattering_view],
             groups,
             environment,
         }
@@ -416,12 +427,14 @@ impl Held {
     }
 }
 
-/// What a frame computes: the inputs, the tables and the atlas's steps.
+/// What a frame computes: the inputs, the tables, the atlas's steps and,
+/// while aerial perspective is in effect, the aerial volume's camera.
 #[derive(Clone)]
 struct Plan {
     inputs: SkyUniform,
     computed: Computed,
     steps: Range<usize>,
+    aerial: Option<SkyAerialUniform>,
 }
 
 /// The stage of one view (or one probe capture).
@@ -433,6 +446,10 @@ pub(crate) struct Sky {
     held: Held,
     /// The environment atlas's cycle.
     cycle: AtlasCycle,
+    /// The aerial volume's pipeline, compiled on its first frame.
+    aerial_pipeline: Option<AerialPipeline>,
+    /// The aerial volume, while aerial perspective is in effect.
+    aerial: Option<AerialVolume>,
     /// What the frame being rendered computes, as `prepare` planned it.
     plan: Option<Plan>,
 }
@@ -440,12 +457,21 @@ pub(crate) struct Sky {
 impl Sky {
     /// Readies the stage for a frame of `input` seen from `eye`, and plans
     /// it: with a sky, its pipelines and tables, made once, the tables whose
-    /// inputs differ from what they hold, and the atlas's steps, all of them
-    /// on a new atlas or where the view's history restarts (`restart`);
-    /// without a sky, the tables and atlas are dropped.
-    pub fn prepare(&mut self, device: &wgpu::Device, input: &FrameInput, eye: Vec3, restart: bool) {
+    /// inputs differ from what they hold, the atlas's steps, all of them on
+    /// a new atlas or where the view's history restarts (`restart`), and,
+    /// where aerial perspective is in effect (`aerial`), the aerial volume,
+    /// made on its first frame and dropped on a frame it is not; without a
+    /// sky, the tables, atlas and volume are dropped.
+    pub fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        input: &FrameInput,
+        eye: Vec3,
+        (restart, aerial): (bool, bool),
+    ) {
         self.plan = None;
         let FrameEnvironment::Sky(sky) = &input.environment else {
+            self.aerial = None;
             if self.tables.take().is_some() {
                 self.held = Held::default();
                 self.cycle.forget();
@@ -457,6 +483,34 @@ impl Sky {
             self.tables = Some(Tables::new(device, pipelines));
             self.held = Held::default();
             self.cycle.forget();
+            self.aerial = None;
+        }
+        let tables = self.tables.as_ref().unwrap();
+        let aerial = aerial.then(|| {
+            let pipeline = self
+                .aerial_pipeline
+                .get_or_insert_with(|| AerialPipeline::new(device));
+            if self.aerial.is_none() {
+                let [transmittance, multiscattering] = &tables.table_views;
+                self.aerial = Some(AerialVolume::new(
+                    device,
+                    pipeline,
+                    (
+                        &tables.uniform,
+                        [transmittance, multiscattering],
+                        &pipelines.sampler,
+                    ),
+                ));
+            }
+            let camera = input.camera;
+            SkyAerialUniform::new(
+                camera.view,
+                camera.projection,
+                sky.resolved().aerial_perspective,
+            )
+        });
+        if aerial.is_none() {
+            self.aerial = None;
         }
         let inputs = SkyUniform::of(sky, input, eye);
         let computed = self.held.computes(&inputs);
@@ -466,7 +520,14 @@ impl Sky {
             inputs,
             computed,
             steps,
+            aerial,
         });
+    }
+
+    /// The aerial volume, while aerial perspective is in effect, which the
+    /// renderer lends the fog's integration.
+    pub fn aerial_volume(&self) -> Option<&wgpu::TextureView> {
+        self.aerial.as_ref().map(|aerial| &aerial.view)
     }
 
     /// The backdrop and the environment atlas group 0 binds for the sky:
@@ -506,6 +567,7 @@ impl Sky {
             inputs,
             computed,
             steps,
+            aerial,
         } = plan;
         if computed != Computed::default() {
             crate::counters::write_buffer(queue, &tables.uniform, 0, bytemuck::bytes_of(&inputs));
@@ -545,6 +607,11 @@ impl Sky {
                 workgroups(SKY_VIEW_SIZE),
             );
         }
+        if let (Some(uniform), Some(volume), Some(pipeline)) =
+            (aerial, &self.aerial, &self.aerial_pipeline)
+        {
+            volume.encode(pipeline, (queue, encoder), &uniform, timing);
+        }
         tables
             .environment
             .encode(&pipelines.environment, encoder, steps, timing);
@@ -565,6 +632,12 @@ impl Sky {
         self.plan
             .as_ref()
             .map_or_else(Computed::default, |plan| plan.computed)
+    }
+
+    /// The aerial volume's texture, while the stage holds it.
+    #[cfg(test)]
+    pub fn aerial_texture(&self) -> Option<&wgpu::Texture> {
+        self.aerial.as_ref().map(AerialVolume::texture)
     }
 
     /// The environment atlas, while the stage holds it.

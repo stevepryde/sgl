@@ -5,8 +5,8 @@
 pub(crate) const VIEW_PROBE_CAPTURE: u32 = 1;
 /// `DirectionalLight::flags`: the light has the frame's shadow cascades.
 pub(crate) const DIRECTIONAL_LIGHT_SHADOW: u32 = 1;
-/// `Frame::flags`: the frame's volumetric fog ran; draws fog themselves
-/// from its volume.
+/// `Frame::flags`: the frame has a fog volume to sample (its volumetric fog
+/// or its sky's aerial perspective ran); draws fog themselves from it.
 pub(crate) const FRAME_FOG: u32 = 1;
 /// `Frame::flags`: baked (fixed) lighting is on.
 pub(crate) const FRAME_BAKED_LIGHTING: u32 = 2;
@@ -110,9 +110,6 @@ pub(crate) struct FrameUniform {
     pub mist_size: [f32; 2],
     pub mist_drift: [f32; 2],
     pub backdrop_brightness: f32,
-    /// One over the fog volume's length and over its detail spread.
-    pub fog_inverse_length: f32,
-    pub fog_inverse_detail_spread: f32,
     pub reflection_yaw: f32,
     pub reflection_intensity: f32,
     pub elapsed_seconds: f32,
@@ -125,6 +122,8 @@ pub(crate) struct FrameUniform {
     pub frame_count: u32,
     /// `shading::material::animation_phase` of the frame's time.
     pub animation_phase: f32,
+    /// WGSL aligns `lightmap_chart` to 16 bytes.
+    pub padding_chart: [f32; 2],
     pub lightmap_chart: [f32; 4],
     /// With `FRAME_DYNAMIC_GI`, the scene's dynamic GI volume: its first
     /// probe's position, its probes' spacing and their count on each axis,
@@ -163,6 +162,11 @@ pub(crate) struct FrameUniform {
     /// radiance through the air (rgb) and its angular radius (a); black for
     /// a light that is off.
     pub sky_discs: [[f32; 4]; 2],
+    /// With `FRAME_FOG`, the frame's one fog volume's slices, which draws
+    /// sample it by (`shading::fog::FogLayout`).
+    pub fog: crate::shading::fog::FogLayout,
+    /// WGSL rounds `Frame` up to its 16-byte alignment.
+    pub padding_fog: [u32; 3],
 }
 
 /// One instance's record (`Object` in uniforms.wgsl), at its index in the

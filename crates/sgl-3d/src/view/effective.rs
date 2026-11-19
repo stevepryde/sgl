@@ -155,6 +155,12 @@ pub(crate) struct Effective {
     pub fog: Option<FogQuality>,
     /// The fog filters its froxels before it integrates them, while it runs.
     pub fog_filter: bool,
+    /// The air's aerial perspective is in effect: the frame's environment
+    /// is a procedural sky whose `Sky::aerial_perspective` is above 0, seen
+    /// by a perspective camera. The sky stage computes its aerial volume and
+    /// the fog's integration composes it into the frame's one fog volume,
+    /// whether or not the fog runs.
+    pub aerial_perspective: bool,
     /// The most rays a probe of the dynamic GI volume traces, while it
     /// runs: the scene holds a volume and `Settings::dynamic_gi` is not Off.
     pub dynamic_gi: Option<u32>,
@@ -191,4 +197,17 @@ pub(crate) struct Effective {
     pub dynamic_gi_observation: bool,
     /// Tone mapping writes a target before presentation, for diagnostics.
     pub capture_tone_target: bool,
+}
+
+impl Effective {
+    /// The frame's one fog volume's slices while it has one (`FRAME_FOG`):
+    /// the fog's, over `input`'s fog length, while the fog runs, and the
+    /// aerial slices while aerial perspective is in effect.
+    pub fn fog_layout(&self, input: &crate::FrameInput) -> Option<crate::shading::fog::FogLayout> {
+        let fog = self
+            .fog
+            .map(|quality| (quality.volume().1, input.fog.length));
+        (fog.is_some() || self.aerial_perspective)
+            .then(|| crate::shading::fog::FogLayout::new(fog, self.aerial_perspective))
+    }
 }

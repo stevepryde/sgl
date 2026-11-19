@@ -2,7 +2,8 @@
 //! its backdrop's discs, its motion, the sun colour every surface takes
 //! through the air, finite frames at every sun elevation, and its
 //! environment light: a mirror's reflection, a diffuse plane's bound, the
-//! atlas's lag behind a changing sun and a cut, and a probe capture's sky.
+//! atlas's lag behind a changing sun and a cut, and a probe capture's sky;
+//! and its aerial perspective along the ground, near and kilometres away.
 //! Scenario
 //! harness suite (`specs/testing.md`, "SGL3D scenario harness"); each test
 //! runs alone by name.
@@ -13,8 +14,10 @@
 //! sky has no settings level: `FrameEnvironment::Sky` is its only control.
 //! Camera translation and object motion cannot affect the backdrop, which
 //! lies at infinity and moves with the camera's rotation alone; the camera's
-//! height, which the sky depends on, is the sun-colour scenario's. Not
-//! covered yet: aerial perspective, which it does not give yet.
+//! height, which the sky depends on, is the sun-colour scenario's. Aerial
+//! perspective is covered at rest, with the atmosphere setting off (it runs
+//! without the fog); its composition with the fog is the fog stage's
+//! (`stages::fog` tests).
 //!
 //! The analytic oracles take the air's transmittance from the published
 //! medium (Hillaire 2020's Earth, as Wicked Engine's
@@ -31,7 +34,7 @@ mod scenario;
 
 use scenario::geometry::{Motion, Pose, View};
 use scenario::image::pixels;
-use scenario::rig::{Dump, Rig, gpu};
+use scenario::rig::{Dump, Rig, Shape, gpu};
 use sgl_3d::asset::{Asset, CpuMesh, Material, Vertex};
 use sgl_3d::diagnostics::DiagnosticTarget;
 use sgl_3d::glam::Vec3;
@@ -723,6 +726,153 @@ fn a_probe_capture_records_the_sky_the_backdrop_shows() {
     assert!(
         within(zenith, range),
         "the capture's zenith is {zenith:?}, the backdrop's {range:?}"
+    );
+}
+
+// Plausible defects: aerial perspective that reads near surfaces as hazy
+// (the owner's direction: haze belongs to the far distance alone), the
+// slices' distances in kilometres where the march takes metres or the
+// reverse, slices spaced linearly where the reader takes them squared, the
+// in-scatter accumulated without the transmittance in front of it, blended
+// surfaces fogged from another place in the volume than opaque ones, or haze
+// left on at a strength of 0. The fixture: a camera 1 m above the ground with
+// the atmosphere setting off (aerial perspective runs without the fog),
+// whose pixel row 15 of 32 is the aerial volume's row 15 of 32 and lies
+// level, so its ray runs along the ground through uniform air; on that ray
+// an unlit card of radiance 0, then of radiance 100, at 30 m and at two of
+// the volume's slice depths, 945 m and 4.88 km; a sun from behind, which
+// lights each step of the level ray alike. The oracles are analytic: the
+// card of 0 shows the air's light alone, A(d), and of 100, 100 T(d) + A(d),
+// so T(d) = (bright - black) / 100. At 30 m T lies within 0.002 of 1 and A
+// below 0.5 % of the level sky's radiance; at the slice depths T meets the
+// closed-form mean transmittance of ground-level air within 1 %, A lies
+// between 0 and the level sky's radiance beside the card (the air to the sky
+// holds more), and A grows between them as single scattering through
+// uniform air does, A(d1) / A(d2) = (1 - exp(-sigma d1)) /
+// (1 - exp(-sigma d2)) per channel, within 2 % (the volumes'
+// interpolation). A blended card of radiance 100
+// shows what the opaque one does, within 1 %, and at strength 0 the far card
+// of 0 stays 0.
+#[test]
+fn aerial_haze_is_negligible_near_and_builds_over_kilometres() {
+    let Some(gpu) = gpu() else { return };
+    let lens = View {
+        size: [16, 32],
+        fov_y: 1.,
+        near: 0.1,
+    };
+    let mut rig = sky_rig(&gpu, lens);
+    let eye = Vec3::new(0., 1., 0.);
+    let projection = perspective(lens.fov_y, lens.aspect(), lens.near);
+    let pixel = [8, 15];
+    let ndc_y = 1. - 2. * (pixel[1] as f32 + 0.5) / lens.size[1] as f32;
+    let tilt = (ndc_y / projection.y_axis.y).atan();
+    let forward = Vec3::new(0., -tilt.sin(), -tilt.cos());
+    let camera = looking(&lens, eye, forward);
+    rig.views[0].input.camera = camera;
+    rig.views[0].input.directional_lights[0] = Some(DirectionalLight {
+        direction: -Vec3::new(1., 1., 1.).normalize(),
+        illuminance: 10_000.,
+        ..DirectionalLight::default()
+    });
+    // The pixel's ray, level.
+    let ndc_x = 2. * (pixel[0] as f32 + 0.5) / lens.size[0] as f32 - 1.;
+    let view_ray = Vec3::new(
+        ndc_x / projection.x_axis.x,
+        ndc_y / projection.y_axis.y,
+        -1.,
+    );
+    let ray = camera
+        .view
+        .inverse()
+        .transform_vector3(view_ray)
+        .normalize();
+    assert!(ray.y.abs() < 1e-6, "the pixel's ray is level: {ray}");
+    let mut frame = 0;
+    let mut level = |rig: &mut Rig, depth: f32, card: Option<Shape>, strength: f32| {
+        rig.views[0].input.environment = FrameEnvironment::Sky(Sky {
+            aerial_perspective: strength,
+            ..Sky::default()
+        });
+        let distance = depth / ray.dot(forward);
+        let id = card.map(|card| {
+            let size = lens.pixel_metres(depth) * 4.;
+            rig.add(&card.scaled(size), Pose::at(eye + ray * distance), 0)
+        });
+        rig.render(frame);
+        frame += 1;
+        if let Some(id) = id {
+            rig.remove(id);
+        }
+        let image = rig.read(DiagnosticTarget::Composite);
+        // The level sky, beside the card.
+        let sky = image.at([0, pixel[1]]);
+        (image.at(pixel), f64::from(distance), sky)
+    };
+    let card = |radiance| Shape::card(sgl_3d::glam::Vec2::ONE, 0., radiance);
+    let mut measured = Vec::new();
+    for depth in [30., 945.3125, 4882.8125] {
+        let (black, distance, sky) = level(&mut rig, depth, Some(card(0.)), 1.);
+        let (bright, ..) = level(&mut rig, depth, Some(card(100.)), 1.);
+        let transmittance: [f64; 3] =
+            std::array::from_fn(|c| f64::from(bright[c] - black[c]) / 100.);
+        measured.push((distance, black, bright, transmittance, sky));
+    }
+    // Ground-level air's extinction (ozone's tent is empty below 10 km).
+    let sigma = extinction(0.);
+    let closed_form = |distance: f64| sigma.iter().map(|s| (-s * distance).exp()).sum::<f64>() / 3.;
+    let (_, near_black, _, near, sky) = measured[0];
+    for c in 0..3 {
+        assert!(
+            (1. - near[c]).abs() < 0.002 && near_black[c] < 0.005 * sky[c],
+            "channel {c} at 30 m: transmittance {}, added light {} against the level sky's {}",
+            near[c],
+            near_black[c],
+            sky[c]
+        );
+    }
+    for &(distance, black, _, transmittance, sky) in &measured[1..] {
+        let expected = closed_form(distance);
+        for c in 0..3 {
+            assert!(
+                (transmittance[c] / expected - 1.).abs() < 0.01
+                    && black[c] > 0.
+                    && black[c] < sky[c],
+                "channel {c} at {distance} m: transmittance {}, the closed form {expected}; added light {}, the level sky's {}",
+                transmittance[c],
+                black[c],
+                sky[c]
+            );
+        }
+    }
+    let [
+        (near_distance, near_black, ..),
+        (far_distance, far_black, far_bright, ..),
+    ] = [measured[1], measured[2]];
+    for c in 0..3 {
+        let ratio = f64::from(far_black[c] / near_black[c]);
+        let expected =
+            (1. - (-sigma[c] * far_distance).exp()) / (1. - (-sigma[c] * near_distance).exp());
+        assert!(
+            (ratio / expected - 1.).abs() < 0.02,
+            "channel {c}: the air's light grows {ratio} times from {near_distance} m to {far_distance} m, single scattering {expected}"
+        );
+    }
+    let far = 4882.8125;
+    let (blended, ..) = level(&mut rig, far, Some(card(100.).blended(1.)), 1.);
+    for c in 0..3 {
+        assert!(
+            (blended[c] / far_bright[c] - 1.).abs() < 0.01,
+            "channel {c}: the blended card shows {}, the opaque {}",
+            blended[c],
+            far_bright[c]
+        );
+    }
+    let (clear, ..) = level(&mut rig, far, Some(card(0.)), 0.);
+    assert_eq!(
+        &clear[..3],
+        &[0.; 3],
+        "strength 0 leaves the far card clear"
     );
 }
 

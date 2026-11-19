@@ -276,7 +276,11 @@ impl TestRenderer {
             effective.local_lights,
         );
         view.views.instances.upload(device, queue);
-        view.fog.prepare(device, effective.fog, view.sizes.render);
+        view.fog.prepare(
+            device,
+            (effective.fog, effective.aerial_perspective),
+            view.sizes.render,
+        );
         if let Some(dynamic_gi) = self.renderer.shared.dynamic_gi.as_mut() {
             dynamic_gi.prepare(device, scene, &effective);
         }
@@ -293,8 +297,12 @@ impl TestRenderer {
             shared.prepare.hardware_rays(),
             &slot_lights,
         );
-        view.sky
-            .prepare(device, &input, input.camera.eye, !history.valid);
+        view.sky.prepare(
+            device,
+            &input,
+            input.camera.eye,
+            (!history.valid, effective.aerial_perspective),
+        );
         let mut encoder = device.create_command_encoder(&Default::default());
         view.sky.encode_planned((queue, &mut encoder), None);
         queue.submit([encoder.finish()]);

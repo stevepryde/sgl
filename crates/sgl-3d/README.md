@@ -240,15 +240,32 @@ frame.directional_lights[0] = Some(DirectionalLight {
   a moving sun or a climbing camera by up to 16 frames and diffuse
   environment light (the roughest level) by up to 31, and while a cycle runs
   the faces it has not yet refiltered still hold the cycle before.
-- Not yet: no distance haze. Up is +Y and the ground is flat around the
-  camera.
+- Aerial perspective: distant surfaces take the air's haze, fading toward
+  the sky's colour with distance, coherently with the sun and the sky behind
+  them. `Sky::aerial_perspective` (default 1) is how much air each metre of
+  view distance counts as: 1 is the planet's, 0 none, above 1 hazier, so a
+  small world reads as a large one; negative or non-finite is 0. With
+  Earth's air it is negligible at tens of metres (at 30 m along the ground
+  it dims a surface by about 0.1 %) and builds over kilometres (about 10 %
+  at 5 km). Opaque and blended surfaces, glow and mist take it through the
+  fog volume (Volumetric fog); the sky does not take it again, since it
+  already holds the air. It is independent of `FrameInput::atmosphere` and
+  `Settings::atmosphere`, which turn the fog and mist: with them off it
+  still applies. It needs `perspective`'s projection, as the fog does.
+  Probe captures and ray hits (world-space reflections, the dynamic GI
+  volume) take none, as they take no fog. It reaches 32 km of view
+  distance; anything farther takes the haze at 32 km.
+- Up is +Y and the ground is flat around the camera.
 - Cost: three small tables and the atlas per view (about 0.9 MB and
   3.1 MB). The tables are computed on the first sky frame and again only
   when their inputs change: `sky view` when a light or the camera's height
   changes, all three when a `Sky` density or the albedo does. The atlas then
-  runs one step a frame until it has caught up. A frame at rest pays only
-  the backdrop's one table sample. Timing groups `sky transmittance`,
-  `sky multiscattering`, `sky view` and `sky environment`.
+  runs one step a frame until it has caught up. Aerial perspective adds a
+  32³ volume (0.26 MB) computed every frame it is in effect, since it
+  follows the camera, and 33 slices to the fog volume's integration. A frame
+  at rest without aerial perspective pays only the backdrop's one table
+  sample. Timing groups `sky transmittance`, `sky multiscattering`,
+  `sky view`, `aerial perspective` and `sky environment`.
 
 ## Exposure, bloom and colour grading
 
@@ -437,9 +454,18 @@ before opaque, the fog stage:
 - integrates each column front to back along its view ray into the light
   scattered toward the camera and the transmittance to each slice.
 
+Under a procedural sky with aerial perspective (Procedural sky) the same
+volume carries the air's haze, so every draw that fogs takes it with its
+one sample: the integration composes the fog over the air, as Wicked
+Engine composes its fog over its aerial perspective, in the fog's slices
+and in 32 more from `length` to 32 km of view depth, and keeps a last slice
+of the fog alone for the sky. With the fog off it runs alone, on a 32×32
+volume of those slices, without injection or the filter.
+
 Every draw then fogs from that volume where its point lies, as colour ×
 transmittance + scattered light: source completion fogs opaque surfaces and
-the sky (as if at `length`, by `sky_affect`: the sky mixed with its fogged
+the sky (with the fog alone, never the air, as if at `length`, by
+`sky_affect`: the sky mixed with its fogged
 self, as Godot's `volumetric_fog_sky_affect`, 1 by default), and blended
 surfaces, glow and mist fog themselves; glow adds only its light times the
 transmittance, as the frame behind it already holds the scattered light.
@@ -452,11 +478,11 @@ Light shafts are the medium's shadowed scattering: where an opening lets a
 light's shadow map through, the medium lights, and forward scattering
 (`anisotropy` above 0) brightens it toward the light. A frame
 without a medium (no density and no fog volumes) runs no fog and pays
-nothing for it.
+nothing for it, but for the integration of aerial perspective under a sky.
 `Settings::fog_quality` picks the volume's resolution: 64 slices, and Low
 is Godot's default of 64 froxels across the geometric mean of the frame's sides, High 128, in square froxels and no side past the device's 3D texture limit. Timing groups `fog injection` (the lights and shadows, which scale
 with froxels and the lights reaching them), `fog filter` (with the filter)
-and `fog integration`.
+and `fog integration` (also alone, for aerial perspective).
 
 Each frame bounds the froxels every fog volume may reach from its corners,
 as Godot does: a froxel evaluates only the volumes whose bounds hold it,
@@ -2377,14 +2403,16 @@ stage (each stage's documentation lists its own), are:
 - prepare: `deform` (the frame's skinning and morphing, while an instance's
   deformation changed) and `cull` (the GPU-built lists' early phase);
 - sky: `sky transmittance`, `sky multiscattering` and `sky view`, in a frame
-  whose procedural sky's inputs changed, and `sky environment` (one atlas
-  step a frame, the whole cycle on its first frame and after a cut);
+  whose procedural sky's inputs changed, `aerial perspective` (every frame
+  it is in effect) and `sky environment` (one atlas step a frame, the whole
+  cycle on its first frame and after a cut);
 - dynamic GI: `dynamic GI allocation`, `dynamic GI rays` and `dynamic GI
   blend`, while the scene holds a volume and `Settings::dynamic_gi` runs it;
 - shadows: `directional shadow cascade 0` to `directional shadow cascade 3`
   (one per cascade the frame has), `local shadow layers` (static layers) and
   `local shadows` (the frame's faces);
-- volumetric fog: `fog injection`, `fog filter` and `fog integration`;
+- volumetric fog: `fog injection`, `fog filter` and `fog integration`
+  (only `fog integration` while aerial perspective runs without the fog);
 - opaque: `sky` and `opaque geometry + lighting`, or `geometry`, `sky` and
   `opaque lighting` where the device lacks the fused pass's colour
   attachments or occlusion culling or ray-traced shadows run; while

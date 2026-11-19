@@ -152,7 +152,7 @@ impl Renderer {
         // backdrop draw records the reflection sky (`VIEW_PROBE_CAPTURE` in
         // backdrop.wgsl): under a procedural sky, that atlas.
         let mut sky = crate::stages::sky::Sky::default();
-        sky.prepare(device, input, center, true);
+        sky.prepare(device, input, center, (true, false));
         sky.encode_planned((queue, &mut encoder), None);
         let environment = crate::view::bindings::EnvironmentViews::resolve(
             &scene.environments,

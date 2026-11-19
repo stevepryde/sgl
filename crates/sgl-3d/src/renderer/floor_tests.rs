@@ -29,8 +29,9 @@ const EXTENDED_SAMPLED_TEXTURES: u32 = 48;
 // (transmissive, dispersive blended receivers of screen-space reflections
 // that between them carry every material map, one through a game's shader
 // that reads the scene depth, a masked wall through the same shader,
-// world-space reflections, ambient occlusion, fog and TAA, over an
-// irradiance volume and a dynamic GI volume) on a device of
+// world-space reflections, ambient occlusion, fog under a procedural sky
+// with aerial perspective, and TAA, over an irradiance volume and a dynamic
+// GI volume) on a device of
 // those limits and no optional feature raise no validation error, the
 // device reports the Basic tier, and dynamic GI is reported off.
 #[test]
@@ -156,6 +157,8 @@ fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality
         eye: Vec3::ZERO,
     });
     input.atmosphere = true;
+    input.fog.density = 0.05;
+    input.environment = crate::FrameEnvironment::Sky(crate::Sky::default());
     let output = crate::view::targets::target(&device, "floor", size, gbuffer::COLOR);
     for _ in 0..2 {
         let mut encoder = device.create_command_encoder(&Default::default());

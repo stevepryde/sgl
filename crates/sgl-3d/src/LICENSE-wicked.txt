@@ -21,6 +21,9 @@ ddgi_updateCS.hlsl). The procedural sky's Earth (its radii and its media's
 coefficients and profiles) is ShaderInterop_Weather.h's, as shading/sky.wgsl's
 constants, and its ground term and texel centres follow skyAtmosphere.hlsli,
 skyAtmosphere_multiScatteredLuminanceLutCS.hlsl and skyAtmosphere_skyViewLutCS.hlsl.
+Its aerial volume's squared slices follow skyAtmosphere.hlsli's
+GetAerialPerspectiveTransmittance, and the fog's integration composes the fog
+over it as aerialPerspectiveCS.hlsl does.
 
 The MIT License (MIT)
 

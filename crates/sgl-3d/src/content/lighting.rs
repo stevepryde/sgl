@@ -40,12 +40,16 @@ pub struct Sky {
     pub ground_albedo: [f32; 3],
     /// Scales each directional light's disc in the backdrop; 0 draws none. Default 1.
     pub sun_disc: f32,
+    /// How much air each metre of view distance counts as: 1 is the planet's, 0 no aerial
+    /// perspective, above 1 hazier (a small world reads as a large one). Default 1.
+    pub aerial_perspective: f32,
 }
 
 impl Default for Sky {
     /// Earth, as Wicked Engine and Hillaire's sample hold it: the ground at
     /// world Y 0, clear air of Earth's densities over ground of albedo 0.3,
-    /// and the lights' discs at their own size and radiance.
+    /// the lights' discs at their own size and radiance, and the air's aerial
+    /// perspective at its own distance.
     fn default() -> Self {
         Self {
             ground_height: 0.,
@@ -54,13 +58,14 @@ impl Default for Sky {
             ozone: 1.,
             ground_albedo: [0.3; 3],
             sun_disc: 1.,
+            aerial_perspective: 1.,
         }
     }
 }
 
 impl Sky {
-    /// As the sky stage takes it: a negative or non-finite density or disc
-    /// scale is 0, each albedo channel is clamped to 0..=1 (NaN as 0), and
+    /// As the sky stage takes it: a negative or non-finite density, disc
+    /// scale or aerial perspective is 0, each albedo channel is clamped to 0..=1 (NaN as 0), and
     /// a non-finite ground height is 0.
     pub(crate) fn resolved(&self) -> Self {
         let scale = |value: f32| {
@@ -88,6 +93,7 @@ impl Sky {
             ozone: scale(self.ozone),
             ground_albedo: self.ground_albedo.map(albedo),
             sun_disc: scale(self.sun_disc),
+            aerial_perspective: scale(self.aerial_perspective),
         }
     }
 }

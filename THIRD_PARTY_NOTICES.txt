@@ -218,7 +218,7 @@ licensed MIT OR Apache-2.0; SGL3D uses it under the MIT terms below). The DFG
 table SGL3D embeds (src/scene/dfg.rg16) is Bevy 9d12036's
 (crates/bevy_pbr/src/environment_map/dfg.ktx2). SGL3D ports Bevy 9d12036's
 atmosphere (crates/bevy_pbr/src/atmosphere/functions.wesl, transmittance_lut.wesl,
-multiscattering_lut.wesl, sky_view_lut.wesl and render_sky.wesl's sun disc, with
+multiscattering_lut.wesl, sky_view_lut.wesl, aerial_view_lut.wesl and render_sky.wesl's sun disc, with
 fast_acos, fast_acos_4, fast_atan2 and ray_sphere_intersect from
 crates/bevy_render/src/maths.wesl) to shading/sky.wgsl, stages/sky/ and
 stages/opaque/backdrop.wgsl, and its environment.wesl capture to
@@ -815,6 +815,9 @@ ddgi_updateCS.hlsl). The procedural sky's Earth (its radii and its media's
 coefficients and profiles) is ShaderInterop_Weather.h's, as shading/sky.wgsl's
 constants, and its ground term and texel centres follow skyAtmosphere.hlsli,
 skyAtmosphere_multiScatteredLuminanceLutCS.hlsl and skyAtmosphere_skyViewLutCS.hlsl.
+Its aerial volume's squared slices follow skyAtmosphere.hlsli's
+GetAerialPerspectiveTransmittance, and the fog's integration composes the fog
+over it as aerialPerspectiveCS.hlsl does.
 
 The MIT License (MIT)
 

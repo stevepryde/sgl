@@ -1844,3 +1844,294 @@ fn a_submitted_filtered_frame_is_not_reprojected_as_previous_on_retry() {
         }
     }
 }
+
+/// An unlit opaque square facing +Z centred on `centre`, `2 half` metres
+/// across, of `colour`.
+fn unlit_square(centre: Vec3, half: f32, colour: [f32; 4]) -> crate::asset::Asset {
+    let mut square = test_support::cube();
+    square.meshes[0] = crate::asset::CpuMesh {
+        vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
+            .map(|(x, y)| crate::asset::Vertex {
+                tangent: [0.; 4],
+                lightmap_bounds: [0., 0., 1., 1.],
+                lightmap_uv: [0.; 2],
+                position: (centre + Vec3::new(x, y, 0.) * half).to_array(),
+                normal: [0., 0., 1.],
+                uv: [(x + 1.) / 2., (1. - y) / 2.],
+                color: [1.; 4],
+            })
+            .to_vec(),
+        indices: vec![0, 1, 2, 0, 2, 3],
+        material: 0,
+        deformation: Default::default(),
+    };
+    square.materials[0].unlit = true;
+    square.materials[0].base = colour;
+    square
+}
+
+// Defects: the air composed in front of the fog (the fog's light dimmed by
+// the air) or beside it (neither dimming the other), or the sky taking the
+// air a second time from the volume (the sky-view table already holds it).
+// The three frames share one layout, so a slice read at the wrong depth
+// would cancel here; aerial_slices_past_the_fogs_length_hold_the_air_to_their_depth
+// checks that against a closed form. The oracle is the architecture's composition, fog over
+// air (Wicked Engine 4323a33 aerialPerspectiveCS.hlsl 82-83): each pixel
+// shows the fog's light plus the fog's transmittance over the air's light
+// and the air's transmittance over the surface, with the fog alone and the
+// air alone measured in frames of their own: the fog alone with aerial
+// perspective at 0, the air alone through a medium of the same length too
+// thin to dim anything (1e-6 per metre; at 0 the fog would not run), so
+// the three volumes share their slices. Unlit squares of 0 and
+// then 1 at 40 m (inside the fog's 60 m) and at 200 m (beyond it) give each
+// part's light (the square of 0) and transmittance (the difference); a
+// strength of 50 makes their air 2 km and 10 km deep. The sun lights the
+// air alone (fog energy 0). And the sky shows what it shows with aerial
+// perspective at 0.
+#[test]
+fn the_fog_lies_over_the_air_and_the_sky_takes_the_fog_alone() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let fog = Fog {
+        density: 0.02,
+        length: 60.,
+        ..Fog::default()
+    };
+    let mut base = input(fog);
+    base.backdrop = Backdrop::Color([0.5; 3]);
+    base.directional_lights[0] = Some(DirectionalLight {
+        direction: -Vec3::new(0., 0.6, 0.8),
+        illuminance: 1000.,
+        fog_energy: 0.,
+        ..DirectionalLight::default()
+    });
+    let depths = [40., 200.];
+    let projection = projection();
+    // Each square's pixel: the left at 40 m, the right at 200 m.
+    let columns = [-0.3f32, 0.3].map(|ndc_offset| {
+        let ndc = projection.x_axis.x * ndc_offset;
+        ((ndc + 1.) / 2. * SIZE[0] as f32) as u32
+    });
+    let at = |column: u32| (SIZE[1] / 2 * SIZE[0] + column) as usize;
+    // The squares' and the sky's texels of a frame with `aerial` strength
+    // and the fog's `density`, the squares of `colour`.
+    let frame = |aerial: f32, density: f32, colour: f32| {
+        let mut scene = Scene::new(&device, &queue);
+        for (depth, side) in depths.into_iter().zip([-0.3, 0.3]) {
+            test_support::add_static(
+                &device,
+                &queue,
+                &mut scene,
+                unlit_square(
+                    Vec3::new(side * depth, 0., -depth),
+                    0.08 * depth,
+                    [colour, colour, colour, 1.],
+                ),
+            );
+        }
+        let mut frame = base;
+        frame.fog.density = density;
+        frame.environment = crate::FrameEnvironment::Sky(crate::Sky {
+            aerial_perspective: aerial,
+            ..crate::Sky::default()
+        });
+        let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
+        let composite = texels(&read(&device, &queue, &renderer.targets().composite));
+        (columns.map(|column| composite[at(column)]), composite[0])
+    };
+    // Each square's light and transmittance, and the sky's texel.
+    let parts = |aerial: f32, density: f32| {
+        let (black, sky) = frame(aerial, density, 0.);
+        let (white, _) = frame(aerial, density, 1.);
+        let squares: [([f32; 3], [f32; 3]); 2] = std::array::from_fn(|square| {
+            (
+                std::array::from_fn(|c| black[square][c]),
+                std::array::from_fn(|c| white[square][c] - black[square][c]),
+            )
+        });
+        (squares, sky)
+    };
+    let (fog_alone, fog_sky) = parts(0., fog.density);
+    let (air_alone, _) = parts(50., 1e-6);
+    let (both, both_sky) = parts(50., fog.density);
+    for (square, depth) in depths.into_iter().enumerate() {
+        let ((fog_light, fog_through), (air_light, air_through)) =
+            (fog_alone[square], air_alone[square]);
+        let (light, through) = both[square];
+        for c in 0..3 {
+            assert!(
+                fog_through[c] < 0.9 && air_through[c] < 0.99 && air_light[c] > 0.,
+                "{depth} m channel {c}: the fog passes {}, the air {} and adds {}",
+                fog_through[c],
+                air_through[c],
+                air_light[c]
+            );
+            let expected_light = fog_light[c] + fog_through[c] * air_light[c];
+            let expected_through = fog_through[c] * air_through[c];
+            assert!(
+                (light[c] / expected_light - 1.).abs() < 0.01
+                    && (through[c] / expected_through - 1.).abs() < 0.01,
+                "{depth} m channel {c}: light {} and transmittance {}, the fog over the air {expected_light} and {expected_through}",
+                light[c],
+                through[c]
+            );
+        }
+    }
+    assert!(fog_sky[0] < 0.5, "the fog dims the sky: {fog_sky:?}");
+    for c in 0..3 {
+        assert!(
+            (both_sky[c] - fog_sky[c]).abs() <= fog_sky[c] / 1024.,
+            "channel {c}: the sky shows {} with the air, {} without",
+            both_sky[c],
+            fog_sky[c]
+        );
+    }
+}
+
+// Defect: aerial perspective coming into effect (a sky's strength rising
+// from 0) starts the fog's froxel history over, though only the integrated
+// volume's depth changes, so the fog pops. The oracle is equivalence: the
+// froxels never depend on aerial perspective, which joins at the
+// integration, so the froxels of each frame after the strength rises from
+// 0 equal, texel for texel, those of the same frames of a run with it at 1
+// throughout. A restarted history differs wherever a point light's falloff
+// makes the jittered samples differ.
+#[test]
+fn aerial_perspective_coming_into_effect_keeps_the_froxels_history() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let fog = Fog {
+        density: 0.05,
+        anisotropy: 0.,
+        length: 30.,
+        ..Fog::default()
+    };
+    let mut scene = Scene::new(&device, &queue);
+    scene
+        .add_light(
+            &device,
+            &queue,
+            Light {
+                position: Vec3::new(0.5, 0.3, -6.),
+                shape: LightShape::Point {
+                    radius: LightShape::DEFAULT_RADIUS,
+                },
+                intensity: 20.,
+                range: 15.,
+                casts_shadow: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let settings = settings(true);
+    let output = crate::view::targets::target(&device, "fog frames", SIZE, gbuffer::COLOR);
+    // The froxels of frames 4 and 5 under a sky whose strength is `early`
+    // for frames 0 to 3 and 1 after.
+    let mut froxels_after = |early: f32| {
+        let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
+        let mut written = Vec::new();
+        for frame_index in 0..6 {
+            let mut frame = input(fog);
+            frame.camera_cut = frame_index == 0;
+            frame.environment = crate::FrameEnvironment::Sky(crate::Sky {
+                aerial_perspective: if frame_index < 4 { early } else { 1. },
+                ..crate::Sky::default()
+            });
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &frame,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+            if frame_index >= 4 {
+                written.push(texels(&read(&device, &queue, renderer.fog_volumes()[0])));
+            }
+        }
+        written
+    };
+    let (rising, throughout) = (froxels_after(0.), froxels_after(1.));
+    for (frame, (rising, throughout)) in rising.iter().zip(&throughout).enumerate() {
+        assert!(
+            throughout.iter().any(|texel| texel[0] > 1e-3),
+            "the light lights no froxel"
+        );
+        let differing = rising
+            .iter()
+            .zip(throughout)
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(
+            differing,
+            0,
+            "frame {}: {differing} froxels differ from a run with aerial perspective throughout",
+            frame + 4
+        );
+    }
+}
+
+// Defect: the aerial slices past a fog's length written at other depths
+// than the frame reads them at (fog_layout_aerial_depth and
+// fog_volume_slice disagreeing once the length is not 0, as without its
+// `length +`). The oracle is analytic: with no light the air
+// and a medium too thin to dim anything (1e-6 per metre) add no light, so
+// an unlit white square 1,000 m out, past the fog's 400 m, shows the air's
+// transmittance alone, which at strength 10 is the closed form of 10 km of
+// ground-level air (Rayleigh's scattering and Mie's extinction at sea
+// level; ozone's tent is empty below 10 km), averaged over the channels as
+// the volume stores it, within 1 %.
+#[test]
+fn aerial_slices_past_the_fogs_length_hold_the_air_to_their_depth() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let depth = 1000.;
+    let strength = 10.;
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(
+        &device,
+        &queue,
+        &mut scene,
+        unlit_square(Vec3::new(0., 0., -depth), 0.1 * depth, [1.; 4]),
+    );
+    let mut frame = input(Fog {
+        density: 1e-6,
+        length: 400.,
+        ..Fog::default()
+    });
+    frame.environment = crate::FrameEnvironment::Sky(crate::Sky {
+        aerial_perspective: strength,
+        ..crate::Sky::default()
+    });
+    let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
+    let composite = texels(&read(&device, &queue, &renderer.targets().composite));
+    let column = [SIZE[0] / 2, SIZE[1] / 2];
+    let shown = composite[(column[1] * SIZE[0] + column[0]) as usize];
+    let (ndc, _) = froxel_ray(&frame, [SIZE[0], SIZE[1], 1], column, 0);
+    let metres = f64::from(depth * view_ray(&frame, ndc).length() * strength);
+    let extinction = [
+        5.802e-6 + 4.440e-6,
+        13.558e-6 + 4.440e-6,
+        33.1e-6 + 4.440e-6,
+    ];
+    let expected = extinction
+        .iter()
+        .map(|sigma: &f64| (-sigma * metres).exp())
+        .sum::<f64>()
+        / 3.;
+    for (channel, &through) in shown[..3].iter().enumerate() {
+        let through = f64::from(through);
+        assert!(
+            (through / expected - 1.).abs() < 0.01,
+            "channel {channel}: the square shows {through}, the closed form of {metres} m of air {expected}"
+        );
+    }
+}

@@ -91,10 +91,6 @@ struct Frame {
  mist_size:vec2<f32>,
  mist_drift:vec2<f32>,
  backdrop_brightness:f32,
- // With FRAME_FOG: one over the fog volume's length and over its detail
- // spread (fog.wgsl).
- fog_inverse_length:f32,
- fog_inverse_detail_spread:f32,
  reflection_yaw:f32,
  reflection_intensity:f32,
  elapsed_seconds:f32,
@@ -141,8 +137,11 @@ struct Frame {
  // is off) and its angular radius (a).
  sky_camera_radius:f32,
  sky_discs:array<vec4<f32>,FRAME_DIRECTIONAL_LIGHTS>,
+ // With FRAME_FOG, the frame's one fog volume's slices (fog.wgsl), last.
+ @align(16) fog:FogLayout,
 }
-// The frame's volumetric fog ran: draws fog themselves from its volume.
+// The frame has a fog volume to sample (its volumetric fog or its sky's
+// aerial perspective ran): draws fog themselves from it.
 const FRAME_FOG:u32=1u;
 const FRAME_BAKED_LIGHTING:u32=2u;
 // An irradiance atlas is installed (Scene::set_static_irradiance_atlas).
