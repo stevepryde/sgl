@@ -354,9 +354,11 @@ prove a camera frames the subject at a useful scale.
 
 `fixtures/bistro-quality.json` is an explicit 1080p recipe with TAA, 16×
 anisotropy, AO Medium at 0.5 m, four High shadow cascades, ACES filmic, and
-a bounded 2,592-probe Low diffuse-GI volume. SSR, world-space reflections, ray shadows
-and hardware RT remain off. `fixtures/bistro-lean.json` uses 720p and immutable
-raster-only source data with GI off. These are example-owned choices, not
+a bounded 2,592-probe Low diffuse-GI volume, and Medium contact shadows for
+the sun (`contact_shadows`), which ground the chair legs, planters, bollards
+and the scooter's stand the cascades are too coarse for. SSR, world-space
+reflections, ray shadows and hardware RT remain off. `fixtures/bistro-lean.json`
+uses 720p and immutable raster-only source data with GI and contact shadows off. These are example-owned choices, not
 library defaults or a phone recommendation. The mesh still has 2.83 million
 triangles and its asset transfer is large. Keep measured desktop results
 separate from untested mobile expectations.

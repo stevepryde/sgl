@@ -142,6 +142,14 @@ pub(crate) mod screen_indirect {
     pub(crate) const VIEW: u32 = 11;
 }
 
+/// The opaque stage's lighting pass's group 3 while contact shadows run, as
+/// bind_contact_shadow.wgsl declares it: a number clear of the blended
+/// group 3's and screen-space indirect light's, which the same program
+/// declares, and the shadow mask's.
+pub(crate) mod contact_shadow {
+    pub(crate) const MASK: u32 = 12;
+}
+
 /// The screen-space method's cutoff and fade the blended draw composes its
 /// result with, and whether the transmission copy and the volume layers
 /// hold the frame; matches `BlendedTrace` in bind_blended.wgsl.
@@ -603,6 +611,35 @@ pub(crate) fn screen_indirect_entries() -> [wgpu::BindGroupLayoutEntry; 2] {
             count: None,
         },
     ]
+}
+
+/// The lighting pass's group 3 while contact shadows run:
+/// bind_contact_shadow.wgsl's contact mask.
+pub(crate) fn contact_shadow(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    layout(device, "contact shadow mask", &contact_shadow_entries())
+}
+
+/// The lighting pass's group 3 while contact shadows run and screen-space
+/// indirect light has a kept result: both providers' bindings.
+pub(crate) fn contact_shadow_screen_indirect(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let entries: Vec<_> = contact_shadow_entries()
+        .into_iter()
+        .chain(screen_indirect_entries())
+        .collect();
+    layout(
+        device,
+        "contact shadow mask and screen-space indirect light",
+        &entries,
+    )
+}
+
+/// Group 3's entries for the lighting pass while contact shadows run.
+pub(crate) fn contact_shadow_entries() -> [wgpu::BindGroupLayoutEntry; 1] {
+    [texture(
+        contact_shadow::MASK,
+        wgpu::TextureSampleType::Float { filterable: false },
+        wgpu::TextureViewDimension::D2,
+    )]
 }
 
 #[cfg(test)]

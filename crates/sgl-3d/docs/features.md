@@ -420,6 +420,20 @@ Environment and probe specular always apply. On top of them:
   maps, and without hardware ray tracing the maps shadow everything.
   `Renderer::ray_traced_shadows_in_effect` reports it.
   [Hardware ray tracing](../README.md#hardware-ray-tracing).
+- **Contact shadows** (opt-in, `Settings::contact_shadows`: `Short`,
+  `Medium` or `Long`): a screen-space march through the camera's depth
+  toward the directional light with cascades, Bend Studio's screen-space
+  shadows as Godot runs them, finds the small casters the cascades miss
+  (chair legs, kerbs, a scooter's stand) and darkens what they stand on;
+  the cascades' shadow and theirs combine at the light's shadow opacity.
+  Opaque surfaces of a `perspective` camera only; blended surfaces, the
+  fog and reflections keep the maps, local lights take none, and
+  ray-traced shadows replace them where they run. As in Godot, which
+  leaves out Bend's `IgnoreEdgePixels`, a plane seen within about 3° of
+  edge-on (a floor beyond roughly 35 m at eye height at 1080p) reads as
+  edges and can shadow itself in a band a few pixels wide, as can a march
+  along the frame's border toward a light beyond it.
+  [Settings](settings.md).
 
 ## Image quality and post-processing
 

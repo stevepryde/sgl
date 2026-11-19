@@ -172,6 +172,7 @@
     "antialiasing": "Taa",
     "atmosphere": false,
     "bloom": "Preset",
+    "contact_shadows": "Off",
     "dynamic_gi": "Off",
     "fog_filter": true,
     "fog_quality": "High",

@@ -47,8 +47,8 @@ use sgl_3d::{
     glam::{Mat4, Quat, Vec3, Vec4},
     heat_distortion::HeatDistortion,
     settings::{
-        AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, MotionBlur, ReflectionMethod,
-        RenderPreset, ScreenSpaceReflections, Settings, WorldSpaceReflections,
+        AmbientOcclusionQuality, Antialiasing, ContactShadows, DynamicGiQuality, MotionBlur,
+        ReflectionMethod, RenderPreset, ScreenSpaceReflections, Settings, WorldSpaceReflections,
     },
     static_lighting::{AmbientCube, CompressedIrradianceAtlas, IrradianceAtlas},
     timing::GpuTiming,
@@ -1536,7 +1536,17 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         ..Settings::default()
     };
     let configurations = [
-        ("high, Crystal SSR, TAA", high, false),
+        // Contact shadows' compute pass and the lighting pass that takes
+        // its mask, under the shadowed sun and the perspective camera, with
+        // TAA turning their dither.
+        (
+            "high, Crystal SSR, TAA, contact shadows",
+            Settings {
+                contact_shadows: ContactShadows::Medium,
+                ..high
+            },
+            false,
+        ),
         (
             "high, Velvet and world-space reflections, fog, mist, motion blur, heat",
             Settings {

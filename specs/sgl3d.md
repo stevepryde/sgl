@@ -268,6 +268,9 @@ The code's structure follows the
      Eric Bruneton's Precomputed Atmospheric Scattering (BSD-3-Clause), whose
      transmittance mapping Bevy's and Wicked Engine's atmospheres carry, and
      MIT-licensed Unity samples such as VolumetricLighting.
+     Bend Studio's screen-space shadows sample (Apache-2.0, Sony Interactive
+     Entertainment) is allowed too, credited beside any engine port that
+     derives from it.
      Check each file's header: engines embed code from other projects.
    - Prohibited: Unity's Graphics repository (HDRP, URP and SRP Core, under the
      Unity Companion License), Unreal Engine source, GPL/LGPL/AGPL code, The
@@ -361,8 +364,9 @@ current capabilities and limits.
   [layered stage architecture](sgl3d-architecture.md#shape).
 - **Lighting and shadows:** clustered point and spot lights (5), cascaded
   directional shadows (15), cached local-light shadow atlas (14),
-  contact-hardening soft shadows from the maps by the lights' sizes (#824), and
-  rectangular area lights (16). See [lights](../crates/sgl-3d/README.md#point-spot-and-rectangle-lights)
+  contact-hardening soft shadows from the maps by the lights' sizes (#824),
+  rectangular area lights (16), and screen-space contact shadows for the
+  directional light (#825, `Settings::contact_shadows`). See [lights](../crates/sgl-3d/README.md#point-spot-and-rectangle-lights)
   and [shadows](../crates/sgl-3d/README.md#local-light-shadows).
 - **Image (6):** tone mapping, exposure, local exposure, colour grading, and bloom.
   Sectional grading blends shadows with midtones around `midtones_start`

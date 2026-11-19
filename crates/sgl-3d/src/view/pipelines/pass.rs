@@ -15,13 +15,13 @@ pub(crate) enum GeometryPass {
     /// budget leaves it out of `GBuffer`.
     GBufferAnisotropy,
     /// Lit colour, its ambient light, motion and source identity over the
-    /// G-buffer's depth; with `shadow_mask`, the camera's surfaces take the
-    /// lights the ray-traced shadow mask holds from it, and with
-    /// `screen_indirect` the screen-space indirect light the last finished
-    /// frame kept, both bound at group 3 (`shading::bind::shadow_mask`,
+    /// G-buffer's depth, the camera's surfaces shadowed as `shadows` says,
+    /// and with `screen_indirect` the screen-space indirect light the last
+    /// finished frame kept, all bound at group 3 (`shading::bind::shadow_mask`
+    /// or `shading::bind::contact_shadow`, and
     /// `shading::bind::screen_indirect`).
     Lighting {
-        shadow_mask: bool,
+        shadows: crate::shading::programs::CameraShadows,
         screen_indirect: bool,
     },
     /// `GBuffer` and `Lighting` in one pass, with `screen_indirect` as

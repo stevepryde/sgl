@@ -137,6 +137,11 @@ pub(crate) struct Layouts {
     /// (`shading::bind::shadow_mask_screen_indirect`).
     pub screen_indirect: wgpu::BindGroupLayout,
     pub shadow_mask_screen_indirect: wgpu::BindGroupLayout,
+    /// The lighting pass's group 3 while contact shadows run
+    /// (`shading::bind::contact_shadow`), and with screen-space indirect
+    /// light too (`shading::bind::contact_shadow_screen_indirect`).
+    pub contact_shadow: wgpu::BindGroupLayout,
+    pub contact_shadow_screen_indirect: wgpu::BindGroupLayout,
     /// The GPU-built cascades' casters' group 3
     /// (`shading::bind::caster_positions`).
     pub caster_positions: wgpu::BindGroupLayout,
@@ -154,6 +159,8 @@ impl Layouts {
             shadow_mask: shading::bind::shadow_mask(device),
             screen_indirect: shading::bind::screen_indirect(device),
             shadow_mask_screen_indirect: shading::bind::shadow_mask_screen_indirect(device),
+            contact_shadow: shading::bind::contact_shadow(device),
+            contact_shadow_screen_indirect: shading::bind::contact_shadow_screen_indirect(device),
             caster_positions: shading::bind::caster_positions(device),
             lit,
         }
@@ -178,6 +185,10 @@ pub(crate) struct FrameBindings {
     /// opaque stage binds.
     pub screen_indirect: wgpu::BindGroupLayout,
     pub shadow_mask_screen_indirect: wgpu::BindGroupLayout,
+    /// The lighting pass's group 3 while contact shadows run, without and
+    /// with screen-space indirect light, which the opaque stage binds.
+    pub contact_shadow: wgpu::BindGroupLayout,
+    pub contact_shadow_screen_indirect: wgpu::BindGroupLayout,
     /// The frame's `FrameUniform`, shared by every view of the frame.
     pub frame: wgpu::Buffer,
     /// No specular probes: lit groups bind this while the scene has none
@@ -234,6 +245,8 @@ impl FrameBindings {
             shadow_mask: layouts.shadow_mask.clone(),
             screen_indirect: layouts.screen_indirect.clone(),
             shadow_mask_screen_indirect: layouts.shadow_mask_screen_indirect.clone(),
+            contact_shadow: layouts.contact_shadow.clone(),
+            contact_shadow_screen_indirect: layouts.contact_shadow_screen_indirect.clone(),
             frame,
             empty_probes: UploadedProbes::empty(device),
             shadow_maps,

@@ -35,6 +35,7 @@ pub(crate) static TRACE: shading::Module = shading::Module {
         &shading::tiers::BIND_LIT_EXTENDED,
         &shading::SURFACE_RAY,
         &shading::SHADOW_MASK_NONE,
+        &shading::CONTACT_SHADOW_NONE,
         &COMMON,
     ],
 };

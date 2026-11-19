@@ -179,6 +179,7 @@ override other_side:bool=false;
                         &shading::BIND_LIT,
                         &shading::LIGHTS,
                         &shading::SHADOW_MASK_NONE,
+                        &shading::CONTACT_SHADOW_NONE,
                     ])
                 )
                 .into(),

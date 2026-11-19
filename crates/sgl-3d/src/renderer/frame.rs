@@ -7,12 +7,13 @@ use crate::settings::{ReflectionMethod, Settings};
 use crate::stages::cull::Cull;
 use crate::stages::opaque::Opaque;
 use crate::stages::prepare::Prepare;
+use crate::stages::shadows::contact::ContactShadowStage;
 use crate::stages::shadows::traced::TracedShadows;
 use crate::stages::shadows::traced::slots::SlotLights;
 use crate::timing::GpuTiming;
 use crate::view::draw_list::gpu::Phase;
 use crate::view::effective::Effective;
-use crate::view::frame::{Completed, FrameContext, HardwareRays};
+use crate::view::frame::{CameraMask, Completed, FrameContext, HardwareRays};
 use crate::view::history::HistoryFrame;
 use crate::view::pipelines::GeometryPipelines;
 use crate::view::post_fx::PostFx;
@@ -93,14 +94,18 @@ pub(super) fn render(
     }
     // The ray instances are updated and the acceleration structures built
     // when any view of the frame traces; the shadow-mask pipelines exist
-    // once any runs ray-traced shadows, and screen-space indirect light's
-    // once any runs it.
+    // once any runs ray-traced shadows, the contact-mask pipelines once any
+    // runs contact shadows, and screen-space indirect light's once any runs
+    // it.
     let traced = begun
         .iter()
         .any(|(_, effective)| Prepare::traces(scene, effective));
     let shadow_mask = begun
         .iter()
         .any(|(_, effective)| effective.ray_traced_shadows);
+    let contact_shadow = begun
+        .iter()
+        .any(|(_, effective)| effective.contact_shadows.is_some());
     let screen_indirect = begun
         .iter()
         .any(|(_, effective)| effective.screen_indirect.is_some());
@@ -109,7 +114,7 @@ pub(super) fn render(
         scene,
         &begun[0].1,
         views[0].input,
-        (traced, (shadow_mask, screen_indirect)),
+        (traced, (shadow_mask, contact_shadow, screen_indirect)),
     );
     for (index, (frame, begun)) in views.iter_mut().zip(begun).enumerate() {
         render_view(
@@ -183,6 +188,7 @@ pub(super) fn render_view(
         statistics,
         shadows,
         traced_shadows,
+        contact_shadows,
         fog,
         opaque,
         reflections,
@@ -294,7 +300,7 @@ pub(super) fn render_view(
     // the local lights the atlas placed.
     let slot_lights = SlotLights::of(input, &values.frame, scene, shadows.local.ranking());
     let effective =
-        super::effective::traced_shadows(effective, prepare.hardware_rays(), &slot_lights);
+        super::effective::shadow_stages(effective, prepare.hardware_rays(), &slot_lights);
     // The sky stage's tables, made on its first sky frame and dropped on a
     // frame without one, which the environment's resolver binds.
     sky.prepare(
@@ -367,7 +373,13 @@ pub(super) fn render_view(
     shadows.encode_directional(&mut ctx);
     // The fog over the sky stage's aerial volume, which the renderer lends.
     fog.encode(&mut ctx, sky.aerial_volume());
-    encode_opaque(opaque, cull, traced_shadows, &slot_lights, &mut ctx);
+    encode_opaque(
+        opaque,
+        cull,
+        (traced_shadows, contact_shadows),
+        &slot_lights,
+        &mut ctx,
+    );
     // The camera's statistics, once both phases have appended to its sets.
     statistics.copy(
         device,
@@ -496,18 +508,20 @@ pub(super) fn render_view(
 
 /// The opaque stage in the stage order's named parts: the G-buffer, then,
 /// while they run, the ray-traced shadows of the frame's slots, which may
-/// hold `slot_lights`, the lighting at its depth, which takes their mask,
-/// then ambient occlusion over it, then screen-space indirect light. While
+/// hold `slot_lights`, or the contact shadows of its directional light with
+/// cascades, the lighting at its depth, which takes their mask, then
+/// ambient occlusion over it, then screen-space indirect light. While
 /// occlusion culling runs, the
 /// G-buffer part runs per phase with the cull stage between them: the
 /// G-buffer over the early set, the cull stage's late phase (the pyramid
 /// from that depth, then the late cull), the G-buffer over the late set,
 /// then the cull stage's pyramid from the complete depth, for the next
-/// frame; the shadows trace that complete depth.
+/// frame; the shadows trace that complete depth, and the contact shadows
+/// march through it.
 pub(super) fn encode_opaque(
     opaque: &mut Opaque,
     cull: &mut Cull,
-    traced_shadows: &mut TracedShadows,
+    (traced_shadows, contact_shadows): (&mut TracedShadows, &mut ContactShadowStage),
     slot_lights: &SlotLights,
     ctx: &mut FrameContext<'_>,
 ) {
@@ -517,8 +531,12 @@ pub(super) fn encode_opaque(
         opaque.encode_gbuffer(ctx, Phase::Late);
         cull.encode_pyramid(ctx);
     }
-    let shadow_mask = traced_shadows.encode(ctx, slot_lights);
-    opaque.encode_lighting(ctx, shadow_mask);
+    let traced = traced_shadows.encode(ctx, slot_lights);
+    let contact = contact_shadows.encode(ctx, slot_lights.directional);
+    let mask = traced
+        .map(CameraMask::Traced)
+        .or(contact.map(CameraMask::Contact));
+    opaque.encode_lighting(ctx, mask);
     opaque.encode_ambient_occlusion(ctx);
     opaque.encode_screen_indirect(ctx);
 }

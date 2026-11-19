@@ -322,6 +322,7 @@ fn material_normal_oracle(
                         &shading::BIND_MATERIAL,
                         &shading::SURFACE_RASTER,
                         &shading::SHADOW_MASK_NONE,
+                        &shading::CONTACT_SHADOW_NONE,
                         &shading::tiers::MATERIAL_MAPS_EXTENDED,
                         &shading::tiers::LIT_BASIC,
                         &shading::shader::SHADER_DEFAULT,

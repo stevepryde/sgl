@@ -40,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 39] = [
+    let roots: [&'static super::Module; 42] = [
         &crate::shading::PACKED_VERTEX,
         &crate::stages::opaque::backdrop::BACKDROP,
         &crate::stages::sky::TRANSMITTANCE,
@@ -80,6 +80,9 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::shadows::traced::denoise::FILTER_FOUR,
         &crate::stages::shadows::traced::denoise::FILTER_ONE,
         &crate::stages::shadows::local::COPY,
+        &crate::stages::shadows::contact::SHORT,
+        &crate::stages::shadows::contact::MEDIUM,
+        &crate::stages::shadows::contact::LONG,
     ];
     let mut programs: Vec<_> = roots
         .into_iter()
@@ -92,8 +95,10 @@ fn programs() -> Vec<(&'static str, String)> {
         .collect();
     // The geometry program with each shadow-mask provider (exactly one, the
     // mask's for the lighting pass while ray-traced shadows run), each
-    // screen-space indirect light provider (exactly one, the kept result's
-    // for the camera lighting while it has one), and each
+    // contact provider (the contact mask's for the lighting pass while
+    // contact shadows run, never with the shadow mask), each screen-space
+    // indirect light provider (exactly one, the kept result's for the camera
+    // lighting while it has one), and each
     // binding tier's material-map provider, and the caster program, each
     // with the default shader provider and with a game's module (a fixture
     // that reads every part of the contract), the blended draws' with its
@@ -101,16 +106,18 @@ fn programs() -> Vec<(&'static str, String)> {
     {
         use crate::shading::bind::BindingTier::{Basic, Extended};
         use crate::shading::programs::{
+            CameraShadows::{ContactMask, Maps, ShadowMask},
             GeometryForm::{Blended, Camera, Plain},
             ProgramShader::{Default, Game},
             caster_program, geometry_program,
         };
         let game = Game(crate::shading::shader::tests::FIXTURE);
-        let camera = |shadow_mask, screen_indirect| Camera {
-            shadow_mask,
+        let camera = |shadows, screen_indirect| Camera {
+            shadows,
             screen_indirect,
         };
-        let shadow_mask = camera(true, false);
+        let shadow_mask = camera(ShadowMask, false);
+        let contact = camera(ContactMask, false);
         programs.extend([
             ("geometry", geometry_program(Plain, Extended, Default)),
             ("geometry_basic", geometry_program(Plain, Basic, Default)),
@@ -124,19 +131,31 @@ fn programs() -> Vec<(&'static str, String)> {
             ),
             (
                 "geometry_screen_indirect",
-                geometry_program(camera(false, true), Extended, Default),
+                geometry_program(camera(Maps, true), Extended, Default),
             ),
             (
                 "geometry_screen_indirect_basic",
-                geometry_program(camera(false, true), Basic, Default),
+                geometry_program(camera(Maps, true), Basic, Default),
             ),
             (
                 "geometry_shadow_mask_screen_indirect_basic",
-                geometry_program(camera(true, true), Basic, Default),
+                geometry_program(camera(ShadowMask, true), Basic, Default),
             ),
             (
                 "geometry_shader_screen_indirect",
-                geometry_program(camera(true, true), Extended, game),
+                geometry_program(camera(ShadowMask, true), Extended, game),
+            ),
+            (
+                "geometry_contact_shadow_screen_indirect_basic",
+                geometry_program(camera(ContactMask, true), Basic, Default),
+            ),
+            (
+                "geometry_contact_shadow",
+                geometry_program(contact, Extended, Default),
+            ),
+            (
+                "geometry_contact_shadow_basic",
+                geometry_program(contact, Basic, Default),
             ),
             ("caster", caster_program(Extended, Default)),
             ("caster_basic", caster_program(Basic, Default)),
@@ -148,6 +167,10 @@ fn programs() -> Vec<(&'static str, String)> {
             (
                 "geometry_shader_shadow_mask",
                 geometry_program(shadow_mask, Extended, game),
+            ),
+            (
+                "geometry_shader_contact_shadow",
+                geometry_program(contact, Extended, game),
             ),
             (
                 "geometry_shader_blended",
@@ -202,7 +225,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use crate::stages::opaque::{ambient_occlusion as ao, backdrop, screen_indirect as si};
     use crate::stages::post::{bloom, inputs, local_exposure, smaa, tone_map};
     use crate::stages::reflections::{probe_culling, source, velvet, world};
-    use crate::stages::shadows::{local, traced, traced::denoise};
+    use crate::stages::shadows::{contact, local, traced, traced::denoise};
     use crate::stages::sky;
     use crate::stages::transparent::{effects, heat, mist, transmission};
     use crate::stages::{deform, exposure, fog, motion_blur, probe_prefilter};
@@ -249,6 +272,8 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         ("geometry_basic", geometry.clone()),
         ("geometry_shadow_mask", geometry.clone()),
         ("geometry_shadow_mask_basic", geometry.clone()),
+        ("geometry_contact_shadow", geometry.clone()),
+        ("geometry_contact_shadow_basic", geometry.clone()),
         ("geometry_shader", geometry.clone()),
         ("geometry_shader_basic", geometry.clone()),
         ("geometry_shader_shadow_mask", geometry.clone()),
@@ -259,6 +284,11 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             geometry.clone(),
         ),
         ("geometry_shader_screen_indirect", geometry.clone()),
+        ("geometry_shader_contact_shadow", geometry.clone()),
+        (
+            "geometry_contact_shadow_screen_indirect_basic",
+            geometry.clone(),
+        ),
         ("geometry_shader_blended", geometry),
         ("caster_shader", caster.clone()),
         ("caster_shader_basic", caster.clone()),
@@ -479,6 +509,9 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             crate::shading::motion_tiles::ENTRY_POINTS.to_vec(),
         ),
         (traced::TEMPORAL.name, vec![traced::TEMPORAL_ENTRY]),
+        (contact::SHORT.name, vec![contact::ENTRY]),
+        (contact::MEDIUM.name, vec![contact::ENTRY]),
+        (contact::LONG.name, vec![contact::ENTRY]),
         (traced::UPSAMPLE.name, vec![traced::UPSAMPLE_ENTRY]),
         (
             denoise::TILE_CLASSIFICATION_FOUR.name,
@@ -919,6 +952,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::post::local_exposure::mirrors())
     .chain(super::shadow_mask::mirrors())
     .chain(crate::stages::shadows::traced::mirrors())
+    .chain(crate::stages::shadows::contact::mirrors())
     .chain(super::sky::mirrors())
     .chain(crate::stages::sky::mirrors())
     .chain(crate::stages::sky::environment::mirrors())
@@ -1232,7 +1266,8 @@ fn declared_bindings(label: &str, source: &str, group: u32) -> Vec<(String, u32)
 #[wasm_bindgen_test(unsupported = test)]
 fn rust_binding_names_match_wgsl_bindings() {
     use super::bind::{
-        self, blended, caster, group0, group1, group2, hardware, screen_indirect, shadow_mask,
+        self, blended, caster, contact_shadow, group0, group1, group2, hardware, screen_indirect,
+        shadow_mask,
     };
     let named = [
         (0, "view", group0::VIEW),
@@ -1320,6 +1355,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         (3, "shadow_mask_slots", shadow_mask::SLOTS),
         (3, "screen_indirect_kept", screen_indirect::KEPT),
         (3, "screen_indirect_view", screen_indirect::VIEW),
+        (3, "contact_shadow_mask", contact_shadow::MASK),
     ];
     let numbers = |entries: &[wgpu::BindGroupLayoutEntry]| -> Vec<u32> {
         entries.iter().map(|entry| entry.binding).collect()
@@ -1421,6 +1457,12 @@ fn rust_binding_names_match_wgsl_bindings() {
             &[&super::BIND_SCREEN_INDIRECT],
             3,
             numbers(&bind::screen_indirect_entries()),
+        ),
+        (
+            "bind_contact_shadow",
+            &[&super::BIND_CONTACT_SHADOW],
+            3,
+            numbers(&bind::contact_shadow_entries()),
         ),
     ];
     let mut used = vec![false; named.len()];

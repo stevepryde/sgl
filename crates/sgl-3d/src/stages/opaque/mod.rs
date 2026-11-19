@@ -23,12 +23,15 @@
 //! run, the stage takes its two-pass form, the renderer encodes the
 //! ray-traced shadow stage between its G-buffer and lighting parts, and the
 //! lighting pass takes the lights the stage's mask holds from it, bound at
-//! its group 3.
+//! its group 3. While contact shadows run, likewise the contact shadow
+//! stage, whose mask the lighting pass takes the directional light's
+//! shadow with, bound there.
 //!
 //! Reads: the camera view and its draw list, group 0's camera lit and unlit
 //! groups, the geometry pipelines, the ray-traced shadow mask and slot table
-//! while they run; for a probe capture face (`encode_capture`), the
-//! capture's draw list and the face's groups.
+//! while they run, the contact mask while contact shadows run; for a probe
+//! capture face (`encode_capture`), the capture's draw list and the face's
+//! groups.
 //! Writes: the shared G-buffer, colour, ambient light, source identity and
 //! depth; its own ambient occlusion and screen-space indirect light
 //! targets.
@@ -49,8 +52,8 @@ use crate::counters::Moment;
 use crate::view::cached_group::CachedGroup;
 use crate::view::draw_list::gpu::Phase;
 use crate::view::draw_list::{DrawInstances, DrawList};
-use crate::view::frame::{FrameContext, ShadowMask};
-use crate::view::pipelines::{GeometryPass, GeometryPipelines};
+use crate::view::frame::{CameraMask, FrameContext};
+use crate::view::pipelines::{CameraShadows, GeometryPass, GeometryPipelines};
 use crate::view::targets::{CaptureFace, attachment};
 
 pub(crate) struct Opaque {
@@ -66,24 +69,45 @@ pub(crate) struct Opaque {
     /// The lighting pass's group 3 while ray-traced shadows run
     /// (`shading::bind::shadow_mask`).
     shadow_mask: CachedGroup,
+    /// The lighting pass's group 3 while contact shadows run
+    /// (`shading::bind::contact_shadow`).
+    contact_shadow: CachedGroup,
     /// The fused and lighting passes' group 3 while they take screen-space
-    /// indirect light, without and with the shadow mask
-    /// (`shading::bind::screen_indirect`,
-    /// `shading::bind::shadow_mask_screen_indirect`), for each half of its
-    /// pair they read.
-    screen_indirect_groups: [[CachedGroup; 2]; 2],
+    /// indirect light, without a mask, with the shadow mask and with the
+    /// contact mask (`shading::bind::screen_indirect`,
+    /// `shading::bind::shadow_mask_screen_indirect`,
+    /// `shading::bind::contact_shadow_screen_indirect`), for each half of
+    /// its pair they read.
+    screen_indirect_groups: [[CachedGroup; 2]; 3],
+}
+
+/// Which of `Opaque::screen_indirect_groups` binds `mask` beside
+/// screen-space indirect light.
+fn mask_index(mask: Option<CameraMask<'_>>) -> usize {
+    match mask {
+        None => 0,
+        Some(CameraMask::Traced(_)) => 1,
+        Some(CameraMask::Contact(_)) => 2,
+    }
 }
 
 impl Opaque {
     /// The stage over `unlit` group 0 for its sky, and the group 3 layouts
     /// of its camera lighting: the lighting pass's while ray-traced shadows
-    /// run (`shadow_mask`), and the fused and lighting passes' while they
-    /// take screen-space indirect light (`screen_indirect`), and the
-    /// lighting pass's with both (`both`).
+    /// run (`shadow_mask`) and while contact shadows run (`contact_shadow`),
+    /// the fused and lighting passes' while they take screen-space indirect
+    /// light (`screen_indirect`), and the lighting pass's with it and either
+    /// mask (`shadow_mask_screen_indirect`, `contact_screen_indirect`).
     pub fn new(
         device: &wgpu::Device,
         unlit: &wgpu::BindGroupLayout,
-        [shadow_mask, screen_indirect, both]: [&wgpu::BindGroupLayout; 3],
+        [
+            shadow_mask,
+            contact_shadow,
+            screen_indirect,
+            shadow_mask_screen_indirect,
+            contact_screen_indirect,
+        ]: [&wgpu::BindGroupLayout; 5],
     ) -> Self {
         Self {
             backdrop: backdrop::BackdropDraw::new(device, unlit),
@@ -92,8 +116,13 @@ impl Opaque {
             screen_indirect: None,
             screen_indirect_read: false,
             shadow_mask: CachedGroup::new(shadow_mask.clone()),
-            screen_indirect_groups: [screen_indirect, both]
-                .map(|layout| std::array::from_fn(|_| CachedGroup::new(layout.clone()))),
+            contact_shadow: CachedGroup::new(contact_shadow.clone()),
+            screen_indirect_groups: [
+                screen_indirect,
+                shadow_mask_screen_indirect,
+                contact_screen_indirect,
+            ]
+            .map(|layout| std::array::from_fn(|_| CachedGroup::new(layout.clone()))),
         }
     }
 
@@ -119,12 +148,13 @@ impl Opaque {
     }
 
     /// The fused or lighting pass's group 3 while it takes the last
-    /// finished frame's screen-space indirect light, with `shadow_mask`
-    /// where the lighting pass takes the ray-traced shadow mask too.
+    /// finished frame's screen-space indirect light, with `mask` where the
+    /// lighting pass takes the ray-traced shadow mask or the contact mask
+    /// too.
     fn screen_indirect_group(
         &mut self,
         device: &wgpu::Device,
-        shadow_mask: Option<ShadowMask<'_>>,
+        mask: Option<CameraMask<'_>>,
     ) -> Option<&wgpu::BindGroup> {
         if !self.screen_indirect_read {
             return None;
@@ -140,19 +170,24 @@ impl Opaque {
                 read.view.as_entire_binding(),
             ),
         ];
-        if let Some(mask) = shadow_mask {
-            entries.extend([
+        match mask {
+            None => {}
+            Some(CameraMask::Traced(shadow_mask)) => entries.extend([
                 (
                     crate::shading::bind::shadow_mask::MASK,
-                    wgpu::BindingResource::TextureView(mask.mask),
+                    wgpu::BindingResource::TextureView(shadow_mask.mask),
                 ),
                 (
                     crate::shading::bind::shadow_mask::SLOTS,
-                    mask.slots.as_entire_binding(),
+                    shadow_mask.slots.as_entire_binding(),
                 ),
-            ]);
+            ]),
+            Some(CameraMask::Contact(contact)) => entries.push((
+                crate::shading::bind::contact_shadow::MASK,
+                wgpu::BindingResource::TextureView(contact),
+            )),
         }
-        let groups = &mut self.screen_indirect_groups[usize::from(shadow_mask.is_some())];
+        let groups = &mut self.screen_indirect_groups[mask_index(mask)];
         Some(groups[read.half].get(device, "screen-space indirect light", &entries))
     }
 
@@ -176,16 +211,20 @@ impl Opaque {
 
     /// The lighting part: in the two-pass form, the sky and the lighting
     /// pass at the G-buffer's depth, taking the lights the ray-traced
-    /// shadow mask holds from `shadow_mask` where the ray-traced shadow
-    /// stage ran; nothing in the fused form, whose G-buffer part lit the
-    /// surfaces.
-    pub fn encode_lighting(
-        &mut self,
-        ctx: &mut FrameContext<'_>,
-        shadow_mask: Option<ShadowMask<'_>>,
-    ) {
+    /// shadow mask holds from it where the ray-traced shadow stage ran, or
+    /// the directional light's shadow with the contact mask where the
+    /// contact shadow stage ran (`mask`); nothing in the fused form, whose
+    /// G-buffer part lit the surfaces. Without a contact mask, its groups
+    /// let the last one go, which the contact shadow stage dropped.
+    pub fn encode_lighting(&mut self, ctx: &mut FrameContext<'_>, mask: Option<CameraMask<'_>>) {
+        if !matches!(mask, Some(CameraMask::Contact(_))) {
+            self.contact_shadow.forget();
+            self.screen_indirect_groups[2]
+                .iter_mut()
+                .for_each(CachedGroup::forget);
+        }
         if !ctx.effective.fused {
-            self.encode_lighting_pass(ctx, shadow_mask);
+            self.encode_lighting_pass(ctx, mask);
         }
     }
 
@@ -477,12 +516,8 @@ impl Opaque {
     }
 
     /// The sky, then the lighting pass at the G-buffer's depth, with
-    /// `shadow_mask` at its group 3 where ray-traced shadows ran.
-    fn encode_lighting_pass(
-        &mut self,
-        ctx: &mut FrameContext<'_>,
-        shadow_mask: Option<ShadowMask<'_>>,
-    ) {
+    /// `mask` at its group 3 where ray-traced or contact shadows ran.
+    fn encode_lighting_pass(&mut self, ctx: &mut FrameContext<'_>, mask: Option<CameraMask<'_>>) {
         let targets = ctx.targets;
         // The sky writes color and motion; opaque geometry then writes color,
         // ambient light and identity together once, and its motion over the
@@ -536,33 +571,54 @@ impl Opaque {
             ..Default::default()
         });
         pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
-        let screen_indirect = self.screen_indirect_group(ctx.device, shadow_mask);
+        let screen_indirect = self.screen_indirect_group(ctx.device, mask);
         let takes_screen_indirect = screen_indirect.is_some();
         if let Some(group) = screen_indirect {
             pass.set_bind_group(3, group, &[]);
-        } else if let Some(shadow_mask) = shadow_mask {
-            let group = self.shadow_mask.get(
-                ctx.device,
-                "ray-traced shadow mask",
-                &[
-                    (
-                        crate::shading::bind::shadow_mask::MASK,
-                        wgpu::BindingResource::TextureView(shadow_mask.mask),
-                    ),
-                    (
-                        crate::shading::bind::shadow_mask::SLOTS,
-                        shadow_mask.slots.as_entire_binding(),
-                    ),
-                ],
-            );
-            pass.set_bind_group(3, group, &[]);
+        } else {
+            match mask {
+                None => {}
+                Some(CameraMask::Traced(shadow_mask)) => {
+                    let group = self.shadow_mask.get(
+                        ctx.device,
+                        "ray-traced shadow mask",
+                        &[
+                            (
+                                crate::shading::bind::shadow_mask::MASK,
+                                wgpu::BindingResource::TextureView(shadow_mask.mask),
+                            ),
+                            (
+                                crate::shading::bind::shadow_mask::SLOTS,
+                                shadow_mask.slots.as_entire_binding(),
+                            ),
+                        ],
+                    );
+                    pass.set_bind_group(3, group, &[]);
+                }
+                Some(CameraMask::Contact(contact)) => {
+                    let group = self.contact_shadow.get(
+                        ctx.device,
+                        "contact shadow mask",
+                        &[(
+                            crate::shading::bind::contact_shadow::MASK,
+                            wgpu::BindingResource::TextureView(contact),
+                        )],
+                    );
+                    pass.set_bind_group(3, group, &[]);
+                }
+            }
         }
+        let shadows = match mask {
+            None => CameraShadows::Maps,
+            Some(CameraMask::Traced(_)) => CameraShadows::ShadowMask,
+            Some(CameraMask::Contact(_)) => CameraShadows::ContactMask,
+        };
         ctx.views.camera.list.draw(
             ctx.scene,
             ctx.pipelines,
             &mut pass,
             GeometryPass::Lighting {
-                shadow_mask: shadow_mask.is_some(),
+                shadows,
                 screen_indirect: takes_screen_indirect,
             },
         );

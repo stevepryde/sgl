@@ -225,45 +225,32 @@ pub(crate) fn programs(
     tier: BindingTier,
     shader: ProgramShader<'_>,
 ) -> Vec<(&'static str, String)> {
-    let mut programs = vec![
-        (
-            "geometry",
-            geometry_program(GeometryForm::Plain, tier, shader),
-        ),
-        (
-            "geometry with the shadow mask",
-            geometry_program(
-                GeometryForm::Camera {
-                    shadow_mask: true,
-                    screen_indirect: false,
-                },
-                tier,
-                shader,
-            ),
-        ),
-        (
-            "geometry with screen-space indirect light",
-            geometry_program(
-                GeometryForm::Camera {
-                    shadow_mask: false,
-                    screen_indirect: true,
-                },
-                tier,
-                shader,
-            ),
-        ),
+    use crate::shading::programs::CameraShadows::{ContactMask, Maps, ShadowMask};
+    let mut programs = vec![(
+        "geometry",
+        geometry_program(GeometryForm::Plain, tier, shader),
+    )];
+    for (label, shadows, screen_indirect) in [
+        ("geometry with the shadow mask", ShadowMask, false),
+        ("geometry with the contact mask", ContactMask, false),
+        ("geometry with screen-space indirect light", Maps, true),
         (
             "geometry with the shadow mask and screen-space indirect light",
-            geometry_program(
-                GeometryForm::Camera {
-                    shadow_mask: true,
-                    screen_indirect: true,
-                },
-                tier,
-                shader,
-            ),
+            ShadowMask,
+            true,
         ),
-    ];
+        (
+            "geometry with the contact mask and screen-space indirect light",
+            ContactMask,
+            true,
+        ),
+    ] {
+        let form = GeometryForm::Camera {
+            shadows,
+            screen_indirect,
+        };
+        programs.push((label, geometry_program(form, tier, shader)));
+    }
     if GeometryForm::Blended.distinct(tier, shader) {
         programs.push((
             "blended geometry",

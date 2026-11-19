@@ -222,7 +222,12 @@ fn directional_shadow_visibility(light_id:u32,position:vec3<f32>,normal:vec3<f32
 // shadow mask where its slot holds the light (camera_shadow_mask), which
 // reaches beyond the cascades, where `masked`: the mask holds the camera
 // surface's own side, so the other side of one that passes diffuse light
-// through takes the cascades.
+// through takes the cascades. There, too, they take the lesser of that and
+// the contact mask's (camera_contact_shadow), as Godot b130438's scene
+// shader takes `min(shadow, sscs_shadow)` before its shadow opacity; a
+// program composes one contact provider, which only the lighting pass's
+// reads while contact shadows run, the frame's directional light with
+// cascades being the only one a frame has.
 fn directional_light_shadow(index:u32,position:vec3<f32>,normal:vec3<f32>,pixel:vec2<f32>,receiver:u32,masked:bool)->f32 {
  let light=frame.directional_lights[index];
  if (light.flags&DIRECTIONAL_LIGHT_SHADOW)==0u || light.shadow_opacity<=SHADOW_OPACITY_CUTOFF {
@@ -234,6 +239,9 @@ fn directional_light_shadow(index:u32,position:vec3<f32>,normal:vec3<f32>,pixel:
  }
  if shadow<0. {
   shadow=directional_shadow_visibility(index,position,normal,pixel,receiver);
+ }
+ if masked && receiver==SHADOW_RECEIVER_CAMERA {
+  shadow=min(shadow,camera_contact_shadow(pixel));
  }
  return shadow_opacity_visibility(shadow,light.shadow_opacity);
 }

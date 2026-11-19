@@ -6,7 +6,9 @@
 use crate::Scene;
 use crate::content::identity::ShaderId;
 use crate::shading::bind::BindingTier;
-use crate::shading::programs::{GeometryForm, ProgramShader, caster_program, geometry_program};
+use crate::shading::programs::{
+    CameraShadows, GeometryForm, ProgramShader, caster_program, geometry_program,
+};
 
 /// Which program of a set a pipeline is created from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,12 +18,18 @@ pub(super) enum Program {
 }
 
 /// The camera lighting's program slots: one for each combination of the
-/// providers `GeometryForm::Camera` composes.
-const CAMERA_SLOTS: usize = 4;
+/// providers `GeometryForm::Camera` composes, its shadows' three and
+/// screen-space indirect light's two.
+const CAMERA_SLOTS: usize = 6;
 
-/// The camera lighting program's slot for its providers, a bit each.
-fn camera_slot(shadow_mask: bool, screen_indirect: bool) -> usize {
-    usize::from(shadow_mask) | usize::from(screen_indirect) << 1
+/// The camera lighting program's slot for its providers.
+fn camera_slot(shadows: CameraShadows, screen_indirect: bool) -> usize {
+    let shadows = match shadows {
+        CameraShadows::Maps => 0,
+        CameraShadows::ShadowMask => 1,
+        CameraShadows::ContactMask => 2,
+    };
+    shadows * 2 + usize::from(screen_indirect)
 }
 
 /// One material shader's programs: SGL3D's default provider's, or a game's
@@ -99,16 +107,22 @@ impl ProgramSet {
         let (slot, name) = match program {
             Program::Geometry(GeometryForm::Plain) => (geometry, "geometry"),
             Program::Geometry(GeometryForm::Camera {
-                shadow_mask,
+                shadows,
                 screen_indirect,
             }) => {
-                let name = match (shadow_mask, screen_indirect) {
-                    (false, false) => "camera geometry",
-                    (true, false) => "geometry with the shadow mask",
-                    (false, true) => "geometry with screen-space indirect light",
-                    (true, true) => "geometry with the shadow mask and screen-space indirect light",
+                let name = match (shadows, screen_indirect) {
+                    (CameraShadows::Maps, false) => "camera geometry",
+                    (CameraShadows::ShadowMask, false) => "geometry with the shadow mask",
+                    (CameraShadows::ContactMask, false) => "geometry with the contact mask",
+                    (CameraShadows::Maps, true) => "geometry with screen-space indirect light",
+                    (CameraShadows::ShadowMask, true) => {
+                        "geometry with the shadow mask and screen-space indirect light"
+                    }
+                    (CameraShadows::ContactMask, true) => {
+                        "geometry with the contact mask and screen-space indirect light"
+                    }
                 };
-                (&mut camera[camera_slot(shadow_mask, screen_indirect)], name)
+                (&mut camera[camera_slot(shadows, screen_indirect)], name)
             }
             Program::Geometry(GeometryForm::Blended) => (blended, "blended geometry"),
             Program::Caster => (caster, "casters"),

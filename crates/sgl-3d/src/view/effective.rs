@@ -3,7 +3,7 @@
 //! read only this and the frame's authored values.
 use super::pipelines::LayerConstants;
 use crate::settings::{
-    AmbientOcclusionQuality, Antialiasing, FogQuality, FsrQuality, FsrVersion,
+    AmbientOcclusionQuality, Antialiasing, ContactShadows, FogQuality, FsrQuality, FsrVersion,
     RayTracedShadowQuality, ReflectionMethod, ScreenSpaceIndirect, ShadowQuality, SmaaQuality,
     WorldSpaceReflections,
 };
@@ -147,19 +147,28 @@ pub(crate) struct Effective {
     /// Ray-traced shadows: the setting is on and hardware ray tracing is
     /// in effect, so the frame traces rays. Once the frame knows whether
     /// its rays trace in hardware and its slots hold a light, it is whether
-    /// the ray-traced shadow stage runs (`renderer::effective::traced_shadows`),
+    /// the ray-traced shadow stage runs (`renderer::effective::shadow_stages`),
     /// and the opaque stage then takes its two-pass form.
     pub ray_traced_shadows: bool,
     /// How the ray-traced shadow stage denoises, while it runs: the
     /// setting resolved for the preset, Low or High.
     pub ray_traced_shadow_quality: RayTracedShadowQuality,
+    /// Contact shadows' reach, never `Off`: the setting is not `Off` and the
+    /// camera's projection is a perspective one. Once the frame knows its
+    /// shadowed directional light and whether the ray-traced shadow stage
+    /// runs, it is whether the contact shadow stage runs: a directional
+    /// light holds the frame's cascades above the shadow-opacity cutoff and
+    /// the ray-traced shadow stage does not run
+    /// (`renderer::effective::shadow_stages`), and the opaque stage then
+    /// takes its two-pass form.
+    pub contact_shadows: Option<ContactShadows>,
     /// The receiver pass runs: the scene holds a blended receiver of
     /// screen-space reflections, and a screen-space method, TAA, FSR or
     /// motion blur reads the surface it draws.
     pub receivers: bool,
     /// The G-buffer and lighting are one pass: the device has the
-    /// attachments, unless occlusion culling or the ray-traced shadow stage
-    /// runs between them.
+    /// attachments, unless occlusion culling, the ray-traced shadow stage or
+    /// the contact shadow stage runs between them.
     pub fused: bool,
     /// The camera culls occlusion in two phases, its opaque stage in its
     /// two-pass form: `Settings::occlusion_culling` on a device with the

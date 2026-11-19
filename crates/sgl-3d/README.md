@@ -162,6 +162,22 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   makes a nearer, finer one for a surface toward the light from a cascade's
   part of the view. Timing groups
   `directional shadow cascade 0` to `3`, nearest first.
+- `Settings::contact_shadows` (`Off` by default, in no preset; `Short`,
+  `Medium`, `Long`) adds screen-space contact shadows for the light with
+  the cascades: one compute pass over the camera's opaque depth marches
+  63, 127 or 191 render pixels toward the light (Bend Studio's screen-space
+  shadows as Godot b130438 runs them), and the camera's opaque surfaces
+  take the lesser of that and the cascades' shadow, at the light's
+  `shadow_opacity`. It finds the casters the cascades are too coarse for,
+  a chair leg's or a kerb's, but only what the camera sees: an off-screen
+  or hidden caster casts none, and a thick one may cast past its own
+  thickness. As in Godot, which leaves out Bend's `IgnoreEdgePixels`, a
+  plane seen within about 3° of edge-on (a floor beyond roughly 35 m at
+  eye height at 1080p) reads as edges and can shadow itself in a band a
+  few pixels wide, as can a march along the frame's border toward a light
+  beyond it. While it runs the opaque stage takes its two-pass form. It
+  needs a `perspective` camera, and gives way to ray-traced shadows.
+  Timing group `contact shadows`.
 - `hemisphere_light` is Three.js's `HemisphereLight`: diffuse irradiance
   blended from `ground_color` facing down to `sky_color` facing up, which
   lights a surface as the environment's diffuse light does.
@@ -2506,7 +2522,8 @@ stage (each stage's documentation lists its own), are:
   (only `fog integration` while aerial perspective runs without the fog);
 - opaque: `sky` and `opaque geometry + lighting`, or `geometry`, `sky` and
   `opaque lighting` where the device lacks the fused pass's colour
-  attachments or occlusion culling or ray-traced shadows run; while
+  attachments or occlusion culling, ray-traced shadows or contact shadows
+  run; while
   occlusion culling runs, `depth pyramid` (twice), `cull late` and
   `geometry late` between `geometry` and `sky`; then `ambient occlusion`
   (with the depth pyramid while it runs) and `screen-space indirect` (with
@@ -2517,6 +2534,7 @@ stage (each stage's documentation lists its own), are:
   `ray-traced shadow filter` (three passes, two at Low),
   `ray-traced shadow temporal`
   and `ray-traced shadow upsample`;
+- contact shadows, in the same place while they run: `contact shadows`;
 - reflections: `probe culling`, `reflection source completion`, Crystal's
   `SSR` passes (named after DiligentFX's debug groups), Velvet's `Godot SSR`
   passes, `world reflection classify`, `world reflection rays`,

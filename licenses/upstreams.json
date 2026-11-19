@@ -60,6 +60,12 @@
     "prefix": "Godot Engine, https://github.com/godotengine/godot\nRevision ed1daf0bf001b61586d9930840f2f1394092c079 (4.7.2-stable), LICENSE.txt.\n\n"
   },
   {
+    "component": "Bend Studio screen-space shadows",
+    "path": "crates/sgl-3d/src/LICENSE-bend-screen-space-shadows.txt",
+    "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+    "prefix": "Bend Studio screen-space shadows, https://www.bendstudio.com/assets/cms/downloads/code_final_candidate.zip\nbend_sss_gpu.h and bend_sss_cpu.h, each headed \"Copyright 2023 Sony Interactive\nEntertainment.\" and licensed under the Apache License, Version 2.0, whose\ntext follows. Godot b13043816a0f234985030ec035363a005bc86c32's\nservers/rendering/renderer_rd/shaders/effects/screen_space_contact_shadows.glsl\nand the dispatch in servers/rendering/renderer_rd/effects/ss_effects.cpp derive\nfrom them; SGL3D ports both, changed, into stages/shadows/contact/contact.wgsl\nand stages/shadows/contact.rs.\n\n"
+  },
+  {
     "component": "Godot",
     "path": "crates/sgl-post-fx/LICENSE-godot.txt",
     "url": "https://raw.githubusercontent.com/godotengine/godot/d851ae838de54a0bd3dde9043912f39c74265cdd/LICENSE.txt",

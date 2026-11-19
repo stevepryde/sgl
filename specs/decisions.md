@@ -1212,3 +1212,10 @@ Use the [current specs](README.md) for implementation and the
   2016, saturate(|N·L| + 2·occlusion² − 1)) was not taken: it is an artist's
   fit that returns N·L itself at an occlusion of 0.71 and black below N·L 0.5
   at 0.5, where Chan's follows from the cone the occlusion value stands for.
+- **D-67** Decision, 2026-11-19 (#825): Bend Studio's screen-space shadows
+  sample joins RD-2's allowed sources. Both its files state Apache-2.0
+  (© 2023 Sony Interactive Entertainment), the licence Filament and Diligent
+  are ported under. Godot b130438's `screen_space_contact_shadows.glsl`, the
+  engine port SGL3D follows, derives from it without carrying its notice, so
+  SGL3D credits both. Rationale: attribution is exact (D-51), and an
+  engine's file can embed another project's code (RD-2).

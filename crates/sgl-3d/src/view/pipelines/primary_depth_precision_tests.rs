@@ -91,7 +91,7 @@ struct V { @invariant @builtin(position) position:vec4<f32>, @location(0) @inter
             pipeline(depth(GeometryPass::GBuffer).1),
             pipeline(
                 depth(GeometryPass::Lighting {
-                    shadow_mask: false,
+                    shadows: super::CameraShadows::Maps,
                     screen_indirect: false,
                 })
                 .1,

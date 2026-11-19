@@ -98,6 +98,15 @@ pub(crate) struct ShadowMask<'a> {
     pub slots: &'a wgpu::Buffer,
 }
 
+/// The mask a stage lends the opaque stage's lighting pass for its camera
+/// surfaces' shadows, at its group 3: the ray-traced shadow stage's, or
+/// the contact shadow stage's; never both.
+#[derive(Clone, Copy)]
+pub(crate) enum CameraMask<'a> {
+    Traced(ShadowMask<'a>),
+    Contact(&'a wgpu::TextureView),
+}
+
 /// Which view holds the completed scene, passed from the transparent
 /// stage through antialiasing to post.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

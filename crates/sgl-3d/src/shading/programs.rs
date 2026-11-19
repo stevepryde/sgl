@@ -47,18 +47,34 @@ fn shaded(roots: &[&'static Module], shader: ProgramShader<'_>) -> String {
     }
 }
 
+/// Where the camera lighting's surfaces take their shadows from beside the
+/// maps: one mask at most, bound at the pass's group 3.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum CameraShadows {
+    /// The maps alone.
+    Maps,
+    /// The lights the ray-traced shadow mask holds, from it
+    /// (`shading::bind::shadow_mask`).
+    ShadowMask,
+    /// The directional light with the frame's cascades, the lesser of its
+    /// cascades and the contact mask (`shading::bind::contact_shadow`).
+    ContactMask,
+}
+
 /// Which geometry program a pass draws with: the one every pass but the
 /// opaque stage's camera lighting and the camera's blended draws takes;
 /// the camera lighting's (the fused pass and the lighting pass) with what
-/// it binds at its group 3, the shadow mask's provider while ray-traced
-/// shadows run and screen-space indirect light's while that pass has a
-/// kept result; and the blended draws', which on the Extended binding tier
-/// give a game's shader the opaque depth (shader_scene_depth.wgsl).
+/// it binds at its group 3: the shadow mask's provider while ray-traced
+/// shadows run, the contact provider while contact shadows run (the
+/// lighting pass's alone), and screen-space indirect light's while that
+/// pass has a kept result; and the blended draws', which on the Extended
+/// binding tier give a game's shader the opaque depth
+/// (shader_scene_depth.wgsl).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum GeometryForm {
     Plain,
     Camera {
-        shadow_mask: bool,
+        shadows: CameraShadows,
         screen_indirect: bool,
     },
     Blended,
@@ -66,16 +82,17 @@ pub(crate) enum GeometryForm {
 
 impl GeometryForm {
     /// Whether this form's program on a device of `tier` with `shader`
-    /// differs from the plain one: the camera lighting's with either
-    /// provider, the blended draws' only for a game's shader on the
+    /// differs from the plain one: the camera lighting's with a mask or
+    /// screen-space indirect light, the blended draws' only for a game's
+    /// shader on the
     /// Extended tier.
     pub fn distinct(self, tier: BindingTier, shader: ProgramShader<'_>) -> bool {
         match self {
             Self::Plain => false,
             Self::Camera {
-                shadow_mask,
+                shadows,
                 screen_indirect,
-            } => shadow_mask || screen_indirect,
+            } => shadows != CameraShadows::Maps || screen_indirect,
             Self::Blended => {
                 tier == BindingTier::Extended && matches!(shader, ProgramShader::Game(_))
             }
@@ -84,9 +101,9 @@ impl GeometryForm {
 }
 
 /// Scene geometry's camera and probe-capture passes. A program composes it
-/// with one shadow-mask provider, one screen-space indirect light provider,
-/// one lit provider, one material-map
-/// provider and one transmission provider (`geometry_program`).
+/// with one shadow-mask provider, one contact provider, one screen-space
+/// indirect light provider, one lit provider, one material-map provider and
+/// one transmission provider (`geometry_program`).
 pub(crate) static GEOMETRY: Module = Module {
     name: "geometry",
     source: include_str!("geometry.wgsl"),
@@ -127,27 +144,33 @@ pub(crate) const VOLUME_SECOND_EXIT_FS_ENTRY: &str = "volume_second_exit_fs";
 
 /// The geometry program of `form` on a device of `tier` with `shader`:
 /// `GEOMETRY` with the shadow mask's provider for a camera form with the
-/// mask, else with the provider that holds no slot; screen-space indirect
-/// light's provider for a camera form with it, else the one that gives
-/// none; the tier's lit, material-map and transmission providers; and the
-/// scene depth provider of a game's shader's blended draws on the Extended
-/// tier, else none.
+/// shadow mask, else with the provider that holds no slot; the contact
+/// provider for a camera form with the contact mask, else the one that
+/// leaves the maps alone; screen-space indirect light's provider for a
+/// camera form with it, else the one that gives none; the tier's lit,
+/// material-map and transmission providers; and the scene depth provider of
+/// a game's shader's blended draws on the Extended tier, else none.
 pub(crate) fn geometry_program(
     form: GeometryForm,
     tier: BindingTier,
     shader: ProgramShader<'_>,
 ) -> String {
-    let (shadow_mask, screen_indirect) = match form {
+    let (shadows, screen_indirect) = match form {
         GeometryForm::Camera {
-            shadow_mask,
+            shadows,
             screen_indirect,
-        } => (shadow_mask, screen_indirect),
-        _ => (false, false),
+        } => (shadows, screen_indirect),
+        _ => (CameraShadows::Maps, false),
     };
-    let mask = if shadow_mask {
+    let mask = if shadows == CameraShadows::ShadowMask {
         &super::SHADOW_MASK
     } else {
         &super::SHADOW_MASK_NONE
+    };
+    let contact = if shadows == CameraShadows::ContactMask {
+        &super::CONTACT_SHADOW
+    } else {
+        &super::CONTACT_SHADOW_NONE
     };
     let bounce = if screen_indirect {
         &super::CAMERA_SCREEN_INDIRECT
@@ -163,6 +186,7 @@ pub(crate) fn geometry_program(
         &[
             &GEOMETRY,
             mask,
+            contact,
             bounce,
             super::lit_provider(tier),
             super::material_provider(tier),

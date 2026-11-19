@@ -2629,14 +2629,14 @@ discard nothing a returning light could use, and the velocity refresh on streami
   ran, the stage restarts as in S-1. The stage does not run, and so breaks the sequence, in a frame
   without hardware rays (`ctx.hardware_rays` absent, including a frame whose acceleration
   structures fail to prepare), with `Settings::ray_traced_shadows` off, or whose slots hold no
-  light (`renderer::effective::traced_shadows`: no shadowed directional light and no placed casting
+  light (`renderer::effective::shadow_stages`: no shadowed directional light and no placed casting
   local light).
 - **Raised by.** The only casting light's shadow opacity crossing 0.001, toggling the setting,
   acceleration-structure preparation failing.
 - **Stays triggered while.** Nothing in steady play; a caster whose shadow opacity flickers about
   0.001, or intermittent preparation failures, restart the stage each time.
 - **Source.** SGL3D's own. Code: `src/stages/shadows/traced.rs` (`TracedShadows::encode`),
-  `src/renderer/effective.rs` (`traced_shadows`).
+  `src/renderer/effective.rs` (`shadow_stages`).
 - **Guard.** None.
 - **Status.** Rule.
 

@@ -16,6 +16,8 @@ fn pipelines(device: &wgpu::Device) -> GeometryPipelines {
             &crate::shading::bind::shadow_mask(device),
             &crate::shading::bind::screen_indirect(device),
             &crate::shading::bind::shadow_mask_screen_indirect(device),
+            &crate::shading::bind::contact_shadow(device),
+            &crate::shading::bind::contact_shadow_screen_indirect(device),
             &crate::shading::bind::caster_positions(device),
         ],
         LayerConstants::ALL,
@@ -64,7 +66,7 @@ fn pipelines_of_the_current_and_previous_specialisation_stay() {
     let mut scene = Scene::new(&device, &queue);
     let mut pipelines = pipelines(&device);
     let specialise = |pipelines: &mut GeometryPipelines, scene: &Scene| {
-        pipelines.specialise(&device, LayerConstants::ALL, scene, (false, false));
+        pipelines.specialise(&device, LayerConstants::ALL, scene, (false, false, false));
     };
 
     specialise(&mut pipelines, &scene);

@@ -41,6 +41,8 @@ impl Shared {
                 &layouts.shadow_mask,
                 &layouts.screen_indirect,
                 &layouts.shadow_mask_screen_indirect,
+                &layouts.contact_shadow,
+                &layouts.contact_shadow_screen_indirect,
                 &layouts.caster_positions,
             ],
             layers,
@@ -81,7 +83,8 @@ impl Shared {
     /// The frame's scene work before any view renders, steered by the
     /// primary view's `effective` configuration and `input`: the geometry
     /// pipelines specialised for its layers and the scene, with the
-    /// shadow-mask pipelines once a view runs ray-traced shadows and the
+    /// shadow-mask pipelines once a view runs ray-traced shadows, the
+    /// contact-mask pipelines once a view runs contact shadows and the
     /// screen-space indirect light pipelines once a view runs it
     /// (`group3`); the scene's material sampling filtered as it
     /// chooses; and prepare's scene part, `traced` when a view of the frame
@@ -92,7 +95,7 @@ impl Shared {
         scene: &mut Scene,
         effective: &Effective,
         input: &FrameInput,
-        (traced, group3): (bool, (bool, bool)),
+        (traced, group3): (bool, (bool, bool, bool)),
     ) {
         self.pipelines
             .specialise(device, effective.layers, scene, group3);

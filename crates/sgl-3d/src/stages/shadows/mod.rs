@@ -1,7 +1,8 @@
 //! Shadows: the directional light's shadow cascades and the local-light
 //! shadow atlas, drawn from draw lists of the views they prepare. The
-//! ray-traced shadow stage (`traced`) is a stage of its own, which runs
-//! inside the opaque stage's two-pass form.
+//! ray-traced shadow stage (`traced`) and the contact shadow stage
+//! (`contact`) are stages of their own, which run inside the opaque stage's
+//! two-pass form.
 //!
 //! Reads: the cascade views and their draw lists (`FrameViews`), the scene's
 //! lights and instances, group 0's shadow groups, the geometry pipelines.
@@ -11,6 +12,7 @@
 //! lights and the shadow quality's map sizes.
 //! Timing groups: `directional shadow cascade 0` to `3`, `local shadow
 //! layers`, `local shadows`.
+pub(crate) mod contact;
 pub(crate) mod directional;
 pub(crate) mod local;
 pub(crate) mod traced;

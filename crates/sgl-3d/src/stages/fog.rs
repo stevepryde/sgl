@@ -44,6 +44,7 @@ pub(crate) static VOLUMETRIC_FOG: crate::shading::Module = crate::shading::Modul
         &crate::shading::LIGHTS,
         &crate::shading::DIRECTIONAL_SHADOW,
         &crate::shading::SHADOW_MASK_NONE,
+        &crate::shading::CONTACT_SHADOW_NONE,
         &crate::shading::ENVIRONMENT,
         &crate::shading::PBR,
         &crate::shading::RECT_LIGHT,

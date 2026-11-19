@@ -15,6 +15,7 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Settings::contact_shadows` (new, `Off` by default; `Short`, `Medium`, `Long`): screen-space contact shadows for the directional light with cascades, at the cost of the opaque stage's two-pass form. New timing group `contact shadows`. Distribution notices gain Bend Studio's Apache-2.0 notice: regenerate the game's notices. No game-code changes are needed.
 - `sgl-3d` shading: a material's occlusion map now also shadows direct light (micro-shadowing), where it occluded ambient light only; materials without one are unchanged. No game-code changes are needed; lower `occlusion_strength` to weaken it, and look at occlusion-mapped materials under grazing light. Probe captures and other bakes taken before keep the earlier light and need no regeneration; recapture deliberately if the difference matters.
 - `sgl-3d` `Fog::start` (new, 0 by default): the frame's fog medium begins that many metres from the camera, leaving nearer surfaces unfogged. No game-code changes are needed.
 - `sgl-3d` `Sky::aerial_perspective` (new, default 1): under a procedural sky, distant opaque and blended surfaces, glow and mist take the air's haze through the fog volume. Set 0 for none. Frames without a sky are unchanged; no code changes are needed.

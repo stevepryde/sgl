@@ -384,6 +384,27 @@ impl RayTracedShadowQuality {
     }
 }
 
+/// Screen-space contact shadows for the directional light with the
+/// frame's cascades: how far toward the light each pixel of the camera's
+/// opaque surfaces looks for a caster in the frame's depth, in render
+/// pixels, so small casters the cascades miss (a chair leg, a kerb) shadow
+/// what they stand on. Off by default and in no preset: while they run the
+/// opaque stage takes its two-pass form. They need a `perspective` camera
+/// and give way to ray-traced shadows (`Settings::ray_traced_shadows`),
+/// whose rays resolve contact already. The reach is in render pixels, so it
+/// covers less of the scene at a higher scene resolution.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContactShadows {
+    #[default]
+    Off,
+    /// 63 pixels.
+    Short,
+    /// 127 pixels.
+    Medium,
+    /// 191 pixels.
+    Long,
+}
+
 /// Presentation cadence. Display follows the surface's refresh-paced FIFO;
 /// explicit limits cap rendering without changing the simulation tick rate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -509,6 +530,9 @@ pub struct Settings {
     /// How ray-traced shadows are denoised while they run; no effect
     /// without them.
     pub ray_traced_shadow_quality: RayTracedShadowQuality,
+    /// Screen-space contact shadows for the directional light, and their
+    /// reach; Off by default and in no preset.
+    pub contact_shadows: ContactShadows,
     /// Two-phase occlusion culling of the camera's opaque and masked
     /// surfaces, off by default and in every preset: what was hidden last
     /// frame is tested again this frame against what the frame draws first,
@@ -555,7 +579,8 @@ impl Default for Settings {
     /// High, with atmosphere allowed and the fog filter and volume paths
     /// on, heat
     /// distortion, world-space reflections, hardware ray tracing,
-    /// ray-traced shadows, occlusion culling and motion blur off, sharpness
+    /// ray-traced shadows, contact shadows, occlusion culling and motion
+    /// blur off, sharpness
     /// AMD's FSR sample's 0.8 (`m_Sharpness`), and every other choice at its
     /// default.
     fn default() -> Self {
@@ -581,6 +606,7 @@ impl Default for Settings {
             hardware_ray_tracing: false,
             ray_traced_shadows: false,
             ray_traced_shadow_quality: RayTracedShadowQuality::default(),
+            contact_shadows: ContactShadows::Off,
             occlusion_culling: false,
             atmosphere: true,
             fog_quality: FogQuality::default(),

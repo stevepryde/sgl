@@ -4,9 +4,9 @@
 use crate::FrameInput;
 use crate::scene::RayData;
 use crate::settings::{
-    AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, FogQuality, FsrVersion,
-    ReflectionMethod, RenderPreset, SceneResolution, ScreenSpaceIndirect, ScreenSpaceReflections,
-    Settings, ShadowQuality, Sharpening, Upscaling, WorldSpaceReflections,
+    AmbientOcclusionQuality, Antialiasing, ContactShadows, DynamicGiQuality, FogQuality,
+    FsrVersion, ReflectionMethod, RenderPreset, SceneResolution, ScreenSpaceIndirect,
+    ScreenSpaceReflections, Settings, ShadowQuality, Sharpening, Upscaling, WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
 use crate::shading::bind::BindingTier;
@@ -19,19 +19,26 @@ use crate::view::effective::{
 use crate::view::pipelines::LayerConstants;
 
 /// `effective` for a frame whose rays trace in hardware where `hardware`
-/// and whose slots may hold `lights`: the ray-traced shadow stage runs
+/// and whose shadowed lights are `lights`: the ray-traced shadow stage runs
 /// where the setting asks for it, the rays trace in hardware and a slot
-/// holds a light, and the opaque stage then takes its two-pass form, the
-/// stage between its parts.
-pub(super) fn traced_shadows(
+/// holds a light; the contact shadow stage runs where the setting asks for
+/// it, a directional light holds the frame's cascades and the ray-traced
+/// shadow stage does not run, whose rays resolve contact already. The
+/// opaque stage takes its two-pass form while either runs, the stage
+/// between its parts.
+pub(super) fn shadow_stages(
     effective: Effective,
     hardware: bool,
     lights: &crate::stages::shadows::traced::slots::SlotLights,
 ) -> Effective {
     let ray_traced_shadows = effective.ray_traced_shadows && hardware && !lights.is_empty();
+    let contact_shadows = effective
+        .contact_shadows
+        .filter(|_| lights.directional.is_some() && !ray_traced_shadows);
     Effective {
         ray_traced_shadows,
-        fused: effective.fused && !ray_traced_shadows,
+        contact_shadows,
+        fused: effective.fused && !ray_traced_shadows && contact_shadows.is_none(),
         ..effective
     }
 }
@@ -293,11 +300,14 @@ pub(super) fn resolve(
     let diagnostics = settings.diagnostics_in_effect();
     let disable = diagnostics.disable;
     let p = input.camera.projection.to_cols_array_2d();
+    // A perspective projection: clip w is view depth (`perspective`'s, or
+    // any other whose w row is (0, 0, -1, 0)), as the fog's slices, aerial
+    // perspective and contact shadows' thickness take it.
+    let perspective = p[3][3] == 0. && p[2][3] == -1.;
     // XeGTAO's depth unpack/reconstruction is for centered reversed-Z
     // perspective projections, not orthographic cameras.
     let ambient_occlusion = (settings.ambient_occlusion != AmbientOcclusionQuality::Off
-        && p[3][3] == 0.
-        && p[2][3] == -1.
+        && perspective
         && p[2][0] == 0.
         && p[2][1] == 0.
         && p[2][2] >= 0.
@@ -309,8 +319,7 @@ pub(super) fn resolve(
     // Screen-space indirect light reconstructs its rays and reprojects as
     // XeGTAO does, under the same cameras.
     let screen_indirect = (settings.screen_space_indirect != ScreenSpaceIndirect::Off
-        && p[3][3] == 0.
-        && p[2][3] == -1.
+        && perspective
         && p[2][0] == 0.
         && p[2][1] == 0.
         && p[2][2] >= 0.
@@ -328,7 +337,7 @@ pub(super) fn resolve(
     // infinite reversed-Z projection; with other cameras SSR is off and
     // SMAA replaces TAA, and FSR's render-size frame is presented as it
     // is.
-    let post_fx_camera = p[3][3] == 0. && p[2][3] == -1. && p[2][2] == 0. && p[3][2] > 0.;
+    let post_fx_camera = perspective && p[2][2] == 0. && p[3][2] > 0.;
     let antialiasing = antialiasing(settings, fsr_running);
     let taa = antialiasing == Antialiasing::Taa && !disable.taa && post_fx_camera;
     let fsr = antialiasing.fsr().is_some() && !disable.fsr && post_fx_camera;
@@ -383,10 +392,14 @@ pub(super) fn resolve(
     // Ray-traced shadows trace through the hardware path alone (the
     // architecture's Ray-traced shadows); elsewhere the maps shadow, their
     // path without hardware ray tracing (D-30). The
-    // frame narrows it to whether the stage runs (`traced_shadows`).
+    // frame narrows it to whether the stage runs (`shadow_stages`).
     let ray_traced_shadows =
         settings.ray_traced_shadows && matches!(hardware_ray_tracing, HardwareRayTracing::On(_));
     let occlusion_culling = settings.occlusion_culling && occlusion_supported && !disable.culling;
+    // The thickness test takes a share of perspective depth; the frame
+    // narrows it to whether the stage runs (`shadow_stages`).
+    let contact_shadows =
+        Some(settings.contact_shadows).filter(|&level| level != ContactShadows::Off && perspective);
     Effective {
         antialiasing,
         taa,
@@ -403,6 +416,7 @@ pub(super) fn resolve(
         hardware_ray_tracing,
         ray_traced_shadows,
         ray_traced_shadow_quality: settings.ray_traced_shadow_quality.resolve(low),
+        contact_shadows,
         receivers: content.receivers
             && (screen_space.is_some() || taa || fsr || motion_blur.is_some()),
         // Occlusion culling's late phase falls between the G-buffer passes,
@@ -410,14 +424,9 @@ pub(super) fn resolve(
         fused: fused_supported && !disable.fused_opaque && !occlusion_culling,
         occlusion_culling,
         local_lights: !disable.local_lights,
-        fog: fog(
-            settings,
-            input,
-            content.fog_volumes,
-            p[3][3] == 0. && p[2][3] == -1.,
-        ),
+        fog: fog(settings, input, content.fog_volumes, perspective),
         fog_filter: settings.fog_filter,
-        aerial_perspective: aerial_perspective(input, p[3][3] == 0. && p[2][3] == -1.),
+        aerial_perspective: aerial_perspective(input, perspective),
         dynamic_gi: dynamic_gi(settings, tier, content.ray_data)
             .rays()
             .filter(|_| content.dynamic_gi_volume),
@@ -768,6 +777,109 @@ mod sharpening_tests {
             };
             let resolved = resolve(&settings, &input, SceneContent::default(), device(None));
             assert_eq!(resolved.sharpness, Some(effective), "sharpness {sharpness}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod contact_shadow_tests {
+    use super::*;
+    use crate::stages::shadows::traced::slots::{SlotLight, SlotLights};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Defects: the stage runs with the setting off, under an orthographic
+    // camera (whose depth the thickness test does not take), without a
+    // directional light with the frame's cascades above the opacity
+    // cutoff, or beside the ray-traced shadow stage, whose mask the
+    // lighting pass binds in its place; a level other than the setting's;
+    // or the opaque stage keeps its fused form, which has no pass between
+    // its G-buffer and lighting. The oracle is the Contact shadows design's
+    // conditions as a table.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn contact_shadows_run_as_the_design_says() {
+        let camera = |projection| crate::Camera {
+            view: glam::Mat4::IDENTITY,
+            projection,
+            eye: glam::Vec3::ZERO,
+        };
+        let perspective = crate::perspective(1., 1., 0.1);
+        let orthographic =
+            glam::camera::rh::proj::directx::orthographic(-5., 5., -5., 5., 100., 0.1);
+        let device = Device {
+            fsr_running: None,
+            fused_supported: true,
+            occlusion_supported: true,
+            ray_queries: Some(RayQueryForm::Baseline),
+            tier: BindingTier::Extended,
+        };
+        let sun = SlotLights {
+            directional: Some(0),
+            local: Vec::new(),
+        };
+        let lamp = SlotLights {
+            directional: None,
+            local: vec![SlotLight {
+                id: <crate::LightId as crate::content::identity::Identity>::issue(0, 1),
+                baked: false,
+            }],
+        };
+        // The setting, the projection, the frame's shadowed lights,
+        // whether ray-traced shadows are asked for and the rays trace in
+        // hardware, and the stage's level where it runs.
+        let cases = [
+            (
+                ContactShadows::Medium,
+                perspective,
+                &sun,
+                false,
+                Some(ContactShadows::Medium),
+            ),
+            (
+                ContactShadows::Short,
+                perspective,
+                &sun,
+                false,
+                Some(ContactShadows::Short),
+            ),
+            (
+                ContactShadows::Long,
+                perspective,
+                &sun,
+                false,
+                Some(ContactShadows::Long),
+            ),
+            (ContactShadows::Off, perspective, &sun, false, None),
+            (ContactShadows::Medium, orthographic, &sun, false, None),
+            (ContactShadows::Medium, perspective, &lamp, false, None),
+            (
+                ContactShadows::Medium,
+                perspective,
+                &SlotLights::default(),
+                false,
+                None,
+            ),
+            (ContactShadows::Medium, perspective, &sun, true, None),
+        ];
+        for (level, projection, lights, traced, expected) in cases {
+            let settings = Settings {
+                contact_shadows: level,
+                hardware_ray_tracing: traced,
+                ray_traced_shadows: traced,
+                ..Settings::default()
+            };
+            let input = FrameInput::new(camera(projection));
+            let resolved = shadow_stages(
+                resolve(&settings, &input, SceneContent::default(), device),
+                traced,
+                lights,
+            );
+            let case = format!("{level:?} {lights:?} traced {traced}");
+            assert_eq!(resolved.contact_shadows, expected, "{case}");
+            assert_eq!(
+                resolved.fused,
+                expected.is_none() && !resolved.ray_traced_shadows,
+                "{case}"
+            );
         }
     }
 }

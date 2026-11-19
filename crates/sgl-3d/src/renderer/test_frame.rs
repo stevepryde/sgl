@@ -170,6 +170,11 @@ impl TestRenderer {
         self.view.traced_shadows.last()
     }
 
+    /// The last frame's contact mask, where the contact shadow stage ran.
+    pub(crate) fn contact_shadows(&self) -> Option<&wgpu::TextureView> {
+        self.view.contact_shadows.last()
+    }
+
     /// The ray-traced shadow denoiser's moments the last frame wrote, where
     /// the stage ran.
     pub(crate) fn traced_shadow_moments(&self) -> Option<&wgpu::TextureView> {
@@ -239,6 +244,7 @@ impl TestRenderer {
             scene,
             (
                 effective.ray_traced_shadows,
+                effective.contact_shadows.is_some(),
                 effective.screen_indirect.is_some(),
             ),
         );
@@ -295,7 +301,7 @@ impl TestRenderer {
             scene,
             view.shadows.local.ranking(),
         );
-        let effective = super::effective::traced_shadows(
+        let effective = super::effective::shadow_stages(
             effective,
             shared.prepare.hardware_rays(),
             &slot_lights,
@@ -416,7 +422,10 @@ impl TestRenderer {
         super::frame::encode_opaque(
             &mut self.view.opaque,
             &mut self.view.cull,
-            &mut self.view.traced_shadows,
+            (
+                &mut self.view.traced_shadows,
+                &mut self.view.contact_shadows,
+            ),
             &frame.slot_lights,
             &mut ctx,
         );

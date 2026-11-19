@@ -356,7 +356,8 @@ pub(crate) static SHADOW_SAMPLING: Module = Module {
 };
 /// The directional shadow's cascades. Reads `view`, `frame`,
 /// `directional_shadow_map` and `shadow_sampler`, and calls the program's
-/// mask provider (`camera_shadow_mask`).
+/// mask and contact providers (`camera_shadow_mask`,
+/// `camera_contact_shadow`).
 pub(crate) static DIRECTIONAL_SHADOW: Module = Module {
     name: "directional_shadow",
     source: include_str!("directional_shadow.wgsl"),
@@ -434,6 +435,29 @@ pub(crate) static CAMERA_SCREEN_INDIRECT_NONE: Module = Module {
     name: "camera_screen_indirect_none",
     source: include_str!("camera_screen_indirect_none.wgsl"),
     deps: &[&SCREEN_INDIRECT],
+};
+/// The opaque stage's lighting pass's group 3 while contact shadows run:
+/// the contact mask.
+pub(crate) static BIND_CONTACT_SHADOW: Module = Module {
+    name: "bind_contact_shadow",
+    source: include_str!("bind_contact_shadow.wgsl"),
+    deps: &[],
+};
+/// The contact provider of the opaque stage's lighting pass while contact
+/// shadows run: `camera_contact_shadow` reads the contact mask. It depends
+/// on what calls it (`DIRECTIONAL_SHADOW`), never it on it, and a program
+/// composes it or `CONTACT_SHADOW_NONE`, exactly one.
+pub(crate) static CONTACT_SHADOW: Module = Module {
+    name: "contact_shadow",
+    source: include_str!("contact_shadow.wgsl"),
+    deps: &[&DIRECTIONAL_SHADOW, &BIND_CONTACT_SHADOW],
+};
+/// The contact provider of every other lit program: `camera_contact_shadow`
+/// leaves the cascades' visibility as it is.
+pub(crate) static CONTACT_SHADOW_NONE: Module = Module {
+    name: "contact_shadow_none",
+    source: include_str!("contact_shadow_none.wgsl"),
+    deps: &[&DIRECTIONAL_SHADOW],
 };
 /// A light as it reaches a receiver point: what each light builds and
 /// `surface_direct_light` shades.
@@ -594,6 +618,7 @@ pub(crate) fn lit_compute_library() -> String {
         &BIND_LIT,
         &SURFACE_RAY,
         &SHADOW_MASK_NONE,
+        &CONTACT_SHADOW_NONE,
         &SCENE_RAYS_PORTABLE,
         &tiers::LIT_EXTENDED,
     ])

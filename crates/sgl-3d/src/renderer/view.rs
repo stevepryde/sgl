@@ -10,7 +10,8 @@ use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
     antialiasing, cull::Cull, exposure::Exposure, fog::VolumetricFog, motion_blur::MotionBlur,
     opaque::Opaque, post::Post, reflections::Reflections, shadows::Shadows,
-    shadows::traced::TracedShadows, sky::Sky, transparent::Transparent,
+    shadows::contact::ContactShadowStage, shadows::traced::TracedShadows, sky::Sky,
+    transparent::Transparent,
 };
 use crate::view::FrameViews;
 use crate::view::bindings::FrameBindings;
@@ -103,6 +104,7 @@ pub struct View {
     pub(crate) statistics: StatisticsReadback,
     pub(crate) shadows: Shadows,
     pub(crate) traced_shadows: Box<TracedShadows>,
+    pub(crate) contact_shadows: Box<ContactShadowStage>,
     pub(crate) fog: VolumetricFog,
     pub(crate) opaque: Opaque,
     pub(crate) reflections: Box<Reflections>,
@@ -257,11 +259,14 @@ impl View {
                 &bindings.unlit,
                 [
                     &bindings.shadow_mask,
+                    &bindings.contact_shadow,
                     &bindings.screen_indirect,
                     &bindings.shadow_mask_screen_indirect,
+                    &bindings.contact_shadow_screen_indirect,
                 ],
             ),
             traced_shadows: Box::new(TracedShadows::new(device, &bindings.lit, &bindings.scene)),
+            contact_shadows: Box::new(ContactShadowStage::new(device)),
             reflections: Box::new(Reflections::new(device, queue, render, &first_frame)),
             transparent: Transparent::new(
                 device,
