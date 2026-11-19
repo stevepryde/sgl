@@ -457,9 +457,14 @@ mod native {
         }
         let mut local_light_ids = Vec::new();
         if let Some(descriptor) = fixture.as_ref() {
-            for light in bistro_scene::point_lights_from_json(descriptor)? {
+            for light in bistro_scene::local_lights_from_json(descriptor)? {
                 local_light_ids.push(scene.add_light(&device, &queue, light)?);
             }
+            scene.update_fog_volumes(
+                &device,
+                &queue,
+                &bistro_scene::fog_volumes_from_json(descriptor)?,
+            )?;
         }
         if options.rect {
             // Authored fill for exploring SGL's existing LTC rectangle shading on

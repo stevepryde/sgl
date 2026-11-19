@@ -492,6 +492,43 @@ infer convergence just from a chosen warm-up count. Neutral tone mapping can
 be compared by copying the fixture and changing only `settings.tone_mapping`
 to `KhronosPbrNeutral`, preserving exposure and lighting.
 
+### Bistro Noir
+
+`fixtures/bistro-noir.json` relights the quality profile's `bike` camera at
+night with existing renderer features only: the sun reduced to faint
+moonlight, diffuse environment fill cut to 0.04 while reflections keep 0.7,
+no practical point lights, a warm rectangle strip raking the scooter's cowl,
+a cool spot rimming it from behind through a small fog volume, and one warm
+spot lighting a single patch of cobbles. Exposure stays at the quality
+profile's fixed +0.6. Capture the control and the relight with the same
+camera, size, frames and warm-up:
+
+```sh
+cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-quality.json --view bike --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-noir/baseline
+cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-noir.json --view bike --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-noir/relight
+```
+
+The recipe uses these optional fixture keys, which native and browser runs
+share; a fixture without them renders as before:
+
+- Camera `reflection_environment_intensity`: the environment's specular
+  intensity; `environment_intensity` then sets only the diffuse fill. Missing,
+  reflections take `environment_intensity`.
+- Camera `fog`: `density` (extinction per metre, required), `anisotropy`
+  (-0.9..0.9, default 0.2) and `length` (metres, default 64). Its presence
+  turns the frame's atmosphere on; `settings.atmosphere` must be true too.
+- Top-level `spot_lights`: as `point_lights` without `radius`, plus
+  `direction` and `inner_angle_degrees`/`outer_angle_degrees` (inner at most
+  outer, both below 90).
+- Top-level `rect_lights`: as `point_lights` without `radius`, plus
+  `direction` (the side it lights), `width_axis` (not parallel to it) and
+  positive `width`/`height` in metres; `intensity` is candela along its normal.
+- Optional `fog_energy` on any light (default 1) scales its share of the fog;
+  0 leaves it out.
+- Top-level `fog_volumes`: axis-aligned boxes with `center`, positive `size`
+  (metres), `density` (extinction per metre) and optional `edge_fade`
+  (default 0.1).
+
 ## Attribution and distribution
 
 **Amazon Lumberyard Bistro**, Amazon Lumberyard, July 2017,

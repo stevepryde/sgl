@@ -1,0 +1,223 @@
+{
+  "schema": 1,
+  "scene": "amazon-bistro-exterior-v1",
+  "asset": "BistroExterior.glb",
+  "environment": {
+    "metadata": "environment.json",
+    "panorama": "panorama.png",
+    "pmrem": "pmrem.rgba16",
+    "provenance_metadata": "ENVIRONMENT-PROCESSING.json"
+  },
+  "source_metadata": "asset-stats.json",
+  "compressed_images": "compressed-images.json",
+  "ray_data": "enabled",
+  "cameras": [
+    {
+      "id": "bike",
+      "eye": [
+        -10.2,
+        2.3,
+        3.8
+      ],
+      "look_at": [
+        -7.3,
+        1.35,
+        0.4
+      ],
+      "fov_y_degrees": 55,
+      "near": 0.1,
+      "ambient_occlusion_radius": 0.5,
+      "environment_intensity": 0.04,
+      "reflection_environment_intensity": 0.7,
+      "environment_yaw": 3.6258581590046384,
+      "backdrop_brightness": 0.03,
+      "sun": {
+        "color": [
+          0.55,
+          0.65,
+          1
+        ],
+        "direction": [
+          0.33858266790834657,
+          -0.9396926207859083,
+          0.048368951121327435
+        ],
+        "illuminance": 0.08,
+        "shadow_cascades": 4,
+        "shadow_distance": 60
+      },
+      "fog": {
+        "density": 0.002,
+        "anisotropy": 0.75,
+        "length": 30
+      }
+    }
+  ],
+  "default_camera": "bike",
+  "size": [
+    1920,
+    1080
+  ],
+  "warmup_frames": 720,
+  "exposure_stops": 0.6,
+  "lighting": "Bistro Noir: night relight of the bike camera. Sun reduced to faint moonlight, diffuse environment fill cut while reflections keep the quality profile intensity, no practical point lights. A warm LTC strip rakes the scooter cowl, a cool spot rims it from behind through a small fog volume that shows its beam, and one warm spot lights a single patch of cobbles. Explicit authoring, not imported lights.",
+  "settings": {
+    "ambient_occlusion": "Medium",
+    "anisotropic_filtering": "X16",
+    "antialiasing": "Taa",
+    "atmosphere": true,
+    "bloom": "Preset",
+    "dynamic_gi": "Low",
+    "fog_filter": true,
+    "fog_quality": "High",
+    "fsr_quality": "Quality",
+    "fsr_sharpening": true,
+    "fsr_sharpness": 0.800000011920929,
+    "hardware_ray_tracing": false,
+    "heat_distortion": false,
+    "motion_blur": "Off",
+    "occlusion_culling": false,
+    "preset": "High",
+    "ray_traced_shadow_quality": "Preset",
+    "ray_traced_shadows": false,
+    "reflection_method": "Crystal",
+    "scene_resolution": "Full",
+    "screen_space_reflections": "Off",
+    "shadow_quality": "High",
+    "smaa_quality": "Medium",
+    "tone_mapping": "AcesFilmic",
+    "upscaling": "Off",
+    "volume_paths": true,
+    "world_space_reflections": "Off"
+  },
+  "dynamic_gi_volume": {
+    "origin": [
+      -18,
+      -1,
+      -16
+    ],
+    "spacing": [
+      3,
+      3,
+      3
+    ],
+    "probes": [
+      18,
+      8,
+      18
+    ]
+  },
+  "spot_lights": [
+    {
+      "name": "cool rim",
+      "position": [
+        -5.33,
+        3.4,
+        -0.33
+      ],
+      "direction": [
+        -1.57,
+        -1.7,
+        1.13
+      ],
+      "inner_angle_degrees": 12,
+      "outer_angle_degrees": 25,
+      "color": [
+        0.45,
+        0.65,
+        1
+      ],
+      "intensity": 120,
+      "range": 3.8,
+      "casts_shadow": true
+    },
+    {
+      "name": "cobble pool",
+      "position": [
+        -7.6,
+        5,
+        2.6
+      ],
+      "direction": [
+        0.3,
+        -4.63,
+        -0.3
+      ],
+      "inner_angle_degrees": 12,
+      "outer_angle_degrees": 22,
+      "color": [
+        1,
+        0.75,
+        0.5
+      ],
+      "intensity": 70,
+      "range": 9,
+      "casts_shadow": true,
+      "fog_energy": 0
+    }
+  ],
+  "rect_lights": [
+    {
+      "name": "tank strip",
+      "position": [
+        -7.07,
+        2.6,
+        1.5
+      ],
+      "direction": [
+        0.07,
+        -1.36,
+        -0.35
+      ],
+      "width_axis": [
+        0.76,
+        0,
+        0.65
+      ],
+      "width": 1.2,
+      "height": 0.04,
+      "color": [
+        1,
+        0.4,
+        0.12
+      ],
+      "intensity": 30,
+      "range": 3,
+      "casts_shadow": true,
+      "fog_energy": 0
+    }
+  ],
+  "fog_volumes": [
+    {
+      "center": [
+        -6.4,
+        2.3,
+        0.1
+      ],
+      "size": [
+        3.0,
+        3.0,
+        2.4
+      ],
+      "density": 0.035,
+      "edge_fade": 0.6
+    }
+  ],
+  "provenance": {
+    "conversion": "https://github.com/qian-o/GLTF-Assets/tree/816a1d6533c55787b3fabc9b75660c0d0c57ebc6/Bistro",
+    "creator": "Amazon Lumberyard",
+    "environment": "https://polyhaven.com/a/san_giuseppe_bridge",
+    "environment_creator": "Greg Zaal",
+    "environment_license": "CC0",
+    "license": "CC BY 4.0",
+    "source": "https://developer.nvidia.com/orca/amazon-lumberyard-bistro",
+    "title": "Amazon Lumberyard Bistro"
+  },
+  "notices": [
+    "LICENSE.txt",
+    "SGL-ATTRIBUTION.txt",
+    "THREE-LICENSE.txt",
+    "HDRI-ATTRIBUTION.txt",
+    "ENVIRONMENT-PROCESSING.json"
+  ]
+}

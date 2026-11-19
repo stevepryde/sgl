@@ -2,7 +2,7 @@
 use serde_json::{Value, json};
 use sgl_3d::{
     Backdrop, BakedSpecularProbe, Camera, DirectionalLight, DirectionalShadow, DynamicGiVolume,
-    EnvironmentLight, Exposure, FrameInput, Light, LightShape, SpecularProbeBox,
+    EnvironmentLight, Exposure, Fog, FogVolume, FrameInput, Light, LightShape, SpecularProbeBox,
     SpecularProbeRadiance, SpecularProbeTexels, asset,
     glam::{Mat4, Vec3, camera},
     settings::{
@@ -305,61 +305,168 @@ pub fn apply_transmissive_materials(
     Ok(json!({"count":indices.len(),"names":names,"metallic":0.,"transmission":1.}))
 }
 
-/// Example-owned authored point lights, in world-space metres and linear RGB.
-/// An absent list preserves fixtures without practical lighting. This is not an
-/// emissive-material conversion: the author chooses which geometry emits light.
-pub fn point_lights_from_json(descriptor: &Value) -> Result<Vec<Light>, String> {
-    let Some(values) = descriptor.get("point_lights") else {
-        return Ok(Vec::new());
-    };
-    let values = values.as_array().ok_or("point_lights must be an array")?;
-    values
-        .iter()
-        .map(|value| {
-            let vector = |name: &str| -> Result<Vec3, String> {
-                let vector = Vec3::from_array(
-                    serde_json::from_value(value[name].clone()).map_err(|e| e.to_string())?,
-                );
-                if !vector.is_finite() {
-                    return Err(format!("point light {name} must be finite"));
+/// One authored fixture object's fields: finite vectors and finite,
+/// nonnegative numbers, with an optional default.
+struct Fields<'a> {
+    value: &'a Value,
+    kind: &'a str,
+}
+
+impl Fields<'_> {
+    fn vector(&self, name: &str) -> Result<Vec3, String> {
+        let vector = Vec3::from_array(
+            serde_json::from_value(self.value[name].clone())
+                .map_err(|e| format!("{} {name}: {e}", self.kind))?,
+        );
+        if !vector.is_finite() {
+            return Err(format!("{} {name} must be finite", self.kind));
+        }
+        Ok(vector)
+    }
+
+    fn number(&self, name: &str, fallback: Option<f32>) -> Result<f32, String> {
+        let n = match self.value.get(name) {
+            Some(v) => v
+                .as_f64()
+                .ok_or_else(|| format!("{} {name} must be numeric", self.kind))?
+                as f32,
+            None => fallback.ok_or_else(|| format!("{} {name} missing", self.kind))?,
+        };
+        if !n.is_finite() || n < 0. {
+            return Err(format!(
+                "{} {name} must be finite and nonnegative",
+                self.kind
+            ));
+        }
+        Ok(n)
+    }
+
+    fn color(&self, name: &str) -> Result<[f32; 3], String> {
+        let color = self.vector(name)?;
+        if color.min_element() < 0. {
+            return Err(format!("{} {name} must be nonnegative", self.kind));
+        }
+        Ok(color.to_array())
+    }
+
+    fn direction(&self, name: &str) -> Result<Vec3, String> {
+        let direction = self.vector(name)?;
+        if direction.length_squared() == 0. {
+            return Err(format!("{} {name} must be nonzero", self.kind));
+        }
+        Ok(direction)
+    }
+}
+
+/// Example-owned authored point, spot and rectangle lights, in world-space
+/// metres, degrees and linear RGB. Absent lists preserve fixtures without
+/// them. This is not an emissive-material conversion: the author chooses
+/// which geometry emits light and where each light shines.
+pub fn local_lights_from_json(descriptor: &Value) -> Result<Vec<Light>, String> {
+    let mut lights = Vec::new();
+    for (key, kind) in [
+        ("point_lights", "point light"),
+        ("spot_lights", "spot light"),
+        ("rect_lights", "rect light"),
+    ] {
+        let Some(values) = descriptor.get(key) else {
+            continue;
+        };
+        for value in values
+            .as_array()
+            .ok_or_else(|| format!("{key} must be an array"))?
+        {
+            let fields = Fields { value, kind };
+            let shape = match key {
+                "point_lights" => LightShape::Point {
+                    radius: fields.number("radius", Some(LightShape::DEFAULT_RADIUS))?,
+                },
+                "spot_lights" => {
+                    let inner = fields.number("inner_angle_degrees", None)?;
+                    let outer = fields.number("outer_angle_degrees", None)?;
+                    if inner > outer || outer >= 90. {
+                        return Err(
+                            "spot light needs inner <= outer angle, both below 90 degrees".into(),
+                        );
+                    }
+                    LightShape::Spot {
+                        direction: fields.direction("direction")?,
+                        inner_angle: inner.to_radians(),
+                        outer_angle: outer.to_radians(),
+                        radius: LightShape::DEFAULT_RADIUS,
+                    }
                 }
-                Ok(vector)
-            };
-            let number = |name: &str, fallback: Option<f32>| -> Result<f32, String> {
-                let n = match value.get(name) {
-                    Some(v) => v
-                        .as_f64()
-                        .ok_or_else(|| format!("point light {name} must be numeric"))?
-                        as f32,
-                    None => fallback.ok_or_else(|| format!("point light {name} missing"))?,
-                };
-                if !n.is_finite() || n < 0. {
-                    return Err(format!("point light {name} must be finite and nonnegative"));
+                _ => {
+                    let direction = fields.direction("direction")?;
+                    let width_axis = fields.direction("width_axis")?;
+                    let (width, height) = (
+                        fields.number("width", None)?,
+                        fields.number("height", None)?,
+                    );
+                    if width == 0. || height == 0. {
+                        return Err("rect light width and height must be positive".into());
+                    }
+                    if width_axis.normalize().cross(direction.normalize()).length() < 1e-3 {
+                        return Err("rect light width_axis must not parallel its direction".into());
+                    }
+                    LightShape::Rect {
+                        direction,
+                        width_axis,
+                        width,
+                        height,
+                    }
                 }
-                Ok(n)
             };
-            let color = vector("color")?;
-            if color.min_element() < 0. {
-                return Err("point light color must be nonnegative".into());
-            }
-            let range = number("range", None)?;
+            let range = fields.number("range", None)?;
             if range == 0. {
-                return Err("point light range must be positive".into());
+                return Err(format!("{kind} range must be positive"));
             }
             let casts_shadow = value.get("casts_shadow").map_or(Ok(false), |v| {
                 v.as_bool()
-                    .ok_or("point light casts_shadow must be boolean")
+                    .ok_or_else(|| format!("{kind} casts_shadow must be boolean"))
             })?;
-            Ok(Light {
-                position: vector("position")?,
-                shape: LightShape::Point {
-                    radius: number("radius", Some(LightShape::DEFAULT_RADIUS))?,
-                },
-                color: color.to_array(),
-                intensity: number("intensity", None)?,
+            lights.push(Light {
+                position: fields.vector("position")?,
+                shape,
+                color: fields.color("color")?,
+                intensity: fields.number("intensity", None)?,
                 range,
                 casts_shadow,
+                fog_energy: fields.number("fog_energy", Some(Light::default().fog_energy))?,
                 ..Default::default()
+            });
+        }
+    }
+    Ok(lights)
+}
+
+/// Example-owned boxes of fog medium (`Scene::update_fog_volumes`), axis
+/// aligned, in world-space metres and extinction per metre. An absent list
+/// adds none. They show only where a camera's `fog` turns the atmosphere on.
+pub fn fog_volumes_from_json(descriptor: &Value) -> Result<Vec<FogVolume>, String> {
+    let Some(values) = descriptor.get("fog_volumes") else {
+        return Ok(Vec::new());
+    };
+    let defaults = FogVolume::default();
+    values
+        .as_array()
+        .ok_or("fog_volumes must be an array")?
+        .iter()
+        .map(|value| {
+            let fields = Fields {
+                value,
+                kind: "fog volume",
+            };
+            let size = fields.vector("size")?;
+            if size.min_element() <= 0. {
+                return Err("fog volume size must be positive".into());
+            }
+            Ok(FogVolume {
+                center: fields.vector("center")?,
+                size,
+                density: fields.number("density", None)?,
+                edge_fade: fields.number("edge_fade", Some(defaults.edge_fade))?,
+                ..defaults
             })
         })
         .collect()
@@ -595,11 +702,38 @@ pub fn frame_from_json(
         intensity: number(&spec["environment_intensity"], 1.)?,
         yaw: number(&spec["environment_yaw"], 0.)?,
     };
-    frame.reflection_environment = frame.diffuse_environment;
+    frame.reflection_environment = EnvironmentLight {
+        intensity: number(
+            &spec["reflection_environment_intensity"],
+            frame.diffuse_environment.intensity,
+        )?,
+        ..frame.diffuse_environment
+    };
     frame.backdrop = Backdrop::Environment {
         yaw: frame.diffuse_environment.yaw,
         brightness: number(&spec["backdrop_brightness"], 1.)?,
     };
+    // A camera's fog turns its atmosphere on; without one it stays off.
+    if let Some(fog) = spec.get("fog") {
+        let fields = Fields {
+            value: fog,
+            kind: "fog",
+        };
+        let defaults = Fog::default();
+        let anisotropy = fog.get("anisotropy").map_or(Ok(defaults.anisotropy), |v| {
+            v.as_f64()
+                .map(|n| n as f32)
+                .filter(|n| (-0.9..=0.9).contains(n))
+                .ok_or("fog anisotropy must be within -0.9..=0.9")
+        })?;
+        frame.atmosphere = true;
+        frame.fog = Fog {
+            density: fields.number("density", None)?,
+            anisotropy,
+            length: fields.number("length", Some(defaults.length))?,
+            ..defaults
+        };
+    }
     let sun = &spec["sun"];
     let authored_cascades = sun
         .get("shadow_cascades")
@@ -796,10 +930,10 @@ mod tests {
 
     #[test]
     fn authored_point_lights_keep_world_space_units_and_reject_invalid_inputs() {
-        assert!(point_lights_from_json(&json!({})).unwrap().is_empty());
+        assert!(local_lights_from_json(&json!({})).unwrap().is_empty());
         let light = json!({"position":[-1.8,3.87,-7.52],"color":[1.,0.72,0.45],
             "intensity":8.,"range":5.,"radius":0.07,"casts_shadow":true});
-        let parsed = point_lights_from_json(&json!({"point_lights":[light.clone()]})).unwrap();
+        let parsed = local_lights_from_json(&json!({"point_lights":[light.clone()]})).unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].position, Vec3::new(-1.8, 3.87, -7.52));
         assert_eq!(parsed[0].shape, LightShape::Point { radius: 0.07 });
@@ -821,15 +955,15 @@ mod tests {
             let mut invalid_light = light.clone();
             invalid_light[field] = invalid;
             assert!(
-                point_lights_from_json(&json!({"point_lights":[invalid_light]})).is_err(),
+                local_lights_from_json(&json!({"point_lights":[invalid_light]})).is_err(),
                 "{field}"
             );
         }
-        assert!(point_lights_from_json(&json!({"point_lights":null})).is_err());
+        assert!(local_lights_from_json(&json!({"point_lights":null})).is_err());
         let mut defaults = light;
         defaults.as_object_mut().unwrap().remove("radius");
         defaults.as_object_mut().unwrap().remove("casts_shadow");
-        let defaults = point_lights_from_json(&json!({"point_lights":[defaults]})).unwrap();
+        let defaults = local_lights_from_json(&json!({"point_lights":[defaults]})).unwrap();
         assert!(!defaults[0].casts_shadow);
         assert_eq!(
             defaults[0].shape,
@@ -858,6 +992,11 @@ mod tests {
                 from_fixture.diffuse_environment,
                 original.diffuse_environment
             );
+            assert_eq!(
+                from_fixture.reflection_environment,
+                original.reflection_environment
+            );
+            assert_eq!(from_fixture.atmosphere, original.atmosphere);
         }
         let overridden =
             frame_from_json(&fixture["cameras"][0], [1280, 720], 0.6, Some(4)).unwrap();
@@ -868,16 +1007,18 @@ mod tests {
     }
 
     #[test]
-    fn sponza_recipes_resolve_in_the_shared_native_browser_harness() {
+    fn authored_recipes_resolve_in_the_shared_native_browser_harness() {
         for source in [
             include_str!("../../fixtures/sponza-daylight.json"),
             include_str!("../../fixtures/sponza-gi.json"),
             include_str!("../../fixtures/sponza-sunlit.json"),
             include_str!("../../fixtures/sponza-lamps.json"),
+            include_str!("../../fixtures/bistro-noir.json"),
         ] {
             let recipe: Value = serde_json::from_str(source).unwrap();
             resolve_settings(settings(false, false), Some(&recipe), None, None).unwrap();
-            point_lights_from_json(&recipe).unwrap();
+            local_lights_from_json(&recipe).unwrap();
+            fog_volumes_from_json(&recipe).unwrap();
             let cameras = selected_cameras(Some(&recipe), "all").unwrap();
             assert!(!cameras.is_empty());
             let default = recipe["default_camera"].as_str().unwrap();

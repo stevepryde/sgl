@@ -502,13 +502,20 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
         )
         .map_err(|e| e.to_string())?;
     let mut local_light_ids = Vec::new();
-    for light in bistro_scene::point_lights_from_json(&fixture)? {
+    for light in bistro_scene::local_lights_from_json(&fixture)? {
         local_light_ids.push(
             scene
                 .add_light(&device, &queue, light)
                 .map_err(|e| e.to_string())?,
         );
     }
+    scene
+        .update_fog_volumes(
+            &device,
+            &queue,
+            &bistro_scene::fog_volumes_from_json(&fixture)?,
+        )
+        .map_err(|e| e.to_string())?;
     if options["rect"].as_bool() == Some(true) {
         local_light_ids.push(
             scene
