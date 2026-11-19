@@ -552,20 +552,26 @@ share; a fixture without them renders as before:
 
 ### Bistro Golden
 
-`fixtures/bistro-golden.json` is a low-sun daylight relight of the quality
-profile. It keeps the profile's cameras, asset, environment, +0.6 exposure,
-practical lights, GI volume and ACES filmic tone mapping, and changes only
-the composition:
+`fixtures/bistro-golden.json` is a near-overhead daylight relight of the
+quality profile. It keeps the profile's cameras, asset, environment, +0.6
+exposure, practical lights, GI volume and ACES filmic tone mapping, and
+changes only the composition:
 
-- The sun is at 32 degrees of elevation and 220 degrees of azimuth (measured
-  from +X toward +Z). From there it clears the facing buildings onto the
-  terrace corner and the scooter and rakes along the street in the `bevy` and
-  `street` views. The sky turns with it, to environment yaw 3.0696
-  (35.87 degrees, the HDR sun's azimuth at yaw 0, minus the sun's azimuth).
-  The measured sun colour and strength are unchanged: they were measured
-  from the capture's own sun, which is at 28.6 degrees.
-- Light uniform fog on every camera: 0.007 per metre, anisotropy 0.3, lit by
-  the sun only.
+- The sun is at 78 degrees of elevation and 220 degrees of azimuth (measured
+  from +X toward +Z). The street is narrow between tall buildings, so only a
+  sun near overhead reaches it: from there the road, the terrace and the
+  scooter are in direct sun in the `bevy`, `street` and `bike` views, with
+  short shadows that still shape the facades and awnings. The `overview`
+  camera sits inside an awning, so no sun lights its view. The sky turns with
+  the sun, to environment yaw 3.0696 (35.87 degrees, the HDR sun's azimuth at
+  yaw 0, minus the sun's azimuth). The measured sun colour and strength are
+  unchanged.
+- Haze only at the far ends of the streets: every camera's `fog` has density
+  0 (its presence keeps the atmosphere on) and a 100 m `length`, and two
+  `fog_volumes` of 0.04 per metre sit more than 30 m from the cameras, at the
+  far end of the street in the `street` and `bike` views and beyond the arch
+  in the `bevy` view. Nothing nearer is fogged: a uniform density fogs the
+  foreground as much as the distance, and SGL3D's fog has no start distance.
 - Diffuse transmission on the five leaf materials.
 
 `lighting_authoring` records each choice and the captures it was chosen
@@ -608,6 +614,8 @@ the street reflect the street rather than only the sky panorama:
   them at a grazing angle and they mirror the sunlit facades and the sky at
   the street's end. Puddles nearer the cameras reflect too little at their
   steeper view, or mirror the dark bistro facade, and read as stains.
+  Under the near-overhead sun the stone beneath them is sunlit, so they
+  read as a wet sheen with sun glints more than as mirrors.
 
 `lighting_authoring.reflections_note` records each choice. The probe
 payloads are generated content, not in Git. Capture all four from the
@@ -619,7 +627,7 @@ cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro
 cp target/bistro-golden/probes/bistro-golden-*-probe.rgba16 target/bistro-quality/
 ```
 
-Recapture after changing the placements, the lighting or the puddles.
+Recapture after changing the placements, the lighting (the sun included) or the puddles.
 For matched comparisons, copy the fixture and remove `specular_probes` or
 `decals`, or set `settings.screen_space_reflections` to `Off`, keeping
 everything else.
