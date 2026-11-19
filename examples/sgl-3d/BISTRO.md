@@ -543,6 +543,46 @@ share; a fixture without them renders as before:
   (metres), `density` (extinction per metre) and optional `edge_fade`
   (default 0.1).
 
+### Bistro Golden
+
+`fixtures/bistro-golden.json` is a low-sun daylight relight of the quality
+profile. It keeps the profile's cameras, asset, environment, +0.6 exposure,
+practical lights, GI volume and ACES filmic tone mapping, and changes only
+the composition:
+
+- The sun is at 32 degrees of elevation and 220 degrees of azimuth (measured
+  from +X toward +Z). From there it clears the facing buildings onto the
+  terrace corner and the scooter and rakes along the street in the `bevy` and
+  `street` views. The sky turns with it, to environment yaw 3.0696
+  (35.87 degrees, the HDR sun's azimuth at yaw 0, minus the sun's azimuth).
+  The measured sun colour and strength are unchanged: they were measured
+  from the capture's own sun, which is at 28.6 degrees.
+- Light uniform fog on every camera: 0.007 per metre, anisotropy 0.3, lit by
+  the sun only.
+- Diffuse transmission on the five leaf materials.
+
+`lighting_authoring` records each choice and the captures it was chosen
+from. `bistro-quality` stays unchanged as the control. Capture both with the
+same views, size, frames and warm-up, natively and in the browser:
+
+```sh
+cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-quality.json --view all --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-golden/control
+cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-golden.json --view all --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-golden/golden
+bun scripts/tasks.ts measure-browser --fixture examples/sgl-3d/fixtures/bistro-golden.json --asset-dir target/bistro-quality --view street --size 1920x1080 --warmup 720 --frames 120 --capture target/bistro-golden/web/street.png --output target/bistro-golden/web/street.json
+```
+
+The fixture key `diffuse_transmission_materials` gives named materials
+`KHR_materials_diffuse_transmission`. It takes `names` (exact material
+names), `factor` (0..=1, the share of diffused light passed through) and
+`color` (a linear tint). The transmitted colour is each material's own base
+colour, factor and map, times `color`: the asset has no transmission maps,
+and a leaf passes light in its own colour. Like `transmissive_materials`,
+the list is explicit, with no rule by texture or alpha mode. A missing,
+ambiguous or duplicate name, or a malformed value, fails before any material
+changes. Reports list the applied materials under `material_authoring`
+(browser: `content.material_authoring`). The applied fog appears beside the
+sun in each native view and under browser `lighting`.
+
 ## Attribution and distribution
 
 **Amazon Lumberyard Bistro**, Amazon Lumberyard, July 2017,
