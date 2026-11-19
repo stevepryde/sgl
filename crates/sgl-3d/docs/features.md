@@ -262,7 +262,9 @@ them through unrefracted. A probe captured on an
   `radius` and the directional light's `angular_diameter` size their
   highlights (Karis's representative point, within about 20% of the light's
   energy at any angle): a large bulb or the sun on water shows a broad
-  highlight.
+  highlight. They also soften the camera's shadows from the maps
+  (`Settings::soft_shadows`): sharp where a caster meets its receiver, wider
+  with the distance between them.
   `LightShape::Rect` is a one-sided panel or strip whose face is integrated
   by linearly transformed cosines: soft light and stretched highlights
   nearby, a spot of the same intensity far away. It costs more per pixel

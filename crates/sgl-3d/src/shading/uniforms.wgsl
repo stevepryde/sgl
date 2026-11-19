@@ -160,6 +160,10 @@ const FRAME_IRRADIANCE_VOLUME:u32=128u;
 // The backdrop is the procedural sky (FrameEnvironment::Sky): the sky-view
 // table, which unlit group 0's backdrop_map holds, and the lights' discs.
 const FRAME_BACKDROP_SKY:u32=256u;
+// The camera's shadows take the soft filter, the temporal one widened to
+// each light's penumbra (Settings::soft_shadows); set with
+// FRAME_TEMPORAL_SHADOW_FILTER.
+const FRAME_SOFT_SHADOW_FILTER:u32=512u;
 // One instance's record, at its index in the scene's object buffer. That
 // index plus one is the source identity the G-buffer stores.
 struct Object {

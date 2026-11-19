@@ -48,12 +48,12 @@ fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,coat_normal:
     shadow=camera_shadow_mask(index,pixel);
    }
    if shadow<0. {
-    shadow=local_shadow_visibility(index,light.position,light.range,position,geometry_normal,pixel,receiver);
+    shadow=local_shadow_visibility(index,light.position,light.radius,light.range,position,geometry_normal,pixel,receiver);
    }
    visibility=shadow_opacity_visibility(shadow,light.shadow_opacity);
   }
   if behind {
-   let shadow=local_shadow_visibility(index,light.position,light.range,back,-geometry_normal,pixel,receiver);
+   let shadow=local_shadow_visibility(index,light.position,light.radius,light.range,back,-geometry_normal,pixel,receiver);
    transmitted=shadow_opacity_visibility(shadow,light.shadow_opacity);
   }
  }

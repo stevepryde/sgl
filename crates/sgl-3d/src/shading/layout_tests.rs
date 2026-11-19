@@ -950,6 +950,7 @@ fn rust_mirrors_match_wgsl_layouts() {
         ("FRAME_DYNAMIC_GI", FRAME_DYNAMIC_GI),
         ("FRAME_IRRADIANCE_VOLUME", FRAME_IRRADIANCE_VOLUME),
         ("FRAME_BACKDROP_SKY", FRAME_BACKDROP_SKY),
+        ("FRAME_SOFT_SHADOW_FILTER", FRAME_SOFT_SHADOW_FILTER),
         ("MATERIAL_UNLIT", super::material::MATERIAL_UNLIT),
         (
             "MATERIAL_DOUBLE_SIDED",

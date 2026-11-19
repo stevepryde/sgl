@@ -10,7 +10,9 @@ F_IridescenceToF0 (shaders/src/surface_brdf.fs) into iridescence.wgsl, D_Charlie
 and V_Neubelt (shaders/src/surface_brdf.fs) with the sheen layering into
 sheen.wgsl, and DFV_Charlie_Uniform (libs/ibl/src/CubemapIBL.cpp) with
 hammersley (libs/ibl/include/ibl/utilities.h) into scripts/sheen-dfg.ts, which
-writes src/scene/sheen_dfg.r16.
+writes src/scene/sheen_dfg.r16, and the directional
+PCSS estimate (shaders/src/surface_shadowing.fs, physicalSearchRadius and
+penumbraWidth) into directional_shadow.wgsl's soft filter.
 
 
                                  Apache License

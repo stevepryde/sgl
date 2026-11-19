@@ -1421,3 +1421,300 @@ fn a_shaders_masked_casters_take_its_coverage() {
         );
     }
 }
+
+/// The height of the soft-shadow tests' floor: 0.5 m below the camera, so
+/// their receivers `SOFT_DEPTH` ahead are in view.
+const SOFT_FLOOR: f32 = -0.5;
+/// How far ahead of the camera the soft-shadow tests' receivers lie: in the
+/// first cascade, before its blend into the second (`soft_shadow`).
+const SOFT_DEPTH: f32 = 1.4;
+
+/// The soft-shadow tests' cascades: two out to 20 m, the first to about
+/// 2.1 m, so the second's texels are about 1 cm.
+fn soft_shadow() -> DirectionalShadow {
+    DirectionalShadow {
+        distance: 20.,
+        cascades: 2,
+    }
+}
+
+/// A rectangle facing +Y at `center`, `half_x` and `half_z` metres from its
+/// centre to each side.
+fn rectangle(center: Vec3, half_x: f32, half_z: f32) -> CpuMesh {
+    let mut mesh = floor(Vec3::ZERO, 1.);
+    for vertex in &mut mesh.vertices {
+        let [x, _, z] = vertex.position;
+        vertex.position = (center + Vec3::new(x * half_x, 0., z * half_z)).to_array();
+    }
+    mesh
+}
+
+/// A fixture taking soft shadows where `soft`, under TAA, with a floor and
+/// a half-plane `height` metres above it over x < 0, whose edge's foot is
+/// the line x = 0 on the floor; the camera sees neither.
+fn soft_fixture(device: (wgpu::Device, wgpu::Queue), soft: bool, height: f32) -> Fixture {
+    let mut fixture = Fixture::with_settings(device, SIZE, soft_settings(soft));
+    fixture.place(rectangle(Vec3::new(0., SOFT_FLOOR, -5.), 30., 30.), false);
+    fixture.place(
+        rectangle(Vec3::new(-15., SOFT_FLOOR + height, -5.), 15., 30.),
+        false,
+    );
+    fixture
+}
+
+/// The settings of the soft-shadow tests: TAA, so the camera takes the
+/// temporal filter, and soft shadows on where `soft`, else off.
+fn soft_settings(soft: bool) -> Settings {
+    Settings {
+        antialiasing: settings::Antialiasing::Taa,
+        bloom: settings::Bloom::Off,
+        atmosphere: false,
+        soft_shadows: if soft {
+            settings::SoftShadows::On
+        } else {
+            settings::SoftShadows::Off
+        },
+        ..Settings::default()
+    }
+}
+
+/// A frame from `eye` looking along -Z, lit by the sun shining straight down
+/// with `soft_shadow`'s cascades and `angular_diameter` degrees.
+fn sun_frame(eye: Vec3, angular_diameter: f32) -> FrameInput {
+    let mut input = frame(DirectionalLight {
+        direction: Vec3::NEG_Y,
+        color: [1.; 3],
+        illuminance: 1.,
+        shadow: Some(soft_shadow()),
+        angular_diameter: angular_diameter.to_radians(),
+        ..Default::default()
+    });
+    input.camera.view = Mat4::from_translation(-eye);
+    input.camera.eye = eye;
+    input
+}
+
+/// The camera's view of the sun's shadow at each of `points` on the floor:
+/// its visibility averaged over a 16×16 block of pixels, which turns the
+/// spiral through its rotations, the cascade the point takes, the frame's
+/// frame count, and the first cascade's far bound.
+fn camera_sun(fixture: &mut Fixture, input: &FrameInput, points: &[Vec3]) -> Vec<[f32; 4]> {
+    let (device, queue) = (&fixture.device, &fixture.queue);
+    let prepared = fixture.renderer.prepare_test_frame(
+        device,
+        queue,
+        &mut fixture.scene,
+        input,
+        &fixture.settings,
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    fixture.renderer.encode_test_shadows(
+        device,
+        queue,
+        &mut encoder,
+        &fixture.scene,
+        &prepared,
+        None,
+    );
+    queue.submit([encoder.finish()]);
+    let observed = points
+        .iter()
+        .map(|point| {
+            let point = format!("vec3({:?},{:?},{:?})", point.x, point.y, point.z);
+            observe_shadow(
+                device,
+                queue,
+                &fixture.renderer,
+                &fixture.scene,
+                &format!(
+                    "var sum=0.;\n\
+                     for(var y=0u;y<16u;y++) {{\n\
+                      for(var x=0u;x<16u;x++) {{\n\
+                       sum+=directional_shadow_visibility(0u,{point},vec3(0.,1.,0.),vec2(f32(x),f32(y))+.5,SHADOW_RECEIVER_CAMERA);\n\
+                      }}\n\
+                     }}\n\
+                     output[0]=vec4(sum/256.,f32(get_cascade_index((view.view*vec4({point},1.)).z)),f32(frame.frame_count),frame.shadow_cascades[0].far_bound);"
+                ),
+            )
+        })
+        .collect();
+    fixture.scene.finish_open_frame();
+    observed
+}
+
+/// The floor's points `offsets` metres across the half-plane's edge (x),
+/// `depth` metres ahead of a camera at the origin.
+fn across_the_edge(offsets: &[f32], depth: f32) -> Vec<Vec3> {
+    offsets
+        .iter()
+        .map(|&x| Vec3::new(x, SOFT_FLOOR, -depth))
+        .collect()
+}
+
+/// Asserts each visibility in `observed` is in the zone `expected` names:
+/// 0 is shadowed, 1 lit, and anything else partial, strictly inside
+/// (0.05, 0.95).
+fn expect_zones(observed: &[[f32; 4]], expected: &[f32], label: &str) {
+    for (index, ([visibility, ..], zone)) in observed.iter().zip(expected).enumerate() {
+        let inside = match *zone {
+            0. => *visibility < 0.01,
+            1. => *visibility > 0.99,
+            _ => (0.05..0.95).contains(visibility),
+        };
+        assert!(
+            inside,
+            "{label}, point {index}: visibility {visibility}, expected zone {zone}"
+        );
+    }
+}
+
+// The soft filter widens the sun's penumbra with the caster's height, as
+// the light's disc does. Plausible defects: the penumbra not scaled by the
+// caster's height (the receiver's distance from the near plane taken
+// instead of from its blocker, or depth units taken as metres), by the
+// disc's radius, or by the map's metres per UV; the soft filter not taken
+// at all. The oracle is similar triangles: under a sun of 10° straight
+// down, an edge h above the floor casts a penumbra of half-width
+// h · tan 5°, 0.044 m at h = 0.5 m and 0.35 m at h = 4 m. 0.15 m either
+// side of the edge's foot the low edge leaves full light and full shadow,
+// the high edge partial light on both sides; 0.6 m either side, beyond the
+// high edge's penumbra plus the fixed kernel, full light and shadow again.
+#[test]
+fn a_directional_penumbra_widens_with_the_casters_height() {
+    for (height, offsets, zones) in [
+        (0.5, [0.15, -0.15], [1., 0.]),
+        (4., [0.15, -0.15], [0.5, 0.5]),
+        (4., [0.6, -0.6], [1., 0.]),
+    ] {
+        let Some(device) = test_support::device() else {
+            return;
+        };
+        let mut fixture = soft_fixture(device, true, height);
+        let input = sun_frame(Vec3::ZERO, 10.);
+        let observed = camera_sun(&mut fixture, &input, &across_the_edge(&offsets, SOFT_DEPTH));
+        expect_zones(
+            &observed,
+            &zones,
+            &format!("an edge {height} m up, {offsets:?} m across"),
+        );
+    }
+}
+
+// A light of no size keeps the fixed filter. Plausible defects: the soft
+// filter's floor not restoring the fixed filter for a zero penumbra, which
+// a sun of no angular diameter gives (its search, of no size, finds no
+// blocker) and ray-traced shadows give hard. It guards the floor, not the
+// `disc_radius` gate, which only skips a search that cannot change the
+// result. The oracle is that contract: with the setting on, visibility
+// equals the setting off at the same pixels and frame count, across the
+// high edge's foot.
+#[test]
+fn a_sun_of_no_size_keeps_the_fixed_filter() {
+    let offsets = [-0.02, -0.005, 0., 0.005, 0.02, 0.15];
+    let observe = |soft| {
+        let device = test_support::device()?;
+        let mut fixture = soft_fixture(device, soft, 4.);
+        let input = sun_frame(Vec3::ZERO, 0.);
+        Some(camera_sun(
+            &mut fixture,
+            &input,
+            &across_the_edge(&offsets, SOFT_DEPTH),
+        ))
+    };
+    let (Some(on), Some(off)) = (observe(true), observe(false)) else {
+        return;
+    };
+    assert!(
+        on.iter()
+            .any(|[visibility, ..]| (0.05..0.95).contains(visibility)),
+        "the fixed filter blurs the edge: {on:?}"
+    );
+    for (offset, (on, off)) in offsets.iter().zip(on.iter().zip(&off)) {
+        assert_eq!(on[2], off[2], "the frame counts differ");
+        assert!(
+            (on[0] - off[0]).abs() < 1e-5,
+            "{offset} m across the edge: {} with soft shadows, {} without",
+            on[0],
+            off[0]
+        );
+    }
+}
+
+// The penumbra is a property of the light and the geometry, the same in
+// every cascade. Plausible defects: the penumbra measured from the
+// cascade's near plane (Godot's ratio), so it changes with the cascade's
+// fit; metres converted to UV by another cascade's texel size. The oracle
+// is h · tan 5° = 0.35 m for the high edge under the 10° sun: the same
+// three zones at the same offsets with the camera placed so the receivers
+// lie in the first cascade, clear of the blend into the second, and then
+// in the second.
+#[test]
+fn a_directional_penumbra_is_the_same_in_every_cascade() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = soft_fixture(device, true, 4.);
+    let offsets = [0.6, 0.15, -0.15, -0.6];
+    let points = across_the_edge(&offsets, SOFT_DEPTH);
+    for (eye_z, cascade) in [(0., 0.), (6., 1.)] {
+        let input = sun_frame(Vec3::new(0., 0., eye_z), 10.);
+        let observed = camera_sun(&mut fixture, &input, &points);
+        let label = format!("receivers {} m ahead", SOFT_DEPTH + eye_z);
+        for [_, taken, _, far_bound] in &observed {
+            assert_eq!(
+                *taken, cascade,
+                "{label}: cascade {taken}, cascade 0 to {far_bound} m"
+            );
+            // The first view's receivers lie before the blend into cascade
+            // 1 (SHADOW_CASCADE_OVERLAP).
+            assert!(
+                cascade == 1. || SOFT_DEPTH < 0.8 * far_bound,
+                "{label}: cascade 1 blends in from {} m",
+                0.8 * far_bound
+            );
+        }
+        expect_zones(&observed, &[1., 0.5, 0.5, 0.], &label);
+    }
+}
+
+// A thin caster at contact keeps its contact shadow. Plausible defects: no
+// floor under the penumbra's radius, so a caster near its receiver gives a
+// filter narrower than the fixed kernel and a harder shadow than without
+// the setting; a search that misses the thin caster (eight sparse taps over
+// a region metres wide) and returns the light unshadowed, as Godot's does.
+// The oracle is the floor rule: at contact the penumbra lies within the
+// fixed kernel, so beneath a 2 cm strip just above the depth bias's reach
+// (5 cm up) under the 10° sun the taps are the fixed filter's, setting on
+// or off.
+#[test]
+fn a_thin_casters_contact_shadow_is_the_fixed_filters() {
+    let offsets = [0., 0.005, 0.01];
+    let observe = |soft| {
+        let device = test_support::device()?;
+        let mut fixture = Fixture::with_settings(device, SIZE, soft_settings(soft));
+        fixture.place(rectangle(Vec3::new(0., SOFT_FLOOR, -5.), 30., 30.), false);
+        fixture.place(
+            rectangle(Vec3::new(0., SOFT_FLOOR + 0.05, -5.), 0.01, 30.),
+            false,
+        );
+        let input = sun_frame(Vec3::ZERO, 10.);
+        Some(camera_sun(
+            &mut fixture,
+            &input,
+            &across_the_edge(&offsets, SOFT_DEPTH),
+        ))
+    };
+    let (Some(on), Some(off)) = (observe(true), observe(false)) else {
+        return;
+    };
+    assert!(off[0][0] < 0.9, "the strip shadows the floor: {off:?}");
+    for (offset, (on, off)) in offsets.iter().zip(on.iter().zip(&off)) {
+        assert_eq!(on[2], off[2], "the frame counts differ");
+        assert!(
+            (on[0] - off[0]).abs() < 1e-5,
+            "{offset} m from beneath the strip's centre: {} with soft shadows, {} without",
+            on[0],
+            off[0]
+        );
+    }
+}

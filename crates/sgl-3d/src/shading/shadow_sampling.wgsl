@@ -11,11 +11,38 @@
 // Apache-2.0 (src/LICENSE-bevy.txt).
 // Changes: the map and sampler are parameters, so another shadow kind's map
 // can share the filters; the filter is chosen by a parameter, from what
-// receives the shadow, instead of a shader definition; no PCSS, WebGL 2 or array-less paths; and every tap is
+// receives the shadow, instead of a shader definition; no WebGL 2 or
+// array-less paths; and every tap is
 // clamped to `bounds`, the map's rectangle in its texture (a light's faces in
 // the local-light atlas), as Wicked Engine 4323a33's
 // WickedEngine/shaders/shadowHF.hlsli sample_shadow clamps each sample to
 // shadow_border_clamp's rectangle, MIT (src/LICENSE-wicked.txt).
+//
+// The soft filter (SHADOW_FILTER_SOFT, contact-hardening) follows Bevy's
+// PCSS (shadow_sampling.wesl sample_shadow_map_pcss and
+// search_for_blockers_in_shadow_map): a blocker search, then the Jimenez
+// spiral at the penumbra's size, never below the fixed filter's and with no
+// early return; and Godot b130438's soft shadows
+// (servers/rendering/renderer_rd/shaders/scene_forward_lights_inc.glsl,
+// sample_directional_soft_shadow and the omni and spot soft shadows, MIT,
+// src/LICENSE-godot.txt): one turned kernel for the search and the filter,
+// of eight taps, Godot's `Soft Low` penumbra_shadow_samples
+// (renderer_scene_render_rd.cpp). Each shadow kind estimates its own
+// penumbra (directional_shadow.wgsl, local_shadow.wgsl). Changes: the
+// kernel is this file's spiral and interleaved-gradient rotation, not
+// Godot's Vogel disc and hash, so the file keeps one temporal kernel; the
+// search loads the nearest texels, as WebGPU filters a depth texture only by
+// comparison, where Godot samples linearly; and a search that finds no
+// blocker takes the fixed filter, as Bevy's does, not Godot's lit result:
+// eight sparse taps over a search region wider than a thin caster would
+// miss that caster and drop its contact shadow. Limit, shared with Godot
+// and Bevy: the search and the widened filter compare every tap at the
+// receiver's one biased depth, whose bias does not grow with the filter,
+// so a surface tilted toward a large light counts itself a blocker and
+// puts its uphill taps beneath itself: it darkens unoccluded, and beside a
+// real caster its penumbra narrows. The default sun and light radius are
+// far below where it shows; directional_shadow.wgsl and local_shadow.wgsl
+// give the sizes at which it starts.
 //
 // The fog's tap (sample_shadow_map_fog) ports Godot b130438's
 // servers/rendering/renderer_rd/shaders/environment/volumetric_fog_process.glsl
@@ -32,16 +59,29 @@ const SPIRAL_OFFSET_4_=vec2<f32>(0.3536,-0.3536);
 const SPIRAL_OFFSET_5_=vec2<f32>(-0.0000,0.3750);
 const SPIRAL_OFFSET_6_=vec2<f32>(-0.1768,-0.1768);
 const SPIRAL_OFFSET_7_=vec2<f32>(0.1250,0.0000);
+// The soft filter's taps, for its blocker search and again for its filter:
+// the spiral's eight offsets.
+const SOFT_SHADOW_TAPS:u32=8u;
+const SPIRAL_OFFSETS=array<vec2<f32>,SOFT_SHADOW_TAPS>(SPIRAL_OFFSET_0_,SPIRAL_OFFSET_1_,SPIRAL_OFFSET_2_,SPIRAL_OFFSET_3_,SPIRAL_OFFSET_4_,SPIRAL_OFFSET_5_,SPIRAL_OFFSET_6_,SPIRAL_OFFSET_7_);
+// Spiral offset `tap`, below SOFT_SHADOW_TAPS.
+fn spiral_offset(tap:u32)->vec2<f32> {
+ return SPIRAL_OFFSETS[min(tap,SOFT_SHADOW_TAPS-1u)];
+}
 
 // Bevy's ShadowFilteringMethod: Hardware2x2, Gaussian and Temporal.
 const SHADOW_FILTER_HARDWARE_2X2:u32=0u;
 const SHADOW_FILTER_GAUSSIAN:u32=1u;
 const SHADOW_FILTER_TEMPORAL:u32=2u;
+// The temporal filter widened to each light's penumbra (contact-hardening),
+// where Settings::soft_shadows is in effect. A light of no size takes the
+// temporal filter.
+const SHADOW_FILTER_SOFT:u32=3u;
 // What receives a shadow: a probe capture's or ray hit's surface, which
 // takes the static layers and the fixed kernel; the camera's surface, which
 // takes the frame's maps with the filter its shadow quality chooses (one
 // hardware tap, as Godot's hard filter; else the temporal kernel while
-// temporal antialiasing resolves it, or the fixed one); and a point of the
+// temporal antialiasing resolves it, widened to each light's penumbra
+// where Settings::soft_shadows is on, or the fixed one); and a point of the
 // camera's fog, which has no side and takes the frame's maps with one tap
 // that the fog's reprojection resolves: a local light's one hardware tap,
 // as Bevy's volumetric fog samples it, and the directional cascade's
@@ -71,6 +111,9 @@ fn shadow_filter(receiver:u32)->u32 {
  }
  if receiver==SHADOW_RECEIVER_CAMERA && (frame.flags&FRAME_HARDWARE_SHADOW_FILTER)!=0u {
   return SHADOW_FILTER_HARDWARE_2X2;
+ }
+ if receiver==SHADOW_RECEIVER_CAMERA && (frame.flags&FRAME_SOFT_SHADOW_FILTER)!=0u {
+  return SHADOW_FILTER_SOFT;
  }
  if receiver==SHADOW_RECEIVER_CAMERA && (frame.flags&FRAME_TEMPORAL_SHADOW_FILTER)!=0u {
   return SHADOW_FILTER_TEMPORAL;
@@ -156,9 +199,10 @@ fn calculate_uv_offset_scale_jimenez_fourteen(shadow_map:texture_depth_2d_array,
  return f*blur_size/(texel_size*shadow_map_size);
 }
 
-fn sample_shadow_map_jimenez_fourteen(shadow_map:texture_depth_2d_array,comparison:sampler_comparison,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,texel_size:f32,blur_size:f32,temporal:bool)->f32 {
+// The spiral, turned per pixel (and per frame where `temporal`), its unit
+// offsets `uv_offset_scale` long in UV.
+fn sample_shadow_map_jimenez_fourteen(shadow_map:texture_depth_2d_array,comparison:sampler_comparison,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,uv_offset_scale:vec2<f32>,temporal:bool)->f32 {
  let rotation_matrix=random_rotation_matrix(frag_coord_xy,temporal);
- let uv_offset_scale=calculate_uv_offset_scale_jimenez_fourteen(shadow_map,texel_size,blur_size);
 
  // https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare (slides 120-135)
  let sample_offset0=(rotation_matrix*SPIRAL_OFFSET_0_)*uv_offset_scale;
@@ -184,15 +228,60 @@ fn sample_shadow_map_jimenez_fourteen(shadow_map:texture_depth_2d_array,comparis
 
 // Bevy's sample_shadow_map for `shadow_filtering`: one hardware 2x2 tap; the fixed
 // Castano '13 kernel; or the Jimenez '14 spiral turned per pixel and per
-// frame for TAA or FSR to resolve.
+// frame for TAA or FSR to resolve, which the soft filter is without a
+// penumbra.
 fn sample_shadow_map(shadow_map:texture_depth_2d_array,comparison:sampler_comparison,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,texel_size:f32,shadow_filtering:u32)->f32 {
  if shadow_filtering==SHADOW_FILTER_HARDWARE_2X2 {
   return sample_shadow_map_hardware(shadow_map,comparison,light_local,depth,array_index,bounds);
  }
- if shadow_filtering==SHADOW_FILTER_TEMPORAL {
-  return sample_shadow_map_jimenez_fourteen(shadow_map,comparison,light_local,depth,array_index,bounds,frag_coord_xy,texel_size,1.0,true);
+ if shadow_filtering==SHADOW_FILTER_TEMPORAL || shadow_filtering==SHADOW_FILTER_SOFT {
+  return sample_shadow_map_jimenez_fourteen(shadow_map,comparison,light_local,depth,array_index,bounds,frag_coord_xy,calculate_uv_offset_scale_jimenez_fourteen(shadow_map,texel_size,1.0),true);
  }
  return sample_shadow_map_castano_thirteen(shadow_map,comparison,light_local,depth,array_index,bounds);
+}
+
+// The soft filter's rule (Bevy's floored blur size): the temporal spiral
+// at the larger of the fixed filter's radius and `penumbra`, the
+// penumbra's radius in UV. A penumbra of 0, for no blocker or a light of
+// no size, is the fixed temporal filter.
+fn sample_shadow_map_soft(shadow_map:texture_depth_2d_array,comparison:sampler_comparison,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,texel_size:f32,penumbra:vec2<f32>)->f32 {
+ let fixed=calculate_uv_offset_scale_jimenez_fourteen(shadow_map,texel_size,1.0);
+ return sample_shadow_map_jimenez_fourteen(shadow_map,comparison,light_local,depth,array_index,bounds,frag_coord_xy,soft_shadow_radius(fixed,penumbra),true);
+}
+// The soft filter's radius: the penumbra's, never below the fixed
+// filter's `fixed`.
+fn soft_shadow_radius(fixed:vec2<f32>,penumbra:vec2<f32>)->vec2<f32> {
+ return max(fixed,penumbra);
+}
+
+// The soft filter's blocker test at one tap: the depth of the texel nearest
+// `light_local`, clamped to `bounds`, as (depth, 1) where it blocks a
+// receiver at `depth` (reversed Z: nearer the light, greater), else 0.
+// WebGPU filters a depth texture only by comparison, so the texel is
+// loaded.
+fn shadow_blocker_texel(shadow_map:texture_depth_2d_array,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>)->vec2<f32> {
+ let size=vec2<i32>(textureDimensions(shadow_map));
+ let uv=clamp(light_local,bounds.xy,bounds.zw);
+ let texel=clamp(vec2<i32>(floor(uv*vec2<f32>(size))),vec2(0),size-1);
+ let blocker=textureLoad(shadow_map,texel,array_index,0);
+ return select(vec2(0.),vec2(blocker,1.),blocker>depth);
+}
+
+// The soft filter's blocker search on one 2D map: the spiral turned as the
+// filter turns it, its unit offsets `search` long in UV. The mean depth of
+// the texels that block a receiver at `depth`, and how many do.
+fn search_shadow_blockers(shadow_map:texture_depth_2d_array,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,search:vec2<f32>)->vec2<f32> {
+ let rotation=random_rotation_matrix(frag_coord_xy,true);
+ // The SOFT_SHADOW_TAPS offsets, unrolled as the spiral filter's are.
+ var sum=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_0_)*search,depth,array_index,bounds);
+ sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_1_)*search,depth,array_index,bounds);
+ sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_2_)*search,depth,array_index,bounds);
+ sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_3_)*search,depth,array_index,bounds);
+ sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_4_)*search,depth,array_index,bounds);
+ sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_5_)*search,depth,array_index,bounds);
+ sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_6_)*search,depth,array_index,bounds);
+ sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_7_)*search,depth,array_index,bounds);
+ return vec2(sum.x/max(sum.y,1.),sum.y);
 }
 
 // Godot's INV_FOG_FADE: how fast the light a point in the fog receives

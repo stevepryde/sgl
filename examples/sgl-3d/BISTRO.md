@@ -100,7 +100,8 @@ matched-sample estimator from the separate area-light comparison experiment.
 This is a geometry/material workload with reproducible chosen lighting, not
 an exact recreation of the original Falcor scene. There is no imported
 analytic-light setup, baked GI, camera path or reference-renderer parity claim.
-The default uses TAA, bloom, high shadow maps and environment reflections.
+The default uses TAA, bloom, high shadow maps with contact-hardening soft
+shadows, and environment reflections.
 Ambient occlusion, screen-space reflections, world-space reflections and
 hardware ray tracing are off. Dynamic GI's High setting does nothing without
 an authored volume. Judge captures visually; numerical metrics are not an

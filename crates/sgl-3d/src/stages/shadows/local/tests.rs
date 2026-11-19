@@ -156,7 +156,8 @@ override camera:bool=true;
 override transmits:bool=false;
 override other_side:bool=false;
 // Each query is a receiver and the light's index, then the receiver's
-// normal, or zero for one facing the light.
+// normal, or zero for one facing the light, and the pixel it is seen at,
+// x in the low 16 bits and y in the high.
 @group(1) @binding(0) var<storage,read> queries:array<vec4<f32>>;
 @group(1) @binding(1) var<storage,read_write> output:array<f32>;
 @compute @workgroup_size(32) fn observe(@builtin(global_invocation_id) id:vec3<u32>) {{
@@ -167,7 +168,9 @@ override other_side:bool=false;
   if all(normal==vec3(0.)) {{
    normal=normalize(lights[index].position-receiver);
   }}
-  let sample=scene_light_sample(index,receiver,normal,normal,normal,vec2(0.),select(SHADOW_RECEIVER_CAPTURE,SHADOW_RECEIVER_CAMERA,camera),transmits,receiver,0.,vec3(0.),vec3(0.));
+  let packed=bitcast<u32>(queries[2u*id.x+1u].w);
+  let pixel=vec2(f32(packed&0xffffu),f32(packed>>16u));
+  let sample=scene_light_sample(index,receiver,normal,normal,normal,pixel,select(SHADOW_RECEIVER_CAPTURE,SHADOW_RECEIVER_CAMERA,camera),transmits,receiver,0.,vec3(0.),vec3(0.));
   output[id.x]=select(sample.visibility,sample.transmitted_visibility,other_side);
  }}
 }}
@@ -273,11 +276,45 @@ override other_side:bool=false;
         seen: Seen,
         side: Side,
     ) -> Vec<f32> {
+        let receivers: Vec<_> = receivers.iter().map(|&(p, n)| (p, n, [0; 2])).collect();
+        self.pixel_visibility(light, &receivers, seen, side)
+    }
+
+    /// Light `light`'s visibility at each of `receivers` (positions facing
+    /// the light), as the camera sees it, averaged over a 16×16 block of
+    /// pixels, which turns the spiral through its rotations.
+    fn mean_visibility(&self, light: LightId, receivers: &[Vec3]) -> Vec<f32> {
+        const BLOCK: u32 = 16;
+        let queries: Vec<_> = receivers
+            .iter()
+            .flat_map(|&p| (0..BLOCK * BLOCK).map(move |i| (p, Vec3::ZERO, [i % BLOCK, i / BLOCK])))
+            .collect();
+        self.pixel_visibility(light, &queries, Seen::Camera, Side::Own)
+            .chunks((BLOCK * BLOCK) as usize)
+            .map(|block| block.iter().sum::<f32>() / block.len() as f32)
+            .collect()
+    }
+
+    /// Light `light`'s visibility at `receivers` (positions, normals, zero
+    /// for one facing the light, and the pixels they are seen at) after the
+    /// last frame, as `seen`, on their `side`.
+    fn pixel_visibility(
+        &self,
+        light: LightId,
+        receivers: &[(Vec3, Vec3, [u32; 2])],
+        seen: Seen,
+        side: Side,
+    ) -> Vec<f32> {
         use crate::content::identity::Identity;
         let index = f32::from_bits(light.index() as u32);
         let queries: Vec<_> = receivers
             .iter()
-            .flat_map(|(p, n)| [[p.x, p.y, p.z, index], [n.x, n.y, n.z, 0.]])
+            .flat_map(|(p, n, [x, y])| {
+                [
+                    [p.x, p.y, p.z, index],
+                    [n.x, n.y, n.z, f32::from_bits(x | y << 16)],
+                ]
+            })
             .collect();
         let device = &self.device;
         let input = buffer(
@@ -2034,5 +2071,191 @@ fn transmissive_lamp_shell_preserves_unrelated_wall_shadows() {
                 "shell passes light; wall still blocks",
             );
         }
+    }
+}
+
+/// A perspective camera at the origin looking along -Z, which every light
+/// here reaches, so TAA runs and the camera takes the temporal filter; each
+/// frame a cut, so every frame turns the spiral alike.
+fn soft_input() -> FrameInput {
+    let mut input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: crate::perspective(1., 1., 0.1),
+        eye: Vec3::ZERO,
+    });
+    input.camera_cut = true;
+    input
+}
+
+/// A harness whose frames run TAA, with soft shadows on where `soft`.
+fn soft_harness(soft: bool) -> Option<Harness> {
+    let mut harness = Harness::new()?;
+    harness.settings.antialiasing = Antialiasing::Taa;
+    harness.settings.soft_shadows = if soft {
+        crate::settings::SoftShadows::On
+    } else {
+        crate::settings::SoftShadows::Off
+    };
+    Some(harness)
+}
+
+/// A floor at y = 0 and a half-plane `height` metres above it over x < 0,
+/// whose edge lies along z through x = 0, both turned by `turn` about the
+/// point `pivot`.
+fn edge_world(height: f32, turn: glam::Quat, pivot: Vec3) -> Vec<asset::CpuMesh> {
+    [
+        plane(Vec3::ZERO, Vec3::X * 6., Vec3::Z * 6.),
+        plane(Vec3::new(-6., height, 0.), Vec3::X * 6., Vec3::Z * 6.),
+    ]
+    .into_iter()
+    .map(|mut mesh| {
+        for vertex in &mut mesh.vertices {
+            let position = Vec3::from_array(vertex.position);
+            vertex.position = (pivot + turn * (position - pivot)).to_array();
+            vertex.normal = (turn * Vec3::from_array(vertex.normal)).to_array();
+        }
+        mesh
+    })
+    .collect()
+}
+
+/// A spot light of `radius` metres 4 m above the floor at the origin,
+/// shining straight down.
+fn spot_above(radius: f32) -> Light {
+    Light {
+        shape: LightShape::Spot {
+            direction: Vec3::NEG_Y,
+            inner_angle: 0.,
+            outer_angle: 0.6,
+            radius,
+        },
+        ..point(Vec3::new(0., 4., 0.), 9.)
+    }
+}
+
+/// The mean visibility of a spot of `radius` at points `offsets` metres
+/// across the shadow of an edge `height` metres above the floor, in a frame
+/// with soft shadows on where `soft`.
+fn spot_profile(soft: bool, radius: f32, height: f32, offsets: &[f32]) -> Option<Vec<f32>> {
+    let mut harness = soft_harness(soft)?;
+    let (mut scene, _) = scene(
+        &harness,
+        edge_world(height, glam::Quat::IDENTITY, Vec3::ZERO),
+    );
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let light = scene
+        .add_light(&device, &queue, spot_above(radius))
+        .unwrap();
+    harness.frame(&mut scene, &soft_input());
+    let receivers: Vec<_> = offsets.iter().map(|&x| Vec3::new(x, 0., 0.)).collect();
+    Some(harness.mean_visibility(light, &receivers))
+}
+
+// A spot's penumbra follows its radius. Plausible defects: the penumbra
+// not scaled by the light's radius or by the blocker's distance from the
+// light (the receiver's taken instead, or a face depth taken as metres),
+// metres converted to atlas texels at the wrong distance; the soft filter
+// not taken. The oracle is similar triangles: a spot of radius 0.2 m 4 m
+// above the floor casts from an edge 3.5 m from it a penumbra of
+// half-width 0.2 · 0.5 / 3.5 = 0.029 m, and from an edge 1 m from it one of
+// 0.2 · 3 / 1 = 0.6 m. 0.1 m either side of the edge's projection from the
+// light's centre, within the search's reach of the light's radius, the
+// first leaves full light and full shadow, the second partial light on
+// both sides (strictly inside 0.05 to 0.95).
+#[test]
+fn a_spots_penumbra_follows_its_radius() {
+    for (height, lit, shadowed) in [
+        (0.5, (0.99, 1.), (0., 0.01)),
+        (3., (0.05, 0.95), (0.05, 0.95)),
+    ] {
+        let Some(observed) = spot_profile(true, 0.2, height, &[0.1, -0.1]) else {
+            return;
+        };
+        let label = format!("an edge {height} m above the floor: {observed:?}");
+        assert!(
+            (lit.0..=lit.1).contains(&observed[0]),
+            "{label}: 0.1 m on the lit side"
+        );
+        assert!(
+            (shadowed.0..=shadowed.1).contains(&observed[1]),
+            "{label}: 0.1 m on the shadowed side"
+        );
+    }
+}
+
+// A light of no size keeps the fixed filter. Plausible defects: the soft
+// filter's floor not restoring the fixed filter for a zero penumbra, which
+// a spot of radius 0 gives (its search, of no size, finds no blocker) and
+// ray-traced shadows give hard. It guards the floor, not the
+// `light_radius` gate, which only skips a search that cannot change the
+// result. The oracle is that contract: with the setting on, visibility
+// equals the setting off at the same pixels and frame count (each frame a
+// cut), across an edge 1 m from the light.
+#[test]
+fn a_spot_of_no_size_keeps_the_fixed_filter() {
+    let offsets = [-0.1, -0.005, 0., 0.005, 0.1];
+    let (Some(on), Some(off)) = (
+        spot_profile(true, 0., 3., &offsets),
+        spot_profile(false, 0., 3., &offsets),
+    ) else {
+        return;
+    };
+    assert!(
+        off[0] < 0.01 && off[4] > 0.99,
+        "the receivers cross the edge's shadow: {off:?}"
+    );
+    for (offset, (on, off)) in offsets.iter().zip(on.iter().zip(&off)) {
+        assert!(
+            (on - off).abs() < 1e-5,
+            "{offset} m across the edge: {on} with soft shadows, {off} without"
+        );
+    }
+}
+
+// A cube shadow does not depend on its faces. Plausible defects: a cube's
+// soft taps looked up in the receiver's face alone (past its edge they
+// clamp to it), at the receiver's depth in another face's measure, or with
+// another face's corner or bounds; blockers' distances mixed across faces'
+// axes. The oracle is equivalence by rotation: a point light of radius
+// 0.2 m 2 m above the floor, an edge 1 m below it (a penumbra 0.2 m wide
+// each side), observed across the edge's shadow where the receivers lie at
+// the centre of the light's downward face, and with the whole arrangement
+// turned 45° about the light so they straddle the edge between two faces:
+// the profiles agree within 0.15 (one tap of eight, and rounding).
+#[test]
+fn a_cube_shadow_does_not_depend_on_its_faces() {
+    let light_position = Vec3::new(0., 2., 0.);
+    let offsets = [-0.3, -0.15, -0.05, 0., 0.05, 0.15, 0.3];
+    let profile = |turn: glam::Quat| {
+        let mut harness = soft_harness(true)?;
+        let (mut scene, _) = scene(&harness, edge_world(1., turn, light_position));
+        let (device, queue) = (harness.device.clone(), harness.queue.clone());
+        let light = Light {
+            shape: LightShape::Point { radius: 0.2 },
+            ..point(light_position, 9.)
+        };
+        let light = scene.add_light(&device, &queue, light).unwrap();
+        harness.frame(&mut scene, &soft_input());
+        let receivers: Vec<_> = offsets
+            .iter()
+            .map(|&x| light_position + turn * (Vec3::new(x, 0., 0.) - light_position))
+            .collect();
+        Some(harness.mean_visibility(light, &receivers))
+    };
+    let (Some(centred), Some(straddling)) = (
+        profile(glam::Quat::IDENTITY),
+        profile(glam::Quat::from_rotation_z(45f32.to_radians())),
+    ) else {
+        return;
+    };
+    assert!(
+        centred[0] < 0.05 && centred[6] > 0.95 && (0.05..0.95).contains(&centred[3]),
+        "the receivers cross a wide penumbra: {centred:?}"
+    );
+    for (offset, (centred, straddling)) in offsets.iter().zip(centred.iter().zip(&straddling)) {
+        assert!(
+            (centred - straddling).abs() < 0.15,
+            "{offset} m across the edge: {centred} at a face's centre, {straddling} across a face's edge"
+        );
     }
 }

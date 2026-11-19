@@ -25,6 +25,9 @@ pub(crate) const FRAME_IRRADIANCE_VOLUME: u32 = 128;
 /// `Frame::flags`: the backdrop is the procedural sky (`FrameEnvironment::Sky`):
 /// the sky-view table and the lights' discs.
 pub(crate) const FRAME_BACKDROP_SKY: u32 = 256;
+/// `Frame::flags`: the camera's shadows take the soft filter, with the
+/// temporal filter's bit.
+pub(crate) const FRAME_SOFT_SHADOW_FILTER: u32 = 512;
 /// `Object::flags`: a static instance; a moving one has the bit clear.
 pub(crate) const OBJECT_STATIC: u32 = 1;
 /// `Object::flags`: the main camera draws it (`InstanceState::visible`).

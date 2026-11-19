@@ -146,7 +146,15 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   cm, so no bias is authored.
   While TAA or FSR runs the camera's surfaces filter with Jimenez's 8-tap
   spiral, turned per pixel and per frame for them to resolve; otherwise, and
-  in probe captures and ray hits, with Castaño's fixed 9-tap kernel. At the
+  in probe captures and ray hits, with Castaño's fixed 9-tap kernel. With
+  `Settings::soft_shadows` (on at the High preset) that spiral widens to the
+  penumbra the sun's disc casts: eight taps find the casters between a
+  surface and the sun, and the filter's radius is `angular_diameter`'s
+  half-angle tangent times the metres between them, never below the fixed
+  spiral's, so a shadow is sharp where its caster touches and softens with
+  height, the same in every cascade for the casters found. A sun of no
+  angular diameter keeps the
+  fixed spiral. At the
   Low shadow quality the camera's surfaces take one hardware 2×2 comparison
   instead, Godot's hard filter, with Godot's mobile map sizes. A probe
   capture fits its own cascades about its centre; it and world-space ray
@@ -866,7 +874,16 @@ FSR resolves it, whether or not a directional light casts; one hardware
 cube faces included: Bevy tunes its spot biases for these 2D filters and its
 point biases for its cube-map filter, which the atlas does not use. Each
 tap stays inside its face, as Wicked Engine clamps to its atlas
-rectangles. Probe
+rectangles. With `Settings::soft_shadows`, under TAA or FSR, a point or
+spot light's shadow widens with its `radius` as Godot's soft shadows do: the
+penumbra is the radius times (receiver − blocker) / blocker, from casters
+found within the radius at the receiver, as Godot, Bevy and Filament
+search, never narrower than the fixed spiral. A caster nearer the light
+than half way to the receiver casts a wider penumbra than that search
+reaches, so its lit side is cut off about the radius from the hard edge. A spot's taps lie on its face; a point light's lie across the
+direction to it, each in the cube face it falls in, so a shadow is the same
+across a face's edge. A rectangle's shadow, cast from its centre, keeps the
+fixed spiral. Probe
 captures and world-space ray hits, which show static content, sample the
 static layers: a capture places the lights it shades and draws their layers
 itself, and ray hits see the camera's lights, except one that moved this

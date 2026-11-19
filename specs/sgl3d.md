@@ -360,7 +360,8 @@ current capabilities and limits.
 - **Structure (23):** retained `Scene`, frame-owning `Renderer`, and the
   [layered stage architecture](sgl3d-architecture.md#shape).
 - **Lighting and shadows:** clustered point and spot lights (5), cascaded
-  directional shadows (15), cached local-light shadow atlas (14), and
+  directional shadows (15), cached local-light shadow atlas (14),
+  contact-hardening soft shadows from the maps by the lights' sizes (#824), and
   rectangular area lights (16). See [lights](../crates/sgl-3d/README.md#point-spot-and-rectangle-lights)
   and [shadows](../crates/sgl-3d/README.md#local-light-shadows).
 - **Image (6):** tone mapping, exposure, local exposure, colour grading, and bloom.

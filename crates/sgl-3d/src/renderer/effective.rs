@@ -331,9 +331,13 @@ pub(super) fn resolve(
     // DiligentFX's SSR shares TAA's post-effect context.
     let crystal = screen_space.is_some_and(|ssr| ssr.method == ReflectionMethod::Crystal);
     // The camera's shadow filter: Godot's hard tap at Low; at High, Bevy's
-    // spiral while temporal antialiasing resolves it, else its Gaussian.
+    // spiral while temporal antialiasing resolves it, widened to each
+    // light's penumbra with soft shadows, else its Gaussian.
     let shadow_filter = match settings.shadow_quality {
         ShadowQuality::Low => ShadowFilter::Hardware,
+        ShadowQuality::High if (taa || fsr) && settings.soft_shadows.enabled(low) => {
+            ShadowFilter::Soft
+        }
         ShadowQuality::High if taa || fsr => ShadowFilter::Temporal,
         ShadowQuality::High => ShadowFilter::Gaussian,
     };
@@ -744,6 +748,68 @@ mod sharpening_tests {
             };
             let resolved = resolve(&settings, &input, SceneContent::default(), device(None));
             assert_eq!(resolved.sharpness, Some(effective), "sharpness {sharpness}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod shadow_filter_tests {
+    use super::*;
+    use crate::settings::SoftShadows;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Plausible defects: soft shadows resolved on where the temporal filter
+    // does not run (SMAA, no antialiasing, the Low shadow quality), so eight
+    // turned taps go unresolved; the Preset value not following the preset,
+    // or an explicit value overridden by it; FSR left out of the temporal
+    // condition. The oracle is the settings guide's rule: the soft filter
+    // where the setting resolves on (Preset: on at High, off at Low) and
+    // the temporal filter runs (High shadows with TAA or FSR running).
+    #[wasm_bindgen_test(unsupported = test)]
+    fn soft_shadows_resolve_where_the_temporal_filter_runs() {
+        let input = FrameInput::new(crate::Camera {
+            view: glam::Mat4::IDENTITY,
+            projection: crate::perspective(1., 1., 0.1),
+            eye: glam::Vec3::ZERO,
+        });
+        use Antialiasing::{Fsr2, Smaa, Taa};
+        use ShadowFilter::{Gaussian, Hardware, Soft, Temporal};
+        use SoftShadows as S;
+        let (low, high) = (RenderPreset::Low, RenderPreset::High);
+        let (low_maps, high_maps) = (ShadowQuality::Low, ShadowQuality::High);
+        let rows = [
+            (high, S::Preset, Taa, high_maps, Soft),
+            (low, S::Preset, Taa, high_maps, Temporal),
+            (high, S::Off, Taa, high_maps, Temporal),
+            (low, S::On, Taa, high_maps, Soft),
+            (high, S::On, Fsr2, high_maps, Soft),
+            (high, S::On, Smaa, high_maps, Gaussian),
+            (high, S::On, Antialiasing::Off, high_maps, Gaussian),
+            (high, S::On, Taa, low_maps, Hardware),
+            // The Low preset's own antialiasing is SMAA.
+            (low, S::On, Antialiasing::Preset, high_maps, Gaussian),
+        ];
+        for (preset, soft_shadows, antialiasing, shadow_quality, expected) in rows {
+            let settings = Settings {
+                preset,
+                soft_shadows,
+                antialiasing,
+                shadow_quality,
+                ..Settings::default()
+            };
+            // FSR runs where it is chosen.
+            let device = Device {
+                fsr_running: antialiasing.fsr(),
+                fused_supported: true,
+                occlusion_supported: true,
+                ray_queries: None,
+                tier: BindingTier::Extended,
+            };
+            let effective = resolve(&settings, &input, SceneContent::default(), device);
+            assert_eq!(
+                effective.shadow_filter, expected,
+                "{preset:?}, {soft_shadows:?}, {antialiasing:?}, {shadow_quality:?} shadows"
+            );
         }
     }
 }

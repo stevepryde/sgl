@@ -20,6 +20,9 @@ pub(crate) enum ShadowFilter {
     /// Jimenez's spiral, turned each frame for temporal antialiasing to
     /// resolve.
     Temporal,
+    /// The temporal spiral widened to each light's penumbra
+    /// (`Settings::soft_shadows`).
+    Soft,
 }
 
 /// The size-affecting choices `View::resize` resolves: what the stages'

@@ -7,8 +7,29 @@
 // sample_directional_cascade, fetch_directional_shadow), MIT OR Apache-2.0
 // (src/LICENSE-bevy.txt). Changes: one light has cascades, the frame's; the
 // biases are Bevy's DirectionalLight defaults rather than per-light values;
-// no PCSS; and probe captures and ray hits, which have no camera depth,
-// take the first cascade that holds them (directional_shadow_at).
+// and probe captures and ray hits, which have no camera depth, take the
+// first cascade that holds them (directional_shadow_at).
+//
+// The camera's soft filter (sample_directional_soft) estimates the
+// penumbra as Filament ef1a133's directional PCSS does
+// (shaders/src/surface_shadowing.fs, physicalSearchRadius and
+// penumbraWidth, Apache-2.0, src/LICENSE-filament.txt): the light's disc
+// radius times the receiver's metres from the cascade's near plane to
+// search, and times the metres between receiver and blocker for the
+// penumbra. Godot b130438's sample_directional_soft_shadow takes the ratio
+// (receiver - blocker) / (1 - blocker), measured from the cascade's near
+// plane, so its penumbra changes with the cascade's fit and differs
+// between cascades; a ray within the disc gives the metres form, so the
+// maps match ray-traced shadows. Changes: no maxSearchRadius clamp.
+// Filament bounds its search by its moment maps' mip chain and a 1 m
+// default, which a search of loaded texels has no counterpart for. Each
+// cascade therefore searches from its own near plane, so in a blend band
+// the two cascades search different footprints and, among several
+// casters, can find different blockers: the penumbra is the same in every
+// cascade for a given set of blockers. Limit: the soft filter's taps are
+// compared at the receiver's one biased depth (shadow_sampling.wgsl), so
+// an unoccluded 45 degree slope reads 1 up to a sun of about 6 degrees,
+// then 0.97 at 7, 0.93 at 8 and 0.84 at 10 (1 with soft shadows off).
 //
 // The camera's fog takes Godot b130438's lookup instead
 // (directional_shadow_medium, from servers/rendering/renderer_rd/shaders/
@@ -84,10 +105,43 @@ fn directional_cascade_local(light_id:u32,cascade_index:u32,frag_position:vec3<f
  return world_to_directional_light_local(cascade_index,vec4(offset_position,1.));
 }
 
+// Godot's shadow_z_range: cascade `cascade_index`'s depth in metres, one
+// over its orthographic projection's depth per metre.
+fn directional_cascade_z_range(cascade_index:u32)->f32 {
+ let clip_from_world=frame.shadow_cascades[cascade_index].clip_from_world;
+ let depth_per_metre=vec3(clip_from_world[0].z,clip_from_world[1].z,clip_from_world[2].z);
+ return inverseSqrt(dot(depth_per_metre,depth_per_metre));
+}
+
+// The soft filter in cascade `cascade_index` for a light of `disc_radius`
+// (Filament's directional estimate): the blockers within the disc radius
+// times the receiver's metres from the near plane, and the penumbra the
+// disc radius times the metres between receiver and blocker.
+fn sample_directional_soft(cascade_index:u32,light_local:vec3<f32>,frag_coord_xy:vec2<f32>,disc_radius:f32)->f32 {
+ let cascade=frame.shadow_cascades[cascade_index];
+ let z_range=directional_cascade_z_range(cascade_index);
+ // The map's width and height in metres.
+ let map_metres=cascade.texel_size*vec2<f32>(textureDimensions(directional_shadow_map));
+ // Reversed Z: the near plane is at depth 1.
+ let receiver=(1.-light_local.z)*z_range;
+ let search=disc_radius*receiver/map_metres;
+ let blockers=search_shadow_blockers(directional_shadow_map,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,frag_coord_xy,search);
+ var penumbra=vec2(0.);
+ if blockers.y>0. {
+  let blocker=(1.-blockers.x)*z_range;
+  penumbra=disc_radius*(receiver-blocker)/map_metres;
+ }
+ return sample_shadow_map_soft(directional_shadow_map,shadow_sampler,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,frag_coord_xy,cascade.texel_size,penumbra);
+}
+
 fn sample_directional_cascade(light_id:u32,cascade_index:u32,frag_position:vec3<f32>,surface_normal:vec3<f32>,frag_coord_xy:vec2<f32>,shadow_filtering:u32)->f32 {
  let light_local=directional_cascade_local(light_id,cascade_index,frag_position,surface_normal);
  if light_local.w==0.0 {
   return 1.0;
+ }
+ let disc_radius=frame.directional_lights[light_id].disc_radius;
+ if shadow_filtering==SHADOW_FILTER_SOFT && disc_radius>0. {
+  return sample_directional_soft(cascade_index,light_local.xyz,frag_coord_xy,disc_radius);
  }
  let texel_size=frame.shadow_cascades[cascade_index].texel_size;
  return sample_shadow_map(directional_shadow_map,shadow_sampler,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,frag_coord_xy,texel_size,shadow_filtering);
@@ -143,12 +197,7 @@ fn directional_shadow_medium(position:vec3<f32>,view_z:f32)->f32 {
  if light_local.w==0.0 {
   return 1.0;
  }
- // Godot's shadow_z_range: the cascade's depth in metres, one over its
- // orthographic projection's depth per metre.
- let clip_from_world=frame.shadow_cascades[cascade_index].clip_from_world;
- let depth_per_metre=vec3(clip_from_world[0].z,clip_from_world[1].z,clip_from_world[2].z);
- let z_range=inverseSqrt(dot(depth_per_metre,depth_per_metre));
- return sample_shadow_map_fog(directional_shadow_map,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,z_range);
+ return sample_shadow_map_fog(directional_shadow_map,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,directional_cascade_z_range(cascade_index));
 }
 
 // Directional light `light_id`'s shadow at `receiver` (SHADOW_RECEIVER_*).

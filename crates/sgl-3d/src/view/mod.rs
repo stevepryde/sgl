@@ -41,8 +41,9 @@ use crate::scene::static_lighting::StaticLighting;
 use crate::shading::uniforms::{
     DIRECTIONAL_LIGHT_SHADOW, DirectionalLightUniform, FRAME_BACKDROP_COLOR, FRAME_BACKDROP_SKY,
     FRAME_BAKED_LIGHTING, FRAME_DYNAMIC_GI, FRAME_FOG, FRAME_HARDWARE_SHADOW_FILTER,
-    FRAME_IRRADIANCE_ATLAS, FRAME_IRRADIANCE_VOLUME, FRAME_TEMPORAL_SHADOW_FILTER, FrameUniform,
-    ShadowCascadeUniform, VIEW_PROBE_CAPTURE, ViewUniform,
+    FRAME_IRRADIANCE_ATLAS, FRAME_IRRADIANCE_VOLUME, FRAME_SOFT_SHADOW_FILTER,
+    FRAME_TEMPORAL_SHADOW_FILTER, FrameUniform, ShadowCascadeUniform, VIEW_PROBE_CAPTURE,
+    ViewUniform,
 };
 use bytemuck::Zeroable;
 use cascades::{Cascades, MAX_SHADOW_CASCADES};
@@ -359,8 +360,12 @@ pub(crate) fn frame_uniform(
                 FRAME_BACKDROP_SKY,
             )
             | flag(
-                shadow.filter == ShadowFilter::Temporal,
+                matches!(shadow.filter, ShadowFilter::Temporal | ShadowFilter::Soft),
                 FRAME_TEMPORAL_SHADOW_FILTER,
+            )
+            | flag(
+                shadow.filter == ShadowFilter::Soft,
+                FRAME_SOFT_SHADOW_FILTER,
             )
             | flag(
                 shadow.filter == ShadowFilter::Hardware,

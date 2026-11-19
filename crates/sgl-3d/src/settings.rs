@@ -310,6 +310,31 @@ impl ShadowQuality {
     }
 }
 
+/// Contact-hardening soft shadows: the camera's shadows from the maps stay
+/// sharp where a caster meets its receiver and widen with the distance
+/// between them, by `DirectionalLight::angular_diameter` and a point or spot
+/// light's `radius`, as ray-traced shadows do. In effect only where the
+/// camera takes the temporal shadow filter: `ShadowQuality::High` with TAA or
+/// FSR running; elsewhere the fixed filters stay. Probe captures, ray hits,
+/// the fog and rectangle lights keep their filters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SoftShadows {
+    /// On at `RenderPreset::High`, off at `RenderPreset::Low`.
+    #[default]
+    Preset,
+    Off,
+    On,
+}
+impl SoftShadows {
+    pub fn enabled(self, low: bool) -> bool {
+        match self {
+            Self::Preset => !low,
+            Self::Off => false,
+            Self::On => true,
+        }
+    }
+}
+
 /// How much of the ray-traced shadows (`Settings::ray_traced_shadows`)
 /// is denoised while they run; without them it has no effect. High filters
 /// the directional light's shadow and those of three of the local lights
@@ -430,6 +455,9 @@ pub struct Settings {
     pub tone_mapping: ToneMapping,
     /// The shadow maps' sizes and the camera's shadow filter.
     pub shadow_quality: ShadowQuality,
+    /// Contact-hardening soft shadows from the maps, where the temporal
+    /// shadow filter runs.
+    pub soft_shadows: SoftShadows,
     /// Diffuse sky and fill visibility, and the specular occlusion of
     /// environment and probe reflections (not screen-space hits).
     pub ambient_occlusion: AmbientOcclusionQuality,
@@ -525,6 +553,7 @@ impl Default for Settings {
             anisotropic_filtering: AnisotropicFiltering::default(),
             bloom: Bloom::default(),
             shadow_quality: ShadowQuality::default(),
+            soft_shadows: SoftShadows::default(),
             ambient_occlusion: AmbientOcclusionQuality::default(),
             screen_space_reflections: ScreenSpaceReflections::default(),
             reflection_method: ReflectionMethod::default(),

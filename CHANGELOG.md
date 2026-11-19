@@ -55,6 +55,7 @@ docs and specs the entry links.
   the keys dropped (unknown keys are ignored), as `Sharpening::Preset`:
   convert them on load as above. Timing group `sharpening` is new; `spatial upscale` times EASU alone,
   and an unsharpened EASU frame's final pass is timed under `tone map`.
+- `sgl-3d` `Settings::soft_shadows` (new, `Preset`: on at High, off at Low): camera shadows from the maps widen with distance from the caster by `DirectionalLight::angular_diameter` and a point or spot light's `radius`, under TAA or FSR at `ShadowQuality::High`. No game-code changes are needed; set `SoftShadows::Off` for the fixed filter.
 
 ## 0.8.1 — 2026-11-19
 
