@@ -99,7 +99,7 @@ pub(crate) struct FroxelVolumeUniform {
     ambient: f32,
     volume_count: u32,
     previous_length: f32,
-    padding: u32,
+    start: f32,
     volume_layout: crate::shading::fog::FogLayout,
     /// WGSL rounds `FroxelVolume` up to its 16-byte alignment.
     padding_layout: [u32; 3],
@@ -131,6 +131,7 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
             ambient,
             volume_count,
             previous_length,
+            start,
             volume_layout,
         ]
     )]
@@ -506,7 +507,7 @@ impl VolumetricFog {
             previous_length: held
                 .and_then(|(_, previous)| previous)
                 .unwrap_or(fog.length),
-            padding: 0,
+            start: fog.effective_start(),
             volume_layout: layout,
             padding_layout: [0; 3],
         };

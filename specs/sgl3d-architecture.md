@@ -1651,7 +1651,12 @@ last, after everything it may use, and refuses a directive in it.
   next frame reprojects unfiltered; a retry after submission without
   `finish_frame` rejects the overwritten filtered volume as history; and
   integrates each column along its
-  view ray. The
+  view ray. The frame's medium begins `Fog::start` metres from the eye:
+  injection takes its density as zero at a froxel nearer than that, so
+  nothing nearer is fogged or scatters light, while fog volumes, placed
+  content, are unaffected; a start is SGL3D's own on this port (Godot's
+  volumetric fog has none; its depth fog's `fog_depth_begin` and Unreal's
+  documented start distance are the practice followed). The
   integrated volume is the frame's one fog: group 0 lends it, with its
   layout in `Frame`, to the draws that fog themselves (blended surfaces,
   glow and mist) through `shading::fog`, additive glow taking its

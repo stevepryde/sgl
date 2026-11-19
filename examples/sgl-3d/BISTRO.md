@@ -537,7 +537,8 @@ share; a fixture without them renders as before:
   intensity; `environment_intensity` then sets only the diffuse fill. Missing,
   reflections take `environment_intensity`.
 - Camera `fog`: `density` (extinction per metre, required), `anisotropy`
-  (-0.9..0.9, default 0.2) and `length` (metres, default 64). Its presence
+  (-0.9..0.9, default 0.2), `length` (metres, default 64) and `start`
+  (metres from the camera at which the medium begins, default 0). Its presence
   turns the frame's atmosphere on; `settings.atmosphere` must be true too.
 - Top-level `spot_lights`: as `point_lights` without `radius`, plus
   `direction` and `inner_angle_degrees`/`outer_angle_degrees` (inner at most
@@ -577,7 +578,7 @@ changes only the composition:
   `fog_volumes` of 0.04 per metre sit more than 30 m from the cameras, at the
   far end of the street in the `street` and `bike` views and beyond the arch
   in the `bevy` view. Nothing nearer is fogged: a uniform density fogs the
-  foreground as much as the distance, and SGL3D's fog has no start distance.
+  foreground as much as the distance (the recipe predates `Fog::start`).
 - Diffuse transmission on the five leaf materials.
 
 `lighting_authoring` records each choice and the captures it was chosen

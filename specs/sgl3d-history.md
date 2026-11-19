@@ -3279,7 +3279,8 @@ The fog keeps its last froxel volume, unfiltered, in one of two alternating volu
 each froxel with where it was last frame by a fixed 0.9, after Godot. It has no neighbourhood clamp
 or change test, so moving lights and fog volumes trail rather than reject. A continuously running
 game drops it only by resets, resizes and frames without fog; a changing `Fog::length` keeps it
-(V-3). Under a procedural sky the integrated volume also holds aerial perspective (the fog over the
+(V-3), and a moved or changed `Fog::start` trails through the history as a changed density does,
+with no restart. Under a procedural sky the integrated volume also holds aerial perspective (the fog over the
 air, and the fog alone for the sky); the integration composes it afresh each frame from that
 frame's aerial volume, so its aerial slices are never reprojected and only the froxels keep history.
 
@@ -3301,7 +3302,10 @@ frame's aerial volume, so its aerial slices are never reprojected and only the f
 
 - **Rule.** A frame reprojects only when the other volume holds the frame whose history count is one
   less, at any length (V-3); otherwise its whole volume takes no history and no jitter.
-- **Raised by.** Fog off for a frame (`Settings::atmosphere`, `FrameInput::atmosphere`).
+- **Raised by.** Fog off for a frame: `Settings::atmosphere` or `FrameInput::atmosphere` off; no
+  medium with no fog volumes (a zero `Fog::density`, or a `Fog::start` at or beyond the volume's
+  reach, `length` of view depth along the frame's corner ray); a `Fog::length` that is not positive
+  and finite; or a camera without `perspective`'s projection (`renderer/effective.rs`, `fog`).
 - **Stays triggered while.** Nothing: one frame.
 - **Source.** SGL3D's own. Code: `src/stages/fog/volumes.rs` (`Holds::frame`).
 - **Guard.** `a_reset_without_fog_ends_the_froxels_history` (`src/stages/fog/volumes.rs`).

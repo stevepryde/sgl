@@ -64,6 +64,16 @@ pub struct Fog {
     /// The view depth in metres the froxel volume covers; anything farther
     /// takes the fog as far as it, the sky by `sky_affect`.
     pub length: f32,
+    /// How far from the camera the medium begins, metres along the view
+    /// ray: nearer, it is absent (no extinction, no scattered light), and
+    /// beyond, it builds as from the camera, so far-only fog leaves the
+    /// foreground untouched. Fog volumes are not affected. 0 (the default)
+    /// starts it at the camera; NaN, infinite and negative values are 0. The
+    /// volume covers `length` of view depth, which is `length` metres away
+    /// at the frame's centre and farther toward its edges: a start at
+    /// `length` leaves the medium only toward the edges, and one at or
+    /// beyond the corners' distance leaves it out of the volume.
+    pub start: f32,
     /// How much of its fog the sky takes, 0..=1 (Godot's
     /// `volumetric_fog_sky_affect`): 1 fogs it as if at `length`, 0 leaves
     /// it clear. Fog volumes in front of the sky are part of its fog.
@@ -72,7 +82,8 @@ pub struct Fog {
 
 impl Default for Fog {
     /// No medium, with Godot's defaults: albedo white, anisotropy 0.2, no
-    /// ambient light, uniform, a 64 m volume and the whole fog on the sky.
+    /// ambient light, uniform, a 64 m volume starting at the camera and the
+    /// whole fog on the sky.
     fn default() -> Self {
         Self {
             density: 0.,
@@ -82,7 +93,19 @@ impl Default for Fog {
             height: 0.,
             height_falloff: 0.,
             length: 64.,
+            start: 0.,
             sky_affect: 1.,
+        }
+    }
+}
+
+impl Fog {
+    /// `start` as the fog takes it: NaN, infinite and negative values are 0.
+    pub(crate) fn effective_start(&self) -> f32 {
+        if self.start.is_finite() && self.start > 0. {
+            self.start
+        } else {
+            0.
         }
     }
 }

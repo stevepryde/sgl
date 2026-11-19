@@ -1146,7 +1146,13 @@ Use the [current specs](README.md) for implementation and the
   dimmed by the air in front of it, and the air's in-scatter there is dimmed
   by the whole fog to that depth, a relative error of at most about
   1 - T_air(length), 0.2 to 0.4 % for a fog 100 to 200 m long at strength
-  1. `shading/fog.wgsl`'s
+  1. A `Fog::start` (#840) puts the fog wholly behind the near air, where
+  the error is at most about 1 - T_air(start), about 1 % at a 500 m start.
+  That is the same bound taken over the volume's reach instead of its
+  length, since a start that leaves any medium lies within that reach (at
+  most about 1.5 times `length`, at the frame's corners); it is reached when
+  the fog lies far, and is not a new error.
+  `shading/fog.wgsl`'s
   `FogLayout` (in `Frame`, `FroxelVolume` and `SourceCamera`) owns the layout
   and the one mapping from a depth to a slice; without aerial slices the
   volume and every frame are as before. With the fog off the integration

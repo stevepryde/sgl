@@ -1085,6 +1085,7 @@ pub fn frame_from_json(
             density: fields.number("density", None)?,
             anisotropy,
             length: fields.number("length", Some(defaults.length))?,
+            start: fields.number("start", Some(defaults.start))?,
             ..defaults
         };
     }
@@ -1151,7 +1152,7 @@ pub fn fog_report(frame: &FrameInput) -> Value {
     if !frame.atmosphere {
         return Value::Null;
     }
-    json!({"density":frame.fog.density,"anisotropy":frame.fog.anisotropy,"length":frame.fog.length})
+    json!({"density":frame.fog.density,"anisotropy":frame.fog.anisotropy,"length":frame.fog.length,"start":frame.fog.start})
 }
 
 /// Applied frame inputs for an authoring sidecar, kept distinct from fixture intent.

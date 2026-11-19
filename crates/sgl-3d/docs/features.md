@@ -476,7 +476,8 @@ Environment and probe specular always apply. On top of them:
   its scattered light), the sky by `Fog::sky_affect`
   (all of it by default, as Godot's). Under a procedural sky the volume also
   carries its aerial perspective, the fog over the air; the sky takes the
-  fog alone. `Fog::length` sets its reach,
+  fog alone. `Fog::start` sets where the frame's medium begins (nearer
+  is clear; fog volumes are unaffected), `Fog::length` its reach,
   `Settings::fog_quality` its resolution and `Settings::fog_filter` its
   blur; SGL3D spaces its slices and weights its history.
   [Volumetric fog](../README.md#volumetric-fog).

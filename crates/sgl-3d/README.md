@@ -403,6 +403,7 @@ frame.fog = Fog {
     height: 0.,
     height_falloff: 0.05,    // density halves every 20 m above `height`
     length: 400.,            // metres of view depth the volume covers
+    start: 100.,             // metres from the camera it begins (default 0)
     sky_affect: 0.5,         // half the fog on the sky (default 1)
 };
 // Denser medium in a box, such as a tunnel's haze, added to the frame's.
@@ -422,7 +423,8 @@ camera (Godot's default detail spread, 2). Each frame, after shadows and
 before opaque, the fog stage:
 
 - sums each froxel's medium: the frame's, whose density halves every
-  `1 / height_falloff` metres above `height`, and that of every fog volume
+  `1 / height_falloff` metres above `height` and which is absent nearer the
+  eye than `start` metres, and that of every fog volume
   (`Scene::update_fog_volumes`, Godot's box `FogVolume` with its fog
   material's density, albedo and edge fade) it lies in, of the first 1,024
   in the scene's order that reach the frame;
@@ -494,10 +496,33 @@ one, such as a tunnel's, into segments. A moving light's scattering trails
 it by the history it keeps. Froxels are coarse: detail in the fog blurs
 along the view, the more the farther.
 
+`Fog::start` leaves the foreground clear: nearer the eye than `start`
+metres, measured along each view ray, the frame's medium is absent (no
+extinction, no scattered light, no shafts), and beyond it a surface `d`
+metres away takes the medium's `d - start` metres, so the fog builds from
+nothing with no edge to see; fog volumes are unaffected. Like any edge in
+the medium, it takes effect up to one slice nearer the camera than set
+(about 1 m at 20 m of a 60 m High volume, 9 m at 200 m of a 400 m one),
+and `Settings::fog_filter`'s blur across each slice spreads that edge
+slightly sideways toward the frame's edges, within the same slice; a moving
+camera's start trails it by the history the fog keeps. NaN,
+infinite and negative starts are 0. The volume covers `length` of view
+depth, `length` metres away at the frame's centre and farther toward its
+corners, so a start at `length` still leaves the medium toward the edges and
+fades it out continuously as it grows; a start at or beyond the corners'
+distance leaves the frame's medium out, and with no fog volumes the fog does not run. Under
+aerial perspective the fog still lies over the air in the volume, so with a
+far start the air in front of the fog is dimmed by it too: about 1 % too
+much at a 500 m start under Earth's air.
+
 Where it differs from Godot's fog, and why:
 
 - The frame's medium takes a fog material's height falloff
   (`height_falloff`), so height fog needs no volume.
+- The frame's medium has a start distance (`start`), which Godot's
+  volumetric fog lacks (its depth fog's `fog_depth_begin` and Unreal's
+  documented start distance are the practice): a hard start in density, not
+  a smoothstep, since the integral along the ray is already continuous.
 - The detail spread and the share of history kept are SGL3D's, at Godot's
   defaults, where Godot's `Environment` exposes them (S3D-6), and
   reprojection is always on.

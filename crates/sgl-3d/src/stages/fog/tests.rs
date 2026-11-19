@@ -7,7 +7,8 @@
 //! light in the medium and nowhere else; fog volumes add their medium to
 //! every froxel they reach; the sky takes its sky affect of the fog; and a
 //! light's shadow opacity blends its shadow toward unshadowed on surfaces
-//! and in the medium alike.
+//! and in the medium alike; and the frame's medium begins `Fog::start` from
+//! the eye while fog volumes nearer still fog.
 use super::froxels;
 use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, FogQuality, Settings};
@@ -2134,4 +2135,254 @@ fn aerial_slices_past_the_fogs_length_hold_the_air_to_their_depth() {
             "channel {channel}: the square shows {through}, the closed form of {metres} m of air {expected}"
         );
     }
+}
+
+/// Unlit white squares facing the camera at the origin, each centred on the
+/// ray through pixel `column` of the frame `metres` from the eye, and the
+/// pixel's index: what each pixel shows of white through the fog.
+fn squares_at(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &mut Scene,
+    frame: &FrameInput,
+    placed: &[([u32; 2], f32)],
+) -> Vec<usize> {
+    placed
+        .iter()
+        .map(|&(column, metres)| {
+            let (ndc, _) = froxel_ray(frame, [SIZE[0], SIZE[1], 1], column, 0);
+            let ray = view_ray(frame, ndc).normalize();
+            test_support::add_static(
+                device,
+                queue,
+                scene,
+                unlit_square(ray * metres, 0.03 * metres, [1.; 4]),
+            );
+            (column[1] * SIZE[0] + column[0]) as usize
+        })
+        .collect()
+}
+
+// Defects: the start measured as view depth rather than distance from the
+// eye (a surface at the frame's edge then fogs from farther out than one at
+// its centre the same distance away), in other units, or applied as a ramp
+// (which fogs a surface just nearer than the start, or thins the fog just
+// beyond it). The oracle is the closed form: with no light in the medium an
+// unlit white square shows the transmittance, nearer than the start exactly
+// as with the medium absent, and exp(-density (d - start)) at distance d
+// beyond it, at the frame's centre, edge and corners alike, within the
+// integration's slice tolerance: each froxel's density covers the step that
+// ends at its slice's centre (Godot's integration) while its jittered
+// sample spans half a slice either side, so any edge in the medium, this
+// start's too, takes effect up to a slice nearer. The tolerance is the
+// density over one slice's length along the ray at the start (2.8 % at
+// most here), plus 0.002, the error with the start at 0.
+#[test]
+fn the_frames_medium_begins_its_start_distance_from_the_eye() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let fog = Fog {
+        density: 0.02,
+        length: 60.,
+        start: 20.,
+        ..Fog::default()
+    };
+    let frame = input(fog);
+    let mut scene = Scene::new(&device, &queue);
+    let row = SIZE[1] / 2;
+    // The centre and the left edge 40 m away, a square 25 m away high in
+    // the frame and one 50 m away low and right, and one nearer the eye
+    // than the start, 15 m away.
+    let beyond = [
+        ([SIZE[0] / 2, row], 40.),
+        ([8, row], 40.),
+        ([SIZE[0] / 2, 20], 25.),
+        ([150, 70], 50.),
+    ];
+    let near = ([120, row], 15.);
+    let placed: Vec<_> = beyond.iter().copied().chain([near]).collect();
+    let pixels = squares_at(&device, &queue, &mut scene, &frame, &placed);
+    let mut composite = |atmosphere: bool| {
+        let renderer = render(
+            &device,
+            &queue,
+            &mut scene,
+            &frame,
+            &settings(atmosphere),
+            1,
+        );
+        texels(&read(&device, &queue, &renderer.targets().composite))
+    };
+    let (fogged, clear) = (composite(true), composite(false));
+    let near_pixel = pixels[beyond.len()];
+    assert_eq!(
+        fogged[near_pixel], clear[near_pixel],
+        "the square nearer than the start is fogged"
+    );
+    let slices = froxels(QUALITY, SIZE, device.limits().max_texture_dimension_3d)[2] as f32;
+    for (&(column, metres), &pixel) in beyond.iter().zip(&pixels) {
+        let (ndc, _) = froxel_ray(&frame, [SIZE[0], SIZE[1], 1], column, 0);
+        let ray = view_ray(&frame, ndc).length();
+        // The slice holding the start along this ray, and its length along
+        // the ray (depth = length × unit^spread).
+        let spread = crate::shading::fog::DETAIL_SPREAD;
+        let unit = (fog.start / ray / fog.length).powf(1. / spread);
+        let slice = fog.length * spread * unit.powf(spread - 1.) / slices * ray;
+        let tolerance = fog.density * slice + 0.002;
+        let expected = -fog.density * (metres - fog.start);
+        let shown = fogged[pixel][0].ln();
+        assert!(
+            (shown - expected).abs() <= tolerance,
+            "pixel {column:?}, {metres} m away: optical depth {} against the closed form's {}, within {tolerance}",
+            -shown,
+            -expected
+        );
+    }
+}
+
+// Defect: the start applied to fog volumes, which are placed content. The
+// oracle is the volume's own fog as without a frame medium: a square 12 m
+// away behind a box of fog 6 to 10 m away shows, with a frame medium that
+// starts at 20 m, exactly what it shows with no frame medium at all.
+#[test]
+fn a_fog_volume_nearer_than_the_start_still_fogs() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    scene
+        .update_fog_volumes(
+            &device,
+            &queue,
+            &[crate::FogVolume {
+                center: Vec3::new(0., 0., -8.),
+                size: Vec3::new(20., 20., 4.),
+                density: 0.1,
+                edge_fade: 0.,
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+    let base = input(Fog {
+        length: 60.,
+        start: 20.,
+        ..Fog::default()
+    });
+    let pixel = squares_at(
+        &device,
+        &queue,
+        &mut scene,
+        &base,
+        &[([SIZE[0] / 2, SIZE[1] / 2], 12.)],
+    )[0];
+    let mut centre = |density: f32| {
+        let mut frame = base;
+        frame.fog.density = density;
+        let renderer = render(&device, &queue, &mut scene, &frame, &settings(true), 1);
+        texels(&read(&device, &queue, &renderer.targets().composite))[pixel]
+    };
+    let (with_medium, volume_alone) = (centre(0.02), centre(0.));
+    assert!(
+        volume_alone[0] < 0.9,
+        "the volume fogs nothing: {volume_alone:?}"
+    );
+    assert_eq!(
+        with_medium, volume_alone,
+        "the start reached the fog volume"
+    );
+}
+
+// Defect: a start out of range left as given: NaN, negative or infinite
+// starts making the medium vanish or the frame non-finite, or a start
+// beyond the volume's reach fogging anything. The oracle is Fog::start's
+// documented result over a grey sky, which shows the fog's transmittance:
+// NaN, negative and infinite starts render as a start of 0; a start at the
+// length still fogs the sky toward the frame's edges, where the volume's
+// 60 m of view depth lies up to about 90 m away, every texel finite; and a
+// start beyond that renders as no medium.
+#[test]
+fn out_of_range_starts_render_as_documented() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut base = input(Fog {
+        density: 0.02,
+        length: 60.,
+        ..Fog::default()
+    });
+    base.backdrop = Backdrop::Color([0.5; 3]);
+    squares_at(
+        &device,
+        &queue,
+        &mut scene,
+        &base,
+        &[([SIZE[0] / 2, SIZE[1] / 2], 30.), ([20, 20], 50.)],
+    );
+    let mut composite = |start: f32, atmosphere: bool| {
+        let mut frame = base;
+        frame.fog.start = start;
+        let renderer = render(
+            &device,
+            &queue,
+            &mut scene,
+            &frame,
+            &settings(atmosphere),
+            1,
+        );
+        texels(&read(&device, &queue, &renderer.targets().composite))
+    };
+    let (from_the_eye, clear) = (composite(0., true), composite(0., false));
+    assert_ne!(from_the_eye, clear, "the medium fogs nothing");
+    for start in [f32::NAN, -5., f32::INFINITY] {
+        assert_eq!(composite(start, true), from_the_eye, "start {start}");
+    }
+    let at_length = composite(60., true);
+    assert!(at_length.iter().flatten().all(|c| c.is_finite()));
+    assert_ne!(at_length, clear, "a start at the length fogs nothing");
+    for start in [100., 1000.] {
+        assert_eq!(composite(start, true), clear, "start {start}");
+    }
+}
+
+// Defect: the fog dropping the frame's medium at a reach nearer than the
+// volume's farthest froxel (the frame's edge rather than its corner, or a
+// lens offset taken with its sign), so a start the farthest froxels still
+// lie beyond leaves them clear. The oracle is the frame's geometry: through
+// a lens shifted down the bottom corners' rays are the longest, and a start
+// just inside their distance, 95 % of it, still fogs the sky there.
+#[test]
+fn a_start_just_inside_the_farthest_corner_still_fogs_it() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let mut frame = input(Fog {
+        density: 0.02,
+        length: 60.,
+        ..Fog::default()
+    });
+    frame.backdrop = Backdrop::Color([0.5; 3]);
+    frame.camera.projection.z_axis.y = -0.4;
+    let corner = view_ray(&frame, Vec2::new(-1., -1.)).length() * frame.fog.length;
+    frame.fog.start = 0.95 * corner;
+    let bottom_left = ((SIZE[1] - 1) * SIZE[0]) as usize;
+    let mut sky = |atmosphere: bool| {
+        let renderer = render(
+            &device,
+            &queue,
+            &mut scene,
+            &frame,
+            &settings(atmosphere),
+            1,
+        );
+        texels(&read(&device, &queue, &renderer.targets().composite))[bottom_left]
+    };
+    let (fogged, clear) = (sky(true), sky(false));
+    assert!(
+        fogged[0] < clear[0],
+        "a start of {} m, inside the corner's {corner} m, leaves its sky clear: {fogged:?}",
+        frame.fog.start
+    );
 }

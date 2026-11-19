@@ -23,6 +23,17 @@
 //   height grows without bound as the frame narrows.
 // - The frame's medium, Godot's environment fog, takes a FogMaterial's
 //   height falloff (uniform by default), so height fog needs no volume.
+// - The frame's medium begins Fog::start metres from the eye: injection
+//   takes its density as zero at a froxel whose (jittered) sample lies
+//   nearer, so nothing nearer is fogged or scatters light; fog volumes are
+//   unaffected. SGL3D's own: Godot's volumetric fog has no start. Its depth
+//   fog's fog_depth_begin (scene_forward_clustered.glsl 1103-1106) ramps a
+//   non-volumetric fog by smoothstep, and Unreal documents a start distance
+//   for its height fog; here the density starts hard, since the volume
+//   integrates density along the ray and what a pixel sees,
+//   1 - exp(-density (d - start)) for a uniform medium, already rises
+//   continuously from the start. A froxel straddling the start takes its
+//   share of the medium over the jitter cycle through the temporal blend.
 // - A fog volume is a box with a FogMaterial's density, albedo and edge
 //   fade; emission (the frame medium's too), height falloff, density
 //   textures, negative density and other shapes are not ported. The box's
@@ -146,6 +157,8 @@ struct FroxelVolume {
  // The view depth in metres the last frame's volume covered, which places
  // a reprojected point among its slices.
  previous_length:f32,
+ // How far from the eye the frame's medium begins, metres (Fog::start).
+ start:f32,
  // The integrated volume's slices (shading/fog.wgsl), last.
  @align(16) volume_layout:FogLayout,
 }
@@ -313,7 +326,9 @@ var<workgroup> fog_ambient_light:vec3<f32>;
  let position=froxel_world(unit);
  let view_ray=normalize(position-view.eye);
  let pixel=unit.xy*froxels.render_size;
- var density=froxels.density*clamp(exp2(-froxels.height_falloff*(position.y-froxels.height)),0.,1.);
+ // The frame's medium, absent nearer the eye than its start.
+ let medium=select(froxels.density,0.,distance(position,view.eye)<froxels.start);
+ var density=medium*clamp(exp2(-froxels.height_falloff*(position.y-froxels.height)),0.,1.);
  // The scattering: each medium's albedo weighted by its density, as Godot
  // weights its environment medium's.
  var albedo=froxels.albedo*density;

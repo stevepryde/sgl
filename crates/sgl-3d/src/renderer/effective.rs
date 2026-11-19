@@ -93,8 +93,19 @@ pub(super) fn atmosphere(settings: &Settings, input: &FrameInput) -> bool {
     settings.atmosphere && input.atmosphere && !settings.diagnostics_in_effect().disable.atmosphere
 }
 
+/// How far from the eye the froxel volume reaches: `length` of view depth
+/// along the frame's farthest corner ray, past which `Fog::start` leaves the
+/// frame's medium out of every froxel.
+fn fog_reach(length: f32, projection: glam::Mat4) -> f32 {
+    let [scale_x, scale_y, offset_x, offset_y] = crate::shading::fog::froxel_projection(projection);
+    let x = (1. + offset_x.abs()) / scale_x;
+    let y = (1. + offset_y.abs()) / scale_y;
+    length * (1. + x * x + y * y).sqrt()
+}
+
 /// The volumetric fog's quality while it runs: with the frame's atmosphere,
-/// a medium (a positive density, or the scene's `fog_volumes`), a volume of
+/// a medium (a positive density starting within the volume's reach, or the
+/// scene's `fog_volumes`), a volume of
 /// positive, finite length, and a `perspective` camera (`perspective`),
 /// whose clip w is view depth, which the froxels' slices and reprojection
 /// take. Without a medium there is nothing to fog, and the frame is as it
@@ -106,7 +117,8 @@ fn fog(
     perspective: bool,
 ) -> Option<FogQuality> {
     let fog = input.fog;
-    let medium = fog.density > 0. || fog_volumes;
+    let reach = fog_reach(fog.length, input.camera.projection);
+    let medium = (fog.density > 0. && fog.effective_start() < reach) || fog_volumes;
     let volume = fog.length.is_finite() && fog.length > 0.;
     (atmosphere(settings, input) && medium && volume && perspective).then_some(settings.fog_quality)
 }
