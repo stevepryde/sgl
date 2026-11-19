@@ -2893,8 +2893,10 @@ last, after everything it may use, and refuses a directive in it.
   within `render`: `View::geometry_stats` describes the most recent
   completed frame, with the blended list's CPU counts of that same frame,
   and reports none until a frame completes; `diagnostic_draws` reports the
-  commands encoded, synchronously; `geometry_stats_for_model` needs the
-  `diagnostics` feature, which reads back each candidate's visible sections.
+  commands encoded, synchronously. The `diagnostics` feature also reads back
+  each candidate's visible sections. `geometry_stats_by_model` borrows one
+  completed report for any number of model lookups after one poll.
+  `geometry_stats_for_model` uses the same report for a single model.
   Probe captures touch neither the cull stage nor the pyramid. Its caps
   (AR-12): the frustum's six planes, eight corners, `MAX_MESH_LODS` + 1
   levels of eight corners each, `MAX_MESH_SECTIONS` (65,536) sections a mesh,

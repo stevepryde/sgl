@@ -19,6 +19,22 @@ pub fn counters() -> Counters {
     crate::counters::snapshot()
 }
 
+/// Per-model geometry from one completed camera frame. The view owns the
+/// report, and the borrow keeps it fixed while the caller looks up models.
+#[cfg(feature = "diagnostics")]
+pub struct ModelGeometryStats<'view> {
+    pub(crate) by_model: &'view rustc_hash::FxHashMap<crate::ModelId, (usize, u64)>,
+}
+
+#[cfg(feature = "diagnostics")]
+impl ModelGeometryStats<'_> {
+    /// Submitted opaque and masked sections and blended draws, and their
+    /// triangles, for `model`. A model absent from this report has zero.
+    pub fn for_model(&self, model: crate::ModelId) -> (usize, u64) {
+        self.by_model.get(&model).copied().unwrap_or_default()
+    }
+}
+
 /// The draws the last frame's camera and directional-cascade views encoded
 /// (`View::diagnostic_draws`): one per instanced draw call of the
 /// CPU-built blended list, and one per set and phase of the GPU-built

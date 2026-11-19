@@ -3375,8 +3375,9 @@ bloom and tone mapping),
 `View::take_frame_probe_reports` (source-to-black comparisons run only
 when the actual observed textures have equal dimensions, including FSR
 fallbacks),
-`View::geometry_stats_for_model` (the camera's sections of one model's
-instances, read back with `geometry_stats`), `diagnostics::read_async` (natively
+`View::geometry_stats_by_model` and `View::geometry_stats_for_model` (the
+camera's submitted geometry by model, read back with `geometry_stats`),
+`diagnostics::read_async` (natively
 also the blocking `diagnostics::read`),
 `diagnostics::source_id`, the value the source-identity target holds for an
 instance's pixels, `diagnostics::crystal_roughness_threshold`, where
@@ -3470,7 +3471,11 @@ per instance. It is `None` until a frame's readback has arrived, a few
 frames after the first. It excludes shadow, probe and ray work. With the
 `diagnostics` feature, `View::geometry_stats_for_model(&device, &scene,
 model)` counts the same frame's sections of one model's instances and the
-blended draws that hold one, with their triangles.
+blended draws that hold one, with their triangles. For several models, call
+`View::geometry_stats_by_model(&device)` once and use `report.for_model(model)`
+for each model. The borrowed report holds one completed camera frame while
+those lookups run. `None` means no readback has completed. When a newer
+readback is pending, the previous completed report remains available.
 
 ## Soft additive effects
 

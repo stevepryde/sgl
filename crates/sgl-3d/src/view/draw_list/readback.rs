@@ -185,11 +185,9 @@ impl StatisticsReadback {
         self.latest.as_ref().map(|completed| completed.stats)
     }
 
-    /// The most recent completed frame's draws of `model`'s instances.
+    /// A borrow of the latest completed frame's counts by model.
     #[cfg(feature = "diagnostics")]
-    pub fn latest_for(&self, model: ModelId) -> Option<(usize, u64)> {
-        self.latest
-            .as_ref()
-            .map(|completed| completed.by_model.get(&model).copied().unwrap_or_default())
+    pub fn latest_by_model(&self) -> Option<&rustc_hash::FxHashMap<ModelId, (usize, u64)>> {
+        self.latest.as_ref().map(|completed| &completed.by_model)
     }
 }

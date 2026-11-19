@@ -15,6 +15,10 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `View::geometry_stats_by_model` polls once and borrows one
+  completed frame's per-model counts for multiple lookups. Existing
+  `geometry_stats_for_model` calls need no changes.
+
 - `sgl-3d` `View` now creates volumetric fog and occlusion-culling pipelines
   on first use and keeps them for later frames. No game-code changes are needed.
 

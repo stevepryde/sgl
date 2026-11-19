@@ -478,7 +478,8 @@ size, and record counts must fit `u32`.
 - **Geometry counts**: `View::geometry_stats`, the camera's draws and
   triangles in the most recent completed frame, read back without blocking
   (`None` until one completes), and, with diagnostics,
-  `geometry_stats_for_model`.
+  `View::geometry_stats_by_model` for several model lookups from one
+  completed frame or `View::geometry_stats_for_model` for a single model.
 - **CPU rays** against scene triangles: `geometry::triangles` and
   `obstructed_distance`.
 - **Diagnostics** feature: `Settings::diagnostics` turns layers off (culling

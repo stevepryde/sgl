@@ -61,6 +61,22 @@ impl View {
         }
     }
 
+    /// Polls once for the camera's latest completed per-model geometry
+    /// readback. Returns `None` until the first successful readback. If a
+    /// newer readback is pending, the previous completed report remains
+    /// available. All lookups on this snapshot use the same frame.
+    #[cfg(feature = "diagnostics")]
+    pub fn geometry_stats_by_model(
+        &mut self,
+        device: &wgpu::Device,
+    ) -> Option<crate::diagnostics::ModelGeometryStats<'_>> {
+        self.settle(false);
+        self.statistics.poll(device);
+        self.statistics
+            .latest_by_model()
+            .map(|by_model| crate::diagnostics::ModelGeometryStats { by_model })
+    }
+
     /// The camera's submitted geometry of `scene`'s instances of `model` in
     /// the most recent completed frame (`geometry_stats`): the sections its
     /// instances' candidates appended and their triangles, read back from
@@ -74,9 +90,9 @@ impl View {
         model: ModelId,
     ) -> Result<Option<(usize, u64)>, SceneError> {
         scene.models.get(model)?;
-        self.settle(false);
-        self.statistics.poll(device);
-        Ok(self.statistics.latest_for(model))
+        Ok(self
+            .geometry_stats_by_model(device)
+            .map(|report| report.for_model(model)))
     }
 
     /// The numerical frame probe's reports of finished frames read back
@@ -107,5 +123,72 @@ impl Renderer {
             .dynamic_gi
             .as_mut()
             .map_or_else(Vec::new, |dynamic_gi| dynamic_gi.take_reports(device))
+    }
+}
+
+#[cfg(all(test, feature = "diagnostics", not(target_arch = "wasm32")))]
+mod tests {
+    use crate::{
+        Camera, FrameInput, InstanceState, Mobility, Scene, TestRenderer,
+        glam::{Mat4, Vec3},
+        settings::{RenderPreset, Settings},
+        test_support,
+    };
+
+    #[test]
+    fn model_geometry_snapshot_follows_the_completed_camera_view() {
+        let Some((device, queue)) = test_support::device() else {
+            return;
+        };
+        let size = [16, 16];
+        let format = crate::shading::gbuffer::COLOR;
+        let settings = Settings {
+            preset: RenderPreset::Low,
+            ..Settings::default()
+        };
+        let output = crate::view::targets::target(&device, "geometry snapshot", size, format);
+        let mut scene = Scene::new(&device, &queue);
+        let mut renderer = TestRenderer::new(&device, &queue, format, size, 1., &settings).unwrap();
+        let positions = [-3., 3.].map(|x| Vec3::new(x, 0., 0.));
+        let models = positions.map(|position| {
+            let model = scene
+                .add_asset(&device, &queue, test_support::cube())
+                .unwrap()
+                .model;
+            let mut instance = InstanceState::new(model);
+            instance.pose = Mat4::from_translation(position);
+            scene
+                .add_instance(&device, &queue, instance, Mobility::Static)
+                .unwrap();
+            model
+        });
+        assert!(renderer.view.geometry_stats_by_model(&device).is_none());
+
+        for (visible, position) in positions.into_iter().enumerate() {
+            let eye = position + Vec3::Z * 3.;
+            let input = FrameInput::new(Camera {
+                eye,
+                view: crate::glam::camera::rh::view::look_at_mat4(eye, position, Vec3::Y),
+                projection: crate::perspective(0.8, 1., 0.1),
+            });
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                &device,
+                &queue,
+                &mut encoder,
+                &mut scene,
+                &input,
+                &settings,
+                &output,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+            renderer.view.geometry_stats_by_model(&device);
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            let report = renderer.view.geometry_stats_by_model(&device).unwrap();
+            assert_eq!(report.for_model(models[visible]).1, 12);
+            assert_eq!(report.for_model(models[1 - visible]), (0, 0));
+        }
     }
 }
