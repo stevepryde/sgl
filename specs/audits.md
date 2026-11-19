@@ -108,7 +108,7 @@ Design choices and open ends, recorded so a later pass does not rediscover them.
 - A world-reflection texel is judged by its block's first pixel while its ray is cast from the jittered one, as Wicked's is; measured within one rounding step at every phase ([#814](https://github.com/stevepryde/sgl/issues/814)).
 - A one-pixel slit showing a far surface, between bars wider than the upsample's search reaches, keeps its neighbours' ray-traced shadow (A-25).
 - The largest finite float is a literal in five shaders: a constant of the number format, not a formula SGL owns.
-- Open: FSR3 converges on sub-pixel strips more slowly than its sampling allows in its first jitter cycle at Quality and Balanced, possibly AMD's accumulation; its bar is parked on `scenario/issue-810` ([#810](https://github.com/stevepryde/sgl/issues/810)).
+- FSR's at-rest bars are judged at the first whole jitter cycle that meets them within a frame budget, not after one cycle: AMD's accumulation blends each frame at a fixed weight (`fAverageLanczosWeightPerFrame`) whatever the cycle's length, and FSR3's reactive, disocclusion and shading-change outputs read zero over the strips ([#810](https://github.com/stevepryde/sgl/issues/810)).
 
 ## 2026-11-17 — web target pass
 

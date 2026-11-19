@@ -11,9 +11,10 @@
 //! `<case>::<version>_<quality>`, so a change to one path reruns only its
 //! tests: `cargo test -p sgl-3d-tests --test scenario_fsr_upscaling
 //! at_rest::fsr3_balanced`. Every case but U6 and U7 checks case 12's bound
-//! over the frames it read (`Failures::bounded`). #810 parks FSR3's strip
-//! bar at the upscaling qualities in U1 and U8. Case U1 dumps its frames and
-//! metrics with `SGL_SCENARIO_DUMP`.
+//! over the frames it read (`Failures::bounded`). U1 and U8 judge FSR at
+//! rest at the first whole jitter cycle that meets their bars within a frame
+//! budget (`settle_at_rest`). Case U1 dumps its frames and metrics with
+//! `SGL_SCENARIO_DUMP`.
 //!
 //! The fixtures' truth assumes `rig::fixture_settings`: unlit cards, no
 //! bloom, fog, ambient occlusion, reflections or motion blur, a fixed
@@ -110,10 +111,131 @@ fn reach(rig: &Rig) -> f32 {
     2.5 * scale + 2.
 }
 
-/// The at-rest strip bars parked with #810: FSR3's at the upscaling
-/// qualities, where after a hold and one cycle it has not yet reached them.
-fn parked_strips(method: Antialiasing, quality: FsrQuality, edge: Edge) -> bool {
-    method == Antialiasing::Fsr3 && quality != FsrQuality::NativeAa && edge == Edge::Strips
+/// The frames FSR may render at rest after the hold to meet its at-rest
+/// bars (`settle_at_rest`), in whole jitter cycles. A bound on the test's
+/// cost, not an oracle: the defects the cases name (a mismatched render
+/// size, phase count or jitter scale, a history discarded at rest or after
+/// a turn) never reach the bar however long the case waits, and a
+/// converging resolve meets it long before. In frames, not cycles, because
+/// AMD's accumulation rate is per frame.
+const REST_BUDGET: u32 = 240;
+
+/// One edge's judgement at rest: its pixels, its RMSE against the reference
+/// and the single sample's, and its `bar`.
+struct Judged {
+    edge: Edge,
+    pixels: usize,
+    ours: f32,
+    theirs: f32,
+    bar: f32,
+}
+
+/// What `settle_at_rest` judged: the rest frame's reference and single
+/// sample, the resolve at the cycle end it stopped at, the frames it
+/// rendered at rest after the hold, and each edge.
+struct Rest {
+    truth: Image,
+    single: Image,
+    resolved: Image,
+    frames: u32,
+    edges: [Judged; 2],
+}
+
+/// Renders `scenario` from `from`, from which nothing moves, for the hold
+/// and then whole jitter cycles of `method`'s `phases`, and at each cycle's
+/// end judges the resolve over the strips and the outline at `from`: each
+/// edge's RMSE against the supersampled reference is at least its `bar`
+/// below the single sample's, enlarged where FSR upscales. It stops at the
+/// first cycle end where both edges meet their bars, and records a failure
+/// under `name`, with the last cycle's ratios, if no cycle end within the
+/// limit does.
+///
+/// TAA's limit is one cycle, case 3's settle: its blend schedule is SGL's
+/// own. FSR's is the whole cycles that fit in `REST_BUDGET`, at least one:
+/// how many frames FSR takes to approach its converged image is AMD's
+/// accumulation schedule, fixed per frame whatever the cycle's length, so
+/// one cycle cannot state it. FSR3 blends a frame into history at
+/// w / (fAccumulation + w), w the sum of its 3x3 Lanczos weights times
+/// `fAverageLanczosWeightPerFrame`, 0.74 / 16
+/// (`ffx_fsr3upscaler_accumulate.h:35`, `ffx_fsr3upscaler_upsample.h:629`,
+/// `ffx_fsr3upscaler_common.h:47-48`); `fAccumulation` reaches its ceiling
+/// of 1 three frames after a reset
+/// (`ffx_fsr3upscaler_prepare_reactivity.h:203-236`), and the reset frame
+/// seeds history with the rectification box's centre at weight 1
+/// (`ffx_fsr3upscaler_upsample.h:635-643`). So at rest a frame contributes
+/// about 5% at most, where the Lanczos sum peaks. FSR2 weights a frame by 1/12 (`ffx_fsr2_upsample.h:452`,
+/// `ffx_fsr2_common.h:51`), and its history weight, 1 - reactive, grows over
+/// about nine frames as the temporal reactive factor squares down from 1
+/// (`ffx_fsr2_accumulate.h:128`, `193-202`). The sources are `sp-fidelity`'s
+/// vendored SDK 1.1.4 (`sdk/include/FidelityFX/gpu/{fsr2,fsr3upscaler}/`).
+fn settle_at_rest(
+    scenario: &Scenario,
+    rig: &mut Rig,
+    oracles: &mut Oracles,
+    method: Antialiasing,
+    from: u32,
+    name: &str,
+    failures: &mut Failures,
+) -> Rest {
+    let truth = oracles.reference(scenario, from);
+    let single = oracles.single(scenario, from);
+    let regions = [
+        (Edge::Strips, scenario.strip_edges(from, 1)),
+        (Edge::Outline, scenario.outline_edges(from, &[0, 1])),
+    ];
+    let n = phases(method, rig);
+    let cycles = match method {
+        Antialiasing::Taa => 1,
+        _ => (REST_BUDGET / n).max(1),
+    };
+    for frame in from..from + HOLD {
+        scenario.render(rig, frame);
+    }
+    for cycle in 1..=cycles {
+        let start = from + HOLD + (cycle - 1) * n;
+        for frame in start..start + n {
+            scenario.render(rig, frame);
+        }
+        let resolved = rig.antialiased();
+        let edges = regions.each_ref().map(|(edge, region)| Judged {
+            edge: *edge,
+            pixels: region.len(),
+            ours: error(&resolved, &truth, region).rmse,
+            theirs: error(&single, &truth, region).rmse,
+            bar: bar(method, rig, *edge),
+        });
+        let met = edges.iter().all(|e| e.ours * e.bar <= e.theirs);
+        if !met && cycle < cycles {
+            continue;
+        }
+        let frames = cycle * n;
+        for e in &edges {
+            eprintln!(
+                "{name} ({n} phases, {} samples a pixel), {:?} ({} pixels), cycle {cycle} of at most {cycles} ({frames} frames after the hold): RMSE {}, the single sample's {}, {} times below against the bar {}",
+                samples(method, rig),
+                e.edge,
+                e.pixels,
+                e.ours,
+                e.theirs,
+                e.theirs / e.ours,
+                e.bar
+            );
+            failures.check(e.ours * e.bar <= e.theirs, || {
+                format!(
+                    "{name}, {:?}: RMSE {} is not {} times below the single sample's {} after {cycle} cycles ({frames} frames after the hold)",
+                    e.edge, e.ours, e.bar, e.theirs
+                )
+            });
+        }
+        return Rest {
+            truth,
+            single,
+            resolved,
+            frames,
+            edges,
+        };
+    }
+    unreachable!("at least one cycle")
 }
 
 /// A module named after a case holding one test per FSR version and
@@ -178,11 +300,10 @@ macro_rules! every_quality {
 /// it: one sample at a fraction p across a pixel an outline crosses at a
 /// uniform position errs by (p^3 + (1 - p)^3) / 3 of the contrast squared,
 /// least, 1/12, at the centre, and by more outside, so it is no better than
-/// the centre sample and the bar applies to it. After a hold and a whole
-/// cycle at rest (30 to 84 frames, the fewest in which every phase has
-/// contributed after the hold) the edges' RMSE against the supersampled
-/// frame is at least that bar below the enlarged sample's, on strips and
-/// outlines.
+/// the centre sample and the bar applies to it. At rest, at the first end
+/// of a whole cycle after the hold that meets them within `REST_BUDGET`
+/// (`settle_at_rest`), the edges' RMSE against the supersampled frame is at
+/// least that bar below the enlarged sample's, on strips and outlines.
 fn upscaled_at_rest(method: Antialiasing, quality: FsrQuality) {
     let Some(gpu) = device(method) else { return };
     let scenario = stage(&still);
@@ -190,45 +311,27 @@ fn upscaled_at_rest(method: Antialiasing, quality: FsrQuality) {
     let render = at_quality(&mut rig, &scenario, quality);
     let mut oracles = Oracles::new(&scenario, &gpu);
     oracles.set_render_size(render);
-    let truth = oracles.reference(&scenario, 0);
-    let single = oracles.single(&scenario, 0);
-    let n = phases(method, &rig);
-    for frame in 0..HOLD + n {
-        scenario.render(&mut rig, frame);
-    }
-    let resolved = rig.antialiased();
-    let mut dump = Dump::new(&format!("upscaled_at_rest_{method:?}_{quality:?}"));
-    dump.image("converged", &resolved);
-    dump.image("reference", &truth);
-    dump.image("enlarged", &single);
-    let regions = [
-        (Edge::Strips, scenario.strip_edges(0, 1)),
-        (Edge::Outline, scenario.outline_edges(0, &[0, 1])),
-    ];
+    let name = format!("{method:?} {quality:?} at rest ({render:?})");
     let mut failures = Failures::default();
-    for (edge, region) in &regions {
-        let ours = error(&resolved, &truth, region).rmse;
-        let theirs = error(&single, &truth, region).rmse;
-        let bar = bar(method, &rig, *edge);
-        dump.metric(format!("{edge:?}_rmse"), ours);
-        dump.metric(format!("{edge:?}_enlarged_rmse"), theirs);
-        eprintln!(
-            "{method:?} {quality:?} at rest ({render:?}, {n} phases, {} samples a pixel), {edge:?} ({} pixels): RMSE {ours}, the enlarged sample's {theirs}, {} times below against the bar {bar}",
-            samples(method, &rig),
-            region.len(),
-            theirs / ours
-        );
-        // #810 adds FSR3's strips back.
-        if parked_strips(method, quality, *edge) {
-            continue;
-        }
-        failures.check(ours * bar <= theirs, || {
-            format!(
-                "{method:?} {quality:?} at rest, {edge:?}: the converged RMSE {ours} is not {bar} times below the enlarged sample's {theirs}"
-            )
-        });
+    let rest = settle_at_rest(
+        &scenario,
+        &mut rig,
+        &mut oracles,
+        method,
+        0,
+        &name,
+        &mut failures,
+    );
+    let mut dump = Dump::new(&format!("upscaled_at_rest_{method:?}_{quality:?}"));
+    dump.image("converged", &rest.resolved);
+    dump.image("reference", &rest.truth);
+    dump.image("enlarged", &rest.single);
+    dump.metric("frames_at_rest_after_hold", rest.frames);
+    for e in &rest.edges {
+        dump.metric(format!("{:?}_rmse", e.edge), e.ours);
+        dump.metric(format!("{:?}_enlarged_rmse", e.edge), e.theirs);
     }
-    failures.bounded(&rig, format!("{method:?} {quality:?} at rest"));
+    failures.bounded(&rig, &name);
     failures.assert();
 }
 upscaling!(at_rest, upscaled_at_rest);
@@ -831,8 +934,11 @@ every_quality!(sharpening, sharpening);
 /// view's centre, for `MEASURED` frames after the settle, the RMSE over the
 /// edges against that frame's reference is never above the single
 /// sample's, enlarged where FSR upscales (reference, as case 5's); and once
-/// the turn stops, after a hold and a whole cycle at rest, the edges' RMSE
-/// is case 3's `bar` below it (reference, as case 3's and U1's).
+/// the turn stops, the edges' RMSE is case 3's `bar` below it (reference, as
+/// case 3's and U1's), for TAA after a hold and a whole cycle and for FSR at
+/// the first whole cycle after the hold that meets it within `REST_BUDGET`
+/// (`settle_at_rest`). The camera holds the turn's last pose, frame
+/// `turning`'s, from which the rest is judged.
 fn turning(method: Antialiasing, quality: FsrQuality) {
     let Some(gpu) = device(method) else { return };
     let pixel_angle = (2. * (VIEW.fov_y * 0.5).tan() / VIEW.size[1] as f32).atan();
@@ -845,11 +951,10 @@ fn turning(method: Antialiasing, quality: FsrQuality) {
     let mut oracles = Oracles::new(&scenario, &gpu);
     oracles.set_render_size(render);
     let name = format!("{method:?} {quality:?}");
-    let settled = turning + HOLD + phases(method, &rig);
     let mut moving = Moving::default();
-    for frame in 0..settled {
+    for frame in 0..turning {
         scenario.render(&mut rig, frame);
-        if (SETTLE..turning).contains(&frame) {
+        if frame >= SETTLE {
             let truth = oracles.reference(&scenario, frame);
             let single = oracles.single(&scenario, frame);
             let edges = scenario.edges(frame, &[0, 1]);
@@ -867,32 +972,15 @@ fn turning(method: Antialiasing, quality: FsrQuality) {
             moving.ratio.0, moving.ratio.1
         )
     });
-    let resolved = rig.antialiased();
-    let rest = oracles.reference(&scenario, turning);
-    let single = oracles.single(&scenario, turning);
-    for edge in [Edge::Strips, Edge::Outline] {
-        let region = match edge {
-            Edge::Strips => scenario.strip_edges(turning, 1),
-            Edge::Outline => scenario.outline_edges(turning, &[0, 1]),
-        };
-        let ours = error(&resolved, &rest, &region).rmse;
-        let theirs = error(&single, &rest, &region).rmse;
-        let bar = bar(method, &rig, edge);
-        eprintln!(
-            "{name} at rest after turning, {edge:?} ({} pixels): RMSE {ours}, the single sample's {theirs}, {} times below against the bar {bar}",
-            region.len(),
-            theirs / ours
-        );
-        // #810 adds FSR3's strips at the upscaling qualities back.
-        if parked_strips(method, quality, edge) {
-            continue;
-        }
-        failures.check(ours * bar <= theirs, || {
-            format!(
-                "{name} at rest after turning, {edge:?}: RMSE {ours} is not {bar} times below the single sample's {theirs}"
-            )
-        });
-    }
+    settle_at_rest(
+        &scenario,
+        &mut rig,
+        &mut oracles,
+        method,
+        turning,
+        &format!("{name} at rest after turning"),
+        &mut failures,
+    );
     failures.bounded(&rig, format!("{name} turning"));
     failures.assert();
 }
