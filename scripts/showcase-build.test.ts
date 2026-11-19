@@ -58,3 +58,45 @@ test('showcase downloads are bounded, recoverable, and cached only after complet
     await rm(root, { recursive: true, force: true });
   }
 }, 15_000);
+
+test('showcase deploys the live captures or the complete local refresh', async () => {
+  await mkdir('target', { recursive: true });
+  const root = await mkdtemp(resolve('target/showcase-refresh-test-'));
+  const path = 'renders/current/terrace/on.png';
+  const assembled = Bun.file(resolve(root, 'target/showcase/site', path));
+  const capturedMedia = resolve(root, 'captures');
+  let liveCapture = 'first published render';
+  let downloads = 0;
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch() {
+    downloads += 1;
+    return new Response(liveCapture);
+  } });
+  const options = { root, origin: server.url.origin };
+  try {
+    await Bun.write(resolve(root, 'showcase/credits/terrace.html'), '<title>Terrace credits</title>');
+    await Bun.write(resolve(root, 'showcase/catalog.json'), JSON.stringify({ scenes: [{
+      hero: `/${path}`, thumbnail: `/${path}`, features: [],
+    }] }));
+    for (const name of ['BISTRO-LICENSE.txt', 'SPONZA-LICENSE.txt']) {
+      await Bun.write(resolve(root, 'assets/showcase', name), `Retained ${name}`);
+    }
+    await Bun.write(resolve(root, '.cache/showcase', path), 'stale local capture');
+    await buildShowcase(options);
+    expect(await assembled.text()).toBe('first published render');
+
+    liveCapture = 'newly published render';
+    await buildShowcase(options);
+    expect(await assembled.text()).toBe('newly published render');
+
+    await Bun.write(resolve(capturedMedia, path), 'fresh local render');
+    await buildShowcase({ ...options, capturedMedia });
+    expect(await assembled.text()).toBe('fresh local render');
+
+    await rm(resolve(capturedMedia, path));
+    await expect(buildShowcase({ ...options, capturedMedia })).rejects.toThrow('ENOENT');
+    expect(downloads).toBe(2);
+  } finally {
+    server.stop(true);
+    await rm(root, { recursive: true, force: true });
+  }
+});

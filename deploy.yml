@@ -1,5 +1,9 @@
 name: SGL showcase
 
+vars:
+  bistro_assets: target/bistro-quality
+  sponza_assets: .cache/sponza/prepared
+
 operation:
   deploy:
     default: true
@@ -13,7 +17,25 @@ operation:
         artifact:
           path: target/showcase/site
       # The showcase uses Workers Static Assets, not Cloudflare Pages.
-      - type: local
+      - &publish
+        type: local
         description: Publish the showcase with Wrangler
         commands:
           - wrangler deploy --config showcase/wrangler.jsonc
+
+  refresh:
+    description: Capture all showcase scenes and publish to sgl.inspiredjourneys.dev
+    stage:
+      - type: local_artifact
+        description: Build the renderer, capture the scenes, and assemble the showcase
+        commands:
+          - program: bun
+            args:
+              - scripts/showcase-capture.ts
+              - --bistro-assets
+              - "{{bistro_assets}}"
+              - --sponza-assets
+              - "{{sponza_assets}}"
+        artifact:
+          path: target/showcase/site
+      - *publish

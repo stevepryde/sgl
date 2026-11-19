@@ -5,8 +5,8 @@
       "name": "Bistro",
       "subtitle": "Café terrace",
       "kind": "Exterior · Amazon Lumberyard",
-      "hero": "/renders/bistro-sunlit-4k.png",
-      "thumbnail": "/renders/bistro-thumb.webp",
+      "hero": "/renders/current/bistro/hero.png",
+      "thumbnail": "/renders/current/bistro/thumb.webp",
       "info": "3840 × 2160 · WebGPU",
       "description": "A sunlit café terrace with detailed stonework, foliage and warm practical lighting. Rendered with SGL3D.",
       "comparisonInfo": "1920 × 1080 · WebGPU · Captured A/B",
@@ -18,47 +18,48 @@
           "id": "ao",
           "name": "Ambient occlusion",
           "description": "Adds soft contact shadows where surfaces meet, grounding objects in the scene.",
-          "off": "/renders/bistro/2026-11-10/ao-off.png",
-          "on": "/renders/bistro/2026-11-10/on.png",
-          "offReport": "/renders/bistro/2026-11-10/ao-off.json",
-          "onReport": "/renders/bistro/2026-11-10/on.json"
+          "off": "/renders/current/bistro/ao-off.png",
+          "on": "/renders/current/bistro/on.png",
+          "offReport": "/renders/current/bistro/ao-off.json",
+          "onReport": "/renders/current/bistro/on.json"
         },
         {
           "id": "gi",
           "name": "Diffuse GI",
           "description": "Bounces diffuse light between surfaces, bringing light and colour into shaded areas.",
-          "off": "/renders/bistro/2026-11-10/gi-off.png",
-          "on": "/renders/bistro/2026-11-10/on.png",
-          "offReport": "/renders/bistro/2026-11-10/gi-off.json",
-          "onReport": "/renders/bistro/2026-11-10/on.json"
+          "off": "/renders/current/bistro/gi-off.png",
+          "on": "/renders/current/bistro/on.png",
+          "offReport": "/renders/current/bistro/gi-off.json",
+          "onReport": "/renders/current/bistro/on.json"
         },
         {
           "id": "bloom",
           "name": "Bloom",
           "description": "Spreads bright highlights into a soft glow around lights and reflective surfaces.",
-          "off": "/renders/bistro/2026-11-10/bloom-off.png",
-          "on": "/renders/bistro/2026-11-10/on.png",
-          "offReport": "/renders/bistro/2026-11-10/bloom-off.json",
-          "onReport": "/renders/bistro/2026-11-10/on.json"
+          "off": "/renders/current/bistro/bloom-off.png",
+          "on": "/renders/current/bistro/on.png",
+          "offReport": "/renders/current/bistro/bloom-off.json",
+          "onReport": "/renders/current/bistro/on.json"
         },
         {
           "id": "aa",
           "name": "Temporal anti-aliasing",
           "description": "Combines successive frames to smooth jagged edges and reduce shimmering in fine detail.",
-          "off": "/renders/bistro/2026-11-10/aa-off.png",
-          "on": "/renders/bistro/2026-11-10/on.png",
-          "offReport": "/renders/bistro/2026-11-10/aa-off.json",
-          "onReport": "/renders/bistro/2026-11-10/on.json"
+          "off": "/renders/current/bistro/aa-off.png",
+          "on": "/renders/current/bistro/on.png",
+          "offReport": "/renders/current/bistro/aa-off.json",
+          "onReport": "/renders/current/bistro/on.json"
         }
-      ]
+      ],
+      "report": "/renders/current/bistro/hero.json"
     },
     {
       "id": "bistro-motorcycle",
       "name": "Bistro · Motorcycle",
       "subtitle": "Street view",
       "kind": "Exterior · Amazon Lumberyard",
-      "hero": "/renders/bistro-motorcycle/2026-11-11/on.png",
-      "thumbnail": "/renders/bistro-motorcycle-thumb.webp",
+      "hero": "/renders/current/bistro-motorcycle/on.png",
+      "thumbnail": "/renders/current/bistro-motorcycle/thumb.webp",
       "info": "1920 × 1080 · WebGPU",
       "description": "A street-level view of the Bistro motorcycle, with painted metal, chrome, cobblestones and café lighting. Rendered with SGL3D.",
       "comparisonInfo": "1920 × 1080 · WebGPU · Captured A/B",
@@ -70,48 +71,48 @@
           "id": "ao",
           "name": "Ambient occlusion",
           "description": "Adds soft contact shadows where surfaces meet, grounding objects in the scene.",
-          "off": "/renders/bistro-motorcycle/2026-11-11/ao-off.png",
-          "on": "/renders/bistro-motorcycle/2026-11-11/on.png",
-          "offReport": "/renders/bistro-motorcycle/2026-11-11/ao-off.json",
-          "onReport": "/renders/bistro-motorcycle/2026-11-11/on.json"
+          "off": "/renders/current/bistro-motorcycle/ao-off.png",
+          "on": "/renders/current/bistro-motorcycle/on.png",
+          "offReport": "/renders/current/bistro-motorcycle/ao-off.json",
+          "onReport": "/renders/current/bistro-motorcycle/on.json"
         },
         {
           "id": "gi",
           "name": "Diffuse GI",
           "description": "Bounces diffuse light between surfaces, bringing light and colour into shaded areas.",
-          "off": "/renders/bistro-motorcycle/2026-11-11/gi-off.png",
-          "on": "/renders/bistro-motorcycle/2026-11-11/on.png",
-          "offReport": "/renders/bistro-motorcycle/2026-11-11/gi-off.json",
-          "onReport": "/renders/bistro-motorcycle/2026-11-11/on.json"
+          "off": "/renders/current/bistro-motorcycle/gi-off.png",
+          "on": "/renders/current/bistro-motorcycle/on.png",
+          "offReport": "/renders/current/bistro-motorcycle/gi-off.json",
+          "onReport": "/renders/current/bistro-motorcycle/on.json"
         },
         {
           "id": "bloom",
           "name": "Bloom",
           "description": "Spreads bright highlights into a soft glow around lights and reflective surfaces.",
-          "off": "/renders/bistro-motorcycle/2026-11-11/bloom-off.png",
-          "on": "/renders/bistro-motorcycle/2026-11-11/on.png",
-          "offReport": "/renders/bistro-motorcycle/2026-11-11/bloom-off.json",
-          "onReport": "/renders/bistro-motorcycle/2026-11-11/on.json"
+          "off": "/renders/current/bistro-motorcycle/bloom-off.png",
+          "on": "/renders/current/bistro-motorcycle/on.png",
+          "offReport": "/renders/current/bistro-motorcycle/bloom-off.json",
+          "onReport": "/renders/current/bistro-motorcycle/on.json"
         },
         {
           "id": "aa",
           "name": "Temporal anti-aliasing",
           "description": "Combines successive frames to smooth jagged edges and reduce shimmering in fine detail.",
-          "off": "/renders/bistro-motorcycle/2026-11-11/aa-off.png",
-          "on": "/renders/bistro-motorcycle/2026-11-11/on.png",
-          "offReport": "/renders/bistro-motorcycle/2026-11-11/aa-off.json",
-          "onReport": "/renders/bistro-motorcycle/2026-11-11/on.json"
+          "off": "/renders/current/bistro-motorcycle/aa-off.png",
+          "on": "/renders/current/bistro-motorcycle/on.png",
+          "offReport": "/renders/current/bistro-motorcycle/aa-off.json",
+          "onReport": "/renders/current/bistro-motorcycle/on.json"
         }
       ],
-      "report": "/renders/bistro-motorcycle/2026-11-11/on.json"
+      "report": "/renders/current/bistro-motorcycle/on.json"
     },
     {
       "id": "sponza",
       "name": "Sponza",
       "subtitle": "Curtained atrium",
       "kind": "Interior · Intel Sample Library",
-      "hero": "/renders/sponza.png",
-      "thumbnail": "/renders/sponza-thumb.webp",
+      "hero": "/renders/current/sponza/on.png",
+      "thumbnail": "/renders/current/sponza/thumb.webp",
       "info": "1920 × 1080 · WebGPU",
       "description": "The Sponza atrium, where daylight filters through red curtains into covered stone galleries. Rendered with SGL3D.",
       "comparisonInfo": "1920 × 1080 · WebGPU · Captured A/B",
@@ -123,39 +124,77 @@
           "id": "ao",
           "name": "Ambient occlusion",
           "description": "Adds soft contact shadows where surfaces meet, grounding objects in the scene.",
-          "off": "/renders/sponza/2026-11-10/ao-off.png",
-          "on": "/renders/sponza/2026-11-10/on.png",
-          "offReport": "/renders/sponza/2026-11-10/ao-off.json",
-          "onReport": "/renders/sponza/2026-11-10/on.json"
+          "off": "/renders/current/sponza/ao-off.png",
+          "on": "/renders/current/sponza/on.png",
+          "offReport": "/renders/current/sponza/ao-off.json",
+          "onReport": "/renders/current/sponza/on.json"
         },
         {
           "id": "gi",
           "name": "Diffuse GI",
           "description": "Bounces diffuse light between surfaces, bringing light and colour into shaded areas.",
-          "off": "/renders/sponza/2026-11-10/gi-off.png",
-          "on": "/renders/sponza/2026-11-10/on.png",
-          "offReport": "/renders/sponza/2026-11-10/gi-off.json",
-          "onReport": "/renders/sponza/2026-11-10/on.json"
+          "off": "/renders/current/sponza/gi-off.png",
+          "on": "/renders/current/sponza/on.png",
+          "offReport": "/renders/current/sponza/gi-off.json",
+          "onReport": "/renders/current/sponza/on.json"
         },
         {
           "id": "bloom",
           "name": "Bloom",
           "description": "Spreads bright highlights into a soft glow around lights and reflective surfaces.",
-          "off": "/renders/sponza/2026-11-10/bloom-off.png",
-          "on": "/renders/sponza/2026-11-10/on.png",
-          "offReport": "/renders/sponza/2026-11-10/bloom-off.json",
-          "onReport": "/renders/sponza/2026-11-10/on.json"
+          "off": "/renders/current/sponza/bloom-off.png",
+          "on": "/renders/current/sponza/on.png",
+          "offReport": "/renders/current/sponza/bloom-off.json",
+          "onReport": "/renders/current/sponza/on.json"
         },
         {
           "id": "aa",
           "name": "Temporal anti-aliasing",
           "description": "Combines successive frames to smooth jagged edges and reduce shimmering in fine detail.",
-          "off": "/renders/sponza/2026-11-10/aa-off.png",
-          "on": "/renders/sponza/2026-11-10/on.png",
-          "offReport": "/renders/sponza/2026-11-10/aa-off.json",
-          "onReport": "/renders/sponza/2026-11-10/on.json"
+          "off": "/renders/current/sponza/aa-off.png",
+          "on": "/renders/current/sponza/on.png",
+          "offReport": "/renders/current/sponza/aa-off.json",
+          "onReport": "/renders/current/sponza/on.json"
         }
-      ]
+      ],
+      "report": "/renders/current/sponza/on.json"
     }
+  ],
+  "retainedRenders": [
+    "/renders/bistro-motorcycle-thumb.webp",
+    "/renders/bistro-motorcycle/2026-11-11/aa-off.json",
+    "/renders/bistro-motorcycle/2026-11-11/aa-off.png",
+    "/renders/bistro-motorcycle/2026-11-11/ao-off.json",
+    "/renders/bistro-motorcycle/2026-11-11/ao-off.png",
+    "/renders/bistro-motorcycle/2026-11-11/bloom-off.json",
+    "/renders/bistro-motorcycle/2026-11-11/bloom-off.png",
+    "/renders/bistro-motorcycle/2026-11-11/gi-off.json",
+    "/renders/bistro-motorcycle/2026-11-11/gi-off.png",
+    "/renders/bistro-motorcycle/2026-11-11/on.json",
+    "/renders/bistro-motorcycle/2026-11-11/on.png",
+    "/renders/bistro-sunlit-4k.png",
+    "/renders/bistro-thumb.webp",
+    "/renders/bistro/2026-11-10/aa-off.json",
+    "/renders/bistro/2026-11-10/aa-off.png",
+    "/renders/bistro/2026-11-10/ao-off.json",
+    "/renders/bistro/2026-11-10/ao-off.png",
+    "/renders/bistro/2026-11-10/bloom-off.json",
+    "/renders/bistro/2026-11-10/bloom-off.png",
+    "/renders/bistro/2026-11-10/gi-off.json",
+    "/renders/bistro/2026-11-10/gi-off.png",
+    "/renders/bistro/2026-11-10/on.json",
+    "/renders/bistro/2026-11-10/on.png",
+    "/renders/sponza-thumb.webp",
+    "/renders/sponza.png",
+    "/renders/sponza/2026-11-10/aa-off.json",
+    "/renders/sponza/2026-11-10/aa-off.png",
+    "/renders/sponza/2026-11-10/ao-off.json",
+    "/renders/sponza/2026-11-10/ao-off.png",
+    "/renders/sponza/2026-11-10/bloom-off.json",
+    "/renders/sponza/2026-11-10/bloom-off.png",
+    "/renders/sponza/2026-11-10/gi-off.json",
+    "/renders/sponza/2026-11-10/gi-off.png",
+    "/renders/sponza/2026-11-10/on.json",
+    "/renders/sponza/2026-11-10/on.png"
   ]
 }

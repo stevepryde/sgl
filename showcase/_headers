@@ -5,3 +5,7 @@
 
 /renders/*
   Cache-Control: public, max-age=86400
+
+/renders/current/*
+  ! Cache-Control
+  Cache-Control: public, max-age=0, must-revalidate

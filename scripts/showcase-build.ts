@@ -5,6 +5,12 @@ export async function buildShowcase({
   root = resolve(import.meta.dir, '..'),
   origin = 'https://sgl.inspiredjourneys.dev',
   downloadTimeoutSeconds = 120,
+  capturedMedia,
+}: {
+  root?: string;
+  origin?: string;
+  downloadTimeoutSeconds?: number;
+  capturedMedia?: string;
 } = {}) {
   const output = resolve(root, 'target/showcase/site');
   const media = resolve(root, '.cache/showcase');
@@ -18,7 +24,7 @@ export async function buildShowcase({
   }
   // Copy only catalogued media. Original scene payloads and local diagnostic
   // artifacts are never swept into the public site.
-  const paths = new Set<string>();
+  const paths = new Set<string>(catalog.retainedRenders);
   for (const scene of catalog.scenes) {
     paths.add(scene.hero); paths.add(scene.thumbnail);
     if (scene.report) paths.add(scene.report);
@@ -28,10 +34,19 @@ export async function buildShowcase({
   }
   let completed = 0;
   for (const path of paths) {
-    const cached = resolve(media, path.slice(1));
     const destination = resolve(output, path.slice(1));
     const progress = `[${++completed}/${paths.size}]`;
-    if (await Bun.file(cached).exists()) console.log(`${progress} Using cached ${path}`);
+    await mkdir(dirname(destination), { recursive: true });
+    const current = path.startsWith('/renders/current/');
+    if (current && capturedMedia) {
+      console.log(`${progress} Using fresh capture ${path}`);
+      await copyFile(resolve(capturedMedia, path.slice(1)), destination);
+      continue;
+    }
+    // A site-only deployment always takes mutable captures from production.
+    // Only historical, versioned URLs can be reused from the local cache.
+    const cached = current ? destination : resolve(media, path.slice(1));
+    if (!current && await Bun.file(cached).exists()) console.log(`${progress} Using cached ${path}`);
     else {
       console.log(`${progress} Downloading ${path} (timeout ${downloadTimeoutSeconds}s)`);
       await mkdir(dirname(cached), { recursive: true });
@@ -43,7 +58,12 @@ export async function buildShowcase({
           '--connect-timeout', '15', '--max-time', String(downloadTimeoutSeconds),
           '--output', partial, `${origin}${path}`], { stdout: 'ignore', stderr: 'pipe' });
         const [status, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
-        if (status !== 0) throw new Error(`Could not download ${path}: ${error.trim()}\nRerun to reuse completed downloads. If this capture is unpublished, place it at ${cached}.`);
+        if (status !== 0) {
+          const recovery = current
+            ? 'Retry the site build, or run a showcase refresh to publish the current captures.'
+            : `Rerun to reuse completed downloads. If this capture is unpublished, place it at ${cached}.`;
+          throw new Error(`Could not download ${path}: ${error.trim()}\n${recovery}`);
+        }
         // Only complete transfers become reusable captures. Failures and timeouts
         // must never leave a truncated image under its final cache filename.
         await rename(partial, cached);
@@ -52,8 +72,7 @@ export async function buildShowcase({
         await rm(partial, { force: true });
       }
     }
-    await mkdir(dirname(destination), { recursive: true });
-    await copyFile(cached, destination);
+    if (!current) await copyFile(cached, destination);
   }
   for (const name of ['BISTRO-LICENSE.txt', 'SPONZA-LICENSE.txt']) {
     await copyFile(resolve(root, 'assets/showcase', name), resolve(output, 'credits', name));
