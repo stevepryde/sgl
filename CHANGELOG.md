@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `View` now creates volumetric fog and occlusion-culling pipelines
+  on first use and keeps them for later frames. No game-code changes are needed.
+
 - `sgl-3d` `Light` gains `cookie: Option<LightCookie>` (default `None`): a
   spot projects a decal image (`LightCookie { image, up }`) that multiplies
   its light by the image's colour times alpha on surfaces, ray hits and the

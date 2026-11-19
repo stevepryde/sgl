@@ -77,7 +77,9 @@ The preset, scene resolution, antialiasing changes to, from or between FSR2/FSR3
 quality size the targets, so they apply at the next `View::resize`, which
 the game calls every frame. The rest apply on the next rendered frame; that
 frame rebuilds SMAA's pipelines after an SMAA quality change, and every
-material's sampler after an anisotropic filtering change.
+material's sampler after an anisotropic filtering change. The first frame
+that uses volumetric fog or occlusion culling builds that effect's pipelines.
+The view reuses them when the effect is enabled again.
 `View::antialiasing_in_effect(&settings)` reports what actually runs and
 `fsr_error()` why FSR did not; show the effective choice without rewriting
 the saved value.

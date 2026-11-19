@@ -283,7 +283,6 @@ impl TestRenderer {
         if let Some(dynamic_gi) = self.renderer.shared.dynamic_gi.as_mut() {
             dynamic_gi.prepare(device, scene, &effective);
         }
-        self.cull_test_views(device, queue, scene);
         let Self { renderer, view } = self;
         let shared = &renderer.shared;
         let slot_lights = crate::stages::shadows::traced::slots::SlotLights::of(
@@ -309,13 +308,15 @@ impl TestRenderer {
                 .as_ref()
                 .map(crate::stages::dynamic_gi::DynamicGi::probes),
         );
-        TestFrame {
+        let frame = TestFrame {
             effective,
             slot_lights,
             values,
             input,
             history,
-        }
+        };
+        self.cull_test_views(device, queue, scene, &frame);
+        frame
     }
 
     /// Replaces the prepared frame's directional shadow with one cascade of
@@ -337,24 +338,24 @@ impl TestRenderer {
             frame.values.frame.visibility_mask,
             std::iter::once(clip_from_world),
         );
-        self.cull_test_views(device, queue, scene);
+        self.cull_test_views(device, queue, scene, frame);
     }
 
     /// The deform pass and the cull stage's early phase over the prepared
     /// views, in a submission of their own.
-    pub(crate) fn cull_test_views(
+    fn cull_test_views(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         scene: &Scene,
+        frame: &TestFrame,
     ) {
         let mut encoder = device.create_command_encoder(&Default::default());
         self.shared
             .deform
             .dispatch(device, queue, &mut encoder, scene, None);
-        self.view
-            .cull
-            .encode(device, &mut encoder, scene, &self.view.views, None);
+        let mut ctx = context!(self, device, queue, &mut encoder, scene, frame);
+        self.view.cull.encode_early(&mut ctx);
         queue.submit([encoder.finish()]);
     }
 

@@ -226,7 +226,7 @@ impl View {
         let layouts = &shared.layouts;
         let views = FrameViews::new(device);
         let shadows = Shadows::new(device, settings.shadow_quality);
-        let fog = VolumetricFog::new(device, &layouts.lit.layout);
+        let fog = VolumetricFog::new(device);
         let bindings = FrameBindings::new(
             device,
             layouts,

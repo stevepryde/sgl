@@ -101,14 +101,43 @@ const SECTION_CULL: &[u32] = &[
     binding::OCCLUSION,
 ];
 
-/// The pipelines, by the entry point each runs.
-mod pipeline {
-    pub const INSTANCES: usize = 0;
-    pub const FINALIZE: usize = 1;
-    pub const SECTIONS: usize = 2;
-    pub const INSTANCES_LATE: usize = 3;
-    pub const FINALIZE_LATE: usize = 4;
-    pub const SECTIONS_LATE: usize = 5;
+/// Instance culling, list finalisation and section culling for one phase.
+struct Phase {
+    instances: wgpu::ComputePipeline,
+    finalize: wgpu::ComputePipeline,
+    sections: wgpu::ComputePipeline,
+}
+
+impl Phase {
+    fn new(
+        device: &wgpu::Device,
+        module: &wgpu::ShaderModule,
+        layouts: &[wgpu::BindGroupLayout; 3],
+        entries: [&str; 3],
+    ) -> Self {
+        let [instances, finalize, sections] = std::array::from_fn(|i| {
+            let entry = entries[i];
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(
+                    &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                        label: Some(entry),
+                        bind_group_layouts: &[Some(&layouts[i])],
+                        immediate_size: 0,
+                    }),
+                ),
+                module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        });
+        Self {
+            instances,
+            finalize,
+            sections,
+        }
+    }
 }
 
 /// A view's bind groups (the instance culls', the finalizes', the early
@@ -120,17 +149,16 @@ struct ViewGroups {
     groups: [wgpu::BindGroup; 4],
 }
 
-/// What occlusion culling needs: the pyramid's builder and the pyramid.
+/// Retained from the first frame that uses two-phase occlusion culling.
 struct Occlusion {
+    late: Phase,
     builder: Builder,
-    /// The camera's pyramid, made for the render size on the first frame
-    /// that culls occlusion.
-    pyramid: Option<Pyramid>,
+    pyramid: Pyramid,
 }
 
 pub(crate) struct Cull {
-    /// By `pipeline`'s indices.
-    pipelines: [wgpu::ComputePipeline; 6],
+    module: wgpu::ShaderModule,
+    early: Phase,
     layouts: [wgpu::BindGroupLayout; 3],
     /// The camera's groups, then each cascade's.
     groups: Vec<Option<ViewGroups>>,
@@ -140,7 +168,7 @@ pub(crate) struct Cull {
     no_occlusion: wgpu::Buffer,
     /// A 1×1 pyramid that a view without one binds and never reads.
     no_pyramid: wgpu::TextureView,
-    /// None on a device without the pyramid's storage textures.
+    occlusion_supported: bool,
     occlusion: Option<Occlusion>,
     /// Whether this frame built the pyramid for the next, and whether the
     /// last submitted frame did, which `finish_frame` commits.
@@ -199,22 +227,6 @@ impl Cull {
             layout("cull finalize", FINALIZE),
             layout("section cull", SECTION_CULL),
         ];
-        let pipeline = |layout: &wgpu::BindGroupLayout, entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(
-                    &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some(entry),
-                        bind_group_layouts: &[Some(layout)],
-                        immediate_size: 0,
-                    }),
-                ),
-                module: &module,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
         let occlusion_buffer = |label| {
             crate::counters::buffer_init(
                 device,
@@ -244,23 +256,24 @@ impl Cull {
         let supported =
             device.limits().max_storage_textures_per_shader_stage >= SUPPORTED_STORAGE_TEXTURES;
         Self {
-            pipelines: [
-                pipeline(&layouts[0], CULL_INSTANCES_ENTRY),
-                pipeline(&layouts[1], CULL_FINALIZE_ENTRY),
-                pipeline(&layouts[2], CULL_SECTIONS_ENTRY),
-                pipeline(&layouts[0], CULL_INSTANCES_LATE_ENTRY),
-                pipeline(&layouts[1], CULL_FINALIZE_LATE_ENTRY),
-                pipeline(&layouts[2], CULL_SECTIONS_LATE_ENTRY),
-            ],
+            early: Phase::new(
+                device,
+                &module,
+                &layouts,
+                [
+                    CULL_INSTANCES_ENTRY,
+                    CULL_FINALIZE_ENTRY,
+                    CULL_SECTIONS_ENTRY,
+                ],
+            ),
+            module,
             layouts,
             groups: Vec::new(),
             occlusion_uniform: occlusion_buffer("cull occlusion"),
             no_occlusion: occlusion_buffer("no cull occlusion"),
             no_pyramid,
-            occlusion: supported.then(|| Occlusion {
-                builder: Builder::new(device),
-                pyramid: None,
-            }),
+            occlusion_supported: supported,
+            occlusion: None,
             frame_builds: false,
             submitted_build: false,
         }
@@ -269,7 +282,7 @@ impl Cull {
     /// Whether the device binds the pyramid's storage textures, without
     /// which occlusion culling does not run.
     pub fn occlusion_supported(&self) -> bool {
-        self.occlusion.is_some()
+        self.occlusion_supported
     }
 
     /// The early phase for every GPU-built view of the frame: each view's
@@ -282,17 +295,30 @@ impl Cull {
         self.frame_builds = false;
         let late = ctx.views.camera.list.late();
         let mut occlusion = <CullOcclusion as bytemuck::Zeroable>::zeroed();
-        if let Some(state) = self.occlusion.as_mut().filter(|_| late) {
+        if late {
             let size = ctx.sizes.render;
-            if state
-                .pyramid
-                .as_ref()
-                .is_none_or(|pyramid| !Builder::fits(pyramid, size))
-            {
-                state.pyramid = Some(state.builder.pyramid(ctx.device, size));
+            let state = self.occlusion.get_or_insert_with(|| {
+                let builder = Builder::new(ctx.device);
+                Occlusion {
+                    late: Phase::new(
+                        ctx.device,
+                        &self.module,
+                        &self.layouts,
+                        [
+                            CULL_INSTANCES_LATE_ENTRY,
+                            CULL_FINALIZE_LATE_ENTRY,
+                            CULL_SECTIONS_LATE_ENTRY,
+                        ],
+                    ),
+                    pyramid: builder.pyramid(ctx.device, size),
+                    builder,
+                }
+            });
+            if !Builder::fits(&state.pyramid, size) {
+                state.pyramid = state.builder.pyramid(ctx.device, size);
                 self.submitted_build = false;
             }
-            let pyramid = state.pyramid.as_ref().unwrap();
+            let pyramid = &state.pyramid;
             occlusion.current = ctx
                 .history
                 .camera
@@ -330,6 +356,11 @@ impl Cull {
         let Some(groups) = self.groups.first().and_then(Option::as_ref) else {
             return;
         };
+        let late = &self
+            .occlusion
+            .as_ref()
+            .expect("early cull prepared the late phase")
+            .late;
         let started = crate::counters::Moment::now();
         let dispatch = list.buffers().dispatch;
         let mut pass = ctx
@@ -340,13 +371,13 @@ impl Cull {
                     .timing
                     .and_then(|timing| timing.compute_pass("cull late")),
             });
-        pass.set_pipeline(&self.pipelines[pipeline::INSTANCES_LATE]);
+        pass.set_pipeline(&late.instances);
         pass.set_bind_group(0, &groups.groups[0], &[]);
         pass.dispatch_workgroups_indirect(dispatch, u64::from(DISPATCH_LATE_INSTANCES) * 4);
-        pass.set_pipeline(&self.pipelines[pipeline::FINALIZE_LATE]);
+        pass.set_pipeline(&late.finalize);
         pass.set_bind_group(0, &groups.groups[1], &[]);
         pass.dispatch_workgroups(1, 1, 1);
-        pass.set_pipeline(&self.pipelines[pipeline::SECTIONS_LATE]);
+        pass.set_pipeline(&late.sections);
         pass.set_bind_group(0, &groups.groups[3], &[]);
         pass.dispatch_workgroups_indirect(dispatch, u64::from(DISPATCH_LATE_SECTIONS) * 4);
         drop(pass);
@@ -365,17 +396,13 @@ impl Cull {
 
     /// Builds the pyramid from the opaque depth; whether there is one.
     fn encode_pyramid_build(&mut self, ctx: &mut FrameContext<'_>) -> bool {
-        let Some(Occlusion {
-            builder,
-            pyramid: Some(pyramid),
-        }) = self.occlusion.as_mut()
-        else {
+        let Some(state) = &mut self.occlusion else {
             return false;
         };
-        builder.encode(
+        state.builder.encode(
             ctx.device,
             ctx.encoder,
-            pyramid,
+            &mut state.pyramid,
             &ctx.targets.depth,
             ctx.timing,
         );
@@ -393,12 +420,12 @@ impl Cull {
     pub(crate) fn pyramid(&self) -> Option<&wgpu::Texture> {
         self.occlusion
             .as_ref()
-            .and_then(|occlusion| occlusion.pyramid.as_ref())
-            .map(Pyramid::texture)
+            .map(|occlusion| occlusion.pyramid.texture())
     }
 
-    /// `encode_early` for `views` of `scene`.
-    pub(crate) fn encode(
+    /// Dispatches the early draw lists. A full frame goes through `encode_early`
+    /// to prepare its occlusion test first.
+    pub(super) fn encode(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
@@ -434,13 +461,13 @@ impl Cull {
             let started = crate::counters::Moment::now();
             let groups = &self.groups[at].as_ref().unwrap().groups;
             let [x, y] = slot.list.instance_workgroups();
-            pass.set_pipeline(&self.pipelines[pipeline::INSTANCES]);
+            pass.set_pipeline(&self.early.instances);
             pass.set_bind_group(0, &groups[0], &[]);
             pass.dispatch_workgroups(x, y, 1);
-            pass.set_pipeline(&self.pipelines[pipeline::FINALIZE]);
+            pass.set_pipeline(&self.early.finalize);
             pass.set_bind_group(0, &groups[1], &[]);
             pass.dispatch_workgroups(1, 1, 1);
-            pass.set_pipeline(&self.pipelines[pipeline::SECTIONS]);
+            pass.set_pipeline(&self.early.sections);
             pass.set_bind_group(0, &groups[2], &[]);
             pass.dispatch_workgroups_indirect(
                 slot.list.buffers().dispatch,
@@ -484,9 +511,8 @@ impl Cull {
         let pyramid = self
             .occlusion
             .as_ref()
-            .and_then(|occlusion| occlusion.pyramid.as_ref())
             .filter(|_| camera)
-            .map_or(&self.no_pyramid, Pyramid::view);
+            .map_or(&self.no_pyramid, |occlusion| occlusion.pyramid.view());
         if self.groups[at]
             .as_ref()
             .is_some_and(|groups| groups.bound.iter().eq(buffers) && groups.pyramid == *pyramid)

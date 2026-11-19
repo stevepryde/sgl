@@ -154,11 +154,15 @@ pub(crate) fn froxels(quality: FogQuality, render: [u32; 2], largest: u32) -> [u
     [across(width / height), across(height / width), depth]
 }
 
-pub(crate) struct VolumetricFog {
+struct Pipelines {
     inject: wgpu::ComputePipeline,
     /// Along x, then y.
     filter: [wgpu::ComputePipeline; 2],
     integrate: wgpu::ComputePipeline,
+}
+
+pub(crate) struct VolumetricFog {
+    pipelines: Option<Pipelines>,
     inject_layout: wgpu::BindGroupLayout,
     filter_layout: wgpu::BindGroupLayout,
     integrate_layout: wgpu::BindGroupLayout,
@@ -169,14 +173,70 @@ pub(crate) struct VolumetricFog {
     volumes: Volumes,
 }
 
-impl VolumetricFog {
-    /// The fog's pipelines over the lit group 0 layout `lit`, with a volume
-    /// of one froxel until a frame sizes it.
-    pub fn new(device: &wgpu::Device, lit: &wgpu::BindGroupLayout) -> Self {
+impl Pipelines {
+    fn new(
+        device: &wgpu::Device,
+        lit: &wgpu::BindGroupLayout,
+        inject_layout: &wgpu::BindGroupLayout,
+        filter_layout: &wgpu::BindGroupLayout,
+        integrate_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("volumetric fog"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&VOLUMETRIC_FOG]).into()),
         });
+        let pipeline = |label,
+                        layouts: &[Option<&wgpu::BindGroupLayout>],
+                        entry,
+                        constants: &[(&str, f64)]| {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: layouts,
+                immediate_size: 0,
+            });
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
+                cache: None,
+            })
+        };
+        let inject = pipeline(
+            "volumetric fog injection",
+            &[Some(lit), Some(inject_layout)],
+            INJECT_ENTRY,
+            &[],
+        );
+        let filter = [0., 1.].map(|axis| {
+            pipeline(
+                "volumetric fog filter",
+                &[None, Some(filter_layout)],
+                FILTER_FROXELS_ENTRY,
+                &[("filter_axis", axis)],
+            )
+        });
+        let integrate = pipeline(
+            "volumetric fog integration",
+            &[None, Some(integrate_layout)],
+            INTEGRATE_ENTRY,
+            &[],
+        );
+        Self {
+            inject,
+            filter,
+            integrate,
+        }
+    }
+}
+
+impl VolumetricFog {
+    /// One froxel for group 0 until a frame uses fog.
+    pub fn new(device: &wgpu::Device) -> Self {
         let uniform = wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -241,47 +301,6 @@ impl VolumetricFog {
             label: Some("volumetric fog integration"),
             entries: &[uniform, texture(4, false), storage(5)],
         });
-        let pipeline = |label,
-                        layouts: &[Option<&wgpu::BindGroupLayout>],
-                        entry,
-                        constants: &[(&str, f64)]| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(label),
-                bind_group_layouts: layouts,
-                immediate_size: 0,
-            });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants,
-                    ..Default::default()
-                },
-                cache: None,
-            })
-        };
-        let inject = pipeline(
-            "volumetric fog injection",
-            &[Some(lit), Some(&inject_layout)],
-            INJECT_ENTRY,
-            &[],
-        );
-        let filter = [0., 1.].map(|axis| {
-            pipeline(
-                "volumetric fog filter",
-                &[None, Some(&filter_layout)],
-                FILTER_FROXELS_ENTRY,
-                &[("filter_axis", axis)],
-            )
-        });
-        let integrate = pipeline(
-            "volumetric fog integration",
-            &[None, Some(&integrate_layout)],
-            INTEGRATE_ENTRY,
-            &[],
-        );
         let uniform = crate::counters::buffer(
             device,
             &wgpu::BufferDescriptor {
@@ -299,9 +318,7 @@ impl VolumetricFog {
         });
         let volumes = Volumes::new(device, &filter_layout, &integrate_layout, &uniform, [1; 3]);
         Self {
-            inject,
-            filter,
-            integrate,
+            pipelines: None,
             inject_layout,
             filter_layout,
             integrate_layout,
@@ -367,6 +384,15 @@ impl VolumetricFog {
         else {
             return;
         };
+        let pipelines = self.pipelines.get_or_insert_with(|| {
+            Pipelines::new(
+                ctx.device,
+                &ctx.bindings.lit.layout,
+                &self.inject_layout,
+                &self.filter_layout,
+                &self.integrate_layout,
+            )
+        });
         let fog = ctx.input.fog;
         let camera = ctx.input.camera;
         let projection = camera.projection;
@@ -458,7 +484,7 @@ impl VolumetricFog {
                 label: Some("volumetric fog injection"),
                 timestamp_writes: ctx.timing.and_then(|t| t.compute_pass("fog injection")),
             });
-        pass.set_pipeline(&self.inject);
+        pass.set_pipeline(&pipelines.inject);
         pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
         pass.set_bind_group(1, inject, &[]);
         pass.dispatch_workgroups(
@@ -481,8 +507,11 @@ impl VolumetricFog {
             let groups = |side: u32, along: bool| {
                 side.div_ceil(FILTER_GROUP * if along { FILTER_RUN } else { 1 })
             };
-            for (axis, (pipeline, group)) in
-                self.filter.iter().zip(&volumes.filter[index]).enumerate()
+            for (axis, (pipeline, group)) in pipelines
+                .filter
+                .iter()
+                .zip(&volumes.filter[index])
+                .enumerate()
             {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(1, group, &[]);
@@ -499,7 +528,7 @@ impl VolumetricFog {
                 label: Some("volumetric fog integration"),
                 timestamp_writes: ctx.timing.and_then(|t| t.compute_pass("fog integration")),
             });
-        pass.set_pipeline(&self.integrate);
+        pass.set_pipeline(&pipelines.integrate);
         pass.set_bind_group(1, &volumes.integrate[volumes.integrated_from], &[]);
         pass.dispatch_workgroups(x.div_ceil(INTEGRATE_GROUP), y.div_ceil(INTEGRATE_GROUP), 1);
     }

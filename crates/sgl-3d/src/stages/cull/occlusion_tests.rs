@@ -167,6 +167,34 @@ fn object(id: InstanceId) -> u32 {
     id.index() as u32
 }
 
+/// The single-stage fixture must initialise the same late cull as a full frame:
+/// on its first split opaque pass the wall covers the box at the view centre.
+#[test]
+fn the_first_prepared_opaque_frame_draws_the_occluding_wall() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let Some(mut frames) = Frames::new(&device, &queue) else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let [wall, _, _] = wall_and_boxes(gpu, &mut scene);
+    let mut frame =
+        frames
+            .renderer
+            .prepare_test_frame(&device, &queue, &mut scene, &input(), &settings());
+    let mut encoder = device.create_command_encoder(&Default::default());
+    frames
+        .renderer
+        .encode_test_opaque(&device, &queue, &mut encoder, &scene, &mut frame, false);
+    queue.submit([encoder.finish()]);
+    assert_eq!(
+        frames.source_at(gpu, [SIZE[0] / 2, SIZE[1] / 2]),
+        Some(object(wall))
+    );
+}
+
 // Plausible defects: the early phase testing nothing (no pyramid bound, the
 // flag never set, the pyramid never built for the next frame), testing with
 // the wrong matrices or pose so a visible box is culled or a hidden one
