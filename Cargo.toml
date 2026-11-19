@@ -55,7 +55,7 @@ sgl-net = { version = "0.8.1", path = "crates/sgl-net" }
 bcdec_rs = "0.2"
 blake3 = "1.8.3"
 block2 = "0.6.2"
-bytemuck = { version = "1.25.2", features = ["derive"] }
+bytemuck = { version = "1.25.2", features = ["derive", "extern_crate_alloc"] }
 fastrand = "2.4"
 fontdue = "0.9"
 futures = "0.3"

@@ -83,31 +83,34 @@ impl std::error::Error for ViewError {
 /// everything it held. Its history continues only from its scene's last
 /// finished frame, so a view that a finished frame of its scene did not
 /// render restarts, as on a cut.
+// The stages of more than 2 KB are boxed: a debug build copies a `View`
+// several times on the stack as it is built and moved, in the game's code
+// too, and the debug WASM stack is 1 MB (#839).
 pub struct View {
     pub(crate) output_encodes_srgb: bool,
     pub(crate) sizes: Sizes,
     /// Whether the post stage's bloom targets were made full size.
     pub(crate) bloom_targets: bool,
     pub(crate) targets: SharedTargets,
-    pub(crate) views: FrameViews,
+    pub(crate) views: Box<FrameViews>,
     pub(crate) bindings: FrameBindings,
     /// DiligentFX's post-effect context, while TAA or Crystal SSR runs.
-    pub(crate) post_fx: Option<PostFx>,
+    pub(crate) post_fx: Option<Box<PostFx>>,
     pub(crate) cull: Cull,
     /// The procedural sky's tables, while its frames name one.
     pub(crate) sky: Sky,
     /// The camera's geometry statistics, read back without blocking.
     pub(crate) statistics: StatisticsReadback,
     pub(crate) shadows: Shadows,
-    pub(crate) traced_shadows: TracedShadows,
+    pub(crate) traced_shadows: Box<TracedShadows>,
     pub(crate) fog: VolumetricFog,
     pub(crate) opaque: Opaque,
-    pub(crate) reflections: Reflections,
+    pub(crate) reflections: Box<Reflections>,
     pub(crate) transparent: Transparent,
     pub(crate) exposure: Exposure,
     pub(crate) antialiasing: antialiasing::Antialiasing,
     pub(crate) motion_blur: MotionBlur,
-    pub(crate) post: Post,
+    pub(crate) post: Box<Post>,
     pub(crate) history: CameraHistory,
     /// History restarts: the targets changed since the last finished frame
     /// was rendered, or the view's last render was a reset that was not
@@ -226,7 +229,7 @@ impl View {
             output: output_size,
         };
         let layouts = &shared.layouts;
-        let views = FrameViews::new(device);
+        let views = Box::new(FrameViews::new(device));
         let shadows = Shadows::new(device, settings.shadow_quality);
         let fog = VolumetricFog::new(device);
         let bindings = FrameBindings::new(
@@ -250,8 +253,8 @@ impl View {
         Ok(Self {
             output_encodes_srgb: output.encodes_srgb,
             opaque: Opaque::new(device, &bindings.unlit, &bindings.shadow_mask),
-            traced_shadows: TracedShadows::new(device, &bindings.lit, &bindings.scene),
-            reflections: Reflections::new(device, queue, render, &first_frame),
+            traced_shadows: Box::new(TracedShadows::new(device, &bindings.lit, &bindings.scene)),
+            reflections: Box::new(Reflections::new(device, queue, render, &first_frame)),
             transparent: Transparent::new(
                 device,
                 &bindings.unlit,
@@ -263,15 +266,17 @@ impl View {
             exposure,
             antialiasing,
             motion_blur: MotionBlur::new(device),
-            post: Post::new(
-                device,
-                queue,
-                output,
-                sizes,
-                sizing.bloom_targets,
-                settings.smaa_quality,
-            )
-            .map_err(ViewError::LookupTextures)?,
+            post: Box::new(
+                Post::new(
+                    device,
+                    queue,
+                    output,
+                    sizes,
+                    sizing.bloom_targets,
+                    settings.smaa_quality,
+                )
+                .map_err(ViewError::LookupTextures)?,
+            ),
             cull,
             sky: Sky::default(),
             statistics: StatisticsReadback::default(),

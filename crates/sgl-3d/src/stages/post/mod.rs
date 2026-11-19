@@ -101,9 +101,7 @@ pub(crate) struct Post {
     scene_size: [u32; 2],
     output_size: [u32; 2],
     fsr1: fsr1::Fsr1,
-    /// Boxed, off the stack `View::new` builds the post stage on, which a
-    /// debug WASM build nearly fills (#839).
-    local_exposure: Box<local_exposure::LocalExposure>,
+    local_exposure: local_exposure::LocalExposure,
     /// SMAA's targets, from the first frame SMAA runs at `scene_size`.
     smaa_targets: Option<SmaaTargets>,
     /// The display-referred image RCAS reads at the output size, where
@@ -138,7 +136,7 @@ impl Post {
             scene_size: sizes.scene,
             output_size: sizes.output,
             fsr1: fsr1::Fsr1::new(device, &inputs),
-            local_exposure: Box::new(local_exposure::LocalExposure::new(device)),
+            local_exposure: local_exposure::LocalExposure::new(device),
             smaa_targets: None,
             sharpening_input: None,
             tone_map: tone_map::ToneMap::new(device, &inputs, output, sizes.output),

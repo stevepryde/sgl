@@ -48,13 +48,15 @@ struct CollectionMetadata {
 }
 
 impl CollectionMetadata {
-    fn new(grid: &ProbeGrid) -> Self {
-        Self {
-            grid_origin: grid.origin.to_array(),
-            grid_scale: grid.scale,
-            grid_size: grid.size.to_array(),
-            ..bytemuck::Zeroable::zeroed()
-        }
+    /// Zeroed on the heap and filled in place: at about 45 KB, building or
+    /// moving it on the stack overflows `View::new` in a debug WASM build
+    /// (#839).
+    fn new(grid: &ProbeGrid) -> Box<Self> {
+        let mut metadata: Box<Self> = bytemuck::zeroed_box();
+        metadata.grid_origin = grid.origin.to_array();
+        metadata.grid_scale = grid.scale;
+        metadata.grid_size = grid.size.to_array();
+        metadata
     }
 }
 

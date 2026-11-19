@@ -218,7 +218,7 @@ pub(super) fn render_view(
         .as_ref()
         .is_none_or(|post_fx| post_fx.taa() != effective.taa)
     {
-        *post_fx = Some(PostFx::new(device, queue, effective.taa));
+        *post_fx = Some(Box::new(PostFx::new(device, queue, effective.taa)));
         post.forget_inputs();
         motion_blur.forget_inputs();
     }
@@ -234,7 +234,7 @@ pub(super) fn render_view(
         &effective,
         *sizes,
         history,
-        post_fx.as_mut(),
+        post_fx.as_deref_mut(),
         context_jitter,
     );
     // The camera history commits the jitter this frame applies.
@@ -422,7 +422,7 @@ pub(super) fn render_view(
             crate::stages::transparent::Beauty::Incident(incident),
         );
     }
-    let reflected = reflections.resolve(&mut ctx, post_fx.as_mut(), ambient_occlusion);
+    let reflected = reflections.resolve(&mut ctx, post_fx.as_deref_mut(), ambient_occlusion);
     transparent.encode(
         &mut ctx,
         crate::stages::transparent::Beauty::Composite {
@@ -445,7 +445,7 @@ pub(super) fn render_view(
     }
     // The frame's one exposure, which FSR and the tone map read.
     exposure.encode(&mut ctx, &targets.composite);
-    let completed_kind = antialiasing.encode(&mut ctx, post_fx.as_mut(), exposure.texture());
+    let completed_kind = antialiasing.encode(&mut ctx, post_fx.as_deref_mut(), exposure.texture());
     if antialiasing.take_failure() {
         post.forget_inputs();
         motion_blur.forget_inputs();
@@ -520,7 +520,7 @@ pub(super) fn encode_opaque(
 /// The view holding `kind`.
 pub(super) fn completed<'a>(
     kind: Completed,
-    post_fx: &'a Option<PostFx>,
+    post_fx: &'a Option<Box<PostFx>>,
     antialiasing: &'a crate::stages::antialiasing::Antialiasing,
     targets: &'a SharedTargets,
 ) -> &'a wgpu::TextureView {
