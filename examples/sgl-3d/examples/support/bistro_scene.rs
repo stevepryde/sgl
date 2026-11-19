@@ -262,26 +262,22 @@ pub fn settings(max_quality: bool, no_ray_shadows: bool) -> Settings {
     settings
 }
 
-/// Explicit content authoring, not an automatic emissive-material heuristic.
-/// A named bulb shell becomes a dielectric transmitting surface. Its emission,
-/// textures and geometry stay intact; opaque fixtures and walls remain casters.
-/// Resolve the complete list before mutating anything, including name ambiguity.
-pub fn apply_transmissive_materials(
-    materials: &mut [asset::Material],
-    descriptor: &Value,
-) -> Result<Value, String> {
-    let Some(names) = descriptor.get("transmissive_materials") else {
-        return Ok(json!({"count":0,"names":[]}));
-    };
+/// Indices of the fixture's named materials: each name must match exactly
+/// one material, once.
+fn named_materials(
+    materials: &[asset::Material],
+    names: &Value,
+    key: &str,
+) -> Result<Vec<usize>, String> {
     let names = names
         .as_array()
-        .ok_or("transmissive_materials must be an array of unique material names")?;
+        .ok_or_else(|| format!("{key} must be an array of unique material names"))?;
     let mut indices = Vec::new();
     for value in names {
         let name = value
             .as_str()
             .filter(|s| !s.is_empty())
-            .ok_or("transmissive_materials entries must be nonempty names")?;
+            .ok_or_else(|| format!("{key} entries must be nonempty names"))?;
         let matches: Vec<_> = materials
             .iter()
             .enumerate()
@@ -290,22 +286,75 @@ pub fn apply_transmissive_materials(
             .collect();
         if matches.len() != 1 {
             return Err(format!(
-                "transmissive material {name:?} must match exactly once; found {}",
+                "{key} material {name:?} must match exactly once; found {}",
                 matches.len()
             ));
         }
         if indices.contains(&matches[0]) {
-            return Err(format!("duplicate transmissive material {name:?}"));
+            return Err(format!("duplicate {key} material {name:?}"));
         }
         indices.push(matches[0]);
     }
-    for &index in &indices {
+    Ok(indices)
+}
+
+/// Explicit content authoring, not a heuristic by emission, texture or alpha
+/// mode. `transmissive_materials` makes named bulb shells dielectric
+/// transmitting surfaces; their emission, textures and geometry stay intact
+/// and opaque fixtures and walls remain casters.
+/// `diffuse_transmission_materials` (`names`, `factor`, `color`) gives named
+/// thin materials such as leaves `KHR_materials_diffuse_transmission`: they
+/// pass `factor` of the light they diffuse to their other side, coloured by
+/// their own base colour (factor and map) times `color`.
+/// Both lists resolve completely, including name ambiguity, before anything
+/// changes.
+pub fn apply_material_authoring(
+    materials: &mut [asset::Material],
+    descriptor: &Value,
+) -> Result<Value, String> {
+    let transmissive = match descriptor.get("transmissive_materials") {
+        Some(names) => named_materials(materials, names, "transmissive_materials")?,
+        None => Vec::new(),
+    };
+    let diffuse = descriptor
+        .get("diffuse_transmission_materials")
+        .map(|spec| -> Result<_, String> {
+            let fields = Fields {
+                value: spec,
+                kind: "diffuse_transmission_materials",
+            };
+            let factor = fields.number("factor", None)?;
+            if factor > 1. {
+                return Err("diffuse_transmission_materials factor must be within 0..=1".into());
+            }
+            let color = fields.color("color")?;
+            let indices =
+                named_materials(materials, &spec["names"], "diffuse_transmission_materials")?;
+            Ok((indices, factor, color))
+        })
+        .transpose()?;
+    for &index in &transmissive {
         // KHR_materials_transmission: metals absorb refracted light, so changing
         // transmission alone on the source's metallic bulbs is not glass.
         materials[index].metallic = 0.;
         materials[index].transmission = 1.;
     }
-    Ok(json!({"count":indices.len(),"names":names,"metallic":0.,"transmission":1.}))
+    let mut report = json!({"count":transmissive.len(),
+        "names":transmissive.iter().map(|&i| &materials[i].name).collect::<Vec<_>>(),
+        "metallic":0.,"transmission":1.});
+    if let Some((indices, factor, color)) = diffuse {
+        for &index in &indices {
+            let material = &mut materials[index];
+            material.diffuse_transmission = factor;
+            material.diffuse_transmission_color =
+                std::array::from_fn(|c| color[c] * material.base[c]);
+            material.diffuse_transmission_color_texture = material.base_texture;
+        }
+        report["diffuse_transmission"] = json!({"count":indices.len(),
+            "names":indices.iter().map(|&i| &materials[i].name).collect::<Vec<_>>(),
+            "factor":factor,"color":color,"color_texture":"base colour map"});
+    }
+    Ok(report)
 }
 
 /// One authored fixture object's fields: finite vectors and finite,
@@ -867,6 +916,14 @@ pub fn frame_from_json(
     Ok(frame)
 }
 
+/// The frame's applied fog: null while its atmosphere is off.
+pub fn fog_report(frame: &FrameInput) -> Value {
+    if !frame.atmosphere {
+        return Value::Null;
+    }
+    json!({"density":frame.fog.density,"anisotropy":frame.fog.anisotropy,"length":frame.fog.length})
+}
+
 /// Applied frame inputs for an authoring sidecar, kept distinct from fixture intent.
 pub fn frame_metadata(frame: &FrameInput) -> Value {
     let lights: Vec<_> = frame.directional_lights.iter().map(|light| light.map(|light| {
@@ -940,11 +997,9 @@ mod tests {
         };
         let original = vec![shell.clone(), wall.clone()];
         let mut materials = original.clone();
-        let report = apply_transmissive_materials(
-            &mut materials,
-            &json!({"transmissive_materials":["Bulb"]}),
-        )
-        .unwrap();
+        let report =
+            apply_material_authoring(&mut materials, &json!({"transmissive_materials":["Bulb"]}))
+                .unwrap();
         assert_eq!(report["count"], 1);
         assert_eq!(report["names"], json!(["Bulb"]));
         assert_eq!(materials[0].metallic, 0.);
@@ -962,25 +1017,36 @@ mod tests {
         ] {
             let mut materials = original.clone();
             assert!(
-                apply_transmissive_materials(
-                    &mut materials,
-                    &json!({"transmissive_materials":names})
-                )
-                .is_err()
+                apply_material_authoring(&mut materials, &json!({"transmissive_materials":names}))
+                    .is_err()
             );
             assert_eq!(materials[0].metallic, 1.);
             assert_eq!(materials[0].transmission, 0.);
         }
+        // A bad diffuse transmission entry fails before the bulb list applies.
+        for leaves in [
+            json!({"names":["Missing"],"factor":0.5,"color":[1,1,1]}),
+            json!({"names":["Wall"],"factor":1.5,"color":[1,1,1]}),
+            json!({"names":["Wall"],"factor":0.5}),
+        ] {
+            let mut materials = original.clone();
+            assert!(
+                apply_material_authoring(
+                    &mut materials,
+                    &json!({"transmissive_materials":["Bulb"],"diffuse_transmission_materials":leaves})
+                )
+                .is_err()
+            );
+            assert_eq!(materials[0].transmission, 0.);
+            assert_eq!(materials[1].diffuse_transmission, 0.);
+        }
         let mut duplicate = vec![shell.clone(), shell];
         assert!(
-            apply_transmissive_materials(
-                &mut duplicate,
-                &json!({"transmissive_materials":["Bulb"]})
-            )
-            .is_err()
+            apply_material_authoring(&mut duplicate, &json!({"transmissive_materials":["Bulb"]}))
+                .is_err()
         );
         assert_eq!(
-            apply_transmissive_materials(&mut materials, &json!({})).unwrap()["count"],
+            apply_material_authoring(&mut materials, &json!({})).unwrap()["count"],
             0
         );
     }
@@ -1113,6 +1179,7 @@ mod tests {
             include_str!("../../fixtures/sponza-sunlit.json"),
             include_str!("../../fixtures/sponza-lamps.json"),
             include_str!("../../fixtures/bistro-noir.json"),
+            include_str!("../../fixtures/bistro-golden.json"),
         ] {
             let recipe: Value = serde_json::from_str(source).unwrap();
             resolve_settings(settings(false, false), Some(&recipe), None, None).unwrap();

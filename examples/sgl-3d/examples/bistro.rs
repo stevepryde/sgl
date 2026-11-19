@@ -334,7 +334,7 @@ mod native {
         if !supplied.lock().unwrap().is_empty() {
             return Err("compressed manifest has indices absent from asset".into());
         }
-        let material_authoring = bistro_scene::apply_transmissive_materials(
+        let material_authoring = bistro_scene::apply_material_authoring(
             &mut loaded.materials,
             fixture.as_ref().unwrap_or(&serde_json::Value::Null),
         )?;
@@ -711,6 +711,7 @@ mod native {
             }
             reports.push(serde_json::json!({"view":name,"eye":frame.camera.eye.to_array(),"look_at":camera_spec.map_or(serde_json::json!(look_at.to_array()),|c| c["look_at"].clone()),"fov_y_degrees":camera_spec.and_then(|c|c["fov_y_degrees"].as_f64()).unwrap_or(55.),"camera_view":frame.camera.view.to_cols_array(),"camera_projection":frame.camera.projection.to_cols_array(),"gpu_timings":groups,"local_shadows":local_shadows.report(),
                 "directional_light": {"direction":frame.directional_lights[0].unwrap().direction.to_array(),"color":frame.directional_lights[0].unwrap().color,"illuminance":frame.directional_lights[0].unwrap().illuminance,"shadow_cascades":frame.directional_lights[0].unwrap().shadow.map(|s|s.cascades),"shadow_distance":frame.directional_lights[0].unwrap().shadow.map(|s|s.distance)},
+                "fog":bistro_scene::fog_report(&frame),
                 "environment_intensity": frame.diffuse_environment.intensity,
                 "environment_yaw":frame.diffuse_environment.yaw,
                 "ambient_occlusion_radius_m":frame.ambient_occlusion_radius,
