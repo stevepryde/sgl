@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use sgl_3d::{
     Backdrop, BakedSpecularProbe, Camera, Decal, DecalId, DecalImageId, DirectionalLight,
     DirectionalShadow, DynamicGiVolume, EnvironmentLight, Exposure, Fog, FogVolume, FrameInput,
-    Light, LightCookie, LightId, LightShape, LocalExposure, Scene, SpecularProbeBox,
+    Light, LightCookie, LightId, LightShape, LocalExposure, Scene, Sky, SpecularProbeBox,
     SpecularProbeRadiance, SpecularProbeTexels, asset,
     glam::{Mat4, Quat, Vec3, camera},
     settings::{
@@ -309,7 +309,10 @@ fn named_materials(
 /// thin materials such as leaves `KHR_materials_diffuse_transmission`: they
 /// pass `factor` of the light they diffuse to their other side, coloured by
 /// their own base colour (factor and map) times `color`.
-/// Both lists resolve completely, including name ambiguity, before anything
+/// `ssr_receiver_materials` makes named glass a blended surface that
+/// receives screen-space reflections and keeps its specular at full strength
+/// (`AlphaMode::Blend`), so windows reflect the street in front of them.
+/// Every list resolves completely, including name ambiguity, before anything
 /// changes.
 pub fn apply_material_authoring(
     materials: &mut [asset::Material],
@@ -317,6 +320,10 @@ pub fn apply_material_authoring(
 ) -> Result<Value, String> {
     let transmissive = match descriptor.get("transmissive_materials") {
         Some(names) => named_materials(materials, names, "transmissive_materials")?,
+        None => Vec::new(),
+    };
+    let receivers = match descriptor.get("ssr_receiver_materials") {
+        Some(names) => named_materials(materials, names, "ssr_receiver_materials")?,
         None => Vec::new(),
     };
     let diffuse = descriptor
@@ -356,6 +363,17 @@ pub fn apply_material_authoring(
         report["diffuse_transmission"] = json!({"count":indices.len(),
             "names":indices.iter().map(|&i| &materials[i].name).collect::<Vec<_>>(),
             "factor":factor,"color":color,"color_texture":"base colour map"});
+    }
+    if !receivers.is_empty() {
+        for &index in &receivers {
+            materials[index].alpha = sgl_3d::AlphaMode::Blend {
+                receives_screen_space_reflections: true,
+                keeps_specular: true,
+            };
+        }
+        report["ssr_receivers"] = json!({"count":receivers.len(),
+            "names":receivers.iter().map(|&i| &materials[i].name).collect::<Vec<_>>(),
+            "alpha":format!("{:?}", materials[receivers[0]].alpha)});
     }
     Ok(report)
 }
@@ -1148,6 +1166,36 @@ pub fn local_exposure_from_json(descriptor: &Value) -> Result<LocalExposure, Str
     })
 }
 
+/// The fixture's optional `sky`: the procedural sky (`FrameEnvironment::Sky`)
+/// in place of the captured panorama, lit by each camera's sun. Its fields
+/// are `Sky`'s, each optional with `Sky::default()`'s value: `ground_height`
+/// (world Y, metres), `rayleigh`, `mie`, `ozone`, `sun_disc`,
+/// `aerial_perspective`. Without the key, none.
+pub fn sky_from_json(descriptor: &Value) -> Result<Option<Sky>, String> {
+    let Some(value) = descriptor.get("sky") else {
+        return Ok(None);
+    };
+    let fields = Fields { value, kind: "sky" };
+    let d = Sky::default();
+    let ground_height = match value.get("ground_height") {
+        None => d.ground_height,
+        Some(v) => v
+            .as_f64()
+            .map(|n| n as f32)
+            .filter(|n| n.is_finite())
+            .ok_or("sky ground_height must be a finite number")?,
+    };
+    Ok(Some(Sky {
+        ground_height,
+        rayleigh: fields.number("rayleigh", Some(d.rayleigh))?,
+        mie: fields.number("mie", Some(d.mie))?,
+        ozone: fields.number("ozone", Some(d.ozone))?,
+        sun_disc: fields.number("sun_disc", Some(d.sun_disc))?,
+        aerial_perspective: fields.number("aerial_perspective", Some(d.aerial_perspective))?,
+        ..d
+    }))
+}
+
 /// The frame's applied fog: null while its atmosphere is off.
 pub fn fog_report(frame: &FrameInput) -> Value {
     if !frame.atmosphere {
@@ -1414,7 +1462,7 @@ mod tests {
             include_str!("../../fixtures/sponza-sunlit.json"),
             include_str!("../../fixtures/sponza-lamps.json"),
             include_str!("../../fixtures/bistro-noir.json"),
-            include_str!("../../fixtures/bistro-golden.json"),
+            include_str!("../../fixtures/bistro-daylight.json"),
             include_str!("../../fixtures/bistro-quality.json"),
         ] {
             let recipe: Value = serde_json::from_str(source).unwrap();
@@ -1423,6 +1471,7 @@ mod tests {
             local_lights_from_json(&recipe).unwrap();
             fog_volumes_from_json(&recipe).unwrap();
             decals_from_json(&recipe).unwrap();
+            sky_from_json(&recipe).unwrap();
             specular_probe_placements(&recipe).unwrap();
             let cameras = selected_cameras(Some(&recipe), "all").unwrap();
             assert!(!cameras.is_empty());

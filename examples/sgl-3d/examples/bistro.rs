@@ -584,6 +584,9 @@ mod native {
             frame.environment = sgl_3d::FrameEnvironment::Map(environment);
             if let Some(fixture) = &fixture {
                 frame.local_exposure = bistro_scene::local_exposure_from_json(fixture)?;
+                if let Some(sky) = bistro_scene::sky_from_json(fixture)? {
+                    frame.environment = sgl_3d::FrameEnvironment::Sky(sky);
+                }
             }
             let mut timing = GpuTiming::new(&device, &queue);
             let mut times: BTreeMap<&'static str, Vec<f64>> = BTreeMap::new();
@@ -738,7 +741,7 @@ mod native {
             }
             reports.push(serde_json::json!({"view":name,"eye":frame.camera.eye.to_array(),"look_at":camera_spec.map_or(serde_json::json!(look_at.to_array()),|c| c["look_at"].clone()),"fov_y_degrees":camera_spec.and_then(|c|c["fov_y_degrees"].as_f64()).unwrap_or(55.),"camera_view":frame.camera.view.to_cols_array(),"camera_projection":frame.camera.projection.to_cols_array(),"gpu_timings":groups,"local_shadows":local_shadows.report(),
                 "directional_light": {"direction":frame.directional_lights[0].unwrap().direction.to_array(),"color":frame.directional_lights[0].unwrap().color,"illuminance":frame.directional_lights[0].unwrap().illuminance,"shadow_cascades":frame.directional_lights[0].unwrap().shadow.map(|s|s.cascades),"shadow_distance":frame.directional_lights[0].unwrap().shadow.map(|s|s.distance)},
-                "fog":bistro_scene::fog_report(&frame),
+                "fog":bistro_scene::fog_report(&frame),"environment":format!("{:?}",frame.environment),"local_exposure":format!("{:?}",frame.local_exposure),
                 "environment_intensity": frame.diffuse_environment.intensity,
                 "environment_yaw":frame.diffuse_environment.yaw,
                 "ambient_occlusion_radius_m":frame.ambient_occlusion_radius,

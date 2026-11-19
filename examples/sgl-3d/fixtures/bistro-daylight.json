@@ -35,9 +35,10 @@
       },
       "ambient_occlusion_radius": 0.5,
       "fog": {
-        "density": 0,
+        "density": 0.004,
         "anisotropy": 0.3,
-        "length": 100
+        "length": 100,
+        "start": 40
       }
     },
     {
@@ -74,9 +75,10 @@
       },
       "ambient_occlusion_radius": 0.5,
       "fog": {
-        "density": 0,
+        "density": 0.004,
         "anisotropy": 0.3,
-        "length": 100
+        "length": 100,
+        "start": 40
       }
     },
     {
@@ -84,16 +86,16 @@
       "environment_intensity": 0.7,
       "environment_yaw": 3.069623508651768,
       "eye": [
-        -16,
-        8,
-        15
+        -12,
+        16,
+        12
       ],
       "fov_y_degrees": 55,
       "id": "overview",
       "look_at": [
         0,
-        2,
-        -4
+        0,
+        0
       ],
       "near": 0.1,
       "sun": {
@@ -113,9 +115,10 @@
       },
       "ambient_occlusion_radius": 0.5,
       "fog": {
-        "density": 0,
+        "density": 0.004,
         "anisotropy": 0.3,
-        "length": 100
+        "length": 100,
+        "start": 40
       }
     },
     {
@@ -152,9 +155,10 @@
       },
       "ambient_occlusion_radius": 0.5,
       "fog": {
-        "density": 0,
+        "density": 0.004,
         "anisotropy": 0.3,
-        "length": 100
+        "length": 100,
+        "start": 40
       }
     }
   ],
@@ -166,7 +170,7 @@
     "provenance_metadata": "ENVIRONMENT-PROCESSING.json"
   },
   "exposure_stops": 0.6,
-  "lighting": "Bistro Golden: near-overhead daylight relight of the quality profile with today's renderer. Analytical sun at 78 degrees of elevation and azimuth 220 degrees so the road, terrace and scooter are in direct sun with short shadows, with the sun-reduced San Giuseppe Bridge sky yaw-rotated to match. Measured sun color/strength retained. Fog only in two volumes at the far ends of the streets, diffuse transmission on the named leaf materials. Half-resolution Crystal screen-space reflections, four captured local specular probes and two generated puddles on the road. Practical point lights, exposure, GI volume and cameras as bistro-quality.",
+  "lighting": "Bistro Daylight: near-overhead daylight relight of the quality profile with today's renderer. Analytical sun at 78 degrees of elevation and azimuth 220 degrees so the road, terrace and scooter are in direct sun with short shadows, with the sun-reduced San Giuseppe Bridge sky yaw-rotated to match. Measured sun color/strength retained. Fog only beyond 40 m (Fog::start), diffuse transmission on the named leaf materials, soft shadows and sharpening on. Half-resolution Crystal screen-space reflections, four captured local specular probes and two generated puddles on the road. Practical point lights, exposure and GI volume as bistro-quality; the overview camera moved out of the awning it sits inside in the other recipes.",
   "notices": [
     "LICENSE.txt",
     "SGL-ATTRIBUTION.txt",
@@ -240,7 +244,7 @@
   },
   "compressed_images": "compressed-images.json",
   "ray_data": "enabled",
-  "profile": "Authored desktop daylight look: near-overhead sun over a sunlit street, haze only at the far street ends, translucent foliage, full geometry. Kept beside bistro-quality as its control; not a game default.",
+  "profile": "Authored desktop daylight look: near-overhead sun over a sunlit street, haze only in the far distance, translucent foliage, full geometry. Kept beside bistro-quality as its control; not a game default.",
   "point_lights": [
     {
       "name": "Bistro_Research_Exterior_Paris_Building_01_paris_buildi_0600d1f",
@@ -2134,7 +2138,7 @@
     "sun_elevation_degrees": 78,
     "previous_sun_elevation_degrees": 32,
     "environment_yaw_radians": 3.069623508651768,
-    "sun_elevation_note": "The scene is a narrow street between tall buildings, so the sun is near overhead (#838): at the previous 32 degrees the road, terrace and hero view were mostly shaded. Chosen from matched captures at 75 and 82 degrees and azimuths 40, 120, 188, 220, 280 and 330: 188 and 220 put the road, terrace and scooter in direct sun in the bevy, street and bike views, while 330 and 40 shade the scooter and the west facades; 82 degrees flattens the shadows that shape facades and awnings, 75 keeps them, and 78 sits between. The overview camera sits inside an awning at (-16, 8, 15), so no sun lights its view. Azimuth is measured from +X toward +Z; environment yaw = seed azimuth (35.87 degrees) - sun azimuth, unchanged at 220. Sun color and normal-incidence illuminance are the measured values, unchanged.",
+    "sun_elevation_note": "The scene is a narrow street between tall buildings, so the sun is near overhead (#838): at the previous 32 degrees the road, terrace and hero view were mostly shaded. Chosen from matched captures at 75 and 82 degrees and azimuths 40, 120, 188, 220, 280 and 330: 188 and 220 put the road, terrace and scooter in direct sun in the bevy, street and bike views, while 330 and 40 shade the scooter and the west facades; 82 degrees flattens the shadows that shape facades and awnings, 75 keeps them, and 78 sits between. Azimuth is measured from +X toward +Z; environment yaw = seed azimuth (35.87 degrees) - sun azimuth, unchanged at 220. Sun color and normal-incidence illuminance are the measured values, unchanged.",
     "point_light_positions": "Centers of source bulb/lamp geometry transformed by glTF node and root transforms. String bulbs use individual connected-component bounds; other bulbs use primitive bounds. World-space metres.",
     "point_light_groups": {
       "street_and_hanging": {
@@ -2157,9 +2161,11 @@
     "tone_mapping_note": "ACES filmic kept. Matched captures at the unchanged +0.6 exposure against AgX with the Punchy look: both keep the sunlit cobbles, scooter and facades below clipping (under 0.08% of pixels within 4% of white), but Punchy halves the mean frame brightness and takes the shaded majority of the courtyard toward black. No custom color grading.",
     "gi_coverage": "2592 probes, origin[-18,-1,-16], 3m spacing, [18,8,18] probes, bounds[-18,-1,-16] to[33,20,35]. Covers the main courtyard and visible right facades; not the full asset. Earlier 840-probe volume ended at z10, leaving right facades at z19-27 on unoccluded sky fallback.",
     "sun_azimuth_degrees": 220,
-    "fog_note": "No fog near or at middle distance: every camera fog has density 0 (its presence keeps the atmosphere on) and a 100 m froxel length, and two fog_volumes of 0.04 per metre with 0.3 edge fade sit at the far ends of the streets, more than 34 m from the street and bike cameras: north-street-end ([-4,8,-46], 26 x 18 x 32 m), the far end of the street in the street and bike views, and beyond-arch ([34,7,27], 18 x 16 x 16 m), seen through the arch in the bevy view. Lit by the sun only (Fog ambient 0). Checked against matched fog-off captures: outside the far ends the difference is at the run-to-run noise floor. The earlier uniform 0.007 per metre removed about 13% at 20 m and veiled the sunlit street.",
+    "fog_note": "Fog only beyond the middle distance: every camera fog has density 0.004 per metre starting 40 m from the camera (Fog::start), a 100 m froxel length, anisotropy 0.3, lit by the sun only. Nothing nearer than 40 m can be fogged; the haze shows on the far building at the street's end and faintly through the arch. It replaces #838's two far-end fog_volumes, which gave the same haze at the same cost (interleaved street runs: within 0.6 ms) but had to be placed by hand.",
     "foliage_note": "diffuse_transmission_materials gives the five leaf materials (named exactly, found from the glTF material list; trunks, branches and flowers excluded) KHR_materials_diffuse_transmission factor 0.5, its color taken from each leaf's own base-color map and factor. The asset has no transmission maps.",
-    "reflections_note": "Screen-space reflections at half resolution with Crystal, chosen over Velvet from matched street/bike captures: the two looked alike on these receivers (window glass, scooter chrome, puddles) and Crystal's passes cost about half. Probes are captured natively from this recipe after 720 GI warm-up frames (bistro --capture-probe on this fixture) and sit in the open: street (the square between the bistro corner and the west buildings, scooter excluded from its capture), terrace (south terrace and the bistro's south glass), arch (under the archway at the terrace's far end) and facades (the street in front of the west buildings' east facades). Influences overlap by their 2 m blends; no proxy boxes, since the street is open. Two puddles on the road, placed under the earlier 32 degree sun where the street and bike views see them at a grazing angle and they mirror the sunlit west facades, awnings and the sky gap at the street end: within the generated mask the surface turns level (water fills the joints), roughness goes to 0.03 and base colour darkens by up to 0.25, the stone relief returning over a soft shore. Nearer puddles (in front of the scooter, on the sunlit corner cobbles) were tried and dropped: at their steeper view the water reflects only a few percent, or it mirrors the dark green facade, and they read as faint stains. Under the near-overhead sun (#838) the stone beneath them is sunlit, so they read as a wet sheen with sun glints more than as mirrors; moving the far one toward the hedges found no shaded road left to put it in."
+    "reflections_note": "Screen-space reflections at half resolution with Crystal, chosen over Velvet from matched street/bike captures: the two looked alike on these receivers (window glass, scooter chrome) and Crystal's passes cost about half. Probes are captured natively from this recipe after 720 GI warm-up frames (bistro --capture-probe on this fixture) and sit in the open: street (the square between the bistro corner and the west buildings, scooter excluded from its capture), terrace (south terrace and the bistro's south glass), arch (under the archway at the terrace's far end) and facades (the street in front of the west buildings' east facades). Influences overlap by their 2 m blends; no proxy boxes, since the street is open. Two puddle decals on the road were tried and left out: under the near-overhead sun the stone beneath them is sunlit and they read as darker damp patches rather than water. Under the near-overhead sun (#838) the stone beneath them is sunlit, so they read as a wet sheen with sun glints more than as mirrors; moving the far one toward the hedges found no shaded road left to put it in.",
+    "overview_camera_note": "The overview camera is moved in this recipe only, to eye [-12,16,12] looking at [0,0,0], above the open square: it shows the street, the terrace and the scooter from above with nothing in front of the lens. The other recipes keep eye [-16,8,15], inside an awning.",
+    "features_note": "Settings judged on matched native captures of bevy, street and bike (each feature flipped, all else as the recipe): soft shadows (on through the High preset) and sharpening (On, 0.16-0.19 ms) are kept. Left off: contact_shadows Medium (2.4-2.5 ms native; at this sun height the sun's own short shadows already ground chair legs, planters, bollards and the scooter, and the pair shows no visible gain); screen_space_indirect Low (0.9-4 ms, in the AO and opaque passes; no visible bounce under the awnings or on shaded facades, slightly darker); local_exposure 0.75/1.0 (0.3-0.4 ms; no visible change at this exposure); the procedural sky with aerial perspective (the fixture key sky; frames about a quarter darker with a deeper sky, not clearly better than the captured panorama); MASTER_Glass_Exterior as a screen-space-reflection receiver (ssr_receiver_materials; 1.0-1.2 ms; no visible change, as the probes already put the street in the glass's 4% dielectric reflection). Micro-shadowing was not tried: it needs the derived occlusion export, whose source download and ktx tool are not on the authoring machine."
   },
   "diffuse_transmission_materials": {
     "names": [
@@ -2183,7 +2189,7 @@
       "encoding": "rgba16f-le",
       "levels": 7,
       "face_size": 256,
-      "rgba16": "bistro-golden-street-probe.rgba16",
+      "rgba16": "bistro-daylight-street-probe.rgba16",
       "center": [
         -9,
         1.6,
@@ -2220,7 +2226,7 @@
       "encoding": "rgba16f-le",
       "levels": 7,
       "face_size": 256,
-      "rgba16": "bistro-golden-terrace-probe.rgba16",
+      "rgba16": "bistro-daylight-terrace-probe.rgba16",
       "center": [
         6,
         1.6,
@@ -2252,7 +2258,7 @@
       "encoding": "rgba16f-le",
       "levels": 7,
       "face_size": 256,
-      "rgba16": "bistro-golden-arch-probe.rgba16",
+      "rgba16": "bistro-daylight-arch-probe.rgba16",
       "center": [
         16,
         3,
@@ -2284,7 +2290,7 @@
       "encoding": "rgba16f-le",
       "levels": 7,
       "face_size": 256,
-      "rgba16": "bistro-golden-facades-probe.rgba16",
+      "rgba16": "bistro-daylight-facades-probe.rgba16",
       "center": [
         -9.5,
         3,
@@ -2309,76 +2315,6 @@
       ],
       "proxy": null,
       "exclude_materials": []
-    }
-  ],
-  "decals": [
-    {
-      "name": "road-near",
-      "pattern": "puddle",
-      "position": [
-        -10.5,
-        0.3,
-        -3
-      ],
-      "size": [
-        3.6,
-        0.6,
-        6
-      ],
-      "yaw_degrees": 5,
-      "roughness": 0.03,
-      "darken": 0.25,
-      "normal_fade": 0.3
-    },
-    {
-      "name": "road-far",
-      "pattern": "puddle",
-      "position": [
-        -9.3,
-        0.3,
-        -9.5
-      ],
-      "size": [
-        4.5,
-        0.6,
-        6
-      ],
-      "yaw_degrees": 10,
-      "roughness": 0.03,
-      "darken": 0.25,
-      "normal_fade": 0.3
-    }
-  ],
-  "fog_volumes": [
-    {
-      "name": "north-street-end",
-      "center": [
-        -4,
-        8,
-        -46
-      ],
-      "size": [
-        26,
-        18,
-        32
-      ],
-      "density": 0.04,
-      "edge_fade": 0.3
-    },
-    {
-      "name": "beyond-arch",
-      "center": [
-        34,
-        7,
-        27
-      ],
-      "size": [
-        18,
-        16,
-        16
-      ],
-      "density": 0.04,
-      "edge_fade": 0.3
     }
   ]
 }

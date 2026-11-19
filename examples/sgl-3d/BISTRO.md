@@ -579,39 +579,88 @@ share; a fixture without them renders as before:
   (metres), `density` (extinction per metre) and optional `edge_fade`
   (default 0.1).
 
-### Bistro Golden
+### Bistro Daylight
 
-`fixtures/bistro-golden.json` is a near-overhead daylight relight of the
-quality profile. It keeps the profile's cameras, asset, environment, +0.6
-exposure, practical lights, GI volume and ACES filmic tone mapping, and
-changes only the composition:
+`fixtures/bistro-daylight.json` is a near-overhead daylight relight of the
+quality profile. It keeps the profile's asset, environment, +0.6 exposure,
+practical lights, GI volume and ACES filmic tone mapping, and changes the
+composition:
 
 - The sun is at 78 degrees of elevation and 220 degrees of azimuth (measured
   from +X toward +Z). The street is narrow between tall buildings, so only a
   sun near overhead reaches it: from there the road, the terrace and the
-  scooter are in direct sun in the `bevy`, `street` and `bike` views, with
-  short shadows that still shape the facades and awnings. The `overview`
-  camera sits inside an awning, so no sun lights its view. The sky turns with
-  the sun, to environment yaw 3.0696 (35.87 degrees, the HDR sun's azimuth at
-  yaw 0, minus the sun's azimuth). The measured sun colour and strength are
-  unchanged.
-- Haze only at the far ends of the streets: every camera's `fog` has density
-  0 (its presence keeps the atmosphere on) and a 100 m `length`, and two
-  `fog_volumes` of 0.04 per metre sit more than 30 m from the cameras, at the
-  far end of the street in the `street` and `bike` views and beyond the arch
-  in the `bevy` view. Nothing nearer is fogged: a uniform density fogs the
-  foreground as much as the distance (the recipe predates `Fog::start`).
+  scooter are in direct sun in every camera, with short shadows that still
+  shape the facades and awnings. The sky turns with the sun, to environment
+  yaw 3.0696 (35.87 degrees, the HDR sun's azimuth at yaw 0, minus the sun's
+  azimuth). The measured sun colour and strength are unchanged.
+- Haze only in the far distance: every camera's `fog` has density 0.004 per
+  metre starting 40 m from the camera (`start`), so nothing nearer is fogged,
+  and a 100 m `length`. It shows on the far building at the street's end and
+  faintly through the arch.
 - Diffuse transmission on the five leaf materials.
+- The `overview` camera looks down on the street and terrace from
+  `[-12, 16, 12]`. The other recipes keep it at `[-16, 8, 15]`, inside an
+  awning.
+
+The renderer settings it relies on, with their measured cost (median GPU
+time of their own passes at 1920x1080, Metal natively and Chrome WebGPU, on
+the same machine; where a feature has no pass of its own, the change in the
+frame total from interleaved runs):
+
+| Feature | In the recipe | Native | Chrome |
+|---|---|---|---|
+| Soft shadows (High preset) | on | within run-to-run noise (about 1 ms) | 0.5-0.7 ms of frame total |
+| Sharpening | on | 0.16-0.19 ms | 0.13 ms |
+| Fog with `start` | on | 0.4 ms | 0.3 ms |
+| Contact shadows, Medium | off | 2.4-2.5 ms | 1.8 ms |
+| Screen-space indirect, Low | off | 0.9-4 ms, in the AO and opaque passes | 3.3-4.4 ms of frame total (its own pass 0.39 ms) |
+| Local exposure 0.75/1.0 | off | 0.3-0.4 ms | 0.26 ms |
+| Window glass as SSR receiver | off | 1.0-1.2 ms | 0.2-0.33 ms |
+
+Each was judged from a matched pair of `bevy`, `street` and `bike` captures,
+that feature flipped and everything else as the recipe:
+
+- Contact shadows leave no visible difference: at this sun height the sun's
+  own short shadows already ground chair legs, planters, bollards and the
+  scooter.
+- Screen-space indirect light adds no visible bounce under the awnings or on
+  shaded facades, and darkens the frame slightly.
+- Local exposure at the sourced typical values (highlight 0.75, shadow 1.0)
+  changes nothing visible at this exposure.
+- The procedural sky (`sky`, below) makes the frames about a quarter darker
+  with a deeper blue sky. It is not clearly better on these cameras than
+  the captured panorama, which the recipe keeps.
+- `MASTER_Glass_Exterior` as a screen-space-reflection receiver
+  (`ssr_receiver_materials`, below) shows no visible change. The glass is
+  clear (transmission 1, roughness 0), so it reflects about 4% head-on, and
+  the probes already put the street in that reflection.
+- `Fog::start` replaces #838's two far-end `fog_volumes`: the same haze, at
+  the same cost, with nothing placed by hand.
+- Micro-shadowing was not tried. It needs occlusion maps the prepared Bistro
+  does not have; the opt-in derived-occlusion export needs the source
+  download and the `ktx` tool.
 
 `lighting_authoring` records each choice and the captures it was chosen
 from. `bistro-quality` stays unchanged as the control. Capture both with the
 same views, size, frames and warm-up, natively and in the browser:
 
 ```sh
-cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-quality.json --view all --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-golden/control
-cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-golden.json --view all --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-golden/golden
-bun scripts/tasks.ts measure-browser --fixture examples/sgl-3d/fixtures/bistro-golden.json --asset-dir target/bistro-quality --view street --size 1920x1080 --warmup 720 --frames 120 --capture target/bistro-golden/web/street.png --output target/bistro-golden/web/street.json
+cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-quality.json --view all --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-daylight/control
+cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-daylight.json --view all --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-daylight/daylight
+bun scripts/tasks.ts measure-browser --fixture examples/sgl-3d/fixtures/bistro-daylight.json --asset-dir target/bistro-quality --view street --size 1920x1080 --warmup 720 --frames 120 --capture target/bistro-daylight/web/street.png --output target/bistro-daylight/web/street.json
 ```
+
+Two optional fixture keys exist for these comparisons:
+
+- `sky`: the procedural sky (`FrameEnvironment::Sky`) with its aerial
+  perspective in place of the captured panorama, lit by each camera's sun.
+  Its fields are `Sky`'s, each optional with its default: `ground_height`
+  (world Y in metres), `rayleigh`, `mie`, `ozone`, `sun_disc` and
+  `aerial_perspective`. `{}` is Earth's clear sky.
+- `ssr_receiver_materials`: exact material names made blended surfaces that
+  receive screen-space reflections and keep their specular whole
+  (`AlphaMode::Blend`), as the feature guide's blended receivers describe.
+  Reports list them under `material_authoring.ssr_receivers`.
 
 The fixture key `diffuse_transmission_materials` gives named materials
 `KHR_materials_diffuse_transmission`. It takes `names` (exact material
@@ -625,9 +674,9 @@ changes. Reports list the applied materials under `material_authoring`
 (browser: `content.material_authoring`). The applied fog appears beside the
 sun in each native view and under browser `lighting`.
 
-### Bistro Golden reflections
+### Bistro Daylight reflections
 
-`bistro-golden` also turns on the reflection features, so windows, chrome and
+`bistro-daylight` also turns on the reflection features, so windows, chrome and
 the street reflect the street rather than only the sky panorama:
 
 - Half-resolution Crystal screen-space reflections. Velvet was compared on
@@ -639,27 +688,25 @@ the street reflect the street rather than only the sky panorama:
   end) and `facades` (the street before the west buildings' east facades).
   Their influences overlap by their 2 m blends. The street probe excludes
   the scooter from its capture.
-- Two `decals`: puddles on the road, where the `street` and `bike` views see
-  them at a grazing angle and they mirror the sunlit facades and the sky at
-  the street's end. Puddles nearer the cameras reflect too little at their
-  steeper view, or mirror the dark bistro facade, and read as stains.
-  Under the near-overhead sun the stone beneath them is sunlit, so they
-  read as a wet sheen with sun glints more than as mirrors.
+- No `decals`. Two puddles on the road were tried: under an earlier, lower
+  sun they mirrored the sunlit facades at a grazing angle, but under the
+  near-overhead sun the stone beneath them is sunlit and they read as darker
+  damp patches, so the recipe leaves them out. The `decals` key below still
+  places them.
 
 `lighting_authoring.reflections_note` records each choice. The probe
 payloads are generated content, not in Git. Capture all four from the
-fixture itself, which writes `bistro-golden-NAME-probe.rgba16` and its
+fixture itself, which writes `bistro-daylight-NAME-probe.rgba16` and its
 recipe for each, then copy the payloads into the asset directory:
 
 ```sh
-cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-golden.json --capture-probe examples/sgl-3d/fixtures/bistro-golden.json --view street --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-golden/probes
-cp target/bistro-golden/probes/bistro-golden-*-probe.rgba16 target/bistro-quality/
+cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-daylight.json --capture-probe examples/sgl-3d/fixtures/bistro-daylight.json --view street --size 1920x1080 --frames 840 --warmup 720 --output target/bistro-daylight/probes
+cp target/bistro-daylight/probes/bistro-daylight-*-probe.rgba16 target/bistro-quality/
 ```
 
-Recapture after changing the placements, the lighting (the sun included) or the puddles.
-For matched comparisons, copy the fixture and remove `specular_probes` or
-`decals`, or set `settings.screen_space_reflections` to `Off`, keeping
-everything else.
+Recapture after changing the placements, the lighting (the sun included) or any decals.
+For matched comparisons, copy the fixture and remove `specular_probes`, or
+set `settings.screen_space_reflections` to `Off`, keeping everything else.
 
 Fixture `decals` are puddles: decal boxes that project one irregular puddle
 the examples generate in code. Within it the surface turns level, as water
