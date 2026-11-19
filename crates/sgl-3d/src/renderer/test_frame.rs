@@ -182,11 +182,6 @@ impl TestRenderer {
         self.view.reflections.world()
     }
 
-    /// FSR's upscaled frame of the last frame it ran.
-    pub(crate) fn fsr_output(&self) -> &wgpu::TextureView {
-        self.view.antialiasing.output()
-    }
-
     /// The motion reach's cached bind group sets, while TAA runs.
     pub(crate) fn reach_groups(&self) -> Option<usize> {
         self.view.antialiasing.reach_groups()

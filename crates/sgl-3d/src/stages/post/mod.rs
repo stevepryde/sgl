@@ -2,8 +2,12 @@
 //! grading, dithered to the output; where SMAA runs (or stands in for TAA
 //! that did not run), tone mapping at the scene size, SMAA, then the
 //! antialiased scene resampled and dithered to the output. Opt-in spatial
-//! upscaling reconstructs a smaller scene with AMD FSR1 EASU then RCAS;
-//! RCAS shares the final presentation/dither pass.
+//! upscaling reconstructs a smaller scene with AMD FSR1 EASU. Where
+//! sharpening is in effect, the final pass, which writes the output transfer
+//! and the dither, runs AMD's RCAS over the display-referred image at the
+//! output size, whichever antialiasing completed the frame: over EASU's
+//! output, SMAA's at the output size, or an output-size target the scene
+//! is tone mapped or resampled into. It keeps no history.
 //!
 //! Reads: the completed scene at the scene size, motion-blurred when motion
 //! blur ran (`stages::motion_blur`), within `shading::SCENE_COLOR`'s bound
@@ -11,17 +15,24 @@
 //! frame's exposure (`stages::exposure`).
 //! Writes: its own bloom chain, combined HDR, SMAA, tone-mapped scene,
 //! antialiased and tone-mapped targets, the optional spatial reconstruction
-//! target, and the output. The diagnostic output-size tone-mapped target
-//! exists only while capture is enabled. The tone-mapped
+//! target, the sharpening input, and the output. The diagnostic output-size
+//! tone-mapped target exists only while capture is enabled, and holds the
+//! final image, sharpened where sharpening runs, undithered. The tone-mapped
 //! scene, antialiased and SMAA's edge and weight targets are made the first
 //! frame SMAA runs at the scene size; SMAA's own are released when it stops.
+//! The output-size sharpening input is made the first frame that sharpens
+//! without SMAA's or EASU's output at the output size to read, and released
+//! the first that does not.
 //! Honours: bloom (and the frame's authored bloom parameters, and the
 //! effective sizing's bloom targets), the frame's colour grading, the
-//! antialiasing in effect and SMAA's quality, the bloom and SMAA diagnostics
-//! layers and the diagnostics tone-map capture.
-//! Timing groups: `bloom`, `SMAA`, `tone map`. While SMAA runs, `tone map`
-//! also times the resample after it, so its passes are not consecutive; the
-//! group sums them. `spatial upscale` times EASU and RCAS/presentation.
+//! antialiasing in effect and SMAA's quality, spatial upscaling, the
+//! sharpness, the bloom and SMAA diagnostics layers and the diagnostics
+//! tone-map capture.
+//! Timing groups: `bloom`, `SMAA`, `tone map`, `spatial upscale`,
+//! `sharpening`. While SMAA runs, `tone map` also times the resample after
+//! it, so its passes are not consecutive; the group sums them. `spatial
+//! upscale` times EASU; `sharpening` times the final pass where it runs
+//! RCAS, and `tone map` the final pass otherwise.
 pub(crate) mod bloom;
 pub(crate) mod fsr1;
 pub(crate) mod inputs;
@@ -45,6 +56,8 @@ struct Presentation {
     /// Tone mapping writes the tone-mapped target, which is then presented.
     capture: bool,
     spatial: bool,
+    /// RCAS sharpens the final image at this sharpness.
+    sharpness: Option<f32>,
 }
 
 /// The frame's authored look that post applies.
@@ -85,6 +98,9 @@ pub(crate) struct Post {
     fsr1: fsr1::Fsr1,
     /// SMAA's targets, from the first frame SMAA runs at `scene_size`.
     smaa_targets: Option<SmaaTargets>,
+    /// The display-referred image RCAS reads at the output size, where
+    /// neither SMAA nor EASU writes it there.
+    sharpening_input: Option<wgpu::TextureView>,
     tone_map: tone_map::ToneMap,
 }
 
@@ -115,6 +131,7 @@ impl Post {
             output_size: sizes.output,
             fsr1: fsr1::Fsr1::new(device, &inputs),
             smaa_targets: None,
+            sharpening_input: None,
             tone_map: tone_map::ToneMap::new(device, &inputs, output, sizes.output),
             inputs,
         })
@@ -128,6 +145,7 @@ impl Post {
         self.output_size = sizes.output;
         self.fsr1.release();
         self.smaa_targets = None;
+        self.sharpening_input = None;
         self.smaa.forget_inputs();
         self.tone_map.resize(device, sizes.output);
         self.smaa.resize(sizes.scene[0], sizes.scene[1]);
@@ -166,6 +184,7 @@ impl Post {
                 .then_some(ctx.effective.smaa_quality),
             capture: ctx.effective.capture_tone_target,
             spatial: spatial_resolves(ctx.effective.upscaling, ctx.sizes, kind),
+            sharpness: ctx.effective.sharpness,
         };
         let look = Look {
             exposure,
@@ -228,10 +247,47 @@ impl Post {
             self.inputs.forget();
             self.fsr1.release();
         }
+        // RCAS reads SMAA's or EASU's output where either is at the output
+        // size; else the scene tone mapped or resampled into its own input.
+        let sharpening_input = presentation.sharpness.is_some()
+            && !presentation.spatial
+            && (presentation.smaa.is_none() || self.scene_size != self.output_size);
+        if !sharpening_input && self.sharpening_input.take().is_some() {
+            self.inputs.forget();
+        }
+        let output_size = self.output_size;
+        // RCAS as the final pass, over EASU's gamma-2 output where `encoded`.
+        let sharpen = |encoded| {
+            presentation
+                .sharpness
+                .map(|sharpness| tone_map::Final::Sharpen { sharpness, encoded })
+        };
         if presentation.smaa.is_none() && !presentation.spatial {
             if self.smaa_targets.take().is_some() {
                 self.inputs.forget();
             }
+            let Some(last) = sharpen(false) else {
+                self.tone_map.encode(
+                    device,
+                    queue,
+                    encoder,
+                    &self.inputs,
+                    combined,
+                    self.bloom.halo(),
+                    look.exposure,
+                    look.grading,
+                    look.tone_mapping,
+                    tone_map::Destination::Output {
+                        capture: presentation.capture,
+                        output,
+                    },
+                    timing,
+                );
+                return;
+            };
+            let input = self
+                .sharpening_input
+                .get_or_insert_with(|| target(device, "sharpening input", output_size, HDR));
             self.tone_map.encode(
                 device,
                 queue,
@@ -242,14 +298,23 @@ impl Post {
                 look.exposure,
                 look.grading,
                 look.tone_mapping,
-                tone_map::Destination::Output {
-                    capture: presentation.capture,
-                    output,
-                },
+                tone_map::Destination::Intermediate(input),
+                timing,
+            );
+            self.tone_map.present_final(
+                device,
+                queue,
+                encoder,
+                &self.inputs,
+                input,
+                self.bloom.halo(),
+                presentation.capture,
+                last,
+                output,
                 timing,
             );
             return;
-        };
+        }
         let scene_size = self.scene_size;
         let targets = self
             .smaa_targets
@@ -264,7 +329,7 @@ impl Post {
             look.exposure,
             look.grading,
             look.tone_mapping,
-            tone_map::Destination::Scene(&targets.tone_mapped),
+            tone_map::Destination::Intermediate(&targets.tone_mapped),
             timing,
         );
         if presentation.smaa.is_none() && targets.antialiased.take().is_some() {
@@ -281,31 +346,43 @@ impl Post {
         } else {
             &targets.tone_mapped
         };
-        let scene = if presentation.spatial {
-            self.fsr1.encode(
+        let (scene, last) = if presentation.spatial {
+            let upscaled = self.fsr1.encode(
                 device,
                 encoder,
                 &self.inputs,
                 scene,
                 self.bloom.halo(),
-                self.output_size,
+                output_size,
                 timing,
-            )
+            );
+            (upscaled, sharpen(true).unwrap_or(tone_map::Final::Decode))
+        } else if sharpening_input {
+            let input = self
+                .sharpening_input
+                .get_or_insert_with(|| target(device, "sharpening input", output_size, HDR));
+            self.tone_map.resample_into(
+                device,
+                encoder,
+                &self.inputs,
+                scene,
+                self.bloom.halo(),
+                input,
+                timing,
+            );
+            (&*input, sharpen(false).unwrap_or(tone_map::Final::Resample))
         } else {
-            scene
+            (scene, sharpen(false).unwrap_or(tone_map::Final::Resample))
         };
-        self.tone_map.resample(
+        self.tone_map.present_final(
             device,
+            queue,
             encoder,
             &self.inputs,
             scene,
             self.bloom.halo(),
             presentation.capture,
-            if presentation.spatial {
-                tone_map::Reconstruction::Rcas
-            } else {
-                tone_map::Reconstruction::Linear
-            },
+            last,
             output,
             timing,
         );

@@ -389,7 +389,20 @@ pub enum Upscaling {
     /// Existing linear presentation, with no spatial reconstruction pass.
     #[default]
     Off,
-    /// Edge-adaptive reconstruction and sharpening after tone mapping and SMAA.
+    /// Edge-adaptive reconstruction after tone mapping and SMAA, sharpened
+    /// as `Settings::sharpening` chooses.
+    On,
+}
+
+/// AMD's robust contrast-adaptive sharpening (RCAS) of the displayed image,
+/// once, after tone mapping, whichever antialiasing completed the frame.
+/// Preset is on at High; at Low, only where FSR is the antialiasing in
+/// effect or `Settings::upscaling` is on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Sharpening {
+    #[default]
+    Preset,
+    Off,
     On,
 }
 
@@ -404,11 +417,12 @@ pub struct Settings {
     pub upscaling: Upscaling,
     pub antialiasing: Antialiasing,
     pub fsr_quality: FsrQuality,
-    /// FSR's robust contrast-adaptive sharpening (RCAS) of its output.
-    pub fsr_sharpening: bool,
-    /// How much FSR sharpens while `fsr_sharpening` is on, 0..=1 as AMD's
-    /// `sharpness`: 0 is the least, 1 the most. Others are clamped, NaN to 0.
-    pub fsr_sharpness: f32,
+    /// Whether the displayed image is sharpened.
+    pub sharpening: Sharpening,
+    /// How much it is sharpened while `sharpening` is in effect, 0..=1 as
+    /// AMD's `sharpness`: 0 is the least, 1 the most. Others are clamped,
+    /// NaN to 0.
+    pub sharpness: f32,
     pub smaa_quality: SmaaQuality,
     pub anisotropic_filtering: AnisotropicFiltering,
     pub bloom: Bloom,
@@ -494,9 +508,8 @@ impl Default for Settings {
     /// High, with atmosphere allowed and the fog filter and volume paths
     /// on, heat
     /// distortion, world-space reflections, hardware ray tracing,
-    /// ray-traced shadows, occlusion culling and motion blur off, FSR
-    /// sharpening on at AMD's FSR sample's 0.8
-    /// (`m_RCASSharpen`, `m_Sharpness`), and every other choice at its
+    /// ray-traced shadows, occlusion culling and motion blur off, sharpness
+    /// AMD's FSR sample's 0.8 (`m_Sharpness`), and every other choice at its
     /// default.
     fn default() -> Self {
         Self {
@@ -505,8 +518,8 @@ impl Default for Settings {
             upscaling: Upscaling::default(),
             antialiasing: Antialiasing::default(),
             fsr_quality: FsrQuality::default(),
-            fsr_sharpening: true,
-            fsr_sharpness: 0.8,
+            sharpening: Sharpening::default(),
+            sharpness: 0.8,
             smaa_quality: SmaaQuality::default(),
             tone_mapping: ToneMapping::default(),
             anisotropic_filtering: AnisotropicFiltering::default(),

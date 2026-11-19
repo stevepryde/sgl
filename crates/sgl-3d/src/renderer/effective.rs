@@ -6,7 +6,7 @@ use crate::scene::RayData;
 use crate::settings::{
     AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, FogQuality, FsrVersion,
     ReflectionMethod, RenderPreset, SceneResolution, ScreenSpaceReflections, Settings,
-    ShadowQuality, WorldSpaceReflections,
+    ShadowQuality, Sharpening, Upscaling, WorldSpaceReflections,
 };
 use crate::shading::RayQueryForm;
 use crate::shading::bind::BindingTier;
@@ -119,11 +119,20 @@ fn motion_blur(settings: &Settings, input: &FrameInput) -> Option<f32> {
     (shutter.is_finite() && shutter > 0.).then_some(shutter)
 }
 
-/// FSR's sharpness while `fsr` runs and the setting sharpens: within
-/// AMD's 0..=1, NaN as the least.
-fn fsr_sharpness(settings: &Settings, fsr: bool) -> Option<f32> {
-    let sharpness = settings.fsr_sharpness;
-    (fsr && settings.fsr_sharpening).then(|| {
+/// Post's sharpness while the setting sharpens a frame of `antialiasing`,
+/// the antialiasing in effect: within AMD's 0..=1, NaN as the least.
+/// `Preset` sharpens at High, and at Low only where FSR is the
+/// antialiasing in effect or `Settings::upscaling` is on.
+fn sharpness(settings: &Settings, antialiasing: Antialiasing) -> Option<f32> {
+    let sharpening = match settings.sharpening {
+        Sharpening::Off => false,
+        Sharpening::On => true,
+        Sharpening::Preset => {
+            !settings.low() || antialiasing.fsr().is_some() || settings.upscaling == Upscaling::On
+        }
+    };
+    let sharpness = settings.sharpness;
+    sharpening.then(|| {
         if sharpness.is_nan() {
             0.
         } else {
@@ -337,7 +346,7 @@ pub(super) fn resolve(
         taa,
         fsr,
         temporal_masks,
-        fsr_sharpness: fsr_sharpness(settings, fsr),
+        sharpness: sharpness(settings, antialiasing),
         post_fx: taa || crystal,
         shadow_quality: settings.shadow_quality,
         shadow_filter,
@@ -620,6 +629,97 @@ mod temporal_mask_tests {
         };
         for content in alone {
             assert!(!held(&off, content), "no temporal antialiasing");
+        }
+    }
+}
+
+#[cfg(test)]
+mod sharpening_tests {
+    use super::*;
+    use crate::settings::{Antialiasing as A, Sharpening as S};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    // Defects: `Preset` sharpens Low's unreconstructed frames (SMAA, TAA,
+    // no antialiasing), or not its FSR or spatially upscaled ones; it
+    // follows the FSR the settings request rather than the antialiasing in
+    // effect on a device without FSR; Off or On is overridden by the
+    // preset; the sharpness leaves AMD's 0..=1. The oracle is the settings
+    // guide's Sharpening row as a table.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn sharpening_follows_the_settings_guide() {
+        let camera = crate::Camera {
+            view: glam::Mat4::IDENTITY,
+            projection: crate::perspective(1., 1., 0.1),
+            eye: glam::Vec3::ZERO,
+        };
+        let input = FrameInput::new(camera);
+        let device = |fsr_running| Device {
+            fsr_running,
+            fused_supported: true,
+            occlusion_supported: true,
+            ray_queries: None,
+            tier: BindingTier::Extended,
+        };
+        let fsr2 = Some(FsrVersion::Fsr2);
+        let fsr3 = Some(FsrVersion::Fsr3);
+        let (high, low) = (RenderPreset::High, RenderPreset::Low);
+        let (off, on) = (Upscaling::Off, Upscaling::On);
+        // Preset, requested antialiasing, the FSR the device runs,
+        // upscaling, sharpening, and whether the frame is sharpened.
+        let cases = [
+            (high, A::Preset, None, off, S::Preset, true),
+            (high, A::Smaa, None, off, S::Preset, true),
+            (high, A::Off, None, off, S::Preset, true),
+            (high, A::Fsr2, fsr2, off, S::Preset, true),
+            (high, A::Fsr2, None, off, S::Preset, true),
+            (low, A::Preset, None, off, S::Preset, false),
+            (low, A::Taa, None, off, S::Preset, false),
+            (low, A::Off, None, off, S::Preset, false),
+            (low, A::Smaa, None, on, S::Preset, true),
+            (low, A::Taa, None, on, S::Preset, true),
+            (low, A::Fsr2, fsr2, off, S::Preset, true),
+            (low, A::Fsr3, fsr3, off, S::Preset, true),
+            // FSR requested on a device without it: TAA is in effect.
+            (low, A::Fsr2, None, off, S::Preset, false),
+            (low, A::Fsr3, fsr2, off, S::Preset, false),
+            (low, A::Fsr2, None, on, S::Preset, true),
+            (high, A::Taa, None, off, S::Off, false),
+            (high, A::Fsr2, fsr2, on, S::Off, false),
+            (low, A::Fsr2, fsr2, off, S::Off, false),
+            (low, A::Smaa, None, off, S::On, true),
+            (low, A::Off, None, off, S::On, true),
+            (high, A::Taa, None, off, S::On, true),
+        ];
+        for (preset, antialiasing, fsr_running, upscaling, sharpening, sharpened) in cases {
+            let settings = Settings {
+                preset,
+                antialiasing,
+                upscaling,
+                sharpening,
+                ..Settings::default()
+            };
+            let sharpness = resolve(
+                &settings,
+                &input,
+                SceneContent::default(),
+                device(fsr_running),
+            )
+            .sharpness;
+            assert_eq!(
+                sharpness,
+                sharpened.then_some(0.8),
+                "{preset:?}, {antialiasing:?} on a device running {fsr_running:?}, \
+                 upscaling {upscaling:?}, sharpening {sharpening:?}"
+            );
+        }
+        for (sharpness, effective) in [(0., 0.), (1., 1.), (1.5, 1.), (-0.5, 0.), (f32::NAN, 0.)] {
+            let settings = Settings {
+                sharpening: Sharpening::On,
+                sharpness,
+                ..Settings::default()
+            };
+            let resolved = resolve(&settings, &input, SceneContent::default(), device(None));
+            assert_eq!(resolved.sharpness, Some(effective), "sharpness {sharpness}");
         }
     }
 }

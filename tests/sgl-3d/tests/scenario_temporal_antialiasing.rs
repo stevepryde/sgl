@@ -35,11 +35,11 @@
 //! bloom, fog, ambient occlusion, reflections or motion blur, and a fixed
 //! exposure, so what antialiasing receives is exactly their radiance.
 //!
-//! FSR runs here at Native AA, where the render and scene sizes agree, and
-//! without sharpening (RCAS moves edges away from their coverage on
-//! purpose, so the reference does not measure it); case 1 checks the motion
-//! under rotation. `scenario_fsr_upscaling` covers FSR at its upscaling
-//! qualities, RCAS's bound and every method's resolve under rotation. The
+//! FSR runs here at Native AA, where the render and scene sizes agree; case
+//! 1 checks the motion under rotation. FSR never sharpens: post sharpens
+//! after the antialiased frame these cases read (`scenario_sharpening`).
+//! `scenario_fsr_upscaling` covers FSR at its upscaling qualities and every
+//! method's resolve under rotation. The
 //! stage, scripts and oracles both share are `scenario::temporal`'s.
 #![cfg(not(target_arch = "wasm32"))]
 mod scenario;
@@ -412,9 +412,7 @@ every_method!(jitter_is_sub_pixel_and_never_in_the_motion);
 /// hold and a whole jitter cycle every edge pixel has averaged every jitter
 /// phase, so its RMSE against the supersampled frame is at least `bar`
 /// times below the single centre sample's, on the grating's strips and on
-/// the outlines alike, at either distance. FSR runs without sharpening
-/// (`fixture_settings`): RCAS deliberately moves edges away from their
-/// coverage, which is what the reference measures.
+/// the outlines alike, at either distance.
 fn at_rest_the_resolve_converges_on_coverage(method: Antialiasing) {
     let Some(gpu) = device(method) else { return };
     let mut failures = Failures::default();

@@ -5,8 +5,9 @@
 // effects/fsr_upscale.glsl supplies the reference EASU -> RCAS schedule.
 // Portable f32 fragment passes, no optional device features. Explicit
 // clamped loads replace gathers. AMD's bit reciprocal approximations
-// are retained; a zero gradient remains finite. Input and intermediate colour are
-// gamma 2 as AMD requires perceptual colour; the final result is linear.
+// are retained; a zero gradient remains finite. EASU writes gamma 2 as AMD
+// requires perceptual colour; RCAS takes gamma-2 taps and post's final pass
+// (tone_map.wgsl) loads, sharpens and decodes them.
 // ffx_core_gpu_common.h scalar approximation helpers, kept bit-for-bit.
 fn fsr1_rcp(value:f32)->f32 {
  return bitcast<f32>(0x7ef07ebbu-bitcast<u32>(value));
@@ -106,24 +107,17 @@ fn fsr1_tap(off:vec2<f32>,dir:vec2<f32>,len:vec2<f32>,lob:f32,clp:f32,c:vec3<f32
  accumulated+=fsr1_tap(vec2(0.,2.)-pp,dir,len2,lob,clp,n);
  return vec4(clamp(accumulated.rgb/accumulated.a,min4,max4),1.);
 }
-// FsrRcasF without optional denoise, matching Godot's default path.
-fn fsr1_rcas(p:vec2<i32>)->vec3<f32> {
- // EASU already wrote gamma-2 colour: do not convert again.
- let b=fsr1_load_linear(p+vec2(0,-1));
- let d=fsr1_load_linear(p+vec2(-1,0));
- let e=fsr1_load_linear(p);
- let f=fsr1_load_linear(p+vec2(1,0));
- let h=fsr1_load_linear(p+vec2(0,1));
+// FsrRcasF without optional denoise, matching Godot's default path: the
+// five taps b (above), d (left), e (centre), f (right) and h (below), in
+// gamma 2 (perceptual 0..1, as FSR1 requires of its input), sharpened at
+// `strength`, FsrRcasCon's exp2(-stops). The result is gamma 2.
+fn fsr1_rcas(b:vec3<f32>,d:vec3<f32>,e:vec3<f32>,f:vec3<f32>,h:vec3<f32>,strength:f32)->vec3<f32> {
  let mn4=min(min(b,d),min(f,h));
  let mx4=max(max(b,d),max(f,h));
  // At a flat black/white channel the unconstrained limiter is zero.
  let hit_min=mn4/select(vec3(1.),4.*mx4,mx4>vec3(0.));
  let hit_max=(vec3(1.)-mx4)/select(vec3(-1.),4.*mn4-4.,mn4<vec3(1.));
  let lobes=max(-hit_min,hit_max);
- // FsrRcasCon: fixed 0.2 stops of attenuation, Godot's default
- // (`fsr_sharpness` 0.2); AMD's SDK maps its 0..1 sharpness s to 2 - 2s
- // stops, so this is 0.9 there.
- let lobe=max(-(.25-1./16.),min(max(max(lobes.r,lobes.g),lobes.b),0.))*exp2(-.2);
- let color=clamp((lobe*b+lobe*d+lobe*h+lobe*f+e)*fsr1_rcp_medium(4.*lobe+1.),vec3(0.),vec3(1.));
- return color*color;
+ let lobe=max(-(.25-1./16.),min(max(max(lobes.r,lobes.g),lobes.b),0.))*strength;
+ return clamp((lobe*b+lobe*d+lobe*h+lobe*f+e)*fsr1_rcp_medium(4.*lobe+1.),vec3(0.),vec3(1.));
 }

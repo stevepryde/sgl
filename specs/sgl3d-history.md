@@ -3682,7 +3682,7 @@ See M-11, M-16 and M-17a to M-17c.
 - Bloom: a per-frame mip chain.
 - Tone mapping and deband dither: per frame; the dither is screen-space and static.
 - SMAA: three per-frame passes with no temporal state or jitter.
-- FSR1 (EASU and RCAS): per-frame spatial.
+- FSR1 EASU and sharpening (RCAS): per-frame spatial.
 - Post inputs and output: bind-group caches only.
 - Probe prefilter: one pass per capture.
 - Frame probe: diagnostics readback only.

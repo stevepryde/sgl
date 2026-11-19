@@ -54,7 +54,8 @@ settings SGL3D has today.
    where the adapter has it). Portable spatial upscaling is an opt-in
    post-stage feature on both native and WebGPU devices: scene resolution
    controls its input size, and `Settings::upscaling` controls whether it
-   reconstructs and sharpens that scene to output size. It adds no temporal
+   reconstructs that scene to output size, sharpened as
+   `Settings::sharpening` chooses. It adds no temporal
    history and does not replace native FSR; the default remains linear
    presentation. Its placement and transfer-space owner are defined by the
    [post stage](sgl3d-architecture.md#frame). What the browser cannot do is an input, not a

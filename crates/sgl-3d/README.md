@@ -1048,9 +1048,8 @@ SMAA on Low. They antialias like TAA while upscaling:
 - The frame renders with FSR's jitter sequence and a texture mip bias of
   `log2(render / scene) - 1`. FSR reads the linear HDR frame, the unjittered
   motion vectors and depth, the frame's exposure, and
-  `FrameInput::frame_time_ms`. It sharpens with RCAS while
-  `Settings::fsr_sharpening` is on (the default), at `fsr_sharpness` in
-  AMD's 0..=1 (0.8 by default, as AMD's sample).
+  `FrameInput::frame_time_ms`. FSR does not sharpen: post sharpens its
+  frame as any other ([Sharpening](#sharpening)).
   The camera's blended surfaces, additive effects and mist also write the
   reactive and transparency-and-composition masks, as AMD's FSR documentation
   and sample write them from translucent draws (glow's reactivity from its
@@ -1091,22 +1090,38 @@ SMAA on Low. They antialias like TAA while upscaling:
 
 `Settings::upscaling` (`settings::Upscaling::Off`, the default, or `On`)
 controls spatial enlargement from the scene size to the output size. With
-`On` and a smaller scene, SGL3D runs AMD FSR1 EASU and RCAS after tone mapping
-and SMAA, before final output encoding and dithering. It needs no optional
+`On` and a smaller scene, SGL3D runs AMD FSR1 EASU after tone mapping
+and SMAA, before the final pass, which sharpens it as `Settings::sharpening`
+chooses ([Sharpening](#sharpening)). It needs no optional
 WebGPU feature and adds no temporal history. Equal-size presentation bypasses
 it; `Off` retains the existing linear presentation filter.
 
 Choose the input size with `Settings::scene_resolution`, for example
 `SceneResolution::ThreeQuarter` or `Half`, and call `View::resize` as
 usual. UI drawn after SGL3D stays at output resolution. The game chooses
-whether to upscale and the scene resolution; the filter and sharpening
-parameters remain SGL3D's. Measure the combined rendering and upscaling cost
+whether to upscale and the scene resolution; the filter's parameters remain
+SGL3D's. Measure the combined rendering and upscaling cost
 on the game's camera routes, including moving thin geometry and transparency.
 
 This does not make FSR available in WebGPU. Native FSR still reconstructs
 the HDR frame from render size to scene size; spatial upscaling, when chosen,
 only enlarges the final scene to output size. Existing settings retain their
 presentation behavior because spatial upscaling is opt-in.
+
+### Sharpening
+
+`Settings::sharpening` (`settings::Sharpening::Preset`, `Off` or `On`) and
+`Settings::sharpness` (0..=1, AMD's scale, 0.8 by default as AMD's FSR
+sample) sharpen the displayed image once, with AMD's RCAS in post's final
+pass, after tone mapping, SMAA and spatial upscaling and before the output
+encoding and dither: TAA, SMAA, unantialiased, FSR2/FSR3 and spatially
+upscaled frames alike, natively and in the browser. `Preset` is on at High,
+and at Low only where FSR is in effect or `upscaling` is `On`. It keeps no
+history. Its cost is one full-screen pass of five texel loads at the output
+size (timing group `sharpening`), and, without SMAA at the output size or
+spatial upscaling, one output-size RGBA16F target the frame is tone mapped
+or resampled into first. Under spatial upscaling or SMAA at the output size
+it adds no pass: the final pass sharpens as it presents.
 
 ## Ambient occlusion
 

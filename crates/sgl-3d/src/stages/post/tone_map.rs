@@ -3,9 +3,11 @@
 //! scene to the output, with Bevy's deband dither. Directly, or, when
 //! diagnostics capture it, into the tone-mapped target at the output size,
 //! undithered, which is then copied to the output texel for texel and
-//! dithered alike. Where SMAA runs, into a target at the scene size
-//! (`encode` to `Destination::Scene`), which SMAA antialiases and `resample`
-//! then presents the same two ways.
+//! dithered alike. Where SMAA or spatial upscaling runs, into a target at
+//! the scene size, and where sharpening runs without them, into one at the
+//! output size (`encode` to `Destination::Intermediate`), which the final
+//! pass (`present_final`) then resamples, decodes or sharpens and presents
+//! the same two ways.
 use super::inputs::{self, Inputs, draw, pipeline, sampled, uniform_entry};
 use crate::frame_input::{AgxLook, ColorGrading};
 use crate::settings::ToneMapping;
@@ -31,6 +33,31 @@ pub(crate) const PRESENT_DIRECT_ENTRY: &str = "present_direct";
 pub(crate) const COPY_PIXEL_ENTRY: &str = "copy_pixel";
 pub(crate) const RESAMPLE_ENTRY: &str = "resample";
 pub(crate) const RESAMPLE_DIRECT_ENTRY: &str = "resample_direct";
+pub(crate) const SHARPEN_ENTRY: &str = "sharpen";
+pub(crate) const SHARPEN_DIRECT_ENTRY: &str = "sharpen_direct";
+pub(crate) const SHARPEN_ENCODED_ENTRY: &str = "sharpen_encoded";
+pub(crate) const SHARPEN_ENCODED_DIRECT_ENTRY: &str = "sharpen_encoded_direct";
+pub(crate) const DECODE_ENTRY: &str = "decode";
+pub(crate) const DECODE_DIRECT_ENTRY: &str = "decode_direct";
+
+/// `Sharpening` in `tone_map.wgsl`: RCAS's strength.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct SharpeningUniform {
+    strength: f32,
+}
+
+impl SharpeningUniform {
+    /// AMD's `sharpness` in 0..=1 as its SDK passes it to RCAS: 2 - 2
+    /// `sharpness` stops of attenuation (`ffx_fsr2.cpp` 1262,
+    /// `sharpenessRemapped`), as `FsrRcasCon` turns stops into a factor,
+    /// `exp2(-stops)`.
+    pub fn new(sharpness: f32) -> Self {
+        Self {
+            strength: (-(2. - 2. * sharpness)).exp2(),
+        }
+    }
+}
 
 /// `ColorGrading` in `tone_map.wgsl`: Bevy's `ColorGradingUniform` without
 /// its exposure.
@@ -117,23 +144,26 @@ impl ColorGradingUniform {
 #[cfg(test)]
 pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
     use crate::shading::layout_tests::mirror;
-    vec![mirror!(
-        "tone_map",
-        "ColorGrading",
-        ColorGradingUniform,
-        [
-            balance,
-            saturation,
-            contrast,
-            gamma,
-            gain,
-            lift,
-            midtone_range,
-            hue,
-            post_saturation,
-            tone_mapping,
-        ]
-    )]
+    vec![
+        mirror!(
+            "tone_map",
+            "ColorGrading",
+            ColorGradingUniform,
+            [
+                balance,
+                saturation,
+                contrast,
+                gamma,
+                gain,
+                lift,
+                midtone_range,
+                hue,
+                post_saturation,
+                tone_mapping,
+            ]
+        ),
+        mirror!("tone_map", "Sharpening", SharpeningUniform, [strength]),
+    ]
 }
 
 /// Where tone mapping writes.
@@ -143,15 +173,26 @@ pub(super) enum Destination<'a> {
         capture: bool,
         output: &'a wgpu::TextureView,
     },
-    /// An RGBA16F target of the scene's size, undithered, for SMAA.
-    Scene(&'a wgpu::TextureView),
+    /// An RGBA16F target, undithered, for the passes before the final one.
+    Intermediate(&'a wgpu::TextureView),
 }
 
-/// Reconstruction before the final output transfer and dither.
-#[derive(Clone, Copy)]
-pub(super) enum Reconstruction {
-    Linear,
-    Rcas,
+/// What the final pass does before the output transfer and dither.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Final {
+    /// Resamples the display-referred scene to the output, linearly.
+    Resample,
+    /// Decodes EASU's gamma-2 output, texel for texel.
+    Decode,
+    /// AMD's RCAS at `sharpness`, texel for texel, over linear display
+    /// colour at the output size, or EASU's gamma-2 output where `encoded`.
+    Sharpen { sharpness: f32, encoded: bool },
+}
+
+/// A final pass into the tone-mapped target, and the same into the output.
+struct FinalPipelines {
+    capture: wgpu::RenderPipeline,
+    direct: wgpu::RenderPipeline,
 }
 
 pub(super) struct ToneMap {
@@ -161,13 +202,15 @@ pub(super) struct ToneMap {
     present_direct: wgpu::RenderPipeline,
     /// The tone-mapped target into the output.
     present_copy: wgpu::RenderPipeline,
-    /// The antialiased tone-mapped scene into the tone-mapped target.
-    resample: wgpu::RenderPipeline,
-    /// The antialiased tone-mapped scene into the output, as the copy
-    /// writes it.
-    resample_direct: wgpu::RenderPipeline,
-    rcas: wgpu::RenderPipeline,
-    rcas_direct: wgpu::RenderPipeline,
+    resample: FinalPipelines,
+    decode: FinalPipelines,
+    /// RCAS over linear display colour.
+    sharpen: FinalPipelines,
+    /// RCAS over EASU's output.
+    sharpen_encoded: FinalPipelines,
+    /// `SharpeningUniform`, and the group binding it.
+    sharpening: wgpu::Buffer,
+    sharpening_group: wgpu::BindGroup,
     look_layout: wgpu::BindGroupLayout,
     /// `ColorGradingUniform`.
     grading: wgpu::Buffer,
@@ -196,13 +239,38 @@ impl ToneMap {
             label: Some("tone map exposure and grading"),
             entries: &[sampled(0, false), uniform_entry(1)],
         });
+        let sharpening_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("sharpening"),
+            entries: &[uniform_entry(2)],
+        });
+        let sharpening = crate::counters::buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("sharpening"),
+                contents: bytemuck::bytes_of(&SharpeningUniform::default()),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            },
+        );
+        let sharpening_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("sharpening"),
+            layout: &sharpening_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 2,
+                resource: sharpening.as_entire_binding(),
+            }],
+        });
         let layouts = [Some(inputs.layout()), Some(&look_layout)];
         let copy = [Some(inputs.layout())];
+        let sharpen = [Some(inputs.layout()), Some(&sharpening_layout)];
         let format = destination.format;
         let output = [(
             "OUTPUT_ENCODES_SRGB",
             f64::from(u8::from(destination.encodes_srgb)),
         )];
+        let pair = |layouts: &[Option<&wgpu::BindGroupLayout>], capture, direct| FinalPipelines {
+            capture: pipeline(device, layouts, &shader, capture, &[HDR], (None, &[])),
+            direct: pipeline(device, layouts, &shader, direct, &[format], (None, &output)),
+        };
         Self {
             present: pipeline(
                 device,
@@ -228,15 +296,16 @@ impl ToneMap {
                 &[format],
                 (None, &output),
             ),
-            resample: pipeline(device, &copy, &shader, RESAMPLE_ENTRY, &[HDR], (None, &[])),
-            resample_direct: pipeline(
-                device,
-                &copy,
-                &shader,
-                RESAMPLE_DIRECT_ENTRY,
-                &[format],
-                (None, &output),
+            resample: pair(&copy, RESAMPLE_ENTRY, RESAMPLE_DIRECT_ENTRY),
+            decode: pair(&copy, DECODE_ENTRY, DECODE_DIRECT_ENTRY),
+            sharpen: pair(&sharpen, SHARPEN_ENTRY, SHARPEN_DIRECT_ENTRY),
+            sharpen_encoded: pair(
+                &sharpen,
+                SHARPEN_ENCODED_ENTRY,
+                SHARPEN_ENCODED_DIRECT_ENTRY,
             ),
+            sharpening,
+            sharpening_group,
             grading: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -248,22 +317,6 @@ impl ToneMap {
             ),
             look_layout,
             look: None,
-            rcas: pipeline(
-                device,
-                &copy,
-                &shader,
-                "fsr1_rcas_capture",
-                &[HDR],
-                (None, &[]),
-            ),
-            rcas_direct: pipeline(
-                device,
-                &copy,
-                &shader,
-                "fsr1_rcas_direct",
-                &[format],
-                (None, &output),
-            ),
             tone_mapped: None,
             output_size,
             #[cfg(any(test, feature = "diagnostics"))]
@@ -374,9 +427,12 @@ impl ToneMap {
             self.hold_capture(device);
         }
         let (pipeline, target, label, presented) = match destination {
-            Destination::Scene(scene) => {
-                (&self.present, scene, "tone map the scene for SMAA", None)
-            }
+            Destination::Intermediate(target) => (
+                &self.present,
+                target,
+                "tone map to an intermediate target",
+                None,
+            ),
             Destination::Output { capture, output } => {
                 #[cfg(any(test, feature = "diagnostics"))]
                 {
@@ -410,18 +466,42 @@ impl ToneMap {
         }
     }
 
-    /// `scene`, the antialiased tone-mapped scene at the scene size,
-    /// resampled to `output`, through the tone-mapped target with `capture`.
+    /// `scene`, the display-referred scene, linearly resampled into
+    /// `target`, an RGBA16F target of the output size, undithered.
     #[allow(clippy::too_many_arguments)]
-    pub fn resample(
-        &mut self,
+    pub fn resample_into(
+        &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         inputs: &Inputs,
         scene: &wgpu::TextureView,
         bloom: &wgpu::TextureView,
+        target: &wgpu::TextureView,
+        timing: Option<&crate::timing::GpuTiming>,
+    ) {
+        draw(
+            encoder,
+            &self.resample.capture,
+            &inputs.group(device, scene, bloom),
+            target,
+            "resample the scene for sharpening",
+            timing.and_then(|t| t.render_pass("tone map")),
+        );
+    }
+
+    /// The final pass: `scene`, display-referred, through `last` to
+    /// `output`, through the tone-mapped target with `capture`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn present_final(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        inputs: &Inputs,
+        scene: &wgpu::TextureView,
+        bloom: &wgpu::TextureView,
         capture: bool,
-        reconstruction: Reconstruction,
+        last: Final,
         output: &wgpu::TextureView,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
@@ -434,30 +514,48 @@ impl ToneMap {
         } else {
             self.release_capture(inputs);
         }
-        let group = inputs.group(device, scene, bloom);
-        let pipeline = match (reconstruction, capture) {
-            (Reconstruction::Rcas, true) => &self.rcas,
-            (Reconstruction::Rcas, false) => &self.rcas_direct,
-            (Reconstruction::Linear, true) => &self.resample,
-            (Reconstruction::Linear, false) => &self.resample_direct,
+        let (pipelines, label, timing_group) = match last {
+            Final::Resample => (&self.resample, "resample the scene", "tone map"),
+            Final::Decode => (&self.decode, "decode the upscaled scene", "tone map"),
+            Final::Sharpen { sharpness, encoded } => {
+                crate::counters::write_buffer(
+                    queue,
+                    &self.sharpening,
+                    0,
+                    bytemuck::bytes_of(&SharpeningUniform::new(sharpness)),
+                );
+                let pipelines = if encoded {
+                    &self.sharpen_encoded
+                } else {
+                    &self.sharpen
+                };
+                (pipelines, "sharpen (RCAS)", "sharpening")
+            }
+        };
+        let pipeline = if capture {
+            &pipelines.capture
+        } else {
+            &pipelines.direct
         };
         let target = if capture {
             self.tone_mapped.as_ref().unwrap()
         } else {
             output
         };
-        let (label, timing_group) = match reconstruction {
-            Reconstruction::Linear => ("resample the antialiased scene", "tone map"),
-            Reconstruction::Rcas => ("FSR1 RCAS and presentation", "spatial upscale"),
-        };
-        draw(
-            encoder,
-            pipeline,
-            &group,
-            target,
-            label,
-            timing.and_then(|t| t.render_pass(timing_group)),
-        );
+        let group = inputs.group(device, scene, bloom);
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            timestamp_writes: timing.and_then(|t| t.render_pass(timing_group)),
+            color_attachments: &[crate::view::targets::attachment(target)],
+            ..Default::default()
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        if matches!(last, Final::Sharpen { .. }) {
+            pass.set_bind_group(1, &self.sharpening_group, &[]);
+        }
+        pass.draw(0..3, 0..1);
+        drop(pass);
         if capture {
             self.present_output(device, encoder, inputs, bloom, output, timing);
         }

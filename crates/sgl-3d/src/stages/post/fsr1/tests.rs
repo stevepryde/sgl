@@ -36,14 +36,19 @@ fn coloured_edges_match_the_independent_amd_header_oracle() {
     );
     let output = target(&device, "oracle output", [7, 5], HDR);
     let mut mapper = tone_map::ToneMap::new(&device, &inputs, Output::texture(HDR), [7, 5]);
-    mapper.resample(
+    mapper.present_final(
         &device,
+        &queue,
         &mut encoder,
         &inputs,
         easu,
         &bloom,
         true,
-        tone_map::Reconstruction::Rcas,
+        // The fixture's 0.2 stops.
+        tone_map::Final::Sharpen {
+            sharpness: 0.9,
+            encoded: true,
+        },
         &output,
         None,
     );
@@ -102,14 +107,18 @@ fn direct_black_and_white_are_finite_and_keep_the_sdk_flat_response() {
             [7, 5],
             None,
         );
-        mapper.resample(
+        mapper.present_final(
             &device,
+            &queue,
             &mut encoder,
             &inputs,
             easu,
             &bloom,
             true,
-            tone_map::Reconstruction::Rcas,
+            tone_map::Final::Sharpen {
+                sharpness: 0.9,
+                encoded: true,
+            },
             &output,
             None,
         );

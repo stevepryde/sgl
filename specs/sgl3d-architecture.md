@@ -64,8 +64,9 @@ under RD-2; DiligentFX is its provenance, not a conformance contract.
 
 The antialiasing stage owns one FSR adapter and one active SDK context per view, selected
 by `Antialiasing::Fsr2` or `Antialiasing::Fsr3`; these are mutually exclusive
-with TAA, SMAA and Off. Shared `FsrQuality`, `fsr_quality`, `fsr_sharpening`
-and `fsr_sharpness` controls apply to either version. Presets keep their
+with TAA, SMAA and Off. Shared `FsrQuality` and `fsr_quality` controls apply
+to either version. Neither sharpens: post sharpens an FSR frame as it does
+any other (Frame item 13). Presets keep their
 existing TAA/SMAA choices. The adapter owns SDK-specific dispatch and FSR3's
 three shared scratch textures; the renderer only orders the existing stage.
 Masks, exposure, jitter, history, completion and fallback have one owner and
@@ -604,13 +605,27 @@ Stages run in one order, written in one place in `renderer`:
    next-neighbour pairs are a different algorithm (see the
    [SMAA provenance](../crates/sgl-3d/src/stages/post/smaa/README.md)).
    With `Settings::upscaling` set to `Upscaling::On` and a scene smaller
-   than the output, the same post stage runs AMD FSR1 EASU and RCAS on the
-   tone-mapped scene, after SMAA when selected and before final output
-   encoding and dithering. The stage owns its working transfer conversion;
-   shared composition textures remain linear. `Off` is the default and keeps
-   linear presentation; equal-size presentation bypasses spatial upscaling.
-   The game chooses scene resolution and whether to upscale, not filter
+   than the output, the same post stage runs AMD FSR1 EASU on the
+   tone-mapped scene, after SMAA when selected and before the final pass.
+   The stage owns its working transfer conversion; shared composition
+   textures remain linear. `Off` is the default and keeps linear
+   presentation; equal-size presentation bypasses spatial upscaling. The
+   game chooses scene resolution and whether to upscale, not filter
    internals. Native FSR's render-to-scene stage remains independent.
+   Sharpening is post's alone, and a frame is sharpened once. Where
+   `Settings::sharpening` is in effect, the final pass, which also writes
+   the output transfer and the dither, runs AMD's RCAS (`FsrRcasF`) over the
+   display-referred image at the output size, in gamma 2 as FSR1 requires of
+   its input, at `Settings::sharpness` on AMD's scale (2 − 2 × sharpness
+   stops of attenuation). It runs whichever antialiasing completed the
+   frame, and whether EASU, a linear resample or nothing brought the scene
+   to the output size. Nothing earlier sharpens: FSR2 and FSR3 are
+   dispatched without their RCAS. It follows motion blur, bloom, tone
+   mapping, SMAA and EASU and precedes only the output transfer and the
+   dither, as AMD places FSR1 after tone mapping and before noise, Bevy its
+   sharpening after tone mapping, FXAA and SMAA, and Wicked Engine its
+   sharpen filter after tone mapping. It keeps no history. Without it the
+   final pass presents as before, and EASU's output unsharpened.
    Post holds full-size intermediate targets only for their active consumer,
    and releases disabled-path resources rather than retaining them in caches.
 

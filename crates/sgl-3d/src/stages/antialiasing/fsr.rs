@@ -49,9 +49,16 @@
 //! - `FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE`: linear HDR input (docs 478–482).
 //! - `frameTimeDelta` in milliseconds from the frame's `frame_time_ms`
 //!   (docs 472–476).
-//! - Sharpening: RCAS as `Settings::fsr_sharpening` and `fsr_sharpness`
-//!   choose, a slider as the docs (110) ask applications to expose; by
-//!   default on at 0.8, the sample's `m_RCASSharpen` and `m_Sharpness`.
+//! - Sharpening: dispatched with `enableSharpening` false, so FSR's
+//!   accumulate pass writes the output and its RCAS never runs; post
+//!   sharpens the frame instead, once, after tone mapping, as it does every
+//!   antialiasing mode's (`Settings::sharpening`, Frame item 13), and
+//!   `Settings::sharpness` is the sharpening slider the docs (110) ask
+//!   applications to expose. This departs from AMD's integration, in which
+//!   FSR's own RCAS sharpens, and from Godot and Wicked Engine, which pass
+//!   the sharpness to this dispatch: their RCAS sharpens the linear HDR
+//!   frame, the sharpening would differ between FSR and the other modes,
+//!   and a frame also upscaled spatially would be sharpened twice (D-61).
 //! - Reactive and transparency-and-composition masks (docs 222–242) at the
 //!   render size, written as AMD's FSR sample writes them from its
 //!   translucency pass (`view::targets::mask_targets`): cleared before the camera's
@@ -203,8 +210,6 @@ pub(crate) struct Inputs<'a> {
     pub frame_time_ms: f32,
     /// The frame's 1×1 R32Float exposure multiplier.
     pub exposure: &'a wgpu::Texture,
-    /// RCAS's sharpness in 0..=1, `None` for no sharpening.
-    pub sharpness: Option<f32>,
 }
 
 pub(crate) struct Fsr {
@@ -482,8 +487,6 @@ impl Fsr {
                 width: self.render_size[0],
                 height: self.render_size[1],
             },
-            enable_sharpening: inputs.sharpness.is_some(),
-            sharpness: inputs.sharpness.unwrap_or_default(),
             frame_time_delta: inputs.frame_time_ms,
             pre_exposure: 1.,
             reset: self.reset,
@@ -598,8 +601,6 @@ struct Dispatch {
     jitter_offset: FfxFloatCoords2D,
     motion_vector_scale: FfxFloatCoords2D,
     render_size: FfxDimensions2D,
-    enable_sharpening: bool,
-    sharpness: f32,
     frame_time_delta: f32,
     pre_exposure: f32,
     reset: bool,
@@ -631,8 +632,8 @@ impl Context {
                     jitter_offset: frame.jitter_offset,
                     motion_vector_scale: frame.motion_vector_scale,
                     render_size: frame.render_size,
-                    enable_sharpening: frame.enable_sharpening,
-                    sharpness: frame.sharpness,
+                    // Post sharpens every frame once (Frame item 13).
+                    enable_sharpening: false,
                     frame_time_delta: frame.frame_time_delta,
                     pre_exposure: frame.pre_exposure,
                     reset: frame.reset,
@@ -672,8 +673,8 @@ impl Context {
                         jitter_offset: frame.jitter_offset,
                         motion_vector_scale: frame.motion_vector_scale,
                         render_size: frame.render_size,
-                        enable_sharpening: frame.enable_sharpening,
-                        sharpness: frame.sharpness,
+                        // Post sharpens every frame once (Frame item 13).
+                        enable_sharpening: false,
                         frame_time_delta: frame.frame_time_delta,
                         pre_exposure: frame.pre_exposure,
                         reset: frame.reset,

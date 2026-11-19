@@ -1,16 +1,16 @@
 //! The FSR upscaling suite of the scenario harness (`specs/testing.md`,
 //! "SGL3D scenario harness"): FSR2 and FSR3, where the device runs them, at
-//! the qualities where the render size is below the scene (display) size,
-//! and with RCAS sharpening; and every temporal method, TAA included, under
-//! camera rotation. `scenario_temporal_antialiasing` judges FSR at Native AA,
-//! where the two sizes agree; this suite shares its stage, scripts and
-//! oracles (`scenario::temporal`).
+//! the qualities where the render size is below the scene (display) size;
+//! and every temporal method, TAA included, under camera rotation.
+//! `scenario_temporal_antialiasing` judges FSR at Native AA, where the two
+//! sizes agree; this suite shares its stage, scripts and oracles
+//! (`scenario::temporal`).
 //!
 //! Each case runs alone, one test per FSR version and quality (or per
 //! version, where the case is about changing quality), named
 //! `<case>::<version>_<quality>`, so a change to one path reruns only its
 //! tests: `cargo test -p sgl-3d-tests --test scenario_fsr_upscaling
-//! at_rest::fsr3_balanced`. Every case but U6 and U7 checks case 12's bound
+//! at_rest::fsr3_balanced`. Every case but U6 checks case 12's bound
 //! over the frames it read (`Failures::bounded`). U1 and U8 judge FSR at
 //! rest at the first whole jitter cycle that meets their bars within a frame
 //! budget (`settle_at_rest`). Case U1 dumps its frames and metrics with
@@ -18,7 +18,8 @@
 //!
 //! The fixtures' truth assumes `rig::fixture_settings`: unlit cards, no
 //! bloom, fog, ambient occlusion, reflections or motion blur, a fixed
-//! exposure, and FSR without sharpening but in U7.
+//! exposure, and no sharpening. FSR never sharpens: post does
+//! (`scenario_sharpening`), after the antialiased frame these cases read.
 //!
 //! An upscaled frame's reference is the supersampled frame at the scene
 //! size, which FSR reconstructs; the single sample it must beat is the frame
@@ -38,8 +39,7 @@
 //!
 //! Not covered at the upscaling qualities yet: an object moving along the
 //! view, an appearance or a departure, a resize and an origin move, which
-//! the first suite covers at Native AA; RCAS's effect on the reference
-//! (it moves edges away from their coverage on purpose); rotation about
+//! the first suite covers at Native AA; rotation about
 //! any axis but +Y; a followed object with near scenery streaming past
 //! under sideways travel; and scenery passing nearer than a followed
 //! object, where AMD's previous depth flags it disoccluded (see `WALL`).
@@ -863,66 +863,6 @@ mod mip_bias {
         super::render_size_and_mip_bias(Fsr3)
     }
 }
-
-/// Case U7. Plausible defects: RCAS fed a sharpness outside AMD's range or
-/// mapped wrongly into its strength, an exposure that is zero or not the
-/// frame's (RCAS multiplies by it before and divides after), or sharpening
-/// read from an uninitialised target, any of which writes infinities, NaN
-/// or values far outside the frame. The oracle is the bound, from AMD's
-/// definition of RCAS (`FsrRcasF`, `ffx_fsr1.h`): its output is
-/// (e + w (n + s + e' + w')) / (1 + 4 w) over the centre e and its four
-/// neighbours, with the lobe w limited to -FSR_RCAS_LIMIT x strength..=0,
-/// FSR_RCAS_LIMIT = 0.25 - 1/16 and strength 2^-(2 - 2 sharpness) (the SDK
-/// maps `sharpness` 0..=1 to 2..=0 stops). With every tap within the
-/// frame's radiance range [low, high] of contrast c, that moves the centre
-/// by at most k c beyond it, k = 4 a / (1 - 4 a) at a = FSR_RCAS_LIMIT x
-/// strength: 1.32 at the default 0.8, 3 at 1. The division uses AMD's
-/// medium-precision reciprocal, one Newton step that only lowers it, by at
-/// most (1/8)^2 = 1/64, and each of the method's `stores` may leave a value
-/// a half-float step off. So every value read at rest over the settle (the
-/// sharpest edges a resolve reaches by its end), at both sharpnesses, is
-/// finite and within [low - k c, high + k c], widened by that rounding.
-fn sharpening(method: Antialiasing, quality: FsrQuality) {
-    let Some(gpu) = device(method) else { return };
-    let scenario = stage(&still);
-    let mut rig = scenario.rig(&gpu, VIEW, method);
-    rig.views[0].settings.fsr_sharpening = true;
-    let [low, high] = rig.radiance_range();
-    let contrast = high - low;
-    let mut failures = Failures::default();
-    for sharpness in [0.8, 1.] {
-        rig.views[0].settings.fsr_sharpness = sharpness;
-        let limit = (0.25 - 1. / 16.) * 2f32.powf(-(2. - 2. * sharpness));
-        let k = 4. * limit / (1. - 4. * limit);
-        let rounding = stores(method) * HALF_STEP * high;
-        let floor = (low - k * contrast).min((low - k * contrast) * (1. - 1. / 64.)) - rounding;
-        let ceiling = high + k * contrast + rounding;
-        at_quality(&mut rig, &scenario, quality);
-        let (mut least, mut most) = (f32::INFINITY, f32::NEG_INFINITY);
-        let mut finite = true;
-        for frame in 0..SETTLE {
-            scenario.render(&mut rig, frame);
-            for texel in rig.read(DiagnosticTarget::Antialiased).texels {
-                for &c in &texel[..3] {
-                    finite &= c.is_finite();
-                    least = least.min(c);
-                    most = most.max(c);
-                }
-            }
-        }
-        eprintln!(
-            "{method:?} {quality:?} sharpness {sharpness}: values {least}..={most} against RCAS's bound {floor}..={ceiling} (k {k})"
-        );
-        failures.check(finite && least >= floor && most <= ceiling, || {
-            format!(
-                "{method:?} {quality:?} sharpness {sharpness}: values {least}..={most} (finite: {finite}) leave RCAS's bound {floor}..={ceiling}"
-            )
-        });
-    }
-    failures.assert();
-}
-
-every_quality!(sharpening, sharpening);
 
 /// Case U8. Plausible defects: history lost or misplaced under camera
 /// rotation, which moves every pixel by a different amount (a reprojection

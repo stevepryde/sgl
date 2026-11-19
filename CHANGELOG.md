@@ -36,6 +36,17 @@ docs and specs the entry links.
   shaded and enclosed surfaces stop reflecting the sky at full strength. No
   game-code changes are needed.
 - `sgl-3d` `FrameInput::environment` is now `FrameEnvironment` (`None`, `Map(id)`, `Sky(Sky)`), was `Option<EnvironmentId>`: write `FrameEnvironment::Map(id)` for `Some(id)` and `FrameEnvironment::None` for `None`. `Sky` is a new procedural sky lit by the frame's directional lights, whose `illuminance` and `color` are then their light above the air; it gives no environment light yet.
+- `sgl-3d` `Settings::fsr_sharpening`/`fsr_sharpness` become `sharpening`
+  (`settings::Sharpening::Preset`, `Off`, `On`) and `sharpness`, and now
+  sharpen every antialiasing mode once, in post; TAA frames are sharpened on
+  High by default, and FSR1 (`Upscaling::On`) follows `sharpness` instead of
+  a fixed strength. Migrate `fsr_sharpening: true/false` to
+  `Sharpening::On/Off` and rename `fsr_sharpness`; set `Sharpening::Off` to
+  keep the previous TAA, SMAA and unantialiased image, and `sharpness: 0.9`
+  for the previous FSR1 strength. Saved settings with the old keys still load,
+  the keys dropped (unknown keys are ignored), as `Sharpening::Preset`:
+  convert them on load as above. Timing group `sharpening` is new; `spatial upscale` times EASU alone,
+  and an unsharpened EASU frame's final pass is timed under `tone map`.
 
 ## 0.8.1 — 2026-11-19
 

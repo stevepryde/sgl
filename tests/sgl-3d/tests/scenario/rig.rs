@@ -104,9 +104,10 @@ where
 }
 
 /// The settings a fixture's truth assumes, with `antialiasing` under test:
-/// the scene at the output size with no upscaling, FSR at native quality
-/// without sharpening (RCAS deliberately moves edges away from their
-/// coverage, which the reference oracle measures), and everything that would change an unlit card's
+/// the scene at the output size with no upscaling, FSR at native quality,
+/// no sharpening (RCAS deliberately moves edges away from their coverage,
+/// which the reference oracle measures where it reads the displayed
+/// image), and everything that would change an unlit card's
 /// radiance or the frame before antialiasing off (bloom, ambient
 /// occlusion, screen-space and world-space reflections, atmosphere, dynamic
 /// GI, motion blur). The frame input adds a fixed exposure of 0 stops, no
@@ -117,7 +118,7 @@ pub fn fixture_settings(antialiasing: settings::Antialiasing) -> Settings {
         upscaling: settings::Upscaling::Off,
         antialiasing,
         fsr_quality: settings::FsrQuality::NativeAa,
-        fsr_sharpening: false,
+        sharpening: settings::Sharpening::Off,
         bloom: settings::Bloom::Off,
         ambient_occlusion: settings::AmbientOcclusionQuality::Off,
         screen_space_reflections: settings::ScreenSpaceReflections::Off,

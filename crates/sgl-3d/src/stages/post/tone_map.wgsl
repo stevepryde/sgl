@@ -3,7 +3,9 @@
 // is written to the output. Where SMAA runs, the scene is tone mapped at the
 // scene size first, SMAA antialiases that, and the result is resampled to
 // the output and dithered, as Godot and Bevy run SMAA after tone mapping
-// and before upscaling.
+// and before upscaling. Where sharpening is in effect, the final pass, which
+// writes the output transfer and dither, runs AMD's RCAS (fsr1.wgsl) over
+// the display-referred image at the output size first.
 //
 // Colour grading ports Bevy 9d12036
 // crates/bevy_core_pipeline/src/tonemapping.wesl (LEVEL_MARGIN,
@@ -320,11 +322,52 @@ fn hdr_scene(uv:vec2<f32>)->vec3<f32> {
 @fragment fn resample_direct(i:Output)->@location(0) vec4<f32> {
  return present_rounded(textureSample(scene,linear_sampler,i.uv).rgb,i.position.xy);
 }
-
-// RCAS owns reconstruction; presentation alone owns output transfer/dither.
-@fragment fn fsr1_rcas_capture(i:Output)->@location(0) vec4<f32> {
- return vec4(fsr1_rcas(vec2<i32>(i.position.xy)),1.);
+// Sharpening (`tone_map::SharpeningUniform`): RCAS's strength, FsrRcasCon's
+// exp2(-stops) of AMD's sharpness s, 2 - 2s stops. Bindings 0 and 1 of
+// group 1 are tone mapping's look, which the final pass does not bind.
+struct Sharpening {
+ strength:f32,
 }
-@fragment fn fsr1_rcas_direct(i:Output)->@location(0) vec4<f32> {
- return present_rounded(fsr1_rcas(vec2<i32>(i.position.xy)),i.position.xy);
+@group(1) @binding(2) var<uniform> sharpening:Sharpening;
+// The final pass's RCAS at the output pixel `p` over the display-referred
+// scene at the output size, decoded to linear colour: over linear display
+// colour, whose taps take FSR1's perceptual 0..1 gamma-2 form first
+// (`sharpen_display`), or over EASU's output, gamma 2 already
+// (`sharpen_encoded_at`).
+fn sharpen_display(p:vec2<i32>)->vec3<f32> {
+ let color=fsr1_rcas(
+  fsr1_load(p+vec2(0,-1)),fsr1_load(p+vec2(-1,0)),fsr1_load(p),
+  fsr1_load(p+vec2(1,0)),fsr1_load(p+vec2(0,1)),sharpening.strength);
+ return color*color;
+}
+fn sharpen_encoded_at(p:vec2<i32>)->vec3<f32> {
+ let color=fsr1_rcas(
+  fsr1_load_linear(p+vec2(0,-1)),fsr1_load_linear(p+vec2(-1,0)),fsr1_load_linear(p),
+  fsr1_load_linear(p+vec2(1,0)),fsr1_load_linear(p+vec2(0,1)),sharpening.strength);
+ return color*color;
+}
+// EASU's gamma-2 output, unsharpened, decoded texel for texel.
+fn decode_at(p:vec2<i32>)->vec3<f32> {
+ let color=fsr1_load_linear(p);
+ return color*color;
+}
+// Each final pass into the tone-mapped target, then the same written to the
+// output as the copy writes it.
+@fragment fn sharpen(i:Output)->@location(0) vec4<f32> {
+ return vec4(sharpen_display(vec2<i32>(i.position.xy)),1.);
+}
+@fragment fn sharpen_direct(i:Output)->@location(0) vec4<f32> {
+ return present_rounded(sharpen_display(vec2<i32>(i.position.xy)),i.position.xy);
+}
+@fragment fn sharpen_encoded(i:Output)->@location(0) vec4<f32> {
+ return vec4(sharpen_encoded_at(vec2<i32>(i.position.xy)),1.);
+}
+@fragment fn sharpen_encoded_direct(i:Output)->@location(0) vec4<f32> {
+ return present_rounded(sharpen_encoded_at(vec2<i32>(i.position.xy)),i.position.xy);
+}
+@fragment fn decode(i:Output)->@location(0) vec4<f32> {
+ return vec4(decode_at(vec2<i32>(i.position.xy)),1.);
+}
+@fragment fn decode_direct(i:Output)->@location(0) vec4<f32> {
+ return present_rounded(decode_at(vec2<i32>(i.position.xy)),i.position.xy);
 }

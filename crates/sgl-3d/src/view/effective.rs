@@ -109,8 +109,8 @@ pub(crate) struct Effective {
     /// The temporal masks are drawn and read: while FSR runs, and while TAA
     /// runs and the frame can mark them (Frame item 9).
     pub temporal_masks: bool,
-    /// FSR's RCAS sharpness in 0..=1, while it sharpens.
-    pub fsr_sharpness: Option<f32>,
+    /// Post's RCAS sharpness in 0..=1, while it sharpens the frame.
+    pub sharpness: Option<f32>,
     /// DiligentFX's post-effect context runs: for TAA, and for Crystal SSR.
     pub post_fx: bool,
     /// The shadow maps' sizes.

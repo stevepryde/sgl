@@ -1,5 +1,6 @@
-//! AMD FSR1 EASU, after display mapping/antialiasing. RCAS is fused into
-//! tone mapping's existing final output/dither pass (or diagnostic capture).
+//! AMD FSR1 EASU, after display mapping/antialiasing, writing gamma 2.
+//! RCAS, whose kernel `fsr1.wgsl` also holds, runs in post's final pass
+//! (`tone_map::Final`), which decodes EASU's output with or without it.
 //! Same stage order on native and WebGPU, with no optional GPU features.
 use super::inputs::{self, Inputs, draw, pipeline};
 use crate::shading::gbuffer::COLOR as HDR;

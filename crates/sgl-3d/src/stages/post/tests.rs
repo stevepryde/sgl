@@ -223,6 +223,7 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
                     smaa: None,
                     capture: true,
                     spatial: false,
+                    sharpness: None,
                 };
                 post.present(
                     &device,
@@ -383,6 +384,7 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
                 smaa: Some(SmaaQuality::Medium),
                 capture: true,
                 spatial: false,
+                sharpness: None,
             },
             look(&exposure),
             &output,
@@ -460,9 +462,12 @@ fn spatial_upscaling_is_opt_in_and_does_not_replace_temporal_reconstruction() {
     ));
 }
 
-// Independent invariants: constant colour and alpha survive at borders;
-// spatial reconstruction differs from linear sampling on a diagonal; no
-// optional feature is requested. Check target lifetime through On/Off and
+// Independent invariants: constant colour and alpha survive EASU and
+// presentation, at the borders and inside, sharpened or not: unsharpened,
+// the defect is EASU's gamma 2 presented undecoded or decoded twice;
+// sharpened, also an undefined zero reciprocal in RCAS's limiters. Spatial
+// reconstruction differs from linear sampling on a diagonal; no optional
+// feature is requested. Check target lifetime through On/Off and
 // output-only resize transitions, not source-code assertions.
 #[test]
 fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
@@ -502,7 +507,17 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
         let output = target(&device, "spatial presentation", output_size, HDR);
         // Both flat extremes catch undefined zero reciprocals in AMD's
         // contrast limiters; coloured grey also catches double gamma.
-        for color in [[0., 0., 0., 1.], [1., 1., 1., 1.], [0.18, 0.5, 0.75, 1.]] {
+        // Unsharpened, the gamma-2 round trip through EASU's half-float
+        // target alone separates the two (under 0.1%, plus roundoff).
+        // Sharpened, AMD's medium reciprocal has up to 0.316% relative
+        // error, which converting gamma 2 back to linear doubles: allow that
+        // 0.632% plus half-float roundoff, without hiding a missing or
+        // doubled colour conversion.
+        let flats = [[0., 0., 0., 1.], [1., 1., 1., 1.], [0.18, 0.5, 0.75, 1.]];
+        let cases = [(None, 0.002), (Some(0.8), 0.008)]
+            .into_iter()
+            .flat_map(|case| flats.map(|color| (case, color)));
+        for ((sharpness, tolerance), color) in cases {
             let scene =
                 crate::test_support::hdr_texture(&device, &queue, scene_size, &vec![color; 48]);
             let mut reference = device.create_command_encoder(&Default::default());
@@ -516,6 +531,7 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
                     smaa: None,
                     capture: true,
                     spatial: false,
+                    sharpness: None,
                 },
                 look(&exposure),
                 &output,
@@ -534,6 +550,7 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
                     smaa: None,
                     capture: true,
                     spatial: true,
+                    sharpness,
                 },
                 look(&exposure),
                 &output,
@@ -557,13 +574,9 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
                         (actual - half(&flat[channel * 2..])).abs() < 0.003,
                         "flat colour changed at border"
                     );
-                    // AMD's medium reciprocal has up to 0.316% relative
-                    // error; converting gamma-2 back to linear doubles it.
-                    // Allow that 0.632% plus half-float roundoff, without
-                    // hiding a missing or doubled colour conversion.
                     assert!(
-                        (actual - half(&expected[channel * 2..])).abs() < 0.008,
-                        "flat colour/gamma differs from linear presentation"
+                        (actual - half(&expected[channel * 2..])).abs() < tolerance,
+                        "{sharpness:?}: flat colour/gamma {actual} differs from linear presentation"
                     );
                 }
                 assert_eq!(half(&pixel[6..]), 1.);
@@ -592,6 +605,7 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
                         smaa,
                         capture: true,
                         spatial: true,
+                        sharpness: None,
                     },
                     look(&exposure),
                     &output,
@@ -621,6 +635,7 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
                     smaa: None,
                     capture: false,
                     spatial,
+                    sharpness: None,
                 },
                 look(&exposure),
                 &output,
@@ -688,6 +703,7 @@ fn smaa_holds_scene_size_targets_only_while_it_runs() {
                 smaa,
                 capture: false,
                 spatial: false,
+                sharpness: None,
             },
             look(&exposure),
             &output,
@@ -709,6 +725,303 @@ fn smaa_holds_scene_size_targets_only_while_it_runs() {
     assert!(!post.smaa.holds_targets(), "held without SMAA running");
     frame(&mut post, sizes, Some(SmaaQuality::Medium));
     assert!(post.smaa.holds_targets(), "SMAA ran without its targets");
+}
+
+/// The total variation of an RGBA16F image of `size`: the summed absolute
+/// differences of its colour between horizontally and vertically adjacent
+/// texels.
+fn total_variation(bytes: &[u8], size: [u32; 2]) -> f64 {
+    let at = |x: u32, y: u32, channel: u32| {
+        f64::from(half(
+            &bytes[((y * size[0] + x) * 8 + channel * 2) as usize..],
+        ))
+    };
+    let mut sum = 0.;
+    for y in 0..size[1] {
+        for x in 0..size[0] {
+            for channel in 0..3 {
+                if x > 0 {
+                    sum += (at(x, y, channel) - at(x - 1, y, channel)).abs();
+                }
+                if y > 0 {
+                    sum += (at(x, y, channel) - at(x, y - 1, channel)).abs();
+                }
+            }
+        }
+    }
+    sum
+}
+
+/// A scene of `size` textured in every channel, within tone mapping's
+/// unsaturated range.
+fn textured_scene(size: [u32; 2]) -> Vec<[f32; 4]> {
+    (0..size[1])
+        .flat_map(|y| {
+            (0..size[0]).map(move |x| {
+                let value = |seed: u32| ((x * 37 + y * 11 + x * y * seed) % 17) as f32 / 17.;
+                [
+                    0.04 + 0.5 * value(7),
+                    0.04 + 0.5 * value(5),
+                    0.04 + 0.5 * value(3),
+                    1.,
+                ]
+            })
+        })
+        .collect()
+}
+
+// Defects: a path of the final pass that skips RCAS, or ignores or
+// reverses the sharpness. RCAS raises the differences between neighbouring
+// pixels, more at a higher sharpness (AMD's FSR1 documentation: 0 the
+// least, 1 the most), so on a textured scene the presented image's total
+// variation orders off < 0.5 < 1 in every path of Frame item 13's final
+// pass: tone mapping at the output size or resampled to it, SMAA at the
+// output size or resampled, EASU with and without SMAA; read from the
+// tone-mapped capture, and from the output where nothing is captured.
+#[test]
+fn sharpening_runs_in_every_final_path() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let output_size = [24, 18];
+    let smaller = [16, 12];
+    let smaa = Some(SmaaQuality::Medium);
+    let paths = [
+        ("tone map at the output size", output_size, None, false),
+        ("tone map resampled", smaller, None, false),
+        ("SMAA at the output size", output_size, smaa, false),
+        ("SMAA resampled", smaller, smaa, false),
+        ("EASU", smaller, None, true),
+        ("SMAA then EASU", smaller, smaa, true),
+    ];
+    let exposure = exposure_texture(&device, &queue, 1.);
+    let output = target(&device, "sharpened output", output_size, HDR);
+    for (path, scene_size, smaa, spatial) in paths {
+        let sizes = Sizes {
+            render: scene_size,
+            scene: scene_size,
+            output: output_size,
+        };
+        let mut post = Post::new(
+            &device,
+            &queue,
+            Output::texture(HDR),
+            sizes,
+            false,
+            SmaaQuality::Medium,
+        )
+        .unwrap();
+        let scene = crate::test_support::hdr_texture(
+            &device,
+            &queue,
+            scene_size,
+            &textured_scene(scene_size),
+        );
+        for capture in [true, false] {
+            let variation = |sharpness| {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                post.present(
+                    &device,
+                    &queue,
+                    &mut encoder,
+                    &scene,
+                    Presentation {
+                        bloom: false,
+                        smaa,
+                        capture,
+                        spatial,
+                        sharpness,
+                    },
+                    look(&exposure),
+                    &output,
+                    None,
+                );
+                queue.submit([encoder.finish()]);
+                let image = if capture {
+                    post.tone_map.tone_mapped().texture()
+                } else {
+                    output.texture()
+                };
+                total_variation(&read(&device, &queue, image, 8), output_size)
+            };
+            let [off, half, most] = [None, Some(0.5), Some(1.)].map(variation);
+            eprintln!("{path}, capture {capture}: off {off}, 0.5 {half}, 1 {most}");
+            assert!(
+                off < half && half < most,
+                "{path}, capture {capture}: off {off}, 0.5 {half}, 1 {most}"
+            );
+        }
+    }
+}
+
+// Defect: the final pass's RCAS over linear display colour (every path
+// but EASU's) leaves its gamma-2 result undecoded or decodes it twice, or
+// reads its taps without their gamma-2 form. Oracle: RCAS leaves a flat
+// field flat (its lobe sharpens differences only), so a flat colour
+// sharpened presents as the same path unsharpened, at the borders and
+// inside, within AMD's medium reciprocal's 0.316% relative error doubled
+// by the decode, plus half-float roundoff: the bound the spatial case
+// allows. Black and white also catch undefined zero reciprocals in RCAS's
+// limiters. Paths: tone mapping at the output size, SMAA at the output
+// size, and SMAA on a smaller scene resampled to the output.
+#[test]
+fn a_flat_colour_sharpened_on_the_display_path_presents_unchanged() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let output_size = [17, 13];
+    let smaller = [8, 6];
+    let smaa = Some(SmaaQuality::Medium);
+    let paths = [
+        ("tone map at the output size", output_size, None),
+        ("SMAA at the output size", output_size, smaa),
+        ("SMAA resampled", smaller, smaa),
+    ];
+    let exposure = exposure_texture(&device, &queue, 1.);
+    let output = target(&device, "flat sharpened output", output_size, HDR);
+    for (path, scene_size, smaa) in paths {
+        let sizes = Sizes {
+            render: scene_size,
+            scene: scene_size,
+            output: output_size,
+        };
+        let mut post = Post::new(
+            &device,
+            &queue,
+            Output::texture(HDR),
+            sizes,
+            false,
+            SmaaQuality::Medium,
+        )
+        .unwrap();
+        for color in [[0., 0., 0., 1.], [1., 1., 1., 1.], [0.18, 0.5, 0.75, 1.]] {
+            let texels = vec![color; (scene_size[0] * scene_size[1]) as usize];
+            let scene = crate::test_support::hdr_texture(&device, &queue, scene_size, &texels);
+            let [unsharpened, sharpened] = [None, Some(0.8)].map(|sharpness| {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                post.present(
+                    &device,
+                    &queue,
+                    &mut encoder,
+                    &scene,
+                    Presentation {
+                        bloom: false,
+                        smaa,
+                        capture: true,
+                        spatial: false,
+                        sharpness,
+                    },
+                    look(&exposure),
+                    &output,
+                    None,
+                );
+                queue.submit([encoder.finish()]);
+                read(&device, &queue, post.tone_map.tone_mapped().texture(), 8)
+            });
+            for (pixel, (sharp, plain)) in sharpened
+                .chunks_exact(8)
+                .zip(unsharpened.chunks_exact(8))
+                .enumerate()
+            {
+                for channel in 0..4 {
+                    let (sharp, plain) = (half(&sharp[channel * 2..]), half(&plain[channel * 2..]));
+                    assert!(
+                        sharp.is_finite() && (sharp - plain).abs() < 0.008,
+                        "{path}, {color:?}, pixel {pixel}, channel {channel}: sharpened {sharp}, unsharpened {plain}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+// Defect: the output-size sharpening input is held on frames that never
+// read it (unsharpened frames, or SMAA's or EASU's output at the output
+// size, which RCAS reads directly), or kept once its frame stops. Oracle:
+// Frame item 13, "Post holds full-size intermediate targets only for their
+// active consumer, and releases disabled-path resources", with RCAS its
+// consumer exactly where neither SMAA nor EASU writes the output size: a
+// sharpened frame without SMAA, or with SMAA on a smaller scene and no
+// spatial upscaling.
+#[test]
+fn the_sharpening_input_is_held_only_while_rcas_reads_it() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let equal = sizes([8, 6]);
+    let smaller = Sizes {
+        output: [12, 9],
+        ..equal
+    };
+    let smaa = Some(SmaaQuality::Medium);
+    let on = Some(0.8);
+    // Sizes, SMAA, spatial upscaling, sharpness, and whether it is held.
+    let frames = [
+        (equal, None, false, None, false),
+        (equal, None, false, on, true),
+        (equal, smaa, false, on, false),
+        (equal, None, false, on, true),
+        (equal, None, false, None, false),
+        (smaller, None, false, on, true),
+        (smaller, smaa, false, on, true),
+        (smaller, smaa, true, on, false),
+        (smaller, smaa, false, on, true),
+        (smaller, None, true, on, false),
+        (smaller, None, false, on, true),
+        (smaller, smaa, false, None, false),
+    ];
+    let mut post = Post::new(
+        &device,
+        &queue,
+        Output::texture(HDR),
+        equal,
+        false,
+        SmaaQuality::Medium,
+    )
+    .unwrap();
+    let exposure = exposure_texture(&device, &queue, 1.);
+    let mut current = equal;
+    for (frame, (sizes, smaa, spatial, sharpness, held)) in frames.into_iter().enumerate() {
+        if sizes.output != current.output {
+            post.resize(&device, sizes, false);
+            assert!(post.sharpening_input.is_none(), "kept across a resize");
+            current = sizes;
+        }
+        let scene = crate::test_support::hdr_texture(
+            &device,
+            &queue,
+            sizes.scene,
+            &textured_scene(sizes.scene),
+        );
+        let output = target(&device, "sharpening lifetime output", sizes.output, HDR);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        post.present(
+            &device,
+            &queue,
+            &mut encoder,
+            &scene,
+            Presentation {
+                bloom: false,
+                smaa,
+                capture: false,
+                spatial,
+                sharpness,
+            },
+            look(&exposure),
+            &output,
+            None,
+        );
+        queue.submit([encoder.finish()]);
+        assert_eq!(
+            post.sharpening_input.is_some(),
+            held,
+            "frame {frame}: SMAA {smaa:?}, spatial {spatial}, sharpness {sharpness:?}"
+        );
+        if let Some(input) = &post.sharpening_input {
+            let texture = input.texture();
+            assert_eq!([texture.width(), texture.height()], sizes.output);
+        }
+    }
 }
 
 /// Binary16's +infinity, which an RGBA16F scene texel holds where radiance
@@ -823,6 +1136,7 @@ fn infinite_scene_texels_present_finite_as_each_curves_white() {
                             smaa,
                             capture: true,
                             spatial: false,
+                            sharpness: None,
                         },
                         Look {
                             exposure: &exposure,

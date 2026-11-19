@@ -1044,3 +1044,19 @@ Use the [current specs](README.md) for implementation and the
   camera's height changing recomputes the sky view, about 0.11 ms on an
   Apple M5), so a quality level would have no trade-off to offer (S3D-6);
   the environment's variant is the on/off control.
+- **D-61** Decision, 2026-11-19 (#829): post owns sharpening for every
+  antialiasing mode, as one RCAS in its final pass over the display-referred
+  image, and FSR2 and FSR3 are dispatched without their own RCAS. Godot
+  (b130438, `render_forward_clustered.cpp` 2566) and Wicked Engine (4323a33,
+  `wiRenderPath3D.cpp` 2352) pass the sharpness to FSR2's dispatch, which
+  sharpens the linear HDR frame before their post chain, and SGL3D departs
+  from them: one pass then sharpens TAA, SMAA, unantialiased, FSR and
+  spatially upscaled frames alike, a frame cannot be sharpened twice when
+  FSR and spatial upscaling both run (which it was before), and RCAS always
+  works on the 0..1 perceptual image AMD's FSR1 documentation asks for.
+  Bevy (9d12036, `bevy_anti_alias/src/contrast_adaptive_sharpening`) and
+  Wicked's own sharpen filter (`wiRenderPath3D.cpp` 2518) sharpen after
+  tone mapping likewise. The strength keeps AMD's scale and sample default
+  (0.8); Bevy's default 0.6 multiplies the lobe directly, about 0.63 on
+  AMD's scale. FSR1's RCAS, fixed at 0.2 stops (Godot's default) until now,
+  follows the setting.

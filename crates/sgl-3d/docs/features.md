@@ -421,8 +421,11 @@ Environment and probe specular always apply. On top of them:
   moving receivers eligible for history.
   [Ambient occlusion](../README.md#ambient-occlusion).
 - **Antialiasing**: SGL's DiligentFX-derived TAA in `sgl-post-fx`, SMAA at
-  SMAA 2.8's Low, Medium, High or Ultra preset, or AMD FSR2/FSR3.1 temporal upscaling (no frame generation), with RCAS sharpening the game can turn off or set.
+  SMAA 2.8's Low, Medium, High or Ultra preset, or AMD FSR2/FSR3.1 temporal upscaling (no frame generation).
   [Temporal anti-aliasing](../README.md#temporal-anti-aliasing).
+- **Sharpening**: AMD's RCAS over the displayed image after tone mapping,
+  once, under every antialiasing mode and spatial upscaling; the game turns
+  it on or off and sets its strength. [Sharpening](../README.md#sharpening).
 - **Anisotropic texture filtering** of materials, Off to 16×.
 - **Scene resolution** scaling below the output size; the game's UI stays at
   full size.

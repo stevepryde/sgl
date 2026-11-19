@@ -12,7 +12,8 @@
 //! and accumulation (in the context) or its own FSR output; which view
 //! completes the scene (`Completed`).
 //! Honours: the antialiasing in effect, FSR and its quality (the effective
-//! sizing), FSR's sharpening, the TAA and FSR diagnostics layers.
+//! sizing), the TAA and FSR diagnostics layers. Nothing here sharpens: FSR
+//! is dispatched without its RCAS, and post sharpens.
 //! Timing groups: `TAA`, `TAA motion reach`, `FSR2`, `FSR3`.
 //! History: FSR's context, which restarts on SGL3D's history loss and after
 //! a frame it ran in that was not finished (U-2); TAA's lives in the
@@ -176,7 +177,6 @@ impl Antialiasing {
                 projection: glam::Mat4::from_cols_array_2d(&ctx.values.view.projection),
                 frame_time_ms: ctx.input.frame_time_ms,
                 exposure,
-                sharpness: ctx.effective.fsr_sharpness,
             };
             match upscaler.dispatch(ctx.device, ctx.encoder, &inputs, ctx.timing) {
                 Ok(()) => Completed::Fsr,
