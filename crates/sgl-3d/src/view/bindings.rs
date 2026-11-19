@@ -54,15 +54,14 @@ pub(crate) struct EnvironmentViews {
 
 impl EnvironmentViews {
     /// The one resolver of what group 0 binds for `environment`: a live
-    /// map's panorama and atlas; for a procedural sky, the view's
-    /// `sky_view` table (the sky stage's) as the backdrop and the black
-    /// stand-in's atlas, since a sky gives no environment light yet; the
-    /// black stand-in for none or an ended map (or a sky whose stage holds
-    /// no table).
+    /// map's panorama and atlas; for a procedural sky, the view's sky stage's
+    /// `sky` views, its sky-view table as the backdrop and its environment
+    /// atlas, in the format a map's is; the black stand-in for none or an
+    /// ended map (or a sky whose stage holds no tables).
     pub fn resolve(
         environments: &Environments,
         environment: &FrameEnvironment,
-        sky_view: Option<&wgpu::TextureView>,
+        sky: Option<[&wgpu::TextureView; 2]>,
     ) -> Self {
         let neutral = environments.frame(None);
         let (backdrop, pmrem) = match environment {
@@ -71,7 +70,10 @@ impl EnvironmentViews {
                 let map = environments.frame(Some(*id));
                 (&map.backdrop, &map.pmrem)
             }
-            FrameEnvironment::Sky(_) => (sky_view.unwrap_or(&neutral.backdrop), &neutral.pmrem),
+            FrameEnvironment::Sky(_) => match sky {
+                Some([sky_view, atlas]) => (sky_view, atlas),
+                None => (&neutral.backdrop, &neutral.pmrem),
+            },
         };
         Self {
             backdrop: backdrop.clone(),

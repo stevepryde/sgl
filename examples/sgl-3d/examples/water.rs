@@ -29,12 +29,12 @@
 //! written to `target/water-example/<run>/` for the owner to judge.
 use sgl_3d::glam::{Mat4, Quat, Vec3, camera};
 use sgl_3d::{
-    AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameInput, InstanceId,
-    InstanceState, MaterialId, MaterialShader, Mobility, ModelMesh, MotionBlurParameters,
-    NormalLayer, PreparedModel, Renderer, Scene, ShaderSource, SurfaceMaterial, View, ViewFrame,
+    AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameEnvironment, FrameInput,
+    InstanceId, InstanceState, MaterialId, MaterialShader, Mobility, ModelMesh,
+    MotionBlurParameters, NormalLayer, PreparedModel, Renderer, Scene, ShaderSource, Sky,
+    SurfaceMaterial, View, ViewFrame,
     asset::{Asset, CpuMesh, Image, Material, Vertex},
     deformation::{MeshDeformation, MorphDelta, MorphTarget},
-    environment::{EnvironmentMap, PmremAtlas},
     settings::{
         Antialiasing, FsrQuality, MotionBlur, ReflectionMethod, ScreenSpaceReflections, Settings,
     },
@@ -739,24 +739,6 @@ fn lake(seconds: f32, material: MaterialId) -> ModelMesh {
     }
 }
 
-/// A sky of radiance (0.5, 0.65, 0.9) and a matching backdrop.
-fn sky() -> EnvironmentMap {
-    let radiance = [0x3800u16, 0x3933, 0x3b33, 0x3c00];
-    EnvironmentMap {
-        panorama: image::RgbaImage::from_pixel(4, 2, image::Rgba([150, 175, 220, 255])),
-        filtered: PmremAtlas {
-            width: 336,
-            height: 64,
-            rgba16: radiance
-                .into_iter()
-                .flat_map(u16::to_le_bytes)
-                .cycle()
-                .take(336 * 64 * 8)
-                .collect(),
-        },
-    }
-}
-
 fn output(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some("water example output"),
@@ -1041,7 +1023,6 @@ fn render(
     let resources = scene.diagnostic_resources();
     times.ray_source = resources.ray_source_live;
     times.geometry = resources.geometry_live;
-    let environment = scene.add_environment(device, queue, &sky())?;
     let mut size = options.size;
     let mut texture = output(device, size);
     let mut renderer = Renderer::new(device);
@@ -1096,7 +1077,8 @@ fn render(
         let mut input = FrameInput::new(camera(index, run.orbit, size, origin));
         input.camera_cut = index == 0 || (run.resize_and_cut && index == 2 * frames / 3);
         input.elapsed_seconds = seconds;
-        input.environment = sgl_3d::FrameEnvironment::Map(environment);
+        // The procedural sky, lit by the sun below; it lights the lake too.
+        input.environment = FrameEnvironment::Sky(Sky::default());
         // A fixed exposure keeps runs comparable.
         input.exposure = Exposure {
             stops: 0.,

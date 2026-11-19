@@ -3372,3 +3372,71 @@ fn the_clock_changes_the_probes_inputs_only_where_a_surface_moves() {
     });
     assert_eq!(changes, expected);
 }
+
+// Plausible defects: a procedural sky's environment atlas changing under a
+// converged volume without the volume seeing it, because `Inputs::of` does
+// not take the frame's atlas revision or the renderer does not lend it: the
+// frame's data hold still while the atlas refreshes over the rest of its
+// cycle, so the volume would count those frames as unchanged and could
+// settle and pause on a sky its misses no longer see. The fixture: a cube
+// and a volume under a procedural sky, the sun moved once and then held.
+// The oracle is the contract (X-5, G-10): the frame of the move changes the
+// frame's data and the environment (its atlas's capture); each of the next
+// fifteen, which run the cycle's other steps, changes the environment and
+// nothing else; the frame after the cycle changes nothing.
+#[cfg(feature = "diagnostics")]
+#[test]
+fn a_sky_atlas_refreshing_under_held_lights_changes_the_probes_environment() {
+    use crate::diagnostics::DynamicGiChanges;
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut settings = settings(DynamicGiQuality::High);
+    settings.diagnostics.dynamic_gi = true;
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, test_support::cube());
+    scene.set_dynamic_gi_volume(&device, Some(VOLUME)).unwrap();
+    let mut input = input(Vec3::new(0., 0., 8.));
+    input.environment = crate::FrameEnvironment::Sky(crate::Sky {
+        ground_height: -10.,
+        ..crate::Sky::default()
+    });
+    let sun = |elevation: f32| crate::DirectionalLight {
+        direction: -Vec3::new(0., elevation.sin(), -elevation.cos()),
+        illuminance: 1.,
+        ..crate::DirectionalLight::default()
+    };
+    // Each frame's report, read once the frame completes.
+    let mut reports = Vec::new();
+    let mut frame = |input: &FrameInput, renderer: &mut TestRenderer, scene: &mut Scene| {
+        render(&device, &queue, renderer, scene, input, &settings, 1);
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        reports.extend(renderer.take_dynamic_gi_reports(&device));
+    };
+    // The first frame runs the whole cycle; the second, nothing.
+    input.directional_lights[0] = Some(sun(0.5));
+    for _ in 0..2 {
+        frame(&input, &mut renderer, &mut scene);
+    }
+    input.directional_lights[0] = Some(sun(0.6));
+    for _ in 0..17 {
+        frame(&input, &mut renderer, &mut scene);
+    }
+    assert_eq!(reports.len(), 19);
+    let held = DynamicGiChanges::default();
+    let environment = DynamicGiChanges {
+        environment: true,
+        ..held
+    };
+    let moved = DynamicGiChanges {
+        frame: true,
+        environment: true,
+        ..held
+    };
+    let changes: Vec<_> = reports[1..].iter().map(|report| report.changes).collect();
+    let mut expected = vec![held, moved];
+    expected.extend([environment; 15]);
+    expected.push(held);
+    assert_eq!(changes, expected);
+}

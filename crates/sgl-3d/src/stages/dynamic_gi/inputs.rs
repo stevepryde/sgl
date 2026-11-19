@@ -14,7 +14,8 @@ pub(super) struct Inputs {
     edits: u64,
     deformation_edits: Option<u64>,
     frame: crate::shading::uniforms::FrameUniform,
-    environment: crate::FrameEnvironment,
+    /// The frame's environment and its atlas's revision.
+    environment: (crate::FrameEnvironment, u64),
     max_rays: u32,
     local_lights: bool,
 }
@@ -77,7 +78,7 @@ impl Inputs {
             edits: ctx.scene.edits,
             deformation_edits: ctx.hardware_rays.map(|_| ctx.scene.deformation_edits),
             frame,
-            environment: ctx.input.environment,
+            environment: (ctx.input.environment, ctx.environment_revision),
             max_rays,
             local_lights: ctx.effective.local_lights,
         }

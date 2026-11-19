@@ -48,9 +48,9 @@ fn the_rust_twin_agrees_with_the_transmittance_table() {
     });
     input.environment = crate::FrameEnvironment::Sky(look);
     let mut stage = crate::stages::sky::Sky::default();
-    stage.prepare(&device, &input.environment);
+    stage.prepare(&device, &input, input.camera.eye, true);
     let mut encoder = device.create_command_encoder(&Default::default());
-    stage.encode_from((&queue, &mut encoder), &input, input.camera.eye, None);
+    stage.encode_planned((&queue, &mut encoder), None);
     queue.submit([encoder.finish()]);
     let [table, _, _] = stage.tables().unwrap();
     let bytes = crate::test_support::read(&device, &queue, table, 8);

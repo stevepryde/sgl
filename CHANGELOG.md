@@ -15,6 +15,7 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `FrameEnvironment::Sky` now gives diffuse and specular environment light, scaled by `diffuse_environment.intensity` and `reflection_environment.intensity`, and lights the dynamic GI volume, the fog's ambient share and probe captures. Lower `hemisphere_light` where it stood in for sky light. No code changes are needed.
 - `sgl-3d` `View::geometry_stats_by_model` polls once and borrows one
   completed frame's per-model counts for multiple lookups. Existing
   `geometry_stats_for_model` calls need no changes.
@@ -35,7 +36,7 @@ docs and specs the entry links.
   its environment specular is now occluded by the sky the probes see, so
   shaded and enclosed surfaces stop reflecting the sky at full strength. No
   game-code changes are needed.
-- `sgl-3d` `FrameInput::environment` is now `FrameEnvironment` (`None`, `Map(id)`, `Sky(Sky)`), was `Option<EnvironmentId>`: write `FrameEnvironment::Map(id)` for `Some(id)` and `FrameEnvironment::None` for `None`. `Sky` is a new procedural sky lit by the frame's directional lights, whose `illuminance` and `color` are then their light above the air; it gives no environment light yet.
+- `sgl-3d` `FrameInput::environment` is now `FrameEnvironment` (`None`, `Map(id)`, `Sky(Sky)`), was `Option<EnvironmentId>`: write `FrameEnvironment::Map(id)` for `Some(id)` and `FrameEnvironment::None` for `None`. `Sky` is a new procedural sky lit by the frame's directional lights, whose `illuminance` and `color` are then their light above the air.
 - `sgl-3d` `Settings::fsr_sharpening`/`fsr_sharpness` become `sharpening`
   (`settings::Sharpening::Preset`, `Off`, `On`) and `sharpness`, and now
   sharpen every antialiasing mode once, in post; TAA frames are sharpened on

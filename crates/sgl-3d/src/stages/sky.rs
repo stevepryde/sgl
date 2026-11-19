@@ -16,23 +16,37 @@
 //! frame computes it again, whatever its inputs (X-4 in
 //! `specs/sgl3d-history.md`).
 //!
-//! The pipelines are compiled and the tables made on the first frame whose
-//! environment is a sky; the tables are dropped on a rendered frame whose
-//! environment is not. They are not screen-sized: a resize and a cut do
-//! nothing to them.
+//! Then its environment atlas (`environment`): Three r185's PMREM atlas in
+//! the format a map supplies, refreshed in place one step a frame over a
+//! 16-step cycle that starts when the sky-view table has been computed since
+//! the last cycle's capture, and whole on a new atlas or a frame that
+//! restarts the view's history (X-5).
 //!
-//! Reads: `FrameInput::environment`'s `Sky`, the frame's directional lights
-//! and the camera's eye.
-//! Writes: its three tables; the sky-view table is what the opaque stage's
-//! backdrop draw shows (unlit group 0's backdrop binding).
+//! The pipelines are compiled and the tables and atlas made on the first
+//! frame whose environment is a sky; they are dropped on a rendered frame
+//! whose environment is not. They are not screen-sized, so a resize does
+//! not remake them; but a resize, like a cut and a frame that does not
+//! follow the view's last finished frame, restarts the view's history, and
+//! that frame runs the atlas's whole cycle.
+//!
+//! Reads: `FrameInput::environment`'s `Sky`, the frame's directional lights,
+//! the camera's eye and whether the view's history restarts.
+//! Writes: its three tables and the atlas; the sky-view table is what the
+//! opaque stage's backdrop draw shows (unlit group 0's backdrop binding),
+//! and the atlas what group 0 binds as the frame's environment.
 //! Honours: `FrameEnvironment::Sky` (its only control: no setting).
-//! Timing groups: `sky transmittance`, `sky multiscattering`, `sky view`.
-//! History: none kept; X-4.
+//! Timing groups: `sky transmittance`, `sky multiscattering`, `sky view`,
+//! `sky environment`.
+//! History: the atlas's cycle (X-5); the tables keep none (X-4).
+pub(crate) mod environment;
+
 use crate::FrameInput;
 use crate::content::lighting::{DirectionalLight, FrameEnvironment, Sky as SkyLook};
 use crate::shading::sky::SkyAtmosphereUniform;
 use crate::view::frame::FrameContext;
+use environment::{AtlasCycle, EnvironmentAtlas, EnvironmentPipelines};
 use glam::Vec3;
+use std::ops::Range;
 
 /// The stage's bindings and shared marches.
 pub(crate) static SKY_COMMON: crate::shading::Module = crate::shading::Module {
@@ -144,6 +158,8 @@ struct Pipelines {
     layouts: [wgpu::BindGroupLayout; 3],
     /// Linear and clamped (Bevy's `AtmosphereSampler`).
     sampler: wgpu::Sampler,
+    /// The environment atlas's capture and filter.
+    environment: EnvironmentPipelines,
 }
 
 impl Pipelines {
@@ -226,6 +242,7 @@ impl Pipelines {
                 ..Default::default()
             }),
             layouts,
+            environment: EnvironmentPipelines::new(device),
         }
     }
 }
@@ -242,6 +259,8 @@ struct Tables {
     sky_view: wgpu::Texture,
     sky_view_view: wgpu::TextureView,
     groups: [wgpu::BindGroup; 3],
+    /// The environment atlas, which the capture fills from the sky view.
+    environment: EnvironmentAtlas,
 }
 
 impl Tables {
@@ -326,6 +345,11 @@ impl Tables {
                 ],
             ),
         ];
+        let environment = EnvironmentAtlas::new(
+            device,
+            &pipelines.environment,
+            (&uniform, &sky_view_view, &pipelines.sampler),
+        );
         Self {
             uniform,
             transmittance,
@@ -333,6 +357,7 @@ impl Tables {
             sky_view,
             sky_view_view,
             groups,
+            environment,
         }
     }
 }
@@ -391,6 +416,14 @@ impl Held {
     }
 }
 
+/// What a frame computes: the inputs, the tables and the atlas's steps.
+#[derive(Clone)]
+struct Plan {
+    inputs: SkyUniform,
+    computed: Computed,
+    steps: Range<usize>,
+}
+
 /// The stage of one view (or one probe capture).
 #[derive(Default)]
 pub(crate) struct Sky {
@@ -398,70 +431,85 @@ pub(crate) struct Sky {
     tables: Option<Tables>,
     /// What the tables hold.
     held: Held,
-    /// The tables the last encode computed.
-    computed: Computed,
+    /// The environment atlas's cycle.
+    cycle: AtlasCycle,
+    /// What the frame being rendered computes, as `prepare` planned it.
+    plan: Option<Plan>,
 }
 
 impl Sky {
-    /// Readies the stage for a frame whose environment is `environment`:
-    /// with a sky, its pipelines and tables, made once; without, the tables
-    /// are dropped.
-    pub fn prepare(&mut self, device: &wgpu::Device, environment: &FrameEnvironment) {
-        if !matches!(environment, FrameEnvironment::Sky(_)) {
+    /// Readies the stage for a frame of `input` seen from `eye`, and plans
+    /// it: with a sky, its pipelines and tables, made once, the tables whose
+    /// inputs differ from what they hold, and the atlas's steps, all of them
+    /// on a new atlas or where the view's history restarts (`restart`);
+    /// without a sky, the tables and atlas are dropped.
+    pub fn prepare(&mut self, device: &wgpu::Device, input: &FrameInput, eye: Vec3, restart: bool) {
+        self.plan = None;
+        let FrameEnvironment::Sky(sky) = &input.environment else {
             if self.tables.take().is_some() {
                 self.held = Held::default();
+                self.cycle.forget();
             }
             return;
-        }
+        };
         let pipelines = self.pipelines.get_or_insert_with(|| Pipelines::new(device));
         if self.tables.is_none() {
             self.tables = Some(Tables::new(device, pipelines));
             self.held = Held::default();
+            self.cycle.forget();
         }
-    }
-
-    /// The sky-view table, while the stage holds its tables.
-    pub fn sky_view(&self) -> Option<&wgpu::TextureView> {
-        self.tables.as_ref().map(|tables| &tables.sky_view_view)
-    }
-
-    /// The frame's tables, each where its inputs differ from what it holds:
-    /// in the frame's Sky item, first after prepare.
-    pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
-        self.encode_from(
-            (ctx.queue, ctx.encoder),
-            ctx.input,
-            ctx.input.camera.eye,
-            ctx.timing,
-        );
-    }
-
-    /// The tables of `input`'s sky seen from `eye`, each where its inputs
-    /// differ from what the last finished frame left it holding or an
-    /// unfinished render left it unknown. Nothing without a sky or before
-    /// `prepare`.
-    pub fn encode_from(
-        &mut self,
-        (queue, encoder): (&wgpu::Queue, &mut wgpu::CommandEncoder),
-        input: &FrameInput,
-        eye: Vec3,
-        timing: Option<&crate::timing::GpuTiming>,
-    ) {
-        self.computed = Computed::default();
-        let FrameEnvironment::Sky(sky) = &input.environment else {
-            return;
-        };
-        let (Some(pipelines), Some(tables)) = (&self.pipelines, &self.tables) else {
-            return;
-        };
         let inputs = SkyUniform::of(sky, input, eye);
         let computed = self.held.computes(&inputs);
         self.held.leave(inputs, computed);
-        self.computed = computed;
-        if computed == Computed::default() {
+        let steps = self.cycle.plan(computed.sky_view, restart);
+        self.plan = Some(Plan {
+            inputs,
+            computed,
+            steps,
+        });
+    }
+
+    /// The backdrop and the environment atlas group 0 binds for the sky:
+    /// the sky-view table and the atlas, while the stage holds them.
+    pub fn views(&self) -> Option<[&wgpu::TextureView; 2]> {
+        self.tables
+            .as_ref()
+            .map(|tables| [&tables.sky_view_view, &tables.environment.view])
+    }
+
+    /// The environment atlas's revision as the frame being rendered leaves
+    /// it: it changes whenever a frame writes the atlas; 0 without one.
+    pub fn environment_revision(&self) -> u64 {
+        self.tables.as_ref().map_or(0, |_| self.cycle.revision())
+    }
+
+    /// The frame's tables and atlas steps as `prepare` planned them: in the
+    /// frame's Sky item, first after prepare.
+    pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
+        self.encode_planned((ctx.queue, ctx.encoder), ctx.timing);
+    }
+
+    /// Encodes what `prepare` planned: the tables whose inputs differ from
+    /// what the last finished frame left them holding or an unfinished
+    /// render left unknown, then the atlas's steps. Nothing without a sky.
+    pub fn encode_planned(
+        &mut self,
+        (queue, encoder): (&wgpu::Queue, &mut wgpu::CommandEncoder),
+        timing: Option<&crate::timing::GpuTiming>,
+    ) {
+        let (Some(pipelines), Some(tables), Some(plan)) =
+            (&self.pipelines, &self.tables, self.plan.clone())
+        else {
             return;
+        };
+        let Plan {
+            inputs,
+            computed,
+            steps,
+        } = plan;
+        if computed != Computed::default() {
+            crate::counters::write_buffer(queue, &tables.uniform, 0, bytemuck::bytes_of(&inputs));
         }
-        crate::counters::write_buffer(queue, &tables.uniform, 0, bytemuck::bytes_of(&inputs));
         let mut pass = |name, pipeline, group, [x, y]: [u32; 2]| {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(name),
@@ -497,19 +545,34 @@ impl Sky {
                 workgroups(SKY_VIEW_SIZE),
             );
         }
+        tables
+            .environment
+            .encode(&pipelines.environment, encoder, steps, timing);
     }
 
-    /// Settles the last render (`Held::settle`): a finished frame's inputs
-    /// become what the tables hold; an unfinished one's computed tables are
-    /// unknown.
+    /// Settles the last render (`Held::settle`, `AtlasCycle::settle`): a
+    /// finished frame's inputs become what the tables hold and its cycle the
+    /// atlas's; an unfinished one's computed tables are unknown and its
+    /// atlas step runs again.
     pub fn settle(&mut self, finished: bool) {
         self.held.settle(finished);
+        self.cycle.settle(finished);
     }
 
-    /// The tables the last encode computed.
+    /// The tables the last frame computed.
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn computed(&self) -> Computed {
-        self.computed
+        self.plan
+            .as_ref()
+            .map_or_else(Computed::default, |plan| plan.computed)
+    }
+
+    /// The environment atlas, while the stage holds it.
+    #[cfg(test)]
+    pub fn atlas(&self) -> Option<&wgpu::Texture> {
+        self.tables
+            .as_ref()
+            .map(|tables| tables.environment.texture())
     }
 
     /// The transmittance, multiple-scattering and sky-view tables, while the

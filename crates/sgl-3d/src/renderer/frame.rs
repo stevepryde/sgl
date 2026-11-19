@@ -289,7 +289,7 @@ pub(super) fn render_view(
         super::effective::traced_shadows(effective, prepare.hardware_rays(), &slot_lights);
     // The sky stage's tables, made on its first sky frame and dropped on a
     // frame without one, which the environment's resolver binds.
-    sky.prepare(device, &input.environment);
+    sky.prepare(device, input, input.camera.eye, !history.valid);
     // After prepare, the local shadows', the fog's, dynamic GI's and the
     // sky's, which may replace a light cluster buffer, a shadow map, the
     // shadow records, the fog volume, the probes or the sky-view table group
@@ -300,7 +300,7 @@ pub(super) fn render_view(
         crate::view::bindings::EnvironmentViews::resolve(
             &scene.environments,
             &input.environment,
-            sky.sky_view(),
+            sky.views(),
         ),
         views,
         shadows.maps(),
@@ -325,6 +325,7 @@ pub(super) fn render_view(
         bindings,
         pipelines,
         history,
+        environment_revision: sky.environment_revision(),
         hardware_rays: HardwareRays::of(
             &effective,
             scene,

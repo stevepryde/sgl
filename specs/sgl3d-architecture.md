@@ -387,7 +387,8 @@ Stages run in one order, written in one place in `renderer`:
    directional lights and the camera's height. First after prepare, as Bevy
    computes its atmosphere's tables before its main pass: everything that
    lights or draws the environment reads them, and they need no depth,
-   shadows or camera pass.
+   shadows or camera pass; then one step of its environment atlas while
+   that is stale.
 3. **Dynamic GI**: in the frame's primary view, the dynamic GI volume's update, while the scene holds one
    and the setting runs it: its probes' ray allocation, their rays through
    the scene's ray source, each hit shaded with one light and one visibility
@@ -1676,8 +1677,22 @@ last, after everything it may use, and refuses a directive in it.
   bound where a map's panorama is, plus each light's disc at the radiance
   `Frame` packs, where the planet does not hide it; its motion is the camera's
   rotation alone, and no yaw turns a procedural sky, which its lights place. A
-  probe capture computes tables of its own for its position. Under a
-  procedural sky the environment's diffuse and specular light is none.
+  probe capture computes tables of its own for its position. Its environment
+  light is an atlas the sky stage generates in the format a map supplies
+  (Three r185's PMREM atlas, cube size 128), which the environment resolver
+  binds wherever a map's atlas is bound, so surfaces' diffuse and specular
+  environment light, the dynamic GI volume's misses, the fog's ambient share,
+  probe captures' sky, ray hits and source completion's sky read a procedural
+  sky through the one sampler (`pmrem_sample`) with no branch. Its sharp level
+  is the sky-view table without the lights' discs, whose reflection is each
+  light's own highlight; the rest is Three r185's GGX filter. The atlas is
+  refreshed in place over a 16-step cycle, one step a frame, started when the
+  sky-view table has changed since the cycle's capture, and whole in the
+  stage's first frame and in a frame that restarts the view's history; the
+  step and the atlas's revision advance when a frame is finished. The dynamic
+  GI volume takes a changed revision as a changed environment (D-62: one
+  environment format and a bounded step a frame, not Bevy's second cube format
+  refiltered whole every frame).
 - **Temporal.** Geometry writes unjittered motion. Jitter is applied to the
   projection by the antialiasing in effect, and every history resets together.
   Every temporal consumer (the screen-space method's accumulation, TAA,

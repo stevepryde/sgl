@@ -1,6 +1,9 @@
 //! The procedural sky (`FrameEnvironment::Sky`, the architecture's Sky):
 //! its backdrop's discs, its motion, the sun colour every surface takes
-//! through the air, and finite frames at every sun elevation. Scenario
+//! through the air, finite frames at every sun elevation, and its
+//! environment light: a mirror's reflection, a diffuse plane's bound, the
+//! atlas's lag behind a changing sun and a cut, and a probe capture's sky.
+//! Scenario
 //! harness suite (`specs/testing.md`, "SGL3D scenario harness"); each test
 //! runs alone by name.
 //!
@@ -11,8 +14,7 @@
 //! Camera translation and object motion cannot affect the backdrop, which
 //! lies at infinity and moves with the camera's rotation alone; the camera's
 //! height, which the sky depends on, is the sun-colour scenario's. Not
-//! covered yet: the sky's environment light and aerial perspective, which it
-//! does not give yet.
+//! covered yet: aerial perspective, which it does not give yet.
 //!
 //! The analytic oracles take the air's transmittance from the published
 //! medium (Hillaire 2020's Earth, as Wicked Engine's
@@ -113,6 +115,12 @@ fn sky_rig(gpu: &scenario::rig::Gpu, lens: View) -> Rig {
 /// A white lit square `size` metres across centred on `centre`, facing
 /// along `normal`.
 fn lit_square(centre: Vec3, normal: Vec3, size: f32) -> Asset {
+    square(centre, normal, size, (0., 1.))
+}
+
+/// A white square `size` metres across centred on `centre`, facing along
+/// `normal`, of `(metallic, roughness)`.
+fn square(centre: Vec3, normal: Vec3, size: f32, (metallic, roughness): (f32, f32)) -> Asset {
     let normal = normal.normalize();
     let across = if normal.y.abs() > 0.9 {
         Vec3::X
@@ -146,8 +154,8 @@ fn lit_square(centre: Vec3, normal: Vec3, size: f32) -> Asset {
         materials: vec![Material {
             name: "sunlit square".into(),
             base: [1.; 4],
-            metallic: 0.,
-            roughness: 1.,
+            metallic,
+            roughness,
             double_sided: true,
             ..Material::default()
         }],
@@ -260,8 +268,9 @@ fn the_sky_moves_with_the_camera_alone() {
 // low sun lights the world white beside a red sky. The fixture: a white lit
 // square facing the sun, seen along its normal from 2 m, about 10 m above
 // the ground, so the light meets it and leaves toward the camera at the same
-// angles whatever the sun's elevation; no other light (no environment
-// light, hemisphere fill, ambient occlusion or reflections). The oracle is
+// angles whatever the sun's elevation; no other light (the sky's
+// environment light turned to 0, no hemisphere fill, ambient occlusion or
+// reflections). The oracle is
 // analytic: its radiance with the sun at 20° over its radiance at the
 // zenith is, per channel, the ratio of the air's transmittance along the two
 // paths from the camera's height through the spherical shell.
@@ -281,6 +290,8 @@ fn a_surface_takes_the_sun_through_the_air() {
         rig.add_model(lit_square(centre, toward, 1.), Pose::at(Vec3::ZERO));
         rig.views[0].input.camera = looking(&lens, eye, -toward);
         rig.views[0].input.directional_lights[0] = Some(sun(elevation, 1.));
+        rig.views[0].input.diffuse_environment.intensity = 0.;
+        rig.views[0].input.reflection_environment.intensity = 0.;
         rig.render(0);
         let texel = rig.read(DiagnosticTarget::Composite).at([8, 8]);
         (texel, eye.y)
@@ -374,4 +385,359 @@ fn frames_stay_finite_at_every_sun_elevation_across_a_cut_and_a_resize() {
     };
     rig.render(frame);
     check(&rig, "after a resize");
+}
+
+/// One atlas texel's angular footprint at its sharp level: a face of 128
+/// texels spans 90°.
+const ATLAS_TEXEL: f32 = std::f32::consts::FRAC_PI_2 / 128.;
+
+/// The direction at `elevation` radians above the horizontal and `azimuth`
+/// radians about +Y from -Z toward +X.
+fn toward(azimuth: f32, elevation: f32) -> Vec3 {
+    Vec3::new(
+        azimuth.sin() * elevation.cos(),
+        elevation.sin(),
+        -azimuth.cos() * elevation.cos(),
+    )
+}
+
+/// Each channel's least and greatest radiance `image` shows, seen through
+/// `lens` from `camera`, over the pixels whose ray lies within `radius`
+/// radians of `direction`.
+fn range_about(
+    lens: &View,
+    camera: &Camera,
+    image: &scenario::image::Image,
+    direction: Vec3,
+    radius: f32,
+) -> ([f32; 3], [f32; 3]) {
+    let mut range = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for pixel in pixels(image.size) {
+        let ray = lens.ray(camera, scenario::image::centre(pixel));
+        if ray.dot(direction).clamp(-1., 1.).acos() <= radius {
+            for (c, &value) in image.at(pixel)[..3].iter().enumerate() {
+                range.0[c] = range.0[c].min(value);
+                range.1[c] = range.1[c].max(value);
+            }
+        }
+    }
+    assert!(
+        range.0[0].is_finite(),
+        "no pixel within {radius} of {direction}"
+    );
+    range
+}
+
+/// Whether every channel of `texel` lies in `range`.
+fn within(texel: [f32; 4], (low, high): ([f32; 3], [f32; 3])) -> bool {
+    (0..3).all(|c| texel[c] >= low[c] && texel[c] <= high[c])
+}
+
+/// The rig's model instance `id` shown or hidden.
+fn show(rig: &mut Rig, id: sgl_3d::InstanceId, visible: bool) {
+    let state = *rig.scene.instance(id).expect("a fixture instance");
+    rig.scene
+        .set_instance(
+            &rig.gpu.queue,
+            id,
+            sgl_3d::InstanceState { visible, ..state },
+        )
+        .expect("a fixture instance");
+}
+
+/// A rig under the sky with a smooth white metal mirror 400 m across lying
+/// on the ground, and the camera 2 m above it through a lens 0.1 radians
+/// across 33 pixels (0.17° a pixel).
+struct Mirror {
+    rig: Rig,
+    lens: View,
+    id: sgl_3d::InstanceId,
+    eye: Vec3,
+}
+
+impl Mirror {
+    fn new(gpu: &scenario::rig::Gpu) -> Mirror {
+        let lens = View {
+            size: [33, 33],
+            fov_y: 0.1,
+            near: 0.1,
+        };
+        let mut rig = sky_rig(gpu, lens);
+        let id = rig.add_model(
+            square(Vec3::ZERO, Vec3::Y, 400., (1., 0.)),
+            Pose::at(Vec3::ZERO),
+        );
+        Mirror {
+            rig,
+            lens,
+            id,
+            eye: Vec3::new(0., 2., 0.),
+        }
+    }
+
+    /// Renders frame `frame` looking down at the mirror along `toward`
+    /// mirrored, and returns the centre pixel, whose reflection is `toward`.
+    fn reflection(&mut self, frame: u32, toward: Vec3) -> [f32; 4] {
+        show(&mut self.rig, self.id, true);
+        let down = Vec3::new(toward.x, -toward.y, toward.z);
+        self.rig.views[0].input.camera = looking(&self.lens, self.eye, down);
+        self.rig.render(frame);
+        self.rig.read(DiagnosticTarget::Composite).at([16, 16])
+    }
+
+    /// The environment's share of the mirror's reflection of `toward`, in
+    /// frames `frame` and `frame + 1`: the reflection less the same with
+    /// `reflection_environment.intensity` 0, which leaves the lights' own
+    /// specular (the sun's highlight reaches 10° from it on a mirror whose
+    /// roughness the shading floors).
+    fn environment_reflection(&mut self, frame: u32, toward: Vec3) -> [f32; 4] {
+        let with = self.reflection(frame, toward);
+        let input = &mut self.rig.views[0].input;
+        input.reflection_environment.intensity = 0.;
+        let without = self.reflection(frame + 1, toward);
+        self.rig.views[0].input.reflection_environment.intensity = 1.;
+        std::array::from_fn(|c| with[c] - without[c])
+    }
+
+    /// Renders frame `frame` looking along `toward` with the mirror hidden,
+    /// and returns the backdrop's range within `radius` of it.
+    fn backdrop(&mut self, frame: u32, toward: Vec3, radius: f32) -> ([f32; 3], [f32; 3]) {
+        show(&mut self.rig, self.id, false);
+        let camera = looking(&self.lens, self.eye, toward);
+        self.rig.views[0].input.camera = camera;
+        self.rig.render(frame);
+        let image = self.rig.read(DiagnosticTarget::Composite);
+        range_about(&self.lens, &camera, &image, toward, radius)
+    }
+}
+
+// Plausible defects: the environment atlas's sharp level holding the sky
+// flipped, mirrored or turned (a face or the atlas's y convention wrong), a
+// filtered level read where the sharp one should be, or the sky's atlas not
+// bound where a map's is. The fixture: a smooth metal mirror (roughness 0,
+// no screen-space or world-space reflections) under a sun at 30° and
+// azimuth 45°, off the axes, seen 20° below the horizontal at azimuths
+// toward, across and away from the sun.
+// The oracle is equivalence: the mirror reflects the environment atlas's
+// sharp level, which holds the sky-view table the backdrop shows, so the
+// environment's share of its radiance (its reflection less the same with
+// `reflection_environment.intensity` 0) lies within the range the backdrop
+// shows over one atlas texel's footprint (0.7°) about the mirrored
+// direction.
+#[test]
+fn a_mirror_reflects_the_sky_the_backdrop_shows() {
+    let Some(gpu) = gpu() else { return };
+    let mut mirror = Mirror::new(&gpu);
+    // Off the axes, so a sky mirrored or turned about any of them differs.
+    let sun_azimuth = 45f32;
+    mirror.rig.views[0].input.directional_lights[0] = Some(DirectionalLight {
+        direction: -toward(sun_azimuth.to_radians(), 30f32.to_radians()),
+        illuminance: 1.,
+        ..DirectionalLight::default()
+    });
+    let mut frame = 0;
+    for azimuth in [45f32, 135., 225., 315.] {
+        let reflected = toward(azimuth.to_radians(), 20f32.to_radians());
+        let seen = mirror.environment_reflection(frame, reflected);
+        let range = mirror.backdrop(frame + 2, reflected, ATLAS_TEXEL);
+        frame += 3;
+        assert!(
+            within(seen, range),
+            "azimuth {azimuth}°: the mirror shows {seen:?}, the backdrop {range:?} about the reflected direction"
+        );
+    }
+}
+
+// Plausible defects: the environment's diffuse light under a sky missing
+// (the black stand-in still bound), not scaled by
+// `diffuse_environment.intensity`, or creating energy (a level filtered
+// without normalising its weights, a wrong level read as the roughest). The
+// fixture: a white diffuse plane facing up, under a sun at 30° and a sky
+// without discs. The oracle is a bound: the radiance it gains when
+// `diffuse_environment.intensity` goes from 0 to 1 is positive and finite in
+// every channel and at most its albedo (1) times the brightest radiance the
+// backdrop shows over the upper hemisphere, since its irradiance from a sky
+// no brighter than that is at most π times it; with no light it gains
+// exactly 0.
+#[test]
+fn a_diffuse_plane_takes_no_more_than_the_sky_gives() {
+    let Some(gpu) = gpu() else { return };
+    let lens = View {
+        size: [48, 48],
+        fov_y: 1.6,
+        near: 0.1,
+    };
+    let gain = |light: Option<DirectionalLight>| {
+        let mut rig = sky_rig(&gpu, lens);
+        rig.views[0].input.environment = FrameEnvironment::Sky(Sky {
+            sun_disc: 0.,
+            ..Sky::default()
+        });
+        rig.views[0].input.directional_lights[0] = light;
+        rig.views[0].input.reflection_environment.intensity = 0.;
+        let eye = Vec3::new(0., 2., 0.);
+        let plane = rig.add_model(lit_square(Vec3::ZERO, Vec3::Y, 400.), Pose::at(Vec3::ZERO));
+        let mut taken = [[0.; 4]; 2];
+        for (frame, intensity) in [0., 1.].into_iter().enumerate() {
+            rig.views[0].input.diffuse_environment.intensity = intensity;
+            rig.views[0].input.camera = looking(&lens, eye, Vec3::NEG_Y);
+            rig.render(frame as u32);
+            taken[frame] = rig.read(DiagnosticTarget::Composite).at([24, 24]);
+        }
+        // The brightest backdrop over the upper hemisphere: straight up and
+        // toward the horizon at four azimuths, 92° across each.
+        show(&mut rig, plane, false);
+        let mut brightest = [0f32; 3];
+        let directions = [Vec3::Y, Vec3::NEG_Z, Vec3::X, Vec3::Z, Vec3::NEG_X];
+        for (index, forward) in directions.into_iter().enumerate() {
+            let camera = looking(&lens, eye, forward);
+            rig.views[0].input.camera = camera;
+            rig.render(2 + index as u32);
+            let image = rig.read(DiagnosticTarget::Composite);
+            for pixel in pixels(image.size) {
+                if lens.ray(&camera, scenario::image::centre(pixel)).y >= 0. {
+                    let texel = image.at(pixel);
+                    for c in 0..3 {
+                        brightest[c] = brightest[c].max(texel[c]);
+                    }
+                }
+            }
+        }
+        let gained: [f32; 3] = std::array::from_fn(|c| taken[1][c] - taken[0][c]);
+        (gained, brightest)
+    };
+    let (gained, brightest) = gain(Some(sun(30f32.to_radians(), 1.)));
+    for c in 0..3 {
+        assert!(
+            gained[c].is_finite() && gained[c] > 0. && gained[c] <= brightest[c],
+            "channel {c}: the plane gains {} from the sky, whose brightest is {}",
+            gained[c],
+            brightest[c]
+        );
+    }
+    let (gained, _) = gain(None);
+    assert_eq!(gained, [0.; 3], "no light, no sky light");
+}
+
+// Plausible defects: the atlas left stale for good after the sun moves (a
+// cycle never started, or a change during a cycle lost), refreshed sooner
+// than its schedule (a second atlas, or every step a frame), or a cut that
+// shows a stale sky. The fixture: the mirror under a sun nudged from 30° to
+// 31° (starting a cycle with its capture), then dropped to 5° in the next
+// frame, while the cycle runs. The oracle is the contract (X-5) with the
+// mirror's equivalence to the backdrop: the mirror's sharp level still
+// holds the 31° sky in the frame of the change and the fourteen after it,
+// and the new sky in the sixteenth, when the next cycle captures it; with a
+// cut, in the frame of the change.
+#[test]
+fn the_mirror_follows_the_sun_within_a_cycle_and_at_once_after_a_cut() {
+    let Some(gpu) = gpu() else { return };
+    let mut mirror = Mirror::new(&gpu);
+    let reflected = toward(std::f32::consts::PI, 20f32.to_radians());
+    let set_sun = |mirror: &mut Mirror, degrees: f32| {
+        mirror.rig.views[0].input.directional_lights[0] = Some(sun(degrees.to_radians(), 1.));
+    };
+    set_sun(&mut mirror, 30.);
+    mirror.reflection(0, reflected);
+    mirror.reflection(1, reflected);
+    set_sun(&mut mirror, 31.);
+    mirror.reflection(2, reflected);
+    set_sun(&mut mirror, 5.);
+    let seen: Vec<[f32; 4]> = (3..=18)
+        .map(|frame| mirror.reflection(frame, reflected))
+        .collect();
+    let range = mirror.backdrop(19, reflected, ATLAS_TEXEL);
+    assert!(
+        !within(seen[0], range) && !within(seen[14], range),
+        "the mirror took the 5° sky before the next cycle's capture: {:?} and {:?} in {range:?}",
+        seen[0],
+        seen[14]
+    );
+    assert!(
+        within(seen[15], range),
+        "sixteen frames after the change the mirror shows {:?}, the backdrop {range:?}",
+        seen[15]
+    );
+    set_sun(&mut mirror, 60.);
+    mirror.rig.views[0].input.camera_cut = true;
+    let after_cut = mirror.reflection(20, reflected);
+    let range = mirror.backdrop(21, reflected, ATLAS_TEXEL);
+    assert!(
+        within(after_cut, range),
+        "in the frame of a cut the mirror shows {after_cut:?}, the backdrop {range:?}"
+    );
+}
+
+// Plausible defects: a probe capture under a sky recording the black
+// stand-in, or an atlas of its own built for another position or left
+// unfiltered or unfinished. The fixture: a capture 2 m above the ground under
+// a sun at 30°, 128 texels a face. The oracle is equivalence: its zenith
+// texel (its +Y face's texel beside the centre, half a texel off the
+// zenith) lies within the range the camera's backdrop shows over one atlas
+// texel's footprint plus that half texel about the zenith.
+#[test]
+fn a_probe_capture_records_the_sky_the_backdrop_shows() {
+    let Some(gpu) = gpu() else { return };
+    let lens = View {
+        size: [33, 33],
+        fov_y: 0.1,
+        near: 0.1,
+    };
+    let mut rig = sky_rig(&gpu, lens);
+    let eye = Vec3::new(0., 2., 0.);
+    rig.views[0].input.directional_lights[0] = Some(sun(30f32.to_radians(), 1.));
+    let camera = looking(&lens, eye, Vec3::Y);
+    rig.views[0].input.camera = camera;
+    rig.render(0);
+    let image = rig.read(DiagnosticTarget::Composite);
+    let face = 128;
+    let offset = (0.5f32 / 64.).atan() * std::f32::consts::SQRT_2;
+    let range = range_about(&lens, &camera, &image, Vec3::Y, ATLAS_TEXEL + offset);
+    let Rig {
+        renderer,
+        scene,
+        views,
+        gpu: scenario::rig::Gpu { device, queue },
+        ..
+    } = &mut rig;
+    let view = &mut views[0];
+    let probe = renderer
+        .capture_specular_probe(
+            device,
+            queue,
+            scene,
+            &mut view.view,
+            &view.input,
+            &view.settings,
+            eye,
+            face,
+        )
+        .expect("a capture");
+    let sgl_3d::baked_specular_probe::SpecularProbeTexels::Rgba16Float(texels) = probe.texels
+    else {
+        panic!("a capture returns half floats");
+    };
+    // Level 0, face 2 (+Y), texel (63, 63).
+    let at = ((2 * face * face + 63 * face + 63) * 4) as usize;
+    let zenith: [f32; 4] = std::array::from_fn(|c| half(texels[at + c]));
+    assert!(
+        within(zenith, range),
+        "the capture's zenith is {zenith:?}, the backdrop's {range:?}"
+    );
+}
+
+/// An IEEE-754 binary16 value.
+fn half(bits: u16) -> f32 {
+    let exponent = i32::from((bits >> 10) & 31);
+    let fraction = f32::from(bits & 1023);
+    let magnitude = if exponent == 0 {
+        fraction * 2f32.powi(-24)
+    } else {
+        (1. + fraction / 1024.) * 2f32.powi(exponent - 15)
+    };
+    if bits & 0x8000 == 0 {
+        magnitude
+    } else {
+        -magnitude
+    }
 }

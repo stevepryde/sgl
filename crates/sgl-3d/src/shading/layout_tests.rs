@@ -40,12 +40,13 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 35] = [
+    let roots: [&'static super::Module; 36] = [
         &crate::shading::PACKED_VERTEX,
         &crate::stages::opaque::backdrop::BACKDROP,
         &crate::stages::sky::TRANSMITTANCE,
         &crate::stages::sky::MULTISCATTERING,
         &crate::stages::sky::SKY_VIEW,
+        &crate::stages::sky::environment::SKY_ENVIRONMENT,
         &crate::stages::transparent::effects::GLOW,
         &crate::stages::transparent::mist::MIST,
         &crate::stages::fog::VOLUMETRIC_FOG,
@@ -237,6 +238,13 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         (sky::TRANSMITTANCE.name, vec![sky::TRANSMITTANCE_ENTRY]),
         (sky::MULTISCATTERING.name, vec![sky::MULTISCATTERING_ENTRY]),
         (sky::SKY_VIEW.name, vec![sky::SKY_VIEW_ENTRY]),
+        (
+            sky::environment::SKY_ENVIRONMENT.name,
+            vec![
+                sky::environment::CAPTURE_ENTRY,
+                sky::environment::FILTER_ENTRY,
+            ],
+        ),
         (
             effects::GLOW.name,
             vec![
@@ -856,7 +864,8 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(super::shadow_mask::mirrors())
     .chain(crate::stages::shadows::traced::mirrors())
     .chain(super::sky::mirrors())
-    .chain(crate::stages::sky::mirrors());
+    .chain(crate::stages::sky::mirrors())
+    .chain(crate::stages::sky::environment::mirrors());
     let programs = programs();
     let module = |label: &str| {
         let (_, source) = programs

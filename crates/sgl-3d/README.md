@@ -227,15 +227,28 @@ frame.directional_lights[0] = Some(DirectionalLight {
   yaws of `diffuse_environment` and `reflection_environment`, do not turn
   it (its lights place it). `Backdrop::Color` still replaces it. The sky's
   motion vectors are the camera's rotation alone.
-- Not yet: the sky gives no environment light (no diffuse or specular image
-  lighting, and probe captures record a black sky), so light the scene's
-  shade with `hemisphere_light`; and no distance haze. Up is +Y and the
-  ground is flat around the camera.
-- Cost: three small tables per view (about 0.9 MB), computed on the first
-  sky frame and again only when their inputs change: `sky view` when a light
-  or the camera's height changes, all three when a `Sky` density or the
-  albedo does. A frame at rest pays only the backdrop's one table sample.
-  Timing groups `sky transmittance`, `sky multiscattering` and `sky view`.
+- The sky lights the frame as an environment map does: surfaces' diffuse
+  and specular environment light (`diffuse_environment` and
+  `reflection_environment` scale it), the dynamic GI volume's misses, the
+  fog's ambient share, probe captures and ray hits, through an environment
+  atlas in a map's format. Lower `hemisphere_light` where it stood in for
+  sky light. The atlas holds the sky without the lights' discs: each
+  light's own highlight is its reflection.
+- The atlas follows a changing sky one refresh step a frame over a 16-step
+  cycle, and at once in the first sky frame and after a cut. A cycle under
+  way finishes before the next starts, so reflections (the sharp level) lag
+  a moving sun or a climbing camera by up to 16 frames and diffuse
+  environment light (the roughest level) by up to 31, and while a cycle runs
+  the faces it has not yet refiltered still hold the cycle before.
+- Not yet: no distance haze. Up is +Y and the ground is flat around the
+  camera.
+- Cost: three small tables and the atlas per view (about 0.9 MB and
+  3.1 MB). The tables are computed on the first sky frame and again only
+  when their inputs change: `sky view` when a light or the camera's height
+  changes, all three when a `Sky` density or the albedo does. The atlas then
+  runs one step a frame until it has caught up. A frame at rest pays only
+  the backdrop's one table sample. Timing groups `sky transmittance`,
+  `sky multiscattering`, `sky view` and `sky environment`.
 
 ## Exposure, bloom and colour grading
 
@@ -2346,7 +2359,8 @@ stage (each stage's documentation lists its own), are:
 - prepare: `deform` (the frame's skinning and morphing, while an instance's
   deformation changed) and `cull` (the GPU-built lists' early phase);
 - sky: `sky transmittance`, `sky multiscattering` and `sky view`, in a frame
-  whose procedural sky's inputs changed;
+  whose procedural sky's inputs changed, and `sky environment` (one atlas
+  step a frame, the whole cycle on its first frame and after a cut);
 - dynamic GI: `dynamic GI allocation`, `dynamic GI rays` and `dynamic GI
   blend`, while the scene holds a volume and `Settings::dynamic_gi` runs it;
 - shadows: `directional shadow cascade 0` to `directional shadow cascade 3`

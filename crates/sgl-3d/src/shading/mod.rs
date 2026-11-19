@@ -31,6 +31,7 @@ pub(crate) mod lights;
 pub(crate) mod lod;
 pub(crate) mod material;
 pub(crate) mod motion_tiles;
+pub(crate) mod pmrem_filter;
 pub(crate) mod tiers;
 pub(crate) use tiers::{lit_provider, material_provider, transmission_provider};
 // Wired into the ray source and its readers with #135's prepared models.

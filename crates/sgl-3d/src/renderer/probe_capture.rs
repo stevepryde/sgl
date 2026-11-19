@@ -147,19 +147,17 @@ impl Renderer {
             (scene, &self.shared.pipelines),
             &views.instances,
         );
-        // A sky stage of the capture's own computes its tables for its
-        // position, which its faces' unlit group binds as the backdrop. The
-        // capture's backdrop draw reads the reflection sky, the environment's
-        // atlas, instead (`VIEW_PROBE_CAPTURE` in backdrop.wgsl), which is
-        // the black stand-in under a procedural sky: its captured sky is
-        // black.
+        // A sky stage of the capture's own computes its tables and its
+        // environment atlas's whole cycle for its position. The capture's
+        // backdrop draw records the reflection sky (`VIEW_PROBE_CAPTURE` in
+        // backdrop.wgsl): under a procedural sky, that atlas.
         let mut sky = crate::stages::sky::Sky::default();
-        sky.prepare(device, &input.environment);
-        sky.encode_from((queue, &mut encoder), input, center, None);
+        sky.prepare(device, input, center, true);
+        sky.encode_planned((queue, &mut encoder), None);
         let environment = crate::view::bindings::EnvironmentViews::resolve(
             &scene.environments,
             &input.environment,
-            sky.sky_view(),
+            sky.views(),
         );
         // Surfaces here sample the installed probes (surface.wgsl).
         let probes = scene

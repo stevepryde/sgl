@@ -1060,3 +1060,32 @@ Use the [current specs](README.md) for implementation and the
   (0.8); Bevy's default 0.6 multiplies the lobe directly, about 0.63 on
   AMD's scale. FSR1's RCAS, fixed at 0.2 stops (Godot's default) until now,
   follows the setting.
+- **D-62** Decision, 2026-11-19 (#833): a procedural sky lights the frame
+  through an environment atlas in the format a map supplies (Three r185's
+  PMREM atlas, CubeUV, cube size 128: 384x512 RGBA16F, ten levels), which
+  the environment resolver binds wherever a map's atlas is bound, so every
+  consumer reads a sky through `pmrem_sample` with no branch and no binding
+  is added on either tier. Not Bevy 9d12036's second format (a 128-texel
+  cube refiltered whole every frame and a 32-texel irradiance cube,
+  `atmosphere/environment.rs`, `light_probe/generate.rs`), which would put a
+  branch in every consumer (AR-2, AR-3), nor an SH or analytic diffuse term,
+  since the atlas's roughest level is what a map's diffuse light already
+  reads. Its sharp level is the sky-view table toward each texel (Bevy's
+  `environment.wesl`) without the lights' discs, whose reflection is each
+  light's own highlight (S3D-5); the rest is Three r185's GGX filter
+  (`PMREMGenerator._applyGGXFilter`, `_getGGXShader`). It is refreshed in
+  place over a 16-step cycle, one step a frame (the capture, level 1 a face
+  a step, level 2 three faces a step, levels 3 to 9 a step each; at most
+  4,096 texels and 1.05 million samples a step), started when the sky-view
+  table has been computed since the last cycle's capture, and whole on a new
+  atlas and in a frame that restarts the view's history; the step and the
+  atlas's revision advance when a frame is finished (X-5), and the dynamic
+  GI volume takes a changed revision as a changed environment. Three filters
+  once offline and Bevy every frame; Godot b130438's
+  `Sky.PROCESS_MODE_INCREMENTAL` (a roughness layer a frame) is the practice
+  followed. Measured on an Apple M5 (release, 1920x1080,
+  `Settings::default()`, a shared machine): a step 0.06 to 0.11 ms median
+  (0.27 ms p95 at most), the whole cycle in one frame 1.29 ms median (2.06
+  ms p95), nothing at rest; in Chrome 149's WebGPU on the same machine, the
+  whole cycle 2.36 ms median (3.34 ms p95) and a step below Chrome's 0.066
+  ms timestamp quantum at the median (0.20 ms p95).

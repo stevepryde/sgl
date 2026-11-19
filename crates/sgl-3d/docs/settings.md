@@ -137,7 +137,8 @@ is done (its algorithm and internal parameters) is SGL3D's.
   sky; `None` is black. `diffuse_environment` turns and scales its diffuse
   light, `backdrop` is its panorama or a colour.
 - `reflection_environment`: turns and scales its specular light where no
-  baked probe reflects.
+  baked probe reflects. Both scale a procedural sky's light as a map's; no
+  yaw turns a sky.
 - A material's `emits_into_gi` (`asset::Material`, `SurfaceMaterial`;
   `true` by default): `false` keeps the light it gives off itself (its
   emission, an unlit material's whole colour) out of global illumination,

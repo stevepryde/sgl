@@ -32,6 +32,7 @@ macro_rules! context {
             bindings: &mut $renderer.view.bindings,
             pipelines: &$renderer.renderer.shared.pipelines,
             history: $frame.history,
+            environment_revision: $renderer.view.sky.environment_revision(),
             hardware_rays: crate::view::frame::HardwareRays::of(
                 &$frame.effective,
                 $scene,
@@ -292,10 +293,10 @@ impl TestRenderer {
             shared.prepare.hardware_rays(),
             &slot_lights,
         );
-        view.sky.prepare(device, &input.environment);
-        let mut encoder = device.create_command_encoder(&Default::default());
         view.sky
-            .encode_from((queue, &mut encoder), &input, input.camera.eye, None);
+            .prepare(device, &input, input.camera.eye, !history.valid);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        view.sky.encode_planned((queue, &mut encoder), None);
         queue.submit([encoder.finish()]);
         view.bindings.refresh(
             device,
@@ -303,7 +304,7 @@ impl TestRenderer {
             crate::view::bindings::EnvironmentViews::resolve(
                 &scene.environments,
                 &input.environment,
-                view.sky.sky_view(),
+                view.sky.views(),
             ),
             &view.views,
             view.shadows.maps(),

@@ -299,8 +299,12 @@ them through unrefracted. A probe captured on an
   frame's directional lights, which are then their light above the air and
   reach every surface, shadow, the fog and the GI volume reddened by the air
   and off below the horizon; the backdrop shows the sky and the lights'
-  discs. `Sky` scales the air's densities, sets the ground's height and
-  albedo and the discs. It gives no environment light or distance haze yet.
+  discs. It lights the frame as an environment map does (diffuse and
+  specular, the GI volume's misses, the fog's ambient share, probe captures),
+  following a changing sky within 16 frames for reflections and 31 for
+  diffuse light. `Sky` scales the air's
+  densities, sets the ground's height and albedo and the discs. No distance
+  haze yet.
   [Procedural sky](../README.md#procedural-sky).
 - **Baked diffuse**, authored and baked by the game: a lightmap for chosen
   materials of static instances (`Scene::set_lightmap`) and a static

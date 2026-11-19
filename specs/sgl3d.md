@@ -394,7 +394,9 @@ current capabilities and limits.
 - **Procedural sky ([#832](https://github.com/stevepryde/sgl/issues/832)):**
   a physically based sky a game names as its frame's environment in place of
   a map (`FrameEnvironment::Sky`): Hillaire 2020's tables from the frame's
-  directional lights, its backdrop, and the lights' colour through the air
+  directional lights, its backdrop, the lights' colour through the air, and
+  its environment light, an atlas in a map's format refreshed a step a
+  frame ([#833](https://github.com/stevepryde/sgl/issues/833))
   ([Sky](sgl3d-architecture.md#designs-that-span-stages)).
 - **Dynamic diffuse GI (11,
   [#21](https://github.com/stevepryde/sgl/issues/21)):** a volume of probes

@@ -33,7 +33,7 @@
     "component": "Bevy",
     "path": "crates/sgl-3d/src/LICENSE-bevy.txt",
     "url": "https://raw.githubusercontent.com/bevyengine/bevy/b56fc29d3016e641754765244b5ba3f9cc504671/LICENSE-MIT",
-    "prefix": "Bevy Engine, https://github.com/bevyengine/bevy\nRevision b56fc29d3016e641754765244b5ba3f9cc504671, LICENSE-MIT (Bevy is dual\nlicensed MIT OR Apache-2.0; SGL3D uses it under the MIT terms below). The DFG\ntable SGL3D embeds (src/scene/dfg.rg16) is Bevy 9d12036's\n(crates/bevy_pbr/src/environment_map/dfg.ktx2). SGL3D ports Bevy 9d12036's\natmosphere (crates/bevy_pbr/src/atmosphere/functions.wesl, transmittance_lut.wesl,\nmultiscattering_lut.wesl, sky_view_lut.wesl and render_sky.wesl's sun disc, with\nfast_acos, fast_acos_4, fast_atan2 and ray_sphere_intersect from\ncrates/bevy_render/src/maths.wesl) to shading/sky.wgsl, stages/sky/ and\nstages/opaque/backdrop.wgsl.\n\n"
+    "prefix": "Bevy Engine, https://github.com/bevyengine/bevy\nRevision b56fc29d3016e641754765244b5ba3f9cc504671, LICENSE-MIT (Bevy is dual\nlicensed MIT OR Apache-2.0; SGL3D uses it under the MIT terms below). The DFG\ntable SGL3D embeds (src/scene/dfg.rg16) is Bevy 9d12036's\n(crates/bevy_pbr/src/environment_map/dfg.ktx2). SGL3D ports Bevy 9d12036's\natmosphere (crates/bevy_pbr/src/atmosphere/functions.wesl, transmittance_lut.wesl,\nmultiscattering_lut.wesl, sky_view_lut.wesl and render_sky.wesl's sun disc, with\nfast_acos, fast_acos_4, fast_atan2 and ray_sphere_intersect from\ncrates/bevy_render/src/maths.wesl) to shading/sky.wgsl, stages/sky/ and\nstages/opaque/backdrop.wgsl, and its environment.wesl capture to\nstages/sky/environment.wgsl.\n\n"
   },
   {
     "component": "Bevy",
@@ -95,10 +95,10 @@
     "prefix": "Spartan Engine, https://github.com/PanosK92/SpartanEngine\nRevision a8338d0609b85dc32f3732a5c27fb4463816a3b9, LICENSE.txt. Godot's\nservers/rendering/renderer_rd/shaders/effects/taa_resolve.glsl (revision\nb13043816a0f234985030ec035363a005bc86c32) is based on Spartan Engine's TAA at\nthis revision and carries this notice; the DiligentFX port adds its\nmotion-difference rejection, speed-scaled variance box and history clip to\nTAA_ComputeTemporalAccumulation.wgsl (PROVENANCE.md DFX-14).\n\n"
   },
   {
-    "component": "Three.js (SMAA, mist noise, shading and ACES Filmic ports)",
+    "component": "Three.js (SMAA, mist noise, shading, ACES Filmic and PMREMGenerator ports)",
     "path": "crates/sgl-3d/src/stages/post/smaa/LICENSE-three.txt",
     "url": "https://raw.githubusercontent.com/mrdoob/three.js/2431a09f46f34c560bc8e44b33be0e567723d5b9/LICENSE",
-    "note": "r185 (2431a09) also supplies ACESFilmicToneMapping and RRTAndODTFit in stages/post/tone_map.wgsl."
+    "note": "r185 (2431a09) also supplies ACESFilmicToneMapping and RRTAndODTFit in stages/post/tone_map.wgsl, and PMREMGenerator.js's GGX filter, planes and getDirection in shading/pmrem_filter.wgsl."
   },
   {
     "component": "Wicked Engine",

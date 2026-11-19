@@ -3528,14 +3528,20 @@ unsnapped or float-noisy placement (G-2) restarts it every frame.
   variability over a window of 16 turns of its slowest active probe falls by less than a tenth from
   the last window's, every probe has started and nothing changed. Any change in the scene's edit count,
   deformation edits on the hardware path, the frame data other than cascades and clock, the bound
-  environment, the ray budget or the local-lights switch, or a restart, resets the window.
-- **Raised by.** Any content edit, including any moving instance's pose.
+  environment, a procedural sky's environment atlas revision (X-5), the ray budget or the
+  local-lights switch, or a restart, resets the window.
+- **Raised by.** Any content edit, including any moving instance's pose; under a procedural sky,
+  every frame that writes its environment atlas (X-5), including the cycle a change of the camera's
+  height starts, whose own backdrop values in the frame data (`Inputs::of` zeroes them) the window
+  ignores.
 - **Stays triggered while.** Traffic or any per-frame edit: the volume never pauses (cost only; no history is dropped).
 - **Source.** RTXGI sample's pause (practice only), modified. Code: `src/stages/dynamic_gi/inputs.rs`
   (`Inputs::changes`), `src/stages/dynamic_gi/allocate.wgsl` (`ddgi_paused`),
   `src/stages/dynamic_gi/update.wgsl` (`settle`).
 - **Guard.** `a_converged_volume_traces_nothing_until_what_its_light_follows_changes`,
-  `the_clock_changes_the_probes_inputs_only_where_a_surface_moves` (`src/stages/dynamic_gi/tests.rs`).
+  `the_clock_changes_the_probes_inputs_only_where_a_surface_moves`,
+  `a_sky_atlas_refreshing_under_held_lights_changes_the_probes_environment`
+  (`src/stages/dynamic_gi/tests.rs`).
 - **Status.** Rule.
 
 #### G-11 A ray-budget change keeps the probes
@@ -3673,6 +3679,15 @@ See M-11, M-16 and M-17a to M-17c.
 - **Stays triggered while.** The inputs keep changing, and until a frame that computed the table is finished.
 - **Source.** SGL3D's own; Bevy 9d12036 computes every table every frame (`atmosphere/node.rs`). Code: `src/stages/sky.rs`.
 - **Guard.** The stage's encode-count test.
+- **Status.** Rule.
+
+#### X-5 Sky environment atlas
+
+- **Rule.** The sky stage's environment atlas follows the sky-view table over a 16-step cycle, one step per finished frame, written in place. A cycle under way runs to its end before the next starts, so a change that arrives the frame after a capture reaches the sharp level 16 frames later, counting the frame of the change, and the roughest level, which diffuse environment light reads, 31 frames later; a change to an idle atlas reaches them in that frame and 15 frames later. During a cycle the faces and levels it has refiltered come from its capture and the rest from the cycle before, so neighbouring faces of a level can be a whole cycle apart; each level is filtered from the level before within one cycle, so a level's lineage is consistent. The whole cycle runs in the stage's first sky frame and in any frame that restarts the view's history. A frame rendered again runs the same step. An unfinished frame commits nothing of the cycle, and a sky-view table it computed is computed again in the next frame (X-4), which so starts the cycle that change needs.
+- **Raised by.** The sky-view table computed since the last cycle's capture (X-4).
+- **Stays triggered while.** The cycle runs; again while the table keeps changing.
+- **Source.** SGL3D's own schedule; Godot's incremental sky radiance update is the practice. Code: `src/stages/sky/environment.rs` (`AtlasCycle`).
+- **Guard.** The schedule test; `scenario_sky`'s 16-frame and cut scenarios.
 - **Status.** Rule.
 
 ### Stages without history

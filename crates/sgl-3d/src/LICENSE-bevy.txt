@@ -7,7 +7,8 @@ atmosphere (crates/bevy_pbr/src/atmosphere/functions.wesl, transmittance_lut.wes
 multiscattering_lut.wesl, sky_view_lut.wesl and render_sky.wesl's sun disc, with
 fast_acos, fast_acos_4, fast_atan2 and ray_sphere_intersect from
 crates/bevy_render/src/maths.wesl) to shading/sky.wgsl, stages/sky/ and
-stages/opaque/backdrop.wgsl.
+stages/opaque/backdrop.wgsl, and its environment.wesl capture to
+stages/sky/environment.wgsl.
 
 MIT License
 

@@ -35,6 +35,10 @@ pub(crate) struct FrameContext<'a> {
     pub pipelines: &'a GeometryPipelines,
     /// The camera history every stage continues or restarts with.
     pub history: HistoryFrame,
+    /// The revision of the frame environment's atlas as this frame leaves
+    /// it: a procedural sky's changes whenever its sky stage writes it
+    /// (X-5); 0 otherwise.
+    pub environment_revision: u64,
     /// The hardware path the frame's rays trace, if any.
     pub hardware_rays: Option<HardwareRays<'a>>,
 }

@@ -42,9 +42,9 @@ fn texels(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -
 /// The tables of `input`'s sky computed by a stage of their own.
 fn tables(device: &wgpu::Device, queue: &wgpu::Queue, input: &FrameInput) -> Sky {
     let mut sky = Sky::default();
-    sky.prepare(device, &input.environment);
+    sky.prepare(device, input, input.camera.eye, true);
     let mut encoder = device.create_command_encoder(&Default::default());
-    sky.encode_from((queue, &mut encoder), input, input.camera.eye, None);
+    sky.encode_planned((queue, &mut encoder), None);
     queue.submit([encoder.finish()]);
     sky
 }
@@ -111,9 +111,9 @@ fn multiple_scattering_is_finite_and_non_negative_from_empty_to_dense_air() {
                     ..SkyLook::default()
                 };
                 let input = sky_input(look, Vec3::Y, 0.3);
-                sky.prepare(&device, &input.environment);
+                sky.prepare(&device, &input, Vec3::Y, true);
                 let mut encoder = device.create_command_encoder(&Default::default());
-                sky.encode_from((&queue, &mut encoder), &input, Vec3::Y, None);
+                sky.encode_planned((&queue, &mut encoder), None);
                 queue.submit([encoder.finish()]);
                 assert!(sky.computed().multiscattering);
                 let [_, multiscattering, _] = sky.tables().unwrap();
@@ -301,4 +301,67 @@ fn each_table_is_computed_when_its_inputs_change_and_a_frame_is_unfinished() {
     assert_eq!(frame(&mut renderer, &mapless, true), none, "no sky");
     assert!(renderer.view.sky.tables().is_none(), "no sky, no tables");
     assert_eq!(frame(&mut renderer, &hazy, true), all, "the sky again");
+}
+
+// Plausible defects: a filtered level reading the wrong level or an unwritten
+// part of the atlas (a wrong mip or origin), weights left unnormalised, or a
+// level never written. The oracle is a bound: each of levels 1 to 9 is a
+// normalised, N.L-weighted mean of the level before (Three's GGX filter), so
+// by induction each of its texels lies within the range of the sharp level's
+// texels in every channel (to half-float rounding), and is lit where the
+// sharp level is lit everywhere (a sun at 30° lights the whole sky and the
+// ground).
+#[test]
+fn every_filtered_level_is_a_mean_of_the_sharp_level() {
+    use super::environment::ATLAS;
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let sky = tables(
+        &device,
+        &queue,
+        &sky_input(
+            SkyLook::default(),
+            Vec3::new(0., 2., 0.),
+            30f32.to_radians(),
+        ),
+    );
+    let atlas = texels(&device, &queue, sky.atlas().unwrap());
+    let [width, _] = ATLAS.size();
+    let level_range = |level: u32| {
+        let placed = ATLAS.level(level);
+        let mut range = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+        for face in 0..6 {
+            let [x0, y0] = placed.face_origin(face);
+            for y in y0..y0 + placed.size {
+                for x in x0..x0 + placed.size {
+                    let texel = atlas[(y * width + x) as usize];
+                    for (c, &value) in texel[..3].iter().enumerate() {
+                        range.0[c] = range.0[c].min(value);
+                        range.1[c] = range.1[c].max(value);
+                    }
+                }
+            }
+        }
+        range
+    };
+    let (low, high) = level_range(0);
+    assert!(
+        low.iter().all(|&c| c > 0.),
+        "the sharp level is unlit: {low:?}"
+    );
+    for level in 1..ATLAS.levels() {
+        let (level_low, level_high) = level_range(level);
+        for c in 0..3 {
+            assert!(
+                level_low[c] >= low[c] * (1. - 1. / 512.)
+                    && level_high[c] <= high[c] * (1. + 1. / 512.),
+                "level {level}, channel {c}: {}..{} outside the sharp level's {}..{}",
+                level_low[c],
+                level_high[c],
+                low[c],
+                high[c]
+            );
+        }
+    }
 }
