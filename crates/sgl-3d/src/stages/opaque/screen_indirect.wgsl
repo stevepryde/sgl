@@ -52,8 +52,7 @@ const SCREEN_INDIRECT_SECTORS: f32 = 32.0;
 // How deep in metres a sample's surface is taken to be behind it:
 // SSRT_HDRP.cs's default thickness, constant (linearThickness off).
 const SCREEN_INDIRECT_THICKNESS: f32 = 1.0;
-// HorizonSampling's coarsest depth mip, min((j + 1) / 2, 4): the pyramid's
-// last.
+// The coarsest depth mip a sample reads: the pyramid's last.
 const SCREEN_INDIRECT_LAST_MIP: u32 = 4u;
 // The frames accumulated at most.
 const SCREEN_INDIRECT_MOST_HISTORY: f32 = 16.0;
@@ -318,7 +317,10 @@ fn gather(@builtin(global_invocation_id) id: vec3<u32>) {
                 if any(sample_uv <= vec2(0.0)) || any(sample_uv >= vec2(1.0)) {
                     break;
                 }
-                let mip = min((step + 1u) / 2u, SCREEN_INDIRECT_LAST_MIP);
+                // The depth mip its distance in pixels selects, by XeGTAO's
+                // rule, not SSRTCS.compute's step index, min((j + 1) / 2, 4),
+                // set for its search half as wide in pixels (D-70).
+                let mip = xegtao_depth_mip(offset, SCREEN_INDIRECT_LAST_MIP);
                 let delta = position(sample_uv, sample_depth(sample_uv, mip)) - center;
                 let distance = length(delta);
                 // Beyond the radius a sample covers nothing (D-65), the sky
