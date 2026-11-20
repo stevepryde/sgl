@@ -36,9 +36,6 @@ const DEFAULT_RADIUS: f32 = 5.;
 /// screen_indirect.wgsl).
 const MOST_SLICES: u32 = 2;
 const MOST_STEPS: u32 = 12;
-/// The steps a side at Low: 10 samples a pixel, Godot b130438's default SSIL
-/// quality (`ssil.glsl` 41 `num_taps`, `ss_effects.cpp` 837; D-70).
-const LOW_STEPS: u32 = 5;
 
 /// The frame's reach for `radius` metres: clamped to `MIN_RADIUS..=MAX_RADIUS`,
 /// NaN to `DEFAULT_RADIUS`.
@@ -50,11 +47,11 @@ pub(crate) fn radius(radius: f32) -> f32 {
     }
 }
 
-/// The slices and steps a side of `level`: one slice of `LOW_STEPS` at Low,
-/// and SSRT3's two slices of twelve steps a side at High.
+/// The slices and steps a side of `level`: SSRT3's defaults, one slice of
+/// twelve steps a side, at Low, and two slices at High.
 fn samples(level: ScreenSpaceIndirect) -> (u32, u32) {
     match level {
-        ScreenSpaceIndirect::Off | ScreenSpaceIndirect::Low => (1, LOW_STEPS),
+        ScreenSpaceIndirect::Off | ScreenSpaceIndirect::Low => (1, MOST_STEPS),
         ScreenSpaceIndirect::High => (MOST_SLICES, MOST_STEPS),
     }
 }

@@ -17,8 +17,6 @@ struct Params {
 // loops end whatever the parameters say.
 const MOST_SLICES: u32 = 9u;
 const MOST_STEPS: u32 = 3u;
-// The depth pyramid's last level (output_depth4).
-const LAST_MIP: u32 = 4u;
 // The Hilbert curve's tile, texels across: hilbert_lut's extent.
 const HILBERT_WIDTH: u32 = 64u;
 @group(0) @binding(0) var<uniform> p: Params;
@@ -126,7 +124,8 @@ fn prefilter_depth4(@builtin(global_invocation_id) id:vec3<u32>) {
 fn noise(q:vec2<u32>)->vec2<f32> {
     return xegtao_noise(textureLoad(hilbert_lut,q%vec2(HILBERT_WIDTH),0).x,p.noise_index);
 }
-fn sample_depth(uv:vec2<f32>,mip:u32)->f32 {
+fn sample_depth(uv:vec2<f32>,level:f32)->f32 {
+    let mip=u32(clamp(floor(level+0.5),0.0,4.0));
     let size=mip_size(mip);
     return depth_at(vec2<i32>(floor(uv*vec2<f32>(size))),mip);
 }
@@ -171,7 +170,7 @@ fn main_pass(@builtin(global_invocation_id) id:vec3<u32>) {
             let step_noise=fract(local_noise.y+f32(slice+step*steps)*0.6180339887498948482);
             let sample_s=pow((f32(step)+step_noise)/f32(steps),2.0)+min_s;
             var offset=sample_s*omega;
-            let mip=xegtao_depth_mip(length(offset),LAST_MIP);
+            let mip=clamp(log2(length(offset))-3.30,0.0,5.0);
             offset=round(offset)*p.pixel_size;
             let uv0=uv+offset;
             let uv1=uv-offset;

@@ -1,9 +1,8 @@
 // XeGTAO, Copyright (C) 2016-2021 Intel Corporation, SPDX-License-Identifier: MIT.
 // XeGTAO's pure kernels that ambient occlusion and screen-space indirect light
 // both take, one owner for each (XeGTAO.hlsli a5b1686: XeGTAO_FastACos, the
-// Hilbert R2 noise of SpatioTemporalNoise, the depth mip a sample reads,
-// XeGTAO_CalculateEdges and XeGTAO_PackEdges, and XeGTAO_Denoise's edge
-// weights). Binds nothing.
+// Hilbert R2 noise of SpatioTemporalNoise, XeGTAO_CalculateEdges and
+// XeGTAO_PackEdges, and XeGTAO_Denoise's edge weights). Binds nothing.
 fn fast_acos(v:f32)->f32 {
     let x=abs(v);
     let root=bitcast<f32>(0x1fbd1df5i+(bitcast<i32>(1.0-x)>>1u));
@@ -15,16 +14,6 @@ fn fast_acos(v:f32)->f32 {
 fn xegtao_noise(hilbert_index:u32,frame:u32)->vec2<f32> {
     let index=hilbert_index+288u*(frame%64u);
     return fract(vec2(0.5)+f32(index)*vec2(0.75487766624669276005,0.5698402909980532659114));
-}
-// XeGTAO's DepthMIPSamplingOffset default (XE_GTAO_DEFAULT_DEPTH_MIP_SAMPLING_OFFSET):
-// "main trade-off between performance (memory bandwidth) and quality".
-const XEGTAO_DEPTH_MIP_SAMPLING_OFFSET:f32=3.30;
-// The depth mip a sample `offset` full-size pixels from its receiver reads,
-// of the pyramid's levels 0 to `last`: XeGTAO.hlsli 438's
-// clamp(log2(offset) - DepthMIPSamplingOffset), the nearest level, as its
-// point sampler takes it.
-fn xegtao_depth_mip(offset:f32,last:u32)->u32 {
-    return u32(floor(clamp(log2(offset)-XEGTAO_DEPTH_MIP_SAMPLING_OFFSET,0.0,f32(last))+0.5));
 }
 // A pixel's edges toward its left, right, top and bottom neighbours from its
 // view depth `z` and theirs, 1 where the surface continues and 0 across a
