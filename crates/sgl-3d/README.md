@@ -1319,9 +1319,14 @@ accumulates up to 16 frames. The next frame's opaque surfaces take that
 light as baked light, beneath their material's occlusion and outside the
 ambient light ambient occlusion occludes, and the share of their indirect
 diffuse light it covers (the environment's, the fill's, a bake's and the GI
-volumes') gives way to it, so no bounce is counted twice
+volumes') gives way to it, so no bounce is counted twice. Each pixel reads
+it at its last position: at `High` from the four half-size texels about
+it, weighed bilinearly; at `Low` from the nearest alone where it matches
+the surface, and the four only at edges and disocclusions, which costs
+less, and its light steps every two pixels where temporal antialiasing
+does not smooth it
 ([Screen-space indirect light](../../specs/sgl3d-architecture.md#designs-that-span-stages),
-[D-65](../../specs/decisions.md)).
+[D-65](../../specs/decisions.md), [D-70](../../specs/decisions.md)).
 
 Its limits are part of what it is:
 
@@ -1338,7 +1343,8 @@ Blended surfaces, probe captures and ray hits take none. It needs a centred
 reversed-Z perspective camera, as ambient occlusion does; any other camera
 leaves it off. A camera cut, a resize, a level or radius change and a frame
 without it restart it (its history: [SI-1 to SI-6](../../specs/sgl3d-history.md)).
-It holds no targets while off, and while on 16 bytes a render pixel at half
+It holds nothing while off (targets, pipelines and bind groups go in the
+first frame without it), and while on 16 bytes a render pixel at half
 size, with ambient occlusion's depth pyramid (about 5 bytes a render pixel)
 where ambient occlusion is off. On an Apple M5 at 1920×1080 on Bistro (`bistro-golden`,
 the least-contended of several runs on a shared machine) its passes took

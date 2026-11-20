@@ -93,3 +93,11 @@ pass and the lit programs both compose.
   prefilter take each level's size from the texture.
 - **Light and coverage are kept, then read one frame late.** SSRT3 composes
   in the same frame; SGL3D has no prepass to gather before shading (D-65).
+- **The read at Low** ([D-70](../../../../../../specs/decisions.md)). A
+  fragment at `Low` takes the nearest kept texel alone where it passes the
+  similarity test, and the four about its previous position, bilinearly,
+  only where it does not, so an edge reads as at `High`. Godot b130438 reads
+  its half-size SSIL bilinearly (`scene_forward_clustered.glsl` 2274–2279)
+  and Wicked 4323a33 upsamples with depth-weighted bilinear taps
+  (`upsample_bilateral_float4CS.hlsl`); inside a surface `Low`'s light steps
+  with the kept texels instead.

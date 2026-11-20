@@ -15,6 +15,7 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `ScreenSpaceIndirect::Low`: a fragment now reads the kept bounce from the nearest half-size texel where it matches the surface, and the four about it only at edges and disocclusions, which makes the fused opaque pass cheaper; inside a surface the bounce steps every two pixels where temporal antialiasing does not smooth it. `High` reads as before. Turning `Settings::screen_space_indirect` off now also releases its pipelines and bind groups. No game-code changes are needed.
 - `sgl-3d` `Settings::contact_shadows`: a floor seen near edge-on and the frame's border no longer shadow themselves in bands; a caster only a few pixels wide casts a thinner contact shadow. No game-code changes are needed.
 
 ## 0.9.0 — 2026-11-20

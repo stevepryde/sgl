@@ -3311,7 +3311,8 @@ frame's lighting reprojects again, per fragment.
 - **Rule.** A kept texel is a tap only where its count is above 0, its normal does not oppose the
   receiver's, and its point lies within 0.003 of the receiver's view depth from the receiver's
   tangent plane at its previous position. It applies to the pass's own reprojection and to each
-  fragment's read.
+  fragment's read. At `Low` a fragment's read takes the nearest texel alone where it is a tap, and
+  the four otherwise; the pass's own reprojection always takes the four.
 - **Raised by.** Disocclusion; edges between surfaces at half size.
 - **Stays triggered while.** Nothing in a still picture.
 - **Source.** Bevy `bevy_solari` `pixel_dissimilar`, faithful, evaluated in the previous view's
