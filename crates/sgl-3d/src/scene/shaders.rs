@@ -51,8 +51,8 @@ impl Scene {
     /// surfaces"). It is validated here, composed into every program the
     /// device's binding tier creates for it, so a module this accepts never
     /// fails later; one it refuses adds nothing (`SceneError::Shader`).
-    /// Materials name it (`SurfaceMaterial::shader`), and the first frame
-    /// that draws one of them compiles its pipelines: add shaders at load.
+    /// Materials name it through `SurfaceMaterial::shader`. Each geometry
+    /// pipeline using the shader is compiled on its first frame or probe draw.
     pub fn add_shader(&mut self, source: ShaderSource) -> Result<ShaderId, SceneError> {
         let validated = crate::shading::shader::validate(&source.wgsl, self.materials.tier())?;
         Ok(self.shaders.slots.insert(Shader {

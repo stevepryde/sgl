@@ -659,7 +659,8 @@ sun on water shows a disc.
   face once for diffuse light and once more for each specular lobe (base and
   coat) unless `specular` is 0. The lit pipelines shade rectangles only
   while the scene holds one, so a scene without them pays nothing for them;
-  the first rectangle added, or the last removed, compiles the other set.
+  adding the first rectangle or removing the last selects the other specialization.
+  Draws compile any missing variants when they first use them.
 - `baked` is Godot's `BAKE_STATIC`. A baked light lights only receivers
   without baked lighting: moving instances, and static receivers with no
   baked map (baked lighting is off, or the material is not lightmapped and
@@ -712,8 +713,9 @@ sun on water shows a disc.
   light, or with an `up` along the direction, is refused with
   `SceneError::InvalidLight`, and an image a light projects cannot be
   removed (`SceneError::DecalImageInUse`). The lit pipelines sample cookies
-  only while the scene holds a cookied light, so the first one added, or
-  the last removed, compiles the other set.
+  only while the scene holds a cookied light. Adding the first or removing
+  the last selects the other specialization. Draws reuse its cached pipelines
+  and compile any missing variants on first use.
 
   ```rust,ignore
   let panes = scene.add_decal_image(Image::Rgba8(window_pattern))?;
@@ -807,8 +809,9 @@ and no normal fade.
   the scene's, a ray hit's the view's and a dynamic GI probe ray's the
   volume's.
 - The lit pipelines apply decals only while the scene holds one, so a scene
-  without them pays nothing for them; the first decal added, or the last
-  removed, compiles the other set. Neither Godot (b130438, whose clustered
+  without them pays nothing for them. Adding the first decal or removing the
+  last selects the other specialisation. Geometry draws create any missing
+  pipelines as they bind them. Neither Godot (b130438, whose clustered
   pass walks each cluster's decals whatever the scene holds) nor Bevy
   (9d12036, whose `CLUSTERED_DECALS_ARE_USABLE` follows the device)
   specialises on decals; a game that adds its first decal mid-play and
@@ -2109,10 +2112,10 @@ an instance whose local-light shadow must animate is a moving instance. A
 material with a shader marks FSR's composition mask in the frames its
 shading may change ([FSR](#fsr)): every frame while its module reads the
 time (`ctx.time` or `ctx.phase`, anywhere in the module), else only the
-frame after an edit of its parameters or an instance's data. The first frame that draws a
-shader's material creates its programs (at most four shader modules) and
-the pipelines its materials' alpha modes and sides need (natively, and on
-the browser's main thread there): add shaders at load. A
+frame after an edit of its parameters or an instance's data. Adding a shader
+validates its source. Each frame or probe draw creates the pipeline for its
+pass, material and geometry on first use, including the shader module if it
+has yet to be used. Views and captures share those pipelines. A
 module's functions cost each pass that runs them, vertices twice in the
 passes that write motion; a material without a shader costs nothing more,
 its programs reading neither parameter blocks nor instance data, which

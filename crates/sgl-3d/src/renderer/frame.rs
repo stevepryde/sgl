@@ -15,7 +15,6 @@ use crate::view::draw_list::gpu::Phase;
 use crate::view::effective::Effective;
 use crate::view::frame::{CameraMask, Completed, FrameContext, HardwareRays};
 use crate::view::history::HistoryFrame;
-use crate::view::pipelines::GeometryPipelines;
 use crate::view::post_fx::PostFx;
 use crate::view::targets::SharedTargets;
 use crate::{FrameInput, Scene};
@@ -92,30 +91,11 @@ pub(super) fn render(
         };
         begun.push((history, effective));
     }
-    // The ray instances are updated and the acceleration structures built
-    // when any view of the frame traces; the shadow-mask pipelines exist
-    // once any runs ray-traced shadows, the contact-mask pipelines once any
-    // runs contact shadows, and screen-space indirect light's once any runs
-    // it.
+    // Update ray instances when any view of the frame traces.
     let traced = begun
         .iter()
         .any(|(_, effective)| Prepare::traces(scene, effective));
-    let shadow_mask = begun
-        .iter()
-        .any(|(_, effective)| effective.ray_traced_shadows);
-    let contact_shadow = begun
-        .iter()
-        .any(|(_, effective)| effective.contact_shadows.is_some());
-    let screen_indirect = begun
-        .iter()
-        .any(|(_, effective)| effective.screen_indirect.is_some());
-    shared.run_scene(
-        (device, queue),
-        scene,
-        &begun[0].1,
-        views[0].input,
-        (traced, (shadow_mask, contact_shadow, screen_indirect)),
-    );
+    shared.run_scene((device, queue), scene, &begun[0].1, views[0].input, traced);
     for (index, (frame, begun)) in views.iter_mut().zip(begun).enumerate() {
         render_view(
             shared,
@@ -176,7 +156,6 @@ pub(super) fn render_view(
         ray_form,
         ..
     } = shared;
-    let pipelines: &GeometryPipelines = pipelines;
     let View {
         sizes,
         targets,

@@ -88,7 +88,7 @@ impl Directional {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         scene: &Scene,
-        pipelines: &GeometryPipelines,
+        pipelines: &mut GeometryPipelines,
         (casters, drawn): (&DrawList, &DrawInstances),
         groups: &[wgpu::BindGroup],
     ) {

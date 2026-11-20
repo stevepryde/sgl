@@ -395,7 +395,7 @@ impl GpuList {
     pub fn draw(
         &self,
         scene: &Scene,
-        pipelines: &GeometryPipelines,
+        pipelines: &mut GeometryPipelines,
         pass: &mut wgpu::RenderPass<'_>,
         kind: GeometryPass,
     ) -> usize {
@@ -407,7 +407,7 @@ impl GpuList {
     pub fn draw_materials(
         &self,
         scene: &Scene,
-        pipelines: &GeometryPipelines,
+        pipelines: &mut GeometryPipelines,
         pass: &mut wgpu::RenderPass<'_>,
         kind: GeometryPass,
         drawn: &dyn Fn(MaterialId) -> bool,
@@ -420,7 +420,7 @@ impl GpuList {
     pub fn draw_phase(
         &self,
         scene: &Scene,
-        pipelines: &GeometryPipelines,
+        pipelines: &mut GeometryPipelines,
         pass: &mut wgpu::RenderPass<'_>,
         kind: GeometryPass,
         phase: Phase,
@@ -442,7 +442,7 @@ impl GpuList {
     fn issue(
         &self,
         scene: &Scene,
-        pipelines: &GeometryPipelines,
+        pipelines: &mut GeometryPipelines,
         pass: &mut wgpu::RenderPass<'_>,
         kind: GeometryPass,
         phases: &[Phase],
@@ -482,13 +482,7 @@ impl GpuList {
                 issued += 1;
             }
             if paired && set.variant.alpha == Alpha::Opaque {
-                let shader = scene
-                    .drawn_material(set.material)
-                    .values
-                    .shader
-                    .map(|shader| shader.shader);
-                pass.set_pipeline(pipelines.get(GeometryPass::PairedShadow, set.variant, shader));
-                binder.forget_pipeline();
+                binder.bind_paired(pass, scene);
                 let index = 2 * self.commands + set.index;
                 pass.set_vertex_buffer(
                     DRAW_INSTANCE_SLOT,

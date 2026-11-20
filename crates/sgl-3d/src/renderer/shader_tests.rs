@@ -728,7 +728,7 @@ fn the_surface_function_reads_this_frames_instance_data() {
 // game that replaces its shaders leaks a set of modules and pipelines each
 // time. The oracle is the renderer's own count of the modules and
 // pipelines it holds for shaders: some while a drawn material names one,
-// none once none does and it is removed, however often that repeats.
+// none once none does, even while the shader itself still lives.
 #[test]
 fn a_removed_shader_frees_its_programs() {
     let Some(mut harness) = Harness::new(settings()) else {
@@ -762,9 +762,9 @@ fn a_removed_shader_frees_its_programs() {
             .scene
             .set_material(&harness.queue, material, values)
             .unwrap();
-        harness.scene.remove_shader(shader).unwrap();
         harness.frame(&frame(camera, 0.));
         assert_eq!(harness.renderer.test_shader_programs(), (0, 0));
+        harness.scene.remove_shader(shader).unwrap();
     }
 }
 

@@ -177,13 +177,6 @@ impl Models {
         self.slots.get_mut(id).ok_or(SceneError::UnknownModel)
     }
 
-    /// Whether a model deforms.
-    pub fn holds_deforming(&self) -> bool {
-        self.slots
-            .iter()
-            .any(|(_, model)| model.deformation.is_some())
-    }
-
     /// Whether `lod`'s mesh has authored tangent frames.
     pub fn lod_tangents(&self, lod: &MeshLod) -> bool {
         self.slots

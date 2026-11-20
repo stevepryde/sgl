@@ -21,7 +21,7 @@
 //! pipeline layout takes group 0's and group 2's layouts of that tier, fixed
 //! for the device, so no key holds it.
 use crate::Scene;
-use crate::content::identity::{Identity, ShaderId};
+use crate::content::identity::ShaderId;
 use crate::shading::bind::{BindingTier, LitLayout};
 use crate::shading::programs::*;
 use crate::shading::{self, gbuffer};
@@ -42,88 +42,8 @@ use programs::{Program, ProgramSet};
 pub(crate) use retention::PipelineSpecialisations;
 pub(crate) use variant::{Alpha, Cull, Variant};
 
-/// Which alpha modes the scene's materials use beyond opaque, whether one
-/// is a receiver of screen-space reflections, whether an opaque or masked
-/// one's surface moves, whether it holds a deforming model, and whether a
-/// material is transmissive: the masked, blended, receiver, temporal
-/// composition and deformed pipelines are prepared once it holds such
-/// content, and the blended ones compile transmission in while it holds a
-/// transmissive material.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Content {
-    mask: bool,
-    blend: bool,
-    receivers: bool,
-    moving: bool,
-    deformed: bool,
-    transmissive: bool,
-}
-
-impl Content {
-    /// What `scene` holds.
-    fn of(scene: &Scene) -> Self {
-        Self {
-            mask: scene.materials.holds_masked(),
-            blend: scene.materials.holds_blended(),
-            receivers: scene.materials.holds_receivers(),
-            moving: scene.materials.holds_moving_surfaces(),
-            deformed: scene.models.holds_deforming(),
-            transmissive: scene.materials.holds_transmissive(),
-        }
-    }
-}
-
-/// What the materials that name one shader need of its pipelines: the
-/// alpha modes they use, opaque among them, whether one is a receiver, and
-/// whether one is blended and the shader reads its volume path, whose
-/// meshes the volume layers draw. A shader's opaque or masked material's
-/// surface may always move (`Scene::shading_changes`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct ShaderContent {
-    opaque: bool,
-    mask: bool,
-    blend: bool,
-    receivers: bool,
-    volumes: bool,
-}
-
-impl ShaderContent {
-    /// Each shader the materials of `scene` name, with what they need, in
-    /// the order of their identities' indices.
-    fn of(scene: &Scene) -> Vec<(ShaderId, Self)> {
-        let mut shaders: Vec<(ShaderId, Self)> = Vec::new();
-        for (_, material) in scene.materials.slots.iter() {
-            let Some(shader) = material.values.shader else {
-                continue;
-            };
-            let at = match shaders.iter().position(|(id, _)| *id == shader.shader) {
-                Some(at) => at,
-                None => {
-                    shaders.push((shader.shader, Self::default()));
-                    shaders.len() - 1
-                }
-            };
-            let reads_volume_path = scene
-                .shaders
-                .get(shader.shader)
-                .is_ok_and(|shader| shader.reads_volume_path);
-            let content = &mut shaders[at].1;
-            match Alpha::of(&material.values) {
-                Alpha::Opaque => content.opaque = true,
-                Alpha::Mask => content.mask = true,
-                Alpha::Blend => {
-                    content.blend = true;
-                    content.volumes |= reads_volume_path;
-                }
-            }
-            content.receivers |= material.values.receives_screen_space_reflections();
-        }
-        shaders.sort_by_key(|(id, _)| id.index());
-        shaders
-    }
-}
-
 pub(crate) struct GeometryPipelines {
+    device: wgpu::Device,
     /// Group 0 lit, then scene and material.
     lit: wgpu::PipelineLayout,
     /// `lit`'s, then the blended group 3.
@@ -149,29 +69,9 @@ pub(crate) struct GeometryPipelines {
     /// pipelines when none does.
     shader_programs: HashMap<ShaderId, ProgramSet>,
     cache: HashMap<PipelineKey, wgpu::RenderPipeline>,
-    /// The diagnostics layers `get` returns pipelines for.
-    layers: LayerConstants,
-    /// The lit constants `get` returns pipelines for.
-    lit_constants: LitConstants,
-    /// The content `get` returns pipelines for beyond opaque, rigid
-    /// geometry.
-    content: Content,
-    /// The specialisation before the current one, whose pipelines stay, so
-    /// a constant that flips back (a decal expiring, a rectangle light
-    /// switched off) finds its pipelines cached.
+    current: Specialisation,
+    /// A light or material toggled back can reuse its previous pipelines.
     previous: Option<Specialisation>,
-    /// The shaders `get` returns pipelines for, with what their materials
-    /// need.
-    shaders: Vec<(ShaderId, ShaderContent)>,
-    /// Whether `get` returns the lighting pipelines that take the shadow
-    /// mask, prepared once ray-traced shadows run.
-    shadow_mask: bool,
-    /// Whether `get` returns the lighting pipelines that take the contact
-    /// mask, prepared once contact shadows run.
-    contact_shadow: bool,
-    /// Whether `get` returns the fused and lighting pipelines that take
-    /// screen-space indirect light, prepared once it has a kept result.
-    screen_indirect: bool,
     /// Whether `GBuffer` writes anisotropy itself; otherwise
     /// `GBufferAnisotropy` does.
     pub anisotropy_inline: bool,
@@ -186,13 +86,8 @@ pub(crate) struct GeometryPipelines {
 }
 
 impl GeometryPipelines {
-    /// Creates every pipeline the frame and probe captures draw with for
-    /// `layers`, over group 0's `lit` layout, on the device's binding tier,
-    /// whose providers every program composes, and `shadow` layout, the
-    /// scene's, a material's of that tier (`shading::bind::material`), and
-    /// the blended, shadow-mask, screen-space indirect light (without and
-    /// with the mask's), contact-mask (without and with screen-space
-    /// indirect light's) and caster positions group 3 layouts.
+    /// Create the shared layouts for this device and leave the cache empty
+    /// until a frame or probe capture binds a geometry pipeline.
     pub fn new(
         device: &wgpu::Device,
         lit: &LitLayout,
@@ -207,7 +102,6 @@ impl GeometryPipelines {
             contact_shadow_screen_indirect,
             positions,
         ]: [&wgpu::BindGroupLayout; 9],
-        layers: LayerConstants,
     ) -> Self {
         let tier = lit.tier;
         let lit = &lit.layout;
@@ -220,7 +114,8 @@ impl GeometryPipelines {
         };
         let limits = device.limits();
         let material = &shading::bind::material(device, tier);
-        let mut pipelines = Self {
+        Self {
+            device: device.clone(),
             lit: layout("lit scene geometry", &[lit, scene, material]),
             blended: layout("blended scene geometry", &[lit, scene, material, blended]),
             shadow_masked: layout(
@@ -251,14 +146,8 @@ impl GeometryPipelines {
             programs: ProgramSet::default_set(),
             shader_programs: HashMap::new(),
             cache: HashMap::new(),
-            layers,
-            lit_constants: LitConstants::default(),
-            content: Content::default(),
+            current: (LayerConstants::ALL, LitConstants::default(), false),
             previous: None,
-            shaders: Vec::new(),
-            shadow_mask: false,
-            contact_shadow: false,
-            screen_indirect: false,
             anisotropy_inline: attachments_fit(&limits, &targets(GeometryPass::GBuffer, true)),
             fused_supported: attachments_fit(
                 &limits,
@@ -273,268 +162,54 @@ impl GeometryPipelines {
                 .features()
                 .contains(wgpu::Features::DEPTH_CLIP_CONTROL),
             tier,
-        };
-        pipelines.prepare_layers(device);
-        pipelines
+        }
     }
 
-    /// `get` returns pipelines compiled with `layers` for `scene` from now
-    /// on: shading rectangle lights and applying decals while it holds one,
-    /// and for the alpha modes its materials use and its deforming models,
-    /// and for each shader its materials name, created here on first use,
-    /// with the lighting pipelines that take the shadow mask once
-    /// `shadow_mask` (ray-traced shadows run), the lighting pipelines that
-    /// take the contact mask once `contact_shadow` (contact shadows run),
-    /// and the fused and lighting
-    /// pipelines that take screen-space indirect light once
-    /// `screen_indirect` (it has a kept result). A shader no material names
-    /// any longer loses its programs and pipelines. The pipelines of the
-    /// current and the previous specialisation (layers, lit constants and
-    /// transmission) stay, each with the alpha modes, deformed variants,
-    /// receivers and shadow-mask pipelines it was prepared with; an older
-    /// one's are dropped. Without diagnostics every frame uses `ALL`.
-    pub fn specialise(
-        &mut self,
-        device: &wgpu::Device,
-        layers: LayerConstants,
-        scene: &Scene,
-        (shadow_mask, contact_shadow, screen_indirect): (bool, bool, bool),
-    ) {
-        let lit_constants = LitConstants::of(scene);
-        let content = Content::of(scene);
-        let shaders = if scene.materials.holds_shaders() {
-            ShaderContent::of(scene)
-        } else {
-            Vec::new()
-        };
-        let shadow_mask = self.shadow_mask || shadow_mask;
-        let contact_shadow = self.contact_shadow || contact_shadow;
-        let screen_indirect = self.screen_indirect || screen_indirect;
-        if (
-            self.layers,
-            self.lit_constants,
-            self.content,
-            (self.shadow_mask, self.contact_shadow, self.screen_indirect),
-            &self.shaders,
-        ) != (
+    /// Select the constants for this frame or capture. Keep the current and
+    /// previous specialisations, and only shaders still named by a material
+    /// of this scene. Shader generations are unique across scenes.
+    pub fn specialise(&mut self, layers: LayerConstants, scene: &Scene) {
+        let next = (
             layers,
-            lit_constants,
-            content,
-            (shadow_mask, contact_shadow, screen_indirect),
-            &shaders,
-        ) {
-            let current = self.specialisation();
-            self.layers = layers;
-            self.lit_constants = lit_constants;
-            self.content = content;
-            self.shadow_mask = shadow_mask;
-            self.contact_shadow = contact_shadow;
-            self.screen_indirect = screen_indirect;
-            if self.specialisation() != current {
-                self.previous = Some(current);
-            }
-            self.shader_programs
-                .retain(|id, _| shaders.iter().any(|(shader, _)| shader == id));
-            let kept = [Some(self.specialisation()), self.previous];
+            LitConstants::of(scene),
+            scene.materials.holds_transmissive(),
+        );
+        let changed = next != self.current;
+        if changed {
+            self.previous = Some(std::mem::replace(&mut self.current, next));
+        }
+        let shaders = self.shader_programs.len();
+        self.shader_programs
+            .retain(|&id, _| scene.shaders.get(id).is_ok_and(|shader| shader.users > 0));
+        if changed || self.shader_programs.len() != shaders {
             self.cache.retain(|key, _| {
-                kept.iter().flatten().any(|&kept| key.specialised(kept))
+                (key.specialised(next) || self.previous.is_some_and(|s| key.specialised(s)))
                     && key
                         .shader
-                        .is_none_or(|id| shaders.iter().any(|(shader, _)| *shader == id))
-            });
-            for &(id, _) in &shaders {
-                self.shader_programs
-                    .entry(id)
-                    .or_insert_with(|| ProgramSet::of(scene, id));
-            }
-            self.shaders = shaders;
-            self.prepare_layers(device);
-        }
-    }
-
-    /// Creates the current specialisation's pipelines: each geometry pass
-    /// the device takes and the two casters, for each cull, each alpha mode
-    /// the scene uses and, for pulled passes, deformed vertices while it
-    /// holds a deforming model; and the same of each shader's, for the alpha
-    /// modes its materials use.
-    fn prepare_layers(&mut self, device: &wgpu::Device) {
-        let mut passes = vec![
-            GeometryPass::Forward,
-            GeometryPass::GBuffer,
-            GeometryPass::Lighting {
-                shadows: CameraShadows::Maps,
-                screen_indirect: false,
-            },
-            GeometryPass::DirectionalShadow,
-            GeometryPass::PairedShadow,
-            GeometryPass::CaptureShadow,
-            GeometryPass::LocalShadow,
-            GeometryPass::Blended {
-                temporal_masks: false,
-            },
-            GeometryPass::Blended {
-                temporal_masks: true,
-            },
-        ];
-        if !self.anisotropy_inline {
-            passes.push(GeometryPass::GBufferAnisotropy);
-        }
-        if self.fused_supported {
-            passes.push(GeometryPass::Fused {
-                screen_indirect: false,
+                        .is_none_or(|id| self.shader_programs.contains_key(&id))
             });
         }
-        let shadows = [
-            (CameraShadows::Maps, true),
-            (CameraShadows::ShadowMask, self.shadow_mask),
-            (CameraShadows::ContactMask, self.contact_shadow),
-        ];
-        for (shadows, prepared) in shadows {
-            for screen_indirect in [false, true] {
-                let plain = shadows == CameraShadows::Maps && !screen_indirect;
-                if prepared && (self.screen_indirect || !screen_indirect) && !plain {
-                    passes.push(GeometryPass::Lighting {
-                        shadows,
-                        screen_indirect,
-                    });
-                }
-            }
-        }
-        if self.screen_indirect && self.fused_supported {
-            passes.push(GeometryPass::Fused {
-                screen_indirect: true,
-            });
-        }
-        let content = self.content;
-        let mut alphas = vec![Alpha::Opaque];
-        if content.mask {
-            alphas.push(Alpha::Mask);
-        }
-        if content.blend {
-            alphas.push(Alpha::Blend);
-        }
-        // Each set: its shader, alpha modes, whether it holds receivers,
-        // opaque or masked materials whose shading may change, materials
-        // whose shader may edit what a masked one covers, and volume paths.
-        let mut sets = vec![(
-            None,
-            alphas,
-            content.receivers,
-            content.moving,
-            false,
-            false,
-        )];
-        // The volume layers exist on the Extended binding tier alone.
-        let extended = self.tier == BindingTier::Extended;
-        for &(id, shader) in &self.shaders {
-            let alphas: Vec<_> = [
-                (shader.opaque, Alpha::Opaque),
-                (shader.mask, Alpha::Mask),
-                (shader.blend, Alpha::Blend),
-            ]
-            .into_iter()
-            .filter_map(|(used, alpha)| used.then_some(alpha))
-            .collect();
-            let moving = shader.opaque || shader.mask;
-            let volumes = shader.volumes && extended;
-            sets.push((
-                Some(id),
-                alphas,
-                shader.receivers,
-                moving,
-                shader.mask,
-                volumes,
-            ));
-        }
-        let deformed: &[bool] = if content.deformed {
-            &[false, true]
-        } else {
-            &[false]
-        };
-        for (shader, alphas, receivers, moving, footprint, volumes) in sets {
-            let mut passes = passes.clone();
-            if receivers {
-                passes.push(GeometryPass::Receivers);
-            }
-            if moving {
-                passes.push(GeometryPass::TemporalComposition { footprint: false });
-            }
-            if footprint {
-                passes.push(GeometryPass::TemporalComposition { footprint: true });
-            }
-            if volumes {
-                passes.extend([
-                    GeometryPass::VolumeEntry,
-                    GeometryPass::VolumeExit,
-                    GeometryPass::VolumeSecondExit,
-                ]);
-            }
-            for pass in passes {
-                for &alpha in alphas.iter().filter(|&&alpha| pass.draws(alpha)) {
-                    for cull in [Cull::None, Cull::Back, Cull::Front] {
-                        for &deformed in deformed {
-                            let variant = Variant {
-                                cull,
-                                alpha,
-                                deformed,
-                            };
-                            let key = self.key(pass, variant, shader);
-                            self.prepare(device, key);
-                        }
-                    }
-                }
-            }
-        }
     }
 
-    /// The current specialisation.
-    fn specialisation(&self) -> Specialisation {
-        (self.layers, self.lit_constants, self.content.transmissive)
-    }
-
-    /// The key of `pass`'s pipeline for `variant` and `shader` in the
-    /// current specialisation.
-    fn key(&self, pass: GeometryPass, variant: Variant, shader: Option<ShaderId>) -> PipelineKey {
-        PipelineKey::new(
-            pass,
-            variant,
-            shader,
-            (self.layers, self.lit_constants),
-            self.content.transmissive,
-        )
-    }
-
-    /// Creates the pipeline for `key` unless it exists.
-    fn prepare(&mut self, device: &wgpu::Device, key: PipelineKey) {
-        if !self.cache.contains_key(&key) {
-            let pipeline = self.create(device, key);
-            self.cache.insert(key, pipeline);
-        }
-    }
-
-    /// `pass`'s pipeline for `variant`, of the material's `shader`.
-    pub fn get(
-        &self,
+    /// Called when an executor binds a draw. GPU-built lists need the pipeline
+    /// for the issued indirect command even when culling leaves zero instances.
+    pub fn with_pipeline<T>(
+        &mut self,
+        scene: &Scene,
         pass: GeometryPass,
         variant: Variant,
         shader: Option<ShaderId>,
-    ) -> &wgpu::RenderPipeline {
-        let key = self.key(pass, variant, shader);
-        self.cache
-            .get(&key)
-            .unwrap_or_else(|| panic!("geometry pipeline {key:?} was not prepared"))
-    }
-
-    /// The pipelines it holds that take `specialisation`'s constants:
-    /// neither casters nor the volume layers, which take none.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub fn specialised_pipelines(&self, specialisation: Specialisation) -> usize {
-        self.cache
-            .keys()
-            .filter(|key| {
-                !key.pass.caster() && !key.pass.volume() && key.specialised(specialisation)
-            })
-            .count()
+        use_pipeline: impl FnOnce(&wgpu::RenderPipeline) -> T,
+    ) -> T {
+        let (layers, lit, transmission) = self.current;
+        let key = PipelineKey::new(pass, variant, shader, (layers, lit), transmission);
+        if let Some(pipeline) = self.cache.get(&key) {
+            return use_pipeline(pipeline);
+        }
+        let pipeline = self.create(scene, key);
+        let result = use_pipeline(&pipeline);
+        self.cache.insert(key, pipeline);
+        result
     }
 
     /// The shader modules and pipelines it holds for game shaders.
@@ -546,8 +221,9 @@ impl GeometryPipelines {
         )
     }
 
-    fn create(&mut self, device: &wgpu::Device, key: PipelineKey) -> wgpu::RenderPipeline {
+    fn create(&mut self, scene: &Scene, key: PipelineKey) -> wgpu::RenderPipeline {
         use GeometryPass::*;
+        let device = &self.device;
         let masked = key.variant.alpha == Alpha::Mask;
         let shaded = key.shader.is_some();
         let vertex_buffers = &shading::vertex::GEOMETRY_BUFFERS;
@@ -619,18 +295,15 @@ impl GeometryPipelines {
                 "lit scene geometry",
             ),
         };
-        let layout = layout.clone();
         let tier = self.tier;
         let programs = match key.shader {
             Some(id) => self
                 .shader_programs
-                .get_mut(&id)
-                .expect("a specialised shader's programs are held"),
+                .entry(id)
+                .or_insert_with(|| ProgramSet::of(scene, id)),
             None => &mut self.programs,
         };
-        let module = programs.module(device, tier, program).clone();
-        let module = &module;
-        let layout = &layout;
+        let module = programs.module(device, tier, program);
         // Casters are depth-only: their cull selects the side that casts. A
         // directional cascade's depth is unclipped, so casters between the
         // light and the cascade are drawn at its near plane, as Bevy's

@@ -198,8 +198,8 @@ them through unrefracted. A probe captured on an
   captures and world-space ray hits take them too. Unlit materials take
   none. Keep boxes shallow: everything inside one takes the decal.
   `Decal::new(image)` has Godot's decal defaults. The lit pipelines apply
-  decals only while the scene holds one, so the first decal added compiles
-  them anew. The atlas is limited to 2 GiB in the browser (one 8192-square
+  decals only while the scene holds one. After adding the first decal, draws
+  compile any missing variants on first use. The atlas is limited to 2 GiB in the browser (one 8192-square
   image is too large) and 8 GiB natively.
   [Decals](../README.md#decals).
 - **Material edits** at runtime: `Scene::set_material` (`SurfaceMaterial`,

@@ -1,6 +1,6 @@
 //! Which specialisations' pipelines the cache keeps as the scene's lit
 //! constants change.
-use super::{GeometryPipelines, LayerConstants, LitConstants};
+use super::{Alpha, Cull, GeometryPass, GeometryPipelines, LayerConstants, Variant};
 use crate::Scene;
 use glam::Vec3;
 
@@ -20,7 +20,6 @@ fn pipelines(device: &wgpu::Device) -> GeometryPipelines {
             &crate::shading::bind::contact_shadow_screen_indirect(device),
             &crate::shading::bind::caster_positions(device),
         ],
-        LayerConstants::ALL,
     )
 }
 
@@ -39,55 +38,49 @@ fn rectangle() -> crate::Light {
     }
 }
 
-// Plausible defects: every earlier specialisation's pipelines kept for the
-// renderer's lifetime (a full lit set per distinct combination of lit
-// constants, diagnostics layers and transmission), or only the current
-// one's, so a constant that flips back (a decal expiring, a rectangle
-// light switched off) recompiles the whole lit set inside `specialise`.
-// The oracle is the cache's keys for each specialisation the scene's
-// content selects: A (nothing), B (a rectangle light) and C (a rectangle
-// light and a filmed material).
+// The GPU handles expose recompilation on a return to A. Cache occupancy
+// catches speculative creation before demand and failure to evict A at C.
 #[test]
 fn pipelines_of_the_current_and_previous_specialisation_stay() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let specialisation = |lit| (LayerConstants::ALL, lit, false);
-    let a = specialisation(LitConstants::default());
-    let b = specialisation(LitConstants {
-        rect_lights: true,
-        ..LitConstants::default()
-    });
-    let c = specialisation(LitConstants {
-        rect_lights: true,
-        films: true,
-        ..LitConstants::default()
-    });
     let mut scene = Scene::new(&device, &queue);
     let mut pipelines = pipelines(&device);
-    let specialise = |pipelines: &mut GeometryPipelines, scene: &Scene| {
-        pipelines.specialise(&device, LayerConstants::ALL, scene, (false, false, false));
+    let request = |pipelines: &mut GeometryPipelines, scene: &Scene| {
+        pipelines.with_pipeline(
+            scene,
+            GeometryPass::Forward,
+            Variant {
+                cull: Cull::Back,
+                alpha: Alpha::Opaque,
+                deformed: false,
+            },
+            None,
+            Clone::clone,
+        )
     };
 
-    specialise(&mut pipelines, &scene);
-    let held = pipelines.specialised_pipelines(a);
-    assert!(held > 0, "A is prepared");
-
-    // A, B, A: B keeps every pipeline A held, so the return to A is a hit.
+    pipelines.specialise(LayerConstants::ALL, &scene);
+    assert!(pipelines.cache.is_empty(), "no geometry requested");
+    let a = request(&mut pipelines, &scene);
     let light = scene.add_light(&device, &queue, rectangle()).unwrap();
-    specialise(&mut pipelines, &scene);
-    assert_eq!(
-        pipelines.specialised_pipelines(a),
-        held,
-        "B keeps the previous specialisation's pipelines"
-    );
-    assert!(pipelines.specialised_pipelines(b) > 0, "B is prepared");
-    scene.remove_light(light).unwrap();
-    specialise(&mut pipelines, &scene);
+    pipelines.specialise(LayerConstants::ALL, &scene);
+    assert_eq!(pipelines.cache.len(), 1, "B has no draws yet");
+    let b = request(&mut pipelines, &scene);
+    assert_ne!(a, b, "rectangle lights require different lit shading");
 
-    // A, B, C: C drops A's and keeps B's.
+    scene.remove_light(light).unwrap();
+    pipelines.specialise(LayerConstants::ALL, &scene);
+    assert_eq!(
+        request(&mut pipelines, &scene),
+        a,
+        "return to A reuses its pipeline"
+    );
     scene.add_light(&device, &queue, rectangle()).unwrap();
-    specialise(&mut pipelines, &scene);
+    pipelines.specialise(LayerConstants::ALL, &scene);
+    assert_eq!(request(&mut pipelines, &scene), b);
+
     scene
         .add_materials(
             &device,
@@ -99,15 +92,12 @@ fn pipelines_of_the_current_and_previous_specialisation_stay() {
             &[],
         )
         .unwrap();
-    specialise(&mut pipelines, &scene);
-    assert!(pipelines.specialised_pipelines(c) > 0, "C is prepared");
+    pipelines.specialise(LayerConstants::ALL, &scene);
+    assert_eq!(pipelines.cache.len(), 1, "C evicts A before its first draw");
     assert!(
-        pipelines.specialised_pipelines(b) > 0,
-        "C keeps the previous specialisation's pipelines"
+        pipelines.cache.values().any(|pipeline| pipeline == &b),
+        "B stays"
     );
-    assert_eq!(
-        pipelines.specialised_pipelines(a),
-        0,
-        "C drops the pipelines of a specialisation before the previous"
-    );
+    let c = request(&mut pipelines, &scene);
+    assert_ne!(c, b, "films require different lit shading");
 }

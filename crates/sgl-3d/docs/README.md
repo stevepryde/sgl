@@ -30,7 +30,10 @@ or asset pipeline, and none should be added around it.
 A game holds a `Scene` (content), a `Renderer` (what its views share: the
 pipelines, dynamic GI and the frame boundary), a `View` for each image of the
 scene it draws (its targets, stages and histories) and its rendering
-`settings::Settings`.
+`settings::Settings`. The renderer creates geometry pipelines on the first
+draw that needs each variant. Loading a level, entering a new geometry pass
+or capturing a probe can therefore incur first-use compilation. Views and
+captures on the same renderer reuse the cached pipelines.
 
 1. Device: request `graphics_device::limits(&adapter)`,
    `graphics_device::features(&adapter)` and

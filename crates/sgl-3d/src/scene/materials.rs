@@ -154,13 +154,12 @@ pub(crate) struct Materials {
     /// Changes when an edit changes what casters draw
     /// (`SurfaceMaterial::draws_other_geometry`).
     pub casters: u64,
-    /// How many of its materials are masked, how many blended and how many
+    /// How many of its materials are blended and how many
     /// of those receive screen-space reflections, how many opaque or masked
     /// ones' surfaces may move from frame to frame (their records move or they
     /// have a shader: `Scene::shading_changes`) and of those how many
     /// records do (`Material::record_moves`), and how many have an
     /// iridescent film.
-    masked: usize,
     blended: usize,
     receivers: usize,
     moving: usize,
@@ -178,7 +177,6 @@ impl Materials {
         Self {
             slots: Slots::default(),
             casters: 0,
-            masked: 0,
             blended: 0,
             receivers: 0,
             moving: 0,
@@ -190,11 +188,6 @@ impl Materials {
             textures: Textures::default(),
             groups: Groups::new(device, queue),
         }
-    }
-
-    /// Whether a material is masked.
-    pub fn holds_masked(&self) -> bool {
-        self.masked > 0
     }
 
     /// Whether a material is blended.
@@ -232,13 +225,6 @@ impl Materials {
         self.slots
             .iter()
             .any(|(_, material)| material.shader_casts())
-    }
-
-    /// Whether a material has a shader.
-    pub fn holds_shaders(&self) -> bool {
-        self.slots
-            .iter()
-            .any(|(_, material)| material.values.shader.is_some())
     }
 
     /// `id`'s parameter block of its shader's size becomes `bytes`, which
@@ -304,7 +290,7 @@ impl Materials {
     /// (`record_moves`): one with an iridescent film among the films, one
     /// with a sheen among the sheens, one that passes diffuse light through
     /// among those; a blended or transmissive one among the blended (and the
-    /// receivers where it is one), else a masked one among the masked, one
+    /// receivers where it is one), else one
     /// whose surface moves (its record, or with a shader) among the moving
     /// and one whose record moves among those.
     fn count(&mut self, values: &SurfaceMaterial, record_moves: bool, by: isize) {
@@ -333,9 +319,6 @@ impl Materials {
         }
         if record_moves {
             add(&mut self.moving_records);
-        }
-        if matches!(values.alpha, AlphaMode::Mask { .. }) {
-            add(&mut self.masked);
         }
     }
 

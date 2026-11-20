@@ -30,7 +30,7 @@ macro_rules! context {
             input: &$frame.input,
             views: &$renderer.view.views,
             bindings: &mut $renderer.view.bindings,
-            pipelines: &$renderer.renderer.shared.pipelines,
+            pipelines: &mut $renderer.renderer.shared.pipelines,
             history: $frame.history,
             environment_revision: $renderer.view.sky.environment_revision(),
             hardware_rays: crate::view::frame::HardwareRays::of(
@@ -238,16 +238,7 @@ impl TestRenderer {
             super::effective::SceneContent::of(scene),
             shared.device(None, view.cull.occlusion_supported()),
         );
-        shared.pipelines.specialise(
-            device,
-            effective.layers,
-            scene,
-            (
-                effective.ray_traced_shadows,
-                effective.contact_shadows.is_some(),
-                effective.screen_indirect.is_some(),
-            ),
-        );
+        shared.pipelines.specialise(effective.layers, scene);
         let history = view.begin_history(scene, &input);
         let traced = crate::stages::prepare::Prepare::traces(scene, &effective);
         scene.begin_frame(device, queue);
@@ -479,7 +470,7 @@ impl TestRenderer {
     /// the camera's lit group 0; `Forward` draws the sky first, as a probe
     /// capture face does.
     pub(crate) fn draw_test_camera(
-        &self,
+        &mut self,
         scene: &Scene,
         pass: &mut wgpu::RenderPass<'_>,
         kind: GeometryPass,
@@ -494,7 +485,7 @@ impl TestRenderer {
             .views
             .camera
             .list
-            .draw(scene, &self.renderer.shared.pipelines, pass, kind);
+            .draw(scene, &mut self.renderer.shared.pipelines, pass, kind);
     }
 
     /// The camera's lit group 0, as the frame binds it.
@@ -571,7 +562,7 @@ impl TestRenderer {
     /// colour and motion pass with depth under the camera's lit group 0 of the
     /// prepared frame: a probe face's population and pipeline from the camera.
     pub(crate) fn draw_static(
-        &self,
+        &mut self,
         gpu: (&wgpu::Device, &wgpu::Queue),
         scene: &Scene,
         pass: &mut wgpu::RenderPass<'_>,
@@ -590,7 +581,7 @@ impl TestRenderer {
         instances.upload(device, queue);
         list.draw(
             scene,
-            &self.renderer.shared.pipelines,
+            &mut self.renderer.shared.pipelines,
             &instances,
             pass,
             GeometryPass::Forward,

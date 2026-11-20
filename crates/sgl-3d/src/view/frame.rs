@@ -32,7 +32,7 @@ pub(crate) struct FrameContext<'a> {
     pub input: &'a FrameInput,
     pub views: &'a FrameViews,
     pub bindings: &'a mut FrameBindings,
-    pub pipelines: &'a GeometryPipelines,
+    pub pipelines: &'a mut GeometryPipelines,
     /// The camera history every stage continues or restarts with.
     pub history: HistoryFrame,
     /// The revision of the frame environment's atlas as this frame leaves

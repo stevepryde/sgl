@@ -36,7 +36,6 @@ use crate::Scene;
 use crate::scene::rays::acceleration::RayTracingStats;
 use crate::settings::{DynamicGiQuality, Settings};
 use crate::shading::bind::BindingTier;
-use crate::view::pipelines::LayerConstants;
 use shared::Shared;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -67,9 +66,7 @@ impl Renderer {
     /// [`View::new`] or [`View::new_surface`] with it.
     pub fn new(device: &wgpu::Device) -> Self {
         Self {
-            // Every frame without diagnostics specialises for all layers;
-            // a frame that disables one specialises again.
-            shared: Shared::new(device, LayerConstants::ALL),
+            shared: Shared::new(device),
             rendered: None,
             id: crate::scene::next_generation(),
         }

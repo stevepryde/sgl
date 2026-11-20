@@ -22,7 +22,7 @@ impl DrawList {
     pub fn draw(
         &self,
         scene: &Scene,
-        pipelines: &GeometryPipelines,
+        pipelines: &mut GeometryPipelines,
         drawn: &DrawInstances,
         pass: &mut wgpu::RenderPass<'_>,
         kind: GeometryPass,

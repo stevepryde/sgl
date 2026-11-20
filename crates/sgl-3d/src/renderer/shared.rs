@@ -9,7 +9,7 @@ use crate::Scene;
 use crate::stages::{deform::Deform, dynamic_gi::DynamicGi, prepare::Prepare};
 use crate::view::bindings::Layouts;
 use crate::view::effective::Effective;
-use crate::view::pipelines::{GeometryPipelines, LayerConstants};
+use crate::view::pipelines::GeometryPipelines;
 use crate::view::trace_paths::DeviceRayForm;
 
 pub(super) struct Shared {
@@ -25,9 +25,8 @@ pub(super) struct Shared {
 }
 
 impl Shared {
-    /// The shared part for `device`, its geometry pipelines first prepared
-    /// for `layers`.
-    pub fn new(device: &wgpu::Device, layers: LayerConstants) -> Self {
+    /// The resources shared by every view on this device.
+    pub fn new(device: &wgpu::Device) -> Self {
         let layouts = Layouts::new(device);
         let dynamic_gi = (layouts.lit.tier == crate::shading::bind::BindingTier::Extended)
             .then(|| DynamicGi::new(device, &layouts.lit, &layouts.scene));
@@ -45,7 +44,6 @@ impl Shared {
                 &layouts.contact_shadow_screen_indirect,
                 &layouts.caster_positions,
             ],
-            layers,
         );
         // The form recorded for the device's backend
         // (`shading::scene_rays::METAL_FORM`, `LOWERED_FORM`).
@@ -80,25 +78,18 @@ impl Shared {
         }
     }
 
-    /// The frame's scene work before any view renders, steered by the
-    /// primary view's `effective` configuration and `input`: the geometry
-    /// pipelines specialised for its layers and the scene, with the
-    /// shadow-mask pipelines once a view runs ray-traced shadows, the
-    /// contact-mask pipelines once a view runs contact shadows and the
-    /// screen-space indirect light pipelines once a view runs it
-    /// (`group3`); the scene's material sampling filtered as it
-    /// chooses; and prepare's scene part, `traced` when a view of the frame
-    /// reads the ray instances (`Prepare::traces`).
+    /// Select the primary view's geometry specialisation and material
+    /// filtering, then prepare the scene. Update ray instances when any
+    /// view traces (`Prepare::traces`).
     pub fn run_scene(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
         scene: &mut Scene,
         effective: &Effective,
         input: &FrameInput,
-        (traced, group3): (bool, (bool, bool, bool)),
+        traced: bool,
     ) {
-        self.pipelines
-            .specialise(device, effective.layers, scene, group3);
+        self.pipelines.specialise(effective.layers, scene);
         scene.materials.set_anisotropy(device, effective.anisotropy);
         self.prepare
             .run_scene(device, queue, scene, effective, input, traced);

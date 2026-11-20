@@ -370,7 +370,7 @@ impl Local {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         capture: &CaptureShadows,
-        (scene, pipelines): (&Scene, &GeometryPipelines),
+        (scene, pipelines): (&Scene, &mut GeometryPipelines),
         drawn: &DrawInstances,
     ) {
         self.encode_layers(
@@ -413,7 +413,7 @@ impl Local {
     /// Draws the faces whose content changed: static layers first, then the
     /// frame's faces.
     pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
-        let (scene, pipelines, drawn) = (ctx.scene, ctx.pipelines, &ctx.views.instances);
+        let (scene, pipelines, drawn) = (ctx.scene, &mut *ctx.pipelines, &ctx.views.instances);
         let mut draws = self.encode_layers(
             ctx.encoder,
             ctx.timing,
@@ -455,7 +455,7 @@ impl Local {
         encoder: &mut wgpu::CommandEncoder,
         timing: Option<&GpuTiming>,
         group: impl Fn(usize) -> &'a wgpu::BindGroup,
-        (scene, pipelines, drawn): (&Scene, &GeometryPipelines, &DrawInstances),
+        (scene, pipelines, drawn): (&Scene, &mut GeometryPipelines, &DrawInstances),
     ) -> usize {
         let mut layers = self
             .plan

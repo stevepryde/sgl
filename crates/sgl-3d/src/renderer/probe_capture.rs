@@ -80,10 +80,8 @@ impl Renderer {
             .set_anisotropy(device, settings.anisotropic_filtering.clamp());
         let scene = &*scene;
         self.shared.pipelines.specialise(
-            device,
             LayerConstants::new(&settings.diagnostics_in_effect().disable),
             scene,
-            (false, false, false),
         );
         let prefilter = ProbePrefilter::new(device, face_size, capture_size(face_size));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -137,14 +135,14 @@ impl Renderer {
         view.shadows.directional.encode_capture(
             &mut encoder,
             scene,
-            &self.shared.pipelines,
+            &mut self.shared.pipelines,
             (&views.casters, &views.instances),
             &cascades,
         );
         view.shadows.local.encode_capture(
             &mut encoder,
             &local,
-            (scene, &self.shared.pipelines),
+            (scene, &mut self.shared.pipelines),
             &views.instances,
         );
         // A sky stage of the capture's own computes its tables and its
@@ -188,7 +186,7 @@ impl Renderer {
             view.opaque.encode_capture(
                 &mut encoder,
                 scene,
-                &self.shared.pipelines,
+                &mut self.shared.pipelines,
                 (&views.list, &views.instances),
                 &prefilter.face(),
                 &unlit,

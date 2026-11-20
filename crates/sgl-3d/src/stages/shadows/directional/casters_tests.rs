@@ -196,9 +196,8 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
             &crate::shading::bind::contact_shadow_screen_indirect(&device),
             &crate::shading::bind::caster_positions(&device),
         ],
-        LayerConstants::ALL,
     );
-    pipelines.specialise(&device, LayerConstants::ALL, &scene, (false, false, false));
+    pipelines.specialise(LayerConstants::ALL, &scene);
     let frame = crate::scene::buffer(
         &device,
         "frame",
@@ -210,7 +209,7 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
         layout: &crate::shading::bind::shadow(&device),
         entries: &crate::shading::bind::uniforms(&views.cascades[0].buffer, &frame),
     });
-    let depth = |draw: &dyn Fn(&mut wgpu::RenderPass<'_>)| -> Vec<f32> {
+    let depth = |draw: &mut dyn FnMut(&mut wgpu::RenderPass<'_>)| -> Vec<f32> {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("cascade"),
             size: wgpu::Extent3d {
@@ -249,10 +248,13 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
         queue.submit([encoder.finish()]);
         bytemuck::cast_slice(&test_support::read(&device, &queue, &texture, 4)).to_vec()
     };
-    let gpu_built = depth(&|pass| {
-        views.cascades[0]
-            .list
-            .draw(&scene, &pipelines, pass, GeometryPass::DirectionalShadow);
+    let gpu_built = depth(&mut |pass| {
+        views.cascades[0].list.draw(
+            &scene,
+            &mut pipelines,
+            pass,
+            GeometryPass::DirectionalShadow,
+        );
     });
     let mut captured = DrawList::default();
     let mut instances = DrawInstances::default();
@@ -264,10 +266,10 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
         Population::CaptureShadow,
     );
     instances.upload(&device, &queue);
-    let cpu_built = depth(&|pass| {
+    let cpu_built = depth(&mut |pass| {
         captured.draw(
             &scene,
-            &pipelines,
+            &mut pipelines,
             &instances,
             pass,
             GeometryPass::CaptureShadow,

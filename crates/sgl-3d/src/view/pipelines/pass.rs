@@ -1,6 +1,5 @@
 //! The geometry passes: what each one draws, the colour targets it writes
 //! and its depth test and write.
-use super::variant::Alpha;
 use crate::shading::gbuffer;
 
 /// What a geometry pass writes.
@@ -84,25 +83,6 @@ impl GeometryPass {
             self,
             Self::DirectionalShadow | Self::PairedShadow | Self::CaptureShadow | Self::LocalShadow
         )
-    }
-
-    /// Whether this pass draws materials whose alpha mode requires `alpha`:
-    /// `PairedShadow` opaque ones alone.
-    pub(super) fn draws(self, alpha: Alpha) -> bool {
-        if self == Self::PairedShadow {
-            return alpha == Alpha::Opaque;
-        }
-        if self == (Self::TemporalComposition { footprint: true }) {
-            return alpha == Alpha::Mask;
-        }
-        matches!(
-            self,
-            Self::Blended { .. }
-                | Self::Receivers
-                | Self::VolumeEntry
-                | Self::VolumeExit
-                | Self::VolumeSecondExit
-        ) == (alpha == Alpha::Blend)
     }
 
     /// Whether the pass draws a volume layer.
