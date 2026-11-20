@@ -11,7 +11,7 @@ fn coloured_edges_match_the_independent_amd_header_oracle() {
         return;
     };
     let inputs = Inputs::new(&device);
-    let mut fsr = Fsr1::new(&device, &inputs);
+    let mut fsr = Fsr1::default();
     let linear: Vec<_> = (0..3)
         .flat_map(|y| {
             (0..4).map(move |x| {
@@ -91,7 +91,7 @@ fn direct_black_and_white_are_finite_and_keep_the_sdk_flat_response() {
         return;
     };
     let inputs = Inputs::new(&device);
-    let mut fsr = Fsr1::new(&device, &inputs);
+    let mut fsr = Fsr1::default();
     let bloom = target(&device, "unused flat bloom", [1, 1], HDR);
     let output = target(&device, "flat kernel result", [7, 5], HDR);
     let mut mapper = tone_map::ToneMap::new(&device, &inputs, Output::texture(HDR), [7, 5]);

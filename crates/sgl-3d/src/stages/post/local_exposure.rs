@@ -203,7 +203,13 @@ struct Targets {
     build: Option<(wgpu::TextureView, wgpu::TextureView, wgpu::BindGroup)>,
 }
 
+#[derive(Default)]
 pub(super) struct LocalExposure {
+    pipelines: Option<Pipelines>,
+    targets: Option<Targets>,
+}
+
+struct Pipelines {
     build: wgpu::ComputePipeline,
     blur_grid: [wgpu::ComputePipeline; 3],
     gaussian: [wgpu::ComputePipeline; 2],
@@ -211,7 +217,6 @@ pub(super) struct LocalExposure {
     build_layout: wgpu::BindGroupLayout,
     grid_layout: wgpu::BindGroupLayout,
     image_layout: wgpu::BindGroupLayout,
-    targets: Option<Targets>,
 }
 
 /// A compute-stage float texture entry of `dimension`.
@@ -268,8 +273,8 @@ fn group(
     })
 }
 
-impl LocalExposure {
-    pub fn new(device: &wgpu::Device) -> Self {
+impl Pipelines {
+    fn new(device: &wgpu::Device) -> Self {
         use wgpu::TextureViewDimension::{D2, D3};
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("local exposure"),
@@ -327,84 +332,75 @@ impl LocalExposure {
             build_layout,
             grid_layout,
             image_layout,
-            targets: None,
         }
     }
 
+    fn targets(&self, device: &wgpu::Device, scene_size: [u32; 2]) -> Targets {
+        let cells = cells(scene_size);
+        let texture = |label, [width, height]: [u32; 2], depth, dimension| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: depth,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension,
+                    format: FORMAT,
+                    usage: wgpu::TextureUsages::STORAGE_BINDING
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
+        };
+        use wgpu::TextureDimension::{D2, D3};
+        let grid = texture("local exposure grid", cells, SLICES, D3);
+        let grid_blurred = texture("local exposure blurred grid", cells, SLICES, D3);
+        let mean = texture("local exposure cell means", cells, 1, D2);
+        let mean_blurred = texture("local exposure blurred cell means", cells, 1, D2);
+        let base = texture("local exposure base", cells.map(|c| c * UPSAMPLE), 1, D2);
+        let groups = [
+            group(device, &self.grid_layout, &[(4, &grid), (5, &grid_blurred)]),
+            group(device, &self.grid_layout, &[(4, &grid_blurred), (5, &grid)]),
+            group(device, &self.grid_layout, &[(4, &grid), (5, &grid_blurred)]),
+            group(
+                device,
+                &self.image_layout,
+                &[(6, &mean), (7, &mean_blurred)],
+            ),
+            group(
+                device,
+                &self.image_layout,
+                &[(6, &mean_blurred), (7, &mean)],
+            ),
+            group(device, &self.image_layout, &[(6, &mean), (7, &base)]),
+        ];
+        Targets {
+            scene_size,
+            cells,
+            grid,
+            grid_blurred,
+            mean,
+            base,
+            groups,
+            build: None,
+        }
+    }
+}
+
+impl LocalExposure {
     /// Whether any of its targets is held.
     #[cfg(test)]
     pub fn holds_targets(&self) -> bool {
         self.targets.is_some()
     }
 
-    /// Releases its targets, returning whether any were held.
-    pub fn release(&mut self) -> bool {
-        self.targets.take().is_some()
-    }
-
-    /// The targets for a scene of `scene_size`, made if not held at it.
-    fn targets(&mut self, device: &wgpu::Device, scene_size: [u32; 2]) -> &mut Targets {
-        if self
-            .targets
-            .as_ref()
-            .is_some_and(|targets| targets.scene_size != scene_size)
-        {
-            self.targets = None;
-        }
-        self.targets.get_or_insert_with(|| {
-            let cells = cells(scene_size);
-            let texture = |label, [width, height]: [u32; 2], depth, dimension| {
-                device
-                    .create_texture(&wgpu::TextureDescriptor {
-                        label: Some(label),
-                        size: wgpu::Extent3d {
-                            width,
-                            height,
-                            depth_or_array_layers: depth,
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension,
-                        format: FORMAT,
-                        usage: wgpu::TextureUsages::STORAGE_BINDING
-                            | wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[],
-                    })
-                    .create_view(&Default::default())
-            };
-            use wgpu::TextureDimension::{D2, D3};
-            let grid = texture("local exposure grid", cells, SLICES, D3);
-            let grid_blurred = texture("local exposure blurred grid", cells, SLICES, D3);
-            let mean = texture("local exposure cell means", cells, 1, D2);
-            let mean_blurred = texture("local exposure blurred cell means", cells, 1, D2);
-            let base = texture("local exposure base", cells.map(|c| c * UPSAMPLE), 1, D2);
-            let groups = [
-                group(device, &self.grid_layout, &[(4, &grid), (5, &grid_blurred)]),
-                group(device, &self.grid_layout, &[(4, &grid_blurred), (5, &grid)]),
-                group(device, &self.grid_layout, &[(4, &grid), (5, &grid_blurred)]),
-                group(
-                    device,
-                    &self.image_layout,
-                    &[(6, &mean), (7, &mean_blurred)],
-                ),
-                group(
-                    device,
-                    &self.image_layout,
-                    &[(6, &mean_blurred), (7, &mean)],
-                ),
-                group(device, &self.image_layout, &[(6, &mean), (7, &base)]),
-            ];
-            Targets {
-                scene_size,
-                cells,
-                grid,
-                grid_blurred,
-                mean,
-                base,
-                groups,
-                build: None,
-            }
-        })
+    /// Releases size-dependent targets and keeps the compiled pipelines.
+    pub fn release(&mut self) {
+        self.targets = None;
     }
 
     /// The base layer of `scene`, the image the tone map is about to read
@@ -419,48 +415,54 @@ impl LocalExposure {
         scene_size: [u32; 2],
         timing: Option<&crate::timing::GpuTiming>,
     ) -> (wgpu::TextureView, wgpu::TextureView) {
-        let build_layout = self.build_layout.clone();
-        let build = {
-            let targets = self.targets(device, scene_size);
-            match &targets.build {
-                Some((s, e, group)) if s == scene && e == exposure => group.clone(),
-                _ => {
-                    let build = group(
-                        device,
-                        &build_layout,
-                        &[
-                            (0, scene),
-                            (1, exposure),
-                            (2, &targets.grid),
-                            (3, &targets.mean),
-                        ],
-                    );
-                    targets.build = Some((scene.clone(), exposure.clone(), build.clone()));
-                    build
-                }
+        let pipelines = self.pipelines.get_or_insert_with(|| Pipelines::new(device));
+        if self
+            .targets
+            .as_ref()
+            .is_some_and(|t| t.scene_size != scene_size)
+        {
+            self.targets = None;
+        }
+        let targets = self
+            .targets
+            .get_or_insert_with(|| pipelines.targets(device, scene_size));
+        let build = match &targets.build {
+            Some((s, e, group)) if s == scene && e == exposure => group.clone(),
+            _ => {
+                let build = group(
+                    device,
+                    &pipelines.build_layout,
+                    &[
+                        (0, scene),
+                        (1, exposure),
+                        (2, &targets.grid),
+                        (3, &targets.mean),
+                    ],
+                );
+                targets.build = Some((scene.clone(), exposure.clone(), build.clone()));
+                build
             }
         };
-        let targets = self.targets.as_ref().expect("targets made above");
         let [x, y] = targets.cells;
         let base = [x * UPSAMPLE, y * UPSAMPLE];
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("local exposure"),
             timestamp_writes: timing.and_then(|t| t.compute_pass("local exposure")),
         });
-        pass.set_pipeline(&self.build);
+        pass.set_pipeline(&pipelines.build);
         pass.set_bind_group(0, &build, &[]);
         pass.dispatch_workgroups(x, y, 1);
-        for (pipeline, group) in self.blur_grid.iter().zip(&targets.groups[..3]) {
+        for (pipeline, group) in pipelines.blur_grid.iter().zip(&targets.groups[..3]) {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(x.div_ceil(8), y.div_ceil(8), SLICES);
         }
-        for (pipeline, group) in self.gaussian.iter().zip(&targets.groups[3..5]) {
+        for (pipeline, group) in pipelines.gaussian.iter().zip(&targets.groups[3..5]) {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(x.div_ceil(8), y.div_ceil(8), 1);
         }
-        pass.set_pipeline(&self.upsample);
+        pass.set_pipeline(&pipelines.upsample);
         pass.set_bind_group(0, &targets.groups[5], &[]);
         pass.dispatch_workgroups(base[0].div_ceil(8), base[1].div_ceil(8), 1);
         drop(pass);

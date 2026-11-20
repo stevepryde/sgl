@@ -437,6 +437,10 @@ Environment and probe specular always apply. On top of them:
 
 ## Image quality and post-processing
 
+Local exposure and presentation pipelines are prepared on first use. A loading
+frame with the upcoming look and output path warms them for subsequent frames
+on that view. [Frame workflow](../README.md#retained-scene-and-frame-lifecycle).
+
 - **Ambient occlusion**: XeGTAO after opaque shading, which occludes ambient
   light (its diffuse share, and the specular multiple scattering a rough
   metal reflects most of) and environment and probe reflections, and the

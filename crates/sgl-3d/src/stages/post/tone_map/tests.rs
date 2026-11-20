@@ -1,4 +1,5 @@
 use super::*;
+use crate::stages::post::inputs::pipeline;
 use crate::stages::post::tests::exposure_texture;
 use crate::test_support::{half, hdr_texture, read};
 

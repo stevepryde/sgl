@@ -15,6 +15,8 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `View::new` and `View::new_surface` defer local exposure and presentation pipelines until the first frame that uses each one. No game-code changes are needed.
+
 ## 0.9.1 — 2026-11-20
 
 Move every SGL crate to `0.9.1` together and commit the updated `Cargo.lock`.

@@ -12,28 +12,12 @@ pub(crate) static FSR1: crate::shading::Module = crate::shading::Module {
     deps: &[&inputs::INPUTS],
 };
 
+#[derive(Default)]
 pub(super) struct Fsr1 {
-    easu: wgpu::RenderPipeline,
+    easu: Option<wgpu::RenderPipeline>,
     target: Option<wgpu::TextureView>,
 }
 impl Fsr1 {
-    pub fn new(device: &wgpu::Device, inputs: &Inputs) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("FSR1 EASU"),
-            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&FSR1]).into()),
-        });
-        Self {
-            easu: pipeline(
-                device,
-                &[Some(inputs.layout())],
-                &shader,
-                "fsr1_easu",
-                &[HDR],
-                (None, &[]),
-            ),
-            target: None,
-        }
-    }
     pub fn target_is_held(&self) -> bool {
         self.target.is_some()
     }
@@ -51,13 +35,27 @@ impl Fsr1 {
         size: [u32; 2],
         timing: Option<&crate::timing::GpuTiming>,
     ) -> &wgpu::TextureView {
+        let easu = self.easu.get_or_insert_with(|| {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("FSR1 EASU"),
+                source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&FSR1]).into()),
+            });
+            pipeline(
+                device,
+                &[Some(inputs.layout())],
+                &shader,
+                "fsr1_easu",
+                &[HDR],
+                (None, &[]),
+            )
+        });
         let target = self
             .target
             .get_or_insert_with(|| target(device, "FSR1 EASU output", size, HDR));
         let group = inputs.group(device, scene, bloom);
         draw(
             encoder,
-            &self.easu,
+            easu,
             &group,
             target,
             "FSR1 EASU",

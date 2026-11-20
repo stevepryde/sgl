@@ -619,6 +619,10 @@ Stages run in one order, written in one place in `renderer`:
    contrast below: the base's contrast is scaled and the detail, the
    pixel's luminance over its base, is kept whole. It keeps no history, and
    at contrasts of 1 it runs no pass, holds no target and takes no sample.
+   Each view keeps local exposure's compute pipelines from its first active
+   frame. Post also builds each tone-map, copy, resample, EASU, decode and
+   sharpening pipeline on its first draw, including capture variants.
+   These pipelines survive settings changes and resize for the view's lifetime.
    The post stage owns output encoding:
    floating-point composition textures stay linear on every platform; actual
    surfaces use their configured transfer and capability-dependent Auto

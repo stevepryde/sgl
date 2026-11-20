@@ -8,7 +8,7 @@
 //! output size (`encode` to `Destination::Intermediate`), which the final
 //! pass (`present_final`) then resamples, decodes or sharpens and presents
 //! the same two ways.
-use super::inputs::{self, Inputs, draw, pipeline, sampled, uniform_entry};
+use super::inputs::{self, Inputs, draw, sampled, uniform_entry};
 use crate::frame_input::{AgxLook, ColorGrading};
 use crate::settings::ToneMapping;
 use crate::shading::gbuffer::COLOR as HDR;
@@ -190,29 +190,14 @@ pub(super) enum Final {
     Sharpen { sharpness: f32, encoded: bool },
 }
 
-/// A final pass into the tone-mapped target, and the same into the output.
-struct FinalPipelines {
-    capture: wgpu::RenderPipeline,
-    direct: wgpu::RenderPipeline,
-}
+mod pipelines;
+use pipelines::{Pass, Pipelines, Target};
 
 pub(super) struct ToneMap {
-    /// Into the tone-mapped target.
-    present: wgpu::RenderPipeline,
-    /// Into the output, rounded as the tone-mapped target would be.
-    present_direct: wgpu::RenderPipeline,
-    /// The tone-mapped target into the output.
-    present_copy: wgpu::RenderPipeline,
-    resample: FinalPipelines,
-    decode: FinalPipelines,
-    /// RCAS over linear display colour.
-    sharpen: FinalPipelines,
-    /// RCAS over EASU's output.
-    sharpen_encoded: FinalPipelines,
+    pipelines: Pipelines,
     /// `SharpeningUniform`, and the group binding it.
     sharpening: wgpu::Buffer,
     sharpening_group: wgpu::BindGroup,
-    look_layout: wgpu::BindGroupLayout,
     /// `ColorGradingUniform`.
     grading: wgpu::Buffer,
     /// `local_exposure::LocalExposureUniform`.
@@ -304,51 +289,15 @@ impl ToneMap {
                 resource: sharpening.as_entire_binding(),
             }],
         });
-        let layouts = [Some(inputs.layout()), Some(&look_layout)];
-        let copy = [Some(inputs.layout())];
-        let sharpen = [Some(inputs.layout()), Some(&sharpening_layout)];
-        let format = destination.format;
-        let output = [(
-            "OUTPUT_ENCODES_SRGB",
-            f64::from(u8::from(destination.encodes_srgb)),
-        )];
-        let pair = |layouts: &[Option<&wgpu::BindGroupLayout>], capture, direct| FinalPipelines {
-            capture: pipeline(device, layouts, &shader, capture, &[HDR], (None, &[])),
-            direct: pipeline(device, layouts, &shader, direct, &[format], (None, &output)),
-        };
         Self {
-            present: pipeline(
-                device,
-                &layouts,
-                &shader,
-                PRESENT_ENTRY,
-                &[HDR],
-                (None, &[]),
-            ),
-            present_direct: pipeline(
-                device,
-                &layouts,
-                &shader,
-                PRESENT_DIRECT_ENTRY,
-                &[format],
-                (None, &output),
-            ),
-            present_copy: pipeline(
-                device,
-                &copy,
-                &shader,
-                COPY_PIXEL_ENTRY,
-                &[format],
-                (None, &output),
-            ),
-            resample: pair(&copy, RESAMPLE_ENTRY, RESAMPLE_DIRECT_ENTRY),
-            decode: pair(&copy, DECODE_ENTRY, DECODE_DIRECT_ENTRY),
-            sharpen: pair(&sharpen, SHARPEN_ENTRY, SHARPEN_DIRECT_ENTRY),
-            sharpen_encoded: pair(
-                &sharpen,
-                SHARPEN_ENCODED_ENTRY,
-                SHARPEN_ENCODED_DIRECT_ENTRY,
-            ),
+            pipelines: Pipelines {
+                shader,
+                output: destination,
+                inputs_layout: inputs.layout().clone(),
+                look_layout,
+                sharpening_layout,
+                cached: Default::default(),
+            },
             sharpening,
             sharpening_group,
             grading: crate::counters::buffer(
@@ -360,7 +309,6 @@ impl ToneMap {
                     mapped_at_creation: false,
                 },
             ),
-            look_layout,
             local_exposure: crate::counters::buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {
@@ -470,7 +418,7 @@ impl ToneMap {
         }
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tone map exposure, grading and local exposure"),
-            layout: &self.look_layout,
+            layout: &self.pipelines.look_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -531,7 +479,7 @@ impl ToneMap {
         }
         let (pipeline, target, label, presented) = match destination {
             Destination::Intermediate(target) => (
-                &self.present,
+                Pass::ToneMap(Target::Linear),
                 target,
                 "tone map to an intermediate target",
                 None,
@@ -543,13 +491,18 @@ impl ToneMap {
                 }
                 if capture {
                     (
-                        &self.present,
+                        Pass::ToneMap(Target::Linear),
                         self.tone_mapped.as_ref().unwrap(),
                         "tone map to the tone-mapped target",
                         Some(output),
                     )
                 } else {
-                    (&self.present_direct, output, "tone map to the output", None)
+                    (
+                        Pass::ToneMap(Target::Output),
+                        output,
+                        "tone map to the output",
+                        None,
+                    )
                 }
             }
         };
@@ -559,7 +512,7 @@ impl ToneMap {
             color_attachments: &[crate::view::targets::attachment(target)],
             ..Default::default()
         });
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(self.pipelines.get(device, pipeline));
         pass.set_bind_group(0, &group, &[]);
         pass.set_bind_group(1, &look, &[]);
         pass.draw(0..3, 0..1);
@@ -573,7 +526,7 @@ impl ToneMap {
     /// `target`, an RGBA16F target of the output size, undithered.
     #[allow(clippy::too_many_arguments)]
     pub fn resample_into(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         inputs: &Inputs,
@@ -584,7 +537,7 @@ impl ToneMap {
     ) {
         draw(
             encoder,
-            &self.resample.capture,
+            self.pipelines.get(device, Pass::Resample(Target::Linear)),
             &inputs.group(device, scene, bloom),
             target,
             "resample the scene for sharpening",
@@ -617,9 +570,18 @@ impl ToneMap {
         } else {
             self.release_capture(inputs);
         }
-        let (pipelines, label, timing_group) = match last {
-            Final::Resample => (&self.resample, "resample the scene", "tone map"),
-            Final::Decode => (&self.decode, "decode the upscaled scene", "tone map"),
+        let target = if capture {
+            Target::Linear
+        } else {
+            Target::Output
+        };
+        let (pipeline, label, timing_group) = match last {
+            Final::Resample => (Pass::Resample(target), "resample the scene", "tone map"),
+            Final::Decode => (
+                Pass::Decode(target),
+                "decode the upscaled scene",
+                "tone map",
+            ),
             Final::Sharpen { sharpness, encoded } => {
                 crate::counters::write_buffer(
                     queue,
@@ -627,18 +589,12 @@ impl ToneMap {
                     0,
                     bytemuck::bytes_of(&SharpeningUniform::new(sharpness)),
                 );
-                let pipelines = if encoded {
-                    &self.sharpen_encoded
-                } else {
-                    &self.sharpen
-                };
-                (pipelines, "sharpen (RCAS)", "sharpening")
+                (
+                    Pass::Sharpen { target, encoded },
+                    "sharpen (RCAS)",
+                    "sharpening",
+                )
             }
-        };
-        let pipeline = if capture {
-            &pipelines.capture
-        } else {
-            &pipelines.direct
         };
         let target = if capture {
             self.tone_mapped.as_ref().unwrap()
@@ -652,7 +608,7 @@ impl ToneMap {
             color_attachments: &[crate::view::targets::attachment(target)],
             ..Default::default()
         });
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(self.pipelines.get(device, pipeline));
         pass.set_bind_group(0, &group, &[]);
         if matches!(last, Final::Sharpen { .. }) {
             pass.set_bind_group(1, &self.sharpening_group, &[]);
@@ -666,7 +622,7 @@ impl ToneMap {
 
     /// The tone-mapped target to `output`, texel for texel, dithered.
     pub(super) fn present_output(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         inputs: &Inputs,
@@ -677,7 +633,7 @@ impl ToneMap {
         let group = inputs.group(device, self.tone_mapped.as_ref().unwrap(), bloom);
         draw(
             encoder,
-            &self.present_copy,
+            self.pipelines.get(device, Pass::Copy),
             &group,
             output,
             "present tone-mapped texels",

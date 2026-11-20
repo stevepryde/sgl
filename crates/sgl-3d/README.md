@@ -2420,6 +2420,14 @@ storage are retained, so frames with different inputs cannot be queued in one
 submission. Run probe captures between frames, never between a frame's
 `render` and its `finish_frame`. Skip rendering zero-sized or minimized
 outputs in the game.
+
+A view builds its local exposure and presentation pipelines on their first
+use and keeps them across toggles and resizes. To warm a known transition,
+render, submit and finish a loading frame on the same view with the upcoming
+`FrameInput::local_exposure`, settings and output path. A diagnostics capture
+uses a different final pipeline from direct presentation. The loading frame
+participates in the normal frame history.
+
 Recreate the scene, renderer and views after replacing the device. Dropping
 them releases the library's GPU handles; the game still owns its device,
 queue, surface, and asset sources.
