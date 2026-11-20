@@ -67,6 +67,9 @@ compatibility shims solely to avoid updating consumers.
   any crate makes the shared version's release breaking.
 - A release is only a version. Cut one whenever it is useful, however small:
   there is no stabilisation period, release train or minimum content.
+  The agent asked for one cuts it end to end: changelog section, version,
+  tag and crates.io publication
+  ([Contributing](CONTRIBUTING.md#cut-a-release), D-68).
 - Games depend on every SGL crate with the same version requirement (for
   example, `"0.4.1"`) and commit `Cargo.lock`; Git consumers reference one full
   commit `rev`. Upgrade to a new release deliberately, applying all

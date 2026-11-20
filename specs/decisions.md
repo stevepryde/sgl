@@ -235,7 +235,8 @@ Use the [current specs](README.md) for implementation and the
   as `stevepryde/sgl` with fresh Git history, retaining all licences and
   provenance. Reset the six library crates to `0.1.0` and prepare them for
   crates.io; the owner performs registry publication. Examples remain
-  unpublished. This supersedes D-24's disabled-publication clause.
+  unpublished. This supersedes D-24's disabled-publication clause. D-68
+  supersedes the owner-publishes clause.
   Rationale: give the public library a clean starting point and let games
   consume versioned registry packages as well as Git and local dependencies.
 
@@ -1219,3 +1220,13 @@ Use the [current specs](README.md) for implementation and the
   engine port SGL3D follows, derives from it without carrying its notice, so
   SGL3D credits both. Rationale: attribution is exact (D-51), and an
   engine's file can embed another project's code (RD-2).
+
+- **D-68** Owner direction, 2026-11-20: the agent that cuts a release
+  performs all of it: the changelog section, the version, the release commit
+  on `main`, the `vX.Y.Z` tag and publication of the six crates to crates.io
+  with the publishing machine's Cargo login. The steps are in
+  [Contributing](../CONTRIBUTING.md#cut-a-release). This supersedes D-25's
+  clause that the owner performs registry publication; `0.9.0` is the first
+  release recorded under it. Rationale: agents write and maintain all of SGL
+  (D-50), and a release that stops at the tag leaves games on the registry
+  waiting on a step with no decision in it.

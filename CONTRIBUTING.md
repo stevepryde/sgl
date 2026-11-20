@@ -140,6 +140,37 @@ unfinished, or a change the owner has asked to see before it lands.
 Keep result reports out of `docs/`; that directory holds maintained consumer
 guidance.
 
+## Cut a release
+
+When the owner asks for a release, the agent does all of it, registry
+publication included ([D-68](specs/decisions.md)). The version follows
+[D-52](specs/decisions.md): breaking advances the minor version during `0.x`,
+anything else the patch.
+
+1. **Check.** The full check ([Validate](#validate)) has passed over what the
+   release holds. Commits landed since that cannot have invalidated it need
+   only their own focused checks.
+2. **Prepare**, on a branch from the tip of `origin/main`. In
+   [CHANGELOG.md](CHANGELOG.md), move the `Unreleased` entries into a
+   `## X.Y.Z — YYYY-MM-DD` section under an empty `Unreleased`, merging
+   entries that changed the same symbol, with an opening paragraph that says
+   whether game code, data or settings must change. Set
+   `workspace.package.version` and the six internal requirements in the root
+   `Cargo.toml`, then run `cargo update --workspace`: the lockfile changes
+   only the workspace's own versions.
+3. **Package.** `cargo publish --workspace --dry-run` passes on that tree.
+4. **Land** it as one commit, `Release SGL X.Y.Z`, by fast-forward push. Its
+   message says why the release is breaking or not and what was run.
+5. **Tag** that commit `vX.Y.Z`, annotated `SGL X.Y.Z`, and push the tag.
+6. **Publish** from that commit in a clean checkout:
+   `cargo publish --workspace`. Cargo orders the six crates and skips the
+   unpublished companions. It uses the publishing machine's own Cargo login;
+   never put a token in the repository.
+
+A published version cannot be replaced. A defect found afterwards is fixed in
+a new version, with its correction under `Unreleased`; released changelog
+sections stay as written.
+
 First-party changes use the repository's [MIT OR Apache-2.0 terms](LICENSE).
 Third-party code keeps its original licence and attribution; follow
 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and the owning package's
