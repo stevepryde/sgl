@@ -370,15 +370,10 @@ fn suns(camera: &Camera) -> [(&'static str, Vec3); 2] {
 // occludes a plane, so with the sun at 30° and at a grazing 5° every floor
 // pixel's mask is 1. The camera looks down at 45°, so the floor's depth
 // changes by less than the edge threshold (2%) from one pixel to the next
-// everywhere it sees: where a plane seen at a grazing angle changes more,
-// the method reads each pixel as an edge and takes its depth unfiltered,
-// and the read's rounding to a pixel can shadow the plane, as Bend's
-// header says of grazing flat surfaces (`IgnoreEdgePixels`); that case is
-// not covered here. Nor is a march that runs along the screen's border
-// toward a light beyond it: a neighbour off the screen reads as the far
-// depth, as Godot's border sampler returns it, so the border reads as an
-// edge in the same way. The low sun stands straight ahead, so every march
-// crosses the border.
+// everywhere it sees, and the low sun stands straight ahead, so no march
+// reads an edge across it: those are
+// `a_plane_seen_grazing_casts_no_contact_shadow_on_itself` and
+// `a_march_out_across_the_frame_s_border_casts_no_contact_shadow`.
 #[test]
 fn a_plane_casts_no_contact_shadow_on_itself() {
     let Some((device, queue)) = test_support::device() else {
@@ -411,6 +406,152 @@ fn a_plane_casts_no_contact_shadow_on_itself() {
             floor,
             (SIZE[0] * SIZE[1]) as usize,
             "the floor fills the view"
+        );
+    }
+}
+
+/// The floor pixels of `observed` under `camera` whose mask is below 1,
+/// with the least mask among them, and the floor pixels in all.
+fn shadowed_floor(observed: &Observed, camera: &Camera) -> (usize, u8, usize) {
+    let (mut shadowed, mut least, mut floor) = (0, 255, 0);
+    for y in 0..observed.size[1] {
+        for x in 0..observed.size[0] {
+            if observed.position(camera, [x, y]).is_none() {
+                continue;
+            }
+            floor += 1;
+            let mask = observed.mask([x, y]);
+            if mask < 255 {
+                shadowed += 1;
+                least = least.min(mask);
+            }
+        }
+    }
+    (shadowed, least, floor)
+}
+
+// Plausible defect: a plane seen near edge-on, whose depth changes by more
+// than the edge threshold (2%) from one row to the next, read as edges
+// whose unfiltered depths cast on it: a march across those rows rounds
+// each read to a row, and the rounding stands above the ray (Bend's
+// header on `IgnoreEdgePixels`: "the edge detect may incorrectly detect
+// multiple 'edge' pixels along that flat surface"). As Godot b130438 has
+// the method, without that option, these suns shadowed from about 40 to
+// about 11,000 of the floor's 64,800 pixels, to a mask of 0. The fixture:
+// a level camera 1.6 m above a floor that runs 4 km out, with a 55 degree
+// field of view over 270 rows, where the floor's depth changes that much
+// a row beyond about 8 m, out to the horizon (as beyond about 33 m at
+// 1080 rows). The suns: ahead and to each side, whose marches cross the
+// far rows sideways; straight ahead and high ahead, whose marches fan out
+// from the sun's point; and low behind, whose marches leave the point
+// opposite the sun, on the floor. The oracle: nothing stands on the floor,
+// so every floor pixel's mask is 1, and a level camera sees floor in the
+// lower half of its view.
+#[test]
+fn a_plane_seen_grazing_casts_no_contact_shadow_on_itself() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let size = [480, 270];
+    let mut scene = scene(gpu, 4000., None);
+    let settings = settings(ContactShadows::Long);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
+    let eye = Vec3::new(0., 1.6, 0.);
+    let camera = Camera {
+        view: glam::camera::rh::view::look_at_mat4(eye, eye - Vec3::Z, Vec3::Y),
+        projection: crate::perspective(55_f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1),
+        eye,
+    };
+    for (elevation, azimuth) in [
+        (20_f32, 120_f32),
+        (20., 240.),
+        (20., 180.),
+        (35., 150.),
+        (10., 0.),
+        (3., 30.),
+    ] {
+        let toward_sun = toward(elevation.to_radians(), azimuth.to_radians());
+        let input = input(camera, toward_sun, DirectionalShadow::DEFAULT, 1.);
+        let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+        let (shadowed, least, floor) = shadowed_floor(&observed, &camera);
+        assert_eq!(
+            floor,
+            (size[0] * size[1] / 2) as usize,
+            "the floor fills the view below the horizon"
+        );
+        assert_eq!(
+            shadowed, 0,
+            "the floor shadows itself at {shadowed} pixels, to a mask of {least}, with the sun \
+             {elevation}° up and {azimuth}° round"
+        );
+    }
+}
+
+// Plausible defect: the frame's outermost pixels, whose neighbour outside
+// the target reads as the far depth, read as edges whose unfiltered depths
+// cast on the rows inside them, where a march runs out across the border
+// toward a light beyond it. As Godot b130438 has the method these suns
+// shadowed from 3 to about 130 floor pixels in the three rows along the
+// border, to a mask of 0. The fixture: the floor seen from above at 45
+// degrees, where its depth changes by less than the edge threshold between
+// rows, so only the border is an edge. The suns: four ahead, whose point on screen is
+// above the frame, beside it and over its corners, so the marches of the
+// top rows run sideways out across the top border; and one behind, whose
+// opposite point is left of the frame at its top row, so the marches of
+// the bottom rows run out across the bottom border. The oracle: nothing
+// stands on the floor, so every floor pixel's mask is 1.
+#[test]
+fn a_march_out_across_the_frame_s_border_casts_no_contact_shadow() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let mut scene = scene(gpu, 20., None);
+    let settings = settings(ContactShadows::Long);
+    let mut renderer = TestRenderer::for_test(&device, &queue, SIZE, &settings);
+    let camera = camera(Vec3::new(0., 2.5, 2.5), Vec3::ZERO, SIZE);
+    let [width, height] = SIZE.map(f64::from);
+    let inverse = (camera.projection.as_dmat4() * camera.view.as_dmat4()).inverse();
+    for (point, ahead) in [
+        ([-100., -150.], true),
+        ([width + 100., -150.], true),
+        ([0.5, -150.], true),
+        ([-300., -200.], true),
+        ([-150., 0.5], false),
+    ] {
+        // The direction of the view ray through `point`, in pixels: toward
+        // the sun where it stands ahead, away from it where behind.
+        let at = |depth: f64| {
+            let h = inverse
+                * DVec4::new(
+                    point[0] / width * 2. - 1.,
+                    1. - point[1] / height * 2.,
+                    depth,
+                    1.,
+                );
+            h.truncate() / h.w
+        };
+        let through = (at(0.25) - at(0.5)).normalize();
+        let toward_sun = if ahead { through } else { -through }.as_vec3();
+        assert!(toward_sun.y > 0.05, "the sun stands above the floor");
+        assert_eq!(
+            clip_w(&camera, toward_sun) > 0.,
+            ahead,
+            "the sun stands ahead of the camera or behind it"
+        );
+        let input = input(camera, toward_sun, DirectionalShadow::DEFAULT, 1.);
+        let observed = render(gpu, &mut renderer, &mut scene, &input, &settings);
+        let (shadowed, least, floor) = shadowed_floor(&observed, &camera);
+        assert_eq!(
+            floor,
+            (SIZE[0] * SIZE[1]) as usize,
+            "the floor fills the view"
+        );
+        assert_eq!(
+            shadowed, 0,
+            "the floor shadows itself at {shadowed} pixels, to a mask of {least}, with the \
+             sun's point at {point:?}"
         );
     }
 }

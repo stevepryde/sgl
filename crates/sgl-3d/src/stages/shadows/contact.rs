@@ -17,7 +17,9 @@
 //! version of both: Rust; one dispatch over the light's bounds, as Godot's,
 //! where Bend splits the screen into quadrants; SGL3D's clip space (y up,
 //! reversed-Z), whose y turns over to pixels here as Bend's does; the
-//! light's coordinate in f64; and the mask cleared by a render pass.
+//! light's coordinate in f64; and the mask cleared by a render pass. The
+//! shader also takes bend_sss_gpu.h's `IgnoreEdgePixels`, which Godot
+//! leaves out (D-69).
 //!
 //! Reads: the opaque depth (the G-buffer's, complete) and the frame's
 //! jittered view-projection and shadowed directional light.

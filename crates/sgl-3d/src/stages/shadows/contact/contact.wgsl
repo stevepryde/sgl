@@ -26,6 +26,21 @@
 // is a dynamic index into a vector, cost twice as much through Metal (5.3
 // against 2.4 ms at Medium, 1920x1080, Bistro's street on an Apple M5).
 //
+// One part comes from bend_sss_gpu.h itself, where Godot leaves it out: its
+// `IgnoreEdgePixels`, always on here (EDGE_SKIP, Bend's `edge_skip`). A
+// read whose depth differs from its neighbour's across the march by more
+// than BILINEAR_THRESHOLD is an edge, whose depth is not pushed back by
+// that difference; as a caster, its rounding to a pixel shadows the plane
+// it lies on, so it casts nothing. A plane seen near edge-on is all edges
+// (a floor past about 33 m from 1.6 m up at 1080 rows and 55 degrees), and
+// so is the frame's outermost pixel, whose neighbour outside reads as the
+// far depth. The cost is Bend's "can also thin out otherwise valid
+// shadows": a caster's silhouette against a receiver farther off than the
+// threshold casts nothing, so a caster a few pixels wide loses part of its
+// shadow away from where it stands; where it meets its receiver the depths
+// are within the threshold and it casts as before. The measurements are
+// D-69's.
+//
 // Every loop's bound is a named compile-time constant no buffer's contents
 // can raise (AR-12): READ_COUNT read steps, and HARD_SHADOW_SAMPLES, then
 // the rest of SAMPLE_COUNT tests four a step, the level's reach, an
@@ -59,6 +74,10 @@ const DEPTH_FAR:f32=0.0;
 const Z_SIGN:f32=-1.0;
 
 const BILINEAR_THRESHOLD:f32=0.02;
+// Bend's `edge_skip`, the shadowing depth of an edge read under its
+// `IgnoreEdgePixels`: "apply an extreme value/blend on edge samples to push
+// the value out of range", so no pixel's test finds it.
+const EDGE_SKIP:f32=1e20;
 // Godot's rendering/lights_and_shadows/contact_shadow/surface_thickness
 // default.
 const SURFACE_THICKNESS:f32=0.01;
@@ -183,7 +202,8 @@ fn contact_shadows(@builtin(workgroup_id) workgroup_id:vec3<u32>,@builtin(local_
   // The pixel starts sampling at this depth
   sampling_depth[i]=depths.x;
 
-  let edge_depth=depths.x;
+  // If a pixel has been detected as an edge, then don't include it in the shadow
+  let edge_depth=EDGE_SKIP;
   // Any sample in this wavefront is possibly interpolated towards the bilinear sample
   // So use should use a shadowing depth that is further away, based on the difference between the two samples
   let shadow_depth=depths.x+abs(depths.x-depths.y)*Z_SIGN;

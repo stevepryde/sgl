@@ -428,11 +428,11 @@ Environment and probe specular always apply. On top of them:
   the cascades' shadow and theirs combine at the light's shadow opacity.
   Opaque surfaces of a `perspective` camera only; blended surfaces, the
   fog and reflections keep the maps, local lights take none, and
-  ray-traced shadows replace them where they run. As in Godot, which
-  leaves out Bend's `IgnoreEdgePixels`, a plane seen within about 3° of
-  edge-on (a floor beyond roughly 35 m at eye height at 1080p) reads as
-  edges and can shadow itself in a band a few pixels wide, as can a march
-  along the frame's border toward a light beyond it.
+  ray-traced shadows replace them where they run. A caster's outline
+  against a surface well behind it casts none (Bend's `IgnoreEdgePixels`),
+  so a floor seen near edge-on and the frame's border do not shadow
+  themselves, and a caster only a few pixels wide casts a thinner shadow
+  away from where it stands.
   [Settings](settings.md).
 
 ## Image quality and post-processing

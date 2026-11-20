@@ -171,12 +171,15 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   `shadow_opacity`. It finds the casters the cascades are too coarse for,
   a chair leg's or a kerb's, but only what the camera sees: an off-screen
   or hidden caster casts none, and a thick one may cast past its own
-  thickness. As in Godot, which leaves out Bend's `IgnoreEdgePixels`, a
-  plane seen within about 3° of edge-on (a floor beyond roughly 35 m at
-  eye height at 1080p) reads as edges and can shadow itself in a band a
-  few pixels wide, as can a march along the frame's border toward a light
-  beyond it. While it runs the opaque stage takes its two-pass form. It
-  needs a `perspective` camera, and gives way to ray-traced shadows.
+  thickness. A depth the march reads as an edge, one more than 2% from
+  its neighbour across the march, casts none (Bend's `IgnoreEdgePixels`,
+  which Godot leaves out): a floor seen near edge-on and the frame's
+  border, which read as edges, do not shadow themselves, and a caster's
+  outline against a surface well behind it casts none, so a caster only a
+  few pixels wide casts a thinner shadow away from where it stands
+  ([D-69](../../specs/decisions.md)). While it runs the opaque stage takes
+  its two-pass form. It needs a `perspective` camera, and gives way to
+  ray-traced shadows.
   Timing group `contact shadows`.
 - `hemisphere_light` is Three.js's `HemisphereLight`: diffuse irradiance
   blended from `ground_color` facing down to `sky_color` facing up, which

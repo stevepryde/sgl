@@ -1230,3 +1230,38 @@ Use the [current specs](README.md) for implementation and the
   release recorded under it. Rationale: agents write and maintain all of SGL
   (D-50), and a release that stops at the tag leaves games on the registry
   waiting on a step with no decision in it.
+
+- **D-69** Decision, 2026-11-20 (#844): SGL3D's contact shadows take Bend
+  Studio's `IgnoreEdgePixels` (`bend_sss_gpu.h`, Apache-2.0, D-67), always
+  on, where Godot b130438, whose port they are, leaves the option out: a
+  depth read the 2% edge test takes as an edge casts nothing. It is the
+  stage's own rule, not a setting (S3D-6). Without it a plane seen near
+  edge-on (a floor beyond about 33 m from 1.6 m up at 1080 rows and a 55°
+  field of view) and the frame's outermost pixels read as edges whose
+  unfiltered depths shadow the plane. On an empty level floor from 1.6 m
+  up at 480×270 at `Medium`, over 35 suns (3°, 10°, 20°, 35° and 60° up,
+  every 30° round from behind the camera to ahead of it), 18 shadowed the
+  floor, at up to 21,404 of its 64,800 pixels (10,958 with the sun 20° up
+  and 60° off ahead), to a mask of 0; and up to 133 pixels lay shadowed
+  along the border of a floor seen from above at `Long`. With it, none
+  in either, nor on that floor at 1920×1080. The cost is Bend's "can also
+  thin out otherwise valid shadows": a caster's silhouette against a
+  receiver more than the threshold deeper casts nothing. Measured at
+  `Medium` on that floor at 1920×1080 with a 3 cm post 45 cm tall, over
+  eight suns round at 25° and at 50° up, the floor pixels the post shadows
+  within reach that the mask finds went from 4,599 to 4,577 and 3,080 to 3,014
+  of 5,129 and 3,349 at 3 m, 1,299 to 1,296 and 599 to 576 of 1,574 and
+  693 at 6 m, and 74 to 72 and 64 to 32 of 340 and 131 at 12 m, where the
+  post is under three pixels wide; the floor pixels clear of the post that
+  it darkens went from 55,516–65,173 to 201–1,666 at 25° (the band) and
+  from 301–728 to 74–699 at 50°. A caster still casts where it meets its
+  receiver, the depths there being within the threshold, and the existing
+  fixtures' oracles hold unchanged. The pass costs the same: Apple M5,
+  Metal, 1920×1080, Bistro's `bistro-quality` recipe, three runs each,
+  medians 2.22–2.49 ms before and 2.22–2.44 after on the street view,
+  2.17–2.58 and 2.22–2.28 on the bike view. Bistro's captures do not
+  separate the two: they differ by 0.63–0.77 grey levels, mean absolute,
+  against 0.54–0.89 between two runs of either. Rationale: the band covers
+  open ground at any distance contact shadows no longer resolve, under any
+  sun to the side of the view, while the shadow lost is the outer part of
+  casters a few pixels wide (RD-2).

@@ -1151,13 +1151,17 @@ last, after everything it may use, and refuses a directive in it.
   (`shading/contact_shadow.wgsl`), every other lit program the one that
   returns 1, and a lighting program takes one of three: the maps alone, the
   ray-traced shadow mask or the contact mask. Blended surfaces, the fog,
-  probe captures and ray hits keep the maps alone. The surface thickness,
-  the edge threshold and the hard and fading sample counts are Godot's and
-  SGL3D's, never the game's, and the dither turns each frame only while
-  temporal antialiasing resolves it. The stage keeps no history and holds
-  its mask only while it runs. Only the directional light takes it: one
-  light is one pass, where each local light would be a pass and a mask of
-  its own, as Godot leaves positional lights out.
+  probe captures and ray hits keep the maps alone. A read the edge
+  threshold takes as an edge casts nothing: Bend's `IgnoreEdgePixels`,
+  which Godot leaves out and SGL3D takes from `bend_sss_gpu.h`, always on,
+  so a plane seen near edge-on and the frame's outermost pixels, which
+  read as edges, do not shadow the plane (D-69). The surface thickness,
+  the edge threshold, that edge rule and the hard and fading sample counts
+  are Godot's, Bend's and SGL3D's, never the game's, and the dither turns
+  each frame only while temporal antialiasing resolves it. The stage keeps
+  no history and holds its mask only while it runs. Only the directional
+  light takes it: one light is one pass, where each local light would be a
+  pass and a mask of its own, as Godot leaves positional lights out.
 - **Opaque and masked surfaces.** Direct, baked and ambient light are computed
   in the forward pass, never from the G-buffer; environment specular and
   reflections are computed from it. Ambient occlusion is applied after the

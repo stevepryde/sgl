@@ -15,6 +15,8 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Settings::contact_shadows`: a floor seen near edge-on and the frame's border no longer shadow themselves in bands; a caster only a few pixels wide casts a thinner contact shadow. No game-code changes are needed.
+
 ## 0.9.0 — 2026-11-20
 
 Move every SGL crate to `0.9.0` together and commit the updated `Cargo.lock`.

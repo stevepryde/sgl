@@ -511,7 +511,8 @@ text follows. Godot b13043816a0f234985030ec035363a005bc86c32's
 servers/rendering/renderer_rd/shaders/effects/screen_space_contact_shadows.glsl
 and the dispatch in servers/rendering/renderer_rd/effects/ss_effects.cpp derive
 from them; SGL3D ports both, changed, into stages/shadows/contact/contact.wgsl
-and stages/shadows/contact.rs.
+and stages/shadows/contact.rs, and takes bend_sss_gpu.h's IgnoreEdgePixels,
+which Godot leaves out, from that file.
 
 
                                  Apache License
