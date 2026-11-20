@@ -151,14 +151,14 @@ struct ViewGroups {
 
 /// Retained from the first frame that uses two-phase occlusion culling.
 struct Occlusion {
-    late: Phase,
+    late: Option<Phase>,
     builder: Builder,
     pyramid: Pyramid,
 }
 
 pub(crate) struct Cull {
-    module: wgpu::ShaderModule,
-    early: Phase,
+    module: Option<wgpu::ShaderModule>,
+    early: Option<Phase>,
     layouts: [wgpu::BindGroupLayout; 3],
     /// The camera's groups, then each cascade's.
     groups: Vec<Option<ViewGroups>>,
@@ -178,10 +178,6 @@ pub(crate) struct Cull {
 
 impl Cull {
     pub fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("cull"),
-            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&CULL]).into()),
-        });
         let layout = |label, bindings: &[u32]| {
             let entries: Vec<_> = bindings
                 .iter()
@@ -256,17 +252,8 @@ impl Cull {
         let supported =
             device.limits().max_storage_textures_per_shader_stage >= SUPPORTED_STORAGE_TEXTURES;
         Self {
-            early: Phase::new(
-                device,
-                &module,
-                &layouts,
-                [
-                    CULL_INSTANCES_ENTRY,
-                    CULL_FINALIZE_ENTRY,
-                    CULL_SECTIONS_ENTRY,
-                ],
-            ),
-            module,
+            early: None,
+            module: None,
             layouts,
             groups: Vec::new(),
             occlusion_uniform: occlusion_buffer("cull occlusion"),
@@ -277,6 +264,13 @@ impl Cull {
             frame_builds: false,
             submitted_build: false,
         }
+    }
+
+    fn module(device: &wgpu::Device) -> wgpu::ShaderModule {
+        device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("cull"),
+            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&CULL]).into()),
+        })
     }
 
     /// Whether the device binds the pyramid's storage textures, without
@@ -300,16 +294,7 @@ impl Cull {
             let state = self.occlusion.get_or_insert_with(|| {
                 let builder = Builder::new(ctx.device);
                 Occlusion {
-                    late: Phase::new(
-                        ctx.device,
-                        &self.module,
-                        &self.layouts,
-                        [
-                            CULL_INSTANCES_LATE_ENTRY,
-                            CULL_FINALIZE_LATE_ENTRY,
-                            CULL_SECTIONS_LATE_ENTRY,
-                        ],
-                    ),
+                    late: None,
                     pyramid: builder.pyramid(ctx.device, size),
                     builder,
                 }
@@ -356,11 +341,23 @@ impl Cull {
         let Some(groups) = self.groups.first().and_then(Option::as_ref) else {
             return;
         };
-        let late = &self
+        let late = self
             .occlusion
-            .as_ref()
-            .expect("early cull prepared the late phase")
-            .late;
+            .as_mut()
+            .expect("early cull prepared the pyramid")
+            .late
+            .get_or_insert_with(|| {
+                Phase::new(
+                    ctx.device,
+                    self.module.get_or_insert_with(|| Self::module(ctx.device)),
+                    &self.layouts,
+                    [
+                        CULL_INSTANCES_LATE_ENTRY,
+                        CULL_FINALIZE_LATE_ENTRY,
+                        CULL_SECTIONS_LATE_ENTRY,
+                    ],
+                )
+            });
         let started = crate::counters::Moment::now();
         let dispatch = list.buffers().dispatch;
         let mut pass = ctx
@@ -450,6 +447,19 @@ impl Cull {
         for (at, slot) in slots.iter().enumerate() {
             self.prepare_groups(device, scene, at, slot.list.buffers());
         }
+        let early = self.early.get_or_insert_with(|| {
+            let module = self.module.get_or_insert_with(|| Self::module(device));
+            Phase::new(
+                device,
+                module,
+                &self.layouts,
+                [
+                    CULL_INSTANCES_ENTRY,
+                    CULL_FINALIZE_ENTRY,
+                    CULL_SECTIONS_ENTRY,
+                ],
+            )
+        });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("cull"),
             timestamp_writes: timing.and_then(|timing| timing.compute_pass("cull")),
@@ -461,13 +471,13 @@ impl Cull {
             let started = crate::counters::Moment::now();
             let groups = &self.groups[at].as_ref().unwrap().groups;
             let [x, y] = slot.list.instance_workgroups();
-            pass.set_pipeline(&self.early.instances);
+            pass.set_pipeline(&early.instances);
             pass.set_bind_group(0, &groups[0], &[]);
             pass.dispatch_workgroups(x, y, 1);
-            pass.set_pipeline(&self.early.finalize);
+            pass.set_pipeline(&early.finalize);
             pass.set_bind_group(0, &groups[1], &[]);
             pass.dispatch_workgroups(1, 1, 1);
-            pass.set_pipeline(&self.early.sections);
+            pass.set_pipeline(&early.sections);
             pass.set_bind_group(0, &groups[2], &[]);
             pass.dispatch_workgroups_indirect(
                 slot.list.buffers().dispatch,

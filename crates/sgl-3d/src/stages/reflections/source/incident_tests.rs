@@ -184,8 +184,7 @@ fn incident_environment_is_complete_without_doubling_primary() {
                             sampler: &sampler,
                             parameters: &parameters,
                             material: &material,
-                            baked: &collection.view,
-                            collection: &collection.metadata,
+                            probes: collection,
                         },
                     };
                     let mut encoder = device.create_command_encoder(&Default::default());

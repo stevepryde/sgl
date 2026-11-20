@@ -15,6 +15,8 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `Renderer` and `View` now skip shader and pipeline creation for unused GI, shadow, deformation, culling and optional image passes at startup. No game-code changes are needed.
+
 ## 0.9.2 — 2026-11-20
 
 Move every SGL crate to `0.9.2` together and commit the updated `Cargo.lock`.

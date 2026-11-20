@@ -66,18 +66,21 @@ fn tiles(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Buffer {
 
 /// Culls the probe collection per screen tile.
 pub(super) struct ProbeCulling {
-    pipeline: wgpu::ComputePipeline,
-    group: CachedGroup,
-    camera: wgpu::Buffer,
+    pass: Option<CullPass>,
     /// Each tile's probe buckets, which completion and composition bind.
     pub tiles: wgpu::Buffer,
     /// The render size the tiles cover.
     size: [u32; 2],
 }
 
-impl ProbeCulling {
-    /// Culling into the tiles of `size`.
-    pub fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
+struct CullPass {
+    pipeline: wgpu::ComputePipeline,
+    group: CachedGroup,
+    camera: wgpu::Buffer,
+}
+
+impl CullPass {
+    fn new(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("specular probe tiled culling"),
             source: wgpu::ShaderSource::Wgsl(shading::compose(&[&PROBE_CULLING]).into()),
@@ -102,12 +105,29 @@ impl ProbeCulling {
                     mapped_at_creation: false,
                 },
             ),
+        }
+    }
+}
+
+impl ProbeCulling {
+    /// Culling into the tiles of `size`.
+    pub fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
+        Self {
+            pass: None,
             tiles: tiles(device, size),
             size,
         }
     }
 
+    /// Releases groups retaining a previous collection or depth target.
+    pub fn forget_inputs(&mut self) {
+        if let Some(pass) = &mut self.pass {
+            pass.group.forget();
+        }
+    }
+
     pub fn resize(&mut self, device: &wgpu::Device, size: [u32; 2]) {
+        self.forget_inputs();
         self.size = size;
         self.tiles = tiles(device, size);
     }
@@ -124,26 +144,27 @@ impl ProbeCulling {
         collection: &wgpu::Buffer,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
+        let cull = self.pass.get_or_insert_with(|| CullPass::new(device));
         crate::counters::write_buffer(
             queue,
-            &self.camera,
+            &cull.camera,
             0,
             bytemuck::bytes_of(&CullingCamera::new(camera)),
         );
         let resources = [
             (0, wgpu::BindingResource::TextureView(depth)),
-            (1, self.camera.as_entire_binding()),
+            (1, cull.camera.as_entire_binding()),
             (2, collection.as_entire_binding()),
             (3, self.tiles.as_entire_binding()),
         ];
-        let group = self
+        let group = cull
             .group
             .get(device, "specular probe tiled culling", &resources);
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("specular probe tiled culling"),
             timestamp_writes: timing.and_then(|t| t.compute_pass("probe culling")),
         });
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(&cull.pipeline);
         pass.set_bind_group(0, group, &[]);
         let [x, y] = tile_count(self.size);
         pass.dispatch_workgroups(x, y, 1);

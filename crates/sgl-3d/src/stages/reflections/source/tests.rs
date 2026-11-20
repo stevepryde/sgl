@@ -310,8 +310,7 @@ fn source_environment_blends_overlapping_probes_and_the_sky_by_influence() {
                         sampler: &sampler,
                         parameters: &parameters,
                         material: &material,
-                        baked: &probes.view,
-                        collection: &probes.metadata,
+                        probes: &probes,
                     },
                 },
                 None,
@@ -503,12 +502,8 @@ fn first_frame_keeps_the_source_completion_built_for_the_settings() {
             ..Settings::default()
         };
         let mut renderer = crate::TestRenderer::for_test(&device, &queue, size, &settings);
-        let created = renderer
-            .test_reflections()
-            .source
-            .completion
-            .pipeline
-            .clone();
+        let source = &renderer.test_reflections().source;
+        let created = source.completions[&source.variant].pipeline.clone();
         let mut scene = crate::Scene::new(&device, &queue);
         let input = crate::FrameInput::new(crate::Camera {
             view: Mat4::IDENTITY,
@@ -534,9 +529,9 @@ fn first_frame_keeps_the_source_completion_built_for_the_settings() {
         );
         queue.submit([encoder.finish()]);
         renderer.finish_frame(&mut scene);
+        let source = &renderer.test_reflections().source;
         assert_eq!(
-            renderer.test_reflections().source.completion.pipeline,
-            created,
+            source.completions[&source.variant].pipeline, created,
             "{screen_space_reflections:?} {reflection_method:?} with \
              {ambient_occlusion:?} ambient occlusion rebuilt source completion",
         );

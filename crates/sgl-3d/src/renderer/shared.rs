@@ -29,7 +29,7 @@ impl Shared {
     pub fn new(device: &wgpu::Device) -> Self {
         let layouts = Layouts::new(device);
         let dynamic_gi = (layouts.lit.tier == crate::shading::bind::BindingTier::Extended)
-            .then(|| DynamicGi::new(device, &layouts.lit, &layouts.scene));
+            .then(|| DynamicGi::new(device));
         let pipelines = GeometryPipelines::new(
             device,
             &layouts.lit,

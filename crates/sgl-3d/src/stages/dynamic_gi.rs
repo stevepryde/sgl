@@ -87,7 +87,7 @@ impl Key {
 /// state, and a stand-in lit group 0 binds while no volume runs.
 pub(crate) struct DynamicGi {
     layouts: Layouts,
-    pipelines: Pipelines,
+    pipelines: Option<Pipelines>,
     uniform: wgpu::Buffer,
     /// The moving instances' bounds the allocation takes.
     moving_bounds: wgpu::Buffer,
@@ -101,12 +101,9 @@ pub(crate) struct DynamicGi {
     /// What the rendered frame's probes followed, which `finish_frame`
     /// commits with them.
     rendered_inputs: Option<Inputs>,
-    /// The observation, from the first observed frame on, and the trace's
-    /// groups 0 and 1 it creates its trace's pipelines with.
+    /// The observation, from the first observed frame on.
     #[cfg(feature = "diagnostics")]
     observer: Option<observe::Observer>,
-    #[cfg(feature = "diagnostics")]
-    trace_groups: [wgpu::BindGroupLayout; 2],
     /// The frames the renderer has finished: the number of the frame being
     /// rendered, which its report carries.
     #[cfg(feature = "diagnostics")]
@@ -125,17 +122,12 @@ enum Rendered {
 }
 
 impl DynamicGi {
-    /// `lit` and `scene` are group 0's lit layout and group 1's. The stage
-    /// runs on the Extended binding tier alone, whose lit group 0 binds its
-    /// probes; on Basic it builds no trace.
-    pub fn new(
-        device: &wgpu::Device,
-        lit: &crate::shading::bind::LitLayout,
-        scene: &wgpu::BindGroupLayout,
-    ) -> Self {
+    /// Set up the neutral probe binding. The first actual dispatch prepares
+    /// the pipelines, which stay available across disabled frames.
+    pub fn new(device: &wgpu::Device) -> Self {
         let layouts = Layouts::new(device);
         Self {
-            pipelines: Pipelines::new(device, &layouts, lit, scene),
+            pipelines: None,
             uniform: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -161,8 +153,6 @@ impl DynamicGi {
             rendered_inputs: None,
             #[cfg(feature = "diagnostics")]
             observer: None,
-            #[cfg(feature = "diagnostics")]
-            trace_groups: [lit.layout.clone(), scene.clone()],
             #[cfg(feature = "diagnostics")]
             finished: 0,
         }
@@ -269,18 +259,6 @@ impl DynamicGi {
         let Some(max_rays) = ctx.effective.dynamic_gi else {
             return;
         };
-        let lit = LitConstants::of(ctx.scene);
-        let form = self
-            .pipelines
-            .trace_pipeline(ctx.device, lit, ctx.hardware_rays);
-        #[cfg(feature = "diagnostics")]
-        let mut observer = observe::Observer::for_frame(
-            &mut self.observer,
-            &mut self.pipelines.paths,
-            (&self.trace_groups, &self.layouts.trace),
-            ctx,
-            (lit, form),
-        );
         // The whole spacings the volume has moved since the committed frame.
         let (volume, frame, installed, scrolled) = match (&self.rendered, &self.committed) {
             (Some(Rendered::Fresh(volume)), _) => (&**volume, 0, volume.installed, I64Vec3::ZERO),
@@ -295,6 +273,24 @@ impl DynamicGi {
         let Some(rays) = volume.rays.as_ref() else {
             return;
         };
+        let lit = LitConstants::of(ctx.scene);
+        let pipelines = self.pipelines.get_or_insert_with(|| {
+            Pipelines::new(
+                ctx.device,
+                &self.layouts,
+                &ctx.bindings.lit,
+                &ctx.bindings.scene,
+            )
+        });
+        let form = pipelines.trace_pipeline(ctx.device, lit, ctx.hardware_rays);
+        #[cfg(feature = "diagnostics")]
+        let mut observer = observe::Observer::for_frame(
+            &mut self.observer,
+            &mut pipelines.paths,
+            &self.layouts.trace,
+            ctx,
+            (lit, form),
+        );
         let ProbePlacement {
             volume: placement,
             scroll,
@@ -330,7 +326,7 @@ impl DynamicGi {
         };
         let bounds = moving_bounds(ctx.scene, &placement, camera.eye);
         let inputs = Inputs::of(ctx, max_rays);
-        let trace_group = self.pipelines.paths.group(
+        let trace_group = pipelines.paths.group(
             ctx.device,
             ctx.hardware_rays,
             &[
@@ -371,17 +367,17 @@ impl DynamicGi {
             });
             if scrolled != IVec3::ZERO {
                 pass.set_bind_group(0, &rays.update, &[]);
-                pass.set_pipeline(&self.pipelines.scroll);
+                pass.set_pipeline(&pipelines.scroll);
                 pass.dispatch_workgroups(uniform.probe_count.div_ceil(64), 1, 1);
             }
             pass.set_bind_group(0, &rays.allocate, &[]);
-            pass.set_pipeline(&self.pipelines.rank);
+            pass.set_pipeline(&pipelines.rank);
             pass.dispatch_workgroups(uniform.probe_count.div_ceil(64), 1, 1);
-            pass.set_pipeline(&self.pipelines.threshold);
+            pass.set_pipeline(&pipelines.threshold);
             pass.dispatch_workgroups(1, 1, 1);
-            pass.set_pipeline(&self.pipelines.allocate);
+            pass.set_pipeline(&pipelines.allocate);
             pass.dispatch_workgroups(probes[0], probes[1], 1);
-            pass.set_pipeline(&self.pipelines.prepare_trace);
+            pass.set_pipeline(&pipelines.prepare_trace);
             pass.dispatch_workgroups(1, 1, 1);
         }
         encoder.copy_buffer_to_buffer(
@@ -403,7 +399,7 @@ impl DynamicGi {
                 label: Some("dynamic GI rays"),
                 timestamp_writes: timing.and_then(|t| t.compute_pass("dynamic GI rays")),
             });
-            pass.set_pipeline(&self.pipelines.trace[&(lit, form)]);
+            pass.set_pipeline(&pipelines.trace[&(lit, form)]);
             #[cfg(feature = "diagnostics")]
             if let Some(observer) = observer.as_deref_mut() {
                 observer.bind_trace(ctx.device, &mut pass, lit, rays);
@@ -419,11 +415,11 @@ impl DynamicGi {
                 timestamp_writes: timing.and_then(|t| t.compute_pass("dynamic GI blend")),
             });
             pass.set_bind_group(0, &rays.update, &[]);
-            pass.set_pipeline(&self.pipelines.update_irradiance);
+            pass.set_pipeline(&pipelines.update_irradiance);
             pass.dispatch_workgroups_indirect(&volume.allocation, ALLOCATION_BLEND_GROUPS);
-            pass.set_pipeline(&self.pipelines.update_depth);
+            pass.set_pipeline(&pipelines.update_depth);
             pass.dispatch_workgroups_indirect(&volume.allocation, ALLOCATION_BLEND_GROUPS);
-            pass.set_pipeline(&self.pipelines.settle);
+            pass.set_pipeline(&pipelines.settle);
             pass.dispatch_workgroups(1, 1, 1);
         }
         #[cfg(feature = "diagnostics")]

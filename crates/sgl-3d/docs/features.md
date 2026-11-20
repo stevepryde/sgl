@@ -437,7 +437,9 @@ Environment and probe specular always apply. On top of them:
 
 ## Image quality and post-processing
 
-Local exposure and presentation pipelines are prepared on first use. A loading
+Pipeline setup follows the enabled effects and scene content. First use of an
+effect can still compile shaders. On native, the game can construct its view
+and encode its first world frame on a rendering thread. A later loading
 frame with the upcoming look and output path warms them for subsequent frames
 on that view. [Frame workflow](../README.md#retained-scene-and-frame-lifecycle).
 

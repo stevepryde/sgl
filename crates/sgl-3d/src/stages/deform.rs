@@ -37,7 +37,7 @@ fn stride(alignment: u32) -> u64 {
 }
 
 pub(crate) struct Deform {
-    pipeline: wgpu::ComputePipeline,
+    pipeline: Option<wgpu::ComputePipeline>,
     layout: wgpu::BindGroupLayout,
     /// The frame's dispatch records, one per `stride`.
     records: wgpu::Buffer,
@@ -66,31 +66,35 @@ impl Deform {
                 entry(1, wgpu::BufferBindingType::Uniform),
             ],
         });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("deform"),
-            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&DEFORM]).into()),
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("deform"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
         let stride = stride(device.limits().min_uniform_buffer_offset_alignment);
         Self {
-            pipeline: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("deform"),
-                layout: Some(&pipeline_layout),
-                module: &module,
-                entry_point: Some(DEFORM_ENTRY),
-                compilation_options: Default::default(),
-                cache: None,
-            }),
+            pipeline: None,
             layout,
             records: records(device, stride),
             stride,
             group: None,
             staging: Vec::new(),
         }
+    }
+
+    fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("deform"),
+            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&DEFORM]).into()),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("deform"),
+            bind_group_layouts: &[Some(layout)],
+            immediate_size: 0,
+        });
+        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("deform"),
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some(DEFORM_ENTRY),
+            compilation_options: Default::default(),
+            cache: None,
+        })
     }
 
     /// Writes the frame's deformations, before any pass draws scene
@@ -157,7 +161,10 @@ impl Deform {
             label: Some("deform"),
             timestamp_writes: timing.and_then(|t| t.compute_pass("deform")),
         });
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(
+            self.pipeline
+                .get_or_insert_with(|| Self::pipeline(device, &self.layout)),
+        );
         for (index, record) in work.iter().enumerate() {
             pass.set_bind_group(0, group, &[(index as u64 * self.stride) as u32]);
             let [x, y] = workgroups(record.vertex_count);

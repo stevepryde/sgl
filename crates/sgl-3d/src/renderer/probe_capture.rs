@@ -140,6 +140,7 @@ impl Renderer {
             &cascades,
         );
         view.shadows.local.encode_capture(
+            device,
             &mut encoder,
             &local,
             (scene, &mut self.shared.pipelines),

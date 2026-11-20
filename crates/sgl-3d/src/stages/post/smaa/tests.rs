@@ -52,10 +52,9 @@ fn color_local_contrast_matches_reference_pixel_pairs() {
         return;
     };
     let size = [8, 8];
-    let mut smaa = Smaa::new(&device, &queue, size[0], size[1], FORMAT, QUALITIES[0]).unwrap();
+    let mut smaa = Smaa::new(&device, &queue, size[0], size[1], FORMAT, None).unwrap();
     let output = image_target(&device, size).create_view(&Default::default());
     for quality in QUALITIES {
-        smaa.set_quality(&device, quality);
         for axis in 0..2 {
             // A contrast in any RGB channel is an edge in colour detection;
             // luma detection would lose especially the blue-only contrast.
@@ -76,7 +75,7 @@ fn color_local_contrast_matches_reference_pixel_pairs() {
                     }
                     let input = hdr_texture(&device, &queue, size, &texels);
                     let mut encoder = device.create_command_encoder(&Default::default());
-                    smaa.encode(&device, &mut encoder, &input, &output, None);
+                    smaa.encode(&device, &mut encoder, &input, &output, quality, None);
                     queue.submit([encoder.finish()]);
                     let edges = read(
                         &device,
@@ -146,6 +145,7 @@ fn coverage(
     smaa: &mut Smaa,
     size: [u32; 2],
     edge: Edge,
+    quality: SmaaQuality,
 ) -> Coverage {
     let Edge {
         level,
@@ -213,6 +213,7 @@ fn coverage(
         &mut encoder,
         &input.create_view(&Default::default()),
         &output.create_view(&Default::default()),
+        quality,
         None,
     );
     queue.submit([encoder.finish()]);
@@ -270,7 +271,7 @@ fn every_preset_approaches_supersampled_rasterization() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut smaa = Smaa::new(&device, &queue, 1, 1, FORMAT, SmaaQuality::default()).unwrap();
+    let mut smaa = Smaa::new(&device, &queue, 1, 1, FORMAT, None).unwrap();
     let faint_edge = Edge {
         level: faint(),
         ..Edge::WHITE
@@ -279,9 +280,8 @@ fn every_preset_approaches_supersampled_rasterization() {
         let mut white = Vec::new();
         let mut faint = Vec::new();
         for quality in QUALITIES {
-            smaa.set_quality(&device, quality);
             for (edge, errors) in [(Edge::WHITE, &mut white), (faint_edge, &mut faint)] {
-                let c = coverage(&device, &queue, &mut smaa, size, edge);
+                let c = coverage(&device, &queue, &mut smaa, size, edge, quality);
                 eprintln!(
                     "{quality:?} {size:?} level {}: raw absolute coverage error={:.2}; SMAA={:.2}",
                     edge.level, c.raw_error, c.smaa_error
@@ -295,7 +295,7 @@ fn every_preset_approaches_supersampled_rasterization() {
                         falling,
                         ..Edge::WHITE
                     };
-                    coverage(&device, &queue, &mut smaa, size, edge).smaa_error
+                    coverage(&device, &queue, &mut smaa, size, edge, quality).smaa_error
                 });
                 eprintln!("{quality:?} {size:?} 45°: rising {rising:.2}; falling {falling:.2}");
                 assert!(

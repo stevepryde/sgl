@@ -32,8 +32,7 @@ pub(crate) enum ShadowFilter {
 pub(crate) struct Sizing {
     /// FSR's quality, while FSR is the antialiasing chosen for the preset.
     pub fsr: Option<(FsrVersion, FsrQuality)>,
-    /// Bloom's targets start full size (the High preset), else 1×1; bloom
-    /// sizes them each frame for whether it runs.
+    /// Allocate the bloom chain on resize while bloom is enabled, else 1×1.
     pub bloom_targets: bool,
 }
 

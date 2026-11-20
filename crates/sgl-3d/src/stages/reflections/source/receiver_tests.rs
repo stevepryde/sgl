@@ -144,8 +144,7 @@ fn opaque_surfaces_under_a_receiver_keep_their_environment_specular_once() {
                 sampler: &sampler,
                 parameters: &parameters,
                 material: &material,
-                baked: &probes.view,
-                collection: &probes.metadata,
+                probes: &probes,
             },
         };
         let mut encoder = device.create_command_encoder(&Default::default());

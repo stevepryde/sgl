@@ -63,7 +63,9 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
     )]
 }
 
-pub(crate) struct MotionBlur {
+pub(crate) struct MotionBlur(Option<Filter>);
+
+struct Filter {
     tiles: MotionTiles,
     filter: wgpu::ComputePipeline,
     uniform: wgpu::Buffer,
@@ -74,8 +76,8 @@ pub(crate) struct MotionBlur {
     groups: Vec<(wgpu::TextureView, wgpu::TextureView, wgpu::BindGroup)>,
 }
 
-impl MotionBlur {
-    pub fn new(device: &wgpu::Device) -> Self {
+impl Filter {
+    fn new(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("motion blur"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&MOTION_BLUR]).into()),
@@ -110,18 +112,26 @@ impl MotionBlur {
             groups: Vec::new(),
         }
     }
+}
+
+impl MotionBlur {
+    pub fn new(device: &wgpu::Device, enabled: bool) -> Self {
+        Self(enabled.then(|| Filter::new(device)))
+    }
 
     /// The blurred frame, once the stage has run.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn output(&self) -> Option<&wgpu::TextureView> {
-        self.output.as_ref()
+        self.0.as_ref()?.output.as_ref()
     }
 
     /// Drops the bind groups, which hold frame views and shared targets
     /// that a resize or a new antialiasing context replaces.
     pub fn forget_inputs(&mut self) {
-        self.tiles.forget_inputs();
-        self.groups.clear();
+        if let Some(filter) = &mut self.0 {
+            filter.tiles.forget_inputs();
+            filter.groups.clear();
+        }
     }
 
     /// Blurs `frame`, the antialiased HDR frame, while the frame has a
@@ -150,7 +160,8 @@ impl MotionBlur {
             near: ctx.input.camera.projection.w_axis.z,
             frame: ctx.history.frames,
         };
-        self.dispatch(
+        let filter = self.0.get_or_insert_with(|| Filter::new(ctx.device));
+        filter.dispatch(
             (ctx.device, ctx.queue),
             ctx.encoder,
             frame,
@@ -158,9 +169,11 @@ impl MotionBlur {
             (tiles, uniform),
             ctx.timing,
         );
-        self.output.as_ref()
+        filter.output.as_ref()
     }
+}
 
+impl Filter {
     /// The tile passes and the filter of `frame` with the `motion` and
     /// `depth` targets and the passes' values.
     fn dispatch(

@@ -382,8 +382,7 @@ fn source_inputs<'a: 'p, 'p>(
             sampler: &environments.sampler,
             parameters,
             material: &t.material,
-            baked: &probes.view,
-            collection: &probes.metadata,
+            probes,
         },
     }
 }

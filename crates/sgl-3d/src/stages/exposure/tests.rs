@@ -10,7 +10,8 @@ fn histogram_of(
     frame: &wgpu::TextureView,
     automatic: &AutoExposure,
 ) -> Vec<u32> {
-    exposure.upload(
+    let meter = exposure.metering.get_or_insert_with(|| Meter::new(device));
+    meter.upload(
         queue,
         Metering {
             automatic,
@@ -19,7 +20,7 @@ fn histogram_of(
             reset: true,
         },
     );
-    let group = exposure.group(device, frame);
+    let group = meter.group(device, frame, &exposure.exposure_view);
     let size = frame.texture().size();
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("histogram readback"),
@@ -31,10 +32,10 @@ fn histogram_of(
     {
         let mut pass = encoder.begin_compute_pass(&Default::default());
         pass.set_bind_group(0, &group, &[]);
-        pass.set_pipeline(&exposure.histogram_pipeline);
+        pass.set_pipeline(&meter.histogram_pipeline);
         pass.dispatch_workgroups(size.width.div_ceil(16), size.height.div_ceil(16), 1);
     }
-    encoder.copy_buffer_to_buffer(&exposure.histogram, 0, &readback, 0, 64 * 4);
+    encoder.copy_buffer_to_buffer(&meter.histogram, 0, &readback, 0, 64 * 4);
     queue.submit([encoder.finish()]);
     readback.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();

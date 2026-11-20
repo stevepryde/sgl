@@ -43,6 +43,10 @@ pub(super) fn shadow_stages(
     }
 }
 
+fn bloom(settings: &Settings) -> bool {
+    settings.bloom.enabled(settings.low()) && !settings.diagnostics_in_effect().disable.bloom
+}
+
 /// The size-affecting choices of `settings`.
 pub(super) fn sizing(settings: &Settings) -> Sizing {
     Sizing {
@@ -51,7 +55,7 @@ pub(super) fn sizing(settings: &Settings) -> Sizing {
             .resolve(settings.low())
             .fsr()
             .map(|version| (version, settings.fsr_quality)),
-        bloom_targets: settings.preset == RenderPreset::High,
+        bloom_targets: bloom(settings),
     }
 }
 
@@ -431,7 +435,7 @@ pub(super) fn resolve(
             .rays()
             .filter(|_| content.dynamic_gi_volume),
         volume_paths: volume_paths(settings, tier),
-        bloom: settings.bloom.enabled(low) && !disable.bloom,
+        bloom: bloom(settings),
         motion_blur,
         composite,
         culling: !disable.culling,

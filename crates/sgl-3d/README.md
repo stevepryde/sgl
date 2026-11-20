@@ -2424,6 +2424,16 @@ submission. Run probe captures between frames, never between a frame's
 `render` and its `finish_frame`. Skip rendering zero-sized or minimized
 outputs in the game.
 
+Creating a view sets up one camera's rendering resources. SGL can create
+shaders and pipelines synchronously during that call or the first frame that
+uses an effect. Dynamic GI, deformation and GPU culling skip pipeline creation
+until they have work. Transparent effects such as heat shimmer need visible
+content, and settings such as motion blur and SMAA select their own pipelines.
+On native, a game with a loading UI can create the view and encode the first
+world frame on its rendering thread while the window thread handles input and
+loading feedback. Use the actual scene, settings and output format to exercise
+the pipelines the player will use.
+
 A view builds its local exposure and presentation pipelines on their first
 use and keeps them across toggles and resizes. To warm a known transition,
 render, submit and finish a loading frame on the same view with the upcoming

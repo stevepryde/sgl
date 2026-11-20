@@ -223,15 +223,21 @@ impl Observer {
     pub fn for_frame<'a>(
         slot: &'a mut Option<Self>,
         paths: &mut TracePaths,
-        (groups, trace): (&[wgpu::BindGroupLayout; 2], &[wgpu::BindGroupLayoutEntry]),
+        trace: &[wgpu::BindGroupLayoutEntry],
         ctx: &FrameContext<'_>,
         (lit, form): (LitConstants, Option<RayQueryForm>),
     ) -> Option<&'a mut Self> {
         if !ctx.effective.dynamic_gi_observation || form.is_some() {
             return None;
         }
-        let observer =
-            slot.get_or_insert_with(|| Self::new(ctx.device, &groups[0], &groups[1], trace));
+        let observer = slot.get_or_insert_with(|| {
+            Self::new(
+                ctx.device,
+                &ctx.bindings.lit.layout,
+                &ctx.bindings.scene,
+                trace,
+            )
+        });
         if !observer.ready() {
             observer.skipping = true;
             return None;

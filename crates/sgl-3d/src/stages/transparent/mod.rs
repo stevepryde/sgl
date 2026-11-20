@@ -84,11 +84,12 @@ pub(crate) enum Beauty<'a> {
 /// are drawn from the frame's geometry and the copy is made again every
 /// frame they run.
 pub(crate) struct Transparent {
-    effects: effects::Effects,
-    mist: mist::Mist,
-    heat: heat::Heat,
-    /// The depth soft glow reads, and the frame's exposure.
-    depth_group: wgpu::BindGroup,
+    /// Glow pipelines and the group binding the current opaque depth and exposure.
+    glow: Option<(effects::Effects, wgpu::BindGroup)>,
+    mist: Option<mist::Mist>,
+    heat: Option<heat::Heat>,
+    /// The frame exposure that glow reads.
+    exposure: wgpu::TextureView,
     /// No screen-space result, which the blended draws bind while none
     /// composes, and no transmission copy, which they bind on the Extended
     /// binding tier while none holds the frame: 1×1, zero.
@@ -97,7 +98,7 @@ pub(crate) struct Transparent {
     /// composes nothing, and of the draw onto the composite.
     blended: [BlendedGroup; 2],
     /// The copy of the composed frame transmissive surfaces sample.
-    transmission: transmission::Transmission,
+    transmission: Option<transmission::Transmission>,
     /// The volume layers a game's shader measures its volume path from.
     volumes: volumes::Volumes,
     /// The device's binding tier, which binds the copy on `Extended`.
@@ -114,19 +115,16 @@ struct BlendedGroup {
 }
 
 impl Transparent {
-    /// The stage over `unlit` group 0 for its effects and mist and `blended`
+    /// The stage over `blended`
     /// group 3 (`shading::bind::blended`) of the device's binding `tier` for
     /// its blended draws, its glow reading the frame's `exposure`
     /// multiplier (`stages::exposure::Exposure::view`).
     pub fn new(
         device: &wgpu::Device,
-        unlit: &wgpu::BindGroupLayout,
         blended: &wgpu::BindGroupLayout,
-        targets: &SharedTargets,
         exposure: &wgpu::TextureView,
         tier: BindingTier,
     ) -> Self {
-        let effects = effects::Effects::new(device, unlit);
         let group = |label| BlendedGroup {
             group: CachedGroup::new(blended.clone()),
             trace: crate::counters::buffer(
@@ -141,10 +139,10 @@ impl Transparent {
             written: None,
         };
         Self {
-            depth_group: effects.depth_group(device, &targets.depth, exposure),
-            effects,
-            mist: mist::Mist::new(device, unlit),
-            heat: heat::Heat::new(device),
+            exposure: exposure.clone(),
+            glow: None,
+            mist: None,
+            heat: None,
             no_reflections: crate::view::targets::target(
                 device,
                 "no screen-space reflections",
@@ -155,7 +153,7 @@ impl Transparent {
                 group("blended incident trace"),
                 group("blended composite trace"),
             ],
-            transmission: transmission::Transmission::new(device),
+            transmission: None,
             volumes: volumes::Volumes::new(device, blended),
             tier,
         }
@@ -234,23 +232,22 @@ impl Transparent {
     /// (`encode`), in a frame that draws it.
     pub fn order_mist(&mut self, ctx: &FrameContext<'_>) {
         if ctx.effective.composite.mist {
-            self.mist.order(
-                ctx.device,
-                ctx.queue,
-                &ctx.scene.transient,
-                ctx.input.camera.eye,
-            );
+            self.mist
+                .get_or_insert_with(|| mist::Mist::new(ctx.device, &ctx.bindings.unlit))
+                .order(
+                    ctx.device,
+                    ctx.queue,
+                    &ctx.scene.transient,
+                    ctx.input.camera.eye,
+                );
         }
     }
 
     /// Rebinds the depth the glow reads, beside the frame's `exposure`.
-    pub fn resize(
-        &mut self,
-        device: &wgpu::Device,
-        targets: &SharedTargets,
-        exposure: &wgpu::TextureView,
-    ) {
-        self.depth_group = self.effects.depth_group(device, &targets.depth, exposure);
+    pub fn resize(&mut self, device: &wgpu::Device, targets: &SharedTargets) {
+        if let Some((effects, group)) = &mut self.glow {
+            *group = effects.depth_group(device, &targets.depth, &self.exposure);
+        }
     }
 
     /// Blended surfaces, glow and mist onto `beauty`.
@@ -279,6 +276,7 @@ impl Transparent {
                 && ctx.views.blended.holds_transmissive(ctx.scene))
             .then(|| {
                 self.transmission
+                    .get_or_insert_with(|| transmission::Transmission::new(ctx.device))
                     .encode(ctx.device, ctx.encoder, &targets.composite, ctx.timing)
                     .clone()
             });
@@ -315,25 +313,33 @@ impl Transparent {
                 ..Default::default()
             });
             if draw {
-                self.effects.draw(
+                let (effects, depth_group) = self.glow.get_or_insert_with(|| {
+                    let effects = effects::Effects::new(ctx.device, &ctx.bindings.unlit);
+                    let group = effects.depth_group(ctx.device, &targets.depth, &self.exposure);
+                    (effects, group)
+                });
+                effects.draw(
                     &mut pass,
                     ctx.bindings.camera_unlit(),
-                    &self.depth_group,
+                    depth_group,
                     &ctx.scene.transient,
                     temporal_masks.is_some(),
                 );
             }
         }
         if ctx.effective.composite.mist {
-            self.mist.encode(
-                ctx.encoder,
-                ctx.bindings.camera_unlit(),
-                beauty,
-                &targets.depth,
-                temporal_masks,
-                ctx.timing,
-                "transparent",
-            );
+            self.mist
+                .as_ref()
+                .expect("mist ordered before drawing")
+                .encode(
+                    ctx.encoder,
+                    ctx.bindings.camera_unlit(),
+                    beauty,
+                    &targets.depth,
+                    temporal_masks,
+                    ctx.timing,
+                    "transparent",
+                );
         }
     }
 
@@ -512,18 +518,20 @@ impl Transparent {
     /// the temporal masks under the condition the draws onto the composite
     /// mark them (`composite_masks`).
     pub fn encode_heat(&mut self, ctx: &mut FrameContext<'_>, color: &wgpu::TextureView) {
-        self.heat.encode(
-            ctx.device,
-            ctx.queue,
-            ctx.encoder,
-            &ctx.scene.transient,
-            &ctx.values.view.view_projection,
-            ctx.sizes.scene,
-            color,
-            &ctx.targets.depth,
-            composite_masks(ctx),
-            ctx.timing,
-        );
+        self.heat
+            .get_or_insert_with(|| heat::Heat::new(ctx.device))
+            .encode(
+                ctx.device,
+                ctx.queue,
+                ctx.encoder,
+                &ctx.scene.transient,
+                &ctx.values.view.view_projection,
+                ctx.sizes.scene,
+                color,
+                &ctx.targets.depth,
+                composite_masks(ctx),
+                ctx.timing,
+            );
     }
 }
 

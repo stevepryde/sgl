@@ -73,8 +73,7 @@ pub(crate) struct Environment<'a> {
     pub sampler: &'a wgpu::Sampler,
     pub parameters: &'a wgpu::Buffer,
     pub material: &'a wgpu::TextureView,
-    pub baked: &'a wgpu::TextureView,
-    pub collection: &'a wgpu::Buffer,
+    pub probes: &'a crate::scene::probes::UploadedProbes,
 }
 pub(crate) struct Inputs<'a> {
     /// The frame's fog volume and its sampler.
@@ -160,7 +159,7 @@ impl SourceCamera {
 }
 
 /// What completion and composition are compiled for.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Variant {
     /// They add environment and probe specular (off only as a diagnostics
     /// layer).
@@ -175,17 +174,17 @@ pub(crate) struct Variant {
 struct Completion {
     pipeline: wgpu::ComputePipeline,
     group: CachedGroup,
-    /// Adds a screen-space method's traced lobes into the complete beauty.
-    compose: wgpu::RenderPipeline,
-    compose_group: CachedGroup,
+    /// Only the variants producing incident radiance have a composition pass.
+    composition: Option<Composition>,
+}
+
+struct Composition {
+    pipeline: wgpu::RenderPipeline,
+    group: CachedGroup,
 }
 
 /// Source completion and screen-space composition for `variant`.
-fn completion(device: &wgpu::Device, variant: Variant) -> Completion {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("reflection source completion"),
-        source: wgpu::ShaderSource::Wgsl(shading::compose(&[&COMPLETION]).into()),
-    });
+fn completion(device: &wgpu::Device, shader: &wgpu::ShaderModule, variant: Variant) -> Completion {
     let constants = [
         (
             "application_environment_enabled",
@@ -203,24 +202,38 @@ fn completion(device: &wgpu::Device, variant: Variant) -> Completion {
     let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("reflection source completion"),
         layout: None,
-        module: &shader,
+        module: shader,
         entry_point: Some(MAIN_ENTRY),
         compilation_options: compilation_options(),
         cache: None,
     });
-    let compose = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    Completion {
+        group: CachedGroup::new(pipeline.get_bind_group_layout(0)),
+        pipeline,
+        composition: variant
+            .incident
+            .then(|| composition(device, shader, compilation_options())),
+    }
+}
+
+fn composition(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    options: wgpu::PipelineCompilationOptions<'_>,
+) -> Composition {
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("screen-space reflection composition"),
         layout: None,
         vertex: wgpu::VertexState {
-            module: &shader,
+            module: shader,
             entry_point: Some(shading::FULLSCREEN_VS_ENTRY),
-            compilation_options: compilation_options(),
+            compilation_options: options.clone(),
             buffers: &[],
         },
         fragment: Some(wgpu::FragmentState {
-            module: &shader,
+            module: shader,
             entry_point: Some(COMPOSE_SCREEN_SPACE_ENTRY),
-            compilation_options: compilation_options(),
+            compilation_options: options,
             targets: &[Some(wgpu::ColorTargetState {
                 format: crate::shading::gbuffer::COLOR,
                 blend: Some(wgpu::BlendState {
@@ -240,11 +253,9 @@ fn completion(device: &wgpu::Device, variant: Variant) -> Completion {
         multiview_mask: None,
         cache: None,
     });
-    Completion {
+    Composition {
         group: CachedGroup::new(pipeline.get_bind_group_layout(0)),
         pipeline,
-        compose_group: CachedGroup::new(compose.get_bind_group_layout(0)),
-        compose,
     }
 }
 
@@ -252,8 +263,9 @@ fn completion(device: &wgpu::Device, variant: Variant) -> Completion {
 pub(crate) struct ReflectionSource {
     /// Culls the probe collection per screen tile before completion.
     culling: ProbeCulling,
-    completion: Completion,
-    /// What `completion` is compiled for.
+    shader: wgpu::ShaderModule,
+    completions: std::collections::HashMap<Variant, Completion>,
+    /// The variant used for this frame.
     variant: Variant,
     camera: wgpu::Buffer,
     /// The render size completion covers.
@@ -269,9 +281,14 @@ impl ReflectionSource {
     /// Culling, and completion and composition compiled for `variant`, at
     /// `size`.
     pub fn new(device: &wgpu::Device, size: [u32; 2], variant: Variant) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reflection source completion"),
+            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&COMPLETION]).into()),
+        });
         let mut source = Self {
             culling: ProbeCulling::new(device, size),
-            completion: completion(device, variant),
+            completions: [(variant, completion(device, &shader, variant))].into(),
+            shader,
             variant,
             camera: crate::counters::buffer(
                 device,
@@ -310,11 +327,18 @@ impl ReflectionSource {
             })
             .create_view(&Default::default())
     }
-    /// Rebuilds completion and composition when `variant` changes, and
+    /// Prepares a newly selected variant once, releases its predecessor's input groups, and
     /// sizes the incident radiance for it.
     pub fn use_variant(&mut self, device: &wgpu::Device, variant: Variant) {
         if self.variant != variant {
-            self.completion = completion(device, variant);
+            let old = self.completions.get_mut(&self.variant).unwrap();
+            old.group.forget();
+            if let Some(composition) = &mut old.composition {
+                composition.group.forget();
+            }
+            self.completions
+                .entry(variant)
+                .or_insert_with(|| completion(device, &self.shader, variant));
             self.variant = variant;
         }
         self.fit_incident(device);
@@ -356,15 +380,21 @@ impl ReflectionSource {
             0,
             bytemuck::bytes_of(&SourceCamera::new(input.camera, input.frame_fog)),
         );
-        self.culling.encode(
-            encoder,
-            device,
-            queue,
-            input.depth,
-            input.camera,
-            input.environment.collection,
-            timing,
-        );
+        // With no probes, collection_buckets() is zero in both completion
+        // and composition, even if a previous frame populated the tiles.
+        if self.variant.environment && !input.environment.probes.is_empty() {
+            self.culling.encode(
+                encoder,
+                device,
+                queue,
+                input.depth,
+                input.camera,
+                &input.environment.probes.metadata,
+                timing,
+            );
+        } else {
+            self.culling.forget_inputs();
+        }
         let texture = wgpu::BindingResource::TextureView;
         let fog = input.fog;
         let resources = [
@@ -384,23 +414,23 @@ impl ReflectionSource {
             (13, texture(input.environment.material)),
             (14, texture(&self.incident)),
             (17, texture(input.anisotropy)),
-            (18, texture(input.environment.baked)),
-            (19, input.environment.collection.as_entire_binding()),
+            (18, texture(&input.environment.probes.view)),
+            (19, input.environment.probes.metadata.as_entire_binding()),
             (21, self.culling.tiles.as_entire_binding()),
             (22, texture(input.ambient_occlusion)),
             (24, texture(input.ambient)),
             (25, texture(fog.view)),
             (26, wgpu::BindingResource::Sampler(fog.sampler)),
         ];
-        let group = self
-            .completion
+        let completion = self.completions.get_mut(&self.variant).unwrap();
+        let group = completion
             .group
             .get(device, "reflection source inputs", &resources);
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("reflection source completion"),
             timestamp_writes: timing.and_then(|t| t.compute_pass("reflection source completion")),
         });
-        pass.set_pipeline(&self.completion.pipeline);
+        pass.set_pipeline(&completion.pipeline);
         pass.set_bind_group(0, group, &[]);
         let [width, height] = self.size;
         pass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
@@ -442,8 +472,8 @@ impl ReflectionSource {
             (12, input.environment.parameters.as_entire_binding()),
             (13, texture(input.environment.material)),
             (17, texture(input.anisotropy)),
-            (18, texture(input.environment.baked)),
-            (19, input.environment.collection.as_entire_binding()),
+            (18, texture(&input.environment.probes.view)),
+            (19, input.environment.probes.metadata.as_entire_binding()),
             (20, texture(screen_space)),
             (21, self.culling.tiles.as_entire_binding()),
             (22, texture(input.ambient_occlusion)),
@@ -453,11 +483,15 @@ impl ReflectionSource {
             (26, wgpu::BindingResource::Sampler(fog.sampler)),
             (27, texture(surface_depth)),
         ];
-        let group = self.completion.compose_group.get(
-            device,
-            "screen-space reflection composition",
-            &resources,
-        );
+        let composition = self
+            .completions
+            .get_mut(&self.variant)
+            .and_then(|passes| passes.composition.as_mut())
+            .expect("screen-space composition follows incident radiance");
+        let group =
+            composition
+                .group
+                .get(device, "screen-space reflection composition", &resources);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("screen-space reflection composition"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -472,7 +506,7 @@ impl ReflectionSource {
             timestamp_writes: timing.and_then(|t| t.render_pass("reflection composition")),
             ..Default::default()
         });
-        pass.set_pipeline(&self.completion.compose);
+        pass.set_pipeline(&composition.pipeline);
         pass.set_bind_group(0, group, &[]);
         pass.draw(0..3, 0..1);
     }

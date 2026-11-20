@@ -301,18 +301,6 @@ impl PostFx {
         self.jitter = match &mut self.taa {
             Some(taa) => {
                 taa.prepare_resources(device, encoder, &self.context, TAA_FEATURE_FLAGS, 0);
-                // The resolves a frame can bind: with the reach, and without
-                // or with both temporal masks, created here rather than in
-                // the first frame that has masks (`temporal_anti_aliasing`).
-                for masks in [0, 2] {
-                    taa.prepare_responsive_variant(
-                        device,
-                        &self.context,
-                        TAA_FEATURE_FLAGS,
-                        masks,
-                        Some(crate::shading::motion_tiles::TILE_SIZE),
-                    );
-                }
                 if self.reset_accumulation {
                     [0.; 2]
                 } else {

@@ -46,6 +46,11 @@ pub(crate) struct Smaa {
     search: wgpu::TextureView,
     linear: wgpu::Sampler,
     point: wgpu::Sampler,
+    output_format: wgpu::TextureFormat,
+    pipelines: Option<Pipelines>,
+}
+
+struct Pipelines {
     shader: wgpu::ShaderModule,
     /// The preset `detect` and `calculate` run.
     quality: SmaaQuality,
@@ -208,21 +213,17 @@ fn sampler(binding: u32, sampler: &wgpu::Sampler) -> wgpu::BindGroupEntry<'_> {
 }
 
 impl Smaa {
-    /// SMAA at `quality` into `output_format`.
+    /// Validate the lookup textures at view construction. Prepare the pipelines
+    /// here too when SMAA is selected for the first frame.
     pub(crate) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         width: u32,
         height: u32,
         output_format: wgpu::TextureFormat,
-        quality: SmaaQuality,
+        quality: Option<SmaaQuality>,
     ) -> Result<Self, image::ImageError> {
         let size = [width.max(1), height.max(1)];
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("SMAA 1x"),
-            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&SMAA]).into()),
-        });
-        let [detect, calculate] = Self::preset_pipelines(device, &shader, quality);
         Ok(Self {
             size,
             targets: None,
@@ -244,6 +245,24 @@ impl Smaa {
                 label: Some("SMAA point clamp"),
                 ..Default::default()
             }),
+            output_format,
+            pipelines: quality.map(|quality| Pipelines::new(device, output_format, quality)),
+        })
+    }
+}
+
+impl Pipelines {
+    fn new(
+        device: &wgpu::Device,
+        output_format: wgpu::TextureFormat,
+        quality: SmaaQuality,
+    ) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("SMAA 1x"),
+            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&SMAA]).into()),
+        });
+        let [detect, calculate] = Self::preset_pipelines(device, &shader, quality);
+        Self {
             detect,
             calculate,
             // Blending is the same at every preset.
@@ -257,7 +276,7 @@ impl Smaa {
             ),
             shader,
             quality,
-        })
+        }
     }
 
     /// The edge detection and weight pipelines of `quality`'s preset.
@@ -282,18 +301,9 @@ impl Smaa {
             )
         })
     }
+}
 
-    /// Runs at `quality` from now on, rebuilding the pipelines whose preset
-    /// changed.
-    pub(crate) fn set_quality(&mut self, device: &wgpu::Device, quality: SmaaQuality) {
-        if quality != self.quality {
-            [self.detect, self.calculate] = Self::preset_pipelines(device, &self.shader, quality);
-            self.quality = quality;
-            // Groups made for the old pipelines' layouts.
-            self.bindings = None;
-        }
-    }
-
+impl Smaa {
     /// Whether SMAA holds its scene-size targets.
     #[cfg(test)]
     pub(crate) fn holds_targets(&self) -> bool {
@@ -330,8 +340,18 @@ impl Smaa {
         encoder: &mut wgpu::CommandEncoder,
         input: &wgpu::TextureView,
         output: &wgpu::TextureView,
+        quality: SmaaQuality,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
+        let pipelines = self
+            .pipelines
+            .get_or_insert_with(|| Pipelines::new(device, self.output_format, quality));
+        if pipelines.quality != quality {
+            [pipelines.detect, pipelines.calculate] =
+                Pipelines::preset_pipelines(device, &pipelines.shader, quality);
+            pipelines.quality = quality;
+            self.bindings = None;
+        }
         let size = self.size;
         let targets = self
             .targets
@@ -343,7 +363,7 @@ impl Smaa {
         {
             let detect = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SMAA detect input"),
-                layout: &self.detect.get_bind_group_layout(0),
+                layout: &pipelines.detect.get_bind_group_layout(0),
                 entries: &[
                     texture(0, input),
                     sampler(1, &self.linear),
@@ -355,7 +375,7 @@ impl Smaa {
             });
             let calculate = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SMAA calculate input"),
-                layout: &self.calculate.get_bind_group_layout(0),
+                layout: &pipelines.calculate.get_bind_group_layout(0),
                 entries: &[
                     sampler(1, &self.linear),
                     texture(2, &targets.edges),
@@ -370,7 +390,7 @@ impl Smaa {
             });
             let blend = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SMAA blend input"),
-                layout: &self.blend.get_bind_group_layout(0),
+                layout: &pipelines.blend.get_bind_group_layout(0),
                 entries: &[
                     texture(0, input),
                     sampler(1, &self.linear),
@@ -388,9 +408,9 @@ impl Smaa {
         }
         let [detect, calculate, blend] = &bindings.as_ref().unwrap().groups;
         for (pipeline, group, view) in [
-            (&self.detect, detect, &targets.edges),
-            (&self.calculate, calculate, &targets.weights),
-            (&self.blend, blend, output),
+            (&pipelines.detect, detect, &targets.edges),
+            (&pipelines.calculate, calculate, &targets.weights),
+            (&pipelines.blend, blend, output),
         ] {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SMAA 1x"),

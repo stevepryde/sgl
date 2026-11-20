@@ -111,20 +111,18 @@ pub(crate) struct Post {
 }
 
 impl Post {
-    /// Presentation to `format` for `sizes`; bloom's targets start full
-    /// size with `bloom_targets`, and SMAA's pipelines are built for
-    /// `smaa_quality`.
+    /// Presentation for `sizes`, with the selected bloom and SMAA pipelines prepared.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         output: Output,
         sizes: Sizes,
-        bloom_targets: bool,
-        smaa_quality: SmaaQuality,
+        bloom_enabled: bool,
+        smaa_quality: Option<SmaaQuality>,
     ) -> Result<Self, image::ImageError> {
         let inputs = inputs::Inputs::new(device);
         Ok(Self {
-            bloom: bloom::Bloom::new(device, &inputs, sizes.scene, bloom_targets),
+            bloom: bloom::Bloom::new(device, &inputs, sizes.scene, bloom_enabled),
             smaa: smaa::Smaa::new(
                 device,
                 queue,
@@ -365,9 +363,14 @@ impl Post {
             let antialiased = targets
                 .antialiased
                 .get_or_insert_with(|| target(device, "antialiased scene", scene_size, HDR));
-            self.smaa.set_quality(device, quality);
-            self.smaa
-                .encode(device, encoder, &targets.tone_mapped, antialiased, timing);
+            self.smaa.encode(
+                device,
+                encoder,
+                &targets.tone_mapped,
+                antialiased,
+                quality,
+                timing,
+            );
             &*antialiased
         } else {
             &targets.tone_mapped

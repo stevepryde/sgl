@@ -184,6 +184,16 @@ struct Metering<'a> {
 }
 
 pub(crate) struct Exposure {
+    metering: Option<Meter>,
+    exposure: wgpu::Texture,
+    exposure_view: wgpu::TextureView,
+    /// The fixed exposure last written, while exposure is fixed.
+    fixed: Option<f32>,
+    /// A switch to automatic exposure, retained until its frame finishes.
+    pending_reset: bool,
+}
+
+struct Meter {
     histogram_pipeline: wgpu::ComputePipeline,
     average_pipeline: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
@@ -193,23 +203,40 @@ pub(crate) struct Exposure {
     mask: wgpu::Texture,
     /// The mask `mask` holds.
     mask_weights: Option<MeteringMask>,
-    exposure: wgpu::Texture,
-    exposure_view: wgpu::TextureView,
-    /// The fixed exposure last written, while exposure is fixed.
-    fixed: Option<f32>,
-    /// A switch to automatic exposure, retained until its frame finishes.
-    pending_reset: bool,
     /// One bind group per frame view metered, until the views are replaced.
     groups: Vec<(wgpu::TextureView, wgpu::BindGroup)>,
 }
 
-impl Exposure {
-    pub fn new(device: &wgpu::Device) -> Self {
+fn texture(
+    device: &wgpu::Device,
+    label: &str,
+    size: u32,
+    format: wgpu::TextureFormat,
+    usage: wgpu::TextureUsages,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | usage,
+        view_formats: &[],
+    })
+}
+
+impl Meter {
+    fn new(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("auto exposure"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&EXPOSURE]).into()),
         });
-        let texture = |binding| wgpu::BindGroupLayoutEntry {
+        let sampled = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Texture {
@@ -234,8 +261,8 @@ impl Exposure {
             label: Some("auto exposure"),
             entries: &[
                 buffer(0, wgpu::BufferBindingType::Uniform),
-                texture(1),
-                texture(2),
+                sampled(1),
+                sampled(2),
                 buffer(3, storage),
                 buffer(4, storage),
                 wgpu::BindGroupLayoutEntry {
@@ -265,28 +292,6 @@ impl Exposure {
                 cache: None,
             })
         };
-        let texture = |label, size: u32, format, usage| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: size,
-                    height: size,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | usage,
-                view_formats: &[],
-            })
-        };
-        let exposure = texture(
-            "frame exposure",
-            1,
-            FORMAT,
-            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
-        );
         Self {
             histogram_pipeline: pipeline(COMPUTE_HISTOGRAM_ENTRY),
             average_pipeline: pipeline(COMPUTE_AVERAGE_ENTRY),
@@ -316,18 +321,34 @@ impl Exposure {
                 },
             ),
             mask: texture(
+                device,
                 "metering mask",
                 16,
                 wgpu::TextureFormat::R8Unorm,
                 wgpu::TextureUsages::empty(),
             ),
             mask_weights: None,
+            layout,
+            groups: Vec::new(),
+        }
+    }
+}
+
+impl Exposure {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let exposure = texture(
+            device,
+            "frame exposure",
+            1,
+            FORMAT,
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+        );
+        Self {
             exposure_view: exposure.create_view(&Default::default()),
             exposure,
             fixed: None,
             pending_reset: false,
-            layout,
-            groups: Vec::new(),
+            metering: None,
         }
     }
 
@@ -343,7 +364,9 @@ impl Exposure {
 
     /// Drops the bind groups of the frame views, which a resize replaces.
     pub fn forget_inputs(&mut self) {
-        self.groups.clear();
+        if let Some(meter) = &mut self.metering {
+            meter.groups.clear();
+        }
     }
 
     /// The exposure of `frame`, the complete HDR frame, as the frame's
@@ -400,20 +423,23 @@ impl Exposure {
         metering: Metering<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        self.upload(queue, metering);
-        let group = self.group(device, frame);
+        let meter = self.metering.get_or_insert_with(|| Meter::new(device));
+        meter.upload(queue, metering);
+        let group = meter.group(device, frame, &self.exposure_view);
         let size = frame.texture().size();
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("auto exposure"),
             timestamp_writes: timing.and_then(|t| t.compute_pass("exposure")),
         });
         pass.set_bind_group(0, &group, &[]);
-        pass.set_pipeline(&self.histogram_pipeline);
+        pass.set_pipeline(&meter.histogram_pipeline);
         pass.dispatch_workgroups(size.width.div_ceil(16), size.height.div_ceil(16), 1);
-        pass.set_pipeline(&self.average_pipeline);
+        pass.set_pipeline(&meter.average_pipeline);
         pass.dispatch_workgroups(1, 1, 1);
     }
+}
 
+impl Meter {
     /// Writes `metering`'s settings and, when it changed, its mask.
     fn upload(&mut self, queue: &wgpu::Queue, metering: Metering<'_>) {
         let automatic = metering.automatic;
@@ -441,7 +467,12 @@ impl Exposure {
     }
 
     /// The bind group metering `frame`, made once per view.
-    fn group(&mut self, device: &wgpu::Device, frame: &wgpu::TextureView) -> wgpu::BindGroup {
+    fn group(
+        &mut self,
+        device: &wgpu::Device,
+        frame: &wgpu::TextureView,
+        exposure: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
         if let Some((_, group)) = self.groups.iter().find(|(view, _)| view == frame) {
             return group.clone();
         }
@@ -472,7 +503,7 @@ impl Exposure {
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(&self.exposure_view),
+                    resource: wgpu::BindingResource::TextureView(exposure),
                 },
             ],
         });

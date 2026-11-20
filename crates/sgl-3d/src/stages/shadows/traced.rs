@@ -206,8 +206,8 @@ pub(crate) struct TracedShadows {
     paths: TracePaths,
     /// The trace's pipeline for each form a frame's rays took.
     trace: HashMap<((), Option<RayQueryForm>), wgpu::ComputePipeline>,
-    temporal: Pass,
-    upsample: Pass,
+    temporal: Option<Pass>,
+    upsample: Option<Pass>,
     /// AMD's shadow denoiser over the first slots.
     denoiser: denoise::Denoiser,
     params: wgpu::Buffer,
@@ -291,8 +291,8 @@ impl TracedShadows {
         Self {
             paths: TracePaths::new("ray-traced shadow rays", &TRACE, &entries, lit, scene),
             trace: HashMap::new(),
-            temporal: Pass::new(device, &TEMPORAL, TEMPORAL_ENTRY, &[]),
-            upsample: Pass::new(device, &UPSAMPLE, UPSAMPLE_ENTRY, &[]),
+            temporal: None,
+            upsample: None,
             denoiser: denoise::Denoiser::default(),
             params: uniform_buffer(
                 "ray-traced shadow parameters",
@@ -476,7 +476,10 @@ impl TracedShadows {
                 },
             );
         }
-        let temporal_group = self.temporal.groups[current].get(
+        let temporal = self
+            .temporal
+            .get_or_insert_with(|| Pass::new(device, &TEMPORAL, TEMPORAL_ENTRY, &[]));
+        let temporal_group = temporal.groups[current].get(
             ctx.device,
             "ray-traced shadow temporal",
             &[
@@ -502,7 +505,7 @@ impl TracedShadows {
                         .timing
                         .and_then(|t| t.compute_pass("ray-traced shadow temporal")),
                 });
-            pass.set_pipeline(&self.temporal.pipeline);
+            pass.set_pipeline(&temporal.pipeline);
             pass.set_bind_group(0, temporal_group, &[]);
             pass.dispatch_workgroups(
                 targets.reduced[0].div_ceil(8),
@@ -510,7 +513,10 @@ impl TracedShadows {
                 1,
             );
         }
-        let upsample_group = self.upsample.groups[current].get(
+        let upsample = self
+            .upsample
+            .get_or_insert_with(|| Pass::new(device, &UPSAMPLE, UPSAMPLE_ENTRY, &[]));
+        let upsample_group = upsample.groups[current].get(
             ctx.device,
             "ray-traced shadow upsample",
             &[
@@ -532,7 +538,7 @@ impl TracedShadows {
                         .timing
                         .and_then(|t| t.compute_pass("ray-traced shadow upsample")),
                 });
-            pass.set_pipeline(&self.upsample.pipeline);
+            pass.set_pipeline(&upsample.pipeline);
             pass.set_bind_group(0, upsample_group, &[]);
             pass.dispatch_workgroups(targets.full[0].div_ceil(8), targets.full[1].div_ceil(8), 1);
         }

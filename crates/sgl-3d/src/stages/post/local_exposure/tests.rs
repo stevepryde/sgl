@@ -4,7 +4,7 @@
 //! monotone on grey. Frames are 256 x 128, so the grid's cells are 4 x 4
 //! texels.
 use super::super::tests::{exposure_texture, look};
-use super::super::{HDR, Output, Post, Presentation, Sizes, SmaaQuality, target};
+use super::super::{HDR, Output, Post, Presentation, Sizes, target};
 use crate::LocalExposure;
 use crate::test_support::{half, hdr_texture, read};
 
@@ -25,15 +25,7 @@ fn post_of(device: &wgpu::Device, queue: &wgpu::Queue, size: [u32; 2]) -> Post {
         scene: size,
         output: size,
     };
-    Post::new(
-        device,
-        queue,
-        Output::texture(HDR),
-        sizes,
-        false,
-        SmaaQuality::Medium,
-    )
-    .unwrap()
+    Post::new(device, queue, Output::texture(HDR), sizes, false, None).unwrap()
 }
 
 /// A grey frame of `SIZE` whose texel at x, y has the linear value `value(x, y)`.

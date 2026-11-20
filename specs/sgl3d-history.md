@@ -577,8 +577,8 @@ pixel's motion hold is set to 12.
   armed and the mask hold cleared, over the whole view; `get_jitter_offset` returns zero
   for that frame. Accumulation recovers as after T-1.
 - **Raised by.** Creation of SGL3D's post-effect context (T-6), always together with a
-  T-4 reset; SGL3D's flags never change and it creates both mask-count variants in
-  advance.
+  T-4 reset. SGL3D's flags stay constant. The first frame that binds a different
+  mask count creates the matching resolve and continues the existing history.
 - **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** DiligentFX's placeholder (DFX-2), modified to load the colour as the
   resolve does and to start confidence at 0.5 (DFX-47).

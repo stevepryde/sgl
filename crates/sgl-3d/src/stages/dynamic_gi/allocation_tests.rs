@@ -8,9 +8,7 @@
 use super::DynamicGi;
 use super::buffers::{Allocation, Convergence, STRIDES, VolumeUniform, budget, dispatch};
 use super::frame::{frustum, rotation};
-use super::pipelines::ALLOCATE;
-use crate::renderer::test_frame::TestRenderer;
-use crate::settings::{DynamicGiQuality, Settings};
+use super::pipelines::{ALLOCATE, Pipelines};
 use crate::shading::dynamic_gi as layout;
 use crate::{DynamicGiVolume, test_support};
 use glam::{Mat4, Vec3};
@@ -46,12 +44,9 @@ fn allocate(
     frames: u32,
 ) -> Option<Vec<Frame>> {
     let (device, queue) = test_support::device()?;
-    let settings = Settings {
-        dynamic_gi: DynamicGiQuality::High,
-        ..Settings::default()
-    };
-    let renderer = TestRenderer::for_test(&device, &queue, [16, 16], &settings);
-    let stage: &DynamicGi = renderer.test_dynamic_gi();
+    let stage = DynamicGi::new(&device);
+    let layouts = crate::view::bindings::Layouts::new(&device);
+    let pipelines = Pipelines::new(&device, &stage.layouts, &layouts.lit, &layouts.scene);
     let count = placement.probes.iter().product::<u32>();
     let storage = |label, contents: &[u8]| {
         crate::scene::buffer(
@@ -135,11 +130,11 @@ fn allocate(
             {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.set_bind_group(0, &group, &[]);
-                pass.set_pipeline(&stage.pipelines.rank);
+                pass.set_pipeline(&pipelines.rank);
                 pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
-                pass.set_pipeline(&stage.pipelines.threshold);
+                pass.set_pipeline(&pipelines.threshold);
                 pass.dispatch_workgroups(1, 1, 1);
-                pass.set_pipeline(&stage.pipelines.allocate);
+                pass.set_pipeline(&pipelines.allocate);
                 let [x, y] = dispatch(count);
                 pass.dispatch_workgroups(x, y, 1);
             }

@@ -231,6 +231,10 @@ fn cube_array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
 }
 
 impl UploadedProbes {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.placements.is_empty()
+    }
+
     pub(crate) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

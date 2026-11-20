@@ -5,7 +5,7 @@
 use super::Renderer;
 use super::effective;
 use super::shared::Shared;
-use crate::settings::{Antialiasing, Settings};
+use crate::settings::{Antialiasing, RenderPreset, Settings};
 use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
     antialiasing, cull::Cull, exposure::Exposure, fog::VolumetricFog, motion_blur::MotionBlur,
@@ -90,8 +90,8 @@ impl std::error::Error for ViewError {
 pub struct View {
     pub(crate) output_encodes_srgb: bool,
     pub(crate) sizes: Sizes,
-    /// Whether the post stage's bloom targets were made full size.
-    pub(crate) bloom_targets: bool,
+    /// A change of preset restarts history even if the pixel sizes agree.
+    preset: RenderPreset,
     pub(crate) targets: SharedTargets,
     pub(crate) views: Box<FrameViews>,
     pub(crate) bindings: FrameBindings,
@@ -270,23 +270,22 @@ impl View {
             reflections: Box::new(Reflections::new(device, queue, render, &first_frame)),
             transparent: Transparent::new(
                 device,
-                &bindings.unlit,
                 &bindings.blended,
-                &targets,
                 exposure.view(),
                 bindings.lit.tier,
             ),
             exposure,
             antialiasing,
-            motion_blur: MotionBlur::new(device),
+            motion_blur: MotionBlur::new(device, first_frame.motion_blur.is_some()),
             post: Box::new(
                 Post::new(
                     device,
                     queue,
                     output,
                     sizes,
-                    sizing.bloom_targets,
-                    settings.smaa_quality,
+                    first_frame.bloom,
+                    (first_frame.antialiasing == Antialiasing::Smaa && first_frame.smaa)
+                        .then_some(settings.smaa_quality),
                 )
                 .map_err(ViewError::LookupTextures)?,
             ),
@@ -294,7 +293,7 @@ impl View {
             sky: Sky::default(),
             statistics: StatisticsReadback::default(),
             sizes,
-            bloom_targets: sizing.bloom_targets,
+            preset: settings.preset,
             targets,
             views,
             bindings,
@@ -346,7 +345,7 @@ impl View {
             scene,
             output: output_size,
         };
-        if self.sizes == sizes && self.bloom_targets == sizing.bloom_targets {
+        if self.sizes == sizes && self.preset == settings.preset {
             return;
         }
         self.targets = SharedTargets::new(device, render, self.targets.surface.is_some());
@@ -354,11 +353,10 @@ impl View {
         self.motion_blur.forget_inputs();
         self.antialiasing.forget_inputs();
         self.post.resize(device, sizes, sizing.bloom_targets);
-        self.transparent
-            .resize(device, &self.targets, self.exposure.view());
+        self.transparent.resize(device, &self.targets);
         self.reflections.resize(device, render);
         self.sizes = sizes;
-        self.bloom_targets = sizing.bloom_targets;
+        self.preset = settings.preset;
         self.pending_reset = true;
         self.targets_generation = self.targets_generation.wrapping_add(1);
     }

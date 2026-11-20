@@ -689,6 +689,15 @@ after every face is submitted, which natively it completes by waiting on the
 device and in a browser by awaiting WebGPU's map; its blocking form is a
 native wrapper.
 
+Dynamic GI creates its update pipelines when the primary view first has probe
+work. Deformation, GPU draw-list culling and local shadow atlas clears and
+copies prepare their pipelines when they first encode the respective work.
+Per-view effects can prepare a pipeline during view creation when the initial
+settings already select it. Effects that depend on scene content decide at
+their first applicable frame. TAA prepares only the resolve for the temporal masks
+its frame actually binds. A stage retains its pipelines across periods of
+inactivity and render-target resizes, subject to its specialization keys.
+
 A stage is one module with one struct. It owns its private pipelines, bind
 groups, targets and history, and offers the renderer the same few operations:
 create, resize, prepare, encode and reset history, encode in named parts
