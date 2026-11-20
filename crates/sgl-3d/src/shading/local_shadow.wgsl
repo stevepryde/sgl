@@ -33,18 +33,24 @@
 // distances are averaged as fractions of their taps' own, since its faces
 // measure depth along different axes.
 //
-// Limits, shared with those engines. Projected from the light's centre, a
+// The soft filter's taps follow the receiver's plane (shadow_sampling.wgsl's
+// receiver plane depth bias). A spot's face is a perspective map, whose
+// depth is affine in its UV across a plane, so the slope at the receiver
+// is the plane's across the face (local_shadow_spot_plane_slope). A cube's
+// taps are compared each at the plane's point on its own ray from the
+// light (local_shadow_plane_depth), which is the same bias without a slope
+// per face. An unoccluded 45 degree slope 4 m below a spot or point light
+// of radius 0.7 to 1 m reads 1 (a spot 0.997 to 0.91 and a point light as
+// low as 0.992 at the receiver's one depth, #841).
+//
+// Limit, shared with those engines. Projected from the light's centre, a
 // caster b metres from a light of radius R can hide part of it from a
 // receiver D metres away anywhere within R (D - b) / b of the receiver,
 // which is R only at b = D / 2: a caster nearer the light than half way
 // casts a penumbra wider than the search reaches, whose lit side is cut
 // off about R from its hard edge (a 0.2 m spot 4 m above the floor and an
 // edge 1 m below it: lit from 0.25 m out, where the penumbra reaches
-// 0.6 m). The taps are compared at the receiver's one biased depth
-// (shadow_sampling.wgsl), so a surface tilted toward a large light finds
-// itself a blocker: an unoccluded 45 degree slope 4 m below a spot reads 1
-// up to a radius of about 0.7 m, then 0.98 at 0.8 m and 0.92 at 1 m (1
-// with soft shadows off).
+// 0.6 m).
 
 // Bevy's SpotLight::DEFAULT_SHADOW_DEPTH_BIAS, in metres toward the light.
 const SPOT_SHADOW_DEPTH_BIAS:f32=0.02;
@@ -119,43 +125,69 @@ fn local_shadow_cube_lookup(shadow:LocalShadow,range:f32,frag_ls:vec3<f32>)->Loc
  let face_uv=vec2(uv_slice.x,1.-uv_slice.y);
  return LocalShadowLookup(corner+face_uv*shadow.size,local_shadow_depth(shadow,range,major_axis_magnitude),local_shadow_bounds(shadow,corner));
 }
-// The soft filter on a spot's face for a light of `light_radius` metres:
-// the blockers within the light's radius at the receiver, the engines'
-// search region (the header's limits), and Godot's penumbra, the radius
-// times (receiver - blocker) / blocker.
-fn local_shadow_spot_soft(shadow:LocalShadow,range:f32,lookup:LocalShadowLookup,pixel:vec2<f32>,light_radius:f32)->f32 {
+// The depth the plane of a receiver at `clip` on a spot's face, with
+// `normal`, gains per atlas UV (receiver_plane_depth_slope).
+fn local_shadow_spot_plane_slope(shadow:LocalShadow,clip:vec4<f32>,normal:vec3<f32>)->vec2<f32> {
+ let across=receiver_plane_directions(normal);
+ let ndc=clip.xyz/clip.w;
+ let first=shadow.clip_from_world*vec4(across[0],0.);
+ let second=shadow.clip_from_world*vec4(across[1],0.);
+ // The face's atlas UV and depth per unit of NDC, as its lookup takes them.
+ let scale=vec3(vec2(.5,-.5)*shadow.size,1.);
+ // NDC's derivative along each direction, times clip.w, which both share.
+ return receiver_plane_depth_slope(cross((first.xyz-ndc*first.w)*scale,(second.xyz-ndc*second.w)*scale));
+}
+// The soft filter on a spot's face for a light of `light_radius` metres,
+// along the receiver's plane (`slope`): the blockers within the light's
+// radius at the receiver, the engines' search region (the header's limit),
+// and Godot's penumbra, the radius times (receiver - blocker) / blocker.
+fn local_shadow_spot_soft(shadow:LocalShadow,range:f32,lookup:LocalShadowLookup,slope:vec2<f32>,pixel:vec2<f32>,light_radius:f32)->f32 {
  let receiver=local_shadow_distance(shadow,range,lookup.depth);
  // Atlas UV per metre at the receiver.
  let uv_per_metre=1./(shadow.texel_scale*receiver*vec2<f32>(textureDimensions(local_shadow_atlas)));
- let blockers=search_shadow_blockers(local_shadow_atlas,lookup.uv,lookup.depth,0,lookup.bounds,pixel,light_radius*uv_per_metre);
+ let blockers=search_shadow_blockers(local_shadow_atlas,lookup.uv,lookup.depth,slope,0,lookup.bounds,pixel,light_radius*uv_per_metre);
  var penumbra=vec2(0.);
  if blockers.y>0. {
   let blocker=local_shadow_distance(shadow,range,blockers.x);
   penumbra=light_radius*(receiver-blocker)/blocker*uv_per_metre;
  }
- return sample_shadow_map_soft(local_shadow_atlas,shadow_sampler,lookup.uv,lookup.depth,0,lookup.bounds,pixel,SPOT_SHADOW_TEXEL_SIZE,penumbra);
+ return sample_shadow_map_soft(local_shadow_atlas,shadow_sampler,lookup.uv,lookup.depth,slope,0,lookup.bounds,pixel,SPOT_SHADOW_TEXEL_SIZE,penumbra);
+}
+// The depth of the receiver's plane on the ray from a cube's light through
+// a point `distance` metres along its face's axis, where the plane lies
+// `nearer` the light there, as a share of the receiver's distance (below
+// 0, farther): the ray meets it 1 / (1 + nearer) of the way to the point,
+// or no farther than the light reaches, where the map holds nothing beyond.
+fn local_shadow_plane_depth(shadow:LocalShadow,range:f32,distance:f32,nearer:f32)->f32 {
+ return local_shadow_depth(shadow,range,distance/max(1.+nearer,distance/range));
 }
 // The soft filter of a cube for a light of `light_radius` metres, at the
-// point `frag_ls` from it that `lookup` looks up: the spiral turned in the
-// plane across the direction to the light (Godot's basis), each tap looked
-// up in its own face at its own depth. Blockers within the light's radius
-// at the receiver give Godot's penumbra; within the fixed filter's radius,
-// or with none, it is the fixed filter.
-fn local_shadow_cube_soft(shadow:LocalShadow,range:f32,frag_ls:vec3<f32>,lookup:LocalShadowLookup,pixel:vec2<f32>,light_radius:f32)->f32 {
+// point `frag_ls` from it that `lookup` looks up, on a receiver with
+// `normal`: the spiral turned in the plane across the direction to the
+// light (Godot's basis), each tap looked up in its own face and compared
+// at the depth of the receiver's plane on its ray. Blockers within the
+// light's radius at the receiver give Godot's penumbra; within the fixed
+// filter's radius, or with none, it is the fixed filter.
+fn local_shadow_cube_soft(shadow:LocalShadow,range:f32,frag_ls:vec3<f32>,normal:vec3<f32>,lookup:LocalShadowLookup,pixel:vec2<f32>,light_radius:f32)->f32 {
  let direction=normalize(frag_ls);
  let v0=select(vec3(0.,1.,0.),vec3(0.,0.,1.),abs(direction.z)<.999);
  let tangent=normalize(cross(v0,direction));
  let bitangent=cross(tangent,direction);
  let rotation=random_rotation_matrix(pixel,true);
+ // The share of the receiver's distance by which its plane nears the light
+ // per metre across the direction to it (receiver_plane_depth_slope, in
+ // the taps' frame: the two directions across, then toward the light).
+ let slope=receiver_plane_depth_slope(vec3(dot(normal,tangent),dot(normal,bitangent),-dot(normal,direction)))/length(frag_ls);
  // Each blocker's distance from the light over its tap's, along the tap's
  // face's axis, and how many.
  var fraction=vec2(0.);
  for(var tap=0u;tap<SOFT_SHADOW_TAPS;tap++) {
   let disc=(rotation*spiral_offset(tap))*light_radius;
   let tap_lookup=local_shadow_cube_lookup(shadow,range,frag_ls+tangent*disc.x+bitangent*disc.y);
-  let blocker=shadow_blocker_texel(local_shadow_atlas,tap_lookup.uv,tap_lookup.depth,0,tap_lookup.bounds);
+  let across=local_shadow_distance(shadow,range,tap_lookup.depth);
+  let blocker=shadow_blocker_texel(local_shadow_atlas,tap_lookup.uv,local_shadow_plane_depth(shadow,range,across,dot(slope,disc)),0,tap_lookup.bounds);
   if blocker.y>0. {
-   fraction+=vec2(local_shadow_distance(shadow,range,blocker.x)/local_shadow_distance(shadow,range,tap_lookup.depth),1.);
+   fraction+=vec2(local_shadow_distance(shadow,range,blocker.x)/across,1.);
   }
  }
  // The radii in metres at the receiver.
@@ -174,7 +206,8 @@ fn local_shadow_cube_soft(shadow:LocalShadow,range:f32,frag_ls:vec3<f32>,lookup:
  for(var tap=0u;tap<SOFT_SHADOW_TAPS;tap++) {
   let disc=(rotation*spiral_offset(tap))*radius;
   let tap_lookup=local_shadow_cube_lookup(shadow,range,frag_ls+tangent*disc.x+bitangent*disc.y);
-  sum+=sample_shadow_map_hardware(local_shadow_atlas,shadow_sampler,tap_lookup.uv,tap_lookup.depth,0,tap_lookup.bounds);
+  let across=local_shadow_distance(shadow,range,tap_lookup.depth);
+  sum+=sample_shadow_map_hardware(local_shadow_atlas,shadow_sampler,tap_lookup.uv,local_shadow_plane_depth(shadow,range,across,dot(slope,disc)),0,tap_lookup.bounds);
  }
  return sum/f32(SOFT_SHADOW_TAPS);
 }
@@ -210,7 +243,7 @@ fn local_shadow_visibility(index:u32,light_position:vec3<f32>,light_radius:f32,r
   }
   lookup=local_shadow_cube_lookup(shadow,range,frag_ls);
   if soft {
-   return local_shadow_cube_soft(shadow,range,frag_ls,lookup,pixel,light_radius);
+   return local_shadow_cube_soft(shadow,range,frag_ls,normal,lookup,pixel,light_radius);
   }
  } else {
   // The spot face's w is the distance along the spot's direction.
@@ -225,7 +258,7 @@ fn local_shadow_visibility(index:u32,light_position:vec3<f32>,light_radius:f32,r
   let corner=local_shadow_corner(shadow,0u);
   lookup=LocalShadowLookup(corner+face_uv*shadow.size,ndc.z,local_shadow_bounds(shadow,corner));
   if soft {
-   return local_shadow_spot_soft(shadow,range,lookup,pixel,light_radius);
+   return local_shadow_spot_soft(shadow,range,lookup,local_shadow_spot_plane_slope(shadow,clip,normal),pixel,light_radius);
   }
  }
  return sample_shadow_map(local_shadow_atlas,shadow_sampler,lookup.uv,lookup.depth,0,lookup.bounds,pixel,SPOT_SHADOW_TEXEL_SIZE,shadow_filtering);

@@ -1499,6 +1499,16 @@ fn sun_frame(eye: Vec3, angular_diameter: f32) -> FrameInput {
 /// spiral through its rotations, the cascade the point takes, the frame's
 /// frame count, and the first cascade's far bound.
 fn camera_sun(fixture: &mut Fixture, input: &FrameInput, points: &[Vec3]) -> Vec<[f32; 4]> {
+    camera_sun_on(fixture, input, points, Vec3::Y)
+}
+
+/// `camera_sun` at `points` on a surface whose normal is `normal`.
+fn camera_sun_on(
+    fixture: &mut Fixture,
+    input: &FrameInput,
+    points: &[Vec3],
+    normal: Vec3,
+) -> Vec<[f32; 4]> {
     let (device, queue) = (&fixture.device, &fixture.queue);
     let prepared = fixture.renderer.prepare_test_frame(
         device,
@@ -1521,6 +1531,7 @@ fn camera_sun(fixture: &mut Fixture, input: &FrameInput, points: &[Vec3]) -> Vec
         .iter()
         .map(|point| {
             let point = format!("vec3({:?},{:?},{:?})", point.x, point.y, point.z);
+            let normal = format!("vec3({:?},{:?},{:?})", normal.x, normal.y, normal.z);
             observe_shadow(
                 device,
                 queue,
@@ -1530,7 +1541,7 @@ fn camera_sun(fixture: &mut Fixture, input: &FrameInput, points: &[Vec3]) -> Vec
                     "var sum=0.;\n\
                      for(var y=0u;y<16u;y++) {{\n\
                       for(var x=0u;x<16u;x++) {{\n\
-                       sum+=directional_shadow_visibility(0u,{point},vec3(0.,1.,0.),vec2(f32(x),f32(y))+.5,SHADOW_RECEIVER_CAMERA);\n\
+                       sum+=directional_shadow_visibility(0u,{point},{normal},vec2(f32(x),f32(y))+.5,SHADOW_RECEIVER_CAMERA);\n\
                       }}\n\
                      }}\n\
                      output[0]=vec4(sum/256.,f32(get_cascade_index((view.view*vec4({point},1.)).z)),f32(frame.frame_count),frame.shadow_cascades[0].far_bound);"
@@ -1717,4 +1728,87 @@ fn a_thin_casters_contact_shadow_is_the_fixed_filters() {
             off[0]
         );
     }
+}
+
+/// A plane through `through` that rises 45° toward the horizontal direction
+/// `uphill`, 15 m from its centre to each side, facing up, and its normal.
+fn slope(through: Vec3, uphill: Vec3) -> (CpuMesh, Vec3) {
+    let up = (uphill + Vec3::Y).normalize();
+    let normal = (Vec3::Y - uphill).normalize();
+    let across = up.cross(normal);
+    let mut mesh = quad(Vec3::ZERO, 15.);
+    for vertex in &mut mesh.vertices {
+        let [x, y, _] = vertex.position;
+        vertex.position = (through + across * x + up * y).to_array();
+        vertex.normal = normal.to_array();
+    }
+    (mesh, normal)
+}
+
+// A surface tilted to a large sun does not shadow itself (#841). Plausible
+// defects: every tap of the blocker search or of the widened filter
+// compared at the receiver's one depth, so the slope's uphill texels count
+// as its blockers and its uphill taps fall beneath it; the plane's slope
+// taken along the wrong map axis, with the wrong sign, or scaled by the
+// wrong UV or depth per metre, which leaves one side of the slope above or
+// below the depth its taps are compared at. The oracle is geometric:
+// nothing lies between the sun and the slope, so every point of it sees
+// the whole disc. The sun shines straight down on a plane tilted 45°, at
+// two headings so that neither map axis hides an error, at the sizes #841
+// measured 0.997 to 0.84 at.
+#[test]
+fn a_slope_under_a_large_sun_does_not_shadow_itself() {
+    let centre = Vec3::new(0., SOFT_FLOOR, -SOFT_DEPTH);
+    for heading in [20f32, 250.] {
+        let uphill = Vec3::new(heading.to_radians().cos(), 0., heading.to_radians().sin());
+        let Some(device) = test_support::device() else {
+            return;
+        };
+        let mut fixture = Fixture::with_settings(device, SIZE, soft_settings(true));
+        let (mesh, normal) = slope(centre, uphill);
+        fixture.place(mesh, false);
+        let along = (uphill + Vec3::Y).normalize();
+        let points = [-0.2, 0., 0.2].map(|metres| centre + along * metres);
+        for diameter in [6., 7., 8., 9., 10.] {
+            let input = sun_frame(Vec3::ZERO, diameter);
+            let observed = camera_sun_on(&mut fixture, &input, &points, normal);
+            for (point, [visibility, cascade, ..]) in points.iter().zip(&observed) {
+                assert_eq!(*cascade, 0., "{point:?} lies in the first cascade");
+                assert!(
+                    *visibility > 0.9999,
+                    "a slope rising toward {heading}° under a {diameter}° sun, at {point:?}: visibility {visibility}"
+                );
+            }
+        }
+    }
+}
+
+// A caster's penumbra on a slope is the one the sun's disc casts there
+// (#841). Plausible defects: the slope's own texels averaged into the
+// blockers, which pulls their mean toward the receiver and narrows the
+// penumbra, and darkens its lit side; a plane followed too steeply or the
+// wrong way, which hides the caster from the search or the filter. The
+// oracle is similar triangles on the slope: under a sun of 10° straight
+// down, an edge h above the point x = 0 of a plane rising 45° toward +x
+// leaves the plane lit from x = h t / (1 + t) and dark from
+// x = -h t / (1 - t), t = tan 5°: 0.32 m and -0.38 m for h = 4 m. 0.15 m
+// either side is partly lit; 0.6 m either side, beyond the penumbra and
+// the fixed kernel, fully lit and fully dark.
+#[test]
+fn a_directional_penumbra_on_a_slope_is_the_discs() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::with_settings(device, SIZE, soft_settings(true));
+    let foot = Vec3::new(0., SOFT_FLOOR, -SOFT_DEPTH);
+    let (mesh, normal) = slope(foot, Vec3::X);
+    fixture.place(mesh, false);
+    fixture.place(
+        rectangle(Vec3::new(-15., SOFT_FLOOR + 4., -5.), 15., 30.),
+        false,
+    );
+    let points = [0.6, 0.15, -0.15, -0.6].map(|x| foot + Vec3::new(x, x, 0.));
+    let input = sun_frame(Vec3::ZERO, 10.);
+    let observed = camera_sun_on(&mut fixture, &input, &points, normal);
+    expect_zones(&observed, &[1., 0.5, 0.5, 0.], "an edge 4 m above a slope");
 }

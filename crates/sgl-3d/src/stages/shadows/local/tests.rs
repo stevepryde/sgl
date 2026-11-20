@@ -285,10 +285,16 @@ override other_side:bool=false;
     /// the light), as the camera sees it, averaged over a 16×16 block of
     /// pixels, which turns the spiral through its rotations.
     fn mean_visibility(&self, light: LightId, receivers: &[Vec3]) -> Vec<f32> {
+        self.mean_visibility_on(light, receivers, Vec3::ZERO)
+    }
+
+    /// `mean_visibility` at `receivers` on a surface whose normal is
+    /// `normal`, zero for one facing the light.
+    fn mean_visibility_on(&self, light: LightId, receivers: &[Vec3], normal: Vec3) -> Vec<f32> {
         const BLOCK: u32 = 16;
         let queries: Vec<_> = receivers
             .iter()
-            .flat_map(|&p| (0..BLOCK * BLOCK).map(move |i| (p, Vec3::ZERO, [i % BLOCK, i / BLOCK])))
+            .flat_map(|&p| (0..BLOCK * BLOCK).map(move |i| (p, normal, [i % BLOCK, i / BLOCK])))
             .collect();
         self.pixel_visibility(light, &queries, Seen::Camera, Side::Own)
             .chunks((BLOCK * BLOCK) as usize)
@@ -2258,5 +2264,107 @@ fn a_cube_shadow_does_not_depend_on_its_faces() {
             (centred - straddling).abs() < 0.15,
             "{offset} m across the edge: {centred} at a face's centre, {straddling} across a face's edge"
         );
+    }
+}
+
+// A surface tilted to a large point or spot light does not shadow itself
+// (#841). Plausible defects: every tap of the blocker search or of the
+// widened filter compared at the receiver's one depth, so the slope's
+// uphill texels count as its blockers and its uphill taps fall beneath it;
+// the plane's slope taken along the wrong axis of the face, with the wrong
+// sign, as if the face were orthographic, or, for a cube, its taps left in
+// the plane across the direction to the light. The oracle is geometric:
+// nothing lies between the light and the slope, so every point of it sees
+// the whole light. A plane tilted 45°, at a heading off the faces' axes,
+// passes 4 m below lights of the radii #841 measured a spot at 0.997 to
+// 0.91 at.
+#[test]
+fn a_slope_under_a_large_light_does_not_shadow_itself() {
+    let Some(mut harness) = soft_harness(true) else {
+        return;
+    };
+    let heading = 20f32.to_radians();
+    let uphill = Vec3::new(heading.cos(), 0., heading.sin());
+    let up = (uphill + Vec3::Y).normalize();
+    let normal = (Vec3::Y - uphill).normalize();
+    let slope = plane(Vec3::ZERO, up.cross(normal) * 6., up * 6.);
+    let (mut scene, _) = scene(&harness, vec![slope]);
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let lights: Vec<_> = [0.7, 0.8, 1.]
+        .into_iter()
+        .flat_map(|radius| {
+            let point = Light {
+                shape: LightShape::Point { radius },
+                ..point(Vec3::new(0., 4., 0.), 9.)
+            };
+            [
+                ("spot", radius, spot_above(radius)),
+                ("point", radius, point),
+            ]
+        })
+        .map(|(label, radius, light)| {
+            let light = scene.add_light(&device, &queue, light).unwrap();
+            (label, radius, light)
+        })
+        .collect();
+    harness.frame(&mut scene, &soft_input());
+    let receivers = [-0.3, 0., 0.3].map(|metres| up * metres);
+    for (label, radius, light) in lights {
+        let observed = harness.mean_visibility_on(light, &receivers, normal);
+        for (receiver, visibility) in receivers.iter().zip(observed) {
+            assert!(
+                visibility > 0.9999,
+                "a slope 4 m below a {label} light of radius {radius} m, at {receiver:?}: visibility {visibility}"
+            );
+        }
+    }
+}
+
+// A caster's penumbra on a slope is the one the light's size casts there
+// (#841). Plausible defects: the slope's own texels averaged into the
+// blockers, which narrows the penumbra and darkens its lit side; the
+// search or the filter alone following the plane; a plane followed too
+// steeply, which puts the slope's downhill texels above the depth its
+// taps are compared at. The oracle is similar triangles from the light's
+// rim: a light of radius 1 m 4 m above the point x = 0 of a plane rising
+// 45° toward +x, and an edge half way down to it over x < 0. The plane's
+// point at x is 4 - x below the light and the edge 2, so its penumbra is
+// (2 - x) / 2 wide there: lit from x = 2 / 3 and dark from x = -2. 0.3 m
+// either side is partly lit; 0.8 m uphill, wholly lit, as an unoccluded
+// slope is, and 2.4 m downhill, dark.
+#[test]
+fn a_local_penumbra_on_a_slope_is_the_lights() {
+    let Some(mut harness) = soft_harness(true) else {
+        return;
+    };
+    let up = (Vec3::X + Vec3::Y).normalize();
+    let normal = (Vec3::Y - Vec3::X).normalize();
+    let world = vec![
+        plane(Vec3::ZERO, up.cross(normal) * 6., up * 6.),
+        plane(Vec3::new(-6., 2., 0.), Vec3::X * 6., Vec3::Z * 6.),
+    ];
+    let (mut scene, _) = scene(&harness, world);
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let lights = [
+        ("spot", spot_above(1.)),
+        (
+            "point",
+            Light {
+                shape: LightShape::Point { radius: 1. },
+                ..point(Vec3::new(0., 4., 0.), 9.)
+            },
+        ),
+    ]
+    .map(|(label, light)| (label, scene.add_light(&device, &queue, light).unwrap()));
+    harness.frame(&mut scene, &soft_input());
+    let receivers = [0.8, 0.3, -0.3, -2.4].map(|x| Vec3::new(x, x, 0.));
+    for (label, light) in lights {
+        let observed = harness.mean_visibility_on(light, &receivers, normal);
+        let label = format!("a {label} light's edge over a slope: {observed:?}");
+        assert!(observed[0] > 0.9999, "{label}: 0.8 m uphill");
+        for partial in &observed[1..3] {
+            assert!((0.05..0.95).contains(partial), "{label}: 0.3 m either side");
+        }
+        assert!(observed[3] < 0.01, "{label}: 2.4 m downhill");
     }
 }

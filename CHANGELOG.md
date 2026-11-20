@@ -16,6 +16,7 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-3d` `Settings::contact_shadows`: a floor seen near edge-on and the frame's border no longer shadow themselves in bands; a caster only a few pixels wide casts a thinner contact shadow. No game-code changes are needed.
+- `sgl-3d` soft shadows (`Settings::soft_shadows`): a surface tilted to a large sun or a large point or spot light no longer shadows itself, and a caster's penumbra on a slope is no longer narrowed. No game-code changes are needed.
 
 ## 0.9.0 — 2026-11-20
 

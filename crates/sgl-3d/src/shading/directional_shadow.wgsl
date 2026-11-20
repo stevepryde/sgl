@@ -26,10 +26,12 @@
 // cascade therefore searches from its own near plane, so in a blend band
 // the two cascades search different footprints and, among several
 // casters, can find different blockers: the penumbra is the same in every
-// cascade for a given set of blockers. Limit: the soft filter's taps are
-// compared at the receiver's one biased depth (shadow_sampling.wgsl), so
-// an unoccluded 45 degree slope reads 1 up to a sun of about 6 degrees,
-// then 0.97 at 7, 0.93 at 8 and 0.84 at 10 (1 with soft shadows off).
+// cascade for a given set of blockers. Its taps follow the receiver's
+// plane (shadow_sampling.wgsl's receiver plane depth bias): a cascade is
+// orthographic, so the plane has one slope across its map
+// (directional_cascade_plane_slope), which an unoccluded 45 degree slope
+// under a sun of 6 to 10 degrees holds at 1 (0.997 to 0.84 at the
+// receiver's one depth, #841).
 //
 // The camera's fog takes Godot b130438's lookup instead
 // (directional_shadow_medium, from servers/rendering/renderer_rd/shaders/
@@ -113,25 +115,38 @@ fn directional_cascade_z_range(cascade_index:u32)->f32 {
  return inverseSqrt(dot(depth_per_metre,depth_per_metre));
 }
 
+// The depth the plane of a receiver with `surface_normal` gains per UV of
+// cascade `cascade_index`'s map (receiver_plane_depth_slope): the same
+// anywhere in it, as the map is orthographic.
+fn directional_cascade_plane_slope(cascade_index:u32,surface_normal:vec3<f32>)->vec2<f32> {
+ let clip_from_world=frame.shadow_cascades[cascade_index].clip_from_world;
+ let across=receiver_plane_directions(surface_normal);
+ // world_to_directional_light_local's UV and depth per unit of clip space.
+ let scale=vec3(.5,-.5,1.);
+ return receiver_plane_depth_slope(cross((clip_from_world*vec4(across[0],0.)).xyz*scale,(clip_from_world*vec4(across[1],0.)).xyz*scale));
+}
+
 // The soft filter in cascade `cascade_index` for a light of `disc_radius`
-// (Filament's directional estimate): the blockers within the disc radius
-// times the receiver's metres from the near plane, and the penumbra the
-// disc radius times the metres between receiver and blocker.
-fn sample_directional_soft(cascade_index:u32,light_local:vec3<f32>,frag_coord_xy:vec2<f32>,disc_radius:f32)->f32 {
+// (Filament's directional estimate), along the plane of a receiver with
+// `surface_normal`: the blockers within the disc radius times the
+// receiver's metres from the near plane, and the penumbra the disc radius
+// times the metres between receiver and blocker.
+fn sample_directional_soft(cascade_index:u32,light_local:vec3<f32>,surface_normal:vec3<f32>,frag_coord_xy:vec2<f32>,disc_radius:f32)->f32 {
  let cascade=frame.shadow_cascades[cascade_index];
+ let slope=directional_cascade_plane_slope(cascade_index,surface_normal);
  let z_range=directional_cascade_z_range(cascade_index);
  // The map's width and height in metres.
  let map_metres=cascade.texel_size*vec2<f32>(textureDimensions(directional_shadow_map));
  // Reversed Z: the near plane is at depth 1.
  let receiver=(1.-light_local.z)*z_range;
  let search=disc_radius*receiver/map_metres;
- let blockers=search_shadow_blockers(directional_shadow_map,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,frag_coord_xy,search);
+ let blockers=search_shadow_blockers(directional_shadow_map,light_local.xy,light_local.z,slope,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,frag_coord_xy,search);
  var penumbra=vec2(0.);
  if blockers.y>0. {
   let blocker=(1.-blockers.x)*z_range;
   penumbra=disc_radius*(receiver-blocker)/map_metres;
  }
- return sample_shadow_map_soft(directional_shadow_map,shadow_sampler,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,frag_coord_xy,cascade.texel_size,penumbra);
+ return sample_shadow_map_soft(directional_shadow_map,shadow_sampler,light_local.xy,light_local.z,slope,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,frag_coord_xy,cascade.texel_size,penumbra);
 }
 
 fn sample_directional_cascade(light_id:u32,cascade_index:u32,frag_position:vec3<f32>,surface_normal:vec3<f32>,frag_coord_xy:vec2<f32>,shadow_filtering:u32)->f32 {
@@ -141,7 +156,7 @@ fn sample_directional_cascade(light_id:u32,cascade_index:u32,frag_position:vec3<
  }
  let disc_radius=frame.directional_lights[light_id].disc_radius;
  if shadow_filtering==SHADOW_FILTER_SOFT && disc_radius>0. {
-  return sample_directional_soft(cascade_index,light_local.xyz,frag_coord_xy,disc_radius);
+  return sample_directional_soft(cascade_index,light_local.xyz,surface_normal,frag_coord_xy,disc_radius);
  }
  let texel_size=frame.shadow_cascades[cascade_index].texel_size;
  return sample_shadow_map(directional_shadow_map,shadow_sampler,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,frag_coord_xy,texel_size,shadow_filtering);

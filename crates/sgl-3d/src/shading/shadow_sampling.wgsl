@@ -35,14 +35,44 @@
 // comparison, where Godot samples linearly; and a search that finds no
 // blocker takes the fixed filter, as Bevy's does, not Godot's lit result:
 // eight sparse taps over a search region wider than a thin caster would
-// miss that caster and drop its contact shadow. Limit, shared with Godot
-// and Bevy: the search and the widened filter compare every tap at the
-// receiver's one biased depth, whose bias does not grow with the filter,
-// so a surface tilted toward a large light counts itself a blocker and
-// puts its uphill taps beneath itself: it darkens unoccluded, and beside a
-// real caster its penumbra narrows. The default sun and light radius are
-// far below where it shows; directional_shadow.wgsl and local_shadow.wgsl
-// give the sizes at which it starts.
+// miss that caster and drop its contact shadow.
+//
+// The soft filter follows the receiver's plane (#841): each tap of its
+// search and of its filter is compared at the depth the plane has where
+// the tap lands, not at the receiver's one depth, so a surface tilted to a
+// large light neither counts its own uphill texels as blockers nor puts
+// its uphill taps beneath itself. It is the receiver plane depth bias of
+// Isidoro, "Shadow Mapping: GPU-based Tips and Techniques" (GDC 2006), as
+// Filament 935afa5 applied it in PCSS (shaders/src/surface_shadowing.fs,
+// computeReceiverPlaneDepthBias and the z_bias of blockerSearchAndFilter
+// and filterPCSS, Apache-2.0, src/LICENSE-filament.txt; the last revision
+// with it, before EVSSM replaced that PCSS). Changes: the plane is the one
+// through the offset receiver with its geometry normal, where Filament
+// takes the shadow position's screen derivatives: the lookups take a
+// position and a normal, and run in light loops and compute programs,
+// where WGSL has no derivatives, and a cascade's or face's edge puts no
+// discontinuity in a normal; the solve is Filament's inverse transpose,
+// written as the cross product of the map-space derivatives along two
+// directions across the plane, as DiligentFX f26cfe5 writes it
+// (Shaders/Common/public/Shadows.fxh ComputeReceiverPlaneDepthBias,
+// Apache-2.0, src/LICENSE-diligent.txt), whose slope clamp
+// (fReceiverPlaneDepthBiasClamp, 10) is not taken: flat ground under a sun
+// lower than 5.7 degrees is steeper, and only the division is guarded; a
+// tap clamped to its map's rectangle is compared at the plane's depth
+// where it was read, where Filament biases by the unclamped offset; and
+// the depth compared is kept in the map's range, beyond whose far plane an
+// empty texel would count as a blocker. Each shadow kind gives its map's
+// slope, and a cube follows the plane along each tap's ray
+// (directional_shadow.wgsl, local_shadow.wgsl). The fixed filters compare
+// at the receiver's one depth, as Bevy's do. Limit: the plane is the
+// receiver's at the pixel, from its interpolated normal (not the triangle
+// drawn into the map), so a receiver that curves, ends or meets another
+// surface within the filter is followed only as far as it is flat: a
+// smooth-shaded low-poly mesh keeps a little self-shadow on one side and
+// misses an occluder very near it on the other, and a receiver can still
+// find itself a blocker uphill, or what lies behind its far edge downhill,
+// as the ground does a sunlit wall at the wall's foot under a widened
+// penumbra.
 //
 // The fog's tap (sample_shadow_map_fog) ports Godot b130438's
 // servers/rendering/renderer_rd/shaders/environment/volumetric_fog_process.glsl
@@ -200,8 +230,10 @@ fn calculate_uv_offset_scale_jimenez_fourteen(shadow_map:texture_depth_2d_array,
 }
 
 // The spiral, turned per pixel (and per frame where `temporal`), its unit
-// offsets `uv_offset_scale` long in UV.
-fn sample_shadow_map_jimenez_fourteen(shadow_map:texture_depth_2d_array,comparison:sampler_comparison,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,uv_offset_scale:vec2<f32>,temporal:bool)->f32 {
+// offsets `uv_offset_scale` long in UV, each tap compared at the depth the
+// receiver's plane has there (`slope`, receiver_plane_depth; zero compares
+// every tap at `depth`).
+fn sample_shadow_map_jimenez_fourteen(shadow_map:texture_depth_2d_array,comparison:sampler_comparison,light_local:vec2<f32>,depth:f32,slope:vec2<f32>,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,uv_offset_scale:vec2<f32>,temporal:bool)->f32 {
  let rotation_matrix=random_rotation_matrix(frag_coord_xy,temporal);
 
  // https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare (slides 120-135)
@@ -215,14 +247,14 @@ fn sample_shadow_map_jimenez_fourteen(shadow_map:texture_depth_2d_array,comparis
  let sample_offset7=(rotation_matrix*SPIRAL_OFFSET_7_)*uv_offset_scale;
 
  var sum=0.0;
- sum+=sample_shadow_map_hardware(shadow_map,comparison,light_local+sample_offset0,depth,array_index,bounds);
- sum+=sample_shadow_map_hardware(shadow_map,comparison,light_local+sample_offset1,depth,array_index,bounds);
- sum+=sample_shadow_map_hardware(shadow_map,comparison,light_local+sample_offset2,depth,array_index,bounds);
- sum+=sample_shadow_map_hardware(shadow_map,comparison,light_local+sample_offset3,depth,array_index,bounds);
- sum+=sample_shadow_map_hardware(shadow_map,comparison,light_local+sample_offset4,depth,array_index,bounds);
- sum+=sample_shadow_map_hardware(shadow_map,comparison,light_local+sample_offset5,depth,array_index,bounds);
- sum+=sample_shadow_map_hardware(shadow_map,comparison,light_local+sample_offset6,depth,array_index,bounds);
- sum+=sample_shadow_map_hardware(shadow_map,comparison,light_local+sample_offset7,depth,array_index,bounds);
+ sum+=sample_shadow_map_plane(shadow_map,comparison,light_local,sample_offset0,depth,slope,array_index,bounds);
+ sum+=sample_shadow_map_plane(shadow_map,comparison,light_local,sample_offset1,depth,slope,array_index,bounds);
+ sum+=sample_shadow_map_plane(shadow_map,comparison,light_local,sample_offset2,depth,slope,array_index,bounds);
+ sum+=sample_shadow_map_plane(shadow_map,comparison,light_local,sample_offset3,depth,slope,array_index,bounds);
+ sum+=sample_shadow_map_plane(shadow_map,comparison,light_local,sample_offset4,depth,slope,array_index,bounds);
+ sum+=sample_shadow_map_plane(shadow_map,comparison,light_local,sample_offset5,depth,slope,array_index,bounds);
+ sum+=sample_shadow_map_plane(shadow_map,comparison,light_local,sample_offset6,depth,slope,array_index,bounds);
+ sum+=sample_shadow_map_plane(shadow_map,comparison,light_local,sample_offset7,depth,slope,array_index,bounds);
  return sum/8.0;
 }
 
@@ -235,23 +267,58 @@ fn sample_shadow_map(shadow_map:texture_depth_2d_array,comparison:sampler_compar
   return sample_shadow_map_hardware(shadow_map,comparison,light_local,depth,array_index,bounds);
  }
  if shadow_filtering==SHADOW_FILTER_TEMPORAL || shadow_filtering==SHADOW_FILTER_SOFT {
-  return sample_shadow_map_jimenez_fourteen(shadow_map,comparison,light_local,depth,array_index,bounds,frag_coord_xy,calculate_uv_offset_scale_jimenez_fourteen(shadow_map,texel_size,1.0),true);
+  return sample_shadow_map_jimenez_fourteen(shadow_map,comparison,light_local,depth,vec2(0.),array_index,bounds,frag_coord_xy,calculate_uv_offset_scale_jimenez_fourteen(shadow_map,texel_size,1.0),true);
  }
  return sample_shadow_map_castano_thirteen(shadow_map,comparison,light_local,depth,array_index,bounds);
 }
 
 // The soft filter's rule (Bevy's floored blur size): the temporal spiral
 // at the larger of the fixed filter's radius and `penumbra`, the
-// penumbra's radius in UV. A penumbra of 0, for no blocker or a light of
-// no size, is the fixed temporal filter.
-fn sample_shadow_map_soft(shadow_map:texture_depth_2d_array,comparison:sampler_comparison,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,texel_size:f32,penumbra:vec2<f32>)->f32 {
+// penumbra's radius in UV, along the receiver's plane (`slope`). A
+// penumbra of 0, for no blocker, is the fixed temporal filter's radius.
+fn sample_shadow_map_soft(shadow_map:texture_depth_2d_array,comparison:sampler_comparison,light_local:vec2<f32>,depth:f32,slope:vec2<f32>,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,texel_size:f32,penumbra:vec2<f32>)->f32 {
  let fixed=calculate_uv_offset_scale_jimenez_fourteen(shadow_map,texel_size,1.0);
- return sample_shadow_map_jimenez_fourteen(shadow_map,comparison,light_local,depth,array_index,bounds,frag_coord_xy,soft_shadow_radius(fixed,penumbra),true);
+ return sample_shadow_map_jimenez_fourteen(shadow_map,comparison,light_local,depth,slope,array_index,bounds,frag_coord_xy,soft_shadow_radius(fixed,penumbra),true);
 }
 // The soft filter's radius: the penumbra's, never below the fixed
 // filter's `fixed`.
 fn soft_shadow_radius(fixed:vec2<f32>,penumbra:vec2<f32>)->vec2<f32> {
  return max(fixed,penumbra);
+}
+
+// Two directions across the plane of unit `normal`, neither a unit vector
+// nor zero: the normal crossed with the axis it lies least along, and with
+// that.
+fn receiver_plane_directions(normal:vec3<f32>)->mat2x3<f32> {
+ let along=abs(normal);
+ let axis=select(select(vec3(0.,0.,1.),vec3(0.,1.,0.),along.y<=along.z),vec3(1.,0.,0.),along.x<=along.y && along.x<=along.z);
+ let first=cross(normal,axis);
+ return mat2x3(first,cross(normal,first));
+}
+// The least of a plane's normal along a map's depth that
+// receiver_plane_depth_slope divides by: far below any plane a light sees
+// but edge on, it only keeps the quotient finite. The slope has no other
+// bound: receiver_plane_depth keeps what it gives in the map's range.
+const RECEIVER_PLANE_EDGE_ON:f32=1e-20;
+// Filament's computeReceiverPlaneDepthBias (Isidoro's chain rule): the
+// depth a plane gains per unit along each of a map's two axes, from its
+// normal `plane` in the map's space (the two axes, then depth), which is
+// the cross product of the map-space derivatives along two directions
+// across it.
+fn receiver_plane_depth_slope(plane:vec3<f32>)->vec2<f32> {
+ return -plane.xy/(select(-1.,1.,plane.z>=0.)*max(abs(plane.z),RECEIVER_PLANE_EDGE_ON));
+}
+// The depth the plane of a receiver at `depth` with `slope` has `offset`
+// from it in UV (Filament's z_bias), within the map's range: beyond its far
+// plane an empty texel would be nearer the light than the plane.
+fn receiver_plane_depth(depth:f32,slope:vec2<f32>,offset:vec2<f32>)->f32 {
+ return saturate(depth+dot(slope,offset));
+}
+// One hardware tap `offset` from `light_local`, clamped to `bounds`,
+// compared at the depth the receiver's plane has where it lands.
+fn sample_shadow_map_plane(shadow_map:texture_depth_2d_array,comparison:sampler_comparison,light_local:vec2<f32>,offset:vec2<f32>,depth:f32,slope:vec2<f32>,array_index:i32,bounds:vec4<f32>)->f32 {
+ let sample_uv=clamp(light_local+offset,bounds.xy,bounds.zw);
+ return textureSampleCompareLevel(shadow_map,comparison,sample_uv,array_index,receiver_plane_depth(depth,slope,sample_uv-light_local));
 }
 
 // The soft filter's blocker test at one tap: the depth of the texel nearest
@@ -267,20 +334,28 @@ fn shadow_blocker_texel(shadow_map:texture_depth_2d_array,light_local:vec2<f32>,
  return select(vec2(0.),vec2(blocker,1.),blocker>depth);
 }
 
+// The blocker test at the tap `offset` from `light_local` on a 2D map,
+// clamped to `bounds`, for the receiver's plane where it lands.
+fn shadow_plane_blocker(shadow_map:texture_depth_2d_array,light_local:vec2<f32>,offset:vec2<f32>,depth:f32,slope:vec2<f32>,array_index:i32,bounds:vec4<f32>)->vec2<f32> {
+ let uv=clamp(light_local+offset,bounds.xy,bounds.zw);
+ return shadow_blocker_texel(shadow_map,uv,receiver_plane_depth(depth,slope,uv-light_local),array_index,bounds);
+}
+
 // The soft filter's blocker search on one 2D map: the spiral turned as the
 // filter turns it, its unit offsets `search` long in UV. The mean depth of
-// the texels that block a receiver at `depth`, and how many do.
-fn search_shadow_blockers(shadow_map:texture_depth_2d_array,light_local:vec2<f32>,depth:f32,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,search:vec2<f32>)->vec2<f32> {
+// the texels that block the plane of a receiver at `depth` with `slope`,
+// and how many do.
+fn search_shadow_blockers(shadow_map:texture_depth_2d_array,light_local:vec2<f32>,depth:f32,slope:vec2<f32>,array_index:i32,bounds:vec4<f32>,frag_coord_xy:vec2<f32>,search:vec2<f32>)->vec2<f32> {
  let rotation=random_rotation_matrix(frag_coord_xy,true);
  // The SOFT_SHADOW_TAPS offsets, unrolled as the spiral filter's are.
- var sum=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_0_)*search,depth,array_index,bounds);
- sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_1_)*search,depth,array_index,bounds);
- sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_2_)*search,depth,array_index,bounds);
- sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_3_)*search,depth,array_index,bounds);
- sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_4_)*search,depth,array_index,bounds);
- sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_5_)*search,depth,array_index,bounds);
- sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_6_)*search,depth,array_index,bounds);
- sum+=shadow_blocker_texel(shadow_map,light_local+(rotation*SPIRAL_OFFSET_7_)*search,depth,array_index,bounds);
+ var sum=shadow_plane_blocker(shadow_map,light_local,(rotation*SPIRAL_OFFSET_0_)*search,depth,slope,array_index,bounds);
+ sum+=shadow_plane_blocker(shadow_map,light_local,(rotation*SPIRAL_OFFSET_1_)*search,depth,slope,array_index,bounds);
+ sum+=shadow_plane_blocker(shadow_map,light_local,(rotation*SPIRAL_OFFSET_2_)*search,depth,slope,array_index,bounds);
+ sum+=shadow_plane_blocker(shadow_map,light_local,(rotation*SPIRAL_OFFSET_3_)*search,depth,slope,array_index,bounds);
+ sum+=shadow_plane_blocker(shadow_map,light_local,(rotation*SPIRAL_OFFSET_4_)*search,depth,slope,array_index,bounds);
+ sum+=shadow_plane_blocker(shadow_map,light_local,(rotation*SPIRAL_OFFSET_5_)*search,depth,slope,array_index,bounds);
+ sum+=shadow_plane_blocker(shadow_map,light_local,(rotation*SPIRAL_OFFSET_6_)*search,depth,slope,array_index,bounds);
+ sum+=shadow_plane_blocker(shadow_map,light_local,(rotation*SPIRAL_OFFSET_7_)*search,depth,slope,array_index,bounds);
  return vec2(sum.x/max(sum.y,1.),sum.y);
 }
 

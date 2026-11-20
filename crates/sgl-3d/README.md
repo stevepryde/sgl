@@ -152,8 +152,10 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   surface and the sun, and the filter's radius is `angular_diameter`'s
   half-angle tangent times the metres between them, never below the fixed
   spiral's, so a shadow is sharp where its caster touches and softens with
-  height, the same in every cascade for the casters found. A sun of no
-  angular diameter keeps the
+  height, the same in every cascade for the casters found. Each of those
+  taps is compared at the depth the receiver's plane has there, so a slope
+  under a wide sun neither shadows itself nor narrows its penumbrae. A sun
+  of no angular diameter keeps the
   fixed spiral. At the
   Low shadow quality the camera's surfaces take one hardware 2×2 comparison
   instead, Godot's hard filter, with Godot's mobile map sizes. A probe
@@ -901,7 +903,10 @@ search, never narrower than the fixed spiral. A caster nearer the light
 than half way to the receiver casts a wider penumbra than that search
 reaches, so its lit side is cut off about the radius from the hard edge. A spot's taps lie on its face; a point light's lie across the
 direction to it, each in the cube face it falls in, so a shadow is the same
-across a face's edge. A rectangle's shadow, cast from its centre, keeps the
+across a face's edge. Either's taps are compared at the depth the
+receiver's plane has where they land, so a surface tilted to a large light
+does not shadow itself; a cube whose penumbra is within the fixed filter's
+radius keeps the fixed filter's one depth. A rectangle's shadow, cast from its centre, keeps the
 fixed spiral. Probe
 captures and world-space ray hits, which show static content, sample the
 static layers: a capture places the lights it shades and draws their layers

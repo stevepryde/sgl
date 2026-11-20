@@ -12,8 +12,13 @@ sheen.wgsl, and DFV_Charlie_Uniform (libs/ibl/src/CubemapIBL.cpp) with
 hammersley (libs/ibl/include/ibl/utilities.h) into scripts/sheen-dfg.ts, which
 writes src/scene/sheen_dfg.r16, the directional
 PCSS estimate (shaders/src/surface_shadowing.fs, physicalSearchRadius and
-penumbraWidth) into directional_shadow.wgsl's soft filter, and
-computeMicroShadowing (shaders/src/surface_lighting.fs) into occlusion.wgsl.
+penumbraWidth) into directional_shadow.wgsl's soft filter,
+computeMicroShadowing (shaders/src/surface_lighting.fs) into occlusion.wgsl,
+and, from revision 935afa5e23ff1fbd5a6bd0048c53da20bc9b1d83, the last before
+EVSSM replaced that PCSS, the receiver plane depth bias
+(shaders/src/surface_shadowing.fs, computeReceiverPlaneDepthBias and the z_bias
+of blockerSearchAndFilter and filterPCSS) into shadow_sampling.wgsl's soft
+filter.
 
 
                                  Apache License
