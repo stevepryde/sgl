@@ -15,11 +15,37 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.9.0 — 2026-11-20
+
+Move every SGL crate to `0.9.0` together and commit the updated `Cargo.lock`.
+Game code must change: `FrameInput::environment` is a `FrameEnvironment`,
+`Settings::fsr_sharpening` and `fsr_sharpness` become `sharpening` and
+`sharpness`, and `Scene::set_decal` loses its device argument; the first
+three entries give each migration. `Settings`, `FrameInput`, `Light` and
+`Fog` literals that name every field add the new fields below. The image
+changes without code changes where soft shadows and sharpening now apply at
+High, where a material has an occlusion map, and where dynamic GI occludes
+the sky's reflection. Regenerate the game's distribution notices. Existing
+baked assets and BC7 exports need no regeneration.
+
+- `sgl-3d` `FrameInput::environment` is now `FrameEnvironment` (`None`, `Map(id)`, `Sky(Sky)`), was `Option<EnvironmentId>`: write `FrameEnvironment::Map(id)` for `Some(id)` and `FrameEnvironment::None` for `None`. `Sky` is a new procedural sky lit by the frame's directional lights, whose `illuminance` and `color` are then their light above the air. It gives diffuse and specular environment light, scaled by `diffuse_environment.intensity` and `reflection_environment.intensity`, and lights the dynamic GI volume, the fog's ambient share and probe captures; lower `hemisphere_light` where it stood in for sky light.
+- `sgl-3d` `Settings::fsr_sharpening`/`fsr_sharpness` become `sharpening`
+  (`settings::Sharpening::Preset`, `Off`, `On`) and `sharpness`, and now
+  sharpen every antialiasing mode once, in post; TAA frames are sharpened on
+  High by default, and FSR1 (`Upscaling::On`) follows `sharpness` instead of
+  a fixed strength. Migrate `fsr_sharpening: true/false` to
+  `Sharpening::On/Off` and rename `fsr_sharpness`; set `Sharpening::Off` to
+  keep the previous TAA, SMAA and unantialiased image, and `sharpness: 0.9`
+  for the previous FSR1 strength. Saved settings with the old keys still load,
+  the keys dropped (unknown keys are ignored), as `Sharpening::Preset`:
+  convert them on load as above. Timing group `sharpening` is new; `spatial upscale` times EASU alone,
+  and an unsharpened EASU frame's final pass is timed under `tone map`.
+- `sgl-3d` `Scene::set_decal` no longer takes the device, as `set_light`:
+  `scene.set_decal(&queue, id, decal)`.
 - `sgl-3d` `Settings::contact_shadows` (new, `Off` by default; `Short`, `Medium`, `Long`): screen-space contact shadows for the directional light with cascades, at the cost of the opaque stage's two-pass form. New timing group `contact shadows`. Distribution notices gain Bend Studio's Apache-2.0 notice: regenerate the game's notices. No game-code changes are needed.
 - `sgl-3d` shading: a material's occlusion map now also shadows direct light (micro-shadowing), where it occluded ambient light only; materials without one are unchanged. No game-code changes are needed; lower `occlusion_strength` to weaken it, and look at occlusion-mapped materials under grazing light. Probe captures and other bakes taken before keep the earlier light and need no regeneration; recapture deliberately if the difference matters.
 - `sgl-3d` `Fog::start` (new, 0 by default): the frame's fog medium begins that many metres from the camera, leaving nearer surfaces unfogged. No game-code changes are needed.
 - `sgl-3d` `Sky::aerial_perspective` (new, default 1): under a procedural sky, distant opaque and blended surfaces, glow and mist take the air's haze through the fog volume. Set 0 for none. Frames without a sky are unchanged; no code changes are needed.
-- `sgl-3d` `FrameEnvironment::Sky` now gives diffuse and specular environment light, scaled by `diffuse_environment.intensity` and `reflection_environment.intensity`, and lights the dynamic GI volume, the fog's ambient share and probe captures. Lower `hemisphere_light` where it stood in for sky light. No code changes are needed.
 - `sgl-3d` adds `FrameInput::local_exposure` (`LocalExposure`, both
   contrasts 1 by default, which changes nothing); below 1 it draws large
   bright or dark regions toward middle grey before the tone map and keeps
@@ -28,10 +54,8 @@ docs and specs the entry links.
 - `sgl-3d` `View::geometry_stats_by_model` polls once and borrows one
   completed frame's per-model counts for multiple lookups. Existing
   `geometry_stats_for_model` calls need no changes.
-
 - `sgl-3d` `View` now creates volumetric fog and occlusion-culling pipelines
   on first use and keeps them for later frames. No game-code changes are needed.
-
 - `sgl-3d` `Settings::screen_space_indirect` (new, `Off`) and
   `FrameInput::screen_space_indirect_radius` (new, 5.0 m): opt-in diffuse
   bounce between nearby on-screen surfaces. Add both fields to exhaustive
@@ -48,24 +72,10 @@ docs and specs the entry links.
   `set_light` can now return `UnknownDecalImage` and `DeviceLimit`. A `Light` literal that
   names every field adds `cookie: None`; one built with
   `..Default::default()` needs no change.
-- `sgl-3d` `Scene::set_decal` no longer takes the device, as `set_light`:
-  `scene.set_decal(&queue, id, decal)`.
 - `sgl-3d` dynamic GI: where the volume lights a surface, the sky's share of
   its environment specular is now occluded by the sky the probes see, so
   shaded and enclosed surfaces stop reflecting the sky at full strength. No
   game-code changes are needed.
-- `sgl-3d` `FrameInput::environment` is now `FrameEnvironment` (`None`, `Map(id)`, `Sky(Sky)`), was `Option<EnvironmentId>`: write `FrameEnvironment::Map(id)` for `Some(id)` and `FrameEnvironment::None` for `None`. `Sky` is a new procedural sky lit by the frame's directional lights, whose `illuminance` and `color` are then their light above the air.
-- `sgl-3d` `Settings::fsr_sharpening`/`fsr_sharpness` become `sharpening`
-  (`settings::Sharpening::Preset`, `Off`, `On`) and `sharpness`, and now
-  sharpen every antialiasing mode once, in post; TAA frames are sharpened on
-  High by default, and FSR1 (`Upscaling::On`) follows `sharpness` instead of
-  a fixed strength. Migrate `fsr_sharpening: true/false` to
-  `Sharpening::On/Off` and rename `fsr_sharpness`; set `Sharpening::Off` to
-  keep the previous TAA, SMAA and unantialiased image, and `sharpness: 0.9`
-  for the previous FSR1 strength. Saved settings with the old keys still load,
-  the keys dropped (unknown keys are ignored), as `Sharpening::Preset`:
-  convert them on load as above. Timing group `sharpening` is new; `spatial upscale` times EASU alone,
-  and an unsharpened EASU frame's final pass is timed under `tone map`.
 - `sgl-3d` `Settings::soft_shadows` (new, `Preset`: on at High, off at Low): camera shadows from the maps widen with distance from the caster by `DirectionalLight::angular_diameter` and a point or spot light's `radius`, under TAA or FSR at `ShadowQuality::High`. No game-code changes are needed; set `SoftShadows::Off` for the fixed filter.
 
 ## 0.8.1 — 2026-11-19
