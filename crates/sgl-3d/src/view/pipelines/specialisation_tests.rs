@@ -1,5 +1,5 @@
 //! Which specialisations' pipelines the cache keeps as the scene's lit
-//! constants change.
+//! constants change, and which variants it keeps as features stop.
 use super::{GeometryPipelines, LayerConstants, LitConstants};
 use crate::Scene;
 use glam::Vec3;
@@ -109,5 +109,44 @@ fn pipelines_of_the_current_and_previous_specialisation_stay() {
         pipelines.specialised_pipelines(a),
         0,
         "C drops the pipelines of a specialisation before the previous"
+    );
+}
+
+// Plausible defect: the fused and lighting pipelines that read screen-space
+// indirect light, and their camera programs, outlive the feature, held
+// while it is off and compiled again with each later specialisation. The
+// oracle is the cache's pipelines of the specialisation and the default
+// programs' modules before the feature ran, against theirs after it ran and
+// stopped.
+#[test]
+fn screen_indirect_pipelines_go_with_the_feature() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let specialisation = (LayerConstants::ALL, LitConstants::default(), false);
+    let scene = Scene::new(&device, &queue);
+    let mut pipelines = pipelines(&device);
+    let mut specialise = |screen_indirect| {
+        pipelines.specialise(
+            &device,
+            LayerConstants::ALL,
+            &scene,
+            (false, false, screen_indirect),
+        );
+        (
+            pipelines.specialised_pipelines(specialisation),
+            pipelines.default_programs(),
+        )
+    };
+    let before = specialise(false);
+    let running = specialise(true);
+    assert!(
+        running.0 > before.0 && running.1 > before.1,
+        "the feature's pipelines and programs are prepared: {before:?} then {running:?}"
+    );
+    assert_eq!(
+        specialise(false),
+        before,
+        "the feature's pipelines and programs outlive it"
     );
 }

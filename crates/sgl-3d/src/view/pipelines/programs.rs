@@ -139,6 +139,18 @@ impl ProgramSet {
         })
     }
 
+    /// Drops its camera lighting programs that take screen-space indirect
+    /// light.
+    pub fn forget_screen_indirect(&mut self) {
+        for shadows in [
+            CameraShadows::Maps,
+            CameraShadows::ShadowMask,
+            CameraShadows::ContactMask,
+        ] {
+            self.camera[camera_slot(shadows, true)] = None;
+        }
+    }
+
     /// How many modules it holds.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn modules(&self) -> usize {

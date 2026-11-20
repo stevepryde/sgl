@@ -105,6 +105,19 @@ impl GeometryPass {
         ) == (alpha == Alpha::Blend)
     }
 
+    /// Whether the pass reads screen-space indirect light's kept result.
+    pub(super) fn takes_screen_indirect(self) -> bool {
+        matches!(
+            self,
+            Self::Lighting {
+                screen_indirect: true,
+                ..
+            } | Self::Fused {
+                screen_indirect: true
+            }
+        )
+    }
+
     /// Whether the pass draws a volume layer.
     pub fn volume(self) -> bool {
         matches!(

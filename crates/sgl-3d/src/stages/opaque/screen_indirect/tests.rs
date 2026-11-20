@@ -156,7 +156,7 @@ impl Pass {
             radius,
             pyramid_radius: radius,
         };
-        stage.begin(device, queue, Some(settings), SIZE, history);
+        stage.begin(device, queue, settings, SIZE, history);
         let mut view: crate::shading::uniforms::ViewUniform = bytemuck::Zeroable::zeroed();
         view.view = camera_view(rotated).to_cols_array_2d();
         view.projection = projection().to_cols_array_2d();
@@ -963,7 +963,7 @@ fn the_kept_result_survives_an_unfinished_frame() {
     assert!(pass.stage.begin(
         &pass.device,
         &pass.queue,
-        Some(settings_frame),
+        settings_frame,
         SIZE,
         &history(true, false),
     ));
@@ -983,12 +983,14 @@ fn the_kept_result_survives_an_unfinished_frame() {
 }
 
 // Defect: turning the setting off leaves what it made allocated: its own
-// targets, or, where ambient occlusion is off, the ambient occlusion stage
-// and its depth pyramid it created to read (about 11 MB at 1080p), though
-// it holds no targets while off. Oracle: the frames' stages, read after
-// each frame: with ambient occlusion off, a frame with the setting off
-// holds neither; with ambient occlusion on, its stage stays, as ambient
-// occlusion keeps it, and the bounce's targets go.
+// targets, the groups that bind its kept result (which keep that and the
+// last frame's G-buffer inputs alive), or, where ambient occlusion is off,
+// the ambient occlusion stage and its depth pyramid it created to read
+// (about 11 MB at 1080p), though it holds nothing while off. Oracle: the
+// frames' stages, read after each frame: with ambient occlusion off, a
+// frame with the setting off holds neither; with ambient occlusion on, its
+// stage stays, as ambient occlusion keeps it, and the bounce's targets and
+// groups go.
 #[test]
 fn turning_the_bounce_off_releases_what_it_made() {
     let Some((device, queue)) = crate::test_support::device() else {

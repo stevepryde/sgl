@@ -170,7 +170,8 @@ pub(crate) struct GeometryPipelines {
     /// mask, prepared once contact shadows run.
     contact_shadow: bool,
     /// Whether `get` returns the fused and lighting pipelines that take
-    /// screen-space indirect light, prepared once it has a kept result.
+    /// screen-space indirect light, prepared while a view runs it and
+    /// dropped with their programs in the first frame none does.
     screen_indirect: bool,
     /// Whether `GBuffer` writes anisotropy itself; otherwise
     /// `GBufferAnisotropy` does.
@@ -285,14 +286,16 @@ impl GeometryPipelines {
     /// with the lighting pipelines that take the shadow mask once
     /// `shadow_mask` (ray-traced shadows run), the lighting pipelines that
     /// take the contact mask once `contact_shadow` (contact shadows run),
-    /// and the fused and lighting
-    /// pipelines that take screen-space indirect light once
-    /// `screen_indirect` (it has a kept result). A shader no material names
-    /// any longer loses its programs and pipelines. The pipelines of the
-    /// current and the previous specialisation (layers, lit constants and
-    /// transmission) stay, each with the alpha modes, deformed variants,
-    /// receivers and shadow-mask pipelines it was prepared with; an older
-    /// one's are dropped. Without diagnostics every frame uses `ALL`.
+    /// whether they run follows the scene's lights, and the fused and
+    /// lighting pipelines that take screen-space indirect light while
+    /// `screen_indirect` (a view runs it), which follows only the settings
+    /// and the projection: without it they and their programs are dropped.
+    /// A shader no material names any longer loses its programs and
+    /// pipelines. The pipelines of the current and the previous
+    /// specialisation (layers, lit constants and transmission) stay, each
+    /// with the alpha modes, deformed variants, receivers and shadow-mask
+    /// pipelines it was prepared with; an older one's are dropped. Without
+    /// diagnostics every frame uses `ALL`.
     pub fn specialise(
         &mut self,
         device: &wgpu::Device,
@@ -309,7 +312,6 @@ impl GeometryPipelines {
         };
         let shadow_mask = self.shadow_mask || shadow_mask;
         let contact_shadow = self.contact_shadow || contact_shadow;
-        let screen_indirect = self.screen_indirect || screen_indirect;
         if (
             self.layers,
             self.lit_constants,
@@ -341,7 +343,14 @@ impl GeometryPipelines {
                     && key
                         .shader
                         .is_none_or(|id| shaders.iter().any(|(shader, _)| *shader == id))
+                    && (screen_indirect || !key.pass.takes_screen_indirect())
             });
+            if !screen_indirect {
+                self.programs.forget_screen_indirect();
+                self.shader_programs
+                    .values_mut()
+                    .for_each(ProgramSet::forget_screen_indirect);
+            }
             for &(id, _) in &shaders {
                 self.shader_programs
                     .entry(id)
@@ -523,6 +532,18 @@ impl GeometryPipelines {
         self.cache
             .get(&key)
             .unwrap_or_else(|| panic!("geometry pipeline {key:?} was not prepared"))
+    }
+
+    /// Whether it holds the pipelines that take screen-space indirect
+    /// light (`specialise`).
+    pub fn takes_screen_indirect(&self) -> bool {
+        self.screen_indirect
+    }
+
+    /// The shader modules of the default provider's programs it holds.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn default_programs(&self) -> usize {
+        self.programs.modules()
     }
 
     /// The pipelines it holds that take `specialisation`'s constants:

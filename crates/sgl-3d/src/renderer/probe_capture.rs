@@ -79,11 +79,14 @@ impl Renderer {
             .materials
             .set_anisotropy(device, settings.anisotropic_filtering.clamp());
         let scene = &*scene;
+        // A capture lights no surface with screen-space indirect light, and
+        // leaves the frames' pipelines for it as they are.
+        let screen_indirect = self.shared.pipelines.takes_screen_indirect();
         self.shared.pipelines.specialise(
             device,
             LayerConstants::new(&settings.diagnostics_in_effect().disable),
             scene,
-            (false, false, false),
+            (false, false, screen_indirect),
         );
         let prefilter = ProbePrefilter::new(device, face_size, capture_size(face_size));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

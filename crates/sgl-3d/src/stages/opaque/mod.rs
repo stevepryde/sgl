@@ -128,13 +128,19 @@ impl Opaque {
 
     /// Begins the frame's screen-space indirect light, before any pass
     /// lights a surface: whether the camera lighting takes the last
-    /// finished frame's (SI-1, SI-2).
+    /// finished frame's (SI-1, SI-2). In a frame that does not run it, the
+    /// stage and the groups that bind its kept result go, so it holds
+    /// nothing while off, and the next frame that runs it restarts.
     fn begin_screen_indirect(&mut self, ctx: &FrameContext<'_>) {
-        let settings = ctx.effective.screen_indirect;
-        if settings.is_none() && self.screen_indirect.is_none() {
+        let Some(settings) = ctx.effective.screen_indirect else {
+            self.screen_indirect = None;
+            self.screen_indirect_groups
+                .iter_mut()
+                .flatten()
+                .for_each(CachedGroup::forget);
             self.screen_indirect_read = false;
             return;
-        }
+        };
         let stage = self
             .screen_indirect
             .get_or_insert_with(|| screen_indirect::ScreenIndirect::new(ctx.device));
@@ -334,14 +340,20 @@ impl Opaque {
     }
 
     /// Whether it holds ambient occlusion's stage (its depth pyramid among
-    /// it) and screen-space indirect light's targets.
+    /// it), and screen-space indirect light's targets or a group that binds
+    /// its kept result.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn holds_occlusion_and_bounce(&self) -> (bool, bool) {
         (
             self.ambient_occlusion.is_some(),
             self.screen_indirect
                 .as_ref()
-                .is_some_and(screen_indirect::ScreenIndirect::holds_targets),
+                .is_some_and(screen_indirect::ScreenIndirect::holds_targets)
+                || self
+                    .screen_indirect_groups
+                    .iter()
+                    .flatten()
+                    .any(|group| group.cached().is_some()),
         )
     }
 
