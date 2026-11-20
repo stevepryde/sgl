@@ -15,6 +15,13 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.9.1 — 2026-11-20
+
+Move every SGL crate to `0.9.1` together and commit the updated `Cargo.lock`.
+No game code, data or settings changes are needed. Existing baked assets and
+BC7 exports need no regeneration. Refresh the game's distribution notices to
+carry the updated shadow-code attribution.
+
 - `sgl-3d` ray-traced shadows no longer flash dark squares around thin geometry as coverage changes. No game-code changes are needed.
 
 - `sgl-3d` `Settings::contact_shadows`: a floor seen near edge-on and the frame's border no longer shadow themselves in bands; a caster only a few pixels wide casts a thinner contact shadow. No game-code changes are needed.
