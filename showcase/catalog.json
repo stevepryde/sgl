@@ -132,7 +132,7 @@
         {
           "id": "gi",
           "name": "Diffuse GI",
-          "description": "Bounces diffuse light between surfaces, bringing light and colour into shaded areas.",
+          "description": "Replaces the flat sky fill with light bounced between surfaces, leaving the covered galleries in shade.",
           "off": "/renders/current/sponza/gi-off.png",
           "on": "/renders/current/sponza/on.png",
           "offReport": "/renders/current/sponza/gi-off.json",

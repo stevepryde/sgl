@@ -46,9 +46,10 @@ local reflection probes are generated content: capture them into the Bistro
 package first with the probe command in its
 [reflections section](../examples/sgl-3d/BISTRO.md#bistro-daylight-reflections),
 and again whenever the recipe changes. The Sponza package must include
-`sponza-gallery.json` and its local reflection probe; regenerate both with
-`bun scripts/prepare-sponza-gallery.ts` if the fixture still carries the old
-`specular_probe` key. Run from the repository root.
+`sponza-gallery.json` and its gallery reflection probes; regenerate them with
+`bun scripts/prepare-sponza-gallery.ts` if the recipe names fewer probes than
+[`sponza-gallery-probes.json`](../examples/sgl-3d/fixtures/sponza-gallery-probes.json)
+or still carries the old `specular_probe` key. Run from the repository root.
 
 ```sh
 bun scripts/showcase-capture.ts

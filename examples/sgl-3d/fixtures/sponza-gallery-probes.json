@@ -1,0 +1,392 @@
+{
+  "purpose": "Local specular probes for every covered gallery of the sunlit recipe. The dynamic GI volume's sky visibility occludes the sky's reflection where the probes see little sky (#826), so enclosed surfaces reflect these captures instead. Each proxy box follows its wing's walls, floor and ceiling (measured from the source geometry) for box-projected parallax; each influence reaches past its walls by its blend so it holds full weight to them and fades into the open court. Re-export all of them together, explicitly, after scene or lighting edits.",
+  "specular_probes": [
+    {
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 64,
+      "center": [
+        0,
+        2,
+        -4.35
+      ],
+      "influence": {
+        "min": [
+          -11.6,
+          -0.5,
+          -6.6
+        ],
+        "max": [
+          14.92,
+          5.35,
+          -2.1
+        ]
+      },
+      "blend": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "proxy": {
+        "min": [
+          -11.1,
+          0.0,
+          -6.09
+        ],
+        "max": [
+          14.42,
+          4.85,
+          -2.6
+        ]
+      },
+      "rgba16": "sponza-ground-south-probe.rgba16",
+      "exclude_materials": [],
+      "purpose": "Ground-floor south gallery, from the west wall to the east wall at x 14.42, between its outer wall and the court's column line; fades into the court across the arcade."
+    },
+    {
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 64,
+      "center": [
+        0,
+        2,
+        4.3
+      ],
+      "influence": {
+        "min": [
+          -11.76,
+          -0.5,
+          2.1
+        ],
+        "max": [
+          12.26,
+          5.35,
+          6.53
+        ]
+      },
+      "blend": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "proxy": {
+        "min": [
+          -11.26,
+          0.0,
+          2.6
+        ],
+        "max": [
+          11.76,
+          4.85,
+          6.03
+        ]
+      },
+      "rgba16": "sponza-ground-north-probe.rgba16",
+      "exclude_materials": [],
+      "purpose": "Ground-floor north gallery, wall to wall along x, between the court's column line and its outer wall; fades into the court across the arcade."
+    },
+    {
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 64,
+      "center": [
+        -11.5,
+        2,
+        0
+      ],
+      "influence": {
+        "min": [
+          -15.62,
+          -0.5,
+          -3.1
+        ],
+        "max": [
+          -7.25,
+          5.35,
+          3.1
+        ]
+      },
+      "blend": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "proxy": {
+        "min": [
+          -15.12,
+          0.0,
+          -2.6
+        ],
+        "max": [
+          -7.75,
+          4.85,
+          2.6
+        ]
+      },
+      "rgba16": "sponza-ground-west-probe.rgba16",
+      "exclude_materials": [],
+      "purpose": "Ground-floor west bay and nave to the lion-head wall, between the side galleries; fades into the court at its column line."
+    },
+    {
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 64,
+      "center": [
+        9.6,
+        2,
+        0
+      ],
+      "influence": {
+        "min": [
+          7.25,
+          -0.5,
+          -3.1
+        ],
+        "max": [
+          12.5,
+          5.35,
+          3.1
+        ]
+      },
+      "blend": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "proxy": {
+        "min": [
+          7.75,
+          0.0,
+          -2.6
+        ],
+        "max": [
+          19.5,
+          4.85,
+          2.6
+        ]
+      },
+      "rgba16": "sponza-ground-east-probe.rgba16",
+      "exclude_materials": [],
+      "purpose": "Ground-floor east bay, between the side galleries; its proxy runs on to the back door, and it hands over to the back gallery's probe at x 11.5 to 12.5."
+    },
+    {
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 64,
+      "center": [
+        0,
+        7.4,
+        -4.5
+      ],
+      "influence": {
+        "min": [
+          -11.64,
+          4.92,
+          -6.59
+        ],
+        "max": [
+          11.85,
+          10.9,
+          -2.4
+        ]
+      },
+      "blend": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "proxy": {
+        "min": [
+          -11.14,
+          5.42,
+          -6.09
+        ],
+        "max": [
+          11.35,
+          10.4,
+          -2.9
+        ]
+      },
+      "rgba16": "sponza-upper-south-probe.rgba16",
+      "exclude_materials": [],
+      "purpose": "Upper-floor south gallery, wall to wall along x, between its outer wall and the court's column line; fades into the court across the arcade."
+    },
+    {
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 64,
+      "center": [
+        0,
+        7.4,
+        4.5
+      ],
+      "influence": {
+        "min": [
+          -11.66,
+          4.92,
+          2.4
+        ],
+        "max": [
+          11.98,
+          10.9,
+          6.55
+        ]
+      },
+      "blend": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "proxy": {
+        "min": [
+          -11.16,
+          5.42,
+          2.9
+        ],
+        "max": [
+          11.48,
+          10.4,
+          6.05
+        ]
+      },
+      "rgba16": "sponza-upper-north-probe.rgba16",
+      "exclude_materials": [],
+      "purpose": "Upper-floor north gallery, wall to wall along x, between the court's column line and its outer wall; fades into the court across the arcade."
+    },
+    {
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 64,
+      "center": [
+        -9.6,
+        7.4,
+        0.5
+      ],
+      "influence": {
+        "min": [
+          -11.54,
+          4.92,
+          -3.4
+        ],
+        "max": [
+          -7.25,
+          10.9,
+          3.4
+        ]
+      },
+      "blend": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "proxy": {
+        "min": [
+          -11.04,
+          5.42,
+          -2.9
+        ],
+        "max": [
+          -7.75,
+          10.4,
+          2.9
+        ]
+      },
+      "rgba16": "sponza-upper-west-probe.rgba16",
+      "exclude_materials": [],
+      "purpose": "Upper-floor west bay, between the side galleries; fades into the court at its column line."
+    },
+    {
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 64,
+      "center": [
+        9.55,
+        7.4,
+        0.5
+      ],
+      "influence": {
+        "min": [
+          7.25,
+          4.92,
+          -3.4
+        ],
+        "max": [
+          11.85,
+          10.9,
+          3.4
+        ]
+      },
+      "blend": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "proxy": {
+        "min": [
+          7.75,
+          5.42,
+          -2.9
+        ],
+        "max": [
+          11.35,
+          10.4,
+          2.9
+        ]
+      },
+      "rgba16": "sponza-upper-east-probe.rgba16",
+      "exclude_materials": [],
+      "purpose": "Upper-floor east bay, between the side galleries; fades into the court at its column line."
+    },
+    {
+      "schema": 1,
+      "encoding": "rgba16f-le",
+      "levels": 7,
+      "face_size": 64,
+      "center": [
+        16.5,
+        2,
+        0
+      ],
+      "influence": {
+        "min": [
+          11.5,
+          -2,
+          -2.2
+        ],
+        "max": [
+          21.5,
+          4.7,
+          2.2
+        ]
+      },
+      "blend": [
+        1,
+        0.5,
+        0.5
+      ],
+      "proxy": {
+        "min": [
+          11.5,
+          -0.7,
+          -2.2
+        ],
+        "max": [
+          20,
+          4.8,
+          2.2
+        ]
+      },
+      "rgba16": "sponza-back-gallery-probe.rgba16",
+      "exclude_materials": [],
+      "purpose": "Covered back gallery behind the east bay. Full influence encloses the far door; proxy approximates the gallery enclosure."
+    }
+  ]
+}

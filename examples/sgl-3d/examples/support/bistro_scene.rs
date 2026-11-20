@@ -1523,10 +1523,16 @@ mod tests {
 
     #[test]
     fn sponza_gallery_reflection_keeps_the_far_door_inside_its_full_influence() {
-        let descriptor: Value =
-            serde_json::from_str(include_str!("../../fixtures/sponza-gallery-probe.json")).unwrap();
-        let (_, bytes) = probe_shape(&descriptor).unwrap();
-        let probe = probe_from_json(&descriptor, &vec![0; bytes]).unwrap();
+        let placements: Value =
+            serde_json::from_str(include_str!("../../fixtures/sponza-gallery-probes.json"))
+                .unwrap();
+        let descriptor = specular_probe_placements(&placements)
+            .unwrap()
+            .into_iter()
+            .find(|p| p["rgba16"] == "sponza-back-gallery-probe.rgba16")
+            .unwrap();
+        let (_, bytes) = probe_shape(descriptor).unwrap();
+        let probe = probe_from_json(descriptor, &vec![0; bytes]).unwrap();
         // Source wood_door bounds, not the approximate gallery proxy box.
         let door_min = Vec3::new(19.3685, -0.6519, -1.2158);
         let door_max = Vec3::new(19.6152, 2.2091, 1.2791);

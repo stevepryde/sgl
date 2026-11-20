@@ -77,7 +77,10 @@ The exporter is calibrated for this named HDR, not a general environment API.
 
 The recipe uses a new ground-floor `hero` camera, Intel's `balcony` and
 `curtains` cameras, +2.1 EV exposure, ACES filmic, TAA, high AO, high dynamic GI,
-three high-quality sun-shadow cascades and 16x anisotropic filtering. Scene
+three high-quality sun-shadow cascades and 16x anisotropic filtering. Local
+exposure (`local_exposure`, shadow contrast 0.55, highlights untouched) lifts
+the covered galleries, which bounce light alone reaches, about middle grey
+without raising the sunlit floor. Scene
 resolution is full, with no upscaling. There are no added fill or practical
 lights, baked lightmaps, fake volumetric shafts or reflection probes. The
 1024-pixel export keeps all 5.74 million triangles and uses about 320 MiB of
@@ -129,9 +132,11 @@ argument counts measured frames. Both use the same fixture and asset.
 
 ## Covered-gallery reflections
 
-GI replaces indirect diffuse light, not the outdoor environment's specular
-reflection. For the deep covered doorway, explicitly capture the local room
-with the existing native reflection-probe authoring path:
+GI replaces indirect diffuse light, and the dynamic GI volume's sky visibility
+occludes the sky's specular reflection where the probes see little sky (#826):
+inside the galleries, which see almost none, it reflects close to nothing. The
+enclosed galleries therefore need local reflection probes. Explicitly capture
+them with the existing native reflection-probe authoring path:
 
 ```sh
 # Run after scene and source-sky preparation. Requires native GPU access.
@@ -144,22 +149,33 @@ bun scripts/tasks.ts measure-browser \
   --output .cache/sponza/captures/gallery/hero.json
 ```
 
-Pass `--prepared /local/prepared` to use another prepared directory. The script
-captures a 64-pixel-per-face HDR probe at `[16.5,2,0]`, writes its 262,128-byte
-filtered payload and capture metadata into the ignored cache, and emits the
-small derived `sponza-gallery.json` recipe. It leaves source assets, the sky,
-and checked-in recipes unchanged. The source placement is
-[`sponza-gallery-probe.json`](fixtures/sponza-gallery-probe.json). Its influence
-fully covers the back door, with a blend toward outdoor reflections at the
-entrance. The proxy box approximates that gallery's enclosure, not the whole
-building. No materials, exposure or light intensities are changed.
+Pass `--prepared /local/prepared` to use another prepared directory. In one
+native run the script captures every placement in
+[`sponza-gallery-probes.json`](fixtures/sponza-gallery-probes.json), each a
+64-pixel-per-face HDR probe, writes each 262,128-byte filtered payload
+(`NAME.rgba16`) and its capture metadata (`NAME.json`) into the ignored cache,
+and emits the small derived `sponza-gallery.json` recipe naming them all. It
+publishes nothing unless every probe was captured, and leaves source assets,
+the sky and checked-in recipes unchanged. The capture renders the sunlit
+recipe without probes, so no probe sees another.
+
+Each floor's covered galleries form a ring around the open court
+(x −7.75 to 7.75), so a box per wing is the fewest that keep box-projected
+parallax sound: north and south galleries and west and east bays, on the
+ground floor (floor to vault crown, y 0 to 4.85) and the upper floor
+(y 5.42 to 10.4), with the original back-gallery probe beyond the east bay.
+Every proxy follows its wing's measured walls; every influence reaches half a
+metre past its walls, so it holds full weight to them, and fades into the court
+across its arcade, where the sky's reflection takes over. The `hero`,
+`balcony` and `curtains` cameras together see all nine. No materials or light
+intensities are changed.
 
 This is authored static reflection content, not live ray-traced specular
 occlusion. Re-run the command deliberately after relevant scene or lighting
 changes; no runtime fingerprint, staleness rejection or automatic rebake is
 added. The capture uses the sunlit recipe, so do not silently reuse it as a
 calibrated bake for a different lamp rig. Check other receiver views and blend
-boundaries when changing its placement. The sunlit recipe without this probe
+boundaries when changing a placement. The sunlit recipe without these probes
 remains the comparison control, and neither recipe claims an exact match to
 Intel's reference renderer, camera, exposure or color grading.
 
