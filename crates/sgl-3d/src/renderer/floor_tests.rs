@@ -24,8 +24,9 @@ const EXTENDED_SAMPLED_TEXTURES: u32 = 48;
 // the README and the docs promise it runs SGL3D; or the device takes the
 // wrong binding tier, composes an Extended binding below 48, or runs the
 // dynamic GI stage there. The oracle is wgpu's `Limits::default()`, which
-// wgpu sets to WebGPU's, and wgpu's validation of every pipeline layout
-// against the device's limits: frames that build the heaviest pipelines
+// wgpu sets to WebGPU's, and wgpu's validation of every pipeline layout,
+// pipeline, bind group and pass against the device's limits, which wgpu
+// runs before any backend: frames that build the heaviest pipelines
 // (transmissive, dispersive blended receivers of screen-space reflections
 // that between them carry every material map, one through a game's shader
 // that reads the scene depth, a masked wall through the same shader,
@@ -38,10 +39,9 @@ const EXTENDED_SAMPLED_TEXTURES: u32 = 48;
 // device reports the Basic tier, and dynamic GI is reported off.
 #[test]
 fn a_device_at_webgpus_default_limits_runs_every_pipeline() {
-    if let Some((tier, dynamic_gi)) = heaviest_frame(wgpu::Limits::default()) {
-        assert_eq!(tier, BindingTier::Basic);
-        assert_eq!(dynamic_gi, DynamicGiQuality::Off);
-    }
+    let (tier, dynamic_gi) = heaviest_frame(wgpu::Limits::default());
+    assert_eq!(tier, BindingTier::Basic);
+    assert_eq!(dynamic_gi, DynamicGiQuality::Off);
 }
 
 // Plausible defects: the tier is chosen from the wrong limit, with `>` for
@@ -60,23 +60,32 @@ fn a_device_at_the_extended_threshold_binds_the_extended_tier() {
         max_sampled_textures_per_shader_stage: EXTENDED_SAMPLED_TEXTURES,
         ..wgpu::Limits::default()
     };
-    if let Some((tier, dynamic_gi)) = heaviest_frame(limits) {
-        assert_eq!(tier, BindingTier::Extended);
-        assert_eq!(dynamic_gi, DynamicGiQuality::High);
-    }
+    let (tier, dynamic_gi) = heaviest_frame(limits);
+    assert_eq!(tier, BindingTier::Extended);
+    assert_eq!(dynamic_gi, DynamicGiQuality::High);
 }
 
 /// The binding tier and the dynamic GI in effect of a device of `limits`
 /// and no optional feature, after it draws two frames of the heaviest
-/// pipelines with no validation error; none without a GPU, or where the
-/// adapter binds fewer sampled textures a stage.
-fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality)> {
-    let adapter = test_support::adapter()?;
-    let sampled = limits.max_sampled_textures_per_shader_stage;
-    if adapter.limits().max_sampled_textures_per_shader_stage < sampled {
-        eprintln!("skipping: the adapter binds fewer than {sampled} sampled textures");
-        return None;
-    }
+/// pipelines with no validation error. The device is wgpu's noop backend,
+/// whose adapter offers just `limits` and no feature: wgpu validates every
+/// call as it does on a GPU and skips only the backend's shader translation
+/// and compile, which is most of a GPU's time and no part of the oracle.
+fn heaviest_frame(limits: wgpu::Limits) -> (BindingTier, DynamicGiQuality) {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::NOOP,
+        backend_options: wgpu::BackendOptions {
+            noop: wgpu::NoopBackendOptions {
+                enable: true,
+                limits: Some(limits.clone()),
+                features: Some(wgpu::Features::empty()),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_limits: limits,
         ..Default::default()
@@ -187,10 +196,10 @@ fn heaviest_frame(limits: wgpu::Limits) -> Option<(BindingTier, DynamicGiQuality
     if let Some(error) = pollster::block_on(validation.pop()) {
         panic!("{error}");
     }
-    Some((
+    (
         renderer.binding_tier(),
         renderer.dynamic_gi_in_effect(&settings, &scene),
-    ))
+    )
 }
 
 /// A transmissive, dispersive blended receiver of screen-space reflections

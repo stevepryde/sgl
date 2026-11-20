@@ -74,3 +74,9 @@ wasm-bindgen-test.workspace = true
 # Unit tests exercise the diagnostics accessors.
 # Keep this path-only: Cargo omits it when publishing, avoiding a registry self-dependency.
 sgl-3d = { path = ".", features = ["diagnostics"] }
+
+# The floor tests validate frames on wgpu's noop backend, which reports the
+# floor's limits and runs wgpu's validation without a GPU or a backend's
+# shader compiler.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+wgpu = { workspace = true, features = ["noop"] }
