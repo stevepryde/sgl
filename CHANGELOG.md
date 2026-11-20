@@ -15,6 +15,11 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.9.3 — 2026-11-20
+
+Update SGL crates together to `0.9.3` and commit the lockfile. Existing game
+code, settings and baked assets carry over.
+
 - `sgl-3d` `Renderer` and `View` now skip shader and pipeline creation for unused GI, shadow, deformation, culling and optional image passes at startup. No game-code changes are needed.
 
 ## 0.9.2 — 2026-11-20
