@@ -598,6 +598,7 @@ mod native {
                 if let Some(timing) = &mut timing {
                     for done in timing.begin_frame(&device, &queue) {
                         if done.frame > warm_up {
+                            times.entry("frame total").or_default().push(done.total_ms);
                             for pass in done.passes {
                                 times.entry(pass.name).or_default().push(pass.ms);
                             }
@@ -630,6 +631,7 @@ mod native {
                 if let Some(timing) = &mut timing {
                     for done in timing.begin_frame(&device, &queue) {
                         if done.frame > warm_up {
+                            times.entry("frame total").or_default().push(done.total_ms);
                             for pass in done.passes {
                                 times.entry(pass.name).or_default().push(pass.ms);
                             }
