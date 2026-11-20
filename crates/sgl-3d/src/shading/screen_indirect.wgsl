@@ -51,12 +51,15 @@ fn screen_indirect_unpack(texel:vec4<u32>)->ScreenIndirectKept {
 // The camera of the frame the kept result was written in, the last finished
 // frame's, in this frame's render frame: the rotation from world space to
 // its view space (x right, y up, -z forward), its projection's x and y
-// scales, and the render size the kept result was written at. Rust layout:
+// scales, and the render size the kept result was written at; and whether
+// a fragment's read takes the nearest texel first (`nearest_first`, 1 at
+// Low; screen_indirect_read). Rust layout:
 // stages::opaque::screen_indirect::KeptView.
 struct ScreenIndirectView {
  rotation:mat3x3<f32>,
  projection_scale:vec2<f32>,
  render_size:vec2<f32>,
+ nearest_first:u32,
 }
 // The point at `uv` (y down) and positive view depth `depth` of `view`, in
 // its view space. A centred projection: the feature runs under no other.
@@ -71,6 +74,30 @@ fn screen_indirect_similar(position:vec3<f32>,normal:vec3<f32>,other:vec3<f32>,o
  let plane=abs(dot(normal,other-position));
  return plane<=SCREEN_INDIRECT_PLANE_DISTANCE*(-position.z) && dot(normal,other_normal)>=0.;
 }
+// The kept texels' coordinates at `uv` of `view`: texel k's receiver is the
+// full-size pixel 2k.
+fn screen_indirect_texel_at(view:ScreenIndirectView,uv:vec2<f32>)->vec2<f32> {
+ return (uv*view.render_size-.5)*.5;
+}
+// Kept texel `texel` where it lies in `kept`, its count is above 0 and it
+// passes the similarity test for a point at `position` with `normal` in
+// `view`'s space; a count of 0 where it does not.
+fn screen_indirect_tap(kept:texture_2d<u32>,view:ScreenIndirectView,texel:vec2<i32>,position:vec3<f32>,normal:vec3<f32>)->ScreenIndirectKept {
+ let none=ScreenIndirectKept(vec4(0.),0.,0.,vec3(0.));
+ if any(texel<vec2(0)) || any(texel>=vec2<i32>(textureDimensions(kept))) {
+  return none;
+ }
+ let tap=screen_indirect_unpack(textureLoad(kept,texel,0));
+ if tap.count<=0. {
+  return none;
+ }
+ let receiver=(vec2<f32>(texel*2)+.5)/view.render_size;
+ let other=screen_indirect_position(view,receiver,tap.depth);
+ if !screen_indirect_similar(position,normal,other,tap.normal) {
+  return none;
+ }
+ return tap;
+}
 // What the kept result holds for a point at `uv` of `view` that lies at
 // `position` with `normal` in its view space: the light and coverage
 // (`value`) and the frames accumulated (`count`) of the texels about it
@@ -83,25 +110,17 @@ struct ScreenIndirectTaps {
  weight:f32,
 }
 fn screen_indirect_taps(kept:texture_2d<u32>,view:ScreenIndirectView,uv:vec2<f32>,position:vec3<f32>,normal:vec3<f32>)->ScreenIndirectTaps {
- let size=vec2<i32>(textureDimensions(kept));
- // Texel k's receiver is the full-size pixel 2k.
- let at=(uv*view.render_size-.5)*.5;
+ let at=screen_indirect_texel_at(view,uv);
  let base=vec2<i32>(floor(at));
  let f=at-floor(at);
  let weights=vec4((1.-f.x)*(1.-f.y),f.x*(1.-f.y),(1.-f.x)*f.y,f.x*f.y);
  var taps=ScreenIndirectTaps(vec4(0.),0.,0.);
  for (var i=0u;i<SCREEN_INDIRECT_TAPS;i++) {
-  let texel=base+vec2(i32(i&1u),i32(i>>1u));
-  if any(texel<vec2(0)) || any(texel>=size) || weights[i]<=0. {
+  if weights[i]<=0. {
    continue;
   }
-  let tap=screen_indirect_unpack(textureLoad(kept,texel,0));
+  let tap=screen_indirect_tap(kept,view,base+vec2(i32(i&1u),i32(i>>1u)),position,normal);
   if tap.count<=0. {
-   continue;
-  }
-  let receiver=(vec2<f32>(texel*2)+.5)/view.render_size;
-  let other=screen_indirect_position(view,receiver,tap.depth);
-  if !screen_indirect_similar(position,normal,other,tap.normal) {
    continue;
   }
   taps.value+=tap.value*weights[i];
@@ -116,7 +135,11 @@ fn screen_indirect_taps(kept:texture_2d<u32>,view:ScreenIndirectView,uv:vec2<f32
 // The light a point whose last frame's clip position, unjittered, was
 // `previous_clip` and whose world normal is `normal` takes from `kept`,
 // kept in `view`: none where that position lay behind the camera or off
-// screen, or no texel about it passes (screen_indirect_taps).
+// screen, or no texel about it passes (screen_indirect_taps). Where
+// `view.nearest_first`, the nearest texel's alone where it passes
+// (screen_indirect_tap), so the four are walked only at an edge or where it
+// holds nothing: inside a surface the light steps with the kept texels,
+// and at an edge a point still takes its own surface's (D-70).
 fn screen_indirect_read(kept:texture_2d<u32>,view:ScreenIndirectView,previous_clip:vec4<f32>,normal:vec3<f32>)->ScreenIndirect {
  if previous_clip.w<=0. {
   return screen_indirect_none();
@@ -127,6 +150,13 @@ fn screen_indirect_read(kept:texture_2d<u32>,view:ScreenIndirectView,previous_cl
  }
  let uv=vec2(ndc.x*.5+.5,.5-ndc.y*.5);
  let position=screen_indirect_position(view,uv,previous_clip.w);
- let taps=screen_indirect_taps(kept,view,uv,position,view.rotation*normal);
+ let kept_normal=view.rotation*normal;
+ if view.nearest_first!=0u {
+  let nearest=screen_indirect_tap(kept,view,vec2<i32>(floor(screen_indirect_texel_at(view,uv)+.5)),position,kept_normal);
+  if nearest.count>0. {
+   return ScreenIndirect(nearest.value.rgb,nearest.value.a);
+  }
+ }
+ let taps=screen_indirect_taps(kept,view,uv,position,kept_normal);
  return ScreenIndirect(taps.value.rgb,taps.value.a);
 }

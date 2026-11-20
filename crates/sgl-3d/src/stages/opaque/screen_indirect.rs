@@ -78,8 +78,15 @@ struct Params {
     padding: [u32; 3],
 }
 
+/// Whether a fragment's read at `level` takes the nearest kept texel alone
+/// where it passes, as Low's does, or always the four about it (D-70).
+fn reads_nearest_first(level: ScreenSpaceIndirect) -> bool {
+    level == ScreenSpaceIndirect::Low
+}
+
 /// `ScreenIndirectView` in shading/screen_indirect.wgsl: the camera of the
-/// frame the kept result was written in, in this frame's render frame.
+/// frame the kept result was written in, in this frame's render frame, and
+/// how a fragment reads it.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct KeptView {
@@ -87,11 +94,20 @@ pub(crate) struct KeptView {
     pub rotation: [[f32; 4]; 3],
     pub projection_scale: [f32; 2],
     pub render_size: [f32; 2],
+    /// 1 where a fragment's read takes the nearest texel first
+    /// (`reads_nearest_first`).
+    pub nearest_first: u32,
+    /// WGSL rounds the struct up to its 16-byte alignment.
+    padding: [u32; 3],
 }
 
 impl KeptView {
-    /// `camera`'s, for a kept result of a render of `size`.
-    fn of(camera: &crate::view::history::CameraFrame, size: [u32; 2]) -> Self {
+    /// `camera`'s, for a kept result of a render of `size` at `level`.
+    fn of(
+        camera: &crate::view::history::CameraFrame,
+        size: [u32; 2],
+        level: ScreenSpaceIndirect,
+    ) -> Self {
         let view = camera.view;
         Self {
             rotation: [view.x_axis, view.y_axis, view.z_axis].map(|axis| {
@@ -101,6 +117,8 @@ impl KeptView {
             }),
             projection_scale: [camera.projection.x_axis.x, camera.projection.y_axis.y],
             render_size: size.map(|extent| extent as f32),
+            nearest_first: u32::from(reads_nearest_first(level)),
+            padding: [0; 3],
         }
     }
 }
@@ -324,7 +342,7 @@ impl ScreenIndirect {
             queue,
             &self.kept_view,
             0,
-            bytemuck::bytes_of(&KeptView::of(&previous, size)),
+            bytemuck::bytes_of(&KeptView::of(&previous, size, settings.level)),
         );
         true
     }
@@ -538,7 +556,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
             "screen_indirect_pass",
             "ScreenIndirectView",
             KeptView,
-            [rotation, projection_scale, render_size]
+            [rotation, projection_scale, render_size, nearest_first]
         ),
     ]
 }

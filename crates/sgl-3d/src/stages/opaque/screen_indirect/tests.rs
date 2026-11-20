@@ -689,13 +689,16 @@ fn observe_source(@builtin(global_invocation_id) id:vec3<u32>) {
 
 // Defect: a fragment reads the kept result at the wrong place (its current
 // position, flipped rows, the wrong texel scale), or reads across an edge
-// into another surface's light, or reads where nothing passes. Oracle:
-// authored texels of two surfaces, red at 2 m on the left and green at 4 m
-// on the right, both facing the camera, and a row whose count is 0: a
-// point on either surface reads its own light and coverage exactly, at its
-// centre and at the edge where its footprint straddles the other; a point
-// between them, one behind the camera, one off screen, one whose normal
-// opposes the texels', and one over the uncounted row read none.
+// into another surface's light, or reads where nothing passes, or a level
+// reads in the other's mode. Oracle: authored texels of two surfaces, red
+// at 2 m on the left, its blue rising by 0.25 a texel, and green at 4 m on
+// the right, both facing the camera, and a row whose count is 0: a point on
+// either surface reads its own light and coverage exactly, at its centre
+// and at the edge where its footprint straddles the other; a point between
+// them, one behind the camera, one off screen, one whose normal opposes the
+// texels', and one over the uncounted row read none, at both levels.
+// Between two of the left surface's texel centres, High reads the linear
+// value of the ramp and Low the nearer texel's.
 #[test]
 fn a_fragment_reads_the_light_kept_at_its_previous_position_and_none_across_an_edge() {
     let Some((device, queue)) = crate::test_support::device() else {
@@ -710,7 +713,11 @@ fn a_fragment_reads_the_light_kept_at_its_previous_position_and_none_across_an_e
     let mut geometry = Vec::new();
     for y in 0..half[1] {
         for x in 0..half[0] {
-            let (texel, depth) = if x < 4 { (red, 2.) } else { (green, 4.) };
+            let (texel, depth) = if x < 4 {
+                ([red[0], red[1], 0.25 * x as f32, red[3]], 2.)
+            } else {
+                (green, 4.)
+            };
             light.push(texel);
             // Normal +z, octahedral (0, 0); the last row counts nothing.
             geometry.push([depth, if y == 3 { 0. } else { 4. }, 0., 0.]);
@@ -753,14 +760,11 @@ fn a_fragment_reads_the_light_kept_at_its_previous_position_and_none_across_an_e
         },
         kept.size(),
     );
-    let view = super::KeptView::of(
-        &CameraFrame {
-            view: Mat4::IDENTITY,
-            projection,
-            jitter: [0.; 2],
-        },
-        render,
-    );
+    let camera = CameraFrame {
+        view: Mat4::IDENTITY,
+        projection,
+        jitter: [0.; 2],
+    };
     // A point at render pixel position `pixel` (centres at .5) and view
     // depth `depth`, as its last frame's clip position.
     let clip = |pixel: [f32; 2], depth: f32| {
@@ -777,45 +781,58 @@ fn a_fragment_reads_the_light_kept_at_its_previous_position_and_none_across_an_e
     };
     let facing = Vec4::Z;
     let none = [0.; 4];
+    // The left surface's light with the ramp's blue `blue`.
+    let left = |blue| [red[0], red[1], blue, red[3]];
+    // Each case's light at both levels, then High's and Low's where they
+    // differ.
+    let both = |light| [light, light];
     let cases = [
-        ("left centre", clip([2.5, 2.5], 2.), facing, red),
-        ("right centre", clip([12.5, 2.5], 4.), facing, green),
+        // Texel 1.
+        ("left centre", clip([2.5, 2.5], 2.), facing, both(left(0.25))),
+        ("right centre", clip([12.5, 2.5], 4.), facing, both(green)),
         // Texel 3.5: half its weight on each surface's texels.
-        ("left at the edge", clip([7.5, 2.5], 2.), facing, red),
-        ("right at the edge", clip([7.5, 2.5], 4.), facing, green),
-        ("between them", clip([7.5, 2.5], 3.), facing, none),
+        (
+            "left at the edge",
+            clip([7.5, 2.5], 2.),
+            facing,
+            both(left(0.75)),
+        ),
+        ("right at the edge", clip([7.5, 2.5], 4.), facing, both(green)),
+        ("between them", clip([7.5, 2.5], 3.), facing, both(none)),
         (
             "behind the camera",
             Vec4::new(0., 0., 0.1, -1.),
             facing,
-            none,
+            both(none),
         ),
-        ("off screen", clip([-4., 2.5], 2.), facing, none),
-        ("opposed", clip([2.5, 2.5], 2.), -Vec4::Z, none),
-        ("uncounted row", clip([2.5, 6.5], 2.), facing, none),
+        ("off screen", clip([-4., 2.5], 2.), facing, both(none)),
+        ("opposed", clip([2.5, 2.5], 2.), -Vec4::Z, both(none)),
+        ("uncounted row", clip([2.5, 6.5], 2.), facing, both(none)),
+        // Texels 1.25 and 1.75: a quarter of the way from texel 1 to 2,
+        // and three quarters.
+        (
+            "left a quarter on",
+            clip([3., 2.5], 2.),
+            facing,
+            [left(0.3125), left(0.25)],
+        ),
+        (
+            "left three quarters on",
+            clip([4., 2.5], 2.),
+            facing,
+            [left(0.4375), left(0.5)],
+        ),
     ];
     let queries: Vec<[[f32; 4]; 2]> = cases
         .iter()
         .map(|&(_, c, n, _)| [c.to_array(), n.to_array()])
         .collect();
-    let uniform = crate::scene::buffer(
-        &device,
-        "kept view",
-        bytemuck::bytes_of(&view),
-        wgpu::BufferUsages::UNIFORM,
-    );
     let inputs = crate::scene::buffer(
         &device,
         "reads",
         bytemuck::cast_slice(&queries),
         wgpu::BufferUsages::STORAGE,
     );
-    let results = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("read light"),
-        size: (cases.len() * 16) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
     let source = format!(
         "{}\n{}",
         crate::shading::compose(&[&crate::shading::SCREEN_INDIRECT]),
@@ -845,47 +862,67 @@ fn observe(@builtin(global_invocation_id) id:vec3<u32>) {
         cache: None,
     });
     let kept_view = kept.create_view(&Default::default());
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("kept result read"),
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&kept_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: uniform.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: inputs.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: results.as_entire_binding(),
-            },
-        ],
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
+    // Each case's read at `level`, as the pass's kept view for it says.
+    let read = |level| -> Vec<[f32; 4]> {
+        let uniform = crate::scene::buffer(
+            &device,
+            "kept view",
+            bytemuck::bytes_of(&super::KeptView::of(&camera, render, level)),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        let results = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("read light"),
+            size: (cases.len() * 16) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("kept result read"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&kept_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: inputs.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: results.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(cases.len() as u32, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+        crate::test_support::read_words(&device, &queue, &results)
+            .chunks_exact(4)
+            .map(|texel| std::array::from_fn(|channel| f32::from_bits(texel[channel])))
+            .collect()
+    };
+    for (mode, level) in [ScreenSpaceIndirect::High, ScreenSpaceIndirect::Low]
+        .into_iter()
+        .enumerate()
     {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(cases.len() as u32, 1, 1);
-    }
-    queue.submit([encoder.finish()]);
-    let words = crate::test_support::read_words(&device, &queue, &results);
-    for (index, (name, _, _, expected)) in cases.iter().enumerate() {
-        let read: Vec<f32> = words[index * 4..index * 4 + 4]
-            .iter()
-            .map(|&w| f32::from_bits(w))
-            .collect();
-        for (channel, (&got, &want)) in read.iter().zip(expected).enumerate() {
-            assert!(
-                (got - want).abs() <= 1e-6,
-                "{name}: channel {channel} read {got}, expected {want}"
-            );
+        let read = read(level);
+        for ((name, _, _, expected), got) in cases.iter().zip(&read) {
+            for (channel, (&got, &want)) in got.iter().zip(&expected[mode]).enumerate() {
+                assert!(
+                    (got - want).abs() <= 1e-6,
+                    "{level:?} {name}: channel {channel} read {got}, expected {want}"
+                );
+            }
         }
     }
 }
