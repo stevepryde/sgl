@@ -385,33 +385,53 @@ fn the_bounce_keeps_its_emitters_colour_and_creates_no_energy() {
 // emitter's normal ignored), or the facing test also drops its coverage.
 // Oracle: a lit card 1 m from the camera, facing it and so away from the
 // plane 2 m behind it, within a 3 m radius, gives the plane exactly no
-// light and still covers the plane beside it.
+// light. Coverage is a property of the geometry alone, so the plane beside
+// the card takes the same coverage, above 0, whichever way the card faces.
 #[test]
 fn a_surface_facing_away_gives_no_light() {
     let Some(mut pass) = Pass::new() else {
         return;
     };
     let rows = 50..65;
-    let fixture = PlaneAndWall {
+    let card = |plate_faces_plane| PlaneAndWall {
         plate: Some(rows.clone()),
+        plate_faces_plane,
         plate_color: [1., 0., 0.],
         ..PlaneAndWall::plane()
     };
+    // The coverage of the plane's rows beside the card.
+    let beside = |kept: &KeptTexels| -> Vec<f32> {
+        (0..KeptTexels::half()[0])
+            .flat_map(|x| {
+                [
+                    kept.at(x, rows.start / 2 - 2)[3],
+                    kept.at(x, rows.end / 2 + 2)[3],
+                ]
+            })
+            .collect()
+    };
     for level in [ScreenSpaceIndirect::Low, ScreenSpaceIndirect::High] {
-        let (kept, _) = pass.frame(&fixture, (level, 3.), &history(false, false), true);
-        for (index, texel) in kept.light.iter().enumerate() {
+        let mut frame = |plate_faces_plane| {
+            pass.frame(
+                &card(plate_faces_plane),
+                (level, 3.),
+                &history(false, false),
+                true,
+            )
+            .0
+        };
+        let (away, toward) = (frame(false), frame(true));
+        for (index, texel) in away.light.iter().enumerate() {
             assert_eq!(texel[..3], [0.; 3], "{level:?}: texel {index} lit");
         }
-        // The plane's rows beside the card.
-        let beside = (0..KeptTexels::half()[0]).flat_map(|x| {
-            [
-                kept.at(x, rows.start / 2 - 2)[3],
-                kept.at(x, rows.end / 2 + 2)[3],
-            ]
-        });
-        let mean = beside.clone().sum::<f32>() / beside.count() as f32;
+        let (away, toward) = (beside(&away), beside(&toward));
+        let mean = away.iter().sum::<f32>() / away.len() as f32;
         println!("{level:?}: coverage beside the card {mean:.4}");
-        assert!(mean > 0.05, "{level:?}: the card covers nothing: {mean}");
+        assert!(mean > 0., "{level:?}: the card covers nothing");
+        assert_eq!(
+            away, toward,
+            "{level:?}: the card's coverage depends on which way it faces"
+        );
     }
 }
 

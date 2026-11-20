@@ -226,7 +226,7 @@ pub enum AmbientOcclusionQuality {
 pub enum ScreenSpaceIndirect {
     #[default]
     Off,
-    /// 24 samples a half-size pixel.
+    /// 10 samples a half-size pixel.
     Low,
     /// 48 samples a half-size pixel.
     High,
