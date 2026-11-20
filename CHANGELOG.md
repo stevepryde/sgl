@@ -15,8 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
-- `sgl-3d` `Renderer` now creates each geometry pipeline on its first draw in a frame or probe capture, replacing eager creation during setup and scene changes. No game-code changes are needed.
+## 0.9.2 — 2026-11-20
 
+Move every SGL crate to `0.9.2` together and commit the updated `Cargo.lock`.
+Games updating from 0.9.1 can keep their code, settings and baked assets.
+
+- `sgl-3d` `Renderer` now creates each geometry pipeline on its first draw in a frame or probe capture, replacing eager creation during setup and scene changes. No game-code changes are needed.
 - `sgl-3d` `View::new` and `View::new_surface` defer local exposure and presentation pipelines until the first frame that uses each one. No game-code changes are needed.
 
 ## 0.9.1 — 2026-11-20
