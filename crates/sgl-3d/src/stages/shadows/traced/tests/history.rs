@@ -353,3 +353,42 @@ fn a_light_that_leaves_the_view_restarts_its_slot_when_it_returns() {
         "after its light returned, slot {slot} differs from a camera cut at {differing} pixels"
     );
 }
+
+#[test]
+fn changing_shadow_coverage_keeps_variance_bounded() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let size = [96, 96];
+    let settings = settings(true);
+    let (mut scene, _) = scene(gpu, 6., &grate(), &[]);
+    let mut renderer = TestRenderer::for_test(&device, &queue, size, &settings);
+    let camera = looking_down(HEIGHT, crate::perspective(0.9, 1., 0.1));
+    for frame in 0..16 {
+        // Move the grate's hard shadow across the same floor receivers.
+        let light = DirectionalLight {
+            direction: Vec3::new(0.2, -1., if frame % 2 == 0 { 0.3 } else { -0.3 }),
+            ..sun()
+        };
+        render(
+            gpu,
+            &mut renderer,
+            &mut scene,
+            &input(camera, Some(light)),
+            &settings,
+        );
+        let moments = renderer.traced_shadow_moments().unwrap().texture();
+        let texels = (moments.width() * moments.height()) as usize;
+        for pixel in test_support::read(&device, &queue, moments, 8)[..texels * 8].chunks_exact(8) {
+            let deviation_sum = test_support::half(&pixel[2..4]);
+            let count = test_support::half(&pixel[4..6]);
+            // Binary visibility has population variance at most 1/4 for
+            // any sample weights. Allow rounding in the half-float history.
+            assert!(
+                deviation_sum <= 0.251 * count + 0.001,
+                "frame {frame}: deviation sum {deviation_sum} for effective count {count}"
+            );
+        }
+    }
+}

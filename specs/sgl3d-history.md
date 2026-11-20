@@ -2935,15 +2935,15 @@ discard nothing a returning light could use, and the velocity refresh on streami
 
 #### S-21 Sample-count damper
 
-- **Rule.** The tile classification multiplies the sample count by `exp(−d² / 20)`, where
+- **Rule.** The tile classification multiplies both the sample count and accumulated squared deviation by `exp(−d² / 20)`, where
   `d = (history − mean) / max(0.5σ, 0.001)` over the same neighbourhood, per pixel and lane.
   Where the neighbourhood is uniform (σ near 0), any history deviation above about 0.003 drives the
   count to nearly 0. The count recovers by 1 a frame.
 - **Raised by.** Shadow changes; small differences between a uniform region's history and mean.
 - **Stays triggered while.** Mostly hidden: fully uniform tiles are skipped (S-23).
-- **Source.** AMD FidelityFX Denoiser, faithful. Code:
+- **Source.** AMD FidelityFX Denoiser, modified to discount the squared-deviation sum with its sample weight. Code:
   `src/stages/shadows/traced/ffx_denoiser_shadows_tileclassification.wgsl` (`FFX_DNSR_Shadows_TileClassification`).
-- **Guard.** None.
+- **Guard.** `changing_shadow_coverage_keeps_variance_bounded` (`src/stages/shadows/traced/tests/history.rs`).
 - **Status.** Rule.
 
 #### S-22 History weight and variance boost

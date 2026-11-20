@@ -456,6 +456,10 @@ fn FFX_DNSR_Shadows_TileClassification(group_index:u32,gid:vec2<u32>) {
    let sigma=20.;
    let temporal_discontinuity=(shadow_previous-mean)/max(.5*std_deviation,FfxDnsrFloat(.001));
    let sample_counter_damper=exp(-temporal_discontinuity*temporal_discontinuity/sigma);
+   // Downweight the same samples in the squared-deviation sum. Keeping
+   // their full sum with a nearly zero count can overflow the half-float
+   // variance and spread a false shadow through the spatial filters.
+   moments_s*=sample_counter_damper;
    moments_count*=sample_counter_damper;
 
    // Boost variance on first frames
