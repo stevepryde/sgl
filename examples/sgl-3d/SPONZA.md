@@ -78,9 +78,10 @@ The exporter is calibrated for this named HDR, not a general environment API.
 The recipe uses a new ground-floor `hero` camera, Intel's `balcony` and
 `curtains` cameras, +2.1 EV exposure, ACES filmic, TAA, high AO, high dynamic GI,
 three high-quality sun-shadow cascades and 16x anisotropic filtering. Local
-exposure (`local_exposure`, shadow contrast 0.55, highlights untouched) lifts
-the covered galleries, which bounce light alone reaches, about middle grey
-without raising the sunlit floor. Scene
+exposure (`local_exposure`) draws both toward middle grey: shadow contrast
+0.45 lifts the covered galleries, which bounce light alone reaches, and
+highlight contrast 0.75 brings the sunlit paving down so its detail stays
+readable rather than overexposed. Scene
 resolution is full, with no upscaling. There are no added fill or practical
 lights, baked lightmaps, fake volumetric shafts or reflection probes. The
 1024-pixel export keeps all 5.74 million triangles and uses about 320 MiB of

@@ -17,7 +17,8 @@
   "warmup_frames": 720,
   "exposure_stops": 2.1,
   "local_exposure": {
-    "shadow_contrast": 0.55
+    "highlight_contrast": 0.75,
+    "shadow_contrast": 0.45
   },
   "ray_data": "enabled",
   "cameras": [
@@ -141,7 +142,7 @@
     "tone_mapping": "AcesFilmic",
     "anisotropic_filtering": "X16"
   },
-  "lighting": "Kloppenheim 05 HDR sky with its measured sun lobe replaced by aligned directional shadows. Authored hero camera, +2.1 EV ACES exposure with local exposure lifting the shaded galleries (shadow contrast 0.55, highlights untouched), 4095-probe full-building high dynamic GI, full geometry, no artificial fill or practical lights. Source balcony/curtains cameras remain available.",
+  "lighting": "Kloppenheim 05 HDR sky with its measured sun lobe replaced by aligned directional shadows. Authored hero camera, +2.1 EV ACES exposure with local exposure lifting the shaded galleries (shadow contrast 0.45) and holding the sunlit paving's detail (highlight contrast 0.75), 4095-probe full-building high dynamic GI, full geometry, no artificial fill or practical lights. Source balcony/curtains cameras remain available.",
   "provenance": {
     "title": "Intel Sponza 2022 with Colorful Curtains",
     "source": "https://www.intel.com/content/www/us/en/developer/topic-technology/graphics-research/samples.html",
