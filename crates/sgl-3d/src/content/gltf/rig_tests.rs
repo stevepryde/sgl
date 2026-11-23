@@ -438,7 +438,7 @@ fn skins_morph_targets_and_clips_import_as_plain_data() {
     let joints: Vec<_> = rig.joints.iter().map(|joint| joint.node).collect();
     assert_eq!(joints, [2, 1, 2]);
     assert_eq!(rig.joints[0].inverse_bind, Mat4::IDENTITY);
-    let rest: Vec<Mat4> = rig.nodes.iter().map(|node| node.rest()).collect();
+    let rest: Vec<Mat4> = rig.nodes.iter().map(|node| node.rest.matrix()).collect();
     for matrix in &rig.joint_matrices(&rest)[1..] {
         assert!(matrix.abs_diff_eq(Mat4::IDENTITY, 1e-6), "{matrix}");
     }
@@ -638,9 +638,10 @@ fn a_built_rig_with_a_parent_cycle_still_evaluates() {
     let node = |parent, x: f32| crate::deformation::Node {
         name: None,
         parent,
-        translation: Vec3::new(x, 0., 0.),
-        rotation: Quat::IDENTITY,
-        scale: Vec3::ONE,
+        rest: crate::deformation::Transform {
+            translation: Vec3::new(x, 0., 0.),
+            ..Default::default()
+        },
     };
     let joint = |node| crate::deformation::Joint {
         node,
@@ -656,7 +657,7 @@ fn a_built_rig_with_a_parent_cycle_still_evaluates() {
         joints: vec![joint(0), joint(3)],
         ..Default::default()
     };
-    let locals: Vec<Mat4> = rig.nodes.iter().map(|node| node.rest()).collect();
+    let locals: Vec<Mat4> = rig.nodes.iter().map(|node| node.rest.matrix()).collect();
     let matrices = rig.joint_matrices(&locals);
     assert_eq!(matrices.len(), 2);
     assert!(matrices[0].is_finite());

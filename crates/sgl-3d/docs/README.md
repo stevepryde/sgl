@@ -87,7 +87,8 @@ captures on the same renderer reuse the cached pipelines.
    [scene lifecycle](../README.md#retained-scene-and-frame-lifecycle).
 3. Each frame: `Scene::set_instance` per moving instance (pose, `visible`,
    `capture_visible`), `set_instance_deformation` per deforming one (its
-   joint matrices and morph weights), `set_light` per changed light and
+   joint matrices and morph weights, from an `animation::Pose` sampled at
+   the game's time), `set_light` per changed light and
    `set_decal` per moved decal; `View::resize` (nothing happens unless the size, the scale or a
    setting that [applies at resize](settings.md#when-changes-apply) changed);
    a `FrameInput` with the camera, the authored look and the presentation
@@ -141,7 +142,7 @@ The examples live in the repository, not the published crate:
 (`--decals` adds decals, `--motion-blur` motion blur, `--fog` volumetric
 fog, `--cookie` a spot light's cookie);
 [`examples/skinned.rs`](../../../examples/sgl-3d/examples/skinned.rs) adds a skinned, morphed glTF
-and the game's side of animating it,
+sampled and posed with `animation::Pose`,
 [`examples/instances.rs`](../../../examples/sgl-3d/examples/instances.rs) many instances of a few
 models, [`examples/water.rs`](../../../examples/sgl-3d/examples/water.rs) a lake of 16 m
 chunks whose waves its own shader moves and whose surface receives

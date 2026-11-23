@@ -1,8 +1,9 @@
 //! What deforms a mesh (a skin, morph targets or both), and the rig and
-//! animation clips a loaded asset is posed by, as plain data. The game
-//! samples and blends clips, poses the rig's nodes and gives each deforming
-//! instance its joint matrices and morph weights every frame
-//! (`Scene::set_instance_deformation`); SGL3D renders the pose it is given.
+//! animation clips a loaded asset is posed by, as plain data. The game poses
+//! the rig's nodes (sampling and blending clips with `animation::Pose`, or
+//! by its own means) and gives each deforming instance its joint matrices
+//! and morph weights every frame (`Scene::set_instance_deformation`); SGL3D
+//! renders the pose it is given.
 use glam::{Mat4, Quat, Vec3};
 
 /// The largest joint or morph weight index a mesh may name.
@@ -59,22 +60,43 @@ impl MeshDeformation {
     }
 }
 
+/// A node's transform relative to its parent: scaled, then rotated, then
+/// translated, as glTF composes a node's TRS properties.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transform {
+    pub translation: Vec3,
+    /// A unit quaternion.
+    pub rotation: Quat,
+    pub scale: Vec3,
+}
+
+impl Transform {
+    /// No translation, rotation or scale.
+    pub const IDENTITY: Self = Self {
+        translation: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+
+    /// Its matrix, `T * R * S`.
+    pub fn matrix(&self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
+    }
+}
+
+impl Default for Transform {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
 /// A node of a loaded asset's hierarchy, with its rest transform relative
 /// to its parent (or to the asset's space for a root).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Node {
     pub name: Option<String>,
     pub parent: Option<usize>,
-    pub translation: Vec3,
-    pub rotation: Quat,
-    pub scale: Vec3,
-}
-
-impl Node {
-    /// Its rest transform relative to its parent.
-    pub fn rest(&self) -> Mat4 {
-        Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
-    }
+    pub rest: Transform,
 }
 
 /// A joint: the node that poses it and its inverse bind matrix, which takes
@@ -114,7 +136,9 @@ pub enum ChannelValues {
     MorphWeights(Vec<f32>),
 }
 
-/// One animated property of one node.
+/// One animated property of one node. A loaded channel's values match its
+/// keyframes: one per keyframe, three (in-tangent, value, out-tangent) for
+/// a cubic spline, each a node's whole set of morph weights for weights.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Channel {
     pub node: usize,
@@ -124,11 +148,21 @@ pub struct Channel {
     pub values: ChannelValues,
 }
 
-/// An animation clip.
+/// An animation clip, sampled and blended by `animation::Pose`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Clip {
     pub name: Option<String>,
     pub channels: Vec<Channel>,
+}
+
+impl Clip {
+    /// Its latest keyframe time, zero for a clip without keyframes.
+    pub fn duration(&self) -> f32 {
+        self.channels
+            .iter()
+            .filter_map(|channel| channel.times.last().copied())
+            .fold(0., f32::max)
+    }
 }
 
 /// What poses a loaded asset's deforming meshes: its nodes, the joints its

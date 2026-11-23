@@ -2144,8 +2144,9 @@ cargo run --release -p sgl-3d-examples --example volumes
 
 ## Skinned meshes and morph targets
 
-SGL3D renders the pose a game gives it; sampling and blending animation clips
-stay in the game (S3D-1).
+SGL3D renders the pose a game gives it. It samples and blends a rig's clips
+on the CPU when the game asks (`animation::Pose`); the game owns the clock,
+transitions, state machines, masks and layer order.
 
 - **Loading.** `asset::load` and `load_slice` import a glTF's skins and morph
   targets as each `CpuMesh::deformation` (`deformation::MeshDeformation`): an
@@ -2154,7 +2155,7 @@ stay in the game (S3D-1).
   displacement of each vertex's position, normal and tangent, scaled by one
   morph weight; a primitive without targets loads unmorphed, and a mesh
   whose morphed primitives differ in their number of targets is refused). `Asset::rig` (`deformation::Rig`) holds the node hierarchy
-  with each node's rest transform, the joints (each skin's, in one list: a
+  with each node's rest transform (`rest: Transform`), the joints (each skin's, in one list: a
   node and its inverse bind matrix), the morph weights (each morphed node's,
   with its rest weights) and the animation clips (`Clip`: channels of
   keyframe times and translation, rotation, scale or morph-weight values,
@@ -2192,6 +2193,30 @@ stay in the game (S3D-1).
   Every call counts as a change, whatever its values: the frame deforms the
   instance again and redraws the local-light shadow faces it reaches, so
   skip it for an instance whose pose did not change.
+- **Sampling and blending.** `animation::Pose` holds each node's
+  `Transform` relative to its parent and each morph weight, in the rig's
+  order (`Pose::rest(&rig)`). `pose.sample(&rig, clip, time, wrap)` sets it
+  to the rest pose, then each of the clip's channels at `time` as glTF
+  interpolates it: step; linear, with rotations by shortest-path spherical
+  interpolation; cubic spline, with tangents scaled by the key interval and
+  rotations normalised. A channel holds its first keyframe before it and its
+  last after it (`Wrap::Clamp`); `Wrap::Loop` first wraps the time into
+  `[0, Clip::duration())`. A node or weight the clip does not animate keeps
+  its rest value; a game-built channel the rig cannot take is skipped.
+  `a.blend(&b, weight)` crossfades (`weight` 0 keeps `a`, 1 takes `b`):
+  translation, scale and weights linearly, rotations the short way. Blend
+  several poses incrementally, each by its weight over the sum so far.
+  `pose.add(&additive, &reference, weight)` layers an additive pose's
+  difference from its reference (usually the additive clip at its first
+  time), as three.js's additive mode does: translation, scale and weights
+  add the difference, rotation is followed by `reference⁻¹ · additive`.
+  Nodes the additive clip leaves alone are untouched, so an upper-body clip
+  needs no mask; filter a clip's channels to mask one. Then
+  `pose.local_matrices(&mut locals)` feeds `rig.joint_matrices(&locals)`,
+  and `pose.morph_weights` goes to `Scene::set_instance_deformation`.
+  Sampling costs one binary search per channel. Sampling, blending, adding
+  and `local_matrices` allocate nothing once the pose and `locals` have
+  their size, so keep them between frames.
 - **Rigid nodes.** A rigid mesh's node is baked at its rest transform, so a
   clip that animates it moves nothing; split such parts out by selecting
   their nodes (`LoadOptions::nodes`) and pose them as instances.
@@ -2217,7 +2242,8 @@ stay in the game (S3D-1).
   see them. Probe captures, which show static content, never contain them.
 
 The `skinned` example generates a skinned, morphed glTF with a clip, and
-samples, poses and renders it:
+samples it with `Pose`, poses and renders it; its test checks the joints
+against the analytic bend:
 
 ```sh
 cargo run -p sgl-3d-examples --example skinned -- target/skinned.png

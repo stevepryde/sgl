@@ -1,8 +1,9 @@
 //! A skinned and morphed glTF: a tentacle of four bones with a bulge morph
 //! target and a swaying clip, generated here as a GLB so that no asset file
 //! or licence is needed, loaded with `asset::load_slice`, and animated by
-//! the game's side of the contract: sample the clip, pose the rig's nodes,
-//! and give each instance its joint matrices and morph weights every frame.
+//! the game's side of the contract: sample the clip at the game's time
+//! (`animation::Pose`), compose the rig's joint matrices, and give each
+//! instance its joint matrices and morph weights every frame.
 //! A sun's cascades and a point light shadow it.
 //!
 //! Run with `cargo run -p sgl-3d-examples --example skinned -- target/skinned.png`.
@@ -11,8 +12,8 @@ use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceState, Light,
     LightShape, Mobility, Renderer, Scene, View, ViewFrame,
+    animation::{Pose, Wrap},
     asset::{self, Asset, CpuMesh, Material, Vertex},
-    deformation::{Channel, ChannelValues, Clip, Interpolation, Rig},
     glam::{Mat4, Quat, Vec3},
     settings::{RenderPreset, Settings},
 };
@@ -215,109 +216,6 @@ fn glb(document: &serde_json::Value, mut bin: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
-/// Keyframe `key` of a channel with `width` values per keyframe, and its
-/// tangents for a cubic spline (glTF's in-tangent, value, out-tangent).
-fn keyframe<T: Copy>(
-    values: &[T],
-    interpolation: Interpolation,
-    key: usize,
-    width: usize,
-    item: usize,
-) -> [T; 3] {
-    let at = |k: usize| values[k * width + item];
-    match interpolation {
-        Interpolation::CubicSpline => [at(key * 3), at(key * 3 + 1), at(key * 3 + 2)],
-        _ => [at(key); 3],
-    }
-}
-
-/// A channel's value at `time`, as glTF interpolates it: `mix` blends two
-/// values linearly (spherically for rotations).
-fn sample<T>(
-    channel: &Channel,
-    values: &[T],
-    width: usize,
-    item: usize,
-    time: f32,
-    mix: impl Fn(T, T, f32) -> T,
-) -> T
-where
-    T: Copy + std::ops::Add<Output = T> + std::ops::Mul<f32, Output = T>,
-{
-    let times = &channel.times;
-    let key = times
-        .partition_point(|&t| t <= time)
-        .saturating_sub(1)
-        .min(times.len() - 1);
-    let [_, value, out] = keyframe(values, channel.interpolation, key, width, item);
-    if key + 1 == times.len() || time <= times[0] {
-        return value;
-    }
-    let [in_next, next, _] = keyframe(values, channel.interpolation, key + 1, width, item);
-    let span = times[key + 1] - times[key];
-    let t = (time - times[key]) / span;
-    match channel.interpolation {
-        Interpolation::Step => value,
-        Interpolation::Linear => mix(value, next, t),
-        Interpolation::CubicSpline => {
-            let (t2, t3) = (t * t, t * t * t);
-            value * (2. * t3 - 3. * t2 + 1.)
-                + out * (span * (t3 - 2. * t2 + t))
-                + next * (-2. * t3 + 3. * t2)
-                + in_next * (span * (t3 - t2))
-        }
-    }
-}
-
-/// The rig's node transforms and morph weights at `time` of `clip`: what a
-/// game's animation system produces, here one clip without blending.
-fn pose(rig: &Rig, clip: &Clip, time: f32) -> (Vec<Mat4>, Vec<f32>) {
-    let mut nodes: Vec<_> = rig
-        .nodes
-        .iter()
-        .map(|node| (node.translation, node.rotation, node.scale))
-        .collect();
-    let mut weights: Vec<f32> = rig.morph_weights.iter().map(|weight| weight.rest).collect();
-    for channel in &clip.channels {
-        let node = &mut nodes[channel.node];
-        match &channel.values {
-            ChannelValues::Translation(values) => {
-                node.0 = sample(channel, values, 1, 0, time, Vec3::lerp)
-            }
-            ChannelValues::Rotation(values) => {
-                node.1 = sample(channel, values, 1, 0, time, Quat::slerp).normalize()
-            }
-            ChannelValues::Scale(values) => {
-                node.2 = sample(channel, values, 1, 0, time, Vec3::lerp)
-            }
-            ChannelValues::MorphWeights(values) => {
-                let first = rig
-                    .morph_weights
-                    .iter()
-                    .position(|w| w.node == channel.node);
-                let targets = rig
-                    .morph_weights
-                    .iter()
-                    .filter(|w| w.node == channel.node)
-                    .count();
-                for target in 0..targets {
-                    weights[first.unwrap() + target] =
-                        sample(channel, values, targets, target, time, |a, b, t| {
-                            a + (b - a) * t
-                        });
-                }
-            }
-        }
-    }
-    let locals = nodes
-        .into_iter()
-        .map(|(translation, rotation, scale)| {
-            Mat4::from_scale_rotation_translation(scale, rotation, translation)
-        })
-        .collect();
-    (locals, weights)
-}
-
 fn ground() -> Asset {
     let mut ground = asset::empty();
     ground.materials.push(Material {
@@ -453,15 +351,19 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
         intensity: 0.3,
     };
     let clip = &rig.clips[0];
+    // Kept between frames: sampling reuses their buffers.
+    let mut pose = Pose::rest(&rig);
+    let mut locals = Vec::new();
     for frame in 0..frames {
         let seconds = frame as f32 / 30.;
         for (offset, &instance) in instances.iter().enumerate() {
-            let (locals, weights) = pose(&rig, clip, (seconds + offset as f32 * 0.4) % 2.);
+            pose.sample(&rig, clip, seconds + offset as f32 * 0.4, Wrap::Loop);
+            pose.local_matrices(&mut locals);
             scene.set_instance_deformation(
                 &queue,
                 instance,
                 &rig.joint_matrices(&locals),
-                &weights,
+                &pose.morph_weights,
             )?;
         }
         input.elapsed_seconds = f64::from(seconds);
@@ -551,4 +453,64 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     pollster::block_on(run(output, frames))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Plausible defects: the clip sampled, wrapped or composed into joint
+    // matrices wrongly, or the unanimated tip bone not kept at rest.
+    // Oracle: the clip turns each of the first three bones about Z from 0
+    // to 0.35 rad over the first second and back over the next, and turns
+    // between rotations about one axis are linear in time, so at angle θ
+    // bone i's joint sits at Σ_{j=1..i} R_z(jθ)·(0, h, 0) with h the bone
+    // length; the tip bone has no channel, so a point above it follows
+    // R_z(3θ). The swelling weight runs 0, 1, 0 over the same keys.
+    #[test]
+    fn joints_follow_the_analytic_chain_over_time() {
+        let tentacle = asset::load_slice(&tentacle()).expect("the generated tentacle loads");
+        let rig = &tentacle.rig;
+        let clip = &rig.clips[0];
+        let length = HEIGHT / (BONES - 1) as f32;
+        let up = |angle: f32, distance: f32| Vec3::new(-angle.sin(), angle.cos(), 0.) * distance;
+        let mut pose = Pose::rest(rig);
+        let mut locals = Vec::new();
+        // (time, bend, swelling); 2.5 s loops to 0.5 s.
+        for (time, bend, swelling) in [
+            (0., 0., 0.),
+            (0.25, 0.0875, 0.25),
+            (1., 0.35, 1.),
+            (1.5, 0.175, 0.5),
+            (2.5, 0.175, 0.5),
+        ] {
+            pose.sample(rig, clip, time, Wrap::Loop);
+            pose.local_matrices(&mut locals);
+            let joints = rig.joint_matrices(&locals);
+            let mut expected = Vec3::ZERO;
+            for bone in 0..BONES as usize {
+                if bone > 0 {
+                    expected += up(bone as f32 * bend, length);
+                }
+                let bind = Vec3::Y * bone as f32 * length;
+                let actual = joints[bone].transform_point3(bind);
+                assert!(
+                    actual.abs_diff_eq(expected, 1e-5),
+                    "bone {bone} at {time} s: {actual}, expected {expected}"
+                );
+            }
+            let above_tip = Vec3::Y * (HEIGHT + 1.);
+            let tip = expected + up(3. * bend, 1.);
+            let actual = joints[BONES as usize - 1].transform_point3(above_tip);
+            assert!(
+                actual.abs_diff_eq(tip, 1e-5),
+                "above the tip at {time} s: {actual}"
+            );
+            assert!(
+                (pose.morph_weights[0] - swelling).abs() < 1e-6,
+                "{:?}",
+                pose.morph_weights
+            );
+        }
+    }
 }

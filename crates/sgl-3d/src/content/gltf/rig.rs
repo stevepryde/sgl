@@ -10,7 +10,7 @@ use gltf::animation::{Interpolation as GltfInterpolation, Property, util::ReadOu
 use super::super::asset::{Result, Vertex};
 use super::super::deformation::{
     Channel, ChannelValues, Clip, Influence, Interpolation, Joint, MAX_INDEX, MorphDelta,
-    MorphTarget, MorphWeight, Node, Rig,
+    MorphTarget, MorphWeight, Node, Rig, Transform,
 };
 use super::check_accessor;
 
@@ -83,9 +83,11 @@ impl Rigging {
                 Ok(Node {
                     name: node.name().map(str::to_owned),
                     parent: parents[node.index()],
-                    translation: Vec3::from_array(translation),
-                    rotation: Quat::from_array(rotation),
-                    scale: Vec3::from_array(scale),
+                    rest: Transform {
+                        translation: Vec3::from_array(translation),
+                        rotation: Quat::from_array(rotation),
+                        scale: Vec3::from_array(scale),
+                    },
                 })
             })
             .collect::<Result<_>>()?;

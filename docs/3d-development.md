@@ -46,9 +46,9 @@ Load geometry and textures once per scene through `asset::load` or
 `asset::load_slice`. Select named rigid parts with `LoadOptions::nodes`;
 keep naming conventions in the game predicate. Skinned and morphed assets
 bring their rig and clips as plain data (`Asset::rig`); the game samples and
-blends clips and poses each deforming instance every frame with
-`Scene::set_instance_deformation`. Do not maintain a second glTF
-decoder for embedded models or portraits. Portraits can compose the same
+blends them with `animation::Pose` at its own times and weights, and poses
+each deforming instance every frame with `Scene::set_instance_deformation`.
+Do not maintain a second glTF decoder for embedded models or portraits. Portraits can compose the same
 imported assets with a `Scene`, a `Renderer` and a `View` under a game-owned studio camera.
 Matching Blender images also requires matching lighting and color management.
 

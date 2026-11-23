@@ -41,10 +41,11 @@ use sgl_3d::{
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
     deformation::{
         Influence, Joint, MeshDeformation, MorphDelta, MorphTarget, MorphWeight, Node, Rig,
+        Transform,
     },
     effects::Glow,
     environment::{EnvironmentMap, PmremAtlas},
-    glam::{Mat4, Quat, Vec3, Vec4},
+    glam::{Mat4, Vec3, Vec4},
     heat_distortion::HeatDistortion,
     settings::{
         AmbientOcclusionQuality, Antialiasing, ContactShadows, DynamicGiQuality, MotionBlur,
@@ -330,9 +331,7 @@ fn deforming() -> Asset {
             nodes: vec![Node {
                 name: None,
                 parent: None,
-                translation: Vec3::ZERO,
-                rotation: Quat::IDENTITY,
-                scale: Vec3::ONE,
+                rest: Transform::IDENTITY,
             }],
             joints: vec![Joint {
                 node: 0,
@@ -1042,7 +1041,7 @@ async fn render(
             &mut [ViewFrame {
                 view: &mut scene_view,
                 input: &frame,
-                settings: settings,
+                settings,
                 output: &view,
                 timing: timing.as_ref(),
             }],

@@ -273,6 +273,27 @@ model a level of detail, fail. Its deformation starts at the bind pose
 sets it each frame, and its motion is measured from its deformation in the
 last submitted frame under the same rule.
 
+**Animation.** Sampling and blending a rig's clips is opt-in CPU code in
+content (`animation`), beside the rig it reads. A `Pose` holds each node's
+transform relative to its parent and each morph weight, in the rig's order.
+`Pose::sample` sets a pose to the rig's rest pose and then sets each channel
+of a clip at a time, as
+[glTF 2.0](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#appendix-c-interpolation)
+interpolates it: STEP; LINEAR, with rotations by shortest-path spherical
+interpolation; CUBICSPLINE, with tangents scaled by the key interval and
+rotations normalised. Before a channel's first keyframe it holds the first,
+and after its last it holds the last. `Wrap::Loop` first wraps the time into
+the clip's duration. A channel the rig cannot take is skipped. `Pose::blend`
+mixes toward another pose: translation, scale and morph weights linearly,
+rotations by the same shortest-path interpolation. `Pose::add` adds an
+additive pose's difference from a reference pose, as three.js r187's
+additive mode does. None of it holds time, weights or state between calls,
+and none of it allocates once a pose's buffers have their size
+(`Rig::joint_matrices` still allocates, #875). Clocks, transitions, state
+machines, masks and layer order are the game's.
+`Pose::local_matrices` feeds `Rig::joint_matrices`, and a pose's morph
+weights feed `Scene::set_instance_deformation`.
+
 An instance also carries shader data, four `f32` its materials' shaders
 read (`Scene::set_instance_shader_data`, zero when it is added): a wind
 phase, a chunk's anchor. Their motion is measured from the data of the last

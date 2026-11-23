@@ -92,9 +92,13 @@ them through unrefracted. A probe captured on an
   influences per vertex), morph targets (up to 256 a mesh), the node
   hierarchy and animation clips as plain data (`deformation`, `Asset::rig`).
   Each skin influence needs finite nonnegative weights with a finite positive
-  f32 sum. The game samples and blends clips and gives each instance its joint
-  matrices and morph weights every frame
-  (`Scene::set_instance_deformation`, `Rig::joint_matrices`). SGL3D morphs
+  f32 sum. `animation::Pose` samples a clip at the game's time as glTF
+  interpolates it (clamped or looped), crossfades poses and layers additive
+  clips against a reference pose, reusing its buffers; the game
+  owns clocks, transitions, state machines, masks and layer order, and gives
+  each instance its joint matrices and morph weights every frame
+  (`Pose::local_matrices`, `Rig::joint_matrices`,
+  `Scene::set_instance_deformation`). SGL3D morphs
   and skins each changed instance once per frame in compute, and every pass
   draws the result: motion from the last submitted frame's pose,
   culling by skinned bounds, shadows in the cascades and the local-light
@@ -550,7 +554,8 @@ size, and record counts must fit `u32`.
 
 ## Not provided
 
-Animation playback (sampling and blending clips is the game's).
+An animation player, mixer or state machine: `animation::Pose` samples and
+blends clips at the times and weights the game gives it, and holds no clock.
 DLSS/MetalFX are [planned](../../../specs/sgl3d.md#planned). The
 directional cascades cull by frustum alone.
 

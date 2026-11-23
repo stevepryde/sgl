@@ -15,6 +15,7 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `animation::Pose` (new) samples imported clips as glTF interpolates them (`Pose::sample` with `Wrap::Clamp` or `Wrap::Loop`, `Clip::duration`), crossfades poses (`Pose::blend`) and layers additive ones (`Pose::add`); `deformation::Node`'s rest transform moves from `translation`/`rotation`/`scale` into `rest: Transform`, and `Node::rest()` becomes `node.rest.matrix()`. Replace a hand-written sampler with `pose.sample(&rig, clip, time, Wrap::Loop); pose.local_matrices(&mut locals);` then `rig.joint_matrices(&locals)` and `&pose.morph_weights`.
 - `sgl-3d` `asset::load` and `load_slice` load glTF triangle strips and fans as triangle lists; before, they refused them. No game-code changes are needed.
 
 ## 0.9.3 — 2026-11-20

@@ -38,7 +38,7 @@ pub use content::model::{AssetIds, ModelMesh};
 pub use content::shader::{MaterialShader, ShaderSource};
 pub use content::transient::FogVolume;
 pub use content::{
-    asset, baked_specular_probe, deformation, environment, geometry, static_lighting,
+    animation, asset, baked_specular_probe, deformation, environment, geometry, static_lighting,
 };
 pub use frame_input::{
     AgxLook, AutoExposure, BloomParameters, Camera, ColorGrading, ColorGradingGlobal,
