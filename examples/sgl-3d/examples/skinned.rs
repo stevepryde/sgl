@@ -14,6 +14,7 @@ use sgl_3d::{
     LightShape, Mobility, Renderer, Scene, View, ViewFrame, ViewOutput,
     animation::{Pose, Wrap},
     asset::{self, Asset, CpuMesh, Material, Vertex},
+    deformation::JointMatrices,
     glam::{Mat4, Quat, Vec3},
     settings::{RenderPreset, Settings},
 };
@@ -351,18 +352,21 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
         intensity: 0.3,
     };
     let clip = &rig.clips[0];
-    // Kept between frames: sampling reuses their buffers.
+    // Kept between frames and shared by the instances: posing reuses their
+    // buffers, so a frame allocates nothing.
     let mut pose = Pose::rest(&rig);
     let mut locals = Vec::new();
+    let mut joints = JointMatrices::new();
     for frame in 0..frames {
         let seconds = frame as f32 / 30.;
         for (offset, &instance) in instances.iter().enumerate() {
             pose.sample(&rig, clip, seconds + offset as f32 * 0.4, Wrap::Loop);
             pose.local_matrices(&mut locals);
+            rig.joint_matrices(&locals, &mut joints)?;
             scene.set_instance_deformation(
                 &queue,
                 instance,
-                &rig.joint_matrices(&locals),
+                joints.matrices(),
                 &pose.morph_weights,
             )?;
         }
@@ -476,6 +480,7 @@ mod tests {
         let up = |angle: f32, distance: f32| Vec3::new(-angle.sin(), angle.cos(), 0.) * distance;
         let mut pose = Pose::rest(rig);
         let mut locals = Vec::new();
+        let mut matrices = JointMatrices::new();
         // (time, bend, swelling); 2.5 s loops to 0.5 s.
         for (time, bend, swelling) in [
             (0., 0., 0.),
@@ -486,7 +491,8 @@ mod tests {
         ] {
             pose.sample(rig, clip, time, Wrap::Loop);
             pose.local_matrices(&mut locals);
-            let joints = rig.joint_matrices(&locals);
+            rig.joint_matrices(&locals, &mut matrices).unwrap();
+            let joints = matrices.matrices();
             let mut expected = Vec3::ZERO;
             for bone in 0..BONES as usize {
                 if bone > 0 {

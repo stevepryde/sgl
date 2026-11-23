@@ -107,8 +107,9 @@ them through unrefracted. A probe captured on an
   clips against a reference pose, reusing its buffers; the game
   owns clocks, transitions, state machines, masks and layer order, and gives
   each instance its joint matrices and morph weights every frame
-  (`Pose::local_matrices`, `Rig::joint_matrices`,
-  `Scene::set_instance_deformation`). SGL3D morphs
+  (`Pose::local_matrices`, `Rig::joint_matrices` into a reused
+  `JointMatrices`, `Scene::set_instance_deformation`), allocating nothing
+  per frame on the CPU once those buffers have their size. SGL3D morphs
   and skins each changed instance once per frame in compute, and every pass
   draws the result: motion from the last submitted frame's pose,
   culling by skinned bounds, shadows in the cascades and the local-light

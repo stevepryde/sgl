@@ -178,35 +178,77 @@ pub struct Rig {
 
 impl Rig {
     /// Each joint's matrix with the nodes posed at `locals` (each node's
-    /// transform relative to its parent, in node order): its node's
-    /// transform in the asset's space times its inverse bind matrix, glTF's
-    /// joint matrix. Nodes may come in any order. A loaded rig's parents
-    /// form trees; a built one whose parents form a cycle composes a node's
-    /// ancestors only as far as there are nodes, so its matrices are wrong
-    /// but its evaluation ends.
-    pub fn joint_matrices(&self, locals: &[Mat4]) -> Vec<Mat4> {
-        let mut globals: Vec<Option<Mat4>> = vec![None; self.nodes.len()];
-        self.joints
-            .iter()
-            .map(|joint| self.global(joint.node, locals, &mut globals) * joint.inverse_bind)
-            .collect()
+    /// transform relative to its parent, in node order), into `joints`:
+    /// its node's transform in the asset's space times its inverse bind
+    /// matrix, glTF's joint matrix, one per joint in joint order. Nodes may
+    /// come in any order. `joints` keeps its buffers between calls, so a
+    /// rig posed every frame allocates nothing once they have their size.
+    ///
+    /// `locals` must hold exactly one matrix per node, and every joint and
+    /// the parent of each node above one must name a node of the rig (other
+    /// nodes are not read); otherwise nothing is composed,
+    /// `joints` is left empty and the error says why. A loaded rig's
+    /// parents form trees; a built one whose parents form a cycle composes
+    /// a node's ancestors only as far as there are nodes, so its matrices
+    /// are wrong but its evaluation ends.
+    pub fn joint_matrices(
+        &self,
+        locals: &[Mat4],
+        joints: &mut JointMatrices,
+    ) -> Result<(), RigError> {
+        let JointMatrices {
+            matrices,
+            globals,
+            chain,
+        } = joints;
+        matrices.clear();
+        if locals.len() != self.nodes.len() {
+            return Err(RigError::LocalCount {
+                nodes: self.nodes.len(),
+                locals: locals.len(),
+            });
+        }
+        globals.clear();
+        globals.resize(self.nodes.len(), None);
+        for joint in &self.joints {
+            match self.global(joint.node, locals, globals, chain) {
+                Ok(global) => matrices.push(global * joint.inverse_bind),
+                Err(error) => {
+                    matrices.clear();
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `node`'s transform in the asset's space, each node's composed once:
     /// up from it to the nearest composed ancestor or its root, then down.
     /// A chain of ancestors is at most as long as there are nodes, the cap
-    /// that ends a cycle's walk.
-    fn global(&self, node: usize, locals: &[Mat4], globals: &mut [Option<Mat4>]) -> Mat4 {
-        let mut chain = Vec::new();
+    /// that ends a cycle's walk. `locals` and `globals` hold one per node.
+    fn global(
+        &self,
+        node: usize,
+        locals: &[Mat4],
+        globals: &mut [Option<Mat4>],
+        chain: &mut Vec<usize>,
+    ) -> Result<Mat4, RigError> {
+        chain.clear();
         let mut above = Mat4::IDENTITY;
         let mut at = node;
         loop {
-            if let Some(global) = globals[at] {
+            let composed = globals.get(at).ok_or(RigError::MissingNode { node: at })?;
+            if let Some(global) = *composed {
                 above = global;
                 break;
             }
             chain.push(at);
             match self.nodes[at].parent {
+                // Checked before the cap, which would otherwise end the
+                // walk at a node whose parent is missing.
+                Some(parent) if parent >= self.nodes.len() => {
+                    return Err(RigError::MissingNode { node: parent });
+                }
                 Some(parent) if chain.len() < self.nodes.len() => at = parent,
                 _ => break,
             }
@@ -215,6 +257,57 @@ impl Rig {
             above *= locals[at];
             globals[at] = Some(above);
         }
-        above
+        Ok(above)
     }
 }
+
+/// A rig's joint matrices as `Rig::joint_matrices` last composed them, and
+/// the buffers it composes them in. Keep one between frames (one serves
+/// every instance, since `Scene::set_instance_deformation` copies what it
+/// is given) and it allocates nothing once its buffers have their size.
+#[derive(Clone, Debug, Default)]
+pub struct JointMatrices {
+    matrices: Vec<Mat4>,
+    /// Each node's transform in the asset's space, once composed.
+    globals: Vec<Option<Mat4>>,
+    /// The ancestors of a node being composed.
+    chain: Vec<usize>,
+}
+
+impl JointMatrices {
+    /// Empty buffers, which the first composition sizes.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// One matrix per joint, in the rig's joint order: what
+    /// `Scene::set_instance_deformation` takes. Empty after an error.
+    pub fn matrices(&self) -> &[Mat4] {
+        &self.matrices
+    }
+}
+
+/// Why `Rig::joint_matrices` composed nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RigError {
+    /// The local matrices are not one per node: a pose of another rig, or
+    /// a truncated buffer.
+    LocalCount { nodes: usize, locals: usize },
+    /// A joint, or the parent of a node above one, names a node the rig
+    /// lacks (a rig built by hand; a loaded one has none).
+    MissingNode { node: usize },
+}
+
+impl std::fmt::Display for RigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LocalCount { nodes, locals } => write!(
+                f,
+                "{locals} local matrices for a rig of {nodes} nodes; it takes one per node"
+            ),
+            Self::MissingNode { node } => write!(f, "the rig names node {node}, which it lacks"),
+        }
+    }
+}
+
+impl std::error::Error for RigError {}

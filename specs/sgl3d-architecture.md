@@ -295,11 +295,17 @@ mixes toward another pose: translation, scale and morph weights linearly,
 rotations by the same shortest-path interpolation. `Pose::add` adds an
 additive pose's difference from a reference pose, as three.js r187's
 additive mode does. None of it holds time, weights or state between calls,
-and none of it allocates once a pose's buffers have their size
-(`Rig::joint_matrices` still allocates, #875). Clocks, transitions, state
-machines, masks and layer order are the game's.
-`Pose::local_matrices` feeds `Rig::joint_matrices`, and a pose's morph
-weights feed `Scene::set_instance_deformation`.
+and none of it allocates once a pose's buffers have their size. Clocks,
+transitions, state machines, masks and layer order are the game's.
+`Pose::local_matrices` feeds `Rig::joint_matrices`, which composes into a
+`JointMatrices` the game keeps (its output and its scratch for node
+transforms and ancestor walks), and refuses with a `RigError`, composing
+nothing, local matrices that are not one per node or a joint or a parent
+above one that names a node the rig lacks. Its matrices and a pose's morph weights
+feed `Scene::set_instance_deformation`, whose CPU side reuses the
+instance's buffers. None of the path allocates per frame on the CPU once
+its buffers have their size, beyond the staging wgpu's
+`Queue::write_buffer` makes for the upload.
 
 An instance also carries shader data, four `f32` its materials' shaders
 read (`Scene::set_instance_shader_data`, zero when it is added): a wind

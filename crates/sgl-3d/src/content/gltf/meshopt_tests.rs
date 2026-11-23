@@ -8,6 +8,7 @@ use super::attributes_tests::{
 use super::*;
 use crate::animation::{Pose, Wrap};
 use crate::asset::LoadBudget;
+use crate::deformation::JointMatrices;
 use glam::{Mat3, Mat4, Vec3};
 use serde_json::Value;
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -135,7 +136,9 @@ fn khr_meshopt_cube_with_filters_loads_as_the_float_cube() {
 fn skinned(asset: &Asset, pose: &Pose) -> Vec<(Vec3, Vec3)> {
     let mut locals = Vec::new();
     pose.local_matrices(&mut locals);
-    let matrices = asset.rig.joint_matrices(&locals);
+    let mut joints = JointMatrices::new();
+    asset.rig.joint_matrices(&locals, &mut joints).unwrap();
+    let matrices = joints.matrices();
     let [mesh] = &asset.meshes[..] else {
         panic!("one mesh");
     };
@@ -182,7 +185,9 @@ fn assert_rig_matches(compressed: &Asset, reference: &Asset, rotation: f32, norm
     let reference_mesh = &reference.meshes[0];
     let mut locals = Vec::new();
     Pose::rest(&reference.rig).local_matrices(&mut locals);
-    let matrices = reference.rig.joint_matrices(&locals);
+    let mut joints = JointMatrices::new();
+    reference.rig.joint_matrices(&locals, &mut joints).unwrap();
+    let matrices = joints.matrices();
     let spread: Vec<f32> = reference_mesh
         .vertices
         .iter()

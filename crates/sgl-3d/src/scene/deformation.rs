@@ -300,12 +300,11 @@ impl ModelDeformation {
         rays.free(self.range);
     }
 
-    /// Each mesh's bounds in the model's space under `joints` and `weights`.
-    fn bounds(&self, joints: &[Mat4], weights: &[f32]) -> Vec<[Vec3; 2]> {
-        self.meshes
-            .iter()
-            .map(|mesh| mesh.bounds(joints, weights))
-            .collect()
+    /// Each mesh's bounds in the model's space under `joints` and
+    /// `weights`, into `bounds` (cleared first and reused).
+    fn bounds(&self, joints: &[Mat4], weights: &[f32], bounds: &mut Vec<[Vec3; 2]>) {
+        bounds.clear();
+        bounds.extend(self.meshes.iter().map(|mesh| mesh.bounds(joints, weights)));
     }
 
     /// An instance's words: two slots of positions, normals and tangents,
@@ -323,8 +322,9 @@ impl ModelDeformation {
 /// `DEFORMED_POSITION_WORDS`, since its BLAS reads them in whole 12-byte
 /// strides (`BlasTriangleGeometry::first_vertex` counts strides).
 pub(crate) struct InstanceDeformation {
-    joints: Vec<Mat4>,
-    weights: Vec<f32>,
+    /// The words of its joint matrices and morph weights last written,
+    /// kept so posing it every frame allocates nothing.
+    words: Vec<u32>,
     range: Range<u32>,
     /// Each mesh's bounds in the model's space as deformed, and their union.
     pub mesh_bounds: Vec<[Vec3; 2]>,
@@ -362,8 +362,7 @@ impl InstanceDeformation {
             DEFORMED_POSITION_WORDS,
         )?;
         let mut deformation = Self {
-            joints: Vec::new(),
-            weights: Vec::new(),
+            words: Vec::new(),
             range,
             mesh_bounds: Vec::new(),
             bounds: EMPTY,
@@ -403,18 +402,14 @@ impl InstanceDeformation {
         if !joints.iter().all(Mat4::is_finite) || !weights.iter().all(|w| w.is_finite()) {
             return Err(SceneError::DeformationMismatch);
         }
-        self.joints.clear();
-        self.joints.extend_from_slice(joints);
-        self.weights.clear();
-        self.weights.extend_from_slice(weights);
-        let mut words: Vec<u32> =
-            Vec::with_capacity((model.joints * JOINT_WORDS) as usize + weights.len());
+        self.words.clear();
         for joint in joints {
-            words.extend_from_slice(bytemuck::cast_slice(&joint.to_cols_array()));
+            self.words
+                .extend_from_slice(bytemuck::cast_slice(&joint.to_cols_array()));
         }
-        words.extend_from_slice(bytemuck::cast_slice(weights));
-        rays.write(queue, self.joints_word(model), &words);
-        self.mesh_bounds = model.bounds(joints, weights);
+        self.words.extend_from_slice(bytemuck::cast_slice(weights));
+        rays.write(queue, self.joints_word(model), &self.words);
+        model.bounds(joints, weights, &mut self.mesh_bounds);
         self.bounds = self.mesh_bounds.iter().fold(EMPTY, |b, m| union(b, *m));
         self.revision = super::next_generation();
         self.changed = true;

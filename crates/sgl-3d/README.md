@@ -2571,7 +2571,10 @@ transitions, state machines, masks and layer order.
   name (glTF's: the joint's transform in the model's space times its inverse
   bind matrix; `Rig::joint_matrices` composes them from each node's local
   transform, and ends, with wrong matrices, on a built rig whose parents
-  form a cycle) and one weight per morph weight its targets name; further ones
+  form a cycle; local matrices not one per node, or a joint or a parent
+  above one naming a node the rig lacks, compose nothing and return a
+  `RigError`) and
+  one weight per morph weight its targets name; further ones
   are ignored, fewer are refused (`SceneError::DeformationMismatch`). A
   skinned normal faces the side its deformed triangles wind towards, as a
   mirrored joint's faces do. A joint matrix may scale an axis to zero, as a
@@ -2602,11 +2605,15 @@ transitions, state machines, masks and layer order.
   add the difference, rotation is followed by `reference⁻¹ · additive`.
   Nodes the additive clip leaves alone are untouched, so an upper-body clip
   needs no mask; filter a clip's channels to mask one. Then
-  `pose.local_matrices(&mut locals)` feeds `rig.joint_matrices(&locals)`,
-  and `pose.morph_weights` goes to `Scene::set_instance_deformation`.
-  Sampling costs one binary search per channel. Sampling, blending, adding
-  and `local_matrices` allocate nothing once the pose and `locals` have
-  their size, so keep them between frames.
+  `pose.local_matrices(&mut locals)` feeds
+  `rig.joint_matrices(&locals, &mut joints)?`, and `joints.matrices()` and
+  `pose.morph_weights` go to `Scene::set_instance_deformation`.
+  Sampling costs one binary search per channel. Sampling, blending, adding,
+  `local_matrices`, `joint_matrices` and posing the instance allocate
+  nothing on the CPU once the pose, `locals` and the `JointMatrices` have
+  their size, so keep them between frames; one of each serves every
+  instance of a rig. The upload itself is a `Queue::write_buffer`, which
+  wgpu stages as it does any write.
 - **Rigid nodes.** A rigid mesh's node is baked at its rest transform, so a
   clip that animates it moves nothing; split such parts out by selecting
   their nodes (`LoadOptions::nodes`) and pose them as instances.

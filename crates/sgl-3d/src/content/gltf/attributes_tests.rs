@@ -633,7 +633,10 @@ fn a_posed_skinned_mesh_dequantizes_through_its_inverse_bind_matrices() {
     // The hip turned a quarter about Z and the knee 0.4 about X.
     let hip = Mat4::from_translation(Vec3::Y) * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2);
     let knee = Mat4::from_translation(Vec3::Y) * Mat4::from_rotation_x(0.4);
-    let matrices = rig.joint_matrices(&[hip, knee, Mat4::IDENTITY]);
+    let mut joints = crate::deformation::JointMatrices::new();
+    rig.joint_matrices(&[hip, knee, Mat4::IDENTITY], &mut joints)
+        .unwrap();
+    let matrices = joints.matrices();
     let globals = [hip, hip * knee];
     for (i, vertex) in mesh.vertices.iter().enumerate() {
         let influence = &mesh.deformation.influences[i];

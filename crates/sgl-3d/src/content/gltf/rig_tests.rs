@@ -1,7 +1,7 @@
 //! Skins, morph targets and clips imported from a hand-built document.
 use super::*;
 use crate::content::identity::Identity;
-use crate::deformation::{ChannelValues, Interpolation};
+use crate::deformation::{ChannelValues, Interpolation, JointMatrices};
 use glam::{Quat, Vec3};
 use serde_json::{Value, json};
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -472,13 +472,16 @@ fn skins_morph_targets_and_clips_import_as_plain_data() {
     assert_eq!(joints, [2, 1, 2]);
     assert_eq!(rig.joints[0].inverse_bind, Mat4::IDENTITY);
     let rest: Vec<Mat4> = rig.nodes.iter().map(|node| node.rest.matrix()).collect();
-    for matrix in &rig.joint_matrices(&rest)[1..] {
+    let mut matrices = JointMatrices::new();
+    rig.joint_matrices(&rest, &mut matrices).unwrap();
+    for matrix in &matrices.matrices()[1..] {
         assert!(matrix.abs_diff_eq(Mat4::IDENTITY, 1e-6), "{matrix}");
     }
     // Turning the upper bone turns the lower one's matrix about the upper.
     let mut posed = rest.clone();
     posed[1] *= Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2);
-    let lower = rig.joint_matrices(&posed)[2];
+    rig.joint_matrices(&posed, &mut matrices).unwrap();
+    let lower = matrices.matrices()[2];
     assert!(
         lower
             .transform_point3(Vec3::new(1., 2., 0.))
@@ -691,10 +694,100 @@ fn a_built_rig_with_a_parent_cycle_still_evaluates() {
         ..Default::default()
     };
     let locals: Vec<Mat4> = rig.nodes.iter().map(|node| node.rest.matrix()).collect();
-    let matrices = rig.joint_matrices(&locals);
+    let mut joints = JointMatrices::new();
+    rig.joint_matrices(&locals, &mut joints).unwrap();
+    let matrices = joints.matrices();
     assert_eq!(matrices.len(), 2);
     assert!(matrices[0].is_finite());
     assert_eq!(matrices[1], locals[2] * locals[3]);
+}
+
+/// A built rig of a root with one child, a joint each, and translations
+/// along X of one and two.
+fn built_rig() -> crate::deformation::Rig {
+    let node = |parent, x: f32| crate::deformation::Node {
+        name: None,
+        parent,
+        rest: crate::deformation::Transform {
+            translation: Vec3::new(x, 0., 0.),
+            ..Default::default()
+        },
+    };
+    let joint = |node| crate::deformation::Joint {
+        node,
+        inverse_bind: Mat4::IDENTITY,
+    };
+    crate::deformation::Rig {
+        nodes: vec![node(None, 1.), node(Some(0), 2.)],
+        joints: vec![joint(0), joint(1)],
+        ..Default::default()
+    }
+}
+
+// Plausible defects: local matrices fewer than the nodes (a truncated
+// buffer) indexed past their end and panicking, or more (a pose of a larger
+// rig) composed into matrices that look valid; matrices from an earlier
+// call left behind for the game to upload. The oracle is
+// `Rig::joint_matrices`'s contract: refused, and nothing composed.
+#[wasm_bindgen_test(unsupported = test)]
+fn local_matrices_not_one_per_node_are_refused() {
+    use crate::deformation::RigError;
+    let rig = built_rig();
+    let locals: Vec<Mat4> = rig.nodes.iter().map(|node| node.rest.matrix()).collect();
+    let mut joints = JointMatrices::new();
+    rig.joint_matrices(&locals, &mut joints).unwrap();
+    assert_eq!(
+        joints.matrices()[1].transform_point3(Vec3::ZERO),
+        Vec3::new(3., 0., 0.)
+    );
+    for count in [0, 1, 3] {
+        let mut wrong = locals.clone();
+        wrong.resize(count, Mat4::IDENTITY);
+        assert_eq!(
+            rig.joint_matrices(&wrong, &mut joints),
+            Err(RigError::LocalCount {
+                nodes: 2,
+                locals: count
+            })
+        );
+        assert!(joints.matrices().is_empty(), "{count} locals");
+    }
+}
+
+// Plausible defects: a hand-built rig whose joint or parent names a node it
+// lacks indexing past its nodes and panicking; the matrices composed before
+// the bad joint left behind; a missing parent missed when the ancestor walk
+// reaches its cap of one step per node, so the node above it is composed
+// as a root whichever joint comes first.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_joint_or_parent_naming_a_missing_node_is_refused() {
+    use crate::deformation::RigError;
+    let locals = [Mat4::IDENTITY; 2];
+    let mut joints = JointMatrices::new();
+    let mut rig = built_rig();
+    rig.joints[1].node = 7;
+    assert_eq!(
+        rig.joint_matrices(&locals, &mut joints),
+        Err(RigError::MissingNode { node: 7 })
+    );
+    assert!(joints.matrices().is_empty());
+    let mut rig = built_rig();
+    rig.nodes[1].parent = Some(9);
+    assert_eq!(
+        rig.joint_matrices(&locals, &mut joints),
+        Err(RigError::MissingNode { node: 9 })
+    );
+    assert!(joints.matrices().is_empty());
+    // The root's parent missing, with the child's joint walked first: its
+    // walk takes both nodes, the cap.
+    let mut rig = built_rig();
+    rig.nodes[0].parent = Some(9);
+    rig.joints.reverse();
+    assert_eq!(
+        rig.joint_matrices(&locals, &mut joints),
+        Err(RigError::MissingNode { node: 9 })
+    );
+    assert!(joints.matrices().is_empty());
 }
 
 // Plausible defects: a fifth influence silently dropped; a skinned
