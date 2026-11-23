@@ -552,10 +552,21 @@ size, and record counts must fit `u32`.
 
 Animation playback (sampling and blending clips is the game's).
 DLSS/MetalFX are [planned](../../../specs/sgl3d.md#planned). The
-directional cascades cull by frustum alone. Compressed images
-are BC7 only: transcoding Basis Universal (UASTC) for a device without BC is
-not provided.
+directional cascades cull by frustum alone.
+
+Compressed material images are BC7, ETC2 RGBA8 or ASTC 4×4 chains the game
+prepares ([compressed images](../README.md#compressed-material-images));
+transcoding Basis Universal (UASTC) KTX2 is not provided
+([#857](https://github.com/stevepryde/sgl/issues/857)). Transmissive surfaces
+refract on `Extended` and blend through unrefracted on `Basic`
+([transmission](../README.md#transmissive-glass-and-water)). Specular probes
+are captured between frames, offline or while a level loads:
+`Renderer::capture_specular_probe_async` returns the GGX-prefiltered cube
+(`SpecularProbeRadiance`), which the game stores or installs in a
+`BakedSpecularProbe` with `Scene::set_baked_specular_probes`
+([probes](../README.md#baked-specular-probes)); refreshing probes on the GPU
+during play is not provided
+([#867](https://github.com/stevepryde/sgl/issues/867)).
 
 Also not provided: occlusion maps in an image of their own, specular
-textures, tangent generation, runtime probe capture, order-independent
-transparency and refraction.
+textures, tangent generation and order-independent transparency.
