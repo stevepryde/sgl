@@ -3,8 +3,8 @@ use serde_json::{Value, json};
 use sgl_3d::{
     Backdrop, BakedSpecularProbe, Camera, Decal, DecalId, DecalImageId, DirectionalLight,
     DirectionalShadow, DynamicGiVolume, EnvironmentLight, Exposure, Fog, FogVolume, FrameInput,
-    Light, LightCookie, LightId, LightShape, LocalExposure, Scene, Sky, SpecularProbeBox,
-    SpecularProbeRadiance, SpecularProbeTexels, asset,
+    Light, LightCookie, LightId, LightProfile, LightShape, LocalExposure, Scene, Sky,
+    SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels, SpotProfile, asset,
     glam::{Mat4, Quat, Vec3, camera},
     settings::{
         AmbientOcclusionQuality, AnisotropicFiltering, Antialiasing, Bloom, DynamicGiQuality,
@@ -15,6 +15,8 @@ use sgl_3d::{
 
 #[path = "puddle_mask.rs"]
 mod puddle_mask;
+#[path = "wall_washer.rs"]
+mod wall_washer;
 #[path = "window_panes.rs"]
 mod window_panes;
 
@@ -453,16 +455,44 @@ pub struct AuthoredCookie {
     pub up: Vec3,
 }
 
-/// An authored light and, for a spot, the pattern it projects.
+/// A measured profile a fixture's spot shines with, generated in code.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ProfilePattern {
+    /// `"wall_washer"`: a wall washer's (`wall_washer`).
+    WallWasher,
+}
+
+impl ProfilePattern {
+    fn profile(self) -> Result<LightProfile, String> {
+        match self {
+            Self::WallWasher => {
+                LightProfile::from_ies(&wall_washer::wall_washer_ies()).map_err(|e| e.to_string())
+            }
+        }
+    }
+}
+
+/// An authored spot's profile: its pattern and the direction of its 0°
+/// horizontal angle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AuthoredProfile {
+    pub pattern: ProfilePattern,
+    pub zero_azimuth: Vec3,
+}
+
+/// An authored light and, for a spot, the pattern it projects and the
+/// profile it shines with.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AuthoredLight {
     pub light: Light,
     pub cookie: Option<AuthoredCookie>,
+    pub profile: Option<AuthoredProfile>,
 }
 
 /// Adds the fixture's local lights to `scene`, each spot's cookie with it
-/// unless `cookies` is false (for cookie-on and cookie-off captures of one
-/// fixture), each pattern added once as a decal image. Returns the lights'
+/// unless `cookies` is false and its profile unless `profiles` is false
+/// (for on and off captures and timings of one fixture), each pattern
+/// added once as a decal image or a light profile. Returns the lights'
 /// identities.
 pub fn add_local_lights(
     scene: &mut Scene,
@@ -470,8 +500,10 @@ pub fn add_local_lights(
     queue: &wgpu::Queue,
     descriptor: &Value,
     cookies: bool,
+    profiles: bool,
 ) -> Result<Vec<LightId>, String> {
     let mut images = Vec::new();
+    let mut added_profiles = Vec::new();
     let mut ids = Vec::new();
     for authored in local_lights_from_json(descriptor)? {
         let mut light = authored.light;
@@ -492,6 +524,23 @@ pub fn add_local_lights(
             light.cookie = Some(LightCookie {
                 image,
                 up: cookie.up,
+            });
+        }
+        if let Some(profile) = authored.profile.filter(|_| profiles) {
+            let id = match added_profiles
+                .iter()
+                .find(|(pattern, _)| *pattern == profile.pattern)
+            {
+                Some(&(_, id)) => id,
+                None => {
+                    let id = scene.add_light_profile(profile.pattern.profile()?);
+                    added_profiles.push((profile.pattern, id));
+                    id
+                }
+            };
+            light.profile = Some(SpotProfile {
+                profile: id,
+                zero_azimuth: profile.zero_azimuth,
             });
         }
         ids.push(
@@ -591,6 +640,28 @@ pub fn local_lights_from_json(descriptor: &Value) -> Result<Vec<AuthoredLight>, 
                     })
                 }
             };
+            let profile = match value.get("profile") {
+                None => None,
+                Some(_) if key != "spot_lights" => {
+                    return Err(format!("{kind} cannot shine with a profile"));
+                }
+                Some(profile) => {
+                    let fields = Fields {
+                        value: profile,
+                        kind: "spot light profile",
+                    };
+                    let pattern = match profile["pattern"].as_str() {
+                        Some("wall_washer") => ProfilePattern::WallWasher,
+                        _ => {
+                            return Err("spot light profile pattern must be \"wall_washer\"".into());
+                        }
+                    };
+                    Some(AuthoredProfile {
+                        pattern,
+                        zero_azimuth: fields.direction("zero_azimuth")?,
+                    })
+                }
+            };
             lights.push(AuthoredLight {
                 light: Light {
                     position: fields.vector("position")?,
@@ -603,6 +674,7 @@ pub fn local_lights_from_json(descriptor: &Value) -> Result<Vec<AuthoredLight>, 
                     ..Default::default()
                 },
                 cookie,
+                profile,
             });
         }
     }

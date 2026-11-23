@@ -1,6 +1,6 @@
 // The scene lights that reach a point, and each one as a LightSample.
 // Reads `view`, `lights`, `clusters`, local_shadow.wgsl's bindings and
-// light_cookie.wgsl's; a
+// light_cookie.wgsl's and light_profile.wgsl's; a
 // view's clusters list them (clusters.wgsl). How a light reaches a point is
 // light_reach.wgsl's.
 // Scene light `index` at `receiver` (SHADOW_RECEIVER_*) with its position,
@@ -25,8 +25,9 @@
 // inverse-square denominator (light_reach): the fog passes its froxel's,
 // every surface 0. A spot's cookie scales the radiance of a light that
 // reaches and is seen, on both sides alike (light_cookie): `position_dx`
-// and `position_dy`, the receiver's footprint, select its image's level,
-// and a light it darkens wholly does not reach.
+// and `position_dy`, the receiver's footprint, select its image's level.
+// A spot's profile scales it too, toward the receiver (light_profile). A
+// light its cookie and profile darken wholly does not reach.
 fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,coat_normal:vec3<f32>,geometry_normal:vec3<f32>,pixel:vec2<f32>,receiver:u32,transmits:bool,back:vec3<f32>,distance_bias_square:f32,position_dx:vec3<f32>,position_dy:vec3<f32>)->LightSample {
  let unreached=LightSample(vec3(0.),vec3(0.),0.,0.,0.,NO_RECT_LIGHT,0.);
  let light=lights[index];
@@ -60,7 +61,7 @@ fn scene_light_sample(index:u32,position:vec3<f32>,normal:vec3<f32>,coat_normal:
  if visibility<=0. && transmitted<=0. {
   return unreached;
  }
- let cookie=light_cookie(light,position,position_dx,position_dy);
+ let cookie=light_cookie(light,position,position_dx,position_dy)*light_profile(light,position);
  if all(cookie<=vec3(0.)) {
   return unreached;
  }

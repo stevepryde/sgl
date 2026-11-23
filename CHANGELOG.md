@@ -27,6 +27,7 @@ docs and specs the entry links.
 - `sgl-3d` `timing::PassTime` gains `passes`, the timed passes in its group. No game-code changes are needed unless a game builds a `PassTime`.
 - `sgl-3d` adds `Renderer::compile`, which readies a frame's shaders and pipelines before it, behind a loading screen: geometry pipelines as `CompileJob`s for the game's threads, the rest created by the call. No game-code changes are needed; to use it, call it each loading frame with `render`'s arguments, run `compilation.jobs`, and draw once `compilation.ready()` ([guide](crates/sgl-3d/docs/README.md#compiling-ahead)).
 - `sgl-3d` adds depth of field: `Settings::depth_of_field` (`DepthOfField::Off` by default, `Low`, `Medium`, `High`) focuses the antialiased frame through `FrameInput::depth_of_field` (`DepthOfFieldParameters`: focus distance, f-number, sensor height), after TAA or FSR and before motion blur; `DiagnosticTarget::DepthOfField` reads the focused frame. No game-code changes are needed; a game that matches every `DiagnosticTarget` adds the new variant.
+- `sgl-3d` spot lights shine with a measured LM-63 (`.ies`) profile through the new `Light::profile` (`SpotProfile`, `LightProfile::from_ies`, `Scene::add_light_profile`); before, a spot had only its cone and cookie. A `Light` literal that names every field adds `profile: None`, and an exhaustive `SceneError` match adds `UnknownLightProfile` and `LightProfileInUse`; others need no change.
 
 ## 0.9.3 — 2026-11-20
 

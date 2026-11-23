@@ -19,7 +19,7 @@ fn placed_images_and_their_borders_never_overlap() {
     let mut items: Vec<Item> = (0..60)
         .map(|index| {
             Item::new(
-                (DecalImageId::issue(index, 1), Sampling::Color),
+                AtlasKey::Image(DecalImageId::issue(index, 1), Sampling::Color),
                 [1 + next(700), 1 + next(300)],
             )
         })
@@ -61,7 +61,7 @@ fn placed_images_and_their_borders_never_overlap() {
 // everywhere. `limit` admits every side here, so only the build refuses.
 #[wasm_bindgen_test(unsupported = test)]
 fn an_atlas_too_large_to_build_is_refused_before_it_is_built() {
-    let key = (DecalImageId::issue(0, 1), Sampling::Color);
+    let key = AtlasKey::Image(DecalImageId::issue(0, 1), Sampling::Color);
     let layout = |side: u32| AtlasLayout::place(&[(key, [side, side])], 32768);
     assert!(matches!(layout(16384), Err(SceneError::DeviceLimit)));
     let large = layout(8192);
@@ -80,7 +80,7 @@ fn an_atlas_too_large_to_build_is_refused_before_it_is_built() {
 // is the requirement that no atlas exceeds `limit` on a side.
 #[wasm_bindgen_test(unsupported = test)]
 fn an_image_wider_than_the_device_allows_is_refused_before_it_is_packed() {
-    let key = (DecalImageId::issue(0, 1), Sampling::Color);
+    let key = AtlasKey::Image(DecalImageId::issue(0, 1), Sampling::Color);
     assert!(matches!(
         AtlasLayout::place(&[(key, [u32::MAX - 31, 1])], 16384),
         Err(SceneError::DeviceLimit)

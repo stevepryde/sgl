@@ -116,8 +116,8 @@ impl PunctualLight {
     /// `LightShape::Spot` keeps below, is the largest `f32` below it. A
     /// glTF light is a point (a directional one a point at infinity), so it
     /// has no radius or angular diameter. Every other field takes its
-    /// `Default`: live, physical specular, fog energy 1, no shadow or
-    /// cookie. Set what the game wants differently on the result.
+    /// `Default`: live, physical specular, fog energy 1, no shadow, cookie
+    /// or profile. Set what the game wants differently on the result.
     pub fn place(&self, transform: Mat4) -> PlacedLight {
         let direction = transform.transform_vector3(Vec3::NEG_Z).normalize_or_zero();
         let local = |shape, range: Option<f32>| {

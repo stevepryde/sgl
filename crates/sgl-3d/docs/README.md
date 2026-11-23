@@ -213,7 +213,7 @@ The examples live in the repository, not the published crate:
 <https://github.com/stevepryde/sgl/tree/main/examples/sgl-3d/examples>.
 [`examples/offscreen.rs`](../../../examples/sgl-3d/examples/offscreen.rs) is the loop to copy
 (`--decals` adds decals, `--motion-blur` motion blur, `--fog` volumetric
-fog, `--cookie` a spot light's cookie);
+fog, `--cookie` a spot light's cookie, `--profile` a measured profile);
 [`examples/skinned.rs`](../../../examples/sgl-3d/examples/skinned.rs) adds a skinned, morphed glTF
 sampled and posed with `animation::Pose`,
 [`examples/gltf_lights.rs`](../../../examples/sgl-3d/examples/gltf_lights.rs) a glTF's authored

@@ -1,6 +1,7 @@
 //! Decals: the images decals and spot lights' cookies project, kept as
 //! texels and packed into the decal atlas in each way they are sampled
-//! (`decal_atlas`), and each decal's description and its record in the
+//! (`decal_atlas`), the light profiles spot lights shine with, packed
+//! there beside them, and each decal's description and its record in the
 //! scene's decal buffer, which group 0 binds with the atlas, with the
 //! `Scene` operations that add, read, change and remove them. A removed
 //! decal's record stays until its index is reused; no view lists it, and
@@ -11,14 +12,17 @@
 //! an image the atlas lacks only places the new layout, so the addition
 //! refuses an atlas the device cannot hold; the frame's prepare (or a probe
 //! capture) then uploads its texels and rewrites every decal's record, and
-//! every cookied light's, once. Godot keeps its spot projectors' images in
-//! the same atlas (`LightStorage::light_set_projector`).
-use super::decal_atlas::{AtlasKey, AtlasLayout, DecalAtlas, Sampling};
+//! every cookied or profiled light's, once. Godot keeps its spot
+//! projectors' images in the same atlas
+//! (`LightStorage::light_set_projector`); a profile's grid joins them, so a
+//! profile needs no binding of its own.
+use super::decal_atlas::{AtlasKey, AtlasLayout, AtlasTexels, DecalAtlas, Sampling};
 use super::slots::Slots;
 use super::{Scene, SceneError};
 use crate::asset::Image;
 use crate::content::decal::Decal;
-use crate::content::identity::{DecalId, DecalImageId, Identity, LightId};
+use crate::content::identity::{DecalId, DecalImageId, Identity, LightId, LightProfileId};
+use crate::content::light_profile::LightProfile;
 use crate::shading::decals::{DecalRecord, DecalRects};
 
 const RECORD: u64 = std::mem::size_of::<DecalRecord>() as u64;
@@ -30,8 +34,15 @@ struct DecalImage {
     users: usize,
 }
 
+/// A light profile spot lights shine with, and how many lights do.
+struct Profile {
+    profile: LightProfile,
+    users: usize,
+}
+
 pub(crate) struct Decals {
     images: Slots<DecalImageId, DecalImage>,
+    profiles: Slots<LightProfileId, Profile>,
     pub slots: Slots<DecalId, Decal>,
     buffer: wgpu::Buffer,
     pub atlas: DecalAtlas,
@@ -53,11 +64,13 @@ pub(crate) struct Decals {
 /// The images `decal` projects, each in the way it samples it.
 fn keys(decal: &Decal) -> impl Iterator<Item = AtlasKey> {
     [
-        Some((decal.base_color, Sampling::Color)),
-        decal.normal.map(|image| (image, Sampling::Data)),
+        Some(AtlasKey::Image(decal.base_color, Sampling::Color)),
+        decal
+            .normal
+            .map(|image| AtlasKey::Image(image, Sampling::Data)),
         decal
             .metallic_roughness
-            .map(|image| (image, Sampling::Data)),
+            .map(|image| AtlasKey::Image(image, Sampling::Data)),
     ]
     .into_iter()
     .flatten()
@@ -67,6 +80,7 @@ impl Decals {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         Self {
             images: Slots::default(),
+            profiles: Slots::default(),
             slots: Slots::default(),
             buffer: decal_buffer(device, 1),
             atlas: DecalAtlas::empty(device, queue),
@@ -128,11 +142,13 @@ impl Decals {
         DecalRecord::new(
             decal,
             DecalRects {
-                base_color: rect((decal.base_color, Sampling::Color)),
-                normal: decal.normal.map(|image| rect((image, Sampling::Data))),
+                base_color: rect(AtlasKey::Image(decal.base_color, Sampling::Color)),
+                normal: decal
+                    .normal
+                    .map(|image| rect(AtlasKey::Image(image, Sampling::Data))),
                 metallic_roughness: decal
                     .metallic_roughness
-                    .map(|image| rect((image, Sampling::Data))),
+                    .map(|image| rect(AtlasKey::Image(image, Sampling::Data))),
             },
         )
     }
@@ -168,14 +184,23 @@ impl Decals {
         Ok(Some((count as u64).max(capacity * 2).min(limit)))
     }
 
-    /// A cookied light's image's place (`key`) in the layout records name
-    /// (`layout`), in atlas UV; zero for a light without a cookie.
-    pub fn cookie_rect(&self, key: Option<AtlasKey>) -> [f32; 4] {
+    /// The place of a light's cookie or profile (`key`) in the layout
+    /// records name (`layout`), in atlas UV; zero for none.
+    pub fn light_rect(&self, key: Option<AtlasKey>) -> [f32; 4] {
         key.map_or([0.; 4], |key| {
             self.layout()
                 .rect(key)
-                .expect("the layout holds every cookied light's image")
+                .expect("the layout holds every light's cookie and profile")
         })
+    }
+
+    /// A profile's grid size in samples (`LightProfile::size`).
+    pub fn profile_size(&self, id: LightProfileId) -> [u32; 2] {
+        self.profiles
+            .get(id)
+            .expect("a light's profile is in the scene")
+            .profile
+            .size
     }
 
     /// Takes `layout` for the next upload, which rewrites every record.
@@ -190,9 +215,14 @@ impl Decals {
     /// waits: once per frame. Returns whether the atlas was replaced.
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
         let packed = if let Some(layout) = self.pending.take() {
-            let images = &self.images;
-            self.atlas = DecalAtlas::fill(device, queue, layout, |(image, _)| {
-                images.get(image).map(|image| &image.texels)
+            let (images, profiles) = (&self.images, &self.profiles);
+            self.atlas = DecalAtlas::fill(device, queue, layout, |key| match key {
+                AtlasKey::Image(image, _) => images
+                    .get(image)
+                    .map(|image| AtlasTexels::Image(&image.texels)),
+                AtlasKey::Profile(profile) => profiles
+                    .get(profile)
+                    .map(|profile| AtlasTexels::Profile(&profile.profile)),
             });
             true
         } else {
@@ -223,14 +253,17 @@ impl Decals {
         images.sort_by_key(|image| image.index());
         images.dedup();
         for image in images {
-            self.count_image(image, more);
+            self.count_user(AtlasKey::Image(image, Sampling::Color), more);
         }
     }
 
-    /// Counts `image` as used by one user (a decal or a light) more, or
-    /// one less.
-    pub fn count_image(&mut self, image: DecalImageId, more: bool) {
-        let users = &mut self.images.get_mut(image).unwrap().users;
+    /// Counts what `key` names as used by one user (a decal or a light)
+    /// more, or one less.
+    pub fn count_user(&mut self, key: AtlasKey, more: bool) {
+        let users = match key {
+            AtlasKey::Image(image, _) => &mut self.images.get_mut(image).unwrap().users,
+            AtlasKey::Profile(profile) => &mut self.profiles.get_mut(profile).unwrap().users,
+        };
         if more {
             *users += 1;
         } else {
@@ -238,13 +271,18 @@ impl Decals {
         }
     }
 
-    /// The images of `keys` are in the scene.
+    /// The images and profiles of `keys` are in the scene.
     pub fn validate_images(&self, keys: &[AtlasKey]) -> Result<(), SceneError> {
-        if keys
-            .iter()
-            .any(|(image, _)| self.images.get(*image).is_none())
-        {
-            return Err(SceneError::UnknownDecalImage);
+        for &key in keys {
+            match key {
+                AtlasKey::Image(image, _) if self.images.get(image).is_none() => {
+                    return Err(SceneError::UnknownDecalImage);
+                }
+                AtlasKey::Profile(profile) if self.profiles.get(profile).is_none() => {
+                    return Err(SceneError::UnknownLightProfile);
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -312,16 +350,22 @@ impl Scene {
             .iter()
             .filter(|(id, _)| Some(*id) != decal)
             .flat_map(|(_, decal)| keys(decal))
-            .chain(self.lights.cookie_keys(light))
+            .chain(self.lights.atlas_keys(light))
             .chain(adding.iter().copied())
             .collect();
-        used.sort_by_key(|(image, sampling)| (image.index(), *sampling == Sampling::Data));
+        used.sort_by_key(|key| key.order());
         used.dedup();
         let images: Vec<(AtlasKey, [u32; 2])> = used
             .into_iter()
             .map(|key| {
-                let texels = &decals.images.get(key.0).unwrap().texels;
-                (key, [texels.width(), texels.height()])
+                let size = match key {
+                    AtlasKey::Image(image, _) => {
+                        let texels = &decals.images.get(image).unwrap().texels;
+                        [texels.width(), texels.height()]
+                    }
+                    AtlasKey::Profile(profile) => decals.profile_size(profile),
+                };
+                (key, size)
             })
             .collect();
         AtlasLayout::place(&images, decals.limit).map(Some)
@@ -364,6 +408,28 @@ impl Scene {
             return Err(SceneError::DecalImageInUse);
         }
         self.decals.images.remove(id);
+        Ok(())
+    }
+
+    /// Adds a measured light profile for spot lights to shine with
+    /// (`SpotProfile`). The decal atlas packs it once a light uses it.
+    pub fn add_light_profile(&mut self, profile: LightProfile) -> LightProfileId {
+        self.edited();
+        self.decals.profiles.insert(Profile { profile, users: 0 })
+    }
+
+    /// Removes a light profile no light shines with.
+    pub fn remove_light_profile(&mut self, id: LightProfileId) -> Result<(), SceneError> {
+        self.edited();
+        let profile = self
+            .decals
+            .profiles
+            .get(id)
+            .ok_or(SceneError::UnknownLightProfile)?;
+        if profile.users > 0 {
+            return Err(SceneError::LightProfileInUse);
+        }
+        self.decals.profiles.remove(id);
         Ok(())
     }
 
@@ -437,7 +503,7 @@ impl Scene {
     }
 
     /// Uploads a decal atlas packed since the last frame and rewrites the
-    /// records it moved, the decals' and the cookied lights', through the
+    /// records it moved, the decals' and the cookied and profiled lights', through the
     /// queue: before a frame or a probe capture draws, so a record never
     /// names a place in another atlas than the one bound with it.
     pub(crate) fn upload_decals(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -445,7 +511,7 @@ impl Scene {
             self.resources = super::next_generation();
             let decals = &self.decals;
             self.lights
-                .write_cookied(queue, &super::lights::cookie_rects(decals));
+                .write_placed(queue, &super::lights::atlas_places(decals));
         }
     }
 }

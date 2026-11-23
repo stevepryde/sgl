@@ -1024,7 +1024,7 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
---- Three.js (SMAA, mist noise, shading, ACES Filmic and PMREMGenerator ports)
+--- Three.js (SMAA, mist noise, shading, ACES Filmic, PMREMGenerator and IES ports)
 Sources:
 crates/sgl-3d/src/stages/post/smaa/LICENSE-three.txt
 

@@ -1,7 +1,7 @@
 //! Content: the CPU data a game authors or loads and hands to a `Scene`:
 //! meshes, materials and images (glTF), rigs and the sampling and blending
 //! of their animation clips, the identities a scene issues for
-//! them, instance states, lights, decals, environments, baked lighting,
+//! them, instance states, lights and their measured profiles, decals, environments, baked lighting,
 //! specular probes, the dynamic GI volume's placement, the irradiance
 //! volume's placement and cells, mesh alternatives, material shaders,
 //! render textures' sizes and transient geometry;
@@ -21,6 +21,7 @@ pub(crate) mod images;
 pub(crate) mod instance;
 pub(crate) mod irradiance_volume;
 pub(crate) mod light;
+pub(crate) mod light_profile;
 pub(crate) mod lighting;
 mod load_budget;
 pub mod lod;

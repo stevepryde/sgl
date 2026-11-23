@@ -1,6 +1,6 @@
 //! Rust mirrors of light_records.wgsl: a scene light's record and a light's
 //! shadow in the local-light shadow atlas.
-use crate::content::light::{Light, LightCookie, LightShape};
+use crate::content::light::{Light, LightCookie, LightShape, SpotProfile};
 use glam::Vec3;
 
 /// One scene light as shading reads it (`Light` in light_records.wgsl), at
@@ -48,6 +48,28 @@ pub(crate) struct LightRecord {
     /// A cookied spot's outer cone's cotangent, which scales its projector
     /// square to the cone; zero without a cookie.
     pub cookie_cotangent: f32,
+    /// A profiled spot's grid in the decal atlas (`light_profile.wgsl`):
+    /// the atlas UV of its first sample's centre in xy, and the atlas UV
+    /// per radian of vertical angle in z and of horizontal angle in w (zero
+    /// for one row); all zero for a light without a profile.
+    pub profile_lookup: [f32; 4],
+    /// A profiled spot's unit direction of its profile's 0° horizontal
+    /// angle, across its direction (`SpotProfile::zero_azimuth`); zero
+    /// without a profile.
+    pub profile_zero: [f32; 3],
+    /// WGSL rounds the record to 16 bytes.
+    pub profile_padding: f32,
+}
+
+/// Where a light's cookie and profile lie in the decal atlas its record is
+/// read with: each one's place in atlas UV (offset in xy, size in zw), and
+/// the profile's grid size in samples (`LightProfile::size`). What the
+/// light lacks is ignored.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct AtlasPlaces {
+    pub cookie: [f32; 4],
+    pub profile: [f32; 4],
+    pub profile_size: [u32; 2],
 }
 
 /// `LightRecord::shape`: a point or spot light.
@@ -66,10 +88,10 @@ impl LightRecord {
     /// Filament's `getAngleAttenuation` takes; a point light's and a
     /// rectangle's leave it whole. A rectangle's luminance is its intensity
     /// over its area, as Bevy's `extract_lights` divides its flux by its
-    /// area and π. `cookie_rect` is the place of its cookie's image in the
-    /// decal atlas the record is read with; it is ignored for a light
-    /// without a cookie.
-    pub fn new(light: &Light, cookie_rect: [f32; 4]) -> Self {
+    /// area and π. `places` are its cookie's and profile's in the decal
+    /// atlas the record is read with.
+    pub fn new(light: &Light, places: AtlasPlaces) -> Self {
+        let cookie = cookie(light, places.cookie);
         let mut color = light.color.map(|channel| channel * light.intensity);
         let (shape, direction, half_width, half_height, spot_scale, spot_offset) = match light.shape
         {
@@ -134,7 +156,10 @@ impl LightRecord {
                 LightShape::Rect { .. } => 0.,
             },
             padding: 0.,
-            ..cookie(light, cookie_rect)
+            cookie_rect: cookie.cookie_rect,
+            cookie_right: cookie.cookie_right,
+            cookie_cotangent: cookie.cookie_cotangent,
+            ..profile(light, places)
         }
     }
 }
@@ -178,6 +203,55 @@ fn cookie(light: &Light, rect: [f32; 4]) -> LightRecord {
         cookie_rect: rect,
         cookie_right: right.to_array(),
         cookie_cotangent: cotangent,
+        ..zeroed
+    }
+}
+
+/// A profile's unit 0° horizontal axis on a light of `shape`: the part of
+/// its `zero_azimuth` across the spot's direction; none unless the light
+/// is a spot and that part is finite and nonzero.
+pub(crate) fn profile_zero(profile: &SpotProfile, shape: &LightShape) -> Option<Vec3> {
+    let LightShape::Spot { direction, .. } = *shape else {
+        return None;
+    };
+    let zero = profile
+        .zero_azimuth
+        .reject_from_normalized(direction.normalize())
+        .normalize();
+    zero.is_finite().then_some(zero)
+}
+
+/// The record's profile rows: where its grid's samples lie in the atlas
+/// (`places.profile`, `places.profile_size`), its first one's centre and
+/// the atlas UV per radian of each angle, which span 0° to 90° across its
+/// columns and 0° to 360° down its rows; and its frame (`profile_zero`).
+/// Zero without a profile.
+fn profile(light: &Light, places: AtlasPlaces) -> LightRecord {
+    let zeroed = bytemuck::Zeroable::zeroed();
+    let Some(zero) = light
+        .profile
+        .and_then(|profile| profile_zero(&profile, &light.shape))
+    else {
+        return zeroed;
+    };
+    let [x, y, width, height] = places.profile;
+    let [columns, rows] = places.profile_size.map(|side| side as f32);
+    let texel = [width / columns, height / rows];
+    let across = |samples: f32, span: f32, texel: f32| {
+        if samples > 1. {
+            texel * (samples - 1.) / span
+        } else {
+            0.
+        }
+    };
+    LightRecord {
+        profile_lookup: [
+            x + 0.5 * texel[0],
+            y + 0.5 * texel[1],
+            across(columns, std::f32::consts::FRAC_PI_2, texel[0]),
+            across(rows, std::f32::consts::TAU, texel[1]),
+        ],
+        profile_zero: zero.to_array(),
         ..zeroed
     }
 }
@@ -272,6 +346,8 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
                 cookie_rect,
                 cookie_right,
                 cookie_cotangent,
+                profile_lookup,
+                profile_zero,
             ]
         ),
         mirror!(

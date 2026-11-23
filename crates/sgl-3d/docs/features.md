@@ -222,7 +222,7 @@ them through unrefracted. A probe captured on an
   and metallic before lighting, so reflections and SSR see them
   (`Scene::add_decal_image`, `add_decal`, `Decal`). Godot's clustered decals:
   clustered with the lights, sampled from one atlas SGL3D packs, which
-  spot lights' cookies share; probe
+  spot lights' cookies and profiles share; probe
   captures and world-space ray hits take them too. Unlit materials take
   none. Keep boxes shallow: everything inside one takes the decal.
   `Decal::new(image)` has Godot's decal defaults. The lit pipelines apply
@@ -313,6 +313,14 @@ them through unrefracted. A probe captured on an
   and in the fog, whatever its shadow; a `baked` light's pattern belongs in
   the game's bake. The lit pipelines sample cookies only while the scene
   holds one.
+  A spot's `profile` (`SpotProfile`) shines it with a measured
+  luminaire's intensity by direction, read from an LM-63 (`.ies`) file of
+  type C photometry (`LightProfile::from_ies`, `Scene::add_light_profile`):
+  its nadir along the spot's direction, its 0° plane toward `zero_azimuth`.
+  `intensity` is the candela in the profile's brightest direction
+  (`LightProfile::peak_candela` for the file's own); the cone still bounds
+  it, a cookie multiplies it, and every receiver takes it, the fog too.
+  Shading evaluates profiles only while the scene holds one.
   [Point, spot and rectangle lights](../README.md#point-spot-and-rectangle-lights).
 - **Local-light shadows**: lights with `casts_shadow` share one shadow atlas,
   sized and chosen by screen coverage; lights beyond its room are lit without
@@ -546,7 +554,7 @@ window thread.
   Godot's; the first 1,024 that reach the frame), lit by the
   directional lights through their cascades, the clustered point, spot and
   rectangle lights through their shadows, each scaled by its `fog_energy`
-  and a spot's by its cookie, and that share of the ambient light, so light
+  and a spot's by its cookie and profile, and that share of the ambient light, so light
   shafts form where openings let a shadowed light through, or carry a
   cookie's pattern. Opaque surfaces, the sky, blended surfaces,
   glow and mist all fog from one volume (glow dimmed by it, adding none of

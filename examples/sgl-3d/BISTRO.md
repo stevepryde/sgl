@@ -199,7 +199,7 @@ requested unavailable feature is not mistaken for active rendering.
 
 Controls include `--asset-dir DIR`, `--view street|bike|overview|bevy`,
 `--size WxH`, `--warmup N`, `--exposure STOPS`, `--cascades 1..4`,
-`--aa taa|smaa|fsr|off`, `--rect-light`, `--no-cookies`, and `--settings FILE` for a complete
+`--aa taa|smaa|fsr|off`, `--rect-light`, `--no-cookies`, `--no-profiles`, and `--settings FILE` for a complete
 serialized settings bundle. `--skip-build` repeats the saved release module;
 the module hash and its saved build provenance distinguish it from current
 checkout source. As with the native example, lighting changes are explicit
@@ -575,6 +575,12 @@ share; a fixture without them renders as before:
   top, not parallel to `direction`). The pattern fills the square twice the
   outer angle across, so keep the inner angle near the outer for a
   hard-edged window.
+- Optional `profile` on a spot light: `pattern` (`"wall_washer"`, a wall
+  washer's LM-63 file the examples generate in code) and `zero_azimuth`
+  (the direction of its 0° horizontal angle, toward which it throws its
+  light, not parallel to `direction`). `--no-profiles` (the browser
+  runner's too) leaves the fixture's spots without their profiles, for
+  profile-on and profile-off captures and timings.
 - Top-level `fog_volumes`: axis-aligned boxes with `center`, positive `size`
   (metres), `density` (extinction per metre) and optional `edge_fade`
   (default 0.1).

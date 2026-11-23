@@ -19,12 +19,16 @@ pub enum SceneError {
     UnknownDecal,
     /// The decal image was removed, or another scene issued its identity.
     UnknownDecalImage,
+    /// The light profile was removed, or another scene issued its identity.
+    UnknownLightProfile,
     /// A model's mesh uses the material.
     MaterialInUse,
     /// An instance uses the model, or it is a level of detail of a mesh.
     ModelInUse,
     /// A decal uses the decal image, or a light projects it as its cookie.
     DecalImageInUse,
+    /// A light shines with the light profile.
+    LightProfileInUse,
     /// A material names an image index beyond the images added with it.
     MissingImage,
     /// An asset's mesh names a material index beyond the asset's materials.
@@ -111,7 +115,9 @@ pub enum SceneError {
     /// outside 0..=1, a spot's direction is zero or its angles are not
     /// `0 <= inner <= outer < π/2`, or it has a cookie but is not a spot of
     /// a positive outer angle, or the cookie's `up` has no finite part
-    /// across the spot's direction.
+    /// across the spot's direction, or it has a profile but is not a spot,
+    /// or the profile's `zero_azimuth` has no finite part across the spot's
+    /// direction.
     InvalidLight,
     /// A decal's position, rotation or size is not finite, its size not
     /// positive, or its colour, mix or fades outside their ranges.
@@ -208,9 +214,11 @@ impl std::fmt::Display for SceneError {
             Self::UnknownEnvironment => "the environment is not in this scene",
             Self::UnknownDecal => "the decal is not in this scene",
             Self::UnknownDecalImage => "the decal image is not in this scene",
+            Self::UnknownLightProfile => "the light profile is not in this scene",
             Self::MaterialInUse => "a model's mesh uses the material",
             Self::ModelInUse => "an instance uses the model, or it is a level of detail",
             Self::DecalImageInUse => "a decal or a light's cookie uses the decal image",
+            Self::LightProfileInUse => "a light shines with the light profile",
             Self::MissingImage => "a material names an image that was not added with it",
             Self::MissingMaterial => "a mesh names a material the asset does not have",
             Self::MissingMesh => "the model has no mesh at that index",
@@ -269,7 +277,7 @@ impl std::fmt::Display for SceneError {
                 "a static instance takes baked light from charts, not an ambient cube"
             }
             Self::InvalidLight => {
-                "a light needs a finite position, nonnegative colour, intensity and specular scale, a shadow opacity in 0..=1, a positive range, a spot a nonzero direction with 0 <= inner <= outer < pi/2, and a cookie a spot of positive outer angle and an up not parallel to its direction"
+                "a light needs a finite position, nonnegative colour, intensity and specular scale, a shadow opacity in 0..=1, a positive range, a spot a nonzero direction with 0 <= inner <= outer < pi/2, a cookie a spot of positive outer angle and an up not parallel to its direction, and a profile a spot and a zero azimuth not parallel to its direction"
             }
             Self::InvalidDecal => {
                 "a decal needs a finite pose, a positive size, and colour, mix and fades in range"

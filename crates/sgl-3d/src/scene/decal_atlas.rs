@@ -1,5 +1,6 @@
-//! The decal atlas: each image the scene's decals project, in each way they
-//! sample it, packed into one texture with its mips, which group 0 binds.
+//! The decal atlas: each image the scene's decals and spot lights' cookies
+//! project, in each way they sample it, and each light profile spot lights
+//! shine with, packed into one texture with its mips, which group 0 binds.
 //!
 //! The packing is Godot b130438's
 //! (`servers/rendering/renderer_rd/storage_rd/texture_storage.cpp`,
@@ -16,9 +17,12 @@
 //! mips are box-filtered here, each from the 16-bit level above, as Godot's
 //! blits halve its 8-bit ones, so the atlas is bounded by the memory its
 //! build takes (`MAX_BUILD_BYTES`) as well as the device's texture size;
-//! and an atlas without images is one transparent texel.
+//! and an atlas without images is one transparent texel. A light profile's
+//! grid (`LightProfile`) is placed as an image is, its normalised
+//! intensities in each texel's colour channels, alpha one.
 use super::SceneError;
-use crate::content::identity::{DecalImageId, Identity};
+use crate::content::identity::{DecalImageId, Identity, LightProfileId};
+use crate::content::light_profile::LightProfile;
 use crate::content::static_lighting::{half_value, irradiance_half};
 
 /// The atlas's mips, Godot's `DecalAtlas::mipmaps`.
@@ -54,8 +58,35 @@ pub(crate) enum Sampling {
     Data,
 }
 
-/// An image in the way decals sample it.
-pub(crate) type AtlasKey = (DecalImageId, Sampling);
+/// What the atlas holds at a place: an image in the way decals or cookies
+/// sample it, or a light profile's grid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum AtlasKey {
+    Image(DecalImageId, Sampling),
+    Profile(LightProfileId),
+}
+
+impl AtlasKey {
+    /// A fixed order: images by identity and sampling, then profiles by
+    /// identity.
+    pub fn order(self) -> (bool, usize, u64, bool) {
+        match self {
+            Self::Image(image, sampling) => (
+                false,
+                image.index(),
+                image.generation(),
+                sampling == Sampling::Data,
+            ),
+            Self::Profile(profile) => (true, profile.index(), profile.generation(), false),
+        }
+    }
+}
+
+/// The texels `DecalAtlas::fill` packs at a key's place.
+pub(crate) enum AtlasTexels<'a> {
+    Image(&'a image::RgbaImage),
+    Profile(&'a LightProfile),
+}
 
 /// Where each image is in an atlas, and the atlas's size, before its
 /// texels are filled.
@@ -175,7 +206,7 @@ impl DecalAtlas {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: AtlasLayout,
-        texels: impl Fn(AtlasKey) -> Option<&'a image::RgbaImage>,
+        texels: impl Fn(AtlasKey) -> Option<AtlasTexels<'a>>,
     ) -> Self {
         let size = layout.size;
         // Byte counts and indices are `usize`: a 32768 by 16384 atlas has
@@ -184,22 +215,41 @@ impl DecalAtlas {
         let width = size[0] as usize;
         let mut level = vec![0u8; width * size[1] as usize * TEXEL_BYTES];
         for &(key, corner, _) in &layout.places {
-            let Some(image) = texels(key) else {
-                continue;
-            };
-            let color = key.1 == Sampling::Color;
-            for (x, y, texel) in image.enumerate_pixels() {
+            let mut put = |x: u32, y: u32, texel: [f32; 4]| {
                 let at =
                     ((corner[1] + y) as usize * width + (corner[0] + x) as usize) * TEXEL_BYTES;
-                for channel in 0..4 {
-                    let value = f32::from(texel[channel]) / 255.;
-                    let value = if color && channel < 3 {
-                        crate::shading::srgb::to_linear(value)
-                    } else {
-                        value
-                    };
+                for (channel, value) in texel.into_iter().enumerate() {
                     level[at + channel * 2..][..2]
                         .copy_from_slice(&irradiance_half(value).to_le_bytes());
+                }
+            };
+            match texels(key) {
+                None => {}
+                Some(AtlasTexels::Image(image)) => {
+                    let color = matches!(key, AtlasKey::Image(_, Sampling::Color));
+                    for (x, y, texel) in image.enumerate_pixels() {
+                        put(
+                            x,
+                            y,
+                            std::array::from_fn(|channel| {
+                                let value = f32::from(texel[channel]) / 255.;
+                                if color && channel < 3 {
+                                    crate::shading::srgb::to_linear(value)
+                                } else {
+                                    value
+                                }
+                            }),
+                        );
+                    }
+                }
+                Some(AtlasTexels::Profile(profile)) => {
+                    let [columns, rows] = profile.size;
+                    for y in 0..rows {
+                        for x in 0..columns {
+                            let value = profile.samples[(y * columns + x) as usize];
+                            put(x, y, [value, value, value, 1.]);
+                        }
+                    }
                 }
             }
         }
@@ -243,13 +293,10 @@ fn place(items: &mut [Item]) -> [u32; 2] {
     // Larger to smaller, as Godot's SortItem orders them, then in a fixed
     // order.
     items.sort_by_key(|item| {
-        let (image, sampling) = item.key;
         (
             std::cmp::Reverse(item.size[1]),
             std::cmp::Reverse(item.size[0]),
-            image.index(),
-            image.generation(),
-            sampling == Sampling::Data,
+            item.key.order(),
         )
     });
     let mut base_size = items
