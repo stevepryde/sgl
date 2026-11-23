@@ -55,8 +55,6 @@ pub enum ViewOutput<'a> {
 /// Why a view could not be created.
 #[derive(Debug)]
 pub enum ViewError {
-    /// SMAA's lookup textures did not decode.
-    LookupTextures(image::ImageError),
     /// The surface requires an unsupported transfer or format/colour-space pair.
     UnsupportedSurfaceOutput {
         format: wgpu::TextureFormat,
@@ -67,7 +65,6 @@ pub enum ViewError {
 impl std::fmt::Display for ViewError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::LookupTextures(error) => write!(f, "SMAA lookup textures: {error}"),
             Self::UnsupportedSurfaceOutput {
                 format,
                 color_space,
@@ -81,14 +78,7 @@ impl std::fmt::Display for ViewError {
     }
 }
 
-impl std::error::Error for ViewError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::LookupTextures(error) => Some(error),
-            Self::UnsupportedSurfaceOutput { .. } => None,
-        }
-    }
-}
+impl std::error::Error for ViewError {}
 
 /// One camera's frame of a scene: its targets and sizes, its stages with
 /// their state, group 0's bindings, and every history kept in screen space
@@ -100,9 +90,10 @@ impl std::error::Error for ViewError {
 /// finished frame, so a view that a finished frame of its scene did not
 /// render restarts, as on a cut. A view may draw into a render texture of
 /// its scene instead of a texture of the game's ([`ViewOutput`]).
-// The stages of more than 2 KB are boxed: a debug build copies a `View`
-// several times on the stack as it is built and moved, in the game's code
-// too, and the debug WASM stack is 1 MB (#839).
+// Every stage and every other field over a few hundred bytes is boxed, so a
+// `View` is about a kilobyte: a debug build copies one several times on the
+// stack as it is built, returned and moved, in the game's code too, and the
+// browser's stack is 1 MiB (#839, #893).
 pub struct View {
     pub(crate) output_encodes_srgb: bool,
     /// The format of the textures it renders into.
@@ -110,28 +101,28 @@ pub struct View {
     pub(crate) sizes: Sizes,
     /// A change of preset restarts history even if the pixel sizes agree.
     preset: RenderPreset,
-    pub(crate) targets: SharedTargets,
+    pub(crate) targets: Box<SharedTargets>,
     pub(crate) views: Box<FrameViews>,
-    pub(crate) bindings: FrameBindings,
+    pub(crate) bindings: Box<FrameBindings>,
     /// DiligentFX's post-effect context, while TAA or Crystal SSR runs.
     pub(crate) post_fx: Option<Box<PostFx>>,
-    pub(crate) cull: Cull,
+    pub(crate) cull: Box<Cull>,
     /// The procedural sky's tables, while its frames name one.
-    pub(crate) sky: Sky,
+    pub(crate) sky: Box<Sky>,
     /// The camera's geometry statistics, read back without blocking.
     pub(crate) statistics: StatisticsReadback,
-    pub(crate) shadows: Shadows,
+    pub(crate) shadows: Box<Shadows>,
     pub(crate) traced_shadows: Box<TracedShadows>,
     pub(crate) contact_shadows: Box<ContactShadowStage>,
-    pub(crate) fog: VolumetricFog,
-    pub(crate) opaque: Opaque,
+    pub(crate) fog: Box<VolumetricFog>,
+    pub(crate) opaque: Box<Opaque>,
     pub(crate) reflections: Box<Reflections>,
-    pub(crate) transparent: Transparent,
-    pub(crate) exposure: Exposure,
-    pub(crate) antialiasing: antialiasing::Antialiasing,
-    pub(crate) hdr_effect: HdrEffectStage,
-    pub(crate) depth_of_field: DepthOfField,
-    pub(crate) motion_blur: MotionBlur,
+    pub(crate) transparent: Box<Transparent>,
+    pub(crate) exposure: Box<Exposure>,
+    pub(crate) antialiasing: Box<antialiasing::Antialiasing>,
+    pub(crate) hdr_effect: Box<HdrEffectStage>,
+    pub(crate) depth_of_field: Box<DepthOfField>,
+    pub(crate) motion_blur: Box<MotionBlur>,
     pub(crate) post: Box<Post>,
     pub(crate) outline: OutlineStage,
     pub(crate) history: CameraHistory,
@@ -161,6 +152,13 @@ pub struct View {
     pub(crate) completed: Option<crate::view::frame::Completed>,
 }
 
+/// `make()` built in a stack frame of its own and moved to the heap, so the
+/// caller's frame holds a pointer: `View::create` builds every stage this
+/// way, so its own frame stays small however many stages a view has (#893).
+fn boxed<T>(make: impl FnOnce() -> T) -> Box<T> {
+    Box::new(make())
+}
+
 /// A rendered frame the view has not settled: the scene frame attempt it
 /// was part of, the flag `Renderer::finish_frame` sets when that attempt is
 /// finished, its history and the targets generation it rendered with.
@@ -187,14 +185,14 @@ impl View {
         device_scale: f32,
         settings: &Settings,
     ) -> Result<Self, ViewError> {
-        Self::create(
+        Ok(Self::create(
             (&renderer.shared, renderer.id),
             (device, queue),
             crate::stages::post::Output::texture(output_format),
             output_size,
             device_scale,
             settings,
-        )
+        ))
     }
 
     /// A view of `renderer`'s scenes rendering directly to a surface
@@ -222,14 +220,14 @@ impl View {
             format: config.format,
             color_space: config.color_space,
         })?;
-        Self::create(
+        Ok(Self::create(
             (&renderer.shared, renderer.id),
             (device, queue),
             output,
             [config.width, config.height],
             device_scale,
             settings,
-        )
+        ))
     }
 
     /// A view of the renderer whose shared part is `shared` and identity
@@ -241,7 +239,7 @@ impl View {
         output_size: [u32; 2],
         device_scale: f32,
         settings: &Settings,
-    ) -> Result<Self, ViewError> {
+    ) -> Self {
         let scene = effective::scene_size(
             output_size,
             settings.preset,
@@ -249,7 +247,7 @@ impl View {
             device_scale,
         );
         let sizing = effective::sizing(settings);
-        let mut antialiasing = antialiasing::Antialiasing::default();
+        let mut antialiasing = boxed(antialiasing::Antialiasing::default);
         let (render, _) = antialiasing.resize(device, scene, sizing.fsr);
         let sizes = Sizes {
             render,
@@ -257,70 +255,76 @@ impl View {
             output: output_size,
         };
         let layouts = &shared.layouts;
-        let views = Box::new(FrameViews::new(device));
-        let shadows = Shadows::new(device, settings.shadow_quality);
-        let fog = VolumetricFog::new(device);
-        let bindings = FrameBindings::new(
-            device,
-            layouts,
-            &views,
-            shadows.maps(),
-            fog.volume(),
-            shared
-                .dynamic_gi
-                .as_ref()
-                .map(crate::stages::dynamic_gi::DynamicGi::probes),
-        );
-        let targets = SharedTargets::new(device, render, false);
-        let cull = Cull::new(device);
-        let exposure = Exposure::new(device);
+        let views = boxed(|| FrameViews::new(device));
+        let shadows = boxed(|| Shadows::new(device, settings.shadow_quality));
+        let fog = boxed(|| VolumetricFog::new(device));
+        let bindings = boxed(|| {
+            FrameBindings::new(
+                device,
+                layouts,
+                &views,
+                shadows.maps(),
+                fog.volume(),
+                shared
+                    .dynamic_gi
+                    .as_ref()
+                    .map(crate::stages::dynamic_gi::DynamicGi::probes),
+            )
+        });
+        let targets = boxed(|| SharedTargets::new(device, render, false));
+        let cull = boxed(|| Cull::new(device));
+        let exposure = boxed(|| Exposure::new(device));
         let first_frame = effective::first_frame(
             settings,
             shared.device(antialiasing.fsr_running(), cull.occlusion_supported()),
         );
-        Ok(Self {
+        Self {
             output_encodes_srgb: output.encodes_srgb,
             output_format: output.format,
-            opaque: Opaque::new(
-                device,
-                &bindings.unlit,
-                [
-                    &bindings.shadow_mask,
-                    &bindings.contact_shadow,
-                    &bindings.screen_indirect,
-                    &bindings.shadow_mask_screen_indirect,
-                    &bindings.contact_shadow_screen_indirect,
-                ],
-            ),
-            traced_shadows: Box::new(TracedShadows::new(device, &bindings.lit, &bindings.scene)),
-            contact_shadows: Box::new(ContactShadowStage::new(device)),
-            reflections: Box::new(Reflections::new(device, queue, render, &first_frame)),
-            transparent: Transparent::new(
-                device,
-                &bindings.blended,
-                exposure.view(),
-                bindings.lit.tier,
-            ),
+            opaque: boxed(|| {
+                Opaque::new(
+                    device,
+                    &bindings.unlit,
+                    [
+                        &bindings.shadow_mask,
+                        &bindings.contact_shadow,
+                        &bindings.screen_indirect,
+                        &bindings.shadow_mask_screen_indirect,
+                        &bindings.contact_shadow_screen_indirect,
+                    ],
+                )
+            }),
+            traced_shadows: boxed(|| TracedShadows::new(device, &bindings.lit, &bindings.scene)),
+            contact_shadows: boxed(|| ContactShadowStage::new(device)),
+            reflections: boxed(|| Reflections::new(device, queue, render, &first_frame)),
+            transparent: boxed(|| {
+                Transparent::new(
+                    device,
+                    &bindings.blended,
+                    exposure.view(),
+                    bindings.lit.tier,
+                )
+            }),
             exposure,
             antialiasing,
-            hdr_effect: HdrEffectStage::default(),
-            depth_of_field: DepthOfField::new(device, first_frame.depth_of_field.is_some()),
-            motion_blur: MotionBlur::new(device, first_frame.motion_blur.is_some()),
-            post: Box::new(
+            hdr_effect: Box::default(),
+            depth_of_field: boxed(|| {
+                DepthOfField::new(device, first_frame.depth_of_field.is_some())
+            }),
+            motion_blur: boxed(|| MotionBlur::new(device, first_frame.motion_blur.is_some())),
+            post: boxed(|| {
                 Post::new(
                     device,
-                    queue,
                     output,
                     sizes,
                     first_frame.bloom,
                     (first_frame.antialiasing == Antialiasing::Smaa && first_frame.smaa)
                         .then_some(settings.smaa_quality),
                 )
-                .map_err(ViewError::LookupTextures)?,
-            ),
+            }),
             outline: OutlineStage::default(),
             cull,
-            sky: Sky::default(),
+            sky: Box::default(),
             statistics: StatisticsReadback::default(),
             sizes,
             preset: settings.preset,
@@ -341,7 +345,7 @@ impl View {
             probe: None,
             #[cfg(any(test, feature = "diagnostics"))]
             completed: None,
-        })
+        }
     }
 
     /// Sizes the targets for an output of `output_size` physical pixels at
@@ -381,7 +385,7 @@ impl View {
         if self.sizes == sizes && self.preset == settings.preset {
             return;
         }
-        self.targets = SharedTargets::new(device, render, self.targets.surface.is_some());
+        *self.targets = SharedTargets::new(device, render, self.targets.surface.is_some());
         self.exposure.forget_inputs();
         self.hdr_effect.forget_inputs();
         self.depth_of_field.forget_inputs();

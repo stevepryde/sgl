@@ -42,7 +42,11 @@ portable bundles do not need separate atlas files. The implementation and
 lookup tables originate in [SMAA v2.8](https://github.com/iryoku/smaa/releases/tag/v2.8).
 The adjacent `LICENSE-three.txt` and `LICENSE-smaa.txt` retain their notices.
 
-Call `Smaa::new(device, queue, width, height, output_format, quality)`, then
+A renderer decodes and uploads both once (`smaa::Tables::new`), the first
+frame one of its views may run SMAA (`renderer::frame::render`, a planning
+pass included), and every view shares them (`hold_tables`); a renderer
+whose views never run SMAA holds none. Call
+`Smaa::new(device, width, height, output_format, quality)`, then
 `resize(width, height)` when target size changes and `set_quality` when the
 preset does, which rebuilds the detection and weight pipelines.
 `encode(device, encoder, input, output, timing)` performs

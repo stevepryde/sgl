@@ -76,15 +76,17 @@ fn antialiasing_off_preserves_captured_pixels() {
             wgpu::TextureFormat::Rgba8Unorm,
             wgpu::TextureFormat::Bgra8Unorm,
         ] {
-            let mut post = Post::new(
+            let mut post = with_tables(
                 &device,
                 &queue,
-                Output::texture(format),
-                sizes([80, 64]),
-                true,
-                None,
-            )
-            .unwrap();
+                Post::new(
+                    &device,
+                    Output::texture(format),
+                    sizes([80, 64]),
+                    true,
+                    None,
+                ),
+            );
             for size in [[80, 64], [37, 29]] {
                 post.resize(&device, sizes(size), true);
                 let bytes = &capture[..(size[0] * size[1] * 8) as usize];
@@ -186,15 +188,11 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
         return;
     };
     pollster::block_on(async {
-        let mut post = Post::new(
+        let mut post = with_tables(
             &device,
             &queue,
-            Output::texture(HDR),
-            sizes([64, 64]),
-            false,
-            None,
-        )
-        .unwrap();
+            Post::new(&device, Output::texture(HDR), sizes([64, 64]), false, None),
+        );
         let output = target(&device, "bloom switch result", [64, 64], HDR);
         let exposure = exposure_texture(&device, &queue, 1.);
         let scene = target(&device, "impulse", [64, 64], HDR);
@@ -347,7 +345,11 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
         scene: scene_size,
         output: [72, 60],
     };
-    let mut post = Post::new(&device, &queue, Output::texture(HDR), sizes, false, None).unwrap();
+    let mut post = with_tables(
+        &device,
+        &queue,
+        Post::new(&device, Output::texture(HDR), sizes, false, None),
+    );
     let output = target(&device, "SMAA exposure result", sizes.output, HDR);
     // A dark field and a bright one across a shallow diagonal: 0.05 and 0.8
     // differ by under SMAA's 0.1 threshold once divided by 16.
@@ -480,7 +482,11 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
         scene: scene_size,
         output: [17, 13],
     };
-    let mut post = Post::new(&device, &queue, Output::texture(HDR), sizes, false, None).unwrap();
+    let mut post = with_tables(
+        &device,
+        &queue,
+        Post::new(&device, Output::texture(HDR), sizes, false, None),
+    );
     assert!(!post.tone_map.holds_capture());
     assert!(!post.fsr1.target_is_held());
     let exposure = exposure_texture(&device, &queue, 1.);
@@ -659,7 +665,11 @@ fn smaa_holds_scene_size_targets_only_while_it_runs() {
         return;
     };
     let mut sizes = sizes([8, 6]);
-    let mut post = Post::new(&device, &queue, Output::texture(HDR), sizes, false, None).unwrap();
+    let mut post = with_tables(
+        &device,
+        &queue,
+        Post::new(&device, Output::texture(HDR), sizes, false, None),
+    );
     let exposure = exposure_texture(&device, &queue, 1.);
     let frame = |post: &mut Post, sizes: Sizes, smaa: Option<SmaaQuality>| {
         let scene = crate::test_support::hdr_texture(
@@ -779,8 +789,11 @@ fn sharpening_runs_in_every_final_path() {
             scene: scene_size,
             output: output_size,
         };
-        let mut post =
-            Post::new(&device, &queue, Output::texture(HDR), sizes, false, None).unwrap();
+        let mut post = with_tables(
+            &device,
+            &queue,
+            Post::new(&device, Output::texture(HDR), sizes, false, None),
+        );
         let scene = crate::test_support::hdr_texture(
             &device,
             &queue,
@@ -855,8 +868,11 @@ fn a_flat_colour_sharpened_on_the_display_path_presents_unchanged() {
             scene: scene_size,
             output: output_size,
         };
-        let mut post =
-            Post::new(&device, &queue, Output::texture(HDR), sizes, false, None).unwrap();
+        let mut post = with_tables(
+            &device,
+            &queue,
+            Post::new(&device, Output::texture(HDR), sizes, false, None),
+        );
         for color in [[0., 0., 0., 1.], [1., 1., 1., 1.], [0.18, 0.5, 0.75, 1.]] {
             let texels = vec![color; (scene_size[0] * scene_size[1]) as usize];
             let scene = crate::test_support::hdr_texture(&device, &queue, scene_size, &texels);
@@ -933,7 +949,11 @@ fn the_sharpening_input_is_held_only_while_rcas_reads_it() {
         (smaller, None, false, on, true),
         (smaller, smaa, false, None, false),
     ];
-    let mut post = Post::new(&device, &queue, Output::texture(HDR), equal, false, None).unwrap();
+    let mut post = with_tables(
+        &device,
+        &queue,
+        Post::new(&device, Output::texture(HDR), equal, false, None),
+    );
     let exposure = exposure_texture(&device, &queue, 1.);
     let mut current = equal;
     for (frame, (sizes, smaa, spatial, sharpness, held)) in frames.into_iter().enumerate() {
@@ -1060,15 +1080,17 @@ fn infinite_scene_texels_present_finite_as_each_curves_white() {
     let scene =
         crate::test_support::hdr_texture(&device, &queue, INFINITE_SCENE, &infinite_scene());
     let exposure = exposure_texture(&device, &queue, 1.);
-    let mut post = Post::new(
+    let mut post = with_tables(
         &device,
         &queue,
-        Output::texture(HDR),
-        sizes(INFINITE_SCENE),
-        true,
-        None,
-    )
-    .unwrap();
+        Post::new(
+            &device,
+            Output::texture(HDR),
+            sizes(INFINITE_SCENE),
+            true,
+            None,
+        ),
+    );
     let output = target(&device, "infinite scene output", INFINITE_SCENE, HDR);
     let bloom = crate::BloomParameters::default();
     let mut failures = Vec::new();
@@ -1223,4 +1245,11 @@ fn bounded_filter_filters_as_the_sampler_filters_the_bounded_scene() {
             );
         }
     }
+}
+
+/// `post` holding SMAA's tables, as the renderer readies them before a
+/// frame SMAA may run in (`renderer::frame::render`).
+fn with_tables(device: &wgpu::Device, queue: &wgpu::Queue, mut post: Post) -> Post {
+    post.hold_smaa_tables(&smaa::Tables::new(device, queue));
+    post
 }

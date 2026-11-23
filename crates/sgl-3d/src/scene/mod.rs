@@ -94,31 +94,35 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// returns the content's identity. Content only: rendering settings are
 /// `settings::Settings` and each frame's camera and look are a
 /// [`FrameInput`](crate::FrameInput). All dimensions are metres, Y-up.
+// Its parts over a couple of hundred bytes are boxed, so a `Scene` a game
+// holds and moves is small: a debug build copies one several times on the
+// stack as it is built, returned and moved, and the browser's stack is
+// 1 MiB (#893, as `View`).
 pub struct Scene {
     ray_data: RayData,
     pub(crate) shaders: shaders::Shaders,
     pub(crate) hdr_effects: hdr_effects::HdrEffects,
     /// The instances each selection holds, which a frame outlines.
     pub(crate) selections: selections::Selections,
-    pub(crate) materials: materials::Materials,
+    pub(crate) materials: Box<materials::Materials>,
     /// The pictures views draw for materials to sample.
     pub(crate) render_textures: render_textures::RenderTextures,
     pub(crate) planar_reflectors: planar_reflectors::PlanarReflectors,
     pub(crate) models: models::Models,
-    pub(crate) instances: instances::Instances,
+    pub(crate) instances: Box<instances::Instances>,
     /// Each instance's draw candidates, with the sets and level chains they
     /// name, which the GPU draw lists cull.
-    pub(crate) candidates: candidates::Candidates,
+    pub(crate) candidates: Box<candidates::Candidates>,
     pub(crate) lights: lights::Lights,
-    pub(crate) decals: decals::Decals,
-    pub(crate) environments: environments::Environments,
+    pub(crate) decals: Box<decals::Decals>,
+    pub(crate) environments: Box<environments::Environments>,
     /// Lit group 0's lookup tables (`lookup_tables`).
     pub(crate) lookup_tables: wgpu::TextureView,
     pub(crate) rays: rays::SceneRays,
     /// What shadow casters draw from vertex and index buffers.
     pub(crate) geometry: geometry::GeometryBuffers,
     /// The ray source's instance entries and instance BVHs.
-    pub(crate) ray_instances: rays::instances::RayInstances,
+    pub(crate) ray_instances: Box<rays::instances::RayInstances>,
     /// The hardware path's acceleration structures, while hardware ray
     /// tracing is in effect on a device that has it; none until a frame
     /// builds them and after one runs with the setting off.
@@ -128,11 +132,11 @@ pub struct Scene {
     /// The buffers `scene_group` binds: objects, ray source, ray instances.
     bound: [wgpu::Buffer; 4],
     scene_layout: wgpu::BindGroupLayout,
-    pub(crate) static_lighting: static_lighting::StaticLighting,
+    pub(crate) static_lighting: Box<static_lighting::StaticLighting>,
     /// The specular probe collection: the baked probes and the live ones.
     probes: Option<probes::UploadedProbes>,
     /// The irradiance volume (`Scene::set_irradiance_volume`).
-    pub(crate) irradiance_cells: irradiance_volume::IrradianceCells,
+    pub(crate) irradiance_cells: Box<irradiance_volume::IrradianceCells>,
     /// The dynamic GI volume's placement (`Scene::set_dynamic_gi_volume`).
     pub(crate) dynamic_gi: Option<dynamic_gi::InstalledVolume>,
     /// This scene among every scene created: a renderer given another scene
@@ -154,9 +158,8 @@ pub struct Scene {
     /// them, so the dynamic GI volume's pause counts them then.
     pub(crate) deformation_edits: u64,
     /// Caller-authored glow, heat and mist geometry.
-    pub(crate) transient: transient::Transient,
+    pub(crate) transient: Box<transient::Transient>,
     /// Sprite images and batches (`Scene::add_sprite_batch`).
-    /// Boxed: a scene without sprites carries one pointer for them.
     pub(crate) sprites: Box<sprites::Sprites>,
     /// The world bounds static edits touched since the last submitted frame.
     pub(crate) static_edits: static_edits::StaticEdits,
@@ -211,23 +214,26 @@ impl Scene {
     /// its preparation and retention, rather than deferring those costs.
     pub fn with_options(device: &wgpu::Device, queue: &wgpu::Queue, options: SceneOptions) -> Self {
         let scene_layout = crate::shading::bind::scene(device);
-        let instances = instances::Instances::new(device);
+        let instances = Box::new(instances::Instances::new(device));
         let rays = rays::SceneRays::with_ray_data(device, options.ray_data);
-        let ray_instances = rays::instances::RayInstances::with_ray_data(device, options.ray_data);
+        let ray_instances = Box::new(rays::instances::RayInstances::with_ray_data(
+            device,
+            options.ray_data,
+        ));
         let bound = Self::buffers(&instances, &rays, &ray_instances);
         Self {
             ray_data: options.ray_data,
             shaders: shaders::Shaders::default(),
             hdr_effects: hdr_effects::HdrEffects::default(),
             selections: selections::Selections::default(),
-            materials: materials::Materials::new(device, queue),
+            materials: Box::new(materials::Materials::new(device, queue)),
             render_textures: render_textures::RenderTextures::default(),
             planar_reflectors: planar_reflectors::PlanarReflectors::default(),
             models: models::Models::default(),
-            candidates: candidates::Candidates::new(&device.limits()),
+            candidates: Box::new(candidates::Candidates::new(&device.limits())),
             lights: lights::Lights::new(device),
-            decals: decals::Decals::new(device, queue),
-            environments: environments::Environments::new(device, queue),
+            decals: Box::new(decals::Decals::new(device, queue)),
+            environments: Box::new(environments::Environments::new(device, queue)),
             lookup_tables: lookup_tables::lookup_tables(device, queue),
             ray_instances,
             acceleration: None,
@@ -237,15 +243,15 @@ impl Scene {
             instances,
             rays,
             geometry: geometry::GeometryBuffers::new(device),
-            static_lighting: static_lighting::StaticLighting::empty(device, queue),
+            static_lighting: Box::new(static_lighting::StaticLighting::empty(device, queue)),
             probes: None,
-            irradiance_cells: irradiance_volume::IrradianceCells::new(device),
+            irradiance_cells: Box::new(irradiance_volume::IrradianceCells::new(device)),
             dynamic_gi: None,
             id: next_generation(),
             resources: next_generation(),
             edits: 0,
             deformation_edits: 0,
-            transient: transient::Transient::new(device),
+            transient: Box::new(transient::Transient::new(device)),
             sprites: Box::default(),
             static_edits: static_edits::StaticEdits::default(),
             frame: FrameRecord::default(),

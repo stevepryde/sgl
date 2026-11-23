@@ -229,13 +229,22 @@ if (task === "mutants") {
 // needs Playwright's browser build and a GPU.
 
 const PROBE_DIR = "target/browser-probe";
+// The smoke page links half of rustc's 1 MiB wasm32 stack. Its frames and
+// SGL3D's deepest path beneath them must fit in that, so a game whose own
+// call chain is no deeper keeps the other half: a change that eats the margin
+// traps here ("memory access out of bounds") rather than in a game (#893).
+const SMOKE_STACK_BYTES = 512 * 1024;
 
 async function checkBrowser(): Promise<void> {
   requireWasmBindgenCli();
   const steps: string[][] = [
     ["bun", "install", "--frozen-lockfile"],
     ["cargo", "build", "-p", "sgl-net-examples", "--example", "browser_probe", "--target", "wasm32-unknown-unknown"],
-    ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_smoke", "--target", "wasm32-unknown-unknown"],
+    // `cargo rustc` passes the link argument to the example alone.
+    [
+      "cargo", "rustc", "-p", "sgl-3d-examples", "--example", "browser_smoke", "--target", "wasm32-unknown-unknown",
+      "--", "-C", `link-arg=-zstack-size=${SMOKE_STACK_BYTES}`,
+    ],
     ["cargo", "build", "-p", "sgl-webgpu-examples", "--example", "browser_backend", "--target", "wasm32-unknown-unknown"],
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_baseline", "--target", "wasm32-unknown-unknown"],
     // Built, not run: explicit prepared assets are needed by the Bistro benchmark.

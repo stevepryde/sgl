@@ -482,11 +482,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
         .collect();
     phase("prepare and upload scene");
     let start = now();
-    let mut scene = Box::new(Scene::with_options(
-        &device,
-        &queue,
-        SceneOptions { ray_data },
-    ));
+    let mut scene = Scene::with_options(&device, &queue, SceneOptions { ray_data });
     let ids = scene
         .add_asset(&device, &queue, loaded)
         .map_err(|e| e.to_string())?;
@@ -611,19 +607,17 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
         view_formats: &[],
     });
     let view = output.create_view(&Default::default());
-    let mut renderer = Box::new(Renderer::new(&device));
-    let mut scene_view = Box::new(
-        View::new(
-            &renderer,
-            &device,
-            &queue,
-            output.format(),
-            size,
-            1.,
-            &settings,
-        )
-        .map_err(|e| e.to_string())?,
-    );
+    let mut renderer = Renderer::new(&device);
+    let mut scene_view = View::new(
+        &renderer,
+        &device,
+        &queue,
+        output.format(),
+        size,
+        1.,
+        &settings,
+    )
+    .map_err(|e| e.to_string())?;
     let renderer_cpu_ms = now() - start;
     let eye = vector(&camera_spec["eye"])?;
     let look_at = vector(&camera_spec["look_at"])?;

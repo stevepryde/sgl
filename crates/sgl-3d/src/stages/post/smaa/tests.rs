@@ -52,7 +52,8 @@ fn color_local_contrast_matches_reference_pixel_pairs() {
         return;
     };
     let size = [8, 8];
-    let mut smaa = Smaa::new(&device, &queue, size[0], size[1], FORMAT, None).unwrap();
+    let mut smaa = Smaa::new(&device, size[0], size[1], FORMAT, None);
+    smaa.hold_tables(&Tables::new(&device, &queue));
     let output = image_target(&device, size).create_view(&Default::default());
     for quality in QUALITIES {
         for axis in 0..2 {
@@ -271,7 +272,8 @@ fn every_preset_approaches_supersampled_rasterization() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut smaa = Smaa::new(&device, &queue, 1, 1, FORMAT, None).unwrap();
+    let mut smaa = Smaa::new(&device, 1, 1, FORMAT, None);
+    smaa.hold_tables(&Tables::new(&device, &queue));
     let faint_edge = Edge {
         level: faint(),
         ..Edge::WHITE

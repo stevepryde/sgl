@@ -66,9 +66,9 @@ pub struct Startup {
     errors: Arc<Mutex<Vec<String>>>,
     asset: Option<Asset>,
     layout: Value,
-    scene: Option<Box<Scene>>,
-    renderer: Option<Box<Renderer>>,
-    view: Option<Box<View>>,
+    scene: Option<Scene>,
+    renderer: Option<Renderer>,
+    view: Option<View>,
     models: Vec<ModelId>,
     moving: Vec<(InstanceId, ModelId, Mat4)>,
     mask: Option<InstanceId>,
@@ -162,13 +162,13 @@ impl Startup {
         };
         // No world-space ray effect is used, so the scene keeps no ray data,
         // as the package guide recommends.
-        let mut scene = Box::new(Scene::with_options(
+        let mut scene = Scene::with_options(
             device,
             queue,
             SceneOptions {
                 ray_data: RayData::Disabled,
             },
-        ));
+        );
         let scene_ms = lap();
         let materials = scene
             .add_materials(device, queue, &asset.materials, &asset.images)
@@ -284,8 +284,8 @@ impl Startup {
             },
             profile => return Err(error(format!("unknown profile {profile:?}"))),
         };
-        let renderer = Box::new(Renderer::new(&self.device));
-        self.view = Some(Box::new(
+        let renderer = Renderer::new(&self.device);
+        self.view = Some(
             View::new_surface(
                 &renderer,
                 &self.device,
@@ -296,7 +296,7 @@ impl Startup {
                 &self.settings,
             )
             .map_err(error)?,
-        ));
+        );
         self.renderer = Some(renderer);
         Ok(())
     }

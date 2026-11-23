@@ -1,7 +1,9 @@
 // The browser lane (testing.md 5): SGL3D's smoke test, built by
 // `bun scripts/tasks.ts check-browser`, renders its scene on the page's
 // WebGPU device in headless Chromium under Playwright. Every configuration
-// must report `ok`, and the page must log no error.
+// must report `ok`, and the page must log no error. The page runs on half
+// the default wasm stack (`SMOKE_STACK_BYTES`), so "memory access out of
+// bounds" most likely means that stack ran out (#893).
 //
 // Playwright's default headless browser, the headless shell, exposes no
 // WebGPU adapter on macOS (only SwiftShader's, under --enable-unsafe-webgpu).

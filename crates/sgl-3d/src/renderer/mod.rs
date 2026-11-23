@@ -71,15 +71,16 @@ pub use view::{View, ViewError, ViewFrame, ViewOutput};
 /// specialises its pipelines again and restarts its dynamic GI, so a game
 /// that shows two scenes at once holds a renderer for each.
 pub struct Renderer {
-    /// What every view of the scene shares.
-    shared: Shared,
+    /// What every view of the scene shares. Boxed, as `refresh` is, so a
+    /// `Renderer` a game holds and moves is a few words (#893).
+    shared: Box<Shared>,
     /// The last `render`, until `finish_frame` commits it: its scene frame
     /// attempt and the flag `finish_frame` sets, which each view the frame
     /// rendered holds with its pending render.
     rendered: Option<(u64, Arc<AtomicBool>)>,
     /// What refreshing a scene's live specular probes holds, from the first
     /// refresh until a frame of a scene without live probes.
-    refresh: Option<probe_capture::LiveRefresh>,
+    refresh: Option<Box<probe_capture::LiveRefresh>>,
     /// The renderer's identity, which each view it creates holds.
     pub(crate) id: u64,
 }
@@ -89,7 +90,7 @@ impl Renderer {
     /// [`View::new`] or [`View::new_surface`] with it.
     pub fn new(device: &wgpu::Device) -> Self {
         Self {
-            shared: Shared::new(device),
+            shared: Box::new(Shared::new(device)),
             rendered: None,
             refresh: None,
             id: crate::scene::next_generation(),

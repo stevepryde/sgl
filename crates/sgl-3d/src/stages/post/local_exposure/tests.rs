@@ -14,18 +14,18 @@ const SIZE: [u32; 2] = [256, 128];
 const TOLERANCE: f32 = 2e-3;
 
 /// A post stage presenting `SIZE` frames.
-fn post(device: &wgpu::Device, queue: &wgpu::Queue) -> Post {
-    post_of(device, queue, SIZE)
+fn post(device: &wgpu::Device) -> Post {
+    post_of(device, SIZE)
 }
 
 /// A post stage presenting frames of `size`.
-fn post_of(device: &wgpu::Device, queue: &wgpu::Queue, size: [u32; 2]) -> Post {
+fn post_of(device: &wgpu::Device, size: [u32; 2]) -> Post {
     let sizes = Sizes {
         render: size,
         scene: size,
         output: size,
     };
-    Post::new(device, queue, Output::texture(HDR), sizes, false, None).unwrap()
+    Post::new(device, Output::texture(HDR), sizes, false, None)
 }
 
 /// A grey frame of `SIZE` whose texel at x, y has the linear value `value(x, y)`.
@@ -109,7 +109,7 @@ fn a_uniform_frame_moves_toward_middle_grey_by_the_formula() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut post = post(&device, &queue);
+    let mut post = post(&device);
     for k in [2f32, 0., -2.] {
         let input = frame(|_, _| grey(k));
         let scaled = neutral(&mut post, &device, &queue, grey(k) * (-k / 2.).exp2());
@@ -147,7 +147,7 @@ fn local_exposure_follows_the_frames_exposure() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut post = post(&device, &queue);
+    let mut post = post(&device);
     let exposed = render(
         &mut post,
         &device,
@@ -180,7 +180,7 @@ fn a_step_edge_keeps_each_side_flat_without_ringing() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut post = post(&device, &queue);
+    let mut post = post(&device);
     let actual = render(
         &mut post,
         &device,
@@ -292,7 +292,7 @@ fn the_base_rises_smoothly_across_a_step() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut post = post(&device, &queue);
+    let mut post = post(&device);
     let actual = render(
         &mut post,
         &device,
@@ -348,7 +348,7 @@ fn every_texel_of_an_uneven_partition_counts_once() {
         return;
     };
     let size = [250, 130];
-    let mut post = post_of(&device, &queue, size);
+    let mut post = post_of(&device, size);
     let mut render_with = |bright: Option<u32>| {
         let input = frame_of(size, |x, y| {
             let edge = bright.is_some_and(|back| x == size[0] - back || y == size[1] - back);
@@ -390,7 +390,7 @@ fn local_detail_is_kept_whole() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut post = post(&device, &queue);
+    let mut post = post(&device);
     let detail = |x: u32, y: u32| {
         let level = if x < SIZE[0] / 2 { 3. } else { -3. };
         let offset = if (x + y).is_multiple_of(2) {
@@ -431,7 +431,7 @@ fn a_feature_moving_within_its_cell_changes_nothing_else() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut post = post(&device, &queue);
+    let mut post = post(&device);
     let positions = [[100, 60], [103, 63]];
     let frames = positions.map(|[bx, by]| {
         let input = frame(|x, y| {
@@ -461,7 +461,7 @@ fn targets_are_held_only_while_a_contrast_is_below_1() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut post = post(&device, &queue);
+    let mut post = post(&device);
     assert!(!post.local_exposure.holds_targets());
     let input = frame(halves(3., -3.));
     for (contrasts, held) in [

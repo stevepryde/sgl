@@ -314,7 +314,7 @@ async fn measured(
         move |error| errors.lock().unwrap().push(error.to_string())
     }));
     let device_ms = now() - started;
-    let mut scene = Box::new(Scene::new(&device, &queue));
+    let mut scene = Scene::new(&device, &queue);
     let underwater = if hdr_effect {
         let effect = scene
             .add_hdr_effect(sgl_3d::ShaderSource {
@@ -483,19 +483,17 @@ async fn measured(
     });
     let view = output.create_view(&Default::default());
     let renderer_start = now();
-    let mut renderer = Box::new(Renderer::new(&device));
-    let mut scene_view = Box::new(
-        View::new(
-            &renderer,
-            &device,
-            &queue,
-            output.format(),
-            size,
-            1.,
-            &settings,
-        )
-        .map_err(|e| e.to_string())?,
-    );
+    let mut renderer = Renderer::new(&device);
+    let mut scene_view = View::new(
+        &renderer,
+        &device,
+        &queue,
+        output.format(),
+        size,
+        1.,
+        &settings,
+    )
+    .map_err(|e| e.to_string())?;
     let renderer_cpu_ms = now() - renderer_start;
     let mut timing = GpuTiming::new(&device, &queue);
     let mut gpu_frames = Vec::new();

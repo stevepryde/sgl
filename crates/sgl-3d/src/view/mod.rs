@@ -606,7 +606,7 @@ pub(crate) struct FrameViews {
     /// its opaque and masked ones.
     pub blended: draw_list::DrawList,
     /// The camera's sprite batches.
-    pub sprites: Box<sprites::SpriteList>,
+    pub sprites: sprites::SpriteList,
     /// The scene lights and decals that reach each of the camera's
     /// clusters.
     pub clusters: clusters::Clusters,
@@ -651,7 +651,7 @@ impl FrameViews {
         Self {
             camera: ViewSlot::new(device, "camera view"),
             blended: draw_list::DrawList::default(),
-            sprites: Box::default(),
+            sprites: Default::default(),
             clusters: clusters::Clusters::new(device, "camera clusters"),
             ray_lists: clusters::Clusters::new(device, "ray hit lights and decals"),
             volume_lists: clusters::Clusters::new(device, "dynamic GI probe hit lights and decals"),

@@ -276,27 +276,20 @@ pub(super) fn keep(
                 reflected.size = shown.crop.size;
                 reflected
             }
-            None => {
-                // A view that could not be made leaves the reflector with
-                // its fallback.
-                let Ok(created) = View::create(
+            None => ReflectedView {
+                reflector: shown.reflector,
+                view: Box::new(View::create(
                     (shared, view.renderer),
                     (device, queue),
                     crate::stages::post::Output::texture(gbuffer::COLOR),
                     shown.crop.size,
                     1.,
                     settings,
-                ) else {
-                    continue;
-                };
-                ReflectedView {
-                    reflector: shown.reflector,
-                    view: Box::new(created),
-                    size: shown.crop.size,
-                    idle: 0,
-                    full: [0; 2],
-                }
-            }
+                )),
+                size: shown.crop.size,
+                idle: 0,
+                full: [0; 2],
+            },
         };
         view.reflected.push(ReflectedView {
             idle: 0,

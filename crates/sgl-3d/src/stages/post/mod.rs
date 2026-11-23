@@ -115,23 +115,15 @@ impl Post {
     /// Presentation for `sizes`, with the selected bloom and SMAA pipelines prepared.
     pub fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
         output: Output,
         sizes: Sizes,
         bloom_enabled: bool,
         smaa_quality: Option<SmaaQuality>,
-    ) -> Result<Self, image::ImageError> {
+    ) -> Self {
         let inputs = inputs::Inputs::new(device);
-        Ok(Self {
+        Self {
             bloom: bloom::Bloom::new(device, &inputs, sizes.scene, bloom_enabled),
-            smaa: smaa::Smaa::new(
-                device,
-                queue,
-                sizes.scene[0],
-                sizes.scene[1],
-                HDR,
-                smaa_quality,
-            )?,
+            smaa: smaa::Smaa::new(device, sizes.scene[0], sizes.scene[1], HDR, smaa_quality),
             scene_size: sizes.scene,
             output_size: sizes.output,
             fsr1: fsr1::Fsr1::default(),
@@ -140,7 +132,7 @@ impl Post {
             sharpening_input: None,
             tone_map: tone_map::ToneMap::new(device, &inputs, output, sizes.output),
             inputs,
-        })
+        }
     }
 
     /// New targets for `sizes`, bloom's full size with `bloom_targets`.
@@ -156,6 +148,12 @@ impl Post {
         self.smaa.forget_inputs();
         self.tone_map.resize(device, sizes.output);
         self.smaa.resize(sizes.scene[0], sizes.scene[1]);
+    }
+
+    /// Holds the renderer's SMAA `tables`, before the first frame SMAA may
+    /// run (`smaa_may_run`).
+    pub fn hold_smaa_tables(&mut self, tables: &smaa::Tables) {
+        self.smaa.hold_tables(tables);
     }
 
     /// Drops cached input groups, which may hold a replaced input's views.
@@ -439,10 +437,22 @@ fn spatial_resolves(
 /// that failed this frame. A frame FSR did not upscale is otherwise
 /// presented as it is, as is any frame not at the scene size.
 fn smaa_resolves(effective: &Effective, sizes: Sizes, completed: Completed) -> bool {
+    smaa_may_run(effective, sizes)
+        && match effective.antialiasing {
+            Antialiasing::Taa => completed != Completed::Taa,
+            Antialiasing::Fsr2 | Antialiasing::Fsr3 => completed != Completed::Fsr,
+            _ => true,
+        }
+}
+
+/// Whether SMAA may run in a frame of `effective` at `sizes`, before its
+/// stages complete it (`smaa_resolves`): chosen; in place of TAA that
+/// cannot run; or in place of FSR that runs, should its dispatch fail.
+pub(crate) fn smaa_may_run(effective: &Effective, sizes: Sizes) -> bool {
     let antialiasing = match effective.antialiasing {
         Antialiasing::Smaa => true,
-        Antialiasing::Taa => completed != Completed::Taa,
-        Antialiasing::Fsr2 | Antialiasing::Fsr3 => effective.fsr && completed != Completed::Fsr,
+        Antialiasing::Taa => !effective.taa,
+        Antialiasing::Fsr2 | Antialiasing::Fsr3 => effective.fsr,
         _ => false,
     };
     antialiasing && effective.smaa && sizes.render == sizes.scene

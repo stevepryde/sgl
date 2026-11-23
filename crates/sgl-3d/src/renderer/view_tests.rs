@@ -283,3 +283,83 @@ fn a_view_left_out_of_a_frame_reads_back_its_own_finished_frame() {
         );
     }
 }
+
+// Plausible defect: SMAA's lookup tables are decoded and uploaded for every
+// renderer or every view whether or not SMAA ever runs, or again for each
+// view that runs it (#893). The oracle is the library's upload counters at
+// SMAA's own call sites: nothing while a renderer and a view render with
+// SMAA off; then the two tables, area 160x560 and search 66x33 RGBA8 as
+// the README gives their PNGs, written once when two views run SMAA.
+#[test]
+fn smaa_tables_upload_once_for_the_first_view_that_may_run_smaa() {
+    use crate::settings::Antialiasing;
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let uploads = |since: &crate::counters::Counters| {
+        let counted = crate::counters::snapshot().since(since);
+        counted
+            .uploads
+            .iter()
+            .filter(|site| site.file.ends_with("smaa/mod.rs"))
+            .fold((0, 0), |(writes, bytes), site| {
+                (writes + site.writes, bytes + site.bytes)
+            })
+    };
+    let output = output(&device);
+    let mut scene = Scene::new(&device, &queue);
+    let frame = |renderer: &mut Renderer,
+                 scene: &mut Scene,
+                 views: &mut [&mut View],
+                 settings: &Settings| {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let input = input();
+        let mut list: Vec<ViewFrame<'_>> = views
+            .iter_mut()
+            .map(|view| ViewFrame {
+                view,
+                input: &input,
+                settings,
+                output: ViewOutput::Texture(&output),
+                timing: None,
+            })
+            .collect();
+        renderer.render(&device, &queue, &mut encoder, scene, &mut list);
+        drop(list);
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(scene);
+    };
+    let started = crate::counters::snapshot();
+    let mut renderer = Renderer::new(&device);
+    let off = Settings {
+        antialiasing: Antialiasing::Off,
+        ..Settings::default()
+    };
+    let format = crate::shading::gbuffer::COLOR;
+    let mut plain = View::new(&renderer, &device, &queue, format, SIZE, 1., &off).unwrap();
+    for _ in 0..2 {
+        frame(&mut renderer, &mut scene, &mut [&mut plain], &off);
+    }
+    assert_eq!(uploads(&started), (0, 0), "no SMAA table without SMAA");
+    let smaa = Settings {
+        antialiasing: Antialiasing::Smaa,
+        ..Settings::default()
+    };
+    let mut first = View::new(&renderer, &device, &queue, format, SIZE, 1., &smaa).unwrap();
+    let mut second = View::new(&renderer, &device, &queue, format, SIZE, 1., &smaa).unwrap();
+    assert_eq!(uploads(&started), (0, 0), "a view's creation uploads none");
+    frame(&mut renderer, &mut scene, &mut [&mut first], &smaa);
+    frame(
+        &mut renderer,
+        &mut scene,
+        &mut [&mut second, &mut first],
+        &smaa,
+    );
+    // Beside the tables, each view's SMAA writes its own inverse size, two
+    // f32s, when it first runs.
+    assert_eq!(
+        uploads(&started),
+        (2 + 2, 4 * (160 * 560 + 66 * 33) + 2 * 8),
+        "both tables, once, for the renderer's views"
+    );
+}

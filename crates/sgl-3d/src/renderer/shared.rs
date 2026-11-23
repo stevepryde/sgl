@@ -7,6 +7,7 @@
 use super::effective;
 use crate::FrameInput;
 use crate::Scene;
+use crate::stages::post::smaa::Tables as SmaaTables;
 use crate::stages::{
     deform::Deform, dynamic_gi::DynamicGi, mip_chains::MipChains, prepare::Prepare,
 };
@@ -32,6 +33,9 @@ pub(super) struct Shared {
     pub dynamic_gi: Option<DynamicGi>,
     /// The device traces rays in hardware, in this form.
     pub ray_form: Option<DeviceRayForm>,
+    /// SMAA's lookup tables, from the first frame a view may run SMAA
+    /// (`frame::render`).
+    pub smaa_tables: Option<SmaaTables>,
 }
 
 impl Shared {
@@ -73,6 +77,7 @@ impl Shared {
             deform: Deform::new(device),
             dynamic_gi,
             ray_form,
+            smaa_tables: None,
         }
     }
 

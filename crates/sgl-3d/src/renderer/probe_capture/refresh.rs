@@ -139,12 +139,14 @@ impl Renderer {
             .refresh
             .take()
             .filter(|state| state.scene == scene.id && state.prefilter.face_size() == face_size)
-            .unwrap_or_else(|| LiveRefresh {
-                scene: scene.id,
-                prefilter: ProbePrefilter::new(device, face_size, face_size),
-                views: CaptureViews::new(device),
-                records: RefreshRecords::default(),
-                flight: None,
+            .unwrap_or_else(|| {
+                Box::new(LiveRefresh {
+                    scene: scene.id,
+                    prefilter: ProbePrefilter::new(device, face_size, face_size),
+                    views: CaptureViews::new(device),
+                    records: RefreshRecords::default(),
+                    flight: None,
+                })
             });
         if let Some(flight) = &state.flight {
             let held = scene.live_probe_cube(flight.probe).is_some();

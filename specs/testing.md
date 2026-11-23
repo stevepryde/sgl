@@ -40,7 +40,10 @@ check, run once before a release or over a batch of landed changes
    test launches the `chromium` channel, the full browser in its new
    headless mode, which exposes the GPU's WebGPU adapter; the default
    headless shell exposes none on macOS. It fails on any WebGPU error and on
-   a pixel result reasoned from the scene's geometry. The full `check`
+   a pixel result reasoned from the scene's geometry. Its debug build links
+   half the wasm32 default stack (`SMOKE_STACK_BYTES` in
+   `scripts/tasks.ts`), so SGL3D's deepest path traps there ("memory access
+   out of bounds") before it leaves a game less than half (#893). The full `check`
    runs the browser lane after its native and WASM steps, and
    `bun scripts/tasks.ts check-browser` runs it alone. It needs Playwright's
    browser build and a GPU.

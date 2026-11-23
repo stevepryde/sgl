@@ -12,6 +12,8 @@ use super::view::{ViewFrame, ViewOutput};
 use super::view_stages::{Drawn, Role, begin_view, finish_view};
 use crate::Scene;
 use crate::settings::Settings;
+use crate::stages::post::smaa::Tables as SmaaTables;
+use crate::stages::post::smaa_may_run;
 use crate::stages::prepare::Prepare;
 use crate::view::effective::Effective;
 use crate::view::history::HistoryFrame;
@@ -183,6 +185,21 @@ pub(super) fn render(
         );
     }
     let primary_effective = primary_effective.expect("the primary view renders");
+    // SMAA's tables, made the first frame a view may run SMAA and shared
+    // by every view from then on: here, not in the post stage, as their
+    // decode takes tens of kilobytes of debug stack (#893). A planning pass
+    // makes them as a frame would. Reflected views run no antialiasing
+    // (`reflected::settings`).
+    for (frame, begun) in views.iter_mut().zip(&begun) {
+        if let Some((_, effective)) = begun
+            && smaa_may_run(effective, frame.view.sizes)
+        {
+            let tables = shared
+                .smaa_tables
+                .get_or_insert_with(|| SmaaTables::new(device, queue));
+            frame.view.post.hold_smaa_tables(tables);
+        }
+    }
     // Update ray instances when any view of the frame traces.
     let traced = begun
         .iter()

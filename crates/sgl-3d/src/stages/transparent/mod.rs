@@ -96,7 +96,7 @@ pub(crate) struct Transparent {
     glow: Option<(effects::Effects, wgpu::BindGroup)>,
     mist: Option<mist::Mist>,
     /// Sprite batches' pipelines and this view's orders of them.
-    sprites: Box<sprites::Sprites>,
+    sprites: sprites::Sprites,
     heat: Option<heat::Heat>,
     /// The frame exposure that glow reads.
     exposure: wgpu::TextureView,
@@ -152,7 +152,7 @@ impl Transparent {
             exposure: exposure.clone(),
             glow: None,
             mist: None,
-            sprites: Box::default(),
+            sprites: Default::default(),
             heat: None,
             no_reflections: crate::view::targets::target(
                 device,

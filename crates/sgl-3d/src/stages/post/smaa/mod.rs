@@ -42,8 +42,8 @@ pub(crate) struct Smaa {
     /// From the first frame SMAA runs at `size` until it stops or resizes.
     targets: Option<Targets>,
     bindings: Option<Bindings>,
-    area: wgpu::TextureView,
-    search: wgpu::TextureView,
+    /// The renderer's tables, from the first frame SMAA may run.
+    tables: Option<Tables>,
     linear: wgpu::Sampler,
     point: wgpu::Sampler,
     output_format: wgpu::TextureFormat,
@@ -107,13 +107,44 @@ fn target(device: &wgpu::Device, size: [u32; 2], label: &str) -> wgpu::TextureVi
         .create_view(&Default::default())
 }
 
+/// SMAA's area and search lookup textures, which every view of a renderer
+/// shares. The renderer makes them once, the first frame a view may run
+/// SMAA (`renderer::frame::render`, a planning pass included), and holds
+/// nothing before: decoding them takes tens of kilobytes of stack in a
+/// debug build, which a stage deep in a frame cannot spare on the
+/// browser's 1 MiB stack (#893).
+#[derive(Clone)]
+pub(crate) struct Tables {
+    area: wgpu::TextureView,
+    search: wgpu::TextureView,
+}
+
+impl Tables {
+    /// # Panics
+    ///
+    /// If the embedded PNGs do not decode, which every SMAA test rules out.
+    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        Self {
+            area: lookup(device, queue, include_bytes!("area.png"), "SMAA area atlas"),
+            search: lookup(
+                device,
+                queue,
+                include_bytes!("search.png"),
+                "SMAA search atlas",
+            ),
+        }
+    }
+}
+
 fn lookup(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     bytes: &[u8],
     label: &str,
-) -> Result<wgpu::TextureView, image::ImageError> {
-    let pixels = image::load_from_memory(bytes)?.to_rgba8();
+) -> wgpu::TextureView {
+    let pixels = image::load_from_memory(bytes)
+        .expect("SMAA's embedded lookup tables decode")
+        .to_rgba8();
     let size = wgpu::Extent3d {
         width: pixels.width(),
         height: pixels.height(),
@@ -140,7 +171,7 @@ fn lookup(
         },
         size,
     );
-    Ok(texture.create_view(&Default::default()))
+    texture.create_view(&Default::default())
 }
 
 /// A pipeline of `shader`'s `vertex_entry` and `entry` into `format`, with
@@ -213,28 +244,21 @@ fn sampler(binding: u32, sampler: &wgpu::Sampler) -> wgpu::BindGroupEntry<'_> {
 }
 
 impl Smaa {
-    /// Validate the lookup textures at view construction. Prepare the pipelines
-    /// here too when SMAA is selected for the first frame.
+    /// SMAA, preparing the pipelines when SMAA is selected for the first
+    /// frame. It runs once it holds the renderer's tables (`hold_tables`).
     pub(crate) fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
         width: u32,
         height: u32,
         output_format: wgpu::TextureFormat,
         quality: Option<SmaaQuality>,
-    ) -> Result<Self, image::ImageError> {
+    ) -> Self {
         let size = [width.max(1), height.max(1)];
-        Ok(Self {
+        Self {
             size,
             targets: None,
             bindings: None,
-            area: lookup(device, queue, include_bytes!("area.png"), "SMAA area atlas")?,
-            search: lookup(
-                device,
-                queue,
-                include_bytes!("search.png"),
-                "SMAA search atlas",
-            )?,
+            tables: None,
             linear: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("SMAA linear clamp"),
                 mag_filter: wgpu::FilterMode::Linear,
@@ -247,7 +271,7 @@ impl Smaa {
             }),
             output_format,
             pipelines: quality.map(|quality| Pipelines::new(device, output_format, quality)),
-        })
+        }
     }
 }
 
@@ -310,6 +334,11 @@ impl Smaa {
         self.targets.is_some()
     }
 
+    /// Holds the renderer's `tables`, before the first frame SMAA may run.
+    pub(crate) fn hold_tables(&mut self, tables: &Tables) {
+        self.tables.get_or_insert_with(|| tables.clone());
+    }
+
     /// Drop groups retaining a presentation target that no longer runs.
     pub(crate) fn forget_inputs(&mut self) {
         self.bindings = None;
@@ -352,6 +381,10 @@ impl Smaa {
             pipelines.quality = quality;
             self.bindings = None;
         }
+        let tables = self
+            .tables
+            .as_ref()
+            .expect("the renderer readies SMAA's tables before a frame it may run in");
         let size = self.size;
         let targets = self
             .targets
@@ -379,8 +412,8 @@ impl Smaa {
                 entries: &[
                     sampler(1, &self.linear),
                     texture(2, &targets.edges),
-                    texture(3, &self.area),
-                    texture(4, &self.search),
+                    texture(3, &tables.area),
+                    texture(4, &tables.search),
                     sampler(5, &self.point),
                     wgpu::BindGroupEntry {
                         binding: 7,

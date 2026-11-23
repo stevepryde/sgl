@@ -1356,16 +1356,6 @@ fn hdr_effect(color:vec3<f32>,ctx:EffectContext,params:EffectParams)->vec3<f32> 
     ))
 }
 
-/// `outline`'s future, on the heap: a debug build lays out every future an
-/// async function awaits in that function's own stack frame, and the smoke
-/// test's frame has little stack to spare (#893).
-fn outline_boxed<'a>(
-    device: &'a wgpu::Device,
-    queue: &'a wgpu::Queue,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + 'a>> {
-    Box::pin(outline(device, queue))
-}
-
 // An outline on the browser's WebGPU (the architecture's Frame, item 16),
 // its programs compiled ahead as a job. Plausible defects there: its
 // program or its R8Uint rows target refused by Dawn, the mask's depth
@@ -2386,33 +2376,27 @@ async fn color_outputs(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(),
         antialiasing: Antialiasing::Off,
         ..Default::default()
     };
-    // Keep retained GPU owners on the heap: this async fixture otherwise
-    // exhausts the debug WASM stack during the nested renderer constructor.
-    let mut renderer = Box::new(Renderer::new(device));
-    let mut texture_view = Box::new(
-        View::new(
-            &renderer,
-            device,
-            queue,
-            float.format(),
-            size,
-            1.,
-            &settings,
-        )
-        .map_err(|e| e.to_string())?,
-    );
-    let mut surface_view = Box::new(
-        View::new_surface(
-            &renderer,
-            device,
-            queue,
-            &config,
-            &capabilities,
-            1.,
-            &settings,
-        )
-        .map_err(|e| e.to_string())?,
-    );
+    let mut renderer = Renderer::new(device);
+    let mut texture_view = View::new(
+        &renderer,
+        device,
+        queue,
+        float.format(),
+        size,
+        1.,
+        &settings,
+    )
+    .map_err(|e| e.to_string())?;
+    let mut surface_view = View::new_surface(
+        &renderer,
+        device,
+        queue,
+        &config,
+        &capabilities,
+        1.,
+        &settings,
+    )
+    .map_err(|e| e.to_string())?;
     let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor { label:Some("game composition fixture"),source:wgpu::ShaderSource::Wgsl("
         @group(0) @binding(0) var source:texture_2d<f32>;
         @vertex fn vs(@builtin(vertex_index) id:u32)->@builtin(position) vec4<f32> {
@@ -2420,7 +2404,7 @@ async fn color_outputs(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(),
         }
         @fragment fn fs(@builtin(position) p:vec4<f32>)->@location(0) vec4<f32> {return textureLoad(source,vec2<i32>(p.xy),0);}
     ".into()) });
-    let mut scene = Box::new(Scene::new(device, queue));
+    let mut scene = Scene::new(device, queue);
     let mut frame = FrameInput::new(camera());
     // Original Three.js r185, Khronos 180b1a7 and Filament ef1a133 results
     // respectively for exact binary16 grey 0.1875 and linear unit red.
@@ -2450,12 +2434,12 @@ async fn color_outputs(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(),
             for (name, scene_view, format) in [
                 (
                     "offscreen float",
-                    texture_view.as_mut(),
+                    &mut texture_view,
                     wgpu::TextureFormat::Rgba8UnormSrgb,
                 ),
                 (
                     "browser Auto float surface",
-                    surface_view.as_mut(),
+                    &mut surface_view,
                     wgpu::TextureFormat::Rgba8Unorm,
                 ),
             ] {
@@ -2616,7 +2600,7 @@ async fn compressed_materials(
             let mut outputs = Vec::new();
             let reference = image::RgbaImage::from_pixel(4, 4, image::Rgba(expected));
             for image in [compressed.clone(), Image::Rgba8(reference)] {
-                let mut scene = Box::new(Scene::new(device, queue));
+                let mut scene = Scene::new(device, queue);
                 let mut mesh = panel(Vec3::ZERO, Vec3::X * 2., Vec3::Y * 2., 0);
                 for vertex in &mut mesh.vertices {
                     vertex.uv = vertex.uv.map(|value| value * uv_scale);
@@ -2671,19 +2655,17 @@ async fn compressed_materials(
                     antialiasing: Antialiasing::Off,
                     ..Default::default()
                 };
-                let mut renderer = Box::new(Renderer::new(device));
-                let mut scene_view = Box::new(
-                    View::new(
-                        &renderer,
-                        device,
-                        queue,
-                        target.format(),
-                        size,
-                        1.,
-                        &settings,
-                    )
-                    .map_err(|e| e.to_string())?,
-                );
+                let mut renderer = Renderer::new(device);
+                let mut scene_view = View::new(
+                    &renderer,
+                    device,
+                    queue,
+                    target.format(),
+                    size,
+                    1.,
+                    &settings,
+                )
+                .map_err(|e| e.to_string())?;
                 let eye = Vec3::new(0., 0., 3.);
                 let frame = FrameInput::new(Camera {
                     eye,
@@ -2824,7 +2806,7 @@ async fn smoke(report: &mut String) -> Result<(), String> {
             let _ = writeln!(report, "FAIL HDR effect: {error}");
         }
     }
-    let outlined = outline_boxed(&device, &queue).await;
+    let outlined = outline(&device, &queue).await;
     let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
     match outlined {
         Ok(_) if !errors.is_empty() => {
