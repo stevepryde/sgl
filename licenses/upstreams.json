@@ -140,6 +140,12 @@
     "note": "Licence source only; the original font import did not record its upstream revision. Preserve the bundled font and its existing notice."
   },
   {
+    "component": "Khronos glTF Sample Assets: Animated Morph Cube (test fixture)",
+    "path": "crates/sgl-3d/tests/fixtures/gltf/AnimatedMorphCube/LICENSE.md",
+    "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/AnimatedMorphCube/LICENSE.md",
+    "note": "Models/AnimatedMorphCube/glTF and glTF-Quantized, unchanged (CC0-1.0; LICENSE.md itself CC-BY-4.0). Test-only: the published crate does not include it; provenance in the fixture's README.md."
+  },
+  {
     "component": "zstd-rs decoder",
     "path": "crates/sgl-3d/src/content/zstandard/LICENSE-MIT",
     "url": "https://raw.githubusercontent.com/Avarok-Cybersecurity/zstd-rs/bac4c37d86e5307537c145823a106f7ed8f386d7/LICENSE-MIT",

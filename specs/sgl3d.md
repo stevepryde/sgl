@@ -80,6 +80,13 @@ settings SGL3D has today.
    become the triangle list glTF 2.0 3.7.2.1 defines once at import, after
    the decoded budget is charged for that list, with triangles that repeat
    an index left out; point and line primitives fail the load.
+   The integer vertex attributes and morph displacements
+   `KHR_mesh_quantization` allows become floats in one step where their
+   accessors are read, by the extension's int-to-float equations
+   (unnormalized integers keep their values); the dequantisation it puts in
+   a node's transform or a skin's inverse bind matrices applies where those
+   already apply, once, and bounds come from the decoded vertices, never
+   from an accessor's `min` and `max`.
    Invalid primitive/morph accessor references, animation target nodes or
    paths, and image source variants fail the load with an error naming the
    element before document readers run. Each image has exactly one URI or

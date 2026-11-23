@@ -33,7 +33,8 @@ them through unrefracted. A probe captured on an
 
 ## Content
 
-- **glTF 2.0 meshes**: triangles, strips and fans with metallic/roughness, normal and
+- **glTF 2.0 meshes**: triangles, strips and fans, their attributes floats or
+  `KHR_mesh_quantization` integers, with metallic/roughness, normal and
   bump maps (a bump usually shows stronger in world-space reflections and
   dynamic GI than to the camera: its strength is per pixel in raster, as
   three.js's, and per metre at ray hits, [D-45](../../../specs/decisions.md)), an

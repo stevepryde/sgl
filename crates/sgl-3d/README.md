@@ -3414,6 +3414,17 @@ draws reads (`TEXCOORD_2` on, `COLOR_1` on, or an application-specific
 and primitive (`Ignored::Attribute`); a second joint and weight set still
 fails the load. Other unsupported visible features return asset-path errors.
 
+`KHR_mesh_quantization` files load: integer `POSITION`, `NORMAL`,
+`TANGENT`, `TEXCOORD_0`/`TEXCOORD_1` and morph displacements in the
+component types the extension allows, which become the same `f32`
+`Vertex` a float file gives (and the same decoded-budget charge). A
+normalized integer converts by the extension's equations and an
+unnormalized one keeps its value, so an unnormalized UV of 2 is 2.0. The
+dequantising scale and offset in a node's transform or a skin's inverse
+bind matrices apply as those always do. `KHR_texture_transform`, which
+dequantises UVs, is not read yet: a file that uses it lists it in
+`Asset::ignored` and its UVs keep their stored range.
+
 A dielectric's reflectance at normal incidence (F0) follows its index of
 refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for water
 at 1.33, 0.17 for diamond at 2.42. `KHR_materials_specular` tints it

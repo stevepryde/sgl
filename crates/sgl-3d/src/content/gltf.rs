@@ -16,6 +16,9 @@ use material::read_material;
 use meshes::{batch, ignored_attribute, read_node};
 use rig::Rigging;
 
+mod attributes;
+#[cfg(test)]
+mod attributes_tests;
 mod material;
 mod meshes;
 mod rig;
@@ -145,8 +148,9 @@ fn check(options: LoadOptions<'_>) -> Result<()> {
 }
 
 /// The glTF extensions SGL3D honours: a file may require any of them. The
-/// loader reads each itself, from the extension's values.
-const SUPPORTED_EXTENSIONS: [&str; 13] = [
+/// loader reads each itself, from the extension's values, or for
+/// `KHR_mesh_quantization` the integer attributes it allows (`attributes`).
+const SUPPORTED_EXTENSIONS: [&str; 14] = [
     "KHR_materials_anisotropy",
     "KHR_materials_clearcoat",
     "KHR_materials_diffuse_transmission",
@@ -159,6 +163,7 @@ const SUPPORTED_EXTENSIONS: [&str; 13] = [
     "KHR_materials_transmission",
     "KHR_materials_unlit",
     "KHR_materials_volume",
+    "KHR_mesh_quantization",
     "EXT_materials_bump",
 ];
 

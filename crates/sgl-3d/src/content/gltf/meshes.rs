@@ -3,12 +3,13 @@
 //! what primitives must share to be drawn as one mesh.
 use glam::{Mat3, Mat4, Vec3};
 use gltf::Semantic;
-use gltf::accessor::DataType::{self, F32, U8, U16, U32};
+use gltf::accessor::DataType::{self, F32, I8, I16, U8, U16, U32};
 use gltf::accessor::Dimensions::{self, Scalar, Vec2, Vec4};
 use std::collections::HashMap;
 
 use super::super::asset::{CpuMesh, Material, Result, Vertex, tangent_off_normal};
 use super::super::deformation::{MeshDeformation, MorphTarget};
+use super::attributes::{DIRECTION_TYPES, attribute, check_direction};
 use super::check_accessor;
 use super::rig::{Rigging, read_influences, read_morph_targets};
 use super::topology::{check_mode, triangle_list};
@@ -177,9 +178,11 @@ fn read_mesh_node(
             }
             check_mode(primitive.mode(), &label)?;
             // glTF 2.0 3.7.2.1's accessor types for each attribute, its
-            // indices and its morph targets' displacements. Every attribute
-            // and displacement holds one element a vertex, as many as
-            // POSITION (glTF 2.0 3.7.2.1 and 3.7.2.2).
+            // indices and its morph targets' displacements, with
+            // KHR_mesh_quantization's for positions, directions, UVs and
+            // displacements. Every attribute and displacement holds one
+            // element a vertex, as many as POSITION (glTF 2.0 3.7.2.1 and
+            // 3.7.2.2).
             let vertices = primitive.get(&Semantic::Positions).map(|p| p.count());
             for (semantic, accessor) in primitive.attributes() {
                 // Neither checked nor read.
@@ -190,10 +193,11 @@ fn read_mesh_node(
                     Semantic::Joints(1..) | Semantic::Weights(1..) => {
                         return Err(format!("{label}: more than four joint influences per vertex; limit influences to four in the export").into());
                     }
-                    Semantic::Positions | Semantic::Normals => (&[F32], &[Dimensions::Vec3]),
-                    Semantic::Tangents => (&[F32], &[Vec4]),
+                    Semantic::Positions => (&[F32, I8, U8, I16, U16], &[Dimensions::Vec3]),
+                    Semantic::Normals => (DIRECTION_TYPES, &[Dimensions::Vec3]),
+                    Semantic::Tangents => (DIRECTION_TYPES, &[Vec4]),
                     // TEXCOORD_1 is the lightmap UV (`Vertex::lightmap_uv`).
-                    Semantic::TexCoords(0 | 1) => (&[F32, U8, U16], &[Vec2]),
+                    Semantic::TexCoords(0 | 1) => (&[F32, I8, U8, I16, U16], &[Vec2]),
                     Semantic::Colors(0) => (&[F32, U8, U16], &[Dimensions::Vec3, Vec4]),
                     Semantic::Joints(0) => (&[U8, U16], &[Vec4]),
                     Semantic::Weights(0) => (&[F32, U8, U16], &[Vec4]),
@@ -201,14 +205,18 @@ fn read_mesh_node(
                         return Err(format!("{label}: unsupported attribute {semantic:?}; add its renderer input or remove it from the export").into());
                     }
                 };
+                let what = format!("{label}: {}", semantic.to_string());
                 check_accessor(
                     &accessor,
-                    &format!("{label}: {}", semantic.to_string()),
+                    &what,
                     types,
                     shapes,
                     vertices.filter(|_| semantic != Semantic::Positions),
                     (buffers, buffer_bytes),
                 )?;
+                if matches!(semantic, Semantic::Normals | Semantic::Tangents) {
+                    check_direction(&accessor, &what)?;
+                }
             }
             if let Some(indices) = primitive.indices() {
                 check_accessor(
@@ -221,47 +229,45 @@ fn read_mesh_node(
                 )?;
             }
             for (target, displacements) in primitive.morph_targets().enumerate() {
-                for accessor in [
-                    displacements.positions(),
-                    displacements.normals(),
-                    displacements.tangents(),
-                ]
-                .into_iter()
-                .flatten()
-                {
+                let what = format!("{label}: morph target {target}");
+                for (accessor, direction) in [
+                    (displacements.positions(), false),
+                    (displacements.normals(), true),
+                    (displacements.tangents(), true),
+                ] {
+                    let Some(accessor) = accessor else { continue };
+                    let types: &[DataType] = if direction {
+                        DIRECTION_TYPES
+                    } else {
+                        &[F32, I8, I16]
+                    };
                     check_accessor(
                         &accessor,
-                        &format!("{label}: morph target {target}"),
-                        &[F32],
+                        &what,
+                        types,
                         &[Dimensions::Vec3],
                         vertices,
                         (buffers, buffer_bytes),
                     )?;
+                    if direction {
+                        check_direction(&accessor, &what)?;
+                    }
                 }
             }
-            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()].0));
-            let positions = reader
-                .read_positions()
-                .ok_or_else(|| format!("{label}: missing POSITION"))?
-                .collect::<Vec<_>>();
-            let normals = reader
-                .read_normals()
-                .ok_or_else(|| format!("{label}: missing NORMAL; export vertex normals"))?
-                .collect::<Vec<_>>();
+            let positions: Vec<[f32; 3]> = attribute(&primitive, Semantic::Positions, buffers)
+                .ok_or_else(|| format!("{label}: missing POSITION"))?;
+            let normals: Vec<[f32; 3]> = attribute(&primitive, Semantic::Normals, buffers)
+                .ok_or_else(|| format!("{label}: missing NORMAL; export vertex normals"))?;
             let material_index = primitive.material().index().unwrap_or(default_material);
             let material = &materials[material_index];
-            let tangents = reader
-                .read_tangents()
-                .map(|values| values.collect::<Vec<_>>());
+            let tangents: Option<Vec<[f32; 4]>> =
+                attribute(&primitive, Semantic::Tangents, buffers);
             if material.anisotropy_strength > 0.0 && tangents.is_none() {
                 return Err(format!("{label}: anisotropic material {} requires authored TANGENT; export tangents from Blender with vertex normals", material.name).into());
             }
-            let uvs = reader
-                .read_tex_coords(0)
-                .map(|uv| uv.into_f32().collect::<Vec<_>>());
-            let lightmap_uvs = reader
-                .read_tex_coords(1)
-                .map(|uv| uv.into_f32().collect::<Vec<_>>());
+            let uvs: Option<Vec<[f32; 2]>> = attribute(&primitive, Semantic::TexCoords(0), buffers);
+            let lightmap_uvs: Option<Vec<[f32; 2]>> =
+                attribute(&primitive, Semantic::TexCoords(1), buffers);
             let textured = material.texture_indices().iter().any(Option::is_some);
             if textured && uvs.is_none() {
                 return Err(format!("{label}: textured primitive is missing TEXCOORD_0").into());
@@ -277,6 +283,7 @@ fn read_mesh_node(
             {
                 return Err(format!("{label}: attribute counts differ").into());
             }
+            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()].0));
             let colors = reader
                 .read_colors(0)
                 .map(|values| values.into_rgba_f32().collect::<Vec<_>>());
@@ -361,7 +368,7 @@ fn read_mesh_node(
             } else {
                 let first = rigging.morph_weights(node, target_count)?;
                 read_morph_targets(
-                    &reader,
+                    (&primitive, buffers),
                     first,
                     (transform, normal_transform),
                     (&normals, tangents.as_deref()),

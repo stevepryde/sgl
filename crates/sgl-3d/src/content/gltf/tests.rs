@@ -1866,3 +1866,14 @@ fn decoded_images_and_scene_data_share_the_load_budget() {
         "{error}"
     );
 }
+
+// Defect: the quantized cube's external buffer resolves or decodes
+// differently from a file than from bytes. Oracle: Khronos' float export,
+// loaded from its own files (`attributes_tests::assert_cube_matches`).
+#[test]
+fn khronos_quantized_cube_loads_from_its_files() {
+    let cube = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gltf/AnimatedMorphCube");
+    let quantized = load(&cube.join("glTF-Quantized/AnimatedMorphCube.gltf")).unwrap();
+    let float = load(&cube.join("glTF/AnimatedMorphCube.gltf")).unwrap();
+    super::attributes_tests::assert_cube_matches(&quantized, &float);
+}

@@ -12,6 +12,7 @@ use super::super::deformation::{
     Channel, ChannelValues, Clip, Influence, Interpolation, Joint, MAX_INDEX, MorphDelta,
     MorphTarget, MorphWeight, Node, Rig, Transform,
 };
+use super::attributes;
 use super::check_accessor;
 
 /// The rig being imported, where each skin's joints and each morphed
@@ -408,17 +409,14 @@ where
 /// the baked normal, each at the factor that normalized its baked vector.
 /// A target displaces no tangent of a `baked` vertex whose tangent is
 /// absent (zero), as when it was not authored or lay along its normal.
-pub(super) fn read_morph_targets<'a, 's, F>(
-    reader: &gltf::mesh::Reader<'a, 's, F>,
+pub(super) fn read_morph_targets(
+    (primitive, buffers): (&gltf::Primitive<'_>, &[gltf::buffer::Data]),
     first: u32,
     (transform, normal_transform): (Mat4, Mat4),
     (normals, authored_tangents): (&[[f32; 3]], Option<&[[f32; 4]]>),
     baked: &[Vertex],
     label: &str,
-) -> Result<Vec<MorphTarget>>
-where
-    F: Clone + Fn(gltf::Buffer<'a>) -> Option<&'s [u8]>,
-{
+) -> Result<Vec<MorphTarget>> {
     let count = normals.len();
     let read = |values: Option<Vec<[f32; 3]>>, target: usize| -> Result<Vec<Vec3>> {
         let Some(values) = values else {
@@ -431,13 +429,15 @@ where
         }
         Ok(values.into_iter().map(Vec3::from_array).collect())
     };
-    reader
-        .read_morph_targets()
+    let displacements =
+        |accessor: Option<gltf::Accessor<'_>>| accessor.and_then(|a| attributes::read(&a, buffers));
+    primitive
+        .morph_targets()
         .enumerate()
-        .map(|(target, (positions, target_normals, tangents))| {
-            let positions = read(positions.map(Iterator::collect), target)?;
-            let target_normals = read(target_normals.map(Iterator::collect), target)?;
-            let tangents = read(tangents.map(Iterator::collect), target)?;
+        .map(|(target, displaced)| {
+            let positions = read(displacements(displaced.positions()), target)?;
+            let target_normals = read(displacements(displaced.normals()), target)?;
+            let tangents = read(displacements(displaced.tangents()), target)?;
             let deltas = (0..count)
                 .map(|vertex| {
                     // The baked normal was normalized after `normal_transform`,

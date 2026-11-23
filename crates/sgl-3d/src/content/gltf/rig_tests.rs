@@ -54,6 +54,39 @@ impl Buffer {
         )
     }
 
+    /// An accessor of `values.len() / width` elements of `width` integers,
+    /// each stored as `component` (5120 BYTE to 5123 UNSIGNED_SHORT),
+    /// `normalized` or not, an element padded to four bytes as glTF
+    /// requires of vertex attributes; with `min` and `max` for a VEC3.
+    pub(super) fn integers(
+        &mut self,
+        values: &[i32],
+        component: u32,
+        normalized: bool,
+        kind: &str,
+        width: usize,
+    ) -> usize {
+        let size = if component < 5122 { 1 } else { 2 };
+        let stride = (width * size).next_multiple_of(4);
+        let mut bytes = Vec::new();
+        for element in values.chunks(width) {
+            for &value in element {
+                bytes.extend_from_slice(&(value as u16).to_le_bytes()[..size]);
+            }
+            bytes.resize(bytes.len().next_multiple_of(4), 0);
+        }
+        let count = values.len() / width;
+        let accessor = self.accessor(&bytes, component, kind, count);
+        self.views.last_mut().unwrap()["byteStride"] = json!(stride);
+        self.accessors[accessor]["normalized"] = json!(normalized);
+        if kind == "VEC3" {
+            let axis = |a: usize| values.iter().skip(a).step_by(3);
+            self.accessors[accessor]["min"] = json!([0, 1, 2].map(|a| *axis(a).min().unwrap()));
+            self.accessors[accessor]["max"] = json!([0, 1, 2].map(|a| *axis(a).max().unwrap()));
+        }
+        accessor
+    }
+
     /// `document` with this buffer, as a GLB.
     pub(super) fn glb(self, mut document: Value) -> Vec<u8> {
         document["buffers"] = json!([{"byteLength": self.bytes.len()}]);
@@ -817,7 +850,7 @@ fn malformed_accessors_are_rejected() {
         "exceeds system limits"
     };
     type Edit = fn(&mut Value, &mut Buffer);
-    let cases: [(&str, Edit, &str); 20] = [
+    let cases: [(&str, Edit, &str); 24] = [
         (
             "FLOAT indices",
             |document, buffer| {
@@ -851,12 +884,52 @@ fn malformed_accessors_are_rejected() {
             "mesh 0 primitive 0: TEXCOORD_0 accessor",
         ),
         (
-            "UNSIGNED_SHORT POSITION",
+            "UNSIGNED_INT POSITION",
             |document, buffer| {
                 let positions = attribute(document, "POSITION");
-                buffer.accessors[positions]["componentType"] = json!(5123);
+                buffer.accessors[positions]["componentType"] = json!(5125);
             },
             "mesh 0 primitive 0: POSITION accessor",
+        ),
+        (
+            // KHR_mesh_quantization allows only normalized integer directions.
+            "unnormalized BYTE NORMAL",
+            |document, buffer| {
+                let normals = attribute(document, "NORMAL");
+                buffer.accessors[normals]["componentType"] = json!(5120);
+            },
+            "mesh 0 primitive 0: NORMAL accessor",
+        ),
+        (
+            "UNSIGNED_BYTE TANGENT",
+            |document, buffer| {
+                let tangents = document["meshes"][1]["primitives"][0]["attributes"]["TANGENT"]
+                    .as_u64()
+                    .unwrap() as usize;
+                buffer.accessors[tangents]["componentType"] = json!(5121);
+                buffer.accessors[tangents]["normalized"] = json!(true);
+            },
+            "mesh 1 primitive 0: TANGENT accessor",
+        ),
+        (
+            "UNSIGNED_SHORT morph target POSITION",
+            |document, buffer| {
+                let lift = document["meshes"][1]["primitives"][0]["targets"][0]["POSITION"]
+                    .as_u64()
+                    .unwrap() as usize;
+                buffer.accessors[lift]["componentType"] = json!(5123);
+            },
+            "mesh 1 primitive 0: morph target 0 accessor",
+        ),
+        (
+            "unnormalized SHORT morph target NORMAL",
+            |document, buffer| {
+                let tilt = document["meshes"][1]["primitives"][0]["targets"][0]["NORMAL"]
+                    .as_u64()
+                    .unwrap() as usize;
+                buffer.accessors[tilt]["componentType"] = json!(5122);
+            },
+            "mesh 1 primitive 0: morph target 0 accessor",
         ),
         (
             "VEC4 NORMAL",
