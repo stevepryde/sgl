@@ -129,7 +129,7 @@ fn draw(
             view,
             input: &input,
             settings: &settings,
-            output,
+            output: ViewOutput::Texture(output),
             timing: None,
         }],
     );

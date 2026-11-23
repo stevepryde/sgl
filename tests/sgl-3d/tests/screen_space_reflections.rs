@@ -3,7 +3,7 @@
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Backdrop, Camera, FrameInput, InstanceState, Mobility, ModelId, Renderer, Scene,
-    SpecularProbeTexels, View, ViewFrame,
+    SpecularProbeTexels, View, ViewFrame, ViewOutput,
     asset::{Asset, CpuMesh, Material, Vertex},
     diagnostics::DiagnosticTarget,
     environment::{EnvironmentMap, PmremAtlas},
@@ -322,7 +322,7 @@ impl Frames {
                     view: &mut self.view,
                     input: &self.input,
                     settings: &self.settings,
-                    output: &self.output,
+                    output: ViewOutput::Texture(&self.output),
                     timing: None,
                 }],
             );
@@ -976,7 +976,7 @@ fn keeps_its_history_across_an_unfinished_frame(method: settings::ReflectionMeth
                         view: &mut frames.view,
                         input: &frames.input,
                         settings: &frames.settings,
-                        output: &frames.output,
+                        output: ViewOutput::Texture(&frames.output),
                         timing: None,
                     }],
                 );

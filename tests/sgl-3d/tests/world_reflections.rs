@@ -3,6 +3,7 @@
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, FrameInput, InstanceId, InstanceState, Mobility, Renderer, Scene, View, ViewFrame,
+    ViewOutput,
     asset::{Asset, CpuMesh, Material, Vertex},
     diagnostics::DiagnosticTarget,
     environment::{EnvironmentMap, PmremAtlas},
@@ -333,7 +334,7 @@ impl Frames {
                 view: &mut self.view,
                 input: &self.input,
                 settings: &self.settings,
-                output: &self.output,
+                output: ViewOutput::Texture(&self.output),
                 timing: None,
             }],
         );

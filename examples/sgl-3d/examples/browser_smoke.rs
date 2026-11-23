@@ -27,7 +27,10 @@
 //! back through the library's `diagnostics::read_async`. Before the scene,
 //! it captures a specular probe inside an enclosure of uniform emission,
 //! after dropping one capture part-way, and every texel must hold the
-//! emission (`probe_capture`).
+//! emission (`probe_capture`). Then a screen shows the picture a second
+//! view draws into a render texture: its centre must hold the colour the
+//! source has in that frame, and the report gives the frame's GPU time
+//! against the same two views drawing into separate textures (`monitor`).
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -36,8 +39,9 @@ use sgl_3d::{
     AlphaMode, BakedSpecularProbe, Camera, Decal, DirectionalLight, DirectionalShadow,
     DynamicGiVolume, EnvironmentId, Fog, FogVolume, FrameInput, HemisphereLight, InstanceId,
     InstanceState, IrradianceCell, IrradianceVolume, Light, LightShape, MaterialShader, Mist,
-    Mobility, ModelMesh, PreparedIrradianceRegion, PreparedModel, Renderer, Scene, ShaderSource,
-    SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels, SurfaceMaterial, View, ViewFrame,
+    Mobility, ModelMesh, PreparedIrradianceRegion, PreparedModel, RenderTexture, Renderer, Scene,
+    ShaderSource, SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels, SurfaceMaterial,
+    View, ViewFrame, ViewOutput,
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
     deformation::{
         Influence, Joint, MeshDeformation, MorphDelta, MorphTarget, MorphWeight, Node, Rig,
@@ -1047,7 +1051,7 @@ async fn render(
                 view: &mut scene_view,
                 input: &frame,
                 settings,
-                output: &view,
+                output: ViewOutput::Texture(&view),
                 timing: timing.as_ref(),
             }],
         );
@@ -1063,6 +1067,246 @@ async fn render(
         fsr_error: scene_view.fsr_error().map(str::to_owned),
         volume_paths: renderer.volume_paths_in_effect(settings),
         timed_frames,
+    })
+}
+
+/// Resolves once the GPU has run everything submitted so far, which lets
+/// the page deliver a frame's timestamp readback.
+async fn completed(queue: &wgpu::Queue) -> Result<(), String> {
+    let (send, receive) = futures::channel::oneshot::channel();
+    queue.on_submitted_work_done(move || {
+        let _ = send.send(());
+    });
+    receive.await.map_err(|e| e.to_string())
+}
+
+/// An unlit black panel that emits `emission` times its emission map,
+/// which it clamps at its edges.
+fn emitter(emission: [f32; 3]) -> Material {
+    Material {
+        emissive: emission,
+        wrap: [gltf::texture::WrappingMode::ClampToEdge; 2],
+        unlit: true,
+        double_sided: true,
+        ..material([0., 0., 0., 1.], 0., 1.)
+    }
+}
+
+// A screen that shows a second view's picture on the browser's WebGPU (the
+// architecture's Frame, "Render textures"). Plausible defects there: Dawn
+// refuses a render texture sampled by one view and drawn by another in one
+// command buffer; the views render as listed, so the main view, listed
+// first, shows the picture of the frame before. The fixture: a main view
+// before a screen, and far along +X a feed view before a source that fills
+// it, whose colour changes every frame; the screen shows the render
+// texture the feed draws. The oracle is the frames' known colours: the
+// strong channel at the screen's centre is this frame's. The report adds
+// the frame's GPU time with the render texture and with the same two views
+// drawing into separate textures, where the device has timestamp queries.
+async fn monitor(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, String> {
+    const MAIN: [u32; 2] = [640, 360];
+    const FEED: [u32; 2] = [256, 144];
+    const WARM_UP: u64 = 8;
+    const MEASURED: u64 = 24;
+    let far = Vec3::new(100., 0., 0.);
+    let mut scene = Scene::new(device, queue);
+    let asset = |mesh: CpuMesh, material: Material| Asset {
+        meshes: vec![mesh],
+        materials: vec![material],
+        images: Vec::new(),
+        rig: Default::default(),
+        ignored: Vec::new(),
+        lights: Default::default(),
+    };
+    let add = |scene: &mut Scene, asset: Asset| -> Result<sgl_3d::MaterialId, String> {
+        let ids = scene
+            .add_asset(device, queue, asset)
+            .map_err(|e| format!("add_asset: {e}"))?;
+        scene
+            .add_instance(
+                device,
+                queue,
+                InstanceState::new(ids.model),
+                Mobility::Static,
+            )
+            .map_err(|e| format!("add_instance: {e}"))?;
+        Ok(ids.materials[0])
+    };
+    let screen = add(
+        &mut scene,
+        asset(
+            panel(Vec3::new(0., 0., -4.), Vec3::X * 1.6, Vec3::Y * 0.9, 0),
+            emitter([1.; 3]),
+        ),
+    )?;
+    let source = add(
+        &mut scene,
+        asset(
+            panel(far + Vec3::new(0., 0., -8.), Vec3::X * 12., Vec3::Y * 7., 0),
+            emitter([0.; 3]),
+        ),
+    )?;
+    let picture = scene
+        .add_render_texture(device, RenderTexture::new(FEED))
+        .map_err(|e| format!("add_render_texture: {e}"))?;
+    let show = |scene: &mut Scene, shown: bool| -> Result<(), String> {
+        let values = scene.material(screen).map_err(|e| e.to_string())?;
+        scene
+            .set_material(
+                queue,
+                screen,
+                SurfaceMaterial {
+                    emission_render_texture: shown.then_some(picture),
+                    ..values
+                },
+            )
+            .map_err(|e| format!("set_material: {e}"))
+    };
+    show(&mut scene, true)?;
+    let target = |size: [u32; 2], format| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("monitor fixture output"),
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    };
+    let main_output = target(MAIN, wgpu::TextureFormat::Rgba8Unorm);
+    let feed_output = target(FEED, RenderTexture::new(FEED).format());
+    let [main_target, feed_target] =
+        [&main_output, &feed_output].map(|texture| texture.create_view(&Default::default()));
+    let settings = Settings::default();
+    let mut renderer = Renderer::new(device);
+    let view = |format, size| {
+        View::new(&renderer, device, queue, format, size, 1., &settings)
+            .map_err(|e| format!("View::new: {e}"))
+    };
+    let mut main_view = view(main_output.format(), MAIN)?;
+    let mut feed_view = view(RenderTexture::new(FEED).format(), FEED)?;
+    let input = |eye: Vec3, size: [u32; 2]| {
+        FrameInput::new(Camera {
+            eye,
+            view: camera::rh::view::look_at_mat4(eye, eye - Vec3::Z, Vec3::Y),
+            projection: sgl_3d::perspective(1., size[0] as f32 / size[1] as f32, 0.1),
+        })
+    };
+    let [main_input, feed_input] = [input(Vec3::ZERO, MAIN), input(far, FEED)];
+    let mut timing = GpuTiming::new(device, queue);
+    // The frames rendered, and each measured frame's GPU time by whether
+    // the feed drew the render texture.
+    let mut frames = 0u64;
+    let mut times: [Vec<f64>; 2] = Default::default();
+    let colours = [[0.6, 0.02, 0.02], [0.02, 0.6, 0.02], [0.02, 0.02, 0.6]];
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    for (separate, count) in [
+        (false, WARM_UP + MEASURED),
+        (true, WARM_UP + MEASURED),
+        (false, 12),
+    ] {
+        show(&mut scene, !separate)?;
+        let first = frames + WARM_UP;
+        for index in 0..count {
+            if let Some(timing) = timing.as_mut() {
+                for timed in timing.begin_frame(device, queue) {
+                    // `GpuTiming` counts frames from 1.
+                    let frame = timed.frame - 1;
+                    for (kind, start) in [(0, WARM_UP), (1, 2 * WARM_UP + MEASURED)] {
+                        if (start..start + MEASURED).contains(&frame) {
+                            times[kind].push(timed.total_ms);
+                        }
+                    }
+                }
+            }
+            let colour = (frames % 3) as usize;
+            let values = scene.material(source).map_err(|e| e.to_string())?;
+            scene
+                .set_material(
+                    queue,
+                    source,
+                    SurfaceMaterial {
+                        emission: colours[colour],
+                        ..values
+                    },
+                )
+                .map_err(|e| format!("set_material: {e}"))?;
+            main_view.resize(device, MAIN, 1., &settings);
+            feed_view.resize(device, FEED, 1., &settings);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            // The main view is listed first, the primary; the renderer
+            // draws the feed before it.
+            renderer.render(
+                device,
+                queue,
+                &mut encoder,
+                &mut scene,
+                &mut [
+                    ViewFrame {
+                        view: &mut main_view,
+                        input: &main_input,
+                        settings: &settings,
+                        output: ViewOutput::Texture(&main_target),
+                        timing: timing.as_ref(),
+                    },
+                    ViewFrame {
+                        view: &mut feed_view,
+                        input: &feed_input,
+                        settings: &settings,
+                        output: if separate {
+                            ViewOutput::Texture(&feed_target)
+                        } else {
+                            ViewOutput::RenderTexture(picture)
+                        },
+                        timing: timing.as_ref(),
+                    },
+                ],
+            );
+            queue.submit([encoder.finish()]);
+            if let Some(timing) = timing.as_mut() {
+                timing.submitted(queue);
+            }
+            completed(queue).await?;
+            renderer.finish_frame(&mut scene);
+            frames += 1;
+            // The first frames of the first arrangement: the screen holds
+            // this frame's colour.
+            if !separate && frames <= 3 && first == WARM_UP {
+                let pixels = sgl_3d::diagnostics::read_async(device, queue, &main_output, 4).await;
+                let at = ((MAIN[1] / 2 * MAIN[0] + MAIN[0] / 2) * 4) as usize;
+                let texel = &pixels[at..at + 3];
+                let strongest = (0..3).max_by_key(|&c| texel[c]).unwrap();
+                let others = (0..3).filter(|&c| c != strongest).map(|c| texel[c]).max();
+                if strongest != colour
+                    || u16::from(texel[strongest]) < 2 * u16::from(others.unwrap())
+                {
+                    return Err(format!(
+                        "frame {index}: the screen's centre holds {texel:?}, not this frame's colour {colour}"
+                    ));
+                }
+            }
+        }
+    }
+    if let Some(error) = validation.pop().await {
+        return Err(format!("validation error: {error}"));
+    }
+    let median = |values: &mut Vec<f64>| {
+        values.sort_by(f64::total_cmp);
+        values.get(values.len() / 2).copied()
+    };
+    let [with, without] = times.each_mut().map(median);
+    Ok(match (with, without) {
+        (Some(with), Some(without)) => format!(
+            "this frame's colour in 3 frames; GPU median {with:.3} ms with the render texture, {without:.3} ms with separate views ({MEASURED} frames each, main {}x{}, feed {}x{})",
+            MAIN[0], MAIN[1], FEED[0], FEED[1]
+        ),
+        _ => "this frame's colour in 3 frames; no GPU timestamps".into(),
     })
 }
 
@@ -1240,7 +1484,7 @@ async fn color_outputs(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(),
                         view: scene_view,
                         input: &frame,
                         settings: &settings,
-                        output: &float_view,
+                        output: ViewOutput::Texture(&float_view),
                         timing: None,
                     }],
                 );
@@ -1434,7 +1678,7 @@ async fn compressed_materials(
                         view: &mut scene_view,
                         input: &frame,
                         settings: &settings,
-                        output: &target.create_view(&Default::default()),
+                        output: ViewOutput::Texture(&target.create_view(&Default::default())),
                         timing: None,
                     }],
                 );
@@ -1530,6 +1774,19 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         }
         Err(error) => {
             let _ = writeln!(report, "FAIL specular probe capture: {error}");
+        }
+    }
+    let shown = monitor(&device, &queue).await;
+    let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
+    match shown {
+        Ok(_) if !errors.is_empty() => {
+            let _ = writeln!(report, "FAIL render texture: uncaptured {errors:?}");
+        }
+        Ok(detail) => {
+            let _ = writeln!(report, "ok render texture: {detail}");
+        }
+        Err(error) => {
+            let _ = writeln!(report, "FAIL render texture: {error}");
         }
     }
     let mut timing = GpuTiming::new(&device, &queue);

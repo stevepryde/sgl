@@ -3,7 +3,7 @@
 //! renderer's dynamic GI reports.
 #[cfg(feature = "diagnostics")]
 use super::Renderer;
-use super::{View, frame};
+use super::{View, view_stages};
 #[cfg(feature = "diagnostics")]
 use crate::{ModelId, Scene, SceneError};
 
@@ -26,7 +26,7 @@ impl View {
             DiagnosticTarget::ToneMapped => return self.post.captured_tone_mapped(),
             DiagnosticTarget::Exposure => self.exposure.view(),
             DiagnosticTarget::Antialiased => {
-                frame::completed(self.completed?, &self.post_fx, &self.antialiasing, targets)
+                view_stages::completed(self.completed?, &self.post_fx, &self.antialiasing, targets)
             }
         })
     }

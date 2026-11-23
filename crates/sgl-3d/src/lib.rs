@@ -24,7 +24,8 @@ pub use content::baked_specular_probe::{
 pub use content::decal::Decal;
 pub use content::dynamic_gi::DynamicGiVolume;
 pub use content::identity::{
-    DecalId, DecalImageId, EnvironmentId, InstanceId, LightId, MaterialId, ModelId, ShaderId,
+    DecalId, DecalImageId, EnvironmentId, InstanceId, LightId, MaterialId, ModelId,
+    RenderTextureId, ShaderId,
 };
 pub use content::instance::{InstanceState, Mobility};
 pub use content::irradiance_volume::{IrradianceCell, IrradianceVolume};
@@ -35,6 +36,7 @@ pub use content::lighting::{
 };
 pub use content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 pub use content::model::{AssetIds, ModelMesh};
+pub use content::render_texture::RenderTexture;
 pub use content::shader::{MaterialShader, ShaderSource};
 pub use content::transient::FogVolume;
 pub use content::{
@@ -48,7 +50,7 @@ pub use frame_input::{
 pub use glam;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use renderer::test_frame::TestRenderer;
-pub use renderer::{Renderer, View, ViewError, ViewFrame};
+pub use renderer::{Renderer, View, ViewError, ViewFrame, ViewOutput};
 pub use scene::irradiance_volume::PreparedIrradianceRegion;
 pub use scene::rays::acceleration::RayTracingStats;
 pub use scene::{PreparedModel, PreparedModelOptions, RayData, Scene, SceneError, SceneOptions};

@@ -27,7 +27,7 @@
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, Exposure, FrameInput, InstanceState, Mobility, Renderer, Scene, View,
-    ViewFrame,
+    ViewFrame, ViewOutput,
     asset::{Asset, CpuMesh, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     glam::Vec3,
@@ -354,7 +354,7 @@ fn run(
                 view: &mut scene_view,
                 input: &input,
                 settings: &settings,
-                output: &output_view,
+                output: ViewOutput::Texture(&output_view),
                 timing: timing.as_ref(),
             }],
         );

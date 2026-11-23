@@ -154,8 +154,9 @@ pub(crate) enum ShadingChange {
     /// submitted frame's.
     None,
     /// It changes from frame to frame: its normal layers move
-    /// (`Material::record_moves`) or its shader reads the time
-    /// (`Shader::reads_time`).
+    /// (`Material::record_moves`), its shader reads the time
+    /// (`Shader::reads_time`) or a frame changed the picture of the render
+    /// texture it names (`RenderTextures::changed`).
     Continuous,
     /// An edit since the last submitted frame changed what its shader
     /// reads: its parameter block (`Scene::set_shader_parameters`) or the
@@ -175,8 +176,13 @@ impl ShadingChanges {
     /// precedence over a continuous change.
     pub fn of(&self, scene: &Scene, id: MaterialId) -> ShadingChange {
         let material = scene.drawn_material(id);
+        // The picture it emits is another than the last finished frame's.
+        let picture = material
+            .values
+            .emission_render_texture
+            .is_some_and(|texture| scene.render_textures.changed(texture));
         let Some(shader) = material.values.shader else {
-            return if material.record_moves() {
+            return if material.record_moves() || picture {
                 ShadingChange::Continuous
             } else {
                 ShadingChange::None
@@ -185,6 +191,7 @@ impl ShadingChanges {
         if material.parameters_changed() || self.edited.contains(&id) {
             ShadingChange::Edited
         } else if material.record_moves()
+            || picture
             || scene
                 .shaders
                 .get(shader.shader)

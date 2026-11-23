@@ -1,6 +1,6 @@
 //! One camera's frame: its targets and sizes, its stages with their state,
 //! group 0's bindings, and every history kept in screen space or fit to its
-//! camera, which `frame::render_view` renders after the frame's shared
+//! camera, which `view_stages` renders after the frame's shared
 //! scene work (`shared::Shared`).
 use super::Renderer;
 use super::effective;
@@ -26,15 +26,30 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// One view's part of a frame ([`Renderer::render`]): the view, its
-/// camera and frame values, its settings and the texture it renders into,
-/// a view of its output format and size (offscreen or a surface's). Scene
+/// camera and frame values, its settings and what it renders into. Scene
 /// work is timed with the primary view's `timing`.
 pub struct ViewFrame<'a> {
     pub view: &'a mut View,
     pub input: &'a FrameInput,
     pub settings: &'a Settings,
-    pub output: &'a wgpu::TextureView,
+    pub output: ViewOutput<'a>,
     pub timing: Option<&'a crate::timing::GpuTiming>,
+}
+
+/// What a view renders into, of the view's output format and size.
+#[derive(Clone, Copy, Debug)]
+pub enum ViewOutput<'a> {
+    /// A texture of the game's: offscreen or a surface's.
+    Texture(&'a wgpu::TextureView),
+    /// A render texture of the frame's scene (`Scene::add_render_texture`),
+    /// which its materials sample: the view is created with
+    /// `RenderTexture::format` and sized to the texture. It renders in the
+    /// frames where a surface that samples the texture lies in the frustum
+    /// and visibility mask of another view the frame renders, before every
+    /// such view that does not feed it in turn; in other frames, and while
+    /// the game does not list it, it draws nothing and the texture keeps
+    /// its picture (the architecture's Frame, "Render textures").
+    RenderTexture(crate::RenderTextureId),
 }
 
 /// Why a view could not be created.
@@ -83,12 +98,15 @@ impl std::error::Error for ViewError {
 /// [`Renderer::render`] and drops it when it is done, which releases
 /// everything it held. Its history continues only from its scene's last
 /// finished frame, so a view that a finished frame of its scene did not
-/// render restarts, as on a cut.
+/// render restarts, as on a cut. A view may draw into a render texture of
+/// its scene instead of a texture of the game's ([`ViewOutput`]).
 // The stages of more than 2 KB are boxed: a debug build copies a `View`
 // several times on the stack as it is built and moved, in the game's code
 // too, and the debug WASM stack is 1 MB (#839).
 pub struct View {
     pub(crate) output_encodes_srgb: bool,
+    /// The format of the textures it renders into.
+    pub(crate) output_format: wgpu::TextureFormat,
     pub(crate) sizes: Sizes,
     /// A change of preset restarts history even if the pixel sizes agree.
     preset: RenderPreset,
@@ -254,6 +272,7 @@ impl View {
         );
         Ok(Self {
             output_encodes_srgb: output.encodes_srgb,
+            output_format: output.format,
             opaque: Opaque::new(
                 device,
                 &bindings.unlit,

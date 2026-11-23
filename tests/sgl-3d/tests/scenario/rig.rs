@@ -11,8 +11,8 @@ use sgl_3d::glam::{Mat4, Vec2, Vec3};
 use sgl_3d::settings::{self, Settings};
 use sgl_3d::{
     AlphaMode, Backdrop, Exposure, FrameInput, InstanceId, InstanceState, MaterialId,
-    MaterialShader, Mobility, Renderer, Scene, ShaderId, SurfaceMaterial, View as SceneView,
-    ViewFrame,
+    MaterialShader, Mobility, RenderTexture, RenderTextureId, Renderer, Scene, ShaderId,
+    SurfaceMaterial, View as SceneView, ViewFrame, ViewOutput,
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -35,6 +35,12 @@ pub struct Gpu {
 /// turns a missing adapter into a failure.
 pub fn gpu() -> Option<Gpu> {
     device(features)
+}
+
+/// [`gpu`]'s device held to S3D-1's floor, WebGPU's default limits
+/// (`wgpu::Limits::default()`), so it takes the Basic binding tier.
+pub fn floor_gpu() -> Option<Gpu> {
+    device_with(features, |_| wgpu::Limits::default())
 }
 
 /// The renderer's optional features and the adapter's texture compression.
@@ -69,6 +75,14 @@ where
     F: FnOnce(&wgpu::Adapter) -> R,
     R: Into<Option<wgpu::Features>>,
 {
+    device_with(features, sgl_3d::graphics_device::limits)
+}
+
+fn device_with<F, R>(features: F, limits: fn(&wgpu::Adapter) -> wgpu::Limits) -> Option<Gpu>
+where
+    F: FnOnce(&wgpu::Adapter) -> R,
+    R: Into<Option<wgpu::Features>>,
+{
     let required = std::env::var("SGL_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0");
     let adapter =
         match pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default())) {
@@ -95,7 +109,7 @@ where
     };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: features,
-        required_limits: sgl_3d::graphics_device::limits(&adapter),
+        required_limits: limits(&adapter),
         experimental_features,
         ..Default::default()
     }))
@@ -312,6 +326,9 @@ pub struct RigView {
     /// The camera's pose (world).
     camera: Pose,
     output: (wgpu::TextureView, [u32; 2]),
+    /// The render texture it draws into in place of its output
+    /// ([`Rig::add_producer`]).
+    produces: Option<RenderTextureId>,
 }
 
 /// A renderer, its scene and its views, driven frame by frame. Scripts set
@@ -353,7 +370,14 @@ impl Rig {
         };
         input.visibility_mask = 0x00ff_ffff;
         let renderer = Renderer::new(&gpu.device);
-        let view = rig_view(gpu, &renderer, lens, fixture_settings(antialiasing), input);
+        let view = rig_view(
+            gpu,
+            &renderer,
+            lens,
+            fixture_settings(antialiasing),
+            input,
+            None,
+        );
         Rig {
             scene: Scene::new(&gpu.device, &gpu.queue),
             gpu: gpu.clone(),
@@ -372,6 +396,27 @@ impl Rig {
     /// visibility mask), its camera at the origin until [`Rig::look_view`].
     /// Returns its index.
     pub fn add_view(&mut self, lens: View, antialiasing: settings::Antialiasing) -> usize {
+        self.add_view_into(lens, antialiasing, None)
+    }
+
+    /// [`Rig::add_view`] of a view that draws into the scene's render
+    /// texture `texture`, of `lens`'s size, in place of an output of its
+    /// own.
+    pub fn add_producer(
+        &mut self,
+        lens: View,
+        antialiasing: settings::Antialiasing,
+        texture: RenderTextureId,
+    ) -> usize {
+        self.add_view_into(lens, antialiasing, Some(texture))
+    }
+
+    fn add_view_into(
+        &mut self,
+        lens: View,
+        antialiasing: settings::Antialiasing,
+        produces: Option<RenderTextureId>,
+    ) -> usize {
         let mut input = self.views[0].input;
         input.camera_cut = false;
         let view = rig_view(
@@ -380,11 +425,78 @@ impl Rig {
             lens,
             fixture_settings(antialiasing),
             input,
+            produces,
         );
         self.views.push(view);
         let index = self.views.len() - 1;
         self.look_view(index, Pose::at(Vec3::ZERO));
         index
+    }
+
+    /// Adds an unlit black card `size` metres across facing +Z that emits
+    /// `emission`, times its emission map from corner to corner (UV 0..=1,
+    /// V down) once a script gives its material one
+    /// (`SurfaceMaterial::emission_render_texture`), at `pose` as a moving
+    /// instance in visibility group 0: a screen, or a source of one flat
+    /// colour. It is not one of the rig's shapes, as
+    /// [`Rig::add_textured`]'s card is not.
+    pub fn add_emissive(
+        &mut self,
+        size: Vec2,
+        emission: [f32; 3],
+        pose: Pose,
+    ) -> (InstanceId, MaterialId) {
+        let [low, high] = [-size * 0.5, size * 0.5];
+        let vertex = |x: f32, y: f32, u: f32, v: f32| Vertex {
+            position: [x, y, 0.],
+            normal: [0., 0., 1.],
+            uv: [u, v],
+            color: [1.; 4],
+            tangent: [1., 0., 0., 1.],
+            lightmap_bounds: [0., 0., 1., 1.],
+            lightmap_uv: [0.; 2],
+        };
+        let asset = Asset {
+            meshes: vec![CpuMesh {
+                vertices: vec![
+                    vertex(low.x, low.y, 0., 1.),
+                    vertex(high.x, low.y, 1., 1.),
+                    vertex(high.x, high.y, 1., 0.),
+                    vertex(low.x, high.y, 0., 0.),
+                ],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                material: 0,
+                deformation: Default::default(),
+            }],
+            materials: vec![Material {
+                name: "scenario emissive fixture".into(),
+                base: [0., 0., 0., 1.],
+                emissive: emission,
+                wrap: [gltf::texture::WrappingMode::ClampToEdge; 2],
+                metallic: 0.,
+                double_sided: true,
+                unlit: true,
+                ..Material::default()
+            }],
+            images: Vec::new(),
+            rig: Default::default(),
+            ignored: Vec::new(),
+            lights: Default::default(),
+        };
+        let Gpu { device, queue } = &self.gpu;
+        let ids = self
+            .scene
+            .add_asset(device, queue, asset)
+            .expect("an emissive fixture model");
+        let state = InstanceState {
+            pose: self.render_pose(pose),
+            ..InstanceState::new(ids.model)
+        };
+        let instance = self
+            .scene
+            .add_instance(device, queue, state, Mobility::Moving)
+            .expect("an emissive fixture instance");
+        (instance, ids.materials[0])
     }
 
     /// Drops view `index`; the views after it move down one.
@@ -824,7 +936,10 @@ impl Rig {
                     view: &mut view.view,
                     input: &view.input,
                     settings: &view.settings,
-                    output: &view.output.0,
+                    output: match view.produces {
+                        Some(texture) => ViewOutput::RenderTexture(texture),
+                        None => ViewOutput::Texture(&view.output.0),
+                    },
                     timing: None,
                 }
             })
@@ -892,19 +1007,24 @@ impl Rig {
 }
 
 /// A view of the rig's renderer through `lens` with `settings` and `input`,
-/// whose antialiasing must run.
+/// whose antialiasing must run, drawing into the render texture `produces`
+/// where it names one.
 fn rig_view(
     gpu: &Gpu,
     renderer: &Renderer,
     lens: View,
     settings: Settings,
     input: FrameInput,
+    produces: Option<RenderTextureId>,
 ) -> RigView {
     let view = SceneView::new(
         renderer,
         &gpu.device,
         &gpu.queue,
-        wgpu::TextureFormat::Rgba8Unorm,
+        match produces {
+            Some(_) => RenderTexture::new(lens.size).format(),
+            None => wgpu::TextureFormat::Rgba8Unorm,
+        },
         lens.size,
         1.,
         &settings,
@@ -923,6 +1043,7 @@ fn rig_view(
         input,
         settings,
         camera: Pose::at(Vec3::ZERO),
+        produces,
     }
 }
 

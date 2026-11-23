@@ -23,7 +23,7 @@ the view's selected output transfer.
 Start with the [agent guide](docs/README.md) for a short integration path.
 This page is the detailed reference:
 
-- [Frame lifecycle](#retained-scene-and-frame-lifecycle), [data conventions](#dependencies-and-data-conventions), [browser differences](#browser-wasm--webgpu)
+- [Frame lifecycle](#retained-scene-and-frame-lifecycle), [several views](#several-views), [render textures](#render-textures), [data conventions](#dependencies-and-data-conventions), [browser differences](#browser-wasm--webgpu)
 - [Lights and look](#frame-lights-and-look), [procedural sky](#procedural-sky), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
 - [Reflections](#reflections), [TAA, SMAA and FSR](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion), [screen-space indirect light](#screen-space-indirect-light)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
@@ -2506,10 +2506,12 @@ describes each view's camera, the authored look and per-frame state in a
 6. Build each view's `FrameInput` (`FrameInput::new(camera)` holds the
    defaults) and call `renderer.render(&device, &queue, &mut encoder, &mut
    scene, &mut [ViewFrame { view: &mut view, input: &input, settings:
-   &settings, output: &output_view, timing }])` once, every view listed, the
-   main view first. It encodes the scene's frame work once and then each
-   view's whole frame into its output view, of that view's output format and
-   size; the output may be offscreen, so no window or surface is required.
+   &settings, output: ViewOutput::Texture(&output_view), timing }])` once,
+   every view listed, the main view first. It encodes the scene's frame work
+   once and then each view's whole frame into its output view, of that
+   view's output format and size; the output may be offscreen, so no window
+   or surface is required, or a [render texture](#render-textures) of the
+   scene that its materials show.
    One `render` call is one frame of the scene: never render the scene twice
    for one finished frame.
 7. Draw game-owned HUD/UI afterward, submit the encoder, then call
@@ -2585,9 +2587,7 @@ shadow-face draws grow with views, and creating one
 compiles its own stage pipelines. One renderer shows one scene at a time:
 another scene specialises its pipelines again and restarts its dynamic GI,
 so a game showing two scenes at once holds a renderer for each. Known
-limits: rays see the scene under the primary view's visibility mask, and a
-view's output cannot yet be a scene texture (an in-world mirror or portal
-needs a render-texture material first). The
+limit: rays see the scene under the primary view's visibility mask. The
 [views example](../../examples/sgl-3d/examples/views.rs) draws a main view and a rear-view inset:
 
 ```sh
@@ -2626,6 +2626,85 @@ cargo run --release -p sgl-3d-examples --example streaming -- walk fly
 cargo run --release -p sgl-3d-examples --example streaming -- --check
 ```
 
+### Render textures
+
+A view can draw into a texture the scene owns, which a material then shows:
+an in-world monitor, with nothing read back.
+
+```rust
+// Once: the picture, the view that draws it, and the screen that shows it.
+let description = RenderTexture::new([512, 288]);
+let picture = scene.add_render_texture(&device, description)?;
+let mut feed = View::new(&renderer, &device, &queue,
+    description.format(), description.size, 1., &feed_settings)?;
+let values = scene.material(screen)?;
+scene.set_material(&queue, screen, SurfaceMaterial {
+    emission_render_texture: Some(picture), ..values })?;
+// Each frame: list both views, the main view first.
+renderer.render(&device, &queue, &mut encoder, &mut scene, &mut [
+    ViewFrame { view: &mut main, input: &main_input, settings: &settings,
+        output: ViewOutput::Texture(&surface_view), timing: None },
+    ViewFrame { view: &mut feed, input: &feed_input, settings: &feed_settings,
+        output: ViewOutput::RenderTexture(picture), timing: None },
+]);
+```
+
+- **The texture** has `RenderTexture::format` (`Rgba8UnormSrgb`) and the
+  size the game gives, one level, black until a view draws into it. The
+  view that draws it is created with that format and size, which `render`
+  asserts. `Scene::set_render_texture` replaces it at another size (black
+  again); resize the view to match. `Scene::remove_render_texture` refuses
+  while a material names it. A new device is a new scene: add it again.
+- **The screen** is any material: `emission_render_texture` puts the picture
+  in its emission map's place, sampled with the mesh's UVs (the picture's
+  top left at UV 0, 0) through the material's own sampler, and multiplied by
+  `emission`, the screen's brightness. Give the screen a black `base`, and
+  author its material with `wrap: [ClampToEdge; 2]`
+  (`gltf::texture::WrappingMode`): the default repeats, which blends the
+  picture's opposite edges into each other along the screen's border. A
+  wall that tiles the picture keeps `Repeat`. It works alike on both
+  binding tiers and in the browser.
+- **Colour.** The texture holds the feed view's displayed picture, tone
+  mapped and graded by the feed's own `FrameInput` and settings, and the
+  emission map decodes it to linear as it does an authored sRGB image. The
+  main view then exposes and tone maps the lit screen like any emitter.
+  Never apply gamma in between.
+- **Which frame.** The renderer orders the views: the feed renders before
+  the views that show its screen, whichever is listed first, so the screen
+  shows this frame. A view that shows its own picture shows its last one;
+  of views that show each other's, the one listed first shows the other's
+  last picture. The primary view is still the first listed.
+- **When it renders.** The feed renders only in frames where a surface
+  that shows its picture is inside another rendered view's frustum and
+  visibility mask (occlusion is not tested). In other frames it draws
+  nothing and the texture keeps its picture; its temporal history restarts
+  when it comes back, so a feed that is often left out should use SMAA or
+  no antialiasing. To freeze a screen, leave its view out of the frame: no
+  consumer makes an unlisted view render.
+- **Scaling.** The feed's `SceneResolution` renders its scene below the
+  texture's size and presents up to it, as any view does.
+- **Limits.** One view draws a render texture in a frame. The picture has
+  no mips, so a distant or steeply angled screen aliases. Rays and dynamic
+  GI see the screen's material as it was added: its `emission` and its
+  authored emission map, white without one, so author a still image there
+  where reflections of the screen matter. Probe captures sample the last
+  picture drawn. While the picture changes, the screen is marked for TAA
+  and FSR as moving shading is, and a scene that holds a screen keeps
+  their temporal masks in every frame, as one with a shader material
+  does. A `GpuTiming` given to the main view alone also spans the feeds
+  rendered within its frame: give every view of a frame the same one.
+
+The [monitor example](../../examples/sgl-3d/examples/monitor.rs) shows a
+camera behind the player on a screen in front of them; `--measure` prints
+the timed passes and GPU time of a frame with the screen, with the same two
+views drawn separately and with the screen out of view, and `--passes` adds
+each pass group's time:
+
+```sh
+cargo run -p sgl-3d-examples --example monitor -- target/monitor.png
+cargo run --release -p sgl-3d-examples --example monitor -- --measure
+```
+
 ### GPU pass timing
 
 `timing::GpuTiming::new(&device, &queue)` returns `None` unless the device was
@@ -2634,10 +2713,11 @@ is taken to render untimed. Each frame:
 
 ```rust
 for frame in timing.begin_frame(&device, &queue) {
-    // frame.frame, frame.total_ms, frame.passes: [PassTime { name, ms }]
+    // frame.frame, frame.total_ms, frame.passes: [PassTime { name, ms, passes }]
 }
 renderer.render(&device, &queue, &mut encoder, &mut scene, &mut [ViewFrame {
-    view: &mut view, input: &input, settings: &settings, output: &output, timing: Some(&timing),
+    view: &mut view, input: &input, settings: &settings,
+    output: ViewOutput::Texture(&output), timing: Some(&timing),
 }]);
 // Game passes may join: `timestamp_writes: timing.render_pass("HUD")`.
 queue.submit([encoder.finish()]);

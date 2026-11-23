@@ -32,6 +32,7 @@ pub(crate) mod probes;
 pub(crate) mod ranges;
 pub(crate) mod ray_class;
 pub(crate) mod rays;
+pub(crate) mod render_textures;
 pub(crate) mod shaders;
 pub(crate) mod shadow_clusters;
 mod slots;
@@ -91,6 +92,8 @@ pub struct Scene {
     ray_data: RayData,
     pub(crate) shaders: shaders::Shaders,
     pub(crate) materials: materials::Materials,
+    /// The pictures views draw for materials to sample.
+    pub(crate) render_textures: render_textures::RenderTextures,
     pub(crate) models: models::Models,
     pub(crate) instances: instances::Instances,
     /// Each instance's draw candidates, with the sets and level chains they
@@ -202,6 +205,7 @@ impl Scene {
             ray_data: options.ray_data,
             shaders: shaders::Shaders::default(),
             materials: materials::Materials::new(device, queue),
+            render_textures: render_textures::RenderTextures::default(),
             models: models::Models::default(),
             candidates: candidates::Candidates::new(&device.limits()),
             lights: lights::Lights::new(device),
@@ -560,6 +564,7 @@ impl Scene {
         self.frame.open = None;
         self.instances.finish_frame();
         self.materials.finish_frame();
+        self.render_textures.finish_frame();
         self.static_edits.finish();
         if let Some(acceleration) = &mut self.acceleration {
             acceleration.finish_frame();

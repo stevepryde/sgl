@@ -52,7 +52,7 @@ use sgl_3d::{
     Backdrop, Camera, DirectionalLight, DirectionalShadow, EnvironmentId, Exposure, FrameInput,
     HemisphereLight, InstanceId, InstanceState, IrradianceCell, IrradianceVolume, MaterialId,
     Mobility, ModelId, ModelMesh, PreparedIrradianceRegion, PreparedModel, Renderer, Scene, View,
-    ViewFrame,
+    ViewFrame, ViewOutput,
     asset::{CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     settings::{
@@ -1151,7 +1151,7 @@ fn walk(
                 view: &mut scene_view,
                 input: &input,
                 settings: &settings,
-                output: &view,
+                output: ViewOutput::Texture(&view),
                 timing: timing.as_ref(),
             }],
         );

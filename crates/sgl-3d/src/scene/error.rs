@@ -175,6 +175,11 @@ pub enum SceneError {
     UnknownShader,
     /// A material names the shader.
     ShaderInUse,
+    /// The render texture was removed, or another scene issued its
+    /// identity; or a material names such a render texture.
+    UnknownRenderTexture,
+    /// A material names the render texture.
+    RenderTextureInUse,
     /// `Scene::set_shader_parameters` was given `given` bytes for a
     /// material whose shader's `ShaderParams` takes `expected`, 0 for a
     /// material without a shader.
@@ -318,6 +323,8 @@ impl std::fmt::Display for SceneError {
             }
             Self::UnknownShader => "the shader is not in this scene",
             Self::ShaderInUse => "a material names the shader",
+            Self::UnknownRenderTexture => "the render texture is not in this scene",
+            Self::RenderTextureInUse => "a material names the render texture",
             Self::ShaderParameters { expected, given } => {
                 return write!(
                     f,

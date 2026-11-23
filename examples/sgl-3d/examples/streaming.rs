@@ -75,6 +75,7 @@ use sgl_3d::settings::RayTracedShadowQuality;
 use sgl_3d::{
     EnvironmentId, FrameInput, InstanceId, InstanceState, LightId, MaterialId, Mobility, ModelId,
     ModelMesh, PreparedModel, RayTracingStats, Renderer, Scene, SceneError, View, ViewFrame,
+    ViewOutput,
     timing::{FrameTime, GpuTiming},
 };
 use std::collections::{BTreeMap, VecDeque};
@@ -1160,7 +1161,7 @@ fn render(
                 view: &mut scene_view,
                 input: &input,
                 settings: &settings,
-                output: &output,
+                output: ViewOutput::Texture(&output),
                 timing: timing.as_ref(),
             }],
         );
@@ -1308,7 +1309,7 @@ fn check(gpu: (&wgpu::Device, &wgpu::Queue), tracing: Tracing) -> Result<(), Box
                 view: scene_view,
                 input: &game.input(),
                 settings: &settings,
-                output: &output,
+                output: ViewOutput::Texture(&output),
                 timing: None,
             }],
         );

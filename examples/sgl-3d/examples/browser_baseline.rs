@@ -4,7 +4,7 @@
 use serde_json::{Value, json};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight,
-    InstanceState, Light, LightShape, Mobility, Renderer, Scene, View, ViewFrame,
+    InstanceState, Light, LightShape, Mobility, Renderer, Scene, View, ViewFrame, ViewOutput,
     asset::{Asset, CpuMesh, Image, Material, Rgba8MipChain, Vertex},
     glam::{Mat4, Vec3, camera},
     settings::{
@@ -534,7 +534,7 @@ async fn measured(
                 view: &mut scene_view,
                 input: &frame,
                 settings: &settings,
-                output: &view,
+                output: ViewOutput::Texture(&view),
                 timing: timing.as_ref(),
             }],
         );

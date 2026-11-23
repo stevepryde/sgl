@@ -33,7 +33,7 @@
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, DynamicGiVolume, FrameInput, HemisphereLight,
-    InstanceState, Light, LightShape, Mobility, Renderer, Scene, View, ViewFrame,
+    InstanceState, Light, LightShape, Mobility, Renderer, Scene, View, ViewFrame, ViewOutput,
     asset::{Asset, CpuMesh, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     glam::{Mat4, Vec3},
@@ -480,7 +480,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 view: &mut scene_view,
                 input: &frame,
                 settings: &settings,
-                output: &output_view,
+                output: ViewOutput::Texture(&output_view),
                 timing: timing.as_ref(),
             }],
         );

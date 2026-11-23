@@ -36,7 +36,7 @@ use sgl_3d::glam::{Mat4, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight,
     InstanceState, MaterialId, MaterialShader, Mobility, ModelMesh, PreparedModel, Renderer, Scene,
-    ShaderSource, SurfaceMaterial, View, ViewFrame,
+    ShaderSource, SurfaceMaterial, View, ViewFrame, ViewOutput,
     asset::{Asset, CpuMesh, Image, Material, Vertex},
     settings::{Antialiasing, Settings},
     timing::GpuTiming,
@@ -576,7 +576,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     view: &mut scene_view,
                     input: &input,
                     settings: &settings,
-                    output: &view,
+                    output: ViewOutput::Texture(&view),
                     timing: timing.as_ref(),
                 }],
             );

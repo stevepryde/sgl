@@ -11,7 +11,7 @@
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceState, Light,
-    LightShape, Mobility, Renderer, Scene, View, ViewFrame,
+    LightShape, Mobility, Renderer, Scene, View, ViewFrame, ViewOutput,
     animation::{Pose, Wrap},
     asset::{self, Asset, CpuMesh, Material, Vertex},
     glam::{Mat4, Quat, Vec3},
@@ -379,7 +379,7 @@ async fn run(output_path: std::path::PathBuf, frames: u32) -> Result<(), Box<dyn
                 view: &mut scene_view,
                 input: &input,
                 settings: &settings,
-                output: &output_view,
+                output: ViewOutput::Texture(&output_view),
                 timing: None,
             }],
         );

@@ -130,6 +130,18 @@ them through unrefracted. A probe captured on an
   (dynamic GI, ray tracing, material filtering). A view left out of a
   finished frame restarts its history.
   [Several views](README.md#several-views), `examples/views.rs`.
+- **Render textures**: a view's picture on a surface of the scene, live
+  (an in-world monitor): the scene owns the texture
+  (`Scene::add_render_texture`), a view draws into it
+  (`ViewOutput::RenderTexture`) and a material shows it as its emission map
+  (`SurfaceMaterial::emission_render_texture`), on both binding tiers and
+  in the browser, with no readback. The screen shows this frame's picture
+  however the views are listed; a view that shows its own picture shows its
+  last. The feed renders only while a view has the screen in its frustum.
+  Limits: emission only, no mips, one producer view a texture a frame; rays
+  and dynamic GI see the screen's authored emission map.
+  [A view on an in-world screen](README.md#a-view-on-an-in-world-screen),
+  `examples/monitor.rs`.
 - **Instances**: model placements (`InstanceState`; `InstanceState::new(model)`
   is at the origin and shown in every view), static or moving. Static
   instances are what bakes and probe captures contain and write no motion;

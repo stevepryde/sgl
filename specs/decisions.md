@@ -1265,3 +1265,50 @@ Use the [current specs](README.md) for implementation and the
   open ground at any distance contact shadows no longer resolve, under any
   sun to the side of the view, while the shadow lost is the outer part of
   casters a few pixels wide (RD-2).
+- **D-70** Decision, 2026-11-23 (#865): a view's picture as a material
+  texture. The scene owns a render texture, a view draws its frame into
+  it and a material names it as its emission map; nothing is read back.
+  (1) Order: the renderer orders a frame's views, producers before the
+  views that show them, whichever view is primary, so a screen shows this
+  frame with no rule for the game to follow; the primary view's prepare
+  and the scene's GPU work run first, which keeps one primary-view policy.
+  Ordering by what each view samples in the frame is SGL3D's own: Godot
+  b130438 draws child viewports before their parents
+  (`_sort_active_viewports`), a hierarchy SGL3D's views do not have; Bevy
+  9d12036 takes a game-set `Camera::order`, and three.js r187 and Filament
+  leave it to the caller. (2) Feedback reads the last submitted picture
+  from the one texture: a producer writes it only in its last pass, so
+  views in a loop, in listed order, need no second texture or copy, at one
+  frame of latency for the view listed first. A double-buffered texture
+  with one frame of latency everywhere was rejected: a reflected camera
+  (#866) cannot lag its consumer. (3) A producer renders only in frames
+  where another rendered view's frustum and visibility mask hold a surface
+  that samples it, tested on the CPU from this frame's bounds, where
+  Godot's default `VIEWPORT_UPDATE_WHEN_VISIBLE` uses the frame before's
+  draws: the first frame a screen is in view already has its picture.
+  Occlusion is not tested. The game's lever is not listing the view. (4)
+  Colour: the texture holds the view's displayed picture, sRGB-encoded,
+  because a screen is a display; the emission map decodes it as an
+  authored image and the consumer's display transform applies once.
+  three.js r187 keeps a render target scene-referred and untonemapped
+  (`Renderer.currentToneMapping`), which a mirror or portal needs: that is
+  a later field of `RenderTexture` with a default, which is why the format
+  is the description's (`RenderTexture::format`) and not a constant; its
+  producer then stops before exposure and tone mapping, a branch of the
+  view's last stages that #866 owns.
+  (5) It fills the emission map's binding, on both tiers, and no other
+  map: the base colour's alpha reaches casters and the depth of masked
+  surfaces, where a picture drawn this frame has no meaning. (6) Rays and
+  dynamic GI read the material as authored, since the ray source holds CPU
+  texels; probe captures rasterise and sample the last submitted picture.
+  (7) No mip chain: the picture is sampled at one level, as three.js's
+  render targets are by default, and minifies with aliasing; mips are a
+  per-frame cost a later level control would buy. (8) The picture is
+  sampled through the material's one sampler, so it wraps as the material
+  was authored: a screen clamps (`Material::wrap`), a video wall may
+  repeat. three.js clamps a render target's texture by default; SGL3D's
+  wrap belongs to the material until a map has a sampler of its own. (9) A
+  scene that holds a screen keeps the temporal masks in every frame, as
+  one that holds a shader material does (F-15), which costs a TAA or FSR
+  view its composition pass and masked resolve while the picture stands
+  still. Measured numbers are in the change that landed it.

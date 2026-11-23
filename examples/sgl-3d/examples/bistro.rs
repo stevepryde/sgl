@@ -18,7 +18,8 @@ mod native {
 
     use super::bistro_scene;
     use sgl_3d::{
-        InstanceState, Mobility, RayData, Renderer, Scene, SceneOptions, View, ViewFrame, asset,
+        InstanceState, Mobility, RayData, Renderer, Scene, SceneOptions, View, ViewFrame,
+        ViewOutput, asset,
         environment::{EnvironmentMap, PmremAtlas},
         settings::{Antialiasing, DynamicGiQuality},
         timing::GpuTiming,
@@ -614,7 +615,7 @@ mod native {
                         view: &mut scene_view,
                         input: &frame,
                         settings: &settings,
-                        output: &view,
+                        output: ViewOutput::Texture(&view),
                         timing: timing.as_ref(),
                     }],
                 );

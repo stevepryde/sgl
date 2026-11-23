@@ -6,7 +6,8 @@ mod bistro_scene;
 
 use serde_json::{Value, json};
 use sgl_3d::{
-    InstanceState, Mobility, RayData, Renderer, Scene, SceneOptions, View, ViewFrame, asset,
+    InstanceState, Mobility, RayData, Renderer, Scene, SceneOptions, View, ViewFrame, ViewOutput,
+    asset,
     environment::{EnvironmentMap, PmremAtlas},
     glam::{Mat4, Vec3, camera},
     settings::{DynamicGiQuality, Settings},
@@ -694,7 +695,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
                 view: &mut scene_view,
                 input: &frame,
                 settings: &settings,
-                output: &view,
+                output: ViewOutput::Texture(&view),
                 timing: timing.as_ref(),
             }],
         );
@@ -789,7 +790,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
                     view: &mut scene_view,
                     input: &frame,
                     settings: &settings,
-                    output: &view,
+                    output: ViewOutput::Texture(&view),
                     timing: None,
                 }],
             );

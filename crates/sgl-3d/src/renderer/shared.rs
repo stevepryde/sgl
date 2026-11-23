@@ -2,7 +2,7 @@
 //! geometry pipeline cache, prepare's scene part, the deform stage, the
 //! dynamic GI stage with its probes and the device's ray-query form. A
 //! frame's scene work runs once, in its primary view's stage order
-//! (`frame::render_view`, `Role`).
+//! (`view_stages::begin_view`, `Role`).
 use super::effective;
 use crate::FrameInput;
 use crate::Scene;
@@ -90,7 +90,9 @@ impl Shared {
         traced: bool,
     ) {
         self.pipelines.specialise(effective.layers, scene);
-        scene.materials.set_anisotropy(device, effective.anisotropy);
+        scene
+            .materials
+            .set_anisotropy(device, &scene.render_textures, effective.anisotropy);
         self.prepare
             .run_scene(device, queue, scene, effective, input, traced);
     }

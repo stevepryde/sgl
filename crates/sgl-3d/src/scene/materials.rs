@@ -3,12 +3,13 @@
 //! operations that add, read, edit and remove them.
 use super::candidates::CandidateMesh;
 use super::rays::SceneRays;
+use super::render_textures::RenderTextures;
 use super::shaders::Shaders;
 use super::slots::Slots;
 use super::textures::{self, Textures};
 use super::{Scene, SceneError, buffer};
 use crate::asset::{Image, Material as AuthoredMaterial};
-use crate::content::identity::{MaterialId, ModelId};
+use crate::content::identity::{MaterialId, ModelId, RenderTextureId};
 use crate::content::material::{AlphaMode, SurfaceMaterial};
 use crate::shading::bind::group2::MaterialMap;
 use crate::shading::material::{MaterialMaps, MaterialUniform};
@@ -36,6 +37,12 @@ fn params_block(
         .layout
         .size;
     Some(ParamBlock::new(device, size))
+}
+
+/// Whether a frame's visibility mask (all groups when None) enables the
+/// visibility group `group`: every bit of it.
+pub(crate) fn group_enabled(group: u32, mask: Option<u32>) -> bool {
+    mask.is_none_or(|mask| group & mask == group)
 }
 
 pub(crate) struct Material {
@@ -76,10 +83,7 @@ impl Material {
     /// Whether the frame's visibility mask (all groups when None) enables
     /// its visibility group.
     pub fn enabled(&self, mask: Option<u32>) -> bool {
-        mask.is_none_or(|mask| {
-            let group = self.values.visibility_group;
-            group & mask == group
-        })
+        group_enabled(self.values.visibility_group, mask)
     }
 
     /// Its values as the shaders read them, with its maps in effect.
@@ -156,8 +160,9 @@ pub(crate) struct Materials {
     pub casters: u64,
     /// How many of its materials are blended and how many
     /// of those receive screen-space reflections, how many opaque or masked
-    /// ones' surfaces may move from frame to frame (their records move or they
-    /// have a shader: `Scene::shading_changes`) and of those how many
+    /// ones' surfaces may move from frame to frame (their records move, they
+    /// have a shader or they name a render texture: `Scene::shading_changes`)
+    /// and of those how many
     /// records do (`Material::record_moves`), and how many have an
     /// iridescent film.
     blended: usize,
@@ -202,7 +207,8 @@ impl Materials {
 
     /// Whether an opaque or masked material's shading may change where its
     /// geometry stands still in some frame (`Scene::shading_changes`): its
-    /// record moves (`Material::record_moves`) or it has a shader.
+    /// record moves (`Material::record_moves`), it has a shader or it names
+    /// a render texture.
     pub fn holds_moving_surfaces(&self) -> bool {
         self.moving > 0
     }
@@ -291,8 +297,8 @@ impl Materials {
     /// with a sheen among the sheens, one that passes diffuse light through
     /// among those; a blended or transmissive one among the blended (and the
     /// receivers where it is one), else one
-    /// whose surface moves (its record, or with a shader) among the moving
-    /// and one whose record moves among those.
+    /// whose surface moves (its record, with a shader or naming a render
+    /// texture) among the moving and one whose record moves among those.
     fn count(&mut self, values: &SurfaceMaterial, record_moves: bool, by: isize) {
         let add = |count: &mut usize| *count = count.checked_add_signed(by).unwrap();
         if values.iridescence > 0. {
@@ -314,7 +320,7 @@ impl Materials {
             }
             return;
         }
-        if record_moves || values.shader.is_some() {
+        if record_moves || values.shader.is_some() || values.emission_render_texture.is_some() {
             add(&mut self.moving);
         }
         if record_moves {
@@ -477,6 +483,7 @@ impl Materials {
             &bound,
             [&values_buffer, &baked],
             None,
+            None,
         );
         let mut distinct: Vec<usize> = maps.images().map(|(texture, _)| texture).collect();
         distinct.sort_unstable();
@@ -504,24 +511,47 @@ impl Materials {
 
     /// Samples every material's maps with at most `anisotropy` anisotropic
     /// samples (`anisotropy_clamp`), remaking their groups when it changes.
-    pub fn set_anisotropy(&mut self, device: &wgpu::Device, anisotropy: u16) {
+    pub fn set_anisotropy(
+        &mut self,
+        device: &wgpu::Device,
+        render_textures: &RenderTextures,
+        anisotropy: u16,
+    ) {
         if self.groups.anisotropy == anisotropy {
             return;
         }
         self.groups.anisotropy = anisotropy;
+        self.regroup(device, render_textures, |_| true);
+    }
+
+    /// Remakes group 2 of the materials that name `id`, a render texture
+    /// whose GPU texture was replaced.
+    pub fn rebind_render_texture(
+        &mut self,
+        device: &wgpu::Device,
+        render_textures: &RenderTextures,
+        id: RenderTextureId,
+    ) {
+        self.regroup(device, render_textures, |material| {
+            material.values.emission_render_texture == Some(id)
+        });
+    }
+
+    /// Remakes group 2 of each material `which` selects.
+    fn regroup(
+        &mut self,
+        device: &wgpu::Device,
+        render_textures: &RenderTextures,
+        which: impl Fn(&Material) -> bool,
+    ) {
         let remade: Vec<_> = self
             .slots
             .iter()
+            .filter(|(_, material)| which(material))
             .map(|(id, material)| {
-                let bound = &material.bound;
-                let buffers = [&material.buffer, &material.baked];
-                let group = self.groups.group(
-                    device,
-                    &self.textures,
-                    bound,
-                    buffers,
-                    material.params.as_ref(),
-                );
+                let group = self
+                    .groups
+                    .of(device, &self.textures, render_textures, material);
                 (id, group)
             })
             .collect();
@@ -532,15 +562,19 @@ impl Materials {
 
     /// Replaces a material's values in raster and the ray source at once;
     /// one whose shader changes takes zero parameter blocks of its new
-    /// shader's size, in a group 2 that binds them.
+    /// shader's size, in a group 2 that binds them, and one whose render
+    /// texture changes a group 2 that binds it.
     pub fn set(
         &mut self,
         queue: &wgpu::Queue,
-        (rays, shaders): (&SceneRays, &Shaders),
+        (rays, shaders, render_textures): (&SceneRays, &Shaders, &RenderTextures),
         id: MaterialId,
         values: SurfaceMaterial,
     ) -> Result<(), SceneError> {
         validate_shader(&values, shaders)?;
+        if let Some(texture) = values.emission_render_texture {
+            render_textures.get(texture)?;
+        }
         let material = self.slots.get_mut(id).ok_or(SceneError::UnknownMaterial)?;
         validate_core(&values)?;
         validate_anisotropy(&values, material.untangented)?;
@@ -561,16 +595,15 @@ impl Materials {
             crate::counters::write_buffer(queue, &material.buffer, 0, bytemuck::bytes_of(&uniform));
             rays.write_material(queue, material.word(), &uniform);
             let shader = |values: &SurfaceMaterial| values.shader.map(|shader| shader.shader);
-            if shader(&old.0) != shader(&values) {
-                let device = &self.groups.device;
+            let device = &self.groups.device;
+            let reshaded = shader(&old.0) != shader(&values);
+            if reshaded {
                 material.params = params_block(device, shaders, &values);
-                material.group = self.groups.group(
-                    device,
-                    &self.textures,
-                    &material.bound,
-                    [&material.buffer, &material.baked],
-                    material.params.as_ref(),
-                );
+            }
+            if reshaded || old.0.emission_render_texture != values.emission_render_texture {
+                material.group = self
+                    .groups
+                    .of(device, &self.textures, render_textures, material);
             }
             self.count(&old.0, old.1, -1);
             self.count(&values, uniform.surface_moves(), 1);
@@ -635,7 +668,8 @@ impl Scene {
 
     /// Replaces a material's values, its alpha mode among them. Anisotropy
     /// needs authored tangent frames on every mesh drawn with the material.
-    /// Textures stay as added.
+    /// Textures stay as added; `emission_render_texture` names a render
+    /// texture of this scene or none (`SceneError::UnknownRenderTexture`).
     /// Non-finite `normal_scale`, `coat_normal_scale` or `bump_scale`
     /// returns `SceneError::InvalidMaterialFactors` without changing the material.
     pub fn set_material(
@@ -678,11 +712,18 @@ impl Scene {
                 return Err(SceneError::DeviceLimit);
             }
         }
-        self.materials
-            .set(queue, (&self.rays, &self.shaders), id, values)?;
+        self.materials.set(
+            queue,
+            (&self.rays, &self.shaders, &self.render_textures),
+            id,
+            values,
+        )?;
         let shader = |values: &SurfaceMaterial| values.shader.map(|shader| shader.shader);
         self.shaders.count(shader(&old), -1);
         self.shaders.count(shader(&values), 1);
+        self.render_textures.count(old.emission_render_texture, -1);
+        self.render_textures
+            .count(values.emission_render_texture, 1);
         if blending || std::mem::discriminant(&old.alpha) != std::mem::discriminant(&values.alpha) {
             self.models.classify_users(id, &self.materials);
         }
@@ -704,9 +745,12 @@ impl Scene {
     /// Removes a material no model's mesh uses.
     pub fn remove_material(&mut self, id: MaterialId) -> Result<(), SceneError> {
         self.edited();
-        let shader = self.materials.get(id)?.values.shader;
+        let values = self.materials.get(id)?.values;
         self.materials.remove(&mut self.rays, id)?;
-        self.shaders.count(shader.map(|shader| shader.shader), -1);
+        self.shaders
+            .count(values.shader.map(|shader| shader.shader), -1);
+        self.render_textures
+            .count(values.emission_render_texture, -1);
         Ok(())
     }
 }

@@ -1,5 +1,5 @@
 //! The stages, one module each, in the order the renderer runs them
-//! (`renderer/frame.rs`). Each is one struct that owns its pipelines, bind
+//! (`renderer/view_stages.rs`). Each is one struct that owns its pipelines, bind
 //! groups, targets and history, and states what it reads, writes and
 //! honours and its timing groups. Stages meet only through what the
 //! renderer lends them (`view::frame::FrameContext`) and the values it

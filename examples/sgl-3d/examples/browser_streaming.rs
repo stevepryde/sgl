@@ -27,7 +27,7 @@ mod voxel_world;
 use sgl_3d::glam::{IVec3, Mat4};
 use sgl_3d::{
     InstanceState, Mobility, ModelMesh, PreparedModel, Renderer, Scene, View, ViewFrame,
-    timing::GpuTiming,
+    ViewOutput, timing::GpuTiming,
 };
 use std::fmt::Write as _;
 use voxel_world::{CHUNK, Mesher, SIZE, World};
@@ -230,7 +230,7 @@ async fn measured(
                 view: &mut scene_view,
                 input: &input,
                 settings: &settings,
-                output: &view,
+                output: ViewOutput::Texture(&view),
                 timing: timing.as_ref(),
             }],
         );

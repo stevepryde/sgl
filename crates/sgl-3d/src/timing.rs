@@ -25,6 +25,8 @@ pub struct PassTime {
     /// Tile-based GPUs start a pass long before earlier fragments finish, so
     /// raw start-to-end spans overlap and would count shared time repeatedly.
     pub ms: f64,
+    /// How many of the frame's timed passes the group holds.
+    pub passes: u32,
 }
 
 /// Completed GPU timings for one frame.
@@ -297,7 +299,7 @@ fn read(slot: &mut Slot, period_ns: f64, previous: Option<u64>) -> Option<(Frame
     let ms = |ticks: u64| ticks as f64 * period_ns / 1e6;
     let mut first = None;
     let mut frontier = previous;
-    let mut groups: Vec<(&'static str, u64)> = Vec::new();
+    let mut groups: Vec<(&'static str, u64, u32)> = Vec::new();
     for (name, pair) in slot.names.iter().zip(values.chunks_exact(2)) {
         let (begin, end) = (pair[0], pair[1]);
         // Unwritten, stale or reversed samples, and implausibly long passes.
@@ -309,8 +311,11 @@ fn read(slot: &mut Slot, period_ns: f64, previous: Option<u64>) -> Option<(Frame
         frontier = Some(frontier.map_or(end, |frontier| frontier.max(end)));
         let added = end.saturating_sub(start);
         match groups.iter_mut().find(|group| group.0 == *name) {
-            Some(group) => group.1 += added,
-            None => groups.push((name, added)),
+            Some(group) => {
+                group.1 += added;
+                group.2 += 1;
+            }
+            None => groups.push((name, added, 1)),
         }
     }
     let (first, last) = (first?, frontier?);
@@ -320,9 +325,10 @@ fn read(slot: &mut Slot, period_ns: f64, previous: Option<u64>) -> Option<(Frame
         total_ms: ms(last.saturating_sub(first)),
         passes: groups
             .into_iter()
-            .map(|(name, ticks)| PassTime {
+            .map(|(name, ticks, passes)| PassTime {
                 name,
                 ms: ms(ticks),
+                passes,
             })
             .collect(),
     };

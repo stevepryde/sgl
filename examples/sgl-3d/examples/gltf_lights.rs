@@ -155,7 +155,7 @@ async fn run(gltf: PathBuf, output: PathBuf) -> Result<(), Box<dyn Error>> {
                 view: &mut view,
                 input: &frame,
                 settings: &settings,
-                output: &output_view,
+                output: sgl_3d::ViewOutput::Texture(&output_view),
                 timing: None,
             }],
         );

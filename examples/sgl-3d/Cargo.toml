@@ -11,6 +11,8 @@ publish = false
 [dev-dependencies]
 bytemuck.workspace = true
 glam.workspace = true
+# A material's texture wrapping (`asset::Material::wrap`) is glTF's type.
+gltf.workspace = true
 image = { workspace = true, features = ["hdr"] }
 # Existing encoder for the KTX2 export example.
 ktx2.workspace = true

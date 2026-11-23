@@ -68,3 +68,8 @@ identity!(
     /// A shader of a scene: a game's WGSL module its materials name.
     ShaderId
 );
+identity!(
+    /// A render texture of a scene: a picture a view draws for materials to
+    /// sample.
+    RenderTextureId
+);

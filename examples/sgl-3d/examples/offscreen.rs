@@ -27,7 +27,7 @@ use sgl_3d::glam::camera;
 use sgl_3d::{
     AlphaMode, AutoExposure, Camera, CompensationCurve, Decal, DirectionalLight, DirectionalShadow,
     Fog, FogVolume, FrameInput, HemisphereLight, InstanceState, Light, LightCookie, LightShape,
-    Mobility, Renderer, Scene, View, ViewFrame,
+    Mobility, Renderer, Scene, View, ViewFrame, ViewOutput,
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     glam::{Mat4, Quat, Vec3},
@@ -568,7 +568,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 view: &mut scene_view,
                 input: &frame,
                 settings: &settings,
-                output: &output_view,
+                output: ViewOutput::Texture(&output_view),
                 timing: None,
             }],
         );

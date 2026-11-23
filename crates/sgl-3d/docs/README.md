@@ -97,7 +97,7 @@ captures on the same renderer reuse the cached pipelines.
    time in seconds (`elapsed_seconds`, an `f64`, which moves materials'
    normal layers, their shaders and the mist); `Renderer::render` with
    `&mut [ViewFrame { view, input, settings, output, timing }]`
-   into the output texture. Draw the game's UI (`sgl-2d` can, on the same
+   into the output texture (`ViewOutput::Texture(&view)`). Draw the game's UI (`sgl-2d` can, on the same
    device), submit, and call `Renderer::finish_frame(&mut scene)`. One
    `render` call is one frame of the scene: never render it twice for one
    finished frame. A frame rendered and
@@ -138,6 +138,26 @@ local-light shadow atlas, so memory grows with views. One renderer
 shows one scene at a time; a game showing two scenes at once holds a renderer
 for each. [`examples/views.rs`](../../../examples/sgl-3d/examples/views.rs) draws a main view and
 a rear-view inset.
+
+### A view on an in-world screen
+
+A monitor, a security feed or a picture-in-picture inside the world is a
+view that draws into a render texture of the scene instead of a texture of
+the game's, and a material that shows it:
+`Scene::add_render_texture(&device, RenderTexture::new(size))`; a `View`
+created with `RenderTexture::format` and that size, listed with
+`ViewOutput::RenderTexture(id)`; and `SurfaceMaterial::emission_render_texture`
+on the screen's material (`Scene::set_material`), whose `emission` is the
+screen's brightness and whose `wrap` is `ClampToEdge`, authored when the
+material is added. List the main view first as ever: the renderer draws
+the feed before the views that show it, so the screen shows this frame, and
+leaves the feed out of the frames in which no view has the screen in its
+frustum. Leave the feed out of the frame to freeze its screen. The picture
+is the feed's displayed image, decoded as an authored sRGB texture is: no
+gamma in between. Rays and dynamic GI see the screen's authored emission
+map, and the picture has no mips.
+[Render textures](../README.md#render-textures),
+[`examples/monitor.rs`](../../../examples/sgl-3d/examples/monitor.rs).
 
 The examples live in the repository, not the published crate:
 <https://github.com/stevepryde/sgl/tree/main/examples/sgl-3d/examples>.

@@ -5,24 +5,30 @@
 //! camera's frame: its targets and sizes, group 0's bindings, its views,
 //! its camera history, DiligentFX's post-effect context and every other
 //! stage. A frame (`frame.rs`) runs the scene's frame work once, then
-//! orders each view's stages from its effective configuration (resolved in
-//! `effective.rs`). A probe capture (`probe_capture.rs`) orders the
+//! orders each view's stages (`view_stages.rs`) from its effective
+//! configuration (resolved in `effective.rs`), the views in the order
+//! `order.rs` gives them: those that draw render textures before the views
+//! that show them. A probe capture (`probe_capture.rs`) orders the
 //! prepare, shadow and opaque stages and the probe prefilter over its own
 //! views. It holds no pipelines or shaders of its own.
 #[cfg(any(test, feature = "diagnostics"))]
 mod diagnostics;
 pub(crate) mod effective;
 pub(crate) mod frame;
+mod order;
 pub(crate) mod probe_capture;
 mod shared;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod test_frame;
 mod view;
+mod view_stages;
 
 #[cfg(all(test, feature = "diagnostics", not(target_arch = "wasm32")))]
 mod diagnostics_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod floor_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod render_texture_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod shader_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -39,7 +45,7 @@ use crate::shading::bind::BindingTier;
 use shared::Shared;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-pub use view::{View, ViewError, ViewFrame};
+pub use view::{View, ViewError, ViewFrame, ViewOutput};
 
 /// What every view of a [`Scene`] shares: the geometry pipelines and the
 /// bind group layouts, the deform stage, the dynamic GI stage with its
@@ -74,12 +80,18 @@ impl Renderer {
 
     /// Encodes one frame of `scene`: its frame work once (its uploads, the
     /// acceleration structures, the deform pass and the dynamic GI update),
-    /// then each view in order, each as its `ViewFrame` describes it, into
+    /// then each view, each as its `ViewFrame` describes it, into
     /// its output: prepare, shadows, fog, opaque, reflections and
     /// transparent, exposure, antialiasing, motion blur, post. `views[0]` is
     /// the primary view: its input and settings steer what a scene has one
     /// of (the architecture's Frame, "Views of one frame"). Nothing happens
-    /// for an empty slice. A view's history restarts for a camera cut, after
+    /// for an empty slice. Views render as listed, but a view that draws
+    /// a render texture (`ViewOutput::RenderTexture`) renders before the
+    /// views that show it, whichever is primary, and only in the frames one
+    /// does: a surface then shows this frame's picture, and where views
+    /// show each other's, or one its own, the view listed first shows the
+    /// picture the other last drew (the architecture's Frame, "Render
+    /// textures"). A view's history restarts for a camera cut, after
     /// a resize that changed its targets, for a frame that does not follow
     /// its own last finished frame (its first, one of another scene, or one
     /// after a finished frame of the scene that did not render it), and
@@ -91,7 +103,9 @@ impl Renderer {
     ///
     /// # Panics
     ///
-    /// For a view created from another renderer.
+    /// For a view created from another renderer; for a view that draws a
+    /// render texture `scene` does not hold, or one of another size or
+    /// format than its own; and for two views that draw one render texture.
     pub fn render(
         &mut self,
         device: &wgpu::Device,

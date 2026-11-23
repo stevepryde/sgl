@@ -1,6 +1,7 @@
 //! A material's values, which `Scene::material` reads and
 //! `Scene::set_material` replaces, and how its alpha is used.
 use super::asset::Material;
+use super::identity::RenderTextureId;
 use super::shader::MaterialShader;
 
 /// How a material uses its alpha: glTF's `alphaMode`, with Bevy's
@@ -210,6 +211,19 @@ pub struct SurfaceMaterial {
     /// layers of local-light shadows see its rest geometry and these values.
     /// None by default.
     pub shader: Option<MaterialShader>,
+    /// The render texture (`Scene::add_render_texture`) whose picture is
+    /// its emission map in place of the image it was added with, which a
+    /// game names with `Scene::set_material` after adding the material (an
+    /// authored material has none): the surface emits the picture, decoded
+    /// to linear as an sRGB image is, times `emission`. An in-world
+    /// monitor: set `emission` to the screen's brightness and `base` to
+    /// black, and add its material with `wrap` `ClampToEdge`, since the
+    /// picture is sampled through the material's sampler and the default
+    /// repeats. Raster passes, probe captures among them, sample the picture;
+    /// rays and dynamic GI see the material as it was added, its emission
+    /// map or none. While the picture changes, the surface counts as moving
+    /// for the temporal composition mask. None by default.
+    pub emission_render_texture: Option<RenderTextureId>,
 }
 
 impl Default for SurfaceMaterial {
@@ -263,6 +277,7 @@ impl SurfaceMaterial {
             double_sided: m.double_sided,
             alpha: m.alpha,
             shader: None,
+            emission_render_texture: None,
         }
     }
 

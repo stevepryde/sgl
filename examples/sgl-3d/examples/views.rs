@@ -15,7 +15,7 @@ use sgl_3d::settings::{RenderPreset, Settings};
 use sgl_3d::timing::GpuTiming;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceState, Light,
-    LightShape, Mobility, Renderer, Scene, View, ViewFrame,
+    LightShape, Mobility, Renderer, Scene, View, ViewFrame, ViewOutput,
     asset::{Asset, CpuMesh, Material, Vertex},
 };
 use std::time::Instant;
@@ -325,14 +325,14 @@ async fn run(output: PathBuf, options: Options) -> Result<(), Box<dyn Error>> {
                     view: &mut main_view,
                     input: &main,
                     settings: &main_settings,
-                    output: &main_target,
+                    output: ViewOutput::Texture(&main_target),
                     timing: timing.as_ref(),
                 },
                 ViewFrame {
                     view: &mut inset_view,
                     input: &inset,
                     settings: &inset_settings,
-                    output: &inset_target,
+                    output: ViewOutput::Texture(&inset_target),
                     timing: timing.as_ref(),
                 },
             ],

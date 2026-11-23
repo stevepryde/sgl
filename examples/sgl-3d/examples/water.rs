@@ -32,7 +32,7 @@ use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameEnvironment, FrameInput,
     InstanceId, InstanceState, MaterialId, MaterialShader, Mobility, ModelMesh,
     MotionBlurParameters, NormalLayer, PreparedModel, Renderer, Scene, ShaderSource, Sky,
-    SurfaceMaterial, View, ViewFrame,
+    SurfaceMaterial, View, ViewFrame, ViewOutput,
     asset::{Asset, CpuMesh, Image, Material, Vertex},
     deformation::{MeshDeformation, MorphDelta, MorphTarget},
     settings::{
@@ -1109,7 +1109,7 @@ fn render(
                 view: &mut scene_view,
                 input: &input,
                 settings: &run.settings,
-                output: &view,
+                output: ViewOutput::Texture(&view),
                 timing: timing.as_ref(),
             }],
         );

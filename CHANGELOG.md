@@ -20,6 +20,8 @@ docs and specs the entry links.
 - `sgl-3d` `asset::load` and `load_slice` load `KHR_mesh_quantization` files (integer positions, normals, tangents, UVs and morph displacements); before, they refused them. An unnormalized integer `TEXCOORD_0`/`TEXCOORD_1` now loads as its value, not normalized. No game-code changes are needed.
 - `sgl-3d` `View` creates its local-light shadow atlases when a frame or probe capture first places a local shadow, not in `View::new`, so a view without one holds none. No game-code changes are needed.
 - `sgl-3d` `asset::load` and `load_slice` load a glTF's `KHR_lights_punctual` lights into the new `Asset::lights` (`AssetLights`, placed with `PunctualLight::place`); before, the extension was ignored and a file requiring it was refused. A file whose lights the extension forbids (a bad type, negative intensity, zero range, invalid cone, a zero-scale spot or sun node) now fails to load. Loading installs nothing. Code that builds `Asset { .. }` adds `lights: Default::default()`.
+- `sgl-3d` `ViewFrame::output` is now a `ViewOutput`: write `output: ViewOutput::Texture(&view)` where a frame passed `output: &view`. `ViewOutput::RenderTexture` draws a view into a scene render texture (`Scene::add_render_texture`) that a material shows as its emission map (`SurfaceMaterial::emission_render_texture`, `None` by default; add it to any `SurfaceMaterial` built field by field): an in-world monitor ([guide](crates/sgl-3d/README.md#render-textures)). Exhaustive matches on `SceneError` add `UnknownRenderTexture` and `RenderTextureInUse`.
+- `sgl-3d` `timing::PassTime` gains `passes`, the timed passes in its group. No game-code changes are needed unless a game builds a `PassTime`.
 
 ## 0.9.3 — 2026-11-20
 

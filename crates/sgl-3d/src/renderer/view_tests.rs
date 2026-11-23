@@ -1,7 +1,7 @@
 //! The frame boundary between a renderer and its views: which frames a
 //! view's history continues from (the register's F-1 and F-12) and which
 //! views a renderer renders.
-use super::{Renderer, View, ViewFrame};
+use super::{Renderer, View, ViewFrame, ViewOutput};
 use crate::settings::Settings;
 use crate::{Camera, FrameInput, Scene, test_support};
 
@@ -56,7 +56,7 @@ fn render(
             view,
             input: &input(),
             settings: &Settings::default(),
-            output,
+            output: ViewOutput::Texture(output),
             timing: None,
         }],
     );
@@ -249,7 +249,7 @@ fn a_view_left_out_of_a_frame_reads_back_its_own_finished_frame() {
             view: &mut a,
             input: &input,
             settings: &settings,
-            output: &outputs[0],
+            output: ViewOutput::Texture(&outputs[0]),
             timing: None,
         }];
         if with_b {
@@ -257,7 +257,7 @@ fn a_view_left_out_of_a_frame_reads_back_its_own_finished_frame() {
                 view: &mut b,
                 input: &input,
                 settings: &settings,
-                output: &outputs[1],
+                output: ViewOutput::Texture(&outputs[1]),
                 timing: None,
             });
         }

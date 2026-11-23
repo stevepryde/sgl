@@ -184,6 +184,13 @@ settings SGL3D has today.
    textures in display-referred linear sRGB on both platforms.
    `View::new_surface` takes the actual surface configuration and
    capabilities and owns its display transfer; games never compensate with gamma in materials.
+   A render texture holds its view's displayed picture, display-referred:
+   exposed, tone mapped and graded, stored sRGB-encoded
+   (`RenderTexture::format`). The attachment encodes and sampling decodes,
+   so a material's emission map reads it as it reads an authored sRGB
+   image, linear, scaled by the emission factor; the view that shows the
+   surface then applies its own display transform once, as a camera sees a
+   lit screen, and nothing is encoded twice.
    The tone mapper is an explicit artistic choice in `Settings::tone_mapping`:
    Khronos PBR Neutral by default, Three.js ACES Filmic, or Filament AgX with its look.
    Grading adjustments remain neutral by default.
@@ -200,7 +207,9 @@ settings SGL3D has today.
    the frame drew. Resize, scene replacement and camera cuts invalidate
    affected history. Device-bound resources are recreated when the caller
    replaces the device, and rendering into a caller-provided texture needs no
-   window. Caches become reusable only after the caller submits the frame and
+   window. A view may instead render into a render texture the scene owns,
+   which its materials sample: an in-world screen, with no readback
+   ([architecture](sgl3d-architecture.md#frame), "Render textures"). Caches become reusable only after the caller submits the frame and
    calls `Renderer::finish_frame`; an abandoned encoder leaves them dirty.
 5. **S3D-5 — Coherent shading.** One physically based material and lighting
    model serves primary shading, reflections, probes, bakes and GI. Fix a wrong

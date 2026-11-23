@@ -2,7 +2,7 @@
 //! driven one frame at a time as before views, a frame prepared as `render`
 //! prepares it, then single stage operations, for tests that observe one
 //! stage's output.
-use super::{Renderer, View, ViewError, ViewFrame};
+use super::{Renderer, View, ViewError, ViewFrame, ViewOutput};
 use crate::settings::Settings;
 use crate::shading::uniforms::FrameValues;
 use crate::view::draw_list::{DrawInstances, DrawList};
@@ -119,7 +119,7 @@ impl TestRenderer {
                 view: &mut self.view,
                 input,
                 settings,
-                output,
+                output: ViewOutput::Texture(output),
                 timing,
             }],
         );
@@ -410,7 +410,7 @@ impl TestRenderer {
     ) {
         frame.effective.fused = fused;
         let mut ctx = context!(self, device, queue, encoder, scene, frame);
-        super::frame::encode_opaque(
+        super::view_stages::encode_opaque(
             &mut self.view.opaque,
             &mut self.view.cull,
             (
