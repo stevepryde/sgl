@@ -43,13 +43,15 @@ impl Shadows {
         }
     }
 
-    /// Reallocates the maps whose size `quality` changes; the local atlas
-    /// then places and draws every shadow anew. Cheap when nothing changed.
+    /// Reallocates the cascades if `quality` changes their size, and
+    /// releases the local atlases if it changes theirs: the next frame that
+    /// places a local shadow creates them, and places and draws every
+    /// shadow anew. Cheap when nothing changed.
     pub fn resize(&mut self, device: &wgpu::Device, quality: ShadowQuality) {
         if self.directional.size() != quality.cascade_size() {
             self.directional = directional::Directional::new(device, quality.cascade_size());
         }
-        self.local.resize(device, quality.atlas_size());
+        self.local.resize(quality.atlas_size());
     }
 
     /// The maps, records and sampler to lend to group 0.

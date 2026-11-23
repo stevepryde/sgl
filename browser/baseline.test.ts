@@ -31,3 +31,14 @@ for (const [name, query] of [["scaled", "scaled=1"], ["prepared", "prepared=1"]]
     expect(result.errors).toEqual([]);
   },210_000);
 }
+
+// The lights cast from the first measured frame: the frame that creates the
+// view's atlases raises no WebGPU error, and the measured frames draw local
+// shadow faces where the device times its passes.
+test("browser baseline turns its lights' shadows on at the first measured frame", async () => {
+  const result = await runMeasurement({page:"baseline",dist:process.env.SGL_BROWSER_PROBE_DIR ?? "target/browser-probe",query:"frames=60&local_shadows=1",timeoutMs:180_000});
+  const report = JSON.parse(result.report);
+  validateBaseline(report);
+  if (report.gpu.supported) expect(report.gpu.passes["local shadows"].samples).toBeGreaterThan(0);
+  expect(result.errors).toEqual([]);
+},210_000);

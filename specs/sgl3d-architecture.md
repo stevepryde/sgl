@@ -838,7 +838,16 @@ last, after everything it may use, and refuses a directive in it.
   every caster of a light that moved. What a frame draws becomes reusable at
   `finish_frame`. The camera's surfaces sample the frame's atlas; probe
   captures and ray hits, which show static content, sample the static
-  layers. The directional
+  layers. A view's local shadow stage creates its two atlases when a frame
+  or probe capture first places a shadow, before that frame draws a face or
+  writes a record that places one, as Godot b130438 creates its shadow
+  atlas's texture at its first shadow pass (`_update_shadow_atlas`). Until
+  then group 0 binds, for both, one depth texel of the atlases' format and
+  dimension, which no record places a shadow in. It keeps them while the
+  atlas size holds, through frames without a shadowed light, so a light
+  that leaves and returns finds its static layers. A change of atlas size
+  releases both, and the next frame that places a shadow creates them at
+  the new size. The directional
   light that casts a shadow has cascades that `view/cascades.rs` splits and
   fits from the camera: Godot's default splits, fixed shares of the range
   from the camera's near plane to the shadow's distance, and Bevy's

@@ -204,9 +204,18 @@ pub async fn measure(
     scaled: bool,
     prepared_upload: bool,
     capture_frame: bool,
+    local_shadows: bool,
 ) -> String {
     console_error_panic_hook::set_once();
-    match measured(frames as usize, scaled, prepared_upload, capture_frame).await {
+    match measured(
+        frames as usize,
+        scaled,
+        prepared_upload,
+        capture_frame,
+        local_shadows,
+    )
+    .await
+    {
         Ok(report) => report.to_string(),
         Err(error) => json!({"error": error}).to_string(),
     }
@@ -216,6 +225,7 @@ async fn measured(
     scaled: bool,
     prepared_upload: bool,
     capture_frame: bool,
+    local_shadows: bool,
 ) -> Result<Value, String> {
     if !(60..=3600).contains(&frames) {
         return Err("frames must be in 60..=3600".into());
@@ -320,25 +330,24 @@ async fn measured(
     scene
         .add_instance(&device, &queue, ground, Mobility::Static)
         .map_err(|e| e.to_string())?;
+    let mut lights = Vec::new();
     for number in 0..8 {
-        scene
-            .add_light(
-                &device,
-                &queue,
-                Light {
-                    position: Vec3::new(
-                        (number % 4) as f32 * 7. - 10.5,
-                        4.,
-                        (number / 4) as f32 * 14. - 7.,
-                    ),
-                    shape: LightShape::Point { radius: 0.1 },
-                    color: [1., 0.7, 0.4],
-                    intensity: 40.,
-                    range: 12.,
-                    ..Default::default()
-                },
-            )
+        let light = Light {
+            position: Vec3::new(
+                (number % 4) as f32 * 7. - 10.5,
+                4.,
+                (number / 4) as f32 * 14. - 7.,
+            ),
+            shape: LightShape::Point { radius: 0.1 },
+            color: [1., 0.7, 0.4],
+            intensity: 40.,
+            range: 12.,
+            ..Default::default()
+        };
+        let id = scene
+            .add_light(&device, &queue, light)
             .map_err(|e| e.to_string())?;
+        lights.push((id, light));
     }
     let upload_cpu_ms = now() - upload_start;
     // Submit even when the last upload has no render commands; includes real GPU texture/geometry uploads.
@@ -400,12 +409,29 @@ async fn measured(
     let mut draws = Vec::new();
     let mut blended_draws = Vec::new();
     let mut first_frame_ms = 0.;
+    // With local shadows, the frame whose lights start to cast them: the
+    // first measured one.
+    let mut activation = None;
     let mut streamed_upload_cpu = Vec::new();
     let mut streamed_generate_cpu = Vec::new();
     let mut streamed_frame_wall = Vec::new();
     for index in 0..WARMUP + frames + 8 {
         let frame_start = now();
         let seconds = index as f32 / 60.;
+        if local_shadows && index == WARMUP {
+            for &(id, light) in &lights {
+                scene
+                    .set_light(
+                        &queue,
+                        id,
+                        Light {
+                            casts_shadow: true,
+                            ..light
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+        }
         if index >= WARMUP + frames {
             let number = MATERIALS + index - WARMUP - frames;
             let generated = if prepared_upload {
@@ -522,6 +548,9 @@ async fn measured(
         if index == 0 {
             first_frame_ms = now() - started;
         }
+        if local_shadows && index == WARMUP {
+            activation = Some((encode_ms, now() - frame_start));
+        }
         if (WARMUP..WARMUP + frames).contains(&index) {
             cpu.push(encode_ms);
             wall.push(now() - frame_start);
@@ -550,6 +579,11 @@ async fn measured(
         capture(&device, &queue, &output).await?;
     }
     let resources = scene.diagnostic_resources();
+    // `GpuTiming` counts frames from 1.
+    let activation = activation.map(|(encode_ms, wall_ms)| {
+        json!({"frame":WARMUP,"cpu_encode_ms":encode_ms,"frame_complete_wall_ms":wall_ms,
+            "gpu_total_ms":gpu_frames.iter().find(|f| f.frame == WARMUP as u64 + 1).map(|f| f.total_ms)})
+    });
     Ok(
         json!({"schema":1,"scene":"textured-grid-v1","scaled":scaled,"prepared_upload":prepared_upload,"size":SIZE,"frames":frames,"warmup_frames":WARMUP,
         "adapter":{"name":info.name,"backend":format!("{:?}",info.backend),"device_type":format!("{:?}",info.device_type),
@@ -557,6 +591,7 @@ async fn measured(
         "settings":format!("{:?}",settings),
         "content":{"instances":257,"opaque_instances":225,"blended_instances":32,"moving_instances":moving.len(),"materials":MATERIALS,"textures":MATERIALS,
             "texture_size":TEXTURE,"source_texture_bytes":MATERIALS*TEXTURE as usize*TEXTURE as usize*4,"triangles":257*768,"local_lights":8,"shadow_cascades":4},
+        "local_shadows":{"cast_from_frame":local_shadows.then_some(WARMUP),"activation":activation},
         "startup":{"prepare_cpu_ms":prepare_cpu_ms,"device_ms":device_ms,"content_cpu_ms":upload_cpu_ms,"content_complete_ms":upload_wall_ms,
             "renderer_cpu_ms":renderer_cpu_ms,"first_frame_complete_ms":first_frame_ms},
         "cpu_encode":summary(&cpu),"frame_complete_wall":summary(&wall),

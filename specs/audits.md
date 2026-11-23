@@ -225,7 +225,7 @@ alone then changed nothing.
 - Dynamic GI is not reproducible run to run when its ray budget refuses probes. Two identical single-view runs (360 probes, `DynamicGiQuality::Low`) give composites that differ by up to 1.7e-3 at frame 0 and 1e-4 to 5e-4 afterwards, at a few pixels; with 18 probes, none refused, they are bit-identical. By reading: the budget admits probes first-come through atomics (`stages/dynamic_gi/allocate.wgsl`), and each ray's random stream is seeded by its atomically allocated list slot (`trace.wgsl`), as in Wicked, so which probes trace and their noise follow GPU scheduling. It bounds any exact oracle over dynamic GI to a volume the budget does not saturate (the views scenarios use 18 probes). Found by the views work, not addressed here; whether to make admission deterministic is a decision.
 - Known limits of several views a frame (D-57), no issue filed yet:
   - L1: rays see the scene under the primary view's visibility mask, which lives in the scene's ray source header, and a view's output cannot yet be a scene texture.
-  - L2: each view compiles its own stage pipelines (a second `View::new` takes about 22 ms once a process has made one) and holds its own local-light shadow atlases (128 MiB a view at High, 32 MiB at Low).
+  - L2: each view compiles its own stage pipelines (a second `View::new` takes about 22 ms once a process has made one) and holds its own local-light shadow atlases (128 MiB a view at High, 32 MiB at Low; since #853 only once a frame or probe capture of the view places a shadow).
   - L3: FSR restarts after an unfinished frame (D-58, U-2).
 
 ### Left as they are

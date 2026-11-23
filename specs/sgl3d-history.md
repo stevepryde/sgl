@@ -3113,12 +3113,20 @@ These rules redraw a cached face exactly; they cost time, not history.
 
 #### S-34 Atlas resize forgets everything
 
-- **Rule.** A change of atlas size (from the shadow quality) replaces both atlases and forgets every
-  placement and static layer.
+- **Rule.** A change of atlas size (from the shadow quality) releases both atlases and forgets every
+  placement and static layer; the next frame or probe capture that places a shadow creates them at
+  the new size. Nothing else releases them: frames without a shadowed light keep both atlases, every
+  placement and every static layer.
 - **Raised by.** A shadow-quality change.
 - **Stays triggered while.** Nothing: it needs a setting change.
-- **Source.** SGL3D's own. Code: `src/stages/shadows/local.rs` (`Local::resize`).
-- **Guard.** `shadows_follow_a_change_of_shadow_quality` (`src/stages/shadows/local/tests.rs`).
+- **Source.** Godot b130438 `light_storage.cpp` (`shadow_atlas_set_size` frees the atlas,
+  `_update_shadow_atlas` creates it at the next shadow pass). Code: `src/stages/shadows/local.rs`
+  (`Local::resize`, `Local::create_when_placed`).
+- **Guard.** `shadows_follow_a_change_of_shadow_quality`,
+  `local_atlases_are_created_by_the_first_placed_shadow_at_the_quality_s_size`,
+  `local_atlases_and_their_static_layers_outlast_frames_without_a_shadow`
+  (`src/stages/shadows/local/tests.rs`); `a_capture_shadows_scene_lights_from_static_layers_it_places`
+  (`src/renderer/probe_capture/tests.rs`), a capture that creates them before any frame.
 - **Status.** Rule.
 
 ### Shadow-map sampling

@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--baseline | --bistro] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
+  "measure-browser [--baseline | --bistro] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
 
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
@@ -277,6 +277,7 @@ async function measureBrowser(args: string[]): Promise<void> {
   let skipBuild = false;
   let scaled = false;
   let prepared = false;
+  let localShadows = false;
   let capturePath: string | undefined;
   let sequenceDir: string | undefined;
   let output: string | undefined;
@@ -310,6 +311,7 @@ async function measureBrowser(args: string[]): Promise<void> {
     else if (args[at] === "--sequence" && at+1<args.length) {sequenceDir=args[++at];sceneOptions.sequence=true;sceneOptions.motion=true;}
     else if (args[at] === "--capture" && at + 1 < args.length) capturePath = args[++at];
     else if (args[at] === "--prepared") prepared = true;
+    else if (args[at] === "--local-shadows") localShadows = true;
     else if (args[at] === "--skip-build") skipBuild = true;
     else if (args[at] === "--output" && at + 1 < args.length) output = args[++at];
     else if (args[at] === "--occlusion") occlusion = true;
@@ -331,9 +333,10 @@ async function measureBrowser(args: string[]): Promise<void> {
   if (sceneOptions.ray_data !== undefined && !["enabled","disabled"].includes(String(sceneOptions.ray_data))) throw new Error("--ray-data needs enabled|disabled");
   if (baseline && bistro) throw new Error("choose --baseline or --bistro");
   if (!bistro && (Object.keys(sceneOptions).length || fixturePath || settingsPath || assetDir!=="target/bistro-browser-512")) throw new Error("scene options require --bistro or --fixture");
-  if (bistro && (scaled || prepared || occlusion)) throw new Error("--bistro uses explicit fixture/settings instead of --scaled, --prepared or --occlusion");
+  if (bistro && (scaled || prepared || occlusion || localShadows)) throw new Error("--bistro uses explicit fixture/settings instead of --scaled, --prepared, --local-shadows or --occlusion");
   if ((baseline || bistro) && frames > 3600) throw new Error("--baseline --frames must not exceed 3600");
   if ((scaled || prepared || capturePath || output) && !baseline && !bistro) throw new Error("--scaled, --prepared, --capture and --output require --baseline or --bistro");
+  if (localShadows && !baseline) throw new Error("--local-shadows requires --baseline");
   const example = bistro ? "browser_bistro" : baseline ? "browser_baseline" : "browser_streaming";
   const buildMetadataPath = `${MEASURE_DIR}/${example}.build.json`;
   // Capture provenance at the build boundary, not when a saved binary is rerun.
@@ -361,7 +364,7 @@ async function measureBrowser(args: string[]): Promise<void> {
   if (bistro) sceneOptions.frames=frames;
   const result = await runMeasurement({page: bistro ? "bistro" : baseline ? "baseline" : "streaming", dist: MEASURE_DIR, capturePath, sequenceDir,
     assetDir:bistro?assetDir:undefined,run:bistro?sceneOptions:undefined,
-    query: `frames=${frames}&across=${radius[0]}&up=${radius[1]}&occlusion=${occlusion ? 1 : 0}&scaled=${scaled ? 1 : 0}&prepared=${prepared ? 1 : 0}&capture=${capturePath ? 1 : 0}`});
+    query: `frames=${frames}&across=${radius[0]}&up=${radius[1]}&occlusion=${occlusion ? 1 : 0}&scaled=${scaled ? 1 : 0}&prepared=${prepared ? 1 : 0}&local_shadows=${localShadows ? 1 : 0}&capture=${capturePath ? 1 : 0}`});
   if (baseline || bistro) {
     const report = JSON.parse(result.report);
     if (bistro) {

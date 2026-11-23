@@ -88,9 +88,8 @@ impl Renderer {
             label: Some("author static specular probe"),
         });
         // The capture draws into the frame's shadow maps, at the settings'
-        // quality, and its groups bind them.
+        // quality, and its groups bind them once its shadows are placed.
         view.shadows.resize(device, settings.shadow_quality);
-        view.bindings.shadow_maps = view.shadows.maps();
         // The volume the committed probes light, and those probes: what the
         // last submitted frame left, never a fresher frame's abandoned ones,
         // while dynamic GI is in effect.
@@ -125,6 +124,8 @@ impl Renderer {
             },
             !settings.diagnostics_in_effect().disable.local_lights,
         );
+        // Placing them created the local atlases where none were.
+        view.bindings.shadow_maps = view.shadows.maps();
         // Every list the capture draws is built.
         views.instances.upload(device, queue);
         let cascades: Vec<_> = views

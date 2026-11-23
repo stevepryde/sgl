@@ -37,12 +37,20 @@ bun scripts/tasks.ts measure-browser --baseline --scaled --frames 180 --output t
 
 # Prepare RGBA mip chains outside frame-critical uploads.
 bun scripts/tasks.ts measure-browser --baseline --prepared --frames 180 --output target/browser-prepared.json
+
+# The eight point lights cast shadows from the first measured frame.
+bun scripts/tasks.ts measure-browser --baseline --local-shadows --frames 180 --output target/browser-local-shadows.json
 ```
 
 `--scaled` selects `SceneResolution::ThreeQuarter` and `Upscaling::On`; this
 changes the render-resolution/quality tradeoff, so report it separately from
 an identical-settings renderer before/after comparison. Native FSR is not
 selected.
+
+`--local-shadows` turns on the point lights' `casts_shadow` at the first
+measured frame, so the warmup runs without local shadows and that frame is
+the view's first to place one; `local_shadows.activation` reports its CPU
+encode, completion and GPU time.
 
 `--prepared` constructs `Image::Rgba8Mips(Rgba8MipChain::new(image)?)` before
 upload/measurement. Preparation produces the separate colour/data mip chains

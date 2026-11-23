@@ -5,14 +5,20 @@
 //! written to a PNG.
 //!
 //! Run with `cargo run -p sgl-3d-examples --example views -- target/views.png`.
-//! Optional `--frames N` sets how many frames run.
+//! Optional `--frames N` sets how many frames run. `--lamp N` switches on a
+//! shadow-casting lamp at frame N: until a view's camera sees a shadowed
+//! local light, it holds no local-light shadow atlas. `--timing` prints how
+//! long each `View::new` took, and each frame's CPU time to encode both
+//! views, with its GPU time where the device has `TIMESTAMP_QUERY`.
 use sgl_3d::glam::{Mat4, Vec3, camera};
 use sgl_3d::settings::{RenderPreset, Settings};
+use sgl_3d::timing::GpuTiming;
 use sgl_3d::{
-    Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceState,
-    Mobility, Renderer, Scene, View, ViewFrame,
+    Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceState, Light,
+    LightShape, Mobility, Renderer, Scene, View, ViewFrame,
     asset::{Asset, CpuMesh, Material, Vertex},
 };
+use std::time::Instant;
 use std::{error::Error, path::PathBuf};
 
 const SIZE: [u32; 2] = [640, 360];
@@ -127,13 +133,28 @@ fn read_pixels(
         .collect())
 }
 
-async fn run(output: PathBuf, frames: u32) -> Result<(), Box<dyn Error>> {
+/// What a run does besides drawing the two views.
+#[derive(Default)]
+struct Options {
+    frames: u32,
+    /// The frame the shadow-casting lamp switches on at.
+    lamp: Option<u32>,
+    timing: bool,
+}
+
+async fn run(output: PathBuf, options: Options) -> Result<(), Box<dyn Error>> {
+    let frames = options.frames;
     let adapter = wgpu::Instance::default()
         .request_adapter(&Default::default())
         .await?;
+    let timestamps = if options.timing {
+        adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+    } else {
+        wgpu::Features::empty()
+    };
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
-            required_features: sgl_3d::graphics_device::features(&adapter),
+            required_features: sgl_3d::graphics_device::features(&adapter) | timestamps,
             required_limits: sgl_3d::graphics_device::limits(&adapter),
             ..Default::default()
         })
@@ -198,7 +219,10 @@ async fn run(output: PathBuf, frames: u32) -> Result<(), Box<dyn Error>> {
         preset: RenderPreset::Low,
         ..Settings::default()
     };
+    let started = Instant::now();
     let mut main_view = View::new(&renderer, &device, &queue, FORMAT, SIZE, 1., &main_settings)?;
+    let main_setup = started.elapsed();
+    let started = Instant::now();
     let mut inset_view = View::new(
         &renderer,
         &device,
@@ -208,6 +232,16 @@ async fn run(output: PathBuf, frames: u32) -> Result<(), Box<dyn Error>> {
         1.,
         &inset_settings,
     )?;
+    if options.timing {
+        println!(
+            "View::new: main {:.2} ms, inset {:.2} ms",
+            main_setup.as_secs_f64() * 1e3,
+            started.elapsed().as_secs_f64() * 1e3
+        );
+    }
+    let mut timing = GpuTiming::new(&device, &queue).filter(|_| options.timing);
+    // Each frame's CPU time to encode both views, reported with its GPU time.
+    let mut encoded = Vec::new();
     let main_output = texture(
         &device,
         SIZE,
@@ -235,6 +269,26 @@ async fn run(output: PathBuf, frames: u32) -> Result<(), Box<dyn Error>> {
         };
     };
     for frame in 0..frames {
+        if options.lamp == Some(frame) {
+            // A lamp both cameras see: each view creates its shadow atlases
+            // on this frame.
+            scene.add_light(
+                &device,
+                &queue,
+                Light {
+                    position: Vec3::new(0., 2.5, 0.),
+                    shape: LightShape::Point { radius: 0.1 },
+                    color: [1., 0.8, 0.6],
+                    intensity: 30.,
+                    range: 8.,
+                    casts_shadow: true,
+                    ..Default::default()
+                },
+            )?;
+        }
+        if let Some(timing) = &mut timing {
+            report(timing.begin_frame(&device, &queue), &encoded);
+        }
         // Edit the scene, then render, submit and finish, as with one view.
         let along = frame as f32 * 0.05 - 2.;
         cart_state.pose = Mat4::from_translation(Vec3::new(0., 0., along));
@@ -257,6 +311,7 @@ async fn run(output: PathBuf, frames: u32) -> Result<(), Box<dyn Error>> {
         main_view.resize(&device, SIZE, 1., &main_settings);
         inset_view.resize(&device, INSET, 1., &inset_settings);
         let mut encoder = device.create_command_encoder(&Default::default());
+        let started = Instant::now();
         renderer.render(
             &device,
             &queue,
@@ -268,14 +323,14 @@ async fn run(output: PathBuf, frames: u32) -> Result<(), Box<dyn Error>> {
                     input: &main,
                     settings: &main_settings,
                     output: &main_target,
-                    timing: None,
+                    timing: timing.as_ref(),
                 },
                 ViewFrame {
                     view: &mut inset_view,
                     input: &inset,
                     settings: &inset_settings,
                     output: &inset_target,
-                    timing: None,
+                    timing: timing.as_ref(),
                 },
             ],
         );
@@ -292,8 +347,24 @@ async fn run(output: PathBuf, frames: u32) -> Result<(), Box<dyn Error>> {
             },
             inset_output.size(),
         );
-        queue.submit([encoder.finish()]);
+        let commands = encoder.finish();
+        encoded.push(started.elapsed().as_secs_f64() * 1e3);
+        if options.timing && timing.is_none() {
+            println!("frame {frame}: encode {:.3} ms", encoded[frame as usize]);
+        }
+        queue.submit([commands]);
+        if let Some(timing) = &mut timing {
+            timing.submitted(&queue);
+            // One frame at a time, so each is timed alone.
+            device.poll(wgpu::PollType::wait_indefinitely())?;
+        }
         renderer.finish_frame(&mut scene);
+    }
+    if let Some(timing) = &mut timing {
+        for _ in 0..3 {
+            device.poll(wgpu::PollType::wait_indefinitely())?;
+            report(timing.begin_frame(&device, &queue), &encoded);
+        }
     }
     let pixels = read_pixels(&device, &queue, &main_output)?;
     if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -307,16 +378,46 @@ async fn run(output: PathBuf, frames: u32) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// Prints completed frames' GPU times beside their CPU encode times
+/// (`encoded`, by frame index).
+fn report(frames: impl Iterator<Item = sgl_3d::timing::FrameTime>, encoded: &[f64]) {
+    for frame in frames {
+        // `GpuTiming` counts frames from 1.
+        let cpu = encoded
+            .get(frame.frame as usize - 1)
+            .copied()
+            .unwrap_or(f64::NAN);
+        let local = frame
+            .passes
+            .iter()
+            .filter(|pass| pass.name.starts_with("local shadow"))
+            .fold(0., |sum, pass| sum + pass.ms);
+        println!(
+            "frame {}: encode {cpu:.3} ms, GPU {:.3} ms (local shadows {local:.3} ms)",
+            frame.frame - 1,
+            frame.total_ms
+        );
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let mut output: PathBuf = "target/sgl-3d-views.png".into();
-    let mut frames = 30;
+    let mut options = Options {
+        frames: 30,
+        ..Default::default()
+    };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--frames" => frames = args.next().ok_or("--frames requires a count")?.parse()?,
+            "--frames" => {
+                options.frames = args.next().ok_or("--frames requires a count")?.parse()?
+            }
+            "--lamp" => options.lamp = Some(args.next().ok_or("--lamp requires a frame")?.parse()?),
+            "--timing" => options.timing = true,
             flag if flag.starts_with('-') => return Err(format!("unknown option {flag}").into()),
             _ => output = arg.into(),
         }
     }
-    pollster::block_on(run(output, frames.max(1)))
+    options.frames = options.frames.max(1);
+    pollster::block_on(run(output, options))
 }

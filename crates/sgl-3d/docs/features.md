@@ -287,7 +287,7 @@ them through unrefracted. A probe captured on an
 - **Local-light shadows**: lights with `casts_shadow` share one shadow atlas,
   sized and chosen by screen coverage; lights beyond its room are lit without
   a shadow (`View::local_shadow_stats` counts them). Each view has its own
-  atlas, placed for its camera. A closed or unrepresentably
+  atlas, placed for its camera and created when it first places a shadow. A closed or unrepresentably
   narrow spot cone remains valid scene content and releases its shadow slots
   until its projection is finite. Static casters are
   cached per face, so a frame redraws a light's shadow only where something

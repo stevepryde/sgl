@@ -856,6 +856,12 @@ shadows the camera's opaque surfaces take up to fifteen of the placed
 lights' shadows from rays instead
 ([Hardware ray tracing](#hardware-ray-tracing)).
 
+A view creates the atlas and its static layers (128 MiB together at High,
+32 MiB at Low) when its first frame or probe capture places a shadow, as
+Godot creates its atlas at its first shadow pass, and keeps them until the
+shadow quality changes, through frames that place none. A view that no
+shadowed light reaches holds neither.
+
 A point light has six cube faces around it, side by side in one quadrant as
 Wicked Engine lays them out; a spot light has one face covering its cone, or
 the cube faces its cone reaches when it is wider than 45°; a rectangle has a
@@ -2486,8 +2492,10 @@ The primary's settings choose what a scene has one of: `hardware_ray_tracing`,
 `Renderer::*_in_effect` queries for them take its settings. Everything else
 is each view's own: its antialiasing and sizes, shadows and their quality,
 reflections, ambient occlusion, fog, exposure, culling and post. Each view
-holds its own targets, FSR context, local-light shadow atlas, static layers
-and cache, so memory and shadow-face draws grow with views, and creating one
+holds its own targets, FSR context, and, once a frame or probe capture of
+it places a local shadow, local-light shadow atlas, static layers and
+cache, so memory and
+shadow-face draws grow with views, and creating one
 compiles its own stage pipelines. One renderer shows one scene at a time:
 another scene specialises its pipelines again and restarts its dynamic GI,
 so a game showing two scenes at once holds a renderer for each. Known

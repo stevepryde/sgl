@@ -15,6 +15,15 @@
 //! moved, the face draws every caster at once. A frame in which nothing a
 //! face shows changed draws nothing.
 //!
+//! The atlases are created when a frame or probe capture first places a
+//! shadow, before anything draws into them or a record places a shadow in
+//! them, as Godot b130438 creates its shadow atlas's texture at its first
+//! shadow pass (`LightStorage::_update_shadow_atlas`). Until then group 0
+//! binds one depth texel for both, which no record places a shadow in. They
+//! are kept while the atlas size holds, through frames without a shadowed
+//! light, so no static layer is lost to a light that leaves and returns; a
+//! change of size releases them, as Godot's `shadow_atlas_set_size` does.
+//!
 //! Each light's shadow record (`LocalShadowRecord`) is written only when it
 //! changed: a light placed, re-placed, moved or left without a shadow. As
 //! Bevy extracts a light to its render world only when what it shows changed
@@ -35,9 +44,10 @@ pub(crate) mod atlas;
 mod cache;
 mod plan;
 mod shape;
+mod textures;
 
 use crate::Scene;
-use crate::shading::lights::LocalShadowRecord;
+use crate::shading::lights::{LOCAL_SHADOW_NONE, LocalShadowRecord};
 use crate::timing::GpuTiming;
 use crate::view::bindings::FrameBindings;
 use crate::view::draw_list::DrawInstances;
@@ -47,6 +57,7 @@ use glam::{Mat4, Vec3};
 pub(crate) use plan::ShadowFrame;
 use plan::{Face, Work};
 use std::sync::OnceLock;
+use textures::Atlases;
 
 /// The last rendered frame's local-light shadows
 /// (`View::local_shadow_stats`).
@@ -82,10 +93,13 @@ pub(crate) struct CaptureShadows {
 }
 
 pub(crate) struct Local {
-    /// The frame's atlas.
-    frame: Atlas,
-    /// The static layers.
-    layers: Atlas,
+    /// The atlases' width and height in texels.
+    size: u32,
+    /// The atlases, from the first frame or capture that places a shadow
+    /// until the size changes.
+    atlases: Option<Atlases>,
+    /// What group 0 binds for both atlases while there are none.
+    stand_in: wgpu::TextureView,
     /// `LocalShadowRecord`s at each light's index, which group 0 binds.
     pub records: wgpu::Buffer,
     /// What `records` holds once the writes queued so far land.
@@ -94,48 +108,9 @@ pub(crate) struct Local {
     clear: OnceLock<wgpu::RenderPipeline>,
     copy: OnceLock<wgpu::RenderPipeline>,
     copy_layout: wgpu::BindGroupLayout,
-    copy_group: wgpu::BindGroup,
     plan: plan::Plan,
     /// The view of each face drawn, by its place in the plan's faces.
     views: Vec<FaceView>,
-}
-
-/// One of the stage's two atlases of one layout: the view its passes draw
-/// into and the one-layer array group 0 samples, as the shared shadow
-/// filters take.
-struct Atlas {
-    target: wgpu::TextureView,
-    sampled: wgpu::TextureView,
-}
-
-impl Atlas {
-    /// An atlas of `size` texels a side.
-    fn new(device: &wgpu::Device, label: &str, size: u32) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: crate::shading::gbuffer::DEPTH,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        Self {
-            target: texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                ..Default::default()
-            }),
-            sampled: texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            }),
-        }
-    }
 }
 
 /// The local shadow stage's own shaders: clearing a face and copying its
@@ -204,26 +179,10 @@ fn face_pipeline(
     })
 }
 
-/// The copy's group: the static layers it copies faces from.
-fn copy_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    layers: &Atlas,
-) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("local light shadow static layers"),
-        layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: wgpu::BindingResource::TextureView(&layers.target),
-        }],
-    })
-}
-
 impl Local {
-    /// Atlases of `size` texels a side.
+    /// Atlases of `size` texels a side, created when a shadow is first
+    /// placed.
     pub fn new(device: &wgpu::Device, size: u32) -> Self {
-        let layers = Atlas::new(device, "local light shadow static layers", size);
         let copy_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("local light shadow static layers"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -238,9 +197,9 @@ impl Local {
             }],
         });
         Self {
-            frame: Atlas::new(device, "local light shadow atlas", size),
-            copy_group: copy_group(device, &copy_layout, &layers),
-            layers,
+            size,
+            atlases: None,
+            stand_in: textures::stand_in(device),
             records: records_buffer(device, 1),
             written: vec![LocalShadowRecord::NONE],
             face_shader: OnceLock::new(),
@@ -285,27 +244,52 @@ impl Local {
         })
     }
 
-    /// Reallocates both atlases at `size` texels a side unless they are
-    /// that size, forgetting every placement and static layer, so the next
-    /// frame places and draws every shadow anew.
-    pub fn resize(&mut self, device: &wgpu::Device, size: u32) {
-        if self.frame.target.texture().width() == size {
+    /// Makes the atlases `size` texels a side unless they are that size:
+    /// releases both and forgets every placement and static layer, so the
+    /// next frame that places a shadow creates them and draws every shadow
+    /// anew.
+    pub fn resize(&mut self, size: u32) {
+        if self.size == size {
             return;
         }
-        self.frame = Atlas::new(device, "local light shadow atlas", size);
-        self.layers = Atlas::new(device, "local light shadow static layers", size);
-        self.copy_group = copy_group(device, &self.copy_layout, &self.layers);
+        self.size = size;
+        self.atlases = None;
         self.plan = plan::Plan::new(size);
+    }
+
+    /// Creates the atlases once the plan places a shadow: before a face is
+    /// drawn or a record that places one is written.
+    fn create_when_placed(&mut self, device: &wgpu::Device) {
+        if self.atlases.is_none()
+            && self
+                .plan
+                .records()
+                .iter()
+                .any(|record| record.kind != LOCAL_SHADOW_NONE)
+        {
+            self.atlases = Some(Atlases::new(device, &self.copy_layout, self.size));
+        }
+    }
+
+    /// The created atlases, which a planned face draws into.
+    fn atlases(&self) -> &Atlases {
+        self.atlases
+            .as_ref()
+            .expect("a placed shadow creates the atlases")
     }
 
     /// The frame's atlas, as group 0 samples it.
     pub fn atlas(&self) -> &wgpu::TextureView {
-        &self.frame.sampled
+        self.atlases
+            .as_ref()
+            .map_or(&self.stand_in, |atlases| &atlases.frame.sampled)
     }
 
     /// The static layers, as group 0 samples them.
     pub fn layers(&self) -> &wgpu::TextureView {
-        &self.layers.sampled
+        self.atlases
+            .as_ref()
+            .map_or(&self.stand_in, |atlases| &atlases.layers.sampled)
     }
 
     /// The last prepared frame's statistics.
@@ -336,6 +320,7 @@ impl Local {
         enabled: bool,
     ) {
         self.plan.prepare(drawn, scene, camera, frame, enabled);
+        self.create_when_placed(device);
         self.upload_views(device, queue, bindings);
         let records = self.plan.records();
         if self.written.len() < records.len() {
@@ -366,6 +351,7 @@ impl Local {
     ) -> CaptureShadows {
         self.plan
             .prepare_capture(drawn, scene, center, frame, enabled);
+        self.create_when_placed(device);
         self.upload_views(device, queue, bindings);
         let faces = self.plan.faces().len();
         CaptureShadows {
@@ -443,7 +429,13 @@ impl Local {
         );
         let faces = self.plan.faces();
         if !faces.is_empty() {
-            let mut pass = begin(ctx.encoder, ctx.timing, &self.frame.target, "local shadows");
+            let atlases = self.atlases();
+            let mut pass = begin(
+                ctx.encoder,
+                ctx.timing,
+                &atlases.frame.target,
+                "local shadows",
+            );
             for (index, face) in faces.iter().enumerate() {
                 limit(&mut pass, face);
                 let casters = if face.work == Work::Full {
@@ -451,7 +443,7 @@ impl Local {
                     &face.casters
                 } else {
                     pass.set_pipeline(self.copy_pipeline(ctx.device));
-                    pass.set_bind_group(0, &self.copy_group, &[]);
+                    pass.set_bind_group(0, &atlases.copy_group, &[]);
                     &face.moving
                 };
                 pass.draw(0..3, 0..1);
@@ -490,7 +482,12 @@ impl Local {
             return 0;
         }
         let mut draws = 0;
-        let mut pass = begin(encoder, timing, &self.layers.target, "local shadow layers");
+        let mut pass = begin(
+            encoder,
+            timing,
+            &self.atlases().layers.target,
+            "local shadow layers",
+        );
         for (index, face) in layers {
             limit(&mut pass, face);
             pass.set_pipeline(self.clear_pipeline(device));

@@ -788,6 +788,203 @@ fn shadows_follow_a_change_of_shadow_quality() {
     }
 }
 
+/// The sizes of the textures `view`'s group 0 binds for the frame's
+/// local-light atlas and its static layers, read from the views themselves.
+fn bound_atlases(view: &crate::View) -> [[u32; 2]; 2] {
+    let maps = &view.bindings.shadow_maps;
+    [&maps.local_atlas, &maps.local_layers].map(|atlas| {
+        let texture = atlas.texture();
+        [texture.width(), texture.height()]
+    })
+}
+
+/// The camera of `input` moved `offset` along +X: from 100 m, it sees
+/// nothing a light near the origin reaches.
+fn input_from(offset: Vec3) -> FrameInput {
+    FrameInput::new(Camera {
+        view: Mat4::from_translation(-offset),
+        projection: Mat4::IDENTITY,
+        eye: offset,
+    })
+}
+
+// Plausible defects: atlases created with the view, which holds them
+// whether or not a light ever casts in it (the memory a view without local
+// shadows does not need); atlases created after the frame that first
+// places a shadow draws its faces or samples them, so that frame's light is
+// unshadowed or its faces are drawn into nothing; a quality change that
+// leaves the old size bound, creates atlases for a view that has no
+// shadow, or creates them again at the new size for a view whose atlases
+// it released while it places none. The oracles: the textures the view's
+// group 0 binds, one texel while nothing is placed since the atlases were
+// created or last released, and the shadow quality's atlas once something
+// is (4096² at High, 2048² at Low, the README's sizes); and the light's
+// visibility behind a static blocker on the frame that first places it, to
+// the camera and to ray hits, which sample the static layers, geometric
+// as above.
+#[test]
+fn local_atlases_are_created_by_the_first_placed_shadow_at_the_quality_s_size() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (mut scene, _) = scene(
+        &harness,
+        vec![plane(Vec3::X * 2., Vec3::Y * 0.6, Vec3::Z * 0.6)],
+    );
+    let input = input();
+    for quality in [ShadowQuality::High, ShadowQuality::Low] {
+        harness.settings.shadow_quality = quality;
+        let stats = harness.frame(&mut scene, &input);
+        assert_eq!(stats.shadowed, 0, "{quality:?} without a light: {stats:?}");
+        assert_eq!(
+            bound_atlases(&harness.renderer.view),
+            [[1, 1]; 2],
+            "{quality:?} without a shadowed light"
+        );
+    }
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let light = scene
+        .add_light(&device, &queue, point(Vec3::ZERO, 9.))
+        .unwrap();
+    for (quality, size) in [
+        (ShadowQuality::Low, 2048),
+        (ShadowQuality::High, 4096),
+        (ShadowQuality::Low, 2048),
+    ] {
+        harness.settings.shadow_quality = quality;
+        if size == 2048 && bound_atlases(&harness.renderer.view)[0] == [4096; 2] {
+            // A change of quality while the light is out of view releases
+            // the atlases and creates none.
+            let away = harness.frame(&mut scene, &input_from(Vec3::X * 100.));
+            assert_eq!(away.shadowed, 0, "{quality:?}, the light away: {away:?}");
+            assert_eq!(
+                bound_atlases(&harness.renderer.view),
+                [[1, 1]; 2],
+                "{quality:?}, released while no shadow is placed"
+            );
+        }
+        let stats = harness.frame(&mut scene, &input);
+        assert_eq!(stats.shadowed, 1, "{quality:?}: {stats:?}");
+        assert_eq!(
+            bound_atlases(&harness.renderer.view),
+            [[size, size]; 2],
+            "{quality:?} with a shadowed light"
+        );
+        let expected = [(BEHIND_STATIC, 0.), (-BEHIND_STATIC, 1.)];
+        harness.expect(light, &expected, &format!("{quality:?}, camera"));
+        harness.expect_seen(
+            light,
+            &expected,
+            Seen::RayHit,
+            &format!("{quality:?}, ray hits"),
+        );
+    }
+}
+
+// Plausible defects: atlases released when no light is shadowed, which
+// recreates them, and redraws every static layer, each time a light
+// leaves the view and returns; or kept but with their static layers
+// forgotten. The oracles: the textures group 0 binds are the same ones
+// across frames that place no shadow, and the frame the light returns to
+// draws no static layer and the shadow behind the static blocker is still
+// there, geometric as above.
+#[test]
+fn local_atlases_and_their_static_layers_outlast_frames_without_a_shadow() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (mut scene, light, _, _) = cached_scene(&mut harness);
+    let input = input();
+    harness.frame(&mut scene, &input);
+    let maps = &harness.renderer.view.bindings.shadow_maps;
+    let created = [maps.local_atlas.clone(), maps.local_layers.clone()];
+    for _ in 0..2 {
+        let stats = harness.frame(&mut scene, &input_from(Vec3::X * 100.));
+        assert_eq!(stats.shadowed, 0, "the light out of view: {stats:?}");
+        let maps = &harness.renderer.view.bindings.shadow_maps;
+        assert!(
+            [&maps.local_atlas, &maps.local_layers] == [&created[0], &created[1]],
+            "the atlases were replaced while no shadow was placed"
+        );
+    }
+    let back = harness.frame(&mut scene, &input);
+    assert_eq!(back.shadowed, 1, "the light back in view: {back:?}");
+    assert_eq!(back.layers_drawn, 0, "the light back in view: {back:?}");
+    harness.expect(
+        light,
+        &[(BEHIND_STATIC, 0.), (BEHIND_MOVING, 1.)],
+        "the light back in view",
+    );
+}
+
+// Plausible defects: one view's placed shadow creating atlases in every
+// view of the renderer, or views sharing one pair, so a view whose camera
+// sees no shadowed light holds full-size atlases, or two views draw into
+// each other's. The oracle: the textures each view's group 0 binds, one
+// texel for a view whose camera no shadowed light reaches, and the
+// quality's atlas, its own, for each view whose camera one does.
+#[test]
+fn each_view_creates_its_own_local_atlases_for_its_own_shadows() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let (mut scene, _, _, _) = cached_scene(&mut harness);
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let mut other = crate::View::new(
+        &harness.renderer.renderer,
+        &device,
+        &queue,
+        shading::gbuffer::COLOR,
+        [64, 64],
+        1.,
+        &harness.settings,
+    )
+    .unwrap();
+    let output =
+        crate::view::targets::target(&device, "other view", [64, 64], shading::gbuffer::COLOR);
+    for (other_input, other_size) in [(input_from(Vec3::X * 100.), 1), (input(), 4096)] {
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let renderer = &mut harness.renderer;
+        renderer.renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            &mut scene,
+            &mut [
+                crate::ViewFrame {
+                    view: &mut renderer.view,
+                    input: &input(),
+                    settings: &harness.settings,
+                    output: &harness.output,
+                    timing: None,
+                },
+                crate::ViewFrame {
+                    view: &mut other,
+                    input: &other_input,
+                    settings: &harness.settings,
+                    output: &output,
+                    timing: None,
+                },
+            ],
+        );
+        queue.submit([encoder.finish()]);
+        renderer.renderer.finish_frame(&mut scene);
+        let first = &renderer.view;
+        assert_eq!(bound_atlases(first), [[4096, 4096]; 2], "the first view");
+        assert_eq!(
+            bound_atlases(&other),
+            [[other_size, other_size]; 2],
+            "the other view, {} shadowed lights",
+            other.local_shadow_stats().shadowed
+        );
+        let (mine, theirs) = (&first.bindings.shadow_maps, &other.bindings.shadow_maps);
+        assert!(
+            mine.local_atlas != theirs.local_atlas && mine.local_layers != theirs.local_layers,
+            "two views bind one atlas"
+        );
+    }
+}
+
 // Plausible defects: the Low quality's camera shadows taking Castaño's
 // kernel, as High's do, rather than Godot's hard filter. The oracle is the
 // filters' footprints: one hardware 2×2 comparison blends the four texels

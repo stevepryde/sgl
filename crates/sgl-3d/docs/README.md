@@ -131,7 +131,8 @@ view left out of a finished frame restarts, so a view drawn every other frame
 should use SMAA or no antialiasing. List every view of a frame in one
 `render`: two renderers drawing one scene in a frame make the first's views
 restart every frame. Each view holds its own targets, FSR
-context and local-light shadow atlas, so memory grows with views. One renderer
+context and, once a frame or probe capture of it places a local shadow,
+local-light shadow atlas, so memory grows with views. One renderer
 shows one scene at a time; a game showing two scenes at once holds a renderer
 for each. [`examples/views.rs`](../../../examples/sgl-3d/examples/views.rs) draws a main view and
 a rear-view inset.
