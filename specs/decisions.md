@@ -1454,3 +1454,12 @@ Use the [current specs](README.md) for implementation and the
   (`refreshes_read_nothing_back_and_upload_no_texels`). Rationale: the
   cheapest design that keeps one capture, one prefilter and one sampling
   path, and never shows a torn probe (RD-2, AR-2).
+
+- **D-74** Owner direction, 2026-11-23 (#22): DLSS and MetalFX upscaling
+  are not planned. Neither runs in the browser, where WebGPU has no
+  equivalent. Natively each is one more temporal upscaler beside FSR2 and
+  FSR3, DLSS on NVIDIA devices and MetalFX on Apple's, adding no capability
+  a game lacks; whether either looks or runs better than FSR was not
+  measured. Roadmap step 12 is closed without being built; a later case for
+  one of them is a new issue with that measured comparison. Rationale:
+  rendering effort goes to shader and lighting quality first.

@@ -620,8 +620,8 @@ size, and record counts must fit `u32`.
 
 An animation player, mixer or state machine: `animation::Pose` samples and
 blends clips at the times and weights the game gives it, and holds no clock.
-DLSS/MetalFX are [planned](../../../specs/sgl3d.md#planned). The
-directional cascades cull by frustum alone.
+DLSS and MetalFX upscaling are [not planned](../../../specs/sgl3d.md#planned).
+The directional cascades cull by frustum alone.
 
 Compressed material images are BC7, ETC2 RGBA8 or ASTC 4×4 chains the game
 prepares ([compressed images](../README.md#compressed-material-images));

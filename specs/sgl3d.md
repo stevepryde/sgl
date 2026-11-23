@@ -524,17 +524,9 @@ current capabilities and limits.
 
 ### Planned
 
-Remaining work, in the existing roadmap order:
-
-1. **DLSS and MetalFX upscaling (12,
-   [#22](https://github.com/stevepryde/sgl/issues/22)).** Current antialiasing choices are TAA, SMAA, and FSR; FSR
-   requires native device features and falls back to TAA in the browser.
-
-This is a planned capability, not an API a game can depend on yet. Implement
-it under RD-1 and the architecture rules, retaining native and browser
-support: native takes every capability the device has, and the browser every
-capability WebGPU has, with an explicit fallback or none only where it cannot
-(D-27, D-48).
+Nothing remains in the roadmap order. DLSS and MetalFX upscaling (12,
+[#22](https://github.com/stevepryde/sgl/issues/22)) is not planned
+([D-74](decisions.md)): antialiasing and upscaling are TAA, SMAA and FSR.
 
 ## Acceptance boundaries
 
