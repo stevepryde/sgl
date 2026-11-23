@@ -152,6 +152,7 @@ fn stable_normal_attachment_preserves_authored_directions() {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     };
     let Some(mut frames) = Frames::new(asset, environment(0.), false, [EXTENT; 2]) else {
         return;

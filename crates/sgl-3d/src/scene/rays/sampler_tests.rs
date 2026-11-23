@@ -79,6 +79,7 @@ fn sample(materials: Vec<Material>, probes: &[(usize, usize, [f32; 2])]) -> Opti
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     };
     let fixture = Fixture::new(&device, &queue, &[&asset]);
     let words: Vec<u32> = probes

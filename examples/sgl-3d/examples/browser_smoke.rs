@@ -182,6 +182,7 @@ fn world() -> Asset {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     }
 }
 
@@ -222,6 +223,7 @@ fn alpha_content(bc: bool) -> Result<Asset, String> {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     })
 }
 
@@ -286,6 +288,7 @@ fn baked_box() -> Asset {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     }
 }
 
@@ -376,6 +379,7 @@ fn deforming() -> Asset {
         },
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     }
 }
 
@@ -839,6 +843,7 @@ async fn probe_capture(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Str
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     };
     let model = scene
         .add_asset(device, queue, enclosure)
@@ -1211,6 +1216,7 @@ async fn monitor(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, S
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     };
     let add = |scene: &mut Scene, asset: Asset| -> Result<sgl_3d::MaterialId, String> {
         let ids = scene
@@ -1437,6 +1443,7 @@ async fn live_probe(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
+            instanced: Vec::new(),
         };
         let ids = scene
             .add_asset(device, queue, asset)
@@ -2029,6 +2036,7 @@ async fn compressed_materials(
                     rig: Default::default(),
                     ignored: Vec::new(),
                     lights: Default::default(),
+                    instanced: Vec::new(),
                 };
                 let ids = scene
                     .add_asset(device, queue, asset)

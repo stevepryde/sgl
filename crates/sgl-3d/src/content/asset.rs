@@ -12,15 +12,17 @@
 //! extensions are scalar clearcoat, anisotropy with authored tangents,
 //! emissive strength, unlit, bump mapping, IOR and specular factors.
 //! Authored punctual lights (`KHR_lights_punctual`) load as data in
-//! [`Asset::lights`] for the game to install.
+//! [`Asset::lights`], and `EXT_mesh_gpu_instancing` nodes as shared
+//! geometry and placements in [`Asset::instanced`], for the game to install.
 use std::error::Error;
 
 use glam::Vec3;
 
 use super::deformation::{MeshDeformation, Rig};
 pub use super::gltf::{
-    AssetLights, GltfImage, Ignored, ImageSource, LightPlacement, LoadOptions, PlacedLight,
-    PunctualKind, PunctualLight, load, load_slice, load_slice_with_options, load_with_options,
+    AssetLights, GltfImage, Ignored, ImageSource, InstancedMesh, InstancedNode, LightPlacement,
+    LoadOptions, PlacedLight, PunctualKind, PunctualLight, load, load_slice,
+    load_slice_with_options, load_with_options,
 };
 pub use super::images::{CompressedFormat, CompressedImage, Image, ImageError, Rgba8MipChain};
 pub use super::load_budget::LoadBudget;
@@ -422,7 +424,8 @@ impl Default for Material {
 /// The caller owns this data and decides how to compose it into a scene.
 #[derive(Clone)]
 pub struct Asset {
-    /// Triangle meshes with baked transforms, batched by material when loaded.
+    /// Triangle meshes with baked transforms, batched by material when
+    /// loaded; an instanced node's mesh is in [`Self::instanced`] instead.
     pub meshes: Vec<CpuMesh>,
     /// Materials addressed by [`CpuMesh::material`].
     pub materials: Vec<Material>,
@@ -439,6 +442,13 @@ pub struct Asset {
     /// Its authored lights (`KHR_lights_punctual`), which loading does not
     /// install; empty without them and for content built in code.
     pub lights: AssetLights,
+    /// The meshes its `EXT_mesh_gpu_instancing` nodes instance, each once
+    /// in its own space, with every placement of it, which loading does not
+    /// install: `Scene::add_asset` prepares each as its own model
+    /// (`AssetIds::instanced`) and the game adds an instance per transform
+    /// it wants. These meshes are not in [`Self::meshes`]. Empty without
+    /// the extension and for content built in code.
+    pub instanced: Vec<InstancedMesh>,
 }
 
 /// Whether every vertex carries a finite, nonzero authored tangent frame with
@@ -496,5 +506,6 @@ pub fn empty() -> Asset {
         rig: Rig::default(),
         ignored: Vec::new(),
         lights: AssetLights::default(),
+        instanced: Vec::new(),
     }
 }

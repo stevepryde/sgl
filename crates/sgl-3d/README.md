@@ -1013,6 +1013,74 @@ The [gltf_lights example](../../examples/sgl-3d/examples/gltf_lights.rs)
 loads a glTF (`fixtures/authored-lights.gltf` by default) and installs its
 lights this way.
 
+## Instanced glTF nodes
+
+A glTF node with `EXT_mesh_gpu_instancing` draws its mesh once per
+instance: a forest or a prop set authored as one mesh and many placements.
+It loads as shared geometry and placements, `Asset::instanced`
+(`InstancedMesh`), and loading installs none of them. Each `InstancedMesh`
+is one glTF mesh that instanced nodes of the loaded scene use (`mesh`, its
+index), read once in its own space (`meshes`, batched by material, their
+materials indexing `Asset::materials`), with each instanced node that uses
+it (`nodes`, `InstancedNode`: the node's index and name and `transforms`).
+Each transform takes one instance from the mesh's space to the asset's: the
+node's world transform at the scene's authored pose times the instance's
+translation, rotation and scale. These meshes are not in `Asset::meshes`.
+`Scene::add_asset` prepares each as its own model, `AssetIds::instanced[i]`
+for `asset.instanced[i]`; where every mesh node is instanced, `model` is
+empty and draws nothing. The game adds an instance for each placement it
+wants, choosing its mobility and visibility as for any instance:
+
+```rust,ignore
+let placements: Vec<Vec<Mat4>> = asset
+    .instanced
+    .iter()
+    .map(|mesh| mesh.nodes.iter().flat_map(|node| node.transforms.clone()).collect())
+    .collect();
+let ids = scene.add_asset(&device, &queue, asset)?;
+let model = Mat4::IDENTITY; // where the game places the asset
+scene.add_instance(&device, &queue, InstanceState { pose: model, ..InstanceState::new(ids.model) }, Mobility::Static)?;
+for (id, transforms) in ids.instanced.iter().zip(placements) {
+    for transform in transforms {
+        let state = InstanceState { pose: model * transform, ..InstanceState::new(*id) };
+        scene.add_instance(&device, &queue, state, Mobility::Static)?;
+    }
+}
+```
+
+The instances are ordinary instances of one model: draw lists batch them,
+each is culled and picks its level of detail on its own (a `MeshLod` of the
+instanced model serves every placement), and they cast shadows and meet
+rays. Retained geometry is one copy however many instances, where the same
+scene authored as ordinary nodes bakes a copy per node. A transform with a
+negative determinant (a negative scale) is a mirrored pose, which the scene
+draws with reversed winding, normals and tangent handedness; the geometry
+is not copied or re-indexed for it. Filter by `InstancedNode::name` to take
+some groups and not others; `LoadOptions::nodes` also selects instanced
+nodes by name, though every instanced node of the scene is still checked
+and charged, selected or not.
+
+The load follows the extension. `TRANSLATION` and `SCALE` must be FLOAT
+VEC3 and `ROTATION` FLOAT or normalized BYTE or SHORT VEC4, which loads
+dequantised and normalised (gltfpack writes normalized SHORT with `-mi
+-cc`; Meshopt-compressed instance data decodes like any other). Every
+attribute of a node must have the same count. A zero or non-finite
+rotation, a non-finite translation or scale, or a transform that is
+singular (a zero scale) fails the load, naming the node and instance.
+Other attributes (`_ID`) are checked but not read and are listed in
+`Asset::ignored` (`Ignored::InstanceAttribute`). A skinned or morphed
+instanced node fails the load when the file requires the extension, and
+otherwise loads as an ordinary node, once, listed as
+`Ignored::Instancing`. The extension on a node without a mesh is ignored.
+The decoded budget is charged for one copy of each instanced mesh and 64
+bytes an instance before anything is read. Animation does not move
+placements. A file without the extension loads as before, with
+`Asset::instanced` empty.
+
+The [gltf_instancing example](../../examples/sgl-3d/examples/gltf_instancing.rs)
+loads a glTF (`crates/sgl-3d/tests/fixtures/gltf/InstancedProps` by
+default) and installs its placements this way.
+
 ## Local-light shadows
 
 Lights with `casts_shadow` share one 4096² depth atlas (2048² at the Low
@@ -3728,8 +3796,10 @@ metallic-roughness image (ORM), `KHR_materials_clearcoat` with its maps,
 emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_iridescence`, `KHR_materials_sheen`,
 `KHR_materials_diffuse_transmission`, the `KHR_materials_ior` and
-`KHR_materials_specular` factors, and `KHR_lights_punctual` lights as data
-([Authored glTF lights](#authored-gltf-lights)). A primitive whose material has any map
+`KHR_materials_specular` factors, `KHR_lights_punctual` lights as data
+([Authored glTF lights](#authored-gltf-lights)), and `EXT_mesh_gpu_instancing`
+nodes as shared geometry and placements
+([Instanced glTF nodes](#instanced-gltf-nodes)). A primitive whose material has any map
 needs `TEXCOORD_0`. Each map keeps its texture's sampler, any filtering and
 wrapping glTF allows ([material textures](#material-textures)).
 `TEXCOORD_1` is the mesh's static irradiance atlas chart: on a static

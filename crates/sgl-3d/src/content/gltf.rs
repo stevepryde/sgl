@@ -1,7 +1,8 @@
 //! glTF 2.0 import into an [`Asset`]: the document, its images, its scene's
 //! mesh nodes, with rigid nodes' transforms baked into the vertices and
-//! skinned ones' kept in bind space, its rig (`rig`): nodes, skins,
-//! morph weights and animation clips, and its authored lights (`lights`).
+//! skinned ones' kept in bind space, its instanced nodes' meshes and
+//! placements (`instancing`), its rig (`rig`): nodes, skins, morph weights
+//! and animation clips, and its authored lights (`lights`).
 use std::path::Path;
 
 use glam::{Mat4, Quat, Vec3};
@@ -12,9 +13,10 @@ use super::asset::{Asset, Material, Result, Vertex};
 use super::deformation;
 use super::images::Image;
 use super::load_budget::{Budget, LoadBudget};
+pub use instancing::{InstancedMesh, InstancedNode};
 pub use lights::{AssetLights, LightPlacement, PlacedLight, PunctualKind, PunctualLight};
 use material::read_material;
-use meshes::{batch, ignored_attribute, read_node};
+use meshes::{Walk, batch, ignored_attribute, read_node};
 use rig::Rigging;
 
 mod attributes;
@@ -24,6 +26,9 @@ mod attributes_tests;
 mod draco;
 #[cfg(all(test, feature = "draco"))]
 mod draco_tests;
+mod instancing;
+#[cfg(test)]
+mod instancing_tests;
 mod lights;
 #[cfg(test)]
 mod lights_tests;
@@ -124,11 +129,11 @@ fn load_inner(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
     let mut budget = Budget::source(options.budget);
     let mut decoded_budget = Budget::decoded(options.budget);
     let bytes = budget.read_file(path, None)?;
-    let (document, buffers) = import(&bytes, path.parent(), (&mut budget, &mut decoded_budget)).map_err(|error| {
+    let (document, buffers, required) = import(&bytes, path.parent(), (&mut budget, &mut decoded_budget)).map_err(|error| {
         format!("glTF import failed: {error}; check referenced files and re-export valid glTF from the Blender source")
     })?;
     decode(
-        document,
+        (document, required),
         &buffers,
         path.parent(),
         options,
@@ -151,10 +156,10 @@ pub fn load_slice_with_options(bytes: &[u8], options: LoadOptions<'_>) -> Result
     let mut budget = Budget::source(options.budget);
     let mut decoded_budget = Budget::decoded(options.budget);
     budget.charge(bytes.len() as u64)?;
-    let (document, buffers) = import(bytes, None, (&mut budget, &mut decoded_budget))
+    let (document, buffers, required) = import(bytes, None, (&mut budget, &mut decoded_budget))
         .map_err(|error| format!("embedded glTF import failed: {error}"))?;
     decode(
-        document,
+        (document, required),
         &buffers,
         None,
         options,
@@ -177,7 +182,7 @@ fn check(options: LoadOptions<'_>) -> Result<()> {
 /// `KHR_mesh_quantization` the integer attributes it allows (`attributes`),
 /// and for the meshopt pair the compressed buffer views (`meshopt`). With
 /// the `draco` feature, `KHR_draco_mesh_compression` too ([`supported`]).
-const SUPPORTED_EXTENSIONS: [&str; 17] = [
+const SUPPORTED_EXTENSIONS: [&str; 18] = [
     "KHR_lights_punctual",
     "KHR_materials_anisotropy",
     "KHR_materials_clearcoat",
@@ -194,6 +199,7 @@ const SUPPORTED_EXTENSIONS: [&str; 17] = [
     "KHR_mesh_quantization",
     "KHR_meshopt_compression",
     "EXT_materials_bump",
+    "EXT_mesh_gpu_instancing",
     "EXT_meshopt_compression",
 ];
 
@@ -241,11 +247,24 @@ pub enum Ignored {
         primitive: usize,
         name: String,
     },
+    /// Node `node`'s `EXT_mesh_gpu_instancing`, which the file uses
+    /// without requiring it, on a skinned or morphed mesh, which SGL3D does
+    /// not instance: the node loads as an ordinary mesh node, once, as a
+    /// loader without the extension draws it. A file that requires the
+    /// extension fails to load instead.
+    Instancing { node: usize },
+    /// Instance attribute `name` of node `node`'s `EXT_mesh_gpu_instancing`,
+    /// which SGL3D does not read: an application-specific one (`_ID`) or
+    /// any other but `TRANSLATION`, `ROTATION` and `SCALE`. It is checked
+    /// like them, and counts toward their shared count.
+    InstanceAttribute { node: usize, name: String },
 }
 
-/// The document in `bytes`, validated, and its buffers, with compressed
+/// The document in `bytes`, validated, its buffers, with compressed
 /// buffer views decoded (`meshopt`) and, with the `draco` feature,
-/// compressed primitives decoded into the accessors they name (`draco`).
+/// compressed primitives decoded into the accessors they name (`draco`),
+/// and whether it requires `EXT_mesh_gpu_instancing`, which decides what an
+/// instanced node SGL3D cannot instance does (`instancing::Plan`).
 /// glTF 2.0 5.17.2: a
 /// file that requires an extension SGL3D does not support fails to load.
 /// The gltf crate's validation knows none of the material extensions SGL3D
@@ -255,7 +274,7 @@ fn import(
     bytes: &[u8],
     base: Option<&Path>,
     (budget, decoded_budget): (&mut Budget, &mut Budget),
-) -> Result<(gltf::Document, Vec<gltf::buffer::Data>)> {
+) -> Result<(gltf::Document, Vec<gltf::buffer::Data>, bool)> {
     // The gltf crate subtracts the 12-byte header from the length the GLB
     // header declares unchecked, so a header declaring less is refused here.
     if bytes.starts_with(b"glTF") {
@@ -289,6 +308,10 @@ fn import(
     // validation reads them.
     #[cfg(feature = "draco")]
     let draco = draco::Draco::plan(&mut root)?;
+    let instancing_required = root
+        .extensions_required
+        .iter()
+        .any(|name| name == instancing::EXTENSION);
     root.extensions_required.clear();
     let document = gltf::Document::from_json(root)?;
     let blob = glb.as_ref().and_then(|glb| glb.bin.as_deref());
@@ -310,7 +333,7 @@ fn import(
     if let Some(draco) = draco {
         draco.decode(document.as_json(), &mut buffers, decoded_budget)?;
     }
-    Ok((document, buffers))
+    Ok((document, buffers, instancing_required))
 }
 
 /// Check the references and source variants gltf-json 1.4.1 leaves unchecked
@@ -457,7 +480,7 @@ fn sampled_images(material: &Material) -> Vec<usize> {
 }
 
 fn decode(
-    document: gltf::Document,
+    (document, instancing_required): (gltf::Document, bool),
     buffers: &[gltf::buffer::Data],
     base: Option<&Path>,
     options: LoadOptions<'_>,
@@ -468,14 +491,19 @@ fn decode(
         .or_else(|| document.scenes().next())
         .ok_or("GLB contains no scene")?;
     let parents = rig::parents(&document)?;
-    check_scene(&document, &scene, &parents, &mut decoded_budget)?;
-    let lights = lights::read(&document, &scene)?;
     // What the file uses but does not require (import refused the rest).
     let mut ignored: Vec<Ignored> = document
         .extensions_used()
         .filter(|extension| !supported(extension))
         .map(|extension| Ignored::Extension(extension.to_owned()))
         .collect();
+    // The roots first: every walk after it, the plan's included, then
+    // visits each node of the scene once.
+    check_roots(&scene, &parents)?;
+    let plan = instancing::Plan::read(&document, &scene, instancing_required, &mut ignored)?;
+    charge_scene(&document, &scene, &plan, &mut decoded_budget)
+        .map_err(|error| format!("scene {}: {error}", scene.index()))?;
+    let lights = lights::read(&document, &scene)?;
     let mut materials = document
         .materials()
         .enumerate()
@@ -519,22 +547,32 @@ fn decode(
     let buffer_bytes = buffers.iter().map(|buffer| buffer.0.len()).sum();
     let mut rigging = Rigging::new(&document, &parents, (buffers, buffer_bytes))?;
     let include_node = options.nodes.unwrap_or(&|_| true);
-    let mut meshes = Vec::new();
+    let mut walk = Walk::default();
     for node in scene.nodes() {
         read_node(
             node,
             Mat4::IDENTITY,
+            (&document, &plan, include_node),
             (buffers, buffer_bytes),
             (default_material, &materials),
             &mut rigging,
-            &mut meshes,
-            include_node,
+            &mut walk,
         )?;
     }
     // After batching, which leaves out meshes without triangles, such as a
     // strip of only degenerates.
-    let meshes = batch(meshes, materials.len());
-    if meshes.is_empty() {
+    let meshes = batch(walk.meshes, materials.len());
+    let instanced: Vec<InstancedMesh> = walk
+        .instanced
+        .into_iter()
+        .map(|read| InstancedMesh {
+            mesh: read.mesh,
+            meshes: batch(read.primitives, materials.len()),
+            nodes: read.nodes,
+        })
+        .filter(|instanced| !instanced.meshes.is_empty())
+        .collect();
+    if meshes.is_empty() && instanced.is_empty() {
         return Err("scene has no triangle meshes".into());
     }
     Ok(Asset {
@@ -544,23 +582,19 @@ fn decode(
         rig: rigging.rig,
         ignored,
         lights,
+        instanced,
     })
 }
 
-/// Refuses a scene the load would read too much of, before reading any of
-/// it: one that lists a node among its roots more than once or a node with
-/// a parent, which glTF 2.0 forbids (3.5.1, and the scene schema's
-/// `uniqueItems`: a scene's `nodes` are distinct root nodes) and which
-/// would read a subtree's meshes again each time it is listed, and one
-/// whose load exceeds the chosen decoded budget. `parents` holds each
-/// node's parent, its hierarchy a
-/// set of trees.
-fn check_scene(
-    document: &gltf::Document,
-    scene: &gltf::Scene<'_>,
-    parents: &[Option<usize>],
-    budget: &mut Budget,
-) -> Result<()> {
+/// Refuses a scene whose walks would read a subtree more than once, before
+/// any walk of it: one that lists a node among its roots more than once or
+/// a node with a parent, which glTF 2.0 forbids (3.5.1, and the scene
+/// schema's `uniqueItems`: a scene's `nodes` are distinct root nodes) and
+/// which would read a subtree's meshes, instancing and lights again each
+/// time it is listed. `parents` holds each node's parent, its hierarchy a
+/// set of trees. What the load decodes is charged after it
+/// (`charge_scene`).
+fn check_roots(scene: &gltf::Scene<'_>, parents: &[Option<usize>]) -> Result<()> {
     let mut listed = vec![false; parents.len()];
     for node in scene.nodes().map(|node| node.index()) {
         if std::mem::replace(&mut listed[node], true) {
@@ -574,26 +608,38 @@ fn check_scene(
             return Err(format!("scene {} lists node {node} as a root, but node {parent} is its parent; re-export valid glTF", scene.index()).into());
         }
     }
-    charge_scene(document, scene, budget)
-        .map_err(|error| format!("scene {}: {error}", scene.index()).into())
+    Ok(())
 }
 
 /// Charge the bytes a load produces before reading accessors: each scene
 /// node's primitive vertices, indices, skin influences and morph deltas;
-/// every skin's joints and every animation channel's keys. Selected and
+/// every skin's joints and every animation channel's keys. An instanced
+/// node's mesh is charged once however many instanced nodes use it, and
+/// each instanced node its instances' transforms, by its accessors'
+/// declared count (`plan`). Selected and
 /// unselected nodes count, as before. Minimum one-element charges also bound
 /// the counting work for empty declarations. Byte products and accumulation
 /// are checked, and the vertex index boundary remains independent of budget.
 fn charge_scene(
     document: &gltf::Document,
     scene: &gltf::Scene<'_>,
+    plan: &instancing::Plan,
     budget: &mut Budget,
 ) -> Result<()> {
     use std::mem::size_of;
     let mut vertices_total = 0u64;
+    let mut instanced_meshes = vec![false; document.meshes().len()];
     let mut nodes: Vec<gltf::Node<'_>> = scene.nodes().collect();
     while let Some(node) = nodes.pop() {
         nodes.extend(node.children());
+        if let Some(instancing::NodeUse::Instanced { count, .. }) = plan.node(node.index()) {
+            budget.charge_count(*count as u64, size_of::<Mat4>() as u64)?;
+            if let Some(mesh) = node.mesh()
+                && std::mem::replace(&mut instanced_meshes[mesh.index()], true)
+            {
+                continue;
+            }
+        }
         let vertex_size = size_of::<Vertex>()
             + node
                 .skin()

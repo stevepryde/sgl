@@ -14,7 +14,7 @@ use super::shadow_clusters::{MeshClusters, PosedClusters};
 use super::slots::Slots;
 use super::static_edits::posed_bounds;
 use super::{Scene, SceneError};
-use crate::asset::Asset;
+use crate::asset::{Asset, CpuMesh};
 use crate::content::identity::{Identity, MaterialId, ModelId};
 use crate::content::model::{AssetIds, ModelMesh};
 use crate::counters::{BuildStep, step};
@@ -536,46 +536,69 @@ impl Scene {
     }
 
     /// Adds a loaded asset whole: its materials and images, then its meshes,
-    /// prepared here, as one model. Its own indices do not outlive this
-    /// call. On failure nothing remains added.
+    /// prepared here, as one model, and each of its instanced meshes
+    /// (`Asset::instanced`) as a model of its own, with the same materials.
+    /// Its own indices do not outlive this call. It adds no instance: the
+    /// game places `model` and each instanced placement it wants. On
+    /// failure nothing remains added.
     pub fn add_asset(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         asset: Asset,
     ) -> Result<AssetIds, SceneError> {
-        if asset
-            .meshes
+        let models: Vec<Vec<CpuMesh>> = std::iter::once(asset.meshes)
+            .chain(
+                asset
+                    .instanced
+                    .into_iter()
+                    .map(|instanced| instanced.meshes),
+            )
+            .collect();
+        if models
             .iter()
+            .flatten()
             .any(|mesh| mesh.material >= asset.materials.len())
         {
             return Err(SceneError::MissingMaterial);
         }
         let materials = self.add_materials(device, queue, &asset.materials, &asset.images)?;
-        let meshes = asset
-            .meshes
-            .into_iter()
-            .map(|mesh| ModelMesh {
-                vertices: mesh.vertices,
-                indices: mesh.indices,
-                material: materials[mesh.material],
-                deformation: mesh.deformation,
-            })
-            .collect();
         let options = PreparedModelOptions {
             ray_data: self.ray_data(),
         };
-        match PreparedModel::with_options(meshes, options)
-            .and_then(|model| self.add_model(device, queue, model))
-        {
-            Ok(model) => Ok(AssetIds { materials, model }),
-            Err(error) => {
-                for &material in &materials {
-                    self.remove_material(material)
-                        .expect("a material just added has no users");
+        let mut added = Vec::with_capacity(models.len());
+        for meshes in models {
+            let meshes = meshes
+                .into_iter()
+                .map(|mesh| ModelMesh {
+                    vertices: mesh.vertices,
+                    indices: mesh.indices,
+                    material: materials[mesh.material],
+                    deformation: mesh.deformation,
+                })
+                .collect();
+            match PreparedModel::with_options(meshes, options)
+                .and_then(|model| self.add_model(device, queue, model))
+            {
+                Ok(model) => added.push(model),
+                Err(error) => {
+                    for &model in &added {
+                        self.remove_model(model)
+                            .expect("a model just added has no instances");
+                    }
+                    for &material in &materials {
+                        self.remove_material(material)
+                            .expect("a material just added has no users");
+                    }
+                    return Err(error);
                 }
-                Err(error)
             }
         }
+        let model = added.remove(0);
+        Ok(AssetIds {
+            materials,
+            model,
+            instanced: added,
+        })
     }
 }

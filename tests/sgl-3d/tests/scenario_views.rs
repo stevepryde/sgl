@@ -502,6 +502,7 @@ fn lit(corners: [Vec3; 4], normal: Vec3, base: f32, metallic: f32, roughness: f3
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     }
 }
 

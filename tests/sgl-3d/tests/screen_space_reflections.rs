@@ -153,6 +153,7 @@ fn world(floor: Material, panel: f32) -> Asset {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     };
     if panel > 0. {
         let mut glow = material([panel, panel, panel, 1.], 0., 1.);
@@ -487,6 +488,7 @@ fn reflects_a_distant_emitter_up_to_the_far_plane_whatever_the_near_plane() {
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
+            instanced: Vec::new(),
         };
         let Some(mut frames) = Frames::new(world, environment(0.), true, SIZE) else {
             return;
@@ -664,6 +666,7 @@ fn world_space_reflections_find_a_moving_objects_hidden_underside() {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     };
     let Some(mut frames) = Frames::with_models(
         world(smooth_metal(), 0.),

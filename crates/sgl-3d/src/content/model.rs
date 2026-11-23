@@ -19,9 +19,12 @@ pub struct ModelMesh {
 }
 
 /// The identities `Scene::add_asset` gave an asset's content: its material
-/// `i` is `materials[i]`, and its meshes are `model`'s, in order.
+/// `i` is `materials[i]`, its meshes are `model`'s, in order (none where
+/// all its mesh nodes are instanced), and its instanced mesh `i`
+/// (`Asset::instanced`) is `instanced[i]`'s.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AssetIds {
     pub materials: Vec<MaterialId>,
     pub model: ModelId,
+    pub instanced: Vec<ModelId>,
 }

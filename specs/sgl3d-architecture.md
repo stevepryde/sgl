@@ -241,7 +241,9 @@ deform is then pending a BLAS, which the scene builds before a
 hardware-traced frame. An operation consumes the prepared model; one that fails places
 nothing and returns the scene's typed error, and the game prepares again if
 it wants another try. `add_asset` prepares the asset's meshes itself once
-its materials have identities. A prepared model is the only way geometry
+its materials have identities, as one model, and each of its instanced
+meshes (`EXT_mesh_gpu_instancing`, S3D-2) as a model of its own with the
+same materials, whose placements the game adds as instances. A prepared model is the only way geometry
 enters the scene, and the irradiance volume's cells arrive the same way
 ([Irradiance volume](#designs-that-span-stages)): a pure `Send` value built
 by `new` from plain content data, which the scene operation takes and only

@@ -269,6 +269,7 @@ fn add_opaque(
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
+            instanced: Vec::new(),
         },
     )?;
     scene.add_instance(

@@ -62,7 +62,9 @@ captures on the same renderer reuse the cached pipelines.
    identities it returns: `asset::load` (a file) or `asset::load_slice` (bytes,
    as a browser fetches them; `Asset::ignored` lists what the file uses
    that SGL3D leaves out) into
-   `Scene::add_asset`, instances with `add_instance` (static or moving),
+   `Scene::add_asset`, instances with `add_instance` (static or moving;
+   a glTF's instanced nodes, `Asset::instanced`, are a model each,
+   `AssetIds::instanced`, with a transform per placement to install),
    point, spot and rectangle lights with `add_light` (a glTF's authored
    lights, `Asset::lights`, placed with `PunctualLight::place`; its suns go
    in the frame's directional slots, which the game picks), decals with
@@ -223,6 +225,8 @@ fog, `--cookie` a spot light's cookie, `--profile` a measured profile);
 sampled and posed with `animation::Pose`,
 [`examples/gltf_lights.rs`](../../../examples/sgl-3d/examples/gltf_lights.rs) a glTF's authored
 lights installed, with the suns for the frame's two slots picked,
+[`examples/gltf_instancing.rs`](../../../examples/sgl-3d/examples/gltf_instancing.rs) a glTF's
+instanced nodes installed as instances of one model each,
 [`examples/instances.rs`](../../../examples/sgl-3d/examples/instances.rs) many instances of a few
 models, [`examples/water.rs`](../../../examples/sgl-3d/examples/water.rs) a lake of 16 m
 chunks whose waves its own shader moves and whose surface receives

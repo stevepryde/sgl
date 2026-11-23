@@ -165,6 +165,7 @@ fn asset(number: usize) -> Asset {
         rig: Default::default(),
         ignored: vec![],
         lights: Default::default(),
+        instanced: Vec::new(),
     }
 }
 

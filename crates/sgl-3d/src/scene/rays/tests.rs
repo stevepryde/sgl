@@ -267,6 +267,7 @@ pub(super) fn asset(meshes: Vec<CpuMesh>, two_sided: bool) -> Asset {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     }
 }
 

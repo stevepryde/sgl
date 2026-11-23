@@ -656,6 +656,7 @@ pub(crate) fn cube() -> crate::asset::Asset {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     }
 }
 

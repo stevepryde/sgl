@@ -2358,6 +2358,7 @@ fn scrolling_plane(repeats: f32, velocity: f32) -> sgl_3d::asset::Asset {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     }
 }
 

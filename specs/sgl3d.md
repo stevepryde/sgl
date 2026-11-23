@@ -125,6 +125,22 @@ settings SGL3D has today.
    local lights to its `Scene` and chooses which directional lights fill
    `FrameInput::directional_lights`, and SGL3D never chooses between
    authored suns.
+   A file's `EXT_mesh_gpu_instancing` nodes load as shared geometry and
+   placements (`Asset::instanced`): each glTF mesh an instanced node of the
+   loaded scene uses, once, in its own space, and for each such node its
+   instances' transforms, the node's world transform at the scene's
+   authored pose times the instance's translation, rotation and scale,
+   composed once at import. Geometry is never copied per instance or per
+   node. `Scene::add_asset` prepares each as its own model
+   (`AssetIds::instanced`), and loading installs nothing: the game adds an
+   instance per transform it wants, so the scene's batching, culling,
+   levels of detail, shadows and rays treat them as any instances. A
+   mirrored instance keeps its geometry, and its pose mirrors it. Accessor
+   types, counts and quaternions follow the extension, normalized
+   rotations dequantised in the one accessor step. An instanced node that
+   is skinned or morphed fails the load when the file requires the
+   extension, and otherwise loads as an ordinary node, listed in
+   `Asset::ignored`.
    Invalid primitive/morph accessor references, animation target nodes or
    paths, and image source variants fail the load with an error naming the
    element before document readers run. Each image has exactly one URI or

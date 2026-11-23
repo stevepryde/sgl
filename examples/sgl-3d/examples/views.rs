@@ -167,6 +167,7 @@ async fn run(output: PathBuf, options: Options) -> Result<(), Box<dyn Error>> {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     };
     let ground = scene.add_asset(&device, &queue, ground)?.model;
     scene.add_instance(
@@ -194,6 +195,7 @@ async fn run(output: PathBuf, options: Options) -> Result<(), Box<dyn Error>> {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     };
     let pillars = scene.add_asset(&device, &queue, pillars)?.model;
     scene.add_instance(
@@ -209,6 +211,7 @@ async fn run(output: PathBuf, options: Options) -> Result<(), Box<dyn Error>> {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     };
     let cart = scene.add_asset(&device, &queue, cart)?.model;
     let mut cart_state = InstanceState::new(cart);

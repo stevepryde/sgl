@@ -1,6 +1,8 @@
 //! A glTF scene's mesh nodes read into meshes, rigid nodes' transforms baked
 //! into their vertices and skinned ones' kept in bind space, and batched by
-//! what primitives must share to be drawn as one mesh.
+//! what primitives must share to be drawn as one mesh. An instanced node's
+//! mesh (`instancing`) is read once, in its own space, and its node's
+//! instances become placements.
 use glam::{Mat3, Mat4, Vec3};
 use gltf::Semantic;
 use gltf::accessor::DataType::{self, F32, I8, I16, U8, U16, U32};
@@ -11,6 +13,7 @@ use super::super::asset::{CpuMesh, Material, Result, Vertex, tangent_off_normal}
 use super::super::deformation::{MeshDeformation, MorphTarget};
 use super::attributes::{DIRECTION_TYPES, attribute, check_direction};
 use super::check_accessor;
+use super::instancing::{InstancedNode, NodeUse, Plan, transforms};
 use super::rig::{Rigging, read_influences, read_morph_targets};
 use super::topology::{check_mode, triangle_list};
 
@@ -101,27 +104,91 @@ pub(super) fn batch(meshes: Vec<(BatchKey, CpuMesh)>, materials: usize) -> Vec<C
         .collect()
 }
 
+/// What the node walk accumulates: the ordinary nodes' meshes, baked, and
+/// the instanced nodes' meshes, each read once, with their placements.
+#[derive(Default)]
+pub(super) struct Walk {
+    pub(super) meshes: Vec<(BatchKey, CpuMesh)>,
+    pub(super) instanced: Vec<InstancedRead>,
+    /// Each instanced glTF mesh's entry in `instanced`.
+    by_mesh: HashMap<usize, usize>,
+}
+
+/// Which mesh nodes load, asked with each one's name (`LoadOptions::nodes`).
+type NodeFilter<'a> = &'a dyn Fn(Option<&str>) -> bool;
+
+/// One glTF mesh instanced nodes use: its primitives, read once in its own
+/// space, and each such node with its instances' transforms.
+pub(super) struct InstancedRead {
+    pub(super) mesh: usize,
+    pub(super) primitives: Vec<(BatchKey, CpuMesh)>,
+    pub(super) nodes: Vec<InstancedNode>,
+}
+
 pub(super) fn read_node(
     node: gltf::Node<'_>,
     parent: Mat4,
+    (document, plan, include_node): (&gltf::Document, &Plan, NodeFilter<'_>),
     (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
     (default_material, materials): (usize, &[Material]),
     rigging: &mut Rigging,
-    meshes: &mut Vec<(BatchKey, CpuMesh)>,
-    include_node: &dyn Fn(Option<&str>) -> bool,
+    walk: &mut Walk,
 ) -> Result<()> {
     let mut pending = vec![(node, parent)];
     while let Some((node, parent)) = pending.pop() {
         let global = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
-        read_mesh_node(
-            &node,
-            global,
-            (buffers, buffer_bytes),
-            (default_material, materials),
-            rigging,
-            meshes,
-            include_node,
-        )?;
+        if let Some(NodeUse::Instanced { attributes, count }) = plan.node(node.index()) {
+            if let Some(mesh) = node.mesh()
+                && include_node(node.name())
+            {
+                let transforms = transforms(
+                    &node,
+                    global,
+                    (attributes, *count),
+                    document,
+                    (buffers, buffer_bytes),
+                )?;
+                let entry = match walk.by_mesh.get(&mesh.index()) {
+                    Some(&entry) => entry,
+                    None => {
+                        // The mesh's own space: no node transform, no skin
+                        // and (the plan has refused them) no morph targets.
+                        let mut primitives = Vec::new();
+                        read_primitives(
+                            &node,
+                            &mesh,
+                            (Mat4::IDENTITY, None),
+                            (buffers, buffer_bytes),
+                            (default_material, materials),
+                            rigging,
+                            &mut primitives,
+                        )?;
+                        walk.instanced.push(InstancedRead {
+                            mesh: mesh.index(),
+                            primitives,
+                            nodes: Vec::new(),
+                        });
+                        walk.by_mesh.insert(mesh.index(), walk.instanced.len() - 1);
+                        walk.instanced.len() - 1
+                    }
+                };
+                walk.instanced[entry].nodes.push(InstancedNode {
+                    node: node.index(),
+                    name: node.name().map(str::to_owned),
+                    transforms,
+                });
+            }
+        } else {
+            read_mesh_node(
+                &node,
+                global,
+                (buffers, buffer_bytes),
+                (default_material, materials),
+                rigging,
+                &mut walk.meshes,
+                include_node,
+            )?;
+        }
         // Reverse just the appended children: the stack then visits them
         // depth-first in declared order, preserving batching and selection order.
         let first_child = pending.len();
@@ -129,6 +196,19 @@ pub(super) fn read_node(
         pending[first_child..].reverse();
     }
     Ok(())
+}
+
+/// Whether `transform` cannot place a mesh: not finite, or singular
+/// relative to its axes' own lengths, so a uniformly tiny scale
+/// (determinant s³) passes and only a collapsed axis is refused.
+pub(super) fn singular(transform: Mat4) -> bool {
+    let axes = Mat3::from_mat4(transform);
+    let volume = axes.x_axis.length() * axes.y_axis.length() * axes.z_axis.length();
+    // Normals use only the 3x3, so an inverted translation cannot overflow it.
+    let normal_transform = axes.inverse().transpose();
+    !transform.is_finite()
+        || axes.determinant().abs() <= 1e-6 * volume
+        || !normal_transform.is_finite()
 }
 
 fn read_mesh_node(
@@ -151,25 +231,42 @@ fn read_mesh_node(
         } else {
             global
         };
-        // Singular relative to the axes' own lengths, so a uniformly tiny
-        // scale (determinant s³) loads and only a collapsed axis is refused.
-        let axes = Mat3::from_mat4(transform);
-        let volume = axes.x_axis.length() * axes.y_axis.length() * axes.z_axis.length();
-        // Normals use only the 3x3, so an inverted translation cannot overflow it.
-        let normal_transform = Mat4::from_mat3(axes.inverse().transpose());
-        if !transform.is_finite()
-            || axes.determinant().abs() <= 1e-6 * volume
-            || !normal_transform.is_finite()
-        {
+        if singular(transform) {
             return Err(format!(
                 "node {} has a singular/nonfinite transform; apply a nonzero scale in Blender",
                 node.index()
             )
             .into());
         }
+        read_primitives(
+            node,
+            &mesh,
+            (transform, skin),
+            (buffers, buffer_bytes),
+            (default_material, materials),
+            rigging,
+            meshes,
+        )?;
+    }
+    Ok(())
+}
+
+/// `mesh`'s primitives, held by `node`, with `transform` baked into their
+/// vertices (mirrored winding corrected) and `skin`'s influences.
+fn read_primitives(
+    node: &gltf::Node<'_>,
+    mesh: &gltf::Mesh<'_>,
+    (transform, skin): (Mat4, Option<(u32, u32)>),
+    (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
+    (default_material, materials): (usize, &[Material]),
+    rigging: &mut Rigging,
+    meshes: &mut Vec<(BatchKey, CpuMesh)>,
+) -> Result<()> {
+    {
+        let normal_transform = Mat4::from_mat3(Mat3::from_mat4(transform).inverse().transpose());
         // Every primitive with morph targets has the mesh's, which the
         // node's one set of weights drives; one without is unmorphed.
-        let mesh_targets = rigging.mesh_targets(&mesh);
+        let mesh_targets = rigging.mesh_targets(mesh);
         for primitive in mesh.primitives() {
             let label = format!("mesh {} primitive {}", mesh.index(), primitive.index());
             let target_count = primitive.morph_targets().count();

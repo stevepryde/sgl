@@ -2370,3 +2370,47 @@ fn an_unfinished_frame_commits_nothing() {
     assert!(!scene.rigid_objects_changed());
     assert!(scene.static_edits.pending().is_empty());
 }
+
+// Plausible defects: an asset's instanced meshes (`Asset::instanced`) added
+// as one model with its ordinary meshes, or not with its materials; or a
+// failure in one leaving the models and materials added before it. The
+// oracles are `add_asset`'s contract: a model each, in order, with the
+// asset's materials, and nothing left added on failure.
+#[test]
+fn an_assets_instanced_meshes_are_models_of_their_own_added_whole_or_not_at_all() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let mut scene = Scene::new(&device, &queue);
+    let instanced = |meshes| asset::InstancedMesh {
+        mesh: 0,
+        meshes,
+        nodes: Vec::new(),
+    };
+    let mut asset = test_support::cube();
+    let mesh = asset.meshes[0].clone();
+    asset.instanced = vec![instanced(vec![mesh.clone(), mesh.clone()])];
+    let ids = scene.add_asset(&device, &queue, asset.clone()).unwrap();
+    assert_eq!(ids.instanced.len(), 1);
+    let model = scene.models.get(ids.instanced[0]).unwrap();
+    assert_eq!(model.meshes.len(), 2);
+    assert!(
+        model.meshes.iter().all(|m| m.material == ids.materials[0]),
+        "the instanced model takes the asset's materials"
+    );
+    assert_eq!(scene.models.get(ids.model).unwrap().meshes.len(), 1);
+
+    let mut scene = Scene::new(&device, &queue);
+    let mut broken = mesh.clone();
+    broken.vertices[0].position[0] = f32::NAN;
+    asset.instanced.push(instanced(vec![broken]));
+    assert!(matches!(
+        scene.add_asset(&device, &queue, asset),
+        Err(SceneError::NonFiniteGeometry)
+    ));
+    assert!(scene.models.slots.is_empty(), "a model was left added");
+    assert!(
+        scene.materials.slots.is_empty(),
+        "a material was left added"
+    );
+}

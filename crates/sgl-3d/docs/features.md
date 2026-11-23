@@ -58,7 +58,10 @@ them through unrefracted. A probe captured on an
   gives 0.02), and `KHR_materials_transmission`, `KHR_materials_volume` and
   `KHR_materials_dispersion` (their maps on `Extended`), and
   `KHR_lights_punctual` lights as data (`Asset::lights`), which the game
-  places and installs. Every map lies on `TEXCOORD_0` and keeps its
+  places and installs, and `EXT_mesh_gpu_instancing` nodes as one model a
+  mesh and its placements (`Asset::instanced`, `AssetIds::instanced`),
+  which the game installs as instances
+  ([Instanced glTF nodes](../README.md#instanced-gltf-nodes)). Every map lies on `TEXCOORD_0` and keeps its
   texture's sampler (`asset::MaterialTexture`: nearest or linear
   filtering, mipmapped or not, and repeat, mirror or clamp on each axis;
   [Material textures](../README.md#material-textures)); `TEXCOORD_1` loads

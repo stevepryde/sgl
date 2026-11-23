@@ -92,6 +92,7 @@ fn model(meshes: Vec<CpuMesh>, base: [f32; 3], emissive: [f32; 3]) -> Asset {
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
+        instanced: Vec::new(),
     }
 }
 

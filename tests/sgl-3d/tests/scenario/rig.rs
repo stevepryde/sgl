@@ -286,6 +286,7 @@ impl Shape {
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
+            instanced: Vec::new(),
         }
     }
 }
@@ -494,6 +495,7 @@ impl Rig {
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
+            instanced: Vec::new(),
         };
         let Gpu { device, queue } = &self.gpu;
         let ids = self
@@ -580,6 +582,7 @@ impl Rig {
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
+            instanced: Vec::new(),
         };
         let Gpu { device, queue } = &self.gpu;
         let ids = self

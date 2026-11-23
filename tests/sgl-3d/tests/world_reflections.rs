@@ -215,6 +215,7 @@ impl Frames {
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
+            instanced: Vec::new(),
         };
         if let Some(z) = wall_z {
             world.materials.push(material([0.1, 0.1, 0.1, 1.], 0., 1.));
@@ -238,6 +239,7 @@ impl Frames {
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
+            instanced: Vec::new(),
         };
         let offscreen_model = scene
             .add_asset(&device, &queue, offscreen_model)

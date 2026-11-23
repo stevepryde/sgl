@@ -193,6 +193,7 @@ fn build(
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
+            instanced: Vec::new(),
         };
         let ids = scene.add_asset(device, queue, asset)?;
         let state = InstanceState::new(ids.model);

@@ -152,6 +152,12 @@
     "note": "Models/RiggedSimple/glTF and glTF-Draco, unchanged, and glTF-Meshopt-KHR and glTF-Meshopt-Fallback, written from glTF by gltfpack 1.3 (© 2017 Cesium, CC-BY-4.0). Test-only: the published crate does not include it; provenance in the fixture's README.md."
   },
   {
+    "component": "Khronos glTF Sample Assets: Simple Instancing (test fixture)",
+    "path": "crates/sgl-3d/tests/fixtures/gltf/SimpleInstancing/LICENSE.md",
+    "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/SimpleInstancing/LICENSE.md",
+    "note": "Models/SimpleInstancing/glTF, unchanged; glTF-Expanded, written from it by Khronos glTF Blender I/O in Blender 5.2.1, and glTF-Meshopt, by gltfpack 1.3 (© 2023 Marco Hutter, CC0-1.0; LICENSE.md itself CC-BY-4.0). Test-only: the published crate does not include it; provenance in the fixture's README.md."
+  },
+  {
     "component": "meshoptimizer decoders",
     "path": "crates/sgl-3d/src/content/meshopt/LICENSE.md",
     "url": "https://raw.githubusercontent.com/zeux/meshoptimizer/9e1f07b159d3cb777f1c67ed31fc11fd117986f4/LICENSE.md",

@@ -53,6 +53,7 @@ fn asset(texel: [u8; 4], mapped: bool, tangent: u32) -> Asset {
         rig: Default::default(),
         ignored: vec![],
         lights: Default::default(),
+        instanced: Vec::new(),
     }
 }
 struct ResultImage {

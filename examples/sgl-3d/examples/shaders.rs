@@ -224,6 +224,7 @@ fn build(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Scene, Box<dyn Er
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
+            instanced: Vec::new(),
         },
     )?;
     scene.add_instance(
