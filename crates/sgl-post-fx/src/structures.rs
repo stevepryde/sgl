@@ -177,10 +177,12 @@ pub struct TemporalAntiAliasingAttribs {
     pub skip_rejection: u32,
 
     /// Nonzero when content changed this frame without a motion vector that
-    /// describes the change: an object appeared, departed, was shown or
-    /// hidden, changed its geometry, or moved without writing its motion.
-    /// With MOTION_ADAPTIVE_HISTORY, rearms recovery across the view so
-    /// newly uncovered zero-motion background does not retain object history.
+    /// describes the change, and the caller marks it nowhere narrower (an
+    /// object appeared, departed, was shown or hidden, changed its geometry,
+    /// or moved without writing its motion, where the responsive masks do
+    /// not mark it). With MOTION_ADAPTIVE_HISTORY, rearms recovery across
+    /// the view so newly uncovered zero-motion background does not retain
+    /// object history.
     /// Motion the motion vectors carry (a moving object's, deformation's) is
     /// followed per pixel and needs no flag; default is zero.
     pub rigid_object_motion: u32,

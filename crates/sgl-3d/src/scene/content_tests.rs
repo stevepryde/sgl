@@ -2188,12 +2188,12 @@ fn joint(x: f32) -> [Mat4; 1] {
 // (S3D-4's next frame) becomes the submitted state: a moving instance's next
 // frame writes zero motion, a hide-and-show loses its motion, the shader
 // data and parameters measure from the edited values, a deformation set
-// since is never written, and the rigid-change signal and static-edit
-// bounds raised since are retired unseen. Or a parameter block's first
+// since is never written, and the footprints and static-edit bounds made
+// since are retired unseen. Or a parameter block's first
 // frame measures from zeros (B-8). The oracles are the fixture's poses and
 // values, read from what the GPU holds for the next frame, and the
-// architecture's "Edits and frames" rule for the signal, the bounds and the
-// deform work.
+// architecture's "Edits and frames" rule for the footprints, the bounds and
+// the deform work.
 #[test]
 fn a_frame_commits_what_it_drew() {
     let Some((device, queue)) = test_support::device() else {
@@ -2262,9 +2262,12 @@ fn a_frame_commits_what_it_drew() {
     assert!(scene.finish_frame(attempt));
     assert_eq!(scene.last_finished(), Some(attempt));
 
-    assert!(
-        scene.rigid_objects_changed(),
-        "a static move after the frame began is the next frame's"
+    assert_eq!(
+        scene.footprints.pending(),
+        [2, 1],
+        "the edits after the frame began are the next frame's: the static move marks where \
+         the frame drew the instance and where it stands, the hiding where the frame drew the \
+         hidden one"
     );
     let centres: Vec<f32> = scene
         .static_edits
@@ -2301,12 +2304,13 @@ fn a_frame_commits_what_it_drew() {
 // Plausible defect: an edit made after the submission and before
 // `finish_frame` is judged against the last finished frame rather than the
 // frame the scene is about to commit, so a moving instance whose model was
-// swapped for that frame and is swapped back in the window raises nothing:
+// swapped for that frame and is swapped back in the window marks nothing:
 // the last finished frame shows the model it now names, but the committed
 // frame drew the other, and the next frame replaces the model with zero
-// motion and no signal. The oracle is M-9 with F-13: a model swap that no
-// motion vector describes raises the rigid-change signal, and one raised
-// after the frame began stays raised for the next frame.
+// motion and no mark. The oracle is M-23 with F-13: a model swap that no
+// motion vector describes marks where the frame it follows drew the
+// instance and where it stands, and one made after the frame began stays
+// for the next frame.
 #[test]
 fn an_edit_in_the_window_is_judged_against_the_frame_it_follows() {
     let Some((device, queue)) = test_support::device() else {
@@ -2326,8 +2330,9 @@ fn an_edit_in_the_window_is_judged_against_the_frame_it_follows() {
     // Frame f-1 draws model A.
     scene.begin_frame(&device, &queue);
     scene.finish_open_frame();
-    assert!(
-        !scene.rigid_objects_changed(),
+    assert_eq!(
+        scene.footprints.pending(),
+        [0, 0],
         "the appearance was retired by the frame that showed it"
     );
     // Before frame f: model B. Frame f draws it and retires the swap.
@@ -2337,10 +2342,13 @@ fn an_edit_in_the_window_is_judged_against_the_frame_it_follows() {
     // In the window: model A again, which frame f did not draw.
     scene.set_instance(&queue, mover, state(a, pose)).unwrap();
     assert!(scene.finish_frame(attempt));
-    assert!(
-        scene.rigid_objects_changed(),
-        "frame f+1 replaces frame f's model B with A, which no motion describes"
+    assert_eq!(
+        scene.footprints.pending(),
+        [1, 1],
+        "frame f+1 replaces frame f's model B with A, which no motion describes: where \
+         frame f drew B and where A stands"
     );
+    assert!(!scene.rigid_objects_changed(), "nothing view-wide");
 }
 
 // Plausible defects: beginning a frame commits part of it (its record
@@ -2381,7 +2389,7 @@ fn an_unfinished_frame_commits_nothing() {
     let retried = scene.begin_frame(&device, &queue);
     assert!(!scene.finish_frame(dropped), "a superseded attempt");
     assert_eq!(scene.last_finished(), finished);
-    assert!(scene.rigid_objects_changed());
+    assert_eq!(scene.footprints.pending(), [1, 1], "the static move");
     assert_eq!(scene.static_edits.pending().len(), 2);
     assert!(!scene.deformations.is_empty());
     let motion = uploaded_record(&device, &queue, &scene, mover).motion;
@@ -2393,7 +2401,7 @@ fn an_unfinished_frame_commits_nothing() {
     assert!(scene.finish_frame(retried));
     assert!(!scene.finish_frame(retried), "an attempt finishes once");
     assert_eq!(scene.last_finished(), Some(retried));
-    assert!(!scene.rigid_objects_changed());
+    assert_eq!(scene.footprints.pending(), [0, 0]);
     assert!(scene.static_edits.pending().is_empty());
 }
 

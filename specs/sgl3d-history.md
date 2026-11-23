@@ -67,11 +67,15 @@ contract a game follows:
   `finish_frame` belongs to the next frame (F-13).
 - Set `FrameInput::camera_cut` when the camera jumps, and only then (F-1).
 - Give moving objects `Mobility::Moving` and pose them every frame; a static
-  instance that is moved writes no motion and re-arms antialiasing across
-  the view (M-4, M-5, M-6, M-9).
-- Change `FrameInput::visibility_mask`, models, geometry and what a material
-  draws only when the content changes: each re-arms antialiasing across the
-  view (F-10, M-9).
+  instance that is moved writes no motion and holds antialiasing at full
+  strength where it stood and where it stands (M-4, M-5, M-6, M-23).
+- Spawning, removing, showing, hiding and swapping models, replacing a
+  model's geometry and material edits that change what is drawn cost history
+  where the instances stood and stand (M-23); past 1024 footprint draws
+  (one a mesh) pending before a frame, or for an instance drawn with a shader that
+  displaces its vertices and reads no time, they re-arm antialiasing across
+  the view (M-9). Change `FrameInput::visibility_mask` only when the content
+  changes: each change re-arms antialiasing across the view (F-10).
 - Expect surfaces under blended materials, blended sprites, glow, mist,
   heat distortion and
   materials whose normal layers move or whose shader reads the time never to
@@ -96,7 +100,7 @@ a measurement settles it.
 
 ## Frame and renderer
 
-Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`): its last finished frame's unjittered view and projection, its jitter, its time, its visibility mask, the render origin it is expressed in, and the frames since the last reset. It issues the one reset every one of its stages follows, and each stage keeps what describes its GPU history as the view's last finished frame left it (`view::history::Kept`), so a stage restarts when it did not run in that frame and a frame rendered again continues as the first rendering did. The scene keeps the motion history (submitted poses, deformation slots, shader data, parameter blocks) and the rigid-change signal, committed by `Renderer::finish_frame`. A continuously running game most often trips the visibility-mask signal (F-10) and the scene's rigid-change signal where it spawns, hides or swaps models (M-9); a frame that was rendered but not finished, then rendered again, restarts FSR (F-3, U-2) and leaves filtered fog unreprojected for one frame (V-5).
+Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`): its last finished frame's unjittered view and projection, its jitter, its time, its visibility mask, the render origin it is expressed in, and the frames since the last reset. It issues the one reset every one of its stages follows, and each stage keeps what describes its GPU history as the view's last finished frame left it (`view::history::Kept`), so a stage restarts when it did not run in that frame and a frame rendered again continues as the first rendering did. The scene keeps the motion history (submitted poses, deformation slots, shader data, parameter blocks), the instance footprints and the rigid-change signal, committed by `Renderer::finish_frame`. A continuously running game most often trips the visibility-mask signal (F-10), and the footprints of what it spawns, hides or swaps (M-23), view-wide only past their cap or under a displacing shader (M-9); a frame that was rendered but not finished, then rendered again, restarts FSR (F-3, U-2) and leaves filtered fog unreprojected for one frame (V-5).
 
 ### Signals
 
@@ -107,10 +111,11 @@ Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`):
 | `HistoryFrame::previous_camera` and `previous` | `CameraHistory::begin` | none, and previous = this frame's view-projection, after a reset; otherwise translated by any render-origin move | committed at `finish_frame` | the view's `previous_view_projection` (all motion), the DiligentFX previous camera, Velvet, world-space reflections, ray-traced shadows, ambient occlusion, fog, the cull stage's early phase |
 | `HistoryFrame::previous_elapsed_seconds` | `CameraHistory::begin` | this frame's time after a reset | committed at `finish_frame` | `Frame.previous_elapsed_seconds` and `previous_animation_phase`, at which vertex functions evaluate motion |
 | `HistoryFrame::visibility_changed` | `CameraHistory::begin` | `FrameInput::visibility_mask` differs from the last finished frame's and history is valid | when a frame with the new mask is finished | TAA's `rigid_object_motion` only; FSR never sees it |
-| `Scene::rigid_objects_changed()` | `Instances` (add, `set_instance`, remove, `geometry_changed`), `Scene::set_model`, `Scene::set_material` | see M-9 | a finished frame, for what was raised before it began (`Scene::finish_frame`) | TAA's `rigid_object_motion` only; FSR never sees it |
+| `Scene::rigid_objects_changed()` | `Scene::footprint_stood`, `Scene::footprint_stands` (`Instances::raise_view_wide`), for a change its footprints cannot mark | see M-9 | a finished frame, for what was raised before it began (`Scene::finish_frame`) | TAA's `rigid_object_motion` only; FSR never sees it |
+| Instance footprints (`Scene::footprints`) | `Scene::add_instance`, `set_instance`, `remove_instance`, `set_model`, `set_material` | see M-23 | a finished frame begun after the edit (`Footprints::finish_frame`) | the transparent stage's temporal composition, into the temporal masks |
 | TAA camera motion | `PostFx::begin` (`TemporalAntiAliasing::camera_moved`) | see T-20 | per frame | TAA's `camera_motion` only |
 | G-buffer motion: UV motion RG, depth motion B, its validity A | geometry passes, the sky, masked sprites' depth pass (M-21), the receiver pass | every pixel, every frame | per frame | TAA (through the DiligentFX inputs pass), FSR, motion blur, TAA's motion reach, ambient occlusion, the reflection methods |
-| Temporal masks: reactive, transparency and composition | the transparent stage's draws (M-11, M-16, M-17a–c, M-21, M-22) | while `Effective::temporal_masks` | cleared by the first writer each frame | FSR always; TAA's responsive masks |
+| Temporal masks: reactive, transparency and composition | the transparent stage's draws (M-11, M-16, M-17a–c, M-21, M-22, M-23) | while `Effective::temporal_masks` | cleared by the first writer each frame | FSR always; TAA's responsive masks |
 | TAA motion reach | `stages/antialiasing/reach.rs` | every frame TAA runs | per frame | TAA's neighbourhood motion |
 | Jitter (`HistoryFrame::camera.jitter`) | the DiligentFX context's `prepare` (TAA) or FSR's `prepare` | TAA: zero on its reset frames; FSR: every frame | committed with the camera at `finish_frame` | raster, the DiligentFX previous camera, the cull stage's pyramid reprojection |
 
@@ -192,7 +197,7 @@ Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`):
 
 #### F-9 TAA's view-wide re-arm signal
 
-- **Rule.** TAA's `rigid_object_motion` is the scene's rigid-change signal (M-9) or a changed visibility mask (F-10), held until the frame is finished: the changes of the frame that no motion vector describes. Camera motion reaches TAA separately (T-20). TAA's use of the signal is T-21.
+- **Rule.** TAA's `rigid_object_motion` is the scene's rigid-change signal (M-9) or a changed visibility mask (F-10), held until the frame is finished: the changes of the frame that no motion vector describes and no footprint marks (M-23). Camera motion reaches TAA separately (T-20). TAA's use of the signal is T-21.
 - **Raised by.** See M-9 and F-10.
 - **Stays triggered while.** See M-9 and F-10.
 - **Source.** SGL3D's own. Code: `stages/antialiasing/mod.rs` (`Antialiasing::encode`), `view/post_fx.rs` (`PostFx::temporal_anti_aliasing`).
@@ -232,7 +237,7 @@ Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`):
 
 #### F-13 Commit takes what the frame drew
 
-- **Rule.** `render` records what the frame draws (`Scene::begin_frame`, which returns the frame's attempt id): each instance's pose, model, visibility and shader data, each deformation's slot and revision, each material's shader parameter block, and the rigid-change signal's and static edits' marks up to it. `finish_frame` commits that record, and only for the attempt the scene last began and has not finished (`Scene::finish_frame(attempt)`); an instance added or a block created since the frame began commits nothing. An edit made after the frame's commands are submitted and before `finish_frame` belongs to the next frame: the next frame measures motion from what the finished frame drew, a deformation set since is written in it, and the rigid-change signal and static-edit bounds raised since stay pending for it. Whether such an edit raises the signal is judged against what the next frame follows: the frame being finished as much as the last finished frame (M-9). An edit between `render` and the submission uploads through the queue before the frame's commands run, so it changes what the frame draws, and is not allowed.
+- **Rule.** `render` records what the frame draws (`Scene::begin_frame`, which returns the frame's attempt id): each instance's pose, model, visibility and shader data, each deformation's slot and revision, each material's shader parameter block, and the rigid-change signal's, the instance footprints' and static edits' marks up to it. `finish_frame` commits that record, and only for the attempt the scene last began and has not finished (`Scene::finish_frame(attempt)`); an instance added or a block created since the frame began commits nothing. An edit made after the frame's commands are submitted and before `finish_frame` belongs to the next frame: the next frame measures motion from what the finished frame drew, a deformation set since is written in it, and the footprints, rigid-change signal and static-edit bounds made since stay pending for it. Whether such an edit leaves footprints, and where it stood, is judged against what the next frame follows: the frame being finished as much as the last finished frame, both of whose states it keeps (M-23). An edit between `render` and the submission uploads through the queue before the frame's commands run, so it changes what the frame draws, and is not allowed.
 - **Raised by.** A loop that renders and submits, updates the scene, then calls `finish_frame`: it loses nothing.
 - **Stays triggered while.** Nothing: no history is rejected.
 - **Source.** SGL3D's own (S3D-4: the caller's `finish_frame` says the frame was submitted), recording at the frame's scene step as engines capture "previous" there: Wicked Engine 4323a33's `Scene::Update` (`wiScene.cpp:4711`), Bevy 9d12036's `PreviousGlobalTransform` (`crates/bevy_pbr/src/prepass/mod.rs`). Code: `scene/mod.rs` (`Scene::begin_frame`, `Scene::finish_frame`), `scene/instances.rs` (`Instances::prepare_frame`, `Instances::finish_frame`), `scene/deformation.rs` (`InstanceDeformation::finish`), `scene/materials/params.rs` (`ParamBlock::prepare_frame`, `ParamBlock::finish_frame`), `scene/static_edits.rs` (`StaticEdits::begin_frame`, `StaticEdits::finish`).
@@ -261,11 +266,11 @@ Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`):
 
 #### F-15 The temporal masks exist only while a writer can mark them
 
-- **Rule.** Each view holds the reactive and transparency-and-composition masks (R8, render size) when FSR runs, or when TAA runs and the scene holds a blended, transmissive or moving-surface material or a sprite batch with sprites or a pending footprint, or draws glow, mist or heat, or the view shows a planar reflector's picture in the frame (`Effective::temporal_masks`); otherwise it releases them and TAA binds no responsive masks. The masks keep no history: the first writer of each frame clears them.
-- **Raised by.** The scene's content, decided scene-wide rather than by what the frame draws.
+- **Rule.** Each view holds the reactive and transparency-and-composition masks (R8, render size) when FSR runs, or when TAA runs and the scene holds a blended, transmissive or moving-surface material or a sprite batch with sprites or a pending footprint, or pending instance footprints (M-23) in a frame that continues the view's history, or draws glow, mist or heat, or the view shows a planar reflector's picture in the frame (`Effective::temporal_masks`); otherwise it releases them and TAA binds no responsive masks. The masks keep no history: the first writer of each frame clears them. Where instance footprints alone hold them, a TAA view holds them in exactly the frames after an instance edit, and its first frame, planned (`Renderer::compile`) or not, makes TAA's resolve with them and, for TAA and FSR alike, the footprints' programs, so the first instance edit creates no program.
+- **Raised by.** The scene's content, decided scene-wide rather than by what the frame draws; an instance edit (M-23) for the frames until one begun after it is finished.
 - **Stays triggered while.** Nothing: no history lives in the masks.
 - **Source.** AMD's FSR sample for formats and blends; the allocation policy is SGL3D's own. Code: `renderer/effective.rs` (`resolve`), `view/targets.rs` (`SharedTargets::set_temporal_masks`), `stages/transparent/mod.rs` (`Transparent::encode`).
-- **Guard.** `the_temporal_masks_are_held_exactly_while_a_writer_can_mark_them` (`renderer/effective.rs`), which counts sprites among the writers; `temporal_masks_are_allocated_only_while_enabled` (`view/targets.rs`); `fsrs_masks_start_clear_each_frame_with_moving_surfaces` (`stages/transparent/composition_tests.rs`).
+- **Guard.** `the_temporal_masks_are_held_exactly_while_a_writer_can_mark_them` (`renderer/effective.rs`), which counts sprites and instance footprints among the writers; `temporal_masks_are_allocated_only_while_enabled` (`view/targets.rs`); `fsrs_masks_start_clear_each_frame_with_moving_surfaces` (`stages/transparent/composition_tests.rs`); `a_changed_instance_marks_where_it_stood_and_stands_and_nothing_else` (`stages/transparent/footprints_tests.rs`), a TAA frame without a change holding none; `a_compiled_level_whose_masks_follow_its_footprints_creates_no_program_as_they_come_and_go` (`renderer/compile_tests.rs`).
 - **Status.** Rule.
 
 #### F-16 Settings changes that restart history
@@ -290,7 +295,7 @@ Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`):
 
 ## Motion vectors
 
-Geometry, the sky and blended receivers write unjittered motion into the G-buffer's motion target: current minus previous UV (+y down) in RG, previous minus current view depth in B and its validity in A. Motion is measured against the scene's motion history (each moving instance's pose, deformation slot and shader data in the last finished frame, each material's parameter block then) and each view's camera and time history. Where content changes without a motion vector, the transparent stage writes the reactive and transparency-and-composition masks instead. A continuously running game most often trips the rigid-change signal (M-9, raised by every moving instance), the composition mark on every material with a game shader (M-16), and the per-pixel marks of blended surfaces and effects (M-11, M-17a–c).
+Geometry, the sky and blended receivers write unjittered motion into the G-buffer's motion target: current minus previous UV (+y down) in RG, previous minus current view depth in B and its validity in A. Motion is measured against the scene's motion history (each moving instance's pose, deformation slot and shader data in the last finished frame, each material's parameter block then) and each view's camera and time history. Where content changes without a motion vector, the transparent stage writes the reactive and transparency-and-composition masks instead. A continuously running game most often trips the footprints of what it spawns, hides or swaps (M-23), the composition mark on materials whose shading changes (M-16), and the per-pixel marks of blended surfaces and effects (M-11, M-17a–c).
 
 ### Encoding
 
@@ -334,9 +339,9 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 
 #### M-4 Static instances write no motion
 
-- **Rule.** A `Mobility::Static` instance's record measures motion from its current pose, so it writes no object motion, even in the frame `set_instance` moves it; that move uncovers its old footprint with no motion vector and raises the rigid-change signal (M-9).
+- **Rule.** A `Mobility::Static` instance's record measures motion from its current pose, so it writes no object motion, even in the frame `set_instance` moves it; that move uncovers its old footprint with no motion vector, which the next frame marks with where it now stands (M-23).
 - **Raised by.** Moving a static instance.
-- **Stays triggered while.** The game moves a static instance every frame, which also raises M-9 every frame.
+- **Stays triggered while.** The game moves a static instance every frame, which also marks its footprints every frame (M-23).
 - **Source.** SGL3D's own. Code: `scene/instances.rs` (`Instance::previous_pose`).
 - **Guard.** `static_instances_write_no_motion_and_moving_ones_measure_from_the_last_submitted_frame` (`scene/content_tests.rs`).
 - **Status.** Rule.
@@ -345,7 +350,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 
 - **Rule.** A moving instance measures motion from its pose in the last finished frame only when it was `visible` then and its model is the same; a new instance, one whose state names another model, one hidden in the last finished frame and one at a reused index write no object motion for that frame. Motion resumes the next frame.
 - **Raised by.** Spawns, model swaps, showing a hidden instance.
-- **Stays triggered while.** Nothing: it lasts one frame. Each of these also raises M-9.
+- **Stays triggered while.** Nothing: it lasts one frame. Each of these also leaves footprints (M-23).
 - **Source.** SGL3D's own. Code: `scene/instances.rs` (`Instance::previous_pose`, `Instances::finish_frame`).
 - **Guard.** `instance_motion_uses_last_submitted_model_after_abandoned_updates`, `static_instances_write_no_motion_and_moving_ones_measure_from_the_last_submitted_frame`, `reused_indices_show_no_earlier_geometry_record_or_motion` (`scene/content_tests.rs`).
 - **Status.** Rule.
@@ -361,7 +366,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 
 #### M-7 Deformation motion only from a visible last frame
 
-- **Rule.** A deforming instance's previous positions are the position slot it showed in the last finished frame only while it was `visible` then; in its first frame or after a hidden frame, previous positions equal current ones and deformation writes no motion that frame. Deformation never raises the rigid-change signal.
+- **Rule.** A deforming instance's previous positions are the position slot it showed in the last finished frame only while it was `visible` then; in its first frame or after a hidden frame, previous positions equal current ones and deformation writes no motion that frame. Deformation never raises the rigid-change signal or leaves footprints (M-23).
 - **Raised by.** Spawns, showing a hidden deforming instance.
 - **Stays triggered while.** Nothing: it lasts one frame.
 - **Source.** SGL3D's own (two position slots). Code: `scene/deformation.rs` (`InstanceDeformation::prepare`, `InstanceDeformation::finish`), `shading/vertex_pull.wgsl` (`scene_source_vertex`).
@@ -379,12 +384,11 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 
 #### M-9 The scene's rigid-change signal
 
-- **Rule.** The scene raises `rigid_objects_changed` for the changes no motion vector describes: when a `visible` instance is added; when `set_instance` changes `visible` of an instance; when it changes the pose (exact matrix inequality) or the model of an instance visible before or after, unless the instance is `Mobility::Moving`, visible now, and its last-submitted pose applies (it was visible in the last finished frame and that frame's model is the one it now names: M-5, and, for an edit made while a frame is rendered and not yet finished, that frame drew it shown with that model too, since finishing it makes its record the pose the next frame measures from: F-13), whose move then writes motion; when an instance visible or shown in the last finished frame is removed; when `Scene::set_model` replaces geometry of a model an instance names and is visible, or names and has a submitted record (a moving instance visible in the last finished frame), or that the frame being rendered showed it with (the submitted record's model is not compared: a swap that made it differ already raised the signal, which only a finished frame begun after the swap, and so drawing the new model, retires); and when `Scene::set_material` makes an edit that changes what its users draw (`SurfaceMaterial::draws_other_geometry`). So it is raised for an appearance, a departure, showing or hiding, a model swap, any move of a `Mobility::Static` instance (M-4) and a move of a moving instance whose last-submitted pose does not apply, and not for a moving instance's move from its submitted pose, wherever it goes, on screen or off. No culling, distance or screen test applies. A finished frame clears what was raised before it rendered (`Scene::begin_frame` records the count raised, `Scene::finish_frame` commits it); what is raised after a frame began stays raised for the next. While it is raised, TAA's `rigid_object_motion` re-arms full rejection over the whole view (T-21), which recovers over TAA's hold. A moving instance's move instead arms the pixels it covers and leaves through its motion: its own pixels and the 1-pixel band of the closest-motion search below a pixel a frame (T-22, T-9), and the motion reach from a pixel to a 32-pixel tile a frame (T-23, M-14), as for deformation and vertex functions, which never raise it. Why the view-wide signal is needed for the rest: what it uncovers has no motion of its own and its previous neighbourhood may already hold it, so neither the depth test nor any per-pixel rule sees the change (T-17, `taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost`).
-- **Raised by.** Spawns, despawns, showing and hiding, model swaps, streaming, moving a static instance, geometry replacement and drawing-changing material edits.
-- **Stays triggered while.** The game adds, removes, shows, hides or swaps the model of a visible-flagged instance, moves a static one, or replaces geometry or edits a material in a way that changes what is drawn, every frame or every few frames, anywhere in the scene, on or off screen: the whole view never reaches TAA's resting stability.
-- **Known limits.** A moving instance that moves faster than the motion reach covers (more than about a 32-pixel tile a frame, a jump, or out of the view in one frame) leaves its old outline to the depth test and the categorical sky alone (T-17, T-16), as deformation does (T-23).
-- **Source.** Filament's global rigid-object signal (`PostProcessManager.cpp` `taa`, re-arm when objects moved), narrowed by SGL3D to changes without a motion vector because its hold is per pixel and the motion reach covers what moves (2026-11-18 history audit, B-1), and extended to departures, geometry and material edits. Code: `scene/instances.rs` (`Instances::geometry_changed`, `Scene::add_instance`, `Scene::set_instance`, `Scene::remove_instance`, `Instances::prepare_frame`, `Instances::finish_frame`), `scene/models.rs` (`Scene::set_model`), `scene/materials.rs` (`Scene::set_material`), `stages/antialiasing/mod.rs` (`Antialiasing::encode`).
-- **Guard.** `rigid_recovery_tracks_departures_until_submission_and_ignores_unchanged_poses`, `rigid_recovery_leaves_moves_with_motion_to_the_pixels`, `material_edits_that_change_what_is_drawn_rearm_until_submission` (`scene/instances.rs`); `a_frame_commits_what_it_drew`, `an_unfinished_frame_commits_nothing`, `an_edit_in_the_window_is_judged_against_the_frame_it_follows` (`scene/content_tests.rs`); `appearance_and_departure_at_rest_resolve_within_the_hold`, `a_static_instance_moved_at_rest_resolves_within_the_hold`, `material_edits_at_rest_resolve_within_the_hold`, `at_rest_taa_holds_silhouettes_beside_a_rigid_mover_still`, `a_rigid_card_moves_from_rest`, `a_disocclusion_recovers` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`).
+- **Rule.** The scene raises `rigid_objects_changed` for a change no motion vector describes that its footprints (M-23) cannot mark: one that would take the pending footprints past 1024 draws (`MAX_FOOTPRINT_DRAWS`, one for each marked mesh of each state) or past 2²¹ triangles (`MAX_FOOTPRINT_TRIANGLES`); or a change of an instance one of whose opaque or masked meshes has a material whose game shader displaces its vertices (`MaterialShader::displacement_bound` above 0) and is not marked in every frame (its shader reads no time and its normal layers stand still: M-16), whose footprint, drawn without the shader, would not lie where its triangles were drawn. The change then leaves no footprint. A finished frame clears what was raised before it rendered (`Scene::begin_frame` records the count raised, `Scene::finish_frame` commits it); what is raised after a frame began stays raised for the next. While it is raised, TAA's `rigid_object_motion` re-arms full rejection over the whole view (T-21), which recovers over TAA's hold. Why view-wide for these: past the cap, drawing every footprint would cost more than the frame it protects; a displaced mesh's footprint is not where it was drawn; and what such a change uncovers has no motion of its own and its previous neighbourhood may already hold it, so neither the depth test nor any per-pixel rule sees it (T-17, `taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost`).
+- **Raised by.** Spawning, removing or swapping more than the cap allows before one frame (a level or a wide area streamed in or out at once, a game's first frame of a large scene); an edit of a material more instances draw with than the cap allows; any change M-23 lists of an instance drawn with a displacing shader that reads no time.
+- **Stays triggered while.** The game makes such changes every frame or every few frames: the whole view never reaches TAA's resting stability.
+- **Source.** Filament's global rigid-object signal (`PostProcessManager.cpp` `taa`, re-arm when objects moved), narrowed by SGL3D to changes without a motion vector (2026-11-18 history audit, B-1) and then to those its footprints cannot mark (#892). Code: `scene/footprints.rs` (`Scene::footprint_stood`, `Scene::footprint_stands`, `Scene::need`), `scene/instances.rs` (`Instances::raise_view_wide`, `Scene::rigid_objects_changed`), `stages/antialiasing/mod.rs` (`Antialiasing::encode`).
+- **Guard.** `past_the_cap_or_under_a_displacing_shader_a_change_rearms_the_view` (`scene/footprints_tests.rs`); `taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost` (`tests/sgl-post-fx/tests/support/adaptive_taa.rs`), the resolve's response to the flag.
 - **Status.** Rule.
 
 #### M-13 LOD switches change geometry without a signal
@@ -448,7 +452,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 
 #### M-16 Surfaces whose shading changes where they stand still are marked 1
 
-- **Rule.** While the frame has the temporal masks and the scene holds an opaque or masked material whose shading may change where its geometry stands still (its normal layers move, it has a game shader, or it names a render texture), or the view shows a planar reflector's picture in this frame, the transparent stage first clears the masks and then marks transparency and composition 1, leaving reactivity, over the camera's sets of the materials whose shading changes in this frame (`Scene::shading_changes`). A material's shading changes in a frame when: its normal layers move (`Material::record_moves`), every frame; its shader's module reads the frame's time or phase anywhere (`Shader::reads_time`, which covers the surface function and, through `custom`, what the vertex function passes it), every frame; or its shader parameter block differs from the last submitted frame's (`Material::parameters_changed`; a block that was in no finished frame has none and counts as unchanged, as an instance's data does, the rigid-change signal M-9 covering the edit that gave the material its shader), or the shader data of an instance of a model drawn with it differs from that instance's in the last submitted frame (`Instances::shader_data_edited`), in that frame alone; or it names a render texture (`SurfaceMaterial::emission_render_texture`) whose picture may differ from the one its surfaces showed in the last finished frame (`RenderTextures::changed`): a render since that frame drew into the texture or `Scene::set_render_texture` replaced it, or the same held for that frame, whose consumers may have sampled the texture before its producer drew (feedback), so every frame while its producer renders and the frame after it stops, and never while the picture stands still. Never for having a shader alone; a write of the values already in effect is no change. An instance's data edit marks the material, so every instance drawn with it, not that instance alone. The sets are drawn at the opaque depth, tested equal, a masked material's cut-out texels discarded; but a masked material changed by an edit is drawn over its whole footprint at or in front of the opaque depth, its cut-out texels included, since the edit may have cut out texels that showed in the last submitted frame and the frame before marked nothing there. Scope: the material's pixels. Recovery: the frame after the change (TAA then holds them as T-25 says).
+- **Rule.** While the frame has the temporal masks and the scene holds an opaque or masked material whose shading may change where its geometry stands still (its normal layers move, it has a game shader, or it names a render texture), or the view shows a planar reflector's picture in this frame, the transparent stage first clears the masks and then marks transparency and composition 1, leaving reactivity, over the camera's sets of the materials whose shading changes in this frame (`Scene::shading_changes`). A material's shading changes in a frame when: its normal layers move (`Material::record_moves`), every frame; its shader's module reads the frame's time or phase anywhere (`Shader::reads_time`, which covers the surface function and, through `custom`, what the vertex function passes it), every frame; or its shader parameter block differs from the last submitted frame's (`Material::parameters_changed`; a block that was in no finished frame has none and counts as unchanged, as an instance's data does, its users' footprints (M-23) covering the edit that gave the material its shader), or the shader data of an instance of a model drawn with it differs from that instance's in the last submitted frame (`Instances::shader_data_edited`), in that frame alone; or it names a render texture (`SurfaceMaterial::emission_render_texture`) whose picture may differ from the one its surfaces showed in the last finished frame (`RenderTextures::changed`): a render since that frame drew into the texture or `Scene::set_render_texture` replaced it, or the same held for that frame, whose consumers may have sampled the texture before its producer drew (feedback), so every frame while its producer renders and the frame after it stops, and never while the picture stands still. Never for having a shader alone; a write of the values already in effect is no change. An instance's data edit marks the material, so every instance drawn with it, not that instance alone. The sets are drawn at the opaque depth, tested equal, a masked material's cut-out texels discarded; but a masked material changed by an edit is drawn over its whole footprint at or in front of the opaque depth, its cut-out texels included, since the edit may have cut out texels that showed in the last submitted frame and the frame before marked nothing there. Scope: the material's pixels. Recovery: the frame after the change (TAA then holds them as T-25 says).
 - **Raised by.** Water and scrolling normal layers; a game shader that reads `ctx.time` or `ctx.phase`; a game editing a shader's parameters or an instance's shader data; an in-world screen whose producer view renders; a mirror or water plane whose material names a planar reflector (`SurfaceMaterial::planar_reflector`), in the views and frames that show its picture (`FrameViews::mirrors`, the architecture's Frame, "Planar reflections"): the picture is the scene mirrored, which moves with the viewer and the scene while its surface's motion vectors stand still. A view that does not show the reflector (it is out of the frustum or the mask, the eye is behind its plane, or the level is `Off`) does not mark it, and a scene's reflectors alone hold no view's masks.
 - **Stays triggered while.** Normal layers move or the shader reads the time (also where it reads it without changing what it draws: the test is of the module's code), or the game changes the parameters or instance data every frame, or a screen's producer renders every frame (also where the picture it draws does not change: the test is of the producer rendering, not of its texels), or a view shows a planar reflector's picture (also where nothing in the picture moves: the test is of the view showing it).
 - **Source.** AMD FidelityFX SDK 1.1.4 sample animated textures (`AnimatedTexture.hlsl`, transparency and composition 1) and FSR documentation (`super-resolution-upscaler.md` 131, 192: the mask is for shading that motion vectors do not follow); the time test is Godot b130438's `is_animated()` reading of a material's code; the edit test and the footprint of an edited masked material are SGL3D's own, from the scene's history of parameter blocks and instance data; a render texture is AMD's animated texture, its change taken from the frames that drew it. Code: `scene/shaders.rs` (`Scene::shading_changes`, `ShadingChanges::of`), `scene/render_textures.rs` (`RenderTextures::changed`), `scene/materials/params.rs` (`ParamBlock::changed`), `scene/instances.rs` (`Instances::shader_data_edited`), `stages/transparent/mod.rs` (`Transparent::encode_composition`), `view/pipelines/pass.rs` (`GeometryPass::TemporalComposition`), `shading/geometry.wgsl` (`temporal_composition_fs`), `view/targets.rs` (`composition_targets`).
@@ -500,6 +504,16 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Guard.** `sprites_mark_the_temporal_masks_as_they_change` (`stages/transparent/sprites_tests.rs`); `a_moving_sprite_shows_itself_and_leaves_no_ghost` (`tests/sgl-3d/tests/scenario_sprites.rs`).
 - **Status.** Rule.
 
+#### M-23 Changed instances mark where they stood and where they stand
+
+- **Rule.** A change of an instance that no motion vector describes leaves footprints: an instance added visible, removed, shown or hidden, given another model, a static instance moved, a moving one moved where its last submitted pose does not apply (M-5), the geometry of a model it shows replaced (`Scene::set_model`), or an edit of a material its model draws with that changes what is drawn (`SurfaceMaterial::draws_other_geometry`). Every view whose frame has the temporal masks and continues its history draws them in the transparent stage's temporal composition pass, beside M-16's marks (a frame that restarts the view's history, F-1, has none for them to protect: it draws none, and TAA holds no masks for them), marking transparency and composition 1 and leaving reactivity: where the instance stood, its opaque and masked meshes as the frames the next may follow drew them (the last finished frame's state and, for an edit between a frame's submission and its `finish_frame`, that frame's: pose, model geometry and deformed positions), at or in front of the opaque depth; and where it stands, its opaque and masked meshes as this frame draws them, from its object record, with no depth test, since the camera's cull may draw a coarser level whose surface lies on either side of the base level's. Both are drawn at the base level of detail, which a drawn level differs from by at most half a pixel (M-13), both faces, cut-out texels included, culled to the view's clip volume and to the visibility groups its mask enables, without the material's vertex function. Blended and transmissive meshes leave none: every frame that drew them marked their coverage (M-11). Nor does a mesh whose material is marked in every frame it is drawn (its normal layers move or its shader reads the time: M-16). A change that would take the pending footprints past 1024 draws or 2²¹ triangles, or of an instance drawn with a shader that displaces its vertices and is not marked every frame, leaves none and raises the view-wide signal instead (M-9). Each state is kept once, in a footprint kept no earlier than the frame it follows began, so repeated edits before a frame add nothing: where the frame being rendered drew the instance as the last finished frame did, the footprint kept for both holds it only when both were kept together. The scene keeps each state's record (its pose and deformed positions) in its own buffer, bound as group 1 in place of the object records, and, while a footprint is pending, the scene-source words of a removed or replaced model and of a removed deforming instance's positions, until a frame begun after the edit is finished, then frees them. Scope: the instance's pixels where it stood and stands, and TAA's 3x3 neighbourhood of them. Recovery: TAA's mask hold, 12 frames after the frame that marked them (T-25); FSR removes its locks and tightens its box there in that frame (U-26, U-45).
+- **Raised by.** Spawns, despawns, showing and hiding, model swaps, moving a static instance, streaming, geometry replacement and drawing-changing material edits.
+- **Stays triggered while.** The game changes the same instance every frame: its pixels stay at full strength while the rest of the view rests.
+- **Known limits.** Where an instance stands is marked whatever lies in front of it, so one that appears behind a surface marks that surface's pixels it projects to. A moving instance moved from its submitted pose leaves none: its motion vectors arm the pixels it covers and leaves (T-22, T-9, T-23), and one that moves faster than the motion reach covers (more than about a 32-pixel tile a frame, a jump, or out of the view in one frame) leaves its old outline to the depth test and the categorical sky alone (T-17, T-16), as deformation does. FSR3 reads the mask undilated (U-45): a footprint's edge within half a pixel of the drawn one may go unmarked there, which FSR's own rectification then takes, as before footprints.
+- **Source.** SGL3D's own, after the footprint of an edited masked material (M-16) and of a removed masked sprite batch (M-21). AMD FidelityFX SDK 1.1.4 `super-resolution-upscaler.md` 131 and 192–194 (the transparency and composition mask for content motion vectors do not describe; 1 removes a pixel's lock) and 427 (the previous depth is reconstructed from the current one, so FSR sees no departure of its own). Wicked Engine 4323a33 (`temporalaaCS.hlsl`) and Godot b130438 (`taa_resolve.glsl`) clip history to the neighbourhood every frame and mark nothing; Filament re-arms the whole view (M-9's source). Code: `scene/footprints.rs` (`Footprints`, `Scene::footprint_stood`, `Scene::footprint_stands`), `scene/instances.rs` (`Instance::uncaptured`), `scene/models.rs` (`Scene::set_model`, `Scene::remove_model`), `scene/materials.rs` (`Scene::set_material`), `view/footprints.rs` (`FootprintList::build`), `stages/transparent/footprints.rs`, `stages/transparent/footprints.wgsl`.
+- **Guard.** `a_changed_instance_marks_where_it_stood_and_stands_and_nothing_else`, `footprints_follow_depth_cut_outs_and_deformation_as_drawn` (`stages/transparent/footprints_tests.rs`); `footprints_track_departures_until_a_frame_is_finished_and_ignore_unchanged_poses`, `footprints_leave_moves_with_motion_to_the_pixels`, `material_edits_that_change_what_is_drawn_leave_footprints_until_a_frame_is_finished`, `a_removed_models_words_wait_while_a_footprint_may_name_them`, `a_state_the_window_keeps_is_kept_once_and_outlives_its_model`, `an_instance_needing_no_footprint_is_marked_once_an_edit_makes_it_need_one` (`scene/footprints_tests.rs`); `a_frame_commits_what_it_drew`, `an_unfinished_frame_commits_nothing`, `an_edit_in_the_window_is_judged_against_the_frame_it_follows` (`scene/content_tests.rs`); `a_changed_instance_keeps_the_rest_of_the_views_history` (`tests/sgl-3d/tests/scenario_history_masks.rs`); `appearance_and_departure_at_rest_resolve_within_the_hold`, `a_static_instance_moved_at_rest_resolves_within_the_hold`, `a_model_swap_at_rest_resolves_within_the_hold`, `material_edits_at_rest_resolve_within_the_hold`, `at_rest_taa_holds_silhouettes_beside_a_rigid_mover_still`, `a_rigid_card_moves_from_rest`, `a_disocclusion_recovers` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`).
+- **Status.** Rule.
+
 ### Consumers' own thresholds
 
 #### M-14 TAA's motion reach
@@ -507,7 +521,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Rule.** Every frame TAA runs, the reach takes the G-buffer's motion in render pixels, clamps each vector to 2 tiles (64 px, `TILE_SIZE` = 32), and writes for each 32 px tile the largest motion in its 3×3 tile neighbourhood; TAA arms its recovery hold where that is at least 1 px a frame (T area). Motion beyond 64 px reads as 64 px.
 - **Raised by.** Camera motion (every tile), any mover.
 - **Stays triggered while.** Anything moves at 1 px a frame or more: a slow continuous mover keeps the 96 px around it armed every frame, and a camera turning at 1 px a frame or more keeps the whole view armed.
-- **Known limits.** A pixel a surface left is armed only while the surface is still within its 3x3 tile neighbourhood, so a deforming surface or a moving instance (M-9) that moves more than about a tile (32 px) a frame leaves its old outline to the depth test and the categorical sky (T-23).
+- **Known limits.** A pixel a surface left is armed only while the surface is still within its 3x3 tile neighbourhood, so a deforming surface or a moving instance moved from its submitted pose (which leaves no footprint, M-23) that moves more than about a tile (32 px) a frame leaves its old outline to the depth test and the categorical sky (T-23).
 - **Source.** Wicked Engine 4323a33 motion-blur tile passes after McGuire et al. 2012; the clamp is McGuire's, which Wicked omits. Code: `stages/antialiasing/reach.rs` (`Reach::encode`), `shading/motion_tiles.wgsl` (`motionblur_velocity`, `motionblur_neighborhoodMaxVelocity`).
 - **Guard.** `at_rest_taa_holds_silhouettes_beyond_the_reach_of_motion_still`, `at_rest_taa_holds_silhouettes_within_the_reach_of_slow_motion_still` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`).
 - **Status.** Rule.
@@ -541,7 +555,8 @@ continuously running game most often trips the shader-material composition mark 
 the masks' hold (T-25), a pixel's own sub-pixel motion (T-22) and the reach of
 anything moving (T-23): each keeps pixels at full strength in a picture that looks
 still. The view-wide signals (T-20, T-21) need the camera to move beyond f32 rounding,
-or content to change with no motion vector.
+or content to change with no motion vector and no footprint (M-9, F-10); an instance
+spawned, removed, hidden or swapped arms the pixels it marks (M-23).
 
 ### Resting and full strength
 
@@ -1076,36 +1091,35 @@ pixel's motion hold is set to 12.
 - **Rule.** When `TemporalAntiAliasingAttribs::rigid_object_motion` is non-zero, the
   resolve arms the hold at every pixel. SGL3D sets it to the scene's rigid-change signal
   (M-9) or a changed visibility mask (F-10), held until the frame is finished: changes
-  no motion vector describes. Recovery is 12 frames after the last frame that raised it.
-  A moving instance moved from its submitted pose does not raise it: the pixels it
-  covers and leaves arm their own holds (T-22, T-9, T-23).
-- **Raised by.** See M-9 and F-10: additions and removals, showing and hiding, model
-  swaps and moves without a usable submitted pose of any instance whose `visible` flag
-  is set before or after (culled, off screen or not), any move of a static instance,
-  model replacement, material edits that change what is drawn, and a changed
-  `FrameInput::visibility_mask`.
-- **Stays triggered while.** The game keeps making such changes, anywhere, however small
-  or far: spawning or despawning every frame, toggling visibility or visibility groups,
-  moving static instances, swapping models. Moving instances posed every frame, traffic
-  and other craft included, do not keep it raised.
+  no motion vector describes that no footprint marks. Recovery is 12 frames after the
+  last frame that raised it. A change an instance's footprints mark (M-23) does not
+  raise it: the pixels where the instance stood and stands arm their mask holds (T-25,
+  T-28). Nor does a moving instance moved from its submitted pose: the pixels it covers
+  and leaves arm their own holds (T-22, T-9, T-23).
+- **Raised by.** See M-9 and F-10: more additions, removals, showings, hidings, model
+  swaps, static moves, geometry replacements or drawing-changing material edits before
+  a frame than the footprints' cap allows; any of them on an instance drawn with a
+  displacing shader that reads no time; and a changed `FrameInput::visibility_mask`.
+- **Stays triggered while.** The game keeps making such changes: toggling visibility
+  groups, streaming more than the cap allows every few frames, changing instances drawn
+  with a displacing shader. Spawning, despawning and swapping within the cap, and moving
+  instances posed every frame, traffic and other craft included, do not keep it raised.
 - **Known limits.** What a moving instance leaves faster than the motion reach covers
   (more than about a 32-pixel tile a frame) has only the depth test and the categorical
   sky (T-17, T-16), as for deformation (T-23).
 - **Source.** Filament `PostProcessManager.cpp` (`taa`, re-arm when `objectMotionVectors`
   exists) with `View.cpp`, modified: Filament re-arms for renderables in its culled
   visible set whose transform changed, because its hold is one value a frame; SGL3D's
-  hold is per pixel and armed by motion and its reach, so it re-arms the view only for
-  changes without a motion vector, culled or not, including appearances, departures,
-  material edits and mask changes.
+  hold is per pixel and armed by motion, its reach and the masks, so it re-arms the
+  view only for changes without a motion vector that its footprints do not mark (#892),
+  and for mask changes.
   Code: `TAA_ComputeTemporalAccumulation.wgsl` (`ComputeTemporalAccumulationPS`);
   `crates/sgl-3d/src/stages/antialiasing/mod.rs` (`Antialiasing::encode`).
 - **Guard.** `taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost`
   (`tests/sgl-post-fx/tests/support/adaptive_taa.rs`), the resolve's response to the flag;
-  `appearance_and_departure_at_rest_resolve_within_the_hold`,
-  `a_static_instance_moved_at_rest_resolves_within_the_hold`,
-  `material_edits_at_rest_resolve_within_the_hold`,
-  `at_rest_taa_holds_silhouettes_beside_a_rigid_mover_still`,
-  `a_rigid_card_moves_from_rest`
+  `past_the_cap_or_under_a_displacing_shader_a_change_rearms_the_view`
+  (`crates/sgl-3d/src/scene/footprints_tests.rs`), what raises it;
+  `appearance_and_departure_at_rest_resolve_within_the_hold` (its masking events)
   (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`).
 - **Status.** Rule.
 
@@ -1144,7 +1158,8 @@ pixel's motion hold is set to 12.
   so its old outline is rejected only by the depth test and the categorical sky (T-17,
   T-16): among distant scenery whose depth step is under the threshold, it ghosts for
   as long as the relaxed blend takes. This holds alike for deformation, vertex functions
-  and moving instances, none of which raise the view-wide signal (M-9).
+  and moving instances moved from their submitted poses, none of which leave
+  footprints (M-23) or raise the view-wide signal (M-9).
 - **Source.** McGuire et al. 2012 and Wicked Engine's motion-blur tile passes; arming
   TAA's hold with them is SGL3D's own.
   Code: `crates/sgl-3d/src/stages/antialiasing/reach.rs` (`Reach::encode`);
@@ -1202,7 +1217,7 @@ pixel's motion hold is set to 12.
 
 - **Rule.** TAA does not distinguish the reactive mask from the transparency and
   composition mask: it takes the larger over the pixel's 3x3 neighbourhood as `m`
-  (T-25), so each writer's mark reaches a pixel beyond what it covers. The writers (M-11, M-16, M-17a to M-17c, M-21, M-22) give:
+  (T-25), so each writer's mark reaches a pixel beyond what it covers. The writers (M-11, M-16, M-17a to M-17c, M-21, M-22, M-23) give:
   - Blended and transmissive surfaces (M-11): reactive up to 0.9 (also where they
     overlap), composition up to their coverage (1 for a transmissive non-blended one),
     so a near-opaque blended surface holds full or near-full strength on and through it
@@ -1221,11 +1236,15 @@ pixel's motion hold is set to 12.
     over what a removed or restyled batch drew; nothing over an unchanged batch, whose
     depth and motion are then an opaque surface's.
   - Blended sprites (M-22): as blended surfaces, reactive and composition their alpha.
+  - Changed instances (M-23): composition 1, for the frame after the change, where an
+    instance stood (at or in front of the opaque depth) and where it stands, so those
+    pixels and their neighbourhood are at full strength that frame and the 12 of the
+    mask hold after it, and nothing else in the view is.
 
   The masks are bound only in frames whose scene can mark them; without them `m` is 0
   and the mask hold decays.
 - **Raised by.** Blended or transmissive materials, materials whose shading changes, glow,
-  mist, heat and sprites in view.
+  mist, heat and sprites in view; instances changed without a motion vector.
 - **Stays triggered while.** Any of them is in view, moving or not.
 - **Source.** AMD FidelityFX SDK 1.1.4 (FSR's reactive and composition masks) for the
   values; their use as TAA strength is SGL3D's own.
@@ -1234,7 +1253,9 @@ pixel's motion hold is set to 12.
 - **Guard.** `marked_content_at_rest_responds_and_leaves_no_trail`
   (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`);
   `the_temporal_masks_are_held_exactly_while_a_writer_can_mark_them`
-  (`crates/sgl-3d/src/renderer/effective.rs`).
+  (`crates/sgl-3d/src/renderer/effective.rs`);
+  `a_changed_instance_keeps_the_rest_of_the_views_history`
+  (`tests/sgl-3d/tests/scenario_history_masks.rs`).
 - **Status.** Rule.
 
 #### T-29 Shader materials held at full strength while their shading changes
@@ -1262,12 +1283,14 @@ pixel's motion hold is set to 12.
 ### How the rules combine
 
 - T-20 and T-21 both arm the hold at every pixel; either alone keeps the whole view at
-  full strength. Neither is raised by a camera at rest within f32 rounding or by
-  moving instances posed from their submitted pose.
+  full strength. Neither is raised by a camera at rest within f32 rounding, by moving
+  instances posed from their submitted pose, or by instance changes within the
+  footprints' cap (M-23), which arm only their own pixels through T-25.
 - T-22 makes T-24's gradual sub-pixel response moot; T-22, T-9 and T-23 together cover
   what anything with a motion vector leaves, up to about 32 pixels a frame.
-- T-17 cannot see disocclusions among distant scenery, which is why T-21 stays
-  view-wide for changes without a motion vector; what moves faster than T-23's reach
+- T-17 cannot see disocclusions among distant scenery, which is why changes without a
+  motion vector mark where the instance stood and stands (M-23), and T-21 stays
+  view-wide for those its footprints cannot mark; what moves faster than T-23's reach
   shares that limit.
 - T-25's dilation keeps the jittered edges of still marked content at `m`; only content
   narrower than a pixel that a whole neighbourhood misses on some phases still meets
@@ -1426,13 +1449,13 @@ units, with `view_space_to_meters_factor` 1. AMD file names abbreviate
 
 ### What the masks do in each version
 
-The mask writers and their values are M-11, M-16 and M-17. This group states only how each FSR version uses the
+The mask writers and their values are M-11, M-16, M-17 and M-21 to M-23. This group states only how each FSR version uses the
 reactive mask and the transparency and composition (T&C) mask. Beware AMD's naming: in FSR3's code the "reactive"
 channel holds T&C and motion divergence, and the game's reactive mask feeds the "shading change" channel.
 
 #### U-9 Masks start clear every frame
 
-See M-11, M-16 and M-17a to M-17c (the first writer of a frame clears both masks; FSR binds them in every frame).
+See M-11, M-16, M-17a to M-17c and M-23 (the first writer of a frame clears both masks; FSR binds them in every frame).
 
 #### U-10 Overlapping writers combine within 0.9
 
@@ -1539,7 +1562,7 @@ displacement is zero; FSR uses it as U-26 and U-45).
   U-25. It multiplies lock lifetime by `1 − mask`, raises the rectification box's tightening factor to at least the
   mask (U-29), multiplies luma instability by `1 − mask`, and skips the luma history at 0.1 or more. It leaves the
   accumulation weight alone.
-- **Raised by.** U-11, blended coverage, mist, heat (M-11, M-16, M-17a, M-17c); motion discontinuities.
+- **Raised by.** U-11, blended coverage, mist, heat, changed instances' footprints (M-11, M-16, M-17a, M-17c, M-23); motion discontinuities.
 - **Stays triggered while.** Marked materials are in view, and along every silhouette whose motion differs from
   its neighbours'.
 - **Source.** AMD `fsr2/depth_clip.h` (`PreProcessReactiveMasks`), `fsr2/postprocess_lock_status.h`
@@ -1569,7 +1592,7 @@ displacement is zero; FSR uses it as U-26 and U-45).
   "reactive" channel. That channel raises the box's tightening factor to at least its square root (U-48), drains
   locks by twice its value a frame and scales new locks by one minus it (U-50), and multiplies luma instability by
   one minus it. It leaves the accumulation counter alone.
-- **Raised by.** U-11, blended coverage, mist, heat (M-11, M-16, M-17a, M-17c); U-42.
+- **Raised by.** U-11, blended coverage, mist, heat, changed instances' footprints (M-11, M-16, M-17a, M-17c, M-23); U-42.
 - **Stays triggered while.** Marked materials are in view; the near road at speed (U-42).
 - **Source.** AMD `fsr3/prepare_reactivity.h` (`DilateTransparencyAndCompositionMasks`, `PrepareReactivity`),
   `fsr3/accumulate.h` (`RectifyHistory`, `UpdateLockStatus`); faithful port (`sp-fidelity`).

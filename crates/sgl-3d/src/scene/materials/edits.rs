@@ -83,6 +83,26 @@ impl Scene {
                 return Err(SceneError::DeviceLimit);
             }
         }
+        // Where its users' instances stood, with what it drew before the
+        // edit, where the edit changes what is drawn (M-23): once it is
+        // known to take.
+        self.materials.validate_edit(
+            (
+                &self.shaders,
+                &self.render_textures,
+                &self.planar_reflectors,
+            ),
+            id,
+            &values,
+        )?;
+        let showing: Vec<(ModelId, Vec<crate::InstanceId>)> = if old.draws_other_geometry(&values) {
+            users
+                .iter()
+                .map(|&model| (model, self.footprint_model_stood(model)))
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.materials.set(
             queue,
             (
@@ -110,12 +130,9 @@ impl Scene {
         }
         self.candidates
             .material_changed(id, super::super::candidates::look(self.materials.get(id)?));
-        // What its users draw appearing or departing at rest re-arms
-        // temporal rejection, as a geometry replacement does.
-        if old.draws_other_geometry(&values) {
-            for &model in &users {
-                self.instances.geometry_changed(model);
-            }
+        // And where they stand, drawn as it draws now.
+        for (model, showing) in &showing {
+            self.footprint_model_stands(*model, showing);
         }
         Ok(())
     }

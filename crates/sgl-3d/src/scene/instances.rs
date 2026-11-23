@@ -26,9 +26,10 @@ pub(crate) struct Instance {
     /// its model's mesh order, which local-light shadow faces test; empty
     /// for a moving instance, which they test whole.
     pub casters: Vec<PosedClusters>,
-    /// A moving instance's pose and model in the last submitted frame, when
-    /// it was visible in it.
-    submitted: Option<(Mat4, ModelId)>,
+    /// Its pose and model in the last submitted frame, when it was visible
+    /// in it: a moving instance's motion is measured from it, and a change
+    /// no motion vector describes marks where it stood (M-23).
+    drawn: Option<(Mat4, ModelId)>,
     /// Its written record's motion is from before the last submitted frame.
     stale: bool,
     /// Its pose of its model's deformation, when the model deforms.
@@ -43,6 +44,29 @@ pub(crate) struct Instance {
     /// What the frame being rendered draws of it, which a finished frame
     /// commits; none when it was added since the frame began.
     rendered: Option<Shown>,
+    /// What its footprints hold (M-23).
+    captured: Captured,
+}
+
+/// Which of its states an instance's footprints hold (M-23): where the
+/// last finished frame drew it and where the frame being rendered draws
+/// it, since those frames, and where it stands, since the last frame began.
+#[derive(Clone, Copy, Default)]
+struct Captured {
+    drawn: bool,
+    rendered: bool,
+    stands: bool,
+}
+
+/// A state a frame drew of an instance, for its footprint
+/// (`Instance::uncaptured`): its pose, its model, its deformed positions'
+/// slot in the scene source (zero for a rigid one) and their bounds in the
+/// model's space.
+pub(crate) struct Drawn {
+    pub pose: Mat4,
+    pub model: ModelId,
+    pub positions: u32,
+    pub bounds: Option<[Vec3; 2]>,
 }
 
 /// What a frame draws of an instance (`Scene::begin_frame`).
@@ -66,13 +90,14 @@ impl Instance {
             mobility,
             baked_irradiance: AmbientCube::default(),
             casters: Vec::new(),
-            submitted: None,
+            drawn: None,
             stale: false,
             deformation,
             shader_data: [0.; 4],
             submitted_shader_data: None,
             shader_stale: false,
             rendered: None,
+            captured: Captured::default(),
         };
         instance.pose_casters(model);
         instance
@@ -103,32 +128,88 @@ impl Instance {
     /// makes its record the pose motion is measured from (F-13).
     fn last_pose_applies(&self, model: ModelId) -> bool {
         self.mobility == Mobility::Moving
-            && self
-                .submitted
-                .is_some_and(|(_, submitted)| submitted == model)
+            && self.drawn.is_some_and(|(_, drawn)| drawn == model)
             && self
                 .rendered
                 .is_none_or(|shown| shown.visible && shown.model == model)
     }
 
-    /// Whether it names `model` now and is visible or has a submitted
-    /// record (a moving instance visible in the last finished frame), or
-    /// the frame being rendered showed it with `model`. The submitted
-    /// record's model is not compared: a swap that made it differ already
-    /// raised the signal, which only a finished frame that began after the
-    /// swap, and so drew the new model, retires.
+    /// Whether a frame the next one may follow drew it with `model`, or it
+    /// is visible with it now.
     fn shows(&self, model: ModelId) -> bool {
-        (self.state.model == model && (self.state.visible || self.submitted.is_some()))
+        self.drawn.is_some_and(|(_, drawn)| drawn == model)
             || self
                 .rendered
                 .is_some_and(|shown| shown.visible && shown.model == model)
+            || (self.state.visible && self.state.model == model)
+    }
+
+    /// The states the frames the next one may follow drew of it that its
+    /// footprints do not hold yet (M-23), each drawn with a model `accepts`:
+    /// the last finished frame's and the frame being rendered's, each where
+    /// it was visible, with the deformed positions that frame showed, which
+    /// `models`' deformation lays out; and which of the two its footprints
+    /// hold once those states are kept. The frame being rendered's state is
+    /// left out where it is the last finished frame's and that is kept in
+    /// the same footprint, which then holds both.
+    pub(crate) fn uncaptured(
+        &self,
+        models: &super::models::Models,
+        accepts: impl Fn(ModelId) -> bool,
+    ) -> ([Option<Drawn>; 2], [bool; 2]) {
+        let shown = self.deformation.as_ref().map_or([None; 2], |deformation| {
+            let model = models.slots.get(self.state.model);
+            let model = model.and_then(|model| model.deformation.as_ref());
+            deformation.shown(model.expect("a deforming instance's model deforms"))
+        });
+        let drawn = |(pose, model): (Mat4, ModelId), slot: Option<(u32, [Vec3; 2])>| Drawn {
+            pose,
+            model,
+            positions: slot.map_or(0, |(word, _)| word),
+            bounds: slot.map(|(_, bounds)| bounds),
+        };
+        let finished = self
+            .drawn
+            .filter(|&(_, model)| !self.captured.drawn && accepts(model))
+            .map(|state| drawn(state, shown[0]));
+        let rendered = self
+            .rendered
+            .filter(|state| state.visible && !self.captured.rendered && accepts(state.model))
+            .map(|state| (state.pose, state.model));
+        // Only a footprint kept now holds the frame being rendered's state
+        // for as long as it does: one kept before the frame began retires
+        // when it is finished, before the next frame that follows it.
+        let folded = finished.is_some()
+            && rendered.is_some_and(|state| Some(state) == self.drawn && shown[1] == shown[0]);
+        let rendered = rendered
+            .filter(|_| !folded)
+            .map(|state| drawn(state, shown[1]));
+        let held = [finished.is_some(), rendered.is_some() || folded];
+        ([finished, rendered], held)
+    }
+
+    /// Its footprints now hold the last finished frame's state where
+    /// `drawn` and the frame being rendered's where `rendered`.
+    pub(crate) fn captured(&mut self, [drawn, rendered]: [bool; 2]) {
+        self.captured.drawn |= drawn;
+        self.captured.rendered |= rendered;
+    }
+
+    /// Whether its footprints do not yet mark where it stands.
+    pub(crate) fn stands_uncaptured(&self) -> bool {
+        !self.captured.stands
+    }
+
+    /// Its footprints mark where it stands until the next frame begins.
+    pub(crate) fn stands_captured(&mut self) {
+        self.captured.stands = true;
     }
 
     /// The pose motion is measured from: a moving instance's pose in the
     /// last submitted frame while that pose applies, else its current pose,
     /// which writes no motion.
     fn previous_pose(&self) -> Mat4 {
-        match (self.mobility, self.submitted) {
+        match (self.mobility, self.drawn) {
             (Mobility::Moving, Some((pose, model))) if model == self.state.model => pose,
             _ => self.state.pose,
         }
@@ -190,15 +271,12 @@ pub(crate) struct Instances {
     pub objects: Objects,
     /// Live static and moving instances.
     counts: [usize; 2],
-    /// Changes that no motion vector describes (M-9), counted as raised:
-    /// appearances, departures, showing or hiding, model and geometry
-    /// replacement, a static instance moved, a moving one moved where its
-    /// last submitted pose does not apply, and material edits that change
-    /// what their users draw (`Scene::set_material`). A moving instance's
-    /// move from its submitted pose, deformation and vertex functions write
-    /// motion and do not raise it. The count the frame being rendered saw,
-    /// and the count the last finished frame saw: a finished frame retires
-    /// what was raised before it began.
+    /// Changes that no motion vector describes and no footprint marks
+    /// (M-9, `Scene::footprint_stood`), counted as raised: those past the
+    /// footprints' cap, and those of an instance drawn with a shader that
+    /// displaces its vertices and is not marked every frame. The count the
+    /// frame being rendered saw, and the count the last finished frame saw:
+    /// a finished frame retires what was raised before it began.
     rigid: [u64; 3],
     /// The instances whose shader data was set since the last submitted
     /// frame (`set_shader_data`), repeats and removed ones included, and
@@ -211,14 +289,6 @@ pub(crate) struct Instances {
 const RAISED: usize = 0;
 const RENDERED: usize = 1;
 const COMMITTED: usize = 2;
-
-/// Raises the rigid-change signal `rigid` (`Instances::rigid`) when
-/// `changed`.
-fn raise_rigid(rigid: &mut [u64; 3], changed: bool) {
-    if changed {
-        rigid[RAISED] = rigid[RAISED].wrapping_add(1);
-    }
-}
 
 /// `Instances::counts`' index of a mobility.
 fn kind(mobility: Mobility) -> usize {
@@ -276,14 +346,21 @@ impl Instances {
             })
     }
 
-    /// Geometry replacement, or a material edit that changes what `model`'s
-    /// meshes draw, can uncover old pixels without any pose motion.
-    /// Include prior visible users even when the new geometry/position is
-    /// culled: those the last finished frame or the frame being rendered
-    /// showed, which the next frame follows.
-    pub fn geometry_changed(&mut self, model: ModelId) {
-        let changed = self.slots.iter().any(|(_, instance)| instance.shows(model));
-        raise_rigid(&mut self.rigid, changed);
+    /// Raises the view-wide signal (M-9) for a change no footprint marks.
+    pub fn raise_view_wide(&mut self) {
+        self.rigid[RAISED] = self.rigid[RAISED].wrapping_add(1);
+    }
+
+    /// The instances a frame the next one may follow drew with `model`, or
+    /// that are visible with it now, culled or not: those whose pixels a
+    /// replacement of its geometry, or an edit of what a material draws
+    /// on it, changes without a motion vector.
+    pub fn showing(&self, model: ModelId) -> Vec<InstanceId> {
+        self.slots
+            .iter()
+            .filter(|(_, instance)| instance.shows(model))
+            .map(|(id, _)| id)
+            .collect()
     }
 
     /// Rewrites the object records of `model`'s instances.
@@ -350,7 +427,7 @@ impl Instances {
         let mut records = Vec::new();
         for (id, instance) in self.slots.iter_mut() {
             instance.state.pose = translated(instance.state.pose, by);
-            if let Some((pose, _)) = &mut instance.submitted {
+            if let Some((pose, _)) = &mut instance.drawn {
                 *pose = translated(*pose, by);
             }
             if let Some(shown) = &mut instance.rendered {
@@ -371,12 +448,13 @@ impl Instances {
     }
 
     /// Commits a submitted frame, as it drew each instance it drew
-    /// (`prepare_frame`): a moving instance's pose and deformation become
-    /// the ones its motion is measured from while it was visible, and its
-    /// shader data the one its shaders' motion is. The rigid changes and
-    /// shader-data edits made before the frame began are retired. An
-    /// instance added since commits nothing, and edits made since stay for
-    /// the next frame.
+    /// (`prepare_frame`): its pose and model become where it was drawn
+    /// while it was visible, which a moving instance's motion is measured
+    /// from and its footprints mark (M-23), its deformation the one its
+    /// motion is measured from, and its shader data the one its shaders'
+    /// motion is. The view-wide changes and shader-data edits made before the
+    /// frame began are retired. An instance added since commits nothing,
+    /// and edits made since stay for the next frame.
     pub fn finish_frame(&mut self) {
         self.rigid[COMMITTED] = self.rigid[RENDERED];
         self.shader_edits.drain(..self.shader_edits_rendered);
@@ -395,11 +473,12 @@ impl Instances {
             if let Some(deformation) = &mut instance.deformation {
                 deformation.finish(shown.visible);
             }
-            if instance.mobility == Mobility::Moving {
-                let on_gpu = instance.previous_pose();
-                instance.submitted = shown.visible.then_some((shown.pose, shown.model));
-                instance.stale |= instance.previous_pose() != on_gpu;
-            }
+            let on_gpu = instance.previous_pose();
+            instance.drawn = shown.visible.then_some((shown.pose, shown.model));
+            instance.stale |= instance.previous_pose() != on_gpu;
+            // The frame's state is where it was drawn now.
+            instance.captured.drawn = instance.captured.rendered;
+            instance.captured.rendered = false;
         }
     }
 
@@ -443,6 +522,10 @@ impl Instances {
                 visible: instance.state.visible,
                 shader_data: instance.shader_data,
             });
+            // The frame draws its own state, and marks where it stands from
+            // the edits before it.
+            instance.captured.rendered = false;
+            instance.captured.stands = false;
         }
     }
 }
@@ -506,10 +589,11 @@ impl Scene {
             .slots
             .insert(Instance::new(state, mobility, model, deformation));
         self.instances.counts[kind(mobility)] += 1;
-        raise_rigid(&mut self.instances.rigid, state.visible);
         self.write_instance(queue, id);
         // Its index may be a removed instance's.
         self.instances.write_shader_data(queue, id);
+        // An appearance writes no motion (M-5): its footprint marks it.
+        self.footprint_stands(id);
         Ok(id)
     }
 
@@ -525,8 +609,9 @@ impl Scene {
         self.ray_instances.set(id.index(), ray, pose);
     }
 
-    /// Changes without a motion vector, visible now or before their
-    /// departure (M-9). Deliberately conservative across frustum and
+    /// Changes without a motion vector that no footprint marks (M-9): past
+    /// the footprints' cap, or under a displacing shader that is not
+    /// marked every frame. Deliberately conservative across frustum and
     /// occlusion culling: a culled new state can still expose history at
     /// the old one. A finished frame clears what was raised before it
     /// began.
@@ -602,39 +687,45 @@ impl Scene {
         let placed = instance.state.pose != state.pose || previous != state.model;
         // A moving instance whose last submitted pose applies to the new
         // state writes its move as motion, which TAA follows per pixel; any
-        // other change has no motion vector and re-arms the view (M-9).
-        // Between a frame's submission and `finish_frame` that pose is the
-        // frame's own record as much as the last finished frame's.
+        // other change has no motion vector and marks where the instance
+        // stood and stands (M-23). Between a frame's submission and
+        // `finish_frame` that pose is the frame's own record as much as the
+        // last finished frame's.
         let motion_describes_it = state.visible && instance.last_pose_applies(state.model);
-        raise_rigid(
-            &mut self.instances.rigid,
-            (old.visible || state.visible)
-                && (old.visible != state.visible || (placed && !motion_describes_it)),
-        );
+        let unmoving = (old.visible || state.visible)
+            && (old.visible != state.visible || (placed && !motion_describes_it));
+        if unmoving {
+            self.footprint_stood(id, None);
+        }
+        let instance = self.instances.slots.get_mut(id).unwrap();
         instance.state = state;
         instance.stale = false;
         if placed {
             instance.pose_casters(self.models.get(state.model)?);
         }
         self.write_instance(queue, id);
+        if unmoving {
+            self.footprint_stands(id);
+        }
         Ok(())
     }
 
-    /// Removes an instance. Its index is reused under a new identity.
+    /// Removes an instance. Its index is reused under a new identity. Where
+    /// a frame drew it, the next marks where it stood (M-23), and a
+    /// deforming instance's positions stay until that frame is finished.
     pub fn remove_instance(&mut self, id: InstanceId) -> Result<(), SceneError> {
         self.edited();
+        self.instances.get(id)?;
+        self.footprint_stood(id, None);
         let mut instance = self
             .instances
             .slots
             .remove(id)
             .ok_or(SceneError::UnknownInstance)?;
-        raise_rigid(
-            &mut self.instances.rigid,
-            instance.state.visible || instance.submitted.is_some(),
-        );
         self.candidates.remove(id.index());
         if let Some(deformation) = instance.deformation.take() {
-            deformation.free(&mut self.rays);
+            self.footprints
+                .free(&mut self.rays, deformation.into_words());
         }
         let shaded = self.shaded_bounds(self.drawn_model(instance.state.model));
         let model = self
@@ -679,352 +770,5 @@ impl Scene {
             .objects
             .write_baked_irradiance(queue, id.index(), cube);
         Ok(())
-    }
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod temporal_recovery_tests {
-    use super::*;
-
-    // A hidden or removed object, or replaced geometry, can uncover
-    // zero-motion background. Observe changes through real scene mutations,
-    // rather than setting the temporal signal directly.
-    #[test]
-    fn rigid_recovery_tracks_departures_until_submission_and_ignores_unchanged_poses() {
-        let Some((device, queue)) = crate::test_support::device() else {
-            return;
-        };
-        let mut scene = Scene::new(&device, &queue);
-        let model = scene
-            .add_asset(&device, &queue, crate::test_support::cube())
-            .unwrap()
-            .model;
-        let mut state = InstanceState {
-            model,
-            pose: Mat4::IDENTITY,
-            visible: true,
-            capture_visible: true,
-        };
-        let id = scene
-            .add_instance(&device, &queue, state, Mobility::Moving)
-            .unwrap();
-        assert!(
-            scene.rigid_objects_changed(),
-            "appearance exposes new temporal content"
-        );
-        scene.test_frame(&device, &queue);
-        scene.set_instance(&queue, id, state).unwrap();
-        assert!(
-            !scene.rigid_objects_changed(),
-            "repeated game pose writes must not suppress stabilization"
-        );
-        scene
-            .set_model(
-                &device,
-                &queue,
-                model,
-                crate::PreparedModel::new(Vec::new()).unwrap(),
-            )
-            .unwrap();
-        assert!(
-            scene.rigid_objects_changed(),
-            "same-ID geometry removal uncovers history even though instance pose and identity are unchanged"
-        );
-        scene.test_frame(&device, &queue);
-        state.visible = false;
-        scene.set_instance(&queue, id, state).unwrap();
-        assert!(
-            scene.rigid_objects_changed(),
-            "hiding a previously visible object is a departure"
-        );
-        scene.test_frame(&device, &queue);
-        state.pose = Mat4::IDENTITY;
-        scene.set_instance(&queue, id, state).unwrap();
-        assert!(
-            !scene.rigid_objects_changed(),
-            "fully hidden rigid motion has no visible history"
-        );
-        state.visible = true;
-        scene.set_instance(&queue, id, state).unwrap();
-        scene.test_frame(&device, &queue);
-        scene.remove_instance(id).unwrap();
-        assert!(
-            scene.rigid_objects_changed(),
-            "removal must retain departure evidence after its slot is gone"
-        );
-        scene.test_frame(&device, &queue);
-        assert!(
-            !scene.rigid_objects_changed(),
-            "only submission retires departure evidence"
-        );
-    }
-
-    // Plausible defects: a moving instance's move, which its motion vectors
-    // describe, re-arms the whole view (so a scene with anything moving never
-    // rests); or a change that writes no motion vector does not. The
-    // expected values are M-9's rule: a pose change of a moving instance
-    // whose last submitted pose applies (visible in that frame and now, the
-    // same model) leaves the signal down, wherever it moves; every change M-5
-    // and M-4 give no motion (another model, hidden, shown after a hidden
-    // frame, a hidden new instance shown and moved before its first
-    // submitted frame, a static instance moved) raises it until a frame is
-    // submitted.
-    #[test]
-    fn rigid_recovery_leaves_moves_with_motion_to_the_pixels() {
-        let Some((device, queue)) = crate::test_support::device() else {
-            return;
-        };
-        let mut scene = Scene::new(&device, &queue);
-        let mut add_model = || {
-            scene
-                .add_asset(&device, &queue, crate::test_support::cube())
-                .unwrap()
-                .model
-        };
-        let (model, other) = (add_model(), add_model());
-        let at = |x: f32| Mat4::from_translation(Vec3::new(x, 0., 0.));
-        let shown = |model| InstanceState {
-            model,
-            pose: Mat4::IDENTITY,
-            visible: true,
-            capture_visible: true,
-        };
-        let moving = scene
-            .add_instance(&device, &queue, shown(model), Mobility::Moving)
-            .unwrap();
-        let fixed = scene
-            .add_instance(&device, &queue, shown(model), Mobility::Static)
-            .unwrap();
-        let mut state = InstanceState {
-            pose: at(0.5),
-            ..shown(model)
-        };
-        scene.test_frame(&device, &queue);
-        let expect = |scene: &mut Scene, change: InstanceState, id, raised: bool, what: &str| {
-            scene.set_instance(&queue, id, change).unwrap();
-            assert_eq!(scene.rigid_objects_changed(), raised, "{what}");
-            scene.test_frame(&device, &queue);
-            assert!(
-                !scene.rigid_objects_changed(),
-                "{what}: only submission retires it"
-            );
-        };
-        for (x, what) in [
-            (0.5, "a moving instance moved from its submitted pose"),
-            (1000., "a moving instance moved out of view"),
-            (0.75, "a moving instance moved back into view"),
-        ] {
-            state.pose = at(x);
-            expect(&mut scene, state, moving, false, what);
-        }
-        state.model = other;
-        expect(
-            &mut scene,
-            state,
-            moving,
-            true,
-            "a moving instance given another model",
-        );
-        state.pose = at(1.);
-        expect(
-            &mut scene,
-            state,
-            moving,
-            false,
-            "the next move of the other model",
-        );
-        state.visible = false;
-        expect(&mut scene, state, moving, true, "a moving instance hidden");
-        state = InstanceState {
-            pose: at(2.),
-            ..shown(other)
-        };
-        expect(
-            &mut scene,
-            state,
-            moving,
-            true,
-            "a moving instance shown elsewhere after a hidden frame",
-        );
-        expect(
-            &mut scene,
-            InstanceState {
-                pose: at(0.25),
-                ..shown(model)
-            },
-            fixed,
-            true,
-            "a static instance moved",
-        );
-        let fresh = scene
-            .add_instance(
-                &device,
-                &queue,
-                InstanceState {
-                    visible: false,
-                    ..shown(model)
-                },
-                Mobility::Moving,
-            )
-            .unwrap();
-        assert!(
-            !scene.rigid_objects_changed(),
-            "a hidden instance added shows nothing"
-        );
-        scene
-            .set_instance(
-                &queue,
-                fresh,
-                InstanceState {
-                    pose: at(3.),
-                    ..shown(model)
-                },
-            )
-            .unwrap();
-        assert!(
-            scene.rigid_objects_changed(),
-            "an instance with no submitted frame shown and moved"
-        );
-    }
-
-    // Plausible defect: a material edit that adds or removes what its
-    // users draw, with nothing moving, leaves the view-wide signal down, so
-    // the camera at rest fades the change in over many frames. The expected
-    // values are Frame item 11's rule: an edit raises the signal, until a
-    // submitted frame, exactly when it changes what a visible instance's
-    // meshes draw; shading alone, or a material nothing visible draws with,
-    // does not.
-    #[test]
-    fn material_edits_that_change_what_is_drawn_rearm_until_submission() {
-        use crate::{AlphaMode, MaterialShader, SurfaceMaterial};
-        let Some((device, queue)) = crate::test_support::device() else {
-            return;
-        };
-        let mut scene = Scene::new(&device, &queue);
-        let shader = crate::test_support::add_test_shader(&mut scene);
-        let mut material = |visible: bool| {
-            let ids = scene
-                .add_asset(&device, &queue, crate::test_support::cube())
-                .unwrap();
-            let state = InstanceState {
-                visible,
-                ..InstanceState::new(ids.model)
-            };
-            scene
-                .add_instance(&device, &queue, state, Mobility::Moving)
-                .unwrap();
-            ids.materials[0]
-        };
-        let (shown, hidden) = (material(true), material(false));
-        let base = scene.material(shown).unwrap();
-        let masked = |cutoff| SurfaceMaterial {
-            alpha: AlphaMode::Mask { cutoff },
-            ..base
-        };
-        let blended = |receives_screen_space_reflections, keeps_specular| SurfaceMaterial {
-            alpha: AlphaMode::Blend {
-                receives_screen_space_reflections,
-                keeps_specular,
-            },
-            ..base
-        };
-        let edits = [
-            (
-                "visibility group",
-                base,
-                SurfaceMaterial {
-                    visibility_group: base.visibility_group ^ 2,
-                    ..base
-                },
-                true,
-            ),
-            ("opaque to masked", base, masked(0.5), true),
-            ("mask cutoff", masked(0.5), masked(0.75), true),
-            (
-                "masked base alpha",
-                masked(0.5),
-                SurfaceMaterial {
-                    base: [base.base[0], base.base[1], base.base[2], 0.25],
-                    ..masked(0.5)
-                },
-                true,
-            ),
-            ("opaque to blended", base, blended(false, false), true),
-            (
-                "masked to blended",
-                masked(0.5),
-                blended(false, false),
-                true,
-            ),
-            (
-                "transmissive",
-                base,
-                SurfaceMaterial {
-                    transmission: 1.,
-                    ..base
-                },
-                true,
-            ),
-            (
-                "blended receiver",
-                blended(false, false),
-                blended(true, false),
-                true,
-            ),
-            (
-                "double-sided",
-                base,
-                SurfaceMaterial {
-                    double_sided: !base.double_sided,
-                    ..base
-                },
-                true,
-            ),
-            (
-                "shader",
-                base,
-                SurfaceMaterial {
-                    shader: Some(MaterialShader {
-                        shader,
-                        displacement_bound: 0.,
-                    }),
-                    ..base
-                },
-                true,
-            ),
-            (
-                "colour",
-                base,
-                SurfaceMaterial {
-                    base: [0.25, 0.5, 0.75, base.base[3]],
-                    ..base
-                },
-                false,
-            ),
-            (
-                "blended specular",
-                blended(false, false),
-                blended(false, true),
-                false,
-            ),
-        ];
-        for (name, before, after, draws) in edits {
-            for (id, users) in [(shown, "a visible instance"), (hidden, "nothing visible")] {
-                scene.set_material(&queue, id, before).unwrap();
-                scene.test_frame(&device, &queue);
-                scene.set_material(&queue, id, after).unwrap();
-                let expected = draws && id == shown;
-                assert_eq!(
-                    scene.rigid_objects_changed(),
-                    expected,
-                    "{name} edit of a material {users} draws with"
-                );
-                scene.test_frame(&device, &queue);
-                assert!(
-                    !scene.rigid_objects_changed(),
-                    "{name}: only submission retires the edit"
-                );
-            }
-        }
     }
 }

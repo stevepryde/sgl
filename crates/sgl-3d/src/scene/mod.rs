@@ -15,6 +15,7 @@ pub(crate) mod deformation;
 pub(crate) mod dynamic_gi;
 pub(crate) mod environments;
 pub(crate) mod error;
+pub(crate) mod footprints;
 pub(crate) mod geometry;
 pub(crate) mod hdr_effects;
 pub(crate) mod instances;
@@ -161,6 +162,9 @@ pub struct Scene {
     pub(crate) transient: Box<transient::Transient>,
     /// Sprite images and batches (`Scene::add_sprite_batch`).
     pub(crate) sprites: Box<sprites::Sprites>,
+    /// Where instances changed by an edit no motion vector describes stood
+    /// and stand (M-23). Boxed, as the sprites are.
+    pub(crate) footprints: Box<footprints::Footprints>,
     /// The world bounds static edits touched since the last submitted frame.
     pub(crate) static_edits: static_edits::StaticEdits,
     /// The frame being rendered and the last finished frame.
@@ -174,7 +178,7 @@ pub struct Scene {
 
 /// Group 1 (`shading::bind::scene`) over `objects`, `source`, `instances`
 /// and the instances' `shader_data`.
-fn scene_group(
+pub(super) fn scene_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     [objects, source, instances, shader_data]: &[wgpu::Buffer; 4],
@@ -253,6 +257,7 @@ impl Scene {
             deformation_edits: 0,
             transient: Box::new(transient::Transient::new(device)),
             sprites: Box::default(),
+            footprints: Box::default(),
             static_edits: static_edits::StaticEdits::default(),
             frame: FrameRecord::default(),
             deformations: Vec::new(),
@@ -373,7 +378,8 @@ impl Scene {
     /// finished frame ended, chooses the deformations the frame writes and
     /// shows, and records what the frame draws (each instance's pose,
     /// model, visibility and shader data, each deformation, each parameter
-    /// block, and the rigid-change and static-edit marks up to now), which
+    /// block, and the rigid-change and static-edit marks up to now), marks
+    /// the pending footprints its own and writes their records, which
     /// `finish_frame` commits. Edits made after it belong to the next frame
     /// once the frame's commands are submitted; before that they would
     /// change what it draws, and are not allowed.
@@ -385,6 +391,16 @@ impl Scene {
             .prepare_frame(queue, &self.models, &mut self.deformations);
         self.static_edits.begin_frame();
         self.sprites.begin_frame();
+        self.footprints.begin_frame(
+            device,
+            queue,
+            &self.scene_layout,
+            [
+                self.rays.source(),
+                self.ray_instances.buffer(),
+                self.instances.objects.shader_data(),
+            ],
+        );
         let attempt = next_generation();
         self.frame.open = Some(attempt);
         attempt
@@ -577,8 +593,9 @@ impl Scene {
     /// (`begin_frame`) becomes what the next frame's motion is measured
     /// from (each moving instance's pose and deformation while it was
     /// visible, each instance's shader data and each material's shader
-    /// parameters), and the rigid changes and static edits recorded before
-    /// it are no longer pending. Edits made since it began are left to the
+    /// parameters), and the rigid changes, static edits and footprints
+    /// recorded before it are no longer pending, the scene-source words
+    /// kept for those footprints freed. Edits made since it began are left to the
     /// next frame. Returns whether it committed: nothing for another
     /// attempt, one already finished or a frame of another scene.
     /// `Renderer::finish_frame` calls it.
@@ -591,6 +608,7 @@ impl Scene {
         self.materials.finish_frame();
         self.render_textures.finish_frame();
         self.sprites.finish_frame();
+        self.footprints.finish_frame(&mut self.rays);
         self.static_edits.finish();
         if let Some(acceleration) = &mut self.acceleration {
             acceleration.finish_frame();
@@ -729,6 +747,9 @@ pub(crate) fn buffer(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[path = "content_tests.rs"]
 mod content_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod footprints_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod origin_tests;

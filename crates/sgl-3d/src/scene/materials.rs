@@ -616,6 +616,39 @@ impl Materials {
         }
     }
 
+    /// Whether material `id` may take `values` (`set`).
+    pub fn validate_edit(
+        &self,
+        (shaders, render_textures, planar_reflectors): (
+            &Shaders,
+            &RenderTextures,
+            &PlanarReflectors,
+        ),
+        id: MaterialId,
+        values: &SurfaceMaterial,
+    ) -> Result<(), SceneError> {
+        validate_shader(values, shaders)?;
+        if let Some(texture) = values.emission_render_texture {
+            render_textures.get(texture)?;
+        }
+        if let Some(reflector) = values.planar_reflector {
+            planar_reflectors.get(reflector)?;
+            if values.blended() {
+                return Err(SceneError::BlendedPlanarReflector);
+            }
+        }
+        let material = self.slots.get(id).ok_or(SceneError::UnknownMaterial)?;
+        validate_core(values)?;
+        validate_anisotropy(values, material.untangented)?;
+        validate_alpha(values)?;
+        validate_reflectance(values)?;
+        validate_iridescence(values)?;
+        validate_transmission(values)?;
+        validate_sheen(values)?;
+        validate_diffuse_transmission(values)?;
+        validate_normal_layers(values, material.normal_wrap)
+    }
+
     /// Replaces a material's values in raster and the ray source at once;
     /// one whose shader changes takes zero parameter blocks of its new
     /// shader's size, in a group 2 that binds them, and one whose render
@@ -632,26 +665,8 @@ impl Materials {
         id: MaterialId,
         values: SurfaceMaterial,
     ) -> Result<(), SceneError> {
-        validate_shader(&values, shaders)?;
-        if let Some(texture) = values.emission_render_texture {
-            render_textures.get(texture)?;
-        }
-        if let Some(reflector) = values.planar_reflector {
-            planar_reflectors.get(reflector)?;
-            if values.blended() {
-                return Err(SceneError::BlendedPlanarReflector);
-            }
-        }
+        self.validate_edit((shaders, render_textures, planar_reflectors), id, &values)?;
         let material = self.slots.get_mut(id).ok_or(SceneError::UnknownMaterial)?;
-        validate_core(&values)?;
-        validate_anisotropy(&values, material.untangented)?;
-        validate_alpha(&values)?;
-        validate_reflectance(&values)?;
-        validate_iridescence(&values)?;
-        validate_transmission(&values)?;
-        validate_sheen(&values)?;
-        validate_diffuse_transmission(&values)?;
-        validate_normal_layers(&values, material.normal_wrap)?;
         if material.values != values {
             if material.values.draws_other_geometry(&values) {
                 self.casters = super::next_generation();

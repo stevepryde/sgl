@@ -484,12 +484,16 @@ impl View {
         if scene.materials.holds_receivers() {
             self.targets.hold_surface(device);
         }
+        let content = effective::SceneContent::of(scene, input);
         let effective = effective::resolve(
             settings,
             input,
             effective::SceneContent {
                 planar,
-                ..effective::SceneContent::of(scene, input)
+                // A frame that restarts the view's history has none the
+                // footprints protect (the register's M-23).
+                footprints: content.footprints && history.valid,
+                ..content
             },
             shared.device(
                 self.antialiasing.fsr_running(),

@@ -255,6 +255,8 @@ pub(super) struct SceneContent {
     pub heat: bool,
     /// A sprite batch with sprites.
     pub sprites: bool,
+    /// Instance footprints pending (`Scene::footprints`).
+    pub footprints: bool,
     /// A planar reflector's surface the view shows in this frame, which
     /// the frame adds (`renderer::reflected`).
     pub planar: bool,
@@ -275,6 +277,7 @@ impl SceneContent {
             mist: !scene.transient.mist_positions.is_empty(),
             heat: scene.transient.heat_count > 0,
             sprites: scene.sprites.any(),
+            footprints: !scene.footprints.is_empty(),
             planar: false,
             hdr_effect: scene.applied_hdr_effect(input.hdr_effect).is_some(),
         }
@@ -410,6 +413,7 @@ pub(super) fn resolve(
         mist: content.mist && atmosphere(settings, input),
         heat: content.heat && settings.heat_distortion,
         sprites: content.sprites,
+        footprints: content.footprints,
     };
     let temporal_masks = fsr || taa && composite.any();
     let hardware_ray_tracing = match (settings.hardware_ray_tracing, content.ray_data, ray_queries)
@@ -661,7 +665,7 @@ mod temporal_mask_tests {
     // left without the masks their dispatch binds. The oracle is Frame item
     // 8's rule as a table: the masks are held for every FSR frame, and for a
     // TAA frame exactly when blended or moving-shading materials, sprites,
-    // or glow, mist or heat that draws, can mark them.
+    // instance footprints, or glow, mist or heat that draws, can mark them.
     #[wasm_bindgen_test(unsupported = test)]
     fn the_temporal_masks_are_held_exactly_while_a_writer_can_mark_them() {
         let camera = crate::Camera {
@@ -699,6 +703,10 @@ mod temporal_mask_tests {
             SceneContent { heat: true, ..none },
             SceneContent {
                 sprites: true,
+                ..none
+            },
+            SceneContent {
+                footprints: true,
                 ..none
             },
         ];

@@ -1456,11 +1456,16 @@ integrated as Diligent's Hydrogent renderer does:
   camera and the surface at a pixel are still, only partial rectification
   and slower feedback, which steadies subpixel detail; full rejection
   returns, held for twelve frames, across the view on camera motion (beyond
-  f32 rounding of its matrices, wherever it is from the origin), an instance
-  added, removed, shown or hidden, a static instance moved, a model or its
-  geometry replaced, a `Scene::set_material` edit that changes what is drawn
-  (faces, visibility group, alpha mode, cutoff, blending or shader) and a
-  changed `FrameInput::visibility_mask`; and locally on motion, a moving
+  f32 rounding of its matrices, wherever it is from the origin) and a
+  changed `FrameInput::visibility_mask`; only where the instance stood and
+  stands when an instance is added, removed, shown or hidden, a static
+  instance moved, a model or its geometry replaced, or a
+  `Scene::set_material` edit changes what is drawn (faces, visibility group,
+  alpha mode, cutoff, blending or shader): the frame after marks those
+  footprints, as FSR's transparency-and-composition mask, which FSR reads
+  too (view-wide instead past 1024 marked meshes or 2²¹ of their triangles
+  pending before a frame, or for an instance drawn with a shader that moves
+  its vertices and reads no time); and locally on motion, a moving
   instance's included, whose motion vectors arm the pixels it covers and
   leaves rather than the whole view, and on depth disocclusion, at any
   distance: the sky and far surfaces settle at rest like
@@ -1979,6 +1984,11 @@ took to record:
 ```sh
 cargo run --release -p sgl-3d-examples --example instances -- target/instances.png --count 10000
 ```
+
+`--churn N` despawns and respawns N props every other frame, `--high`
+renders under TAA and `--passes` prints each pass group's GPU time over the
+frames that changed props and those that did not, where a spawn's or
+despawn's footprint is marked (`temporal composition`).
 
 Devices with the attachments for it write stable geometry and primary lighting
 in one eight-target pass, with ambient occlusion on or off. Only devices without

@@ -338,9 +338,11 @@ pub(crate) struct InstanceDeformation {
     motion: Option<u32>,
     /// Set since the deformation the last submitted frame wrote.
     changed: bool,
-    /// The frame being rendered's slot, whether the frame writes it, and
-    /// the revision it shows.
-    frame: Option<(u32, bool, u64)>,
+    /// The frame being rendered's slot, whether the frame writes it, the
+    /// revision it shows and its bounds then.
+    frame: Option<(u32, bool, u64, [Vec3; 2])>,
+    /// The bounds of the positions the last submitted frame showed.
+    shown_bounds: [Vec3; 2],
     /// Its object record's deformed position, previous position and normal
     /// words this frame.
     pub record: [u32; 3],
@@ -371,6 +373,7 @@ impl InstanceDeformation {
             motion: None,
             changed: true,
             frame: None,
+            shown_bounds: EMPTY,
             record: [0; 3],
         };
         let joints = vec![Mat4::IDENTITY; model.joints as usize];
@@ -382,6 +385,23 @@ impl InstanceDeformation {
     /// Frees its words.
     pub fn free(self, rays: &mut SceneRays) {
         rays.free(self.range);
+    }
+
+    /// Its words, for the caller to free.
+    pub fn into_words(self) -> Range<u32> {
+        self.range
+    }
+
+    /// The first word of its positions and their bounds in the model's
+    /// space as the last submitted frame showed them and as the frame being
+    /// rendered shows them, where each did.
+    pub fn shown(&self, model: &ModelDeformation) -> [Option<(u32, [Vec3; 2])>; 2] {
+        [
+            self.written
+                .map(|slot| (self.slot_word(model, slot), self.shown_bounds)),
+            self.frame
+                .map(|(slot, _, _, bounds)| (self.slot_word(model, slot), bounds)),
+        ]
     }
 
     /// Poses it with the first of `joints` and `weights` that `model` takes.
@@ -439,7 +459,7 @@ impl InstanceDeformation {
             Some(written) => (1 - written, true),
             None => (0, true),
         };
-        self.frame = Some((slot, writes, self.revision));
+        self.frame = Some((slot, writes, self.revision, self.bounds));
         let positions = self.slot_word(model, slot);
         let normals = self.slot_word(model, 2);
         self.record = [
@@ -472,12 +492,13 @@ impl InstanceDeformation {
     /// Commits a submitted frame in which the instance was `visible`: a
     /// deformation set since the frame began is still to write.
     pub fn finish(&mut self, visible: bool) {
-        if let Some((slot, writes, revision)) = self.frame.take() {
+        if let Some((slot, writes, revision, bounds)) = self.frame.take() {
             if writes {
                 self.written = Some(slot);
                 self.changed = self.revision != revision;
             }
             self.motion = self.written.filter(|_| visible);
+            self.shown_bounds = bounds;
         }
     }
 }

@@ -152,12 +152,14 @@ impl Antialiasing {
                 ctx.encoder,
                 color,
                 // What changed since the last submitted frame without a
-                // motion vector (M-9), and material groups the frame's mask
-                // switched (F-10). Camera motion is `PostFx::begin`'s.
+                // motion vector that no footprint marks (M-9), and material
+                // groups the frame's mask switched (F-10). Camera motion is
+                // `PostFx::begin`'s; footprints reach it through the masks.
                 ctx.scene.rigid_objects_changed() || ctx.history.visibility_changed,
                 Responsive {
                     masks: ctx.targets.temporal_masks.as_ref(),
                     reach: &reach,
+                    ready_masked: !ctx.effective.composite.lasting(),
                 },
                 ctx.timing,
             );

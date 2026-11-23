@@ -53,6 +53,7 @@ impl Scene {
         self.planar_reflectors.move_origin(to);
         self.transient.move_origin(queue, to);
         self.sprites.move_origin(queue, to);
+        self.footprints.move_origin(to);
         if let Some(probes) = &mut self.probes {
             probes.move_origin(device, to);
             // Group 0 binds the probes' metadata.

@@ -25,6 +25,7 @@ pub(crate) mod compile;
 pub(crate) mod culling;
 pub(crate) mod draw_list;
 pub(crate) mod effective;
+pub(crate) mod footprints;
 pub(crate) mod frame;
 pub(crate) mod history;
 pub(crate) mod lod;
@@ -607,6 +608,9 @@ pub(crate) struct FrameViews {
     pub blended: draw_list::DrawList,
     /// The camera's sprite batches.
     pub sprites: sprites::SpriteList,
+    /// The camera's instance footprints, while its frame has the temporal
+    /// masks (the register's M-23).
+    pub footprints: footprints::FootprintList,
     /// The scene lights and decals that reach each of the camera's
     /// clusters.
     pub clusters: clusters::Clusters,
@@ -623,7 +627,7 @@ pub(crate) struct FrameViews {
     /// projection with the frame's jitter.
     pub reflection_camera: reflection_camera::Camera,
     /// Every CPU-built draw list's instances this frame: the blended
-    /// list's and the local-light shadow faces'.
+    /// list's, the footprints' and the local-light shadow faces'.
     pub instances: draw_list::DrawInstances,
     /// A reflected view's reflector (the architecture's Frame, "Planar
     /// reflections"), which the renderer sets before prepare: none for any
@@ -652,6 +656,7 @@ impl FrameViews {
             camera: ViewSlot::new(device, "camera view"),
             blended: draw_list::DrawList::default(),
             sprites: Default::default(),
+            footprints: Default::default(),
             clusters: clusters::Clusters::new(device, "camera clusters"),
             ray_lists: clusters::Clusters::new(device, "ray hit lights and decals"),
             volume_lists: clusters::Clusters::new(device, "dynamic GI probe hit lights and decals"),

@@ -439,6 +439,16 @@ impl Prepare {
         // The camera's sprite batches, whose blended ones split the blended
         // list where they stand.
         views.sprites.build(scene, &camera_view);
+        // Where changed instances stood and stand, which the frame marks
+        // while it has the temporal masks and continues the view's history
+        // (M-23).
+        if effective.temporal_masks && history.valid {
+            views
+                .footprints
+                .build(&mut views.instances, scene, &camera_view, mask);
+        } else {
+            views.footprints.clear();
+        }
         let barriers: Vec<f32> = views.sprites.blended_depths().collect();
         views.blended.build(
             &mut views.instances,

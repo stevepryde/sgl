@@ -18,7 +18,7 @@ impl DrawInstances {
     }
 
     /// Appends one list's instances and returns where the first is.
-    pub(super) fn append(&mut self, instances: &[DrawInstance]) -> u32 {
+    pub(in crate::view) fn append(&mut self, instances: &[DrawInstance]) -> u32 {
         let first = self.entries.len() as u32;
         self.entries.extend_from_slice(instances);
         first
@@ -58,7 +58,7 @@ impl DrawInstances {
     }
 
     /// The buffer the draws step through.
-    pub(super) fn buffer(&self) -> &wgpu::Buffer {
+    pub(crate) fn buffer(&self) -> &wgpu::Buffer {
         self.buffer
             .as_ref()
             .expect("draw instances are uploaded before they are drawn")

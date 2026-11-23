@@ -771,6 +771,83 @@ fn a_compiled_level_with_sprites_creates_no_program_at_its_first_frame() {
     assert_eq!(level.programs(), before);
 }
 
+impl Level {
+    /// The level with its blended cube made opaque: no material, effect or
+    /// sprite marks a TAA view's temporal masks, so its frames hold them
+    /// exactly while instance footprints are pending (the register's
+    /// M-23), settled by two frames.
+    fn without_mask_writers() -> Option<Self> {
+        let mut level = Self::new()?;
+        let blended: Vec<_> = level
+            .scene
+            .materials
+            .slots
+            .iter()
+            .filter(|(_, material)| material.values.blended())
+            .map(|(id, material)| (id, material.values))
+            .collect();
+        for (id, values) in blended {
+            let values = crate::SurfaceMaterial {
+                alpha: crate::AlphaMode::Opaque,
+                ..values
+            };
+            level.scene.set_material(&level.queue, id, values).unwrap();
+        }
+        Some(level)
+    }
+
+    /// Places another cube in view: a spawn, which leaves a footprint.
+    fn spawn(&mut self) {
+        let model = self
+            .scene
+            .add_asset(&self.device, &self.queue, test_support::cube())
+            .unwrap()
+            .model;
+        let state = crate::InstanceState {
+            pose: Mat4::from_translation(Vec3::new(0.75, 1., 0.)),
+            ..crate::InstanceState::new(model)
+        };
+        self.scene
+            .add_instance(&self.device, &self.queue, state, crate::Mobility::Moving)
+            .unwrap();
+    }
+}
+
+// Plausible defect: where a TAA view's temporal masks follow instance
+// footprints alone (no other writer in the scene), a planning pass readies
+// only the resolve its frame binds and the footprints' programs only where
+// its frame draws one, so the first spawn after loading creates TAA's
+// resolve with the masks or the footprints' programs on the window thread.
+// The oracle is wgpu's count, as
+// `a_compiled_levels_first_frame_creates_no_program`'s: unchanged across a
+// compiled level's first frame (which restarts history, so marks no
+// footprint and binds no mask), the frames after a spawn, which hold the
+// masks for its footprints, and those after they retire.
+#[test]
+fn a_compiled_level_whose_masks_follow_its_footprints_creates_no_program_as_they_come_and_go() {
+    let Some(mut level) = Level::without_mask_writers() else {
+        return;
+    };
+    let first = Level::input(0.);
+    let still = FrameInput {
+        camera_cut: false,
+        ..first
+    };
+    level.compile_all(&first);
+    let before = level.programs();
+    level.render(&first);
+    level.render(&still);
+    level.spawn();
+    level.render(&still);
+    assert!(
+        level.view.targets.temporal_masks.is_some(),
+        "the spawn's frame held the masks"
+    );
+    level.render(&still);
+    assert!(level.scene.footprints.is_empty());
+    assert_eq!(level.programs(), before);
+}
+
 // Plausible defect: the planning pass reaches a material's pipelines
 // without the maps it samples on the second UV set or through a transform
 // (`Variant::uv1`, `Variant::transformed`), so the first frame creates

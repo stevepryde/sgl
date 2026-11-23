@@ -18,17 +18,20 @@
 //! that fails with that rule alone removed (#816): the camera test
 //! (`a_camera_step_rearms_the_whole_view`), the hold carried over its
 //! frames (`the_hold_lasts_its_frames_after_a_camera_step`), the rigid
-//! signal (case 9 and its material edits), the visibility mask (case 9's
-//! masking), the pixel's own motion (case 13), depth disocclusion
+//! signal (`sgl-post-fx`'s
+//! `taa_adaptive_resting_thin_occluder_departure_does_not_leave_a_ghost`),
+//! the visibility mask (case 9's masking), the pixel's own motion (case
+//! 13), depth disocclusion
 //! (`depth_disocclusion_rejects_beyond_the_reach`), the sky a surface
 //! leaves (`the_sky_a_far_surface_leaves_is_a_disocclusion`), the
-//! responsive masks' strength and full hold (cases 14 and 15 and case 9's
-//! dissolves), and the motion reach
+//! responsive masks' strength and full hold (cases 14 and 15, and case 9's
+//! instance footprints, model swaps, material edits and dissolves), and
+//! the motion reach
 //! (`a_surface_its_morph_target_moves_from_rest_beyond_the_search`, and
 //! case 4 beside motion for its threshold). The sky a surface arrives over
 //! has none: whatever covers a neighbourhood that held only sky moved
-//! there, so its own motion re-arms the hold; or it appeared, which sets
-//! the rigid signal; or a shader drew it, which marks the masks. No scene
+//! there, so its own motion re-arms the hold; or it appeared, which marks
+//! its footprint; or a shader drew it, which marks the masks. No scene
 //! the public API builds depends on that rule alone.
 //!
 //! The fixtures' truth assumes `rig::fixture_settings`: unlit cards, no
@@ -1242,8 +1245,9 @@ fn thin_card() -> Shape {
     Shape::card(Vec2::new(2. * px(), 0.9), 0., CARD)
 }
 
-/// A rigid moving instance moved by its pose (M-9, T-21). Plausible defect:
-/// with the view-wide signal left to changes without a motion vector, the
+/// A rigid moving instance moved by its pose (M-9, M-23, T-21). Plausible
+/// defect: with footprints and the view-wide signal left to changes without
+/// a motion vector, the
 /// pixels a moving instance's pose change vacates keep its ghost, because
 /// its own motion does not arm them: the closest-motion search below a pixel
 /// a frame, the motion reach from a pixel to a tile (32 px) a frame (Frame
@@ -1303,10 +1307,12 @@ enum Event {
 /// 0.2 m before a background 8 m away, a layer on a wall: their normalized
 /// depths differ by 0.1 / 7.8 - 0.1 / 8 = 3.2e-4, below the adaptive depth
 /// threshold 0.001, so depth disocclusion cannot reject and only the
-/// view-wide re-arm can. Against the sky, near and far, nothing else
-/// restores rejection either now that depth's magnitude does not (#791).
-/// The oracle is analytic with the spec's rule that appearances,
-/// departures and visibility changes re-arm the view (Frame item 11): the
+/// instance's footprints (M-23) or the view-wide re-arm can. Against the
+/// sky, near and far, nothing else restores rejection either now that
+/// depth's magnitude does not (#791). The oracle is analytic with the
+/// spec's rule that appearances and departures mark where the instance
+/// stood and stands (Frame item 9) and visibility changes re-arm the view
+/// (Frame item 11): the
 /// hold after each event, the pixels whose box grown by 2 px lies wholly
 /// inside the card show their new truth (what lies behind, or the card)
 /// within the method's `stores`. Each event follows the last by the
@@ -1472,6 +1478,91 @@ fn a_static_instance_moved_at_rest_resolves_within_the_hold(method: Antialiasing
 }
 every_method!(a_static_instance_moved_at_rest_resolves_within_the_hold);
 
+/// Case 9 for a model swap (M-5, M-23). Plausible defect: an instance given
+/// another model at rest, after the hold has expired, fades over many
+/// frames where the old model's surface left and where the new one's
+/// arrived, because the swap writes no motion and nothing marks either.
+/// The fixtures, truth, oracle and epsilon are case 9's, with the layer's
+/// instance given the model of a layer twice as tall and a third as wide,
+/// and back: the hold after each swap, the pixels whose box grown by 2 px lies
+/// wholly inside the layer it now shows show the card, and those grown by
+/// 2 px wholly inside the one it showed and clear of the new one show what
+/// lies behind, within the method's `stores`.
+fn a_model_swap_at_rest_resolves_within_the_hold(method: Antialiasing) {
+    let Some(gpu) = device(method) else { return };
+    let (back, back_pose) = background();
+    let mut failures = Failures::default();
+    for (name, scale, behind) in AGAINST {
+        let layers = [Vec2::new(2.4, 1.6), Vec2::new(0.8, 3.2)]
+            .map(|size| Shape::card(size, 0.3, CARD).scaled(scale));
+        let layer_pose = farther(Pose::at(Vec3::new(0.6, 0.2, -7.8)), scale);
+        let gone = match behind {
+            Behind::Background => BACKGROUND,
+            Behind::Sky => SKY,
+        };
+        // Where each layer lies, with the 2 px margin inside it and around
+        // it.
+        let regions = layers.clone().map(|layer| {
+            let script = move |_| vec![layer_pose];
+            let scenario = Scenario {
+                shapes: vec![layer],
+                camera: &still,
+                script: &script,
+            };
+            let met = Region::from_fn(VIEW.size, |pixel| {
+                coverage(&scenario.polygons(0)[0][0], pixel, 2.) > 0.
+            });
+            (scenario.inside(0, 0, 2.), met)
+        });
+        let mut rig = Rig::new(&gpu, VIEW, method, SKY);
+        if behind == Behind::Background {
+            rig.add(&back, back_pose, 0);
+        }
+        let id = rig.add(&layers[0], layer_pose, 1);
+        rig.look(still(0));
+        let mut frame = 0;
+        for (to, from) in [(1, 0), (0, 1)] {
+            let at = frame + SETTLE + HOLD;
+            while frame < at {
+                rig.render(frame);
+                frame += 1;
+            }
+            rig.swap(id, &layers[to]);
+            let left = regions[from].0.and(&regions[to].1.not());
+            let mut residuals = Vec::new();
+            while frame <= at + HOLD {
+                rig.render(frame);
+                let resolved = rig.antialiased();
+                residuals.push([
+                    error_to(&resolved, CARD, &regions[to].0).max,
+                    error_to(&resolved, gone, &left).max,
+                ]);
+                frame += 1;
+            }
+            for (i, (what, truth)) in [("where it arrived", CARD), ("where it left", gone)]
+                .into_iter()
+                .enumerate()
+            {
+                let residuals: Vec<f32> = residuals.iter().map(|r| r[i]).collect();
+                let residual = *residuals.last().unwrap();
+                let epsilon = stores(method) * truth * HALF_STEP;
+                let converged = image::frames_to_converge(&residuals, epsilon);
+                eprintln!(
+                    "{method:?} {name}, a model swap {what}: residual {residual} the hold after it, within {epsilon} from frame {converged:?} after it"
+                );
+                failures.check(residual <= epsilon, || {
+                    format!(
+                        "{method:?} {name}, a model swap: the pixels {what} are {residual} off their new truth {truth} the hold after it; residuals by frame {residuals:?}"
+                    )
+                });
+            }
+        }
+        failures.bounded(&rig, format!("{method:?} model swaps {name}"));
+    }
+    failures.assert();
+}
+every_method!(a_model_swap_at_rest_resolves_within_the_hold);
+
 /// What case 9's material edits do, in the order they happen.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Edit {
@@ -1489,8 +1580,9 @@ enum Edit {
 /// adds or removes what its users draw, at rest after the hold has
 /// expired, fades over many frames because nothing re-arms rejection, as
 /// an instance's appearance or departure would without it. The fixtures,
-/// truth, oracle and epsilon are case 9's: Frame item 11 re-arms the view
-/// for material edits that change what is drawn, so the hold after each
+/// truth, oracle and epsilon are case 9's: a material edit that changes what
+/// is drawn marks where its users' instances stood and stand (Frame item 9,
+/// M-23), so the hold after each
 /// edit the pixels whose box grown by 2 px lies wholly inside the card show
 /// their new truth within the method's `stores`. The card's base alpha is
 /// 0.5, which its opaque mode ignores, so a cutoff of 0.75 cuts out every

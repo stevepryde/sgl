@@ -343,6 +343,29 @@ impl Models {
         (range, deformation, meshes): (Range<u32>, Option<ModelDeformation>, &[Mesh]),
     ) {
         rays.free(range);
+        Self::free_rest(rays, geometry, (deformation, meshes));
+    }
+
+    /// `free` of a model a frame may have drawn: its words in the ray
+    /// source, its meshes' records and vertices, once no footprint can name
+    /// them (M-23), and the rest at once.
+    fn retire(
+        footprints: &mut super::footprints::Footprints,
+        rays: &mut SceneRays,
+        geometry: &mut GeometryBuffers,
+        (range, deformation, meshes): (Range<u32>, Option<ModelDeformation>, &[Mesh]),
+    ) {
+        footprints.free(rays, range);
+        Self::free_rest(rays, geometry, (deformation, meshes));
+    }
+
+    /// Frees a model's deformation words and its meshes' ranges of the
+    /// geometry buffers, which no footprint reads.
+    fn free_rest(
+        rays: &mut SceneRays,
+        geometry: &mut GeometryBuffers,
+        (deformation, meshes): (Option<ModelDeformation>, &[Mesh]),
+    ) {
         if let Some(deformation) = deformation {
             deformation.free(rays);
         }
@@ -465,12 +488,13 @@ impl Scene {
         });
         self.refresh_scene_group(device);
         let (built, posed) = posed?;
-        self.instances.geometry_changed(id);
+        // Where its instances stood, drawn with the geometry it replaces.
+        let showing = self.footprint_model_stood(id);
         for (_, instance) in self.instances.slots.iter_mut() {
             if instance.state.model == id
                 && let Some(previous) = instance.deformation.take()
             {
-                previous.free(&mut self.rays);
+                self.footprints.free(&mut self.rays, previous.into_words());
             }
         }
         for (instance, deformation) in posed {
@@ -496,7 +520,8 @@ impl Scene {
         let previous_range = std::mem::replace(&mut model.ray_range, built.ray_range);
         let previous_deformation = std::mem::replace(&mut model.deformation, built.deformation);
         self.models.release(&mut self.materials, id, &previous);
-        Models::free(
+        Models::retire(
+            &mut self.footprints,
             &mut self.rays,
             &mut self.geometry,
             (previous_range, previous_deformation, &previous),
@@ -515,6 +540,7 @@ impl Scene {
                     .set(instance.index(), model.ray, shown.state.pose);
             }
         }
+        self.footprint_model_stands(id, &showing);
         Ok(())
     }
 
@@ -527,7 +553,8 @@ impl Scene {
         let model = self.models.slots.remove(id).unwrap();
         self.candidates.remove_chains(id);
         self.models.release(&mut self.materials, id, &model.meshes);
-        Models::free(
+        Models::retire(
+            &mut self.footprints,
             &mut self.rays,
             &mut self.geometry,
             (model.ray_range, model.deformation, &model.meshes),

@@ -126,11 +126,22 @@ pub(crate) struct CompositeDraws {
     pub heat: bool,
     /// The scene holds a sprite batch with sprites.
     pub sprites: bool,
+    /// The scene holds instance footprints, which the temporal composition
+    /// marks (`Scene::footprints`, the register's M-23).
+    pub footprints: bool,
 }
 
 impl CompositeDraws {
     /// Whether anything draws that marks the masks.
     pub fn any(self) -> bool {
+        self.lasting() || self.footprints
+    }
+
+    /// Whether anything draws that marks the masks but instance
+    /// footprints, which an instance edit makes and the next finished frame
+    /// retires (`Scene::footprints`): while nothing does, a TAA view holds
+    /// the masks in exactly the frames with footprints.
+    pub fn lasting(self) -> bool {
         self.blended || self.moving_surfaces || self.glow || self.mist || self.heat || self.sprites
     }
 }

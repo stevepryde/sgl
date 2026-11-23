@@ -6,7 +6,15 @@
 //!
 //! Run with `cargo run --release -p sgl-3d-examples --example instances -- target/instances.png`.
 //! Optional `--count N` sets how many props (1000) and `--frames N` how many
-//! frames it renders (62); the timing skips the first two.
+//! frames it renders (62); the timing skips the first two. `--churn N`
+//! removes N still props every other frame after the first two and places
+//! N in their place, as a game despawns and spawns: under TAA each change
+//! marks only where the prop stood and stands (the history register's
+//! M-23). `--high` renders at the High preset (TAA), `--size W H` at
+//! another size (320 240), and `--passes` prints the median GPU time of
+//! each pass group over the timed frames, where the device has timestamp
+//! queries: with `--churn`, apart for the frames that changed props and
+//! those that did not, which one run times alike.
 use sgl_3d::glam::camera;
 use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceState, Light,
@@ -21,6 +29,10 @@ struct Options {
     output: PathBuf,
     count: usize,
     frames: u32,
+    churn: usize,
+    high: bool,
+    size: [u32; 2],
+    passes: bool,
 }
 
 impl Options {
@@ -29,14 +41,28 @@ impl Options {
             output: "target/sgl-3d-instances.png".into(),
             count: 1000,
             frames: 62,
+            churn: 0,
+            high: false,
+            size: [320, 240],
+            passes: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--count" => options.count = args.next().ok_or("--count requires N")?.parse()?,
                 "--frames" => options.frames = args.next().ok_or("--frames requires N")?.parse()?,
+                "--churn" => options.churn = args.next().ok_or("--churn requires N")?.parse()?,
+                "--high" => options.high = true,
+                "--passes" => options.passes = true,
+                "--size" => {
+                    for side in &mut options.size {
+                        *side = args.next().ok_or("--size requires W H")?.parse()?;
+                    }
+                }
                 "--help" | "-h" => {
-                    println!("instances [output.png] [--count N] [--frames N]");
+                    println!(
+                        "instances [output.png] [--count N] [--frames N] [--churn N] [--high] [--size W H] [--passes]"
+                    );
                     std::process::exit(0);
                 }
                 flag if flag.starts_with('-') => {
@@ -198,10 +224,16 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let adapter = wgpu::Instance::default()
         .request_adapter(&Default::default())
         .await?;
+    let timestamps = if options.passes {
+        adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+    } else {
+        wgpu::Features::empty()
+    };
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             required_features: (adapter.features() & wgpu::Features::SHADER_F16)
-                | sgl_3d::graphics_device::features(&adapter),
+                | sgl_3d::graphics_device::features(&adapter)
+                | timestamps,
             required_limits: sgl_3d::graphics_device::limits(&adapter),
             ..Default::default()
         })
@@ -225,6 +257,8 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .map(|asset| Ok(scene.add_asset(&device, &queue, asset)?.model))
         .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
     let mut spinning = Vec::new();
+    // The still props, oldest first, which `--churn` replaces.
+    let mut still = std::collections::VecDeque::new();
     for index in 0..options.count {
         let state = InstanceState {
             pose: prop_pose(index, options.count, 0.),
@@ -234,7 +268,8 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let id = scene.add_instance(&device, &queue, state, Mobility::Moving)?;
             spinning.push((id, index, state));
         } else {
-            scene.add_instance(&device, &queue, state, Mobility::Static)?;
+            let id = scene.add_instance(&device, &queue, state, Mobility::Static)?;
+            still.push_back((id, state));
         }
     }
     scene.add_light(
@@ -254,7 +289,7 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             ..Default::default()
         },
     )?;
-    let size = [320, 240];
+    let size = options.size;
     let output = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("instances output"),
         size: wgpu::Extent3d {
@@ -271,10 +306,21 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     });
     let output_view = output.create_view(&Default::default());
     let settings = Settings {
-        preset: RenderPreset::Low,
+        preset: if options.high {
+            RenderPreset::High
+        } else {
+            RenderPreset::Low
+        },
         atmosphere: false,
         ..Settings::default()
     };
+    let mut timing = sgl_3d::timing::GpuTiming::new(&device, &queue);
+    // Whether each frame changed props, and each pass group's GPU times
+    // over the timed frames that did (1) and did not (0), in first-use
+    // order.
+    let mut churned = Vec::new();
+    let mut groups: [Vec<(&'static str, Vec<f64>)>; 2] = Default::default();
+    let mut totals: [Vec<f64>; 2] = Default::default();
     let mut renderer = Renderer::new(&device);
     let mut scene_view = View::new(
         &renderer,
@@ -307,13 +353,42 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         intensity: 0.2,
     };
     // CPU time recording each frame: `Renderer::render` and finishing the
-    // encoder.
+    // encoder, over every frame and apart for those that changed no prop (0)
+    // and those that did (1).
     let mut recording = Vec::new();
+    let mut recording_by_change: [Vec<f64>; 2] = Default::default();
     for frame_index in 0..options.frames {
         let phase = frame_index as f32 / options.frames as f32;
         for &(id, index, mut state) in &spinning {
             state.pose = prop_pose(index, options.count, phase);
             scene.set_instance(&queue, id, state)?;
+        }
+        let churn = frame_index >= 2 && frame_index % 2 == 0;
+        churned.push(churn && options.churn > 0);
+        if churn {
+            for _ in 0..options.churn.min(still.len()) {
+                let (id, state) = still.pop_front().expect("a still prop");
+                scene.remove_instance(id)?;
+                let id = scene.add_instance(&device, &queue, state, Mobility::Static)?;
+                still.push_back((id, state));
+            }
+        }
+        if let Some(timing) = &mut timing {
+            for timed in timing.begin_frame(&device, &queue) {
+                // `GpuTiming` counts frames from 1; skip the first two.
+                if timed.frame <= 2 {
+                    continue;
+                }
+                let changed = usize::from(churned[timed.frame as usize - 1]);
+                totals[changed].push(timed.total_ms);
+                let groups = &mut groups[changed];
+                for group in &timed.passes {
+                    match groups.iter_mut().find(|(name, _)| *name == group.name) {
+                        Some((_, times)) => times.push(group.ms),
+                        None => groups.push((group.name, vec![group.ms])),
+                    }
+                }
+            }
         }
         frame.elapsed_seconds = frame_index as f64 / 60.;
         frame.camera_cut = frame_index == 0;
@@ -330,14 +405,24 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 input: &frame,
                 settings: &settings,
                 output: ViewOutput::Texture(&output_view),
-                timing: None,
+                timing: timing.as_ref(),
             }],
         );
         let commands = encoder.finish();
         if frame_index >= 2 {
-            recording.push(started.elapsed().as_secs_f64() * 1000.);
+            let ms = started.elapsed().as_secs_f64() * 1000.;
+            recording.push(ms);
+            recording_by_change[usize::from(churned[frame_index as usize])].push(ms);
         }
-        queue.submit([commands]);
+        let submission = queue.submit([commands]);
+        if let Some(timing) = &mut timing {
+            timing.submitted(&queue);
+            // One frame on the GPU at a time, so a frame's time is its own.
+            device.poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: None,
+            })?;
+        }
         renderer.finish_frame(&mut scene);
     }
     let pixels = read_pixels(&device, &queue, &output)?;
@@ -369,6 +454,43 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
         recording.len(),
         options.output.display()
     );
+    if options.churn > 0 {
+        let [unchanged, changed] = recording_by_change.map(|mut times| {
+            times.sort_by(f64::total_cmp);
+            times[times.len() / 2]
+        });
+        println!(
+            "recording CPU median {changed:.3} ms in frames that removed and placed {} props, {unchanged:.3} ms in those that changed none",
+            options.churn
+        );
+    }
+    if options.passes {
+        if timing.is_none() {
+            println!("no GPU timestamps: the device has no timestamp queries");
+        }
+        let median = |times: &mut Vec<f64>| {
+            times.sort_by(f64::total_cmp);
+            times[times.len() / 2]
+        };
+        for (changed, (totals, groups)) in totals.iter_mut().zip(&mut groups).enumerate() {
+            if totals.is_empty() {
+                continue;
+            }
+            println!(
+                "GPU frame median {:.3} ms over {} frames {}",
+                median(totals),
+                totals.len(),
+                if changed == 1 {
+                    format!("that removed and placed {} props", options.churn)
+                } else {
+                    "that changed no prop".into()
+                }
+            );
+            for (name, times) in groups {
+                println!("    {name:<30}{:>10.3}", median(times));
+            }
+        }
+    }
     Ok(())
 }
 

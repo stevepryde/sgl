@@ -364,7 +364,7 @@ mod tests {
     // change), the change reported on every later frame (stabilization
     // never returns), or a change in the high bits ignored although
     // `Material::enabled` tests every bit. The oracle is the architecture's
-    // rule (Frame item 11) that appearances and departures rearm the view
+    // rule (Frame item 11) that a changed visibility mask rearms the view
     // until a submitted frame; the expected values follow from the masks
     // each frame passes, compared by hand.
     #[wasm_bindgen_test(unsupported = test)]

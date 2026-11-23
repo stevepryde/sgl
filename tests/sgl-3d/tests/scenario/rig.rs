@@ -790,6 +790,31 @@ impl Rig {
         self.placed.retain(|p| p.id != id);
     }
 
+    /// Gives `id` a model of `shape`, at its pose and visibility, as a game
+    /// swaps a model (`Scene::set_instance` naming another model).
+    pub fn swap(&mut self, id: InstanceId, shape: &Shape) {
+        for quad in &shape.quads {
+            self.range = [
+                self.range[0].min(quad.radiance),
+                self.range[1].max(quad.radiance),
+            ];
+        }
+        let group = self.placed(id).group;
+        let Gpu { device, queue } = &self.gpu;
+        let ids = self
+            .scene
+            .add_asset(device, queue, shape.asset(group))
+            .expect("a fixture model");
+        let state = InstanceState {
+            model: ids.model,
+            ..*self.scene.instance(id).unwrap()
+        };
+        self.scene
+            .set_instance(queue, id, state)
+            .expect("a fixture model swap");
+        self.placed(id).shape = shape.clone();
+    }
+
     /// Replaces the scene with an empty one, which restarts history: a
     /// renderer costs its pipelines to create, so a suite reuses one across
     /// runs this way.

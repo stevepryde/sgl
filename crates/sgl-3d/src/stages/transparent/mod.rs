@@ -2,6 +2,7 @@
 //! transmission copy, blended, transmissive and additive surfaces, mist and
 //! distortion.
 pub(crate) mod effects;
+pub(crate) mod footprints;
 pub(crate) mod heat;
 pub(crate) mod mist;
 pub(crate) mod sprites;
@@ -27,7 +28,8 @@ pub(crate) enum Beauty<'a> {
     /// temporal masks (`Effective::temporal_masks`), these draws also write
     /// them, AMD's reactive and transparency and composition masks, which
     /// are cleared here and, while the scene holds an opaque surface whose
-    /// shading moves, marked by it first.
+    /// shading moves or the view draws an instance footprint, marked by
+    /// them first.
     Composite {
         reflections: Option<&'a wgpu::TextureView>,
     },
@@ -59,14 +61,18 @@ pub(crate) enum Beauty<'a> {
 /// of it), as AMD's FSR
 /// sample marks its animated textures after its lighting and before its
 /// translucency (`samples/fsrapi/config/fsrapiconfig.json`, its render
-/// modules' order; SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt).
+/// modules' order; SDK 1.1.4, MIT, see LICENSE-amd-fidelityfx.txt); in the
+/// same pass, where the view draws them, the instance footprints
+/// (`footprints`, the register's M-23): where changed instances stood, at
+/// or in front of the opaque depth, and where they stand.
 ///
 /// Reads: the camera's blended draw list with its lit group 0 and the
 /// geometry pipelines, the camera's opaque draw list (its sets whose
 /// material's shading changes, with the temporal masks), its unlit group 0 (with the
-/// fog volume), the opaque depth (written by masked sprites' depth, copied
-/// into the surface depth, and tested by every other draw but the receiver
-/// pass), the surface depth
+/// fog volume), the view's footprint draws with the scene's footprint
+/// records and object records (with the temporal masks), the opaque depth
+/// (written by masked sprites' depth, copied into the surface depth, and
+/// tested by every other draw but the receiver pass), the surface depth
 /// and the screen-space method's result (receivers that are the surface),
 /// the scene's transient geometry (glow, heat and mist) and the camera's
 /// sprite batches (`view::sprites`), the beauty it draws
@@ -85,8 +91,9 @@ pub(crate) enum Beauty<'a> {
 /// the effects and atmosphere diagnostics layers.
 /// Timing groups: `sprites` (masked sprites' depth and colour),
 /// `receivers`, `volume layers`, `temporal composition` (the
-/// moving opaque surfaces' mask), `transmission copy`, `blended` (blended
-/// surfaces and blended sprites, both draws), `transparent` (glow and mist, both draws), `heat
+/// moving opaque surfaces' mask and the instance footprints),
+/// `transmission copy`, `blended` (blended surfaces and blended sprites,
+/// both draws), `transparent` (glow and mist, both draws), `heat
 /// distortion`.
 /// History: none; the receiver pass rebuilds the surface, the volume layers
 /// are drawn from the frame's geometry and the copy is made again every
@@ -97,6 +104,8 @@ pub(crate) struct Transparent {
     mist: Option<mist::Mist>,
     /// Sprite batches' pipelines and this view's orders of them.
     sprites: sprites::Sprites,
+    /// The instance footprints' pipelines.
+    footprints: footprints::Footprints,
     heat: Option<heat::Heat>,
     /// The frame exposure that glow reads.
     exposure: wgpu::TextureView,
@@ -153,6 +162,7 @@ impl Transparent {
             glow: None,
             mist: None,
             sprites: Default::default(),
+            footprints: Default::default(),
             heat: None,
             no_reflections: crate::view::targets::target(
                 device,
@@ -285,14 +295,23 @@ impl Transparent {
                 (&targets.composite, composite_masks(ctx), (1, reflections))
             }
         };
-        // The first pass that writes the temporal masks clears them: the moving
-        // opaque surfaces' while the scene holds one, else the blended
-        // surfaces', else the additive effects'.
-        let moving = temporal_masks.filter(|_| ctx.effective.composite.moving_surfaces);
-        if let Some(masks) = moving {
-            Self::encode_composition(ctx, masks);
+        // A view whose antialiasing reads the masks makes the footprints'
+        // programs in its first frame, planned (`Renderer::compile`) or
+        // not, since any instance edit brings them into a frame (M-23).
+        if trace == 1 && (ctx.effective.taa || ctx.effective.fsr) {
+            self.footprints.programs(ctx);
         }
-        let mut cleared = moving.is_some();
+        // The first pass that writes the temporal masks clears them: the
+        // temporal composition's while the scene holds a moving opaque
+        // surface or the view draws a footprint, else the blended
+        // surfaces', else the additive effects'.
+        let composition = temporal_masks.filter(|_| {
+            ctx.effective.composite.moving_surfaces || !ctx.views.footprints.is_empty()
+        });
+        if let Some(masks) = composition {
+            self.encode_composition(ctx, masks);
+        }
+        let mut cleared = composition.is_some();
         // Masked sprites' colour, at the depth their depth pass wrote, before
         // the transmission copy, so transmissive surfaces show them.
         cleared |= self
@@ -471,8 +490,14 @@ impl Transparent {
     /// they test for equality without writing it; a masked material whose
     /// shader's inputs were edited is drawn over its footprint at or in
     /// front of the opaque depth, its cut-out texels included
-    /// (`GeometryPass::TemporalComposition`).
-    fn encode_composition(ctx: &mut FrameContext<'_>, masks: &[wgpu::TextureView; 2]) {
+    /// (`GeometryPass::TemporalComposition`); then the view's instance
+    /// footprints (`footprints`, the register's M-23).
+    fn encode_composition(&mut self, ctx: &mut FrameContext<'_>, masks: &[wgpu::TextureView; 2]) {
+        let programs = if ctx.views.footprints.is_empty() {
+            None
+        } else {
+            self.footprints.programs(ctx)
+        };
         let attachments = masks.each_ref().map(attachment);
         let started = crate::counters::Moment::now();
         let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -488,6 +513,18 @@ impl Transparent {
                 .and_then(|t| t.render_pass("temporal composition")),
             ..Default::default()
         });
+        if let Some(programs) = programs {
+            footprints::Footprints::draw(
+                programs,
+                (ctx.scene, ctx.views, ctx.bindings.camera_unlit()),
+                &mut pass,
+            );
+        }
+        if !ctx.effective.composite.moving_surfaces {
+            drop(pass);
+            ctx.views.camera.recorded_since(started);
+            return;
+        }
         pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
         let scene = ctx.scene;
         let changes = scene.shading_changes();
@@ -638,6 +675,8 @@ mod blended_tests;
 mod composition_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod effects_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod footprints_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod receiver_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
