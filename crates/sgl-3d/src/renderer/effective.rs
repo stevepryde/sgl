@@ -253,10 +253,12 @@ pub(super) struct SceneContent {
     pub glow: bool,
     pub mist: bool,
     pub heat: bool,
+    /// The frame's input names an HDR effect the scene holds.
+    pub hdr_effect: bool,
 }
 
 impl SceneContent {
-    pub fn of(scene: &crate::Scene) -> Self {
+    pub fn of(scene: &crate::Scene, input: &FrameInput) -> Self {
         Self {
             ray_data: scene.ray_data(),
             fog_volumes: !scene.transient.fog_volume_corners.is_empty(),
@@ -267,6 +269,7 @@ impl SceneContent {
             glow: scene.transient.glow_count > 0,
             mist: !scene.transient.mist_positions.is_empty(),
             heat: scene.transient.heat_count > 0,
+            hdr_effect: scene.applied_hdr_effect(input.hdr_effect).is_some(),
         }
     }
 }
@@ -432,6 +435,7 @@ pub(super) fn resolve(
             && (screen_space.is_some()
                 || taa
                 || fsr
+                || content.hdr_effect
                 || depth_of_field.is_some()
                 || motion_blur.is_some()),
         // Occlusion culling's late phase falls between the G-buffer passes,
@@ -447,6 +451,7 @@ pub(super) fn resolve(
             .filter(|_| content.dynamic_gi_volume),
         volume_paths: volume_paths(settings, tier),
         bloom: bloom(settings),
+        hdr_effect: content.hdr_effect,
         depth_of_field,
         motion_blur,
         composite,
@@ -575,7 +580,12 @@ mod ray_data_tests {
         };
         for mode in [RayData::Disabled, RayData::Enabled] {
             let mut scene = Scene::with_options(&device, &queue, SceneOptions { ray_data: mode });
-            let effective = resolve(&settings, &input, SceneContent::of(&scene), synthetic);
+            let effective = resolve(
+                &settings,
+                &input,
+                SceneContent::of(&scene, &input),
+                synthetic,
+            );
             let history = CameraHistory::default().begin(
                 CameraFrame {
                     view: input.camera.view,

@@ -395,3 +395,93 @@ fn a_view_drawing_a_render_texture_focuses_its_own_picture() {
         "the main view focused"
     );
 }
+
+// Plausible defect: a view that draws a render texture skips the HDR
+// effect its own input names, or takes the main view's, so a feed a game
+// tints (a security camera's night vision, a scope's underwater view)
+// shows as the main view does. The oracle is the architecture's rule that
+// a render texture's view runs its stages like any view, from its own
+// input: in a frame where the feed alone applies an effect that darkens to
+// nothing, the screen showing the feed's picture, its white backdrop
+// otherwise, is black in the main view (within the output's dither), the
+// feed's effect ran at the
+// texture's size, and the main view applies none.
+#[test]
+fn a_view_drawing_a_render_texture_applies_its_own_hdr_effect() {
+    let Some(mut stage) = Stage::new() else {
+        return;
+    };
+    // No history in the main view, whose pixels so show this frame's picture.
+    let main_settings = Settings {
+        antialiasing: Antialiasing::Off,
+        ..settings()
+    };
+    let feed_settings = settings();
+    let effect = stage
+        .scene
+        .add_hdr_effect(crate::ShaderSource {
+            wgsl: "struct EffectParams { scale:vec4<f32>, }
+fn hdr_effect(color:vec3<f32>,ctx:EffectContext,params:EffectParams)->vec3<f32> {
+ return color*params.scale.xyz;
+}"
+            .into(),
+            label: "night".into(),
+        })
+        .unwrap();
+    let mut feed_input = input(Vec3::X * 100.);
+    feed_input.backdrop = crate::Backdrop::Color([1.; 3]);
+    let main_input = input(Vec3::ZERO);
+    // The red of the main view's centre texel, on the screen.
+    let screen = |stage: &mut Stage, feed_input: &FrameInput| {
+        let mut views = vec![
+            ViewFrame {
+                view: &mut stage.main,
+                input: &main_input,
+                settings: &main_settings,
+                output: ViewOutput::Texture(&stage.output),
+                timing: None,
+            },
+            ViewFrame {
+                view: &mut stage.feed,
+                input: feed_input,
+                settings: &feed_settings,
+                output: ViewOutput::RenderTexture(stage.texture),
+                timing: None,
+            },
+        ];
+        let mut encoder = stage.device.create_command_encoder(&Default::default());
+        stage.renderer.render(
+            &stage.device,
+            &stage.queue,
+            &mut encoder,
+            &mut stage.scene,
+            &mut views,
+        );
+        stage.queue.submit([encoder.finish()]);
+        stage.renderer.finish_frame(&mut stage.scene);
+        let bytes = test_support::read(&stage.device, &stage.queue, stage.output.texture(), 8);
+        let centre = ((SIZE[1] / 2) * SIZE[0] + SIZE[0] / 2) as usize * 8;
+        test_support::half(&bytes[centre..])
+    };
+    let white = screen(&mut stage, &feed_input);
+    assert!(
+        white > 0.1,
+        "the screen shows {white}, not the feed's white"
+    );
+    feed_input.hdr_effect = Some(stage.scene.hdr_effect(effect, &[0; 16]).unwrap());
+    let black = screen(&mut stage, &feed_input);
+    // Within the output's dither, one 8-bit code.
+    assert!(
+        black < 1. / 255.,
+        "the screen shows {black}: the feed's effect did not reach its picture"
+    );
+    let applied = stage.feed.hdr_effect.output().expect("the feed applied it");
+    assert_eq!(
+        [applied.texture().width(), applied.texture().height()],
+        FEED
+    );
+    assert!(
+        stage.main.hdr_effect.output().is_none(),
+        "the main view applied the feed's effect"
+    );
+}

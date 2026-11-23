@@ -220,6 +220,15 @@ them through unrefracted. A probe captured on an
   from depth layers of its deformed geometry (`Settings::volume_paths`),
   for absorption by finite glass or liquid. SGL3D ships no water, wind or
   glass. [Programmable surfaces](../README.md#programmable-surfaces).
+- **HDR effects** (`Scene::add_hdr_effect`, `FrameInput::hdr_effect`): the
+  game's WGSL function at every pixel of a view's resolved HDR frame, with
+  its linear colour before exposure, its view depth and distance along the
+  view ray, the camera and the exposure: an underwater colour shift, a tint
+  by distance. After TAA or FSR, before depth of field, motion blur, bloom
+  and the tone map; per view and per frame, with the game's parameters.
+  Effects on the displayed picture (grain, vignette) take the game's own
+  pass over the view's output texture instead.
+  [HDR effects](../README.md#hdr-effects).
 - **Decals**: boxes that project the game's images onto the lit surfaces
   inside them, changing base colour and, with their maps, normal, roughness
   and metallic before lighting, so reflections and SSR see them

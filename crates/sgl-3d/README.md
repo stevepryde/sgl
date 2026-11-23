@@ -26,7 +26,7 @@ This page is the detailed reference:
 - [Frame lifecycle](#retained-scene-and-frame-lifecycle), [several views](#several-views), [render textures](#render-textures), [data conventions](#dependencies-and-data-conventions), [browser differences](#browser-wasm--webgpu)
 - [Lights and look](#frame-lights-and-look), [procedural sky](#procedural-sky), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
 - [Reflections](#reflections), [TAA, SMAA and FSR](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion), [screen-space indirect light](#screen-space-indirect-light)
-- [Exposure and grading](#exposure-bloom-and-colour-grading), [depth of field](#depth-of-field), [motion blur](#motion-blur), [fog](#volumetric-fog)
+- [Exposure and grading](#exposure-bloom-and-colour-grading), [HDR effects](#hdr-effects), [depth of field](#depth-of-field), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [live specular probes](#live-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
 - [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [programmable surfaces](#programmable-surfaces), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
 - [Settings and fallbacks](#settings-and-capability-fallback), [binding tiers](#binding-tiers), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
@@ -389,6 +389,89 @@ frame.color_grading = ColorGrading {
 - `ColorGrading::global.hue` rotates in radians, wrapping either direction
   every 2π; negative angles and multiple turns need no game-side wrapping.
 
+## HDR effects
+
+A game's own full-screen function over each view's resolved HDR frame,
+with the pixel's linear colour and its scene depth: an underwater colour
+shift, a tint by distance or height. The game writes the effect and gives
+its parameters each frame; SGL3D owns the pass, its inputs, its target and
+its place. The `hdr_effect` example is an underwater scene.
+
+```rust,ignore
+use sgl_3d::ShaderSource;
+const UNDERWATER: &str = r#"
+struct EffectParams { absorption: vec3<f32>, unused: f32, scatter: vec3<f32>, unused_too: f32 }
+fn hdr_effect(color: vec3<f32>, ctx: EffectContext, params: EffectParams) -> vec3<f32> {
+    let kept = exp(-params.absorption * ctx.distance); // Beer-Lambert along the view ray
+    return color * kept + params.scatter * (1. - kept);
+}"#;
+let effect = scene.add_hdr_effect(ShaderSource { wgsl: UNDERWATER.into(), label: "underwater".into() })?;
+// Check the Rust mirror against naga's layout once, then each frame:
+let layout = scene.hdr_effect_parameters_layout(effect)?;
+frame.hdr_effect = Some(scene.hdr_effect(effect, bytemuck::bytes_of(&water))?);
+```
+
+- The module defines `struct EffectParams` (a uniform block, at most
+  `shader::HDR_EFFECT_PARAMS_MAX_BYTES`, 256) and
+  `fn hdr_effect(color: vec3<f32>, ctx: EffectContext, params: EffectParams) -> vec3<f32>`,
+  over `crates/sgl-3d/src/shading/hdr_effect_contract.wgsl`. SGL3D calls
+  it once a pixel.
+- `color`, and what the effect returns, is linear scene-referred RGB (sRGB
+  primaries) in the lights' units (candela, lux), **before exposure**. The
+  tone map multiplies it by `ctx.exposure` afterwards, so `color *
+  ctx.exposure` is what it would take. A result channel that is negative
+  or not finite reads 0, and one above `SCENE_COLOR_MAX` (65504) is
+  clamped, so one bad pixel never spreads through bloom or depth of field.
+- `EffectContext`: `uv` (the pixel's centre over the frame, top-left
+  (0, 0)), `pixel` and `size` (scene-size pixels), `view_depth` (metres
+  along the camera's axis to the surface) and `distance` (metres along the
+  pixel's view ray: from the eye under a perspective projection, from the
+  camera's plane under an orthographic one), both `SCENE_DEPTH_FAR` at the
+  sky (under any projection); `ray` and `eye` in the render frame (`eye +
+  ray * distance` is the surface), `exposure`, `time` (`elapsed_seconds`)
+  and `phase` (where it falls in the hour material animation repeats over,
+  0..1, precise however long a session runs).
+- It may call `effect_color(uv)` (the frame, bilinear, clamped to its
+  edge), `effect_view_depth(uv)` and `effect_distance(uv)` at any `uv`,
+  for a distortion or a blur. SGL3D maps `uv` to the render-size depth
+  under it, so under FSR or another scale an effect needs no sizes of its
+  own. The depth is the surface's: opaque, or a blended receiver of
+  screen-space reflections (the receiver pass runs for the effect);
+  other blended surfaces write no depth and take what lies behind them.
+- `Scene::add_hdr_effect` validates the module as `add_shader` does a
+  material's: a refused one returns `SceneError::Shader` and adds
+  nothing; every loop must be counted, at most `SHADER_LOOP_BUDGET` (256)
+  iterations a call, since it runs at every pixel; no bindings, `discard`
+  or entry points. `Scene::hdr_effect` checks the parameters' size;
+  `remove_hdr_effect` removes it, and frames that still name it apply none.
+- It runs after TAA or FSR and before depth of field, motion blur, bloom,
+  SMAA and the tone map: the lens then focuses, the shutter smears and the
+  lens scatters the light the effect changed, and each pixel still has its
+  own depth, unmixed with its neighbours'. That depth is this frame's at
+  the render size, jittered under TAA and FSR while the colour is
+  resolved, so at a silhouette an effect keyed sharply on depth can change
+  by a render pixel from frame to frame; and automatic exposure meters the
+  frame before the effect, so it does not compensate what the effect
+  darkens or brightens. Each view applies its own input's effect, a view
+  that draws a render texture included. It keeps no history.
+- Cost: one fragment pass at the scene size and one Rgba16Float target
+  there, held while an effect runs; a frame without one runs no pass and
+  holds no target, and a view that never applies one holds nothing.
+  Timing group `HDR effect`. Its pipeline is made at the view's first frame
+  with the effect, or by the job `Renderer::compile` queues for that frame
+  ([compiling ahead](docs/README.md#compiling-ahead)): ready it behind a
+  loading screen with the frame input that names the effect.
+- `DiagnosticTarget::HdrEffect` reads the effect's frame.
+
+**Display-space effects** (a film grain, a vignette, a scan-line or a
+pixelation over the displayed picture, or anything drawn with the HUD)
+belong after the tone map: render the view into a texture of the game's
+(`ViewOutput::Texture`), then draw the game's own pass from it into the
+surface before its UI. Use an HDR effect for what changes the light in
+the scene (needs linear HDR colour, depth or exposure, or must come before
+depth of field, motion blur and bloom); use the display-space route for
+what changes the picture.
+
 ## Depth of field
 
 ```rust,ignore
@@ -424,9 +507,10 @@ and blurs less.
   background. A tile whose neighbourhood blurs under a pixel is copied. A
   blur's radius is at most 32 pixels of the scene size, which the
   neighbourhood reaches.
-- It runs on the antialiased frame at the scene size, after TAA or FSR and
-  before motion blur, bloom, SMAA and tone mapping, as Wicked Engine and
-  Filament place it, reading the depth at the render size. It keeps no
+- It runs on the antialiased frame at the scene size (the HDR effect's,
+  where one ran), after TAA or FSR and before motion blur, bloom, SMAA and
+  tone mapping, as Wicked Engine and Filament place it, reading the depth
+  at the render size. It keeps no
   history, so a cut, resize or second view needs nothing; each view focuses
   through its own frame's lens, a view that draws a render texture
   included. Blended surfaces write no depth and take

@@ -876,6 +876,35 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
 }
 "#;
 
+/// A game's HDR effect for fixtures (`Scene::add_hdr_effect`): Beer-Lambert
+/// attenuation of each channel by its parameters' coefficient per metre
+/// along the pixel's view ray to the surface, `color × exp(−σ d)`.
+pub(crate) const TEST_EFFECT: &str = r#"
+struct EffectParams {
+ coefficient:vec3<f32>,
+ unused:f32,
+}
+fn hdr_effect(color:vec3<f32>,ctx:EffectContext,params:EffectParams)->vec3<f32> {
+ return color*exp(-params.coefficient*ctx.distance);
+}
+"#;
+
+/// `TEST_EFFECT` added to `scene` and applied with `coefficient`, the
+/// frame value a fixture's input takes.
+pub(crate) fn test_effect(scene: &mut crate::Scene, coefficient: [f32; 3]) -> crate::HdrEffect {
+    let effect = scene
+        .add_hdr_effect(crate::ShaderSource {
+            wgsl: TEST_EFFECT.into(),
+            label: "test effect".into(),
+        })
+        .unwrap();
+    let [r, g, b] = coefficient;
+    let block: [f32; 4] = [r, g, b, 0.];
+    scene
+        .hdr_effect(effect, bytemuck::cast_slice(&block))
+        .unwrap()
+}
+
 /// A game's shader that reads its volume path, for fixtures: it moves every
 /// vertex along its parameters' `direction` by their `lift`; its surface
 /// function, through a helper of its own, writes its volume path's length,

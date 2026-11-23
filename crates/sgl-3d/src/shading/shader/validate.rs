@@ -1,29 +1,31 @@
-//! What `Scene::add_shader` checks of a game's module before it accepts it,
-//! so that no program created from an accepted module later fails WGSL
-//! validation: no directive (it cannot follow SGL3D's library) and no name
-//! SGL3D's programs declare; that it parses against the contract alone,
-//! which leaves SGL3D's other declarations unknown to it; that it declares
-//! only constants, structs, aliases and functions, among them
-//! `ShaderParams`, `material_vertex` and `material_surface` as the contract
-//! gives them, without `discard`, with counted loops within the budget
-//! (`loops`), derivatives only in uniform control flow (`derivatives`) and
-//! parameters within `SHADER_PARAMS_MAX_BYTES`; and that every
-//! program the device's tier composes it into (`programs`) parses and
-//! validates with the naga wgpu creates its modules with. Bevy 9d12036
-//! validates a material's shader only when wgpu creates its module and logs
-//! the error (crates/bevy_render/src/render_resource/pipeline_cache.rs
-//! 133–180); validating at the add returns it to the game instead.
+//! What `Scene::add_shader` and `Scene::add_hdr_effect` check of a game's
+//! module before they accept it, so that no program created from an
+//! accepted module later fails WGSL validation: no directive (it cannot
+//! follow SGL3D's library) and no name SGL3D's programs declare; that it
+//! parses against its contract alone, which leaves SGL3D's other
+//! declarations unknown to it; that it declares only constants, structs,
+//! aliases and functions, among them its parameter block and functions as
+//! the contract gives them, without `discard`, with counted loops within
+//! the budget (`loops`), derivatives only in uniform control flow
+//! (`derivatives`) and parameters within the contract's limit; and that
+//! every program the device's tier composes it into (`programs`) parses
+//! and validates with the naga wgpu creates its modules with. One validator
+//! for both contracts (`Contract`): a material shader's (the shader
+//! contract) and an HDR effect's (the HDR effect contract), the first with
+//! the rules of its own a material's passes need. Bevy 9d12036 validates a
+//! material's shader only when wgpu creates its module and logs the error
+//! (crates/bevy_render/src/render_resource/pipeline_cache.rs 133–180);
+//! validating at the add returns it to the game instead.
 use super::super::bind::BindingTier;
 use super::super::compose;
+use super::super::hdr_effect;
 use super::super::programs::{
     GAME_MODULE_HEADER, GeometryForm, ProgramShader, caster_program, geometry_program,
 };
-use super::{
-    CONTRACT_NAMES, SHADER_CONTRACT, SHADER_DEFAULT, SHADER_SCENE_DEPTH_NONE, derivatives, loops,
-};
-use crate::content::shader::{
-    ForbiddenItem, SHADER_PARAMS_MAX_BYTES, ShaderError, ShaderParamField, ShaderParamsLayout,
-};
+use super::contracts::{Contract, HDR_EFFECT, MATERIAL, Type};
+use super::tokens::{declared_names, leading_directive, tokens};
+use super::{CONTRACT_NAMES, SHADER_DEFAULT, derivatives, loops};
+use crate::content::shader::{ForbiddenItem, ShaderError, ShaderParamField, ShaderParamsLayout};
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
@@ -42,7 +44,7 @@ pub(crate) struct ValidatedShader {
 
 /// The contract's scene depth functions, which a game's module calls and
 /// does not define.
-const CONTRACT_FUNCTIONS: [&str; 4] = [
+pub(super) const CONTRACT_FUNCTIONS: [&str; 4] = [
     "scene_depth_available",
     "scene_depth",
     "scene_depth_behind",
@@ -107,8 +109,45 @@ pub(crate) fn validator() -> naga::valid::Validator {
     )
 }
 
-/// `source`, a game's module, validated for a device of `tier`.
+/// What the checks common to both contracts learn of a module that passed
+/// those before its parameter block's layout and its programs.
+struct Parsed {
+    module: naga::Module,
+    info: naga::valid::ModuleInfo,
+    params: naga::Handle<naga::Type>,
+}
+
+/// `source`, a game's material shader module, validated for a device of
+/// `tier`.
 pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShader, ShaderError> {
+    let Parsed {
+        module,
+        info,
+        params,
+    } = parse_checked(&MATERIAL, source)?;
+    if let Some(function) = reaches(&module, "material_vertex", &CONTRACT_FUNCTIONS) {
+        return Err(ShaderError::SceneDepthInVertex { function });
+    }
+    let reads_volume_path = reaches(&module, "material_surface", &[VOLUME_PATH]).is_some();
+    let reads_time = reads_time(&module, &info);
+    let layout = finish(&MATERIAL, source, tier, &module, params)?;
+    Ok(ValidatedShader {
+        layout,
+        reads_volume_path,
+        reads_time,
+    })
+}
+
+/// `source`, a game's HDR effect module, validated: its parameter block's
+/// layout. Its one program is the same on either binding tier.
+pub(crate) fn validate_hdr_effect(source: &str) -> Result<ShaderParamsLayout, ShaderError> {
+    let Parsed { module, params, .. } = parse_checked(&HDR_EFFECT, source)?;
+    finish(&HDR_EFFECT, source, BindingTier::Basic, &module, params)
+}
+
+/// The checks of `contract` on `source` up to its parameter block's layout
+/// and its programs.
+fn parse_checked(contract: &Contract, source: &str) -> Result<Parsed, ShaderError> {
     let tokens = tokens(source);
     if let Some(directive) = leading_directive(&tokens) {
         return Err(ShaderError::Forbidden {
@@ -116,7 +155,7 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
             name: directive,
         });
     }
-    let reserved = reserved_names();
+    let reserved = (contract.reserved)();
     let declared = declared_names(&tokens);
     // WGSL lets a module-scope declaration shadow a predeclared type,
     // enumerant or built-in function, and naga resolves the module's own
@@ -132,38 +171,52 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
     {
         return Err(ShaderError::NameTaken { name: name.clone() });
     }
-    // Missing before parsing, where an undeclared ShaderParams the
+    // Missing before parsing, where an undeclared parameter block the
     // functions name would read as an unknown name.
-    if let Some(&name) = CONTRACT_NAMES
+    if let Some(&name) = contract
+        .names
         .iter()
         .find(|&&name| !declared.iter().any(|declared| declared == name))
     {
         return Err(ShaderError::MissingFunction { name });
     }
-    let module = parse_against_contract(source)?;
+    let module = parse_against_contract(contract, source)?;
     let info = validator()
         .validate(&module)
         .map_err(|error| validation(&error))?;
     forbidden(&module)?;
-    let params = signatures(&module)?;
+    let params = signatures(contract, &module)?;
+    let game = |name: &str| !contract.provided.contains(&name);
     for (_, function) in module.functions.iter() {
         let name = function.name.clone().unwrap_or_default();
-        if CONTRACT_FUNCTIONS.contains(&name.as_str()) {
+        if !game(&name) {
             continue;
         }
         if discards(&function.body) {
             return Err(ShaderError::Discard { function: name });
         }
     }
-    loops::check(&module, |name| !CONTRACT_FUNCTIONS.contains(&name))?;
-    derivatives::check(&module, |name| !CONTRACT_FUNCTIONS.contains(&name))?;
-    if let Some(function) = reaches(&module, "material_vertex", &CONTRACT_FUNCTIONS) {
-        return Err(ShaderError::SceneDepthInVertex { function });
-    }
-    let reads_volume_path = reaches(&module, "material_surface", &[VOLUME_PATH]).is_some();
-    let reads_time = reads_time(&module, &info);
-    let layout = params_layout(&module, params)?;
-    for (label, program) in programs(tier, ProgramShader::Game(source)) {
+    loops::check(&module, game)?;
+    derivatives::check(&module, game)?;
+    Ok(Parsed {
+        module,
+        info,
+        params,
+    })
+}
+
+/// The parameter block's layout of `module`, within `contract`'s limit,
+/// once every program a device of `tier` composes `source` into parses and
+/// validates.
+fn finish(
+    contract: &Contract,
+    source: &str,
+    tier: BindingTier,
+    module: &naga::Module,
+    params: naga::Handle<naga::Type>,
+) -> Result<ShaderParamsLayout, ShaderError> {
+    let layout = params_layout(module, params, contract.max_params)?;
+    for (label, program) in (contract.programs)(tier, source) {
         let module =
             naga::front::wgsl::parse_str(&program).map_err(|error| ShaderError::Validate {
                 message: format!("{label}: {}", error.message()),
@@ -172,11 +225,7 @@ pub(crate) fn validate(source: &str, tier: BindingTier) -> Result<ValidatedShade
             .validate(&module)
             .map_err(|error| validation(&error))?;
     }
-    Ok(ValidatedShader {
-        layout,
-        reads_volume_path,
-        reads_time,
-    })
+    Ok(layout)
 }
 
 /// Whether a function of `module`, the game's or the contract's, reads the
@@ -273,10 +322,10 @@ fn validation(error: &dyn std::error::Error) -> ShaderError {
     ShaderError::Validate { message }
 }
 
-/// `source` composed after the contract and the scene depth functions it
-/// may call, parsed: a parse error placed in the game's source.
-fn parse_against_contract(source: &str) -> Result<naga::Module, ShaderError> {
-    let mut program = compose(&[&SHADER_CONTRACT, &SHADER_SCENE_DEPTH_NONE]);
+/// `source` composed after `contract`'s modules and the functions it may
+/// call, parsed: a parse error placed in the game's source.
+fn parse_against_contract(contract: &Contract, source: &str) -> Result<naga::Module, ShaderError> {
+    let mut program = compose(contract.context);
     program.push_str(GAME_MODULE_HEADER);
     let before = program.matches('\n').count() as u32;
     program.push_str(source);
@@ -334,50 +383,59 @@ fn named_type(module: &naga::Module, name: &str) -> Option<naga::Handle<naga::Ty
         .map(|(handle, _)| handle)
 }
 
-const PARAMS_EXPECTED: &str = "struct ShaderParams { ... }";
-const VERTEX_EXPECTED: &str = "fn material_vertex(v: MaterialVertex, ctx: VertexContext, params: ShaderParams) -> MaterialVertex";
-const SURFACE_EXPECTED: &str = "fn material_surface(s: MaterialSurface, ctx: SurfaceContext, params: ShaderParams) -> MaterialSurface";
-
-/// `ShaderParams` a struct, and the two functions with the contract's
-/// signatures. Returns `ShaderParams`.
-fn signatures(module: &naga::Module) -> Result<naga::Handle<naga::Type>, ShaderError> {
-    let params = named_type(module, "ShaderParams").ok_or(ShaderError::MissingFunction {
-        name: "ShaderParams",
-    })?;
+/// `contract`'s parameter block a struct, and its functions with the
+/// contract's signatures. Returns the parameter block.
+fn signatures(
+    contract: &Contract,
+    module: &naga::Module,
+) -> Result<naga::Handle<naga::Type>, ShaderError> {
+    let name = contract.names[0];
+    let params = named_type(module, name).ok_or(ShaderError::MissingFunction { name })?;
     if !matches!(module.types[params].inner, naga::TypeInner::Struct { .. }) {
         return Err(ShaderError::Signature {
-            name: "ShaderParams",
-            expected: PARAMS_EXPECTED,
+            name,
+            expected: contract.params_expected,
         });
     }
-    let contract = |name| named_type(module, name).expect("the contract declares its structs");
-    for (name, value, context, expected) in [
-        (
-            "material_vertex",
-            contract("MaterialVertex"),
-            contract("VertexContext"),
-            VERTEX_EXPECTED,
-        ),
-        (
-            "material_surface",
-            contract("MaterialSurface"),
-            contract("SurfaceContext"),
-            SURFACE_EXPECTED,
-        ),
-    ] {
-        let (_, function) = module
+    let of = |ty: Type| match ty {
+        Type::Named(name) => named_type(module, name),
+        Type::Params => Some(params),
+        Type::Vec3F32 => module
+            .types
+            .iter()
+            .find(|(_, ty)| {
+                ty.name.is_none()
+                    && ty.inner
+                        == naga::TypeInner::Vector {
+                            size: naga::VectorSize::Tri,
+                            scalar: naga::Scalar::F32,
+                        }
+            })
+            .map(|(handle, _)| handle),
+    };
+    for function in contract.functions {
+        let name = function.name;
+        let (_, declared) = module
             .functions
             .iter()
-            .find(|(_, function)| function.name.as_deref() == Some(name))
+            .find(|(_, declared)| declared.name.as_deref() == Some(name))
             .ok_or(ShaderError::MissingFunction { name })?;
-        let arguments: Vec<_> = function
+        let arguments: Vec<_> = declared
             .arguments
             .iter()
-            .map(|argument| argument.ty)
+            .map(|argument| Some(argument.ty))
             .collect();
-        let result = function.result.as_ref().map(|result| result.ty);
-        if arguments != [value, context, params] || result != Some(value) {
-            return Err(ShaderError::Signature { name, expected });
+        let expected: Vec<_> = function.arguments.iter().map(|&ty| of(ty)).collect();
+        let result = declared.result.as_ref().map(|result| result.ty);
+        if expected.iter().any(Option::is_none)
+            || arguments != expected
+            || result.is_none()
+            || result != of(function.result)
+        {
+            return Err(ShaderError::Signature {
+                name,
+                expected: function.expected,
+            });
         }
     }
     Ok(params)
@@ -399,23 +457,21 @@ fn discards(block: &naga::Block) -> bool {
 
 /// `params`' layout as naga lays out WGSL's host-shareable structs, which a
 /// uniform block takes when it meets the uniform rules the programs'
-/// validation checks; within `SHADER_PARAMS_MAX_BYTES`.
+/// validation checks; within `max` bytes.
 fn params_layout(
     module: &naga::Module,
     params: naga::Handle<naga::Type>,
+    max: u32,
 ) -> Result<ShaderParamsLayout, ShaderError> {
     let mut layouter = naga::proc::Layouter::default();
     layouter
         .update(module.to_ctx())
         .map_err(|error| validation(&error))?;
     let naga::TypeInner::Struct { members, span } = &module.types[params].inner else {
-        unreachable!("ShaderParams was found a struct");
+        unreachable!("the parameter block was found a struct");
     };
-    if *span > SHADER_PARAMS_MAX_BYTES {
-        return Err(ShaderError::ParamsTooLarge {
-            size: *span,
-            max: SHADER_PARAMS_MAX_BYTES,
-        });
+    if *span > max {
+        return Err(ShaderError::ParamsTooLarge { size: *span, max });
     }
     Ok(ShaderParamsLayout {
         size: *span,
@@ -493,7 +549,7 @@ fn calls(block: &naga::Block, callees: &mut Vec<naga::Handle<naga::Function>>) {
 /// with the default provider's text where a game's module goes. Both
 /// tiers', so a module one tier accepts never takes a name the other's
 /// programs declare. Found once.
-fn reserved_names() -> &'static HashSet<String> {
+pub(super) fn reserved_names() -> &'static HashSet<String> {
     static NAMES: OnceLock<HashSet<String>> = OnceLock::new();
     NAMES.get_or_init(|| {
         let mut names = HashSet::new();
@@ -502,18 +558,7 @@ fn reserved_names() -> &'static HashSet<String> {
         for (label, program) in tiers.into_iter().flat_map(|tier| programs(tier, shader)) {
             let module = naga::front::wgsl::parse_str(&program)
                 .unwrap_or_else(|error| panic!("{label}: {}", error.message()));
-            let name = |name: &Option<String>| name.clone();
-            names.extend(module.types.iter().filter_map(|(_, ty)| name(&ty.name)));
-            names.extend(module.constants.iter().filter_map(|(_, c)| name(&c.name)));
-            names.extend(module.overrides.iter().filter_map(|(_, o)| name(&o.name)));
-            names.extend(
-                module
-                    .global_variables
-                    .iter()
-                    .filter_map(|(_, variable)| name(&variable.name)),
-            );
-            names.extend(module.functions.iter().filter_map(|(_, f)| name(&f.name)));
-            names.extend(module.entry_points.iter().map(|entry| entry.name.clone()));
+            names.extend(module_names(&module));
         }
         for name in CONTRACT_NAMES {
             names.remove(name);
@@ -522,158 +567,37 @@ fn reserved_names() -> &'static HashSet<String> {
     })
 }
 
-/// A token of WGSL source with its comments removed: an identifier or
-/// keyword, or one other character.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Token {
-    Word(String),
-    Mark(char),
-}
-
-/// `source`'s tokens, line and nested block comments skipped, as naga 30
-/// lexes WGSL (`front::wgsl::parse::lexer`, `consume_token`): a line
-/// comment ends at any of its line breaks and its blankspace separates
-/// tokens, so no declaration naga sees is hidden from `declared_names`.
-fn tokens(source: &str) -> Vec<Token> {
-    let mut tokens = Vec::new();
-    let mut chars = source.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '/' if chars.peek() == Some(&'/') => {
-                for next in chars.by_ref() {
-                    if is_comment_end(next) {
-                        break;
-                    }
-                }
-            }
-            '/' if chars.peek() == Some(&'*') => {
-                chars.next();
-                let mut depth = 1;
-                let mut previous = ' ';
-                for next in chars.by_ref() {
-                    match (previous, next) {
-                        ('/', '*') => {
-                            depth += 1;
-                            previous = ' ';
-                            continue;
-                        }
-                        ('*', '/') => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                            previous = ' ';
-                            continue;
-                        }
-                        _ => {}
-                    }
-                    previous = next;
-                }
-            }
-            c if c.is_alphanumeric() || c == '_' => {
-                let mut word = String::from(c);
-                while let Some(&next) = chars.peek() {
-                    if !(next.is_alphanumeric() || next == '_') {
-                        break;
-                    }
-                    word.push(next);
-                    chars.next();
-                }
-                tokens.push(Token::Word(word));
-            }
-            c if is_blankspace(c) => {}
-            c => tokens.push(Token::Mark(c)),
+/// The names an HDR effect's program declares at module scope, but those
+/// a game's module defines: the program parsed with an effect that returns
+/// its colour. Found once.
+pub(super) fn effect_reserved_names() -> &'static HashSet<String> {
+    static NAMES: OnceLock<HashSet<String>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        let program = hdr_effect::program(hdr_effect::IDENTITY);
+        let module = naga::front::wgsl::parse_str(&program)
+            .unwrap_or_else(|error| panic!("HDR effect: {}", error.message()));
+        let mut names = module_names(&module);
+        for name in hdr_effect::CONTRACT_NAMES {
+            names.remove(name);
         }
-    }
-    tokens
+        names
+    })
 }
 
-/// Whether `c` ends a line comment: WGSL's line breaks, naga 30's
-/// `is_comment_end` (`front::wgsl::parse::lexer`).
-const fn is_comment_end(c: char) -> bool {
-    matches!(
-        c,
-        '\u{000a}'..='\u{000d}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
-    )
-}
-
-/// Whether `c` is WGSL blankspace (Unicode Pattern_White_Space), naga 30's
-/// `is_blankspace` (`front::wgsl::parse::lexer`).
-const fn is_blankspace(c: char) -> bool {
-    matches!(
-        c,
-        '\t'..='\r' | ' ' | '\u{0085}' | '\u{200e}' | '\u{200f}' | '\u{2028}' | '\u{2029}'
-    )
-}
-
-/// The directive the module starts with, if any, up to its `;`.
-fn leading_directive(tokens: &[Token]) -> Option<String> {
-    let Some(Token::Word(word)) = tokens.first() else {
-        return None;
-    };
-    if !matches!(word.as_str(), "enable" | "requires" | "diagnostic") {
-        return None;
-    }
-    let mut directive = String::new();
-    for token in tokens
-        .iter()
-        .take_while(|token| **token != Token::Mark(';'))
-    {
-        if !directive.is_empty() {
-            directive.push(' ');
-        }
-        match token {
-            Token::Word(word) => directive.push_str(word),
-            Token::Mark(mark) => directive.push(*mark),
-        }
-    }
-    Some(directive)
-}
-
-/// The names the module declares at module scope: each `fn`, `struct`,
-/// `const`, `override`, `alias` and `var` outside any brace.
-fn declared_names(tokens: &[Token]) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut depth = 0usize;
-    let mut at = 0;
-    while at < tokens.len() {
-        match &tokens[at] {
-            Token::Mark('{') => depth += 1,
-            Token::Mark('}') => depth = depth.saturating_sub(1),
-            Token::Word(word)
-                if depth == 0
-                    && matches!(
-                        word.as_str(),
-                        "fn" | "struct" | "const" | "override" | "alias" | "var"
-                    ) =>
-            {
-                let mut next = at + 1;
-                // A variable's address space and access: `var<...>`.
-                if word == "var" && tokens.get(next) == Some(&Token::Mark('<')) {
-                    let mut angles = 0usize;
-                    while let Some(token) = tokens.get(next) {
-                        match token {
-                            Token::Mark('<') => angles += 1,
-                            Token::Mark('>') => {
-                                angles -= 1;
-                                if angles == 0 {
-                                    next += 1;
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                        next += 1;
-                    }
-                }
-                if let Some(Token::Word(name)) = tokens.get(next) {
-                    names.push(name.clone());
-                }
-                at = next;
-            }
-            _ => {}
-        }
-        at += 1;
-    }
+/// The names `module` declares at module scope.
+fn module_names(module: &naga::Module) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let name = |name: &Option<String>| name.clone();
+    names.extend(module.types.iter().filter_map(|(_, ty)| name(&ty.name)));
+    names.extend(module.constants.iter().filter_map(|(_, c)| name(&c.name)));
+    names.extend(module.overrides.iter().filter_map(|(_, o)| name(&o.name)));
+    names.extend(
+        module
+            .global_variables
+            .iter()
+            .filter_map(|(_, variable)| name(&variable.name)),
+    );
+    names.extend(module.functions.iter().filter_map(|(_, f)| name(&f.name)));
+    names.extend(module.entry_points.iter().map(|entry| entry.name.clone()));
     names
 }

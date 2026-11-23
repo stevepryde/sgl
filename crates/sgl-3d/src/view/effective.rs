@@ -178,8 +178,8 @@ pub(crate) struct Effective {
     /// takes its two-pass form.
     pub contact_shadows: Option<ContactShadows>,
     /// The receiver pass runs: the scene holds a blended receiver of
-    /// screen-space reflections, and a screen-space method, TAA, FSR, depth
-    /// of field or motion blur reads the surface it draws.
+    /// screen-space reflections, and a screen-space method, TAA, FSR, the
+    /// HDR effect, depth of field or motion blur reads the surface it draws.
     pub receivers: bool,
     /// The G-buffer and lighting are one pass: the device has the
     /// attachments, unless occlusion culling, the ray-traced shadow stage or
@@ -211,6 +211,9 @@ pub(crate) struct Effective {
     /// `Settings::volume_paths` on a device of the Extended binding tier.
     pub volume_paths: bool,
     pub bloom: bool,
+    /// The frame applies the HDR effect its input names, which the scene
+    /// holds (`stages::hdr_effect`).
+    pub hdr_effect: bool,
     /// Depth of field's lens and gather, while it runs: the setting is on,
     /// the camera is `perspective`'s and the frame's lens is valid.
     pub depth_of_field: Option<DepthOfFieldFrame>,

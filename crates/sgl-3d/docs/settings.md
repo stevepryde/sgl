@@ -113,6 +113,13 @@ is done (its algorithm and internal parameters) is SGL3D's.
   focal length, focuses nothing.
 - `motion_blur`: the shutter angle, the share of each frame's motion that
   blurs (0.5 by default).
+- `hdr_effect`: the game's effect on this view's resolved HDR frame and its
+  parameters (`Scene::hdr_effect`), `None` by default: content the game
+  writes, not a setting; SGL3D owns its pass and place. With an effect it
+  costs one fragment pass at the scene size and one target (on an Apple M5,
+  the example's underwater effect 0.08 ms at 1920×1080 and 0.04 ms at
+  1280×720 natively on Metal, one 0.07 ms step of Chrome's timer at
+  either); `None` runs no pass and holds no target.
 - `color_grading`: white balance, hue, post-saturation, the midtone range,
   each section's saturation, contrast, gamma, gain and lift, and the AgX
   look (`AgxLook::None` by default, `Punchy` or `Golden`), applied only

@@ -9,16 +9,9 @@ fn scene_depth_available()->bool {
  return true;
 }
 // The linear view depth in metres of device depth `z` under the view's
-// projection: whatever projection the camera has, its depth rows give the
-// view-space z whose clip z over clip w is `z`. SCENE_DEPTH_FAR where no
-// finite depth does (the sky under an infinite projection).
+// projection (view_depth.wgsl).
 fn scene_view_depth(z:f32)->f32 {
- let p=view.projection;
- let denominator=z*p[2][3]-p[2][2];
- if denominator==0. {
-  return SCENE_DEPTH_FAR;
- }
- return clamp(-(p[3][2]-z*p[3][3])/denominator,0.,SCENE_DEPTH_FAR);
+ return projected_view_depth(view.projection,z);
 }
 // The linear view depth in metres of the opaque surface at `pixel`, a
 // position in the render target in texels: SCENE_DEPTH_FAR at the sky.

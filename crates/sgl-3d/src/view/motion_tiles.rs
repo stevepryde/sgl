@@ -2,7 +2,7 @@
 //! (`shading::motion_tiles`) over a motion target: their pipelines, made
 //! from a program that composes the module, and their targets at one frame
 //! size. Motion blur and TAA's motion reach each hold their own, run at
-//! their own size and place in the frame (Frame items 11 and 13).
+//! their own size and place in the frame (Frame items 11 and 14).
 use crate::shading::gbuffer::COLOR;
 use crate::shading::motion_tiles::{ENTRY_POINTS, GROUP_SIZE, MotionTilesUniform, TILE_SIZE};
 use crate::view::targets::target_with_usage;

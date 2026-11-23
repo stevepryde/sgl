@@ -31,6 +31,7 @@ macro_rules! context {
             views: &$renderer.view.views,
             bindings: &mut $renderer.view.bindings,
             pipelines: &mut $renderer.renderer.shared.pipelines,
+            compiler: &$renderer.renderer.shared.compiler,
             history: $frame.history,
             environment_revision: $renderer.view.sky.environment_revision(),
             hardware_rays: crate::view::frame::HardwareRays::of(
@@ -235,7 +236,7 @@ impl TestRenderer {
         let effective = super::effective::resolve(
             settings,
             &input,
-            super::effective::SceneContent::of(scene),
+            super::effective::SceneContent::of(scene, &input),
             shared.device(None, view.cull.occlusion_supported()),
         );
         shared.pipelines.specialise(effective.layers, scene);

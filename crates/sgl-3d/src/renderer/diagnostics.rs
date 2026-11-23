@@ -28,6 +28,7 @@ impl View {
             DiagnosticTarget::Antialiased => {
                 view_stages::completed(self.completed?, &self.post_fx, &self.antialiasing, targets)
             }
+            DiagnosticTarget::HdrEffect => return self.hdr_effect.output(),
             DiagnosticTarget::DepthOfField => return self.depth_of_field.output(),
         })
     }

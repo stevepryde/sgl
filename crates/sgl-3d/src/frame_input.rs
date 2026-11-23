@@ -163,6 +163,11 @@ pub struct FrameInput {
     pub depth_of_field: DepthOfFieldParameters,
     /// While `Settings::motion_blur` is on.
     pub motion_blur: MotionBlurParameters,
+    /// The game's effect on this view's resolved HDR frame, after
+    /// antialiasing and before depth of field, motion blur, bloom and the
+    /// tone map, with its parameters (`Scene::hdr_effect`); `None` (the
+    /// default) applies none, as does an effect the scene no longer holds.
+    pub hdr_effect: Option<crate::HdrEffect>,
     pub color_grading: ColorGrading,
     /// XeGTAO's search radius in world metres, clamped to 0.01..=10000
     /// (NaN to 0.01). `Settings::ambient_occlusion` turns ambient occlusion
@@ -179,7 +184,7 @@ impl FrameInput {
     /// or environment; the environment's diffuse lighting, reflections and
     /// backdrop unturned at intensity 1; baked lighting on and atmosphere
     /// off; a 60 Hz frame time; a fixed exposure of 0 stops and no local
-    /// exposure; and the default bloom, lens, motion blur and colour grading, an
+    /// exposure; no HDR effect; and the default bloom, lens, motion blur and colour grading, an
     /// ambient occlusion radius of 0.5 m and a screen-space indirect light
     /// radius of 5 m.
     pub fn new(camera: Camera) -> Self {
@@ -207,6 +212,7 @@ impl FrameInput {
             bloom: BloomParameters::default(),
             depth_of_field: DepthOfFieldParameters::default(),
             motion_blur: MotionBlurParameters::default(),
+            hdr_effect: None,
             color_grading: ColorGrading::default(),
             ambient_occlusion_radius: 0.5,
             screen_space_indirect_radius: 5.,

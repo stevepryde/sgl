@@ -48,6 +48,12 @@ bun scripts/tasks.ts measure-browser --baseline --local-shadows --frames 180 --o
 bun scripts/tasks.ts measure-browser --baseline --depth-of-field high --size 1920x1080 --frames 180 --output target/browser-dof.json
 ```
 
+```sh
+# The `hdr_effect` example's underwater HDR effect on every frame; its pass
+# is the `HDR effect` timing group.
+bun scripts/tasks.ts measure-browser --baseline --hdr-effect --size 1920x1080 --frames 180 --output target/browser-hdr-effect.json
+```
+
 `--scaled` selects `SceneResolution::ThreeQuarter` and `Upscaling::On`; this
 changes the render-resolution/quality tradeoff, so report it separately from
 an identical-settings renderer before/after comparison. Native FSR is not

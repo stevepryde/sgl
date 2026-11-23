@@ -5,8 +5,10 @@
 // structs, and from material_surface may call the scene depth functions its
 // program's provider declares (shader_scene_depth_none.wgsl,
 // shader_scene_depth.wgsl): scene_depth_available, scene_depth,
-// scene_depth_behind and scene_volume_path; nothing else SGL3D declares is
-// the contract. SGL3D's own programs compose shader_default.wgsl in its
+// scene_depth_behind and scene_volume_path, which return SCENE_DEPTH_FAR at
+// the sky (view_depth.wgsl, with projected_view_depth, the view depth of a
+// device depth under a projection); nothing else SGL3D declares is the
+// contract. SGL3D's own programs compose shader_default.wgsl in its
 // place, whose functions return their argument.
 // The pattern is Filament ef1a133's materialVertex() and material()
 // (shaders/src/surface_main.vs, surface_main.fs,
@@ -108,8 +110,6 @@ struct SurfaceContext {
  pixel:vec2<f32>,
  view_depth:f32,
 }
-// What scene_depth returns at the sky.
-const SCENE_DEPTH_FAR:f32=1e30;
 // What scene_volume_path returns: the `length` in metres along the
 // fragment's view ray inside the volume its material bounds, at most
 // SCENE_DEPTH_FAR and never negative, and its `bound`, one of the VOLUME_*

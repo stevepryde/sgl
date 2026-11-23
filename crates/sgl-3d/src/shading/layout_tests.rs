@@ -112,6 +112,10 @@ fn programs() -> Vec<(&'static str, String)> {
             ProgramShader::{Default, Game},
             caster_program, geometry_program,
         };
+        programs.push((
+            "hdr_effect",
+            crate::shading::hdr_effect::program(crate::shading::hdr_effect::IDENTITY),
+        ));
         let game = Game(crate::shading::shader::tests::FIXTURE);
         let camera = |shadows, screen_indirect| Camera {
             shadows,
@@ -340,6 +344,10 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
         (
             heat::HEAT.name,
             vec![heat::VS_ENTRY, heat::FS_ENTRY, heat::FS_MASKED_ENTRY],
+        ),
+        (
+            "hdr_effect",
+            vec![FULLSCREEN_VS_ENTRY, super::hdr_effect::FRAGMENT_ENTRY],
         ),
         (
             transmission::COPY.name,
@@ -947,6 +955,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::opaque::ambient_occlusion::mirrors())
     .chain(crate::stages::opaque::screen_indirect::mirrors())
     .chain(crate::stages::exposure::mirrors())
+    .chain(super::hdr_effect::mirrors())
     .chain(crate::stages::depth_of_field::mirrors())
     .chain(crate::stages::motion_blur::mirrors())
     .chain(super::motion_tiles::mirrors())

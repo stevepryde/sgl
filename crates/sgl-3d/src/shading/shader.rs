@@ -5,16 +5,18 @@
 //! (`validate`).
 use super::Module;
 
+mod contracts;
 mod derivatives;
 mod loops;
+mod tokens;
 mod validate;
-pub(crate) use validate::validate;
+pub(crate) use validate::{validate, validate_hdr_effect};
 
 /// The structs a game's module takes and returns.
 pub(crate) static SHADER_CONTRACT: Module = Module {
     name: "shader_contract",
     source: include_str!("shader_contract.wgsl"),
-    deps: &[],
+    deps: &[&super::VIEW_DEPTH],
 };
 /// The default provider: `ShaderParams` and functions that return their
 /// argument, composed by every program of a material without a shader.
@@ -56,5 +58,7 @@ pub(crate) static SHADER_SCENE_DEPTH: Module = Module {
 pub(crate) const CONTRACT_NAMES: [&str; 3] =
     ["ShaderParams", "material_vertex", "material_surface"];
 
+#[cfg(test)]
+mod hdr_effect_tests;
 #[cfg(test)]
 pub(crate) mod tests;

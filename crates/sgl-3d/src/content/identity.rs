@@ -73,6 +73,11 @@ identity!(
     ShaderId
 );
 identity!(
+    /// An HDR effect of a scene: a game's WGSL module a view's frame input
+    /// applies to its resolved HDR frame.
+    HdrEffectId
+);
+identity!(
     /// A render texture of a scene: a picture a view draws for materials to
     /// sample.
     RenderTextureId

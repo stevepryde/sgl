@@ -27,6 +27,14 @@ use wasm_bindgen::prelude::*;
 
 /// The output size unless the page asks for another.
 const SIZE: [u32; 2] = [1280, 720];
+/// The `hdr_effect` example's underwater effect: absorption along the view
+/// ray, the water's colour scattered in.
+const UNDERWATER: &str =
+    "struct EffectParams { absorption:vec3<f32>, unused:f32, scatter:vec3<f32>, unused_too:f32, }
+fn hdr_effect(color:vec3<f32>,ctx:EffectContext,params:EffectParams)->vec3<f32> {
+ let kept=exp(-params.absorption*ctx.distance);
+ return color*kept+params.scatter*(1.-kept);
+}";
 const WARMUP: usize = 60;
 const MATERIALS: usize = 16;
 const TEXTURE: u32 = 256;
@@ -208,8 +216,13 @@ fn collect(
 }
 
 /// `depth_of_field` is `off`, `low`, `medium` or `high`; `size` is the
-/// output's width and height, or `SIZE` unless both are given and above 0.
+/// output's width and height, or `SIZE` unless both are given and above 0;
+/// `hdr_effect` applies an underwater HDR effect (`UNDERWATER`).
 #[wasm_bindgen]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the page passes each of its query's options positionally"
+)]
 pub async fn measure(
     frames: u32,
     scaled: bool,
@@ -218,6 +231,7 @@ pub async fn measure(
     local_shadows: bool,
     depth_of_field: String,
     size: Vec<u32>,
+    hdr_effect: bool,
 ) -> String {
     console_error_panic_hook::set_once();
     let depth_of_field = match depth_of_field.as_str() {
@@ -236,7 +250,7 @@ pub async fn measure(
         scaled,
         prepared_upload,
         capture_frame,
-        (local_shadows, depth_of_field, size),
+        (local_shadows, depth_of_field, size, hdr_effect),
     )
     .await
     {
@@ -249,7 +263,7 @@ async fn measured(
     scaled: bool,
     prepared_upload: bool,
     capture_frame: bool,
-    (local_shadows, depth_of_field, size): (bool, DepthOfField, [u32; 2]),
+    (local_shadows, depth_of_field, size, hdr_effect): (bool, DepthOfField, [u32; 2], bool),
 ) -> Result<Value, String> {
     if !(60..=3600).contains(&frames) {
         return Err("frames must be in 60..=3600".into());
@@ -277,6 +291,23 @@ async fn measured(
     }));
     let device_ms = now() - started;
     let mut scene = Box::new(Scene::new(&device, &queue));
+    let underwater = if hdr_effect {
+        let effect = scene
+            .add_hdr_effect(sgl_3d::ShaderSource {
+                wgsl: UNDERWATER.into(),
+                label: "underwater".into(),
+            })
+            .map_err(|e| e.to_string())?;
+        let block: [f32; 8] = [0.12, 0.045, 0.03, 0., 0.02, 0.09, 0.12, 0.];
+        let bytes: Vec<u8> = block.iter().flat_map(|v| v.to_le_bytes()).collect();
+        Some(
+            scene
+                .hdr_effect(effect, &bytes)
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
     // Caller-owned preparation is deliberately outside every measured upload
     // and frame. This example runs it on this thread, not a hidden worker.
     let prepare_start = now();
@@ -520,6 +551,7 @@ async fn measured(
                 0.1,
             ),
         });
+        frame.hdr_effect = underwater;
         // The camera module takes a unit direction. Independently enforce
         // a rigid view basis so an accidentally scaled look vector fails
         // the fixture instead of producing misleading timing evidence.
@@ -618,7 +650,7 @@ async fn measured(
             "gpu_total_ms":gpu_frames.iter().find(|f| f.frame == WARMUP as u64 + 1).map(|f| f.total_ms)})
     });
     Ok(
-        json!({"schema":1,"scene":"textured-grid-v1","scaled":scaled,"prepared_upload":prepared_upload,"depth_of_field":format!("{depth_of_field:?}"),"size":size,"frames":frames,"warmup_frames":WARMUP,
+        json!({"schema":1,"scene":"textured-grid-v1","scaled":scaled,"prepared_upload":prepared_upload,"depth_of_field":format!("{depth_of_field:?}"),"hdr_effect":hdr_effect,"size":size,"frames":frames,"warmup_frames":WARMUP,
         "adapter":{"name":info.name,"backend":format!("{:?}",info.backend),"device_type":format!("{:?}",info.device_type),
             "features":format!("{:?}",device.features()),"sampled_textures_per_stage":device.limits().max_sampled_textures_per_shader_stage},
         "settings":format!("{:?}",settings),

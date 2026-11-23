@@ -7,15 +7,22 @@ use super::identity::ShaderId;
 
 /// The most bytes a shader's `ShaderParams` may take.
 pub const SHADER_PARAMS_MAX_BYTES: u32 = 4096;
+/// The most bytes an HDR effect's `EffectParams` may take
+/// (`Scene::add_hdr_effect`): `FrameInput::hdr_effect` carries them by
+/// value.
+pub const HDR_EFFECT_PARAMS_MAX_BYTES: u32 = 256;
 /// The most loop iterations one call of a function of a shader may make:
 /// nested loops' counts multiply, one loop after another's add, and a call
 /// within a loop counts its callee's (AR-12). Six Gerstner components take
 /// six.
 pub const SHADER_LOOP_BUDGET: u64 = 256;
 
-/// A game's WGSL module: `material_vertex`, `material_surface` and
-/// `struct ShaderParams`, over the contract's structs, declaring only
-/// `const`, `struct`, `alias` and `fn`. `Scene::add_shader` validates it.
+/// A game's WGSL module, declaring only `const`, `struct`, `alias` and
+/// `fn`: a material shader (`material_vertex`, `material_surface` and
+/// `struct ShaderParams` over the shader contract's structs), which
+/// `Scene::add_shader` validates, or an HDR effect (`hdr_effect` and
+/// `struct EffectParams` over the HDR effect contract's), which
+/// `Scene::add_hdr_effect` validates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShaderSource {
     pub wgsl: String,
@@ -69,7 +76,8 @@ pub enum ForbiddenItem {
     Directive,
 }
 
-/// Why `Scene::add_shader` refused a module. Nothing is added.
+/// Why `Scene::add_shader` or `Scene::add_hdr_effect` refused a module.
+/// Nothing is added.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShaderError {
     /// The module does not parse against the contract: a syntax error, an
@@ -85,7 +93,9 @@ pub enum ShaderError {
     /// derivative reached from `material_vertex`, or `ShaderParams` breaking
     /// the uniform layout's rules.
     Validate { message: String },
-    /// `material_vertex`, `material_surface` or `ShaderParams` is missing.
+    /// A function or the parameter block the contract has the module
+    /// define is missing: `material_vertex`, `material_surface` or
+    /// `ShaderParams`; `hdr_effect` or `EffectParams`.
     MissingFunction { name: &'static str },
     /// `name` is declared, but not as `expected`.
     Signature {
@@ -123,7 +133,8 @@ pub enum ShaderError {
     /// already use, or a WGSL predeclared type, enumerant or built-in
     /// function, which it would replace in SGL3D's calls.
     NameTaken { name: String },
-    /// `ShaderParams` takes more than `SHADER_PARAMS_MAX_BYTES`.
+    /// The parameter block takes more than its contract's limit
+    /// (`SHADER_PARAMS_MAX_BYTES`, `HDR_EFFECT_PARAMS_MAX_BYTES`).
     ParamsTooLarge { size: u32, max: u32 },
 }
 
@@ -164,7 +175,7 @@ impl std::fmt::Display for ShaderError {
             ),
             Self::NameTaken { name } => write!(f, "SGL3D already declares {name}"),
             Self::ParamsTooLarge { size, max } => {
-                write!(f, "ShaderParams takes {size} bytes, more than {max}")
+                write!(f, "the parameter block takes {size} bytes, more than {max}")
             }
         }
     }

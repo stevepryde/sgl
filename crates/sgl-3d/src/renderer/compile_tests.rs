@@ -384,6 +384,134 @@ fn a_compiled_level_with_a_profiled_spot_in_fog_creates_no_program_at_its_first_
     assert_eq!(compiled.programs(), before);
 }
 
+/// What wgpu holds for the device, counted by kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Held {
+    textures: usize,
+    buffers: usize,
+    bind_groups: usize,
+    render_pipelines: usize,
+    compute_pipelines: usize,
+    shader_modules: usize,
+}
+
+impl Level {
+    fn held(&self) -> Held {
+        let report = self.instance.generate_report().unwrap();
+        let hub = report.hub_report();
+        Held {
+            textures: hub.textures.num_allocated,
+            buffers: hub.buffers.num_allocated,
+            bind_groups: hub.bind_groups.num_allocated,
+            render_pipelines: hub.render_pipelines.num_allocated,
+            compute_pipelines: hub.compute_pipelines.num_allocated,
+            shader_modules: hub.shader_modules.num_allocated,
+        }
+    }
+}
+
+// Plausible defects: a view that applies no HDR effect paying for the stage
+// (a target, buffer, pipeline or bind group made at the view, or at a
+// scene's first effect, or kept after its last frame with one), or an
+// effect costing more than its pass and one target. The oracle is wgpu's
+// own count of what the device holds: a level whose scene holds an effect
+// that no frame applies holds what a level without one holds, frame for
+// frame, and draws the same bytes; a frame that applies it adds exactly
+// one texture (its target), two buffers (its frame values and parameters)
+// and one render pipeline, and no compute pipeline or shader module (a
+// module lives only while its pipeline is created); the frame after,
+// without it, holds one texture fewer again.
+#[test]
+fn an_hdr_effect_costs_nothing_unapplied_and_one_target_applied() {
+    let (Some(mut plain), Some(mut holding)) = (Level::new(), Level::new()) else {
+        return;
+    };
+    let effect = test_support::test_effect(&mut holding.scene, [0.1; 3]);
+    for along in [0., 0.1] {
+        let input = Level::input(along);
+        let bytes = [plain.render(&input), holding.render(&input)];
+        assert_eq!(plain.held(), holding.held(), "frame at {along}");
+        assert!(bytes[0] == bytes[1], "the frames differ at {along}");
+    }
+    let before = holding.held();
+    let mut applied = Level::input(0.2);
+    applied.hdr_effect = Some(effect);
+    holding.render(&applied);
+    let after = holding.held();
+    assert!(holding.view.hdr_effect.output().is_some(), "the effect ran");
+    assert_eq!(
+        after.textures,
+        before.textures + 1,
+        "{before:?} to {after:?}"
+    );
+    assert_eq!(after.buffers, before.buffers + 2, "{before:?} to {after:?}");
+    assert_eq!(after.render_pipelines, before.render_pipelines + 1);
+    assert_eq!(after.shader_modules, before.shader_modules);
+    assert_eq!(after.compute_pipelines, before.compute_pipelines);
+    holding.render(&Level::input(0.3));
+    assert_eq!(
+        holding.held().textures,
+        before.textures,
+        "the target is released"
+    );
+}
+
+// Plausible defect: the HDR effect's pipeline, a game's program, left out
+// of the planning pass or created where the stage draws, so a level that
+// turns an effect on compiles on the window thread after all. The oracle
+// is wgpu's count, as `a_compiled_levels_first_frame_creates_no_program`'s:
+// unchanged across the compiled level's first frame with the effect, which
+// the frame ran; and the planning pass found the effect's pipeline among
+// its jobs, one more than the same level without it.
+#[test]
+fn a_compiled_level_with_an_hdr_effect_creates_no_program_at_its_first_frame() {
+    let (Some(mut compiled), Some(mut without)) = (Level::new(), Level::new()) else {
+        return;
+    };
+    let mut input = Level::input(0.);
+    input.hdr_effect = Some(test_support::test_effect(&mut compiled.scene, [0.1; 3]));
+    let jobs = compiled.compile_all(&input);
+    let before = compiled.programs();
+    compiled.render(&input);
+    assert_eq!(compiled.programs(), before);
+    assert!(
+        compiled.view.hdr_effect.output().is_some(),
+        "the frame ran the effect"
+    );
+    assert_eq!(jobs, without.compile_all(&Level::input(0.)) + 1);
+}
+
+// Plausible defect: an effect the scene no longer holds still applied, or
+// its pipeline kept by every view for the scene's lifetime. The oracle is
+// the contract (a frame whose input names a removed effect applies none, as
+// one naming no effect) and wgpu's count of render pipelines, one fewer
+// once the frame after the removal has run.
+#[test]
+fn a_removed_hdr_effect_applies_none_and_its_pipeline_goes() {
+    let (Some(mut level), Some(mut plain)) = (Level::new(), Level::new()) else {
+        return;
+    };
+    let mut input = Level::input(0.);
+    let effect = test_support::test_effect(&mut level.scene, [0.5; 3]);
+    input.hdr_effect = Some(effect);
+    level.render(&input);
+    let pipelines = level.held().render_pipelines;
+    level.scene.remove_hdr_effect(effect.effect()).unwrap();
+    let mut next = Level::input(0.);
+    next.hdr_effect = Some(effect);
+    let bytes = level.render(&next);
+    assert!(
+        level.view.hdr_effect.output().is_none(),
+        "a removed effect ran"
+    );
+    assert_eq!(level.held().render_pipelines, pipelines - 1);
+    plain.render(&Level::input(0.));
+    assert!(
+        plain.render(&Level::input(0.)) == bytes,
+        "the frame differs from one with no effect"
+    );
+}
+
 // Plausible defect: the planning passes leave something behind that the
 // first frames differ by (history advanced, a target written, a stage's
 // state changed), a pipeline a job made differs from the one a frame

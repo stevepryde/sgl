@@ -31,6 +31,9 @@
 //! view draws into a render texture: its centre must hold the colour the
 //! source has in that frame, and the report gives the frame's GPU time
 //! against the same two views drawing into separate textures (`monitor`).
+//! Then a game's HDR effect, compiled ahead, attenuates a near and a far
+//! panel of one radiance by distance: the far one must show darker than
+//! the near one, which it does not without the effect (`hdr_effect`).
 //! Then a mirror shows a live specular probe refreshed under each pace: its
 //! centre must hold the colour of the last published cube in every frame,
 //! and the report gives the refresh passes' GPU time (`live_probe`).
@@ -1160,6 +1163,175 @@ async fn render(
     })
 }
 
+// A game's HDR effect on the browser's WebGPU (the architecture's Frame,
+// item 12), its pipeline compiled ahead as a job. Plausible defects there:
+// the effect's program refused by the browser's WGSL compiler after naga
+// accepted it, its depth binding rejected by Dawn, or its pass not
+// reaching the picture. The fixture: two unlit panels of one radiance
+// filling the view's halves, the left 2 m ahead and the right 10 m, under
+// an effect that keeps exp(-0.15 d) of the light d metres along the ray.
+// The oracle is the geometry: without the effect both halves show alike;
+// with it the far half keeps at most exp(-0.15 × 8) = 0.3 of what the near
+// one keeps, before a tone map that preserves order.
+async fn hdr_effect(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, String> {
+    const WGSL: &str = "struct EffectParams { coefficient:vec4<f32>, }
+fn hdr_effect(color:vec3<f32>,ctx:EffectContext,params:EffectParams)->vec3<f32> {
+ return color*exp(-params.coefficient.xyz*ctx.distance);
+}";
+    let mut scene = Scene::new(device, queue);
+    for (center, half) in [
+        (Vec3::new(-10., 0., -2.), 10.),
+        (Vec3::new(50., 0., -10.), 50.),
+    ] {
+        let ids = scene
+            .add_asset(
+                device,
+                queue,
+                Asset {
+                    meshes: vec![panel(center, Vec3::X * half, Vec3::Y * half, 0)],
+                    // Unlit: its radiance is its base colour.
+                    materials: vec![Material {
+                        unlit: true,
+                        double_sided: true,
+                        ..material([0.5, 0.5, 0.5, 1.], 0., 1.)
+                    }],
+                    images: Vec::new(),
+                    rig: Default::default(),
+                    ignored: Vec::new(),
+                    lights: Default::default(),
+                    instanced: Vec::new(),
+                },
+            )
+            .map_err(|e| format!("add_asset: {e}"))?;
+        scene
+            .add_instance(
+                device,
+                queue,
+                InstanceState::new(ids.model),
+                Mobility::Static,
+            )
+            .map_err(|e| format!("add_instance: {e}"))?;
+    }
+    let effect = scene
+        .add_hdr_effect(ShaderSource {
+            wgsl: WGSL.into(),
+            label: "attenuation".into(),
+        })
+        .map_err(|e| format!("add_hdr_effect: {e}"))?;
+    let coefficient = [0.15f32, 0.15, 0.15, 0.];
+    let applied = scene
+        .hdr_effect(
+            effect,
+            &coefficient
+                .iter()
+                .flat_map(|c| c.to_le_bytes())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|e| format!("hdr_effect: {e}"))?;
+    let output = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("HDR effect fixture output"),
+        size: wgpu::Extent3d {
+            width: SIZE[0],
+            height: SIZE[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let target = output.create_view(&Default::default());
+    let settings = Settings::default();
+    let mut lumas = Vec::new();
+    let mut jobs = 0;
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    for effect in [None, Some(applied)] {
+        let mut renderer = Renderer::new(device);
+        let mut view = View::new(
+            &renderer,
+            device,
+            queue,
+            output.format(),
+            SIZE,
+            1.,
+            &settings,
+        )
+        .map_err(|e| format!("View::new: {e}"))?;
+        let mut input = FrameInput::new(Camera {
+            eye: Vec3::ZERO,
+            view: Mat4::IDENTITY,
+            projection: sgl_3d::perspective(1., SIZE[0] as f32 / SIZE[1] as f32, 0.1),
+        });
+        input.hdr_effect = effect;
+        input.camera_cut = true;
+        loop {
+            let compilation = renderer.compile(
+                device,
+                queue,
+                &mut scene,
+                &mut [ViewFrame {
+                    view: &mut view,
+                    input: &input,
+                    settings: &settings,
+                    output: ViewOutput::Texture(&target),
+                    timing: None,
+                }],
+            );
+            if compilation.ready() {
+                break;
+            }
+            if effect.is_some() {
+                jobs += compilation.jobs.len();
+            }
+            compilation.jobs.into_iter().for_each(|job| job.run());
+        }
+        for index in 0..FRAMES {
+            input.camera_cut = index == 0;
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                device,
+                queue,
+                &mut encoder,
+                &mut scene,
+                &mut [ViewFrame {
+                    view: &mut view,
+                    input: &input,
+                    settings: &settings,
+                    output: ViewOutput::Texture(&target),
+                    timing: None,
+                }],
+            );
+            queue.submit([encoder.finish()]);
+            renderer.finish_frame(&mut scene);
+        }
+        let pixels = sgl_3d::diagnostics::read_async(device, queue, &output, 4).await;
+        let row = SIZE[1] / 2;
+        lumas.push([
+            luma(&pixels, [SIZE[0] / 4, row]),
+            luma(&pixels, [3 * SIZE[0] / 4, row]),
+        ]);
+    }
+    if let Some(error) = validation.pop().await {
+        return Err(format!("validation error: {error}"));
+    }
+    let [[near, far], [near_affected, far_affected]] = [lumas[0], lumas[1]];
+    if (near - far).abs() > 2. || near < 20. {
+        return Err(format!(
+            "without the effect the panels show {near:.1} and {far:.1}, not one emission"
+        ));
+    }
+    if far_affected >= 0.6 * near_affected || near_affected >= near {
+        return Err(format!(
+            "with the effect the near panel shows {near_affected:.1} and the far one {far_affected:.1}, of {near:.1}"
+        ));
+    }
+    Ok(format!(
+        "near luma {near_affected:.1}, far {far_affected:.1}, {near:.1} without; {jobs} compile jobs"
+    ))
+}
+
 /// Resolves once the GPU has run everything submitted so far, which lets
 /// the page deliver a frame's timestamp readback.
 async fn completed(queue: &wgpu::Queue) -> Result<(), String> {
@@ -2212,6 +2384,19 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         }
         Err(error) => {
             let _ = writeln!(report, "FAIL render texture: {error}");
+        }
+    }
+    let affected = hdr_effect(&device, &queue).await;
+    let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
+    match affected {
+        Ok(_) if !errors.is_empty() => {
+            let _ = writeln!(report, "FAIL HDR effect: uncaptured {errors:?}");
+        }
+        Ok(detail) => {
+            let _ = writeln!(report, "ok HDR effect: {detail}");
+        }
+        Err(error) => {
+            let _ = writeln!(report, "FAIL HDR effect: {error}");
         }
     }
     let refreshed = live_probe(&device, &queue).await;

@@ -2,6 +2,7 @@
 //! the completed scene as it passes from stage to stage.
 use super::FrameViews;
 use super::bindings::FrameBindings;
+use super::compile::Compiler;
 use super::effective::{Effective, HardwareRayTracing};
 use super::history::HistoryFrame;
 use super::pipelines::GeometryPipelines;
@@ -33,6 +34,10 @@ pub(crate) struct FrameContext<'a> {
     pub views: &'a FrameViews,
     pub bindings: &'a mut FrameBindings,
     pub pipelines: &'a mut GeometryPipelines,
+    /// Whether this pass is a frame or a planning pass
+    /// (`Renderer::compile`), which a stage asks its `Compiled` slots
+    /// through.
+    pub compiler: &'a Compiler,
     /// The camera history every stage continues or restarts with.
     pub history: HistoryFrame,
     /// The revision of the frame environment's atlas as this frame leaves

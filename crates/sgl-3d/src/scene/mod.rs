@@ -15,6 +15,7 @@ pub(crate) mod dynamic_gi;
 pub(crate) mod environments;
 pub(crate) mod error;
 pub(crate) mod geometry;
+pub(crate) mod hdr_effects;
 pub(crate) mod instances;
 pub(crate) mod irradiance_volume;
 mod lattice;
@@ -91,6 +92,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct Scene {
     ray_data: RayData,
     pub(crate) shaders: shaders::Shaders,
+    pub(crate) hdr_effects: hdr_effects::HdrEffects,
     pub(crate) materials: materials::Materials,
     /// The pictures views draw for materials to sample.
     pub(crate) render_textures: render_textures::RenderTextures,
@@ -205,6 +207,7 @@ impl Scene {
         Self {
             ray_data: options.ray_data,
             shaders: shaders::Shaders::default(),
+            hdr_effects: hdr_effects::HdrEffects::default(),
             materials: materials::Materials::new(device, queue),
             render_textures: render_textures::RenderTextures::default(),
             models: models::Models::default(),

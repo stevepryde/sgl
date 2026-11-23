@@ -453,7 +453,7 @@ fn a_feature_moving_within_its_cell_changes_nothing_else() {
 }
 
 // Defect: local exposure's targets made, or kept, on frames that do not
-// run it, or kept across a resize. Oracle: Frame item 14, "at contrasts
+// run it, or kept across a resize. Oracle: Frame item 15, "at contrasts
 // of 1 it runs no pass, holds no target and takes no sample"; contrasts
 // are clamped to 0..=1 and non-finite ones are 1.
 #[test]

@@ -17,6 +17,7 @@ mod diffuse_transmission_tests;
 pub(crate) mod dynamic_gi;
 pub(crate) mod fog;
 pub(crate) mod gbuffer;
+pub(crate) mod hdr_effect;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod iridescence_tests;
 #[cfg(test)]
@@ -329,6 +330,14 @@ pub(crate) static TEMPORAL_MASKS: Module = Module {
 pub(crate) static DEPTH: Module = Module {
     name: "depth",
     source: include_str!("depth.wgsl"),
+    deps: &[],
+};
+/// The view depth of a device depth under any projection, and
+/// `SCENE_DEPTH_FAR`: the material shader and HDR effect contracts' one
+/// owner of both.
+pub(crate) static VIEW_DEPTH: Module = Module {
+    name: "view_depth",
+    source: include_str!("view_depth.wgsl"),
     deps: &[],
 };
 /// Pseudo-random numbers from a pixel and a frame, where Wicked reads blue

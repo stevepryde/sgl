@@ -193,8 +193,13 @@ pub enum SceneError {
     /// material whose shader's `ShaderParams` takes `expected`, 0 for a
     /// material without a shader.
     ShaderParameters { expected: u32, given: u32 },
-    /// `Scene::add_shader` refused the module.
+    /// `Scene::add_shader` or `Scene::add_hdr_effect` refused the module.
     Shader(crate::shader::ShaderError),
+    /// The HDR effect was removed, or another scene issued its identity.
+    UnknownHdrEffect,
+    /// `Scene::hdr_effect` was given `given` bytes for an effect whose
+    /// `EffectParams` takes `expected`.
+    HdrEffectParameters { expected: u32, given: u32 },
     /// A material's shader's displacement bound is not finite and
     /// nonnegative.
     InvalidDisplacementBound,
@@ -344,6 +349,13 @@ impl std::fmt::Display for SceneError {
                 );
             }
             Self::Shader(error) => return error.fmt(f),
+            Self::UnknownHdrEffect => "the HDR effect is not in this scene",
+            Self::HdrEffectParameters { expected, given } => {
+                return write!(
+                    f,
+                    "the HDR effect's parameters take {expected} bytes, not {given}"
+                );
+            }
             Self::InvalidDisplacementBound => {
                 "a shader's displacement bound must be finite and nonnegative"
             }

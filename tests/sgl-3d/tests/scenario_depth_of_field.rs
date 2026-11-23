@@ -1,6 +1,6 @@
 //! The depth of field suite of the scenario harness (`specs/testing.md`,
 //! "SGL3D scenario harness"): `Settings::depth_of_field` and
-//! `FrameInput::depth_of_field` (Frame item 12) through the public API, on
+//! `FrameInput::depth_of_field` (Frame item 13) through the public API, on
 //! unlit planes at known metric depths under a fixed lens, reading
 //! `DiagnosticTarget::DepthOfField`, the focused frame. The oracle is the
 //! thin lens: a point `z` metres ahead blurs into a disc whose radius in

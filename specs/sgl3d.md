@@ -200,7 +200,10 @@ settings SGL3D has today.
    functions SGL3D composes into its own programs) are its content, never
    SGL3D's built-in look: SGL3D ships no water, wind or glass equations,
    which live with the game and the examples. They are shading content, not
-   gameplay logic, which stays the game's.
+   gameplay logic, which stays the game's. So is a game's HDR effect
+   (`Scene::add_hdr_effect`: a WGSL function SGL3D runs over each view's
+   resolved HDR frame, an underwater colour shift): the game supplies it
+   and its parameters, SGL3D owns its pass, inputs, target and place.
 3. **S3D-3 — Coordinates and state.** The boundary uses metres, +Y up,
    right-handed view/projection matrices, camera-local forward −Z, reversed-Z
    device depth (1 at the near plane, 0 at the far plane; `sgl_3d::perspective`
@@ -473,10 +476,13 @@ current capabilities and limits.
   ([Programmable surfaces](sgl3d-architecture.md#designs-that-span-stages));
   rays, bakes and static shadow layers see the rest geometry. See
   [programmable surfaces](../crates/sgl-3d/README.md#programmable-surfaces).
-- **Effects:** motion blur (9), volumetric fog with light shafts (10) and
-  depth of field ([#870](https://github.com/stevepryde/sgl/issues/870)).
+- **Effects:** motion blur (9), volumetric fog with light shafts (10),
+  depth of field ([#870](https://github.com/stevepryde/sgl/issues/870)) and
+  a game's own HDR effect over the resolved scene before them
+  ([#871](https://github.com/stevepryde/sgl/issues/871)).
   See [motion blur](../crates/sgl-3d/README.md#motion-blur),
-  [depth of field](../crates/sgl-3d/README.md#depth-of-field) and
+  [depth of field](../crates/sgl-3d/README.md#depth-of-field),
+  [HDR effects](../crates/sgl-3d/README.md#hdr-effects) and
   [fog](../crates/sgl-3d/README.md#volumetric-fog).
 - **Procedural sky ([#832](https://github.com/stevepryde/sgl/issues/832)):**
   a physically based sky a game names as its frame's environment in place of

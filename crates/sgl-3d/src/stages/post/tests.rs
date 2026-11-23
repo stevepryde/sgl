@@ -751,7 +751,7 @@ fn textured_scene(size: [u32; 2]) -> Vec<[f32; 4]> {
 // reverses the sharpness. RCAS raises the differences between neighbouring
 // pixels, more at a higher sharpness (AMD's FSR1 documentation: 0 the
 // least, 1 the most), so on a textured scene the presented image's total
-// variation orders off < 0.5 < 1 in every path of Frame item 14's final
+// variation orders off < 0.5 < 1 in every path of Frame item 15's final
 // pass: tone mapping at the output size or resampled to it, SMAA at the
 // output size or resampled, EASU with and without SMAA; read from the
 // tone-mapped capture, and from the output where nothing is captured.
@@ -901,7 +901,7 @@ fn a_flat_colour_sharpened_on_the_display_path_presents_unchanged() {
 // Defect: the output-size sharpening input is held on frames that never
 // read it (unsharpened frames, or SMAA's or EASU's output at the output
 // size, which RCAS reads directly), or kept once its frame stops. Oracle:
-// Frame item 14, "Post holds full-size intermediate targets only for their
+// Frame item 15, "Post holds full-size intermediate targets only for their
 // active consumer, and releases disabled-path resources", with RCAS its
 // consumer exactly where neither SMAA nor EASU writes the output size: a
 // sharpened frame without SMAA, or with SMAA on a smaller scene and no

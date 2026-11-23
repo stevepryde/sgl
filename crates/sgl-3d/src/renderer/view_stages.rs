@@ -75,6 +75,7 @@ pub(super) fn begin_view(
     let primary = role == Role::Primary;
     let Shared {
         pipelines,
+        compiler,
         prepare,
         deform,
         dynamic_gi,
@@ -93,6 +94,7 @@ pub(super) fn begin_view(
         shadows,
         fog,
         antialiasing,
+        hdr_effect,
         depth_of_field,
         motion_blur,
         post,
@@ -118,6 +120,7 @@ pub(super) fn begin_view(
         if post_fx.take().is_some() {
             // Cached presentation groups may hold TAA's outputs.
             post.forget_inputs();
+            hdr_effect.forget_inputs();
             depth_of_field.forget_inputs();
             motion_blur.forget_inputs();
         }
@@ -127,6 +130,7 @@ pub(super) fn begin_view(
     {
         *post_fx = Some(Box::new(PostFx::new(device, queue, effective.taa)));
         post.forget_inputs();
+        hdr_effect.forget_inputs();
         depth_of_field.forget_inputs();
         motion_blur.forget_inputs();
     }
@@ -242,6 +246,7 @@ pub(super) fn begin_view(
         views: &*views,
         bindings,
         pipelines,
+        compiler,
         history,
         environment_revision,
         hardware_rays: HardwareRays::of(
@@ -282,8 +287,8 @@ pub(super) fn begin_view(
 /// shadows between its G-buffer and lighting while they run), the
 /// transparent stage's receivers and volume layers, reflections with the
 /// transparent stage drawn into their input (while a screen-space method
-/// traces it) and onto their result, heat, exposure, antialiasing, depth
-/// of field, motion blur, then post.
+/// traces it) and onto their result, heat, exposure, antialiasing, the HDR
+/// effect, depth of field, motion blur, then post.
 pub(super) fn finish_view(
     shared: &mut Shared,
     view: &mut View,
@@ -306,6 +311,7 @@ pub(super) fn finish_view(
     } = begun;
     let Shared {
         pipelines,
+        compiler,
         prepare,
         ray_form,
         ..
@@ -328,6 +334,7 @@ pub(super) fn finish_view(
         transparent,
         exposure,
         antialiasing,
+        hdr_effect,
         depth_of_field,
         motion_blur,
         post,
@@ -355,6 +362,7 @@ pub(super) fn finish_view(
         views: &*views,
         bindings,
         pipelines,
+        compiler,
         history,
         environment_revision,
         hardware_rays: HardwareRays::of(
@@ -460,6 +468,7 @@ pub(super) fn finish_view(
     let completed_kind = antialiasing.encode(&mut ctx, post_fx.as_deref_mut(), exposure.texture());
     if antialiasing.take_failure() {
         post.forget_inputs();
+        hdr_effect.forget_inputs();
         depth_of_field.forget_inputs();
         motion_blur.forget_inputs();
     }
@@ -468,7 +477,19 @@ pub(super) fn finish_view(
         *diagnostic_completed = Some(completed_kind);
     }
     let antialiased = completed(completed_kind, post_fx, antialiasing, targets);
-    // The resolved HDR frame's chain: the lens's focus, then the shutter.
+    // The resolved HDR frame's chain: the game's effect on the light that
+    // reaches the camera, the lens's focus, then the shutter.
+    let affected = hdr_effect
+        .encode(&mut ctx, antialiased, exposure.view())
+        .cloned();
+    if hdr_effect.take_replaced() {
+        // The groups of the stages after may bind the frame it made or
+        // let go.
+        depth_of_field.forget_inputs();
+        motion_blur.forget_inputs();
+        post.forget_inputs();
+    }
+    let antialiased = affected.as_ref().unwrap_or(antialiased);
     let focused = depth_of_field.encode(&mut ctx, antialiased).cloned();
     if depth_of_field.take_replaced() {
         // Motion blur's groups and post's may bind the focused frame it

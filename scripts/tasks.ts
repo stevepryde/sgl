@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--baseline | --bistro | --loading [--ordinary] [--jobs-per-frame <count>]] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--depth-of-field off|low|medium|high] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--no-profiles] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>] | " +
+  "measure-browser [--baseline | --bistro | --loading [--ordinary] [--jobs-per-frame <count>]] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--depth-of-field off|low|medium|high] [--hdr-effect] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--no-profiles] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>] | " +
   "measure-browser --startup [--scene minimal|opening] [--runs <count>] [--startup-path ordinary|prepared] [--captures <directory>] [--output <json>] [--skip-build]";
 
 if (task === "check-browser") {
@@ -322,6 +322,7 @@ async function measureBrowser(args: string[]): Promise<void> {
   let prepared = false;
   let depthOfField = "off";
   let localShadows = false;
+  let hdrEffect = false;
   let capturePath: string | undefined;
   let sequenceDir: string | undefined;
   let output: string | undefined;
@@ -373,6 +374,7 @@ async function measureBrowser(args: string[]): Promise<void> {
     else if (args[at] === "--prepared") prepared = true;
     else if (args[at] === "--depth-of-field" && at+1<args.length) depthOfField = args[++at];
     else if (args[at] === "--local-shadows") localShadows = true;
+    else if (args[at] === "--hdr-effect") hdrEffect = true;
     else if (args[at] === "--skip-build") skipBuild = true;
     else if (args[at] === "--output" && at + 1 < args.length) output = args[++at];
     else if (args[at] === "--occlusion") occlusion = true;
@@ -406,6 +408,7 @@ async function measureBrowser(args: string[]): Promise<void> {
   if ((scaled || prepared || capturePath || output) && !baseline && !bistro && !(startup && !scaled && !prepared && !capturePath)) throw new Error("--scaled, --prepared and --capture require --baseline or --bistro; --output requires --baseline, --bistro or --startup");
   if (localShadows && !baseline) throw new Error("--local-shadows requires --baseline");
   if (!startup && (startupOptions.captureDir || startupOptions.runs !== 3 || startupOptions.path !== "ordinary" || startupOptions.scenes.length !== 2)) throw new Error("--scene, --runs, --startup-path and --captures require --startup");
+  if (hdrEffect && !baseline) throw new Error("--hdr-effect requires --baseline");
   const example = bistro ? "browser_bistro" : baseline || startup ? "browser_baseline" : "browser_streaming";
   const buildMetadataPath = `${MEASURE_DIR}/${example}.build.json`;
   // Capture provenance at the build boundary, not when a saved binary is rerun.
@@ -442,7 +445,7 @@ async function measureBrowser(args: string[]): Promise<void> {
   if (bistro) sceneOptions.frames=frames;
   const result = await runMeasurement({page: bistro ? "bistro" : baseline ? "baseline" : "streaming", dist: MEASURE_DIR, capturePath, sequenceDir,
     assetDir:bistro?assetDir:undefined,run:bistro?sceneOptions:undefined,
-    query: `frames=${frames}&across=${radius[0]}&up=${radius[1]}&occlusion=${occlusion ? 1 : 0}&scaled=${scaled ? 1 : 0}&prepared=${prepared ? 1 : 0}&local_shadows=${localShadows ? 1 : 0}&capture=${capturePath ? 1 : 0}&dof=${depthOfField}&width=${baselineSize[0]}&height=${baselineSize[1]}`});
+    query: `frames=${frames}&across=${radius[0]}&up=${radius[1]}&occlusion=${occlusion ? 1 : 0}&scaled=${scaled ? 1 : 0}&prepared=${prepared ? 1 : 0}&local_shadows=${localShadows ? 1 : 0}&capture=${capturePath ? 1 : 0}&dof=${depthOfField}&hdr_effect=${hdrEffect ? 1 : 0}&width=${baselineSize[0]}&height=${baselineSize[1]}`});
   if (baseline || bistro) {
     const report = JSON.parse(result.report);
     if (bistro) {

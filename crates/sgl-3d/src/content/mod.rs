@@ -16,6 +16,7 @@ pub(crate) mod dynamic_gi;
 pub mod environment;
 pub mod geometry;
 mod gltf;
+pub(crate) mod hdr_effect;
 pub(crate) mod identity;
 pub(crate) mod images;
 pub(crate) mod instance;

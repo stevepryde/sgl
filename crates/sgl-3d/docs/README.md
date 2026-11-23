@@ -141,7 +141,8 @@ if compilation.ready() { /* `render` with these arguments creates nothing */ }
 - It readies frames, not probe captures: a live probe's first refresh
   (`Renderer::refresh_specular_probe`) creates its own filter and face
   pipelines, so make one while the level loads too.
-- Geometry pipelines are the compile jobs. Every other stage's programs are
+- Geometry pipelines and each view's HDR effect pipelines (for an input
+  whose `hdr_effect` names one) are the compile jobs. Every other stage's programs are
   created by the call that first meets them, on the calling thread: that
   call blocks for them (seconds on a first run of the game, before the
   graphics driver has cached them), once, and the frame then creates none.
@@ -258,6 +259,7 @@ and an asynchronous readback.
 | Light the game computes, relit by region (a voxel world's sky and block light) | [Irradiance volume](../README.md#irradiance-volume) |
 | Bounce light without a bake | [Dynamic diffuse GI](../README.md#dynamic-diffuse-gi) |
 | A sky and sun colour for any time of day, without a panorama | [Procedural sky](../README.md#procedural-sky) |
+| A look over the whole lit scene before the tone map (underwater, a tint by distance), or one over the displayed picture | [HDR effects](../README.md#hdr-effects) |
 | A feature's API, data format and limits | Its section in the [package README](../README.md) |
 | Rendering rules and roadmap | [SGL3D spec](../../../specs/sgl3d.md) |
 | How SGL3D's code is structured, for changing SGL3D itself | [SGL3D architecture](../../../specs/sgl3d-architecture.md), [code structure](../README.md#code-structure) |
