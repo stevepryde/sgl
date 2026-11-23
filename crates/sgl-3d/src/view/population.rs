@@ -28,14 +28,16 @@ pub(crate) enum Population<'a> {
         lod: Option<LodSelector>,
         cull: bool,
     },
-    /// A static specular probe face: static `capture_visible` instances'
-    /// meshes whose material's groups the mask enables, whole and
-    /// double-sided.
-    ProbeFace,
-    /// A probe capture's directional shadow cascades: static
-    /// `capture_visible` instances, unculled, each mesh whose material casts
-    /// directional shadows in the mask's groups.
-    CaptureShadow,
+    /// A specular probe face: the `capture_visible` instances a capture
+    /// shows (`content`: a bake's static ones, a live refresh's moving ones
+    /// too), each mesh whose material's groups the mask enables,
+    /// double-sided: whole, or, when `culled`, the parts the face's view
+    /// reaches, as the camera's blended surfaces are culled.
+    ProbeFace { content: Casters, culled: bool },
+    /// A probe capture's directional shadow cascades: the `capture_visible`
+    /// instances the capture shows, unculled, each mesh whose material
+    /// casts directional shadows in the mask's groups.
+    CaptureShadow(Casters),
     /// A local-light shadow face: `capture_visible` instances of
     /// `casters`, each mesh whose material's groups the mask enables. A
     /// static instance draws its meshes' caster clusters within `range` of
@@ -105,8 +107,9 @@ impl LightReach {
     }
 }
 
-/// Which casters a local-light shadow face's draw list holds: its static
-/// layer's, its moving ones', or all of them.
+/// Which instances a local-light shadow face's draw list or a probe
+/// capture's holds, by whether they move: a face's static layer's or a
+/// bake's, a face's moving ones, or all of them, as a live refresh shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Casters {
     Static,
@@ -164,10 +167,11 @@ impl Population<'_> {
         let state = &instance.state;
         match self {
             Self::Blended { .. } => state.visible,
-            Self::ProbeFace | Self::CaptureShadow => {
-                state.capture_visible && instance.mobility == Mobility::Static
+            Self::ProbeFace {
+                content: casters, ..
             }
-            Self::LocalShadow { casters, .. } => {
+            | Self::CaptureShadow(casters)
+            | Self::LocalShadow { casters, .. } => {
                 state.capture_visible && casters.holds(instance.mobility)
             }
         }
@@ -178,13 +182,13 @@ impl Population<'_> {
     /// (`camera_variant`), but a probe face, which draws both sides.
     pub(super) fn variant(&self, material: &Material, mirrored: bool, deformed: bool) -> Variant {
         match self {
-            Self::ProbeFace => Variant {
+            Self::ProbeFace { .. } => Variant {
                 cull: Cull::None,
                 alpha: Alpha::of(&material.values),
                 deformed,
                 shader_sampled: material.shader_sampled(),
             },
-            Self::Blended { .. } | Self::CaptureShadow | Self::LocalShadow { .. } => {
+            Self::Blended { .. } | Self::CaptureShadow(_) | Self::LocalShadow { .. } => {
                 camera_variant(material, mirrored, deformed)
             }
         }
@@ -201,7 +205,7 @@ impl Population<'_> {
             return false;
         }
         match self {
-            Self::CaptureShadow => material.casts_directional_shadow(mask.unwrap_or(0)),
+            Self::CaptureShadow(_) => material.casts_directional_shadow(mask.unwrap_or(0)),
             _ => material.enabled(mask),
         }
     }

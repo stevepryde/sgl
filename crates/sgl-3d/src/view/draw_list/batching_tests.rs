@@ -90,7 +90,7 @@ fn merged_draws_share_material_pipeline_and_geometry() {
         &scene,
         &camera,
         None,
-        Population::CaptureShadow,
+        Population::CaptureShadow(crate::view::population::Casters::Static),
     );
     let mut drawn = HashSet::new();
     // Each instance's meshes, in the order drawn.

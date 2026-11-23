@@ -122,7 +122,7 @@ impl std::fmt::Display for ProbeError {
             ),
             Self::MixedRadiance => write!(
                 f,
-                "a collection's probes share one face size and texel encoding"
+                "a scene's probes share one face size and texel encoding, Rgba16Float beside live probes"
             ),
             Self::CompressionUnsupported => write!(
                 f,
@@ -130,7 +130,8 @@ impl std::fmt::Display for ProbeError {
             ),
             Self::TooManyProbes => write!(
                 f,
-                "a collection holds at most {MAX_PROBES} probes within the device's array layers"
+                "a scene holds at most {MAX_PROBES} probes, {} of them live, within the device's array layers",
+                super::live_specular_probe::MAX_LIVE_PROBES
             ),
             Self::Readback(reason) => {
                 write!(f, "static specular capture readback failed: {reason}")
@@ -150,8 +151,26 @@ fn validate_box(b: SpecularProbeBox, what: &'static str) -> Result<(), ProbeErro
 impl BakedSpecularProbe {
     /// Its position, transform, influence, blend and proxy.
     pub(crate) fn validate_placement(&self) -> Result<(), ProbeError> {
-        let m = self.world_to_local;
-        if !self.center.is_finite() || !m.is_finite() {
+        Self::validate_parts(
+            self.center,
+            self.world_to_local,
+            self.influence,
+            self.blend,
+            self.proxy,
+        )
+    }
+
+    /// A probe's placement, baked or live: a finite capture `center`, a
+    /// rigid `world_to_local`, boxes of positive finite extent, nonnegative
+    /// `blend` distances and the centre inside the `proxy`.
+    pub(crate) fn validate_parts(
+        center: Vec3,
+        m: Mat4,
+        influence: SpecularProbeBox,
+        blend: Vec3,
+        proxy: Option<SpecularProbeBox>,
+    ) -> Result<(), ProbeError> {
+        if !center.is_finite() || !m.is_finite() {
             return Err(ProbeError::InvalidProbe("coordinates must be finite"));
         }
         let axes = [
@@ -174,18 +193,15 @@ impl BakedSpecularProbe {
                 "transform must be a rigid rotation and translation",
             ));
         }
-        validate_box(
-            self.influence,
-            "influence must have positive, finite extent",
-        )?;
-        if !self.blend.is_finite() || self.blend.min_element() < 0. {
+        validate_box(influence, "influence must have positive, finite extent")?;
+        if !blend.is_finite() || blend.min_element() < 0. {
             return Err(ProbeError::InvalidProbe(
                 "blend distances must be finite and nonnegative",
             ));
         }
-        if let Some(proxy) = self.proxy {
+        if let Some(proxy) = proxy {
             validate_box(proxy, "proxy must have positive, finite extent")?;
-            let local = m.transform_point3(self.center);
+            let local = m.transform_point3(center);
             if !local.cmpge(proxy.min).all() || !local.cmple(proxy.max).all() {
                 return Err(ProbeError::InvalidProbe(
                     "capture center must lie inside the proxy",

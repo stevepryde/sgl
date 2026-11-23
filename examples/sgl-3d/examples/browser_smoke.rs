@@ -31,6 +31,9 @@
 //! view draws into a render texture: its centre must hold the colour the
 //! source has in that frame, and the report gives the frame's GPU time
 //! against the same two views drawing into separate textures (`monitor`).
+//! Then a mirror shows a live specular probe refreshed under each pace: its
+//! centre must hold the colour of the last published cube in every frame,
+//! and the report gives the refresh passes' GPU time (`live_probe`).
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -1401,6 +1404,329 @@ async fn monitor(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, S
     })
 }
 
+// A live specular probe on the browser's WebGPU (the architecture's Frame,
+// "Live probe refresh"). Plausible defects there: Dawn refuses the cube
+// array sampled by a refresh's faces and written by its publication, or a
+// copy between cube arrays; a probe in flight shows a face of its next
+// cube. The fixture: a mirror before the camera, in a group the probe
+// hides, and behind the camera a moving emitter that fills the mirror's
+// reflection and changes colour before each refresh. Screen-space
+// reflections miss it, so the mirror's centre shows the probe, through the
+// camera's tile-culled probes. The oracle is the colours, by the mirror's
+// strongest channel: nothing before the first publication; in every call
+// of a refresh spread over calls, the colour of the last published cube;
+// and the new colour some frames after each publication, once the frame's
+// temporal filters have mostly taken it. The
+// report adds the refresh passes' GPU time under each pace, where the
+// device has timestamp queries.
+async fn live_probe(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, String> {
+    use sgl_3d::{LiveSpecularProbe, ProbeRefresh, ProbeRefreshPace};
+    const SIZE: [u32; 2] = [320, 180];
+    const FACE_SIZE: u32 = 64;
+    const MIRROR_GROUP: u32 = 1;
+    /// Refreshes measured under each pace, after one that warms it up.
+    const MEASURED: usize = 5;
+    /// Frames after a publication before the mirror is read.
+    const SETTLE: usize = 8;
+    let mut scene = Scene::new(device, queue);
+    let add = |scene: &mut Scene, mesh: CpuMesh, material: Material| {
+        let asset = Asset {
+            meshes: vec![mesh],
+            materials: vec![material],
+            images: Vec::new(),
+            rig: Default::default(),
+            ignored: Vec::new(),
+            lights: Default::default(),
+        };
+        let ids = scene
+            .add_asset(device, queue, asset)
+            .map_err(|e| format!("add_asset: {e}"))?;
+        scene
+            .add_instance(
+                device,
+                queue,
+                InstanceState::new(ids.model),
+                Mobility::Moving,
+            )
+            .map_err(|e| format!("add_instance: {e}"))?;
+        Ok::<_, String>(ids.materials[0])
+    };
+    add(
+        &mut scene,
+        panel(Vec3::new(0., 0., -4.), Vec3::X * 1.6, Vec3::Y * 0.9, 0),
+        Material {
+            double_sided: true,
+            visibility_group: MIRROR_GROUP,
+            ..material([1.; 4], 1., 0.)
+        },
+    )?;
+    let source = add(
+        &mut scene,
+        panel(Vec3::new(0., 0., 8.), Vec3::X * 12., Vec3::Y * 7., 0),
+        // An unlit black panel that emits the colour each refresh sets.
+        Material {
+            unlit: true,
+            double_sided: true,
+            ..material([0., 0., 0., 1.], 0., 1.)
+        },
+    )?;
+    let center = Vec3::new(0., 0., -3.);
+    let probe = scene
+        .add_live_specular_probe(
+            device,
+            queue,
+            LiveSpecularProbe {
+                center,
+                world_to_local: Mat4::from_translation(-center),
+                influence: SpecularProbeBox {
+                    min: Vec3::splat(-2.),
+                    max: Vec3::splat(2.),
+                },
+                blend: Vec3::ZERO,
+                proxy: None,
+                face_size: FACE_SIZE,
+                hidden_groups: MIRROR_GROUP,
+            },
+        )
+        .map_err(|e| format!("add_live_specular_probe: {e}"))?;
+    let output = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("live probe fixture output"),
+        size: wgpu::Extent3d {
+            width: SIZE[0],
+            height: SIZE[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let target = output.create_view(&Default::default());
+    let settings = Settings::default();
+    let mut renderer = Renderer::new(device);
+    let mut view = View::new(
+        &renderer,
+        device,
+        queue,
+        output.format(),
+        SIZE,
+        1.,
+        &settings,
+    )
+    .map_err(|e| format!("View::new: {e}"))?;
+    let mut input = FrameInput::new(Camera {
+        eye: Vec3::ZERO,
+        view: camera::rh::view::look_at_mat4(Vec3::ZERO, -Vec3::Z, Vec3::Y),
+        projection: sgl_3d::perspective(1., SIZE[0] as f32 / SIZE[1] as f32, 0.1),
+    });
+    // Frames, and so the probe's refreshes, show the mirror's group.
+    input.visibility_mask = MIRROR_GROUP;
+    let mut timing = GpuTiming::new(device, queue);
+    let colours = [[0.6, 0.02, 0.02], [0.02, 0.6, 0.02], [0.02, 0.02, 0.6]];
+    let paces = [
+        ProbeRefreshPace::Whole,
+        ProbeRefreshPace::FacesThenFilter,
+        ProbeRefreshPace::FacePerCall,
+    ];
+    /// A rendered frame: its call, if it made one (its pace and whether it
+    /// published), and its refresh passes' GPU time once its timestamps
+    /// arrive.
+    struct Frame {
+        call: Option<(usize, bool)>,
+        refresh_ms: Option<f64>,
+    }
+    let mut frames: Vec<Frame> = Vec::new();
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    // The colour of the last published cube, and the frames since.
+    let mut shown: Option<usize> = None;
+    let mut settled = SETTLE;
+    let mut round = 0;
+    // One frame before any refresh; each pace's refreshes, each followed by
+    // frames that let the picture settle; frames for the last timestamps.
+    let mut plan: Vec<Option<usize>> = vec![None];
+    for pace in 0..paces.len() {
+        plan.extend(std::iter::repeat_n(Some(pace), MEASURED + 1));
+    }
+    plan.extend([None; 4]);
+    for refresh in plan {
+        // The source takes the next colour before each refresh.
+        let mut pending = None;
+        if refresh.is_some() {
+            round += 1;
+            let colour = round % 3;
+            let values = scene.material(source).map_err(|e| e.to_string())?;
+            scene
+                .set_material(
+                    queue,
+                    source,
+                    SurfaceMaterial {
+                        emission: colours[colour],
+                        ..values
+                    },
+                )
+                .map_err(|e| format!("set_material: {e}"))?;
+            pending = Some(colour);
+        }
+        let mut remaining = SETTLE;
+        loop {
+            if let Some(timing) = timing.as_mut() {
+                for timed in timing.begin_frame(device, queue) {
+                    // `GpuTiming` counts frames from 1.
+                    if let Some(frame) = frames.get_mut(timed.frame as usize - 1) {
+                        frame.refresh_ms = Some(
+                            timed
+                                .passes
+                                .iter()
+                                .filter(|group| group.name.starts_with("probe refresh"))
+                                .map(|group| group.ms)
+                                .sum(),
+                        );
+                    }
+                }
+            }
+            view.resize(device, SIZE, 1., &settings);
+            let mut call = None;
+            if let (Some(pace), Some(colour)) = (refresh, pending) {
+                // Between frames, with the frame's own input.
+                let published = renderer
+                    .refresh_specular_probe(
+                        device,
+                        queue,
+                        &mut scene,
+                        &mut view,
+                        &input,
+                        &settings,
+                        timing.as_ref(),
+                        probe,
+                        paces[pace],
+                    )
+                    .map_err(|e| format!("refresh_specular_probe: {e}"))?
+                    == ProbeRefresh::Published;
+                call = Some((pace, published));
+                if published {
+                    shown = Some(colour);
+                    settled = 0;
+                    pending = None;
+                }
+            }
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                device,
+                queue,
+                &mut encoder,
+                &mut scene,
+                &mut [ViewFrame {
+                    view: &mut view,
+                    input: &input,
+                    settings: &settings,
+                    output: ViewOutput::Texture(&target),
+                    timing: timing.as_ref(),
+                }],
+            );
+            queue.submit([encoder.finish()]);
+            if let Some(timing) = timing.as_mut() {
+                timing.submitted(queue);
+            }
+            completed(queue).await?;
+            renderer.finish_frame(&mut scene);
+            frames.push(Frame {
+                call,
+                refresh_ms: None,
+            });
+            settled += 1;
+            // The mirror's centre, once the frames since the last
+            // publication have settled: nothing before the first cube,
+            // then the colour of the last one published, whole, in the
+            // calls of a refresh still in flight too.
+            if settled > SETTLE {
+                let pixels = sgl_3d::diagnostics::read_async(device, queue, &output, 4).await;
+                let at = ((SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) * 4) as usize;
+                let texel = &pixels[at..at + 3];
+                let correct = match shown {
+                    None => texel.iter().all(|&channel| channel < 16),
+                    // Its channel leads the others by a quarter at least:
+                    // the frame's temporal filters still hold some of the
+                    // cube before.
+                    Some(colour) => (0..3).all(|c| {
+                        c == colour || 4 * u16::from(texel[colour]) >= 5 * u16::from(texel[c])
+                    }),
+                };
+                if !correct {
+                    return Err(format!(
+                        "frame {}: the mirror's centre holds {texel:?}, not the published cube's colour {shown:?}",
+                        frames.len()
+                    ));
+                }
+            }
+            if pending.is_none() {
+                // A refresh is followed by frames that settle its picture.
+                if refresh.is_none() || remaining == 0 {
+                    break;
+                }
+                remaining -= 1;
+            }
+        }
+    }
+    if let Some(error) = validation.pop().await {
+        return Err(format!("validation error: {error}"));
+    }
+    // Each pace's refreshes after its first: the calls of each, the time of
+    // its refresh passes and of its costliest call.
+    let mut detail = String::new();
+    for (pace, name) in ["whole", "faces then filter", "face per call"]
+        .iter()
+        .enumerate()
+    {
+        let mut refreshes: Vec<(usize, f64, f64)> = Vec::new();
+        let mut open = (0, 0., 0f64);
+        let mut timed = true;
+        for frame in &frames {
+            let Some((_, published)) = frame.call.filter(|call| call.0 == pace) else {
+                continue;
+            };
+            timed &= frame.refresh_ms.is_some();
+            let ms = frame.refresh_ms.unwrap_or(0.);
+            open = (open.0 + 1, open.1 + ms, open.2.max(ms));
+            if published {
+                refreshes.push(open);
+                open = (0, 0., 0.);
+            }
+        }
+        if refreshes.len() != MEASURED + 1 {
+            return Err(format!(
+                "{name}: {} refreshes published, not {}",
+                refreshes.len(),
+                MEASURED + 1
+            ));
+        }
+        let median = |values: &mut Vec<f64>| {
+            values.sort_by(f64::total_cmp);
+            values[values.len() / 2]
+        };
+        let measured = &refreshes[1..];
+        let _ = write!(detail, "; {name}: {} calls", measured[0].0);
+        if timed {
+            let _ = write!(
+                detail,
+                ", GPU median {:.3} ms a refresh, {:.3} ms its costliest call",
+                median(&mut measured.iter().map(|r| r.1).collect()),
+                median(&mut measured.iter().map(|r| r.2).collect()),
+            );
+        }
+    }
+    Ok(format!(
+        "the published cube's colour in {} frames, faces {FACE_SIZE}x{FACE_SIZE}{detail}{}",
+        frames.len(),
+        if timing.is_some() {
+            ""
+        } else {
+            "; no GPU timestamps"
+        }
+    ))
+}
+
 // Exercise the public constructors on real browser WebGPU. Defects: float
 // textures encoded as canvases, actual canvas transfer omitted, or changing
 // Settings::tone_mapping not reaching the GPU. The oracle is independently
@@ -1878,6 +2204,19 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         }
         Err(error) => {
             let _ = writeln!(report, "FAIL render texture: {error}");
+        }
+    }
+    let refreshed = live_probe(&device, &queue).await;
+    let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
+    match refreshed {
+        Ok(_) if !errors.is_empty() => {
+            let _ = writeln!(report, "FAIL live specular probe: uncaptured {errors:?}");
+        }
+        Ok(detail) => {
+            let _ = writeln!(report, "ok live specular probe: {detail}");
+        }
+        Err(error) => {
+            let _ = writeln!(report, "FAIL live specular probe: {error}");
         }
     }
     let mut timing = GpuTiming::new(&device, &queue);

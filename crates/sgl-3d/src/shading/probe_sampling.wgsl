@@ -13,7 +13,11 @@ struct BakedProbe {
 }
 // Probes in one collection (baked_specular_probe.rs).
 const MAX_PROBES:u32=256u;
+// Live probes among them (live_specular_probe.rs).
+const MAX_LIVE_PROBES:u32=16u;
 struct ProbeCollection {
+ // x every probe, y the baked ones, which come first: the live probes
+ // follow from index y (scene/probes.rs).
  counts:vec4<u32>,
  // The world grid over the probes (probe_grid.wgsl): the minimum corner of
  // cell (0,0,0), cells per metre and cells on each axis (none without probes).

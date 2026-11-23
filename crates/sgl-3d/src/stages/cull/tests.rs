@@ -578,7 +578,7 @@ fn gpu_lists_hold_the_cpu_builders_instances_and_meshes() {
         &scene,
         &ViewData::shadow_cascade(cascade),
         Some(mask),
-        Population::CaptureShadow,
+        Population::CaptureShadow(crate::view::population::Casters::Static),
     );
     let cpu = pairs(drawn.entries());
     assert!(!cpu.is_empty());

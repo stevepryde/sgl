@@ -1,12 +1,20 @@
-//! The scene's specular probe collection on the GPU: the installed probes'
-//! cube array and metadata (`baked_specular_probe`'s content), and
+//! The scene's specular probe collection on the GPU: the installed baked
+//! probes (`baked_specular_probe`'s content), then the live ones
+//! (`live`), in one cube array with one metadata buffer, and
 //! `Scene::set_baked_specular_probes`.
+mod cubes;
+mod live;
+
 use super::probe_grid::{ProbeGrid, REACH};
 use super::{Scene, buffer};
 use crate::baked_specular_probe::{
     BakedSpecularProbe, LEVELS, MAX_PROBES, ProbeError, SpecularProbeBox, SpecularProbeTexels,
 };
+use crate::content::live_specular_probe::MAX_LIVE_PROBES;
+pub(crate) use cubes::{copy_cubes, payload_size};
+use cubes::{cube_array, cube_array_view, upload};
 use glam::{Mat3, Mat4, Vec3};
+use live::Live;
 
 impl SpecularProbeTexels {
     fn format(&self) -> wgpu::TextureFormat {
@@ -32,12 +40,28 @@ struct ProbeMetadata {
     sphere: [f32; 4],
 }
 
-// One immutable storage buffer: fixed arrays keep host and WGSL indexing
-// bounded independently of caller data. The world grid's words follow it
-// in the same buffer (`ProbeCollection::grid`).
+impl ProbeMetadata {
+    /// A probe no receiver is inside: a live probe before its first
+    /// publication, whose cube holds nothing yet. Its influence box is
+    /// empty, so `probe_influence` weighs it zero everywhere.
+    fn nowhere() -> Self {
+        Self {
+            world_to_local: Mat4::IDENTITY.to_cols_array_2d(),
+            influence_min: [1., 1., 1., 0.],
+            influence_max: [-1., -1., -1., 0.],
+            ..bytemuck::Zeroable::zeroed()
+        }
+    }
+}
+
+// One storage buffer: fixed arrays keep host and WGSL indexing bounded
+// independently of caller data. The world grid's words follow it in the
+// same buffer (`ProbeCollection::grid`). Baked probes' records never change;
+// a live probe's is written in place when it moves or publishes.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct CollectionMetadata {
+    /// Every probe, then the baked ones, which come first.
     counts: [u32; 4],
     /// `probe_grid::ProbeGrid`'s origin, scale and size.
     grid_origin: [f32; 3],
@@ -65,8 +89,15 @@ pub(crate) struct UploadedProbes {
     /// The collection's metadata, then the world grid's cells and their
     /// probe lists (`ProbeGrid::words`).
     pub metadata: wgpu::Buffer,
-    /// Each probe's placement, which the metadata and grid are built from.
+    /// Each baked probe's placement, which the metadata and grid are built
+    /// from.
     placements: Vec<Placement>,
+    /// The live probes, whose cubes and records follow the baked ones' in
+    /// this order.
+    live: Vec<Live>,
+    /// What every cube of the array is.
+    face_size: u32,
+    format: wgpu::TextureFormat,
 }
 
 /// Where a probe is: what its metadata and the world grid hold of it.
@@ -81,6 +112,17 @@ struct Placement {
     proxy: Option<SpecularProbeBox>,
 }
 
+/// A rigid `world_to_local` in a render frame whose origin lies `by` from
+/// this one's: its frame's origin translated, and the transform rebuilt
+/// from that origin rather than translated.
+fn translated_frame(world_to_local: Mat4, by: Vec3) -> Mat4 {
+    let rotation = Mat3::from_mat4(world_to_local);
+    let origin = -(rotation.transpose() * world_to_local.w_axis.truncate()) - by;
+    let mut moved = world_to_local;
+    moved.w_axis = (-(rotation * origin)).extend(world_to_local.w_axis.w);
+    moved
+}
+
 impl Placement {
     fn new(probe: &BakedSpecularProbe) -> Self {
         Self {
@@ -93,15 +135,10 @@ impl Placement {
     }
 
     /// The placement in a render frame whose origin lies `by` from this
-    /// one's: its frame's origin translated, and its rigid `world_to_local`
-    /// rebuilt from that origin rather than translated.
+    /// one's (`translated_frame`).
     fn translated(self, by: Vec3) -> Self {
-        let rotation = Mat3::from_mat4(self.world_to_local);
-        let origin = -(rotation.transpose() * self.world_to_local.w_axis.truncate()) - by;
-        let mut world_to_local = self.world_to_local;
-        world_to_local.w_axis = (-(rotation * origin)).extend(self.world_to_local.w_axis.w);
         Self {
-            world_to_local,
+            world_to_local: translated_frame(self.world_to_local, by),
             ..self
         }
     }
@@ -139,20 +176,31 @@ impl Placement {
     }
 }
 
-/// The collection's metadata and world grid over `placements`, in one
-/// buffer.
-fn collection(device: &wgpu::Device, placements: &[Placement]) -> wgpu::Buffer {
+/// The collection's metadata and world grid in one buffer: `placements`'
+/// baked probes, which the grid covers, then `live`'s.
+fn collection(device: &wgpu::Device, placements: &[Placement], live: &[Live]) -> wgpu::Buffer {
     let influences: Vec<_> = placements
         .iter()
         .map(|placement| (placement.world_to_local, placement.influence))
         .collect();
     let grid = ProbeGrid::new(&influences);
     let mut metadata = CollectionMetadata::new(&grid);
-    metadata.counts[0] = placements.len() as u32;
-    for (slot, placement) in metadata.probes.iter_mut().zip(placements) {
-        *slot = placement.metadata();
+    metadata.counts[0] = (placements.len() + live.len()) as u32;
+    metadata.counts[1] = placements.len() as u32;
+    let records = placements
+        .iter()
+        .map(Placement::metadata)
+        .chain(live.iter().map(Live::record));
+    for (slot, record) in metadata.probes.iter_mut().zip(records) {
+        *slot = record;
     }
-    collection_buffer(device, "baked specular probe collection", &metadata, &grid)
+    // A live probe's record is written in place.
+    let usage = if live.is_empty() {
+        wgpu::BufferUsages::STORAGE
+    } else {
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST
+    };
+    collection_buffer(device, "specular probe collection", &metadata, &grid, usage)
 }
 
 pub(crate) fn validate_face_size(face_size: u32, limits: &wgpu::Limits) -> Result<(), ProbeError> {
@@ -163,23 +211,6 @@ pub(crate) fn validate_face_size(face_size: u32, limits: &wgpu::Limits) -> Resul
         return Err(ProbeError::InvalidDimensions);
     }
     Ok(())
-}
-
-/// Bytes per row and rows of one face of a level `size` texels wide.
-fn level_rows(format: wgpu::TextureFormat, size: u32) -> (u32, u32) {
-    let (width, height) = format.block_dimensions();
-    let block = format.block_copy_size(None).unwrap_or(0);
-    (size.div_ceil(width) * block, size.div_ceil(height))
-}
-
-/// Bytes of a prefiltered cube's every level and face.
-pub(crate) fn payload_size(format: wgpu::TextureFormat, face_size: u32) -> usize {
-    (0..LEVELS)
-        .map(|level| {
-            let (row, rows) = level_rows(format, face_size >> level);
-            row as usize * rows as usize * 6
-        })
-        .sum()
 }
 
 impl BakedSpecularProbe {
@@ -198,125 +229,169 @@ impl BakedSpecularProbe {
     }
 }
 
-fn cube_array(
-    device: &wgpu::Device,
-    label: &str,
-    format: wgpu::TextureFormat,
-    face_size: u32,
-    cubes: u32,
-    levels: u32,
-    usage: wgpu::TextureUsages,
-) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width: face_size,
-            height: face_size,
-            depth_or_array_layers: cubes * 6,
-        },
-        mip_level_count: levels,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage,
-        view_formats: &[],
-    })
-}
-
-fn cube_array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
-    texture.create_view(&wgpu::TextureViewDescriptor {
-        dimension: Some(wgpu::TextureViewDimension::CubeArray),
-        ..Default::default()
-    })
+/// Where a new collection's baked cubes come from.
+enum Baked<'a> {
+    /// The game's probes, validated and uploaded.
+    Upload(&'a [BakedSpecularProbe]),
+    /// The collection it replaces, copied on the GPU.
+    Keep,
 }
 
 impl UploadedProbes {
     pub(crate) fn is_empty(&self) -> bool {
-        self.placements.is_empty()
+        self.placements.is_empty() && self.live.is_empty()
     }
 
+    /// A collection of `probes` alone.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         probes: &[BakedSpecularProbe],
     ) -> Result<Self, ProbeError> {
+        Ok(
+            Self::assemble(device, queue, Baked::Upload(probes), Vec::new(), None)?
+                .expect("a collection of probes"),
+        )
+    }
+
+    /// The collection of `baked` probes and the `live` ones, in a new cube
+    /// array; none without a probe. The cubes `baked` keeps, and each live
+    /// probe's published cube, are copied on the GPU from `previous`, the
+    /// collection this one replaces. Every probe shares one face size and
+    /// texel encoding, `Rgba16Float` beside live probes, whose cubes the
+    /// renderer writes.
+    fn assemble(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        baked: Baked<'_>,
+        live: Vec<Live>,
+        previous: Option<&Self>,
+    ) -> Result<Option<Self>, ProbeError> {
         let limits = device.limits();
-        if probes.len() > MAX_PROBES || probes.len() as u32 * 6 > limits.max_texture_array_layers {
+        let (placements, kept): (Vec<Placement>, _) = match &baked {
+            Baked::Upload(probes) => (probes.iter().map(Placement::new).collect(), None),
+            Baked::Keep => (
+                previous.map_or_else(Vec::new, |previous| previous.placements.clone()),
+                previous,
+            ),
+        };
+        let count = placements.len() + live.len();
+        if count == 0 {
+            return Ok(None);
+        }
+        if count > MAX_PROBES
+            || live.len() > MAX_LIVE_PROBES
+            || count as u32 * 6 > limits.max_texture_array_layers
+        {
             return Err(ProbeError::TooManyProbes);
         }
-        let face_size = probes[0].radiance.face_size;
-        let format = probes[0].radiance.texels.format();
+        // The baked probes' face size and encoding, which the live ones
+        // share; the first live probe's face size without baked probes.
+        let of_baked = match &baked {
+            Baked::Upload(probes) => probes
+                .first()
+                .map(|probe| (probe.radiance.face_size, probe.radiance.texels.format())),
+            Baked::Keep => kept
+                .filter(|kept| !kept.placements.is_empty())
+                .map(|kept| (kept.face_size, kept.format)),
+        };
+        let (face_size, format) = of_baked.unwrap_or_else(|| {
+            (
+                live.first().map_or(0, |live| live.probe.face_size),
+                wgpu::TextureFormat::Rgba16Float,
+            )
+        });
         if format.required_features() != wgpu::Features::empty()
             && !device.features().contains(format.required_features())
         {
             return Err(ProbeError::CompressionUnsupported);
         }
-        for probe in probes {
-            probe.validate(&limits)?;
-            if probe.radiance.face_size != face_size || probe.radiance.texels.format() != format {
-                return Err(ProbeError::MixedRadiance);
+        if let Baked::Upload(probes) = &baked {
+            for probe in *probes {
+                probe.validate(&limits)?;
+                if probe.radiance.face_size != face_size || probe.radiance.texels.format() != format
+                {
+                    return Err(ProbeError::MixedRadiance);
+                }
             }
         }
-        let placements: Vec<_> = probes.iter().map(Placement::new).collect();
+        validate_face_size(face_size, &limits)?;
+        if !live.is_empty()
+            && (format != wgpu::TextureFormat::Rgba16Float
+                || live.iter().any(|live| live.probe.face_size != face_size))
+        {
+            return Err(ProbeError::MixedRadiance);
+        }
+        // An uncompressed array is a copy source, for the collection that
+        // replaces it when a live probe is added or removed.
+        let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+        if format == wgpu::TextureFormat::Rgba16Float {
+            usage |= wgpu::TextureUsages::COPY_SRC;
+        }
         let texture = cube_array(
             device,
-            "baked specular probes",
+            "specular probes",
             format,
             face_size,
-            probes.len() as u32,
+            count as u32,
             LEVELS,
-            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage,
         );
-        let (block_width, block_height) = format.block_dimensions();
-        for (index, probe) in probes.iter().enumerate() {
-            let bytes = probe.radiance.texels.bytes();
-            let mut offset = 0;
-            for level in 0..LEVELS {
-                let size = face_size >> level;
-                let (row, rows) = level_rows(format, size);
-                let count = row as usize * rows as usize * 6;
-                crate::counters::write_texture(
-                    queue,
-                    wgpu::TexelCopyTextureInfo {
-                        mip_level: level,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: 0,
-                            z: index as u32 * 6,
-                        },
-                        ..texture.as_image_copy()
-                    },
-                    &bytes[offset..offset + count],
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(row),
-                        rows_per_image: Some(rows),
-                    },
-                    // A level smaller than a block copies the whole block.
-                    wgpu::Extent3d {
-                        width: size.div_ceil(block_width) * block_width,
-                        height: size.div_ceil(block_height) * block_height,
-                        depth_or_array_layers: 6,
-                    },
-                );
-                offset += count;
+        if let Baked::Upload(probes) = &baked {
+            upload(queue, &texture, probes, face_size);
+        }
+        // What the replaced collection holds that this one keeps.
+        let mut copies = Vec::new();
+        if let Some(kept) = kept.filter(|kept| !kept.placements.is_empty()) {
+            copies.push((0, 0, kept.placements.len() as u32));
+        }
+        for (index, entry) in live.iter().enumerate() {
+            let held = previous.and_then(|previous| {
+                let at = previous.live.iter().position(|old| old.id == entry.id)?;
+                Some((previous.placements.len() + at) as u32)
+            });
+            if let (Some(from), Some(_)) = (held, entry.captured) {
+                copies.push((from, (placements.len() + index) as u32, 1));
             }
         }
-        Ok(Self {
+        if let (Some(previous), false) = (previous, copies.is_empty()) {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("specular probe collection"),
+            });
+            for (from, to, cubes) in copies {
+                copy_cubes(
+                    &mut encoder,
+                    (previous.view.texture(), from),
+                    (&texture, to),
+                    cubes,
+                    face_size,
+                );
+            }
+            queue.submit([encoder.finish()]);
+        }
+        Ok(Some(Self {
             view: cube_array_view(&texture),
-            metadata: collection(device, &placements),
+            metadata: collection(device, &placements, &live),
             placements,
-        })
+            live,
+            face_size,
+            format,
+        }))
     }
 
     /// Moves the render origin by `by` (`Scene::move_origin`): each probe's
-    /// frame, which carries its centre, and the world grid built over them
-    /// anew. A capture's radiance is about its centre and is unchanged.
+    /// frame, which carries a baked probe's centre, each live probe's
+    /// centres, and the world grid built over the baked probes anew. A
+    /// capture's radiance is about its centre and is unchanged.
     pub(crate) fn move_origin(&mut self, device: &wgpu::Device, by: Vec3) {
         for placement in &mut self.placements {
             *placement = placement.translated(by);
         }
-        self.metadata = collection(device, &self.placements);
+        for live in &mut self.live {
+            live.translate(by);
+        }
+        self.metadata = collection(device, &self.placements, &self.live);
     }
 
     pub(crate) fn empty(device: &wgpu::Device) -> Self {
@@ -336,8 +411,12 @@ impl UploadedProbes {
                 "empty specular probe collection",
                 &CollectionMetadata::new(&grid),
                 &grid,
+                wgpu::BufferUsages::STORAGE,
             ),
             placements: Vec::new(),
+            live: Vec::new(),
+            face_size: 1,
+            format: wgpu::TextureFormat::Rgba16Float,
         }
     }
 }
@@ -349,30 +428,45 @@ fn collection_buffer(
     label: &str,
     metadata: &CollectionMetadata,
     grid: &ProbeGrid,
+    usage: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
     let mut bytes = bytemuck::bytes_of(metadata).to_vec();
     bytes.extend_from_slice(bytemuck::cast_slice(&grid.words));
     bytes.resize(bytes.len().next_multiple_of(16), 0);
-    buffer(device, label, &bytes, wgpu::BufferUsages::STORAGE)
+    buffer(device, label, &bytes, usage)
 }
 
 impl Scene {
-    /// Replace the installed collection; an empty slice clears it. All probes
-    /// must share one face size. Invalid input leaves the previous collection
-    /// installed. Receivers take environment specular from the probes whose
-    /// influence contains them, then the sky.
+    /// Replace the installed baked probes; an empty slice clears them. All
+    /// probes must share one face size, the live probes' too, beside which
+    /// the baked ones are `Rgba16Float` (`ProbeError::MixedRadiance`
+    /// otherwise). Invalid input leaves the previous collection installed.
+    /// Receivers take environment specular from the probes whose influence
+    /// contains them, then the sky. Live probes keep their published cubes.
     pub fn set_baked_specular_probes(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         probes: &[BakedSpecularProbe],
     ) -> Result<(), super::SceneError> {
+        let live = self
+            .probes
+            .as_ref()
+            .map_or_else(Vec::new, |held| held.live.clone());
+        self.replace_probes(device, queue, Baked::Upload(probes), live)
+    }
+
+    /// Replaces the collection with one of `baked` and `live`, which leaves
+    /// it as it was when they are refused.
+    fn replace_probes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        baked: Baked<'_>,
+        live: Vec<Live>,
+    ) -> Result<(), super::SceneError> {
+        self.probes = UploadedProbes::assemble(device, queue, baked, live, self.probes.as_ref())?;
         self.edited();
-        self.baked_specular_probes = if probes.is_empty() {
-            None
-        } else {
-            Some(UploadedProbes::new(device, queue, probes)?)
-        };
         // World-space ray hits bind the collection in a renderer's group 0.
         self.resources = super::next_generation();
         Ok(())
@@ -408,280 +502,4 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
-    use super::*;
-    use crate::baked_specular_probe::{SpecularProbeBox, SpecularProbeRadiance};
-    use glam::{Mat4, Vec3};
-
-    fn fixture() -> BakedSpecularProbe {
-        BakedSpecularProbe {
-            center: Vec3::ZERO,
-            world_to_local: Mat4::IDENTITY,
-            influence: SpecularProbeBox {
-                min: Vec3::splat(-2.),
-                max: Vec3::splat(2.),
-            },
-            blend: Vec3::splat(0.5),
-            proxy: Some(SpecularProbeBox {
-                min: Vec3::splat(-2.),
-                max: Vec3::splat(2.),
-            }),
-            radiance: SpecularProbeRadiance {
-                face_size: 64,
-                texels: SpecularProbeTexels::Rgba16Float(vec![
-                    0x3c00;
-                    payload_size(
-                        wgpu::TextureFormat::Rgba16Float,
-                        64
-                    ) / 2
-                ]),
-            },
-        }
-    }
-
-    // Malformed asset input must be rejected before texture creation/upload,
-    // which otherwise reports a GPU validation error or admits poisoned radiance.
-    #[test]
-    fn malformed_radiance_and_truncated_levels_are_rejected() {
-        fn values(probe: &mut BakedSpecularProbe) -> &mut Vec<u16> {
-            match &mut probe.radiance.texels {
-                SpecularProbeTexels::Rgba16Float(values) => values,
-                SpecularProbeTexels::Bc6hUfloat(_) => unreachable!(),
-            }
-        }
-        let mut probe = fixture();
-        for invalid in [0x7c00, 0xfc00, 0x7e00, 0xbc00, 0x8001] {
-            values(&mut probe)[17] = invalid;
-            assert!(matches!(
-                probe.validate(&wgpu::Limits::default()),
-                Err(ProbeError::InvalidRadiance { component: 17 })
-            ));
-        }
-        values(&mut probe)[17] = 0x8000; // IEEE negative zero is finite and nonnegative.
-        assert!(probe.validate(&wgpu::Limits::default()).is_ok());
-        values(&mut probe).pop();
-        assert!(matches!(
-            probe.validate(&wgpu::Limits::default()),
-            Err(ProbeError::InvalidPayloadLength { .. })
-        ));
-    }
-
-    #[test]
-    fn box_projection_rejects_scale_shear_and_outside_capture_origin() {
-        let mut probe = fixture();
-        probe.world_to_local = Mat4::from_scale(Vec3::new(1., 2., 1.));
-        assert!(matches!(
-            probe.validate(&wgpu::Limits::default()),
-            Err(ProbeError::InvalidProbe(_))
-        ));
-        probe.world_to_local = Mat4::IDENTITY;
-        probe.world_to_local.y_axis.x = 0.2;
-        assert!(matches!(
-            probe.validate(&wgpu::Limits::default()),
-            Err(ProbeError::InvalidProbe(_))
-        ));
-        probe.world_to_local =
-            Mat4::from_rotation_y(0.7) * Mat4::from_translation(Vec3::new(-10., 0., 0.));
-        assert!(matches!(
-            probe.validate(&wgpu::Limits::default()),
-            Err(ProbeError::InvalidProbe(_))
-        ));
-        probe.center = Vec3::new(10., 0., 0.);
-        assert!(probe.validate(&wgpu::Limits::default()).is_ok());
-        probe.blend.x = -0.1;
-        assert!(matches!(
-            probe.validate(&wgpu::Limits::default()),
-            Err(ProbeError::InvalidProbe(_))
-        ));
-    }
-
-    // Defect: a box wider than f32 can hold passes as finite with `min <
-    // max`, and its infinite extent reaches the probe grid and shading.
-    // Independent signal: f32 overflow of `max - min`.
-    #[test]
-    fn boxes_wider_than_f32_can_hold_are_rejected() {
-        let mut probe = fixture();
-        let huge = SpecularProbeBox {
-            min: Vec3::splat(-1e13),
-            max: Vec3::splat(1e13),
-        };
-        probe.influence = huge;
-        probe.proxy = Some(huge);
-        assert!(probe.validate(&wgpu::Limits::default()).is_ok());
-        let overflowing = SpecularProbeBox {
-            min: Vec3::new(-1., -f32::MAX, -1.),
-            max: Vec3::new(1., f32::MAX, 1.),
-        };
-        probe.influence = overflowing;
-        assert!(matches!(
-            probe.validate(&wgpu::Limits::default()),
-            Err(ProbeError::InvalidProbe(_))
-        ));
-        probe.influence = huge;
-        probe.proxy = Some(overflowing);
-        assert!(matches!(
-            probe.validate(&wgpu::Limits::default()),
-            Err(ProbeError::InvalidProbe(_))
-        ));
-    }
-
-    #[test]
-    fn unaddressable_face_sizes_are_rejected_before_payload_access() {
-        let mut probe = fixture();
-        for face_size in [0, 32, 96, u32::MAX] {
-            probe.radiance.face_size = face_size;
-            assert!(matches!(
-                probe.validate(&wgpu::Limits::default()),
-                Err(ProbeError::InvalidDimensions)
-            ));
-        }
-    }
-
-    // Defect: box projection normalised `hit - centre` by its length, whose
-    // square overflows f32 once the proxy reaches about 1e19 m, and a proxy
-    // near f32's range overflowed the hit distance too, so the probe was
-    // sampled toward zero or NaN: an arbitrary texel. Oracle: Lagarde and
-    // Zanuttini's construction. A proxy that large acts as distant, so a
-    // receiver near the capture centre samples the face its reflection
-    // direction's major axis names; an ordinary proxy is sampled toward the
-    // ray's hit on it from the capture centre. Each face holds its own value
-    // (+X 1, -X 2, +Y 3, -Y 4, +Z 5, -Z 6) on every level.
-    #[test]
-    fn box_projection_samples_the_face_toward_the_proxy_hit() {
-        use crate::settings::{self, Settings};
-        use std::f32::consts::FRAC_PI_2;
-        let Some((device, queue)) = crate::test_support::device() else {
-            return;
-        };
-        // The probe frame turns world (x, y, z) about `origin` into local
-        // (-y, x, z); local (u, v, w) is world origin + (v, -u, w).
-        let origin = Vec3::new(10., -4., 3.);
-        let world_to_local = Mat4::from_rotation_z(FRAC_PI_2) * Mat4::from_translation(-origin);
-        let local_to_world = world_to_local.inverse();
-        let texels: Vec<u16> = (0..LEVELS)
-            .flat_map(|level| {
-                (0..6u16).flat_map(move |face| {
-                    let value = crate::test_support::to_half(f32::from(face + 1));
-                    [value, 0, 0, 0x3c00].repeat((64usize >> level).pow(2))
-                })
-            })
-            .collect();
-        // The capture at local (0.9, 0, 0), inside a proxy of half-width
-        // `half`.
-        let probe = |half: f32| BakedSpecularProbe {
-            center: local_to_world.transform_point3(Vec3::new(0.9, 0., 0.)),
-            world_to_local,
-            influence: SpecularProbeBox {
-                min: Vec3::splat(-1.),
-                max: Vec3::splat(1.),
-            },
-            blend: Vec3::ZERO,
-            proxy: Some(SpecularProbeBox {
-                min: Vec3::splat(-half),
-                max: Vec3::splat(half),
-            }),
-            radiance: SpecularProbeRadiance {
-                face_size: 64,
-                texels: SpecularProbeTexels::Rgba16Float(texels.clone()),
-            },
-        };
-        let mut scene = Scene::new(&device, &queue);
-        scene
-            .set_baked_specular_probes(
-                &device,
-                &queue,
-                &[probe(1.), probe(1e20), probe(f32::MAX / 2.)],
-            )
-            .unwrap();
-        let receiver = origin + Vec3::new(0.2, 0.1, -0.3);
-        // (probe, receiver, world direction, expected face value).
-        let mut cases = vec![
-            // From the frame's origin along local (1, 0.3, 0), world -Y, the
-            // ray meets the unit proxy at local (1, 0.3, 0), which lies along
-            // local (0.1, 0.3, 0), world +X, from the capture.
-            (0, origin, Vec3::new(0.3, -1., 0.), 1.),
-        ];
-        for index in [1, 2] {
-            for (direction, face) in [
-                (Vec3::X, 1.),
-                (Vec3::NEG_X, 2.),
-                (Vec3::Y, 3.),
-                (Vec3::NEG_Y, 4.),
-                (Vec3::new(0.36, -0.8, 0.48), 4.),
-                (Vec3::new(-0.9, 0.3, 0.2), 2.),
-            ] {
-                cases.push((index, receiver, direction, face));
-            }
-        }
-        // From local (-0.49, -0.49, -0.49) f32::MAX along local (1, 0.95,
-        // 0.9), world (0.95, -1, 0.9), the ray meets the f32::MAX / 2 proxy
-        // on its local +X face, at about (1, 0.9, 0.8) of its half-width,
-        // which lies along world -Y from the capture.
-        cases.push((
-            2,
-            local_to_world.transform_point3(Vec3::splat(-0.49 * f32::MAX)),
-            Vec3::new(0.95, -1., 0.9),
-            4.,
-        ));
-        let vec3 = |v: Vec3| format!("vec3({:?},{:?},{:?})", v.x, v.y, v.z);
-        let count = cases.len();
-        let observation = format!(
-            r#"@group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
-@compute @workgroup_size(1) fn observe() {{
- let probes=array<u32,{count}>({});
- let worlds=array<vec3<f32>,{count}>({});
- let directions=array<vec3<f32>,{count}>({});
- for (var i=0u;i<{count}u;i++) {{
-  output[i]=vec4(probe_radiance(probes[i],worlds[i],directions[i],0.,environment_sampler),0.);
- }}
-}}
-"#,
-            cases
-                .iter()
-                .map(|c| format!("{}u", c.0))
-                .collect::<Vec<_>>()
-                .join(","),
-            cases
-                .iter()
-                .map(|c| vec3(c.1))
-                .collect::<Vec<_>>()
-                .join(","),
-            cases
-                .iter()
-                .map(|c| vec3(c.2.normalize()))
-                .collect::<Vec<_>>()
-                .join(","),
-        );
-        let settings = Settings {
-            antialiasing: settings::Antialiasing::Off,
-            bloom: settings::Bloom::Off,
-            ambient_occlusion: settings::AmbientOcclusionQuality::Off,
-            screen_space_reflections: settings::ScreenSpaceReflections::Off,
-            world_space_reflections: settings::WorldSpaceReflections::Off,
-            dynamic_gi: settings::DynamicGiQuality::Off,
-            ..Settings::default()
-        };
-        let mut renderer = crate::TestRenderer::for_test(&device, &queue, [16, 16], &settings);
-        let input = crate::FrameInput::new(crate::Camera {
-            view: Mat4::IDENTITY,
-            projection: crate::perspective(1., 1., 0.1),
-            eye: Vec3::ZERO,
-        });
-        let sampled = crate::test_support::observe_ray_hits(
-            &device,
-            &queue,
-            &mut renderer,
-            &mut scene,
-            &input,
-            &settings,
-            &observation,
-            count,
-        );
-        for ((index, _, direction, face), sample) in cases.iter().zip(&sampled) {
-            assert!(
-                (sample[0] - face).abs() < 0.01,
-                "probe {index} toward {direction}: sampled {sample:?}, expected face {face}"
-            );
-        }
-    }
-}
+mod tests;

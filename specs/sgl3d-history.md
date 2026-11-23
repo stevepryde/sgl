@@ -3082,7 +3082,7 @@ These rules redraw a cached face exactly; they cost time, not history.
 
 - **Rule.** When a light's `LightView` differs at all from the last finished frame's, every face
   draws every caster into the frame atlas, no static layer is kept, and its shadow record carries
-  `layers` 0, so probe captures take no shadow from it. A static layer is drawn the frame after the
+  `layers` 0, so a bake's capture and ray hits, which sample the static layers, take no shadow from it; a live probe's refresh samples the frame atlas, which holds its casters, with records that mark it held (`Local::refresh_records`). A static layer is drawn the frame after the
   light stops moving.
 - **Raised by.** Lights attached to moving objects; any per-frame rewrite of a light that changes a
   bit of its position, range or direction.
@@ -3794,11 +3794,20 @@ See M-11, M-16 and M-17a to M-17c.
 
 #### X-5 Sky environment atlas
 
-- **Rule.** The sky stage's environment atlas follows the sky-view table over a 16-step cycle, one step per finished frame, written in place. A cycle under way runs to its end before the next starts, so a change that arrives the frame after a capture reaches the sharp level 16 frames later, counting the frame of the change, and the roughest level, which diffuse environment light reads, 31 frames later; a change to an idle atlas reaches them in that frame and 15 frames later. During a cycle the faces and levels it has refiltered come from its capture and the rest from the cycle before, so neighbouring faces of a level can be a whole cycle apart; each level is filtered from the level before within one cycle, so a level's lineage is consistent. The whole cycle runs in the stage's first sky frame and in any frame that restarts the view's history. A frame rendered again runs the same step. An unfinished frame commits nothing of the cycle, and a sky-view table it computed is computed again in the next frame (X-4), which so starts the cycle that change needs.
+- **Rule.** The sky stage's environment atlas follows the sky-view table over a 16-step cycle, one step per finished frame, written in place. A cycle under way runs to its end before the next starts, so a change that arrives the frame after a capture reaches the sharp level 16 frames later, counting the frame of the change, and the roughest level, which diffuse environment light reads, 31 frames later; a change to an idle atlas reaches them in that frame and 15 frames later. During a cycle the faces and levels it has refiltered come from its capture and the rest from the cycle before, so neighbouring faces of a level can be a whole cycle apart; each level is filtered from the level before within one cycle, so a level's lineage is consistent. The whole cycle runs in the stage's first sky frame and in any frame that restarts the view's history. A bake's sky stage is its own, not a view's, and runs the whole cycle once; a live probe's refresh computes no sky and samples the atlas of the view it borrows as that view's last frame left it, mid-cycle or not. A frame rendered again runs the same step. An unfinished frame commits nothing of the cycle, and a sky-view table it computed is computed again in the next frame (X-4), which so starts the cycle that change needs.
 - **Raised by.** The sky-view table computed since the last cycle's capture (X-4).
 - **Stays triggered while.** The cycle runs; again while the table keeps changing.
 - **Source.** SGL3D's own schedule; Godot's incremental sky radiance update is the practice. Code: `src/stages/sky/environment.rs` (`AtlasCycle`).
 - **Guard.** The schedule test; `scenario_sky`'s 16-frame and cut scenarios.
+- **Status.** Rule.
+
+#### X-6 Live specular probe cubes
+
+- **Rule.** A live probe's cube is state the scene keeps on the GPU, replaced whole by each publication and never part old and part new. A refresh's surfaces take environment specular from the installed probes, the probe's own last published cube among them, so each refresh holds the last one's light after one more bounce: light reflected between surfaces inside a probe builds up over refreshes and, once its source is gone, fades by the surfaces' specular reflectance a refresh. Nothing restarts it: a camera cut, a resize and a view's history restart leave the cube; removing the probe ends it, a collection rebuild copies it, and a render origin move translates the centre it was captured from. A publication changes receivers' environment specular in the next frame at once: no view history is cut and no temporal mask is marked for it, so temporal antialiasing and the reflection denoisers take the new cube over their own histories, as they take any change of lighting: in the browser lane's live probe fixture a mirror in a still view still showed about a third of the cube before, six frames after a publication.
+- **Raised by.** `Renderer::refresh_specular_probe`.
+- **Stays triggered while.** The game refreshes the probe.
+- **Source.** SGL3D's own; a bake repeated with its first pass installed is the same feedback, and Unity documents it as reflection bounces. Code: `src/renderer/probe_capture/refresh.rs`, `src/scene/probes/live.rs`.
+- **Guard.** `a_refresh_in_flight_leaves_the_published_cube_whole`, `a_published_cube_survives_the_collections_changes`, `a_render_origin_move_carries_a_live_probe_and_restarts_its_refresh`, `a_frame_after_a_refresh_renders_as_without_it` (`src/renderer/probe_capture/refresh/tests.rs`); the bounce has no guard.
 - **Status.** Rule.
 
 ### Stages without history

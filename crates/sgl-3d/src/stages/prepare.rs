@@ -32,33 +32,48 @@ use crate::scene::dynamic_gi::ProbePlacement;
 use crate::scene::rays::acceleration::RayTracingStats;
 use crate::settings::WorldSpaceReflections;
 use crate::shading::uniforms::{FrameValues, ViewUniform};
+use crate::view::cascades::MAX_SHADOW_CASCADES;
 use crate::view::clusters::{BoxVolume, CAMERA_CLUSTERS, Clusters, ViewVolume};
 use crate::view::draw_list::gpu::{camera_cull, cascade_cull};
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::effective::{Effective, HardwareRayTracing};
 use crate::view::frame::FrameContext;
 use crate::view::history::HistoryFrame;
-use crate::view::population::Population;
+use crate::view::population::{Casters, Population};
 use crate::view::reflection_camera;
 use crate::view::{FrameShadow, FrameViews, Jitter, ViewData, frame_uniform, lod::LodSelector};
 use crate::{FrameInput, Scene};
 use glam::{Mat4, Vec3};
 
 /// A probe capture's views: the frame data its views share, each face's
-/// view data, each directional shadow cascade's, and what they draw.
+/// view data, each directional shadow cascade's, and what they draw. Its
+/// buffers are made once and written by each capture (`Prepare::capture`),
+/// growing only when a capture needs more: a bake makes its own, and a
+/// renderer keeps one for its live probes' refreshes, which so create no
+/// buffer in the frame loop.
 pub(crate) struct CaptureViews {
     /// The frame's `FrameUniform`, with the capture's cascades.
     pub frame: wgpu::Buffer,
-    /// Each face's `ViewUniform` (`ViewData::probe_face`), in cube-face order.
-    pub faces: Vec<wgpu::Buffer>,
-    /// Each directional shadow cascade's `ViewUniform`, nearest first; none
-    /// without a directional shadow.
-    pub cascades: Vec<wgpu::Buffer>,
-    /// What every cascade draws: the unculled static capture-visible casters.
+    /// Each face's `ViewUniform` (`ViewData::probe_face`), in cube-face
+    /// order: written for the faces the last capture rendered.
+    face_views: [wgpu::Buffer; 6],
+    /// Each directional shadow cascade's `ViewUniform`, nearest first.
+    cascade_views: [wgpu::Buffer; MAX_SHADOW_CASCADES],
+    /// How many cascades the last capture has; none without a directional
+    /// shadow.
+    cascade_count: usize,
+    /// Each cascade's shadow group 0, over its view and `frame`, from the
+    /// first capture that draws cascades.
+    cascade_groups: Vec<wgpu::BindGroup>,
+    /// The faces the last capture renders, in cube-face order.
+    pub faces: Vec<CaptureFaceView>,
+    /// What every cascade draws: the capture's unculled casters.
     pub casters: DrawList,
-    /// What every face draws: the same unculled static capture-visible
-    /// instances.
-    pub list: DrawList,
+    /// What the faces draw (`CaptureFaceView::list`): one list of the
+    /// capture's unculled instances for every face of a bake, and one a
+    /// face of a live refresh, culled to its view. Lists past those the
+    /// last capture built are kept for the next.
+    pub lists: Vec<DrawList>,
     /// The capture's draw instances: these lists' and its local-light
     /// shadow layers'.
     pub instances: DrawInstances,
@@ -66,6 +81,75 @@ pub(crate) struct CaptureViews {
     /// on, baked ones taken only by receivers without baked lighting, and
     /// every decal.
     pub clusters: Clusters,
+}
+
+/// One face of a probe capture.
+#[derive(Clone, Copy)]
+pub(crate) struct CaptureFaceView {
+    /// Its place in cube-face order, 0..6.
+    pub face: u32,
+    /// What it draws, in `CaptureViews::lists`.
+    pub list: usize,
+}
+
+impl CaptureViews {
+    /// Views no capture has filled.
+    pub fn new(device: &wgpu::Device) -> Self {
+        let uniform = |label, size: usize| {
+            crate::counters::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size: size as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            )
+        };
+        let view = std::mem::size_of::<ViewUniform>();
+        Self {
+            frame: uniform(
+                "probe capture frame",
+                std::mem::size_of::<crate::shading::uniforms::FrameUniform>(),
+            ),
+            face_views: std::array::from_fn(|_| uniform("probe capture face", view)),
+            cascade_views: std::array::from_fn(|_| uniform("probe capture shadow cascade", view)),
+            cascade_count: 0,
+            cascade_groups: Vec::new(),
+            faces: Vec::new(),
+            casters: DrawList::default(),
+            lists: Vec::new(),
+            instances: DrawInstances::default(),
+            clusters: Clusters::new(device, "probe capture lights and decals"),
+        }
+    }
+
+    /// Makes each cascade's shadow group 0 with `group`, of its view's
+    /// buffer and the frame's, unless a capture already has: the buffers
+    /// are these views' for good, so the groups are too.
+    pub fn ready_cascade_groups(
+        &mut self,
+        group: impl Fn(&wgpu::Buffer, &wgpu::Buffer) -> wgpu::BindGroup,
+    ) {
+        if self.cascade_groups.is_empty() && self.cascade_count > 0 {
+            self.cascade_groups = self
+                .cascade_views
+                .iter()
+                .map(|view| group(view, &self.frame))
+                .collect();
+        }
+    }
+
+    /// Each of the last capture's cascades' shadow group 0, nearest first,
+    /// once readied.
+    pub fn cascade_groups(&self) -> &[wgpu::BindGroup] {
+        &self.cascade_groups[..self.cascade_count.min(self.cascade_groups.len())]
+    }
+
+    /// The `ViewUniform` of a face the last capture rendered.
+    pub fn face_view(&self, face: CaptureFaceView) -> &wgpu::Buffer {
+        &self.face_views[face.face as usize]
+    }
 }
 
 /// Sets the frame's directional shadow cascades to views with
@@ -371,12 +455,17 @@ impl Prepare {
         self.hardware_requested
     }
 
-    /// The views of a probe capture at `center` with `input`'s lights, the
-    /// directional shadow's cascades about `center` in maps of
+    /// Fills `views` with the views of faces `faces` (of 0..6) of a probe
+    /// capture at `center` of the instances `content` holds (a bake's static
+    /// ones, a live refresh's moving ones too), each face's list culled to
+    /// its view when `culled` and without the materials of the visibility
+    /// groups `hidden`, which still cast into its cascades, with `input`'s
+    /// lights, the directional shadow's cascades about `center` in maps of
     /// `cascade_size` texels and, when `local_lights`, the scene's lights,
     /// without their shadow, lit by the `dynamic_gi` volume whose probes
-    /// group 0 binds. A capture has no fog: completion fogs what reflects
-    /// it at the receiver.
+    /// group 0 binds. It writes `views`' buffers and creates none but to
+    /// grow one. A capture has no fog: completion fogs what reflects it at
+    /// the receiver.
     #[allow(clippy::too_many_arguments)]
     pub fn capture(
         &self,
@@ -385,10 +474,12 @@ impl Prepare {
         scene: &Scene,
         input: &FrameInput,
         local_lights: bool,
-        center: Vec3,
+        (center, content): (Vec3, Casters),
+        (faces, culled, hidden): (std::ops::Range<u32>, bool, u32),
         cascade_size: u32,
         dynamic_gi: Option<&ProbePlacement>,
-    ) -> CaptureViews {
+        views: &mut CaptureViews,
+    ) {
         let shadow = FrameShadow::capture(input, center, cascade_size, scene.origin());
         let frame = frame_uniform(
             input,
@@ -398,57 +489,60 @@ impl Prepare {
             None,
             dynamic_gi,
         );
-        let uniform = |label, bytes: &[u8]| {
-            crate::scene::buffer(device, label, bytes, wgpu::BufferUsages::UNIFORM)
+        let write = |buffer: &wgpu::Buffer, bytes: &[u8]| {
+            crate::counters::write_buffer(queue, buffer, 0, bytes);
         };
-        let frame_buffer = uniform("static capture frame", bytemuck::bytes_of(&frame));
-        // Each face is a view.
-        let views: Vec<_> = (0..6)
-            .map(|face| ViewData::probe_face(center, face))
-            .collect();
-        let faces = views
-            .iter()
-            .map(|view| uniform("static capture camera", bytemuck::bytes_of(&view.uniform)))
-            .collect();
+        write(&views.frame, bytemuck::bytes_of(&frame));
         let mask = Some(frame.visibility_mask);
-        let cascades: Vec<_> = shadow
-            .cascades
-            .as_slice()
-            .iter()
-            .map(|cascade| ViewData::shadow_cascade(cascade.clip_from_world))
-            .collect();
-        // Every cascade draws the same unculled static content.
-        let mut instances = DrawInstances::default();
-        let mut casters = DrawList::default();
-        if let Some(cascade) = cascades.first() {
-            casters.build(
-                &mut instances,
-                scene,
-                cascade,
-                mask,
-                Population::CaptureShadow,
+        views.instances.clear();
+        // Every cascade draws the same unculled content.
+        let cascades = shadow.cascades.as_slice();
+        views.cascade_count = cascades.len();
+        for (index, cascade) in cascades.iter().enumerate() {
+            let view = ViewData::shadow_cascade(cascade.clip_from_world);
+            if index == 0 {
+                views.casters.build(
+                    &mut views.instances,
+                    scene,
+                    &view,
+                    mask,
+                    Population::CaptureShadow(content),
+                );
+            }
+            write(
+                &views.cascade_views[index],
+                bytemuck::bytes_of(&view.uniform),
             );
         }
-        let cascades = cascades
-            .iter()
-            .map(|cascade| {
-                uniform(
-                    "static capture shadow cascade",
-                    bytemuck::bytes_of(&cascade.uniform),
-                )
-            })
-            .collect();
-        // Every face sees the same unculled static content.
-        let mut list = DrawList::default();
-        list.build(
-            &mut instances,
-            scene,
-            &views[0],
-            mask,
-            Population::ProbeFace,
-        );
-        let mut clusters = Clusters::new(device, "static capture lights and decals");
-        clusters.list(
+        // A bake's faces draw one list of its unculled content; a live
+        // refresh's each draw their own, culled to the face's view.
+        views.faces.clear();
+        let mut built = 0;
+        for face in faces {
+            let view = ViewData::probe_face(center, face as u8);
+            if culled || built == 0 {
+                if views.lists.len() == built {
+                    views.lists.push(DrawList::default());
+                }
+                views.lists[built].build(
+                    &mut views.instances,
+                    scene,
+                    &view,
+                    mask.map(|mask| mask & !hidden),
+                    Population::ProbeFace { content, culled },
+                );
+                built += 1;
+            }
+            write(
+                &views.face_views[face as usize],
+                bytemuck::bytes_of(&view.uniform),
+            );
+            views.faces.push(CaptureFaceView {
+                face,
+                list: built - 1,
+            });
+        }
+        views.clusters.list(
             device,
             queue,
             &scene.lights,
@@ -457,14 +551,5 @@ impl Prepare {
             &scene.decals,
             |_| true,
         );
-        CaptureViews {
-            frame: frame_buffer,
-            faces,
-            cascades,
-            casters,
-            list,
-            instances,
-            clusters,
-        }
     }
 }

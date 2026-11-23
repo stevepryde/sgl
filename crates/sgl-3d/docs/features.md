@@ -415,6 +415,18 @@ them through unrefracted. A probe captured on an
   borrows a `View`'s shadow maps (natively also blocking,
   `capture_specular_probe`).
   [Probes](../README.md#baked-specular-probes).
+- **Live specular probes**: probes of the same kind that the renderer
+  captures and filters on the GPU during play, for what moves: a vehicle's
+  surroundings, a room whose contents change (`Scene::add_live_specular_probe`,
+  moved with `set_live_specular_probe`). Nothing refreshes one unless the
+  game calls `Renderer::refresh_specular_probe`, between frames, as often as
+  it chooses; `ProbeRefreshPace` spreads a refresh over one, two or seven
+  calls, and the probe shows its last whole cube until the next is
+  complete. A refresh shows moving instances and leaves out the probe's
+  `hidden_groups` (the reflecting object's), which still cast shadows in
+  it. Up to 16, sharing the baked probes' face size, which must then be
+  uncompressed.
+  [Live probes](../README.md#live-specular-probes).
 
 ## Reflections
 
@@ -621,9 +633,9 @@ are captured between frames, offline or while a level loads:
 `Renderer::capture_specular_probe_async` returns the GGX-prefiltered cube
 (`SpecularProbeRadiance`), which the game stores or installs in a
 `BakedSpecularProbe` with `Scene::set_baked_specular_probes`
-([probes](../README.md#baked-specular-probes)); refreshing probes on the GPU
-during play is not provided
-([#867](https://github.com/stevepryde/sgl/issues/867)).
+([probes](../README.md#baked-specular-probes)), and a probe that must follow
+what moves is a [live probe](../README.md#live-specular-probes), which the
+game refreshes when it chooses.
 
 Also not provided: occlusion maps in an image of their own, specular
 textures, tangent generation and order-independent transparency.

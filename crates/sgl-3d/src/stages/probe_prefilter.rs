@@ -2,10 +2,12 @@
 //! capture's opaque pass renders, one face at a time, averaged into the
 //! cube's face; a solid-angle mip chain over the six faces; and a cube with
 //! the perceptual roughness `specular_probe_levels.wgsl` assigns each mip,
-//! read back for the caller. Used only by
-//! `Renderer::capture_specular_probe_async`.
+//! read back for the caller of a bake
+//! (`Renderer::capture_specular_probe_async`, `read`) or copied into a live
+//! probe's cube of the scene's array (`Renderer::refresh_specular_probe`,
+//! `publish`).
 //!
-//! Each face renders at `CAPTURE_SIZE` texels a side, or at the probe's face
+//! A bake's face renders at `CAPTURE_SIZE` texels a side, or at the probe's face
 //! size if that is larger, and a uniform box (the 2x2 `mip_reduce` chain)
 //! averages it to the face size, so the cube's mip 0 holds each texel's
 //! area-averaged radiance rather than the one sample at its centre: an
@@ -25,8 +27,14 @@
 //! positions. The uniform box weighs a texel's samples equally, though
 //! their solid angles differ, by under 1 % within a texel.
 //!
+//! A live refresh's face renders at the probe's face size, as Godot's and
+//! three.js's do: it runs during play, where the supersample's fill and
+//! its 2048-texel targets are not affordable, and a later refresh corrects
+//! what one aliased (D-73).
+//!
 //! Reads: the captured face. Writes: its own face target, cube, mip chain
-//! and prefiltered cube. Honours: nothing. Timing groups: none (authoring).
+//! and prefiltered cube, and a live probe's cube. Honours: nothing. Timing
+//! groups: `probe refresh filter` (a live refresh's; a bake is untimed).
 use crate::baked_specular_probe::{LEVELS, ProbeError};
 use crate::scene::probes::payload_size;
 use crate::view::targets::CaptureFace;
@@ -89,19 +97,26 @@ pub(crate) struct ProbePrefilter {
     /// The face being captured, at the capture size, with a mip chain down
     /// to the face size.
     rendered: wgpu::Texture,
-    rendered_mips: Vec<wgpu::TextureView>,
-    motion: wgpu::TextureView,
-    depth: wgpu::TextureView,
+    /// What a face renders into: `rendered`'s first level, with the motion
+    /// attachment the pass writes and nothing reads, and its depth.
+    face: CaptureFace,
     /// The captured faces with a solid-angle mip chain for filtered
     /// importance sampling.
-    cube: wgpu::TextureView,
-    cube_mips: Vec<wgpu::TextureView>,
+    cube: wgpu::Texture,
     /// The prefiltered cube, `LEVELS` mips.
     filtered: wgpu::Texture,
-    pipeline: wgpu::ComputePipeline,
     mip_pipeline: wgpu::ComputePipeline,
-    sampler: wgpu::Sampler,
+    pipeline: wgpu::ComputePipeline,
+    /// The face's box chain: each mip after the first from the one before.
+    face_reduce: Vec<wgpu::BindGroup>,
+    /// The cube's box chain.
+    cube_reduce: Vec<wgpu::BindGroup>,
+    /// Each GGX level's group, with its level's uniform.
+    levels: Vec<wgpu::BindGroup>,
 }
+
+/// The timing group of a live refresh's filter passes.
+const TIMING: &str = "probe refresh filter";
 
 fn image(
     device: &wgpu::Device,
@@ -192,73 +207,141 @@ impl ProbePrefilter {
                 cache: None,
             })
         };
+        let pipeline = compute(PREFILTER_ENTRY);
+        let mip_pipeline = compute(MIP_REDUCE_ENTRY);
+        let mip_layout = mip_pipeline.get_bind_group_layout(0);
+        // Each of a chain's mips after the first, from the one before.
+        let chain = |mips: &[wgpu::TextureView]| -> Vec<_> {
+            mips.windows(2)
+                .map(|pair| {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("specular probe adjacent mips"),
+                        layout: &mip_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::TextureView(&pair[0]),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::TextureView(&pair[1]),
+                            },
+                        ],
+                    })
+                })
+                .collect()
+        };
+        let rendered_mips = mip_views(&rendered, rendered_mip_count);
+        let cube_mips = mip_views(&cube, mip_count);
+        let cube_view = cube.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::Cube),
+            ..Default::default()
+        });
+        let filtered = image(
+            device,
+            face_size,
+            6,
+            LEVELS,
+            wgpu::TextureFormat::Rgba16Float,
+            wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            "prefiltered specular probe",
+        );
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("specular probe capture trilinear"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        let level_layout = pipeline.get_bind_group_layout(0);
+        let levels = (0..LEVELS)
+            .map(|level| {
+                let uniform = crate::counters::buffer_init(
+                    device,
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("specular probe level"),
+                        contents: bytemuck::bytes_of(&level),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    },
+                );
+                let target = filtered.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2Array),
+                    base_mip_level: level,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                });
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("specular probe GGX level"),
+                    layout: &level_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&cube_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(&target),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: uniform.as_entire_binding(),
+                        },
+                    ],
+                })
+            })
+            .collect();
         Self {
             face_size,
-            rendered_mips: mip_views(&rendered, rendered_mip_count),
+            face_reduce: chain(&rendered_mips),
+            cube_reduce: chain(&cube_mips),
+            face: CaptureFace {
+                color: rendered.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                }),
+                motion: auxiliary(
+                    crate::shading::gbuffer::MOTION,
+                    "specular probe unused motion attachment",
+                ),
+                depth: auxiliary(crate::shading::gbuffer::DEPTH, "specular probe depth"),
+            },
             rendered,
-            motion: auxiliary(
-                crate::shading::gbuffer::MOTION,
-                "specular probe unused motion attachment",
-            ),
-            depth: auxiliary(crate::shading::gbuffer::DEPTH, "specular probe depth"),
-            cube: cube.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::Cube),
-                ..Default::default()
-            }),
-            cube_mips: mip_views(&cube, mip_count),
-            filtered: image(
-                device,
-                face_size,
-                6,
-                LEVELS,
-                wgpu::TextureFormat::Rgba16Float,
-                wgpu::TextureUsages::STORAGE_BINDING
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC,
-                "prefiltered specular probe",
-            ),
-            pipeline: compute(PREFILTER_ENTRY),
-            mip_pipeline: compute(MIP_REDUCE_ENTRY),
-            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("specular probe capture trilinear"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                ..Default::default()
-            }),
+            cube,
+            filtered,
+            pipeline,
+            mip_pipeline,
+            levels,
         }
+    }
+
+    /// The probe's face size.
+    pub fn face_size(&self) -> u32 {
+        self.face_size
     }
 
     /// The attachments a face renders into, at the capture size. Each face
     /// is resolved (`resolve_face`) before the next renders.
-    pub fn face(&self) -> CaptureFace {
-        CaptureFace {
-            color: self.rendered.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                mip_level_count: Some(1),
-                ..Default::default()
-            }),
-            motion: self.motion.clone(),
-            depth: self.depth.clone(),
-        }
+    pub fn face(&self) -> &CaptureFace {
+        &self.face
     }
 
     /// After face `index` (0..6) renders: its uniform box average to the
     /// face size, into the cube's face.
     pub fn resolve_face(
         &self,
-        device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
+        timing: Option<&crate::timing::GpuTiming>,
         index: u32,
     ) {
-        self.reduce(
-            device,
-            encoder,
-            &self.rendered_mips,
-            self.rendered.width(),
-            1,
-        );
-        let level = self.rendered_mips.len() as u32 - 1;
+        self.reduce(encoder, timing, &self.face_reduce, self.rendered.width(), 1);
+        let level = self.face_reduce.len() as u32;
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
                 mip_level: level,
@@ -270,7 +353,7 @@ impl ProbePrefilter {
                     y: 0,
                     z: index,
                 },
-                ..self.cube.texture().as_image_copy()
+                ..self.cube.as_image_copy()
             },
             wgpu::Extent3d {
                 width: self.face_size,
@@ -280,85 +363,60 @@ impl ProbePrefilter {
         );
     }
 
-    /// Each of `mips` after the first, the 2x2 mean of the one before:
-    /// `layers` layers, `size` texels a side at the first.
+    /// Each mip of a chain after the first, the 2x2 mean of the one before,
+    /// by `groups`: `layers` layers, `size` texels a side at the first.
     fn reduce(
         &self,
-        device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        mips: &[wgpu::TextureView],
+        timing: Option<&crate::timing::GpuTiming>,
+        groups: &[wgpu::BindGroup],
         size: u32,
         layers: u32,
     ) {
-        for (level, pair) in (1u32..).zip(mips.windows(2)) {
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("specular probe adjacent mips"),
-                layout: &self.mip_pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(&pair[0]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::TextureView(&pair[1]),
-                    },
-                ],
-            });
+        for (level, group) in (1u32..).zip(groups) {
             let size = (size >> level).max(1);
-            let mut pass = encoder.begin_compute_pass(&Default::default());
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("specular probe mip"),
+                timestamp_writes: timing.and_then(|timing| timing.compute_pass(TIMING)),
+            });
             pass.set_pipeline(&self.mip_pipeline);
-            pass.set_bind_group(0, &group, &[]);
+            pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(size.div_ceil(8), size.div_ceil(8), layers);
         }
     }
 
     /// After all six faces: the solid-angle mip chain, then every GGX level.
-    pub fn encode(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        self.reduce(device, encoder, &self.cube_mips, self.face_size, 6);
-        for level in 0..LEVELS {
-            let uniform = crate::counters::buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("specular probe level"),
-                    contents: bytemuck::bytes_of(&level),
-                    usage: wgpu::BufferUsages::UNIFORM,
-                },
-            );
-            let target = self.filtered.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                base_mip_level: level,
-                mip_level_count: Some(1),
-                ..Default::default()
-            });
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("specular probe GGX level"),
-                layout: &self.pipeline.get_bind_group_layout(0),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&self.cube),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&target),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: uniform.as_entire_binding(),
-                    },
-                ],
-            });
+    pub fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        timing: Option<&crate::timing::GpuTiming>,
+    ) {
+        self.reduce(encoder, timing, &self.cube_reduce, self.face_size, 6);
+        for (level, group) in (0u32..).zip(&self.levels) {
             let size = self.face_size >> level;
-            let mut pass = encoder.begin_compute_pass(&Default::default());
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("specular probe GGX level"),
+                timestamp_writes: timing.and_then(|timing| timing.compute_pass(TIMING)),
+            });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &group, &[]);
+            pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(size.div_ceil(8), size.div_ceil(8), 6);
         }
+    }
+
+    /// After `encode`: copies every level and face of the prefiltered cube
+    /// into cube `cube` of `array`, a cube array of the probe's face size
+    /// and the prefiltered cube's format. The copies are one run of
+    /// commands with no draw between them, so nothing samples the cube part
+    /// written.
+    pub fn publish(&self, encoder: &mut wgpu::CommandEncoder, array: &wgpu::Texture, cube: u32) {
+        crate::scene::probes::copy_cubes(
+            encoder,
+            (&self.filtered, 0),
+            (array, cube),
+            1,
+            self.face_size,
+        );
     }
 
     /// Submits `encoder` and reads every level of the prefiltered cube

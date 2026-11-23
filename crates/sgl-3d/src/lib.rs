@@ -24,8 +24,8 @@ pub use content::baked_specular_probe::{
 pub use content::decal::Decal;
 pub use content::dynamic_gi::DynamicGiVolume;
 pub use content::identity::{
-    DecalId, DecalImageId, EnvironmentId, InstanceId, LightId, LightProfileId, MaterialId, ModelId,
-    RenderTextureId, ShaderId,
+    DecalId, DecalImageId, EnvironmentId, InstanceId, LightId, LightProfileId, LiveSpecularProbeId,
+    MaterialId, ModelId, RenderTextureId, ShaderId,
 };
 pub use content::instance::{InstanceState, Mobility};
 pub use content::irradiance_volume::{IrradianceCell, IrradianceVolume};
@@ -35,6 +35,7 @@ pub use content::lighting::{
     Backdrop, DirectionalLight, DirectionalShadow, EnvironmentLight, FrameEnvironment,
     HemisphereLight, Mist, Sky,
 };
+pub use content::live_specular_probe::{LiveSpecularProbe, ProbeRefresh, ProbeRefreshPace};
 pub use content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 pub use content::model::{AssetIds, ModelMesh};
 pub use content::render_texture::RenderTexture;

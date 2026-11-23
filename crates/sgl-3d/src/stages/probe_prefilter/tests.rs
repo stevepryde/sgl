@@ -61,11 +61,11 @@ fn sharp_level_holds_each_texels_box_average_through_cube_sampling() {
             },
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        capture.resolve_face(&device, &mut encoder, face);
+        capture.resolve_face(&mut encoder, None, face);
         queue.submit([encoder.finish()]);
     }
     let mut encoder = device.create_command_encoder(&Default::default());
-    capture.encode(&device, &mut encoder);
+    capture.encode(&mut encoder, None);
     let levels = pollster::block_on(capture.read(&device, &queue, encoder)).unwrap();
     // One half-precision rounding per level of the 4x4 chain, each at most
     // half a step (2^-10 between 2 and 4); neighbouring texels differ by

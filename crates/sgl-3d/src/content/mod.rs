@@ -23,6 +23,7 @@ pub(crate) mod irradiance_volume;
 pub(crate) mod light;
 pub(crate) mod light_profile;
 pub(crate) mod lighting;
+pub(crate) mod live_specular_probe;
 mod load_budget;
 pub mod lod;
 pub(crate) mod material;

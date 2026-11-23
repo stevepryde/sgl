@@ -15,6 +15,9 @@ const TIMING: [&str; MAX_SHADOW_CASCADES] = [
     "directional shadow cascade 3",
 ];
 
+/// The timing group of a live probe refresh's cascades.
+const CAPTURE_TIMING: &str = "probe refresh shadows";
+
 pub(crate) struct Directional {
     /// Every cascade's layer, as lit group 0 samples them.
     pub array: wgpu::TextureView,
@@ -83,7 +86,8 @@ impl Directional {
     }
 
     /// A probe capture's cascades: `casters` drawn under each of `groups`,
-    /// one per cascade, nearest first.
+    /// one per cascade, nearest first; a live refresh's `timing` times them
+    /// as `probe refresh shadows`.
     pub fn encode_capture(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -91,9 +95,14 @@ impl Directional {
         pipelines: &mut GeometryPipelines,
         (casters, drawn): (&DrawList, &DrawInstances),
         groups: &[wgpu::BindGroup],
+        timing: Option<&crate::timing::GpuTiming>,
     ) {
         for (layer, group) in self.layers.iter().zip(groups) {
-            let mut pass = begin(encoder, layer, None);
+            let mut pass = begin(
+                encoder,
+                layer,
+                timing.and_then(|timing| timing.render_pass(CAPTURE_TIMING)),
+            );
             pass.set_bind_group(0, group, &[]);
             casters.draw(
                 scene,

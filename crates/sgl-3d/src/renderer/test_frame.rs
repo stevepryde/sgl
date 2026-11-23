@@ -575,7 +575,10 @@ impl TestRenderer {
             scene,
             &crate::view::ViewData::camera(bytemuck::Zeroable::zeroed()),
             None,
-            Population::ProbeFace,
+            Population::ProbeFace {
+                content: crate::view::population::Casters::Static,
+                culled: false,
+            },
         );
         pass.set_bind_group(0, self.view.bindings.camera_lit(), &[]);
         instances.upload(device, queue);

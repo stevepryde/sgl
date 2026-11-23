@@ -119,7 +119,8 @@ pub struct Scene {
     bound: [wgpu::Buffer; 4],
     scene_layout: wgpu::BindGroupLayout,
     pub(crate) static_lighting: static_lighting::StaticLighting,
-    baked_specular_probes: Option<probes::UploadedProbes>,
+    /// The specular probe collection: the baked probes and the live ones.
+    probes: Option<probes::UploadedProbes>,
     /// The irradiance volume (`Scene::set_irradiance_volume`).
     pub(crate) irradiance_cells: irradiance_volume::IrradianceCells,
     /// The dynamic GI volume's placement (`Scene::set_dynamic_gi_volume`).
@@ -221,7 +222,7 @@ impl Scene {
             rays,
             geometry: geometry::GeometryBuffers::new(device),
             static_lighting: static_lighting::StaticLighting::empty(device, queue),
-            baked_specular_probes: None,
+            probes: None,
             irradiance_cells: irradiance_volume::IrradianceCells::new(device),
             dynamic_gi: None,
             id: next_generation(),
@@ -545,7 +546,7 @@ impl Scene {
     }
     /// The installed specular probe collection.
     pub(crate) fn specular_probes(&self) -> Option<&probes::UploadedProbes> {
-        self.baked_specular_probes.as_ref()
+        self.probes.as_ref()
     }
     /// Commits frame attempt `attempt` after its commands were submitted,
     /// when it is the frame last begun and not yet finished: what it drew

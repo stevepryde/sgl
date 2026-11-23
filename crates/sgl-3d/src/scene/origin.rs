@@ -51,7 +51,7 @@ impl Scene {
             .move_origin(queue, to, &super::lights::atlas_places(decals));
         self.decals.move_origin(to);
         self.transient.move_origin(queue, to);
-        if let Some(probes) = &mut self.baked_specular_probes {
+        if let Some(probes) = &mut self.probes {
             probes.move_origin(device, to);
             // Group 0 binds the probes' metadata.
             self.resources = super::next_generation();

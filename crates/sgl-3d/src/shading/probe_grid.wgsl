@@ -2,8 +2,9 @@
 // and ray hits): the probes listed in the receiver's cell of the collection's
 // world grid (scene/probe_grid.rs), as Wicked Engine's surfel_raytraceCS.hlsl
 // reads a ray hit's SurfelGridCell. A cell lists, in ascending order, every
-// probe whose influence may reach it, so its walk adds what walking every
-// probe in order adds. Reads `collection`, whose `grid` holds it, and `baked`.
+// baked probe whose influence may reach it, so its walk and the live probes'
+// add what walking every probe in order adds. Reads `collection`, whose
+// `grid` holds it, and `baked`.
 
 // Each cell's record in `collection.grid`, in words (scene/probe_grid.rs
 // GridCell): its list's first index into the grid, and its probe count.
@@ -35,6 +36,15 @@ fn collection_environment(world:vec3<f32>,direction:vec3<f32>,rough:f32,scale:f3
   for(var i=0u;i<count;i++) {
    sum=collection_add(sum,collection.grid[first+i],world,direction,rough,filter_sampler);
   }
+ }
+ // The live probes are in no cell, so one that moves rebuilds no grid: each
+ // is tested in turn, MAX_LIVE_PROBES at most whatever the counts say
+ // (AR-12), and none in a scene without them.
+ let total=min(collection.counts.x,MAX_PROBES);
+ let first_live=min(collection.counts.y,total);
+ let live=min(total-first_live,MAX_LIVE_PROBES);
+ for(var i=0u;i<live;i++) {
+  sum=collection_add(sum,first_live+i,world,direction,rough,filter_sampler);
  }
  return collection_resolve(sum,direction,rough,scale,sky,filter_sampler,rotation,strength);
 }

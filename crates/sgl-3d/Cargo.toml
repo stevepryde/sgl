@@ -82,6 +82,7 @@ sgl-3d = { path = ".", features = ["diagnostics", "draco"] }
 
 # The floor tests validate frames on wgpu's noop backend, which reports the
 # floor's limits and runs wgpu's validation without a GPU or a backend's
-# shader compiler.
+# shader compiler. The live probe tests read wgpu's API trace of what a
+# device was asked to do.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-wgpu = { workspace = true, features = ["noop"] }
+wgpu = { workspace = true, features = ["noop", "trace"] }

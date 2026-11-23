@@ -264,7 +264,7 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
         &scene,
         &ViewData::shadow_cascade(cascade),
         Some(mask),
-        Population::CaptureShadow,
+        Population::CaptureShadow(crate::view::population::Casters::Static),
     );
     instances.upload(&device, &queue);
     let cpu_built = depth(&mut |pass| {

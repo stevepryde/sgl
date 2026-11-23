@@ -10,9 +10,10 @@
 //! `order.rs` gives them: those that draw render textures before the views
 //! that show them. `Renderer::compile` runs that same frame as a planning
 //! pass whose commands are dropped, to ready its programs ahead
-//! (`view::compile`). A probe capture (`probe_capture.rs`) orders the
-//! prepare, shadow and opaque stages and the probe prefilter over its own
-//! views. It holds no pipelines or shaders of its own.
+//! (`view::compile`). A probe capture (`probe_capture.rs`), a bake or a live
+//! probe's refresh, orders the prepare, shadow and opaque stages and the
+//! probe prefilter over its own views. It holds no pipelines or shaders of
+//! its own.
 #[cfg(any(test, feature = "diagnostics"))]
 mod diagnostics;
 pub(crate) mod effective;
@@ -70,6 +71,9 @@ pub struct Renderer {
     /// attempt and the flag `finish_frame` sets, which each view the frame
     /// rendered holds with its pending render.
     rendered: Option<(u64, Arc<AtomicBool>)>,
+    /// What refreshing a scene's live specular probes holds, from the first
+    /// refresh until a frame of a scene without live probes.
+    refresh: Option<probe_capture::LiveRefresh>,
     /// The renderer's identity, which each view it creates holds.
     pub(crate) id: u64,
 }
@@ -81,6 +85,7 @@ impl Renderer {
         Self {
             shared: Shared::new(device),
             rendered: None,
+            refresh: None,
             id: crate::scene::next_generation(),
         }
     }
@@ -129,6 +134,14 @@ impl Renderer {
             views.iter().all(|frame| frame.view.renderer == self.id),
             "every view rendered by a renderer is created from it (`View::new`)"
         );
+        // The live probes' staging goes with the scene's last live probe.
+        if self
+            .refresh
+            .as_ref()
+            .is_some_and(|refresh| !refresh.serves(scene))
+        {
+            self.refresh = None;
+        }
         let finished = Arc::new(AtomicBool::new(false));
         let attempt = frame::render(
             &mut self.shared,

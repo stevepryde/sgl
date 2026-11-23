@@ -112,6 +112,7 @@ that would exceed a device limit is refused with the typed error.
 | Decal | A box that projects images onto the lit surfaces inside it: its position, orientation and size, a base colour image, optional normal and metallic-roughness images, a colour, how much of the base colour it replaces, and its fades. | Its description. |
 | Environment | An environment map. The frame input names a map, a procedural sky or nothing (`FrameEnvironment`); with nothing, or an ended identity, no environment lights or shows. | Nothing. |
 | Render texture | A picture a view of the scene draws on the GPU for materials to sample: its size in texels (`RenderTexture`). The scene owns the texture, of `RenderTexture::format` with one level, black until a view draws into it. A view listed with `ViewOutput::RenderTexture` draws its frame into it ([Frame](#frame), "Render textures"), and a material names it as its emission map (`SurfaceMaterial::emission_render_texture`), set through `Scene::set_material` as a shader is. It cannot be removed while a material names it. | Its size: a new texture, black until a view draws into it. |
+| Live specular probe | A specular probe the renderer captures and refreshes on the GPU during play: its placement (`LiveSpecularProbe`: capture centre, rigid `world_to_local`, influence box, blend, optional proxy), its face size and the visibility groups its faces leave out. The scene owns its cube in the probe collection's cube array, beside the baked probes', and whether it holds a published cube. Until its first publication it weighs nothing. At most 16, all of one face size, which the baked probes share. | Its placement, written in place; its cube, by `Renderer::refresh_specular_probe`. |
 
 Transient geometry (glow, heat, mist) and fog volumes have no identity: each
 kind is replaced whole by its own operation. `Scene::update_fog_volumes`,
@@ -745,6 +746,63 @@ by under 1 %. The capture is asynchronous: it suspends only at its readback,
 after every face is submitted, which natively it completes by waiting on the
 device and in a browser by awaiting WebGPU's map; its blocking form is a
 native wrapper.
+
+**Live probe refresh.** `Renderer::refresh_specular_probe` is the capture
+operation kept on the GPU: the same views, shadows, opaque faces and
+prefilter, between frames, whose result is copied into the scene's probe
+cube array instead of read back. It is explicit: nothing refreshes a probe
+the game did not ask for, and a scene with no live probe creates and does
+nothing for it. It differs from a bake in what it draws, how it is lit and
+how it is paced. It draws moving `capture_visible` instances too, at their
+current poses and their deformation as of the last rendered frame; each
+face draws its own list, culled to its view as the camera's blended
+surfaces are, and leaves out the materials of the probe's `hidden_groups`,
+which still cast into its cascades; each face renders at the probe's face
+size. Its directional cascades are its own, about its centre, with moving
+casters. Its local-light shadows are the borrowed view's frame atlas with
+the records of that view's last prepared frame, read and not placed or
+drawn, so it changes no shadow cache: a refresh binds a copy of those
+records that marks every placed shadow as held, since the frame atlas holds
+a moved light's casters where its static layers do not (the register's
+S-31), and no shadow at all where that frame was of another scene or render
+origin; a light the frame gave no shadow casts none in the probe. A
+procedural sky is the view's, as its last frame computed it for its camera:
+a refresh computes none. Its surfaces take the installed probes' specular,
+the probe's own last cube among them, so a refresh holds one more bounce of
+the last (the register's X-6). And the game paces it (`ProbeRefreshPace`): a
+call renders the faces its pace allows into staging targets the renderer
+holds, and the call that completes the filter copies every level and face
+into the probe's cube in one run of copies with no draw between them, then
+writes the probe's record through the queue ahead of every later
+submission, so a frame samples the cube before the refresh or after it and
+never between. A refresh latches the probe's centre at its first face, and
+its record corrects parallax about that centre; one whose scene moved its
+render origin since starts again. One refresh is in flight in a renderer at
+a time, and a call for another probe waits (`ProbeRefresh::Waiting`). Until
+a live probe's first publication its influence is empty in the collection,
+and receivers take the other probes and the sky. The renderer holds the
+staging (the face target, the cube the faces resolve into, the prefiltered
+cube and the filter's pipelines) and the capture's views (its frame, face
+and cascade uniforms, light list, draw instances and lists, and its copy of
+the shadow records) from its first refresh until a frame of a scene without
+live probes. Each call writes those buffers and makes one anew only to grow
+it, so a refresh of a warmed probe creates no buffer, texture, layout or
+pipeline: each face's lit and unlit group 0 alone, which bind what may
+change between calls (the view's shadow maps, the environment, the scene's
+probes and lights, the dynamic GI volume). A bake fills views of its own
+through the same routine. `Renderer::compile` readies a frame's programs
+and none of a capture's: a first refresh creates the filter's and the
+geometry pipeline variants its faces and cascades draw with. A refresh takes nothing from, and commits nothing
+to, any view's history. It follows Godot b130438's reflection probes
+(`RendererSceneCull::render_probes` and `_render_reflection_probe_step`: an
+update mode a probe, faces and then the filter spread over frames, one
+`UPDATE_ONCE` probe at a time, a cull mask a probe, each face culled to its
+view, a shadow atlas of the probes' own) and three.js r187's
+`CubeCamera.update` (explicit, six 90° faces, the mips after the last,
+`layers` to hide the reflecting object), in practice and no code; Unity's
+time slicing and Unreal's scene captures by their documentation. Publishing
+whole, where Godot filters a probe in place in its atlas, the face size,
+and the shadows are [D-73](decisions.md).
 
 Dynamic GI creates its update pipelines when the primary view first has probe
 work. Deformation, GPU draw-list culling and local shadow atlas clears and
@@ -1469,6 +1527,16 @@ last, after everything it may use, and refuses a directive in it.
   per screen tile, and captures, ray hits and blended surfaces add them in
   shading from the probes a world grid, built when the probes are installed,
   lists for their cell.
+  The collection lists baked probes first, then live ones
+  ([Scene content](#scene-content)), in one cube array and one metadata
+  buffer, whose `counts` hold the total and the baked count. Tile-culled
+  receivers walk every probe. Receivers without tiles walk their grid
+  cell's baked probes, then the live probes, at most `MAX_LIVE_PROBES`
+  (AR-12): the world grid covers baked probes only, so moving a live probe
+  writes its record and rebuilds nothing. With a live probe the array is
+  `Rgba16Float`, which the renderer can write, so compressed baked probes
+  and live ones are refused together, and no binding is added: `Basic`
+  keeps its 16 sampled textures.
   Completion first takes the share of each surface's ambient light that
   its visibility, the lesser of its material's occlusion and the frame's
   ambient occlusion, hides out of the opaque colour (the diffuse share

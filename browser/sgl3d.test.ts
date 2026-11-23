@@ -61,6 +61,7 @@ test(
       const lines = report.trim().split("\n");
       expect(lines.filter((line) => line.startsWith("FAIL"))).toEqual([]);
       expect(lines.some((line) => line.startsWith("ok specular probe capture:"))).toBe(true);
+      expect(lines.some((line) => line.startsWith("ok live specular probe:"))).toBe(true);
       // The frame compiled ahead ran its jobs and passed the same checks.
       expect(lines.find((line) => line.includes("compiled ahead:"))).toMatch(/^ok .* compile jobs run ahead/);
       // WebGPU cannot expose the native SDK's required features. Observe the

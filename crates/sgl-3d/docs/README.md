@@ -134,6 +134,9 @@ for job in compilation.jobs {
 if compilation.ready() { /* `render` with these arguments creates nothing */ }
 ```
 
+- It readies frames, not probe captures: a live probe's first refresh
+  (`Renderer::refresh_specular_probe`) creates its own filter and face
+  pipelines, so make one while the level loads too.
 - Geometry pipelines are the compile jobs. Every other stage's programs are
   created by the call that first meets them, on the calling thread: that
   call blocks for them (seconds on a first run of the game, before the
@@ -277,6 +280,10 @@ and an asynchronous readback.
   game bakes them with explicit export commands and installs them at load;
   SGL3D never writes files. Rebake only when lighting content or a bake format
   changes, never for dependency or code updates.
+- Refresh a live specular probe only where something it shows moves, and
+  only as often as the game can afford: nothing refreshes one unless the
+  game calls `Renderer::refresh_specular_probe`, and `ProbeRefreshPace`
+  bounds what a call costs ([live probes](../README.md#live-specular-probes)).
 - Persist `settings::Settings` in the game's own settings record and follow
   the [preset rules](settings.md#presets).
 - Build scene and frame values from their defaults and set only what

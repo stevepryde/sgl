@@ -186,6 +186,9 @@ pub enum SceneError {
     UnknownRenderTexture,
     /// A material names the render texture.
     RenderTextureInUse,
+    /// The live specular probe was removed, or another scene issued its
+    /// identity.
+    UnknownLiveSpecularProbe,
     /// `Scene::set_shader_parameters` was given `given` bytes for a
     /// material whose shader's `ShaderParams` takes `expected`, 0 for a
     /// material without a shader.
@@ -333,6 +336,7 @@ impl std::fmt::Display for SceneError {
             Self::ShaderInUse => "a material names the shader",
             Self::UnknownRenderTexture => "the render texture is not in this scene",
             Self::RenderTextureInUse => "a material names the render texture",
+            Self::UnknownLiveSpecularProbe => "the live specular probe is not in this scene",
             Self::ShaderParameters { expected, given } => {
                 return write!(
                     f,

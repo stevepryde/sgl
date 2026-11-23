@@ -1382,3 +1382,75 @@ Use the [current specs](README.md) for implementation and the
   3.979 against 1.855: the inlined paths took the whole lighting shader's
   registers, so each pipeline now compiles it into its shader-sampled
   bindings alone.
+- **D-73** Decision, 2026-11-23 (#867): live specular probes are refreshed
+  by the capture operation kept on the GPU, published whole. (1) One cube
+  array: live probes take cubes beside the baked ones in the scene's one
+  array, and receivers sample them through the bindings they had. A second
+  array was rejected: `Basic` binds exactly its 16 textures, and a scene
+  without live probes would pay a binding. The cost is one format, so BC6H
+  baked probes and live ones are refused together. (2) Publication: a
+  refresh renders and filters into staging the renderer holds and copies
+  the finished cube, every level and face, into the scene's array in one
+  run of copies. Godot b130438 renders and filters a probe in place in its
+  atlas, so a probe in flight shows new faces under old roughness levels;
+  the staging costs about 2.3 cubes of memory a renderer and one copy a
+  refresh, and no consumer samples a part-updated cube. (3) Face size:
+  live faces render at the probe's face size, as Godot's and three.js's
+  do, not at the bake's 2048-texel supersample (#263): at 128 texels a
+  face that is 1/256 of the bake's fill, and about 2.3 MiB of staging against
+  the bake's 80 MB of targets. A thin emitter may alias in one refresh,
+  and a bake remains the way to store one exactly; a refresh and a bake of
+  a scene of texel-aligned emitters hold the same cube
+  (`a_refresh_holds_the_cube_a_bake_of_the_same_scene_returns`). (4)
+  Culling: each face draws a list culled to its view, as Godot's
+  `_render_reflection_probe_step` culls each face, where a bake draws one
+  unculled list six times. (5) Shadows and sky: the directional shadow is
+  drawn for the probe, in cascades about its centre, as in a bake.
+  Local-light shadows are the borrowed view's frame atlas, with a copy of
+  its last frame's records that marks each placed shadow held, so moving
+  casters and moving lights (S-31) shadow the probe and nothing is placed
+  or drawn. Placing the refresh's own layers in the view's atlas, as a
+  bake does, was measured: the next frame drew the six static layers of a
+  point light again, 19 draws against none
+  (`a_frame_after_a_refresh_renders_as_without_it` with that change); an
+  atlas of the probes' own (Godot's `reflection_probe_shadow_atlas`) costs
+  its memory and draws for every scene with a live probe. A light the
+  view's frame gave no shadow so casts none in the probe. A procedural sky
+  is the view's atlas as its last frame left it: a sky stage of the
+  refreshes' own, for a probe that follows a vehicle, recomputes the sky
+  view and runs the atlas's 16 steps (D-62) at the start of every refresh.
+  (6) Hidden groups are the probe's (`LiveSpecularProbe::hidden_groups`,
+  Godot's `cull_mask`): faces leave them out and cascades keep them, so a
+  reflecting object is not in its own probe and still shadows the ground
+  the probe shows, and a refresh takes the frame's own input; three.js's
+  way, hiding the object for the capture, loses that shadow. (7) The world
+  grid stays over baked probes; live probes are walked after it, at most
+  16, so a probe that follows an object writes one 224-byte record a move
+  instead of rebuilding 256 KiB of cells. (8) The capture's views
+  (uniforms, light list, draw instances, shadow records) are held with the
+  staging and written by each call: a refresh of a warmed probe creates no
+  buffer, texture, layout or pipeline, only each face's two bind groups
+  (`refreshes_read_nothing_back_and_upload_no_texels`); a bake fills views
+  of its own through the same routine. Measured on an Apple M5, a
+  shared machine (`live_probe --measure`: 1280x720, one 128-texel probe,
+  directional shadow of two cascades, medians of GPU pass time): a
+  frame without a refresh 2.53 ms in 17 timed passes; a whole refresh 0.44
+  ms (cascades 0.09, six faces 0.17, filter 0.18), a frame that does one
+  3.06 ms; faces then filter 0.44 ms a refresh, its costlier call 0.27 ms,
+  a frame at most 2.85 ms; a face a call 0.92 ms a refresh, since each of
+  the six face calls draws the cascades again (0.54 ms of it), its
+  costliest call 0.18 ms (the filter's), a frame at most 2.72 ms. The
+  probe's cube is 1.0 MiB and the staging 2.3 MiB. In
+  Chromium's WebGPU on the same machine (the browser lane's fixture: 64
+  texels, no directional shadow; the browser quantises a pass's time to
+  0.066 ms): a whole refresh 0.20 ms; faces then filter 0.20 ms, its
+  costlier call 0.13 ms; a face a call 0.72 ms over seven calls, its
+  costliest 0.26 ms. Frames of a scene
+  without a live probe recorded the same device commands on the branch as
+  at its base (9e91bc6c), by wgpu's API trace: 34 render and 4 compute passes and the
+  same textures, buffers, pipelines and bind groups in the first frame, 28
+  render and 4 compute passes a steady frame. A refresh records no texture
+  write, no copy between a buffer and a texture and no mappable buffer
+  (`refreshes_read_nothing_back_and_upload_no_texels`). Rationale: the
+  cheapest design that keeps one capture, one prefilter and one sampling
+  path, and never shows a torn probe (RD-2, AR-2).

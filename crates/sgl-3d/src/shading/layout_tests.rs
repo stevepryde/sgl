@@ -1536,6 +1536,11 @@ fn rust_constants_match_wgsl_twins() {
             naga::Literal::U32(max_probes),
         ),
         Constant::new(
+            "probe_culling",
+            "MAX_LIVE_PROBES",
+            naga::Literal::U32(crate::content::live_specular_probe::MAX_LIVE_PROBES as u32),
+        ),
+        Constant::new(
             "geometry",
             "OBJECT_STATIC",
             naga::Literal::U32(crate::shading::uniforms::OBJECT_STATIC),

@@ -92,6 +92,25 @@ pub(crate) struct CaptureShadows {
     groups: Vec<wgpu::BindGroup>,
 }
 
+/// A live probe refresh's copy of a frame's shadow records
+/// (`Local::refresh_records`), which what refreshes the probes keeps from
+/// call to call.
+#[derive(Default)]
+pub(crate) struct RefreshRecords {
+    buffer: Option<wgpu::Buffer>,
+    /// What `buffer` holds once the writes queued so far land.
+    records: Vec<LocalShadowRecord>,
+}
+
+impl RefreshRecords {
+    /// The records, as `Local::refresh_records` last wrote them.
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        self.buffer
+            .as_ref()
+            .expect("refresh_records fills it before it is bound")
+    }
+}
+
 pub(crate) struct Local {
     /// The atlases' width and height in texels.
     size: u32,
@@ -104,6 +123,10 @@ pub(crate) struct Local {
     pub records: wgpu::Buffer,
     /// What `records` holds once the writes queued so far land.
     written: Vec<LocalShadowRecord>,
+    /// The scene, and its render origin, of the frame those records and the
+    /// frame atlas were last prepared for; none before a frame and after
+    /// the atlases are released.
+    placed: Option<(u64, glam::DVec3)>,
     face_shader: OnceLock<wgpu::ShaderModule>,
     clear: OnceLock<wgpu::RenderPipeline>,
     copy: OnceLock<wgpu::RenderPipeline>,
@@ -202,6 +225,7 @@ impl Local {
             stand_in: textures::stand_in(device),
             records: records_buffer(device, 1),
             written: vec![LocalShadowRecord::NONE],
+            placed: None,
             face_shader: OnceLock::new(),
             clear: OnceLock::new(),
             copy: OnceLock::new(),
@@ -255,6 +279,7 @@ impl Local {
         self.size = size;
         self.atlases = None;
         self.plan = plan::Plan::new(size);
+        self.placed = None;
     }
 
     /// Creates the atlases once the plan places a shadow: before a face is
@@ -320,6 +345,7 @@ impl Local {
         enabled: bool,
     ) {
         self.plan.prepare(drawn, scene, camera, frame, enabled);
+        self.placed = Some((scene.id, scene.origin()));
         self.create_when_placed(device);
         self.upload_views(device, queue, bindings);
         let records = self.plan.records();
@@ -329,6 +355,53 @@ impl Local {
             self.written = vec![LocalShadowRecord::NONE; records.len()];
         }
         write_changed(queue, &self.records, &mut self.written, records);
+    }
+
+    /// Writes into `held` the shadow records a live probe's refresh of
+    /// `scene` binds with the frame's atlas (`atlas`): the last prepared
+    /// frame's, each placed shadow marked as held, since the frame atlas
+    /// holds every caster of every light it places, a moved light's too,
+    /// whose static layers hold nothing (the register's S-31). No shadow
+    /// where the atlas was last prepared for another scene or render
+    /// origin, or not at all. The refresh places and draws nothing, and
+    /// `held`'s buffer is written only when the records changed and made
+    /// anew only to grow.
+    pub fn refresh_records(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+        held: &mut RefreshRecords,
+    ) {
+        let placed = self.placed == Some((scene.id, scene.origin()));
+        let records = if placed { &self.written[..] } else { &[] };
+        let room = held.records.len();
+        if held.buffer.is_none() || room < records.len() {
+            let room = records.len().max(1).next_power_of_two();
+            held.buffer = Some(records_buffer(device, room));
+            // A new buffer holds zeros: every light without a shadow.
+            held.records = vec![LocalShadowRecord::NONE; room];
+        }
+        // Past the frame's records, lights without a shadow.
+        let mut changed = false;
+        for (index, slot) in held.records.iter_mut().enumerate() {
+            let record = records
+                .get(index)
+                .map_or(LocalShadowRecord::NONE, |record| LocalShadowRecord {
+                    layers: u32::from(record.kind != LOCAL_SHADOW_NONE),
+                    ..*record
+                });
+            changed |= bytemuck::bytes_of(&record) != bytemuck::bytes_of(slot);
+            *slot = record;
+        }
+        if changed {
+            crate::counters::write_buffer(
+                queue,
+                held.buffer.as_ref().unwrap(),
+                0,
+                bytemuck::cast_slice(&held.records),
+            );
+        }
     }
 
     /// Places the static layers a probe capture at `center` of `scene`

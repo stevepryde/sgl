@@ -27,7 +27,7 @@ This page is the detailed reference:
 - [Lights and look](#frame-lights-and-look), [procedural sky](#procedural-sky), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
 - [Reflections](#reflections), [TAA, SMAA and FSR](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion), [screen-space indirect light](#screen-space-indirect-light)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [depth of field](#depth-of-field), [motion blur](#motion-blur), [fog](#volumetric-fog)
-- [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
+- [Specular probes](#baked-specular-probes), [live specular probes](#live-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
 - [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [programmable surfaces](#programmable-surfaces), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
 - [Settings and fallbacks](#settings-and-capability-fallback), [binding tiers](#binding-tiers), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
 
@@ -1630,6 +1630,105 @@ listed in their cell of a world grid built when the collection is installed
 (`src/scene/probe_grid.rs`, following Wicked Engine's surfel grid), so each
 walks only the probes whose influence can reach that cell.
 
+## Live specular probes
+
+A probe that must show what moves (a vehicle's surroundings, a room whose
+furniture moves) is a live probe: the renderer captures and filters it on the
+GPU during play and nothing is read back or uploaded. It is placed like a
+baked probe, without radiance, and receivers blend it with the baked probes
+and the sky by the same influence, blend and proxy rules.
+
+```rust,ignore
+use sgl_3d::{LiveSpecularProbe, ProbeRefresh, ProbeRefreshPace, SpecularProbeBox};
+// A probe about `position`: its capture point and its boxes' frame both.
+let probe_at = |position: Vec3| LiveSpecularProbe {
+    center: position,
+    world_to_local: Mat4::from_translation(-position),
+    influence: SpecularProbeBox { min: Vec3::splat(-3.), max: Vec3::splat(3.) },
+    blend: Vec3::splat(1.),
+    proxy: None,
+    face_size: 128,
+    // The car's material group: the car is not in its own probe.
+    hidden_groups: CAR_GROUP,
+};
+let probe = scene.add_live_specular_probe(&device, &queue, probe_at(car_position))?;
+// Each frame, after `finish_frame` and before the next `render`:
+scene.set_live_specular_probe(&queue, probe, probe_at(car_position))?;
+match renderer.refresh_specular_probe(
+    &device, &queue, &mut scene, &mut view, &input, &settings, None,
+    probe, ProbeRefreshPace::FacePerCall,
+)? {
+    ProbeRefresh::Published => {} // frames from now on sample the new cube
+    ProbeRefresh::InFlight | ProbeRefresh::Waiting => {} // call again next frame
+}
+```
+
+- **Explicit.** Nothing refreshes a probe unless the game calls
+  `refresh_specular_probe`: every frame for a probe that tracks motion, once
+  after a door opens, never for a probe that is good as it is. A scene
+  without live probes pays nothing for the feature.
+- **Pace** bounds what a call costs. A refresh is six faces, then the filter.
+  `ProbeRefreshPace::Whole` does all of it in one call; `FacesThenFilter`
+  the faces in one call and the filter in the next; `FacePerCall` (the
+  default) one face a call and the filter in a seventh. Each call that draws
+  faces also draws the directional shadow's cascades about the probe, so a
+  slower pace lowers the peak and raises the total.
+- **Whole cubes only.** The probe shows its last published cube until the
+  call that returns `Published`, which replaces every face and roughness
+  level at once. Before its first publication a live probe weighs nothing:
+  receivers take the other probes and the sky, never black.
+- **What it shows.** What a bake shows, and moving `capture_visible`
+  instances too, at their poses when the call is made (a skinned instance as
+  the last rendered frame deformed it); blended surfaces and effects are left
+  out. Pass the frame's own `input`. The probe's `hidden_groups` are left
+  out of its faces and still cast their shadows in it: give the reflecting
+  object's material a `visibility_group` and name it there. Each face
+  renders at `face_size`, not at the bake's 2048-texel supersample, so an
+  emitter thinner than a texel can flicker between refreshes; bake a probe
+  that must hold one exactly.
+- **How it is lit.** By `input`'s lights with the directional shadow drawn
+  for the probe, moving casters included; by the scene's lights with the
+  shadows `view`'s last frame drew, so a light that frame gave no shadow
+  (one outside the camera's view, or beyond the atlas's room) casts none in
+  the probe; under a procedural sky as `view`'s last frame computed it; and
+  with the installed probes' specular, its own last cube's among them, so
+  each refresh adds a bounce of the last and reflected light from a source
+  that went out fades over a few refreshes.
+- **One capture a refresh.** A refresh captures from the probe's `center` as
+  its first call found it; moving the probe meanwhile moves its influence at
+  once and its capture point from the next refresh. Faces drawn by later
+  calls show moving content at those calls' times. One refresh is in flight
+  in a renderer at a time: a call for another probe returns
+  `ProbeRefresh::Waiting` and does nothing, so carry one probe's refresh to
+  `Published` before starting another's; one left unfinished ends when its
+  probe is removed.
+- **Limits.** At most 16 live probes in a scene, inside the 256 probes and
+  the device's array layers. Every probe of a scene, baked or live, has one
+  `face_size`, and baked probes beside live ones are
+  `SpecularProbeTexels::Rgba16Float`: installing `Bc6hUfloat` probes beside
+  a live one, another `face_size`, or a seventeenth live probe returns
+  `ProbeError::MixedRadiance` or `TooManyProbes` and changes nothing. A live
+  probe's cube takes `face_size² × 64` bytes (1 MiB at 128, 4.2 MiB at 256),
+  and the renderer holds about 2.3 times that as staging while the scene has
+  a live probe. `add_live_specular_probe`, `remove_live_specular_probe` and
+  `set_baked_specular_probes` each make a new cube array and copy the kept
+  cubes into it on the GPU, so call them when a level changes, not every
+  frame; `set_live_specular_probe` writes one small record.
+- **When to call.** Like a bake, a refresh borrows `view`'s shadow maps and
+  opaque stage: call it between frames, with the settings `view`'s frames
+  use. The first refresh creates the staging, the buffers every later one
+  writes and its own programs, so make it while a level loads.
+  `Renderer::compile` readies a frame's programs, not a refresh's: after it
+  a first refresh still creates the filter's shader and two pipelines and
+  the pipeline variants its faces and cascades draw with, and it never
+  waits on a frame's compile jobs. A refresh of a warmed probe creates no
+  buffer, texture or pipeline: only each face's two bind groups, which bind
+  what may change between calls. Pass a `GpuTiming` begun for the frame as
+  `timing` to see its passes (`probe refresh shadows`, `probe refresh
+  faces`, `probe refresh filter`).
+  `examples/sgl-3d/examples/live_probe.rs` is a moving object reflected by a
+  probe that follows it; its `--measure` prints what each pace costs.
+
 ## Visible work and pass selection
 
 The camera's opaque and masked surfaces and each directional shadow cascade
@@ -2889,6 +2988,9 @@ stage (each stage's documentation lists its own), are:
 - shadows: `directional shadow cascade 0` to `directional shadow cascade 3`
   (one per cascade the frame has), `local shadow layers` (static layers) and
   `local shadows` (the frame's faces);
+- a live probe's refresh, in a frame whose `GpuTiming` a
+  `refresh_specular_probe` call was given: `probe refresh shadows` (its
+  cascades), `probe refresh faces` and `probe refresh filter`;
 - volumetric fog: `fog injection`, `fog filter` and `fog integration`
   (only `fog integration` while aerial perspective runs without the fog);
 - opaque: `sky` and `opaque geometry + lighting`, or `geometry`, `sky` and

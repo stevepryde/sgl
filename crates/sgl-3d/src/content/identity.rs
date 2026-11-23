@@ -77,3 +77,8 @@ identity!(
     /// sample.
     RenderTextureId
 );
+identity!(
+    /// A live specular probe of a scene: a probe the renderer refreshes on
+    /// the GPU.
+    LiveSpecularProbeId
+);

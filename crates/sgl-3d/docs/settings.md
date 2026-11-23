@@ -163,6 +163,14 @@ is done (its algorithm and internal parameters) is SGL3D's.
 - `reflection_environment`: turns and scales its specular light where no
   baked probe reflects. Both scale a procedural sky's light as a map's; no
   yaw turns a sky.
+- A live specular probe's refresh (`Renderer::refresh_specular_probe`): when
+  and how often the game calls it, for which probe, and its
+  `ProbeRefreshPace`, how much of a refresh one call does: `Whole`,
+  `FacesThenFilter` or `FacePerCall` (the default, one face a call and the
+  filter in a seventh). A probe's `face_size` and `hidden_groups` (the
+  material groups its faces leave out, none by default) are content
+  (`LiveSpecularProbe`). Nothing refreshes unasked, and SGL3D owns the
+  capture's resolution, culling, filter and shadows.
 - A material's `emits_into_gi` (`asset::Material`, `SurfaceMaterial`;
   `true` by default): `false` keeps the light it gives off itself (its
   emission, an unlit material's whole colour) out of global illumination,

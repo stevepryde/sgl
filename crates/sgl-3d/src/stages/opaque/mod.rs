@@ -628,7 +628,8 @@ impl Opaque {
 
     /// Probe capture face `face`: the sky under `unlit`, then `list`'s lit
     /// colour and motion with depth under `lit`, from the capture's draw
-    /// instances.
+    /// instances; a live refresh's `timing` times it as `probe refresh
+    /// faces`.
     #[allow(clippy::too_many_arguments)]
     pub fn encode_capture(
         &self,
@@ -639,9 +640,11 @@ impl Opaque {
         face: &CaptureFace,
         unlit: &wgpu::BindGroup,
         lit: &wgpu::BindGroup,
+        timing: Option<&crate::timing::GpuTiming>,
     ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("static instances and sky capture"),
+            label: Some("probe capture face"),
+            timestamp_writes: timing.and_then(|timing| timing.render_pass("probe refresh faces")),
             color_attachments: &[attachment(&face.color), attachment(&face.motion)],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &face.depth,

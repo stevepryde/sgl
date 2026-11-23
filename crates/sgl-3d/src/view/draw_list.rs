@@ -180,7 +180,8 @@ impl DrawList {
     }
 
     /// The camera's blended draws of one instance, and a probe capture's
-    /// faces' and cascades'.
+    /// faces' and cascades': a face of a live refresh culled as the
+    /// camera's are, a bake's and every cascade's whole.
     fn object(
         &mut self,
         scene: &Scene,
@@ -190,8 +191,11 @@ impl DrawList {
         (index, instance, model, rank): (usize, &Instance, &Model, u32),
     ) {
         let pose = instance.state.pose;
+        // Whether its meshes draw by their culling ranges, as the camera's
+        // blended surfaces and a culled probe face do, or whole.
         let (camera, lod, culled) = match population {
             Population::Blended { lod, cull } => (true, lod.as_ref(), *cull),
+            Population::ProbeFace { culled: true, .. } => (true, None, true),
             _ => (false, None, false),
         };
         // The clip volume, built at the instance's first drawn mesh: a

@@ -398,6 +398,15 @@ impl FrameBindings {
         }
     }
 
+    /// The frame's local-light shadows as `records` place them: what a live
+    /// probe's refresh samples (`shadows::local::Local::refresh_records`).
+    pub fn frame_local_shadows<'a>(&'a self, records: &'a wgpu::Buffer) -> LocalShadows<'a> {
+        LocalShadows {
+            atlas: &self.shadow_maps.local_atlas,
+            records,
+        }
+    }
+
     /// The local-light shadows' static layers, placed by `records`: what
     /// probe captures and ray hits sample.
     pub fn static_local_shadows<'a>(&'a self, records: &'a wgpu::Buffer) -> LocalShadows<'a> {
