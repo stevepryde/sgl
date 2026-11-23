@@ -3,7 +3,10 @@
 //! the sky's tables and, in the primary view's order, the scene's GPU work)
 //! and its remaining stages. The primary view's head runs first; the views
 //! then render in the frame's order (`order::of`), a view that draws a
-//! render texture before the views that show it.
+//! render texture before the views that show it, and each view's reflected
+//! views, of the planar reflectors it shows (`reflected`), between its head
+//! and its remaining stages.
+use super::reflected::{self, Shown};
 use super::shared::Shared;
 use super::view::{ViewFrame, ViewOutput};
 use super::view_stages::{Drawn, Role, begin_view, finish_view};
@@ -54,37 +57,137 @@ pub(super) fn render(
 ) -> u64 {
     let planning = shared.compiler.planning();
     let attempt = scene.begin_frame(device, queue);
-    // The views the frame renders, in render order; none where no view
-    // draws a render texture: all of them, as listed.
-    let order = super::order::of(scene, views);
-    let renders = |index: usize| order.as_ref().is_none_or(|order| order.contains(&index));
     let primary_settings = *views[0].settings;
-    let mut begun: Vec<Option<(HistoryFrame, Effective)>> = Vec::with_capacity(views.len());
-    let mut primary_effective = None;
-    for (index, frame) in views.iter_mut().enumerate() {
-        if !renders(index) {
-            begun.push(None);
-            continue;
-        }
-        let settings = match index {
+    // Each view's settings, with what a scene has one of the primary's.
+    let settings: Vec<Settings> = views
+        .iter()
+        .enumerate()
+        .map(|(index, frame)| match index {
             0 => primary_settings,
             _ => scene_wide(frame.settings, &primary_settings),
-        };
-        let (history, effective) = frame
-            .view
-            .begin(device, shared, scene, frame.input, &settings);
+        })
+        .collect();
+    // The scene's surfaces that name a planar reflector: none, and nothing
+    // more of this, where no material names one or no view's level asks
+    // for a picture. Then, per view, the reflectors it shows.
+    let pictured = settings
+        .iter()
+        .any(|settings| settings.planar_reflections != crate::settings::PlanarReflections::Off);
+    let mirrors = if pictured {
+        scene.mirrors()
+    } else {
+        Vec::new()
+    };
+    let mut shows: Vec<Vec<Shown>> = views
+        .iter()
+        .zip(&settings)
+        .map(|(frame, settings)| {
+            if mirrors.is_empty() {
+                return Vec::new();
+            }
+            let view = &*frame.view;
+            reflected::shown(
+                scene,
+                &mirrors,
+                (frame.input, settings, view.sizes.render),
+                |reflector| {
+                    view.reflected
+                        .iter()
+                        .find(|held| held.reflector == reflector)
+                        .map(|held| held.size)
+                },
+            )
+        })
+        .collect();
+    // The views the frame renders, in render order; none where no view
+    // draws a render texture: all of them, as listed.
+    let order = super::order::of(scene, views, &shows);
+    let renders = |index: usize| order.as_ref().is_none_or(|order| order.contains(&index));
+    let mut begun: Vec<Option<(HistoryFrame, Effective)>> = Vec::with_capacity(views.len());
+    // Per view, the planar reflectors it shows, each with its reflected
+    // view's begun frame.
+    let mut reflections: Vec<Vec<(Shown, (HistoryFrame, Effective))>> =
+        Vec::with_capacity(views.len());
+    let mut primary_effective = None;
+    for (index, frame) in views.iter_mut().enumerate() {
+        let mut shows = std::mem::take(&mut shows[index]);
+        let settings = settings[index];
+        // The view's reflected views: those of the reflectors it shows,
+        // and those it showed within the idle period. A view the frame
+        // leaves out shows nothing, which counts as a frame of it.
+        let reflected_settings = reflected::settings(&settings);
+        if !renders(index) {
+            shows.clear();
+        }
+        if !shows.is_empty() || !frame.view.reflected.is_empty() {
+            let full = reflected::full_size(frame.view.sizes.render, settings.planar_reflections);
+            reflected::keep(
+                (device, queue),
+                shared,
+                frame.view,
+                &shows,
+                (scene, &reflected_settings, full),
+            );
+            let held = &frame.view.reflected;
+            shows.retain(|shown| held.iter().any(|held| held.reflector == shown.reflector));
+        }
+        if !renders(index) {
+            begun.push(None);
+            reflections.push(Vec::new());
+            continue;
+        }
+        // What the view shows, for the stages that mark its surfaces.
+        let mirrors = &mut frame.view.views.mirrors;
+        mirrors.clear();
+        mirrors.extend(shows.iter().map(|shown| shown.reflector));
+        let (history, effective) = frame.view.begin(
+            device,
+            shared,
+            scene,
+            frame.input,
+            &settings,
+            !shows.is_empty(),
+        );
         let effective = match &primary_effective {
             Some(primary) => secondary(effective, primary),
             None => effective,
         };
-        primary_effective.get_or_insert(effective);
+        let primary = *primary_effective.get_or_insert(effective);
         begun.push(Some((history, effective)));
+        let held = &mut frame.view.reflected;
+        reflections.push(
+            shows
+                .into_iter()
+                .filter_map(|shown| {
+                    let reflected = held
+                        .iter_mut()
+                        .find(|held| held.reflector == shown.reflector)?;
+                    let (history, effective) = reflected.view.begin(
+                        device,
+                        shared,
+                        scene,
+                        &shown.input,
+                        &reflected_settings,
+                        false,
+                    );
+                    #[allow(unused_mut)]
+                    let mut effective = secondary(effective, &primary);
+                    // The frame probe observes the views a game lists.
+                    #[cfg(feature = "diagnostics")]
+                    {
+                        effective.frame_probe = false;
+                    }
+                    Some((shown, (history, effective)))
+                })
+                .collect(),
+        );
     }
     let primary_effective = primary_effective.expect("the primary view renders");
     // Update ray instances when any view of the frame traces.
     let traced = begun
         .iter()
         .flatten()
+        .chain(reflections.iter().flatten().map(|(_, begun)| begun))
         .any(|(_, effective)| Prepare::traces(scene, effective));
     shared.run_scene(
         (device, queue),
@@ -150,6 +253,52 @@ pub(super) fn render(
             let began = begun[index].take().expect("a rendered view began");
             head(shared, encoder, frame, began, Role::Secondary)
         };
+        // Its reflected views, whole, before the stages that sample their
+        // pictures: each an ordinary view at the mirrored eye that stops
+        // after its transparent stage.
+        // A planning pass's commands are never submitted.
+        let timing = frame.timing.filter(|_| !planning);
+        let mut held = std::mem::take(&mut frame.view.reflected);
+        let mut shown_pictures = Vec::new();
+        for (shown, began) in std::mem::take(&mut reflections[index]) {
+            let Some(reflected) = held
+                .iter_mut()
+                .find(|held| held.reflector == shown.reflector)
+            else {
+                continue;
+            };
+            let view = &mut *reflected.view;
+            view.views.reflected = Some(crate::view::Reflected {
+                reflector: shown.reflector,
+                plane: shown.plane,
+            });
+            let began = begin_view(
+                shared,
+                view,
+                (device, queue, encoder),
+                scene,
+                (&shown.input, timing),
+                began,
+                (Role::Secondary, attempt, finished),
+            );
+            finish_view(
+                shared,
+                view,
+                (device, queue, encoder),
+                scene,
+                Drawn {
+                    input: &shown.input,
+                    output: None,
+                    pictures: &[],
+                    keeps_pictures: false,
+                    timing,
+                },
+                began,
+            );
+            shown_pictures.push(shown.picture(view));
+        }
+        frame.view.reflected = held;
+        let keeps_pictures = !frame.view.reflected.is_empty();
         let output = match frame.output {
             ViewOutput::Texture(output) => output,
             ViewOutput::RenderTexture(_) => pictures[index]
@@ -163,7 +312,11 @@ pub(super) fn render(
             scene,
             Drawn {
                 input: frame.input,
-                output,
+                output: Some(output),
+                pictures: &shown_pictures,
+                // The planar method's targets and pipeline live as long as
+                // the reflected views it composites.
+                keeps_pictures,
                 // A planning pass's commands are never submitted.
                 timing: frame.timing.filter(|_| !planning),
             },

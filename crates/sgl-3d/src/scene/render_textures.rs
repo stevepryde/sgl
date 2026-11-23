@@ -108,76 +108,14 @@ impl RenderTextures {
 
 /// A surface that samples a render texture: a mesh of a visible instance
 /// drawn with a material that names it.
-pub(crate) struct Screen {
-    pub texture: RenderTextureId,
-    /// Its instance's pose.
-    pub pose: glam::Mat4,
-    /// Its mesh's bounds in its model's space, with those of its levels of
-    /// detail, grown by what its material's shader may move a vertex.
-    pub bounds: [glam::Vec3; 2],
-    /// Its material's visibility group.
-    group: u32,
-}
-
-impl Screen {
-    /// Whether a view whose visibility mask is `mask` draws it.
-    pub fn enabled(&self, mask: u32) -> bool {
-        super::materials::group_enabled(self.group, Some(mask))
-    }
-}
+pub(crate) type Screen = super::named_surfaces::Named<RenderTextureId>;
 
 impl Scene {
     /// The surfaces that sample a render texture, which a frame tests
     /// against its views (`renderer::order`): none without a material that
-    /// names one. The cull draws a mesh, or the level of detail it chooses
-    /// in its place, by its own bounds, so a screen's hold them all.
+    /// names one.
     pub(crate) fn screens(&self) -> Vec<Screen> {
-        // The models drawn with a material that names a render texture: few.
-        let mut models = Vec::new();
-        for (_, material) in self.materials.slots.iter() {
-            if material.values.emission_render_texture.is_some() {
-                for &model in material.users.keys() {
-                    if !models.contains(&model) {
-                        models.push(model);
-                    }
-                }
-            }
-        }
-        let mut screens = Vec::new();
-        if models.is_empty() {
-            return screens;
-        }
-        for (_, instance) in self.instances.slots.iter() {
-            if !instance.state.visible || !models.contains(&instance.state.model) {
-                continue;
-            }
-            let model = self.drawn_model(instance.state.model);
-            for (index, mesh) in model.meshes.iter().enumerate() {
-                let material = self.drawn_material(mesh.material);
-                let Some(texture) = material.values.emission_render_texture else {
-                    continue;
-                };
-                let levels = mesh
-                    .lods
-                    .iter()
-                    .filter_map(|lod| self.drawn_model(lod.model).meshes[lod.mesh].ranges.bounds());
-                let Some(bounds) = instance
-                    .mesh_bounds(model, index)
-                    .into_iter()
-                    .chain(levels)
-                    .reduce(|[low, high], [a, b]| [low.min(a), high.max(b)])
-                else {
-                    continue;
-                };
-                screens.push(Screen {
-                    texture,
-                    pose: instance.state.pose,
-                    bounds: super::static_edits::grown(bounds, material.displacement_bound()),
-                    group: material.values.visibility_group,
-                });
-            }
-        }
-        screens
+        self.named_surfaces(|material| material.emission_render_texture)
     }
 
     /// Adds a render texture: a GPU texture of `texture.size` texels and

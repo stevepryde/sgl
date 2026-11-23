@@ -166,6 +166,36 @@ pub enum WorldSpaceReflections {
     All,
 }
 
+/// The pictures of the scene's planar reflectors
+/// (`Scene::add_planar_reflector`): each view that shows a surface whose
+/// material names one renders the scene mirrored in its plane, over the
+/// surface's bounds on screen, at this many texels per render pixel a side.
+/// A scene without a reflector, and a reflector out of a view, cost that
+/// view nothing at any level.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlanarReflections {
+    /// No picture: a reflector's surfaces keep their environment and probe
+    /// specular.
+    Off,
+    Quarter,
+    #[default]
+    Half,
+    Full,
+}
+
+impl PlanarReflections {
+    /// The picture's texels per render pixel of the view that shows it,
+    /// per side; none at `Off`.
+    pub(crate) fn scale(self) -> Option<f32> {
+        match self {
+            Self::Off => None,
+            Self::Quarter => Some(0.25),
+            Self::Half => Some(0.5),
+            Self::Full => Some(1.),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Bloom {
     #[default]
@@ -533,6 +563,10 @@ pub struct Settings {
     /// Traces what screen-space reflections miss through the scene's ray
     /// buffers; only effective with screen-space reflections.
     pub world_space_reflections: WorldSpaceReflections,
+    /// The resolution of planar reflectors' pictures, `Half` by default
+    /// and in no preset; it costs nothing until the scene holds a planar
+    /// reflector that a view shows.
+    pub planar_reflections: PlanarReflections,
     /// Hardware ray tracing, off by default and in no preset: a game opts
     /// in by turning it on and requesting the device's feature
     /// (`graphics_device::ray_tracing_features`). Where the device has it, on
@@ -633,6 +667,7 @@ impl Default for Settings {
             screen_space_reflections: ScreenSpaceReflections::default(),
             reflection_method: ReflectionMethod::default(),
             world_space_reflections: WorldSpaceReflections::Off,
+            planar_reflections: PlanarReflections::default(),
             hardware_ray_tracing: false,
             ray_traced_shadows: false,
             ray_traced_shadow_quality: RayTracedShadowQuality::default(),

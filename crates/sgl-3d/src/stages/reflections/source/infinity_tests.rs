@@ -144,6 +144,7 @@ fn infinite_lit_colour_completes_as_the_scene_colour_bound() {
         Variant {
             environment: true,
             incident: true,
+            composition: true,
         },
     );
     let output = ReflectionSource::target(&device, size, "complete opaque beauty");

@@ -20,6 +20,7 @@ pub(crate) mod effective;
 pub(crate) mod frame;
 mod order;
 pub(crate) mod probe_capture;
+pub(crate) mod reflected;
 mod shared;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) mod test_frame;
@@ -32,6 +33,8 @@ mod compile_tests;
 mod diagnostics_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod floor_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod planar_reflection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod render_texture_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -50,6 +53,7 @@ use crate::scene::rays::acceleration::RayTracingStats;
 use crate::settings::{DynamicGiQuality, Settings};
 use crate::shading::bind::BindingTier;
 pub use crate::view::compile::{Compilation, CompileError, CompileJob};
+pub use reflected::PlanarReflectionStats;
 use shared::Shared;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

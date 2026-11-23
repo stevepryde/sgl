@@ -3064,6 +3064,92 @@ cargo run -p sgl-3d-examples --example monitor -- target/monitor.png
 cargo run --release -p sgl-3d-examples --example monitor -- --measure
 ```
 
+### Planar reflections
+
+A mirror, a polished floor or still water shows the scene mirrored in it,
+moving objects and what lies outside the camera's view included, on every
+device, without rays or a bake. The game says where the plane is and which
+material lies in it; the renderer does the rest.
+
+```rust
+// Once: the plane, and the material whose surfaces lie in it.
+let floor = scene.add_planar_reflector(PlanarReflector::new(Vec3::ZERO, Vec3::Y))?;
+let values = scene.material(marble)?;
+scene.set_material(&queue, marble, SurfaceMaterial {
+    planar_reflector: Some(floor), ..values })?;
+// Each frame: nothing. `Settings::planar_reflections` chooses the level.
+```
+
+- **The plane** is a point on it and its normal, toward the side that
+  reflects (`PlanarReflector`). `Scene::set_planar_reflector` moves it (a
+  rising water level, a mirror on a door); `remove_planar_reflector`
+  refuses while a material names it. The scene holds no GPU state for it.
+- **The surface** is an opaque or masked material that names the reflector,
+  on geometry that lies in the plane and faces its normal. Its specular
+  lobe takes the picture in place of its environment and probe specular,
+  with the material's own response: a metal of `roughness` 0 and a white
+  `base` is a mirror; a dark dielectric with a low `roughness` is water,
+  bright at grazing angles; a coated floor reflects in its coat. A normal
+  map, moving `normal_layers` among them, bends the picture by the angle it
+  turns the reflected ray, less where the reflected thing is near. The
+  picture is not blurred for roughness: a lobe at or above the selected
+  `Settings::reflection_method`'s cutoff (0.2 for `Crystal`, 0.7 for
+  `Velvet`) keeps its environment specular, fading in below it, whether or
+  not screen-space reflections run. A blended material cannot name a
+  reflector (`SceneError::BlendedPlanarReflector`).
+- **What it costs.** Each view that shows a reflector renders the scene
+  again for it, from the mirrored eye: its own shadows (at `Low`'s sizes
+  below `Full`), opaque, fog and transparent passes, lit as the view is,
+  without antialiasing, ambient occlusion, screen-space effects, exposure
+  or post. That picture covers
+  only the reflector's bounds on screen, at `Settings::planar_reflections`
+  texels per render pixel a side (`Quarter`, `Half`, the default, or
+  `Full`), is clipped at the plane and culls what lies behind it. A view
+  that does not show the reflector (it is out of the frustum or the
+  visibility mask, the eye is behind the plane, the camera is
+  orthographic, or the level is `Off`) renders nothing for it, and a
+  scene without one does no work at all. A view keeps a reflector's
+  render, minus its picture and shadow maps, for 120 of its frames after
+  it last showed it, so a camera sweeping off a mirror and back costs a
+  fraction of a millisecond, not a new render's setup; then, at `Off`, or
+  when the reflector is removed or the view resized, it holds nothing for
+  it. Occlusion is not tested and nothing caps the count: every reflector
+  in a view's frustum costs that view a render, however small it is on
+  screen, so keep them few and use `visibility_group` for the views that
+  should not show one. `View::planar_reflections` reports each picture's
+  size and what its reflected view drew.
+- **Each viewer its own.** Two views that see one mirror each render their
+  own reflection. Nothing is listed in `Renderer::render` and nothing is
+  ordered: the reflection is this frame's, and an in-world screen
+  (`ViewOutput::RenderTexture`) seen only in a mirror still shows this
+  frame's picture.
+- **Two mirrors.** One level deep: a mirror seen in a mirror shows its
+  environment and probe specular, not a second reflection, so two facing
+  mirrors cost a viewer two extra renders, never more.
+- **Limits.** The picture is not antialiased beyond its bilinear lookup,
+  and at `Quarter` and `Half` it is coarser than the view. Its depth
+  resolution is that of a view whose near plane is the eye's distance from
+  the mirror: with the eye within centimetres of the plane, distant
+  reflected surfaces may z-fight. Geometry that crosses the plane is cut
+  at it. A displaced surface (waves from a shader) is shown the picture of
+  its plane. Fog in the picture is the frame's medium seen from the
+  mirrored eye: right for a uniform medium, but the stretch from the eye to
+  the surface is fogged twice, and a fog volume behind the plane fogs the
+  whole reflection (#887). Rays, dynamic GI and probe captures see the
+  material without the picture. While a view shows the picture the surface
+  is marked for TAA and FSR, as moving water is, and a view's `GpuTiming`
+  spans its reflected views' passes, in the groups of its own.
+
+The [planar reflections example](../../examples/sgl-3d/examples/planar_reflections.rs)
+shows a wall mirror and a rippling pond; `--measure` prints the timed
+passes and GPU time of a frame at each level and with the reflectors out of
+view, and `--passes` adds each pass group's time:
+
+```sh
+cargo run -p sgl-3d-examples --example planar_reflections -- target/planar.png
+cargo run --release -p sgl-3d-examples --example planar_reflections -- --measure
+```
+
 ### GPU pass timing
 
 `timing::GpuTiming::new(&device, &queue)` returns `None` unless the device was

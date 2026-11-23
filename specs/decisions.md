@@ -1504,3 +1504,106 @@ Use the [current specs](README.md) for implementation and the
   cannot. Rationale: every feature is code in every game's build and a
   surface agents must keep coherent; one no game uses costs that for
   nothing.
+- **D-77** Decision, 2026-11-23 (#866): planar reflections. A planar
+  reflector is a plane the scene holds and an opaque or masked material
+  names; each view that shows one owns a reflected view, an ordinary
+  `View` the frame renders before that view's remaining stages, whose
+  composite is the picture. (1) Not a render texture (D-70): one material
+  would name one texture for every viewer, and a mirror's reflection
+  depends on the eye, so the picture is the view's, as three.js r187
+  `ReflectorNode` keeps a virtual camera and a target per viewing camera;
+  the scene holds only the plane. (2) The camera is three.js's: the
+  mirrored eye with a proper, unmirrored view whose image is the mirror
+  image flipped left to right (view' = S V R, projection' = S P S, S the x
+  flip), so winding, culling and every geometry pipeline are the
+  viewer's and no second set of pipelines exists; an engine that mirrors
+  the view matrix instead flips its front faces. (3) Lengyel's oblique
+  near plane, in SGL3D's reversed-Z form: three.js builds it for a
+  0-to-1 depth with a finite far plane (`elements[10] = clipPlane.z`),
+  where under `perspective`'s infinite far plane the far corner is a point
+  at infinity; `row_z = row_w − C (row_w · Q) / (C · Q)` covers both, and
+  costs what Lengyel's does, the depth resolution of a standard buffer
+  whose near plane is the eye's distance from the mirror. A fragment
+  discard or a clip distance was rejected: the first puts a discard in
+  every opaque program, the second is an optional WebGPU feature. (4) The
+  picture covers the reflector's bounds on screen only, the projection
+  cropped to them, where three.js and Wicked Engine 2ff1d9e render the
+  whole screen (Wicked at a quarter of it): in the `planar_reflections`
+  example at 1280×720 a wall mirror's picture is 160×135 texels and a
+  pond's 400×180 at `Half`, of 640×360. Its size moves in eighths of the
+  level's full size with a step of hysteresis, since each change of size
+  reallocates the reflected view's targets. (5) One level of recursion,
+  where three.js's `bounces` lets reflectors render each other: a
+  reflected view shows no reflector, and one seen in it draws with its
+  fallback (environment and probes), so two facing mirrors cost a viewer
+  two reflected views. Wicked skips reflective objects in its reflection
+  pass, which leaves holes. (6) The reflected view runs without
+  antialiasing, ambient occlusion, screen-space indirect light, contact
+  and ray-traced shadows, screen-space and world-space reflections,
+  occlusion culling, heat distortion, motion blur, exposure and post, as
+  Wicked's reflection pass runs without its screen-space effects. It
+  draws its own shadows, at the viewer's quality at `Full` and at `Low`'s
+  sizes below it (a quarter of the cascades' memory: a view holds its
+  1024-texel cascades from when it is made, 16 MiB, where `High`'s
+  2048-texel ones are 64 MiB), where Wicked samples the main view's shadow
+  maps, drawn once (`DrawShadowmaps(visibility_main)`):
+  a departure, and the costlier one, because cascades are fit to the
+  viewer's frustum and a mirror shows what lies behind the viewer, which
+  they do not cover. In the `planar_reflections` example (two cascades) a
+  reflected view's cascades are about 0.1 ms of the 0.35 ms it costs
+  (Apple M-series GPU, 1280×720, provisional). (7) The surface takes the picture as its traced
+  lobe's reflected radiance, through the one composition formula, under
+  the selected reflection method's cutoff and fade (Crystal's 0.2,
+  Velvet's 0.7) whether or not that method runs, so a reflector looks the
+  same with screen-space reflections on or off; Wicked adds the picture
+  times Fresnel in place of its environment maps at any roughness. The
+  picture is not filtered for roughness (no mip chain: D-70 (7)), which
+  Unity's and Unreal's planar reflections prefilter: a later level. (8) A
+  mapped normal bends the picture by its own reflected ray: the picture's
+  depth at the surface point's texel gives how far the mirror direction
+  reaches, and the texel sampled is where the surface's ray reaches that
+  distance. Wicked adds the tangent normal's xy to the UV, a shift that
+  is the same for a reflection at the waterline and one of the far shore;
+  this one is exact for the plane's own normal, needs no authored scale
+  and shrinks to nothing where the reflected thing touches the surface.
+  Its guard places a marker where a normal leaning 0.03 rad sends the ray
+  (`a_leaning_normal_bends_the_reflection`). (9) A reflected view is kept,
+  unrendered, for 120 of its viewer's frames after the last that showed
+  its reflector (two seconds at 60 Hz, one at 120 Hz: a camera sweep off a
+  mirror and back), holding its programs and fixed-size tables, and
+  released after them, as #853 keeps a view's local shadow atlases once
+  made. Making the view again, as dropping it the first frame out of view
+  did, took 8 to 15 ms of CPU per reflector in the frame it returned,
+  since a `View` builds its stages' programs when it is made (the
+  `planar_reflections` example's `--measure`: `Renderer::render` 0.3 to
+  0.7 ms with a mirror and a pond in view, 27 to 34 ms in the frame both
+  returned, #888). Its picture's targets (72 bytes a texel: 2.5 MiB for a
+  200×180 picture, 40 MiB for 800×720) and shadow maps (16 MiB of `Low`
+  cascades below `Full`, the viewer's at `Full`, 64 MiB at `High`), and
+  the viewer's planar method's targets (10 bytes a viewer pixel), are
+  released while it is kept and made again on return: 0.3 to 0.7 ms for
+  the targets and 0.1 to 0.2 ms for the cascades when measured alone, and
+  the return frame took 0.7 to 1.6 ms against 0.3 to 0.7 steady, where
+  keeping them too gave 0.3 to 0.8 against the same. Kept whole, the
+  pair of views would have held 30 to 120 MiB while hidden. `Off`, a
+  removed reflector and a change of the viewer's render size or level
+  release at once. Apple M-series GPU, 1280×720, shared machine,
+  provisional. (10)
+  The level's default is `Half`, not `Off`: a reflector is content a game
+  adds, and S3D-6 asks that a feature's level need not be set. (11)
+  Blended materials cannot name a reflector yet: a receiver's traced lobe
+  composes in the transparent stage, a later slice. (12) Nothing caps the
+  reflected views a viewer renders: every reflector in its frustum and
+  visibility mask whose plane its eye is in front of costs one, occlusion
+  untested as for an in-world screen (D-70 (3)) and however few pixels it
+  covers. A cutoff by coverage would be a threshold of SGL3D's on the
+  game's content; which surfaces are reflectors, and in which views, is
+  the game's (the visibility mask). (13) The surface is marked for TAA and
+  FSR only in the views and frames that show its picture, so a scene's
+  reflectors hold no view's temporal masks while out of view or at `Off`.
+  (14) Only a perspective viewer shows a reflector: the clip and the
+  lookup take view rays from an eye. (15) The picture's fog is the frame's
+  medium from the mirrored eye, exact for a uniform medium but for the
+  eye-to-surface stretch, which composition's fog counts again, as
+  three.js's and Wicked's do; a medium that begins at the plane is #887.
+  Measured numbers are in the change that landed it.

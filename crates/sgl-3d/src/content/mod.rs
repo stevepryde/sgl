@@ -29,6 +29,7 @@ pub mod lod;
 pub(crate) mod material;
 mod material_texture;
 pub(crate) mod model;
+pub(crate) mod planar_reflector;
 pub(crate) mod render_texture;
 pub mod shader;
 pub(crate) mod srgb;

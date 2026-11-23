@@ -54,6 +54,15 @@ impl Shadows {
         self.local.resize(quality.atlas_size());
     }
 
+    /// Releases the maps while the view renders nothing (a planar
+    /// reflector's kept reflected view): the cascades shrink to one texel
+    /// and the local atlases are dropped, and the next frame's `resize`
+    /// makes the cascades again and the next placed shadow the atlases.
+    pub fn release(&mut self, device: &wgpu::Device) {
+        self.directional = directional::Directional::new(device, 1);
+        self.local.release();
+    }
+
     /// The maps, records and sampler to lend to group 0.
     pub fn maps(&self) -> ShadowMaps {
         ShadowMaps {

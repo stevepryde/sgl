@@ -14,7 +14,7 @@ use crate::stages::reflections::velvet;
 use crate::view::effective::CompositeDraws;
 use crate::view::effective::{
     AmbientOcclusion, Effective, HardwareRayTracing, ScreenIndirect, ScreenSpace, ShadowFilter,
-    Sizing,
+    Sizing, Trace,
 };
 use crate::view::pipelines::LayerConstants;
 
@@ -253,6 +253,9 @@ pub(super) struct SceneContent {
     pub glow: bool,
     pub mist: bool,
     pub heat: bool,
+    /// A planar reflector's surface the view shows in this frame, which
+    /// the frame adds (`renderer::reflected`).
+    pub planar: bool,
     /// The frame's input names an HDR effect the scene holds.
     pub hdr_effect: bool,
 }
@@ -269,6 +272,7 @@ impl SceneContent {
             glow: scene.transient.glow_count > 0,
             mist: !scene.transient.mist_positions.is_empty(),
             heat: scene.transient.heat_count > 0,
+            planar: false,
             hdr_effect: scene.applied_hdr_effect(input.hdr_effect).is_some(),
         }
     }
@@ -286,6 +290,14 @@ fn trace_cutoff(method: ReflectionMethod) -> (f32, f32) {
         ),
         ReflectionMethod::Velvet => (velvet::ROUGHNESS_CUTOFF, velvet::ROUGHNESS_FADE),
     }
+}
+
+/// Whether `projection` is a perspective one: clip w is view depth
+/// (`perspective`'s, or any other whose w row is (0, 0, -1, 0)), as the
+/// fog's slices, aerial perspective, contact shadows' thickness and a
+/// planar reflector's picture take it.
+pub(super) fn perspective(projection: glam::Mat4) -> bool {
+    projection.w_axis.w == 0. && projection.z_axis.w == -1.
 }
 
 /// The effective configuration of a frame of a scene holding `content` on
@@ -307,10 +319,7 @@ pub(super) fn resolve(
     let diagnostics = settings.diagnostics_in_effect();
     let disable = diagnostics.disable;
     let p = input.camera.projection.to_cols_array_2d();
-    // A perspective projection: clip w is view depth (`perspective`'s, or
-    // any other whose w row is (0, 0, -1, 0)), as the fog's slices, aerial
-    // perspective and contact shadows' thickness take it.
-    let perspective = p[3][3] == 0. && p[2][3] == -1.;
+    let perspective = perspective(input.camera.projection);
     // XeGTAO's depth unpack/reconstruction is for centered reversed-Z
     // perspective projections, not orthographic cameras.
     let ambient_occlusion = (settings.ambient_occlusion != AmbientOcclusionQuality::Off
@@ -354,14 +363,15 @@ pub(super) fn resolve(
         ScreenSpaceReflections::Half => Some(true),
         ScreenSpaceReflections::Full => Some(false),
     }
-    .map(|half_resolution| {
+    .map(|half_resolution| ScreenSpace {
+        method: settings.reflection_method,
+        half_resolution,
+    });
+    // A planar picture fills the method's result under the selected
+    // method's cutoff, whether or not that method runs.
+    let trace = (screen_space.is_some() || content.planar).then(|| {
         let (cutoff, fade) = trace_cutoff(settings.reflection_method);
-        ScreenSpace {
-            method: settings.reflection_method,
-            half_resolution,
-            cutoff,
-            fade,
-        }
+        Trace { cutoff, fade }
     });
     // DiligentFX's SSR shares TAA's post-effect context.
     let crystal = screen_space.is_some_and(|ssr| ssr.method == ReflectionMethod::Crystal);
@@ -390,7 +400,9 @@ pub(super) fn resolve(
     // every frame.
     let composite = CompositeDraws {
         blended: content.blended,
-        moving_surfaces: content.moving_surfaces,
+        // A planar reflector's surface the view shows counts in the frames
+        // it is shown: its picture moves where its geometry stands still.
+        moving_surfaces: content.moving_surfaces || content.planar,
         glow: content.glow && !disable.effects,
         mist: content.mist && atmosphere(settings, input),
         heat: content.heat && settings.heat_distortion,
@@ -426,6 +438,7 @@ pub(super) fn resolve(
         ambient_occlusion,
         screen_indirect,
         screen_space,
+        trace,
         world_space: world_space(settings, content.ray_data, screen_space.is_some()),
         hardware_ray_tracing,
         ray_traced_shadows,

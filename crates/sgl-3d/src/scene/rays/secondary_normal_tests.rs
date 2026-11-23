@@ -280,6 +280,7 @@ fn material_normal_oracle(
                     alpha: crate::AlphaMode::Opaque,
                     shader: None,
                     emission_render_texture: None,
+                    planar_reflector: None,
                 },
                 // A normal map, else the bump map, as the scene puts them in
                 // effect (`scene::materials::maps::InEffect`).

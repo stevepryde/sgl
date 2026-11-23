@@ -1,7 +1,7 @@
 //! A material's values, which `Scene::material` reads and
 //! `Scene::set_material` replaces, and how its alpha is used.
 use super::asset::Material;
-use super::identity::RenderTextureId;
+use super::identity::{PlanarReflectorId, RenderTextureId};
 use super::shader::MaterialShader;
 
 /// How a material uses its alpha: glTF's `alphaMode`, with Bevy's
@@ -225,6 +225,22 @@ pub struct SurfaceMaterial {
     /// map or none. While the picture changes, the surface counts as moving
     /// for the temporal composition mask. None by default.
     pub emission_render_texture: Option<RenderTextureId>,
+    /// The planar reflector (`Scene::add_planar_reflector`) whose plane the
+    /// material's surfaces lie in, which a game names with
+    /// `Scene::set_material` after adding the material (an authored
+    /// material has none): each view that shows such a surface renders the
+    /// scene mirrored in the plane and the surface's specular lobe takes
+    /// that picture in place of its environment and probe specular, at the
+    /// level `Settings::planar_reflections` chooses. A mirror: `metallic` 1,
+    /// `roughness` 0 and a white `base`; water: a dielectric with a low
+    /// `roughness` and moving `normal_layers`, which bend the picture. The
+    /// picture is not filtered for roughness: a lobe rougher than the
+    /// selected reflection method's cutoff keeps its environment specular.
+    /// Opaque and masked materials only (`SceneError::BlendedPlanarReflector`).
+    /// Rays, dynamic GI and probe captures see the material without the
+    /// picture. In the views and frames that show the picture, the surface
+    /// counts as moving for the temporal composition mask. None by default.
+    pub planar_reflector: Option<PlanarReflectorId>,
 }
 
 impl Default for SurfaceMaterial {
@@ -279,6 +295,7 @@ impl SurfaceMaterial {
             alpha: m.alpha,
             shader: None,
             emission_render_texture: None,
+            planar_reflector: None,
         }
     }
 

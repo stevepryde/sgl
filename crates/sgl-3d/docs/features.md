@@ -151,6 +151,23 @@ them through unrefracted. A probe captured on an
   and dynamic GI see the screen's authored emission map.
   [A view on an in-world screen](README.md#a-view-on-an-in-world-screen),
   `examples/monitor.rs`.
+- **Planar reflections**: a mirror, a polished floor or still water that
+  shows the scene mirrored in it, what is behind the camera and what moves
+  included, with no rays and no bake: add the plane
+  (`Scene::add_planar_reflector`) and name it in the surface's opaque or
+  masked material (`SurfaceMaterial::planar_reflector`). Each view that
+  shows the surface renders the scene again from the mirrored eye, over
+  the surface's bounds on screen, at `Settings::planar_reflections`
+  (`Quarter`, `Half` by default, `Full`; `Off` for none), on both binding
+  tiers and in the browser. Out of view it renders nothing, and two
+  seconds out of view it holds nothing; every reflector in view costs that
+  view a render, occluded or not. Normal maps bend the
+  picture. Limits: perspective cameras only, one level deep (a mirror in a
+  mirror shows its environment specular), no blur for roughness, no
+  blended materials, the picture is not antialiased, fog between the eye
+  and the surface counts twice.
+  [Planar reflections](../README.md#planar-reflections),
+  `examples/planar_reflections.rs`.
 - **Instances**: model placements (`InstanceState`; `InstanceState::new(model)`
   is at the origin and shown in every view), static or moving. Static
   instances are what bakes and probe captures contain and write no motion;

@@ -60,6 +60,8 @@ mod shadow_normal_tests;
 mod sheen_tests;
 pub(crate) mod srgb;
 mod surface_modules;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod view_depth_tests;
 pub(crate) use surface_modules::{
     LOOKUP_TABLES, MATERIAL_SURFACE_RASTER, OCCLUSION, SPECULAR_LOBES, SURFACE, SURFACE_RASTER,
     SURFACE_RAY, TRANSMISSION,
@@ -332,9 +334,10 @@ pub(crate) static DEPTH: Module = Module {
     source: include_str!("depth.wgsl"),
     deps: &[],
 };
-/// The view depth of a device depth under any projection, and
-/// `SCENE_DEPTH_FAR`: the material shader and HDR effect contracts' one
-/// owner of both.
+/// The view depth of a device depth under any projection, a planar
+/// reflector's reflected view's clipped one among them, and
+/// `SCENE_DEPTH_FAR`: the one owner of both, which the material shader and
+/// HDR effect contracts and the glow read.
 pub(crate) static VIEW_DEPTH: Module = Module {
     name: "view_depth",
     source: include_str!("view_depth.wgsl"),

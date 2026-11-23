@@ -3,12 +3,13 @@
 //! draws a render texture only where another rendered view shows it, and
 //! in which order, each such producer before the views that sample its
 //! picture.
+use super::reflected::Shown;
 use super::view::{ViewFrame, ViewOutput};
 use crate::Scene;
 use crate::content::identity::RenderTextureId;
 use crate::scene::render_textures::Screen;
 use crate::view::culling::Frustum;
-use glam::{Mat4, Vec3};
+use glam::Mat4;
 
 /// The views of `views` the frame of `scene` renders, as indices in render
 /// order; none for a frame none of whose views draws a render texture,
@@ -19,7 +20,11 @@ use glam::{Mat4, Vec3};
 /// For a view that draws a render texture the scene does not hold or one
 /// of another size or format than its own, and for two views that draw one
 /// render texture.
-pub(super) fn of(scene: &Scene, views: &[ViewFrame<'_>]) -> Option<Vec<usize>> {
+pub(super) fn of(
+    scene: &Scene,
+    views: &[ViewFrame<'_>],
+    reflections: &[Vec<Shown>],
+) -> Option<Vec<usize>> {
     if views
         .iter()
         .all(|frame| matches!(frame.output, ViewOutput::Texture(_)))
@@ -53,8 +58,9 @@ pub(super) fn of(scene: &Scene, views: &[ViewFrame<'_>]) -> Option<Vec<usize>> {
     // For each view, the listed views whose render textures it samples.
     let samples: Vec<Vec<usize>> = views
         .iter()
-        .map(|frame| {
-            let sampled = sampled(frame, &screens);
+        .zip(reflections)
+        .map(|(frame, reflections)| {
+            let sampled = sampled(frame, &screens, reflections);
             (0..views.len())
                 .filter(|&producer| targets[producer].is_some_and(|id| sampled.contains(&id)))
                 .collect()
@@ -70,19 +76,31 @@ pub(super) fn of(scene: &Scene, views: &[ViewFrame<'_>]) -> Option<Vec<usize>> {
 
 /// The render textures a surface of `screens` samples within `frame`'s
 /// view: in its visibility mask and its frustum, which is widened by a
-/// render pixel on each side, more than antialiasing's jitter moves it.
-fn sampled(frame: &ViewFrame<'_>, screens: &[Screen]) -> Vec<RenderTextureId> {
+/// render pixel on each side, more than antialiasing's jitter moves it, or
+/// in the frustum of one of its reflected views (`reflections`: the planar
+/// reflectors it shows), which render within its frame and show the screen
+/// in a mirror.
+fn sampled(
+    frame: &ViewFrame<'_>,
+    screens: &[Screen],
+    reflections: &[Shown],
+) -> Vec<RenderTextureId> {
     let camera = &frame.input.camera;
-    let [width, height] = frame.view.sizes.render.map(|side| side as f32);
-    let widened = Mat4::from_scale(Vec3::new(width / (width + 2.), height / (height + 2.), 1.))
-        * camera.projection;
+    let widen = crate::view::culling::widening(frame.view.sizes.render);
+    let widened = Mat4::from_scale(widen.extend(1.)) * camera.projection;
     let mut sampled = Vec::new();
     for screen in screens {
+        let reaches = |view: Mat4, projection: Mat4| {
+            Frustum::new(view, projection, screen.pose, [0.; 2]).reaches(screen.bounds)
+        };
         if screen.enabled(frame.input.visibility_mask)
-            && !sampled.contains(&screen.texture)
-            && Frustum::new(camera.view, widened, screen.pose, [0.; 2]).reaches(screen.bounds)
+            && !sampled.contains(&screen.name)
+            && (reaches(camera.view, widened)
+                || reflections
+                    .iter()
+                    .any(|shown| reaches(shown.input.camera.view, shown.raster_projection())))
         {
-            sampled.push(screen.texture);
+            sampled.push(screen.name);
         }
     }
     sampled

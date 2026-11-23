@@ -361,10 +361,16 @@ impl Transparent {
         ),
         tier: BindingTier,
     ) -> &'a wgpu::BindGroup {
-        let traced = ctx.effective.screen_space.zip(reflections);
-        let mut values = traced.map_or_else(BlendedTrace::default, |(ssr, _)| BlendedTrace {
-            cutoff: ssr.cutoff,
-            fade: ssr.fade,
+        // A blended receiver composes a screen-space method's result, which
+        // traced it as the surface.
+        let traced = ctx
+            .effective
+            .trace
+            .filter(|_| ctx.effective.screen_space.is_some())
+            .zip(reflections);
+        let mut values = traced.map_or_else(BlendedTrace::default, |(trace, _)| BlendedTrace {
+            cutoff: trace.cutoff,
+            fade: trace.fade,
             ..BlendedTrace::default()
         });
         values.transmission = u32::from(copy.is_some());
@@ -443,6 +449,16 @@ impl Transparent {
         pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
         let scene = ctx.scene;
         let changes = scene.shading_changes();
+        // A planar reflector's surface the view shows in this frame: its
+        // picture moves while its surface's motion vectors stand still.
+        let mirrors = &ctx.views.mirrors;
+        let mirrored = |material| {
+            scene
+                .drawn_material(material)
+                .values
+                .planar_reflector
+                .is_some_and(|reflector| mirrors.contains(&reflector))
+        };
         // Whether a material's edit marks its footprint: a masked one's, whose
         // coverage the edit may have changed.
         let footprint = |material| {
@@ -457,7 +473,10 @@ impl Transparent {
             ctx.pipelines,
             &mut pass,
             GeometryPass::TemporalComposition { footprint: false },
-            &|material| changes.of(scene, material) != ShadingChange::None && !footprint(material),
+            &|material| {
+                (changes.of(scene, material) != ShadingChange::None || mirrored(material))
+                    && !footprint(material)
+            },
         );
         ctx.views.camera.list.draw_materials(
             scene,

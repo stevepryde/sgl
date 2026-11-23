@@ -50,6 +50,7 @@ impl Scene {
         self.lights
             .move_origin(queue, to, &super::lights::cookie_rects(decals));
         self.decals.move_origin(to);
+        self.planar_reflectors.move_origin(to);
         self.transient.move_origin(queue, to);
         if let Some(probes) = &mut self.probes {
             probes.move_origin(device, to);

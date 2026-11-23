@@ -25,8 +25,10 @@ pub(crate) mod lookup_tables;
 pub(crate) mod materials;
 pub(crate) mod mesh_ranges;
 pub(crate) mod models;
+pub(crate) mod named_surfaces;
 pub(crate) mod objects;
 pub(crate) mod origin;
+pub(crate) mod planar_reflectors;
 pub(crate) mod prepared;
 pub(crate) mod probe_grid;
 pub(crate) mod probes;
@@ -96,6 +98,7 @@ pub struct Scene {
     pub(crate) materials: materials::Materials,
     /// The pictures views draw for materials to sample.
     pub(crate) render_textures: render_textures::RenderTextures,
+    pub(crate) planar_reflectors: planar_reflectors::PlanarReflectors,
     pub(crate) models: models::Models,
     pub(crate) instances: instances::Instances,
     /// Each instance's draw candidates, with the sets and level chains they
@@ -210,6 +213,7 @@ impl Scene {
             hdr_effects: hdr_effects::HdrEffects::default(),
             materials: materials::Materials::new(device, queue),
             render_textures: render_textures::RenderTextures::default(),
+            planar_reflectors: planar_reflectors::PlanarReflectors::default(),
             models: models::Models::default(),
             candidates: candidates::Candidates::new(&device.limits()),
             lights: lights::Lights::new(device),

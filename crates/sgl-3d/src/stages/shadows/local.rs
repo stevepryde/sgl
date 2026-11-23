@@ -282,6 +282,14 @@ impl Local {
         self.placed = None;
     }
 
+    /// Releases the atlases and forgets every placement and static layer,
+    /// keeping their size: the next frame that places a shadow creates
+    /// them and draws every shadow anew.
+    pub fn release(&mut self) {
+        self.atlases = None;
+        self.plan = plan::Plan::new(self.size);
+    }
+
     /// Creates the atlases once the plan places a shadow: before a face is
     /// drawn or a record that places one is written.
     fn create_when_placed(&mut self, device: &wgpu::Device) {

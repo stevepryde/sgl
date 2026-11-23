@@ -2,6 +2,7 @@
 //! lightmap eligibility) and record in the ray source, with the `Scene`
 //! operations that add, read, edit and remove them.
 use super::candidates::CandidateMesh;
+use super::planar_reflectors::PlanarReflectors;
 use super::rays::SceneRays;
 use super::render_textures::RenderTextures;
 use super::shaders::Shaders;
@@ -572,13 +573,24 @@ impl Materials {
     pub fn set(
         &mut self,
         queue: &wgpu::Queue,
-        (rays, shaders, render_textures): (&SceneRays, &Shaders, &RenderTextures),
+        (rays, shaders, render_textures, planar_reflectors): (
+            &SceneRays,
+            &Shaders,
+            &RenderTextures,
+            &PlanarReflectors,
+        ),
         id: MaterialId,
         values: SurfaceMaterial,
     ) -> Result<(), SceneError> {
         validate_shader(&values, shaders)?;
         if let Some(texture) = values.emission_render_texture {
             render_textures.get(texture)?;
+        }
+        if let Some(reflector) = values.planar_reflector {
+            planar_reflectors.get(reflector)?;
+            if values.blended() {
+                return Err(SceneError::BlendedPlanarReflector);
+            }
         }
         let material = self.slots.get_mut(id).ok_or(SceneError::UnknownMaterial)?;
         validate_core(&values)?;
@@ -674,7 +686,10 @@ impl Scene {
     /// Replaces a material's values, its alpha mode among them. Anisotropy
     /// needs authored tangent frames on every mesh drawn with the material.
     /// Textures stay as added; `emission_render_texture` names a render
-    /// texture of this scene or none (`SceneError::UnknownRenderTexture`).
+    /// texture of this scene or none (`SceneError::UnknownRenderTexture`),
+    /// and `planar_reflector` a planar reflector of this scene or none
+    /// (`UnknownPlanarReflector`), on an opaque or masked material
+    /// (`BlendedPlanarReflector`).
     /// Non-finite `normal_scale`, `coat_normal_scale` or `bump_scale`
     /// returns `SceneError::InvalidMaterialFactors` without changing the material.
     pub fn set_material(
@@ -719,7 +734,12 @@ impl Scene {
         }
         self.materials.set(
             queue,
-            (&self.rays, &self.shaders, &self.render_textures),
+            (
+                &self.rays,
+                &self.shaders,
+                &self.render_textures,
+                &self.planar_reflectors,
+            ),
             id,
             values,
         )?;
@@ -729,6 +749,8 @@ impl Scene {
         self.render_textures.count(old.emission_render_texture, -1);
         self.render_textures
             .count(values.emission_render_texture, 1);
+        self.planar_reflectors.count(old.planar_reflector, -1);
+        self.planar_reflectors.count(values.planar_reflector, 1);
         if blending || std::mem::discriminant(&old.alpha) != std::mem::discriminant(&values.alpha) {
             self.models.classify_users(id, &self.materials);
         }
@@ -756,6 +778,7 @@ impl Scene {
             .count(values.shader.map(|shader| shader.shader), -1);
         self.render_textures
             .count(values.emission_render_texture, -1);
+        self.planar_reflectors.count(values.planar_reflector, -1);
         Ok(())
     }
 }

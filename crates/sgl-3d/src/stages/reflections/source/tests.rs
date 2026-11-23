@@ -12,6 +12,7 @@ use wgpu::util::DeviceExt;
 const ENVIRONMENT: Variant = Variant {
     environment: true,
     incident: false,
+    composition: false,
 };
 
 /// Full ambient visibility, which `Scene` binds while ambient occlusion is off.
@@ -453,6 +454,126 @@ fn probe_tiles_keep_the_probes_whose_influence_reaches_their_geometry() {
     let mut expected = vec![0; 2 * buckets];
     expected[0] = 0b101;
     expected[buckets] = 0b100;
+    assert_eq!(tiles, expected, "left then right tile buckets");
+}
+
+// Tiled culling under a planar reflector's reflected view, whose projection
+// is clipped at the reflector's plane so that a device depth gives a view
+// depth only with its pixel. Plausible defect: the cull takes its near
+// plane and its tiles' depth bounds from that projection as if depth were
+// the view depth's alone, and culls the probes of everything the mirror
+// shows. The fixture: a viewer 1.6 m above a floor mirror looking down and
+// ahead, its reflected camera, and a depth target holding the device depth
+// of a point 20 m along the left tile's centre ray, beyond the floor; a
+// probe around that point, and one 500 m to the side of the view. The oracle is the
+// geometry: the first probe's influence holds what the left tile shows, so
+// it is in that tile, and neither probe reaches the right tile.
+#[test]
+fn probe_tiles_keep_their_probes_under_a_clipped_projection() {
+    use crate::view::reflected_camera;
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let size = [64, 32];
+    let eye = Vec3::new(0., 1.6, 0.);
+    let consumer = crate::Camera {
+        view: camera::rh::view::look_at_mat4(eye, Vec3::new(0., 1., -4.), Vec3::Y),
+        projection: crate::perspective(1., 2., 0.1),
+        eye,
+    };
+    let floor = Vec3::Y.extend(0.);
+    let whole = reflected_camera::Rect {
+        min: glam::Vec2::splat(-1.),
+        max: glam::Vec2::splat(1.),
+    };
+    let reflected = reflected_camera::camera(&consumer, floor, whole);
+    let clipped = reflected_camera::oblique(reflected.projection, reflected.view, floor).unwrap();
+    // What the left tile's centre pixel shows 20 m from the reflected eye,
+    // which stands 1.6 m below the floor.
+    let ndc = Vec3::new(16. / size[0] as f32 * 2. - 1., 0., 1.);
+    let on_ray = (reflected.projection * reflected.view)
+        .inverse()
+        .project_point3(ndc);
+    let seen = reflected.eye + (on_ray - reflected.eye).normalize() * 20.;
+    assert!(
+        seen.y > 0.1,
+        "the fixture's point is above the floor: {seen}"
+    );
+    let device_depth = (clipped * reflected.view).project_point3(seen).z;
+    assert!((0. ..1.).contains(&device_depth), "{device_depth}");
+    let around = |center: Vec3, half: f32| crate::BakedSpecularProbe {
+        world_to_local: Mat4::from_translation(-center),
+        influence: crate::SpecularProbeBox {
+            min: Vec3::splat(-half),
+            max: Vec3::splat(half),
+        },
+        ..probe([1.; 3], Vec3::ZERO, Vec3::ONE, 0.)
+    };
+    let aside = reflected
+        .view
+        .inverse()
+        .transform_point3(Vec3::new(500., 0., -20.));
+    let probes = crate::scene::probes::UploadedProbes::new(
+        &device,
+        &queue,
+        &[around(seen, 1.), around(aside, 1.)],
+    )
+    .unwrap();
+    let depth = device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("a reflected view's depth"),
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+        .create_view(&Default::default());
+    let mut culling = ProbeCulling::new(&device, size);
+    let mut encoder = device.create_command_encoder(&Default::default());
+    drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: None,
+        color_attachments: &[],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &depth,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(device_depth),
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        ..Default::default()
+    }));
+    culling.encode(
+        &mut encoder,
+        &device,
+        &queue,
+        &depth,
+        reflection_camera::Camera::clipped(reflected.view, clipped, reflected.projection),
+        &probes.metadata,
+        None,
+    );
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: culling.tiles.size(),
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    encoder.copy_buffer_to_buffer(&culling.tiles, 0, &readback, 0, culling.tiles.size());
+    queue.submit([encoder.finish()]);
+    readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    let tiles: Vec<u32> =
+        bytemuck::cast_slice(&readback.slice(..).get_mapped_range().unwrap()).to_vec();
+    let buckets = PROBE_BUCKETS as usize;
+    let mut expected = vec![0; 2 * buckets];
+    expected[0] = 0b01;
     assert_eq!(tiles, expected, "left then right tile buckets");
 }
 

@@ -169,6 +169,7 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
         &scene,
         camera_cull(&camera, [TEXELS; 2], mask, true),
         false,
+        None,
     );
     crate::stages::prepare::set_cascades(
         (&device, &queue),

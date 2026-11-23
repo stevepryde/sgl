@@ -26,7 +26,7 @@ pub use content::dynamic_gi::DynamicGiVolume;
 pub use content::hdr_effect::HdrEffect;
 pub use content::identity::{
     DecalId, DecalImageId, EnvironmentId, HdrEffectId, InstanceId, LightId, LiveSpecularProbeId,
-    MaterialId, ModelId, RenderTextureId, ShaderId,
+    MaterialId, ModelId, PlanarReflectorId, RenderTextureId, ShaderId,
 };
 pub use content::instance::{InstanceState, Mobility};
 pub use content::irradiance_volume::{IrradianceCell, IrradianceVolume};
@@ -38,6 +38,7 @@ pub use content::lighting::{
 pub use content::live_specular_probe::{LiveSpecularProbe, ProbeRefresh, ProbeRefreshPace};
 pub use content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 pub use content::model::{AssetIds, ModelMesh};
+pub use content::planar_reflector::PlanarReflector;
 pub use content::render_texture::RenderTexture;
 pub use content::shader::{MaterialShader, ShaderSource};
 pub use content::transient::FogVolume;
@@ -53,7 +54,8 @@ pub use glam;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use renderer::test_frame::TestRenderer;
 pub use renderer::{
-    Compilation, CompileError, CompileJob, Renderer, View, ViewError, ViewFrame, ViewOutput,
+    Compilation, CompileError, CompileJob, PlanarReflectionStats, Renderer, View, ViewError,
+    ViewFrame, ViewOutput,
 };
 pub use scene::irradiance_volume::PreparedIrradianceRegion;
 pub use scene::rays::acceleration::RayTracingStats;

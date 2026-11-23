@@ -1,6 +1,7 @@
 //! Reflections: ambient occlusion of opaque surfaces' ambient light,
 //! environment and probe specular, the screen-space method, world-space
 //! rays, and their one composition.
+pub(crate) mod planar;
 pub(crate) mod probe_culling;
 pub(crate) mod source;
 pub(crate) mod velvet;
@@ -74,6 +75,8 @@ pub(crate) struct Reflections {
     velvet: Option<velvet::Velvet>,
     /// While world-space rays run.
     world: Option<world::WorldReflections>,
+    /// While the view shows a planar reflector's picture.
+    planar: Option<planar::Planar>,
     /// Full ambient visibility, which completion and composition read in
     /// frames without ambient occlusion.
     full_visibility: wgpu::TextureView,
@@ -81,6 +84,11 @@ pub(crate) struct Reflections {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 impl Reflections {
+    /// Whether it holds the planar method, with its targets.
+    pub(crate) fn holds_planar(&self) -> bool {
+        self.planar.is_some()
+    }
+
     /// The world-space reflection stage, once a frame ran it.
     pub(crate) fn world(&self) -> Option<&world::WorldReflections> {
         self.world.as_ref()
@@ -102,6 +110,7 @@ impl Reflections {
             environment_parameters: source::environment_uniform(device, 0., 1.),
             velvet: None,
             world: None,
+            planar: None,
             full_visibility: crate::counters::texture_init(
                 device,
                 queue,
@@ -195,15 +204,19 @@ impl Reflections {
     }
 
     /// After the transparent stage drew into the incident radiance: the
-    /// screen-space method over the surface, world-space rays filling its
-    /// misses on opaque surfaces, and their composition into the
-    /// composite. Returns the method's result, which receivers that are the
-    /// surface compose; `None` while no method runs.
+    /// screen-space method over the surface, each of `pictures`, the
+    /// planar reflectors' the view shows, over its reflector's surfaces
+    /// (the planar method kept with its targets while `keep`),
+    /// world-space rays filling the method's misses on opaque surfaces,
+    /// and their composition into the composite. Returns the frame's method
+    /// result, which receivers that are the surface compose; `None` while
+    /// no method runs and no picture shows.
     pub fn resolve(
         &mut self,
         ctx: &mut FrameContext<'_>,
         post_fx: Option<&mut PostFx>,
         ambient_occlusion: Option<&wgpu::TextureView>,
+        (pictures, keep): (&[planar::Picture], bool),
     ) -> Option<wgpu::TextureView> {
         let screen_space = ctx.effective.screen_space;
         // A method that does not run keeps no history.
@@ -214,51 +227,78 @@ impl Reflections {
         if reach == WorldSpaceReflections::Off {
             self.world = None;
         }
-        let ScreenSpace {
-            method,
-            half_resolution,
-            ..
-        } = screen_space?;
+        // The planar method lives while the view holds a reflected view,
+        // shown or kept, so a reflector that returns makes no pipeline; its
+        // targets only while it shows a picture.
+        if !keep {
+            self.planar = None;
+        } else if pictures.is_empty()
+            && let Some(planar) = &mut self.planar
+        {
+            planar.release_targets();
+        }
         let (traced, fade) = traced(ctx);
         let t = ctx.targets;
         let surface = ctx.surface;
         let camera = ctx.views.reflection_camera;
-        let reflected = match method {
-            ReflectionMethod::Crystal => post_fx
-                .expect("Crystal SSR runs in the post-effect context")
-                .screen_space_reflections(
-                    ctx.device,
-                    ctx.queue,
-                    ctx.encoder,
-                    ctx.input.frame_time_ms / 1000.,
-                    half_resolution,
-                    &self.source.incident,
-                    ctx.timing,
-                ),
-            ReflectionMethod::Velvet => self
-                .velvet
-                .get_or_insert_with(|| velvet::Velvet::new(ctx.device))
-                .encode(
-                    ctx.device,
-                    ctx.queue,
-                    ctx.encoder,
-                    ctx.sizes.render,
-                    half_resolution,
-                    velvet::Inputs {
-                        depth: surface.depth,
-                        opaque_depth: &t.depth,
-                        receivers: surface.receivers,
-                        normal: &t.normal,
-                        material: &t.material,
-                        f0: &t.f0,
-                        radiance: &self.source.incident,
-                        motion: &t.motion,
-                        camera,
-                        frame: ctx.history,
-                    },
-                    ctx.timing,
-                ),
+        let traced_screen = if let Some(ScreenSpace {
+            method,
+            half_resolution,
+            ..
+        }) = screen_space
+        {
+            Some(match method {
+                ReflectionMethod::Crystal => post_fx
+                    .expect("Crystal SSR runs in the post-effect context")
+                    .screen_space_reflections(
+                        ctx.device,
+                        ctx.queue,
+                        ctx.encoder,
+                        ctx.input.frame_time_ms / 1000.,
+                        half_resolution,
+                        &self.source.incident,
+                        ctx.timing,
+                    )
+                    .clone(),
+                ReflectionMethod::Velvet => self
+                    .velvet
+                    .get_or_insert_with(|| velvet::Velvet::new(ctx.device))
+                    .encode(
+                        ctx.device,
+                        ctx.queue,
+                        ctx.encoder,
+                        ctx.sizes.render,
+                        half_resolution,
+                        velvet::Inputs {
+                            depth: surface.depth,
+                            opaque_depth: &t.depth,
+                            receivers: surface.receivers,
+                            normal: &t.normal,
+                            material: &t.material,
+                            f0: &t.f0,
+                            radiance: &self.source.incident,
+                            motion: &t.motion,
+                            camera,
+                            frame: ctx.history,
+                        },
+                        ctx.timing,
+                    )
+                    .clone(),
+            })
+        } else {
+            None
         };
+        // The frame's method result: the screen-space method's, with each
+        // planar reflector's picture over its surfaces.
+        let reflected = if pictures.is_empty() {
+            traced_screen?
+        } else {
+            let planar = self
+                .planar
+                .get_or_insert_with(|| planar::Planar::new(ctx.device));
+            planar.encode(ctx, pictures, traced_screen.as_ref())
+        };
+        let reflected = &reflected;
         let world_space = if reach != WorldSpaceReflections::Off {
             let world = self.world.get_or_insert_with(|| {
                 world::WorldReflections::new(
@@ -332,16 +372,19 @@ fn source_variant(effective: &Effective) -> source::Variant {
         environment: effective.source_environment,
         // Only the method reads it; world-space rays run only with one.
         incident: effective.screen_space.is_some(),
+        composition: effective.trace.is_some(),
     }
 }
 
-/// The alpha roughness below which the screen-space method traces a lobe,
-/// and the width of its fade below that (0 and 0 with no method). The
-/// methods compare perceptual roughness with their own cutoff.
+/// The alpha roughness below which a surface's traced lobe takes the
+/// frame's method result (a screen-space method's, or a planar reflector's
+/// picture under the selected method's cutoff), and the width of its fade
+/// below that (0 and 0 with no result). The methods compare perceptual
+/// roughness with their own cutoff.
 fn traced(ctx: &FrameContext<'_>) -> (f32, f32) {
     ctx.effective
-        .screen_space
-        .map_or((0., 0.), |ssr| (ssr.cutoff * ssr.cutoff, ssr.fade))
+        .trace
+        .map_or((0., 0.), |trace| (trace.cutoff * trace.cutoff, trace.fade))
 }
 
 /// Source completion's and composition's inputs: `probes`, the frame's

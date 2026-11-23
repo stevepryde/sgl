@@ -125,10 +125,18 @@ fn main(@builtin(workgroup_id) gid:vec3<u32>,@builtin(global_invocation_id) dtid
  atomicMax(&max_depth,bitcast<u32>(depth_max_unrolled));
  workgroupBarrier();
  let geometry=atomicLoad(&max_depth)!=0u;
+ // The frame's depths are not the camera's projection's (camera.z_near.y:
+ // a view clipped at an oblique plane, whose device depth gives a view
+ // depth only with its pixel): the tile takes the frustum's whole depth.
+ let whole_depth=camera.z_near.y!=0.;
  // Reversed depth.
- let f_min_depth=saturate(bitcast<f32>(atomicLoad(&max_depth))+FLT_EPSILON);
+ var f_min_depth=saturate(bitcast<f32>(atomicLoad(&max_depth))+FLT_EPSILON);
  // The far bound stays finite under the infinite far plane.
- let f_max_depth=max(bitcast<f32>(atomicLoad(&min_depth))-FLT_EPSILON,FLT_EPSILON);
+ var f_max_depth=max(bitcast<f32>(atomicLoad(&min_depth))-FLT_EPSILON,FLT_EPSILON);
+ if whole_depth {
+  f_min_depth=1.;
+  f_max_depth=FLT_EPSILON;
+ }
 
  // View space frustum corners, near then far: top left, top right, bottom
  // left, bottom right.
@@ -160,8 +168,11 @@ fn main(@builtin(workgroup_id) gid:vec3<u32>,@builtin(global_invocation_id) dtid
  // Occupied slices of 32 between the depth bounds, in view space.
  let depth_range_recip=31./(max_depth_vs-min_depth_vs);
  var depth_mask_unrolled=0u;
+ if whole_depth {
+  depth_mask_unrolled=0xffffffffu;
+ }
  for(var g=0u;g<GRANULARITY*GRANULARITY;g++) {
-  if depths[g]>0. {
+  if depths[g]>0. && !whole_depth {
    let real_depth_vs=screen_to_view(vec4(0.,0.,depths[g],1.),dim_rcp).z;
    let cell=u32(clamp(floor((real_depth_vs-min_depth_vs)*depth_range_recip),0.,31.));
    depth_mask_unrolled|=1u<<cell;

@@ -51,7 +51,11 @@ pub(crate) static SHADER_SCENE_DEPTH_NONE: Module = Module {
 pub(crate) static SHADER_SCENE_DEPTH: Module = Module {
     name: "shader_scene_depth",
     source: include_str!("shader_scene_depth.wgsl"),
-    deps: &[&SHADER_CONTRACT, &super::tiers::BIND_BLENDED_EXTENDED],
+    deps: &[
+        &SHADER_CONTRACT,
+        &super::tiers::BIND_BLENDED_EXTENDED,
+        &super::VIEW_DEPTH,
+    ],
 };
 
 /// The names a game's module defines in place of the default provider's.

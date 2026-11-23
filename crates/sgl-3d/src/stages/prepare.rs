@@ -40,8 +40,8 @@ use crate::view::effective::{Effective, HardwareRayTracing};
 use crate::view::frame::FrameContext;
 use crate::view::history::HistoryFrame;
 use crate::view::population::{Casters, Population};
-use crate::view::reflection_camera;
 use crate::view::{FrameShadow, FrameViews, Jitter, ViewData, frame_uniform, lod::LodSelector};
+use crate::view::{reflected_camera, reflection_camera};
 use crate::{FrameInput, Scene};
 use glam::{Mat4, Vec3};
 
@@ -169,7 +169,7 @@ pub(crate) fn set_cascades(
         slot.set(queue, view);
         let started = crate::counters::Moment::now();
         slot.list
-            .prepare(device, queue, scene, cascade_cull(&view, mask), false);
+            .prepare(device, queue, scene, cascade_cull(&view, mask), false, None);
         slot.built(started);
     }
 }
@@ -278,10 +278,27 @@ impl Prepare {
         frame_buffer: &wgpu::Buffer,
     ) -> FrameValues {
         let camera = input.camera;
-        let stable = history.stable;
+        // A reflected view's near plane is its reflector's (the
+        // architecture's Frame, "Planar reflections"): raster, the cull's
+        // planes and the depth unprojection take the clipped projection,
+        // which differs in its z row alone, and everything that takes the
+        // frustum's shape or view depth the camera's own.
+        let clip = |projection: glam::Mat4| {
+            views
+                .reflected
+                .and_then(|reflected| {
+                    reflected_camera::oblique(projection, camera.view, reflected.plane)
+                })
+                .unwrap_or(projection)
+        };
+        let raster_projection = clip(camera.projection);
+        let stable = match views.reflected {
+            Some(_) => raster_projection * camera.view,
+            None => history.stable,
+        };
         let mut view = ViewUniform {
             view: camera.view.to_cols_array_2d(),
-            projection: camera.projection.to_cols_array_2d(),
+            projection: raster_projection.to_cols_array_2d(),
             view_projection: stable.to_cols_array_2d(),
             inverse_view_projection: stable.inverse().to_cols_array_2d(),
             stable_view_projection: stable.to_cols_array_2d(),
@@ -319,21 +336,29 @@ impl Prepare {
         // The panorama's yaw in the last submitted frame, which the sky's
         // motion turns from.
         frame.previous_backdrop_yaw = history.previous_backdrop_yaw;
-        views.reflection_camera = reflection_camera::Camera::new(camera.view, camera.projection);
+        // Reflections' camera unprojects the frame's depth: the clipped
+        // projection where the view has one.
+        let reflection_camera =
+            |projection: glam::Mat4, unclipped: glam::Mat4| match views.reflected {
+                Some(_) => reflection_camera::Camera::clipped(camera.view, projection, unclipped),
+                None => reflection_camera::Camera::new(camera.view, projection),
+            };
+        views.reflection_camera = reflection_camera(raster_projection, camera.projection);
         if let Some(jitter) = jitter {
             // As Diligent's `TemporalAntiAliasing::GetJitteredProjMatrix`
             // and FSR's documented jitter translation apply it to the
             // projection, which the camera history records with the jitter
             // (`CameraFrame::jittered_projection`). Motion vectors stay
             // unjittered (`stable_view_projection`).
-            let projection = history.camera.jittered_projection();
+            let jittered = history.camera.jittered_projection();
+            let projection = clip(jittered);
             let raster = projection * camera.view;
             view.view_projection = raster.to_cols_array_2d();
             view.inverse_view_projection = raster.inverse().to_cols_array_2d();
             // vertex.wgsl offsets clip xy by 2 · jitter · w.
             view.jitter = [jitter.ndc[0] / 2., jitter.ndc[1] / 2.];
             view.mip_bias = jitter.mip_bias;
-            views.reflection_camera = reflection_camera::Camera::new(camera.view, projection);
+            views.reflection_camera = reflection_camera(projection, jittered);
         }
         let values = FrameValues { view, frame };
         crate::counters::write_buffer(queue, frame_buffer, 0, bytemuck::bytes_of(&frame));
@@ -403,6 +428,7 @@ impl Prepare {
             scene,
             camera_cull,
             effective.occlusion_culling,
+            views.reflected.map(|reflected| reflected.reflector),
         );
         views.camera.built(started);
         let lod = if world_space {

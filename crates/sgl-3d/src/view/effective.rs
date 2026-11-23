@@ -73,9 +73,13 @@ pub(crate) struct ScreenSpace {
     pub method: ReflectionMethod,
     /// Rays traced at half resolution.
     pub half_resolution: bool,
-    /// The perceptual roughness at and above which the method traces no
-    /// lobe, and the width of the fade below it over which composition
-    /// takes its result in (`specular_trace_fade` in specular_lobes.wgsl).
+}
+
+/// The perceptual roughness at and above which the frame's traced lobe
+/// takes no method's result, and the width of the fade below it
+/// (`specular_trace_fade` in specular_lobes.wgsl).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Trace {
     pub cutoff: f32,
     pub fade: f32,
 }
@@ -152,6 +156,12 @@ pub(crate) struct Effective {
     /// projection.
     pub screen_indirect: Option<ScreenIndirect>,
     pub screen_space: Option<ScreenSpace>,
+    /// The cutoff and fade under which a surface's traced lobe takes the
+    /// frame's method result: the screen-space method's while it runs, and
+    /// the selected method's while the view shows a planar reflector's
+    /// picture, which fills that result (the architecture's Frame, "Planar
+    /// reflections"), whether or not the method runs.
+    pub trace: Option<Trace>,
     /// What world-space rays reach where they fill the screen-space
     /// method's misses: Off without a method.
     pub world_space: WorldSpaceReflections,

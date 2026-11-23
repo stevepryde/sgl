@@ -32,6 +32,7 @@ pub(crate) mod motion_tiles;
 pub(crate) mod pipelines;
 pub(crate) mod population;
 pub(crate) mod post_fx;
+pub(crate) mod reflected_camera;
 pub(crate) mod reflection_camera;
 pub(crate) mod targets;
 pub(crate) mod trace_paths;
@@ -621,6 +622,25 @@ pub(crate) struct FrameViews {
     /// Every CPU-built draw list's instances this frame: the blended
     /// list's and the local-light shadow faces'.
     pub instances: draw_list::DrawInstances,
+    /// A reflected view's reflector (the architecture's Frame, "Planar
+    /// reflections"), which the renderer sets before prepare: none for any
+    /// other view.
+    pub reflected: Option<Reflected>,
+    /// The planar reflectors the view shows in this frame, which the
+    /// renderer sets before prepare: their surfaces' pictures move while
+    /// their own motion stands still (the register's M-16).
+    pub mirrors: Vec<crate::PlanarReflectorId>,
+}
+
+/// What makes a view the reflected view of a planar reflector.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Reflected {
+    /// The reflector, whose materials' surfaces the camera does not draw:
+    /// they are the mirror its picture is seen in.
+    pub reflector: crate::PlanarReflectorId,
+    /// Its plane in world space (unit normal, d), which is the camera's
+    /// near plane (`reflected_camera::oblique`).
+    pub plane: glam::Vec4,
 }
 
 impl FrameViews {
@@ -635,6 +655,8 @@ impl FrameViews {
             cascade_count: 0,
             reflection_camera: reflection_camera::Camera::new(Mat4::IDENTITY, Mat4::IDENTITY),
             instances: draw_list::DrawInstances::default(),
+            reflected: None,
+            mirrors: Vec::new(),
         }
     }
 }

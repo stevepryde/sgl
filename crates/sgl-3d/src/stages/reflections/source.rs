@@ -167,6 +167,9 @@ pub(crate) struct Variant {
     /// Completion writes the incident radiance, which only a screen-space
     /// method reads.
     pub incident: bool,
+    /// A method's result is composed: a screen-space method's, a planar
+    /// reflector's picture, or both.
+    pub composition: bool,
 }
 
 /// Source completion and screen-space composition compiled for one variant,
@@ -174,7 +177,8 @@ pub(crate) struct Variant {
 struct Completion {
     pipeline: wgpu::ComputePipeline,
     group: CachedGroup,
-    /// Only the variants producing incident radiance have a composition pass.
+    /// Only the variants that compose a method's result have a composition
+    /// pass.
     composition: Option<Composition>,
 }
 
@@ -211,7 +215,7 @@ fn completion(device: &wgpu::Device, shader: &wgpu::ShaderModule, variant: Varia
         group: CachedGroup::new(pipeline.get_bind_group_layout(0)),
         pipeline,
         composition: variant
-            .incident
+            .composition
             .then(|| composition(device, shader, compilation_options())),
     }
 }
@@ -487,7 +491,7 @@ impl ReflectionSource {
             .completions
             .get_mut(&self.variant)
             .and_then(|passes| passes.composition.as_mut())
-            .expect("screen-space composition follows incident radiance");
+            .expect("the variant composes a method's result");
         let group =
             composition
                 .group

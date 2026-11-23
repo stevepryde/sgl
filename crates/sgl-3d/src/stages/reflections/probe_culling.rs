@@ -26,16 +26,29 @@ struct CullingCamera {
 impl CullingCamera {
     /// Wicked's culling works in a left-handed view space with depth forward;
     /// SGL's views are right-handed, so view depth is mirrored.
+    ///
+    /// The tiles' frusta and the near plane come from the projection
+    /// without an oblique near plane's clip, and `z_near.y` then tells the
+    /// cull that the frame's device depths are not that projection's, so
+    /// each tile takes the frustum's whole depth: under the clip a device
+    /// depth gives a view depth only with its pixel, which the cull's
+    /// bounds, taken per tile, do not have.
     fn new(camera: reflection_camera::Camera) -> Self {
         let mirror = glam::Mat4::from_scale(glam::Vec3::new(1., 1., -1.));
         let view = glam::Mat4::from_cols_array_2d(&camera.view);
-        let inverse_projection = mirror * glam::Mat4::from_cols_array_2d(&camera.proj).inverse();
+        let projection = camera.unclipped.unwrap_or(camera.proj);
+        let inverse_projection = mirror * glam::Mat4::from_cols_array_2d(&projection).inverse();
         let near = inverse_projection * glam::Vec4::new(0., 0., 1., 1.);
         Self {
             view: (mirror * view).to_cols_array_2d(),
             inverse_view: (view.inverse() * mirror).to_cols_array_2d(),
             inverse_projection: inverse_projection.to_cols_array_2d(),
-            z_near: [near.z / near.w, 0., 0., 0.],
+            z_near: [
+                near.z / near.w,
+                f32::from(u8::from(camera.unclipped.is_some())),
+                0.,
+                0.,
+            ],
         }
     }
 }

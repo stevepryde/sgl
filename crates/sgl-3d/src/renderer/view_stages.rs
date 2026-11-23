@@ -35,12 +35,17 @@ pub(super) enum Role {
     Secondary,
 }
 
-/// What a view draws in a frame: its input, the texture it draws into and
-/// its timing.
+/// What a view draws in a frame: its input, the texture it draws into,
+/// none for a planar reflector's reflected view, whose composite is its
+/// picture, the pictures of the planar reflectors it shows, and its timing.
 #[derive(Clone, Copy)]
 pub(super) struct Drawn<'a> {
     pub input: &'a FrameInput,
-    pub output: &'a wgpu::TextureView,
+    pub output: Option<&'a wgpu::TextureView>,
+    pub pictures: &'a [crate::stages::reflections::planar::Picture],
+    /// It holds a reflected view, shown in this frame or kept, so its
+    /// reflections keep the planar method.
+    pub keeps_pictures: bool,
     pub timing: Option<&'a GpuTiming>,
 }
 
@@ -288,7 +293,10 @@ pub(super) fn begin_view(
 /// transparent stage's receivers and volume layers, reflections with the
 /// transparent stage drawn into their input (while a screen-space method
 /// traces it) and onto their result, heat, exposure, antialiasing, the HDR
-/// effect, depth of field, motion blur, then post.
+/// effect, depth of field, motion blur, then post. A planar reflector's
+/// reflected view stops after the transparent stage: its composite,
+/// scene-referred radiance before exposure, is its picture (the
+/// architecture's Frame, "Planar reflections").
 pub(super) fn finish_view(
     shared: &mut Shared,
     view: &mut View,
@@ -300,6 +308,8 @@ pub(super) fn finish_view(
     let Drawn {
         input,
         output,
+        pictures,
+        keeps_pictures,
         timing,
     } = drawn;
     let Begun {
@@ -442,7 +452,12 @@ pub(super) fn finish_view(
             crate::stages::transparent::Beauty::Incident(incident),
         );
     }
-    let reflected = reflections.resolve(&mut ctx, post_fx.as_deref_mut(), ambient_occlusion);
+    let reflected = reflections.resolve(
+        &mut ctx,
+        post_fx.as_deref_mut(),
+        ambient_occlusion,
+        (pictures, keeps_pictures),
+    );
     transparent.encode(
         &mut ctx,
         crate::stages::transparent::Beauty::Composite {
@@ -460,6 +475,11 @@ pub(super) fn finish_view(
             true,
         );
     }
+    // A planar reflector's reflected view stops here: its composite is its
+    // picture. The frame probe never observes one (`frame::render`).
+    let Some(output) = output else {
+        return;
+    };
     if effective.composite.heat {
         transparent.encode_heat(&mut ctx, &targets.composite);
     }

@@ -180,6 +180,17 @@ pub enum SceneError {
     UnknownRenderTexture,
     /// A material names the render texture.
     RenderTextureInUse,
+    /// The planar reflector was removed, or another scene issued its
+    /// identity; or a material names such a reflector.
+    UnknownPlanarReflector,
+    /// A material names the planar reflector.
+    PlanarReflectorInUse,
+    /// A planar reflector's origin is not finite or its normal has no
+    /// direction.
+    InvalidPlanarReflector,
+    /// A blended or transmissive material names a planar reflector, which
+    /// opaque and masked materials alone show.
+    BlendedPlanarReflector,
     /// The live specular probe was removed, or another scene issued its
     /// identity.
     UnknownLiveSpecularProbe,
@@ -333,6 +344,14 @@ impl std::fmt::Display for SceneError {
             Self::ShaderInUse => "a material names the shader",
             Self::UnknownRenderTexture => "the render texture is not in this scene",
             Self::RenderTextureInUse => "a material names the render texture",
+            Self::UnknownPlanarReflector => "the planar reflector is not in this scene",
+            Self::PlanarReflectorInUse => "a material names the planar reflector",
+            Self::InvalidPlanarReflector => {
+                "a planar reflector needs a finite origin and a normal with a direction"
+            }
+            Self::BlendedPlanarReflector => {
+                "only opaque and masked materials name a planar reflector"
+            }
             Self::UnknownLiveSpecularProbe => "the live specular probe is not in this scene",
             Self::ShaderParameters { expected, given } => {
                 return write!(

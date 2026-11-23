@@ -188,7 +188,9 @@ impl GpuList {
     /// when `late` and paired regions where its flags pair: grows its
     /// buffers to the scene's candidates, sets and regions, uploads the cull
     /// and chooses the sets it draws, those its population can show under
-    /// the frame's mask.
+    /// the frame's mask, but for the camera's sets of the materials that
+    /// name `mirror`, a reflected view's own reflector, whose surfaces are
+    /// the mirror its picture is seen in.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -196,6 +198,7 @@ impl GpuList {
         scene: &Scene,
         mut view: CullView,
         late: bool,
+        mirror: Option<crate::PlanarReflectorId>,
     ) {
         let candidates = scene.candidates.end();
         let sets = &scene.candidates.sets;
@@ -295,6 +298,7 @@ impl GpuList {
             let material = scene.drawn_material(key.material);
             let shown = if camera {
                 material.enabled(Some(view.visibility_mask))
+                    && (mirror.is_none() || material.values.planar_reflector != mirror)
             } else {
                 material.casts_directional_shadow(view.visibility_mask)
             };

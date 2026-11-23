@@ -217,6 +217,22 @@ map, and the picture has no mips.
 [Render textures](../README.md#render-textures),
 [`examples/monitor.rs`](../../../examples/sgl-3d/examples/monitor.rs).
 
+### A mirror or a water plane
+
+A flat surface that should mirror the scene, off-screen and moving things
+included, is a planar reflector: `Scene::add_planar_reflector(PlanarReflector::new(point, normal))`
+and `SurfaceMaterial::planar_reflector` on the material of the geometry
+that lies in that plane (`Scene::set_material`). There is no view to
+create, list or order. Make the material what the surface is: a metal of
+roughness 0 for a mirror, a dark low-roughness dielectric for water, with
+its normal map if it ripples. Each view that shows the surface renders the
+scene once more for it, so use it for the few surfaces that need it, pick
+the level with `Settings::planar_reflections`, and read
+`View::planar_reflections` for what each costs. Screen-space reflections,
+probes and world-space rays keep serving every other surface.
+[Planar reflections](../README.md#planar-reflections),
+[`examples/planar_reflections.rs`](../../../examples/sgl-3d/examples/planar_reflections.rs).
+
 The examples live in the repository, not the published crate:
 <https://github.com/stevepryde/sgl/tree/main/examples/sgl-3d/examples>.
 [`examples/offscreen.rs`](../../../examples/sgl-3d/examples/offscreen.rs) is the loop to copy

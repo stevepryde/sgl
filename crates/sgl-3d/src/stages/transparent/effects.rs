@@ -13,6 +13,7 @@ pub(crate) static GLOW: crate::shading::Module = crate::shading::Module {
         &crate::shading::BIND_UNLIT,
         &crate::shading::FRAME_FOG,
         &crate::shading::TEMPORAL_MASKS,
+        &crate::shading::VIEW_DEPTH,
     ],
 };
 /// The entry points the glow's pipelines are created with.

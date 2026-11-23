@@ -79,6 +79,11 @@ identity!(
     RenderTextureId
 );
 identity!(
+    /// A planar reflector of a scene: a plane whose materials' surfaces
+    /// mirror the scene.
+    PlanarReflectorId
+);
+identity!(
     /// A live specular probe of a scene: a probe the renderer refreshes on
     /// the GPU.
     LiveSpecularProbeId

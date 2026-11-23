@@ -8,17 +8,26 @@
 fn scene_depth_available()->bool {
  return true;
 }
-// The linear view depth in metres of device depth `z` under the view's
-// projection (view_depth.wgsl).
-fn scene_view_depth(z:f32)->f32 {
- return projected_view_depth(view.projection,z);
+// The share of device depth the view ray through `pixel`, a position in
+// the render target in texels, gives by its direction under the view's
+// projection (view_depth.wgsl): 0 but in a planar reflector's reflected
+// view. The view's jitter is removed: raster offsets clip xy by 2 jitter w.
+fn scene_oblique_depth(pixel:vec2<f32>)->f32 {
+ let ndc=vec2(pixel.x/view.viewport.x*2.-1.,1.-pixel.y/view.viewport.y*2.)-2.*view.jitter;
+ return view_oblique_depth(view.projection,ndc);
+}
+// The linear view depth in metres of device depth `z` on the view ray whose
+// direction gives `oblique` of it (scene_oblique_depth) under the view's
+// projection (view_depth.wgsl): SCENE_DEPTH_FAR at the sky.
+fn scene_view_depth(z:f32,oblique:f32)->f32 {
+ return projected_view_depth(view.projection,z,oblique);
 }
 // The linear view depth in metres of the opaque surface at `pixel`, a
 // position in the render target in texels: SCENE_DEPTH_FAR at the sky.
 fn scene_depth(pixel:vec2<f32>)->f32 {
  let last=vec2<i32>(textureDimensions(blended_scene_depth))-vec2(1);
  let texel=clamp(vec2<i32>(floor(pixel)),vec2(0),last);
- return scene_view_depth(textureLoad(blended_scene_depth,texel,0));
+ return scene_view_depth(textureLoad(blended_scene_depth,texel,0),scene_oblique_depth(pixel));
 }
 // The distance in metres along the fragment's view ray from it to the
 // opaque surface behind it, 0 where that surface is in front of it: along
@@ -61,13 +70,14 @@ fn scene_volume_path(ctx:SurfaceContext)->VolumePath {
  let last=vec2<i32>(textureDimensions(blended_scene_depth))-vec2(1);
  let texel=clamp(vec2<i32>(floor(ctx.pixel)),vec2(0),last);
  let opaque=textureLoad(blended_scene_depth,texel,0);
+ let slope=scene_oblique_depth(ctx.pixel);
  if ctx.front {
-  let to_opaque=scene_along_ray(ctx,scene_view_depth(opaque)-ctx.view_depth);
+  let to_opaque=scene_along_ray(ctx,scene_view_depth(opaque,slope)-ctx.view_depth);
   let exit=textureLoad(blended_volume_exit,texel,0);
   if exit<=opaque {
    return VolumePath(to_opaque,VOLUME_OPAQUE);
   }
-  let exit_depth=scene_view_depth(exit);
+  let exit_depth=scene_view_depth(exit,slope);
   if exit_depth>=ctx.view_depth {
    return VolumePath(scene_along_ray(ctx,exit_depth-ctx.view_depth),VOLUME_EXIT);
   }
@@ -75,7 +85,7 @@ fn scene_volume_path(ctx:SurfaceContext)->VolumePath {
   if second<=opaque {
    return VolumePath(to_opaque,VOLUME_OPAQUE);
   }
-  let second_depth=scene_view_depth(second);
+  let second_depth=scene_view_depth(second,slope);
   if second_depth>=ctx.view_depth {
    return VolumePath(scene_along_ray(ctx,second_depth-ctx.view_depth),VOLUME_EXIT);
   }
@@ -83,11 +93,11 @@ fn scene_volume_path(ctx:SurfaceContext)->VolumePath {
  }
  let from_eye=scene_along_ray(ctx,ctx.view_depth);
  let entry=textureLoad(blended_volume_entry,texel,0);
- let entry_depth=scene_view_depth(entry);
+ let entry_depth=scene_view_depth(entry,slope);
  let entered=entry>opaque && entry_depth<ctx.view_depth;
  let exit=textureLoad(blended_volume_exit,texel,0);
  let second=textureLoad(blended_volume_second_exit,texel,0);
- if !scene_exit_ahead(exit,opaque,ctx.view_depth) {
+ if !scene_exit_ahead(exit,opaque,ctx.view_depth,slope) {
   if entered {
    return VolumePath(scene_along_ray(ctx,ctx.view_depth-entry_depth),VOLUME_ENTRY);
   }
@@ -95,7 +105,7 @@ fn scene_volume_path(ctx:SurfaceContext)->VolumePath {
  }
  // Another exit lies in front: the entry starts this segment only where
  // every such exit, at most one, precedes it.
- if entered && exit>entry && !scene_exit_ahead(second,opaque,ctx.view_depth) {
+ if entered && exit>entry && !scene_exit_ahead(second,opaque,ctx.view_depth,slope) {
   return VolumePath(scene_along_ray(ctx,ctx.view_depth-entry_depth),VOLUME_ENTRY);
  }
  return VolumePath(from_eye,VOLUME_HIDDEN);
@@ -107,8 +117,8 @@ fn scene_volume_path(ctx:SurfaceContext)->VolumePath {
 // depth in f32), which this equality tolerance clears with margin.
 const SCENE_VOLUME_SAME_FACE:f32=1e-4;
 // Whether exit layer texel `exit` holds a face (nearer than the `opaque`
-// texel) in front of a back fragment at linear view depth `view_depth`,
-// other than its own.
-fn scene_exit_ahead(exit:f32,opaque:f32,view_depth:f32)->bool {
- return exit>opaque && scene_view_depth(exit)<view_depth*(1.-SCENE_VOLUME_SAME_FACE);
+// texel) in front of a back fragment at linear view depth `view_depth` on
+// the view ray of `slope` (scene_oblique_depth), other than its own.
+fn scene_exit_ahead(exit:f32,opaque:f32,view_depth:f32,slope:f32)->bool {
+ return exit>opaque && scene_view_depth(exit,slope)<view_depth*(1.-SCENE_VOLUME_SAME_FACE);
 }

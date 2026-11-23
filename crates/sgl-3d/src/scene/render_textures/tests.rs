@@ -205,7 +205,7 @@ fn screens_are_the_shown_meshes_that_name_a_render_texture_with_all_they_may_dra
     name(&mut scene, &queue, cube.materials[0], Some(texture)).expect("a screen");
     let screens = scene.screens();
     assert_eq!(screens.len(), 1, "one mesh of one shown instance");
-    assert_eq!(screens[0].texture, texture);
+    assert_eq!(screens[0].name, texture);
     assert_eq!(screens[0].pose, pose);
     assert_eq!(screens[0].bounds, [Vec3::splat(-half), Vec3::splat(half)]);
     // What a shader may move a vertex grows the bounds.

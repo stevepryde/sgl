@@ -147,6 +147,10 @@ pub struct View {
     pub(crate) rendered: Option<Pending>,
     /// The identity of the renderer that created the view (`Renderer::id`).
     pub(crate) renderer: u64,
+    /// The reflected views of the planar reflectors its last rendered frame
+    /// showed (`renderer::reflected`), dropped when a frame stops showing
+    /// theirs.
+    pub(crate) reflected: Vec<super::reflected::ReflectedView>,
     /// The numerical frame probe, once a frame asked for it.
     #[cfg(feature = "diagnostics")]
     pub(crate) probe: Option<crate::stages::frame_probe::FrameProbe>,
@@ -182,8 +186,8 @@ impl View {
         device_scale: f32,
         settings: &Settings,
     ) -> Result<Self, ViewError> {
-        Self::with_output(
-            renderer,
+        Self::create(
+            (&renderer.shared, renderer.id),
             (device, queue),
             crate::stages::post::Output::texture(output_format),
             output_size,
@@ -217,8 +221,8 @@ impl View {
             format: config.format,
             color_space: config.color_space,
         })?;
-        Self::with_output(
-            renderer,
+        Self::create(
+            (&renderer.shared, renderer.id),
             (device, queue),
             output,
             [config.width, config.height],
@@ -227,15 +231,16 @@ impl View {
         )
     }
 
-    fn with_output(
-        renderer: &Renderer,
+    /// A view of the renderer whose shared part is `shared` and identity
+    /// `renderer`, rendering into `output`.
+    pub(super) fn create(
+        (shared, renderer): (&Shared, u64),
         (device, queue): (&wgpu::Device, &wgpu::Queue),
         output: crate::stages::post::Output,
         output_size: [u32; 2],
         device_scale: f32,
         settings: &Settings,
     ) -> Result<Self, ViewError> {
-        let shared = &renderer.shared;
         let scene = effective::scene_size(
             output_size,
             settings.preset,
@@ -328,7 +333,8 @@ impl View {
             targets_generation: 0,
             finished: None,
             rendered: None,
-            renderer: renderer.id,
+            renderer,
+            reflected: Vec::new(),
             #[cfg(feature = "diagnostics")]
             probe: None,
             #[cfg(any(test, feature = "diagnostics"))]
@@ -457,6 +463,7 @@ impl View {
     /// follow its own last finished frame), and resolves its effective
     /// configuration, holding the surface's targets from a scene's first
     /// receiver on and the temporal masks while a writer can mark them.
+    /// `planar`: the frame shows a planar reflector's picture in it.
     pub(super) fn begin(
         &mut self,
         device: &wgpu::Device,
@@ -464,6 +471,7 @@ impl View {
         scene: &Scene,
         input: &FrameInput,
         settings: &Settings,
+        planar: bool,
     ) -> (HistoryFrame, Effective) {
         self.settle(true);
         let history = self.begin_history(scene, input);
@@ -473,7 +481,10 @@ impl View {
         let effective = effective::resolve(
             settings,
             input,
-            effective::SceneContent::of(scene, input),
+            effective::SceneContent {
+                planar,
+                ..effective::SceneContent::of(scene, input)
+            },
             shared.device(
                 self.antialiasing.fsr_running(),
                 self.cull.occlusion_supported(),

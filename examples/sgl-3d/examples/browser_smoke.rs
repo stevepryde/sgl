@@ -37,6 +37,10 @@
 //! Then a mirror shows a live specular probe refreshed under each pace: its
 //! centre must hold the colour of the last published cube in every frame,
 //! and the report gives the refresh passes' GPU time (`live_probe`).
+//! Then a mirror shows a source behind the viewer through a planar
+//! reflector: its centre must hold the colour the source has in that
+//! frame, and the report gives the frame's GPU time at two levels and
+//! without the picture, and what the reflected view draws (`mirror`).
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -1906,6 +1910,230 @@ async fn live_probe(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String
     ))
 }
 
+// A mirror that shows what is behind the viewer on the browser's WebGPU
+// (the architecture's Frame, "Planar reflections"). Plausible defects
+// there: Dawn refuses the reflected view's composite or depth sampled by
+// the viewer's reflections in the same command buffer; the reflected view
+// renders after the view that shows it, so the mirror shows the frame
+// before's picture. The fixture: a view before a mirror, and behind the
+// viewer a source that fills the mirror, whose colour changes every frame.
+// The oracle is the frames' known colours: the strong channel at the
+// mirror's centre is this frame's. The report adds the frame's GPU time at
+// `Half`, at `Full` and with the level `Off`, where the device has
+// timestamp queries, and what the reflected view drew.
+async fn mirror(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, String> {
+    use sgl_3d::settings::PlanarReflections;
+    const MAIN: [u32; 2] = [640, 360];
+    const WARM_UP: u64 = 8;
+    const MEASURED: u64 = 24;
+    let mut scene = Scene::new(device, queue);
+    let asset = |mesh: CpuMesh, material: Material| Asset {
+        meshes: vec![mesh],
+        materials: vec![material],
+        images: Vec::new(),
+        rig: Default::default(),
+        ignored: Vec::new(),
+        lights: Default::default(),
+        instanced: Vec::new(),
+    };
+    let add = |scene: &mut Scene, asset: Asset| -> Result<sgl_3d::MaterialId, String> {
+        let ids = scene
+            .add_asset(device, queue, asset)
+            .map_err(|e| format!("add_asset: {e}"))?;
+        scene
+            .add_instance(
+                device,
+                queue,
+                InstanceState::new(ids.model),
+                Mobility::Static,
+            )
+            .map_err(|e| format!("add_instance: {e}"))?;
+        Ok(ids.materials[0])
+    };
+    // A metal of roughness 0, 4 m ahead, facing the viewer.
+    let centre = Vec3::new(0., 0., -4.);
+    let glass = add(
+        &mut scene,
+        asset(
+            panel(centre, Vec3::X * 1.6, Vec3::Y * 0.9, 0),
+            material([1.; 4], 1., 0.),
+        ),
+    )?;
+    let reflector = scene
+        .add_planar_reflector(sgl_3d::PlanarReflector::new(centre, Vec3::Z))
+        .map_err(|e| format!("add_planar_reflector: {e}"))?;
+    let values = scene.material(glass).map_err(|e| e.to_string())?;
+    scene
+        .set_material(
+            queue,
+            glass,
+            SurfaceMaterial {
+                planar_reflector: Some(reflector),
+                ..values
+            },
+        )
+        .map_err(|e| format!("set_material: {e}"))?;
+    // Behind the viewer, outside its frustum: an unlit panel of one
+    // emitted colour.
+    let source = add(
+        &mut scene,
+        asset(
+            panel(Vec3::new(0., 0., 6.), Vec3::X * 12., Vec3::Y * 7., 0),
+            Material {
+                unlit: true,
+                double_sided: true,
+                ..material([0., 0., 0., 1.], 0., 1.)
+            },
+        ),
+    )?;
+    let output = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("mirror fixture output"),
+        size: wgpu::Extent3d {
+            width: MAIN[0],
+            height: MAIN[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let target = output.create_view(&Default::default());
+    let mut settings = Settings::default();
+    let mut renderer = Renderer::new(device);
+    let mut view = View::new(
+        &renderer,
+        device,
+        queue,
+        output.format(),
+        MAIN,
+        1.,
+        &settings,
+    )
+    .map_err(|e| format!("View::new: {e}"))?;
+    let input = FrameInput::new(Camera {
+        eye: Vec3::ZERO,
+        view: camera::rh::view::look_at_mat4(Vec3::ZERO, -Vec3::Z, Vec3::Y),
+        projection: sgl_3d::perspective(1., MAIN[0] as f32 / MAIN[1] as f32, 0.1),
+    });
+    let mut timing = GpuTiming::new(device, queue);
+    let mut frames = 0u64;
+    let levels = [
+        PlanarReflections::Half,
+        PlanarReflections::Full,
+        PlanarReflections::Off,
+    ];
+    let mut times: [Vec<f64>; 3] = Default::default();
+    let mut pictures = [String::new(), String::new()];
+    let colours = [[0.6, 0.02, 0.02], [0.02, 0.6, 0.02], [0.02, 0.02, 0.6]];
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    for (kind, level) in levels.into_iter().enumerate() {
+        settings.planar_reflections = level;
+        for index in 0..WARM_UP + MEASURED + if kind == 2 { 12 } else { 0 } {
+            if let Some(timing) = timing.as_mut() {
+                for timed in timing.begin_frame(device, queue) {
+                    // `GpuTiming` counts frames from 1.
+                    let frame = timed.frame - 1;
+                    let (arrangement, within) = (
+                        (frame / (WARM_UP + MEASURED)) as usize,
+                        frame % (WARM_UP + MEASURED),
+                    );
+                    if arrangement < 3 && within >= WARM_UP {
+                        times[arrangement].push(timed.total_ms);
+                    }
+                }
+            }
+            let colour = (frames % 3) as usize;
+            let values = scene.material(source).map_err(|e| e.to_string())?;
+            scene
+                .set_material(
+                    queue,
+                    source,
+                    SurfaceMaterial {
+                        emission: colours[colour],
+                        ..values
+                    },
+                )
+                .map_err(|e| format!("set_material: {e}"))?;
+            view.resize(device, MAIN, 1., &settings);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.render(
+                device,
+                queue,
+                &mut encoder,
+                &mut scene,
+                &mut [ViewFrame {
+                    view: &mut view,
+                    input: &input,
+                    settings: &settings,
+                    output: ViewOutput::Texture(&target),
+                    timing: timing.as_ref(),
+                }],
+            );
+            queue.submit([encoder.finish()]);
+            if let Some(timing) = timing.as_mut() {
+                timing.submitted(queue);
+            }
+            completed(queue).await?;
+            renderer.finish_frame(&mut scene);
+            frames += 1;
+            let shown = view.planar_reflections(device);
+            if (level == PlanarReflections::Off) != shown.is_empty() {
+                return Err(format!(
+                    "{level:?}, frame {index}: the view shows {} reflectors",
+                    shown.len()
+                ));
+            }
+            // The first frames of each level with a picture: the mirror
+            // holds this frame's colour.
+            if kind < 2 && index < 3 {
+                let pixels = sgl_3d::diagnostics::read_async(device, queue, &output, 4).await;
+                let at = ((MAIN[1] / 2 * MAIN[0] + MAIN[0] / 2) * 4) as usize;
+                let texel = &pixels[at..at + 3];
+                let strongest = (0..3).max_by_key(|&c| texel[c]).unwrap();
+                let others = (0..3).filter(|&c| c != strongest).map(|c| texel[c]).max();
+                if strongest != colour
+                    || u16::from(texel[strongest]) < 2 * u16::from(others.unwrap())
+                {
+                    return Err(format!(
+                        "{level:?}, frame {index}: the mirror's centre holds {texel:?}, not this frame's colour {colour}"
+                    ));
+                }
+            }
+            if let (Some(stats), Some(picture)) = (shown.first(), pictures.get_mut(kind)) {
+                let drawn = stats.geometry.map_or(String::new(), |geometry| {
+                    format!(
+                        ", {} draws of {} triangles",
+                        geometry.static_instances.0 + geometry.moving_instances.0,
+                        geometry.static_instances.1 + geometry.moving_instances.1
+                    )
+                });
+                *picture = format!("{}x{} picture{drawn}", stats.size[0], stats.size[1]);
+            }
+        }
+    }
+    if let Some(error) = validation.pop().await {
+        return Err(format!("validation error: {error}"));
+    }
+    let median = |values: &mut Vec<f64>| {
+        values.sort_by(f64::total_cmp);
+        values.get(values.len() / 2).copied()
+    };
+    let [half, full, off] = times.each_mut().map(median);
+    let [half_picture, full_picture] = pictures;
+    Ok(match (half, full, off) {
+        (Some(half), Some(full), Some(off)) => format!(
+            "this frame's colour in 3 frames at each level; GPU median {half:.3} ms at Half ({half_picture}), {full:.3} ms at Full ({full_picture}), {off:.3} ms at Off ({MEASURED} frames each, view {}x{})",
+            MAIN[0], MAIN[1]
+        ),
+        _ => format!(
+            "this frame's colour in 3 frames at each level; Half {half_picture}, Full {full_picture}; no GPU timestamps"
+        ),
+    })
+}
+
 // Exercise the public constructors on real browser WebGPU. Defects: float
 // textures encoded as canvases, actual canvas transfer omitted, or changing
 // Settings::tone_mapping not reaching the GPU. The oracle is independently
@@ -2410,6 +2638,19 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         }
         Err(error) => {
             let _ = writeln!(report, "FAIL live specular probe: {error}");
+        }
+    }
+    let mirrored = mirror(&device, &queue).await;
+    let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
+    match mirrored {
+        Ok(_) if !errors.is_empty() => {
+            let _ = writeln!(report, "FAIL planar reflection: uncaptured {errors:?}");
+        }
+        Ok(detail) => {
+            let _ = writeln!(report, "ok planar reflection: {detail}");
+        }
+        Err(error) => {
+            let _ = writeln!(report, "FAIL planar reflection: {error}");
         }
     }
     let mut timing = GpuTiming::new(&device, &queue);

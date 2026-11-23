@@ -90,10 +90,13 @@ fn soft_fade(i:Glow)->f32 {
  if z<=0. {
   return 1.;
  }
- // Solve z_ndc=(P22*z_view+P32)/(P23*z_view+P33).
- // This works for conventional perspective and orthographic projections.
- let p=view.projection;
- let scene_depth=(p[3][2]-z*p[3][3])/(p[2][2]-z*p[2][3]);
+ // Whatever projection the view has, a planar reflector's reflected
+ // view's clipped one among them (view_depth.wgsl).
+ // The fragment's unjittered position: raster offsets clip xy by 2
+ // jitter w.
+ let ndc=vec2(i.clip.x/view.viewport.x*2.-1.,1.-i.clip.y/view.viewport.y*2.)-2.*view.jitter;
+ let oblique=view_oblique_depth(view.projection,ndc);
+ let scene_depth=projected_view_depth(view.projection,z,oblique);
  return clamp((scene_depth-i.view_depth)/i.soft_distance,0.,1.);
 }
 fn glow_soft_color(i:Glow)->vec4<f32> {

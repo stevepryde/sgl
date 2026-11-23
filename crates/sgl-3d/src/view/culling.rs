@@ -4,6 +4,16 @@ use crate::scene::static_edits::grown;
 use glam::{DMat4, DVec4, Mat4, Vec3};
 use std::ops::Range;
 
+/// The scale that widens a projection's image, of `render` pixels, by a
+/// render pixel on each side, more than antialiasing's jitter moves it:
+/// what the frame's CPU tests of what a view shows (a screen, a planar
+/// reflector's surface) take the view's frustum with, so a surface the
+/// jitter brings into view is counted.
+pub(crate) fn widening(render: [u32; 2]) -> glam::Vec2 {
+    let size = glam::Vec2::new(render[0] as f32, render[1] as f32);
+    size / (size + 2.)
+}
+
 pub(crate) struct Frustum {
     planes: [DVec4; 6],
     error: [DVec4; 6],

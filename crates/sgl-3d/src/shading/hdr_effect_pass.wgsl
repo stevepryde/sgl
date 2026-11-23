@@ -40,7 +40,9 @@ fn effect_device_depth(uv:vec2<f32>)->f32 {
  return textureLoad(effect_depth,texel,0);
 }
 fn effect_view_depth(uv:vec2<f32>)->f32 {
- return projected_view_depth(effect_frame.projection,effect_device_depth(uv));
+ let ndc=vec2(uv.x*2.-1.,1.-uv.y*2.);
+ let oblique=view_oblique_depth(effect_frame.projection,ndc);
+ return projected_view_depth(effect_frame.projection,effect_device_depth(uv),oblique);
 }
 // The unit view-space direction of the view ray through `uv`, away from the
 // camera: between two of its points the inverse projection gives, at the

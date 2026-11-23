@@ -219,6 +219,11 @@ settings SGL3D has today.
    image, linear, scaled by the emission factor; the view that shows the
    surface then applies its own display transform once, as a camera sees a
    lit screen, and nothing is encoded twice.
+   A planar reflector's picture is scene-referred instead: its reflected
+   view's linear radiance before exposure and tone mapping, which the
+   surface that shows it reflects as it reflects any light and the view
+   that shows the surface exposes and tone maps once
+   ([architecture](sgl3d-architecture.md#frame), "Planar reflections").
    The tone mapper is an explicit artistic choice in `Settings::tone_mapping`:
    Khronos PBR Neutral by default, Three.js ACES Filmic, or Filament AgX with its look.
    Grading adjustments remain neutral by default.
