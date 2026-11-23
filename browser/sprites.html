@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SGL3D browser sprite cost measurement</title>
+<link rel="icon" href="data:,">
+<pre id="report">measuring…</pre>
+<script type="module">
+  import init, { measure } from "./browser_sprites.js";
+  const out = document.getElementById("report");
+  const query = new URLSearchParams(location.search);
+  try {
+    await init();
+    const report = await measure(Number(query.get("count") ?? 10000), Number(query.get("frames") ?? 120));
+    out.textContent = report;
+    window.__sglReport = report;
+  } catch (error) {
+    out.textContent = `FAIL init: ${error}`;
+    window.__sglReport = `FAIL init: ${error}\n`;
+  }
+</script>

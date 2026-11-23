@@ -124,12 +124,14 @@ pub(crate) struct CompositeDraws {
     /// Heat distortion is drawn: the scene holds some and
     /// `Settings::heat_distortion` is on.
     pub heat: bool,
+    /// The scene holds a sprite batch with sprites.
+    pub sprites: bool,
 }
 
 impl CompositeDraws {
     /// Whether anything draws that marks the masks.
     pub fn any(self) -> bool {
-        self.blended || self.moving_surfaces || self.glow || self.mist || self.heat
+        self.blended || self.moving_surfaces || self.glow || self.mist || self.heat || self.sprites
     }
 }
 

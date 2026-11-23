@@ -25,6 +25,15 @@ pub enum SceneError {
     ModelInUse,
     /// A decal uses the decal image, or a light projects it as its cookie.
     DecalImageInUse,
+    /// The sprite image was removed, or another scene issued its identity;
+    /// or a batch names such an image.
+    UnknownSpriteImage,
+    /// The sprite batch was removed, or another scene issued its identity.
+    UnknownSpriteBatch,
+    /// A sprite batch shows the sprite image.
+    SpriteImageInUse,
+    /// A sprite or a sprite batch has a value outside its documented range.
+    InvalidSprite,
     /// A material names an image index beyond the images added with it.
     MissingImage,
     /// An asset's mesh names a material index beyond the asset's materials.
@@ -230,6 +239,12 @@ impl std::fmt::Display for SceneError {
             Self::MaterialInUse => "a model's mesh uses the material",
             Self::ModelInUse => "an instance uses the model, or it is a level of detail",
             Self::DecalImageInUse => "a decal or a light's cookie uses the decal image",
+            Self::UnknownSpriteImage => "the sprite image is not in this scene",
+            Self::UnknownSpriteBatch => "the sprite batch is not in this scene",
+            Self::SpriteImageInUse => "a sprite batch shows the sprite image",
+            Self::InvalidSprite => {
+                "a sprite's position, size, pivot, rotation and region must be finite, its size and tint nonnegative and its alpha in 0..1; a batch's axis finite and nonzero and its cutoff in 0..1"
+            }
             Self::MissingImage => "a material names an image that was not added with it",
             Self::MissingMaterial => "a mesh names a material the asset does not have",
             Self::MissingMesh => "the model has no mesh at that index",

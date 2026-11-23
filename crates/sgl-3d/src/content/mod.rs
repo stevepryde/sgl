@@ -32,6 +32,7 @@ pub(crate) mod model;
 pub(crate) mod planar_reflector;
 pub(crate) mod render_texture;
 pub mod shader;
+pub(crate) mod sprite;
 pub(crate) mod srgb;
 pub mod static_lighting;
 pub(crate) mod transient;

@@ -26,7 +26,8 @@ pub use content::dynamic_gi::DynamicGiVolume;
 pub use content::hdr_effect::HdrEffect;
 pub use content::identity::{
     DecalId, DecalImageId, EnvironmentId, HdrEffectId, InstanceId, LightId, LiveSpecularProbeId,
-    MaterialId, ModelId, PlanarReflectorId, RenderTextureId, ShaderId,
+    MaterialId, ModelId, PlanarReflectorId, RenderTextureId, ShaderId, SpriteBatchId,
+    SpriteImageId,
 };
 pub use content::instance::{InstanceState, Mobility};
 pub use content::irradiance_volume::{IrradianceCell, IrradianceVolume};
@@ -69,6 +70,12 @@ pub use view::draw_list::GeometryStats;
 pub mod lod {
     pub use crate::content::lod::MeshLod;
     pub use crate::shading::culling::MAX_MESH_LODS;
+}
+/// Textured world-space sprites (`Scene::add_sprite_batch`).
+pub mod sprite {
+    pub use crate::content::sprite::{
+        Sprite, SpriteBatch, SpriteBlend, SpriteFacing, SpriteRegion, SpriteSizing,
+    };
 }
 /// Caller-authored additive geometry.
 pub mod effects {

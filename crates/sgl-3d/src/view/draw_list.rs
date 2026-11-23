@@ -77,6 +77,8 @@ pub(crate) struct DrawBatch {
     ranges: Range<usize>,
     /// Its instances in `DrawList::instances`, in draw order.
     instances: Range<u32>,
+    /// A blended list's: the depth it is sorted by, of its first draw.
+    depth: f32,
 }
 
 /// A view's draws, reused from frame to frame.
@@ -162,9 +164,9 @@ impl DrawList {
             }
         }
         let merged = (&self.ranges[..], &mut self.batches, &mut self.instances);
-        if matches!(population, Population::Blended { .. }) {
+        if let Population::Blended { barriers, .. } = population {
             self.batcher.sort_by_depth(depth_in(scene, view));
-            self.batcher.merge_adjacent(merged);
+            self.batcher.merge_adjacent(merged, barriers);
         } else {
             self.batcher.bin(merged);
         }
@@ -194,7 +196,7 @@ impl DrawList {
         // Whether its meshes draw by their culling ranges, as the camera's
         // blended surfaces and a culled probe face do, or whole.
         let (camera, lod, culled) = match population {
-            Population::Blended { lod, cull } => (true, lod.as_ref(), *cull),
+            Population::Blended { lod, cull, .. } => (true, lod.as_ref(), *cull),
             Population::ProbeFace { culled: true, .. } => (true, None, true),
             _ => (false, None, false),
         };
@@ -255,6 +257,7 @@ impl DrawList {
                     drawn,
                 ),
                 order: (rank, mesh_index as u32),
+                depth: 0.,
             });
         }
     }
@@ -327,6 +330,7 @@ impl DrawList {
                 ranges: start..self.ranges.len(),
                 instance: draw_instance(index, model.ray.mesh_word(mesh_index), instance, mesh),
                 order: (rank, mesh_index as u32),
+                depth: 0.,
             });
         }
     }
@@ -368,6 +372,7 @@ impl DrawList {
                 ranges: start..self.ranges.len(),
                 instance: draw_instance(index, model.ray.mesh_word(mesh_index), instance, mesh),
                 order: (rank, mesh_index as u32),
+                depth: 0.,
             });
         }
     }
@@ -410,20 +415,33 @@ impl DrawList {
         &self.instances[batch.instances.start as usize..batch.instances.end as usize]
     }
 
-    /// The draw calls `draw` issues, in order: each batch's index ranges in
-    /// turn, each drawn for all the batch's instances.
-    fn calls(&self) -> impl Iterator<Item = (&DrawBatch, &Range<u32>)> {
-        self.batches.iter().flat_map(|batch| {
+    /// The draw calls `draw_batches` issues for its batches `batches`, in
+    /// order: each batch's index ranges in turn, each drawn for all the
+    /// batch's instances.
+    fn calls(&self, batches: Range<usize>) -> impl Iterator<Item = (&DrawBatch, &Range<u32>)> {
+        self.batches[batches].iter().flat_map(|batch| {
             self.ranges[batch.ranges.clone()]
                 .iter()
                 .map(move |range| (batch, range))
         })
     }
 
+    /// How many of a blended list's batches, back to front, lie farther
+    /// than view-space Z `depth`: those drawn before a sprite batch there.
+    /// A batch never spans it (`Population::Blended`'s barriers).
+    pub fn batches_before(&self, depth: f32) -> usize {
+        self.batches.partition_point(|batch| batch.depth < depth)
+    }
+
+    /// How many batches it holds.
+    pub fn batch_count(&self) -> usize {
+        self.batches.len()
+    }
+
     /// The draw calls `draw` issues.
     #[cfg(any(test, feature = "diagnostics"))]
     pub fn draws(&self) -> usize {
-        self.calls().count()
+        self.calls(0..self.batches.len()).count()
     }
 
     /// Its submitted draws of the instances of each model it draws: the

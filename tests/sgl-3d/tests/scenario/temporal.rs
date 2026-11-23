@@ -589,3 +589,30 @@ pub fn vacated(scenario: &Scenario, shape: usize, frames: u32, reach: f32) -> Ve
 pub fn ahead(camera: Pose, distance: f32) -> Pose {
     camera.then(Pose::at(Vec3::new(0., -0.2, -distance)))
 }
+
+/// The motion-adaptive resolve's blend (Frame item 11; `sgl-post-fx`
+/// PROVENANCE.md, "Motion-adaptive TAA"): the current frame's weight at
+/// full strength, 1 - 0.88, and Filament's floors at rest, 0.3 of that
+/// weight and 0.1 of the variance box's rectification.
+pub const FEEDBACK: f32 = 1. - 0.88;
+pub const FEEDBACK_FLOOR: f32 = 0.3;
+pub const BOX_FLOOR: f32 = 0.1;
+
+/// The share of a pixel's error against the current frame, in the blend
+/// space v / (1 + v), that one resolve at `strength` (0 at rest, 1 full)
+/// leaves where its 3x3 neighbourhood is uniform: the variance box then has
+/// no extent, so rectification moves history `BOX_FLOOR + (1 - BOX_FLOOR)
+/// strength` of the way to the current sample, and the blend keeps `1 -
+/// FEEDBACK (FEEDBACK_FLOOR + (1 - FEEDBACK_FLOOR) strength)` of what
+/// remains. Frame item 11 sets both at full strength in proportion to the
+/// mask; at rest unmarked, 0.9 x 0.964 = 0.868 survives, the "13% a frame"
+/// of #795.
+pub fn survives(strength: f32) -> f32 {
+    let rectified = BOX_FLOOR + (1. - BOX_FLOOR) * strength;
+    let current = FEEDBACK * (FEEDBACK_FLOOR + (1. - FEEDBACK_FLOOR) * strength);
+    (1. - rectified) * (1. - current)
+}
+
+pub fn sdr(v: f32) -> f32 {
+    v / (1. + v)
+}

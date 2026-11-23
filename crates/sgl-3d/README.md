@@ -28,7 +28,7 @@ This page is the detailed reference:
 - [Reflections](#reflections), [TAA, SMAA and FSR](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion), [screen-space indirect light](#screen-space-indirect-light)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [HDR effects](#hdr-effects), [depth of field](#depth-of-field), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [live specular probes](#live-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
-- [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [programmable surfaces](#programmable-surfaces), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
+- [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [programmable surfaces](#programmable-surfaces), [mesh LOD](#spatial-mesh-lod), [sprites](#world-space-sprites), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
 - [Settings and fallbacks](#settings-and-capability-fallback), [binding tiers](#binding-tiers), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
 
 ## Dependencies and data conventions
@@ -4474,6 +4474,79 @@ blended draws that hold one, with their triangles. For several models, call
 for each model. The borrowed report holds one completed camera frame while
 those lookups run. `None` means no readback has completed. When a newer
 readback is pending, the previous completed report remains available.
+
+## World-space sprites
+
+A sprite batch draws textured quads in the world, each facing the view
+that draws it, as one instanced draw: hit markers, foliage cards, flipbook
+particles. The game simulates and places them; HUD sprites belong to
+`sgl-2d`.
+
+```rust,ignore
+use sgl_3d::sprite::{Sprite, SpriteBatch, SpriteBlend, SpriteFacing, SpriteRegion};
+let sheet = scene.add_sprite_image(&device, &queue, &image)?;
+let smoke = scene.add_sprite_batch(&SpriteBatch::new(sheet))?;
+let cards = scene.add_sprite_batch(&SpriteBatch {
+    facing: SpriteFacing::Axis(Vec3::Y),
+    blend: SpriteBlend::Masked { cutoff: 0.5 },
+    ..SpriteBatch::new(leaf)
+})?;
+// Each frame the particles move; the cards were set once.
+scene.set_sprites(&device, &queue, smoke, &puffs.iter().map(|p| Sprite {
+    region: SpriteRegion::cell(4, 4, p.frame),
+    tint: [1., 1., 1., p.alpha],
+    ..Sprite::new(p.position, Vec2::splat(p.size))
+}).collect::<Vec<_>>())?;
+```
+
+- **Image.** `Scene::add_sprite_image` uploads an `asset::Image` once as
+  sRGB colour with its mips; batches name it and `remove_sprite_image`
+  refuses while one does. A batch samples it with its `asset::Sampler`
+  (nearest filters for pixel art); anisotropic filtering does not apply.
+  Pad an atlas's cells so their mips do not bleed.
+- **Sprite.** Its pivot's world `position`, `size` (metres, or with
+  `SpriteSizing::Fixed` its size at 1 m of view depth, kept on screen as
+  three.js's `sizeAttenuation` off), `pivot` ((0, 0) bottom left, (1, 1)
+  top right, three.js's `center`), `rotation` (radians, anticlockwise as the
+  view sees it, about the pivot), `region` (UV, v down; `SpriteRegion::cell`
+  for a grid's cell, row by row from the top left) and linear `tint`, whose
+  RGB above 1 glows. A flipbook is the game advancing `region`.
+- **Facing**, resolved per view in the vertex stage: `SpriteFacing::Camera`
+  lies in the view's image plane (three.js r187's `Sprite`, Godot's
+  `BILLBOARD_ENABLED`); `Axis(axis)` stays upright along the axis, turned to
+  the view (Godot's `BILLBOARD_FIXED_Y`). Every view, a split-screen half,
+  a render-texture view or a planar reflector's reflected view alike,
+  faces it with its own camera, so a mirror shows it mirrored as it shows
+  geometry; a game's view whose matrix mirrors shows it unmirrored, as
+  three.js does.
+- **Blending.** `SpriteBlend::Blended` (the default) blends premultiplied,
+  writes no depth, and is ordered back to front: within a batch exactly,
+  its quads being parallel, each view re-sorting and uploading the order
+  only when the batch, its facing or (for upright cards) its eye changed;
+  among blended surfaces by its bounds' centre, as a mesh is.
+  `Masked { cutoff }` is opaque where alpha reaches the cutoff: it writes
+  depth and motion before reflections and the temporal stages, so it
+  occludes, is focused and reprojects as opaque geometry, and needs no
+  sorting.
+- **Look.** Unlit, as three.js's `SpriteMaterial` and Godot's `Sprite3D`
+  default to: texel times tint, fogged where it lies. No shadow; probe
+  captures do not show sprites.
+- **Temporal antialiasing.** A masked sprite's motion is the camera's
+  reprojection of the point it covers; in a frame its batch changed it
+  marks its pixels, and where its sprites stood in the last frame, for
+  FSR's and TAA's transparency-and-composition mask, so a moved, cleared
+  or animated sprite takes the current frame and leaves nothing behind.
+  Removing a drawn masked batch, or changing its look, marks what it drew
+  in the next frame, and nothing else. Blended sprites mark both masks by
+  their alpha, as blended surfaces do.
+- **Cost.** `set_sprites` uploads the batch's records (64 bytes a sprite)
+  once; identical sprites upload nothing. An empty scene or batch creates
+  no buffer, pipeline or pass. The pipelines are one compile job
+  (`Renderer::compile`).
+
+The `sprites` example draws foliage cards, hit markers and a flipbook;
+`sprites --compare N` and `bun scripts/tasks.ts measure-browser --sprites`
+measure N sprites against game-built quads through the model path.
 
 ## Soft additive effects
 

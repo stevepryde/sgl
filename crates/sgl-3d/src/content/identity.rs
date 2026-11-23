@@ -79,6 +79,15 @@ identity!(
     RenderTextureId
 );
 identity!(
+    /// An image a scene's sprite batches show.
+    SpriteImageId
+);
+identity!(
+    /// A batch of a scene's sprites: textured world-space quads drawn
+    /// together.
+    SpriteBatchId
+);
+identity!(
     /// A planar reflector of a scene: a plane whose materials' surfaces
     /// mirror the scene.
     PlanarReflectorId

@@ -596,6 +596,13 @@ window thread.
   `Settings::fog_quality` its resolution and `Settings::fog_filter` its
   blur; SGL3D spaces its slices and weights its history.
   [Volumetric fog](../README.md#volumetric-fog).
+- **Sprites**: batches of textured world-space quads, one instanced draw
+  each (`Scene::add_sprite_batch`, `set_sprites`, `sprite::Sprite`):
+  facing the view's image plane or upright along an axis
+  (`SpriteFacing`), blended and sorted or masked with depth and motion
+  (`SpriteBlend`), sized in metres or kept on screen (`SpriteSizing`), an
+  atlas cell each (`SpriteRegion::cell`, a flipbook the game advances),
+  unlit, tinted and fogged. [Sprites](../README.md#world-space-sprites).
 - **Mist**: positioned billboards (`Scene::update_mist`, their look and
   drift `FrameInput::mist`, which `Mist::default()` hides), while
   `FrameInput::atmosphere` is on.

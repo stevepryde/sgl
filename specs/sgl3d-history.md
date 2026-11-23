@@ -72,10 +72,12 @@ contract a game follows:
 - Change `FrameInput::visibility_mask`, models, geometry and what a material
   draws only when the content changes: each re-arms antialiasing across the
   view (F-10, M-9).
-- Expect surfaces under blended materials, glow, mist, heat distortion and
+- Expect surfaces under blended materials, blended sprites, glow, mist,
+  heat distortion and
   materials whose normal layers move or whose shader reads the time never to
   reach antialiasing's resting stability: they are marked as changing every
-  frame (M-11, M-16, M-17a to M-17c). Set a shader's parameters and an
+  frame (M-11, M-16, M-17a to M-17c, M-22). Set a masked sprite batch's
+  sprites only when they change (M-21). Set a shader's parameters and an
   instance's shader data only when they change: each change marks the
   material's surfaces for that frame (M-16); writing the values in effect
   marks nothing.
@@ -107,8 +109,8 @@ Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`):
 | `HistoryFrame::visibility_changed` | `CameraHistory::begin` | `FrameInput::visibility_mask` differs from the last finished frame's and history is valid | when a frame with the new mask is finished | TAA's `rigid_object_motion` only; FSR never sees it |
 | `Scene::rigid_objects_changed()` | `Instances` (add, `set_instance`, remove, `geometry_changed`), `Scene::set_model`, `Scene::set_material` | see M-9 | a finished frame, for what was raised before it began (`Scene::finish_frame`) | TAA's `rigid_object_motion` only; FSR never sees it |
 | TAA camera motion | `PostFx::begin` (`TemporalAntiAliasing::camera_moved`) | see T-20 | per frame | TAA's `camera_motion` only |
-| G-buffer motion: UV motion RG, depth motion B, its validity A | geometry passes, the sky, the receiver pass | every pixel, every frame | per frame | TAA (through the DiligentFX inputs pass), FSR, motion blur, TAA's motion reach, ambient occlusion, the reflection methods |
-| Temporal masks: reactive, transparency and composition | the transparent stage's draws (M-11, M-16, M-17a–c) | while `Effective::temporal_masks` | cleared by the first writer each frame | FSR always; TAA's responsive masks |
+| G-buffer motion: UV motion RG, depth motion B, its validity A | geometry passes, the sky, masked sprites' depth pass (M-21), the receiver pass | every pixel, every frame | per frame | TAA (through the DiligentFX inputs pass), FSR, motion blur, TAA's motion reach, ambient occlusion, the reflection methods |
+| Temporal masks: reactive, transparency and composition | the transparent stage's draws (M-11, M-16, M-17a–c, M-21, M-22) | while `Effective::temporal_masks` | cleared by the first writer each frame | FSR always; TAA's responsive masks |
 | TAA motion reach | `stages/antialiasing/reach.rs` | every frame TAA runs | per frame | TAA's neighbourhood motion |
 | Jitter (`HistoryFrame::camera.jitter`) | the DiligentFX context's `prepare` (TAA) or FSR's `prepare` | TAA: zero on its reset frames; FSR: every frame | committed with the camera at `finish_frame` | raster, the DiligentFX previous camera, the cull stage's pyramid reprojection |
 
@@ -259,11 +261,11 @@ Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`):
 
 #### F-15 The temporal masks exist only while a writer can mark them
 
-- **Rule.** Each view holds the reactive and transparency-and-composition masks (R8, render size) when FSR runs, or when TAA runs and the scene holds a blended, transmissive or moving-surface material or draws glow, mist or heat, or the view shows a planar reflector's picture in the frame (`Effective::temporal_masks`); otherwise it releases them and TAA binds no responsive masks. The masks keep no history: the first writer of each frame clears them.
+- **Rule.** Each view holds the reactive and transparency-and-composition masks (R8, render size) when FSR runs, or when TAA runs and the scene holds a blended, transmissive or moving-surface material or a sprite batch with sprites or a pending footprint, or draws glow, mist or heat, or the view shows a planar reflector's picture in the frame (`Effective::temporal_masks`); otherwise it releases them and TAA binds no responsive masks. The masks keep no history: the first writer of each frame clears them.
 - **Raised by.** The scene's content, decided scene-wide rather than by what the frame draws.
 - **Stays triggered while.** Nothing: no history lives in the masks.
 - **Source.** AMD's FSR sample for formats and blends; the allocation policy is SGL3D's own. Code: `renderer/effective.rs` (`resolve`), `view/targets.rs` (`SharedTargets::set_temporal_masks`), `stages/transparent/mod.rs` (`Transparent::encode`).
-- **Guard.** `the_temporal_masks_are_held_exactly_while_a_writer_can_mark_them` (`renderer/effective.rs`); `temporal_masks_are_allocated_only_while_enabled` (`view/targets.rs`); `fsrs_masks_start_clear_each_frame_with_moving_surfaces` (`stages/transparent/composition_tests.rs`).
+- **Guard.** `the_temporal_masks_are_held_exactly_while_a_writer_can_mark_them` (`renderer/effective.rs`), which counts sprites among the writers; `temporal_masks_are_allocated_only_while_enabled` (`view/targets.rs`); `fsrs_masks_start_clear_each_frame_with_moving_surfaces` (`stages/transparent/composition_tests.rs`).
 - **Status.** Rule.
 
 #### F-16 Settings changes that restart history
@@ -478,6 +480,24 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 - **Stays triggered while.** The mist is on screen, every frame by design.
 - **Source.** AMD FidelityFX SDK 1.1.4 sample `translucencyps.hlsl` (translucent materials). Code: `stages/transparent/mist.wgsl` (`mist_masked_fs`).
 - **Guard.** None.
+- **Status.** Rule.
+
+#### M-21 Masked sprites write depth and the camera's motion, and mark what changed
+
+- **Rule.** A masked sprite batch's sprites (`SpriteBlend::Masked`) write the opaque depth and the G-buffer's motion at Frame item 7, before the receiver pass and the DiligentFX inputs copy them. Their motion is the camera's reprojection of the point a sprite covers this frame (the corner placed with this frame's facing and sizing, by the last submitted frame's unjittered view-projection): exact for a still sprite sized in metres while the view only translates; off by the facing's turn while the view rotates, and for a sprite kept on screen (`SpriteSizing::Fixed`) by its scaling with view depth while the view moves along it, both sub-pixel at a walking camera's speed, which TAA's rectification absorbs; it never carries the sprite's own movement, which SGL3D does not know. So, while the frame has the temporal masks, a batch whose look or sprites changed since the last submitted frame, or that no submitted frame drew, marks transparency and composition 1, leaving reactivity, over its sprites where they pass the cutoff; and a masked batch whose sprites changed marks it over the whole quads of the last submitted frame's sprites where they meet the view, cut-out texels included, at or in front of the opaque depth, whether or not it draws now (cleared, or moved out of view). The batch keeps those sprites for it: an edit writes a buffer neither the last submitted frame nor a frame rendered and not yet finished drew. An unchanged batch marks nothing and accumulates as opaque geometry does. Removing a masked batch a submitted or rendered frame drew with sprites, or changing its look (its facing, sizing, cutoff or image may move or cut out what it showed), marks the whole quads it drew under its old look the same way (`Sprites::departed`: the scene keeps their buffers, and an old look's own placement where its facing or sizing changed, until a frame begun after the edit is finished, then frees them), and raises nothing view-wide. Scope: the batch's pixels, this frame's and the last's. Recovery: the frame after the batch stops changing, TAA's hold rejecting what its marks left (T-28).
+- **Raised by.** A game moving, adding, removing, clearing or animating (a flipbook's `region`) masked sprites; restyling or removing a masked batch.
+- **Stays triggered while.** The game calls `Scene::set_sprites` with different sprites every frame (identical sprites change nothing), or `set_sprite_batch` with a different look every frame (a dissolve by cutoff marks the batch's pixels each frame).
+- **Source.** Godot b130438 billboards measure motion with this frame's billboard placement; AMD FidelityFX SDK 1.1.4 sample animated textures (transparency and composition 1 for shading motion vectors do not follow) and the footprint of an edited masked material (M-16). Code: `stages/transparent/sprites.rs` (`Sprites::encode_depth`, `Sprites::encode_masked`), `stages/transparent/sprites.wgsl`, `view/sprites.rs` (`SpriteList::footprints`), `scene/sprites.rs` (`Batch::changed`, `Batch::previous`, `Batch::writable`, `Scene::set_sprite_batch`, `Scene::remove_sprite_batch`).
+- **Guard.** `a_masked_sprite_writes_the_motion_of_its_own_point`, `sprites_mark_the_temporal_masks_as_they_change`, `a_changed_masked_batch_marks_where_its_sprites_stood`, `an_edit_before_finish_frame_keeps_what_the_frame_drew_for_the_marks`, `removing_or_restyling_a_masked_batch_marks_what_it_drew_and_nothing_else` (`stages/transparent/sprites_tests.rs`); `a_moving_sprite_shows_itself_and_leaves_no_ghost`, `removing_a_masked_batch_keeps_the_rest_of_the_views_history` (`tests/sgl-3d/tests/scenario_sprites.rs`).
+- **Status.** Rule.
+
+#### M-22 Blended sprites write masks, not motion
+
+- **Rule.** Blended sprites (`SpriteBlend::Blended`) write no depth and no motion, so their pixels reproject by what lies behind them; while the frame has the temporal masks, each writes reactive = its alpha, capped at 0.9, and transparency and composition = its alpha, accumulated as the blended draws accumulate theirs (M-11). Moving, removing or restyling a blended batch needs nothing more: every frame that drew a pixel of it marked that pixel, which arms TAA's hold for when it is gone (T-28).
+- **Raised by.** Every blended sprite drawn, moving or not.
+- **Stays triggered while.** The sprite is on screen, every frame by design.
+- **Source.** As M-11 (AMD FidelityFX SDK 1.1.4: alpha as reactivity for alpha-blended objects, the translucent sample's alpha as transparency and composition). Code: `stages/transparent/sprites.wgsl` (`sprite_blended_masked_fs`).
+- **Guard.** `sprites_mark_the_temporal_masks_as_they_change` (`stages/transparent/sprites_tests.rs`); `a_moving_sprite_shows_itself_and_leaves_no_ghost` (`tests/sgl-3d/tests/scenario_sprites.rs`).
 - **Status.** Rule.
 
 ### Consumers' own thresholds
@@ -1182,7 +1202,7 @@ pixel's motion hold is set to 12.
 
 - **Rule.** TAA does not distinguish the reactive mask from the transparency and
   composition mask: it takes the larger over the pixel's 3x3 neighbourhood as `m`
-  (T-25), so each writer's mark reaches a pixel beyond what it covers. The writers (M-11, M-16, M-17a to M-17c) give:
+  (T-25), so each writer's mark reaches a pixel beyond what it covers. The writers (M-11, M-16, M-17a to M-17c, M-21, M-22) give:
   - Blended and transmissive surfaces (M-11): reactive up to 0.9 (also where they
     overlap), composition up to their coverage (1 for a transmissive non-blended one),
     so a near-opaque blended surface holds full or near-full strength on and through it
@@ -1196,11 +1216,16 @@ pixel's motion hold is set to 12.
     whose neighbourhood the drifting noise leaves unmarked are held.
   - Heat distortion (M-17): composition equal to its weight where it lies in front of
     the opaque depth, including where its displacement is zero.
+  - Masked sprites (M-21): composition 1 over a changed batch's sprites and, where its
+    sprites changed, over where they stood in the last submitted frame, and for one frame
+    over what a removed or restyled batch drew; nothing over an unchanged batch, whose
+    depth and motion are then an opaque surface's.
+  - Blended sprites (M-22): as blended surfaces, reactive and composition their alpha.
 
   The masks are bound only in frames whose scene can mark them; without them `m` is 0
   and the mask hold decays.
 - **Raised by.** Blended or transmissive materials, materials whose shading changes, glow,
-  mist and heat in view.
+  mist, heat and sprites in view.
 - **Stays triggered while.** Any of them is in view, moving or not.
 - **Source.** AMD FidelityFX SDK 1.1.4 (FSR's reactive and composition masks) for the
   values; their use as TAA strength is SGL3D's own.
@@ -2596,8 +2621,11 @@ rejection repeats (R-16, R-29).
   receiver's full velocity (screen motion, depth motion and validity) over the G-buffer's
   motion. Crystal's and Velvet's histories there follow the receiver; the opaque surface's
   reflection history beneath is not kept (world rays: R-28). A receiver appearing or leaving
-  changes the surface depth, and the depth tests reject there for one frame.
-- **Raised by.** Blended receivers in view and their motion.
+  changes the surface depth, and the depth tests reject there for one frame. Masked
+  sprites (M-21) write the opaque depth and motion before the receiver pass copies it, so
+  the same holds where one covers an opaque surface: the reflection histories there follow
+  the sprite, and the surface beneath keeps none.
+- **Raised by.** Blended receivers and masked sprites in view and their motion.
 - **Stays triggered while.** Nothing beyond the edges a moving receiver uncovers.
 - **Source.** SGL3D's own, after HDRP's transparent depth prepass and motion vectors. Code:
   `sgl-3d/src/stages/transparent/mod.rs` (`Transparent::encode_receivers`),

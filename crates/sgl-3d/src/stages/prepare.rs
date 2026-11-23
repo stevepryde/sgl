@@ -436,12 +436,20 @@ impl Prepare {
         } else {
             LodSelector::new(camera.view, camera.projection, render_size)
         };
+        // The camera's sprite batches, whose blended ones split the blended
+        // list where they stand.
+        views.sprites.build(scene, &camera_view);
+        let barriers: Vec<f32> = views.sprites.blended_depths().collect();
         views.blended.build(
             &mut views.instances,
             scene,
             &camera_view,
             Some(mask),
-            Population::Blended { lod, cull },
+            Population::Blended {
+                lod,
+                cull,
+                barriers: &barriers,
+            },
         );
         let cascades = shadow.cascades.as_slice().iter();
         set_cascades(

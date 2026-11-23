@@ -1,17 +1,16 @@
-// The mist: billboards at the scene's mist positions, shaded by drifting
-// noise and fogged where they stand.
+// The mist: billboards at the scene's mist positions, facing the view as
+// sprites do (shading/sprite.wgsl), shaded by drifting noise and fogged
+// where they stand.
 struct Mist {
  @builtin(position) clip:vec4<f32>,
  @location(0) uv:vec2<f32>,
 }
 @vertex fn mist_vs(@builtin(vertex_index) id:u32,@location(0) center:vec3<f32>)->Mist {
- let corners=array<vec2<f32>,6>(vec2(-.5,-.5),vec2(.5,-.5),vec2(.5,.5),vec2(-.5,-.5),vec2(.5,.5),vec2(-.5,.5));
- let p=corners[id];
- let vp=view.view_projection;
- let right=normalize(vec3(vp[0].x,vp[1].x,vp[2].x));
- let up=normalize(vec3(vp[0].y,vp[1].y,vp[2].y));
+ let p=sprite_quad_corner(id);
+ // In the view's image plane, as a sprite of SpriteFacing::Camera faces it.
+ let axes=sprite_axes(view.view,vec3(0.));
  var o:Mist;
- o.clip=vp*vec4(center+right*p.x*frame.mist_size.x+up*p.y*frame.mist_size.y,1.);
+ o.clip=view.view_projection*vec4(center+axes.right*p.x*frame.mist_size.x+axes.up*p.y*frame.mist_size.y,1.);
  o.uv=p+vec2(.5);
  return o;
 }

@@ -34,6 +34,7 @@ pub(crate) mod population;
 pub(crate) mod post_fx;
 pub(crate) mod reflected_camera;
 pub(crate) mod reflection_camera;
+pub(crate) mod sprites;
 pub(crate) mod targets;
 pub(crate) mod trace_paths;
 
@@ -604,6 +605,8 @@ pub(crate) struct FrameViews {
     /// The camera's blended surfaces, back to front; `camera.list` holds
     /// its opaque and masked ones.
     pub blended: draw_list::DrawList,
+    /// The camera's sprite batches.
+    pub sprites: Box<sprites::SpriteList>,
     /// The scene lights and decals that reach each of the camera's
     /// clusters.
     pub clusters: clusters::Clusters,
@@ -648,6 +651,7 @@ impl FrameViews {
         Self {
             camera: ViewSlot::new(device, "camera view"),
             blended: draw_list::DrawList::default(),
+            sprites: Box::default(),
             clusters: clusters::Clusters::new(device, "camera clusters"),
             ray_lists: clusters::Clusters::new(device, "ray hit lights and decals"),
             volume_lists: clusters::Clusters::new(device, "dynamic GI probe hit lights and decals"),

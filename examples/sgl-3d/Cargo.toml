@@ -53,6 +53,11 @@ crate-type = ["cdylib"]
 name = "browser_baseline"
 crate-type = ["cdylib"]
 
+# `bun scripts/tasks.ts measure-browser --sprites` builds and runs it.
+[[example]]
+name = "browser_sprites"
+crate-type = ["cdylib"]
+
 [[example]]
 name = "browser_bistro"
 crate-type = ["cdylib"]

@@ -24,9 +24,13 @@ pub(crate) enum Population<'a> {
     /// pose, with the selected LOD, sorted back to front by the view depth
     /// of each mesh's bounds centre, as Bevy 9d12036's `Transparent3d` phase
     /// sorts (crates/bevy_core_pipeline/src/core_3d/mod.rs).
+    /// Two draws on either side of one of the `barriers`, the view depths
+    /// of the blended sprite batches (`view::sprites`), are never merged,
+    /// so each batch is drawn between them.
     Blended {
         lod: Option<LodSelector>,
         cull: bool,
+        barriers: &'a [f32],
     },
     /// A specular probe face: the `capture_visible` instances a capture
     /// shows (`content`: a bake's static ones, a live refresh's moving ones

@@ -418,6 +418,9 @@ pub(super) fn finish_view(
         );
         probe.coverage(device, ctx.encoder, &targets.depth, &targets.source_id);
     }
+    // Masked sprites' depth and motion, over the opaque depth, which
+    // everything after sees them in.
+    transparent.encode_sprite_depth(&mut ctx);
     // The surface reflections and the temporal consumers read from here on:
     // the nearest receiver's over the opaque depth.
     let receivers = transparent.encode_receivers(&mut ctx);
@@ -425,6 +428,7 @@ pub(super) fn finish_view(
     // The volume layers and the mist's order both blended draws read.
     transparent.encode_volumes(&mut ctx);
     transparent.order_mist(&ctx);
+    transparent.order_sprites(&ctx);
     // Every reflection producer initializes composite before reading it.
     if let Some(post_fx) = post_fx.as_mut() {
         let camera = ctx.views.reflection_camera;

@@ -40,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 43] = [
+    let roots: [&'static super::Module; 44] = [
         &crate::shading::PACKED_VERTEX,
         &crate::stages::opaque::backdrop::BACKDROP,
         &crate::stages::sky::TRANSMITTANCE,
@@ -50,6 +50,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::sky::environment::SKY_ENVIRONMENT,
         &crate::stages::transparent::effects::GLOW,
         &crate::stages::transparent::mist::MIST,
+        &crate::stages::transparent::sprites::SPRITES,
         &crate::stages::fog::VOLUMETRIC_FOG,
         &crate::stages::transparent::heat::HEAT,
         &crate::stages::transparent::transmission::COPY,
@@ -232,7 +233,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use crate::stages::reflections::{probe_culling, source, velvet, world};
     use crate::stages::shadows::{contact, local, traced, traced::denoise};
     use crate::stages::sky;
-    use crate::stages::transparent::{effects, heat, mist, transmission};
+    use crate::stages::transparent::{effects, heat, mist, sprites, transmission};
     use crate::stages::{deform, exposure, fog, motion_blur, probe_prefilter};
     use crate::view::post_fx;
     let geometry = vec![
@@ -331,6 +332,19 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
                 mist::MIST_VS_ENTRY,
                 mist::MIST_FS_ENTRY,
                 mist::MIST_MASKED_FS_ENTRY,
+            ],
+        ),
+        (
+            sprites::SPRITES.name,
+            vec![
+                sprites::VS_ENTRY,
+                sprites::ORDERED_VS_ENTRY,
+                sprites::DEPTH_FS_ENTRY,
+                sprites::MASKED_FS_ENTRY,
+                sprites::MASKED_MASKED_FS_ENTRY,
+                sprites::BLENDED_FS_ENTRY,
+                sprites::BLENDED_MASKED_FS_ENTRY,
+                sprites::FOOTPRINT_FS_ENTRY,
             ],
         ),
         (
@@ -944,6 +958,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(super::clusters::mirrors())
     .chain(super::culling::mirrors())
     .chain(super::decals::mirrors())
+    .chain(super::sprite::mirrors())
     .chain(crate::scene::rays::mirrors())
     .chain(crate::shading::deformation::mirrors())
     .chain(crate::scene::probes::mirrors())

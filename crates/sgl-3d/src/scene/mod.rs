@@ -39,6 +39,7 @@ pub(crate) mod render_textures;
 pub(crate) mod shaders;
 pub(crate) mod shadow_clusters;
 mod slots;
+pub(crate) mod sprites;
 pub(crate) mod static_edits;
 pub(crate) mod static_lighting;
 mod textures;
@@ -150,6 +151,9 @@ pub struct Scene {
     pub(crate) deformation_edits: u64,
     /// Caller-authored glow, heat and mist geometry.
     pub(crate) transient: transient::Transient,
+    /// Sprite images and batches (`Scene::add_sprite_batch`).
+    /// Boxed: a scene without sprites carries one pointer for them.
+    pub(crate) sprites: Box<sprites::Sprites>,
     /// The world bounds static edits touched since the last submitted frame.
     pub(crate) static_edits: static_edits::StaticEdits,
     /// The frame being rendered and the last finished frame.
@@ -237,6 +241,7 @@ impl Scene {
             edits: 0,
             deformation_edits: 0,
             transient: transient::Transient::new(device),
+            sprites: Box::default(),
             static_edits: static_edits::StaticEdits::default(),
             frame: FrameRecord::default(),
             deformations: Vec::new(),
@@ -368,6 +373,7 @@ impl Scene {
         self.instances
             .prepare_frame(queue, &self.models, &mut self.deformations);
         self.static_edits.begin_frame();
+        self.sprites.begin_frame();
         let attempt = next_generation();
         self.frame.open = Some(attempt);
         attempt
@@ -573,6 +579,7 @@ impl Scene {
         self.instances.finish_frame();
         self.materials.finish_frame();
         self.render_textures.finish_frame();
+        self.sprites.finish_frame();
         self.static_edits.finish();
         if let Some(acceleration) = &mut self.acceleration {
             acceleration.finish_frame();

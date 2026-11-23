@@ -601,3 +601,50 @@ fn a_compiled_frame_with_a_map_sampled_in_the_shader_creates_no_program() {
     level.render(&input);
     assert_eq!(level.programs(), before);
 }
+
+// Plausible defect: sprite batches, whose pipelines are one program set
+// of the transparent stage, left out of the planning pass (their passes
+// skipped before asking the slot, or the slot asked only in a frame), so a
+// level with hit markers, foliage cards or particles compiles on the
+// window thread at its first frame. The oracle is wgpu's count of the
+// pipelines and shader modules, unchanged across the compiled first frame
+// of a level with a masked and a blended batch in view, under TAA, which
+// draws both into the reflections' input and the composite with the
+// temporal masks.
+#[test]
+fn a_compiled_level_with_sprites_creates_no_program_at_its_first_frame() {
+    use crate::sprite::{Sprite, SpriteBatch, SpriteBlend};
+    let Some(mut level) = Level::new() else {
+        return;
+    };
+    let image = level
+        .scene
+        .add_sprite_image(
+            &level.device,
+            &level.queue,
+            &crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(2, 2, image::Rgba([255; 4]))),
+        )
+        .unwrap();
+    for (blend, x) in [
+        (SpriteBlend::Masked { cutoff: 0.5 }, 0.),
+        (SpriteBlend::Blended, 1.5),
+    ] {
+        let batch = level
+            .scene
+            .add_sprite_batch(&SpriteBatch {
+                blend,
+                ..SpriteBatch::new(image)
+            })
+            .unwrap();
+        let sprite = Sprite::new(Vec3::new(x, 1.2, 0.), glam::Vec2::splat(0.5));
+        level
+            .scene
+            .set_sprites(&level.device, &level.queue, batch, &[sprite])
+            .unwrap();
+    }
+    let input = Level::input(0.);
+    level.compile_all(&input);
+    let before = level.programs();
+    level.render(&input);
+    assert_eq!(level.programs(), before);
+}

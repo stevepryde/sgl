@@ -451,7 +451,8 @@ current capabilities and limits.
   and water (refraction, volume attenuation and dispersion,
   [#243](https://github.com/stevepryde/sgl/issues/243)), skinned meshes and
   morph targets (18), instanced draws (19), compressed material textures
-  (20), and decals (21). See [content support and limits](../crates/sgl-3d/docs/features.md#content).
+  (20), decals (21), and world-space sprite batches
+  ([#868](https://github.com/stevepryde/sgl/issues/868)). See [content support and limits](../crates/sgl-3d/docs/features.md#content).
 - **Programmable surfaces
   ([#272](https://github.com/stevepryde/sgl/issues/272), [D-35](decisions.md)):**
   a game's WGSL vertex and surface functions, composed into SGL3D's own

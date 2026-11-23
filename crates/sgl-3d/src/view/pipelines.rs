@@ -224,6 +224,13 @@ impl GeometryPipelines {
             .map(use_pipeline)
     }
 
+    /// The compiler a frame's programs are created through
+    /// (`view::compile`), which the stages that hold slots of their own ask
+    /// too.
+    pub fn compiler(&self) -> &Compiler {
+        &self.compiler
+    }
+
     /// The shader modules and pipelines it holds for game shaders.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn shader_programs(&self) -> (usize, usize) {

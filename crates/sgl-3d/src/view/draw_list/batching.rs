@@ -33,6 +33,8 @@ pub(super) struct InstanceDraw {
     /// Where its bin goes among the batches: its instance's model's rank
     /// (`Batcher::rank`), then the mesh's index in that model.
     pub order: (u32, u32),
+    /// The depth a blended list sorts it by (`sort_by_depth`); 0 elsewhere.
+    pub depth: f32,
 }
 
 /// Draws merged into one batch while binning.
@@ -101,18 +103,29 @@ impl Batcher {
             .map(|draw| (key(&draw), draw))
             .collect();
         keyed.sort_by(|(a, _), (b, _)| a.total_cmp(b));
-        self.draws.extend(keyed.into_iter().map(|(_, draw)| draw));
+        self.draws.extend(
+            keyed
+                .into_iter()
+                .map(|(depth, draw)| InstanceDraw { depth, ..draw }),
+        );
     }
 
     /// Merges each draw into the batch before it where they are equal and
     /// draw one index range, so the draws keep their order: a batch draws
     /// each range for all its instances before the next range, which would
     /// interleave the instances of draws of several ranges.
-    pub fn merge_adjacent(&self, (ranges, batches, instances): Merged<'_>) {
+    pub fn merge_adjacent(&self, (ranges, batches, instances): Merged<'_>, barriers: &[f32]) {
+        let mut previous = f32::NEG_INFINITY;
         for draw in &self.draws {
             let index = instances.len() as u32;
             instances.push(draw.instance);
+            // A barrier at or below this draw's depth and above the last's.
+            let split = barriers
+                .iter()
+                .any(|&barrier| previous < barrier && barrier <= draw.depth);
+            previous = draw.depth;
             if let Some(last) = batches.last_mut()
+                && !split
                 && last.key == draw.key
                 && draw.ranges.len() == 1
                 && ranges[last.ranges.clone()] == ranges[draw.ranges.clone()]
@@ -120,7 +133,10 @@ impl Batcher {
                 last.instances.end = index + 1;
                 continue;
             }
-            batches.push(batch(draw.key, draw.ranges.clone(), index..index + 1));
+            batches.push(DrawBatch {
+                depth: draw.depth,
+                ..batch(draw.key, draw.ranges.clone(), index..index + 1)
+            });
         }
     }
 
@@ -203,5 +219,6 @@ fn batch(key: BatchKey, ranges: Range<usize>, instances: Range<u32>) -> DrawBatc
         key,
         ranges,
         instances,
+        depth: 0.,
     }
 }

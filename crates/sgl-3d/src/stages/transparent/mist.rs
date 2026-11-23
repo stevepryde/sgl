@@ -1,10 +1,12 @@
 //! Caller-positioned transparent mist (the mist positions are the scene's
 //! transient geometry), fogged where it stands.
+use crate::content::sprite::SpriteFacing;
 use crate::scene::transient::Transient;
 use crate::shading::gbuffer::COLOR as HDR;
+use crate::shading::sprite::facing_normal;
 use crate::shading::vertex::{Attribute, VertexLayout};
 use crate::view::targets::mask_targets;
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 
 static MIST_NOISE: crate::shading::Module = crate::shading::Module {
     name: "mist_noise",
@@ -19,6 +21,7 @@ pub(crate) static MIST: crate::shading::Module = crate::shading::Module {
         &crate::shading::BIND_UNLIT,
         &crate::shading::FRAME_FOG,
         &crate::shading::TEMPORAL_MASKS,
+        &crate::shading::sprite::SPRITE,
         &MIST_NOISE,
     ],
 };
@@ -112,22 +115,24 @@ impl Mist {
         }
     }
 
-    /// Orders the scene's mist back to front from the view's `eye`, as
-    /// Three.js orders transparent objects for each camera it renders, and
+    /// Orders the scene's mist back to front from the view whose
+    /// world-to-view matrix is `view`, along its backward axis, as sprites
+    /// facing its image plane are ordered (`sprites::Sprites::order`), and
     /// uploads it for the frame's draws, growing the buffer as needed.
     pub fn order(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         transient: &Transient,
-        eye: Vec3,
+        view: &Mat4,
     ) {
+        let normal = facing_normal(view, SpriteFacing::Camera);
         self.positions.clear();
         self.positions.extend_from_slice(&transient.mist_positions);
         self.positions.sort_by(|a, b| {
-            Vec3::from_array(*b)
-                .distance_squared(eye)
-                .total_cmp(&Vec3::from_array(*a).distance_squared(eye))
+            Vec3::from_array(*a)
+                .dot(normal)
+                .total_cmp(&Vec3::from_array(*b).dot(normal))
         });
         let bytes: &[u8] = bytemuck::cast_slice(&self.positions);
         if bytes.len() as u64 > self.buffer.size() {

@@ -116,6 +116,7 @@ fn blended_draws_are_sorted_back_to_front_by_mesh_bounds_centre() {
     let population = Population::Blended {
         lod: None,
         cull: false,
+        barriers: &[],
     };
     list.build(
         &mut DrawInstances::default(),
@@ -201,6 +202,7 @@ fn culled_blended_draws_keep_each_instance_whole_and_back_to_front() {
     let population = Population::Blended {
         lod: None,
         cull: true,
+        barriers: &[],
     };
     list.build(
         &mut DrawInstances::default(),
@@ -210,7 +212,7 @@ fn culled_blended_draws_keep_each_instance_whole_and_back_to_front() {
         population,
     );
     let drawn: Vec<_> = list
-        .calls()
+        .calls(0..list.batches.len())
         .flat_map(|(batch, range)| {
             list.instances_of(batch)
                 .iter()

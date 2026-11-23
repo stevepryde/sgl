@@ -181,6 +181,7 @@ fn draws_merge_only_with_the_same_ranges() {
                 ..Zeroable::zeroed()
             },
             order: (0, 0),
+            depth: 0.,
         });
     }
     let (mut batches, mut instances) = (Vec::new(), Vec::new());
@@ -244,6 +245,7 @@ fn draws_merge_only_with_the_same_mobility() {
                     ..Zeroable::zeroed()
                 },
                 order: (0, 0),
+                depth: 0.,
             });
         }
         batcher
@@ -270,7 +272,7 @@ fn draws_merge_only_with_the_same_mobility() {
     binned.sort();
     assert_eq!(binned, [vec![0, 1, 4], vec![2, 3]], "binned");
     let (mut batches, mut instances) = (Vec::new(), Vec::new());
-    batcher().merge_adjacent((&ranges, &mut batches, &mut instances));
+    batcher().merge_adjacent((&ranges, &mut batches, &mut instances), &[]);
     assert_eq!(
         held(&batches, &instances),
         [vec![0, 1], vec![2, 3], vec![4]],

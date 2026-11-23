@@ -58,6 +58,7 @@ pub(crate) mod shadow_mask;
 mod shadow_normal_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod sheen_tests;
+pub(crate) mod sprite;
 pub(crate) mod srgb;
 mod surface_modules;
 #[cfg(all(test, not(target_arch = "wasm32")))]

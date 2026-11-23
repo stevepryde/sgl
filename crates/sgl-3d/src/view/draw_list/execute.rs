@@ -27,7 +27,21 @@ impl DrawList {
         pass: &mut wgpu::RenderPass<'_>,
         kind: GeometryPass,
     ) -> usize {
-        if self.batches.is_empty() {
+        self.draw_batches(scene, pipelines, drawn, pass, kind, 0..self.batches.len())
+    }
+
+    /// `draw` of its batches `batches` alone: a blended list's between the
+    /// sprite batches that stand among them (`batches_before`).
+    pub fn draw_batches(
+        &self,
+        scene: &Scene,
+        pipelines: &mut GeometryPipelines,
+        drawn: &DrawInstances,
+        pass: &mut wgpu::RenderPass<'_>,
+        kind: GeometryPass,
+        batches: std::ops::Range<usize>,
+    ) -> usize {
+        if batches.is_empty() {
             return 0;
         }
         let pulled = kind.pulled();
@@ -43,7 +57,7 @@ impl DrawList {
         let mut first_index = 0;
         let receivers = kind == GeometryPass::Receivers;
         let volumes = kind.volume();
-        for (batch, range) in self.calls() {
+        for (batch, range) in self.calls(batches) {
             if (receivers && !receives(scene, batch)) || (volumes && !measures_volume(scene, batch))
             {
                 continue;

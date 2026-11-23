@@ -48,9 +48,9 @@ use scenario::geometry::{FRAME_RATE, Motion, Pose, View, coverage};
 use scenario::image::{self, Image, Region, centre, error, error_to, pixels};
 use scenario::rig::{Dump, Gpu, HALF_STEP, Rig, Shape, gpu};
 use scenario::temporal::{
-    BACKGROUND, CARD, DEPTH, Edge, Failures, GRATING, HOLD, JITTER_CYCLE, Oracles, SETTLE, SKY,
-    STRIPS, Scenario, Script, VIEW, ahead, background, bar, card, device, grating, px, stage,
-    stage_poses, still, stores, vacated,
+    BACKGROUND, CARD, DEPTH, Edge, FEEDBACK, Failures, GRATING, HOLD, JITTER_CYCLE, Oracles,
+    SETTLE, SKY, STRIPS, Scenario, Script, VIEW, ahead, background, bar, card, device, grating, px,
+    sdr, stage, stage_poses, still, stores, survives, vacated,
 };
 use sgl_3d::ShaderSource;
 use sgl_3d::diagnostics::{self, DiagnosticTarget};
@@ -2039,33 +2039,6 @@ fn moving_the_origin_during_a_pan_changes_nothing(method: Antialiasing) {
     failures.assert();
 }
 every_method!(moving_the_origin_during_a_pan_changes_nothing);
-
-/// The motion-adaptive resolve's blend (Frame item 11; `sgl-post-fx`
-/// PROVENANCE.md, "Motion-adaptive TAA"): the current frame's weight at
-/// full strength, 1 - 0.88, and Filament's floors at rest, 0.3 of that
-/// weight and 0.1 of the variance box's rectification.
-const FEEDBACK: f32 = 1. - 0.88;
-const FEEDBACK_FLOOR: f32 = 0.3;
-const BOX_FLOOR: f32 = 0.1;
-
-/// The share of a pixel's error against the current frame, in the blend
-/// space v / (1 + v), that one resolve at `strength` (0 at rest, 1 full)
-/// leaves where its 3x3 neighbourhood is uniform: the variance box then has
-/// no extent, so rectification moves history `BOX_FLOOR + (1 - BOX_FLOOR)
-/// strength` of the way to the current sample, and the blend keeps `1 -
-/// FEEDBACK (FEEDBACK_FLOOR + (1 - FEEDBACK_FLOOR) strength)` of what
-/// remains. Frame item 11 sets both at full strength in proportion to the
-/// mask; at rest unmarked, 0.9 x 0.964 = 0.868 survives, the "13% a frame"
-/// of #795.
-fn survives(strength: f32) -> f32 {
-    let rectified = BOX_FLOOR + (1. - BOX_FLOOR) * strength;
-    let current = FEEDBACK * (FEEDBACK_FLOOR + (1. - FEEDBACK_FLOOR) * strength);
-    (1. - rectified) * (1. - current)
-}
-
-fn sdr(v: f32) -> f32 {
-    v / (1. + v)
-}
 
 /// What marks the temporal masks in cases 14 and 15 (Frame item 9).
 #[derive(Clone, Copy, Debug, PartialEq)]

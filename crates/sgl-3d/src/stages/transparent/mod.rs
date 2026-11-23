@@ -4,6 +4,7 @@
 pub(crate) mod effects;
 pub(crate) mod heat;
 pub(crate) mod mist;
+pub(crate) mod sprites;
 pub(crate) mod transmission;
 pub(crate) mod volumes;
 
@@ -32,11 +33,14 @@ pub(crate) enum Beauty<'a> {
     },
 }
 
-/// Transparent: the receiver pass (`encode_receivers`), which draws the
+/// Transparent: the camera's masked sprite batches' depth and motion over
+/// the opaque depth (`encode_sprite_depth`, `sprites`); the receiver pass
+/// (`encode_receivers`), which draws the
 /// blended receivers of screen-space reflections as the surface; the volume
 /// layers (`encode_volumes`), while volume paths are in effect, of the
 /// blended materials whose shader reads its volume path, which both blended
-/// draws read; then blended surfaces, transmissive ones among them, back to
+/// draws read; then masked sprites' colour, blended surfaces,
+/// transmissive ones among them, and blended sprite batches back to
 /// front, and additive glow and ground mist, drawn (`encode`) into the
 /// reflections' incident radiance while they trace it and onto the
 /// composite, each fogged from the frame's fog volume where it lies, then
@@ -60,25 +64,29 @@ pub(crate) enum Beauty<'a> {
 /// Reads: the camera's blended draw list with its lit group 0 and the
 /// geometry pipelines, the camera's opaque draw list (its sets whose
 /// material's shading changes, with the temporal masks), its unlit group 0 (with the
-/// fog volume), the opaque depth (copied into the surface depth, and tested
-/// by every draw but the receiver pass, never written), the surface depth
+/// fog volume), the opaque depth (written by masked sprites' depth, copied
+/// into the surface depth, and tested by every other draw but the receiver
+/// pass), the surface depth
 /// and the screen-space method's result (receivers that are the surface),
-/// the scene's transient geometry (glow, heat and mist), the beauty it draws
+/// the scene's transient geometry (glow, heat and mist) and the camera's
+/// sprite batches (`view::sprites`), the beauty it draws
 /// onto (the composite copied for transmission), its volume layers (the
 /// blended draws, and the second exit layer's pass the exit layer).
-/// Writes: the surface depth, the receiver layer and the G-buffer's motion
+/// Writes: the opaque depth and the G-buffer's motion (masked sprites);
+/// the surface depth, the receiver layer and the G-buffer's motion
 /// (the receiver pass); its volume layers (copies of the opaque depth with
 /// the volumes' faces drawn over them); its transmission copy; its mist
-/// positions, ordered from the view's eye; that beauty
+/// positions and its blended sprites' order, ordered from the view; that beauty
 /// in place; the temporal masks while the frame has them; the completed scene in place
 /// (heat) through its own snapshot of it.
 /// Blended surfaces write no other depth, motion or G-buffer.
 /// Honours: the receiver pass and volume paths (the effective
 /// configuration's), atmosphere (mist), heat distortion, the temporal masks,
 /// the effects and atmosphere diagnostics layers.
-/// Timing groups: `receivers`, `volume layers`, `temporal composition` (the
+/// Timing groups: `sprites` (masked sprites' depth and colour),
+/// `receivers`, `volume layers`, `temporal composition` (the
 /// moving opaque surfaces' mask), `transmission copy`, `blended` (blended
-/// surfaces, both draws), `transparent` (glow and mist, both draws), `heat
+/// surfaces and blended sprites, both draws), `transparent` (glow and mist, both draws), `heat
 /// distortion`.
 /// History: none; the receiver pass rebuilds the surface, the volume layers
 /// are drawn from the frame's geometry and the copy is made again every
@@ -87,6 +95,8 @@ pub(crate) struct Transparent {
     /// Glow pipelines and the group binding the current opaque depth and exposure.
     glow: Option<(effects::Effects, wgpu::BindGroup)>,
     mist: Option<mist::Mist>,
+    /// Sprite batches' pipelines and this view's orders of them.
+    sprites: Box<sprites::Sprites>,
     heat: Option<heat::Heat>,
     /// The frame exposure that glow reads.
     exposure: wgpu::TextureView,
@@ -142,6 +152,7 @@ impl Transparent {
             exposure: exposure.clone(),
             glow: None,
             mist: None,
+            sprites: Box::default(),
             heat: None,
             no_reflections: crate::view::targets::target(
                 device,
@@ -228,6 +239,20 @@ impl Transparent {
         self.volumes.encode(ctx, &self.no_reflections)
     }
 
+    /// The Masked sprites step, first of Frame item 7: the camera's masked
+    /// sprite batches' depth over the opaque depth and their motion into
+    /// the G-buffer's (`sprites::Sprites::encode_depth`), before the
+    /// receiver pass copies the opaque depth. Returns whether it drew.
+    pub fn encode_sprite_depth(&mut self, ctx: &mut FrameContext<'_>) -> bool {
+        self.sprites.encode_depth(ctx)
+    }
+
+    /// Orders the camera's blended sprite batches from the view's eye for
+    /// the frame's draws (`encode`).
+    pub fn order_sprites(&mut self, ctx: &FrameContext<'_>) {
+        self.sprites.order(ctx);
+    }
+
     /// Orders the scene's mist from the view's eye for the frame's draws
     /// (`encode`), in a frame that draws it.
     pub fn order_mist(&mut self, ctx: &FrameContext<'_>) {
@@ -238,7 +263,7 @@ impl Transparent {
                     ctx.device,
                     ctx.queue,
                     &ctx.scene.transient,
-                    ctx.input.camera.eye,
+                    &glam::Mat4::from_cols_array_2d(&ctx.values.view.view),
                 );
         }
     }
@@ -267,8 +292,15 @@ impl Transparent {
         if let Some(masks) = moving {
             Self::encode_composition(ctx, masks);
         }
-        let blended = !ctx.views.blended.is_empty();
-        if blended {
+        let mut cleared = moving.is_some();
+        // Masked sprites' colour, at the depth their depth pass wrote, before
+        // the transmission copy, so transmissive surfaces show them.
+        cleared |= self
+            .sprites
+            .encode_masked(ctx, beauty, temporal_masks, cleared)
+            && temporal_masks.is_some();
+        let sprites = self.sprites.ready_blended(ctx);
+        if !ctx.views.blended.is_empty() || sprites {
             // The copy of the composed frame, before anything is drawn onto
             // it, where a transmissive surface shows.
             let copy = (trace == 1
@@ -280,16 +312,26 @@ impl Transparent {
                     .encode(ctx.device, ctx.encoder, &targets.composite, ctx.timing)
                     .clone()
             });
-            let group = Self::blended_group(
+            let group = (!ctx.views.blended.is_empty()).then(|| {
+                Self::blended_group(
+                    ctx,
+                    &mut self.blended[trace],
+                    &self.no_reflections,
+                    (reflections, copy.as_ref(), self.volumes.held()),
+                    self.tier,
+                )
+                .clone()
+            });
+            Self::encode_blended(
                 ctx,
-                &mut self.blended[trace],
-                &self.no_reflections,
-                (reflections, copy.as_ref(), self.volumes.held()),
-                self.tier,
+                beauty,
+                temporal_masks,
+                cleared,
+                group.as_ref(),
+                &self.sprites,
             );
-            Self::encode_blended(ctx, beauty, temporal_masks, moving.is_some(), group);
+            cleared = true;
         }
-        let cleared = moving.is_some() || blended;
         let draw = ctx.effective.composite.glow;
         if draw || (temporal_masks.is_some() && !cleared) {
             let mut color = attachment(beauty).unwrap();
@@ -489,16 +531,19 @@ impl Transparent {
         ctx.views.camera.recorded_since(started);
     }
 
-    /// The camera's blended surfaces onto `beauty`, back to front, tested
-    /// against the opaque depth without writing it, with their group 3
-    /// `group`, and onto the `temporal_masks`, which this pass
-    /// clears unless they were `cleared`.
+    /// The camera's blended surfaces and blended sprite batches onto
+    /// `beauty`, back to front, tested against the opaque depth without
+    /// writing it, the surfaces with their group 3 `group` (none while the
+    /// list is empty), each sprite batch between the surfaces farther and
+    /// nearer than it (`DrawList::batches_before`), and onto the
+    /// `temporal_masks`, which this pass clears unless they were `cleared`.
     fn encode_blended(
         ctx: &mut FrameContext<'_>,
         beauty: &wgpu::TextureView,
         temporal_masks: Option<&[wgpu::TextureView; 2]>,
         cleared: bool,
-        group: &wgpu::BindGroup,
+        group: Option<&wgpu::BindGroup>,
+        sprites: &sprites::Sprites,
     ) {
         let color = loaded(attachment(beauty), true);
         let mut attachments = vec![color];
@@ -519,18 +564,41 @@ impl Transparent {
             timestamp_writes: ctx.timing.and_then(|t| t.render_pass("blended")),
             ..Default::default()
         });
-        pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
-        pass.set_bind_group(3, group, &[]);
+        let masked = temporal_masks.is_some();
         let kind = GeometryPass::Blended {
-            temporal_masks: temporal_masks.is_some(),
+            temporal_masks: masked,
         };
-        ctx.views.blended.draw(
-            ctx.scene,
-            ctx.pipelines,
-            &ctx.views.instances,
-            &mut pass,
-            kind,
-        );
+        let list = &ctx.views.blended;
+        // The surfaces' batches `range`, their groups bound again after a
+        // sprite batch's.
+        let mut surfaces = |pass: &mut wgpu::RenderPass<'_>, range: std::ops::Range<usize>| {
+            if let Some(group) = group.filter(|_| !range.is_empty()) {
+                pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
+                pass.set_bind_group(3, group, &[]);
+                list.draw_batches(
+                    ctx.scene,
+                    ctx.pipelines,
+                    &ctx.views.instances,
+                    pass,
+                    kind,
+                    range,
+                );
+            }
+        };
+        let mut drawn = 0;
+        for listed in ctx.views.sprites.blended() {
+            let farther = list.batches_before(listed.depth);
+            surfaces(&mut pass, drawn..farther);
+            drawn = drawn.max(farther);
+            sprites.draw_blended(
+                &mut pass,
+                ctx.scene,
+                ctx.bindings.camera_unlit(),
+                listed,
+                masked,
+            );
+        }
+        surfaces(&mut pass, drawn..list.batch_count());
     }
 
     /// Heat distortion of the completed scene `color` in place, marking
@@ -572,6 +640,8 @@ mod composition_tests;
 mod effects_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod receiver_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod sprites_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod transmission_tests;
 

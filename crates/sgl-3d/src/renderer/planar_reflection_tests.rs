@@ -478,3 +478,64 @@ fn a_reflector_away_past_the_idle_period_is_released() {
         "the device holds {away:?} after the release, {showing:?} while showing it"
     );
 }
+
+// Plausible defects: sprites left out of a reflected view, which runs the
+// transparent stage; faced to the consumer's camera rather than the
+// reflected one, or placed through the reflected view's oblique, cropped
+// projection wrongly, so a mirror shows them on the wrong side or not at
+// all. The fixture: a masked red sprite 0.6 m wide 1 m behind the camera,
+// which the camera does not see, 0.2 m to its right, before the mirror
+// 3 m ahead. The oracle is the mirror's geometry: the sprite's mirror
+// image stands 7 m ahead, 0.2 m to the right, so the view sees it red in
+// the mirror along (0.2, 0, -7) and not along (-0.2, 0, -7), where the
+// mirror shows the empty sky.
+#[test]
+fn a_sprite_shows_in_a_mirror_where_its_mirror_image_stands() {
+    use crate::sprite::{Sprite, SpriteBatch, SpriteBlend};
+    let Some(mut stage) = Stage::counted() else {
+        return;
+    };
+    let red = crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(
+        1,
+        1,
+        image::Rgba([255, 0, 0, 255]),
+    ));
+    let image = stage
+        .scene
+        .add_sprite_image(&stage.device, &stage.queue, &red)
+        .unwrap();
+    let batch = stage
+        .scene
+        .add_sprite_batch(&SpriteBatch {
+            blend: SpriteBlend::Masked { cutoff: 0.5 },
+            ..SpriteBatch::new(image)
+        })
+        .unwrap();
+    let sprite = Sprite::new(Vec3::new(0.2, 0., 1.), glam::Vec2::splat(0.6));
+    stage
+        .scene
+        .set_sprites(&stage.device, &stage.queue, batch, &[sprite])
+        .unwrap();
+    stage.frame(false, PlanarReflections::Full);
+    let composite = test_support::read(
+        &stage.device,
+        &stage.queue,
+        stage.main.targets.composite.texture(),
+        8,
+    );
+    // The texel along a direction from the camera at the origin.
+    let texel = |direction: Vec3| {
+        let x = direction.x / -direction.z / 0.5f32.tan();
+        let column = ((x * 0.5 + 0.5) * SIZE[0] as f32) as u32;
+        let row = SIZE[1] / 2;
+        let at = ((row * SIZE[0] + column) * 8) as usize;
+        [0, 1].map(|c| test_support::half(&composite[at + c * 2..at + c * 2 + 2]))
+    };
+    let [shown, shown_green] = texel(Vec3::new(0.2, 0., -7.));
+    let [opposite, _] = texel(Vec3::new(-0.2, 0., -7.));
+    assert!(
+        shown > 0.5 && shown_green < 0.1,
+        "the mirror image: {shown}, {shown_green}"
+    );
+    assert!(opposite < 0.1, "the other side: {opposite}");
+}

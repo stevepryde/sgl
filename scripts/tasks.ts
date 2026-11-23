@@ -5,6 +5,7 @@ const [task, ...options] = Bun.argv.slice(2);
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
   "measure-browser [--baseline | --bistro | --loading [--ordinary] [--jobs-per-frame <count>]] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--depth-of-field off|low|medium|high] [--hdr-effect] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>] | " +
+  "measure-browser --sprites [--count <sprites>] [--frames <count>] [--skip-build] | " +
   "measure-browser --startup [--scene minimal|opening] [--runs <count>] [--startup-path ordinary|prepared] [--captures <directory>] [--output <json>] [--skip-build]";
 
 if (task === "check-browser") {
@@ -243,6 +244,8 @@ async function checkBrowser(): Promise<void> {
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_streaming", "--target", "wasm32-unknown-unknown"],
     // Built, not run: `measure-browser --loading` runs it.
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_loading", "--target", "wasm32-unknown-unknown"],
+    // Built, not run: `measure-browser --sprites` runs it.
+    ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_sprites", "--target", "wasm32-unknown-unknown"],
     ...["browser_probe", "browser_smoke", "browser_baseline", "browser_backend"].map((example) => [
       "wasm-bindgen",
       "--target",
@@ -308,8 +311,47 @@ async function measureLoading(args: string[]): Promise<void> {
   }
 }
 
+// The sprites example's cost comparison (`browser_sprites`): sprite
+// batches against game-built quads, as `sprites --compare` prints natively.
+async function measureSprites(args: string[]): Promise<void> {
+  let count = 10000;
+  let frames = 120;
+  let skipBuild = false;
+  for (let at = 0; at < args.length; at += 1) {
+    if (args[at] === "--sprites") continue;
+    else if (args[at] === "--skip-build") skipBuild = true;
+    else if (args[at] === "--count" && at + 1 < args.length) count = Number(args[++at]);
+    else if (args[at] === "--frames" && at + 1 < args.length) frames = Number(args[++at]);
+    else throw new Error(USAGE);
+  }
+  if (!Number.isInteger(count) || count < 1 || !Number.isInteger(frames) || frames < 1) {
+    throw new Error("--count and --frames must be positive integers");
+  }
+  const steps: string[][] = [
+    ["bun", "install", "--frozen-lockfile"],
+    ["cargo", "build", "--release", "-p", "sgl-3d-examples", "--example", "browser_sprites", "--target", "wasm32-unknown-unknown"],
+    [
+      "wasm-bindgen", "--target", "web", "--out-dir", MEASURE_DIR,
+      `${process.env.CARGO_TARGET_DIR ?? "target"}/wasm32-unknown-unknown/release/examples/browser_sprites.wasm`,
+    ],
+  ];
+  for (const argv of skipBuild ? [] : steps) {
+    const result = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
+    if (result.exitCode !== 0) process.exit(result.exitCode ?? 1);
+  }
+  const { runMeasurement } = await import("../browser/measurement");
+  const result = await runMeasurement({ page: "sprites", dist: MEASURE_DIR, query: `count=${count}&frames=${frames}` });
+  console.log(`Chromium ${result.browserVersion}`);
+  console.log(result.report.trimEnd());
+  if (result.report.startsWith("FAIL") || result.errors.length) {
+    for (const error of result.errors) console.error(error);
+    process.exitCode = 1;
+  }
+}
+
 async function measureBrowser(args: string[]): Promise<void> {
   if (args.includes("--loading")) return measureLoading(args);
+  if (args.includes("--sprites")) return measureSprites(args);
   let frames = 600;
   let baseline = false;
   let bistro = false;

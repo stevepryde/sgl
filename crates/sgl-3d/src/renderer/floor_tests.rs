@@ -164,6 +164,30 @@ fn heaviest_frame(limits: wgpu::Limits) -> (BindingTier, DynamicGiQuality) {
             }),
         )
         .unwrap();
+    // A masked and a blended sprite batch in view, whose pipelines bind the
+    // unlit group 0, their batch's group and a blended batch's order.
+    let sprite_image = scene
+        .add_sprite_image(
+            &device,
+            &queue,
+            &Image::Rgba8(image::RgbaImage::from_pixel(2, 2, image::Rgba([255; 4]))),
+        )
+        .unwrap();
+    for (blend, x) in [
+        (crate::sprite::SpriteBlend::Masked { cutoff: 0.5 }, -0.4),
+        (crate::sprite::SpriteBlend::Blended, 0.4),
+    ] {
+        let batch = scene
+            .add_sprite_batch(&crate::sprite::SpriteBatch {
+                blend,
+                ..crate::sprite::SpriteBatch::new(sprite_image)
+            })
+            .unwrap();
+        let sprite = crate::sprite::Sprite::new(Vec3::new(x, 0.2, -1.5), glam::Vec2::splat(0.3));
+        scene
+            .set_sprites(&device, &queue, batch, &[sprite])
+            .unwrap();
+    }
     let mut input = FrameInput::new(Camera {
         view: Mat4::IDENTITY,
         projection: crate::perspective(1., 1., 0.1),

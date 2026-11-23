@@ -2,7 +2,7 @@ import { chromium } from "playwright";
 
 /** The same real Chromium/WebGPU launch path for streaming and baseline. */
 export async function runMeasurement(options: {
-  page: "streaming" | "baseline" | "bistro" | "loading";
+  page: "streaming" | "baseline" | "bistro" | "loading" | "sprites";
   assetDir?: string;
   run?: Record<string, unknown>;
   dist: string;

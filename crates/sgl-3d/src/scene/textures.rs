@@ -18,6 +18,23 @@ pub(crate) fn upload(
     upload_rgba8_levels(device, queue, &levels, srgb)
 }
 
+/// `image` as one sampled texture of sRGB colour with its mips, as a
+/// material samples a colour map: a sprite image (`scene::sprites`).
+pub(crate) fn upload_color(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    image: &Image,
+) -> wgpu::TextureView {
+    match image {
+        Image::Rgba8(image) => upload(device, queue, image, true),
+        Image::Rgba8Mips(image) => upload_rgba8_levels(device, queue, image.levels(true), true),
+        Image::Compressed(image) => {
+            let [color, _] = upload_compressed(device, queue, image, [true, false]);
+            color.expect("a colour view was asked for")
+        }
+    }
+}
+
 /// Uploads already filtered levels without cloning or filtering them.
 fn upload_rgba8_levels(
     device: &wgpu::Device,
