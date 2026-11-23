@@ -66,6 +66,16 @@ impl std::fmt::Display for GpuError {
 
 impl std::error::Error for GpuError {}
 
+/// A wgpu instance: wgpu's own backends natively, SGL's WebGPU backend
+/// (`sgl-webgpu`) in the browser.
+fn instance() -> wgpu::Instance {
+    #[cfg(not(target_arch = "wasm32"))]
+    let instance = wgpu::Instance::default();
+    #[cfg(target_arch = "wasm32")]
+    let instance = sgl_webgpu::instance(&wgpu::InstanceDescriptor::new_without_display_handle());
+    instance
+}
+
 /// The canvas renderer's device, windowed or headless: default limits and
 /// no optional features.
 fn device_descriptor(label: &'static str) -> wgpu::DeviceDescriptor<'static> {
@@ -89,7 +99,7 @@ impl Gpu {
     /// A device + queue from whatever adapter the host offers, with no
     /// surface: for offscreen rendering, native scene capture, and tests.
     pub async fn headless_async() -> Result<Self, GpuError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = instance();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
             .await
@@ -163,7 +173,7 @@ impl Context {
         window: Arc<Window>,
         vsync: bool,
     ) -> Result<Self, RendererInitError> {
-        let instance = wgpu::Instance::default();
+        let instance = instance();
         // The surface borrows nothing beyond the Arc<Window> it is given, so
         // it is 'static for as long as that Arc is alive.
         let surface = instance

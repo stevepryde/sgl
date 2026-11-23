@@ -28,7 +28,7 @@ publish.workspace = true
 
 [dependencies]
 bytemuck.workspace = true
-wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan", "gles", "webgpu"] }
+wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan", "gles"] }
 
 [dev-dependencies]
 pollster.workspace = true

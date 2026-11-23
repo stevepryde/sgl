@@ -179,7 +179,7 @@ async fn measured(ordinary: bool, jobs_per_frame: usize) -> Result<String, Strin
             .and_then(JsCast::dyn_into)
             .map_err(|_| "the page has no canvas with id `screen`")?;
     let (width, height) = (canvas.width(), canvas.height());
-    let instance = wgpu::Instance::default();
+    let instance = sgl_webgpu::instance(&wgpu::InstanceDescriptor::new_without_display_handle());
     let surface = instance
         .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
         .map_err(|error| format!("create_surface: {error}"))?;

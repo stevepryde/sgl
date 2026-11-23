@@ -3622,11 +3622,15 @@ The browser is a first-class target in its own right
 [D-48](../../specs/decisions.md)): SGL3D supports there everything WebGPU
 supports, and only a feature or speed-up the web platform cannot run falls
 back or is absent. The same `Scene`, `Renderer`, views and frame run on the page's
-WebGPU device, built for `wasm32-unknown-unknown` (sgl-3d enables wgpu's
-`webgpu` backend). WebGL2 is not supported, since SGL3D needs compute; if
-WebGL is ever added it will be a minimal fallback.
+WebGPU device, built for `wasm32-unknown-unknown`. WebGL2 is not supported,
+since SGL3D needs compute; if WebGL is ever added it will be a minimal
+fallback.
 
-- **Device.** Request it as natively, with `graphics_device::limits` (the
+- **Device.** Create the instance with
+  `sgl_webgpu::instance(&wgpu::InstanceDescriptor::new_without_display_handle())`
+  ([sgl-webgpu](../sgl-webgpu/README.md), a `wasm32` dependency), not
+  `wgpu::Instance::default()`. Request the device from it as natively, with
+  `graphics_device::limits` (the
   adapter's limits; WebGPU's defaults are the floor, S3D-1) and
   `graphics_device::features`. Desktop Chrome on Apple silicon reports 48
   sampled textures and 10 storage buffers from Chromium 149, the `Extended`

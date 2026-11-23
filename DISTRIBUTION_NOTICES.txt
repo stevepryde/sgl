@@ -67,6 +67,7 @@ errno@0.3.14 — authors: Chris Wong <lambda.fairy@gmail.com>, Dan Gohman <dev@s
 fastrand@2.5.0 — authors: Stjepan Glavina <stjepang@gmail.com>
 fdeflate@0.3.7 — authors: The image-rs Developers
 find-msvc-tools@0.1.10
+fixedbitset@0.5.7 — authors: bluss
 flate2@1.1.10 — authors: Alex Crichton <alex@alexcrichton.com>, Josh Triplett <josh@joshtriplett.org>
 fnv@1.0.7 — authors: Alex Crichton <alex@alexcrichton.com>
 foldhash@0.1.5 — authors: Orson Peters <orsonpeters@gmail.com>
@@ -167,6 +168,7 @@ ordered-float@5.3.0 — authors: Jonathan Reem <jonathan.reem@gmail.com>, Matt B
 parking_lot_core@0.9.12 — authors: Amanieu d'Antras <amanieu@gmail.com>
 parking_lot@0.12.5 — authors: Amanieu d'Antras <amanieu@gmail.com>
 percent-encoding@2.3.2 — authors: The rust-url developers
+petgraph@0.8.3 — authors: bluss, mitchmindtree
 pin-project-internal@1.1.13
 pin-project-lite@0.2.17
 pin-project@1.1.13
@@ -177,6 +179,7 @@ polling@3.11.0 — authors: Stjepan Glavina <stjepang@gmail.com>, John Nunley <d
 pollster@0.4.0 — authors: Joshua Barretto <joshua.s.barretto@gmail.com>
 portable-atomic-util@0.2.7
 portable-atomic@1.14.0
+pp-rs@0.2.1 — authors: pp-rs Developers
 ppv-lite86@0.2.21 — authors: The CryptoCorrosion Contributors
 presser@0.3.1 — authors: Embark <opensource@embark-studios.com>, Gray Olson <gray@grayolson.com
 proc-macro-crate@3.5.0 — authors: Bastian Köcher <git@kchr.de>
@@ -216,6 +219,7 @@ sgl-core
 sgl-input
 sgl-net
 sgl-post-fx
+sgl-webgpu
 sha1@0.10.7 — authors: RustCrypto Developers
 shlex@2.0.1 — authors: comex <comexk@gmail.com>, Fenhl <fenhl@fenhl.net>, Adrian Taylor <adetaylor@chromium.org>, Alex Touchet <alextouchet@outlook.com>, Daniel Parks <dp+git@oxidized.org>, Garrett Berg <googberg@gmail.com>
 simd_cesu8@1.2.0 — authors: Sean C. Roach <me@seancroach.dev>
@@ -232,6 +236,7 @@ spirv@0.4.0+sdk-1.4.341.0 — authors: Lei Zhang <antiagainst@gmail.com>
 static_assertions@1.1.0 — authors: Nikolai Vazquez
 syn@2.0.119 — authors: David Tolnay <dtolnay@gmail.com>
 syn@3.0.3 — authors: David Tolnay <dtolnay@gmail.com>
+termcolor@1.4.1 — authors: Andrew Gallant <jamslam@gmail.com>
 thiserror-impl@1.0.69 — authors: David Tolnay <dtolnay@gmail.com>
 thiserror-impl@2.0.20 — authors: David Tolnay <dtolnay@gmail.com>
 thiserror@1.0.69 — authors: David Tolnay <dtolnay@gmail.com>
@@ -248,6 +253,7 @@ typenum@1.20.1
 unicode-ident@1.0.24 — authors: David Tolnay <dtolnay@gmail.com>
 unicode-segmentation@1.13.3 — authors: kwantam <kwantam@gmail.com>, Manish Goregaokar <manishsmail@gmail.com>
 unicode-width@0.2.2 — authors: kwantam <kwantam@gmail.com>, Manish Goregaokar <manishsmail@gmail.com>
+unicode-xid@0.2.6 — authors: erick.tryzelaar <erick.tryzelaar@gmail.com>, kwantam <kwantam@gmail.com>, Manish Goregaokar <manishsmail@gmail.com>
 urlencoding@2.1.3 — authors: Kornel <kornel@geekhood.net>, Bertram Truong <b@bertramtruong.com>
 uuid@1.26.1 — authors: Ashley Mannix<ashleymannix@live.com.au>, Dylan DPC<dylan.dpc@gmail.com>, Hunar Roop Kahlon<hunar.roop@gmail.com>
 vec_map@0.8.2 — authors: Alex Crichton <alex@alexcrichton.com>, Jorge Aparicio <japaricious@gmail.com>, Alexis Beingessner <a.beingessner@gmail.com>, Brian Anderson <>, tbu- <>, Manish Goregaokar <>, Aaron Turon <aturon@mozilla.com>, Adolfo Ochagavía <>, Niko Matsakis <>, Steven Fackler <>, Chase Southwood <csouth3@illinois.edu>, Eduard Burtescu <>, Florian Wilkens <>, Félix Raimundo <>, Tibor Benke <>, Markus Siemens <markus@m-siemens.de>, Josh Branchaud <jbranchaud@gmail.com>, Huon Wilson <dbau.pp@gmail.com>, Corey Farwell <coref@rwell.org>, Aaron Liblong <>, Nick Cameron <nrc@ncameron.org>, Patrick Walton <pcwalton@mimiga.net>, Felix S Klock II <>, Andrew Paseltiner <apaseltiner@gmail.com>, Sean McArthur <sean.monstar@gmail.com>, Vadim Petrochenkov <>
@@ -728,7 +734,7 @@ Apache License
    See the License for the specific language governing permissions and
    limitations under the License.
 
---- Applies to: as-raw-xcb-connection@1.0.1, codespan-reporting@0.13.1, raw-window-metal@1.1.0, sgl-2d, sgl-3d, sgl-core, sgl-input, sgl-net, static_assertions@1.1.0, x11rb-protocol@0.13.2, x11rb@0.13.2, zeroize@1.9.0, zune-core@0.5.3, zune-jpeg@0.5.15
+--- Applies to: as-raw-xcb-connection@1.0.1, codespan-reporting@0.13.1, raw-window-metal@1.1.0, sgl-2d, sgl-3d, sgl-core, sgl-input, sgl-net, sgl-webgpu, static_assertions@1.1.0, x11rb-protocol@0.13.2, x11rb@0.13.2, zeroize@1.9.0, zune-core@0.5.3, zune-jpeg@0.5.15
 
 Apache License
                            Version 2.0, January 2004
@@ -3806,7 +3812,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
---- Applies to: ahash@0.8.12, arrayvec@0.7.8, atomic-waker@1.1.2, autocfg@1.5.1, base64@0.13.1, bitflags@1.3.2, bitflags@2.13.1, bumpalo@3.20.3, cc@1.4.2, cfg-if@1.0.4, concurrent-queue@2.5.0, core-foundation-sys@0.8.7, core-foundation@0.9.4, core-graphics-types@0.1.3, core-graphics@0.23.2, crossbeam-utils@0.8.22, equivalent@1.0.2, errno@0.3.14, fastrand@2.5.0, find-msvc-tools@0.1.10, flate2@1.1.10, fnv@1.0.7, gethostname@1.1.0, glow@0.17.0, gltf-derive@1.4.1, gltf-json@1.4.1, gltf@1.4.1, hashbrown@0.15.5, hashbrown@0.16.1, hashbrown@0.17.1, hermit-abi@0.5.2, httparse@1.10.1, indexmap@2.14.0, jobserver@0.1.35, js-sys@0.3.106, khronos-egl@6.0.0, lazy_static@1.5.0, linux-raw-sys@0.12.1, linux-raw-sys@0.4.15, lock_api@0.4.14, log@0.4.33, num-traits@0.2.19, once_cell@1.21.4, parking_lot@0.12.5, parking_lot_core@0.9.12, percent-encoding@2.3.2, pkg-config@0.3.33, plain@0.2.3, png@0.18.1, polling@3.11.0, pollster@0.4.0, renderdoc-sys@1.1.0, rustc-hash@1.1.0, rustc_version@0.4.1, rustix@0.38.44, rustix@1.1.4, scoped-tls@1.0.1, scopeguard@1.2.0, simd_cesu8@1.2.0, smallvec@1.15.2, smol_str@0.2.2, ttf-parser@0.25.1, tungstenite@0.29.0, unicode-segmentation@1.13.3, unicode-width@0.2.2, uuid@1.26.1, version_check@0.9.5, wasi@0.11.1+wasi-snapshot-preview1, wasip2@1.0.4+wasi-0.2.12, wasm-bindgen-futures@0.4.79, wasm-bindgen-macro-support@0.2.129, wasm-bindgen-macro@0.2.129, wasm-bindgen-shared@0.2.129, wasm-bindgen@0.2.129, web-sys@0.3.106, wit-bindgen@0.57.1
+--- Applies to: ahash@0.8.12, arrayvec@0.7.8, atomic-waker@1.1.2, autocfg@1.5.1, base64@0.13.1, bitflags@1.3.2, bitflags@2.13.1, bumpalo@3.20.3, cc@1.4.2, cfg-if@1.0.4, concurrent-queue@2.5.0, core-foundation-sys@0.8.7, core-foundation@0.9.4, core-graphics-types@0.1.3, core-graphics@0.23.2, crossbeam-utils@0.8.22, equivalent@1.0.2, errno@0.3.14, fastrand@2.5.0, find-msvc-tools@0.1.10, fixedbitset@0.5.7, flate2@1.1.10, fnv@1.0.7, gethostname@1.1.0, glow@0.17.0, gltf-derive@1.4.1, gltf-json@1.4.1, gltf@1.4.1, hashbrown@0.15.5, hashbrown@0.16.1, hashbrown@0.17.1, hermit-abi@0.5.2, httparse@1.10.1, indexmap@2.14.0, jobserver@0.1.35, js-sys@0.3.106, khronos-egl@6.0.0, lazy_static@1.5.0, linux-raw-sys@0.12.1, linux-raw-sys@0.4.15, lock_api@0.4.14, log@0.4.33, num-traits@0.2.19, once_cell@1.21.4, parking_lot@0.12.5, parking_lot_core@0.9.12, percent-encoding@2.3.2, petgraph@0.8.3, pkg-config@0.3.33, plain@0.2.3, png@0.18.1, polling@3.11.0, pollster@0.4.0, renderdoc-sys@1.1.0, rustc-hash@1.1.0, rustc_version@0.4.1, rustix@0.38.44, rustix@1.1.4, scoped-tls@1.0.1, scopeguard@1.2.0, simd_cesu8@1.2.0, smallvec@1.15.2, smol_str@0.2.2, ttf-parser@0.25.1, tungstenite@0.29.0, unicode-segmentation@1.13.3, unicode-width@0.2.2, unicode-xid@0.2.6, uuid@1.26.1, version_check@0.9.5, wasi@0.11.1+wasi-snapshot-preview1, wasip2@1.0.4+wasi-0.2.12, wasm-bindgen-futures@0.4.79, wasm-bindgen-macro-support@0.2.129, wasm-bindgen-macro@0.2.129, wasm-bindgen-shared@0.2.129, wasm-bindgen@0.2.129, web-sys@0.3.106, wit-bindgen@0.57.1
 
 Apache License
                         Version 2.0, January 2004
@@ -6735,6 +6741,38 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+--- Applies to: pp-rs@0.2.1
+
+BSD 3-Clause License
+
+Copyright (c) 2020, Corentin Wallez
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 --- Applies to: inotify-sys@0.1.8, inotify@0.11.5
 
 Copyright (c) Hanno Braun and contributors
@@ -8363,7 +8401,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
---- Applies to: byteorder-lite@0.1.0, byteorder@1.5.0, memchr@2.8.3, walkdir@2.5.0
+--- Applies to: byteorder-lite@0.1.0, byteorder@1.5.0, memchr@2.8.3, termcolor@1.4.1, walkdir@2.5.0
 
 The MIT License (MIT)
 
@@ -11435,7 +11473,89 @@ Copyright The Android Open Source Project.
    See the License for the specific language governing permissions and
    limitations under the License.
 
---- Applies to: unicode-segmentation@1.13.3, unicode-width@0.2.2
+--- Applies to: sgl-webgpu
+
+THIRD-PARTY NOTICES FOR STEVE'S GAME LIBRARY
+
+This file covers third-party code and assets copied, ported or bundled in this
+repository. Source headers and adjacent provenance records retain file-level
+attribution. Dependencies fetched separately by Cargo are not included here;
+their licences still apply when redistributing them, including in compiled games.
+Game distributors must include the notices required by the code and assets they
+ship. This file does not relicense game-owned code or assets.
+
+Regenerate with: bun scripts/license-notices.ts generate
+
+--- wgpu
+Sources:
+crates/sgl-webgpu/LICENSE-wgpu.txt
+
+wgpu, https://github.com/gfx-rs/wgpu
+Revision 2b38d994b38dd001157d31fd3321111103a8dd80 (v30.0.2), LICENSE.MIT (wgpu is
+dual licensed MIT OR Apache-2.0; sgl-webgpu uses it under the MIT terms
+below). sgl-webgpu ports wgpu's WebGPU backend, wgpu/src/backend/webgpu.rs
+and wgpu/src/backend/webgpu/, to src/webgpu.rs and src/webgpu/
+(PROVENANCE.md).
+
+MIT License
+
+Copyright (c) 2025 The gfx-rs developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- wasm-bindgen (web-sys WebGPU bindings)
+Sources:
+crates/sgl-webgpu/LICENSE-wasm-bindgen.txt
+
+wasm-bindgen, https://github.com/wasm-bindgen/wasm-bindgen
+Revision a579ee62b631fd1fa96c7740b52a2952b07c0219 (0.2.127), LICENSE-MIT
+(wasm-bindgen is dual licensed MIT OR Apache-2.0; sgl-webgpu uses it under
+the MIT terms below). src/webgpu/webgpu_sys/ is web-sys 0.2.127's generated
+WebGPU bindings as wgpu v30.0.2 vendors them (PROVENANCE.md).
+
+Copyright (c) 2014 Alex Crichton
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+--- Applies to: unicode-segmentation@1.13.3, unicode-width@0.2.2, unicode-xid@0.2.6
 
 Licensed under the Apache License, Version 2.0
 <LICENSE-APACHE or

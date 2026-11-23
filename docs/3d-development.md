@@ -15,7 +15,8 @@ assets and supplies the renderer with final presentation transforms, lighting,
 environment maps, and settings. SGL3D retains GPU resources and encodes rendering
 into the game's command encoder. It neither creates a window nor handles input;
 use game-owned winit or another compatible window integration, or in the
-browser a canvas surface on the page's WebGPU device. Request the device with
+browser a canvas surface on the page's WebGPU device, from an instance
+`sgl_webgpu::instance` creates. Request the device with
 `graphics_device::limits` and `graphics_device::features` on either. A
 native game that opts in to hardware ray tracing also requests
 `graphics_device::ray_tracing_features` with wgpu's experimental token and

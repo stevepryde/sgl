@@ -1,0 +1,3 @@
+# The port keeps wgpu's formatting (wgpu is a 2021-edition crate) so upgrades
+# diff cleanly against upstream.
+style_edition = "2021"

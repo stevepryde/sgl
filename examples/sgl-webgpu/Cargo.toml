@@ -1,0 +1,32 @@
+[package]
+name = "sgl-webgpu-examples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# sgl-webgpu's browser lane page, kept out of its published package.
+
+[lints]
+workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+console_error_panic_hook.workspace = true
+futures.workspace = true
+js-sys.workspace = true
+sgl-webgpu.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "console",
+    "ImageData",
+    "OffscreenCanvas",
+    "OffscreenCanvasRenderingContext2d",
+] }
+wgpu = { workspace = true, features = ["std", "wgsl"] }
+
+# The browser lane (`bun scripts/tasks.ts check-browser`) builds it and
+# `browser/webgpu.test.ts` runs it.
+[[example]]
+name = "browser_backend"
+crate-type = ["cdylib"]

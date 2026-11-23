@@ -84,7 +84,8 @@ impl Startup {
     pub async fn create(canvas: web_sys::HtmlCanvasElement) -> Result<Startup, JsError> {
         console_error_panic_hook::set_once();
         let size = [canvas.width(), canvas.height()];
-        let instance = wgpu::Instance::default();
+        let instance =
+            sgl_webgpu::instance(&wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance
             .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
             .map_err(error)?;
@@ -139,9 +140,7 @@ impl Startup {
     /// The `GPUDevice` the canvas renders with, for its adapter's identity.
     #[wasm_bindgen(js_name = gpuDevice)]
     pub fn gpu_device(&self) -> JsValue {
-        self.device
-            .as_webgpu()
-            .map_or(JsValue::NULL, |device| device.clone().into())
+        sgl_webgpu::device_as_webgpu(&self.device).unwrap_or(JsValue::NULL)
     }
 
     /// The GLB, its PNGs decoded as `asset::load_slice` does.

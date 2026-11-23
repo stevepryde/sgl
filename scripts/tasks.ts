@@ -222,7 +222,8 @@ if (task === "mutants") {
 
 // --- Browser lane (testing.md 5): the browser-only code paths run in
 // headless Chromium under Playwright: the WebSocket probe against a native
-// fixture server, and SGL3D's smoke test on the page's WebGPU device.
+// fixture server, SGL3D's smoke test on the page's WebGPU device, and
+// sgl-webgpu's backend checks.
 // `check` runs it after its other steps; `check-browser` runs it alone. It
 // needs Playwright's browser build and a GPU.
 
@@ -234,6 +235,7 @@ async function checkBrowser(): Promise<void> {
     ["bun", "install", "--frozen-lockfile"],
     ["cargo", "build", "-p", "sgl-net-examples", "--example", "browser_probe", "--target", "wasm32-unknown-unknown"],
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_smoke", "--target", "wasm32-unknown-unknown"],
+    ["cargo", "build", "-p", "sgl-webgpu-examples", "--example", "browser_backend", "--target", "wasm32-unknown-unknown"],
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_baseline", "--target", "wasm32-unknown-unknown"],
     // Built, not run: explicit prepared assets are needed by the Bistro benchmark.
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_bistro", "--target", "wasm32-unknown-unknown"],
@@ -241,7 +243,7 @@ async function checkBrowser(): Promise<void> {
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_streaming", "--target", "wasm32-unknown-unknown"],
     // Built, not run: `measure-browser --loading` runs it.
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_loading", "--target", "wasm32-unknown-unknown"],
-    ...["browser_probe", "browser_smoke", "browser_baseline"].map((example) => [
+    ...["browser_probe", "browser_smoke", "browser_baseline", "browser_backend"].map((example) => [
       "wasm-bindgen",
       "--target",
       "web",

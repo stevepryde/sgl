@@ -57,7 +57,7 @@ serde.workspace = true
 serde_json.workspace = true
 sp-fidelity.workspace = true
 sp-fidelity-wgpu.workspace = true
-wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan", "gles", "webgpu"] }
+wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan", "gles"] }
 
 # The native blocking forms of the readbacks wait on their asynchronous
 # forms, as `sgl-2d`'s blocking constructors do.

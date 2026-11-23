@@ -1,0 +1,79 @@
+THIRD-PARTY NOTICES FOR STEVE'S GAME LIBRARY
+
+This file covers third-party code and assets copied, ported or bundled in this
+repository. Source headers and adjacent provenance records retain file-level
+attribution. Dependencies fetched separately by Cargo are not included here;
+their licences still apply when redistributing them, including in compiled games.
+Game distributors must include the notices required by the code and assets they
+ship. This file does not relicense game-owned code or assets.
+
+Regenerate with: bun scripts/license-notices.ts generate
+
+--- wgpu
+Sources:
+crates/sgl-webgpu/LICENSE-wgpu.txt
+
+wgpu, https://github.com/gfx-rs/wgpu
+Revision 2b38d994b38dd001157d31fd3321111103a8dd80 (v30.0.2), LICENSE.MIT (wgpu is
+dual licensed MIT OR Apache-2.0; sgl-webgpu uses it under the MIT terms
+below). sgl-webgpu ports wgpu's WebGPU backend, wgpu/src/backend/webgpu.rs
+and wgpu/src/backend/webgpu/, to src/webgpu.rs and src/webgpu/
+(PROVENANCE.md).
+
+MIT License
+
+Copyright (c) 2025 The gfx-rs developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- wasm-bindgen (web-sys WebGPU bindings)
+Sources:
+crates/sgl-webgpu/LICENSE-wasm-bindgen.txt
+
+wasm-bindgen, https://github.com/wasm-bindgen/wasm-bindgen
+Revision a579ee62b631fd1fa96c7740b52a2952b07c0219 (0.2.127), LICENSE-MIT
+(wasm-bindgen is dual licensed MIT OR Apache-2.0; sgl-webgpu uses it under
+the MIT terms below). src/webgpu/webgpu_sys/ is web-sys 0.2.127's generated
+WebGPU bindings as wgpu v30.0.2 vendors them (PROVENANCE.md).
+
+Copyright (c) 2014 Alex Crichton
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.

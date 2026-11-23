@@ -2140,7 +2140,7 @@ pub async fn run() -> String {
 }
 
 async fn smoke(report: &mut String) -> Result<(), String> {
-    let adapter = wgpu::Instance::default()
+    let adapter = sgl_webgpu::instance(&wgpu::InstanceDescriptor::new_without_display_handle())
         .request_adapter(&Default::default())
         .await
         .map_err(|e| format!("no WebGPU adapter: {e}"))?;

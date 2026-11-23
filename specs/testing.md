@@ -32,8 +32,9 @@ check, run once before a release or over a batch of landed changes
    `#[test]` under a `not(target_arch = "wasm32")` gate. GPU tests must run, not skip,
    on any host with a wgpu adapter: `check` sets `SGL_REQUIRE_GPU=1` on macOS
    and honours it elsewhere, turning a missing adapter into a failure.
-   Browser-only code (`websocket/browser.rs`) and SGL3D on WebGPU (the
-   `browser_smoke` example) run in headless Chromium under Playwright via
+   Browser-only code (`websocket/browser.rs`), SGL3D on WebGPU (the
+   `browser_smoke` example) and the `sgl-webgpu` backend checks SGL3D does
+   not reach (`browser_backend`) run in headless Chromium under Playwright via
    the browser lane (never through WebDriver or chromedriver;
    `bunx playwright install chromium` fetches the pinned browser). SGL3D's
    test launches the `chromium` channel, the full browser in its new

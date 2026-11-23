@@ -58,7 +58,7 @@ async fn measured(
     [across, up]: [i32; 2],
     occlusion: bool,
 ) -> Result<String, String> {
-    let adapter = wgpu::Instance::default()
+    let adapter = sgl_webgpu::instance(&wgpu::InstanceDescriptor::new_without_display_handle())
         .request_adapter(&Default::default())
         .await
         .map_err(|e| format!("no WebGPU adapter: {e}"))?;

@@ -7,6 +7,7 @@ members = [
     "crates/sgl-input",
     "crates/sgl-3d",
     "crates/sgl-post-fx",
+    "crates/sgl-webgpu",
     "examples/direct-game",
     "tests/sgl-core",
     "tests/sgl-net",
@@ -17,6 +18,7 @@ members = [
     "examples/sgl-2d",
     "examples/sgl-input",
     "examples/sgl-3d",
+    "examples/sgl-webgpu",
 ]
 default-members = [
     "crates/sgl-core",
@@ -25,6 +27,7 @@ default-members = [
     "crates/sgl-input",
     "crates/sgl-3d",
     "crates/sgl-post-fx",
+    "crates/sgl-webgpu",
     "examples/direct-game",
     "tests/sgl-core",
     "tests/sgl-net",
@@ -35,6 +38,7 @@ default-members = [
     "examples/sgl-2d",
     "examples/sgl-input",
     "examples/sgl-3d",
+    "examples/sgl-webgpu",
 ]
 
 [workspace.package]
@@ -52,6 +56,7 @@ sgl-3d = { version = "0.9.3", path = "crates/sgl-3d" }
 sgl-post-fx = { version = "0.9.3", path = "crates/sgl-post-fx" }
 sgl-core = { version = "0.9.3", path = "crates/sgl-core" }
 sgl-net = { version = "0.9.3", path = "crates/sgl-net" }
+sgl-webgpu = { version = "0.9.3", path = "crates/sgl-webgpu" }
 bcdec_rs = "0.2"
 blake3 = "1.8.3"
 block2 = "0.6.2"
@@ -70,6 +75,7 @@ rustc-hash = "1.1"
 ruzstd = { version = "0.8", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 js-sys = "0.3.104"
+log = "0.4.29"
 console_error_panic_hook = "0.1.7"
 pollster = "0.4.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -87,6 +93,8 @@ tungstenite = { version = "0.29", default-features = false, features = [
 getrandom = "0.4.3"
 mio = { version = "1.2", default-features = false, features = ["os-poll", "net"] }
 wgpu = { version = "30.0.1", default-features = false }
+# sgl-webgpu names wgpu's types by the paths wgpu's own web backend uses.
+wgpu-types = { version = "30.0.1", default-features = false }
 # wgpu re-exports naga only with its native core; SGL3D's layout tests parse WGSL
 # with it directly, at wgpu's version.
 naga = "30.0.1"
@@ -108,7 +116,8 @@ web-sys = { version = "0.3.104", features = [
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
-# crates/sgl-input/Cargo.toml mirrors this table; change both.
+# crates/sgl-input/Cargo.toml and crates/sgl-webgpu/Cargo.toml mirror this
+# table; change all three.
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }

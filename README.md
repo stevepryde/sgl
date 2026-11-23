@@ -78,6 +78,7 @@ and rendering settings.
 | [sgl-2d](crates/sgl-2d/README.md) | Sprite and logical-canvas rendering, assets, text, lighting, and immediate UI; also HUDs over 3D |
 | [sgl-3d](crates/sgl-3d/docs/README.md) | PBR scenes, glTF assets, lighting, shadows, reflections, post-processing, and GPU diagnostics |
 | [sgl-post-fx](crates/sgl-post-fx/README.md) | GPU post-processing effects used by SGL3D, derived from DiligentFX |
+| [sgl-webgpu](crates/sgl-webgpu/README.md) | The browser's WebGPU backend for wgpu: a browser game creates its wgpu instance from it |
 
 SGL is under active development. The library crates are published on crates.io
 and share one version. Keep SGL dependencies on the same release or revision and

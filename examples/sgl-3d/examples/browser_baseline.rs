@@ -254,7 +254,7 @@ async fn measured(
         return Err("frames must be in 60..=3600".into());
     }
     let started = now();
-    let adapter = wgpu::Instance::default()
+    let adapter = sgl_webgpu::instance(&wgpu::InstanceDescriptor::new_without_display_handle())
         .request_adapter(&Default::default())
         .await
         .map_err(|e| e.to_string())?;

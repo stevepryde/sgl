@@ -1463,3 +1463,24 @@ Use the [current specs](README.md) for implementation and the
   measured. Roadmap step 12 is closed without being built; a later case for
   one of them is a new issue with that measured comparison. Rationale:
   rendering effort goes to shader and lighting quality first.
+
+
+- **D-75** Decision, 2026-11-23 (#882): in the browser SGL runs wgpu on its
+  own WebGPU backend, `sgl-webgpu`, a port of wgpu's
+  (`wgpu/src/backend/webgpu.rs`, v30.0.2) plugged in through wgpu's
+  custom-backend interface. Why: the browser side of wgpu is a translation
+  layer whose gaps SGL can close itself, and asynchronous pipeline creation
+  had waited on wgpu since 2023 (gfx-rs/wgpu#3794). Every type stays
+  `wgpu::*`, so nothing that takes a wgpu device changes, and native stays on
+  stock wgpu. Cost: the backend implements wgpu's 29 dispatch traits, which
+  change between wgpu's major releases, so a wgpu upgrade ports upstream's
+  changes to that file in the same change (`crates/sgl-webgpu/PROVENANCE.md`),
+  and a browser game creates its instance with `sgl_webgpu::instance`. wgpu
+  declares one of those traits' methods only under its own `webgpu` feature,
+  so `sgl-webgpu` enables that feature and wgpu's own backend is compiled
+  into a browser build beside it, unused, until wgpu stops gating a
+  custom-backend method on it. Not taken: waiting for wgpu; a patched or
+  renamed wgpu, which cannot publish to crates.io as a dependency and splits
+  `wgpu::Device` from the one `sp-fidelity-wgpu` takes; raw twin pipelines
+  (D-71). When wgpu exposes a call this crate added, the crate implements
+  wgpu's trait method and its own entry point is deleted.

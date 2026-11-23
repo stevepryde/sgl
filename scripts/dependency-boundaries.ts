@@ -69,3 +69,24 @@ export async function hostTriple(): Promise<string> {
   if (!host) throw new Error("rustc -vV did not report a host triple");
   return host;
 }
+
+/// The features a workspace build for `platform` enables on package `name`,
+/// as `cargo tree` resolves them. (`cargo metadata` unifies features across
+/// targets, so it reports wasm32-only features on native too.)
+export async function buildFeatures(name: string, platform: string): Promise<Set<string>> {
+  const proc = Bun.spawn(
+    ["cargo", "tree", "--workspace", "--locked", "--invert", name, "--depth", "0",
+      "--format", "{p} {f}", "--target", platform],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`cargo tree failed: ${stderr.trim()}`);
+  const line = stdout.split("\n").find((l) => l.startsWith(`${name} v`));
+  if (!line) throw new Error(`cargo tree did not report ${name}`);
+  const features = line.split(" ")[2] ?? "";
+  return new Set(features.split(",").filter(Boolean));
+}

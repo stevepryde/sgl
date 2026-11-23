@@ -1,0 +1,82 @@
+[package]
+name = "sgl-webgpu"
+repository.workspace = true
+rust-version.workspace = true
+documentation = "https://docs.rs/sgl-webgpu"
+categories = ["game-development", "rendering", "wasm"]
+keywords = ["gamedev", "wgpu", "webgpu", "wasm"]
+readme = "README.md"
+description = "SGL's WebGPU backend for wgpu in the browser, ported from wgpu's own and plugged in through wgpu's custom-backend interface"
+# Ship the library, its README, provenance and licences.
+include = [
+    "/src",
+    "/README.md",
+    "/PROVENANCE.md",
+    "/LICENSE*",
+    "/THIRD_PARTY_NOTICES.txt",
+]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[package.metadata.docs.rs]
+targets = ["wasm32-unknown-unknown"]
+
+[features]
+# wgpu's web backend translates these shader sources to WGSL with naga; the
+# port keeps them behind the same features (PROVENANCE.md).
+spirv = ["wgpu/spirv", "dep:naga", "naga/spv-in", "naga/wgsl-out"]
+glsl = ["wgpu/glsl", "dep:naga", "naga/glsl-in", "naga/wgsl-out"]
+naga-ir = ["wgpu/naga-ir", "dep:naga", "naga/wgsl-out"]
+
+# The crate is empty off wasm32: native builds take no dependency from it,
+# and native wgpu never gains the `custom` feature (it costs native wgpu its
+# devirtualised dispatch).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys.workspace = true
+log.workspace = true
+naga = { workspace = true, optional = true }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "console",
+    "Document",
+    "Event",
+    "EventTarget",
+    "HtmlCanvasElement",
+    "HtmlImageElement",
+    "HtmlVideoElement",
+    "ImageBitmap",
+    "ImageData",
+    "MediaQueryList",
+    "Navigator",
+    "NodeList",
+    "OffscreenCanvas",
+    "VideoFrame",
+    "Window",
+    "WorkerGlobalScope",
+    "WorkerNavigator",
+] }
+# `webgpu` too, though this crate replaces that backend: wgpu declares
+# `BufferMappedRangeInterface::as_uint8array` only under it (wgpu
+# src/dispatch.rs), so a custom backend compiles only if the feature's state
+# is fixed. Any dependent that enables it (sp-fidelity-wgpu does) would
+# otherwise break this crate's build. Delete it here when wgpu stops gating a
+# custom-backend trait method on its own backends.
+wgpu = { workspace = true, features = ["std", "custom", "web", "webgpu", "wgsl"] }
+wgpu-types.workspace = true
+
+# `unsafe` is denied crate-wide and allowed only on the items wgpu's backend
+# interface makes unsafe, each with its reason. Cargo cannot inherit
+# `[workspace.lints]` while overriding one lint, so the clippy table mirrors
+# `[workspace.lints.clippy]` in the root manifest.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"

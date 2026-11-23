@@ -374,7 +374,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
     }
     phase("device");
     let device_start = now();
-    let adapter = wgpu::Instance::default()
+    let adapter = sgl_webgpu::instance(&wgpu::InstanceDescriptor::new_without_display_handle())
         .request_adapter(&Default::default())
         .await
         .map_err(|e| e.to_string())?;

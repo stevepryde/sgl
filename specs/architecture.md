@@ -68,6 +68,11 @@ library; their rules, content, and process layouts stay with the games.
      that follows the surface's depth motion (motion input Z and W);
      SGL3D enables it with a 0.88 history stability factor. Other TAA flags
      retain their legacy resolve.
+   - `sgl-webgpu` — SGL's WebGPU backend for wgpu in the browser, ported from
+     wgpu's own and plugged in through wgpu's custom-backend interface. A
+     browser game creates its `wgpu::Instance` from it; everything after is
+     wgpu's API. It is where SGL adds WebGPU calls wgpu does not expose yet.
+     Empty on native.
    - `sgl-2d` — assets, immediate UI, and a caller-driven logical-canvas wgpu
      renderer
    - `sgl-input` — controller discovery and normalized events/state, independent
@@ -80,8 +85,8 @@ library; their rules, content, and process layouts stay with the games.
    winit.
    `sgl-3d` must not require `winit`, input handling, `sgl-net`, or a game crate.
    Its wgpu backend may depend on platform graphics libraries. SGL3D and the
-   ports it runs build for `wasm32-unknown-unknown` with wgpu's WebGPU backend
-   ([D-20](decisions.md)).
+   ports it runs build for `wasm32-unknown-unknown` and run in the browser on
+   `sgl-webgpu` ([D-20](decisions.md), [D-75](decisions.md)).
 5. Extract from working game code. Prefer one good implementation over four
    variants. Helpers take the game's tick rate, canvas size, wire identity,
    and types as parameters rather than baking one game's constants.

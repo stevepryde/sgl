@@ -3,10 +3,16 @@
 - Rust 2024 with overflow checks. Existing core/net/2D workspace crates forbid
   unsafe code. SGL3D denies unsafe by default, retaining narrowly reviewed
   experimental GPU/shader opt-ins; `sgl-post-fx` forbids it.
-  `sgl-input` denies unsafe except in its macOS FFI module.
+  `sgl-input` denies unsafe except in its macOS FFI module. `sgl-webgpu`
+  denies unsafe except where wgpu's backend interface requires it (unsafe
+  trait methods, the canvas behind a raw window handle, mapped buffer
+  ranges).
 - wgpu and winit for the caller-driven client renderer. Dependency versions
   are defined in the root [workspace manifest](../Cargo.toml); package manifests
-  inherit them and select features and target conditions.
+  inherit them and select features and target conditions. In the browser wgpu
+  runs on `sgl-webgpu`, SGL's port of wgpu's WebGPU backend; SGL does not use
+  wgpu's own, though `sgl-webgpu` must enable its feature
+  ([D-75](decisions.md)).
 - Native transports: `std` UDP, polled from the caller's thread or owned by a
   bounded worker; tungstenite WebSocket, served by one I/O worker thread per
   server or client over nonblocking sockets with mio readiness. Browser
@@ -22,7 +28,7 @@
   `include` list publishes its sources, data, guides and licences; examples,
   tests, fixtures and unused vendored references stay in the repository.
   Bun runs repository tooling and the Playwright browser tests of the
-  transport and SGL3D.
+  transport, SGL3D and `sgl-webgpu`.
 
 Games commonly use glam, `image` (PNG), fontdue, RON, and postcard. Those
 belong in SGL when extracted code needs them, not before.

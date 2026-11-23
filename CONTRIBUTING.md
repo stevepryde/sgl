@@ -52,9 +52,10 @@ libraries and libudev.
   and a suite says which situations it does not cover. A fix for a rendering
   defect adds the scenario that fails without it, at the lowest boundary that
   shows it: the frame when only the frame shows it.
-- Library crates take the root `[workspace.lints]`. `sgl-input` mirrors its
-  clippy table because its macOS FFI module needs `unsafe_code` denied rather
-  than forbidden. `sgl-3d` and `sgl-post-fx` are exempt from clippy's pedantic
+- Library crates take the root `[workspace.lints]`. `sgl-input` and
+  `sgl-webgpu` mirror its clippy table because they need `unsafe_code` denied
+  rather than forbidden; `sgl-webgpu`'s port of wgpu's backend allows the
+  pedantic group to keep upstream's code as written. `sgl-3d` and `sgl-post-fx` are exempt from clippy's pedantic
   group, as their manifests record; unsafe-code levels follow
   [stack](specs/stack.md).
 - Add tests only for plausible defects with independent observable results.
@@ -155,7 +156,7 @@ anything else the patch.
    `## X.Y.Z — YYYY-MM-DD` section under an empty `Unreleased`, merging
    entries that changed the same symbol, with an opening paragraph that says
    whether game code, data or settings must change. Set
-   `workspace.package.version` and the six internal requirements in the root
+   `workspace.package.version` and the seven internal requirements in the root
    `Cargo.toml`, then run `cargo update --workspace`: the lockfile changes
    only the workspace's own versions.
 3. **Package.** `cargo publish --workspace --dry-run` passes on that tree.
@@ -163,7 +164,7 @@ anything else the patch.
    message says why the release is breaking or not and what was run.
 5. **Tag** that commit `vX.Y.Z`, annotated `SGL X.Y.Z`, and push the tag.
 6. **Publish** from that commit in a clean checkout:
-   `cargo publish --workspace`. Cargo orders the six crates and skips the
+   `cargo publish --workspace`. Cargo orders the seven crates and skips the
    unpublished companions. It uses the publishing machine's own Cargo login;
    never put a token in the repository.
 

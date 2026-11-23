@@ -46,8 +46,10 @@ captures on the same renderer reuse the cached pipelines.
    and turns `Settings::hardware_ray_tracing` on, and
    `Settings::ray_traced_shadows` too for ray-traced shadows
    ([hardware ray tracing](../README.md#hardware-ray-tracing)).
-   In the browser the device is the page's WebGPU one, requested the same way;
-   any device at WebGPU's default limits runs SGL3D.
+   In the browser the device is the page's WebGPU one, requested the same way
+   from an instance `sgl_webgpu::instance` creates
+   ([sgl-webgpu](../../sgl-webgpu/README.md)); any device at WebGPU's default
+   limits runs SGL3D.
    `Renderer::binding_tier` reports the device's binding tier: `Extended`
    at 48 or more sampled textures per stage, else `Basic`, where baked
    light is non-directional, dynamic GI is off

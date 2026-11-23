@@ -18,7 +18,7 @@ async function fixture(run: (root: string, base: string) => Promise<void>) {
     },
   });
   try {
-    for (const path of ["scripts", "licenses", "vendor", "crates/sgl-3d", "crates/sgl-post-fx"]) {
+    for (const path of ["scripts", "licenses", "vendor", "crates/sgl-3d", "crates/sgl-post-fx", "crates/sgl-webgpu"]) {
       await mkdir(resolve(root, path), { recursive: true });
     }
     for (const name of ["refresh-licenses.ts", "license-notices.ts"]) {

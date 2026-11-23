@@ -29,6 +29,8 @@ futures.workspace = true
 js-sys.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
+# The browser examples create their wgpu instance on SGL's WebGPU backend.
+sgl-webgpu.workspace = true
 # `browser_loading` presents its loading screen on the page's canvas; the
 # startup comparison (`browser_baseline`) renders to it too.
 web-sys.workspace = true

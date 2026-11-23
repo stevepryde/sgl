@@ -50,6 +50,10 @@ lockfile. To select a particular revision, add the same `rev` to every SGL
 Git dependency. There is no umbrella crate or installation step for SGL.
 Bun and Playwright are repository development tools, not game dependencies.
 
+A browser game creates its wgpu instance with `sgl_webgpu::instance` (the
+[sgl-webgpu](../crates/sgl-webgpu/README.md) crate, a `wasm32` dependency) where
+a native build calls `wgpu::Instance::default()`.
+
 Use `sgl_3d::glam` for 3D math and `sgl_core::math` for shared 2D math.
 Both re-export the same workspace glam types, so matching vectors and matrices
 can be passed directly between packages. See [3D conventions](3d-development.md)

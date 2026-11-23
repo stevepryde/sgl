@@ -17,6 +17,9 @@ adds text and widgets: `cargo run -p sgl-2d-examples --example tool_ui`.
 The game keeps composition; do not wrap the canvas in another engine layer.
 For resource lifetimes, color spaces, and presentation behavior, read the
 [2D rendering contract](../../specs/rendering.md).
+In the browser `Context` and `Gpu::headless_async` create their wgpu instance
+on [sgl-webgpu](../sgl-webgpu/README.md); a game that creates its own device
+there uses `sgl_webgpu::instance` too.
 `Context` caps initial and resized swapchain dimensions per axis to the device's
 maximum 2D texture dimension; `Context::size` reports the configured dimensions.
 `Renderer::read_scene_async` reads the scene back on either platform; its

@@ -1,6 +1,7 @@
 import { beforeAll, expect, test } from "bun:test";
 
 import {
+  buildFeatures,
   cargoMetadata,
   duplicateVersions,
   hostTriple,
@@ -8,17 +9,20 @@ import {
   type ResolvedMetadata,
 } from "./dependency-boundaries";
 
-const GPU = ["wgpu", "winit"];
+const GPU = ["wgpu", "winit", "sgl-webgpu"];
+const SGL = ["sgl-core", "sgl-net", "sgl-2d", "sgl-input", "sgl-3d", "sgl-post-fx"];
 const NET_IO = ["tungstenite", "getrandom", "mio", "socket2", "web-sys"];
 
 // What each crate must never link, on any target. Every entry is a spec
 // requirement: architecture.md 3-4, netcode.md acceptance, rendering.md
-// acceptance, and core.md 1.
+// acceptance, core.md 1, and D-75 for sgl-webgpu.
 const forbidden: Record<string, string[]> = {
   "sgl-core": ["sgl-net", "sgl-2d", ...GPU, ...NET_IO, "image", "fontdue"],
   "sgl-net": ["sgl-2d", "sgl-core", ...GPU, "image", "fontdue"],
   "sgl-2d": ["sgl-net", "tungstenite"],
   "sgl-direct-game": ["sgl-net"],
+  "sgl-webgpu": SGL,
+  "sgl-post-fx": ["sgl-webgpu"],
 };
 
 let host: ResolvedMetadata;
@@ -61,4 +65,15 @@ test("the workspace resolves one version of wgpu and wasm-bindgen", () => {
 test("the checker sees sgl-2d's wgpu edge", () => {
   expect(normalDependencies(host, "sgl-2d").has("wgpu")).toBe(true);
   expect(normalDependencies(wasm, "sgl-2d").has("web-sys")).toBe(true);
+});
+
+// D-75: wgpu's `custom` feature costs native wgpu its devirtualised dispatch,
+// so only the browser build, where sgl-webgpu plugs in, may enable it.
+test("wgpu has its custom-backend feature on wasm32 only", async () => {
+  const [native, browser] = await Promise.all([
+    hostTriple().then((triple) => buildFeatures("wgpu", triple)),
+    buildFeatures("wgpu", "wasm32-unknown-unknown"),
+  ]);
+  expect(native.has("custom"), "native").toBe(false);
+  expect(browser.has("custom"), "wasm32").toBe(true);
 });
