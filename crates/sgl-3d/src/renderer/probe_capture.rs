@@ -109,7 +109,7 @@ impl Renderer {
         }
         validate_face_size(face_size, &device.limits())?;
         validate_readback_size(face_size, &device.limits())?;
-        self.ready_capture(device, queue, scene, view, settings);
+        self.ready_capture(device, queue, scene, view, (settings, None));
         let scene = &*scene;
         let prefilter = ProbePrefilter::new(device, face_size, capture_size(face_size));
         let label = wgpu::CommandEncoderDescriptor {
@@ -154,17 +154,20 @@ impl Renderer {
     }
 
     /// Readies `scene`, `view` and the pipelines for a capture with
-    /// `settings`, as a frame's prepare does for its own.
+    /// `settings`, as a frame's prepare does for its own; a live refresh's
+    /// `timing` times the mip chains it builds.
     fn ready_capture(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         scene: &mut Scene,
         view: &mut View,
-        settings: &Settings,
+        (settings, timing): (&Settings, Option<&crate::timing::GpuTiming>),
     ) {
-        // Decals added since the last frame take their atlas first.
+        // Decals added since the last frame take their atlas first, and
+        // decoded images their mip chains.
         scene.upload_decals(device, queue);
+        self.shared.build_mip_chains((device, queue), scene, timing);
         // Materials sample as the settings filter them, as a frame does.
         scene.materials.set_anisotropy(
             device,

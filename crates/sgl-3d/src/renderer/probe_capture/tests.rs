@@ -1125,3 +1125,102 @@ fn capture_rejects_faces_past_the_readback_buffer_limit() {
         Err(ProbeError::InvalidDimensions)
     ));
 }
+
+/// What a probe capture at the origin, before any frame, holds of an unlit
+/// floor 1 m below it whose base map is `image`, repeated 256 times a
+/// metre: the floor's radiance summed over the capture's texels. A face
+/// renders at `CAPTURE_SIZE` (2048) texels, so a pixel of the bottom face
+/// spans about 1 mm of floor, four or more of a 16-texel image's texels,
+/// and samples its third level and below.
+fn captured_minified_floor(image: crate::asset::Image) -> Option<f32> {
+    use crate::asset::{CpuMesh, MaterialTexture, Vertex};
+    use crate::baked_specular_probe::SpecularProbeTexels;
+    use crate::settings::Settings;
+    use crate::{Camera, FrameInput, Scene};
+    use glam::{Mat4, Vec3};
+    let (device, queue) = crate::test_support::device()?;
+    let mut floor = crate::test_support::cube();
+    floor.meshes = vec![CpuMesh {
+        vertices: [[-2., -2.], [2., -2.], [2., 2.], [-2., 2.]]
+            .map(|[x, z]| Vertex {
+                tangent: [0.; 4],
+                lightmap_uv: [0.; 2],
+                lightmap_bounds: [0., 0., 1., 1.],
+                position: [x, -1., z],
+                normal: [0., 1., 0.],
+                uv: [(x + 2.) * 256., (z + 2.) * 256.],
+                color: [1.; 4],
+            })
+            .to_vec(),
+        indices: vec![0, 2, 1, 0, 3, 2],
+        material: 0,
+        deformation: Default::default(),
+    }];
+    floor.images = vec![image];
+    floor.materials[0].unlit = true;
+    floor.materials[0].double_sided = true;
+    floor.materials[0].base = [1.; 4];
+    floor.materials[0].base_texture = Some(MaterialTexture::new(0));
+    let mut scene = Scene::new(&device, &queue);
+    crate::test_support::add_static(&device, &queue, &mut scene, floor);
+    let input = FrameInput::new(Camera {
+        view: Mat4::IDENTITY,
+        projection: Mat4::IDENTITY,
+        eye: Vec3::ZERO,
+    });
+    let settings = Settings::default();
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
+    let radiance = renderer
+        .capture_specular_probe(
+            &device,
+            &queue,
+            &mut scene,
+            &input,
+            &settings,
+            Vec3::ZERO,
+            64,
+        )
+        .unwrap();
+    let SpecularProbeTexels::Rgba16Float(texels) = radiance.texels else {
+        unreachable!("captures return RGBA16F")
+    };
+    Some(
+        texels
+            .chunks_exact(4)
+            .map(|texel| {
+                (0..3)
+                    .map(|c| crate::test_support::half(&texel[c].to_le_bytes()))
+                    .sum::<f32>()
+            })
+            .sum(),
+    )
+}
+
+// Plausible defect: a probe capture drawing a decoded image before its mip
+// chain is built (a bake tool that adds its materials and captures before
+// any frame, the chain left for the next frame's scene work), so a
+// minified surface samples unwritten levels and captures black. The oracle
+// is equivalence: the same checker of black and white texels added
+// decoded, whose chain the capture builds, and as a chain prepared on the
+// CPU (`Rgba8MipChain`), uploaded as stored. The levels the floor samples
+// are mid-grey in both, the mean of the checker in linear light, which
+// each rounds to the nearest 8-bit code, so the captures agree within one
+// step of that grey (2% of its linear value); without the chain the
+// decoded floor's levels are unwritten and it captures nothing.
+#[test]
+fn a_capture_before_any_frame_samples_the_chains_of_decoded_images() {
+    use crate::asset::{Image, Rgba8MipChain};
+    let checker = image::RgbaImage::from_fn(16, 16, |x, y| {
+        let c = if (x + y) % 2 == 0 { 0 } else { 255 };
+        image::Rgba([c, c, c, 255])
+    });
+    let Some(decoded) = captured_minified_floor(Image::Rgba8(checker.clone())) else {
+        return;
+    };
+    let prepared =
+        captured_minified_floor(Image::Rgba8Mips(Rgba8MipChain::new(checker).unwrap())).unwrap();
+    assert!(
+        prepared > 1. && (decoded - prepared).abs() <= prepared * 0.02,
+        "a capture holds {decoded} of the decoded floor and {prepared} of the prepared one"
+    );
+}

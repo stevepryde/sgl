@@ -141,8 +141,10 @@ if compilation.ready() { /* `render` with these arguments creates nothing */ }
 - It readies frames, not probe captures: a live probe's first refresh
   (`Renderer::refresh_specular_probe`) creates its own filter and face
   pipelines, so make one while the level loads too.
-- Geometry pipelines and each view's HDR effect pipelines (for an input
-  whose `hdr_effect` names one) are the compile jobs. Every other stage's programs are
+- Geometry pipelines, each view's HDR effect pipelines (for an input
+  whose `hdr_effect` names one) and, while a decoded image added since the
+  last frame waits for its mip chain, the mip chain programs are the
+  compile jobs. Every other stage's programs are
   created by the call that first meets them, on the calling thread: that
   call blocks for them (seconds on a first run of the game, before the
   graphics driver has cached them), once, and the frame then creates none.

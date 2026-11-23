@@ -89,8 +89,8 @@ them through unrefracted. A probe captured on an
   Valid node trees have no depth limit within the asset load budget; roots
   and children load depth-first in declared order, preserved within each batch.
 - **Compressed material textures**: a material image is decoded RGBA8, whose
-  mips SGL3D filters when it is added, caller-prepared colour/data RGBA mip
-  chains, or a BC7, ETC2 RGBA8 or ASTC 4×4 mip chain uploaded as stored
+  mips the GPU builds before it is first drawn, caller-prepared colour/data
+  RGBA mip chains, or a BC7, ETC2 RGBA8 or ASTC 4×4 mip chain uploaded as stored
   (`asset::Image::Compressed`, read from KTX2 with
   `CompressedImage::from_ktx2`; request the corresponding adapter-supported
   `graphics_device::texture_compression_features`). Games compress

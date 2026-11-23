@@ -16,6 +16,7 @@ pub(crate) mod fog;
 #[cfg(feature = "diagnostics")]
 pub(crate) mod frame_probe;
 pub(crate) mod hdr_effect;
+pub(crate) mod mip_chains;
 pub(crate) mod motion_blur;
 pub(crate) mod opaque;
 pub(crate) mod post;

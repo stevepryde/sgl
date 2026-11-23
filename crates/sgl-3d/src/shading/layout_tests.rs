@@ -40,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 44] = [
+    let roots: [&'static super::Module; 45] = [
         &crate::shading::PACKED_VERTEX,
         &crate::stages::opaque::backdrop::BACKDROP,
         &crate::stages::sky::TRANSMITTANCE,
@@ -68,6 +68,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::post::local_exposure::LOCAL_EXPOSURE_PASSES,
         &crate::stages::exposure::EXPOSURE,
         &crate::stages::deform::DEFORM,
+        &crate::stages::mip_chains::MIP_CHAIN,
         &crate::stages::cull::CULL,
         &crate::stages::cull::pyramid::PYRAMID,
         &crate::stages::dynamic_gi::pipelines::ALLOCATE,
@@ -234,7 +235,7 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
     use crate::stages::shadows::{contact, local, traced, traced::denoise};
     use crate::stages::sky;
     use crate::stages::transparent::{effects, heat, mist, sprites, transmission};
-    use crate::stages::{deform, exposure, fog, motion_blur, probe_prefilter};
+    use crate::stages::{deform, exposure, fog, mip_chains, motion_blur, probe_prefilter};
     use crate::view::post_fx;
     let geometry = vec![
         view::SOURCE_VS_ENTRY,
@@ -483,6 +484,14 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             ],
         ),
         (deform::DEFORM.name, vec![deform::DEFORM_ENTRY]),
+        (
+            mip_chains::MIP_CHAIN.name,
+            vec![
+                FULLSCREEN_VS_ENTRY,
+                mip_chains::MIP_CHAIN_FS_ENTRY,
+                mip_chains::MIP_CHAIN_BATCH_FS_ENTRY,
+            ],
+        ),
         (
             cull::CULL.name,
             vec![

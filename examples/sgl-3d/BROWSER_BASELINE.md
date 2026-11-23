@@ -35,7 +35,9 @@ external assets, or Bistro export.
 # Same output size, 75% render dimensions and portable spatial reconstruction.
 bun scripts/tasks.ts measure-browser --baseline --scaled --frames 180 --output target/browser-scaled.json
 
-# Prepare RGBA mip chains outside frame-critical uploads.
+# Prepare RGBA mip chains on the CPU first, as a tool that compresses them does
+# (slower to start than the GPU's chains: the CPU builds them and a third more
+# is uploaded).
 bun scripts/tasks.ts measure-browser --baseline --prepared --frames 180 --output target/browser-prepared.json
 
 # The eight point lights cast shadows from the first measured frame.
@@ -65,8 +67,9 @@ the view's first to place one; `local_shadows.activation` reports its CPU
 encode, completion and GPU time.
 
 `--prepared` constructs `Image::Rgba8Mips(Rgba8MipChain::new(image)?)` before
-upload/measurement. Preparation produces the separate colour/data mip chains
-used by the normal upload path. The example measures its CPU cost separately.
+upload/measurement. Preparation builds on the CPU the colour and data chains
+the GPU builds for an ordinary `Image::Rgba8`, which the scene then uploads
+as stored. The example measures its CPU cost separately.
 It runs preparation on the page's thread before the loop; it does **not**
 claim an implemented browser worker or a lower total preparation cost. A game
 owns when and where to prepare, its worker message format, and which bounded
@@ -201,11 +204,14 @@ rest are durations: `device` (adapter, device, canvas; three.js
 `renderer.init()`), `asset_fetch`, `asset_decode` (SGL `asset::load_slice`
 decodes the PNGs in WASM on the page's thread, #886; three.js `GLTFLoader`
 uses `createImageBitmap`), `asset_upload` (SGL's scene adds until the queue
-completes, split by `asset_upload_cpu_*`, where `materials` is mostly
-CPU mip building, #884; three.js uploads inside its first frame, so this
-is only its scene graph), `view_setup`,
+completes, split by `asset_upload_cpu_*`, where `materials` uploads each
+image's first level; three.js uploads inside its first frame, so this is
+only its scene graph), `view_setup`,
 `prepare` (prepared path only), `first_frame_encode_submit`,
 `first_frame_gpu_complete_proxy` and `first_frame_presented_after_submit`.
+Both libraries build their textures' mip chains on the GPU ahead of the
+first frame's draws: SGL in a submission of its own just before it, so its
+`first_frame_gpu_complete_proxy` includes them.
 
 **Evidence and proxies.** The first visible world is First Contentful Paint,
 which Chromium stamps when the compositor frame holding the canvas is
@@ -241,8 +247,9 @@ server would send, since the local server sends files uncompressed.
 **Differences that remain.** Lighting units and exposure differ, so the
 images are not expected to match; light counts, types and shadows do.
 three.js has no contact-hardening soft shadows (PCF), a different bloom and
-temporal filter, its own GTAO and GPU-generated mips, where SGL makes mips on
-the CPU; SGL uses an infinite far plane, three.js 200 m. Each library requests
+temporal filter, its own GTAO, and mips of one bilinear tap a texel, where
+SGL weighs the texels an odd level's footprint spans; SGL uses an infinite
+far plane, three.js 200 m. Each library requests
 its device as it normally does. SGL's module is wasm-bindgen output from a
 release build without `wasm-opt`.
 

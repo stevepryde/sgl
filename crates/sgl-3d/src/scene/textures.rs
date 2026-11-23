@@ -1,32 +1,111 @@
 //! Material textures: each image materials were added with, as the sampled
 //! textures raster binds and as its level 0 in the ray source. Materials
-//! added together share them; a texture lives while a material uses it.
+//! added together share them; a texture lives while a material uses it. A
+//! decoded image's mip chain is built on the GPU by the mip chain stage
+//! (`stages::mip_chains`), which takes the textures waiting here
+//! (`Chains`); prepared and block-compressed chains are uploaded as stored.
 use super::SceneError;
 use super::rays::SceneRays;
 use crate::asset::{CompressedFormat, CompressedImage, Image};
 use std::ops::Range;
 
-/// A decoded material map with its mip chain, filtered in linear light for
-/// colour.
+/// Tests read an RGBA8 texture's levels back.
+#[cfg(test)]
+const READBACK: wgpu::TextureUsages = wgpu::TextureUsages::COPY_SRC;
+#[cfg(not(test))]
+const READBACK: wgpu::TextureUsages = wgpu::TextureUsages::empty();
+
+/// An RGBA8 texture of `levels` levels with `first`, its first level,
+/// written, sampled as sRGB colour or as linear data.
+fn rgba8_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    first: &image::RgbaImage,
+    (levels, usage): (u32, wgpu::TextureUsages),
+    srgb: bool,
+) -> wgpu::Texture {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("retained material map"),
+        size: wgpu::Extent3d {
+            width: first.width(),
+            height: first.height(),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: levels,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: if srgb {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        },
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | READBACK
+            | usage,
+        view_formats: &[],
+    });
+    write_level(queue, &texture, 0, first);
+    texture
+}
+
+fn write_level(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    level: u32,
+    texels: &image::RgbaImage,
+) {
+    crate::counters::write_texture(
+        queue,
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: level,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        texels.as_raw(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(texels.width() * 4),
+            rows_per_image: Some(texels.height()),
+        },
+        wgpu::Extent3d {
+            width: texels.width(),
+            height: texels.height(),
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+/// A decoded image as a texture of one level, for a map nothing samples
+/// below its first: the environment's panorama and the white fallback.
 pub(crate) fn upload(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     image: &image::RgbaImage,
     srgb: bool,
 ) -> wgpu::TextureView {
-    let levels = crate::content::images::rgba8_levels(image, srgb);
-    upload_rgba8_levels(device, queue, &levels, srgb)
+    rgba8_texture(
+        device,
+        queue,
+        image,
+        (1, wgpu::TextureUsages::empty()),
+        srgb,
+    )
+    .create_view(&Default::default())
 }
 
 /// `image` as one sampled texture of sRGB colour with its mips, as a
-/// material samples a colour map: a sprite image (`scene::sprites`).
+/// material samples a colour map: a sprite image (`scene::sprites`). A
+/// decoded image's chain waits in `chains` for the mip chain stage.
 pub(crate) fn upload_color(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     image: &Image,
+    chains: &mut Chains,
 ) -> wgpu::TextureView {
     match image {
-        Image::Rgba8(image) => upload(device, queue, image, true),
+        Image::Rgba8(image) => chains.upload(device, queue, image, true),
         Image::Rgba8Mips(image) => upload_rgba8_levels(device, queue, image.levels(true), true),
         Image::Compressed(image) => {
             let [color, _] = upload_compressed(device, queue, image, [true, false]);
@@ -42,48 +121,66 @@ fn upload_rgba8_levels(
     levels: &[image::RgbaImage],
     srgb: bool,
 ) -> wgpu::TextureView {
-    let image = &levels[0];
-    let tex = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("retained material map"),
-        size: wgpu::Extent3d {
-            width: image.width(),
-            height: image.height(),
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: levels.len() as u32,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: if srgb {
-            wgpu::TextureFormat::Rgba8UnormSrgb
-        } else {
-            wgpu::TextureFormat::Rgba8Unorm
-        },
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    for (level, mip) in levels.iter().enumerate() {
-        crate::counters::write_texture(
-            queue,
-            wgpu::TexelCopyTextureInfo {
-                texture: &tex,
-                mip_level: level as u32,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            mip.as_raw(),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(mip.width() * 4),
-                rows_per_image: Some(mip.height()),
-            },
-            wgpu::Extent3d {
-                width: mip.width(),
-                height: mip.height(),
-                depth_or_array_layers: 1,
-            },
-        );
+    let usage = wgpu::TextureUsages::empty();
+    let texture = rgba8_texture(
+        device,
+        queue,
+        &levels[0],
+        (levels.len() as u32, usage),
+        srgb,
+    );
+    for (level, mip) in (1..).zip(&levels[1..]) {
+        write_level(queue, &texture, level, mip);
     }
-    tex.create_view(&Default::default())
+    texture.create_view(&Default::default())
+}
+
+/// The decoded images' textures whose levels below the first are not built
+/// yet (the architecture's Material mip chains). The mip chain stage takes
+/// them before anything draws a material.
+#[derive(Default)]
+pub(crate) struct Chains {
+    waiting: Vec<wgpu::Texture>,
+}
+
+impl Chains {
+    /// A decoded image as a texture with every level down to one texel,
+    /// its first written and the rest waiting for the mip chain stage,
+    /// which draws each into the texture.
+    pub(crate) fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        image: &image::RgbaImage,
+        srgb: bool,
+    ) -> wgpu::TextureView {
+        let levels = 32 - image.width().max(image.height()).leading_zeros();
+        if levels == 1 {
+            return upload(device, queue, image, srgb);
+        }
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        let texture = rgba8_texture(device, queue, image, (levels, usage), srgb);
+        let view = texture.create_view(&Default::default());
+        self.waiting.push(texture);
+        view
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.waiting.is_empty()
+    }
+
+    /// `texture` no longer waits: what sampled it is gone (a material's
+    /// texture freed, a sprite image removed, the materials of a failed
+    /// `add_materials`), so neither its chain's passes nor its memory are
+    /// spent on it.
+    pub fn forget(&mut self, texture: &wgpu::Texture) {
+        self.waiting.retain(|waiting| waiting != texture);
+    }
+
+    /// The textures waiting, which the caller builds: none wait after.
+    pub fn take(&mut self) -> Vec<wgpu::Texture> {
+        std::mem::take(&mut self.waiting)
+    }
 }
 
 /// A block-compressed map with its stored levels, as one texture viewed as
@@ -226,6 +323,8 @@ pub(crate) struct Texture {
 pub(crate) struct Textures {
     entries: Vec<Option<Texture>>,
     free: Vec<usize>,
+    /// Those of them whose mip chains are not built yet.
+    pub chains: Chains,
 }
 
 impl Textures {
@@ -242,8 +341,8 @@ impl Textures {
         let ray = rays.add_image(device, queue, image)?;
         let [color, data] = match image {
             Image::Rgba8(image) => [
-                color.then(|| upload(device, queue, image, true)),
-                data.then(|| upload(device, queue, image, false)),
+                color.then(|| self.chains.upload(device, queue, image, true)),
+                data.then(|| self.chains.upload(device, queue, image, false)),
             ],
             Image::Rgba8Mips(image) => [
                 color.then(|| upload_rgba8_levels(device, queue, image.levels(true), true)),
@@ -300,6 +399,9 @@ impl Textures {
         {
             let texture = self.entries[index].take().unwrap();
             rays.free(texture.ray);
+            for view in [&texture.color, &texture.data].into_iter().flatten() {
+                self.chains.forget(view.texture());
+            }
             self.free.push(index);
         }
     }

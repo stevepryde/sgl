@@ -194,7 +194,8 @@ pub(super) fn render(
         scene,
         &primary_effective,
         views[0].input,
-        traced,
+        // A planning pass's commands are never submitted.
+        (traced, views[0].timing.filter(|_| !planning)),
     );
     // The render textures the frame's views draw into, whose pictures
     // change with it.

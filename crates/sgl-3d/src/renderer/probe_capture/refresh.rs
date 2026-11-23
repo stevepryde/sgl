@@ -159,7 +159,7 @@ impl Renderer {
             }
         }
         view.settle(false);
-        self.ready_capture(device, queue, scene, view, settings);
+        self.ready_capture(device, queue, scene, view, (settings, timing));
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("refresh live specular probe"),
         });

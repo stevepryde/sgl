@@ -602,6 +602,52 @@ fn a_compiled_frame_with_a_map_sampled_in_the_shader_creates_no_program() {
     assert_eq!(level.programs(), before);
 }
 
+// Plausible defects: the mip chain stage creating its programs in place
+// in a planning pass, on the thread that calls `compile`, rather than in a
+// job, or where it builds a chain in a frame, so a level's first frame
+// compiles them on the window thread; or a planning pass taking the
+// textures that wait without building their chains, so the frame draws
+// from unwritten levels. The opaque cube's base map is a decoded image of
+// one colour, whose chain the GPU builds. The oracles: the chain's last
+// level read back after the first planning pass, whose jobs have not run,
+// is unwritten (wgpu reads an unwritten level as zero), which a pass that
+// created the stage's programs in place would have built; wgpu's count of
+// the pipelines and shader modules, unchanged across the compiled first
+// frame; and that level read back after it, the image's colour within the
+// device's rounding (the mean of one colour is that colour).
+#[test]
+fn a_compiled_levels_mip_chains_are_jobs_and_built_before_its_first_frame() {
+    use crate::asset::{Image, MaterialTexture};
+    const COLOUR: [u8; 4] = [200, 100, 50, 255];
+    let mut cube = test_support::cube();
+    cube.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(
+        4,
+        4,
+        image::Rgba(COLOUR),
+    ))];
+    cube.materials[0].base_texture = Some(MaterialTexture::new(0));
+    let Some(mut level) = Level::with_opaque(cube) else {
+        return;
+    };
+    let texture = level.scene.materials.texture(0);
+    let texture = texture.color.as_ref().unwrap().texture().clone();
+    assert_eq!(texture.mip_level_count(), 3);
+    let last = |level: &Level| test_support::read_mip(&level.device, &level.queue, &texture, 2);
+    let input = Level::input(0.);
+    let first = level.compile(&input);
+    assert!(!first.ready());
+    assert_eq!(last(&level), [0; 4], "the chain waits for its job");
+    first.jobs.into_iter().for_each(|job| job.run());
+    level.compile_all(&input);
+    let before = level.programs();
+    level.render(&input);
+    assert_eq!(level.programs(), before);
+    let built = last(&level);
+    for (code, expected) in built.iter().zip(COLOUR) {
+        assert!(code.abs_diff(expected) <= 1, "{built:?} for {COLOUR:?}");
+    }
+}
+
 // Plausible defect: sprite batches, whose pipelines are one program set
 // of the transparent stage, left out of the planning pass (their passes
 // skipped before asking the slot, or the slot asked only in a frame), so a

@@ -2650,8 +2650,8 @@ cargo run -p sgl-3d-examples --example skinned -- target/skinned.png
 
 A game holds a `Scene` (content: geometry, materials, instances, lights,
 decals, environments and bakes), a `Renderer` (what every view of the scene
-shares: the geometry pipelines and bind group layouts, the deform and dynamic
-GI stages and the frame boundary), a `View` for each image of the scene it
+shares: the geometry pipelines and bind group layouts, the mip chain, deform
+and dynamic GI stages and the frame boundary), a `View` for each image of the scene it
 draws (its targets and sizes, its stages and every history kept in screen
 space or fit to its camera) and its `settings::Settings`. Each frame it
 describes each view's camera, the authored look and per-frame state in a
@@ -2873,9 +2873,11 @@ transition (another level's scene, a settings change, a resize).
   frame. For each view it is a render that was not finished, with what that
   restarts, so compile a view while the loading screen is what the player
   sees, and between frames: after `finish_frame`, before the next `render`.
-- Geometry pipelines, with their shader modules, are the jobs
+- Geometry pipelines, with their shader modules, and the mip chain stage's
+  programs, while a decoded image waits for its chain, are the jobs
   (`CompileJob::run`): `Send` on native, where the game runs them on its own
-  threads and the device keeps serving the loading screen meanwhile.
+  threads and the device keeps serving the loading screen meanwhile. A
+  call after the mip chain job has run builds the waiting chains.
 - Every other stage's programs are created by the call itself, on the
   calling thread, the first time a pass meets them: that call blocks for as
   long as they take, which is seconds before the graphics driver has cached
@@ -2899,8 +2901,8 @@ transition (another level's scene, a settings change, a resize).
   `View::resize` itself.
 - In the browser, pipeline creation returns at once and the browser compiles
   in its GPU process, which presents nothing until it has. Today a browser
-  game gets a first frame that creates nothing, geometry pipelines paced a
-  job at a time (run one or a few an animation frame, so each stall is one
+  game gets a first frame that creates nothing, geometry pipelines (and the
+  mip chain programs) paced a job at a time (run one or a few an animation frame, so each stall is one
   job's compile), and the other stages' programs compiled together after
   the first call: one stall behind the loading screen, where it was at the
   first frame. With no change to game code it will get every program paced
@@ -4164,7 +4166,8 @@ sample level 0 with each map's magnification filter and wrapping.
 ### Compressed material images
 
 `asset::Image` accepts decoded RGBA8 texels (`Image::Rgba8`, what glTF
-loading yields), whose mip chain the scene filters when the image is added;
+loading yields), whose first level the scene uploads when the image is
+added and whose mip chain the GPU builds before any draw samples it;
 prepared RGBA8 chains (`Image::Rgba8Mips`); or a block-compressed chain
 (`Image::Compressed`), uploaded as stored with no mip generation. BC7,
 ETC2 RGBA8 and ASTC 4×4 each use 16 bytes per 4×4 raster block, one quarter
@@ -4248,15 +4251,24 @@ total saving is not the raster chain's fourfold reduction. No-ray consumers
 should leave the companion out of their fetch/decode plan as well as GPU
 upload to avoid paying its CPU/WASM cost unnecessarily.
 
-For an uncompressed fallback prepared outside the render-critical thread,
-construct `Rgba8MipChain::new(image)` and pass `Image::Rgba8Mips(chain)`.
-This pure `Send` value owns immutable full chains filtered separately in
-linear-light colour and linear data, so one image can serve both roles.
-Scene upload uses those stored levels without filtering them again. Preparing
-both full chains retains roughly twice one RGBA8 mip chain; the constructor
-checks its platform byte budget before expansion, with filter scratch memory
-additional. The caller chooses the worker and when to prepare it; SGL3D
-starts no thread.
+Decoded images need no preparation: `Scene::add_materials` uploads their
+first level and returns, and the GPU builds each chain in the next frame's
+scene work, or at the start of a probe capture, before anything draws a
+material, in a submission of its own (about 0.2 ms of CPU a 512² texture
+in the browser, where the CPU chain took 26 ms). A level's texel is the mean
+of the texels it covers in the level above, weighted by area (a 2×2 box
+where that level is twice its size), colour in linear light, data and
+normal maps as stored, alpha as stored with no correction for a masked
+material's coverage. Its programs are a `Renderer::compile` job while a
+chain waits. Timing group `mip chains`: one span over all of a frame's
+chain passes (Intel Sponza's 80 images at 1024², 22 to 24 ms on an Apple
+M5). `Rgba8MipChain::new(image)` builds the same chains on the CPU
+for a tool that compresses levels or a game that hands the scene chains of
+its own (`Image::Rgba8Mips(chain)`): a pure `Send` value owning immutable
+full chains, linear-light colour and linear data, so one image can serve
+both roles, uploaded without filtering again. It retains roughly twice one
+RGBA8 mip chain and checks its platform byte budget before expansion. The
+caller chooses the thread; SGL3D starts none.
 Keep asset fetches and chunk selection game-owned: export independent bounded
 GLB/KTX2 groups, prepare geometry with `PreparedModel`, and add each group
 between frames rather than putting a whole large scene in one browser load.

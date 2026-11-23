@@ -1,12 +1,15 @@
 //! What every view of a scene shares: the bind group layouts and the
-//! geometry pipeline cache, prepare's scene part, the deform stage, the
-//! dynamic GI stage with its probes and the device's ray-query form. A
+//! geometry pipeline cache, prepare's scene part, the mip chain stage, the
+//! deform stage, the dynamic GI stage with its probes and the device's
+//! ray-query form. A
 //! frame's scene work runs once, in its primary view's stage order
 //! (`view_stages::begin_view`, `Role`).
 use super::effective;
 use crate::FrameInput;
 use crate::Scene;
-use crate::stages::{deform::Deform, dynamic_gi::DynamicGi, prepare::Prepare};
+use crate::stages::{
+    deform::Deform, dynamic_gi::DynamicGi, mip_chains::MipChains, prepare::Prepare,
+};
 use crate::view::bindings::Layouts;
 use crate::view::compile::Compiler;
 use crate::view::effective::Effective;
@@ -22,6 +25,8 @@ pub(super) struct Shared {
     pub pipelines: GeometryPipelines,
     /// Prepare's scene part: the frame's acceleration structures.
     pub prepare: Prepare,
+    /// Builds the mip chains of the decoded images added since it last ran.
+    pub mip_chains: MipChains,
     pub deform: Deform,
     /// The dynamic GI stage, on the Extended binding tier alone.
     pub dynamic_gi: Option<DynamicGi>,
@@ -64,6 +69,7 @@ impl Shared {
             layouts,
             pipelines,
             prepare: Prepare::default(),
+            mip_chains: MipChains::default(),
             deform: Deform::new(device),
             dynamic_gi,
             ray_form,
@@ -87,21 +93,35 @@ impl Shared {
     }
 
     /// Select the primary view's geometry specialisation and material
-    /// filtering, then prepare the scene. Update ray instances when any
-    /// view traces (`Prepare::traces`).
+    /// filtering, build the mip chains that wait, then prepare the scene.
+    /// Update ray instances when any view traces (`Prepare::traces`).
     pub fn run_scene(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
         scene: &mut Scene,
         effective: &Effective,
         input: &FrameInput,
-        traced: bool,
+        (traced, timing): (bool, Option<&crate::timing::GpuTiming>),
     ) {
         self.pipelines.specialise(effective.layers, scene);
         scene
             .materials
             .set_anisotropy(device, &scene.render_textures, effective.anisotropy);
+        self.build_mip_chains((device, queue), scene, timing);
         self.prepare
             .run_scene(device, queue, scene, effective, input, traced);
+    }
+
+    /// Builds the mip chains of `scene`'s decoded images added since the
+    /// last frame or capture, before anything draws its materials, timed in
+    /// `timing`.
+    pub fn build_mip_chains(
+        &mut self,
+        gpu: (&wgpu::Device, &wgpu::Queue),
+        scene: &mut Scene,
+        timing: Option<&crate::timing::GpuTiming>,
+    ) {
+        self.mip_chains
+            .build(&self.compiler, gpu, scene.materials.chains(), timing);
     }
 }

@@ -331,8 +331,8 @@ fn bounds(look: &SpriteBatch, sprites: &[Sprite]) -> Option<[Vec3; 2]> {
 
 impl Scene {
     /// Adds an image for sprite batches to show, uploaded once as sRGB
-    /// colour with its mips (an RGBA8 image's filtered as a material's
-    /// colour map's are). Batches cut cells from it with each sprite's
+    /// colour with its mips (a decoded image's built on the GPU before the
+    /// next frame draws, as a material's colour map's are). Batches cut cells from it with each sprite's
     /// region; pad an atlas's cells so their mips do not bleed.
     pub fn add_sprite_image(
         &mut self,
@@ -341,7 +341,7 @@ impl Scene {
         image: &Image,
     ) -> Result<SpriteImageId, SceneError> {
         super::textures::validate(device, image)?;
-        let view = super::textures::upload_color(device, queue, image);
+        let view = super::textures::upload_color(device, queue, image, self.materials.chains());
         Ok(self.sprites.images.insert(SpriteImage { view, users: 0 }))
     }
 
@@ -355,7 +355,9 @@ impl Scene {
         if image.users > 0 {
             return Err(SceneError::SpriteImageInUse);
         }
-        self.sprites.images.remove(id);
+        if let Some(image) = self.sprites.images.remove(id) {
+            self.materials.chains().forget(image.view.texture());
+        }
         Ok(())
     }
 

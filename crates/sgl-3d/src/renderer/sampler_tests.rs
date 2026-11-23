@@ -291,17 +291,14 @@ fn minified(
 // detail; the GPU approximates it, so a blend between levels may stray by
 // its share of a few hundredths. Each state is drawn through the bound
 // sampler and in the shader (`bound_and_in_shader`).
-/// The checker's chain under `sampled` in two unlit materials whose red and
+/// The checker (`image`: its prepared chain, or its first level for the
+/// GPU to build the chain from) under `sampled` in two unlit materials whose red and
 /// blue show its base map: the first samples it through the bound sampler,
 /// as its only map; the second in the shader, outvoted by two maps in
 /// glTF's default state that it samples but does not show (its
 /// metallic-roughness map, which an unlit material ignores, and an emission
 /// map under a black factor).
-fn bound_and_in_shader(
-    harness: &mut Harness,
-    sampled: Sampler,
-    chain: &asset::Rgba8MipChain,
-) -> Vec<MaterialId> {
+fn bound_and_in_shader(harness: &mut Harness, sampled: Sampler, image: &Image) -> Vec<MaterialId> {
     let bound = asset::Material {
         base: [1., 0., 1., 1.],
         unlit: true,
@@ -325,7 +322,7 @@ fn bound_and_in_shader(
             device,
             queue,
             &[bound, in_shader],
-            &[Image::Rgba8Mips(chain.clone())],
+            std::slice::from_ref(image),
         )
         .unwrap_or_else(|error| panic!("{error}"))
 }
@@ -337,12 +334,17 @@ fn at_lod(lod: f32, offset: f32) -> ([f32; 2], [f32; 2]) {
     ([offset; 2], [offset + span; 2])
 }
 
-fn minified_maps_select_levels_as_each_samples(basic: bool) {
+fn minified_maps_select_levels_as_each_samples(basic: bool, prepared: bool) {
     let Some(mut harness) = harness(basic) else {
         return;
     };
     let chain = checker();
     let levels = chain.levels(true);
+    let image = if prepared {
+        Image::Rgba8Mips(chain.clone())
+    } else {
+        Image::Rgba8(levels[0].clone())
+    };
     let offset = 1.75 / MINIFIED as f32;
     let lod = |lod: f32| (lod, at_lod(lod, offset));
     let state = |mag_filter, min_filter, mipmap_filter| Sampler {
@@ -359,7 +361,7 @@ fn minified_maps_select_levels_as_each_samples(basic: bool) {
         (state(Nearest, Linear, Some(Linear)), lod(1.5)),
     ];
     for (sampled, (lod, uvs)) in cases {
-        let ids = bound_and_in_shader(&mut harness, sampled, &chain);
+        let ids = bound_and_in_shader(&mut harness, sampled, &image);
         for (id, path) in ids.into_iter().zip(["the bound sampler", "the shader"]) {
             let composite = draw(&mut harness, id, uvs);
             for y in 0..SIZE[1] {
@@ -383,12 +385,26 @@ fn minified_maps_select_levels_as_each_samples(basic: bool) {
 
 #[test]
 fn minified_maps_select_levels_as_each_samples_extended() {
-    minified_maps_select_levels_as_each_samples(false);
+    minified_maps_select_levels_as_each_samples(false, true);
 }
 
 #[test]
 fn minified_maps_select_levels_as_each_samples_basic() {
-    minified_maps_select_levels_as_each_samples(true);
+    minified_maps_select_levels_as_each_samples(true, true);
+}
+
+// Plausible defect: a frame drawing a decoded image before its mip chain
+// is built (the chain's passes left out of the frame's scene work, or
+// submitted after the frame), so a minified map reads unwritten levels,
+// black; or the GPU's levels unlike the chain's rule. The same quads as
+// above, their image added decoded (`Image::Rgba8`), so the frame builds
+// its chain. The oracle is the same `minified` over the known levels of
+// the checker: at the levels these read (1 to 3) its blocks are 4, 2 and 1
+// texels, each texel's footprint one colour, so a level's texels are pure
+// red or blue whichever device averages them.
+#[test]
+fn minified_maps_sample_the_chain_a_frame_built() {
+    minified_maps_select_levels_as_each_samples(false, false);
 }
 
 // Plausible defect: the shader-sampled path dropping or doubling the view's
@@ -420,7 +436,7 @@ fn maps_sampled_in_the_shader_take_the_views_mip_bias() {
             mipmap_filter: Some(mipmap_filter),
             wrap: [Repeat; 2],
         };
-        let ids = bound_and_in_shader(&mut harness, sampled, &chain);
+        let ids = bound_and_in_shader(&mut harness, sampled, &Image::Rgba8Mips(chain.clone()));
         let composite = draw_meshes(
             &mut harness,
             vec![quad(ids[0], [-1., 0.], uvs), quad(ids[1], [0., 1.], uvs)],

@@ -1,7 +1,7 @@
 //! The renderer and its views. `Renderer` (`shared.rs`) is what every view
 //! of a scene shares: the bind group layouts, the geometry pipeline cache,
-//! prepare's scene part, the deform and dynamic GI stages, the device's
-//! ray-query form and the frame boundary. `View` (`view.rs`) is one
+//! prepare's scene part, the mip chain, deform and dynamic GI stages, the
+//! device's ray-query form and the frame boundary. `View` (`view.rs`) is one
 //! camera's frame: its targets and sizes, group 0's bindings, its views,
 //! its camera history, DiligentFX's post-effect context and every other
 //! stage. A frame (`frame.rs`) runs the scene's frame work once, then
@@ -95,7 +95,9 @@ impl Renderer {
     }
 
     /// Encodes one frame of `scene`: its frame work once (its uploads, the
-    /// acceleration structures, the deform pass and the dynamic GI update),
+    /// mip chains of the decoded images added since the last frame, which
+    /// it submits itself ahead of the frame, the acceleration structures,
+    /// the deform pass and the dynamic GI update),
     /// then each view, each as its `ViewFrame` describes it, into
     /// its output: prepare, shadows, fog, opaque, reflections and
     /// transparent, exposure, antialiasing, depth of field, motion blur,
@@ -185,10 +187,11 @@ impl Renderer {
     /// unfinished render restarts. Call it between frames, after
     /// `finish_frame`: it supersedes a render not yet finished.
     ///
-    /// A geometry pipeline is not created by the pass: its job is
-    /// returned, once, and again if it was dropped without running. Every
-    /// other program the frame needs is created by the pass, on this
-    /// thread, which blocks for it. While jobs returned earlier are neither
+    /// A geometry pipeline is not created by the pass, nor are the mip
+    /// chain stage's programs while a decoded image waits for its chain:
+    /// its job is returned, once, and again if it was dropped without
+    /// running. Every other program the frame needs is created by the
+    /// pass, on this thread, which blocks for it. While jobs returned earlier are neither
     /// finished nor dropped, a call runs no pass and only reports them.
     ///
     /// `render` never waits on this: it creates a missing program where it

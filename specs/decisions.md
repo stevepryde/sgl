@@ -1607,3 +1607,64 @@ Use the [current specs](README.md) for implementation and the
   eye-to-surface stretch, which composition's fog counts again, as
   three.js's and Wicked's do; a medium that begins at the plane is #887.
   Measured numbers are in the change that landed it.
+- **D-78** Decision, 2026-11-23 (#884): SGL3D builds a decoded RGBA8 image's
+  mip chain on the GPU, a render pass a level drawn in the texture's own
+  format, as three.js r187 (`WebGPUTexturePassUtils`) and Filament ef1a133
+  (`WebGPURenderPassMipmapGenerator`) do, in place of a CPU chain built when
+  the image was added ([Material mip
+  chains](sgl3d-architecture.md#designs-that-span-stages)). Why: the CPU
+  chain blocked the thread that adds materials for most of a browser game's
+  start. On #852's opening scene (16 materials of 512² PNGs; Apple M5,
+  Chromium 149 on `sgl-webgpu`, shared machine, provisional, median of 3,
+  main at f386a239 against it with this change) `asset_upload` fell from 465
+  to 15 ms cold and 451 to 15 warm, of which `Scene::add_materials` from 453
+  to 2.9 ms, and the first visible world from 761 to 301 ms cold and 634 to
+  192 warm (three.js r187: 244 to 252 and 206 to 214 in the same runs); the
+  first frame's encode stayed 14 ms and its GPU completion, the chains now
+  included, went from 110 to 113 ms cold and 27 to 26 warm. The minimal
+  scene's `asset_upload` fell from 20 to 6 ms and its first visible world
+  from 183 to 170 ms cold and 115 to 99 warm. Natively (Metal, Intel
+  Sponza's 80 images at 1024², three runs each, interleaved) `add_materials`
+  fell from 748 to 828 ms to 27 to 33; the first frame after it encodes the
+  chains, 25 to 31 ms of CPU. That frame's whole encode and GPU wait varied
+  too much between runs on the shared machine (35 to 154 ms) to compare with
+  main's; the chains took 22 to 24 ms of GPU time, their timing group `mip
+  chains`. The filter changes from `image`'s Triangle resize, a tent four
+  texels wide at each halving (weights 1, 3, 3, 1 over 8), to the 2×2 mean
+  three.js and Filament build at run time by default, Bevy's opt-in
+  downsampler takes and Godot's importer takes, weighted along an odd axis
+  by the area each texel of the level above covers, which none of them does
+  (three.js's and Filament's one bilinear tap and Godot's loop leave part of
+  an odd level out): levels are sharper, and a high-frequency pattern
+  aliases a little more as it recedes. Against the old chains on six of
+  Sponza's textures of each kind (the CPU builder's levels; built whole on
+  all 80 images, the GPU's chains differ from the CPU's by at most 3 steps,
+  on average 0.02 to 0.17 over colour levels 1 to 10 and 0.04 to 0.41 over
+  data levels, their rounding compounding down the chain), the mean
+  difference over levels 1 to 10 was 0.5 to 1.9 8-bit steps for colour, 0.7
+  to 2.2 for normal maps and 0.6 to 1.8 for data, and the largest 36, 60 and
+  70 at hard edges in the first levels, where the tent blurred across them.
+  The scenarios that draw minified decoded textures (`scenario_history_taa`
+  `a_channel_flat_at_rest_leaves_the_others_alone`,
+  `scenario_temporal_antialiasing`
+  `scrolling_normals_at_rest_keep_their_motion`) pass before and after; no
+  oracle moved, as none pins a level's values. Textures of one format and
+  size draw a level together, four to a pass into four targets, as many as
+  WebGPU's default 32 bytes a sample hold: on Metal, encoding Sponza's 80
+  chains took 93 to 183 ms the first time with a pass a texture, nearly all
+  of it the driver's first allocations for each render pass, and 25 to 31 ms
+  with four a pass; eight a pass, which needs a raised limit, took 20 to 31,
+  within the noise, so one program serves every device. Normal maps are not
+  renormalised, as before and as three.js and Filament do not; Godot does at
+  import. Alpha coverage of masked materials is not preserved, as before: an
+  image is shared by materials of different cutoffs and the correction is
+  per cutoff (Godot's `preserve_alpha_test_coverage`, off by default), so it
+  would be a choice of the image's, not a free addition.
+  `Rgba8MipChain::new` keeps the CPU form of the same filter, from tables
+  (2.8 to 3.4 times the old builder's speed natively, and the browser
+  baseline's prepared chains 157 to 31 ms), for a tool that compresses
+  levels or a game that hands the scene its own chains. Not taken: Bevy's
+  single-pass compute downsampler, which binds at least six storage textures
+  where WebGPU's default is four and cannot write an sRGB format; a faster
+  CPU path alone, which still blocks the thread and uploads a third more; a
+  bilinear tap, which drops a row of an odd level.

@@ -42,7 +42,7 @@ mod slots;
 pub(crate) mod sprites;
 pub(crate) mod static_edits;
 pub(crate) mod static_lighting;
-mod textures;
+pub(crate) mod textures;
 pub(crate) mod transient;
 
 pub use error::SceneError;

@@ -337,6 +337,11 @@ impl Materials {
         }
     }
 
+    /// The textures whose mip chains the mip chain stage has yet to build.
+    pub fn chains(&mut self) -> &mut textures::Chains {
+        &mut self.textures.chains
+    }
+
     /// The texture at `index`.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn texture(&self, index: usize) -> &textures::Texture {
