@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--baseline | --bistro] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
+  "measure-browser [--baseline | --bistro | --loading [--ordinary] [--jobs-per-frame <count>]] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
 
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
@@ -238,6 +238,8 @@ async function checkBrowser(): Promise<void> {
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_bistro", "--target", "wasm32-unknown-unknown"],
     // Built, not run: `measure-browser` runs it.
     ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_streaming", "--target", "wasm32-unknown-unknown"],
+    // Built, not run: `measure-browser --loading` runs it.
+    ["cargo", "build", "-p", "sgl-3d-examples", "--example", "browser_loading", "--target", "wasm32-unknown-unknown"],
     ...["browser_probe", "browser_smoke", "browser_baseline"].map((example) => [
       "wasm-bindgen",
       "--target",
@@ -266,7 +268,45 @@ if (task === "check" || task === "check-browser") {
 
 const MEASURE_DIR = process.env.SGL_BROWSER_MEASURE_DIR ?? "target/browser-measure";
 
+// The loading example's loop (`Renderer::compile` against ordinary
+// rendering): startup wall time and the longest gap between animation
+// frames, as `browser_loading` reports them.
+async function measureLoading(args: string[]): Promise<void> {
+  let ordinary = false;
+  let jobs = 1;
+  let skipBuild = false;
+  for (let at = 0; at < args.length; at += 1) {
+    if (args[at] === "--loading") continue;
+    else if (args[at] === "--ordinary") ordinary = true;
+    else if (args[at] === "--skip-build") skipBuild = true;
+    else if (args[at] === "--jobs-per-frame" && at + 1 < args.length) jobs = Number(args[++at]);
+    else throw new Error(USAGE);
+  }
+  if (!Number.isInteger(jobs) || jobs < 1) throw new Error("--jobs-per-frame must be at least 1");
+  const steps: string[][] = [
+    ["bun", "install", "--frozen-lockfile"],
+    ["cargo", "build", "--release", "-p", "sgl-3d-examples", "--example", "browser_loading", "--target", "wasm32-unknown-unknown"],
+    [
+      "wasm-bindgen", "--target", "web", "--out-dir", MEASURE_DIR,
+      `${process.env.CARGO_TARGET_DIR ?? "target"}/wasm32-unknown-unknown/release/examples/browser_loading.wasm`,
+    ],
+  ];
+  for (const argv of skipBuild ? [] : steps) {
+    const result = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
+    if (result.exitCode !== 0) process.exit(result.exitCode ?? 1);
+  }
+  const { runMeasurement } = await import("../browser/measurement");
+  const result = await runMeasurement({ page: "loading", dist: MEASURE_DIR, query: `ordinary=${ordinary ? 1 : 0}&jobs=${jobs}` });
+  console.log(`Chromium ${result.browserVersion}`);
+  console.log(result.report.trimEnd());
+  if (result.report.startsWith("FAIL") || result.errors.length) {
+    for (const error of result.errors) console.error(error);
+    process.exitCode = 1;
+  }
+}
+
 async function measureBrowser(args: string[]): Promise<void> {
+  if (args.includes("--loading")) return measureLoading(args);
   let frames = 600;
   let baseline = false;
   let bistro = false;

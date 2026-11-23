@@ -184,6 +184,7 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
     let tier = crate::shading::bind::BindingTier::of(&device.limits());
     let mut pipelines = GeometryPipelines::new(
         &device,
+        &crate::view::compile::Compiler::new(&device),
         &crate::shading::bind::lit(&device, tier),
         [
             &crate::shading::bind::shadow(&device),

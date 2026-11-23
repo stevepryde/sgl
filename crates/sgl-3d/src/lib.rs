@@ -50,7 +50,9 @@ pub use frame_input::{
 pub use glam;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use renderer::test_frame::TestRenderer;
-pub use renderer::{Renderer, View, ViewError, ViewFrame, ViewOutput};
+pub use renderer::{
+    Compilation, CompileError, CompileJob, Renderer, View, ViewError, ViewFrame, ViewOutput,
+};
 pub use scene::irradiance_volume::PreparedIrradianceRegion;
 pub use scene::rays::acceleration::RayTracingStats;
 pub use scene::{PreparedModel, PreparedModelOptions, RayData, Scene, SceneError, SceneOptions};

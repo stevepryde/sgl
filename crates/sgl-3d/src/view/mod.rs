@@ -13,12 +13,15 @@
 //! here too: the frame's context (`frame`), the effective configuration
 //! (`effective`), the sizes and shared targets (`targets`), group 0
 //! (`bindings`), DiligentFX's post-effect context (`post_fx`), the bind
-//! group cache stages keep for their own passes (`cached_group`), and a
-//! tracing stage's programs for each path its rays take (`trace_paths`).
+//! group cache stages keep for their own passes (`cached_group`), a
+//! tracing stage's programs for each path its rays take (`trace_paths`),
+//! and the slot and compiler of programs compiled ahead of a frame
+//! (`compile`).
 pub(crate) mod bindings;
 pub(crate) mod cached_group;
 pub(crate) mod cascades;
 pub(crate) mod clusters;
+pub(crate) mod compile;
 pub(crate) mod culling;
 pub(crate) mod draw_list;
 pub(crate) mod effective;

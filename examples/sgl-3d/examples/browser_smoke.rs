@@ -893,10 +893,22 @@ struct Rendered {
     fsr_error: Option<String>,
     volume_paths: bool,
     timed_frames: usize,
+    /// The compile jobs run before the first frame, where it was compiled
+    /// ahead.
+    compiled_jobs: Option<usize>,
+}
+
+/// Whether a configuration's first frame creates its programs, or
+/// `Renderer::compile` readied them before it.
+#[derive(Clone, Copy, PartialEq)]
+enum Programs {
+    Ordinary,
+    Compiled,
 }
 
 /// Renders `FRAMES` frames under `settings` with a new renderer, inside
 /// error scopes, and reports what ran and the measured luma.
+#[allow(clippy::too_many_arguments)]
 async fn configuration(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -905,11 +917,15 @@ async fn configuration(
     timing: &mut Option<GpuTiming>,
     settings: &Settings,
     atmosphere: bool,
+    programs: Programs,
 ) -> Result<String, String> {
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
-    let rendered = render(device, queue, scene, content, timing, settings, atmosphere).await;
+    let rendered = render(
+        device, queue, scene, content, timing, settings, atmosphere, programs,
+    )
+    .await;
     let errors = [
         ("internal", internal.pop()),
         ("out-of-memory", memory.pop()),
@@ -952,9 +968,18 @@ async fn configuration(
     if timing.is_some() {
         let _ = write!(report, ", {} timed frames read", rendered.timed_frames);
     }
+    // The scene draws geometry, whose pipelines are compile jobs.
+    match rendered.compiled_jobs {
+        Some(0) => return Err("compiling ahead ran no job".into()),
+        Some(jobs) => {
+            let _ = write!(report, ", {jobs} compile jobs run ahead");
+        }
+        None => {}
+    }
     Ok(report)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -963,6 +988,7 @@ async fn render(
     timing: &mut Option<GpuTiming>,
     settings: &Settings,
     atmosphere: bool,
+    programs: Programs,
 ) -> Result<Rendered, String> {
     let output = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("smoke output"),
@@ -1024,6 +1050,37 @@ async fn render(
             ..Fog::default()
         };
     }
+    // Compiled ahead: the first frame's programs are readied by planning
+    // passes, whose commands are dropped, and the jobs they return, run
+    // here as a page runs them between animation frames.
+    let mut compiled_jobs = None;
+    if programs == Programs::Compiled {
+        frame.camera_cut = true;
+        let mut jobs = 0;
+        loop {
+            let compilation = renderer.compile(
+                device,
+                queue,
+                scene,
+                &mut [ViewFrame {
+                    view: &mut scene_view,
+                    input: &frame,
+                    settings,
+                    output: ViewOutput::Texture(&view),
+                    timing: None,
+                }],
+            );
+            if compilation.ready() {
+                break;
+            }
+            if compilation.jobs.is_empty() {
+                return Err("compile is pending with no job to run".into());
+            }
+            jobs += compilation.jobs.len();
+            compilation.jobs.into_iter().for_each(|job| job.run());
+        }
+        compiled_jobs = Some(jobs);
+    }
     let mut timed_frames = 0;
     for index in 0..FRAMES {
         if let Some(timing) = timing.as_mut() {
@@ -1067,6 +1124,7 @@ async fn render(
         fsr_error: scene_view.fsr_error().map(str::to_owned),
         volume_paths: renderer.volume_paths_in_effect(settings),
         timed_frames,
+        compiled_jobs,
     })
 }
 
@@ -1808,6 +1866,20 @@ async fn smoke(report: &mut String) -> Result<(), String> {
                 ..high
             },
             false,
+            Programs::Ordinary,
+        ),
+        // The same settings with the first frame's programs compiled
+        // ahead (`Renderer::compile`): the planning passes' dropped
+        // commands raise no WebGPU error, the jobs run, and the frames
+        // pass the checks the ordinary configuration passes.
+        (
+            "high, Crystal SSR, TAA, contact shadows, compiled ahead",
+            Settings {
+                contact_shadows: ContactShadows::Medium,
+                ..high
+            },
+            false,
+            Programs::Compiled,
         ),
         (
             "high, Velvet and world-space reflections, fog, mist, motion blur, heat",
@@ -1820,6 +1892,7 @@ async fn smoke(report: &mut String) -> Result<(), String> {
                 ..high
             },
             true,
+            Programs::Ordinary,
         ),
         (
             "FSR2 chosen",
@@ -1828,6 +1901,7 @@ async fn smoke(report: &mut String) -> Result<(), String> {
                 ..high
             },
             false,
+            Programs::Ordinary,
         ),
         (
             "FSR3 chosen",
@@ -1836,6 +1910,7 @@ async fn smoke(report: &mut String) -> Result<(), String> {
                 ..high
             },
             false,
+            Programs::Ordinary,
         ),
         (
             "low, SMAA, low dynamic GI",
@@ -1846,9 +1921,10 @@ async fn smoke(report: &mut String) -> Result<(), String> {
                 ..Settings::default()
             },
             false,
+            Programs::Ordinary,
         ),
     ];
-    for (name, settings, atmosphere) in configurations {
+    for (name, settings, atmosphere, programs) in configurations {
         let result = configuration(
             &device,
             &queue,
@@ -1857,6 +1933,7 @@ async fn smoke(report: &mut String) -> Result<(), String> {
             &mut timing,
             &settings,
             atmosphere,
+            programs,
         )
         .await;
         let errors = std::mem::take(&mut *uncaptured.lock().unwrap());

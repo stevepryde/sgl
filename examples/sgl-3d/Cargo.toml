@@ -29,6 +29,8 @@ futures.workspace = true
 js-sys.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
+# `browser_loading` presents its loading screen on the page's canvas.
+web-sys.workspace = true
 
 [[example]]
 name = "browser_smoke"
@@ -37,6 +39,11 @@ crate-type = ["cdylib"]
 # The browser lane builds it; `bun scripts/tasks.ts measure-browser` runs it.
 [[example]]
 name = "browser_streaming"
+crate-type = ["cdylib"]
+
+# The browser lane builds it; `bun scripts/tasks.ts measure-browser --loading` runs it.
+[[example]]
+name = "browser_loading"
 crate-type = ["cdylib"]
 
 [[example]]

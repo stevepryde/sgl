@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SGL3D browser loading measurement</title>
+<link rel="icon" href="data:,">
+<canvas id="screen" width="640" height="360"></canvas>
+<pre id="report">measuring…</pre>
+<script type="module">
+  import init, { measure } from "./browser_loading.js";
+  const out = document.getElementById("report");
+  const query = new URLSearchParams(location.search);
+  try {
+    await init();
+    const report = await measure(query.get("ordinary") === "1", Number(query.get("jobs") ?? 1));
+    out.textContent = report;
+    window.__sglReport = report;
+  } catch (error) {
+    out.textContent = `FAIL init: ${error}`;
+    window.__sglReport = `FAIL init: ${error}\n`;
+  }
+</script>

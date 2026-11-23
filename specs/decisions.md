@@ -1312,3 +1312,37 @@ Use the [current specs](README.md) for implementation and the
   one that holds a shader material does (F-15), which costs a TAA or FSR
   view its composition pass and masked resolve while the picture stands
   still. Measured numbers are in the change that landed it.
+
+- **D-71** Decision, 2026-11-23 (#851): SGL3D readies a frame's shaders and
+  pipelines ahead of it with `Renderer::compile`, a planning pass over the
+  frame's own code path whose commands are dropped, and compiles the
+  programs held in `Compiled` slots in jobs the game runs on its own
+  threads; a frame that meets a missing program still creates it in place.
+  The geometry pipeline cache's entries are the slots so far. The basis for
+  jobs: on an Apple M5, an ordinary first frame run whole on a worker
+  thread created its programs over 4.9 s while a second thread's passes on
+  the same device saw a longest gap of 4.6 ms, so wgpu's ordinary creation
+  on another thread does not stall the one that presents. As built, the
+  block world of the `loading` example needs 39 pipelines for its first
+  frame, 7 of them jobs; the other 32 are created by the first `compile`
+  call on its own thread, the loading loop's longest gap (2.5 to 5.9 s over
+  three starts with a cold driver cache, about 50 to 120 ms warm, against
+  about 110 to 260 ms for the ordinary first frame warm), after which the
+  first frame creates none. Moving the other stages' programs into slots
+  (#879) and a `Send` view, which lets a game run the whole pass on a
+  loading thread (#881), close that gap. Alternatives: every stage planning
+  into one cache of owned descriptors (Bevy's shape), which restates each
+  stage's choices apart from its drawing; a hidden rendered frame, which
+  submits work and takes part in history. The browser's remedy is WebGPU's
+  asynchronous pipeline creation: in Chromium 149 eight heavy pipelines
+  created synchronously stopped the page presenting for 11.3 s while the
+  calls themselves returned in 0.1 ms (the stall is in the GPU process, so
+  a rendering worker does not move it), one a frame for 1.4 s at a time,
+  and asynchronously for 10 ms. wgpu exposes neither call
+  (gfx-rs/wgpu#3794) nor the handles to make a wgpu pipeline from a raw
+  one, so a job in the browser is synchronous creation that the page paces
+  between frames, and takes the asynchronous calls when wgpu has them
+  (#880). Creating raw twins first, so that Chromium's deduplication
+  answers the synchronous call at once (measured: 0.1 ms), was not taken:
+  it rests on one browser's unspecified behaviour and a second copy of
+  wgpu's descriptor mapping.

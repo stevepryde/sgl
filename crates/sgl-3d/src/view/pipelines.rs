@@ -25,6 +25,7 @@ use crate::content::identity::ShaderId;
 use crate::shading::bind::{BindingTier, LitLayout};
 use crate::shading::programs::*;
 use crate::shading::{self, gbuffer};
+use crate::view::compile::{Compiled, Compiler};
 use crate::view::targets::{composition_targets, mask_targets};
 use std::collections::HashMap;
 
@@ -68,7 +69,10 @@ pub(crate) struct GeometryPipelines {
     /// The programs of each shader a material names, dropped with their
     /// pipelines when none does.
     shader_programs: HashMap<ShaderId, ProgramSet>,
-    cache: HashMap<PipelineKey, wgpu::RenderPipeline>,
+    /// Each a slot: a frame creates a missing pipeline where it binds it,
+    /// and a planning pass queues it as a compile job.
+    cache: HashMap<PipelineKey, Compiled<wgpu::RenderPipeline>>,
+    compiler: Compiler,
     current: Specialisation,
     /// A light or material toggled back can reuse its previous pipelines.
     previous: Option<Specialisation>,
@@ -90,6 +94,7 @@ impl GeometryPipelines {
     /// until a frame or probe capture binds a geometry pipeline.
     pub fn new(
         device: &wgpu::Device,
+        compiler: &Compiler,
         lit: &LitLayout,
         [
             shadow,
@@ -146,6 +151,7 @@ impl GeometryPipelines {
             programs: ProgramSet::default_set(),
             shader_programs: HashMap::new(),
             cache: HashMap::new(),
+            compiler: compiler.clone(),
             current: (LayerConstants::ALL, LitConstants::default(), false),
             previous: None,
             anisotropy_inline: attachments_fit(&limits, &targets(GeometryPass::GBuffer, true)),
@@ -193,6 +199,9 @@ impl GeometryPipelines {
 
     /// Called when an executor binds a draw. GPU-built lists need the pipeline
     /// for the issued indirect command even when culling leaves zero instances.
+    /// None in a planning pass (`Renderer::compile`) while the pipeline is
+    /// missing: the pass queues its compile job and the caller leaves the
+    /// draw out.
     pub fn with_pipeline<T>(
         &mut self,
         scene: &Scene,
@@ -200,16 +209,19 @@ impl GeometryPipelines {
         variant: Variant,
         shader: Option<ShaderId>,
         use_pipeline: impl FnOnce(&wgpu::RenderPipeline) -> T,
-    ) -> T {
+    ) -> Option<T> {
         let (layers, lit, transmission) = self.current;
         let key = PipelineKey::new(pass, variant, shader, (layers, lit), transmission);
-        if let Some(pipeline) = self.cache.get(&key) {
-            return use_pipeline(pipeline);
+        if let Some(pipeline) = self.cache.get(&key).and_then(Compiled::ready) {
+            return Some(use_pipeline(pipeline));
         }
-        let pipeline = self.create(scene, key);
-        let result = use_pipeline(&pipeline);
-        self.cache.insert(key, pipeline);
-        result
+        let (label, job) = self.job(scene, key);
+        let compiler = self.compiler.clone();
+        self.cache
+            .entry(key)
+            .or_default()
+            .get(&compiler, label, || job)
+            .map(use_pipeline)
     }
 
     /// The shader modules and pipelines it holds for game shaders.
@@ -217,13 +229,26 @@ impl GeometryPipelines {
     pub fn shader_programs(&self) -> (usize, usize) {
         (
             self.shader_programs.values().map(ProgramSet::modules).sum(),
-            self.cache.keys().filter(|key| key.shader.is_some()).count(),
+            self.cache
+                .iter()
+                .filter(|(key, pipeline)| key.shader.is_some() && pipeline.ready().is_some())
+                .count(),
         )
     }
 
-    fn create(&mut self, scene: &Scene, key: PipelineKey) -> wgpu::RenderPipeline {
+    /// `key`'s label and what creates its pipeline, on whichever thread
+    /// runs it: it owns the device, the layout, the program's module (made
+    /// there if no pipeline has needed it) and the descriptor's values.
+    fn job(
+        &mut self,
+        scene: &Scene,
+        key: PipelineKey,
+    ) -> (
+        &'static str,
+        impl FnOnce() -> wgpu::RenderPipeline + wgpu::WasmNotSend + 'static,
+    ) {
         use GeometryPass::*;
-        let device = &self.device;
+        let device = self.device.clone();
         let masked = key.variant.alpha == Alpha::Mask;
         let shaded = key.shader.is_some();
         let vertex_buffers = &shading::vertex::GEOMETRY_BUFFERS;
@@ -303,7 +328,8 @@ impl GeometryPipelines {
                 .or_insert_with(|| ProgramSet::of(scene, id)),
             None => &mut self.programs,
         };
-        let module = programs.module(device, tier, program);
+        let module = programs.module(tier, program);
+        let layout = layout.clone();
         // Casters are depth-only: their cull selects the side that casts. A
         // directional cascade's depth is unclipped, so casters between the
         // light and the cascade are drawn at its near plane, as Bevy's
@@ -408,50 +434,56 @@ impl GeometryPipelines {
         }
         let constants = key.constants();
         let (depth_write, depth_compare) = depth(key.pass);
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module,
-                entry_point: Some(vertex),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &constants,
+        let pulled = key.pass.pulled();
+        let cull_mode = key.variant.cull.face();
+        let create = move || {
+            let module = module.get(&device);
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module,
+                    entry_point: Some(vertex),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &constants,
+                        ..Default::default()
+                    },
+                    buffers: if pulled {
+                        &vertex_buffers[..1]
+                    } else {
+                        vertex_buffers
+                    },
+                },
+                fragment: fragment.map(|fragment| wgpu::FragmentState {
+                    module,
+                    entry_point: Some(fragment),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &constants,
+                        ..Default::default()
+                    },
+                    targets: &targets,
+                }),
+                primitive: wgpu::PrimitiveState {
+                    cull_mode,
+                    unclipped_depth,
                     ..Default::default()
                 },
-                buffers: if key.pass.pulled() {
-                    &vertex_buffers[..1]
-                } else {
-                    vertex_buffers
-                },
-            },
-            fragment: fragment.map(|fragment| wgpu::FragmentState {
-                module,
-                entry_point: Some(fragment),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &constants,
-                    ..Default::default()
-                },
-                targets: &targets,
-            }),
-            primitive: wgpu::PrimitiveState {
-                cull_mode: key.variant.cull.face(),
-                unclipped_depth,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: gbuffer::DEPTH,
-                depth_write_enabled: Some(depth_write),
-                depth_compare: Some(depth_compare),
-                stencil: Default::default(),
-                // Casters store their depth unbiased: Bevy offsets the
-                // receiver instead, by its normal and depth bias
-                // (shadow_receiver_offset).
-                bias: Default::default(),
-            }),
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        })
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: gbuffer::DEPTH,
+                    depth_write_enabled: Some(depth_write),
+                    depth_compare: Some(depth_compare),
+                    stencil: Default::default(),
+                    // Casters store their depth unbiased: Bevy offsets the
+                    // receiver instead, by its normal and depth bias
+                    // (shadow_receiver_offset).
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        (label, create)
     }
 }
 

@@ -49,7 +49,7 @@ impl DrawList {
                 continue;
             }
             let key = batch.key;
-            binder.bind(pass, scene, key.variant, key.material);
+            let bound = binder.bind(pass, scene, key.variant, key.material);
             if !pulled && geometry != Some(key.geometry) {
                 let (vertices, indices) = match key.geometry {
                     Geometry::Mesh { model, mesh } => {
@@ -102,7 +102,9 @@ impl DrawList {
                 geometry = Some(key.geometry);
             }
             let instances = self.first + batch.instances.start..self.first + batch.instances.end;
-            if pulled {
+            if !bound {
+                // A planning pass whose pipeline is still compiling.
+            } else if pulled {
                 pass.draw(range.clone(), instances);
             } else {
                 let indices = first_index + range.start..first_index + range.end;

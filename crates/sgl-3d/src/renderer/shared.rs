@@ -8,11 +8,16 @@ use crate::FrameInput;
 use crate::Scene;
 use crate::stages::{deform::Deform, dynamic_gi::DynamicGi, prepare::Prepare};
 use crate::view::bindings::Layouts;
+use crate::view::compile::Compiler;
 use crate::view::effective::Effective;
 use crate::view::pipelines::GeometryPipelines;
 use crate::view::trace_paths::DeviceRayForm;
 
 pub(super) struct Shared {
+    /// The pass in progress, a frame or a planning pass, and what a
+    /// planning pass queued (`view::compile`), which the geometry pipeline
+    /// cache's slots follow.
+    pub compiler: Compiler,
     pub layouts: Layouts,
     pub pipelines: GeometryPipelines,
     /// Prepare's scene part: the frame's acceleration structures.
@@ -30,8 +35,10 @@ impl Shared {
         let layouts = Layouts::new(device);
         let dynamic_gi = (layouts.lit.tier == crate::shading::bind::BindingTier::Extended)
             .then(|| DynamicGi::new(device));
+        let compiler = Compiler::new(device);
         let pipelines = GeometryPipelines::new(
             device,
+            &compiler,
             &layouts.lit,
             [
                 &layouts.shadow,
@@ -53,6 +60,7 @@ impl Shared {
             ))
         });
         Self {
+            compiler,
             layouts,
             pipelines,
             prepare: Prepare::default(),

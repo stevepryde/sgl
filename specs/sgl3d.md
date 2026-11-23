@@ -220,6 +220,12 @@ settings SGL3D has today.
    which its materials sample: an in-world screen, with no readback
    ([architecture](sgl3d-architecture.md#frame), "Render textures"). Caches become reusable only after the caller submits the frame and
    calls `Renderer::finish_frame`; an abandoned encoder leaves them dirty.
+   `Renderer::compile` readies ahead of time the shaders and pipelines a
+   frame would create, for the same scene, views, settings, frame inputs
+   and output as `Renderer::render`, without submitting the frame's
+   commands or committing history; the game runs the compile jobs it
+   returns and owns their threads and pacing. Drawing without it, or
+   before it is ready, creates what is missing in place.
 5. **S3D-5 — Coherent shading.** One physically based material and lighting
    model serves primary shading, reflections, probes, bakes and GI. Fix a wrong
    result at its cause (units, double-counted energy, broken normals, ownership

@@ -61,6 +61,8 @@ test(
       const lines = report.trim().split("\n");
       expect(lines.filter((line) => line.startsWith("FAIL"))).toEqual([]);
       expect(lines.some((line) => line.startsWith("ok specular probe capture:"))).toBe(true);
+      // The frame compiled ahead ran its jobs and passed the same checks.
+      expect(lines.find((line) => line.includes("compiled ahead:"))).toMatch(/^ok .* compile jobs run ahead/);
       // WebGPU cannot expose the native SDK's required features. Observe the
       // renderer's effective AA and diagnostic, not the number of report lines.
       for (const method of ["FSR2", "FSR3"]) {

@@ -8,6 +8,7 @@ fn pipelines(device: &wgpu::Device) -> GeometryPipelines {
     let tier = crate::shading::bind::BindingTier::of(&device.limits());
     GeometryPipelines::new(
         device,
+        &crate::view::compile::Compiler::new(device),
         &crate::shading::bind::lit(device, tier),
         [
             &crate::shading::bind::shadow(device),
@@ -95,7 +96,10 @@ fn pipelines_of_the_current_and_previous_specialisation_stay() {
     pipelines.specialise(LayerConstants::ALL, &scene);
     assert_eq!(pipelines.cache.len(), 1, "C evicts A before its first draw");
     assert!(
-        pipelines.cache.values().any(|pipeline| pipeline == &b),
+        pipelines
+            .cache
+            .values()
+            .any(|pipeline| pipeline.ready() == b.as_ref()),
         "B stays"
     );
     let c = request(&mut pipelines, &scene);

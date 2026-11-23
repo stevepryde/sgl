@@ -2214,6 +2214,7 @@ dependencies = [
  "sgl-3d",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
  "wgpu",
 ]
 

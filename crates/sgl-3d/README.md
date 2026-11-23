@@ -2549,17 +2549,68 @@ shaders and pipelines synchronously during that call or the first frame that
 uses an effect. Dynamic GI, deformation and GPU culling skip pipeline creation
 until they have work. Transparent effects such as heat shimmer need visible
 content, and settings such as motion blur and SMAA select their own pipelines.
-On native, a game with a loading UI can create the view and encode the first
-world frame on its rendering thread while the window thread handles input and
-loading feedback. Use the actual scene, settings and output format to exercise
-the pipelines the player will use.
-
 A view builds its local exposure and presentation pipelines on their first
-use and keeps them across toggles and resizes. To warm a known transition,
-render, submit and finish a loading frame on the same view with the upcoming
-`FrameInput::local_exposure`, settings and output path. A diagnostics capture
-uses a different final pipeline from direct presentation. The loading frame
-participates in the normal frame history.
+use and keeps them across toggles and resizes. A diagnostics capture uses a
+different final pipeline from direct presentation.
+
+`Renderer::compile` readies a frame's shaders and pipelines before it, for
+the actual scene, views, settings, frame input and output, so the frame
+creates none. It takes `render`'s arguments without the encoder, each view
+resized first as before `render`, and returns a `Compilation`: `jobs` to
+run, `pending` (how many programs it waits for, one a job not finished;
+`ready()` at 0) and `errors` (jobs that failed, on native, each once). Call
+it once per loading frame until it is ready, and again before a known
+transition (another level's scene, a settings change, a resize).
+
+- A call runs the frame's own code path as a planning pass into an encoder
+  of its own, which it drops: none of the frame's commands is submitted and
+  no history is committed, while the scene's own uploads happen as in a
+  frame. For each view it is a render that was not finished, with what that
+  restarts, so compile a view while the loading screen is what the player
+  sees, and between frames: after `finish_frame`, before the next `render`.
+- Geometry pipelines, with their shader modules, are the jobs
+  (`CompileJob::run`): `Send` on native, where the game runs them on its own
+  threads and the device keeps serving the loading screen meanwhile.
+- Every other stage's programs are created by the call itself, on the
+  calling thread, the first time a pass meets them: that call blocks for as
+  long as they take, which is seconds before the graphics driver has cached
+  them and tens of milliseconds after, and the frame then creates none.
+- A `View` stays on the thread that created it (its FSR context is not
+  `Send`). On native, a game that creates its view and calls `compile` and
+  `render` on a rendering thread keeps the whole of it off its window
+  thread, which handles input and loading feedback meanwhile.
+- `render` never waits on it. A program still missing is created where it
+  is drawn; a job that has not started runs in place; one a thread is
+  running is waited for. A job dropped without running is offered again by
+  the next call, and a failed one is reported once and created in place by
+  the frame that draws it, which reports through the device as before.
+- While jobs it returned are neither finished nor dropped, a call runs no
+  pass and reports them as pending.
+- A renderer shows one scene at a time: compile a level with a renderer
+  that draws no other scene meanwhile, or it drops what the other needs.
+- A program a stage takes only once a frame has finished (the camera's
+  lighting with screen-space indirect light's kept result) is created by
+  that frame. Most resizes need no program; FSR's context is built by
+  `View::resize` itself.
+- In the browser, pipeline creation returns at once and the browser compiles
+  in its GPU process, which presents nothing until it has. Today a browser
+  game gets a first frame that creates nothing, geometry pipelines paced a
+  job at a time (run one or a few an animation frame, so each stall is one
+  job's compile), and the other stages' programs compiled together after
+  the first call: one stall behind the loading screen, where it was at the
+  first frame. With no change to game code it will get every program paced
+  that way once the other stages' are jobs, and no stall once wgpu exposes
+  WebGPU's asynchronous pipeline creation (gfx-rs/wgpu#3794), which a job
+  then uses; `Compilation::errors` is filled in the browser from then too.
+
+The [loading example](../../examples/sgl-3d/examples/loading.rs) is the loop to copy, with
+the game's worker threads and what the run costs, and
+[`browser_loading`](../../examples/sgl-3d/examples/browser_loading.rs) the same in the browser:
+
+```sh
+cargo run --release -p sgl-3d-examples --example loading
+bun scripts/tasks.ts measure-browser --loading
+```
 
 Recreate the scene, renderer and views after replacing the device. Dropping
 them releases the library's GPU handles; the game still owns its device,

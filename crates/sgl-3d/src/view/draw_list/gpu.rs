@@ -464,7 +464,7 @@ impl GpuList {
         let mut positions = None;
         let mut issued = 0;
         for set in self.drawn.iter().filter(|set| drawn(set.material)) {
-            binder.bind(pass, scene, set.variant, set.material);
+            let bound = binder.bind(pass, scene, set.variant, set.material);
             if kind.binds_caster_positions() && positions != Some(set.positions) {
                 pass.set_bind_group(3, scene.geometry.positions_group(set.positions), &[]);
                 positions = Some(set.positions);
@@ -477,18 +477,22 @@ impl GpuList {
                     Phase::Early => (&self.regions, set.index),
                     Phase::Late => (&self.late_regions, self.commands + set.index),
                 };
-                pass.set_vertex_buffer(DRAW_INSTANCE_SLOT, regions.slice(region(0)));
-                pass.draw_indirect(&self.draws, first + u64::from(index) * command);
+                // Not in a planning pass whose pipeline is still compiling.
+                if bound {
+                    pass.set_vertex_buffer(DRAW_INSTANCE_SLOT, regions.slice(region(0)));
+                    pass.draw_indirect(&self.draws, first + u64::from(index) * command);
+                }
                 issued += 1;
             }
             if paired && set.variant.alpha == Alpha::Opaque {
-                binder.bind_paired(pass, scene);
                 let index = 2 * self.commands + set.index;
-                pass.set_vertex_buffer(
-                    DRAW_INSTANCE_SLOT,
-                    self.regions.slice(region(self.paired_region)),
-                );
-                pass.draw_indexed_indirect(&self.draws, first + u64::from(index) * command);
+                if binder.bind_paired(pass, scene) {
+                    pass.set_vertex_buffer(
+                        DRAW_INSTANCE_SLOT,
+                        self.regions.slice(region(self.paired_region)),
+                    );
+                    pass.draw_indexed_indirect(&self.draws, first + u64::from(index) * command);
+                }
                 issued += 1;
             }
         }

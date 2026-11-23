@@ -811,8 +811,13 @@ pub(crate) fn device_choosing(
 /// The default adapter, for a test that requests its own devices, or `None`
 /// after printing why. `SGL_REQUIRE_GPU` turns the skip into a failure.
 pub(crate) fn adapter() -> Option<wgpu::Adapter> {
+    adapter_of(&wgpu::Instance::default())
+}
+
+/// `instance`'s default adapter, as `adapter` gives one.
+fn adapter_of(instance: &wgpu::Instance) -> Option<wgpu::Adapter> {
     let required = std::env::var("SGL_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0");
-    match pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default())) {
+    match pollster::block_on(instance.request_adapter(&Default::default())) {
         Ok(adapter) => Some(adapter),
         Err(error) => {
             assert!(
@@ -823,6 +828,21 @@ pub(crate) fn adapter() -> Option<wgpu::Adapter> {
             None
         }
     }
+}
+
+/// `device`, with the instance that made it, whose report counts what the
+/// device holds (`wgpu::Instance::generate_report`).
+pub(crate) fn counted_device() -> Option<(wgpu::Instance, wgpu::Device, wgpu::Queue)> {
+    let instance = wgpu::Instance::default();
+    let adapter = adapter_of(&instance)?;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: (adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC)
+            | crate::graphics_device::features(&adapter),
+        required_limits: crate::graphics_device::limits(&adapter),
+        ..Default::default()
+    }))
+    .unwrap();
+    Some((instance, device, queue))
 }
 
 /// A game's shader for fixtures (`Scene::add_shader`): it moves every vertex

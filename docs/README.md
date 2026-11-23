@@ -9,7 +9,7 @@ reference do not need to be in every prompt.
 
 | Task | Read | Working example or API |
 | --- | --- | --- |
-| Build a 3D game, native or browser | [SGL3D agent guide](../crates/sgl-3d/docs/README.md), [integration conventions](3d-development.md) | [Offscreen frame](../examples/sgl-3d/examples/offscreen.rs), [WebGPU frame](../examples/sgl-3d/examples/browser_smoke.rs) |
+| Build a 3D game, native or browser | [SGL3D agent guide](../crates/sgl-3d/docs/README.md), [integration conventions](3d-development.md) | [Offscreen frame](../examples/sgl-3d/examples/offscreen.rs), [WebGPU frame](../examples/sgl-3d/examples/browser_smoke.rs), [loading screen](../examples/sgl-3d/examples/loading.rs) |
 | Give a 3D surface its own vertex and surface functions (water, wind, glass) | [Programmable surfaces](../crates/sgl-3d/README.md#programmable-surfaces) | [Water](../examples/sgl-3d/examples/water.rs), [wind and glass](../examples/sgl-3d/examples/shaders.rs), [glass volumes](../examples/sgl-3d/examples/volumes.rs) |
 | Build a 2D game | [sgl-2d](../crates/sgl-2d/README.md) | [Minimal window and sprite](../examples/direct-game/src/main.rs) |
 | Add a HUD, menu, or editing tool | [sgl-2d UI](../crates/sgl-2d/README.md#ui-and-huds), [tool composition](../specs/client.md#tool-composition) | [Tool UI](../examples/sgl-2d/examples/tool_ui.rs) |

@@ -52,6 +52,7 @@ pub(super) fn render(
     views: &mut [ViewFrame<'_>],
     finished: &Arc<AtomicBool>,
 ) -> u64 {
+    let planning = shared.compiler.planning();
     let attempt = scene.begin_frame(device, queue);
     // The views the frame renders, in render order; none where no view
     // draws a render texture: all of them, as listed.
@@ -121,7 +122,8 @@ pub(super) fn render(
             frame.view,
             (device, queue, encoder),
             scene,
-            (frame.input, frame.timing),
+            // A planning pass's commands are never submitted.
+            (frame.input, frame.timing.filter(|_| !planning)),
             begun,
             (role, attempt, finished),
         )
@@ -162,7 +164,8 @@ pub(super) fn render(
             Drawn {
                 input: frame.input,
                 output,
-                timing: frame.timing,
+                // A planning pass's commands are never submitted.
+                timing: frame.timing.filter(|_| !planning),
             },
             begun,
         );

@@ -118,6 +118,56 @@ captures on the same renderer reuse the cached pipelines.
    (chunk-aligned in a streamed world); then give the camera and edits in
    the new frame. Nothing restarts or redraws.
 
+### Compiling ahead
+
+A frame creates the shaders and pipelines it first needs, which stalls the
+thread that renders: the first frame of a level, or of a settings change.
+`Renderer::compile` takes the arguments of `render` (no encoder) and readies
+them before that frame, behind the game's loading screen. Each loading
+frame, after `View::resize` as before `render`:
+
+```rust
+let compilation = renderer.compile(&device, &queue, &mut scene, &mut views);
+for job in compilation.jobs {
+    workers.send(job); // the game's threads run `job.run()`; in the browser, run a few here each frame
+}
+if compilation.ready() { /* `render` with these arguments creates nothing */ }
+```
+
+- Geometry pipelines are the compile jobs. Every other stage's programs are
+  created by the call that first meets them, on the calling thread: that
+  call blocks for them (seconds on a first run of the game, before the
+  graphics driver has cached them), once, and the frame then creates none.
+- A `View` stays on the thread that created it. On native, a game that
+  creates its view and calls `compile` and `render` on a rendering thread
+  keeps all of it off its window thread.
+- It submits none of the frame's commands and commits no history; the
+  scene's own uploads happen as in a frame. For each view it is a render
+  that was not finished (step 3), so compile a view while the loading
+  screen, not the view, is on screen, between frames: after `finish_frame`
+  and before the next `render`.
+- `render` never waits for it: what is missing is created in place, as
+  without it. A job dropped without running is offered again;
+  `Compilation::errors` lists failed jobs (native), each once.
+- Call it again after a settings change, a resize or for another level's
+  scene, with a renderer that draws no other scene meanwhile. Most resizes
+  need nothing; `View::resize` itself builds FSR's context. A program a
+  stage takes only once a frame has finished (screen-space indirect light
+  in the camera's lighting) is created by that frame.
+- In the browser, pipeline creation returns at once and the browser
+  compiles in its GPU process, presenting nothing until it has. What a
+  browser game gets today: a first frame that creates nothing; geometry
+  pipelines paced a job at a time (run one or a few an animation frame),
+  each stalling the page for its own compile only; and the other stages'
+  programs compiled together after the first call, one stall behind the
+  loading screen instead of at the first frame. What it will get, with no
+  change to its code: every program paced the same way once the other
+  stages' are jobs, and no stall at all once wgpu exposes WebGPU's
+  asynchronous pipeline creation (gfx-rs/wgpu#3794), which a job then uses.
+
+[`examples/loading.rs`](../../../examples/sgl-3d/examples/loading.rs) is the loop to copy, and
+[`examples/browser_loading.rs`](../../../examples/sgl-3d/examples/browser_loading.rs) the browser's.
+
 ### Several views
 
 A split screen, an inset, a rear view or an editor's viewports are several

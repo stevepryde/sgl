@@ -464,11 +464,13 @@ Environment and probe specular always apply. On top of them:
 
 ## Image quality and post-processing
 
-Pipeline setup follows the enabled effects and scene content. First use of an
-effect can still compile shaders. On native, the game can construct its view
-and encode its first world frame on a rendering thread. A later loading
-frame with the upcoming look and output path warms them for subsequent frames
-on that view. [Frame workflow](../README.md#retained-scene-and-frame-lifecycle).
+Pipeline setup follows the enabled effects and scene content: a frame creates
+the shaders and pipelines it first needs, on the thread that renders it.
+`Renderer::compile` readies them before the frame, behind a loading screen,
+its geometry pipelines on the game's worker threads
+([Compiling ahead](README.md#compiling-ahead)). On native, a game can create
+its view and render on a thread of its own, which keeps all of it off the
+window thread.
 
 - **Ambient occlusion**: XeGTAO after opaque shading, which occludes ambient
   light (its diffuse share, and the specular multiple scattering a rough
