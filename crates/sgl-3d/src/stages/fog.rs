@@ -162,12 +162,7 @@ pub(crate) fn froxels(quality: FogQuality, render: [u32; 2], largest: u32) -> [u
 }
 
 struct Pipelines {
-    shader: wgpu::ShaderModule,
-    inject_layout: wgpu::PipelineLayout,
-    /// The injection without and with spot lights' profiles
-    /// (`light_profiles_enabled`), each built when a frame first needs it,
-    /// so a scene without a profiled light pays nothing for them.
-    inject: [Option<wgpu::ComputePipeline>; 2],
+    inject: wgpu::ComputePipeline,
     /// Along x, then y.
     filter: [wgpu::ComputePipeline; 2],
     integrate: wgpu::ComputePipeline,
@@ -209,13 +204,24 @@ impl Pipelines {
                 bind_group_layouts: layouts,
                 immediate_size: 0,
             });
-            compute_pipeline(device, &shader, &layout, label, entry, constants)
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
+                cache: None,
+            })
         };
-        let inject_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("volumetric fog injection"),
-            bind_group_layouts: &[Some(lit), Some(inject_layout)],
-            immediate_size: 0,
-        });
+        let inject = pipeline(
+            "volumetric fog injection",
+            &[Some(lit), Some(inject_layout)],
+            INJECT_ENTRY,
+            &[],
+        );
         let filter = [0., 1.].map(|axis| {
             pipeline(
                 "volumetric fog filter",
@@ -231,48 +237,11 @@ impl Pipelines {
             &[],
         );
         Self {
-            shader,
-            inject_layout,
-            inject: [None, None],
+            inject,
             filter,
             integrate,
         }
     }
-
-    /// The injection, with spot lights' profiles compiled in if `profiles`.
-    fn inject(&mut self, device: &wgpu::Device, profiles: bool) -> &wgpu::ComputePipeline {
-        self.inject[usize::from(profiles)].get_or_insert_with(|| {
-            compute_pipeline(
-                device,
-                &self.shader,
-                &self.inject_layout,
-                "volumetric fog injection",
-                INJECT_ENTRY,
-                &[("light_profiles_enabled", f64::from(u8::from(profiles)))],
-            )
-        })
-    }
-}
-
-fn compute_pipeline(
-    device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
-    layout: &wgpu::PipelineLayout,
-    label: &str,
-    entry: &str,
-    constants: &[(&str, f64)],
-) -> wgpu::ComputePipeline {
-    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some(label),
-        layout: Some(layout),
-        module: shader,
-        entry_point: Some(entry),
-        compilation_options: wgpu::PipelineCompilationOptions {
-            constants,
-            ..Default::default()
-        },
-        cache: None,
-    })
 }
 
 impl VolumetricFog {
@@ -631,7 +600,7 @@ impl VolumetricFog {
                 label: Some("volumetric fog injection"),
                 timestamp_writes: ctx.timing.and_then(|t| t.compute_pass("fog injection")),
             });
-        pass.set_pipeline(pipelines.inject(ctx.device, ctx.scene.lights.holds_profile()));
+        pass.set_pipeline(&pipelines.inject);
         pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
         pass.set_bind_group(1, inject, &[]);
         pass.dispatch_workgroups(

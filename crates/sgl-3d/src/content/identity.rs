@@ -61,10 +61,6 @@ identity!(
     DecalImageId
 );
 identity!(
-    /// A measured light profile a scene's spot lights shape their light by.
-    LightProfileId
-);
-identity!(
     /// A decal of a scene: a box that projects images onto surfaces.
     DecalId
 );

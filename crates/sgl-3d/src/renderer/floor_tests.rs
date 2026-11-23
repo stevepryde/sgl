@@ -33,11 +33,8 @@ const EXTENDED_SAMPLED_TEXTURES: u32 = 48;
 // world-space reflections, ambient occlusion, screen-space indirect light,
 // whose second frame binds its kept result, fog under a procedural sky with
 // aerial perspective, contact shadows from a shadowed sun, whose lighting
-// pass binds the contact mask beside that kept result, TAA, and a shadowed
-// spot light that projects a cookie and shines with a measured profile,
-// which the lit passes, the reflection and dynamic GI traces and the fog's
-// injection then compile in, over an irradiance volume and a dynamic GI
-// volume) on a device of
+// pass binds the contact mask beside that kept result, and TAA, over an
+// irradiance volume and a dynamic GI volume) on a device of
 // those limits and no optional feature raise no validation error, the
 // device reports the Basic tier, and dynamic GI is reported off.
 #[test]
@@ -165,45 +162,6 @@ fn heaviest_frame(limits: wgpu::Limits) -> (BindingTier, DynamicGiQuality) {
                 cell_size: Vec3::ONE,
                 cells: [8, 8, 8],
             }),
-        )
-        .unwrap();
-    let cookie = scene
-        .add_decal_image(Image::Rgba8(image::RgbaImage::from_pixel(
-            8,
-            8,
-            image::Rgba([255; 4]),
-        )))
-        .unwrap();
-    let profile = scene.add_light_profile(
-        crate::LightProfile::from_ies(
-            "IESNA:LM-63-2002\nTILT=NONE\n1 -1 1 2 2 1 2 0 0 0\n1 1 10\n0 90\n0 360\n1000 500 1000 500\n",
-        )
-        .unwrap(),
-    );
-    scene
-        .add_light(
-            &device,
-            &queue,
-            crate::Light {
-                position: Vec3::new(0., 2., -3.),
-                shape: crate::LightShape::Spot {
-                    direction: Vec3::NEG_Y,
-                    inner_angle: 0.4,
-                    outer_angle: 0.6,
-                    radius: 0.,
-                },
-                range: 6.,
-                casts_shadow: true,
-                cookie: Some(crate::LightCookie {
-                    image: cookie,
-                    up: Vec3::NEG_Z,
-                }),
-                profile: Some(crate::SpotProfile {
-                    profile,
-                    zero_azimuth: Vec3::X,
-                }),
-                ..Default::default()
-            },
         )
         .unwrap();
     let mut input = FrameInput::new(Camera {

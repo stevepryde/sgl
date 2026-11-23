@@ -17,21 +17,17 @@
 //! `--fog` fills the view with haze that the sun and lights scatter, denser
 //! in a box over the cubes. `--cookie` makes the overhead spot project a
 //! window's panes (`LightCookie`, a pattern generated in code) onto the
-//! ground and, with `--fog`, through the haze. `--profile` makes it shine
-//! with a wall washer's measured profile (`LightProfile`, `SpotProfile`,
-//! an LM-63 file generated in code), its light thrown toward +X.
+//! ground and, with `--fog`, through the haze.
 //! Printed pixel measurements are diagnostics,
 //! not image QA.
-#[path = "support/wall_washer.rs"]
-mod wall_washer;
 #[path = "support/window_panes.rs"]
 mod window_panes;
 
 use sgl_3d::glam::camera;
 use sgl_3d::{
     AlphaMode, AutoExposure, Camera, CompensationCurve, Decal, DirectionalLight, DirectionalShadow,
-    Fog, FogVolume, FrameInput, HemisphereLight, InstanceState, Light, LightCookie, LightProfile,
-    LightShape, Mobility, Renderer, Scene, SpotProfile, View, ViewFrame, ViewOutput,
+    Fog, FogVolume, FrameInput, HemisphereLight, InstanceState, Light, LightCookie, LightShape,
+    Mobility, Renderer, Scene, View, ViewFrame, ViewOutput,
     asset::{Asset, CompressedImage, CpuMesh, Image, Material, MaterialTexture, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     glam::{Mat4, Quat, Vec3},
@@ -50,7 +46,6 @@ struct Options {
     motion_blur: bool,
     fog: bool,
     cookie: bool,
-    profile: bool,
 }
 impl Options {
     fn parse() -> Result<Self, Box<dyn Error>> {
@@ -65,7 +60,6 @@ impl Options {
             motion_blur: false,
             fog: false,
             cookie: false,
-            profile: false,
         };
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -96,10 +90,9 @@ impl Options {
                 "--motion-blur" => options.motion_blur = true,
                 "--fog" => options.fog = true,
                 "--cookie" => options.cookie = true,
-                "--profile" => options.profile = true,
                 "--help" | "-h" => {
                     println!(
-                        "offscreen [output.png] [--frames N] [--light F] [--emission F] [--anisotropy F] [--alpha] [--decals] [--motion-blur] [--fog] [--cookie] [--profile]"
+                        "offscreen [output.png] [--frames N] [--light F] [--emission F] [--anisotropy F] [--alpha] [--decals] [--motion-blur] [--fog] [--cookie]"
                     );
                     std::process::exit(0);
                 }
@@ -418,18 +411,6 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
     } else {
         None
     };
-    // With `--profile` the lamp shines as a measured wall washer: its LM-63
-    // file is read as text, and the spot's intensity is the candela in its
-    // brightest direction, toward its 0° side, here +X.
-    let profile = if options.profile {
-        Some(SpotProfile {
-            profile: scene
-                .add_light_profile(LightProfile::from_ies(&wall_washer::wall_washer_ies())?),
-            zero_azimuth: Vec3::X,
-        })
-    } else {
-        None
-    };
     scene.add_light(
         &device,
         &queue,
@@ -465,7 +446,6 @@ async fn run(options: Options) -> Result<(), Box<dyn Error>> {
             specular: 1.,
             casts_shadow: true,
             cookie,
-            profile,
             ..Default::default()
         },
     )?;

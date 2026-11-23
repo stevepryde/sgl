@@ -534,17 +534,9 @@ pub(crate) static LIGHT_COOKIE: Module = Module {
     source: include_str!("light_cookie.wgsl"),
     deps: &[&LIGHT_RECORDS],
 };
-/// A spot light's measured profile: its intensity by direction from a grid
-/// in the decal atlas, which scales its radiance. Reads `decal_atlas` and
-/// `decal_sampler`.
-pub(crate) static LIGHT_PROFILE: Module = Module {
-    name: "light_profile",
-    source: include_str!("light_profile.wgsl"),
-    deps: &[&LIGHT_RECORDS],
-};
 /// The scene lights that reach a point, each as a `LightSample`. Reads
 /// `view`, `lights`, `clusters`, the local-light shadows and the decal
-/// atlas (a spot's cookie and profile), and calls the program's mask provider
+/// atlas (a spot's cookie), and calls the program's mask provider
 /// (`camera_shadow_mask`).
 pub(crate) static LIGHTS: Module = Module {
     name: "lights",
@@ -553,7 +545,6 @@ pub(crate) static LIGHTS: Module = Module {
         &LIGHT_RECORDS,
         &LIGHT_REACH,
         &LIGHT_COOKIE,
-        &LIGHT_PROFILE,
         &CLUSTERS,
         &LIGHT_SAMPLE,
         &LOCAL_SHADOW,

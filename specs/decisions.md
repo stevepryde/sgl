@@ -1496,7 +1496,8 @@ Use the [current specs](README.md) for implementation and the
   enough: it says where a piece belongs, not whether it is worth having. An
   issue on a milestone is listed work, not the answer to the question.
   First applied the same day: IES light profiles (#872) were removed before
-  release, DLSS and MetalFX were not built (D-74), and planar reflections
+  release (a later case for them is a new issue naming the game and scene
+  that needs them), DLSS and MetalFX were not built (D-74), and planar reflections
   (#866) were kept because they show off-screen and occluded content that
   screen-space reflections cannot. Rationale: every feature is code in
   every game's build and a surface agents must keep coherent; one no game

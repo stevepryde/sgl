@@ -332,58 +332,6 @@ fn a_compiled_level_with_depth_of_field_creates_no_program_at_its_first_frame() 
     );
 }
 
-// Plausible defect: a spot light's measured profile, whose lit and fog
-// programs are specialisations a scene without one never builds, left out
-// of the planning pass (the fog's injection, which builds its profiled
-// variant when a frame first needs it, created only when it draws), so a
-// level with a profiled lamp compiles on the window thread after all. The
-// oracle is wgpu's count, as `a_compiled_levels_first_frame_creates_no_program`'s:
-// unchanged across the compiled level's first frame with a profiled spot
-// shining through the fog.
-#[test]
-fn a_compiled_level_with_a_profiled_spot_in_fog_creates_no_program_at_its_first_frame() {
-    let Some(mut compiled) = Level::new() else {
-        return;
-    };
-    let profile = compiled.scene.add_light_profile(
-        crate::LightProfile::from_ies(
-            "IESNA:LM-63-2002\nTILT=NONE\n1 -1 1 2 2 1 2 0 0 0\n1 1 10\n0 90\n0 360\n1000 500 1000 500\n",
-        )
-        .unwrap(),
-    );
-    compiled
-        .scene
-        .add_light(
-            &compiled.device,
-            &compiled.queue,
-            crate::Light {
-                position: Vec3::new(0., 2.5, 0.),
-                shape: crate::LightShape::Spot {
-                    direction: Vec3::NEG_Y,
-                    inner_angle: 0.4,
-                    outer_angle: 0.6,
-                    radius: 0.,
-                },
-                intensity: 20.,
-                range: 6.,
-                profile: Some(crate::SpotProfile {
-                    profile,
-                    zero_azimuth: Vec3::X,
-                }),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    compiled.settings.atmosphere = true;
-    let mut input = Level::input(0.);
-    input.atmosphere = true;
-    input.fog.density = 0.05;
-    compiled.compile_all(&input);
-    let before = compiled.programs();
-    compiled.render(&input);
-    assert_eq!(compiled.programs(), before);
-}
-
 /// What wgpu holds for the device, counted by kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Held {

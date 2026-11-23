@@ -102,11 +102,6 @@ pub(crate) struct LitConstants {
     /// specialises its forward pipelines on `use_light_projector` (for each
     /// drawn element a projector reaches, where this follows the scene).
     pub light_cookies: bool,
-    /// Spot lights' profiles (`light_profiles_enabled` in
-    /// light_profile.wgsl), evaluated only while the scene holds a profiled
-    /// light, as three.js r187 builds its IES spot node only for an
-    /// `IESSpotLight`.
-    pub light_profiles: bool,
 }
 
 impl LitConstants {
@@ -119,11 +114,10 @@ impl LitConstants {
             sheens: scene.materials.holds_sheens(),
             diffuse_transmission: scene.materials.holds_diffuse_transmission(),
             light_cookies: scene.lights.holds_cookie(),
-            light_profiles: scene.lights.holds_profile(),
         }
     }
 
-    pub fn constants(self) -> [(&'static str, f64); 7] {
+    pub fn constants(self) -> [(&'static str, f64); 6] {
         [
             ("rect_lights_enabled", f64::from(u8::from(self.rect_lights))),
             ("decals_enabled", f64::from(u8::from(self.decals))),
@@ -136,10 +130,6 @@ impl LitConstants {
             (
                 "light_cookies_enabled",
                 f64::from(u8::from(self.light_cookies)),
-            ),
-            (
-                "light_profiles_enabled",
-                f64::from(u8::from(self.light_profiles)),
             ),
         ]
     }

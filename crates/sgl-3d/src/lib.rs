@@ -25,13 +25,12 @@ pub use content::decal::Decal;
 pub use content::dynamic_gi::DynamicGiVolume;
 pub use content::hdr_effect::HdrEffect;
 pub use content::identity::{
-    DecalId, DecalImageId, EnvironmentId, HdrEffectId, InstanceId, LightId, LightProfileId,
-    LiveSpecularProbeId, MaterialId, ModelId, RenderTextureId, ShaderId,
+    DecalId, DecalImageId, EnvironmentId, HdrEffectId, InstanceId, LightId, LiveSpecularProbeId,
+    MaterialId, ModelId, RenderTextureId, ShaderId,
 };
 pub use content::instance::{InstanceState, Mobility};
 pub use content::irradiance_volume::{IrradianceCell, IrradianceVolume};
-pub use content::light::{Light, LightCookie, LightShape, SpotProfile};
-pub use content::light_profile::{IesError, LightProfile};
+pub use content::light::{Light, LightCookie, LightShape};
 pub use content::lighting::{
     Backdrop, DirectionalLight, DirectionalShadow, EnvironmentLight, FrameEnvironment,
     HemisphereLight, Mist, Sky,

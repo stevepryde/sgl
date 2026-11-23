@@ -48,7 +48,7 @@ impl Scene {
         self.static_edits.move_origin(to);
         let decals = &self.decals;
         self.lights
-            .move_origin(queue, to, &super::lights::atlas_places(decals));
+            .move_origin(queue, to, &super::lights::cookie_rects(decals));
         self.decals.move_origin(to);
         self.transient.move_origin(queue, to);
         if let Some(probes) = &mut self.probes {

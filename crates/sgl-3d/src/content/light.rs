@@ -1,6 +1,6 @@
 //! A scene's point, spot and rectangle lights, as the game describes them to
 //! `Scene::add_light` and `Scene::set_light`. Metres, radians and linear RGB.
-use super::identity::{DecalImageId, LightProfileId};
+use super::identity::DecalImageId;
 use glam::Vec3;
 
 /// Where a light shines.
@@ -72,31 +72,6 @@ pub struct LightCookie {
     pub up: Vec3,
 }
 
-/// A measured profile a spot light shines with (`LightProfile`, from
-/// `Scene::add_light_profile`), turned about the spot's direction: the
-/// profile's nadir (vertical angle 0°) is the spot's direction and its 0°
-/// horizontal angle lies toward `zero_azimuth`, its horizontal angles
-/// increasing counterclockwise seen looking along the direction (LM-63's
-/// type C, from above), so its 90° lies toward `zero_azimuth` crossed with
-/// the direction. The spot's intensity toward each direction inside its
-/// cone is multiplied by the profile's there, whose brightest direction is
-/// 1: `Light::intensity` is the candela in that direction
-/// (`LightProfile::peak_candela` for the file's own). Its cone still fades
-/// it and bounds it, and a cookie multiplies it too, wherever the light
-/// reaches: on surfaces, at reflections' and the dynamic GI volume's ray
-/// hits, and in the volumetric fog.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SpotProfile {
-    /// The profile, from `Scene::add_light_profile`: it cannot be removed
-    /// while a light shines with it.
-    pub profile: LightProfileId,
-    /// The direction of the profile's 0° horizontal angle (along a
-    /// luminaire's length): any vector not parallel to the spot's
-    /// direction, whose part across the direction is used, as
-    /// `LightCookie::up`.
-    pub zero_azimuth: Vec3,
-}
-
 /// A point, spot or rectangle light: scene content, added with
 /// `Scene::add_light`. Its light falls off with the inverse square of
 /// distance (a rectangle's, of its distance to each point of its face) and
@@ -151,10 +126,6 @@ pub struct Light {
     /// rectangle light takes none. A `baked` light's pattern must be in the
     /// game's bake too, which holds that light.
     pub cookie: Option<LightCookie>,
-    /// The measured profile a spot light shines with (`SpotProfile`); a
-    /// point or rectangle light takes none. A `baked` light's profile must
-    /// be in the game's bake too, which holds that light.
-    pub profile: Option<SpotProfile>,
 }
 
 impl Default for Light {
@@ -163,7 +134,7 @@ impl Default for Light {
     /// π candela (its light energy of 1, which its renderer scales by π),
     /// reaching 5 metres, live, physical specular (its `light_specular` of
     /// 0.5, which its renderer doubles), fog energy 1, no shadow, at
-    /// opacity 1 when cast, and no cookie or profile. Set what differs and take the
+    /// opacity 1 when cast, and no cookie. Set what differs and take the
     /// rest with `..Default::default()`.
     fn default() -> Self {
         Self {
@@ -180,7 +151,6 @@ impl Default for Light {
             casts_shadow: false,
             shadow_opacity: 1.,
             cookie: None,
-            profile: None,
         }
     }
 }

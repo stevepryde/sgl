@@ -4,7 +4,7 @@ use crate::renderer::test_frame::TestRenderer;
 use crate::settings::{self, Settings};
 use crate::{
     Camera, FrameInput, InstanceState, Light, LightCookie, LightShape, Mobility, Scene, SceneError,
-    SpotProfile, test_support,
+    test_support,
 };
 use glam::{Mat4, Vec3};
 
@@ -450,113 +450,5 @@ fn cookies_need_a_spot_and_keep_their_images() {
     assert!(matches!(
         scene.set_light(&queue, id, spot),
         Err(SceneError::UnknownDecalImage)
-    ));
-}
-
-/// An axially symmetric LM-63 file: 1000 cd at the nadir, 500 at 90°.
-fn profile() -> crate::content::light_profile::LightProfile {
-    crate::content::light_profile::LightProfile::from_ies(
-        "IESNA:LM-63-2002\nTILT=NONE\n1 -1 1 2 1 1 2 0 0 0\n1 1 10\n0 90\n0\n1000 500\n",
-    )
-    .unwrap()
-}
-
-// Plausible defects: a profile accepted on a light it cannot turn about (a
-// point or rectangle light), or with a `zero_azimuth` that leaves no 0°
-// axis (zero, not finite, or along the spot's direction); a profile no
-// longer in the scene accepted; a profile a light shines with removed from
-// under it, or one no light uses any longer kept from removal, through a
-// light's replacement or its removal. The oracle is the scene contract
-// (`SpotProfile`, `Scene::remove_light_profile`).
-#[test]
-fn profiles_need_a_spot_and_stay_while_lights_use_them() {
-    let Some((device, queue)) = test_support::device() else {
-        return;
-    };
-    let mut scene = Scene::new(&device, &queue);
-    let id = scene.add_light_profile(profile());
-    let spot = Light {
-        shape: LightShape::Spot {
-            direction: Vec3::NEG_Y,
-            inner_angle: 0.2,
-            outer_angle: 0.4,
-            radius: 0.,
-        },
-        profile: Some(SpotProfile {
-            profile: id,
-            zero_azimuth: Vec3::X,
-        }),
-        ..light(Vec3::Y)
-    };
-    let with = |shape, zero_azimuth| Light {
-        shape,
-        profile: Some(SpotProfile {
-            profile: id,
-            zero_azimuth,
-        }),
-        ..spot
-    };
-    let point = LightShape::Point { radius: 0. };
-    let rect = LightShape::Rect {
-        direction: Vec3::NEG_Y,
-        width_axis: Vec3::X,
-        width: 1.,
-        height: 1.,
-    };
-    let first = scene.add_light(&device, &queue, spot).unwrap();
-    for invalid in [
-        with(point, Vec3::X),
-        with(rect, Vec3::X),
-        with(spot.shape, Vec3::ZERO),
-        with(spot.shape, Vec3::new(0., 2., 0.)),
-        with(spot.shape, Vec3::new(f32::NAN, 0., 1.)),
-    ] {
-        assert!(matches!(
-            scene.add_light(&device, &queue, invalid),
-            Err(SceneError::InvalidLight)
-        ));
-        assert!(matches!(
-            scene.set_light(&queue, first, invalid),
-            Err(SceneError::InvalidLight)
-        ));
-    }
-    // A `zero_azimuth` leaning along the direction keeps its part across it.
-    scene
-        .set_light(&queue, first, with(spot.shape, Vec3::new(1., -3., 0.)))
-        .unwrap();
-    assert!(matches!(
-        scene.remove_light_profile(id),
-        Err(SceneError::LightProfileInUse)
-    ));
-    // A second light shares the profile; replacing the first with an
-    // unprofiled light leaves the profile the second's.
-    let second = scene.add_light(&device, &queue, spot).unwrap();
-    scene
-        .set_light(
-            &queue,
-            first,
-            Light {
-                profile: None,
-                ..spot
-            },
-        )
-        .unwrap();
-    assert!(matches!(
-        scene.remove_light_profile(id),
-        Err(SceneError::LightProfileInUse)
-    ));
-    scene.remove_light(second).unwrap();
-    scene.remove_light_profile(id).unwrap();
-    assert!(matches!(
-        scene.remove_light_profile(id),
-        Err(SceneError::UnknownLightProfile)
-    ));
-    assert!(matches!(
-        scene.add_light(&device, &queue, spot),
-        Err(SceneError::UnknownLightProfile)
-    ));
-    assert!(matches!(
-        scene.set_light(&queue, first, spot),
-        Err(SceneError::UnknownLightProfile)
     ));
 }

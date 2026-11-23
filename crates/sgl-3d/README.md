@@ -755,8 +755,8 @@ let lamp = scene.add_light(&device, &queue, Light {
 
 `Light::default()` is Godot's `Light3D`: a white point light at the origin
 of π candela (its light energy of 1, which it scales by π) reaching 5 m,
-live, physical specular, fog energy 1, no shadow (opacity 1 when cast),
-no cookie and no profile, with Wicked Engine's radius of 2.5 cm
+live, physical specular, fog energy 1, no shadow (opacity 1 when cast) and
+no cookie, with Wicked Engine's radius of 2.5 cm
 (`LightShape::DEFAULT_RADIUS`). Set what differs and take the rest with
 `..Default::default()`.
 
@@ -855,47 +855,6 @@ sun on water shows a disc.
       ..*scene.light(lamp)?
   })?;
   ```
-- `profile` shines a spot with a measured luminaire's intensity by
-  direction (`SpotProfile`). `LightProfile::from_ies` reads an IESNA LM-63
-  file's text (any version, `TILT=NONE` or `INCLUDE`) of type C
-  photometry, the kind architectural luminaires are measured in, and
-  `Scene::add_light_profile` keeps it, returning a `LightProfileId`. The
-  profile's nadir (vertical angle 0°) lies along the spot's direction and
-  its 0° horizontal angle (along a linear luminaire's length) toward
-  `zero_azimuth` (any vector not parallel to the direction; its part
-  across it is used), its horizontal angles turning counterclockwise seen
-  looking along the direction, SGL3D's reading of LM-63's counterclockwise
-  as seen from above (unconfirmed against the standard's text, #885). The spot's
-  intensity toward a point is `intensity` times the profile's value there
-  over its peak, bilinear between the file's measured angles, which the
-  profile keeps exactly for a file measured no finer than 0.25° from the
-  nadir and 1° round the luminaire (a finer one is resampled linearly to
-  those steps, lowering a peak between them): `intensity` is the candela
-  in its brightest direction, and `LightProfile::peak_candela` (its
-  largest value times its candela multiplier and ballast factor, and before
-  LM-63-2002 its ballast-lamp factor) makes the light shine as measured. The cone still fades and bounds the light, so set the outer
-  angle to the profile's beam (both angles together for a hard edge), and a
-  cookie multiplies it too. Every receiver takes it, as a cookie. A file of
-  type A or B, with tilt data in another file, with a vertical or
-  horizontal range LM-63 does not define for type C, or with no light below
-  90° from its nadir is refused with `IesError`. A profile on a point or rectangle light, or with
-  a `zero_azimuth` along the direction, is refused with
-  `SceneError::InvalidLight`, and one a light shines with cannot be removed
-  (`SceneError::LightProfileInUse`). The profile lives in the
-  [decal atlas](#decals) beside the images, so it adds no binding; shading
-  evaluates profiles only while the scene holds a profiled light, as it
-  does cookies. A `baked` light's profile must be in the game's bake too.
-
-  ```rust,ignore
-  let measured = LightProfile::from_ies(&ies_text)?;
-  let intensity = measured.peak_candela();
-  let washer = scene.add_light_profile(measured);
-  scene.set_light(&queue, lamp, Light {
-      intensity,
-      profile: Some(SpotProfile { profile: washer, zero_azimuth: Vec3::X }),
-      ..*scene.light(lamp)?
-  })?;
-  ```
 - Each frame the renderer assigns the lights, with the
   [decals](#decals), to clusters of the camera's view on the CPU, as Bevy's
   clustered forward rendering does: a grid of render-target tiles and depth
@@ -913,8 +872,8 @@ sun on water shows a disc.
 - Values must be finite, colour, intensity, specular and fog energy
   nonnegative, the range positive, a spot's direction nonzero, a
   rectangle's direction nonzero, its width axis not parallel to it and its
-  size positive, and a cookie only on a spot of a positive outer angle and
-  a profile only on a spot; anything else is refused with `SceneError::InvalidLight`. A light with
+  size positive, and a cookie only on a spot of a positive outer angle;
+  anything else is refused with `SceneError::InvalidLight`. A light with
   zero intensity costs nothing.
 
 ## Decals
@@ -988,15 +947,15 @@ and no normal fade.
   (9d12036, whose `CLUSTERED_DECALS_ARE_USABLE` follows the device)
   specialises on decals; a game that adds its first decal mid-play and
   cannot afford that compile adds its decals at load.
-- The scene packs every image its decals and spot lights' cookies use, and
-  every profile its spot lights shine with, into one atlas of linear 16-bit texels with five mips, as Godot packs its decal
+- The scene packs every image its decals and spot lights' cookies use into
+  one atlas of linear 16-bit texels with five mips, as Godot packs its decal
   atlas with its projectors: each image once for each colour space it is
   sampled in, with a border that keeps images apart at every mip. A decal
   or light that brings in an image, or a colour space, the atlas lacks
   places a new layout; the next frame (or probe capture) packs the atlas
   anew and uploads every image once, however many brought images in, as
-  Godot packs its atlas once per frame. Add images, decals, cookies and
-  profiles at load. A removed decal's images stay in the atlas until it next packs. A
+  Godot packs its atlas once per frame. Add images, decals and cookies at
+  load. A removed decal's images stay in the atlas until it next packs. A
   decal or light whose layout would be larger than the
   device's textures, or take more memory to build than the target can
   allocate, is refused when it is added, with `SceneError::DeviceLimit`.
@@ -1076,7 +1035,7 @@ fall to without the window; near the range it ends smoothly and earlier,
 never with a visible edge. The window shapes a defined range the same way.
 It lights nothing beyond its range. A glTF light is a point, so the result has no
 `radius` or `angular_diameter`. Its other fields take their defaults: live,
-physical specular, fog energy 1, no shadow, no cookie and no profile. Change what the
+physical specular, fog energy 1, no shadow and no cookie. Change what the
 game wants on the result, such as `casts_shadow` or `shadow`.
 
 The load refuses a light the extension forbids, naming it: a negative or

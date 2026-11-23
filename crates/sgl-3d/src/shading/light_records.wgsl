@@ -4,9 +4,8 @@
 // the layout test compares the two.
 // One point, spot or rectangle light. A point or spot light's shading reads
 // its first four rows and, for its shadow, its sixth; a rectangle's the
-// first six. A spot's cookie (light_cookie.wgsl) reads its seventh and
-// eighth, and its profile (light_profile.wgsl) its last two, each zero for
-// a light without one.
+// first six. A spot's cookie (light_cookie.wgsl) reads its last two, which
+// are zero for a light without one.
 struct Light {
  position:vec3<f32>,
  // Filament's falloff: one over the squared range.
@@ -51,14 +50,6 @@ struct Light {
  // A cookied spot's outer cone's cotangent, which fits its projector square
  // to the cone.
  cookie_cotangent:f32,
- // A profiled spot's grid in the decal atlas: the atlas UV of its first
- // sample's centre in xy, the atlas UV per radian of vertical angle in z
- // and of horizontal angle in w (zero for one row); all zero for a light
- // without one.
- profile_lookup:vec4<f32>,
- // A profiled spot's unit direction of its profile's 0° horizontal angle,
- // across its direction.
- profile_zero:vec3<f32>,
 }
 // A rectangle's half height along its height's axis: its width's axis
 // crossed with its normal (Bevy's RectLight up).
