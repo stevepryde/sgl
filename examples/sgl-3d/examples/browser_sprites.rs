@@ -36,7 +36,7 @@ impl sprite_cost::Platform for Browser {
         _: &'a wgpu::Device,
         queue: &'a wgpu::Queue,
     ) -> Pin<Box<dyn Future<Output = ()> + 'a>> {
-        let (send, receive) = futures::channel::oneshot::channel();
+        let (send, receive) = futures_channel::oneshot::channel();
         queue.on_submitted_work_done(move || {
             let _ = send.send(());
         });

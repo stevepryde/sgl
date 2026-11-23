@@ -21,23 +21,16 @@
 use crate::lanes::Fragment;
 use crate::{Lane, RELIABLE_LANES};
 
-pub const DATAGRAM_BYTES: usize = 1200;
+pub(super) use crate::datagram::{ACK_LEN, BASE_HEADER_LEN, DATAGRAM_BYTES, ITEM_HEADER_LEN};
 pub const VERSION: u8 = 3;
-pub const BASE_HEADER_LEN: usize = 3 + 1 + 1 + 8 + 8;
-/// One lane's acknowledgement entry.
-pub const ACK_LEN: usize = 2 + 4;
 /// Every lane's acknowledgement entry.
 pub const ALL_ACKS_LEN: usize = RELIABLE_LANES * ACK_LEN;
-pub const ITEM_HEADER_LEN: usize = 5;
 /// The declared total a multi-fragment message's first fragment carries.
 pub const TOTAL_LEN: usize = 4;
 /// Largest reliable fragment: a reliable item always fits beside every
 /// lane's acknowledgement.
 pub const MAX_RELIABLE_ITEM_PAYLOAD: usize =
     DATAGRAM_BYTES - BASE_HEADER_LEN - ALL_ACKS_LEN - ITEM_HEADER_LEN;
-/// Largest latest-state item: room beside one lane's acknowledgement.
-pub const MAX_LATEST_ITEM_PAYLOAD: usize =
-    DATAGRAM_BYTES - BASE_HEADER_LEN - ACK_LEN - ITEM_HEADER_LEN;
 
 const RELIABLE: u8 = 0;
 const LATEST: u8 = 1;

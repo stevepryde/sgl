@@ -241,7 +241,7 @@ async fn measured(
         if let Some(timing) = &mut timing {
             timing.submitted(&queue);
         }
-        let (done, completed) = futures::channel::oneshot::channel();
+        let (done, completed) = futures_channel::oneshot::channel();
         queue.on_submitted_work_done(move || {
             let _ = done.send(());
         });

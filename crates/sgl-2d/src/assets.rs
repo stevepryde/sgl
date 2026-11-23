@@ -351,7 +351,7 @@ fn manifest_asset_url(manifest_url: &str, path: &str) -> String {
 /// `assets/ui/icon.png`. The bundle keys are the listed paths.
 #[cfg(target_arch = "wasm32")]
 pub async fn fetch_runtime_bundle(manifest_url: &str) -> Result<AssetBundle, String> {
-    use futures::future::try_join_all;
+    use futures_util::future::try_join_all;
     use js_sys::Uint8Array;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;

@@ -8,6 +8,11 @@ tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.
 
 ## Requirements
 
+The `udp` and `websocket` Cargo features select the two transport modules
+independently. Both are enabled by default. Memory, the mux, shared traits
+and payload limits are always available. UDP sockets require native builds.
+The UDP endpoint and simulated datagrams are available on either target.
+
 1. Native peers can use UDP, browser peers can use binary WebSocket, and solo
    or tests can use an in-memory duplex. Native WebSocket is plaintext: the
    native client accepts only `ws://` URLs and refuses any other, `wss://`

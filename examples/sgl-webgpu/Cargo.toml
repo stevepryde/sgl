@@ -12,7 +12,7 @@ workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 console_error_panic_hook.workspace = true
-futures.workspace = true
+futures-channel.workspace = true
 js-sys.workspace = true
 sgl-webgpu.workspace = true
 wasm-bindgen.workspace = true

@@ -1532,7 +1532,7 @@ async fn outline(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, S
 /// Resolves once the GPU has run everything submitted so far, which lets
 /// the page deliver a frame's timestamp readback.
 async fn completed(queue: &wgpu::Queue) -> Result<(), String> {
-    let (send, receive) = futures::channel::oneshot::channel();
+    let (send, receive) = futures_channel::oneshot::channel();
     queue.on_submitted_work_done(move || {
         let _ = send.send(());
     });

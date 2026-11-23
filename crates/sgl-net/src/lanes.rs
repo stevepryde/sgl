@@ -203,6 +203,7 @@ impl std::fmt::Display for ReliableConfigError {
 
 impl std::error::Error for ReliableConfigError {}
 
+#[cfg(any(feature = "udp", feature = "websocket"))]
 /// One lane's completed reliable messages that `poll` has not returned yet,
 /// against the lane's inbound bounds: at most `inbound_messages` messages,
 /// and `inbound_bytes` bytes beside at most one message larger than that
@@ -218,6 +219,7 @@ pub(crate) struct InboundUsage {
     oversized: bool,
 }
 
+#[cfg(any(feature = "udp", feature = "websocket"))]
 impl InboundUsage {
     /// Whether the lane can take a completed `len`-byte message now.
     pub(crate) const fn admits(&self, len: usize, lane: &LaneConfig) -> bool {
@@ -240,6 +242,7 @@ impl InboundUsage {
     }
 
     /// Releases a counted `len`-byte message that `poll` returned.
+    #[cfg(any(feature = "websocket", not(target_arch = "wasm32")))]
     pub(crate) const fn remove(&mut self, len: usize, lane: &LaneConfig) {
         self.messages -= 1;
         if len > lane.inbound_bytes {
@@ -250,6 +253,7 @@ impl InboundUsage {
     }
 }
 
+#[cfg(any(feature = "udp", feature = "websocket"))]
 /// Where a frame's payload sits in its reliable message.
 ///
 /// A message that fits one frame is [`Whole`](Self::Whole); a longer one is
@@ -270,6 +274,7 @@ pub enum Fragment {
     Last,
 }
 
+#[cfg(any(feature = "udp", feature = "websocket"))]
 impl Fragment {
     /// The wire's FIRST and MORE flags.
     pub(crate) const fn flags(self) -> (bool, bool) {
@@ -371,6 +376,7 @@ impl LaneScheduler {
     }
 
     /// The lane [`Self::next`] would pick, without charging it.
+    #[cfg(feature = "websocket")]
     pub(crate) fn peek(&self, ready: impl FnMut(usize) -> bool) -> Option<usize> {
         self.clone().next(ready)
     }
@@ -381,10 +387,12 @@ impl LaneScheduler {
     }
 }
 
+#[cfg(any(feature = "udp", feature = "websocket"))]
 /// A peer broke the fragment rules (netcode.md 14).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FramingViolation;
 
+#[cfg(any(feature = "udp", feature = "websocket"))]
 /// One lane's inbound reassembly: idle, or assembling one message against
 /// the total its first fragment declared. Fragments arrive in lane order.
 /// The buffer grows geometrically with what arrives, reserving at most twice
@@ -395,6 +403,7 @@ pub(crate) struct Reassembly {
     buffer: Vec<u8>,
 }
 
+#[cfg(any(feature = "udp", feature = "websocket"))]
 impl Reassembly {
     /// The length of the message `fragment`, carrying `len` bytes, would
     /// complete; `None` when it completes nothing or breaks the rules.
@@ -454,12 +463,13 @@ impl Reassembly {
     }
 
     /// Bytes of the message being assembled.
+    #[cfg(any(feature = "udp", test))]
     pub(crate) fn retained_bytes(&self) -> usize {
         self.buffer.len()
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "udp", feature = "websocket")))]
 #[allow(clippy::cast_possible_truncation)]
 mod tests {
     use super::*;

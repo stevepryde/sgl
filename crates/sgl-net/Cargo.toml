@@ -17,22 +17,26 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["udp", "websocket"]
+udp = ["dep:blake3", "dep:getrandom"]
+websocket = ["dep:mio", "dep:tungstenite", "dep:js-sys", "dep:wasm-bindgen", "dep:web-sys"]
+
 [dependencies]
-blake3.workspace = true
+blake3 = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-getrandom.workspace = true
-mio.workspace = true
-tungstenite = { workspace = true, features = ["handshake"] }
+getrandom = { workspace = true, optional = true }
+mio = { workspace = true, optional = true }
+tungstenite = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys.workspace = true
-wasm-bindgen.workspace = true
-web-sys.workspace = true
+js-sys = { workspace = true, optional = true }
+wasm-bindgen = { workspace = true, optional = true }
+web-sys = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest.workspace = true
-tungstenite = { workspace = true, features = ["handshake"] }
 
 [dev-dependencies]
 wasm-bindgen-test.workspace = true

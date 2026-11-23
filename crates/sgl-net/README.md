@@ -14,6 +14,13 @@ and connection lifecycle, with no rendering or windowing dependency.
 | Native or browser WebSocket | [`websocket`](src/websocket/mod.rs) |
 | Several server transports behind one interface | [`ServerIoMux`](src/mux.rs) |
 
+The `udp` and `websocket` Cargo features are both enabled by default. To
+build a single transport, set `default-features = false` and select
+`features = ["udp"]` for a UDP game or `features = ["websocket"]` for a
+browser or native WebSocket game. With both features off, the in-memory
+transport, shared traits and mux still work. The `udp` feature also exposes
+the clockless endpoint and simulated datagrams on WASM.
+
 A browser has no UDP sockets, so a browser peer uses the WebSocket:
 everything it sends then travels one ordered reliable stream, and a lost
 segment delays every lane behind it, unreliable ones included.

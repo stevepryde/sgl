@@ -267,7 +267,7 @@ impl Startup {
     pub fn completion(&self) -> js_sys::Promise {
         let queue = self.queue.clone();
         wasm_bindgen_futures::future_to_promise(async move {
-            let (send, receive) = futures::channel::oneshot::channel();
+            let (send, receive) = futures_channel::oneshot::channel();
             queue.on_submitted_work_done(move || {
                 let _ = send.send(());
             });

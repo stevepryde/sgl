@@ -72,7 +72,7 @@ async fn capture(
         output.size(),
     );
     queue.submit([encoder.finish()]);
-    let (send, receive) = futures::channel::oneshot::channel();
+    let (send, receive) = futures_channel::oneshot::channel();
     buffer
         .slice(..)
         .map_async(wgpu::MapMode::Read, move |result| {
@@ -186,7 +186,7 @@ fn now() -> f64 {
     function.call0(&performance).unwrap().as_f64().unwrap()
 }
 async fn completed(queue: &wgpu::Queue) -> Result<(), String> {
-    let (send, receive) = futures::channel::oneshot::channel();
+    let (send, receive) = futures_channel::oneshot::channel();
     queue.on_submitted_work_done(move || {
         let _ = send.send(());
     });

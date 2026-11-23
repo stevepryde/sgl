@@ -99,7 +99,7 @@ async fn bytes(path: &str) -> Result<Vec<u8>, String> {
     Ok(js_sys::Uint8Array::new(&buffer).to_vec())
 }
 async fn completed(queue: &wgpu::Queue) -> Result<(), String> {
-    let (send, receive) = futures::channel::oneshot::channel();
+    let (send, receive) = futures_channel::oneshot::channel();
     queue.on_submitted_work_done(move || {
         let _ = send.send(());
     });
@@ -245,7 +245,7 @@ async fn capture(
         output.size(),
     );
     queue.submit([encoder.finish()]);
-    let (send, receive) = futures::channel::oneshot::channel();
+    let (send, receive) = futures_channel::oneshot::channel();
     buffer
         .slice(..)
         .map_async(wgpu::MapMode::Read, move |result| {

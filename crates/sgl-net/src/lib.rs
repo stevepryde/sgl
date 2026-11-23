@@ -45,7 +45,7 @@
 //! and a receiver that is not polled drops its oldest unpolled unreliable
 //! messages, as a full UDP socket buffer does (reliable overflow closes the
 //! peer only on a browser WebSocket receiver or past
-//! [`udp::EndpointConfig::global_reliable_inbound_bytes`]).
+//! `udp::EndpointConfig::global_reliable_inbound_bytes`).
 //! Each lane has its own bounds and a scheduling weight in
 //! [`ReliableConfig`], which also sets the largest reliable message
 //! (`max_message_bytes`, default 64 KiB, up to 16 MiB). Transports fragment
@@ -74,7 +74,9 @@
 mod lanes;
 pub mod memory;
 pub mod mux;
+#[cfg(feature = "udp")]
 pub mod udp;
+#[cfg(feature = "websocket")]
 pub mod websocket;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -94,6 +96,14 @@ pub use mux::{MAX_MUX_ORPHAN_BYTES, MAX_MUX_ORPHAN_MESSAGES, ServerIoMux};
 
 use std::num::NonZeroU64;
 
+// The UDP wire layout determines the payload limit on every transport.
+mod datagram {
+    pub const DATAGRAM_BYTES: usize = 1200;
+    pub const BASE_HEADER_LEN: usize = 3 + 1 + 1 + 8 + 8;
+    pub const ACK_LEN: usize = 2 + 4;
+    pub const ITEM_HEADER_LEN: usize = 5;
+}
+
 /// Maximum bytes in one latest-state payload across every transport.
 ///
 /// This is exactly the payload space left inside a 1,200-byte UDP datagram
@@ -101,11 +111,14 @@ use std::num::NonZeroU64;
 /// the item header. WebSocket and memory transports use the same cap so a
 /// payload accepted by one transport remains portable to every other
 /// transport.
-pub const MAX_LATEST_STATE_BYTES: usize = udp::MAX_LATEST_PAYLOAD_BYTES;
+pub const MAX_LATEST_STATE_BYTES: usize = datagram::DATAGRAM_BYTES
+    - datagram::BASE_HEADER_LEN
+    - datagram::ACK_LEN
+    - datagram::ITEM_HEADER_LEN;
 /// Maximum bytes in one unreliable payload across every transport: one UDP
 /// datagram item beside one lane's acknowledgement, the same room as latest
 /// state. Unreliable messages are never fragmented.
-pub const MAX_UNRELIABLE_BYTES: usize = udp::MAX_LATEST_PAYLOAD_BYTES;
+pub const MAX_UNRELIABLE_BYTES: usize = MAX_LATEST_STATE_BYTES;
 
 /// A process-local connection identity.
 ///
@@ -525,6 +538,7 @@ impl RttEstimator {
     /// Whether any round trip has been sampled; a 0 ms first sample yields
     /// the same all-zero estimate as none.
     #[must_use]
+    #[cfg(feature = "udp")]
     pub(crate) const fn is_seeded(&self) -> bool {
         self.seeded
     }

@@ -33,7 +33,7 @@ wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan",
 winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-futures.workspace = true
+futures-util.workspace = true
 js-sys.workspace = true
 sgl-webgpu.workspace = true
 wasm-bindgen.workspace = true

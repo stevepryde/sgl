@@ -178,7 +178,7 @@ async fn setup() -> Result<Gpu, String> {
 
 /// Maps `range` of `buffer` for reading and copies it out.
 async fn read(buffer: &wgpu::Buffer, range: Range<u64>) -> Result<Vec<u8>, String> {
-    let (sender, receiver) = futures::channel::oneshot::channel();
+    let (sender, receiver) = futures_channel::oneshot::channel();
     buffer.map_async(wgpu::MapMode::Read, range.clone(), move |result| {
         let _ = sender.send(result);
     });
@@ -324,7 +324,7 @@ async fn buffer_map_round_trip(gpu: &Gpu) -> Result<String, String> {
         usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
-    let (sender, receiver) = futures::channel::oneshot::channel();
+    let (sender, receiver) = futures_channel::oneshot::channel();
     upload.map_async(wgpu::MapMode::Write, .., move |result| {
         let _ = sender.send(result);
     });
@@ -347,7 +347,7 @@ async fn buffer_map_round_trip(gpu: &Gpu) -> Result<String, String> {
 
     // Map 64..256 and view 128..192 inside it: the view's bytes are the
     // buffer's 128..192, not the mapping's first 64.
-    let (sender, receiver) = futures::channel::oneshot::channel();
+    let (sender, receiver) = futures_channel::oneshot::channel();
     download.map_async(wgpu::MapMode::Read, 64..LEN, move |result| {
         let _ = sender.send(result);
     });
