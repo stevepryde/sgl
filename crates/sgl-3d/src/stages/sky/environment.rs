@@ -481,7 +481,7 @@ impl EnvironmentAtlas {
     }
 
     /// The atlas texture, which tests read back.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn texture(&self) -> &wgpu::Texture {
         &self.atlas
     }

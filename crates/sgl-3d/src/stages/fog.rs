@@ -428,7 +428,7 @@ impl VolumetricFog {
 
     /// Whether the stage holds an aerial volume (bound to its integration)
     /// or an integrated volume made for aerial perspective alone.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn holds_aerial(&self) -> bool {
         let volumes = &self.volumes;
         volumes

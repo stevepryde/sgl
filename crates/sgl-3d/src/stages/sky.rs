@@ -258,11 +258,11 @@ impl Pipelines {
 struct Tables {
     uniform: wgpu::Buffer,
     /// The tables, which tests read back.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(test, not(target_arch = "wasm32"))), allow(dead_code))]
     transmittance: wgpu::Texture,
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(test, not(target_arch = "wasm32"))), allow(dead_code))]
     multiscattering: wgpu::Texture,
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(test, not(target_arch = "wasm32"))), allow(dead_code))]
     sky_view: wgpu::Texture,
     sky_view_view: wgpu::TextureView,
     /// The transmittance and multiple-scattering tables as the aerial
@@ -627,7 +627,7 @@ impl Sky {
     }
 
     /// The tables the last frame computed.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn computed(&self) -> Computed {
         self.plan
             .as_ref()
@@ -635,13 +635,13 @@ impl Sky {
     }
 
     /// The aerial volume's texture, while the stage holds it.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn aerial_texture(&self) -> Option<&wgpu::Texture> {
         self.aerial.as_ref().map(AerialVolume::texture)
     }
 
     /// The environment atlas, while the stage holds it.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn atlas(&self) -> Option<&wgpu::Texture> {
         self.tables
             .as_ref()
@@ -650,7 +650,7 @@ impl Sky {
 
     /// The transmittance, multiple-scattering and sky-view tables, while the
     /// stage holds them.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn tables(&self) -> Option<[&wgpu::Texture; 3]> {
         self.tables.as_ref().map(|tables| {
             [

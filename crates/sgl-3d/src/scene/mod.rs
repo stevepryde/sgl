@@ -605,7 +605,7 @@ impl Scene {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 impl Scene {
     /// One frame begun and finished, as a renderer's submitted frame does
     /// it, for tests that edit the scene between frames.

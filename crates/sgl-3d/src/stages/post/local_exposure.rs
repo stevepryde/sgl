@@ -393,7 +393,7 @@ impl Pipelines {
 
 impl LocalExposure {
     /// Whether any of its targets is held.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn holds_targets(&self) -> bool {
         self.targets.is_some()
     }

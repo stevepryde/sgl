@@ -221,7 +221,7 @@ impl Atlas {
         self.seen.retain(|&light, _| live(light));
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn holds(&self, light: LightId) -> bool {
         self.owners.contains_key(&light)
     }

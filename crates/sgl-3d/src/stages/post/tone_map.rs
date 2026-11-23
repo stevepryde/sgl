@@ -357,7 +357,7 @@ impl ToneMap {
         self.tone_mapped.as_ref().filter(|_| self.captured)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn holds_capture(&self) -> bool {
         self.tone_mapped.is_some()
     }
@@ -381,7 +381,7 @@ impl ToneMap {
     }
 
     /// Whether the lookup binds local exposure's views (not placeholders).
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn binds_local_exposure(&self) -> bool {
         self.local_views != self.local_placeholders
     }

@@ -329,7 +329,7 @@ impl Pipelines {
 
 impl Smaa {
     /// Whether SMAA holds its scene-size targets.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn holds_targets(&self) -> bool {
         self.targets.is_some()
     }

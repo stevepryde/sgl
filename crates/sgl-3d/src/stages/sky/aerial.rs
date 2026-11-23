@@ -131,7 +131,7 @@ impl AerialPipeline {
 
 /// The volume, its uniform and its pass's group.
 pub(super) struct AerialVolume {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(all(test, not(target_arch = "wasm32"))), allow(dead_code))]
     texture: wgpu::Texture,
     /// The volume as the fog's integration samples it.
     pub view: wgpu::TextureView,
@@ -227,7 +227,7 @@ impl AerialVolume {
     }
 
     /// The volume's texture, which tests read back.
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn texture(&self) -> &wgpu::Texture {
         &self.texture
     }

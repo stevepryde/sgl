@@ -11,7 +11,7 @@ use super::load_budget::{Budget, LoadBudget, MAX_IMAGE_SIDE};
 
 mod mips;
 pub use mips::{ImageError, Rgba8MipChain};
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use mips::{area_means, noise};
 
 /// An image materials sample. Its colour space belongs to each channel that
