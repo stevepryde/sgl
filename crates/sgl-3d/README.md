@@ -3266,7 +3266,10 @@ require embedded buffers, and embedded images unless the game supplies them
 loads on several threads: build it where it is used, or store a
 `LoadOptions<'static>` of `static` or leaked callbacks.
 
-The loader supports glTF triangle meshes, baked rigid node transforms,
+The loader supports glTF triangle meshes, as triangles, strips or fans
+(a strip or fan becomes a triangle list at import, without the triangles
+that repeat an index, such as a joined strip's degenerates), baked rigid
+node transforms,
 skins with four influences per vertex, morph targets, animation clips as data
 ([Skinned meshes and morph targets](#skinned-meshes-and-morph-targets)),
 UV0, `TEXCOORD_1` as `Vertex::lightmap_uv`, metallic/roughness materials, the
@@ -3335,7 +3338,8 @@ glTF requires. Before it decodes an image or reads an accessor, a load
 counts the bytes its scene produces from the counts its accessors declare,
 and fails beyond its configured decoded cap: for each of the
 scene's mesh nodes, selected or not, its mesh's vertices (88 bytes each,
-plus 32 for skin influences on a skinned node), indices (4 bytes) and
+plus 32 for skin influences on a skinned node), indices (4 bytes; a
+strip or fan's as its triangle list, three a triangle) and
 morph target deltas (36 bytes a vertex and target); each skin's joints;
 and each animation channel's keyframe times and values. A mesh counts
 again for each node that uses it, so each instance counts. Split a file

@@ -5,13 +5,13 @@ use glam::{Mat3, Mat4, Vec3};
 use gltf::Semantic;
 use gltf::accessor::DataType::{self, F32, U8, U16, U32};
 use gltf::accessor::Dimensions::{self, Scalar, Vec2, Vec4};
-use gltf::mesh::Mode;
 use std::collections::HashMap;
 
 use super::super::asset::{CpuMesh, Material, Result, Vertex, tangent_off_normal};
 use super::super::deformation::{MeshDeformation, MorphTarget};
 use super::check_accessor;
 use super::rig::{Rigging, read_influences, read_morph_targets};
+use super::topology::{check_mode, triangle_list};
 
 /// Whether SGL3D leaves out a vertex attribute (`Ignored::Attribute`):
 /// nothing it draws reads a third UV set, a second colour set or an
@@ -175,12 +175,7 @@ fn read_mesh_node(
             if target_count != 0 && target_count != mesh_targets {
                 return Err(format!("{label}: {target_count} morph targets where the mesh's other morphed primitives have {mesh_targets}; give every morphed primitive of a mesh the same shape keys").into());
             }
-            if primitive.mode() != Mode::Triangles {
-                return Err(format!(
-                    "{label}: only triangle primitives are supported; triangulate before export"
-                )
-                .into());
-            }
+            check_mode(primitive.mode(), &label)?;
             // glTF 2.0 3.7.2.1's accessor types for each attribute, its
             // indices and its morph targets' displacements. Every attribute
             // and displacement holds one element a vertex, as many as
@@ -341,17 +336,17 @@ fn read_mesh_node(
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            let mut indices = reader
+            let indices = reader
                 .read_indices()
                 .map(|indices| indices.into_u32().collect::<Vec<_>>())
                 .unwrap_or_else(|| (0..vertices.len() as u32).collect());
-            if indices.len() % 3 != 0
-                || indices
-                    .iter()
-                    .any(|index| *index as usize >= vertices.len())
+            if indices
+                .iter()
+                .any(|index| *index as usize >= vertices.len())
             {
                 return Err(format!("{label}: invalid triangle indices").into());
             }
+            let mut indices = triangle_list(primitive.mode(), indices, &label)?;
             if transform.determinant() < 0.0 {
                 for triangle in indices.as_chunks_mut::<3>().0 {
                     triangle.swap(1, 2);

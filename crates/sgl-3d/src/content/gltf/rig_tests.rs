@@ -8,14 +8,20 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 /// A document's binary chunk and accessors, built one accessor at a time.
 #[derive(Default)]
-struct Buffer {
+pub(super) struct Buffer {
     bytes: Vec<u8>,
     views: Vec<Value>,
     accessors: Vec<Value>,
 }
 
 impl Buffer {
-    fn accessor(&mut self, bytes: &[u8], component: u32, kind: &str, count: usize) -> usize {
+    pub(super) fn accessor(
+        &mut self,
+        bytes: &[u8],
+        component: u32,
+        kind: &str,
+        count: usize,
+    ) -> usize {
         self.views.push(json!({
             "buffer": 0, "byteOffset": self.bytes.len(), "byteLength": bytes.len()
         }));
@@ -39,7 +45,7 @@ impl Buffer {
         self.accessors.len() - 1
     }
 
-    fn floats(&mut self, values: &[f32], kind: &str, width: usize) -> usize {
+    pub(super) fn floats(&mut self, values: &[f32], kind: &str, width: usize) -> usize {
         self.accessor(
             bytemuck::cast_slice(values),
             5126,
@@ -49,7 +55,7 @@ impl Buffer {
     }
 
     /// `document` with this buffer, as a GLB.
-    fn glb(self, mut document: Value) -> Vec<u8> {
+    pub(super) fn glb(self, mut document: Value) -> Vec<u8> {
         document["buffers"] = json!([{"byteLength": self.bytes.len()}]);
         document["bufferViews"] = json!(self.views);
         document["accessors"] = json!(self.accessors);

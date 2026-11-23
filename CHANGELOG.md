@@ -15,6 +15,8 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` `asset::load` and `load_slice` load glTF triangle strips and fans as triangle lists; before, they refused them. No game-code changes are needed.
+
 ## 0.9.3 — 2026-11-20
 
 Update SGL crates together to `0.9.3` and commit the lockfile. Existing game

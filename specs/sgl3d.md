@@ -76,6 +76,10 @@ settings SGL3D has today.
    loader do, and listed with the asset (`Asset::ignored`); file and embedded-byte imports share
    one decoder, which decodes each image a sampled map uses that the game
    does not supply, and never reads one it does or one no sampled map uses.
+   A primitive's TRIANGLE_STRIP or TRIANGLE_FAN indices (at least three)
+   become the triangle list glTF 2.0 3.7.2.1 defines once at import, after
+   the decoded budget is charged for that list, with triangles that repeat
+   an index left out; point and line primitives fail the load.
    Invalid primitive/morph accessor references, animation target nodes or
    paths, and image source variants fail the load with an error naming the
    element before document readers run. Each image has exactly one URI or

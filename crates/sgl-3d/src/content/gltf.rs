@@ -24,6 +24,9 @@ mod rig_tests;
 mod sources;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+mod topology;
+#[cfg(test)]
+mod topology_tests;
 
 /// Optional application adaptations applied while loading an asset.
 #[derive(Clone, Copy, Default)]
@@ -451,11 +454,14 @@ fn decode(
             include_node,
         )?;
     }
+    // After batching, which leaves out meshes without triangles, such as a
+    // strip of only degenerates.
+    let meshes = batch(meshes, materials.len());
     if meshes.is_empty() {
         return Err("scene has no triangle meshes".into());
     }
     Ok(Asset {
-        meshes: batch(meshes, materials.len()),
+        meshes,
         materials,
         images,
         rig: rigging.rig,
@@ -522,9 +528,13 @@ fn charge_scene(
                 .checked_add(vertices)
                 .filter(|&count| count <= u64::from(u32::MAX))
                 .ok_or("scene vertices exceed the u32 index range; split the asset")?;
-            let indices = primitive
+            let authored = primitive
                 .indices()
                 .map_or(vertices, |indices| indices.count() as u64);
+            // A strip or fan is charged as the triangle list it becomes;
+            // a mode the read refuses, as authored.
+            let indices =
+                topology::triangle_list_len(primitive.mode(), authored).unwrap_or(authored);
             budget.charge_count(vertices.max(1), vertex_size as u64)?;
             budget.charge_count(indices.max(1), size_of::<u32>() as u64)?;
             let delta_size = (size_of::<deformation::MorphDelta>() as u64)
