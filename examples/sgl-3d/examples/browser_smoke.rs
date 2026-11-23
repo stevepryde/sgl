@@ -152,6 +152,7 @@ fn world() -> Asset {
         ))],
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 
@@ -189,6 +190,7 @@ fn alpha_content(bc: bool) -> Result<Asset, String> {
         images: vec![image],
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     })
 }
 
@@ -252,6 +254,7 @@ fn baked_box() -> Asset {
         images: Vec::new(),
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 
@@ -341,6 +344,7 @@ fn deforming() -> Asset {
             clips: Vec::new(),
         },
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 
@@ -803,6 +807,7 @@ async fn probe_capture(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Str
         images: Vec::new(),
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     };
     let model = scene
         .add_asset(device, queue, enclosure)
@@ -1362,6 +1367,7 @@ async fn compressed_materials(
                     images: vec![image],
                     rig: Default::default(),
                     ignored: Vec::new(),
+                    lights: Default::default(),
                 };
                 let ids = scene
                     .add_asset(device, queue, asset)

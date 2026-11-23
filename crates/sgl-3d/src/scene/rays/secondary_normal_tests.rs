@@ -149,6 +149,7 @@ fn plane_asset(has_normal_map: bool) -> Asset {
         ],
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 

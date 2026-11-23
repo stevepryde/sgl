@@ -165,6 +165,7 @@ fn square(centre: Vec3, normal: Vec3, size: f32, (metallic, roughness): (f32, f3
         images: Vec::new(),
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 

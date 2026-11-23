@@ -221,6 +221,7 @@ fn room() -> Asset {
         images: Vec::new(),
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 
@@ -231,6 +232,7 @@ fn moving_box(base: [f32; 3]) -> Asset {
         images: Vec::new(),
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 

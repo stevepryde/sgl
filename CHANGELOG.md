@@ -19,6 +19,7 @@ docs and specs the entry links.
 - `sgl-3d` `asset::load` and `load_slice` load glTF triangle strips and fans as triangle lists; before, they refused them. No game-code changes are needed.
 - `sgl-3d` `asset::load` and `load_slice` load `KHR_mesh_quantization` files (integer positions, normals, tangents, UVs and morph displacements); before, they refused them. An unnormalized integer `TEXCOORD_0`/`TEXCOORD_1` now loads as its value, not normalized. No game-code changes are needed.
 - `sgl-3d` `View` creates its local-light shadow atlases when a frame or probe capture first places a local shadow, not in `View::new`, so a view without one holds none. No game-code changes are needed.
+- `sgl-3d` `asset::load` and `load_slice` load a glTF's `KHR_lights_punctual` lights into the new `Asset::lights` (`AssetLights`, placed with `PunctualLight::place`); before, the extension was ignored and a file requiring it was refused. A file whose lights the extension forbids (a bad type, negative intensity, zero range, invalid cone, a zero-scale spot or sun node) now fails to load. Loading installs nothing. Code that builds `Asset { .. }` adds `lights: Default::default()`.
 
 ## 0.9.3 — 2026-11-20
 

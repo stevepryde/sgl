@@ -81,6 +81,7 @@ fn lit(mesh: CpuMesh) -> Asset {
         images: Vec::new(),
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 

@@ -61,7 +61,9 @@ captures on the same renderer reuse the cached pipelines.
    as a browser fetches them; `Asset::ignored` lists what the file uses
    that SGL3D leaves out) into
    `Scene::add_asset`, instances with `add_instance` (static or moving),
-   point, spot and rectangle lights with `add_light`, decals with
+   point, spot and rectangle lights with `add_light` (a glTF's authored
+   lights, `Asset::lights`, placed with `PunctualLight::place`; its suns go
+   in the frame's directional slots, which the game picks), decals with
    `add_decal_image` and `add_decal`, environments with
    `add_environment`, an irradiance volume with `set_irradiance_volume`
    (its cells written by region with `write_irradiance_cells`), and a
@@ -144,6 +146,8 @@ The examples live in the repository, not the published crate:
 fog, `--cookie` a spot light's cookie);
 [`examples/skinned.rs`](../../../examples/sgl-3d/examples/skinned.rs) adds a skinned, morphed glTF
 sampled and posed with `animation::Pose`,
+[`examples/gltf_lights.rs`](../../../examples/sgl-3d/examples/gltf_lights.rs) a glTF's authored
+lights installed, with the suns for the frame's two slots picked,
 [`examples/instances.rs`](../../../examples/sgl-3d/examples/instances.rs) many instances of a few
 models, [`examples/water.rs`](../../../examples/sgl-3d/examples/water.rs) a lake of 16 m
 chunks whose waves its own shader moves and whose surface receives

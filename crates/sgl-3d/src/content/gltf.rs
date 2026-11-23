@@ -1,7 +1,7 @@
 //! glTF 2.0 import into an [`Asset`]: the document, its images, its scene's
 //! mesh nodes, with rigid nodes' transforms baked into the vertices and
-//! skinned ones' kept in bind space, and its rig (`rig`): nodes, skins,
-//! morph weights and animation clips.
+//! skinned ones' kept in bind space, its rig (`rig`): nodes, skins,
+//! morph weights and animation clips, and its authored lights (`lights`).
 use std::path::Path;
 
 use glam::{Mat4, Quat, Vec3};
@@ -12,6 +12,7 @@ use super::asset::{Asset, Material, Result, Vertex};
 use super::deformation;
 use super::images::Image;
 use super::load_budget::{Budget, LoadBudget};
+pub use lights::{AssetLights, LightPlacement, PlacedLight, PunctualKind, PunctualLight};
 use material::read_material;
 use meshes::{batch, ignored_attribute, read_node};
 use rig::Rigging;
@@ -19,6 +20,9 @@ use rig::Rigging;
 mod attributes;
 #[cfg(test)]
 mod attributes_tests;
+mod lights;
+#[cfg(test)]
+mod lights_tests;
 mod material;
 mod meshes;
 mod rig;
@@ -150,7 +154,8 @@ fn check(options: LoadOptions<'_>) -> Result<()> {
 /// The glTF extensions SGL3D honours: a file may require any of them. The
 /// loader reads each itself, from the extension's values, or for
 /// `KHR_mesh_quantization` the integer attributes it allows (`attributes`).
-const SUPPORTED_EXTENSIONS: [&str; 14] = [
+const SUPPORTED_EXTENSIONS: [&str; 15] = [
+    "KHR_lights_punctual",
     "KHR_materials_anisotropy",
     "KHR_materials_clearcoat",
     "KHR_materials_diffuse_transmission",
@@ -398,6 +403,7 @@ fn decode(
     let parents = rig::parents(&document)?;
     let mut decoded_budget = Budget::decoded(options.budget);
     check_scene(&document, &scene, &parents, &mut decoded_budget)?;
+    let lights = lights::read(&document, &scene)?;
     // What the file uses but does not require (import refused the rest).
     let mut ignored: Vec<Ignored> = document
         .extensions_used()
@@ -471,6 +477,7 @@ fn decode(
         images,
         rig: rigging.rig,
         ignored,
+        lights,
     })
 }
 

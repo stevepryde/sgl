@@ -146,6 +146,7 @@ fn world() -> Asset {
         images: Vec::new(),
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 

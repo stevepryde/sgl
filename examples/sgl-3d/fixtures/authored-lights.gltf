@@ -1,0 +1,285 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "SGL gltf_lights example fixture"
+ },
+ "extensionsUsed": [
+  "KHR_lights_punctual"
+ ],
+ "extensionsRequired": [
+  "KHR_lights_punctual"
+ ],
+ "extensions": {
+  "KHR_lights_punctual": {
+   "lights": [
+    {
+     "name": "sun",
+     "type": "directional",
+     "color": [
+      1.0,
+      0.9,
+      0.8
+     ],
+     "intensity": 3.0
+    },
+    {
+     "name": "sky fill",
+     "type": "directional",
+     "color": [
+      0.4,
+      0.5,
+      0.8
+     ],
+     "intensity": 0.5
+    },
+    {
+     "name": "moon",
+     "type": "directional",
+     "color": [
+      0.6,
+      0.7,
+      1.0
+     ],
+     "intensity": 0.05
+    },
+    {
+     "name": "lantern",
+     "type": "point",
+     "color": [
+      1.0,
+      0.6,
+      0.3
+     ],
+     "intensity": 20.0,
+     "range": 6.0
+    },
+    {
+     "name": "lamp",
+     "type": "spot",
+     "color": [
+      1.0,
+      0.95,
+      0.9
+     ],
+     "intensity": 120.0,
+     "spot": {
+      "innerConeAngle": 0.35,
+      "outerConeAngle": 0.6
+     }
+    }
+   ]
+  }
+ },
+ "buffers": [
+  {
+   "byteLength": 648,
+   "uri": "data:application/octet-stream;base64,AADAwAAAAAAAAMBAAADAQAAAAAAAAMBAAADAQAAAAAAAAMDAAADAwAAAAAAAAMDAAAAAvwAAAAAAAAA/AAAAPwAAAAAAAAA/AAAAPwAAAEAAAAA/AAAAvwAAAEAAAAA/AAAAPwAAAAAAAAC/AAAAvwAAAAAAAAC/AAAAvwAAAEAAAAC/AAAAPwAAAEAAAAC/AAAAPwAAAAAAAAA/AAAAPwAAAAAAAAC/AAAAPwAAAEAAAAC/AAAAPwAAAEAAAAA/AAAAvwAAAAAAAAC/AAAAvwAAAAAAAAA/AAAAvwAAAEAAAAA/AAAAvwAAAEAAAAC/AAAAvwAAAEAAAAA/AAAAPwAAAEAAAAA/AAAAPwAAAEAAAAC/AAAAvwAAAEAAAAC/AAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcA"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 288
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 288,
+   "byteLength": 288
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 576,
+   "byteLength": 72
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 24,
+   "type": "VEC3",
+   "min": [
+    -6.0,
+    0,
+    -6.0
+   ],
+   "max": [
+    6.0,
+    2,
+    6.0
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5126,
+   "count": 24,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5123,
+   "count": 36,
+   "type": "SCALAR"
+  }
+ ],
+ "materials": [
+  {
+   "name": "stone",
+   "pbrMetallicRoughness": {
+    "baseColorFactor": [
+     0.6,
+     0.6,
+     0.6,
+     1
+    ],
+    "metallicFactor": 0,
+    "roughnessFactor": 0.8
+   }
+  }
+ ],
+ "meshes": [
+  {
+   "name": "courtyard",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "NORMAL": 1
+     },
+     "indices": 2,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "courtyard",
+   "mesh": 0
+  },
+  {
+   "name": "sun",
+   "rotation": [
+    -0.2876553,
+    -0.0,
+    -0.3835404,
+    0.8775826
+   ],
+   "extensions": {
+    "KHR_lights_punctual": {
+     "light": 0
+    }
+   }
+  },
+  {
+   "name": "sky fill",
+   "rotation": [
+    -0.7071068,
+    -0.0,
+    -0.0,
+    0.7071068
+   ],
+   "extensions": {
+    "KHR_lights_punctual": {
+     "light": 1
+    }
+   }
+  },
+  {
+   "name": "moon",
+   "rotation": [
+    -0.247404,
+    -0.0,
+    -0.0,
+    0.9689124
+   ],
+   "extensions": {
+    "KHR_lights_punctual": {
+     "light": 2
+    }
+   }
+  },
+  {
+   "name": "lanterns",
+   "translation": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0.0,
+    0.3826834,
+    0.0,
+    0.9238795
+   ],
+   "scale": [
+    2,
+    1,
+    2
+   ],
+   "children": [
+    5,
+    6
+   ]
+  },
+  {
+   "name": "lantern east",
+   "translation": [
+    1.5,
+    0.6,
+    0
+   ],
+   "extensions": {
+    "KHR_lights_punctual": {
+     "light": 3
+    }
+   }
+  },
+  {
+   "name": "lantern west",
+   "translation": [
+    -1.5,
+    0.6,
+    0
+   ],
+   "extensions": {
+    "KHR_lights_punctual": {
+     "light": 3
+    }
+   }
+  },
+  {
+   "name": "lamp",
+   "translation": [
+    0,
+    4,
+    3
+   ],
+   "rotation": [
+    -0.5226872,
+    -0.0,
+    -0.0,
+    0.8525245
+   ],
+   "extensions": {
+    "KHR_lights_punctual": {
+     "light": 4
+    }
+   }
+  }
+ ],
+ "scenes": [
+  {
+   "nodes": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    7
+   ]
+  }
+ ],
+ "scene": 0
+}

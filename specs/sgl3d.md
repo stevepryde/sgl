@@ -87,6 +87,19 @@ settings SGL3D has today.
    a node's transform or a skin's inverse bind matrices applies where those
    already apply, once, and bounds come from the decoded vertices, never
    from an accessor's `min` and `max`.
+   A file's `KHR_lights_punctual` lights load as CPU data (`Asset::lights`):
+   each light it defines, as authored, and each node of the loaded scene
+   that places one, with the node's world transform at the scene's authored
+   pose. Two nodes may place one definition. `PunctualLight::place` is the
+   one conversion into SGL3D's lights. Candela stays candela and lux stays
+   lux, and colour is linear RGB. The light shines down its node's local -Z
+   axis as the transform carries it, and its position is the transform's
+   translation. Scale changes neither range, intensity nor cone. A missing
+   range becomes 4096 m. Cone angles carry over, with π/2 held just below
+   it. A punctual light has no size. Loading installs nothing: the game adds
+   local lights to its `Scene` and chooses which directional lights fill
+   `FrameInput::directional_lights`, and SGL3D never chooses between
+   authored suns.
    Invalid primitive/morph accessor references, animation target nodes or
    paths, and image source variants fail the load with an error naming the
    element before document readers run. Each image has exactly one URI or

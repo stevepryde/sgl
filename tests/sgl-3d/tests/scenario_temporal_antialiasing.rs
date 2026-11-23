@@ -2357,6 +2357,7 @@ fn scrolling_plane(repeats: f32, velocity: f32) -> sgl_3d::asset::Asset {
         images: vec![wave_normals(0.6)],
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 

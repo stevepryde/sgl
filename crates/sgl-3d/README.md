@@ -839,6 +839,92 @@ and no normal fade.
   and `base_color_mix` in [0, 1], the fades nonnegative and `normal_fade`
   below 1; anything else is refused with `SceneError::InvalidDecal`.
 
+## Authored glTF lights
+
+A glTF's `KHR_lights_punctual` lights load as data, `Asset::lights`
+(`AssetLights`), and loading installs none of them. `definitions` holds each
+light the file defines, as authored (`PunctualLight`: name, linear colour,
+candela or lux, and `PunctualKind`). `placements` holds each node of the
+loaded scene that places one (`LightPlacement`: the definition's index, the
+node's index and name, and its world transform in the asset's space at the
+scene's authored pose), depth-first in declared order. Two nodes may place
+one definition. `PunctualLight::place` turns a definition and a transform
+into a `PlacedLight`. A point or spot light becomes `Local`, for
+`Scene::add_light`. A directional one becomes `Directional`, for
+`FrameInput::directional_lights`, which holds two: the game picks which, by
+the placement's name or otherwise. SGL3D never chooses between authored suns.
+
+```rust,ignore
+use sgl_3d::asset::PlacedLight;
+let model = Mat4::IDENTITY; // where the game places the asset
+let mut suns = Vec::new();
+for placement in &asset.lights.placements {
+    let light = &asset.lights.definitions[placement.light];
+    match light.place(model * placement.transform) {
+        PlacedLight::Local(light) => {
+            scene.add_light(&device, &queue, light)?;
+        }
+        PlacedLight::Directional(sun) => suns.push((placement.name.clone(), sun)),
+    }
+}
+frame.directional_lights = [suns.first().map(|s| s.1), suns.get(1).map(|s| s.1)];
+```
+
+`place` follows the extension. Candela stays candela and lux stays lux, and
+the colour is linear RGB. The light sits at the transform's translation and
+shines down the local -Z axis as the transform carries it, made unit. Scale
+moves and turns a light but leaves its range, intensity and cone alone. A
+spot's cone angles carry over (glTF's defaults are 0 and π/4). An outer angle
+of π/2 becomes the largest `f32` below it, since `LightShape::Spot` requires
+less. A light without a range, which the extension calls infinite, reaches
+`PunctualLight::UNBOUNDED_RANGE` (4096 m, Godot's cap). Every view cluster
+within it takes the light, and Blender's exporter writes no range, so every
+point and spot light of a typical exported level would reach every pixel.
+Engines bound a light's reach with a per-light radius set alongside its
+intensity: Filament's `falloff` (`LightManager.h`: "use the smallest possible
+falloff distance", since overlapping spheres of influence cost the most) and
+Bevy's `PointLight::range` ("tune this together with `intensity`", 20 m by
+default). A game sets one for each light the file leaves unbounded
+(`PunctualKind`'s `range` is `None`): the distance at which the light's
+inverse-square illuminance falls to a threshold the game picks, below
+anything its exposure shows. Taking the light's brightest channel,
+
+```rust,ignore
+let peak = light.intensity * light.color.into_iter().fold(0., f32::max); // cd
+light.range = (peak / MIN_ILLUMINANCE_LUX).sqrt(); // metres, where peak / d² = threshold
+```
+
+The `gltf_lights` example applies it, with the threshold as a named
+constant. A light of no intensity lights nothing; leave it out. SGL3D fades
+every point and spot light to nothing at its range by Filament's window,
+`(1 - (d / range)⁴)²` times the inverse square (`light_reach.wgsl`). So the
+light keeps 88% of its inverse-square value at half the range, 58% at 0.7,
+12% at 0.9 and none at the range. The threshold is where the light would
+fall to without the window; near the range it ends smoothly and earlier,
+never with a visible edge. The window shapes a defined range the same way.
+It lights nothing beyond its range. A glTF light is a point, so the result has no
+`radius` or `angular_diameter`. Its other fields take their defaults: live,
+physical specular, fog energy 1, no shadow and no cookie. Change what the
+game wants on the result, such as `casts_shadow` or `shadow`.
+
+The load refuses a light the extension forbids, naming it: a negative or
+non-finite colour or intensity, a range that is not positive, or cone angles
+outside `0 <= inner <= outer <= π/2` or an outer angle of 0. inner equal to
+outer is taken, since Blender writes it for a hard edge. It also refuses a spot or directional
+light whose node's transform collapses its -Z axis (a zero scale), naming
+the node. `LoadOptions::nodes` selects mesh nodes only: every placement in
+the scene loads, and the game filters them by name. A scene must still hold
+a triangle mesh, so a file of lights alone does not load. Animation clips do
+not move placements. When the asset has clips, `LightPlacement::node`
+indexes `Rig::nodes`: a game that animates a light's node composes that
+node's posed transform up its parents from `animation::Pose::local_matrices`,
+places the light again and sets it (`Scene::set_light`). A file without the
+extension loads as it did before, with `Asset::lights` empty.
+
+The [gltf_lights example](../../examples/sgl-3d/examples/gltf_lights.rs)
+loads a glTF (`fixtures/authored-lights.gltf` by default) and installs its
+lights this way.
+
 ## Local-light shadows
 
 Lights with `casts_shadow` share one 4096² depth atlas (2048² at the Low
@@ -3312,8 +3398,9 @@ normal and bump maps, an occlusion map packed in the red channel of the
 metallic-roughness image (ORM), `KHR_materials_clearcoat` with its maps,
 emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_iridescence`, `KHR_materials_sheen`,
-`KHR_materials_diffuse_transmission`, and the `KHR_materials_ior` and
-`KHR_materials_specular` factors. A primitive whose material has any map
+`KHR_materials_diffuse_transmission`, the `KHR_materials_ior` and
+`KHR_materials_specular` factors, and `KHR_lights_punctual` lights as data
+([Authored glTF lights](#authored-gltf-lights)). A primitive whose material has any map
 needs `TEXCOORD_0`. Each map SGL3D samples needs linear magnification and
 trilinear minification (or none set); a map it leaves out may sample any
 way. `TEXCOORD_1` is the mesh's static irradiance atlas chart: on a static

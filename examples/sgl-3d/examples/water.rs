@@ -386,6 +386,7 @@ fn world(transmissive: bool) -> Asset {
         images: Vec::new(),
         rig: Default::default(),
         ignored: Vec::new(),
+        lights: Default::default(),
     }
 }
 

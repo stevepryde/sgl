@@ -49,7 +49,9 @@ them through unrefracted. A probe captured on an
   their maps on `Extended`, the `KHR_materials_ior` and
   `KHR_materials_specular` factors (a dielectric's F0: water's IOR 1.33
   gives 0.02), and `KHR_materials_transmission`, `KHR_materials_volume` and
-  `KHR_materials_dispersion` (their maps on `Extended`). Every map lies on
+  `KHR_materials_dispersion` (their maps on `Extended`), and
+  `KHR_lights_punctual` lights as data (`Asset::lights`), which the game
+  places and installs. Every map lies on
   `TEXCOORD_0`; `TEXCOORD_1` loads as `Vertex::lightmap_uv`, the static
   irradiance atlas chart.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
@@ -249,6 +251,12 @@ them through unrefracted. A probe captured on an
   fill
   (`FrameInput::hemisphere_light`, `HemisphereLight`).
   [Frame lights and look](../README.md#frame-lights-and-look).
+- **Authored glTF lights** (`KHR_lights_punctual`): `Asset::lights` holds
+  each light a file defines and each node that places it. `PunctualLight::place`
+  makes a `Light` for `Scene::add_light`, or a `DirectionalLight` the game
+  may put in one of its two frame slots. Loading installs nothing, and SGL3D
+  never picks among authored suns. A light without a range reaches 4096 m.
+  [Authored glTF lights](../README.md#authored-gltf-lights).
 - **Point, spot and rectangle lights**: scene content (`Scene::add_light`,
   `Light`, `LightShape`), clustered on the CPU each frame so each pixel
   pays only for the lights that reach it, up to 8,192 lights and decals a

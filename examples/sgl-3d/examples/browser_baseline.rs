@@ -157,6 +157,7 @@ fn asset(number: usize) -> Asset {
         images: vec![Image::Rgba8(texture)],
         rig: Default::default(),
         ignored: vec![],
+        lights: Default::default(),
     }
 }
 

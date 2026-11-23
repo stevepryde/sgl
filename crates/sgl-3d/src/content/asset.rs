@@ -11,6 +11,8 @@
 //! masked and blended alpha modes are supported. Supported material
 //! extensions are scalar clearcoat, anisotropy with authored tangents,
 //! emissive strength, unlit, bump mapping, IOR and specular factors.
+//! Authored punctual lights (`KHR_lights_punctual`) load as data in
+//! [`Asset::lights`] for the game to install.
 use std::error::Error;
 
 use glam::Vec3;
@@ -18,8 +20,8 @@ use gltf::texture::WrappingMode;
 
 use super::deformation::{MeshDeformation, Rig};
 pub use super::gltf::{
-    GltfImage, Ignored, ImageSource, LoadOptions, load, load_slice, load_slice_with_options,
-    load_with_options,
+    AssetLights, GltfImage, Ignored, ImageSource, LightPlacement, LoadOptions, PlacedLight,
+    PunctualKind, PunctualLight, load, load_slice, load_slice_with_options, load_with_options,
 };
 pub use super::images::{CompressedFormat, CompressedImage, Image, ImageError, Rgba8MipChain};
 pub use super::load_budget::LoadBudget;
@@ -437,6 +439,9 @@ pub struct Asset {
     /// What a glTF load left unrendered, which the file did not require
     /// (glTF lets a loader leave it out); empty for content built in code.
     pub ignored: Vec<Ignored>,
+    /// Its authored lights (`KHR_lights_punctual`), which loading does not
+    /// install; empty without them and for content built in code.
+    pub lights: AssetLights,
 }
 
 /// Whether every vertex carries a finite, nonzero authored tangent frame with
@@ -493,5 +498,6 @@ pub fn empty() -> Asset {
         images: Vec::new(),
         rig: Rig::default(),
         ignored: Vec::new(),
+        lights: AssetLights::default(),
     }
 }
