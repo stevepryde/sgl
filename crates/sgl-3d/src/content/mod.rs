@@ -32,4 +32,5 @@ pub(crate) mod srgb;
 pub mod static_lighting;
 pub(crate) mod transient;
 
+mod meshopt;
 mod zstandard;

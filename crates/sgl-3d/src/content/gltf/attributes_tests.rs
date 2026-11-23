@@ -21,7 +21,7 @@ const CUBE_FLOAT: (&[u8], &[u8]) = (
 );
 
 /// A `.gltf` and the one buffer file it names, as one GLB.
-fn embedded((json, bin): (&[u8], &[u8])) -> Vec<u8> {
+pub(super) fn embedded((json, bin): (&[u8], &[u8])) -> Vec<u8> {
     let mut document: Value = serde_json::from_slice(json).unwrap();
     document["buffers"][0]
         .as_object_mut()
@@ -50,9 +50,21 @@ fn embedded((json, bin): (&[u8], &[u8])) -> Vec<u8> {
 
 /// The angle between `a` and `b`, in radians, resolved near zero, where
 /// an `f32` arccosine of their dot product is not.
-fn angle(a: Vec3, b: Vec3) -> f32 {
+pub(super) fn angle(a: Vec3, b: Vec3) -> f32 {
     let (a, b) = (a.normalize(), b.normalize());
     a.cross(b).length().atan2(a.dot(b))
+}
+
+/// How far a compressed cube may be from the float export: world
+/// distance for positions and their morph displacements, radians for
+/// normals, difference for normal displacements, and per axis for the
+/// box's corners.
+pub(super) struct CubeError {
+    pub(super) position: f32,
+    pub(super) bounds: f32,
+    pub(super) normal: f32,
+    pub(super) delta_position: f32,
+    pub(super) delta_normal: f32,
 }
 
 /// Asserts that the quantized cube loads as its float export within the
@@ -65,8 +77,24 @@ pub(super) fn assert_cube_matches(quantized: &Asset, float: &Asset) {
     // The quantized file's leaf node scale times its parent's: one
     // UNSIGNED_SHORT step in the world.
     const STEP: f32 = 3.649_006_9e-6 * 100.;
-    let position_error = STEP / 2. * 3f32.sqrt() + 1e-6;
-    let direction_error = 0.5 / 127. * 3f32.sqrt();
+    let position = STEP / 2. * 3f32.sqrt() + 1e-6;
+    let direction = 0.5 / 127. * 3f32.sqrt();
+    assert_cube_within(
+        quantized,
+        float,
+        &CubeError {
+            position,
+            bounds: STEP / 2. + 1e-6,
+            normal: direction,
+            delta_position: position,
+            delta_normal: direction,
+        },
+    );
+}
+
+/// Asserts that `quantized` loads as the float cube within `error`, with
+/// the same triangles and winding and the cube's box, ±1 in the world.
+pub(super) fn assert_cube_within(quantized: &Asset, float: &Asset, error: &CubeError) {
     assert!(quantized.ignored.is_empty(), "{:?}", quantized.ignored);
     let ([quantized], [float]) = (&quantized.meshes[..], &float.meshes[..]) else {
         panic!("one mesh each");
@@ -82,8 +110,8 @@ pub(super) fn assert_cube_matches(quantized: &Asset, float: &Asset) {
                 .filter(|&f| {
                     let other = &float.vertices[f];
                     Vec3::from(vertex.position).distance(Vec3::from(other.position))
-                        <= position_error
-                        && angle(vertex.normal.into(), other.normal.into()) <= direction_error
+                        <= error.position
+                        && angle(vertex.normal.into(), other.normal.into()) <= error.normal
                 })
                 .collect();
             assert_eq!(found.len(), 1, "{:?} matched {found:?}", vertex.position);
@@ -96,11 +124,8 @@ pub(super) fn assert_cube_matches(quantized: &Asset, float: &Asset) {
         low = low.min(vertex.position.into());
         high = high.max(vertex.position.into());
     }
-    assert!(low.abs_diff_eq(Vec3::splat(-1.), STEP / 2. + 1e-6), "{low}");
-    assert!(
-        high.abs_diff_eq(Vec3::splat(1.), STEP / 2. + 1e-6),
-        "{high}"
-    );
+    assert!(low.abs_diff_eq(Vec3::splat(-1.), error.bounds), "{low}");
+    assert!(high.abs_diff_eq(Vec3::splat(1.), error.bounds), "{high}");
     let triangles = |indices: &[u32], map: &dyn Fn(u32) -> u32| {
         let mut triangles: Vec<[u32; 3]> = indices
             .as_chunks::<3>()
@@ -129,9 +154,9 @@ pub(super) fn assert_cube_matches(quantized: &Asset, float: &Asset) {
         for (vertex, delta) in target.deltas.iter().enumerate() {
             let expected = &float_target.deltas[matched[vertex]];
             let position = Vec3::from(delta.position) - Vec3::from(expected.position);
-            assert!(position.length() <= position_error, "{position}");
+            assert!(position.length() <= error.delta_position, "{position}");
             let normal = Vec3::from(delta.normal) - Vec3::from(expected.normal);
-            assert!(normal.length() <= direction_error, "{normal}");
+            assert!(normal.length() <= error.delta_normal, "{normal}");
         }
     }
 }

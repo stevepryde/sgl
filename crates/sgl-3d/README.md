@@ -3592,6 +3592,18 @@ bind matrices apply as those always do. `KHR_texture_transform`, which
 dequantises UVs, is not read yet: a file that uses it lists it in
 `Asset::ignored` and its UVs keep their stored range.
 
+`EXT_meshopt_compression` and `KHR_meshopt_compression` files load, as
+gltfpack writes them (`-c`, `-cc`, `-ce khr`, with or without `-cf`):
+every compressed buffer view decodes once at import, in all three modes
+and with every filter its extension defines (KHR's version 1 attribute
+stream and COLOR filter included), so meshes, skins, morph targets and
+animation clips read the decoded bytes. A buffer only compressed views
+use, such as a fallback buffer, is never read, whether the extension is
+required or optional. Decoded views are charged to the decoded budget
+before they are allocated, and a malformed or truncated stream fails the
+load naming its buffer view. A file using neither extension loads as
+before.
+
 A dielectric's reflectance at normal incidence (F0) follows its index of
 refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for water
 at 1.33, 0.17 for diamond at 2.42. `KHR_materials_specular` tints it

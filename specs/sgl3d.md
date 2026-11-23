@@ -87,6 +87,15 @@ settings SGL3D has today.
    a node's transform or a skin's inverse bind matrices applies where those
    already apply, once, and bounds come from the decoded vertices, never
    from an accessor's `min` and `max`.
+   `EXT_meshopt_compression` and `KHR_meshopt_compression` buffer views
+   decode once at import, below every accessor reader, by a port of
+   meshoptimizer's decoders: all three modes and every filter each
+   extension defines, with KHR's version 1 attribute stream. A buffer only
+   compressed views reference, such as a fallback buffer, is never read:
+   its views decode into bytes charged to the decoded budget before they
+   are allocated. A stream that does not decode to exactly its view's
+   `byteLength`, or breaks its extension's rules, fails the load naming
+   the view. A file using neither extension reads its buffers as before.
    A file's `KHR_lights_punctual` lights load as CPU data (`Asset::lights`):
    each light it defines, as authored, and each node of the loaded scene
    that places one, with the node's world transform at the scene's authored

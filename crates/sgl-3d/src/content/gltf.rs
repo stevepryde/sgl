@@ -25,6 +25,9 @@ mod lights;
 mod lights_tests;
 mod material;
 mod meshes;
+mod meshopt;
+#[cfg(test)]
+mod meshopt_tests;
 mod rig;
 #[cfg(test)]
 mod rig_tests;
@@ -115,11 +118,18 @@ pub fn load_with_options(path: &Path, options: LoadOptions<'_>) -> Result<Asset>
 fn load_inner(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
     check(options)?;
     let mut budget = Budget::source(options.budget);
+    let mut decoded_budget = Budget::decoded(options.budget);
     let bytes = budget.read_file(path, None)?;
-    let (document, buffers) = import(&bytes, path.parent(), &mut budget).map_err(|error| {
+    let (document, buffers) = import(&bytes, path.parent(), (&mut budget, &mut decoded_budget)).map_err(|error| {
         format!("glTF import failed: {error}; check referenced files and re-export valid glTF from the Blender source")
     })?;
-    decode(document, &buffers, path.parent(), options, &mut budget)
+    decode(
+        document,
+        &buffers,
+        path.parent(),
+        options,
+        (&mut budget, decoded_budget),
+    )
 }
 
 /// Load an embedded glTF/GLB with the same material and geometry rules as [`load`].
@@ -135,10 +145,17 @@ pub fn load_slice(bytes: &[u8]) -> Result<Asset> {
 pub fn load_slice_with_options(bytes: &[u8], options: LoadOptions<'_>) -> Result<Asset> {
     check(options)?;
     let mut budget = Budget::source(options.budget);
+    let mut decoded_budget = Budget::decoded(options.budget);
     budget.charge(bytes.len() as u64)?;
-    let (document, buffers) = import(bytes, None, &mut budget)
+    let (document, buffers) = import(bytes, None, (&mut budget, &mut decoded_budget))
         .map_err(|error| format!("embedded glTF import failed: {error}"))?;
-    decode(document, &buffers, None, options, &mut budget)
+    decode(
+        document,
+        &buffers,
+        None,
+        options,
+        (&mut budget, decoded_budget),
+    )
 }
 
 fn check(options: LoadOptions<'_>) -> Result<()> {
@@ -152,9 +169,10 @@ fn check(options: LoadOptions<'_>) -> Result<()> {
 }
 
 /// The glTF extensions SGL3D honours: a file may require any of them. The
-/// loader reads each itself, from the extension's values, or for
-/// `KHR_mesh_quantization` the integer attributes it allows (`attributes`).
-const SUPPORTED_EXTENSIONS: [&str; 15] = [
+/// loader reads each itself, from the extension's values, for
+/// `KHR_mesh_quantization` the integer attributes it allows (`attributes`),
+/// and for the meshopt pair the compressed buffer views (`meshopt`).
+const SUPPORTED_EXTENSIONS: [&str; 17] = [
     "KHR_lights_punctual",
     "KHR_materials_anisotropy",
     "KHR_materials_clearcoat",
@@ -169,7 +187,9 @@ const SUPPORTED_EXTENSIONS: [&str; 15] = [
     "KHR_materials_unlit",
     "KHR_materials_volume",
     "KHR_mesh_quantization",
+    "KHR_meshopt_compression",
     "EXT_materials_bump",
+    "EXT_meshopt_compression",
 ];
 
 /// Something in a glTF that SGL3D does not render and the file does not
@@ -208,7 +228,8 @@ pub enum Ignored {
     },
 }
 
-/// The document in `bytes`, validated, and its buffers. glTF 2.0 5.17.2: a
+/// The document in `bytes`, validated, and its buffers, with compressed
+/// buffer views decoded (`meshopt`). glTF 2.0 5.17.2: a
 /// file that requires an extension SGL3D does not support fails to load.
 /// The gltf crate's validation knows none of the material extensions SGL3D
 /// reads itself, so once every required one is known to be supported the
@@ -216,7 +237,7 @@ pub enum Ignored {
 fn import(
     bytes: &[u8],
     base: Option<&Path>,
-    budget: &mut Budget,
+    (budget, decoded_budget): (&mut Budget, &mut Budget),
 ) -> Result<(gltf::Document, Vec<gltf::buffer::Data>)> {
     // The gltf crate subtracts the 12-byte header from the length the GLB
     // header declares unchecked, so a header declaring less is refused here.
@@ -247,7 +268,16 @@ fn import(
     root.extensions_required.clear();
     let document = gltf::Document::from_json(root)?;
     let blob = glb.as_ref().and_then(|glb| glb.bin.as_deref());
-    let buffers = sources::buffers(&document, base, blob, budget)?;
+    let compressed = meshopt::Compressed::find(&document)?;
+    let unread = |buffer| {
+        compressed
+            .as_ref()
+            .is_some_and(|views| views.unread(buffer))
+    };
+    let mut buffers = sources::buffers(&document, base, blob, budget, unread)?;
+    if let Some(compressed) = compressed {
+        compressed.decode(&mut buffers, decoded_budget)?;
+    }
     Ok((document, buffers))
 }
 
@@ -394,14 +424,13 @@ fn decode(
     buffers: &[gltf::buffer::Data],
     base: Option<&Path>,
     options: LoadOptions<'_>,
-    budget: &mut Budget,
+    (budget, mut decoded_budget): (&mut Budget, Budget),
 ) -> Result<Asset> {
     let scene = document
         .default_scene()
         .or_else(|| document.scenes().next())
         .ok_or("GLB contains no scene")?;
     let parents = rig::parents(&document)?;
-    let mut decoded_budget = Budget::decoded(options.budget);
     check_scene(&document, &scene, &parents, &mut decoded_budget)?;
     let lights = lights::read(&document, &scene)?;
     // What the file uses but does not require (import refused the rest).

@@ -127,15 +127,26 @@ fn data_uri(uri: &str, budget: &mut Budget) -> Result<Vec<u8>> {
     Ok(decoded)
 }
 
+/// Each of `document`'s buffers, read under `budget`, but for those
+/// `unread` names, which compressed buffer views alone fill
+/// (`meshopt`): they are left empty, and the GLB BIN chunk, which belongs
+/// to the first buffer without a URI, is not given to a later one.
 pub(super) fn buffers(
     document: &gltf::Document,
     base: Option<&Path>,
     mut blob: Option<&[u8]>,
     budget: &mut Budget,
+    unread: impl Fn(usize) -> bool,
 ) -> Result<Vec<gltf::buffer::Data>> {
     document
         .buffers()
         .map(|buffer| {
+            if unread(buffer.index()) {
+                if matches!(buffer.source(), gltf::buffer::Source::Bin) {
+                    blob.take();
+                }
+                return Ok(gltf::buffer::Data(Vec::new()));
+            }
             let bytes = match buffer.source() {
                 gltf::buffer::Source::Bin => {
                     let bytes = blob.take().ok_or("GLB buffer has no BIN chunk")?;
