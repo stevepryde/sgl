@@ -409,6 +409,7 @@ fn quad(mesh: &mut CpuMesh, corner: Vec3, u: Vec3, v: Vec3) {
     let normal = u.cross(v).normalize();
     for [s, t] in [[0., 0.], [1., 0.], [1., 1.], [0., 1.]] {
         mesh.vertices.push(Vertex {
+            uv1: [0.0; 2],
             tangent: u.normalize().extend(1.).to_array(),
             lightmap_bounds: [0., 0., 1., 1.],
             lightmap_uv: [0.; 2],

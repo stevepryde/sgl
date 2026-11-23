@@ -1,8 +1,10 @@
-// A rasterized texel's base colour: the material's base times the vertex
-// colour and the base map, sampled with the view's mip bias. Every raster
-// pass that reads it, lit and caster alike, takes it from here.
-fn material_base_color(uv:vec2<f32>,color:vec4<f32>)->vec4<f32> {
- return material.base*color*material_map_sample(base_map,MATERIAL_SLOT_BASE,uv,view.mip_bias);
+// A rasterized texel's base colour, where its first and second UV sets are
+// `uv` and `uv1`: the material's base times the vertex colour and the base
+// map at its binding's coordinates (material_map_uv), sampled with the
+// view's mip bias. Every raster pass that reads it, lit and caster alike,
+// takes it from here.
+fn material_base_color(uv:vec2<f32>,uv1:vec2<f32>,color:vec4<f32>)->vec4<f32> {
+ return material.base*color*material_map_sample(base_map,MATERIAL_SLOT_BASE,material_map_uv(MATERIAL_SLOT_BASE,uv,uv1),view.mip_bias);
 }
 // A rasterized texel's material maps, white where a view samples none: its
 // base colour (material_base_color), its emission map's colour and its

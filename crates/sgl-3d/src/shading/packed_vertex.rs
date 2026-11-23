@@ -47,14 +47,14 @@ pub(crate) struct UvRect {
 }
 
 impl UvRect {
-    /// The rectangle `vertices`' UVs span; empty for no vertices.
-    pub fn of(vertices: &[Vertex]) -> Self {
-        let Some((min, max)) = vertices
-            .iter()
-            .map(|vertex| Vec2::from_array(vertex.uv))
-            .fold(None, |bounds: Option<(Vec2, Vec2)>, uv| {
-                Some(bounds.map_or((uv, uv), |(min, max)| (min.min(uv), max.max(uv))))
-            })
+    /// The rectangle `uvs` span; empty for none.
+    pub fn of(uvs: impl IntoIterator<Item = [f32; 2]>) -> Self {
+        let Some((min, max)) =
+            uvs.into_iter()
+                .map(Vec2::from_array)
+                .fold(None, |bounds: Option<(Vec2, Vec2)>, uv| {
+                    Some(bounds.map_or((uv, uv), |(min, max)| (min.min(uv), max.max(uv))))
+                })
         else {
             return Self::default();
         };
@@ -129,10 +129,9 @@ fn frame(vertex: &Vertex) -> (u32, u32) {
     (unorm16_pair(octahedral(axis)), code)
 }
 
-/// `vertex`, whose normal is finite and not zero, packed with its UV across
-/// `uv` and its lightmap chart `chart` in its mesh's table.
-pub(crate) fn pack(vertex: &Vertex, uv: &UvRect, chart: u16) -> PackedVertex {
-    let (axis, angle) = frame(vertex);
+/// `uv` as two unorm16s across `rect`, the packed vertex's `uv` word and a
+/// second UV set's word alike (packed_vertex.wgsl's `packed_vertex_uv`).
+pub(crate) fn pack_uv(uv: [f32; 2], rect: &UvRect) -> u32 {
     let fraction = |value: f32, min: f32, extent: f32| {
         if extent > 0. {
             (f64::from(value) - f64::from(min)) / f64::from(extent)
@@ -140,6 +139,16 @@ pub(crate) fn pack(vertex: &Vertex, uv: &UvRect, chart: u16) -> PackedVertex {
             0.
         }
     };
+    unorm16_pair(DVec2::new(
+        fraction(uv[0], rect.min[0], rect.extent[0]),
+        fraction(uv[1], rect.min[1], rect.extent[1]),
+    ))
+}
+
+/// `vertex`, whose normal is finite and not zero, packed with its UV across
+/// `uv` and its lightmap chart `chart` in its mesh's table.
+pub(crate) fn pack(vertex: &Vertex, uv: &UvRect, chart: u16) -> PackedVertex {
+    let (axis, angle) = frame(vertex);
     let [r, g, b, a] = vertex.color.map(|channel| channel.clamp(0., 1.));
     let srgb = |value: f32| f64::from(super::srgb::from_linear(value));
     let lightmap = Vec2::from_array(vertex.lightmap_uv);
@@ -147,10 +156,7 @@ pub(crate) fn pack(vertex: &Vertex, uv: &UvRect, chart: u16) -> PackedVertex {
         position: vertex.position,
         axis,
         angle_chart: angle | u32::from(chart) << 16,
-        uv: unorm16_pair(DVec2::new(
-            fraction(vertex.uv[0], uv.min[0], uv.extent[0]),
-            fraction(vertex.uv[1], uv.min[1], uv.extent[1]),
-        )),
+        uv: pack_uv(vertex.uv, uv),
         color: unorm(srgb(r), 255.)
             | unorm(srgb(g), 255.) << 8
             | unorm(srgb(b), 255.) << 16

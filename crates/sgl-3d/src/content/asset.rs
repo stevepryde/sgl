@@ -27,13 +27,16 @@ pub use super::gltf::{
 pub use super::images::{CompressedFormat, CompressedImage, Image, ImageError, Rgba8MipChain};
 pub use super::load_budget::LoadBudget;
 use super::material::{AlphaMode, NormalLayer};
-pub use super::material_texture::{MaterialTexture, Sampler, TextureFilter, TextureWrap};
+pub use super::material_texture::{
+    MaterialTexture, Sampler, TextureFilter, TextureWrap, UvSet, UvTransform,
+};
 
 /// A loader failure, including the source asset path for file loads.
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 /// Interleaved vertex input used by the renderer, in the asset's coordinate system.
-/// The scene packs each into 32 bytes when its model is prepared
+/// The scene packs each into 32 bytes when its model is prepared, and its
+/// second UV set into 4 more where its mesh has one
 /// (`PreparedModel::new`; the README's asset limits give the precision).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -47,10 +50,19 @@ pub struct Vertex {
     /// of the rectangle its mesh's UVs span. Finite, or the mesh is refused,
     /// as is a mesh whose UVs span more than `f32` holds.
     pub uv: [f32; 2],
+    /// Second texture coordinate set (`TEXCOORD_1`), which a map on
+    /// [`UvSet::Uv1`] samples; zero for a vertex without one. Kept as
+    /// 16-bit fractions of the rectangle its mesh's span, 4 bytes a
+    /// vertex, only for a mesh with a vertex whose `uv1` is not zero.
+    /// Finite, or the mesh is refused. The glTF loader fills it only for
+    /// meshes whose material has a map on that set.
+    pub uv1: [f32; 2],
     /// Linear vertex color multiplier, including alpha. Clamped to 0..=1 and
     /// kept as 8-bit sRGB with 8-bit linear alpha.
     pub color: [f32; 4],
-    /// TEXCOORD_1: secondary normalized UV into the caller-baked static irradiance atlas.
+    /// Normalized UV into the caller-baked static irradiance atlas, which
+    /// the glTF loader reads from `TEXCOORD_1`; it and `lightmap_bounds`
+    /// alone select the lightmap chart, whatever `uv1` holds.
     /// (0, 0) or a negative UV marks a surface without an atlas chart: it has no
     /// baked lighting, so baked scene lights light it. Kept as 16-bit fractions.
     /// Finite, or the mesh is refused.
@@ -192,14 +204,13 @@ pub struct Material {
     pub base_texture: Option<MaterialTexture>,
     /// Metallic (blue) / roughness (green) map, sampled as linear data.
     pub mr_texture: Option<MaterialTexture>,
-    /// Occlusion map (glTF's `occlusionTexture` on `TEXCOORD_0`;
-    /// the loader leaves out a map on another UV set): its red channel is
+    /// Occlusion map (glTF's `occlusionTexture`): its red channel is
     /// the share of ambient light that reaches the surface, which occludes
     /// its ambient light, its baked light (lightmap, atlas chart or
     /// ambient cube) and its environment specular. SGL3D samples it where
-    /// it is `mr_texture`, image and sampler (ORM packing: occlusion,
-    /// roughness and metallic in red, green and blue), and not yet from an
-    /// image or sampler of its own.
+    /// it is `mr_texture`, image, sampler, UV set and transform (ORM
+    /// packing: occlusion, roughness and metallic in red, green and blue),
+    /// and not yet from a slot of its own.
     pub occlusion_texture: Option<MaterialTexture>,
     /// How much of the occlusion map applies, in `0..=1` (glTF's
     /// `occlusionTexture.strength`): 1 as authored, 0 none.
@@ -267,8 +278,21 @@ impl Material {
         self.occlusion_texture.is_some() && self.occlusion_texture == self.mr_texture
     }
 
-    /// Every map it names, each field once: a new map's field fails to
-    /// compile here until it is listed.
+    /// Every map SGL3D samples: each it names but an occlusion map, which
+    /// SGL3D samples only as its metallic-roughness map
+    /// (`packed_occlusion`), and that map is listed; and but a bump map
+    /// beside a normal map, which shading never takes.
+    pub(crate) fn sampled_textures(&self) -> impl Iterator<Item = MaterialTexture> {
+        let [base, mr, _occlusion, emissive, normal, bump, rest @ ..] = self.textures();
+        let bump = bump.filter(|_| normal.is_none());
+        [base, mr, emissive, normal, bump]
+            .into_iter()
+            .chain(rest)
+            .flatten()
+    }
+
+    /// Every map it names, each field once, the occlusion map third: a new
+    /// map's field fails to compile here until it is listed.
     pub(crate) fn textures(&self) -> [Option<MaterialTexture>; 18] {
         let Self {
             name: _,

@@ -15,6 +15,7 @@ fn triangles(centre: Vec3, triangles: u32) -> CpuMesh {
             let corner = [[-0.5, -0.5], [0.5, -0.5], [0., 0.5]][vertex as usize % 3];
             let layer = (vertex / 3) as f32 * 0.01;
             Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

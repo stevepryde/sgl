@@ -2291,6 +2291,7 @@ fn scrolling_plane(repeats: f32, velocity: f32) -> sgl_3d::asset::Asset {
     let (half_x, half_y) = (5., 3.);
     let vertices = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
         .map(|(x, y): (f32, f32)| Vertex {
+            uv1: [0.0; 2],
             position: [x * half_x, y * half_y, 0.],
             normal: [0., 0., 1.],
             uv: [(x + 1.) / 2., (1. - y) / 2.],

@@ -23,6 +23,7 @@ fn sphere(latitude: u32, longitude: u32) -> crate::asset::Asset {
             let theta = std::f32::consts::TAU * (x as f32 + 0.5) / longitude as f32;
             let p = Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin());
             vertices.push(Vertex {
+                uv1: [0.0; 2],
                 position: p.to_array(),
                 normal: p.to_array(),
                 tangent: [0.; 4],
@@ -111,6 +112,7 @@ fn plane(centre: Vec3, direction: Vec3, inverse: Mat4) -> CpuMesh {
     CpuMesh {
         vertices: [(-2., -2.), (2., -2.), (2., 2.), (-2., 2.)]
             .map(|(x, y)| Vertex {
+                uv1: [0.0; 2],
                 position: inverse.transform_point3(centre + u * x + v * y).to_array(),
                 normal: [0., 0., 1.],
                 tangent: [0.; 4],

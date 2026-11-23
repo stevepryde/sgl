@@ -82,24 +82,34 @@ impl Alpha {
 /// material samples a map in the shader, in a state other than the one its
 /// group 2 sampler binds: a bit, by its map binding's index, for each such
 /// binding (`material_shader_sampled_maps` in material_sampling.wgsl;
-/// `scene::materials::Material::shader_sampled`), none for most materials.
-/// Casters read whichever positions they are given and ignore it.
+/// `scene::materials::Material::shader_sampled`), none for most materials;
+/// and likewise a bit for each map binding that samples the second UV set
+/// (`uv1`) and for each that samples through a transform (`transformed`)
+/// (`scene::materials::Material::map_uvs`), none for a material on its
+/// first UV set untransformed, which a pipeline's key reduces to whether a
+/// map its programs sample does (`material_uv1_enabled` and
+/// `material_transforms_enabled` in map_uv.wgsl, `PipelineKey::new`).
+/// Casters read whichever positions they are given and ignore `deformed`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Variant {
     pub cull: Cull,
     pub alpha: Alpha,
     pub deformed: bool,
     pub shader_sampled: u16,
+    pub uv1: u16,
+    pub transformed: u16,
 }
 
 impl Variant {
-    /// How many variants there are that sample no map in the shader.
+    /// How many variants there are whose maps all sample the first UV set
+    /// untransformed through group 2's sampler.
     pub const COUNT: usize = 18;
 
     /// Its index among those variants, for a draw's lookup table; none
-    /// where it samples a map in the shader.
+    /// where a map of it samples in the shader, the second UV set or
+    /// through a transform.
     pub fn index(self) -> Option<usize> {
-        (self.shader_sampled == 0).then(|| {
+        (self.shader_sampled == 0 && self.uv1 == 0 && self.transformed == 0).then(|| {
             (usize::from(self.deformed) * 3 + self.cull as usize) * 3 + self.alpha as usize
         })
     }

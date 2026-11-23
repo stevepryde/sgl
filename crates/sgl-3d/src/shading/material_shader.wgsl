@@ -43,7 +43,7 @@ fn material_shaded_vertex(object:u32,rest:MaterialVertex,previous:bool)->Materia
 // measured from `previous_position` at the instance's previous pose, where
 // the pipeline writes motion as the material's vertex function places it
 // at the last submitted frame, with this frame's normal and tangent.
-fn vertex(object:u32,rest:MaterialVertex,lightmap_uv:vec2<f32>,lightmap_bounds:vec4<f32>,previous_position:vec3<f32>)->Fragment {
+fn vertex(object:u32,rest:MaterialVertex,uv1:vec2<f32>,lightmap_uv:vec2<f32>,lightmap_bounds:vec4<f32>,previous_position:vec3<f32>)->Fragment {
  var o:Fragment;
  let model=objects[object].model;
  let v=material_shaded_vertex(object,rest,false);
@@ -53,6 +53,7 @@ fn vertex(object:u32,rest:MaterialVertex,lightmap_uv:vec2<f32>,lightmap_bounds:v
  o.normal=object_normal(model,v.normal);
  o.tangent=object_tangent(model,v.tangent,v.normal);
  o.uv=v.uv;
+ o.uv1=uv1;
  o.color=v.color;
  o.custom=v.custom;
  o.instance=material_instance(object,false);

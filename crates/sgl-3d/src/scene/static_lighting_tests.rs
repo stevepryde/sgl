@@ -333,6 +333,7 @@ fn static_atlas_and_moving_cube_transport() {
         world.materials[0].double_sided = true;
         world.meshes[0].vertices = [(-4., -4.), (-4., 4.), (4., 4.), (4., -4.)]
             .map(|(x, z)| asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.0; 4],
                 lightmap_bounds: [0.25, 0.25, 0.75, 0.75],
                 position: [x, 0., z],
@@ -618,6 +619,7 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
         model.materials[0].emissive = [0.; 3];
         model.meshes[0].vertices = [(-1., -1., -1.), (1., -1., 1.), (0., 1., 0.)]
             .map(|(x, y, bend)| asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.0; 4],
                 position: [x, y, 0.],
                 normal: Vec3::new(bend, 0., 1.).normalize().to_array(),
@@ -762,6 +764,7 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
         model.materials[0].emissive = [0.; 3];
         model.meshes[0].vertices = [(-1., -1., -1.), (1., -1., 1.), (0., 1., 0.)]
             .map(|(x, y, bend)| asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.0; 4],
                 position: [x, y, 0.],
                 normal: Vec3::new(bend, 0., 1.).normalize().to_array(),
@@ -915,6 +918,7 @@ fn a_coat_dims_baked_diffuse_and_emission_by_its_fresnel() {
     // A square on z = 0 facing +Z.
     model.meshes[0].vertices = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
         .map(|(x, y)| asset::Vertex {
+            uv1: [0.0; 2],
             tangent: [0.; 4],
             position: [x, y, 0.],
             normal: [0., 0., 1.],
@@ -1228,6 +1232,7 @@ fn lambertian_square(
     model.materials[0].emissive = [0.; 3];
     model.meshes[0].vertices = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
         .map(|(x, y)| asset::Vertex {
+            uv1: [0.0; 2],
             tangent: [0.; 4],
             position: [x, y, 0.],
             normal: [0., 0., 1.],
@@ -1372,4 +1377,505 @@ fn a_moving_instances_ambient_cube_adds_to_the_frames_ambient() {
             "cube {cube:?}: {color:?}, expected {expected}"
         );
     }
+}
+
+/// A square over x and y in -1..1 at z = 0 facing +Z, for an orthographic
+/// camera looking down -Z at 64 by 64 pixels: its first UV set runs from
+/// (0, 0) at the view's top left to (1, 1) at its bottom right, its second
+/// from `second.0` to `second.1`.
+fn two_set_square(second: ([f32; 2], [f32; 2])) -> (Vec<asset::Vertex>, Vec<u32>) {
+    let vertices = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
+        .map(|(x, y): (f32, f32)| {
+            let share = [(x + 1.) * 0.5, (1. - y) * 0.5];
+            asset::Vertex {
+                position: [x, y, 0.],
+                normal: [0., 0., 1.],
+                uv: share,
+                uv1: [0, 1]
+                    .map(|axis| second.0[axis] + share[axis] * (second.1[axis] - second.0[axis])),
+                color: [1.; 4],
+                lightmap_bounds: [0., 0., 1., 1.],
+                ..bytemuck::Zeroable::zeroed()
+            }
+        })
+        .to_vec();
+    (vertices, vec![0, 1, 2, 0, 2, 3])
+}
+
+/// The camera `two_set_square` is drawn for.
+fn square_camera() -> Camera {
+    let eye = Vec3::Z * 3.;
+    Camera {
+        eye,
+        view: camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
+        projection: camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1),
+    }
+}
+
+// A ray hit's surface reads each map where its slot samples, as a raster
+// fragment does (Material map coordinates): surface_ray.wgsl's
+// `ray_base_color` and `ray_emission`, where `scene::rays::map_uv_tests`
+// checks the hit's decode and one resolution. Plausible defect:
+// surface_ray.wgsl sampling a map at the hit's first UV set whatever its
+// slot names, or raster and ray hits resolving a slot differently. An unlit
+// square shows the labelled image twice: its base map (red) on the second
+// set through KHR_texture_transform's first worked example, which reads the
+// image at (0.5 v, 1 - 0.5 u), and its emission map (green) on the first set
+// through the second example, at (u, 1 - v). The oracle is those texels
+// (`magnified`), for the frame's pixel and for a ray through its centre, at
+// pixels where each differs from the texel the first set, and the second
+// set untransformed, would give.
+#[test]
+fn a_ray_hits_maps_read_where_their_slots_sample_as_raster_does() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let second = ([0.9, 0.8], [0.1, 0.05]);
+    let nearest = asset::Sampler {
+        mag_filter: asset::TextureFilter::Nearest,
+        ..Default::default()
+    };
+    let mut model = test_support::cube();
+    (model.meshes[0].vertices, model.meshes[0].indices) = two_set_square(second);
+    model.images = vec![test_support::labelled()];
+    model.materials[0] = asset::Material {
+        base: [1., 0., 0., 1.],
+        emissive: [0., 1., 0.],
+        unlit: true,
+        base_texture: Some(asset::MaterialTexture {
+            sampler: nearest,
+            uv_set: asset::UvSet::Uv1,
+            transform: asset::UvTransform {
+                offset: [0., 1.],
+                rotation: std::f32::consts::FRAC_PI_2,
+                scale: [0.5, 0.5],
+            },
+            ..asset::MaterialTexture::new(0)
+        }),
+        emissive_texture: Some(asset::MaterialTexture {
+            sampler: nearest,
+            transform: asset::UvTransform {
+                offset: [0., 1.],
+                rotation: 0.,
+                scale: [1., -1.],
+            },
+            ..asset::MaterialTexture::new(0)
+        }),
+        ..Default::default()
+    };
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, model);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &Settings::default());
+    let mut input = FrameInput::new(square_camera());
+    input.backdrop = crate::Backdrop::Color([0.; 3]);
+    let bytes = fused_lit_color(gpu, &mut renderer, &mut scene, &input, &Settings::default());
+    // Two pixels' rays in one dispatch: each hit's base red and emission
+    // green.
+    let pixels = [[8u32, 12], [36, 10]];
+    let [a, b] = pixels.map(|pixel| {
+        let x = (pixel[0] as f32 + 0.5) / 32. - 1.;
+        let y = 1. - (pixel[1] as f32 + 0.5) / 32.;
+        format!("vec3<f32>({x},{y},3.)")
+    });
+    let observation = format!(
+        r#"
+@group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
+fn observed(origin:vec3<f32>)->vec2<f32> {{
+ let direction=vec3(0.,0.,-1.);
+ let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)),SCENE_SIDES_AS_RASTER);
+ let hit=scene_decode_hit(raw,origin,direction);
+ let m=scene_material(hit.material_word);
+ return vec2(ray_base_color(hit,m).r,ray_emission(hit,m).g);
+}}
+@compute @workgroup_size(1) fn observe() {{
+ output[0]=vec4(observed({a}),observed({b}));
+}}
+"#
+    );
+    let rays = observe(
+        &device,
+        &queue,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &Settings::default(),
+        &observation,
+    );
+    for (index, pixel) in pixels.into_iter().enumerate() {
+        let [s, t] = pixel.map(|c| (c as f32 + 0.5) / 64.);
+        let [u1, v1] = [
+            second.0[0] + s * (second.1[0] - second.0[0]),
+            second.0[1] + t * (second.1[1] - second.0[1]),
+        ];
+        let expected = [
+            test_support::magnified([0.5 * v1, 1. - 0.5 * u1], nearest),
+            test_support::magnified([s, 1. - t], nearest),
+        ];
+        // What a map would read at the first set, at the second
+        // untransformed and at the first through the base map's transform.
+        let first = test_support::magnified([s, t], nearest);
+        let untransformed = test_support::magnified([u1, v1], nearest);
+        let first_transformed = test_support::magnified([0.5 * t, 1. - 0.5 * s], nearest);
+        assert!(
+            [first, untransformed, first_transformed]
+                .iter()
+                .all(|wrong| (expected[0] - wrong).abs() > 0.01)
+                && (expected[1] - first).abs() > 0.01,
+            "pixel {pixel:?} cannot tell the sets apart"
+        );
+        let at = ((pixel[1] * 64 + pixel[0]) * 8) as usize;
+        let raster = [0, 1].map(|c| test_support::half(&bytes[at + c * 2..]));
+        for channel in 0..2 {
+            let ray = rays[index * 2 + channel];
+            assert!(
+                (raster[channel] - expected[channel]).abs() < 0.01
+                    && (ray - expected[channel]).abs() < 0.01,
+                "pixel {pixel:?}, channel {channel}: raster {}, ray {ray}, expected {}",
+                raster[channel],
+                expected[channel]
+            );
+        }
+    }
+}
+
+// The lightmap and the irradiance atlas keep their own coordinates,
+// whatever a material's maps sample (the lightmap chart is not a material
+// UV set): the lightmap the mesh's first set through the chart's
+// transform, the atlas its lightmap UV. Plausible defects: the lightmap
+// addressed by a map's resolved coordinates (its transform, or the second
+// set), or the second set's varying displacing the lightmap UV's. The
+// square's base map, a white texel, is on the second set, whose
+// coordinates differ everywhere from the first's, through a rotating and
+// scaling transform. The lightmap's two columns hold 0.1 and 0.3
+// (irradiance / PI), bilinearly filtered with X clamped (`Lightmap`), so
+// at U the chart gives 0.1 + 0.2 (U - 0.25) / 0.5 between its texel
+// centres, and a Lambertian surface of albedo 0.5 under the uniform
+// environment of radiance 0.5 (as the test above) shows 0.5 (chart + 0.5).
+// The atlas is the same map read at the lightmap UV, which the square
+// holds mirrored in U, so its columns swap.
+#[test]
+fn a_lightmap_and_an_atlas_chart_keep_their_coordinates_whatever_a_map_samples() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let mut scene = Scene::new(&device, &queue);
+    let (mut model, input) = lambertian_square(gpu, &mut scene);
+    (model.meshes[0].vertices, model.meshes[0].indices) = two_set_square(([3., 5.], [-2., 0.5]));
+    for vertex in &mut model.meshes[0].vertices {
+        vertex.lightmap_uv = [1. - vertex.uv[0], vertex.uv[1]];
+    }
+    model.images = vec![asset::Image::Rgba8(image::RgbaImage::from_pixel(
+        1,
+        1,
+        image::Rgba([255; 4]),
+    ))];
+    model.materials[0].base_texture = Some(asset::MaterialTexture {
+        uv_set: asset::UvSet::Uv1,
+        transform: asset::UvTransform {
+            offset: [0.3, 0.7],
+            rotation: 1.,
+            scale: [3., 0.5],
+        },
+        ..asset::MaterialTexture::new(0)
+    });
+    let (world, _) = test_support::add_static(&device, &queue, &mut scene, model);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &Settings::default());
+    let columns = vec![[0.1; 3], [0.3; 3], [0.1; 3], [0.3; 3]];
+    let chart = |u: f32| 0.1 + 0.2 * ((u - 0.25) / 0.5).clamp(0., 1.);
+    let colors = |renderer: &mut TestRenderer, scene: &mut Scene| {
+        let bytes = fused_lit_color(gpu, renderer, scene, &input, &Settings::default());
+        [20usize, 44].map(|x| test_support::half(&bytes[(32 * 64 + x) * 8..]))
+    };
+    let us = [20.5 / 64., 44.5 / 64.];
+    scene
+        .set_lightmap(
+            &device,
+            &queue,
+            &Lightmap {
+                directionality: vec![],
+                size: [2, 2],
+                uv_scale_offset: [1., 1., 0., 0.],
+                irradiance: columns.clone(),
+            },
+            &world.materials,
+        )
+        .unwrap();
+    let lightmapped = colors(&mut renderer, &mut scene);
+    for (color, u) in lightmapped.iter().zip(us) {
+        let expected = 0.5 * (chart(u) + 0.5);
+        assert!(
+            (color - expected).abs() < 0.001,
+            "the lightmap at U {u}: {color}, expected {expected}"
+        );
+    }
+    // No material lightmapped: the atlas, at the lightmap UV, U mirrored.
+    scene
+        .set_lightmap(
+            &device,
+            &queue,
+            &Lightmap {
+                directionality: vec![],
+                size: [2, 2],
+                uv_scale_offset: [1., 1., 0., 0.],
+                irradiance: columns.clone(),
+            },
+            &[],
+        )
+        .unwrap();
+    scene
+        .set_static_irradiance_atlas(
+            &device,
+            &queue,
+            &IrradianceAtlas {
+                directionality: vec![],
+                back_directionality: vec![],
+                size: [2, 2],
+                irradiance: columns.clone(),
+                back_irradiance: columns,
+            },
+        )
+        .unwrap();
+    let charted = colors(&mut renderer, &mut scene);
+    for (color, u) in charted.iter().zip(us) {
+        let expected = 0.5 * (chart(1. - u) + 0.5);
+        assert!(
+            (color - expected).abs() < 0.001,
+            "the atlas at lightmap U {}: {color}, expected {expected}",
+            1. - u
+        );
+    }
+}
+
+/// A square of side 0.8 centred at x `x` on z = 0 facing +Z in `material`,
+/// with tangent `tangent`: its first and second UV sets are `first` and
+/// `second` of its base coordinates (s, t), which run from (0, 0) at its
+/// top left to (1, 1) at its bottom right, so U along +X and V along -Y.
+fn mapped_square(
+    x: f32,
+    material: usize,
+    tangent: [f32; 4],
+    first: impl Fn([f32; 2]) -> [f32; 2],
+    second: impl Fn([f32; 2]) -> [f32; 2],
+) -> asset::CpuMesh {
+    let vertices = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
+        .map(|(u, v): (f32, f32)| {
+            let base = [(u + 1.) * 0.5, (1. - v) * 0.5];
+            asset::Vertex {
+                position: [x + 0.4 * u, 0.4 * v, 0.],
+                normal: [0., 0., 1.],
+                tangent,
+                uv: first(base),
+                uv1: second(base),
+                color: [1.; 4],
+                lightmap_bounds: [0., 0., 1., 1.],
+                ..bytemuck::Zeroable::zeroed()
+            }
+        })
+        .to_vec();
+    asset::CpuMesh {
+        vertices,
+        indices: vec![0, 1, 2, 0, 2, 3],
+        material,
+        deformation: Default::default(),
+    }
+}
+
+// A ray hit takes a normal or bump map's texel on the frame of the
+// coordinates it was sampled at, as raster does (Material map
+// coordinates): `ray_normal` over `ray_slot_frame` and
+// `map_uv_authored_frame`. Plausible defects: the hit's frame along the
+// first set for a map on the second (its second-set derivatives taken from
+// other vertices), the transform carried by M rather than its inverse, the
+// bump step taken along the mesh's coordinates, or an authored frame used
+// as it is under a rotation. The oracle is the contract's equivalence, in
+// pairs: a map through a transform, or on the second set, gives the normal
+// the same map gives untransformed on a mesh whose first set holds those
+// coordinates (and, for the authored frame, their conformant tangent); and
+// the transformed map's normal must differ from the untransformed one's on
+// the base coordinates, or the pair tells nothing. Then a clearcoat normal
+// map on the second set of an anisotropic material whose relief binding
+// holds a bump map on that set, and no normal map: the authored frame is
+// the first set's (the normal map's set, the first without one), so the
+// coat takes its own coordinates' frame, as a coat normal map on the first
+// set holding those coordinates does, and not the authored frame, as one on
+// the first set of the base coordinates does. Ten squares, one ray each, in
+// one dispatch, which compares them on the GPU.
+#[test]
+fn a_ray_hits_relief_frames_follow_their_slots_coordinates() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let gpu = (&device, &queue);
+    let transform = |offset: [f32; 2], rotation: f32, scale: [f32; 2]| asset::UvTransform {
+        offset,
+        rotation,
+        scale,
+    };
+    let slanted = transform([0.1, 0.3], 2.2, [2., 3.]);
+    let bumped = transform([0.2, 1.3], 0.7, [1.5, -1.]);
+    let turned = transform([0., 0.], 0.9, [1., 1.]);
+    let through = |t: asset::UvTransform| {
+        move |[u, v]: [f32; 2]| {
+            let (sin, cos) = t.rotation.sin_cos();
+            [
+                t.scale[0] * cos * u + t.scale[1] * sin * v + t.offset[0],
+                -t.scale[0] * sin * u + t.scale[1] * cos * v + t.offset[1],
+            ]
+        }
+    };
+    let base = |uv: [f32; 2]| uv;
+    let mirrored = |[u, v]: [f32; 2]| [1. - u, v];
+    let map = |image, uv_set, transform| {
+        Some(asset::MaterialTexture {
+            uv_set,
+            transform,
+            ..asset::MaterialTexture::new(image)
+        })
+    };
+    let identity = asset::UvTransform::IDENTITY;
+    let normal = |slot| asset::Material {
+        metallic: 0.,
+        roughness: 1.,
+        normal_texture: slot,
+        ..Default::default()
+    };
+    let bump = |slot| asset::Material {
+        metallic: 0.,
+        roughness: 1.,
+        bump_texture: slot,
+        bump_scale: 0.3,
+        ..Default::default()
+    };
+    let anisotropic = |slot| asset::Material {
+        anisotropy_strength: 1e-3,
+        ..normal(slot)
+    };
+    let coated = |anisotropy_strength, bump_texture, coat_normal_texture| asset::Material {
+        metallic: 0.,
+        roughness: 1.,
+        anisotropy_strength,
+        clearcoat: 1.,
+        bump_texture,
+        bump_scale: 0.3,
+        coat_normal_texture,
+        ..Default::default()
+    };
+    let quarter = |[u, v]: [f32; 2]| [v, 1. - u];
+    let (rotation_sin, rotation_cos) = 0.9f32.sin_cos();
+    let mut model = test_support::cube();
+    model.materials = vec![
+        normal(map(0, asset::UvSet::Uv0, identity)),
+        normal(map(0, asset::UvSet::Uv1, slanted)),
+        normal(map(0, asset::UvSet::Uv0, identity)),
+        bump(map(1, asset::UvSet::Uv0, bumped)),
+        bump(map(1, asset::UvSet::Uv0, identity)),
+        anisotropic(map(0, asset::UvSet::Uv0, turned)),
+        anisotropic(map(0, asset::UvSet::Uv0, identity)),
+        coated(
+            1e-3,
+            map(1, asset::UvSet::Uv1, identity),
+            map(0, asset::UvSet::Uv1, identity),
+        ),
+        coated(
+            0.,
+            map(1, asset::UvSet::Uv1, identity),
+            map(0, asset::UvSet::Uv0, identity),
+        ),
+        coated(
+            1e-3,
+            map(1, asset::UvSet::Uv1, identity),
+            map(0, asset::UvSet::Uv0, identity),
+        ),
+    ];
+    let conformant = [1., 0., 0., 1.];
+    let none = [0.; 4];
+    model.meshes = vec![
+        // The reference: the normal map on the base coordinates.
+        mapped_square(-3.6, 0, none, base, base),
+        // On the second set through a transform, the first set mirrored.
+        mapped_square(-2.4, 1, none, mirrored, base),
+        mapped_square(-1.2, 2, none, through(slanted), base),
+        // A bump map through a transform.
+        mapped_square(0., 3, none, base, base),
+        mapped_square(1.2, 4, none, through(bumped), base),
+        // The authored frame through a rotation.
+        mapped_square(2.4, 5, conformant, base, base),
+        mapped_square(
+            3.6,
+            6,
+            [rotation_cos, -rotation_sin, 0., 1.],
+            through(turned),
+            base,
+        ),
+        // The coat on the second set, a quarter turn of the first.
+        mapped_square(4.8, 7, conformant, base, quarter),
+        mapped_square(6., 8, none, quarter, quarter),
+        mapped_square(7.2, 9, conformant, base, quarter),
+    ];
+    model.images = vec![
+        // A tilted normal: [204, 153, 230] decodes to (0.6, 0.2, 0.8).
+        asset::Image::Rgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([204, 153, 230, 255]),
+        )),
+        // A height ramp along both axes, so the bump has a slope that
+        // turns with its coordinates.
+        asset::Image::Rgba8(image::RgbaImage::from_fn(16, 16, |x, y| {
+            let height = (10 * x + 5 * y) as u8;
+            image::Rgba([height, height, height, 255])
+        })),
+    ];
+    let mut scene = Scene::new(&device, &queue);
+    test_support::add_static(&device, &queue, &mut scene, model);
+    let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &Settings::default());
+    let input = FrameInput::new(square_camera());
+    let observation = r#"
+@group(3) @binding(0) var<storage,read_write> output:array<vec4<f32>>;
+// The hit's normal, or its coat's.
+fn observed(x:f32,coat:bool)->vec3<f32> {
+ let origin=vec3(x,0.1,3.);
+ let direction=vec3(0.,0.,-1.);
+ let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)),SCENE_SIDES_AS_RASTER);
+ let hit=scene_decode_hit(raw,origin,direction);
+ if !hit.hit {
+  return vec3(100.);
+ }
+ let m=scene_material(hit.material_word);
+ if coat {
+  return ray_coat_normal(hit,m);
+ }
+ return ray_normal(hit,m);
+}
+// The squares' centres, in their order, the last three's coats observed;
+// one call site, so the compiler keeps one copy of the hit's shading.
+const SQUARES:u32=10u;
+const CENTRES=array<f32,10>(-3.6,-2.4,-1.2,0.,1.2,2.4,3.6,4.8,6.,7.2);
+@compute @workgroup_size(1) fn observe() {
+ var n:array<vec3<f32>,10>;
+ for (var square=0u;square<SQUARES;square++) {
+  n[square]=observed(CENTRES[square],square>=7u);
+ }
+ output[0]=vec4(distance(n[1],n[2]),distance(n[3],n[4]),max(distance(n[5],n[6]),distance(n[7],n[8])),min(min(distance(n[1],n[0]),distance(n[3],n[0])),min(distance(n[5],n[0]),distance(n[8],n[9]))));
+}
+"#;
+    let [second, bump, authored, distinct] = observe(
+        gpu.0,
+        gpu.1,
+        &mut renderer,
+        &mut scene,
+        &input,
+        &Settings::default(),
+        observation,
+    );
+    assert!(
+        second < 1e-3 && bump < 1e-3 && authored < 1e-3,
+        "normals differ from their baked coordinates' by {second} (second set), {bump} (bump), {authored} (authored frame or coat)"
+    );
+    assert!(
+        distinct > 0.1,
+        "a transformed map shades as the reference within {distinct}"
+    );
 }

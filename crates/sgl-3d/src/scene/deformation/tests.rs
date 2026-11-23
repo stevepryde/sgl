@@ -23,6 +23,7 @@ fn quad(x: f32, z: f32, half: f32, deformation: MeshDeformation) -> CpuMesh {
             .iter()
             .enumerate()
             .map(|(i, &(u, v))| Vertex {
+                uv1: [0.0; 2],
                 position: [x + u * half, v * half, z],
                 normal: Vec3::new(0.3 * u, 0.2 * v, 1.).normalize().to_array(),
                 uv: [(u + 1.) / 2., (1. - v) / 2.],

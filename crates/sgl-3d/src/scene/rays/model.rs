@@ -80,6 +80,7 @@ pub(crate) fn prepare_model(
                     + mesh.vertices.len() * words::<PackedVertex>()
                     + mesh.indices.len()
                     + mesh.shader_data.len() * words::<[f32; 4]>()
+                    + uv1_words(mesh.vertices)
             },
         );
         let mut words = vec![0u32; table_word];
@@ -93,7 +94,7 @@ pub(crate) fn prepare_model(
         let mut first_vertex = 0;
         let mut mesh_words = Vec::with_capacity(meshes.len());
         for (index, (mesh, charts)) in meshes.iter().zip(&charts).enumerate() {
-            let uv = UvRect::of(mesh.vertices);
+            let uv = UvRect::of(mesh.vertices.iter().map(|vertex| vertex.uv));
             words.resize(vertex_block(words.len()), 0);
             let vertices = words.len() as u32;
             for (vertex, &chart) in mesh.vertices.iter().zip(charts) {
@@ -109,6 +110,20 @@ pub(crate) fn prepare_model(
                 words.len() as u32
             };
             words.extend_from_slice(bytemuck::cast_slice(mesh.shader_data));
+            let uv1 = if uv1_words(mesh.vertices) == 0 {
+                0
+            } else {
+                words.len() as u32
+            };
+            if uv1 != 0 {
+                let rect = UvRect::of(mesh.vertices.iter().map(|vertex| vertex.uv1));
+                words.extend_from_slice(bytemuck::cast_slice(&rect.words()));
+                words.extend(
+                    mesh.vertices
+                        .iter()
+                        .map(|vertex| packed_vertex::pack_uv(vertex.uv1, &rect)),
+                );
+            }
             mesh_words.push(RayMeshWords {
                 vertices,
                 vertex_count: mesh.vertices.len() as u32,
@@ -126,6 +141,7 @@ pub(crate) fn prepare_model(
                 sections: section_tables[index],
                 section_count: sections[index].len() as u32,
                 shader_data,
+                uv1,
             }]));
             first_vertex += mesh.vertices.len() as u32;
         }
@@ -147,10 +163,21 @@ pub(crate) fn prepare_model(
     })
 }
 
+/// The words `vertices`' second UV set takes after its mesh's shader data:
+/// its rectangle and a word a vertex where any vertex's is not zero, else
+/// none, which reads as zero alike.
+fn uv1_words(vertices: &[Vertex]) -> usize {
+    if vertices.iter().any(|vertex| vertex.uv1 != [0.; 2]) {
+        words::<[f32; 4]>() + vertices.len()
+    } else {
+        0
+    }
+}
+
 /// Names each mesh's material record in the mesh records `records` holds,
 /// one material word per record, and adds `base` to the words where each
-/// record's vertices, indices, chart table, section table and shader data
-/// (where it has any) start; a section's first index is relative to its
+/// record's vertices, indices, chart table, section table, shader data and
+/// second UV set (where it has any) start; a section's first index is relative to its
 /// mesh's indices and needs none.
 fn rebase_records(records: &mut [u32], base: u32, materials: &[u32]) {
     let records: &mut [MeshRecord] = bytemuck::cast_slice_mut(records);
@@ -166,6 +193,9 @@ fn rebase_records(records: &mut [u32], base: u32, materials: &[u32]) {
         record.sections += base;
         if record.shader_data != 0 {
             record.shader_data += base;
+        }
+        if record.uv1 != 0 {
+            record.uv1 += base;
         }
         record.material_word = material_word;
     }
@@ -211,8 +241,8 @@ impl PreparedRayModel {
 /// start, its material's record, its first vertex among its model's, where
 /// its own chart table starts, the rectangle its packed UVs span
 /// (`UvRect::words`), where its section table starts, with its sections,
-/// which the GPU draw lists cull by, and where its shader data starts, 0
-/// without any.
+/// which the GPU draw lists cull by, where its shader data starts, 0
+/// without any, and where its second UV set starts, 0 without one.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(super) struct MeshRecord {
@@ -225,6 +255,9 @@ pub(super) struct MeshRecord {
     pub sections: u32,
     pub section_count: u32,
     pub shader_data: u32,
+    /// Where its second UV set starts (its rectangle, then a word a
+    /// vertex), 0 without one.
+    pub uv1: u32,
 }
 
 /// A section table's entry: a leaf of its mesh's range hierarchy

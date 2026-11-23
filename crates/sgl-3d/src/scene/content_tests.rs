@@ -13,6 +13,7 @@ fn plane(z: f32, slope: [f32; 2], half: f32, reversed: bool) -> asset::CpuMesh {
     asset::CpuMesh {
         vertices: [(-half, -half), (half, -half), (half, half), (-half, half)]
             .map(|(x, y)| asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.0; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -977,6 +978,30 @@ fn core_values_outside_their_bounds_are_refused() {
         return;
     };
     let mut scene = Scene::new(&device, &queue);
+    // A map's transform that is not finite, which would put NaN texture
+    // coordinates on every texel the map shades.
+    let transforms: [asset::UvTransform; 3] = [
+        asset::UvTransform {
+            rotation: f32::NAN,
+            ..asset::UvTransform::IDENTITY
+        },
+        asset::UvTransform {
+            scale: [1., f32::INFINITY],
+            ..asset::UvTransform::IDENTITY
+        },
+        asset::UvTransform {
+            offset: [f32::NEG_INFINITY, 0.],
+            ..asset::UvTransform::IDENTITY
+        },
+    ];
+    for transform in transforms {
+        let mut asset = test_support::masked(test_support::cube(), 0.5);
+        asset.materials[0].base_texture.as_mut().unwrap().transform = transform;
+        assert!(matches!(
+            scene.add_asset(&device, &queue, asset),
+            Err(SceneError::InvalidMaterialFactors)
+        ));
+    }
     let invalid: [fn(&mut asset::Material); 9] = [
         |m| m.roughness = f32::NAN,
         |m| m.roughness = 1.01,
@@ -1748,6 +1773,7 @@ fn anisotropic_filtering_keeps_a_receding_textures_detail() {
     let mut floor = asset_of(asset::CpuMesh {
         vertices: [(-20., 0.), (20., 0.), (20., -40.), (-20., -40.)]
             .map(|(x, z)| asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

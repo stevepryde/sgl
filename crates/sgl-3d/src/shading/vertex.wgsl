@@ -20,6 +20,9 @@ struct Fragment {
  // Its instance's shader data (shader_inputs_bound.wgsl), which only the
  // vertex stage reads; zero where the program composes no game's shader.
  @location(11) @interpolate(flat) instance:vec4<f32>,
+ // Its second UV set, which only the pipelines of a material with a map
+ // on it read and write (material_uv1_enabled); zero in the others.
+ @location(12) uv1:vec2<f32>,
 }
 // Keep projection separate from the view transform. Precomposing P*V lets
 // translation cancellation corrupt tiny depth gaps before rasterization.

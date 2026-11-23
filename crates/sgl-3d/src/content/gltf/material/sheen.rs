@@ -1,23 +1,23 @@
 //! A material's `KHR_materials_sheen`: the sheen layer cloth takes.
-use super::super::super::asset::Result;
+use super::super::super::asset::{MaterialTexture, Result};
 use super::{GLTF_PROPERTY_KEYS, color_factor, extension_texture, unit_factor};
 
 /// A material's sheen (KHR_materials_sheen).
-pub(super) struct Sheen<'a> {
+pub(super) struct Sheen {
     pub color: [f32; 3],
     pub roughness: f32,
-    pub color_texture: Option<gltf::Texture<'a>>,
-    pub roughness_texture: Option<gltf::Texture<'a>>,
+    pub color_texture: Option<MaterialTexture>,
+    pub roughness_texture: Option<MaterialTexture>,
 }
 
 // Authority: Khronos glTF acfcbe65e40c53d6d3aa55a7299982bf2c01c75d,
 // KHR_materials_sheen/README.md and schema: sheenColorFactor three numbers
 // in 0..1, default black; sheenRoughnessFactor in 0..1, default 0;
 // sheenColorTexture and sheenRoughnessTexture.
-pub(super) fn read_sheen<'a>(
-    material: &gltf::Material<'a>,
-    document: &'a gltf::Document,
-) -> Result<Sheen<'a>> {
+pub(super) fn read_sheen(
+    material: &gltf::Material<'_>,
+    document: &gltf::Document,
+) -> Result<Sheen> {
     let mut sheen = Sheen {
         color: [0.; 3],
         roughness: 0.,

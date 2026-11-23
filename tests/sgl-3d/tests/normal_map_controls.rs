@@ -16,6 +16,7 @@ fn asset(texel: [u8; 4], mapped: bool, tangent: u32) -> Asset {
     let normal = if mapped { Vec3::Z } else { n.normalize() };
     let vertices = [[0., 0.], [1., 0.], [1., 1.], [0., 1.]]
         .map(|[u, v]| Vertex {
+            uv1: [0.0; 2],
             position: [(u - 0.5) * 8., (v - 0.5) * 8., -5.],
             normal: normal.to_array(),
             uv: [u, v],

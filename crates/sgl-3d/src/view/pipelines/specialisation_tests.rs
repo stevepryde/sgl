@@ -53,6 +53,8 @@ fn pipelines_of_the_current_and_previous_specialisation_stay() {
             scene,
             GeometryPass::Forward,
             Variant {
+                uv1: 0,
+                transformed: 0,
                 cull: Cull::Back,
                 alpha: Alpha::Opaque,
                 deformed: false,

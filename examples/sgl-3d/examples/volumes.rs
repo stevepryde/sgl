@@ -123,6 +123,7 @@ const SHOTS: [Shot; 6] = [
 
 fn vertex(position: Vec3, normal: Vec3, uv: [f32; 2]) -> Vertex {
     Vertex {
+        uv1: [0.0; 2],
         tangent: [0.; 4],
         lightmap_bounds: [0., 0., 1., 1.],
         lightmap_uv: [0.; 2],

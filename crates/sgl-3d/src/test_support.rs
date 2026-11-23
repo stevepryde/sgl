@@ -578,6 +578,7 @@ pub(crate) fn cube() -> crate::asset::Asset {
             let start = vertices.len() as u32;
             for (x, y) in [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)] {
                 vertices.push(Vertex {
+                    uv1: [0.0; 2],
                     tangent: [0.0; 4],
                     lightmap_bounds: [0., 0., 1., 1.],
                     lightmap_uv: [0.; 2],
@@ -676,6 +677,7 @@ pub(crate) fn leaf_clusters(centres: &[glam::Vec3]) -> crate::asset::CpuMesh {
             for offset in [[-0.1, -0.1], [0.1, -0.1], [0., 0.1]] {
                 mesh.indices.push(mesh.vertices.len() as u32);
                 mesh.vertices.push(Vertex {
+                    uv1: [0.0; 2],
                     tangent: [1., 0., 0., 1.],
                     lightmap_bounds: [0., 0., 1., 1.],
                     lightmap_uv: [0.; 2],

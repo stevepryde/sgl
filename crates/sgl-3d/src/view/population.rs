@@ -173,6 +173,8 @@ pub(crate) fn camera_variant(material: &Material, mirrored: bool, deformed: bool
         alpha: Alpha::of(&material.values),
         deformed,
         shader_sampled: material.shader_sampled(),
+        uv1: material.map_uvs().0,
+        transformed: material.map_uvs().1,
     }
 }
 
@@ -199,9 +201,7 @@ impl Population<'_> {
         match self {
             Self::ProbeFace { .. } => Variant {
                 cull: Cull::None,
-                alpha: Alpha::of(&material.values),
-                deformed,
-                shader_sampled: material.shader_sampled(),
+                ..camera_variant(material, mirrored, deformed)
             },
             Self::Blended { .. } | Self::CaptureShadow(_) | Self::LocalShadow { .. } => {
                 camera_variant(material, mirrored, deformed)

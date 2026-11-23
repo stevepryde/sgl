@@ -183,9 +183,9 @@ fn fans_and_unindexed_strips_load_as_their_listed_triangles() {
 
 // Defect: the decoded budget is charged for a strip's authored indices,
 // so expansion allocates beyond the cap. Oracle: the published charge
-// (README "Asset and environment limits"): 88 bytes a rigid vertex and 4
+// (README "Asset and environment limits"): 96 bytes a rigid vertex and 4
 // an index, and an unindexed four-vertex strip's two triangles (glTF 2.0.1
-// 3.7.2.1) hold six indices: 4 × 88 + 6 × 4 = 376 bytes, where its
+// 3.7.2.1) hold six indices: 4 × 96 + 6 × 4 = 408 bytes, where its
 // authored four would charge 368.
 #[wasm_bindgen_test(unsupported = test)]
 fn a_strip_is_charged_as_its_triangle_list_before_expanding() {
@@ -196,7 +196,7 @@ fn a_strip_is_charged_as_its_triangle_list_before_expanding() {
     };
     let error = load_slice_with_options(&bytes, decoded(375)).err().unwrap();
     assert!(error.to_string().contains("decoded load budget"), "{error}");
-    let asset = load_slice_with_options(&bytes, decoded(376)).unwrap();
+    let asset = load_slice_with_options(&bytes, decoded(408)).unwrap();
     assert_eq!(asset.meshes[0].indices.len(), 6);
 }
 

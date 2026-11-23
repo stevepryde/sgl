@@ -27,6 +27,7 @@ fn grid(cells: u32, side: f32, seed: u32, material: usize) -> CpuMesh {
             let hash = (row * 7919 + column * 104_729 + seed * 1_299_709) % 1000;
             let at = |cell: u32| (cell as f32 / cells as f32 - 0.5) * side;
             vertices.push(Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

@@ -102,14 +102,18 @@ fn scene_accepts_solved(ray:SceneRay,candidate:SceneCandidate,mesh:u32,maximum:f
  // A masked material's cut-out texels are no surface to any traversal,
  // nearest, any-hit or visibility, as raster discards them; the test
  // samples the base alpha as a hit's shading does (scene_base_color), at
- // the packed UV and colour, which deformation leaves.
+ // the packed UVs and colour, which deformation leaves.
  if (flags&MATERIAL_ALPHA_MASK)!=0u {
   let material=scene_material(material_word);
   let b=vec3(1.-candidate.barycentrics.x-candidate.barycentrics.y,candidate.barycentrics);
   let vertices=scene_vertex_words(mesh,candidate.primitive_id);
   let uv=scene_interpolated_uv(scene_mesh_uv_rect(mesh),vertices,b);
+  var uv1=vec2(0.);
+  if scene_map_on_uv1(material.values.map_uv_bits,MATERIAL_SLOT_BASE) {
+   uv1=scene_interpolated_uv1(mesh,scene_triangle(mesh,candidate.primitive_id),b);
+  }
   let color=scene_interpolated_color(vertices,b);
-  if material_cut_out(material.values,scene_base_color(material,uv,color).a) {
+  if material_cut_out(material.values,scene_base_color(material,uv,uv1,color).a) {
    return false;
   }
  }

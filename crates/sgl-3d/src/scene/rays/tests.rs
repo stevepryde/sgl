@@ -62,8 +62,10 @@ impl Fixture {
                             &crate::SurfaceMaterial::authored(m),
                             maps.maps(),
                             &maps.samplers(),
+                            &maps.uvs(),
                         ),
                         maps.ray_textures(|index| images[index]),
+                        &maps.uvs(),
                     )
                     .unwrap()
                     .start
@@ -177,6 +179,7 @@ pub(super) fn triangle(x: f32, z: f32, back: bool, material: usize) -> CpuMesh {
         ([0., 1., 0.], [0.5, 1.]),
     ]
     .map(|(p, uv)| Vertex {
+        uv1: [0.0; 2],
         tangent: [0.0; 4],
         lightmap_bounds: [0., 0., 1., 1.],
         lightmap_uv: [0.; 2],

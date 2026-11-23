@@ -129,6 +129,7 @@ fn quads(case: Case, sprites: &[Sprite], view: &Mat4, material: sgl_3d::Material
         ] {
             let offset = (Vec2::new(x, y) - (sprite.pivot - 0.5)) * sprite.size;
             vertices.push(Vertex {
+                uv1: [0.0; 2],
                 position: (sprite.position + right * offset.x + up * offset.y).to_array(),
                 normal: back.to_array(),
                 uv: [u, v],
@@ -150,6 +151,7 @@ fn quads(case: Case, sprites: &[Sprite], view: &Mat4, material: sgl_3d::Material
 
 fn ground() -> Asset {
     let corner = |x: f32, z: f32| Vertex {
+        uv1: [0.0; 2],
         position: [x, 0., z],
         normal: [0., 1., 0.],
         uv: [0.; 2],

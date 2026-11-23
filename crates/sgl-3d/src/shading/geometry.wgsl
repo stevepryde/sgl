@@ -151,7 +151,7 @@ struct LegacyStableOutput {
  }
  let v=scene_source_vertex(drawn.object,drawn.mesh,drawn_index(drawn,draw_vertex));
  let rest=MaterialVertex(v.position,v.normal,v.tangent,v.uv,v.color,v.shader_data,vec4(0.));
- var o=vertex(drawn.object,rest,v.lightmap_uv,v.lightmap_bounds,v.previous_position);
+ var o=vertex(drawn.object,rest,v.uv1,v.lightmap_uv,v.lightmap_bounds,v.previous_position);
  o.source_id=v.source_id;
  return o;
 }

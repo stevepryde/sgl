@@ -59,6 +59,7 @@ fn scaled_and_mirrored_instances_preserve_normals_and_material_sides() {
             asset.meshes = vec![asset::CpuMesh {
                 vertices: [(-0.4, -0.4), (0.4, -0.4), (0.4, 0.4), (-0.4, 0.4)]
                     .map(|(x, y)| Vertex {
+                        uv1: [0.0; 2],
                         tangent: [0.0; 4],
                         lightmap_uv: [0.; 2],
                         lightmap_bounds: [0., 0., 1., 1.],

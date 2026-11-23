@@ -70,7 +70,8 @@ pub enum SceneError {
     /// A material's metallic, roughness, clearcoat, clearcoat roughness or
     /// base alpha is outside 0..=1, or a channel of its base colour or
     /// emission or its environment scale is negative or not finite.
-    /// Also returned for a non-finite normal, coat-normal or bump scale.
+    /// Also returned for a non-finite normal, coat-normal or bump scale, or
+    /// a map's transform (`asset::UvTransform`) that is not finite.
     InvalidMaterialFactors,
     /// Anisotropy strength is outside 0..=1 or its rotation is not finite.
     InvalidAnisotropy,
@@ -271,7 +272,7 @@ impl std::fmt::Display for SceneError {
             }
             Self::InvalidPose => "a pose must be finite and invertible",
             Self::InvalidMaterialFactors => {
-                "metallic, roughness, clearcoat, clearcoat roughness and base alpha must be in 0..1, base colour, emission and environment scale finite and nonnegative, and normal, coat-normal and bump scales finite"
+                "metallic, roughness, clearcoat, clearcoat roughness and base alpha must be in 0..1, base colour, emission and environment scale finite and nonnegative, and normal, coat-normal and bump scales and map transforms finite"
             }
             Self::InvalidAnisotropy => {
                 "anisotropy strength must be finite in 0..1 and rotation finite"

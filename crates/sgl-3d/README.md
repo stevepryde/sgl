@@ -3992,7 +3992,9 @@ that repeat an index, such as a joined strip's degenerates), baked rigid
 node transforms,
 skins with four influences per vertex, morph targets, animation clips as data
 ([Skinned meshes and morph targets](#skinned-meshes-and-morph-targets)),
-UV0, `TEXCOORD_1` as `Vertex::lightmap_uv`, metallic/roughness materials, the
+two UV sets, `TEXCOORD_0` and `TEXCOORD_1`, each map on the set it names
+through its own `KHR_texture_transform` ([material textures](#material-textures)),
+`TEXCOORD_1` also as `Vertex::lightmap_uv`, metallic/roughness materials, the
 opaque, masked and blended alpha modes,
 normal and bump maps, an occlusion map packed in the red channel of the
 metallic-roughness image (ORM), `KHR_materials_clearcoat` with its maps,
@@ -4002,10 +4004,13 @@ emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_specular` factors, `KHR_lights_punctual` lights as data
 ([Authored glTF lights](#authored-gltf-lights)), and `EXT_mesh_gpu_instancing`
 nodes as shared geometry and placements
-([Instanced glTF nodes](#instanced-gltf-nodes)). A primitive whose material has any map
-needs `TEXCOORD_0`. Each map keeps its texture's sampler, any filtering and
+([Instanced glTF nodes](#instanced-gltf-nodes)). A primitive needs each UV
+set a map of its material samples, and a map on `TEXCOORD_2` or above fails
+the load. Each map keeps its texture's sampler, any filtering and
 wrapping glTF allows ([material textures](#material-textures)).
-`TEXCOORD_1` is the mesh's static irradiance atlas chart: on a static
+`TEXCOORD_1` loads as `Vertex::uv1` only for a primitive whose material has
+a map on it, and always as `Vertex::lightmap_uv`, the mesh's static
+irradiance atlas chart, whatever its maps sample: on a static
 instance while an atlas is installed, a vertex it charts samples the atlas
 and takes no baked lights, so set `lightmap_uv` to `[0, 0]` on models the
 bake does not chart (one exported with a second UV map for AO, say).
@@ -4060,7 +4065,7 @@ A scene must list each root node once, and only nodes without a parent, as
 glTF requires. Before it decodes an image or reads an accessor, a load
 counts the bytes its scene produces from the counts its accessors declare,
 and fails beyond its configured decoded cap: for each of the
-scene's mesh nodes, selected or not, its mesh's vertices (88 bytes each,
+scene's mesh nodes, selected or not, its mesh's vertices (96 bytes each,
 plus 32 for skin influences on a skinned node), indices (4 bytes; a
 strip or fan's as its triangle list, three a triangle) and
 morph target deltas (36 bytes a vertex and target); each skin's joints;
@@ -4088,12 +4093,12 @@ with an asset-path error. One it lists only in `extensionsUsed` is left out,
 as glTF lets a loader do: a texture keeps its core image and a material its
 core values, and `Asset::ignored` lists it (`Ignored::Extension`). The list
 also names each material whose occlusion map SGL3D does not sample
-(`Ignored::OcclusionMap`): one in an image or sampler of its own on
-`TEXCOORD_0`, which stays in `Material::occlusion_texture`, or one on another UV
-set, which the load leaves out (`occlusion_texture` `None`). It names each
-material whose specular textures SGL3D does not sample
-(`Ignored::SpecularMap`). To have occlusion drawn, pack it
-into the metallic-roughness image's red channel on `TEXCOORD_0` in the
+(`Ignored::OcclusionMap`): one in an image, sampler, UV set or transform of
+its own, which stays in `Material::occlusion_texture`, or one on
+`TEXCOORD_2` or above, which the load leaves out (`occlusion_texture`
+`None`). It names each material whose specular textures SGL3D does not
+sample (`Ignored::SpecularMap`). To have occlusion drawn, pack it into the
+metallic-roughness image's red channel, sampled as that map is, in the
 export step. The load reads and decodes only the images a map it samples
 uses; each other image, such as a texture extension's source or an
 ignored map's image, is a one-texel placeholder that is never bound, and
@@ -4113,9 +4118,9 @@ component types the extension allows, which become the same `f32`
 normalized integer converts by the extension's equations and an
 unnormalized one keeps its value, so an unnormalized UV of 2 is 2.0. The
 dequantising scale and offset in a node's transform or a skin's inverse
-bind matrices apply as those always do. `KHR_texture_transform`, which
-dequantises UVs, is not read yet: a file that uses it lists it in
-`Asset::ignored` and its UVs keep their stored range.
+bind matrices apply as those always do, and the one an exporter puts in a
+map's `KHR_texture_transform` (gltfpack, glTF-Transform) applies as every
+map transform does, so quantised UVs sample at their authored range.
 
 `EXT_meshopt_compression` and `KHR_meshopt_compression` files load, as
 gltfpack writes them (`-c`, `-cc`, `-ce khr`, with or without `-cf`):
@@ -4175,7 +4180,7 @@ reflects as much under the sun as under an even sky of the same light, and
 a dielectric's diffuse under each light keeps what its specular's Fresnel
 leaves (glTF's dielectric BRDF).
 
-On the GPU the scene keeps each `asset::Vertex` (88 bytes) in 32, packed by
+On the GPU the scene keeps each `asset::Vertex` (96 bytes) in 32, packed by
 `PreparedModel::new` after Godot's attribute compression: the position
 exact; the normal and tangent as one rotation, each within 0.01°, the
 tangent made perpendicular to the normal and unit; the UV as 16-bit
@@ -4184,8 +4189,11 @@ fractions of its mesh's UV rectangle, within the rectangle's extent over
 proportion; the colour as 8-bit sRGB with linear alpha, clamped to 0..1 as
 glTF's `COLOR_0` is; the lightmap UV as 16-bit fractions (a negative one is
 unassigned, as before); and the lightmap chart bounds once per distinct
-chart in a table of its mesh's. A vertex position, UV and lightmap UV
-must be finite, a mesh's UVs must span less than `f32::MAX`, and a normal
+chart in a table of its mesh's. A mesh with a second UV set (a vertex whose
+`uv1` is not zero) keeps it in 4 bytes more a vertex, as 16-bit fractions
+of its own rectangle, as the first; a mesh without one pays nothing for
+it. A vertex position, UVs and lightmap UV must be finite, each of a
+mesh's UV sets must span less than `f32::MAX`, and a normal
 must be finite and not zero (`SceneError::NonFiniteGeometry`), and a mesh's vertices may name at
 most 65,536 distinct `lightmap_bounds` (`SceneError::TooManyLightmapCharts`,
 which names the mesh's index); a model's meshes together may name any
@@ -4193,28 +4201,57 @@ number.
 
 ### Material textures
 
-Each map of an `asset::Material` is an `asset::MaterialTexture`: its image
-and its `asset::Sampler`, glTF's sampler for that texture. A sampler sets
+Each map of an `asset::Material` is an `asset::MaterialTexture`: its image,
+its `asset::Sampler`, glTF's sampler for that texture, the UV set it samples
+(`asset::UvSet::Uv0` or `Uv1`: `Vertex::uv` or `Vertex::uv1`, glTF's
+`texCoord`) and its `asset::UvTransform` (`KHR_texture_transform`'s offset,
+rotation in radians and scale, applied as the extension orders them: scale,
+rotation, offset). A sampler sets
 the magnification and minification filters (`TextureFilter::Nearest` or
 `Linear`), the mipmap filter (`None` samples level 0 alone, glTF's
 non-mipmapped `NEAREST` and `LINEAR` minification) and the wrapping on U and
 V (`TextureWrap::Repeat`, `MirroredRepeat` or `ClampToEdge`).
-`MaterialTexture::new(image)` takes glTF's default: trilinear and repeating.
-Two maps may sample one image in different states; the image is uploaded
-once.
+`MaterialTexture::new(image)` takes glTF's defaults: trilinear and
+repeating, on the first UV set, untransformed. Two maps may sample one
+image in different states, sets and transforms; the image is uploaded once.
 
 ```rust
 let pixel_art = asset::Material {
     base_texture: Some(asset::MaterialTexture {
-        image: 0,
         sampler: asset::Sampler {
             mag_filter: asset::TextureFilter::Nearest,
             ..asset::Sampler::default()
         },
+        ..asset::MaterialTexture::new(0)
+    }),
+    // A decal sheet's lower left quadrant, on the mesh's second UV set.
+    emissive_texture: Some(asset::MaterialTexture {
+        uv_set: asset::UvSet::Uv1,
+        transform: asset::UvTransform {
+            offset: [0., 0.5],
+            rotation: 0.,
+            scale: [0.5, 0.5],
+        },
+        ..asset::MaterialTexture::new(0)
     }),
     ..Default::default()
 };
 ```
+
+Both binding tiers honour both sets and every transform on every map they
+bind, in camera draws, shadows, probe captures and ray hits alike. A
+material whose maps all sample the first set untransformed draws with the
+pipelines and work it always did; one with a map on the second set or
+through a transform draws with pipelines of its own, which resolve those
+maps' coordinates per pixel, and its meshes keep their second set (4 bytes a
+vertex). A normal, bump or clearcoat normal map is taken on the frame of the
+coordinates it samples; an authored tangent is the frame of the normal
+map's UV set as the mesh stores it, untransformed. A set and a transform
+are fixed when the material is added, as its maps are: to scroll a normal
+map use `normal_layers`, and to move any map use a material shader, whose
+`SurfaceContext.uv` is the first set as the mesh holds it.
+`Vertex::lightmap_uv` alone selects the lightmap chart, whatever the maps
+sample.
 
 Maps whose three filters are linear are also filtered anisotropically, up
 to `Settings::anisotropic_filtering` (`settings::AnisotropicFiltering`: Off,

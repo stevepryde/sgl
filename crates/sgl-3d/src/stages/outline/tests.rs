@@ -77,6 +77,7 @@ fn quad(rect: Rect, z: f32, mirrored: bool) -> CpuMesh {
             .map(|&(pixel, uv)| {
                 let p = unproject(pixel, z);
                 Vertex {
+                    uv1: [0.0; 2],
                     position: [p.x * sign, p.y, p.z],
                     normal: [0., 0., 1.],
                     uv,
@@ -439,6 +440,42 @@ fn an_alpha_cut_out_is_outlined_where_it_is_cut() {
     let rect = [20.25, 14.25, 41.25, 32.75];
     let mut asset = test_support::masked(black(quad(rect, 0., false)), 0.5);
     asset.materials[0].base = [0., 0., 0., 1.];
+    let (_, cut) =
+        test_support::add_static(&fixture.device, &fixture.queue, &mut fixture.scene, asset);
+    let selection = fixture.scene.add_selection(&[cut]).unwrap();
+    let pixels = fixture.render(&input(Some(outline(selection, 2.))));
+    let middle = (rect[0] + rect[2]) / 2.;
+    Expected::covering(&[[middle, rect[1], rect[2], rect[3]]]).check(&pixels, 2., "cut");
+}
+
+// The mask resolves a masked map's coordinates as every pass does
+// (Material map coordinates). Plausible defect: the mask's caster
+// pipelines cutting the base map at the first UV set, or without its
+// transform. The quad above, its first set held in the map's kept half and
+// its second set mirroring its U, through a transform that mirrors it back
+// (u' = 1 - u): the outline rings the right half alone, as above; read
+// from the first set it rings the whole quad, and from the second
+// untransformed the left half.
+#[test]
+fn a_cut_out_on_the_second_set_through_a_transform_is_outlined_where_it_is_cut() {
+    let Some(mut fixture) = Fixture::plain() else {
+        return;
+    };
+    let rect = [20.25, 14.25, 41.25, 32.75];
+    let mut mesh = quad(rect, 0., false);
+    for vertex in &mut mesh.vertices {
+        vertex.uv1 = [1. - vertex.uv[0], vertex.uv[1]];
+        vertex.uv = [0.9, 0.5];
+    }
+    let mut asset = test_support::masked(black(mesh), 0.5);
+    asset.materials[0].base = [0., 0., 0., 1.];
+    let base = asset.materials[0].base_texture.as_mut().unwrap();
+    base.uv_set = crate::asset::UvSet::Uv1;
+    base.transform = crate::asset::UvTransform {
+        offset: [1., 0.],
+        rotation: 0.,
+        scale: [-1., 1.],
+    };
     let (_, cut) =
         test_support::add_static(&fixture.device, &fixture.queue, &mut fixture.scene, asset);
     let selection = fixture.scene.add_selection(&[cut]).unwrap();

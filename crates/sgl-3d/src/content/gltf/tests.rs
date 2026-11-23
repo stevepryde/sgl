@@ -1,6 +1,6 @@
 //! The glTF loader against hand-built documents.
 use super::*;
-use crate::asset::{Sampler, TextureFilter, TextureWrap};
+use crate::asset::{Sampler, TextureFilter, TextureWrap, UvSet};
 use glam::Vec3;
 use std::{
     path::PathBuf,
@@ -178,7 +178,7 @@ fn explicit_load_budgets_also_apply_to_file_sources() {
             },
         )
     };
-    let error = load(source - 1, 276).err().unwrap().to_string();
+    let error = load(source - 1, 300).err().unwrap().to_string();
     assert!(
         error.contains("source load budget") && error.contains("fixture.bin"),
         "{error}"
@@ -188,7 +188,7 @@ fn explicit_load_budgets_also_apply_to_file_sources() {
         error.contains("decoded load budget") && error.contains("limit 275 bytes"),
         "{error}"
     );
-    let asset = load(source, 276).unwrap();
+    let asset = load(source, 300).unwrap();
     assert_eq!(asset.meshes[0].indices, [0, 1, 2]);
 }
 
@@ -526,7 +526,7 @@ fn anisotropy_import_resolves_texture_image_and_rejects_unsupported_inputs() {
         serde_json::json!({"anisotropyStrength":1.1}),
         serde_json::json!({"anisotropyRotation":"bad"}),
         serde_json::json!({"anisotropyTexture":{"index":4}}),
-        serde_json::json!({"anisotropyTexture":{"index":0,"texCoord":1}}),
+        serde_json::json!({"anisotropyTexture":{"index":0,"texCoord":2}}),
     ] {
         source["materials"][0]["extensions"]["KHR_materials_anisotropy"] = extension;
         let document = gltf::Gltf::from_slice(&serde_json::to_vec(&source).unwrap())
@@ -562,7 +562,7 @@ fn required_anisotropy_is_supported_without_disabling_core_validation() {
     std::fs::write(fixture.path(), serde_json::to_vec(&source).unwrap()).unwrap();
     assert!(load(&fixture.path()).is_err());
     source["accessors"][0]["bufferView"] = 0.into();
-    source["extensionsRequired"] = serde_json::json!(["KHR_texture_transform"]);
+    source["extensionsRequired"] = serde_json::json!(["KHR_materials_pbrSpecularGlossiness"]);
     std::fs::write(fixture.path(), serde_json::to_vec(&source).unwrap()).unwrap();
     assert!(load(&fixture.path()).is_err());
 }
@@ -1041,11 +1041,24 @@ fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
     assert_eq!(clamped.occlusion_texture.map(|t| t.image), Some(0));
     assert!(!clamped.packed_occlusion());
     assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
+    // On the second UV set, where the metallic-roughness map is on the
+    // first: kept as authored, and not that map's.
     let (second_set, ignored) = read(source(
-        serde_json::json!({"index": 3, "texCoord": 1}),
+        serde_json::json!({"index": 0, "texCoord": 1}),
+        unlisted.clone(),
+    ));
+    assert_eq!(
+        second_set.occlusion_texture.map(|t| (t.image, t.uv_set)),
+        Some((0, UvSet::Uv1))
+    );
+    assert!(!second_set.packed_occlusion());
+    assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
+    // On a third set, which SGL3D has no input for: left out.
+    let (third_set, ignored) = read(source(
+        serde_json::json!({"index": 3, "texCoord": 2}),
         unlisted,
     ));
-    assert_eq!(second_set.occlusion_texture.map(|t| t.image), None);
+    assert_eq!(third_set.occlusion_texture.map(|t| t.image), None);
     assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
     let (_, ignored) = read(source(
         serde_json::json!({"index": 0}),
@@ -1341,7 +1354,7 @@ fn transmission_volume_and_dispersion_load_as_their_extensions_define() {
         serde_json::json!({"KHR_materials_volume": {"thicknessFactor": -0.1}}),
         serde_json::json!({"KHR_materials_volume": {"attenuationDistance": 0}}),
         serde_json::json!({"KHR_materials_volume": {"attenuationColor": [1.0, 1.2, 0.5]}}),
-        serde_json::json!({"KHR_materials_volume": {"thicknessTexture": {"index": 1, "texCoord": 1}}}),
+        serde_json::json!({"KHR_materials_volume": {"thicknessTexture": {"index": 1, "texCoord": 2}}}),
         serde_json::json!({"KHR_materials_dispersion": {"dispersion": -1}}),
         serde_json::json!({"KHR_materials_volume": {"thicknessScale": 1}}),
     ] {
@@ -1513,7 +1526,7 @@ fn clearcoat_maps_and_iridescence_load_with_their_defaults() {
     for (clearcoat, iridescence) in [
         (serde_json::json!({"clearcoatFactor": 1.5}), empty.clone()),
         (
-            serde_json::json!({"clearcoatTexture": {"index": 0, "texCoord": 1}}),
+            serde_json::json!({"clearcoatTexture": {"index": 0, "texCoord": 2}}),
             empty.clone(),
         ),
         (
@@ -1533,7 +1546,7 @@ fn clearcoat_maps_and_iridescence_load_with_their_defaults() {
         ),
         (
             empty.clone(),
-            serde_json::json!({"iridescenceThicknessTexture": {"index": 0, "texCoord": 1}}),
+            serde_json::json!({"iridescenceThicknessTexture": {"index": 0, "texCoord": 2}}),
         ),
         (empty.clone(), serde_json::json!({"iridescenceSpread": 1})),
     ] {
@@ -1625,7 +1638,7 @@ fn sheen_and_diffuse_transmission_load_with_their_defaults() {
             empty.clone(),
         ),
         (
-            serde_json::json!({"sheenColorTexture": {"index": 0, "texCoord": 1}}),
+            serde_json::json!({"sheenColorTexture": {"index": 0, "texCoord": 2}}),
             empty.clone(),
         ),
         (serde_json::json!({"sheenTint": 1}), empty.clone()),
@@ -1639,7 +1652,7 @@ fn sheen_and_diffuse_transmission_load_with_their_defaults() {
         ),
         (
             empty.clone(),
-            serde_json::json!({"diffuseTransmissionTexture": {"index": 0, "texCoord": 1}}),
+            serde_json::json!({"diffuseTransmissionTexture": {"index": 0, "texCoord": 2}}),
         ),
         (
             empty.clone(),
@@ -1958,7 +1971,7 @@ fn oversized_png_and_jpeg_headers_fail_before_pixels_with_image_index() {
 }
 
 // Defect: image bytes receive a fresh budget instead of sharing the scene's
-// budget. Published layout: 46,684,425 unskinned vertices and implicit indices
+// budget. Published layout: 42,949,671 unskinned vertices and implicit indices
 // take 4,294,967,100 bytes, leaving 196 bytes of the native 4 GiB cap; this
 // 64x1 image requires another 256 RGBA bytes. Its tiny mesh buffer cannot
 // satisfy the accessor: the combined-budget error must occur before that
@@ -1975,7 +1988,7 @@ fn decoded_images_and_scene_data_share_the_load_budget() {
         .save(fixture.directory.join("budget.png"))
         .unwrap();
     change_document(&fixture, |document| {
-        document["accessors"][0]["count"] = 46_684_425.into();
+        document["accessors"][0]["count"] = 42_949_671.into();
     });
     let error = load(&fixture.path()).err().unwrap().to_string();
     assert!(

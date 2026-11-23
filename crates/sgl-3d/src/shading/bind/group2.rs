@@ -13,7 +13,7 @@ pub(crate) const EMISSION_MAP: u32 = 4;
 /// The normal map, else the bump map: shading takes a bump map only where
 /// the material has no normal map.
 pub(crate) const RELIEF_MAP: u32 = 5;
-pub(crate) const BAKED_MATERIAL: u32 = 7;
+pub(crate) const MATERIAL_BINDINGS: u32 = 7;
 pub(crate) const ANISOTROPY_MAP: u32 = 8;
 pub(crate) const TRANSMISSION_MAP: u32 = 9;
 pub(crate) const THICKNESS_MAP: u32 = 10;
@@ -156,6 +156,16 @@ pub(crate) const MAP_BINDINGS: [MapBinding; 16] = [
     },
 ];
 
+/// Map binding `binding`'s slot: its index in `MAP_BINDINGS`, by which the
+/// record's words and the pipelines' bits for each binding name it
+/// (`MATERIAL_SLOT_*` in material.wgsl).
+pub(crate) fn map_slot(binding: u32) -> usize {
+    MAP_BINDINGS
+        .iter()
+        .position(|map| map.binding == binding)
+        .expect("a map binding")
+}
+
 /// The map bindings a device of `tier` binds.
 pub(crate) fn map_bindings(tier: BindingTier) -> impl Iterator<Item = &'static MapBinding> {
     MAP_BINDINGS.iter().filter(move |map| map.tier <= tier)
@@ -278,7 +288,7 @@ pub(crate) fn material_entries(tier: BindingTier) -> Vec<wgpu::BindGroupLayoutEn
         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
         count: None,
     });
-    entries.push(uniform(BAKED_MATERIAL));
+    entries.push(uniform(MATERIAL_BINDINGS));
     entries.extend([SHADER_PARAMS, PREVIOUS_SHADER_PARAMS].map(|binding| {
         wgpu::BindGroupLayoutEntry {
             visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,

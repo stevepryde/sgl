@@ -1,18 +1,19 @@
-//! Materials: each one's values, raster group 2 (values, maps, sampler and
-//! lightmap eligibility) and record in the ray source, with the `Scene`
-//! operations that add, read, edit and remove them.
-use super::candidates::CandidateMesh;
+//! Materials: each one's values, raster group 2 (values, maps, sampler,
+//! lightmap eligibility and map coordinates) and record in the ray source.
+//! The `Scene` operations that add, read, edit and remove them are
+//! `edits`'.
 use super::planar_reflectors::PlanarReflectors;
 use super::rays::SceneRays;
 use super::render_textures::RenderTextures;
 use super::shaders::Shaders;
 use super::slots::Slots;
 use super::textures::{self, Textures};
-use super::{Scene, SceneError, buffer};
+use super::{SceneError, buffer};
 use crate::asset::{Image, Material as AuthoredMaterial, TextureWrap};
 use crate::content::identity::{MaterialId, ModelId, RenderTextureId};
 use crate::content::material::{AlphaMode, SurfaceMaterial};
 use crate::shading::bind::group2::MaterialMap;
+use crate::shading::map_uvs::MaterialBindings;
 use crate::shading::material::MaterialUniform;
 use group::{Bound, Groups};
 use maps::{InEffect, authored, normal_wrap};
@@ -22,7 +23,7 @@ use std::ops::Range;
 use validate::{
     validate_alpha, validate_anisotropy, validate_core, validate_diffuse_transmission,
     validate_iridescence, validate_normal_layers, validate_reflectance, validate_shader,
-    validate_sheen, validate_transmission,
+    validate_sheen, validate_transmission, validate_uv_transform,
 };
 
 /// The parameter blocks of `values`' shader, of its size, where it has one.
@@ -56,7 +57,8 @@ pub(crate) struct Material {
     /// What group 2 binds besides its buffers: its maps in effect.
     bound: Bound,
     buffer: wgpu::Buffer,
-    /// Lightmap eligibility, group 2's `baked_material`.
+    /// Group 2's `material_bindings`: lightmap eligibility, which
+    /// `set_baked` writes, and its map bindings' transforms.
     baked: wgpu::Buffer,
     casts_directional_shadow: bool,
     /// Its distinct textures.
@@ -90,7 +92,19 @@ impl Material {
 
     /// Its values as the shaders read them, with its maps in effect.
     fn uniform(&self) -> MaterialUniform {
-        MaterialUniform::new(&self.values, self.bound.maps.maps(), &self.bound.samplers)
+        MaterialUniform::new(
+            &self.values,
+            self.bound.maps.maps(),
+            &self.bound.samplers,
+            &self.bound.uvs,
+        )
+    }
+
+    /// The map bindings that sample its meshes' second UV set, and those
+    /// that sample through a transform (`Variant::uv1`,
+    /// `Variant::transformed`).
+    pub fn map_uvs(&self) -> (u16, u16) {
+        (self.bound.uvs.uv1(), self.bound.uvs.transformed())
     }
 
     /// Whether raster samples one of its maps in the shader, in a state
@@ -368,6 +382,7 @@ impl Materials {
                 if let Some(texture) = authored(material, map) {
                     let image = images.get(texture.image).ok_or(SceneError::MissingImage)?;
                     textures::validate(device, image)?;
+                    validate_uv_transform(&texture.transform)?;
                 }
             }
             let values = SurfaceMaterial::authored(material);
@@ -469,12 +484,14 @@ impl Materials {
     ) -> Result<MaterialId, SceneError> {
         let values = SurfaceMaterial::authored(material);
         let samplers = maps.samplers();
-        let uniform = MaterialUniform::new(&values, maps.maps(), &samplers);
+        let uvs = maps.uvs();
+        let uniform = MaterialUniform::new(&values, maps.maps(), &samplers, &uvs);
         let record = rays.add_material(
             device,
             queue,
             &uniform,
             maps.ray_textures(|texture| self.textures.get(texture).ray.start),
+            &uvs,
         )?;
         let values_buffer = buffer(
             device,
@@ -484,11 +501,18 @@ impl Materials {
         );
         let baked = buffer(
             device,
-            "baked material eligibility",
-            bytemuck::cast_slice(&[0u32; 4]),
+            "material bindings",
+            bytemuck::bytes_of(&MaterialBindings {
+                baked: [0; 4],
+                map_uvs: *uvs.rows(),
+            }),
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
-        let bound = Bound { maps, samplers };
+        let bound = Bound {
+            maps,
+            samplers,
+            uvs,
+        };
         let group = self.groups.group(
             device,
             &self.textures,
@@ -659,135 +683,6 @@ impl Materials {
     }
 }
 
-impl Scene {
-    /// Adds `materials`, whose texture indices index `images`. Materials
-    /// added together share the textures they use; a texture lives while a
-    /// material uses it. A decoded image's mips are filtered here; a
-    /// compressed one's are uploaded as stored. Returns their identities in
-    /// order.
-    pub fn add_materials(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        materials: &[AuthoredMaterial],
-        images: &[Image],
-    ) -> Result<Vec<MaterialId>, SceneError> {
-        let ids = self
-            .materials
-            .add(device, queue, &mut self.rays, materials, images);
-        if ids.is_ok() {
-            self.edited();
-        }
-        // A failure after the source grew still leaves it grown.
-        self.refresh_scene_group(device);
-        ids
-    }
-
-    /// A material's current values.
-    pub fn material(&self, id: MaterialId) -> Result<SurfaceMaterial, SceneError> {
-        Ok(self.materials.get(id)?.values)
-    }
-
-    /// Replaces a material's values, its alpha mode among them. Anisotropy
-    /// needs authored tangent frames on every mesh drawn with the material.
-    /// Textures stay as added; `emission_render_texture` names a render
-    /// texture of this scene or none (`SceneError::UnknownRenderTexture`),
-    /// and `planar_reflector` a planar reflector of this scene or none
-    /// (`UnknownPlanarReflector`), on an opaque or masked material
-    /// (`BlendedPlanarReflector`).
-    /// Non-finite `normal_scale`, `coat_normal_scale` or `bump_scale`
-    /// returns `SceneError::InvalidMaterialFactors` without changing the material.
-    pub fn set_material(
-        &mut self,
-        queue: &wgpu::Queue,
-        id: MaterialId,
-        values: SurfaceMaterial,
-    ) -> Result<(), SceneError> {
-        let old = self.materials.get(id)?.values;
-        if old != values {
-            self.edited();
-        }
-        // Blended and transmissive meshes have no draw candidates: a
-        // material that becomes or stops being either adds or removes its
-        // users' instances' ones.
-        let blending = old.blended() != values.blended();
-        let users: Vec<ModelId> = self.materials.get(id)?.users.keys().copied().collect();
-        if blending {
-            // Each user model's instances, in the order they are placed
-            // again below, take the material's meshes as blended or not.
-            let meshes: Vec<Vec<CandidateMesh>> = users
-                .iter()
-                .map(|&model| {
-                    let mut meshes = self.candidate_meshes(model, self.drawn_model(model));
-                    let owner = &self.drawn_model(model).meshes;
-                    for (mesh, shape) in owner.iter().zip(&mut meshes) {
-                        if mesh.material == id {
-                            shape.blended = values.blended();
-                        }
-                    }
-                    meshes
-                })
-                .collect();
-            let plan: Vec<_> = users
-                .iter()
-                .zip(&meshes)
-                .map(|(&model, meshes)| (model, meshes.as_slice(), None))
-                .collect();
-            if !self.candidates_fit(&plan) {
-                return Err(SceneError::DeviceLimit);
-            }
-        }
-        self.materials.set(
-            queue,
-            (
-                &self.rays,
-                &self.shaders,
-                &self.render_textures,
-                &self.planar_reflectors,
-            ),
-            id,
-            values,
-        )?;
-        let shader = |values: &SurfaceMaterial| values.shader.map(|shader| shader.shader);
-        self.shaders.count(shader(&old), -1);
-        self.shaders.count(shader(&values), 1);
-        self.render_textures.count(old.emission_render_texture, -1);
-        self.render_textures
-            .count(values.emission_render_texture, 1);
-        self.planar_reflectors.count(old.planar_reflector, -1);
-        self.planar_reflectors.count(values.planar_reflector, 1);
-        if blending || std::mem::discriminant(&old.alpha) != std::mem::discriminant(&values.alpha) {
-            self.models.classify_users(id, &self.materials);
-        }
-        if blending {
-            self.place_candidates_of(&users);
-        }
-        self.candidates
-            .material_changed(id, super::candidates::look(self.materials.get(id)?));
-        // What its users draw appearing or departing at rest re-arms
-        // temporal rejection, as a geometry replacement does.
-        if old.draws_other_geometry(&values) {
-            for &model in &users {
-                self.instances.geometry_changed(model);
-            }
-        }
-        Ok(())
-    }
-
-    /// Removes a material no model's mesh uses.
-    pub fn remove_material(&mut self, id: MaterialId) -> Result<(), SceneError> {
-        self.edited();
-        let values = self.materials.get(id)?.values;
-        self.materials.remove(&mut self.rays, id)?;
-        self.shaders
-            .count(values.shader.map(|shader| shader.shader), -1);
-        self.render_textures
-            .count(values.emission_render_texture, -1);
-        self.planar_reflectors.count(values.planar_reflector, -1);
-        Ok(())
-    }
-}
-
 #[cfg(all(test, not(target_arch = "wasm32")))]
 impl Materials {
     /// `id`'s shader parameter blocks, this frame's and the previous one,
@@ -800,6 +695,7 @@ impl Materials {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod coat_film_tests;
+mod edits;
 mod group;
 pub(crate) mod maps;
 #[cfg(all(test, not(target_arch = "wasm32")))]

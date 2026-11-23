@@ -26,6 +26,7 @@ const SHADOW: u32 = 2;
 /// A vertex at `position` facing `normal`, with alpha `alpha`.
 fn vertex(position: Vec3, normal: Vec3, alpha: f32) -> Vertex {
     Vertex {
+        uv1: [0.0; 2],
         tangent: [0.; 4],
         lightmap_bounds: [0., 0., 1., 1.],
         lightmap_uv: [0.; 2],

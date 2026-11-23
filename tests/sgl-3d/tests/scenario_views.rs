@@ -477,6 +477,7 @@ fn lit(corners: [Vec3; 4], normal: Vec3, base: f32, metallic: f32, roughness: f3
         meshes: vec![CpuMesh {
             vertices: corners
                 .map(|position| Vertex {
+                    uv1: [0.0; 2],
                     position: position.to_array(),
                     normal: normal.to_array(),
                     uv: [0.; 2],

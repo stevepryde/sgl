@@ -39,6 +39,8 @@ mod rig_tests;
 mod sources;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod texture_transform_tests;
 mod topology;
 #[cfg(test)]
 mod topology_tests;
@@ -177,7 +179,7 @@ fn check(options: LoadOptions<'_>) -> Result<()> {
 /// loader reads each itself, from the extension's values, for
 /// `KHR_mesh_quantization` the integer attributes it allows (`attributes`),
 /// and for the meshopt pair the compressed buffer views (`meshopt`).
-const SUPPORTED_EXTENSIONS: [&str; 18] = [
+const SUPPORTED_EXTENSIONS: [&str; 19] = [
     "KHR_lights_punctual",
     "KHR_materials_anisotropy",
     "KHR_materials_clearcoat",
@@ -193,6 +195,7 @@ const SUPPORTED_EXTENSIONS: [&str; 18] = [
     "KHR_materials_volume",
     "KHR_mesh_quantization",
     "KHR_meshopt_compression",
+    "KHR_texture_transform",
     "EXT_materials_bump",
     "EXT_mesh_gpu_instancing",
     "EXT_meshopt_compression",

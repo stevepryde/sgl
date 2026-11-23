@@ -45,6 +45,7 @@ fn mirror() -> Asset {
     asset.meshes[0] = crate::asset::CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, y): (f32, f32)| crate::asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [1., 0., 0., 1.],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -538,4 +539,88 @@ fn a_sprite_shows_in_a_mirror_where_its_mirror_image_stands() {
         "the mirror image: {shown}, {shown_green}"
     );
     assert!(opposite < 0.1, "the other side: {opposite}");
+}
+
+// A reflected view shades the scene's materials through the same owner as
+// every view, so a map's UV set and transform hold in a mirror (Material
+// map coordinates). Plausible defect: the reflected view's pipelines drawn
+// without the material's second set or its transform. The fixture: an
+// unlit, double-sided, masked red quad 1.2 m wide, 1 m behind the camera,
+// which the camera does not see; its base map (`half_cut_out`: its left
+// half cut out) is on the second set, which runs against world X, through
+// a transform that mirrors it back (u' = 1 - u), so its +X half is kept;
+// its first set lies in the map's kept half. The oracle is the mirror's
+// geometry, as for the sprite above: the view sees the quad red in the
+// mirror along (0.2, 0, -7) and the sky along (-0.2, 0, -7); read from
+// the first set both show red, and from the second untransformed the two
+// swap.
+#[test]
+fn a_map_on_the_second_set_through_a_transform_holds_in_a_mirror() {
+    use crate::asset::{UvSet, UvTransform};
+    let Some(mut stage) = Stage::counted() else {
+        return;
+    };
+    let mut quad = test_support::masked(test_support::cube(), 0.5);
+    quad.meshes[0] = crate::asset::CpuMesh {
+        vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
+            .map(|(x, y): (f32, f32)| crate::asset::Vertex {
+                position: [x * 0.6, y * 0.6, 1.],
+                normal: [0., 0., -1.],
+                uv: [0.9, 0.5],
+                uv1: [(1. - x) * 0.5, 0.5],
+                color: [1.; 4],
+                lightmap_bounds: [0., 0., 1., 1.],
+                ..bytemuck::Zeroable::zeroed()
+            })
+            .to_vec(),
+        indices: vec![0, 1, 2, 0, 2, 3],
+        material: 0,
+        deformation: Default::default(),
+    };
+    let material = &mut quad.materials[0];
+    material.base = [1., 0., 0., 1.];
+    material.unlit = true;
+    material.double_sided = true;
+    let base = material.base_texture.as_mut().unwrap();
+    base.uv_set = UvSet::Uv1;
+    base.transform = UvTransform {
+        offset: [1., 0.],
+        rotation: 0.,
+        scale: [-1., 1.],
+    };
+    let ids = stage
+        .scene
+        .add_asset(&stage.device, &stage.queue, quad)
+        .unwrap();
+    stage
+        .scene
+        .add_instance(
+            &stage.device,
+            &stage.queue,
+            InstanceState::new(ids.model),
+            Mobility::Static,
+        )
+        .unwrap();
+    stage.frame(false, PlanarReflections::Full);
+    let composite = test_support::read(
+        &stage.device,
+        &stage.queue,
+        stage.main.targets.composite.texture(),
+        8,
+    );
+    // The texel along a direction from the camera at the origin.
+    let texel = |direction: Vec3| {
+        let x = direction.x / -direction.z / 0.5f32.tan();
+        let column = ((x * 0.5 + 0.5) * SIZE[0] as f32) as u32;
+        let row = SIZE[1] / 2;
+        let at = ((row * SIZE[0] + column) * 8) as usize;
+        [0, 1].map(|c| test_support::half(&composite[at + c * 2..at + c * 2 + 2]))
+    };
+    let [kept, kept_green] = texel(Vec3::new(0.2, 0., -7.));
+    let [cut, _] = texel(Vec3::new(-0.2, 0., -7.));
+    assert!(
+        kept > 0.5 && kept_green < 0.1,
+        "the kept half in the mirror: {kept}, {kept_green}"
+    );
+    assert!(cut < 0.1, "the cut-out half in the mirror: {cut}");
 }

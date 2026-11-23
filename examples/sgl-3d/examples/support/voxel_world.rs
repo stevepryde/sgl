@@ -94,6 +94,7 @@ pub fn quad(mesh: &mut CpuMesh, corner: Vec3, u: Vec3, v: Vec3, shade: f32) {
     let normal = u.cross(v).normalize();
     for [s, t] in [[0., 0.], [1., 0.], [1., 1.], [0., 1.]] {
         mesh.vertices.push(Vertex {
+            uv1: [0.0; 2],
             tangent: u.normalize().extend(1.).to_array(),
             lightmap_bounds: [0., 0., 1., 1.],
             lightmap_uv: [0.; 2],
@@ -189,6 +190,7 @@ pub fn mesh_chunk(world: &World, chunk: IVec3, seconds: f32) -> (Vec<CpuMesh>, C
                 let start = water.vertices.len() as u32;
                 for [s, t] in [[0., 0.], [1., 0.], [1., 1.], [0., 1.]] {
                     water.vertices.push(Vertex {
+                        uv1: [0.0; 2],
                         tangent: [1., 0., 0., 1.],
                         lightmap_bounds: [0., 0., 1., 1.],
                         lightmap_uv: [0.; 2],
@@ -319,11 +321,11 @@ pub fn add_materials(
     let block = |name: &str, image| Material {
         name: name.into(),
         base_texture: Some(MaterialTexture {
-            image,
             sampler: Sampler {
                 mag_filter: TextureFilter::Nearest,
                 ..Sampler::default()
             },
+            ..MaterialTexture::new(image)
         }),
         roughness: 0.9,
         ..Default::default()

@@ -61,6 +61,7 @@ fn plane_asset(has_normal_map: bool) -> Asset {
         for [x, y] in [[-0.75, -0.75], [0.75, -0.75], [0.75, 0.75], [-0.75, 0.75]] {
             let u = x / 1.5 + 0.5;
             vertices.push(Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.0; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -294,6 +295,7 @@ fn material_normal_oracle(
                     .chain(coat.then_some(MaterialMap::CoatNormal)),
                 ),
                 &Default::default(),
+                &Default::default(),
             )),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -457,6 +459,15 @@ struct FixtureVertex {
             }],
         });
         let object_group = group(&device, &raster.get_bind_group_layout(1), &object);
+        // Every map binding on the first UV set, untransformed.
+        let bindings = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("material bindings"),
+            contents: bytemuck::bytes_of(&shading::map_uvs::MaterialBindings {
+                baked: [0; 4],
+                map_uvs: *shading::map_uvs::MapUvs::default().rows(),
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
         let raster_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("real normal texture and material"),
             layout: &raster.get_bind_group_layout(2),
@@ -472,6 +483,10 @@ struct FixtureVertex {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(&relief_map),
+                },
+                wgpu::BindGroupEntry {
+                    binding: shading::bind::group2::MATERIAL_BINDINGS,
+                    resource: bindings.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: shading::bind::group2::COAT_NORMAL_MAP,

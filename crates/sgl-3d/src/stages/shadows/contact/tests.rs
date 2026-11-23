@@ -31,6 +31,7 @@ fn floor(half: f32) -> Asset {
     asset.meshes = vec![CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, z)| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

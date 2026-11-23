@@ -83,6 +83,7 @@ fn cuboid(center: Vec3, size: Vec3, material: usize) -> CpuMesh {
         let start = mesh.vertices.len() as u32;
         for [s, t] in [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]] {
             mesh.vertices.push(Vertex {
+                uv1: [0.0; 2],
                 tangent: [u.x, u.y, u.z, 1.],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

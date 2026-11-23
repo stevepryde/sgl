@@ -43,6 +43,10 @@ struct Material {
  iridescence:f32,
  iridescence_ior:f32,
  iridescence_thickness:vec2<f32>,
+ // Where its map bindings sample (map_uv.wgsl): a bit, by MATERIAL_SLOT_*,
+ // for each on the second UV set, and from MAP_UV_TRANSFORMED_SHIFT for
+ // each whose transform is not the identity.
+ map_uv_bits:u32,
  // KHR_materials_volume's Beer-Lambert attenuation coefficient per metre on
  // each channel, -ln(attenuation colour) / attenuation distance, finite
  // (shading::material::attenuation_coefficient), and
@@ -114,8 +118,8 @@ const MATERIAL_MAP_SHEEN_ROUGHNESS:u32=32768u;
 const MATERIAL_MAP_DIFFUSE_TRANSMISSION:u32=65536u;
 const MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR:u32=131072u;
 // Each map binding's slot: its index in shading::bind::group2::MAP_BINDINGS,
-// which names its byte of map_samplers and its bit of
-// material_shader_sampled_maps (material_sampling.wgsl). The
+// which names its byte of map_samplers, its bits of map_uv_bits and its bit
+// of material_shader_sampled_maps (material_sampling.wgsl). The
 // relief binding holds the normal map, else the bump map; the
 // metallic-roughness binding its packed occlusion too.
 const MATERIAL_SLOT_BASE:u32=0u;
@@ -134,6 +138,8 @@ const MATERIAL_SLOT_SHEEN_COLOR:u32=12u;
 const MATERIAL_SLOT_SHEEN_ROUGHNESS:u32=13u;
 const MATERIAL_SLOT_DIFFUSE_TRANSMISSION:u32=14u;
 const MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR:u32=15u;
+// How many map bindings there are.
+const MATERIAL_SLOTS:u32=16u;
 // Map binding `slot`'s sampler state in a record's map_samplers.
 fn material_map_sampler(samplers:vec4<u32>,slot:u32)->u32 {
  return (samplers[slot/4u]>>(8u*(slot%4u)))&255u;

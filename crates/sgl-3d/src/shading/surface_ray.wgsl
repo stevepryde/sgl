@@ -1,6 +1,7 @@
 // A world-space ray hit's Surface (surface.wgsl). The hit supplies its actual
-// position, authored material and triangle UV differential frame; textures are
-// pulled from the scene's ray buffers at LOD 0 (a normal map's scrolling
+// position, authored material and triangle UV differential frames; textures are
+// pulled from the scene's ray buffers at LOD 0, each where its map binding
+// samples (ray_map_uv; a normal map's scrolling
 // layers where the frame's time puts them, as raster's), and the decals its
 // list holds (decals.wgsl) sample the atlas's level 0. The outgoing
 // direction is toward the receiver, never toward the primary camera. Reads
@@ -10,18 +11,54 @@ fn ray_tangent_frame(hit:SceneHit)->mat3x3<f32> {
  let frame=pbr_tangent_frame(hit.normal*side,hit.authored_tangent);
  return mat3x3(frame[0]*side,frame[1]*side,frame[2]*side);
 }
-// Whether the hit has a frame a normal map's texel can be taken on: an
-// authored tangent frame where its material is anisotropic, else a UV
-// differential frame of nonzero axes.
-fn ray_has_map_frame(hit:SceneHit,material:SceneMaterial)->bool {
- return material.values.anisotropy_strength>0. || (dot(hit.tangent,hit.tangent)!=0. && dot(hit.bitangent,hit.bitangent)!=0.);
+// Where map binding `slot` of `material` samples at the hit (scene_map_uv).
+fn ray_map_uv(hit:SceneHit,material:SceneMaterial,slot:u32)->vec2<f32> {
+ return scene_map_uv(material,slot,hit.uv,hit.uv1);
 }
-// The tangent frame a normal map's texel is taken on, the base's and the
-// coat's alike (surface_map_frame): the authored tangent frame where the
-// material is anisotropic, else the dual of the triangle's UV frame.
-fn ray_map_frame(hit:SceneHit,material:SceneMaterial)->mat3x3<f32> {
- if material.values.anisotropy_strength>0. {
-  return ray_tangent_frame(hit);
+// Whether normal-map binding `slot`'s texel is taken on the hit's authored
+// tangent frame: where its material is anisotropic and the binding samples
+// the authored frame's UV set, the normal map's (the first without one).
+fn ray_authored_frame(material:SceneMaterial,slot:u32)->bool {
+ let bits=material.values.map_uv_bits;
+ let normal_set=(material.values.maps&MATERIAL_MAP_NORMAL)!=0u && scene_map_on_uv1(bits,MATERIAL_SLOT_RELIEF);
+ return material.values.anisotropy_strength>0. && scene_map_on_uv1(bits,slot)==normal_set;
+}
+// The hit's position derivatives along the coordinates relief binding
+// `slot` samples at: its triangle's along the binding's UV set, carried
+// through its transform (map_uv_frame).
+fn ray_slot_frame(hit:SceneHit,material:SceneMaterial,slot:u32)->MapUvFrame {
+ let bits=material.values.map_uv_bits;
+ var frame=MapUvFrame(hit.tangent,hit.bitangent);
+ if scene_map_on_uv1(bits,slot) {
+  frame=MapUvFrame(hit.tangent1,hit.bitangent1);
+ }
+ if scene_map_transformed(bits,slot) {
+  frame=map_uv_frame(scene_map_uv_rows(material.word,slot),frame.du,frame.dv);
+ }
+ return frame;
+}
+// Whether the hit has a frame relief binding `slot`'s texel can be taken
+// on: an authored tangent frame (ray_authored_frame), else a UV
+// differential frame of nonzero axes.
+fn ray_has_map_frame(hit:SceneHit,material:SceneMaterial,slot:u32)->bool {
+ if ray_authored_frame(material,slot) {
+  return true;
+ }
+ let frame=ray_slot_frame(hit,material,slot);
+ return dot(frame.du,frame.du)!=0. && dot(frame.dv,frame.dv)!=0.;
+}
+// The tangent frame relief binding `slot`'s texel is taken on, the frame of
+// the coordinates it was sampled at (surface_map_frame): the authored
+// tangent frame carried through the binding's transform
+// (ray_authored_frame), else the dual of the triangle's UV frame along the
+// binding's coordinates.
+fn ray_map_frame(hit:SceneHit,material:SceneMaterial,slot:u32)->mat3x3<f32> {
+ if ray_authored_frame(material,slot) {
+  let authored=ray_tangent_frame(hit);
+  if !scene_map_transformed(material.values.map_uv_bits,slot) {
+   return authored;
+  }
+  return map_uv_authored_frame(scene_map_uv_rows(material.word,slot),authored);
  }
  // scene_trace flips the interpolated normal of accepted two-sided backs.
  // dp/du and dp/dv come from actual triangle positions and UVs. Their dual
@@ -31,34 +68,27 @@ fn ray_map_frame(hit:SceneHit,material:SceneMaterial)->mat3x3<f32> {
  // normal, not the back-flipped lighting normal. This is the glTF
  // tangent.w / mirrored-UV handedness; n already reverses all three TBN
  // columns for accepted back faces.
- let n=hit.normal;
- let du=hit.tangent;
- let dv=hit.bitangent;
- let orientation=sign(dot(cross(du,dv),hit.geometric_normal));
- let tangent=cross(dv,n)*orientation;
- let bitangent=cross(n,du)*orientation;
- let scale=inverseSqrt(max(max(dot(tangent,tangent),dot(bitangent,bitangent)),0.0000001));
- return mat3x3(tangent*scale,bitangent*scale,n);
+ let frame=ray_slot_frame(hit,material,slot);
+ return map_uv_relief_frame(frame.du,frame.dv,hit.normal,hit.geometric_normal);
 }
 fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
  var n=hit.normal;
- let du=hit.tangent;
- let dv=hit.bitangent;
- if !ray_has_map_frame(hit,material) {
+ if !ray_has_map_frame(hit,material,MATERIAL_SLOT_RELIEF) {
   return n;
  }
+ let uv=ray_map_uv(hit,material,MATERIAL_SLOT_RELIEF);
  if normal_maps_enabled && (material.values.maps&MATERIAL_MAP_NORMAL)!=0u {
   let normal_map=material.textures[SCENE_TEXTURE_NORMAL];
   var mapped:vec3<f32>;
   if (material.values.flags&MATERIAL_NORMAL_LAYERS)!=0u {
    let phase=frame.animation_phase;
-   let first=scene_sample_map(material.values.map_samplers,normal_map,MATERIAL_SLOT_RELIEF,material_normal_layer_uv(material.values.normal_layers[0],hit.uv,phase),false);
-   let second=scene_sample_map(material.values.map_samplers,normal_map,MATERIAL_SLOT_RELIEF,material_normal_layer_uv(material.values.normal_layers[1],hit.uv,phase),false);
+   let first=scene_sample_map(material.values.map_samplers,normal_map,MATERIAL_SLOT_RELIEF,material_normal_layer_uv(material.values.normal_layers[0],uv,phase),false);
+   let second=scene_sample_map(material.values.map_samplers,normal_map,MATERIAL_SLOT_RELIEF,material_normal_layer_uv(material.values.normal_layers[1],uv,phase),false);
    mapped=material_layered_normal(material.values,first,second);
   } else {
-   mapped=material_mapped_normal(material.values,scene_sample_map(material.values.map_samplers,normal_map,MATERIAL_SLOT_RELIEF,hit.uv,false));
+   mapped=material_mapped_normal(material.values,scene_sample_map(material.values.map_samplers,normal_map,MATERIAL_SLOT_RELIEF,uv,false));
   }
-  n=normalize(ray_map_frame(hit,material)*mapped);
+  n=normalize(ray_map_frame(hit,material,MATERIAL_SLOT_RELIEF)*mapped);
  }
  // MaterialNode.NORMAL selects normalMap OR ELSE bumpMap: a bump map is in
  // effect only without a normal map (scene::materials::maps), so its bit
@@ -69,8 +99,12 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
   let step=1./vec2<f32>(scene_texture_size(material.textures[SCENE_TEXTURE_BUMP]));
   let u=vec2(step.x,0.);
   let v=vec2(0.,step.y);
-  let dhdu=(scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,hit.uv+u,false).r-scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,hit.uv-u,false).r)/(2.*step.x)*material.values.bump_scale;
-  let dhdv=(scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,hit.uv+v,false).r-scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,hit.uv-v,false).r)/(2.*step.y)*material.values.bump_scale;
+  // Along the bump map's own coordinates.
+  let frame=ray_slot_frame(hit,material,MATERIAL_SLOT_RELIEF);
+  let du=frame.du;
+  let dv=frame.dv;
+  let dhdu=(scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,uv+u,false).r-scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,uv-u,false).r)/(2.*step.x)*material.values.bump_scale;
+  let dhdv=(scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,uv+v,false).r-scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,uv-v,false).r)/(2.*step.y)*material.values.bump_scale;
   // Match Three's faceDirection correction while retaining the physical UV
   // height-gradient contract and current central-difference samples.
   let a=cross(dv,n);
@@ -83,16 +117,16 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
 // The coat's normal (Surface.coat_normal), as surface_coat_normal takes it,
 // on ray_map_frame where the hit has one.
 fn ray_coat_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
- if normal_maps_enabled && (material.values.maps&MATERIAL_MAP_COAT_NORMAL)!=0u && ray_has_map_frame(hit,material) {
-  return normalize(ray_map_frame(hit,material)*material_coat_normal(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_COAT_NORMAL],MATERIAL_SLOT_COAT_NORMAL,hit.uv,false)));
+ if normal_maps_enabled && (material.values.maps&MATERIAL_MAP_COAT_NORMAL)!=0u && ray_has_map_frame(hit,material,MATERIAL_SLOT_COAT_NORMAL) {
+  return normalize(ray_map_frame(hit,material,MATERIAL_SLOT_COAT_NORMAL)*material_coat_normal(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_COAT_NORMAL],MATERIAL_SLOT_COAT_NORMAL,ray_map_uv(hit,material,MATERIAL_SLOT_COAT_NORMAL),false)));
  }
  return hit.normal;
 }
 fn ray_base_color(hit:SceneHit,material:SceneMaterial)->vec4<f32> {
- return scene_base_color(material,hit.uv,hit.color);
+ return scene_base_color(material,hit.uv,hit.uv1,hit.color);
 }
 fn ray_emission(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
- var emission=material.values.emission*scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_EMISSION],MATERIAL_SLOT_EMISSION,hit.uv,true).rgb;
+ var emission=material.values.emission*scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_EMISSION],MATERIAL_SLOT_EMISSION,ray_map_uv(hit,material,MATERIAL_SLOT_EMISSION),true).rgb;
  // A hit's flags are its object record's, so a hit is moving exactly where
  // raster's object.flags say so.
  if !instance_emission_enabled && (hit.instance_flags&OBJECT_STATIC)==0u {
@@ -102,7 +136,7 @@ fn ray_emission(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
 }
 // Its decals are those of `clusters`, the ray hits' lists.
 fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<f32>,outgoing:vec3<f32>,clusters:ClusterRange)->Surface {
- let mr=scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_METALLIC_ROUGHNESS],MATERIAL_SLOT_METALLIC_ROUGHNESS,hit.uv,false);
+ let mr=scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_METALLIC_ROUGHNESS],MATERIAL_SLOT_METALLIC_ROUGHNESS,ray_map_uv(hit,material,MATERIAL_SLOT_METALLIC_ROUGHNESS),false);
  let unlit=(material.values.flags&MATERIAL_UNLIT)!=0u;
  var decaled=DecalSurface(base.rgb,ray_normal(hit,material),material.values.roughness*mr.g,material.values.metallic*mr.b);
  if !unlit {
@@ -111,7 +145,7 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  let n=decaled.normal;
  var anisotropy=vec4(0.);
  if material.values.anisotropy_strength>0. {
-  anisotropy=pbr_resolve_anisotropy(n,ray_tangent_frame(hit),material.values.anisotropy_strength,material.values.anisotropy_rotation,(material.values.maps&MATERIAL_MAP_ANISOTROPY)!=0u,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_ANISOTROPY],MATERIAL_SLOT_ANISOTROPY,hit.uv,false).rgb);
+  anisotropy=pbr_resolve_anisotropy(n,ray_tangent_frame(hit),material.values.anisotropy_strength,material.values.anisotropy_rotation,(material.values.maps&MATERIAL_MAP_ANISOTROPY)!=0u,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_ANISOTROPY],MATERIAL_SLOT_ANISOTROPY,ray_map_uv(hit,material,MATERIAL_SLOT_ANISOTROPY),false).rgb);
  }
  var s:Surface;
  s.position=hit.position;
@@ -128,8 +162,8 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  var coat_roughness=material.values.coat_roughness;
  s.coat_normal=hit.normal;
  if material.values.coat>0. {
-  s.coat=material_coat(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_CLEARCOAT],MATERIAL_SLOT_CLEARCOAT,hit.uv,false));
-  coat_roughness=material_coat_roughness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_COAT_ROUGHNESS],MATERIAL_SLOT_COAT_ROUGHNESS,hit.uv,false));
+  s.coat=material_coat(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_CLEARCOAT],MATERIAL_SLOT_CLEARCOAT,ray_map_uv(hit,material,MATERIAL_SLOT_CLEARCOAT),false));
+  coat_roughness=material_coat_roughness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_COAT_ROUGHNESS],MATERIAL_SLOT_COAT_ROUGHNESS,ray_map_uv(hit,material,MATERIAL_SLOT_COAT_ROUGHNESS),false));
   s.coat_normal=ray_coat_normal(hit,material);
  }
  // A coatless surface's coat normal is its base normal (Surface).
@@ -141,16 +175,16 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  // sRGB.
  var sheen_roughness=material.values.sheen_roughness;
  if any(material.values.sheen>vec3(0.)) {
-  s.sheen=material_sheen(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_SHEEN_COLOR],MATERIAL_SLOT_SHEEN_COLOR,hit.uv,true));
-  sheen_roughness=material_sheen_roughness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_SHEEN_ROUGHNESS],MATERIAL_SLOT_SHEEN_ROUGHNESS,hit.uv,false));
+  s.sheen=material_sheen(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_SHEEN_COLOR],MATERIAL_SLOT_SHEEN_COLOR,ray_map_uv(hit,material,MATERIAL_SLOT_SHEEN_COLOR),true));
+  sheen_roughness=material_sheen_roughness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_SHEEN_ROUGHNESS],MATERIAL_SLOT_SHEEN_ROUGHNESS,ray_map_uv(hit,material,MATERIAL_SLOT_SHEEN_ROUGHNESS),false));
  }
  s.sheen_roughness=clamp(sheen_roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
  s.diffuse_transmission_color=material.values.diffuse_transmission_color;
  if material.values.diffuse_transmission>0. {
-  s.diffuse_transmission=material_diffuse_transmission(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION],MATERIAL_SLOT_DIFFUSE_TRANSMISSION,hit.uv,false));
-  s.diffuse_transmission_color=material_diffuse_transmission_color(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR],MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR,hit.uv,true));
+  s.diffuse_transmission=material_diffuse_transmission(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION],MATERIAL_SLOT_DIFFUSE_TRANSMISSION,ray_map_uv(hit,material,MATERIAL_SLOT_DIFFUSE_TRANSMISSION),false));
+  s.diffuse_transmission_color=material_diffuse_transmission_color(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR],MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR,ray_map_uv(hit,material,MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR),true));
   // Its volume, as raster_surface takes it.
-  let thickness=material_thickness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_THICKNESS],MATERIAL_SLOT_THICKNESS,hit.uv,false));
+  let thickness=material_thickness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_THICKNESS],MATERIAL_SLOT_THICKNESS,ray_map_uv(hit,material,MATERIAL_SLOT_THICKNESS),false));
   s.volume_thickness=transmission_world_thickness(thickness,objects[hit.instance_id].model);
   s.volume_attenuation=material.values.attenuation;
  }
@@ -167,8 +201,8 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.lightmap_bounds=hit.lightmap_bounds;
  s.baked_irradiance=objects[hit.instance_id].baked_irradiance;
  if films_enabled && material.values.iridescence>0. {
-  let strength=material_iridescence(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_IRIDESCENCE],MATERIAL_SLOT_IRIDESCENCE,hit.uv,false));
-  let thickness=material_iridescence_thickness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_IRIDESCENCE_THICKNESS],MATERIAL_SLOT_IRIDESCENCE_THICKNESS,hit.uv,false));
+  let strength=material_iridescence(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_IRIDESCENCE],MATERIAL_SLOT_IRIDESCENCE,ray_map_uv(hit,material,MATERIAL_SLOT_IRIDESCENCE),false));
+  let thickness=material_iridescence_thickness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_IRIDESCENCE_THICKNESS],MATERIAL_SLOT_IRIDESCENCE_THICKNESS,ray_map_uv(hit,material,MATERIAL_SLOT_IRIDESCENCE_THICKNESS),false));
   s.film=surface_film(s,strength,material.values.iridescence_ior,thickness);
  }
  return s;

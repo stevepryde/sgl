@@ -23,6 +23,7 @@ fn chunk(quads: usize, seed: u64, material: MaterialId) -> PreparedModel {
         let start = mesh.vertices.len() as u32;
         for corner in [Vec3::ZERO, Vec3::X, Vec3::new(1., 0., 1.), Vec3::Z] {
             mesh.vertices.push(Vertex {
+                uv1: [0.0; 2],
                 tangent: [1., 0., 0., 1.],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

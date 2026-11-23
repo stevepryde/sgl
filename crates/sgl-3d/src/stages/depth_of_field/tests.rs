@@ -300,6 +300,7 @@ fn square(
     asset.meshes[0] = crate::asset::CpuMesh {
         vertices: [(left, -half), (right, -half), (right, half), (left, half)]
             .map(|(x, y)| crate::asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

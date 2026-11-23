@@ -5,6 +5,7 @@ use super::{Alpha, Cull, GeometryPass, Variant};
 use crate::Scene;
 use crate::content::identity::ShaderId;
 use crate::settings::DisabledLayers;
+use crate::shading::bind::group2;
 
 /// The geometry shader's diagnostics layers, compiled as pipeline constants.
 /// Every layer is on outside diagnostics builds.
@@ -172,13 +173,34 @@ impl PipelineKey {
     ) -> Self {
         let constant = pass.caster() || pass.volume();
         let shaded_mask = pass.caster() && variant.alpha == Alpha::Mask && shader.is_some();
+        // The map bindings the pass's programs sample: none for a caster of
+        // an opaque material, the base map alone for a masked material's
+        // caster without a shader (material_base_color), else every one.
+        let sampled: u16 = if !samples_maps(pass, variant.alpha) {
+            0
+        } else if pass.caster() && shader.is_none() {
+            1 << group2::map_slot(group2::BASE_MAP)
+        } else {
+            u16::MAX
+        };
         Self {
             pass,
             shader,
             variant: Variant {
                 deformed: variant.deformed && pass.pulled(),
-                shader_sampled: if samples_maps(pass, variant.alpha) {
-                    variant.shader_sampled
+                shader_sampled: variant.shader_sampled & sampled,
+                // Whether a sampled map takes the second set or a
+                // transform, as the sampled bindings' mask or none: each
+                // map's own bit is the record's (`map_uv_bits`), so
+                // materials whose maps take them differently share
+                // pipelines, and a key reduced again is unchanged.
+                uv1: if variant.uv1 & sampled != 0 {
+                    sampled
+                } else {
+                    0
+                },
+                transformed: if variant.transformed & sampled != 0 {
+                    sampled
                 } else {
                     0
                 },
@@ -253,6 +275,14 @@ impl PipelineKey {
                 "material_shader_sampled_maps",
                 f64::from(self.variant.shader_sampled),
             ));
+            constants.push((
+                "material_uv1_enabled",
+                f64::from(u8::from(self.variant.uv1 != 0)),
+            ));
+            constants.push((
+                "material_transforms_enabled",
+                f64::from(u8::from(self.variant.transformed != 0)),
+            ));
         }
         if self.pass.pulled() {
             constants.push(deformed);
@@ -268,8 +298,9 @@ impl PipelineKey {
 }
 
 /// Whether `pass`'s programs sample a material of `alpha`'s maps
-/// (material_raster.wgsl), so take its `alpha_mask` and
-/// `material_shader_sampled_maps` constants: every pass but a caster of an
+/// (material_raster.wgsl), so take its `alpha_mask`,
+/// `material_shader_sampled_maps`, `material_uv1_enabled` and
+/// `material_transforms_enabled` constants: every pass but a caster of an
 /// opaque material, which reads no texel.
 fn samples_maps(pass: GeometryPass, alpha: Alpha) -> bool {
     !pass.caster() || alpha == Alpha::Mask

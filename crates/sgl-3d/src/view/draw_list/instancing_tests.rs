@@ -44,6 +44,7 @@ fn one_instanced_draw_renders_each_instance_at_its_own_pose() {
     asset.meshes = vec![CpuMesh {
         vertices: [(-0.4, -0.4), (0.4, -0.4), (0.4, 0.4), (-0.4, 0.4)]
             .map(|(x, y)| Vertex {
+                uv1: [0.0; 2],
                 tangent: [1., 0., 0., 1.],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

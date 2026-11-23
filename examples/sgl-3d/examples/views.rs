@@ -45,6 +45,7 @@ fn cuboid(center: Vec3, size: Vec3, material: usize) -> CpuMesh {
         let start = mesh.vertices.len() as u32;
         for [s, t] in [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]] {
             mesh.vertices.push(Vertex {
+                uv1: [0.0; 2],
                 position: (center + (normal + u * s + v * t) * half).to_array(),
                 normal: normal.to_array(),
                 uv: [(s + 1.) * 0.5, (t + 1.) * 0.5],

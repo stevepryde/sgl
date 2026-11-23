@@ -35,6 +35,7 @@ fn square(emission: f32, group: u32) -> crate::asset::Asset {
     asset.meshes = vec![CpuMesh {
         vertices: [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
             .map(|[x, y]| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_uv: [0.; 2],
                 lightmap_bounds: [0., 0., 1., 1.],

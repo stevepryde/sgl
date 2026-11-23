@@ -18,6 +18,7 @@ fn plane(center: Vec3, u: Vec3, v: Vec3) -> asset::CpuMesh {
     asset::CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, y)| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.0; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -444,6 +445,82 @@ fn masked_casters_shadow_with_their_opaque_texels_only() {
     ];
     harness.expect(light, &expected, "the camera's view");
     harness.expect_seen(light, &expected, Seen::RayHit, "ray hits");
+}
+
+// The cut-out is taken where the base map's slot samples (Material map
+// coordinates): on the second UV set, through its transform. Plausible
+// defects: a masked caster's vertex stage passing the first set whatever
+// the slot names, or its fragment skipping the transform, in the frame's
+// faces or their static layers; for a material with a shader, its masked
+// casters (`ShadedMaskedCaster`) not carrying the second set to the
+// surface they evaluate. The blocker of the test above, but its first set
+// lies wholly in the map's opaque half, and its second set holds the first
+// test's coordinates mirrored in U, which the slot's transform (offset
+// (1, 0), scale (-1, 1): u' = 1 - u) mirrors back. Read from the first set
+// both receivers are shadowed; from the second untransformed, the two
+// swap. Drawn by the plain masked casters, then through a shader that
+// passes the material's surface through.
+#[test]
+fn masked_casters_cut_out_where_their_base_map_samples() {
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    for shaded in [false, true] {
+        let mut blocker = blocker();
+        for (vertex, [u, v]) in
+            blocker.meshes[0]
+                .vertices
+                .iter_mut()
+                .zip([[0., 1.], [1., 1.], [1., 0.], [0., 0.]])
+        {
+            vertex.uv = [0.9, 0.5];
+            vertex.uv1 = [1. - u, v];
+        }
+        let mut blocker = test_support::masked(blocker, 0.5);
+        let base = blocker.materials[0].base_texture.as_mut().unwrap();
+        base.uv_set = asset::UvSet::Uv1;
+        base.transform = asset::UvTransform {
+            offset: [1., 0.],
+            rotation: 0.,
+            scale: [-1., 1.],
+        };
+        let (device, queue) = (&harness.device, &harness.queue);
+        let mut scene = Scene::new(device, queue);
+        let ids = scene.add_asset(device, queue, blocker).unwrap();
+        if shaded {
+            let shader = scene
+                .add_shader(crate::ShaderSource {
+                    label: "the material's own coverage".into(),
+                    wgsl: r#"
+struct ShaderParams { value:vec4<f32>, }
+fn material_vertex(v:MaterialVertex,ctx:VertexContext,p:ShaderParams)->MaterialVertex { return v; }
+fn material_surface(s:MaterialSurface,ctx:SurfaceContext,p:ShaderParams)->MaterialSurface { return s; }
+"#
+                    .into(),
+                })
+                .unwrap();
+            test_support::set_shader(&mut scene, queue, ids.materials[0], (shader, 0.));
+        }
+        scene
+            .add_instance(device, queue, at(ids.model, Vec3::ZERO), Mobility::Static)
+            .unwrap();
+        let light = scene
+            .add_light(device, queue, point(Vec3::new(0., 0., 1.), 4.))
+            .unwrap();
+        harness.frame(&mut scene, &input());
+        let expected = [
+            (Vec3::new(-0.15, 0., -1.), 1.),
+            (Vec3::new(0.15, 0., -1.), 0.),
+        ];
+        let label = if shaded { "with a shader" } else { "plain" };
+        harness.expect(light, &expected, &format!("the camera's view, {label}"));
+        harness.expect_seen(
+            light,
+            &expected,
+            Seen::RayHit,
+            &format!("ray hits, {label}"),
+        );
+    }
 }
 
 /// A scene of `world` as a static instance, and the identities of a

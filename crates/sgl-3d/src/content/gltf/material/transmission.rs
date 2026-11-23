@@ -1,6 +1,6 @@
 //! A material's `KHR_materials_transmission`, `KHR_materials_volume` and
 //! `KHR_materials_dispersion`: the light it transmits from behind it.
-use super::super::super::asset::Result;
+use super::super::super::asset::{MaterialTexture, Result};
 use super::{GLTF_PROPERTY_KEYS, extension_texture};
 
 /// A material extension's number at `key` of `value`, `default` where it is
@@ -42,9 +42,9 @@ fn known_properties(
 }
 
 /// A material's `KHR_materials_transmission`: its factor and map.
-pub(super) struct Transmission<'a> {
+pub(super) struct Transmission {
     pub factor: f32,
-    pub texture: Option<gltf::Texture<'a>>,
+    pub texture: Option<MaterialTexture>,
 }
 
 // Authority: Khronos glTF acfcbe65e40c53d6d3aa55a7299982bf2c01c75d,
@@ -53,10 +53,10 @@ pub(super) struct Transmission<'a> {
 // Read as three.js r185's GLTFLoader reads it
 // (examples/jsm/loaders/GLTFLoader.js 1150-1196). An unlit material takes
 // no light to transmit and is refused, as with anisotropy.
-pub(super) fn read_transmission<'a>(
-    material: &gltf::Material<'a>,
-    document: &'a gltf::Document,
-) -> Result<Transmission<'a>> {
+pub(super) fn read_transmission(
+    material: &gltf::Material<'_>,
+    document: &gltf::Document,
+) -> Result<Transmission> {
     let Some(value) = material.extension_value("KHR_materials_transmission") else {
         return Ok(Transmission {
             factor: 0.,
@@ -86,9 +86,9 @@ pub(super) fn read_transmission<'a>(
 }
 
 /// A material's `KHR_materials_volume`.
-pub(super) struct Volume<'a> {
+pub(super) struct Volume {
     pub thickness: f32,
-    pub thickness_texture: Option<gltf::Texture<'a>>,
+    pub thickness_texture: Option<MaterialTexture>,
     pub attenuation_distance: f32,
     pub attenuation_color: [f32; 3],
 }
@@ -98,10 +98,10 @@ pub(super) struct Volume<'a> {
 // green channel; attenuationDistance positive, default +infinity (absent);
 // attenuationColor linear RGB in 0..1, default white. Read as three.js
 // r185's GLTFLoader reads it (examples/jsm/loaders/GLTFLoader.js 1200-1247).
-pub(super) fn read_volume<'a>(
-    material: &gltf::Material<'a>,
-    document: &'a gltf::Document,
-) -> Result<Volume<'a>> {
+pub(super) fn read_volume(
+    material: &gltf::Material<'_>,
+    document: &gltf::Document,
+) -> Result<Volume> {
     let Some(value) = material.extension_value("KHR_materials_volume") else {
         return Ok(Volume {
             thickness: 0.,

@@ -23,6 +23,7 @@ fn quad(min: [f32; 2], max: [f32; 2], z: f32) -> CpuMesh {
     CpuMesh {
         vertices: [[0., 0.], [1., 0.], [1., 1.], [0., 1.]]
             .map(|[s, t]| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

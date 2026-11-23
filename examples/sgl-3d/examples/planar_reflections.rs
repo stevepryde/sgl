@@ -44,6 +44,7 @@ const MEASURED: u32 = 240;
 
 fn vertex(position: Vec3, normal: Vec3, uv: [f32; 2], tangent: Vec3) -> Vertex {
     Vertex {
+        uv1: [0.0; 2],
         position: position.to_array(),
         normal: normal.to_array(),
         uv,

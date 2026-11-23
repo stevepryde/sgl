@@ -6,6 +6,7 @@ use super::model::{MeshRecord, SectionRecord};
 use super::{
     IMAGE_BC7, IMAGE_RGBA8, ImageHeader, MaterialRecord, MaterialTextures, SourceHeader, bvh,
 };
+use crate::shading::map_uvs::MapUv;
 use crate::shading::material::{MaterialUniform, NormalLayerUniform};
 
 /// The WGSL twins of the source's record layouts, in words: `SourceHeader`,
@@ -55,6 +56,9 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_MESH_SHADER_DATA",
             offset_of!(MeshRecord, shader_data),
         ),
+        ("SCENE_MESH_UV1", offset_of!(MeshRecord, uv1)),
+        ("SCENE_UV1_RECT", 0),
+        ("SCENE_UV1_VERTICES", size_of::<[f32; 4]>()),
         ("SCENE_SHADER_DATA_WORDS", size_of::<[f32; 4]>()),
         ("SCENE_SECTION_WORDS", size_of::<SectionRecord>()),
         ("SCENE_SECTION_MIN", offset_of!(SectionRecord, bounds_min)),
@@ -161,6 +165,10 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             material(offset_of!(MaterialUniform, iridescence_thickness)),
         ),
         (
+            "SCENE_MATERIAL_MAP_UV_BITS",
+            material(offset_of!(MaterialUniform, map_uv_bits)),
+        ),
+        (
             "SCENE_MATERIAL_ATTENUATION",
             material(offset_of!(MaterialUniform, attenuation)),
         ),
@@ -218,6 +226,13 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             offset_of!(MaterialRecord, textures),
         ),
         ("SCENE_MATERIAL_BAKED", offset_of!(MaterialRecord, baked)),
+        (
+            "SCENE_MATERIAL_MAP_UVS",
+            offset_of!(MaterialRecord, map_uvs),
+        ),
+        ("SCENE_MAP_UV_WORDS", size_of::<MapUv>()),
+        ("SCENE_MAP_UV_U", offset_of!(MapUv, u)),
+        ("SCENE_MAP_UV_V", offset_of!(MapUv, v)),
         ("SCENE_TEXTURE_BASE", offset_of!(MaterialTextures, base)),
         (
             "SCENE_TEXTURE_METALLIC_ROUGHNESS",

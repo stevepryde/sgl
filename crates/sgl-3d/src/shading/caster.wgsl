@@ -116,7 +116,9 @@ fn unclipped_caster(clip:vec4<f32>)->UnclippedCaster {
  return min(in.unclipped_depth,1.0);
 }
 // A masked material's casters: the texel coordinates and colour of its base
-// alpha, pulled from the scene source's vertex records of the drawn mesh
+// alpha (`uv` its base map's UV set, the first or the second, chosen in the
+// vertex stage, so its fragment gives it as both sets), pulled from the
+// scene source's vertex records of the drawn mesh
 // (whose record the draw instance names, at the vertex index less the draw's
 // base vertex, as Bevy b56fc29's morph_vertex subtracts
 // first_vertex_index), reach the fragment, which
@@ -136,7 +138,14 @@ fn masked_caster_vertex(position:vec3<f32>,drawn:DrawInstance,vertex_index:u32)-
  let v=caster_vertex(position,drawn,vertex_index);
  var out:MaskedCaster;
  out.position=caster_clip(v.position,drawn);
+ // The base map's UV set, which its fragment takes through the binding's
+ // transform (material_base_color): a plain masked caster's pipelines
+ // enable the second set only where its base map samples it
+ // (view::pipelines::PipelineKey).
  out.uv=v.uv;
+ if material_uv1_enabled {
+  out.uv=scene_vertex_uv1(drawn.mesh,vertex_index);
+ }
  out.color=v.color;
  out.unclipped_depth=out.position.z;
  return out;
@@ -173,10 +182,10 @@ fn pulled_masked_caster(drawn:DrawInstance,vertex:u32)->MaskedCaster {
  return out;
 }
 @fragment fn shadow_masked_fs(in:MaskedCaster) {
- material_alpha_discard(material_base_color(in.uv,in.color).a);
+ material_alpha_discard(material_base_color(in.uv,in.uv,in.color).a);
 }
 @fragment fn shadow_masked_unclipped_fs(in:MaskedCaster)->@builtin(frag_depth) f32 {
- material_alpha_discard(material_base_color(in.uv,in.color).a);
+ material_alpha_discard(material_base_color(in.uv,in.uv,in.color).a);
  return min(in.unclipped_depth,1.0);
 }
 // A masked material's casters where it has a shader: its coverage is the
@@ -197,6 +206,7 @@ struct ShadedMaskedCaster {
  @location(6) @interpolate(flat) object:u32,
  @location(7) @interpolate(flat) instance:vec4<f32>,
  @location(8) tangent:vec4<f32>,
+ @location(9) uv1:vec2<f32>,
 }
 fn shaded_masked_caster_vertex(position:vec3<f32>,drawn:DrawInstance,vertex_index:u32)->ShadedMaskedCaster {
  let v=caster_vertex(position,drawn,vertex_index);
@@ -204,6 +214,9 @@ fn shaded_masked_caster_vertex(position:vec3<f32>,drawn:DrawInstance,vertex_inde
  var out:ShadedMaskedCaster;
  out.position=caster_clip(v.position,drawn);
  out.uv=v.uv;
+ if material_uv1_enabled {
+  out.uv1=scene_vertex_uv1(drawn.mesh,vertex_index);
+ }
  out.color=v.color;
  out.unclipped_depth=out.position.z;
  out.world=(model*vec4(v.position,1.)).xyz;
@@ -251,6 +264,7 @@ fn shaded_caster_coverage(in:ShadedMaskedCaster,raster_front:bool)->f32 {
  i.normal=in.normal;
  i.tangent=in.tangent;
  i.uv=in.uv;
+ i.uv1=in.uv1;
  i.color=in.color;
  i.custom=in.custom;
  i.instance=in.instance;

@@ -12,7 +12,7 @@ use wgpu::util::DeviceExt;
 /// Each map a ray hit reads, by its index here: its texture word
 /// (`SCENE_TEXTURE_*`) and its map binding (`MATERIAL_SLOT_*`), the pair
 /// surface_ray.wgsl samples it by.
-const MAPS: &str = r#"
+pub(super) const TEST_MAP: &str = r#"
 fn test_map(m:SceneMaterial,map:u32)->vec2<u32> {
  switch map {
   case 0u { return vec2(m.textures[SCENE_TEXTURE_BASE],MATERIAL_SLOT_BASE); }
@@ -32,6 +32,10 @@ fn test_map(m:SceneMaterial,map:u32)->vec2<u32> {
   default { return vec2(m.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR],MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR); }
  }
 }
+"#;
+
+/// Samples each probe's map at its UV, as a ray hit samples it.
+const MAPS: &str = r#"
 struct Probe { material:u32, map:u32, uv:vec2<f32> }
 @group(0) @binding(0) var<storage,read> probes:array<Probe>;
 @group(0) @binding(1) var<storage,read_write> colors:array<vec4<f32>>;
@@ -43,8 +47,8 @@ struct Probe { material:u32, map:u32, uv:vec2<f32> }
 }
 "#;
 
-/// The map with `MAPS`' index `map` of `material`.
-fn map_field(material: &mut Material, map: usize) -> &mut Option<MaterialTexture> {
+/// The map with `TEST_MAP`'s index `map` of `material`.
+pub(super) fn map_field(material: &mut Material, map: usize) -> &mut Option<MaterialTexture> {
     match map {
         0 => &mut material.base_texture,
         1 => &mut material.mr_texture,
@@ -64,14 +68,13 @@ fn map_field(material: &mut Material, map: usize) -> &mut Option<MaterialTexture
     }
 }
 
-/// How many maps `MAPS` names.
-const MAP_COUNT: usize = 15;
+/// How many maps `TEST_MAP` names.
+pub(super) const MAP_COUNT: usize = 15;
 
 /// The ray source of one triangle and `materials`, which sample the
 /// labelled image (`labelled`), and each probe's sample, as a ray hit
 /// takes it: material `material`'s map `map` (`MAPS`) at `uv`.
 fn sample(materials: Vec<Material>, probes: &[(usize, usize, [f32; 2])]) -> Option<Vec<[f32; 4]>> {
-    let (device, queue) = crate::test_support::device()?;
     let asset = Asset {
         meshes: vec![triangle(0., 0., false, 0)],
         materials,
@@ -81,18 +84,51 @@ fn sample(materials: Vec<Material>, probes: &[(usize, usize, [f32; 2])]) -> Opti
         lights: Default::default(),
         instanced: Vec::new(),
     };
-    let fixture = Fixture::new(&device, &queue, &[&asset]);
-    let words: Vec<u32> = probes
-        .iter()
-        .flat_map(|&(material, map, [u, v])| {
-            [
-                fixture.materials[0][material],
-                map as u32,
-                u.to_bits(),
-                v.to_bits(),
-            ]
-        })
-        .collect();
+    run(
+        &asset,
+        &crate::shading::SCENE_RAYS,
+        &format!("{TEST_MAP}{MAPS}"),
+        |fixture| {
+            probes
+                .iter()
+                .flat_map(|&(material, map, [u, v])| {
+                    [
+                        fixture.materials[0][material],
+                        map as u32,
+                        u.to_bits(),
+                        v.to_bits(),
+                    ]
+                })
+                .collect()
+        },
+        probes.len(),
+    )
+}
+
+/// Runs `program`'s compute entry `sample`, composed over `root`, once
+/// for each of `count` probes over the ray source of `asset`, placed at
+/// the identity pose: the program reads its probes at group 0 binding 0,
+/// the words `probes` gives, and writes a `vec4<f32>` each at binding 1,
+/// which are returned; none without a GPU.
+pub(super) fn run(
+    asset: &Asset,
+    root: &'static crate::shading::Module,
+    program: &str,
+    probes: impl FnOnce(&Fixture) -> Vec<u32>,
+    count: usize,
+) -> Option<Vec<[f32; 4]>> {
+    let (device, queue) = crate::test_support::device()?;
+    let mut fixture = Fixture::new(&device, &queue, &[asset]);
+    fixture.update(
+        &device,
+        &queue,
+        &[super::tests::Pose {
+            model: 0,
+            world: glam::Mat4::IDENTITY,
+            id: 0,
+        }],
+    );
+    let words = probes(&fixture);
     let probe_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("sampler probes"),
         contents: bytemuck::cast_slice(&words),
@@ -100,14 +136,14 @@ fn sample(materials: Vec<Material>, probes: &[(usize, usize, [f32; 2])]) -> Opti
     });
     let output = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("sampled colours"),
-        size: (probes.len() * 16) as u64,
+        size: (count * 16) as u64,
         usage: wgpu::BufferUsages::STORAGE,
         mapped_at_creation: false,
     });
-    let source = crate::shading::compose(&[&crate::shading::SCENE_RAYS]);
+    let source = crate::shading::compose(&[root]);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("ray hit samples"),
-        source: wgpu::ShaderSource::Wgsl(format!("{source}\n{MAPS}").into()),
+        source: wgpu::ShaderSource::Wgsl(format!("{source}\n{program}").into()),
     });
     let io_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: None,
@@ -161,7 +197,7 @@ fn sample(materials: Vec<Material>, probes: &[(usize, usize, [f32; 2])]) -> Opti
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &io, &[]);
         pass.set_bind_group(1, &fixture.scene_group(&device), &[]);
-        pass.dispatch_workgroups(probes.len() as u32, 1, 1);
+        pass.dispatch_workgroups(count as u32, 1, 1);
     }
     queue.submit([encoder.finish()]);
     let words = crate::test_support::storage_words(&device, &queue, &output);
@@ -211,7 +247,10 @@ fn ray_hits_sample_level_0_through_each_maps_sampler() {
     ];
     let materials = states
         .map(|sampler| Material {
-            base_texture: Some(MaterialTexture { image: 0, sampler }),
+            base_texture: Some(MaterialTexture {
+                sampler,
+                ..MaterialTexture::new(0)
+            }),
             ..Default::default()
         })
         .into();
@@ -260,8 +299,8 @@ fn every_map_binding_carries_its_own_state_to_ray_hits() {
     let mut material = Material::default();
     for map in 0..MAP_COUNT {
         *map_field(&mut material, map) = Some(MaterialTexture {
-            image: 0,
             sampler: state(map),
+            ..MaterialTexture::new(0)
         });
     }
     let probes: Vec<_> = (0..MAP_COUNT)

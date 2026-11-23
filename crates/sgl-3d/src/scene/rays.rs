@@ -18,6 +18,8 @@ use std::ops::Range;
 use super::ranges::Ranges;
 use super::{RayData, SceneError};
 use crate::asset::{CompressedFormat, Image};
+use crate::shading::bind::group2::MAP_BINDINGS;
+use crate::shading::map_uvs::{MapUv, MapUvs};
 use crate::shading::material::MaterialUniform;
 use crate::shading::packed_vertex::PackedVertex;
 
@@ -113,13 +115,15 @@ const IMAGE_RGBA8: u32 = 0;
 const IMAGE_BC7: u32 = 1;
 
 /// A material's record in the source: its values (its maps' sampler states
-/// among them), its textures and whether lightmap charts light it.
+/// among them), its textures, whether lightmap charts light it and each map
+/// binding's transform.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct MaterialRecord {
     material: MaterialUniform,
     textures: MaterialTextures,
     baked: u32,
+    map_uvs: [MapUv; MAP_BINDINGS.len()],
 }
 
 /// Each texture's image word, zero when absent.
@@ -310,11 +314,13 @@ impl SceneRays {
         queue: &wgpu::Queue,
         values: &MaterialUniform,
         textures: MaterialTextures,
+        map_uvs: &MapUvs,
     ) -> Result<Range<u32>, SceneError> {
         let record = MaterialRecord {
             material: *values,
             textures,
             baked: 0,
+            map_uvs: *map_uvs.rows(),
         };
         let range = self.allocate(device, queue, words::<MaterialRecord>())?;
         self.write(queue, range.start, bytemuck::cast_slice(&[record]));
@@ -412,5 +418,7 @@ mod instance_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod lod_receiver_tests;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod map_uv_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod sampler_tests;

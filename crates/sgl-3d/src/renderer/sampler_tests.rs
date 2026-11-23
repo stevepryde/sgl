@@ -21,7 +21,7 @@ const BASIC_SAMPLED_TEXTURES: u32 = 47;
 
 /// A harness on a device of the Basic binding tier, or of the device's own,
 /// where it has at least 47 sampled textures a stage; none without a GPU.
-fn harness(basic: bool) -> Option<Harness> {
+pub(super) fn harness(basic: bool) -> Option<Harness> {
     if !basic {
         return Harness::new(settings());
     }
@@ -48,7 +48,7 @@ fn harness(basic: bool) -> Option<Harness> {
 
 /// A camera looking down -Z at the quad at z = 0, whose x and y in -1..1
 /// fill the view.
-fn camera() -> Camera {
+pub(super) fn camera() -> Camera {
     let eye = Vec3::new(0., 0., 5.);
     Camera {
         view: glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y),
@@ -59,7 +59,7 @@ fn camera() -> Camera {
 
 /// The UV of pixel `pixel` of a quad whose UVs run from `from` at the
 /// view's top left to `to` at its bottom right.
-fn uv(pixel: [u32; 2], (from, to): ([f32; 2], [f32; 2])) -> [f32; 2] {
+pub(super) fn uv(pixel: [u32; 2], (from, to): ([f32; 2], [f32; 2])) -> [f32; 2] {
     std::array::from_fn(|axis| {
         let share = (pixel[axis] as f32 + 0.5) / SIZE[axis] as f32;
         from[axis] + share * (to[axis] - from[axis])
@@ -100,7 +100,7 @@ fn draw(harness: &mut Harness, material: MaterialId, uvs: ([f32; 2], [f32; 2])) 
 }
 
 /// Draws `meshes`, alone, and returns the composite.
-fn draw_meshes(harness: &mut Harness, meshes: Vec<ModelMesh>) -> Vec<[f32; 4]> {
+pub(super) fn draw_meshes(harness: &mut Harness, meshes: Vec<ModelMesh>) -> Vec<[f32; 4]> {
     let (device, queue) = (&harness.device, &harness.queue);
     let model = harness
         .scene
@@ -126,12 +126,12 @@ fn two_states(harness: &mut Harness, image: Image, base: Sampler, emission: Samp
         unlit: true,
         double_sided: true,
         base_texture: Some(MaterialTexture {
-            image: 0,
             sampler: base,
+            ..MaterialTexture::new(0)
         }),
         emissive_texture: Some(MaterialTexture {
-            image: 0,
             sampler: emission,
+            ..MaterialTexture::new(0)
         }),
         ..Default::default()
     };
@@ -202,14 +202,14 @@ fn magnified_maps_filter_and_wrap_as_each_samples_basic() {
 
 /// The minified image's side, 128 texels: four of them a pixel over UVs
 /// 0..1, at level of detail 2.
-const MINIFIED: u32 = 128;
+pub(super) const MINIFIED: u32 = 128;
 
 /// The minified image's levels, prepared as a game prepares them
 /// (`Rgba8MipChain`), so its every level's texels are known: level 0 a
 /// checker of 8 × 8-texel red and blue blocks, each level below it the
 /// chain's filtering of the last, its blocks halving, so each level differs
 /// from the next.
-fn checker() -> asset::Rgba8MipChain {
+pub(super) fn checker() -> asset::Rgba8MipChain {
     asset::Rgba8MipChain::new(image::RgbaImage::from_fn(MINIFIED, MINIFIED, |x, y| {
         if (x / 8 + y / 8) % 2 == 0 {
             image::Rgba([255, 0, 0, 255])
@@ -254,7 +254,7 @@ fn level_sample(
 /// `sampler`, by Vulkan's image level selection: level 0 without mipmaps,
 /// the nearest level with nearest mip selection (half rounding down), else
 /// the two nearest blended; each through the minification filter.
-fn minified(
+pub(super) fn minified(
     levels: &[image::RgbaImage],
     uv: [f32; 2],
     sampler: Sampler,
@@ -297,15 +297,21 @@ fn minified(
 /// as its only map; the second in the shader, outvoted by two maps in
 /// glTF's default state that it samples but does not show (its
 /// metallic-roughness map, which an unlit material ignores, and an emission
-/// map under a black factor).
-fn bound_and_in_shader(harness: &mut Harness, sampled: Sampler, image: &Image) -> Vec<MaterialId> {
+/// map under a black factor). The shown map samples through `transform`.
+pub(super) fn bound_and_in_shader(
+    harness: &mut Harness,
+    sampled: Sampler,
+    transform: asset::UvTransform,
+    image: &Image,
+) -> Vec<MaterialId> {
     let bound = asset::Material {
         base: [1., 0., 1., 1.],
         unlit: true,
         double_sided: true,
         base_texture: Some(MaterialTexture {
-            image: 0,
+            transform,
             sampler: sampled,
+            ..MaterialTexture::new(0)
         }),
         ..Default::default()
     };
@@ -329,7 +335,7 @@ fn bound_and_in_shader(harness: &mut Harness, sampled: Sampler, image: &Image) -
 
 /// The UVs of a quad filling the view that shows the minified image at
 /// level of detail `lod`, from `offset`.
-fn at_lod(lod: f32, offset: f32) -> ([f32; 2], [f32; 2]) {
+pub(super) fn at_lod(lod: f32, offset: f32) -> ([f32; 2], [f32; 2]) {
     let span = SIZE[0] as f32 * lod.exp2() / MINIFIED as f32;
     ([offset; 2], [offset + span; 2])
 }
@@ -361,7 +367,7 @@ fn minified_maps_select_levels_as_each_samples(basic: bool, prepared: bool) {
         (state(Nearest, Linear, Some(Linear)), lod(1.5)),
     ];
     for (sampled, (lod, uvs)) in cases {
-        let ids = bound_and_in_shader(&mut harness, sampled, &image);
+        let ids = bound_and_in_shader(&mut harness, sampled, Default::default(), &image);
         for (id, path) in ids.into_iter().zip(["the bound sampler", "the shader"]) {
             let composite = draw(&mut harness, id, uvs);
             for y in 0..SIZE[1] {
@@ -436,7 +442,12 @@ fn maps_sampled_in_the_shader_take_the_views_mip_bias() {
             mipmap_filter: Some(mipmap_filter),
             wrap: [Repeat; 2],
         };
-        let ids = bound_and_in_shader(&mut harness, sampled, &Image::Rgba8Mips(chain.clone()));
+        let ids = bound_and_in_shader(
+            &mut harness,
+            sampled,
+            Default::default(),
+            &Image::Rgba8Mips(chain.clone()),
+        );
         let composite = draw_meshes(
             &mut harness,
             vec![quad(ids[0], [-1., 0.], uvs), quad(ids[1], [0., 1.], uvs)],

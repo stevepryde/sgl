@@ -141,6 +141,7 @@ fn square(centre: Vec3, normal: Vec3, size: f32, (metallic, roughness): (f32, f3
         meshes: vec![CpuMesh {
             vertices: corners
                 .map(|position| Vertex {
+                    uv1: [0.0; 2],
                     position: position.to_array(),
                     normal: normal.to_array(),
                     uv: [0.; 2],

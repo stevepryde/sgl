@@ -84,8 +84,8 @@ settings SGL3D has today.
    `KHR_mesh_quantization` allows become floats in one step where their
    accessors are read, by the extension's int-to-float equations
    (unnormalized integers keep their values); the dequantisation it puts in
-   a node's transform or a skin's inverse bind matrices applies where those
-   already apply, once, and bounds come from the decoded vertices, never
+   a node's transform, a skin's inverse bind matrices or a map's
+   `KHR_texture_transform` applies where those already apply, once, and bounds come from the decoded vertices, never
    from an accessor's `min` and `max`.
    `EXT_meshopt_compression` and `KHR_meshopt_compression` buffer views
    decode once at import, below every accessor reader, by a port of

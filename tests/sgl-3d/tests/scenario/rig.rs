@@ -265,6 +265,7 @@ impl Shape {
                 vertices: q
                     .corners
                     .map(|position| Vertex {
+                        uv1: [0.0; 2],
                         position: position.to_array(),
                         normal: [0., 0., 1.],
                         uv: [0.; 2],
@@ -449,6 +450,7 @@ impl Rig {
     ) -> (InstanceId, MaterialId) {
         let [low, high] = [-size * 0.5, size * 0.5];
         let vertex = |x: f32, y: f32, u: f32, v: f32| Vertex {
+            uv1: [0.0; 2],
             position: [x, y, 0.],
             normal: [0., 0., 1.],
             uv: [u, v],
@@ -476,11 +478,11 @@ impl Rig {
                 // White, which rays see, until a render texture takes its
                 // place, sampled with this map's clamping sampler.
                 emissive_texture: Some(MaterialTexture {
-                    image: 0,
                     sampler: Sampler {
                         wrap: [TextureWrap::ClampToEdge; 2],
                         ..Sampler::default()
                     },
+                    ..MaterialTexture::new(0)
                 }),
                 metallic: 0.,
                 double_sided: true,
@@ -549,6 +551,7 @@ impl Rig {
     pub fn add_textured(&mut self, size: Vec2, image: sgl_3d::asset::Image, pose: Pose) {
         let [low, high] = [-size * 0.5, size * 0.5];
         let vertex = |x: f32, y: f32, u: f32, v: f32| Vertex {
+            uv1: [0.0; 2],
             position: [x, y, 0.],
             normal: [0., 0., 1.],
             uv: [u, v],

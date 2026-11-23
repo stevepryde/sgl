@@ -39,6 +39,7 @@ fn block(size: Vec3, base: [f32; 4]) -> Asset {
             for (x, y) in [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)] {
                 let corner = axis * sign * 0.5 + u * x * 0.5 + v * y * sign * 0.5;
                 vertices.push(Vertex {
+                    uv1: [0.0; 2],
                     position: (corner * size + Vec3::Y * size.y * 0.5).to_array(),
                     normal: (axis * sign).to_array(),
                     tangent: (u.extend(1.)).to_array(),

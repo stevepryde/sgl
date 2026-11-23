@@ -40,6 +40,7 @@ pub(crate) mod pmrem_filter;
 pub(crate) mod tiers;
 pub(crate) use tiers::{lit_provider, material_provider, transmission_provider};
 // Wired into the ray source and its readers with #135's prepared models.
+pub(crate) mod map_uvs;
 pub(crate) mod packed_vertex;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod packed_vertex_tests;
@@ -196,7 +197,7 @@ pub(crate) static BIND_BLENDED: Module = Module {
 pub(crate) static MATERIAL: Module = Module {
     name: "material",
     source: include_str!("material.wgsl"),
-    deps: &[],
+    deps: &[&map_uvs::MAP_UV],
 };
 /// A rasterized texel of the bound material. Reads `view` and the material.
 pub(crate) static MATERIAL_RASTER: Module = Module {

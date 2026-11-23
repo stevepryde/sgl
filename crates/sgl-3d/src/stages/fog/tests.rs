@@ -1382,6 +1382,7 @@ fn a_blended_surface_is_fogged_at_its_depth() {
     quad.meshes[0] = crate::asset::CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, y)| crate::asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -1452,6 +1453,7 @@ fn a_blended_surface_covers_its_fog_by_its_alpha() {
     quad.meshes[0] = crate::asset::CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, y)| crate::asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -1853,6 +1855,7 @@ fn unlit_square(centre: Vec3, half: f32, colour: [f32; 4]) -> crate::asset::Asse
     square.meshes[0] = crate::asset::CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, y)| crate::asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

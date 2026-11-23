@@ -72,6 +72,7 @@ mod tests {
             .map(|z| CpuMesh {
                 vertices: [[0., 0., z], [1., 0., z], [1., 1., z], [0., 1., z]]
                     .map(|position| Vertex {
+                        uv1: [0.0; 2],
                         tangent: [0.0; 4],
                         lightmap_bounds: [0., 0., 1., 1.],
                         lightmap_uv: [0.; 2],

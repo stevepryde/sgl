@@ -59,6 +59,30 @@ fn material_sample_in_shader(map:texture_2d<f32>,uv:vec2<f32>,bias:f32,state:u32
  let coarser=material_sampling_level(map,uv,min(level+1,last),linear,state);
  return mix(finer,coarser,d-floor(d));
 }
+// Whether the bound material's map binding `slot` (MATERIAL_SLOT_*)
+// samples the second UV set, and whether through a transform: never in the
+// pipelines of a material none of whose maps does (material_uv1_enabled,
+// material_transforms_enabled), else as its record's map_uv_bits say.
+fn material_map_on_uv1(slot:u32)->bool {
+ return material_uv1_enabled && (material.map_uv_bits&(1u<<slot))!=0u;
+}
+fn material_map_transformed(slot:u32)->bool {
+ return material_transforms_enabled && (material.map_uv_bits&(1u<<(slot+MAP_UV_TRANSFORMED_SHIFT)))!=0u;
+}
+// Where the bound material's map binding `slot` samples at a fragment
+// whose first and second UV sets are `uv` and `uv1`
+// (specs/sgl3d-architecture.md, Material map coordinates): its set, through
+// its transform. The one resolution of every raster pass.
+fn material_map_uv(slot:u32,uv:vec2<f32>,uv1:vec2<f32>)->vec2<f32> {
+ var coordinates=uv;
+ if material_map_on_uv1(slot) {
+  coordinates=uv1;
+ }
+ if material_map_transformed(slot) {
+  coordinates=map_uv_transform(material_bindings.map_uvs[slot],coordinates);
+ }
+ return coordinates;
+}
 // The bound material's map `map`, in binding `slot` (MATERIAL_SLOT_*), at
 // `uv` with level-of-detail bias `bias`: through group 2's sampler, or in
 // the shader where its state is another.

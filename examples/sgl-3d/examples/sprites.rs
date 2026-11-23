@@ -267,6 +267,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
 fn ground() -> sgl_3d::asset::Asset {
     let corner = |x: f32, z: f32| sgl_3d::asset::Vertex {
+        uv1: [0.0; 2],
         position: [x, 0., z],
         normal: [0., 1., 0.],
         uv: [0.; 2],

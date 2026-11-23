@@ -57,14 +57,14 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
  // (surface_shading_lit.fs 154–160).
  var sheen_roughness=material.sheen_roughness;
  if any(material.sheen>vec3(0.)) {
-  s.sheen=material_sheen(material,material_sheen_color_texel(i.uv));
-  sheen_roughness=material_sheen_roughness(material,material_sheen_roughness_texel(i.uv));
+  s.sheen=material_sheen(material,material_sheen_color_texel(i.uv,i.uv1));
+  sheen_roughness=material_sheen_roughness(material,material_sheen_roughness_texel(i.uv,i.uv1));
  }
  s.sheen_roughness=surface_roughness(sheen_roughness,n,i);
  s.diffuse_transmission_color=material.diffuse_transmission_color;
  if material.diffuse_transmission>0. {
-  s.diffuse_transmission=material_diffuse_transmission(material,material_diffuse_transmission_texel(i.uv));
-  s.diffuse_transmission_color=material_diffuse_transmission_color(material,material_diffuse_transmission_color_texel(i.uv));
+  s.diffuse_transmission=material_diffuse_transmission(material,material_diffuse_transmission_texel(i.uv,i.uv1));
+  s.diffuse_transmission_color=material_diffuse_transmission_color(material,material_diffuse_transmission_color_texel(i.uv,i.uv1));
   // Its volume, which the transmitted lobe lies behind and crosses.
   s.volume_thickness=transmission_world_thickness(m.thickness,objects[object].model);
   s.volume_attenuation=m.attenuation;
@@ -76,14 +76,14 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
  s.unlit=unlit;
  s.front=front;
  s.moving=(objects[object].flags&OBJECT_STATIC)==0u;
- s.baked=baked_material.x!=0u;
+ s.baked=material_bindings.baked.x!=0u;
  s.uv=i.uv;
  s.lightmap_uv=i.lightmap_uv;
  s.lightmap_bounds=i.lightmap_bounds;
  s.baked_irradiance=objects[object].baked_irradiance;
  if films_enabled && material.iridescence>0. {
-  let strength=material_iridescence(material,material_iridescence_texel(i.uv));
-  let thickness=material_iridescence_thickness(material,material_iridescence_thickness_texel(i.uv));
+  let strength=material_iridescence(material,material_iridescence_texel(i.uv,i.uv1));
+  let thickness=material_iridescence_thickness(material,material_iridescence_thickness_texel(i.uv,i.uv1));
   s.film=surface_film(s,strength,material.iridescence_ior,thickness);
  }
  return s;

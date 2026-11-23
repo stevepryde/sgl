@@ -51,6 +51,7 @@ fn quad(center: Vec3, half: Vec2) -> CpuMesh {
     CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, y)| Vertex {
+                uv1: [0.0; 2],
                 position: (center + Vec3::new(x * half.x, y * half.y, 0.)).to_array(),
                 normal: [0., 0., 1.],
                 uv: [(x + 1.) / 2., (1. - y) / 2.],

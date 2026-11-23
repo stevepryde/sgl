@@ -25,10 +25,11 @@ const SCENE_IMAGE_BC7:u32=1u;
 // words; its first vertex among its model's, where a deforming instance's
 // vertices of it start (deformation.wgsl); the word where its own chart
 // table starts; the rectangle its packed UVs span (min in xy, extent in
-// zw); the word where its section table starts, with its sections; and the
+// zw); the word where its section table starts, with its sections; the
 // word where its shader data starts (PreparedModel::with_shader_data), 0
-// for a mesh without, whose vertices' data read zero.
-const SCENE_MESH_WORDS:u32=12u;
+// for a mesh without, whose vertices' data read zero; and the word where
+// its second UV set starts, 0 for a mesh without, whose vertices' read zero.
+const SCENE_MESH_WORDS:u32=13u;
 const SCENE_MESH_VERTICES:u32=0u;
 const SCENE_MESH_INDICES:u32=1u;
 const SCENE_MESH_MATERIAL_WORD:u32=2u;
@@ -38,6 +39,12 @@ const SCENE_MESH_UV_RECT:u32=5u;
 const SCENE_MESH_SECTIONS:u32=9u;
 const SCENE_MESH_SECTION_COUNT:u32=10u;
 const SCENE_MESH_SHADER_DATA:u32=11u;
+const SCENE_MESH_UV1:u32=12u;
+// A mesh's second UV set: the rectangle its packed UVs span (min in xy,
+// extent in zw), then a word a vertex, packed as its first set's is
+// (packed_vertex_uv).
+const SCENE_UV1_RECT:u32=0u;
+const SCENE_UV1_VERTICES:u32=4u;
 // A vertex's shader data: four f32 words.
 const SCENE_SHADER_DATA_WORDS:u32=4u;
 // A section table entry's: a leaf of the mesh's range hierarchy, at most
@@ -55,8 +62,9 @@ const SCENE_SECTION_PAIRED:u32=2147483648u;
 // then max.
 const SCENE_CHART_WORDS:u32=4u;
 // A material record's: its values (material.wgsl's Material, each member's
-// word, its maps' sampler states among them), then its textures' image words
-// and whether lightmap charts light it.
+// word, its maps' sampler states among them), then its textures' image words,
+// whether lightmap charts light it and each map binding's transform
+// (map_uv.wgsl's MapUv, SCENE_MAP_UV_WORDS each, its rows' words).
 const SCENE_MATERIAL_BASE:u32=0u;
 const SCENE_MATERIAL_EMISSION:u32=4u;
 const SCENE_MATERIAL_ENVIRONMENT_SCALE:u32=7u;
@@ -80,6 +88,7 @@ const SCENE_MATERIAL_COAT_NORMAL_SCALE:u32=33u;
 const SCENE_MATERIAL_IRIDESCENCE:u32=34u;
 const SCENE_MATERIAL_IRIDESCENCE_IOR:u32=35u;
 const SCENE_MATERIAL_IRIDESCENCE_THICKNESS:u32=36u;
+const SCENE_MATERIAL_MAP_UV_BITS:u32=38u;
 const SCENE_MATERIAL_ATTENUATION:u32=40u;
 const SCENE_MATERIAL_TRANSMISSION:u32=43u;
 const SCENE_MATERIAL_THICKNESS:u32=44u;
@@ -92,6 +101,10 @@ const SCENE_MATERIAL_DIFFUSE_TRANSMISSION:u32=55u;
 const SCENE_MATERIAL_MAP_SAMPLERS:u32=56u;
 const SCENE_MATERIAL_TEXTURES:u32=60u;
 const SCENE_MATERIAL_BAKED:u32=76u;
+const SCENE_MATERIAL_MAP_UVS:u32=77u;
+const SCENE_MAP_UV_WORDS:u32=8u;
+const SCENE_MAP_UV_U:u32=0u;
+const SCENE_MAP_UV_V:u32=4u;
 // A normal layer's (material.wgsl's NormalLayer): its words, each member's
 // word.
 const SCENE_NORMAL_LAYER_WORDS:u32=4u;

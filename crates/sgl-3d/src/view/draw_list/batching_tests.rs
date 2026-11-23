@@ -149,6 +149,8 @@ fn merged_draws_share_material_pipeline_and_geometry() {
 fn draws_merge_only_with_the_same_ranges() {
     let key = BatchKey {
         variant: Variant {
+            uv1: 0,
+            transformed: 0,
             cull: Cull::Back,
             alpha: Alpha::Opaque,
             deformed: false,
@@ -214,6 +216,8 @@ fn draws_merge_only_with_the_same_ranges() {
 fn draws_merge_only_with_the_same_mobility() {
     let key = |mobility| BatchKey {
         variant: Variant {
+            uv1: 0,
+            transformed: 0,
             cull: Cull::Back,
             alpha: Alpha::Opaque,
             deformed: false,

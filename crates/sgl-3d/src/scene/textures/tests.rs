@@ -506,6 +506,7 @@ fn rays_pass_the_cut_out_texels_of_a_compressed_masked_material() {
     asset.meshes = vec![CpuMesh {
         vertices: corners
             .map(|[x, y]| Vertex {
+                uv1: [0.0; 2],
                 position: [x, y, 0.],
                 normal: [0., 0., 1.],
                 uv: [x, y],

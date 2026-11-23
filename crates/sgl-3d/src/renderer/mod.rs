@@ -34,6 +34,8 @@ mod diagnostics_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod floor_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod map_uv_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod planar_reflection_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod render_texture_tests;

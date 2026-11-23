@@ -33,6 +33,26 @@ pub(super) fn validate_core(values: &SurfaceMaterial) -> Result<(), SceneError> 
     }
 }
 
+/// A map's transform: its offset, rotation and scale finite
+/// (`asset::UvTransform`), as KHR_texture_transform's numbers are.
+pub(super) fn validate_uv_transform(transform: &asset::UvTransform) -> Result<(), SceneError> {
+    let asset::UvTransform {
+        offset,
+        rotation,
+        scale,
+    } = transform;
+    if offset
+        .iter()
+        .chain(scale)
+        .chain([rotation])
+        .all(|v| v.is_finite())
+    {
+        Ok(())
+    } else {
+        Err(SceneError::InvalidMaterialFactors)
+    }
+}
+
 /// Anisotropy `values` may take on meshes of which `untangented` lack
 /// authored tangent frames.
 pub(super) fn validate_anisotropy(

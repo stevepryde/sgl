@@ -18,6 +18,7 @@ fn square() -> CpuMesh {
     CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, y)| Vertex {
+                uv1: [0.0; 2],
                 position: [x, y, -4.],
                 normal: [0., 0., 1.],
                 uv: [(x + 1.) / 2., (1. - y) / 2.],

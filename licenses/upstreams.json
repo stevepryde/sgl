@@ -146,6 +146,12 @@
     "note": "Models/AnimatedMorphCube/glTF and glTF-Quantized, unchanged, and glTF-Meshopt and glTF-Meshopt-KHR, written from glTF by gltfpack 1.3 (CC0-1.0; LICENSE.md itself CC-BY-4.0). Test-only: the published crate does not include it; provenance in the fixture's README.md."
   },
   {
+    "component": "Khronos glTF Sample Assets: Texture Transform Test (test fixture)",
+    "path": "crates/sgl-3d/tests/fixtures/gltf/TextureTransformTest/LICENSE.md",
+    "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/TextureTransformTest/LICENSE.md",
+    "note": "Models/TextureTransformTest/glTF, unchanged (CC0-1.0; LICENSE.md itself CC-BY-4.0). Test-only: the published crate does not include it; provenance in the fixture's README.md."
+  },
+  {
     "component": "Khronos glTF Sample Assets: Rigged Simple (test fixture)",
     "path": "crates/sgl-3d/tests/fixtures/gltf/RiggedSimple/LICENSE.md",
     "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/RiggedSimple/LICENSE.md",

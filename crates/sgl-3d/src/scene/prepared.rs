@@ -66,13 +66,19 @@ pub(super) fn validate_geometry(vertices: &[Vertex], indices: &[u32]) -> Result<
     if !vertices.iter().all(|vertex| {
         (vertex.position.iter())
             .chain(&vertex.uv)
+            .chain(&vertex.uv1)
             .chain(&vertex.lightmap_uv)
             .all(|x| x.is_finite())
             && Vec3::from_array(vertex.normal)
                 .as_dvec3()
                 .try_normalize()
                 .is_some()
-    }) || !Vec2::from_array(UvRect::of(vertices).extent).is_finite()
+    }) || [
+        UvRect::of(vertices.iter().map(|vertex| vertex.uv)),
+        UvRect::of(vertices.iter().map(|vertex| vertex.uv1)),
+    ]
+    .iter()
+    .any(|rect| !Vec2::from_array(rect.extent).is_finite())
     {
         return Err(SceneError::NonFiniteGeometry);
     }
@@ -417,5 +423,57 @@ mod tests {
             meshes(vec![charts(0, 3), charts(3, (1 << 16) + 1)]),
             Err(SceneError::TooManyLightmapCharts { mesh: 1 })
         ));
+    }
+
+    // The packed vertex does not grow for a second UV set: a mesh keeps
+    // one only where a vertex's `uv1` is not zero, as a stream after its
+    // geometry (its rectangle, then a word a vertex), which its record's
+    // thirteenth word names. Plausible defects: every mesh paying for the
+    // stream, the record naming it wrongly, or the set packed across the
+    // first set's rectangle. Oracle, by hand: `uv1` (2, 10), (4, 10) and
+    // (2, 30) span the rectangle from (2, 10) over (2, 20), so they pack
+    // as the 16-bit fractions (0, 0), (1, 0) and (0, 1).
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_second_uv_set_is_a_stream_only_a_mesh_that_has_one_keeps() {
+        let mesh = |second: [[f32; 2]; 3]| ModelMesh {
+            vertices: [[0., 0.], [1., 0.], [0., 1.]]
+                .into_iter()
+                .zip(second)
+                .map(|([x, y], uv1)| Vertex {
+                    position: [x, y, 0.],
+                    normal: [0., 0., 1.],
+                    uv: [x * 7., y * 9.],
+                    uv1,
+                    color: [1.; 4],
+                    lightmap_bounds: [0., 0., 1., 1.],
+                    ..bytemuck::Zeroable::zeroed()
+                })
+                .collect(),
+            indices: vec![0, 1, 2],
+            material: MaterialId::issue(0, 0),
+            deformation: Default::default(),
+        };
+        let options = PreparedModelOptions {
+            ray_data: RayData::Disabled,
+        };
+        let words = |second| {
+            PreparedModel::with_options(vec![mesh(second)], options)
+                .unwrap()
+                .rays
+                .words()
+                .to_vec()
+        };
+        let plain = words([[0.; 2]; 3]);
+        let second = words([[2., 10.], [4., 10.], [2., 30.]]);
+        // Its record's thirteenth word: none, and where the stream starts.
+        assert_eq!(plain[12], 0);
+        assert_eq!(second.len(), plain.len() + 4 + 3);
+        let stream = second.len() - 7;
+        assert_eq!(second[12] as usize, stream);
+        assert_eq!(second[..12], plain[..12]);
+        assert_eq!(second[13..stream], plain[13..]);
+        let rectangle: &[f32] = bytemuck::cast_slice(&second[stream..stream + 4]);
+        assert_eq!(rectangle, [2., 10., 2., 20.]);
+        assert_eq!(second[stream + 4..], [0, 0xffff, 0xffff << 16]);
     }
 }

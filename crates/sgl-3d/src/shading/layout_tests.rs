@@ -951,6 +951,7 @@ fn rust_mirrors_match_wgsl_layouts() {
                 iridescence,
                 iridescence_ior,
                 iridescence_thickness,
+                map_uv_bits,
                 attenuation,
                 transmission,
                 thickness,
@@ -972,6 +973,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     ]
     .into_iter()
     .chain(super::bind::mirrors())
+    .chain(super::map_uvs::mirrors())
     .chain(super::lights::mirrors())
     .chain(super::clusters::mirrors())
     .chain(super::culling::mirrors())
@@ -1364,7 +1366,7 @@ fn rust_binding_names_match_wgsl_bindings() {
         (2, "tex_sampler", group2::TEX_SAMPLER),
         (2, "emission_map", group2::EMISSION_MAP),
         (2, "relief_map", group2::RELIEF_MAP),
-        (2, "baked_material", group2::BAKED_MATERIAL),
+        (2, "material_bindings", group2::MATERIAL_BINDINGS),
         (2, "anisotropy_map", group2::ANISOTROPY_MAP),
         (2, "clearcoat_map", group2::CLEARCOAT_MAP),
         (2, "coat_roughness_map", group2::COAT_ROUGHNESS_MAP),
@@ -1623,6 +1625,7 @@ fn rust_constants_match_wgsl_twins() {
     .chain(super::lights::constants())
     .chain(super::clusters::constants())
     .chain(super::samplers::constants())
+    .chain(super::map_uvs::constants())
     .chain(super::dynamic_gi::constants())
     .chain(super::vertex::constants())
     .chain(super::culling::constants())

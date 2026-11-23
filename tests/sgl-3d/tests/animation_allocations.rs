@@ -231,6 +231,7 @@ mod gpu {
     /// A skinned, morphed strip of `NODES` vertices, one per joint.
     fn asset(rig: Rig) -> Asset {
         let vertex = |i: usize| Vertex {
+            uv1: [0.0; 2],
             position: [i as f32 * 0.1, (i % 2) as f32, 0.],
             normal: [0., 0., 1.],
             uv: [0.; 2],

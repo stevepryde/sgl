@@ -6,6 +6,7 @@ use crate::asset::{Material as AuthoredMaterial, MaterialTexture, TextureWrap};
 use crate::scene::rays::MaterialTextures;
 use crate::shading::bind::BindingTier;
 use crate::shading::bind::group2::{MAP_BINDINGS, MaterialMap};
+use crate::shading::map_uvs::MapUvs;
 use crate::shading::material::MaterialMaps;
 use crate::shading::samplers::MapSamplers;
 
@@ -45,7 +46,8 @@ pub(super) fn normal_wrap(material: &AuthoredMaterial) -> Option<[TextureWrap; 2
     authored(material, MaterialMap::Normal).map(|texture| texture.sampler.wrap)
 }
 
-/// A material's maps in effect, each one's image and sampler or none: those
+/// A material's maps in effect, each one's slot (its image, sampler, UV set
+/// and transform) or none: those
 /// it was authored with whose binding a device of its tier binds, less a
 /// bump map beside a normal map, which shading never takes.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -111,6 +113,12 @@ impl InEffect {
     /// sampler.
     pub fn samplers(&self) -> MapSamplers {
         MapSamplers::new(MAP_BINDINGS.map(|map| self.slot(map.binding).map(|t| t.sampler)))
+    }
+
+    /// Where group 2 and ray hits sample the maps in effect: each binding's
+    /// UV set and transform.
+    pub fn uvs(&self) -> MapUvs {
+        MapUvs::new(MAP_BINDINGS.map(|map| self.slot(map.binding)))
     }
 
     /// The record's `maps` bits.

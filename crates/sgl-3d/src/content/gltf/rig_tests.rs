@@ -133,7 +133,7 @@ fn mesh_nodes(nodes: Value, roots: Value) -> Vec<u8> {
 
 // Oracle: the fixture's BIN is 72 bytes. Source accounting includes the
 // original GLB plus its imported BIN copy. A rigid triangle retains three
-// 88-byte vertices and three 4-byte implicit indices: 276 decoded bytes.
+// 96-byte vertices and three 4-byte implicit indices: 300 decoded bytes.
 #[wasm_bindgen_test(unsupported = test)]
 fn explicit_load_budgets_propagate_independently_to_embedded_sources_and_geometry() {
     let bytes = mesh_nodes(json!([{"mesh": 0}]), json!([0]));
@@ -143,7 +143,7 @@ fn explicit_load_budgets_propagate_independently_to_embedded_sources_and_geometr
     };
     let source = bytes.len() as u64 + 72;
     for limit in [bytes.len() as u64 - 1, source - 1] {
-        let error = load_slice_with_options(&bytes, options(limit, 276))
+        let error = load_slice_with_options(&bytes, options(limit, 300))
             .err()
             .unwrap()
             .to_string();
@@ -160,7 +160,7 @@ fn explicit_load_budgets_propagate_independently_to_embedded_sources_and_geometr
         error.contains("decoded load budget") && error.contains("limit 275 bytes"),
         "{error}"
     );
-    let asset = load_slice_with_options(&bytes, options(source, 276)).unwrap();
+    let asset = load_slice_with_options(&bytes, options(source, 300)).unwrap();
     assert_eq!(asset.meshes[0].vertices.len(), 3);
     assert_eq!(asset.meshes[0].indices, [0, 1, 2]);
     let raised = LoadBudget::new(isize::MAX as u64, isize::MAX as u64).unwrap();
@@ -219,7 +219,7 @@ fn supplied_images_share_the_configured_decoded_budget() {
                 },
             )
         };
-        let limit = 276 + image_bytes;
+        let limit = 300 + image_bytes;
         let error = load(limit - 1).err().unwrap().to_string();
         assert!(
             error.contains("supplied image 0") && error.contains("decoded load budget"),
@@ -268,13 +268,13 @@ fn decoded_png_images_share_the_configured_geometry_budget() {
             },
         )
     };
-    // 276 bytes of geometry plus 4x2x4 = 32 bytes of RGBA expansion.
+    // 300 bytes of geometry plus 4x2x4 = 32 bytes of RGBA expansion.
     let error = load(307).err().unwrap().to_string();
     assert!(
         error.contains("image 0") && error.contains("budget"),
         "{error}"
     );
-    let asset = load(308).unwrap();
+    let asset = load(332).unwrap();
     match &asset.images[0] {
         Image::Rgba8(image) => assert_eq!(image.get_pixel(3, 1).0, [80, 80, 80, 255]),
         _ => panic!("PNG should decode to RGBA8"),

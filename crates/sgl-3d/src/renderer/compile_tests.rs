@@ -662,11 +662,11 @@ fn a_compiled_frame_with_a_map_sampled_in_the_shader_creates_no_program() {
     ))];
     cube.materials[0].base_texture = Some(MaterialTexture::new(0));
     cube.materials[0].emissive_texture = Some(MaterialTexture {
-        image: 0,
         sampler: Sampler {
             wrap: [TextureWrap::ClampToEdge; 2],
             ..Sampler::default()
         },
+        ..MaterialTexture::new(0)
     });
     let Some(mut level) = Level::with_opaque(cube) else {
         return;
@@ -769,4 +769,92 @@ fn a_compiled_level_with_sprites_creates_no_program_at_its_first_frame() {
     let before = level.programs();
     level.render(&input);
     assert_eq!(level.programs(), before);
+}
+
+// Plausible defect: the planning pass reaches a material's pipelines
+// without the maps it samples on the second UV set or through a transform
+// (`Variant::uv1`, `Variant::transformed`), so the first frame creates
+// them on the window thread. The opaque cube's base map is on the second
+// set, scaled. The oracle is wgpu's count of the pipelines and shader
+// modules, unchanged across the compiled first frame.
+#[test]
+fn a_compiled_frame_with_a_map_on_the_second_set_and_transformed_creates_no_program() {
+    use crate::asset::{Image, MaterialTexture, UvSet, UvTransform};
+    let mut cube = test_support::cube();
+    cube.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(
+        2,
+        2,
+        image::Rgba([200; 4]),
+    ))];
+    cube.materials[0].base_texture = Some(MaterialTexture {
+        uv_set: UvSet::Uv1,
+        transform: UvTransform {
+            scale: [2., 2.],
+            ..UvTransform::IDENTITY
+        },
+        ..MaterialTexture::new(0)
+    });
+    let Some(mut level) = Level::with_opaque(cube) else {
+        return;
+    };
+    let input = Level::input(0.);
+    level.compile_all(&input);
+    let before = level.programs();
+    level.render(&input);
+    assert_eq!(level.programs(), before);
+}
+
+// A material whose maps take transforms draws with one pipeline variant
+// whichever of its maps do (`PipelineKey::new`): a quantised glTF puts a
+// transform on every map, so a key per map would give each pattern of
+// textured maps pipelines of its own. Plausible defect: the key keeping each
+// binding's bit. The oracle is wgpu's count of the pipelines and shader
+// modules a compiled level holds, each beside an untransformed cube: a
+// level that adds a cube whose base map is transformed holds as many as one
+// that adds that cube and one whose emission map alone is transformed, and
+// more than one that adds neither, so the count sees the variant.
+#[test]
+fn materials_whose_maps_take_transforms_differently_share_pipelines() {
+    use crate::asset::{Image, MaterialTexture, UvTransform};
+    let moved = |image| MaterialTexture {
+        transform: UvTransform {
+            offset: [0.5, 0.],
+            ..UvTransform::IDENTITY
+        },
+        ..MaterialTexture::new(image)
+    };
+    let level = |maps: &[(MaterialTexture, MaterialTexture)]| {
+        let mut asset = test_support::cube();
+        let mesh = asset.meshes[0].clone();
+        let material = asset.materials[0].clone();
+        asset.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([200; 4]),
+        ))];
+        asset.meshes.clear();
+        asset.materials.clear();
+        for (index, &(base, emission)) in maps.iter().enumerate() {
+            asset.meshes.push(crate::asset::CpuMesh {
+                material: index,
+                ..mesh.clone()
+            });
+            asset.materials.push(crate::asset::Material {
+                base_texture: Some(base),
+                emissive_texture: Some(emission),
+                ..material.clone()
+            });
+        }
+        let mut level = Level::with_opaque(asset)?;
+        level.compile_all(&Level::input(0.));
+        Some(level.programs())
+    };
+    let plain = MaterialTexture::new(0);
+    let Some(one) = level(&[(plain, plain), (moved(0), plain)]) else {
+        return;
+    };
+    let two = level(&[(plain, plain), (moved(0), plain), (plain, moved(0))]).unwrap();
+    let none = level(&[(plain, plain)]).unwrap();
+    assert_eq!(two, one);
+    assert!(one.0 > none.0, "{one:?} programs transformed, {none:?} not");
 }

@@ -274,6 +274,7 @@ fn a_probe_ray_s_hit_takes_the_light_behind_it_through() {
     far.materials[0].double_sided = true;
     far.meshes[0].vertices = [(-2., -2.), (2., -2.), (2., 2.), (-2., 2.)]
         .map(|(x, y)| crate::asset::Vertex {
+            uv1: [0.0; 2],
             position: [x, y, -0.5],
             normal: [0., 0., 1.],
             uv: [0.; 2],

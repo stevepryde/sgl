@@ -1,5 +1,5 @@
-//! A material's raster group 2: its values and lightmap eligibility
-//! buffers, the views of its maps in effect (white for the rest of the map
+//! A material's raster group 2: its values buffer and its bindings buffer
+//! (lightmap eligibility and each map binding's transform), the views of its maps in effect (white for the rest of the map
 //! bindings the device's binding tier binds; the render texture it names
 //! in its emission map's) and the sampler of their bound state at the
 //! scene's anisotropic filtering, shared by every material of that state
@@ -10,16 +10,19 @@ use crate::asset::Sampler;
 use crate::scene::render_textures::RenderTextures;
 use crate::scene::textures::{self, Textures};
 use crate::shading::bind::{BindingTier, group2};
+use crate::shading::map_uvs::MapUvs;
 use crate::shading::samplers::{self, MapSamplers};
 use std::collections::HashMap;
 
 /// What group 2 binds: the material's maps in effect, each a texture index,
-/// and how they are sampled, whose bound state its sampler takes. A render
-/// texture in the emission map's binding is sampled in that binding's
-/// state.
+/// how they are sampled, whose bound state its sampler takes, and where
+/// (each binding's UV set and transform). A render texture in the emission
+/// map's binding is sampled in that binding's state at that binding's
+/// coordinates.
 pub(super) struct Bound {
     pub maps: InEffect,
     pub samplers: MapSamplers,
+    pub uvs: MapUvs,
 }
 
 /// What every material's group 2 shares: the device, which a material's
@@ -139,7 +142,7 @@ impl Groups {
                 resource: wgpu::BindingResource::Sampler(sampler),
             },
             wgpu::BindGroupEntry {
-                binding: group2::BAKED_MATERIAL,
+                binding: group2::MATERIAL_BINDINGS,
                 resource: baked.as_entire_binding(),
             },
             wgpu::BindGroupEntry {

@@ -127,6 +127,7 @@ fn round_trip(vertices: &[(Vertex, UvRect, u16)]) -> Option<Vec<Decoded>> {
 /// A vertex at the origin with `normal` and `tangent`, and nothing else.
 fn framed(normal: DVec3, tangent: [f64; 4]) -> Vertex {
     Vertex {
+        uv1: [0.0; 2],
         position: [0.; 3],
         normal: normal.as_vec3().to_array(),
         uv: [0.; 2],
@@ -320,7 +321,7 @@ fn uvs_colours_and_charts_decode_within_their_tolerances() {
             ..framed(DVec3::Z, [0.; 4])
         })
         .collect();
-    let rect = UvRect::of(&mesh);
+    let rect = UvRect::of(mesh.iter().map(|vertex| vertex.uv));
     let colors = [
         [-0.5, 0., 0.001, 0.0031308],
         [0.04, 0.2, 0.5, 0.99],

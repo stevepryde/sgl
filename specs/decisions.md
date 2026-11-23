@@ -1700,3 +1700,49 @@ Use the [current specs](README.md) for implementation and the
   hull (Godot's stencil outline), whose width is in metres and which
   misses cut-outs; outline groups of their own colours in one view, which
   need a stencil or identity target, until a game needs them.
+- **D-80** Decision, 2026-11-23 (#858): a material's maps each sample one
+  of two UV sets through their own `KHR_texture_transform`, resolved in
+  the fragment stage by one function (`material_map_uv`; `scene_map_uv`
+  for ray hits) in pipelines keyed by two bits, whether a map the pass
+  samples takes the second set and whether one takes a transform
+  (`Variant::uv1`, `Variant::transformed`), each map's own bit read from
+  the record (`map_uv_bits`). Two sets are glTF's floor and Bevy's,
+  Filament's and Godot's count. The second set is a stream a mesh keeps
+  only where a vertex has one (4 bytes a vertex and a 16-byte rectangle,
+  named by a thirteenth mesh-record word), not a ninth packed word, which
+  would grow every vertex by an eighth for content that never reads it,
+  and not the lightmap UV's word, which must stay the lightmap's. A
+  binding's transform rows (32 bytes) live in group 2's existing second
+  uniform and after the ray record, not in `Material`, so the record
+  raster and ray code pass by value stays 240 bytes and no binding is
+  added. A bit a binding in the key, as D-72 keys its in-shader sampling,
+  was built first and dropped on review: a quantised file
+  (gltfpack, glTF-Transform) transforms every map, so each pattern of
+  textured maps would take pipelines of its own, for code (two dot
+  products a map) too small to need it; the two bits keep one variant a
+  material, as Filament's gltfio keeps one switch (`hasTextureTransforms`)
+  with a matrix a map. Resolving per vertex would need a varying a map.
+  Baking a transform into vertices at import cannot keep two maps of one
+  set apart. The rotation turns as the Khronos sample renderer and
+  three.js r187 turn it and the Khronos TextureTransformTest's markers
+  require, not as the extension README's GLSL listing, read column-major,
+  does. A normal map's frame is the frame of its sampled coordinates: an
+  authored tangent is glTF's frame of the normal map's set as stored
+  (B = (N × T)·w toward decreasing V), carried through the inverse of the
+  transform's linear part, which the Khronos sample renderer and Filament
+  leave unturned. Measured (Apple M5, Metal, shared machine,
+  provisional), a probe of 16 textured materials over 7,888 cubes at
+  1920×1080: on first-set content the same 16 render and 7 compute
+  pipelines, 67 bind groups and 6 shader modules before and after, opaque
+  geometry and lighting 2.898 and 2.895 ms median before, 2.900 and 2.893
+  after; the dynamic GI example's probe rays 0.119 ms before, 0.115 and
+  0.114 after; the browser baseline in Chromium (WebGPU, 0.066 ms
+  timestamps) 2.294 / 2.359 ms opaque and 6.291 ms a frame, before and
+  after alike. With every material's base and normal maps through a
+  transform, 2.936 and 2.929 ms (2.913 with a bit a binding); on the
+  second set 3.104 and 3.134, about 0.2 ms; both 3.097 and 3.094. The
+  fragment's one interpolant more (`Fragment.uv1`), which pipelines that
+  do not read it leave zero, is the cost first-set content keeps, accepted
+  as measured above; a second program set without it was not taken for a
+  difference the measurements do not show. It leaves the fragment 13 of
+  WebGPU's 16 inter-stage locations (`Fragment`, vertex.wgsl).

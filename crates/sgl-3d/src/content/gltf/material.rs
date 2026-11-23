@@ -1,17 +1,15 @@
 //! glTF materials and the material extensions SGL3D supports.
-use gltf::texture::{MagFilter, MinFilter, WrappingMode};
-
-use super::super::asset::{MaterialTexture, Sampler, TextureFilter, TextureWrap};
-
-use super::super::asset::{Material, Result};
+use super::super::asset::{Material, MaterialTexture, Result};
 use super::super::material::AlphaMode;
 use super::Ignored;
 
 mod diffuse_transmission;
 mod sheen;
+mod texture_info;
 mod transmission;
 use diffuse_transmission::read_diffuse_transmission;
 use sheen::read_sheen;
+use texture_info::{TRANSFORM, extension_texture};
 use transmission::{read_dispersion, read_transmission, read_volume};
 
 /// The properties every material extension object takes from glTF 2.0's
@@ -62,27 +60,30 @@ pub(super) fn read_material(
     let dispersion = read_dispersion(&material)?;
     let (specular, specular_color) = read_specular(&material, index, ignored)?;
     let pbr = material.pbr_metallic_roughness();
-    let mr_slot = pbr
-        .metallic_roughness_texture()
-        .map(|info| slot(info.texture()));
-    let occlusion = read_occlusion(&material, mr_slot, index, ignored)?;
-    let texture_slot = |info: gltf::texture::Info<'_>| -> Result<MaterialTexture> {
-        if info.tex_coord() != 0 {
-            return Err(format!(
-                "material {name}: TEXCOORD_{} is unsupported; export UV0",
-                info.tex_coord()
-            )
-            .into());
-        }
-        Ok(slot(info.texture()))
+    // A core textureInfo `what` as a map: its texture, the UV set it names
+    // and its KHR_texture_transform.
+    let texture_slot = |info: gltf::texture::Info<'_>, what: &str| -> Result<MaterialTexture> {
+        texture_info::map(
+            info.texture(),
+            u64::from(info.tex_coord()),
+            info.extension_value(TRANSFORM),
+            &|message| format!("material {name}: {what} {message}"),
+        )
     };
+    let mr_texture = pbr
+        .metallic_roughness_texture()
+        .map(|info| texture_slot(info, "metallicRoughnessTexture"))
+        .transpose()?;
+    let occlusion = read_occlusion(&material, mr_texture, index, ignored)?;
     let normal_texture = material
         .normal_texture()
-        .map(|info| -> Result<MaterialTexture> {
-            if info.tex_coord() != 0 {
-                return Err(format!("material {name}: normal map requires UV0").into());
-            }
-            Ok(slot(info.texture()))
+        .map(|info| {
+            texture_info::map(
+                info.texture(),
+                u64::from(info.tex_coord()),
+                info.extension_value(TRANSFORM),
+                &|message| format!("material {name}: normalTexture {message}"),
+            )
         })
         .transpose()?;
     let bump = material.extension_value("EXT_materials_bump");
@@ -141,38 +142,41 @@ pub(super) fn read_material(
         specular_color,
         clearcoat: clearcoat.factor,
         coat_roughness: clearcoat.roughness,
-        clearcoat_texture: clearcoat.texture.map(slot),
-        coat_roughness_texture: clearcoat.roughness_texture.map(slot),
-        coat_normal_texture: clearcoat.normal_texture.map(slot),
+        clearcoat_texture: clearcoat.texture,
+        coat_roughness_texture: clearcoat.roughness_texture,
+        coat_normal_texture: clearcoat.normal_texture,
         coat_normal_scale: clearcoat.normal_scale,
         iridescence: iridescence.factor,
         iridescence_ior: iridescence.ior,
         iridescence_thickness: iridescence.thickness,
-        iridescence_texture: iridescence.texture.map(slot),
-        iridescence_thickness_texture: iridescence.thickness_texture.map(slot),
+        iridescence_texture: iridescence.texture,
+        iridescence_thickness_texture: iridescence.thickness_texture,
         sheen_color: sheen.color,
         sheen_roughness: sheen.roughness,
-        sheen_color_texture: sheen.color_texture.map(slot),
-        sheen_roughness_texture: sheen.roughness_texture.map(slot),
+        sheen_color_texture: sheen.color_texture,
+        sheen_roughness_texture: sheen.roughness_texture,
         diffuse_transmission: diffuse.factor,
         diffuse_transmission_color: diffuse.color,
-        diffuse_transmission_texture: diffuse.texture.map(slot),
-        diffuse_transmission_color_texture: diffuse.color_texture.map(slot),
+        diffuse_transmission_texture: diffuse.texture,
+        diffuse_transmission_color_texture: diffuse.color_texture,
         anisotropy_strength,
         anisotropy_rotation,
-        anisotropy_texture: anisotropy_texture.map(slot),
-        base_texture: pbr.base_color_texture().map(texture_slot).transpose()?,
-        mr_texture: pbr
-            .metallic_roughness_texture()
-            .map(texture_slot)
+        anisotropy_texture,
+        base_texture: pbr
+            .base_color_texture()
+            .map(|info| texture_slot(info, "baseColorTexture"))
             .transpose()?,
+        mr_texture,
         occlusion_texture: occlusion.texture,
         occlusion_strength: occlusion.strength,
-        emissive_texture: material.emissive_texture().map(texture_slot).transpose()?,
+        emissive_texture: material
+            .emissive_texture()
+            .map(|info| texture_slot(info, "emissiveTexture"))
+            .transpose()?,
         normal_texture,
         normal_scale: material.normal_texture().map_or(1.0, |t| t.scale()),
         normal_layers: None,
-        bump_texture: bump_texture.map(slot),
+        bump_texture,
         // Authority: EXT_materials_bump's schema (KhronosGroup/glTF#2339):
         // bumpFactor in 0..100, default 1.
         bump_scale: bump
@@ -184,9 +188,9 @@ pub(super) fn read_material(
             .transpose()?
             .unwrap_or(1.0),
         transmission: transmission.factor,
-        transmission_texture: transmission.texture.map(slot),
+        transmission_texture: transmission.texture,
         thickness: volume.thickness,
-        thickness_texture: volume.thickness_texture.map(slot),
+        thickness_texture: volume.thickness_texture,
         attenuation_distance: volume.attenuation_distance,
         attenuation_color: volume.attenuation_color,
         dispersion,
@@ -201,10 +205,10 @@ pub(super) fn read_material(
 
 // Authority: Khronos glTF acfcbe65e40c53d6d3aa55a7299982bf2c01c75d,
 // extensions/2.0/Khronos/KHR_materials_anisotropy/README.md and schema.
-fn read_anisotropy<'a>(
-    material: &gltf::Material<'a>,
-    document: &'a gltf::Document,
-) -> Result<(f32, f32, Option<gltf::Texture<'a>>)> {
+fn read_anisotropy(
+    material: &gltf::Material<'_>,
+    document: &gltf::Document,
+) -> Result<(f32, f32, Option<MaterialTexture>)> {
     let Some(value) = material.extension_value("KHR_materials_anisotropy") else {
         return Ok((0.0, 0.0, None));
     };
@@ -242,52 +246,20 @@ fn read_anisotropy<'a>(
     Ok((strength as f32, rotation as f32, texture))
 }
 
-/// Extension property `key` of `value`, a glTF textureInfo: its texture,
-/// which must lie on TEXCOORD_0. `error` words a refusal.
-fn extension_texture<'a>(
-    value: &serde_json::Value,
-    key: &str,
-    document: &'a gltf::Document,
-    error: &dyn Fn(&str) -> String,
-) -> Result<Option<gltf::Texture<'a>>> {
-    let Some(info) = value.get(key) else {
-        return Ok(None);
-    };
-    let info = info
-        .as_object()
-        .ok_or_else(|| error(&format!("{key} must be an object")))?;
-    if info.get("texCoord").is_some_and(|v| v.as_u64() != Some(0)) {
-        return Err(error(&format!("{key} requires TEXCOORD_0; export UV0")).into());
-    }
-    let index = info
-        .get("index")
-        .and_then(|v| v.as_u64())
-        .and_then(|v| usize::try_from(v).ok())
-        .ok_or_else(|| error(&format!("{key} index must be a nonnegative integer")))?;
-    document
-        .textures()
-        .nth(index)
-        .map(Some)
-        .ok_or_else(|| error(&format!("{key} index out of range")).into())
-}
-
 /// A material's clearcoat layer (KHR_materials_clearcoat).
-struct Clearcoat<'a> {
+struct Clearcoat {
     factor: f32,
     roughness: f32,
-    texture: Option<gltf::Texture<'a>>,
-    roughness_texture: Option<gltf::Texture<'a>>,
-    normal_texture: Option<gltf::Texture<'a>>,
+    texture: Option<MaterialTexture>,
+    roughness_texture: Option<MaterialTexture>,
+    normal_texture: Option<MaterialTexture>,
     normal_scale: f32,
 }
 
 // Authority: Khronos glTF KHR_materials_clearcoat/README.md and schema:
 // clearcoatFactor and clearcoatRoughnessFactor in 0..1, default 0; its
 // three textureInfos, clearcoatNormalTexture's scale defaulting to 1.
-fn read_clearcoat<'a>(
-    material: &gltf::Material<'a>,
-    document: &'a gltf::Document,
-) -> Result<Clearcoat<'a>> {
+fn read_clearcoat(material: &gltf::Material<'_>, document: &gltf::Document) -> Result<Clearcoat> {
     let mut clearcoat = Clearcoat {
         factor: 0.,
         roughness: 0.,
@@ -338,23 +310,23 @@ fn read_clearcoat<'a>(
 }
 
 /// A material's thin film (KHR_materials_iridescence).
-struct Iridescence<'a> {
+struct Iridescence {
     factor: f32,
     ior: f32,
     /// Its thinnest and thickest, in nanometres.
     thickness: [f32; 2],
-    texture: Option<gltf::Texture<'a>>,
-    thickness_texture: Option<gltf::Texture<'a>>,
+    texture: Option<MaterialTexture>,
+    thickness_texture: Option<MaterialTexture>,
 }
 
 // Authority: Khronos glTF KHR_materials_iridescence/README.md and schema:
 // iridescenceFactor in 0..1, default 0; iridescenceIor at least 1, default
 // 1.3; iridescenceThicknessMinimum and Maximum nonnegative nanometres,
 // default 100 and 400; iridescenceTexture and iridescenceThicknessTexture.
-fn read_iridescence<'a>(
-    material: &gltf::Material<'a>,
-    document: &'a gltf::Document,
-) -> Result<Iridescence<'a>> {
+fn read_iridescence(
+    material: &gltf::Material<'_>,
+    document: &gltf::Document,
+) -> Result<Iridescence> {
     let mut iridescence = Iridescence {
         factor: 0.,
         ior: 1.3,
@@ -439,7 +411,7 @@ fn color_factor(value: &serde_json::Value, most: f32) -> Option<[f32; 3]> {
 
 /// A material's occlusion map (glTF 2.0 `occlusionTexture`).
 struct Occlusion {
-    /// Its image and sampler, where it lies on `TEXCOORD_0`.
+    /// Its slot, where it lies on `TEXCOORD_0` or `TEXCOORD_1`.
     texture: Option<MaterialTexture>,
     /// glTF's `strength`, in `0..=1`; 1 without a map.
     strength: f32,
@@ -447,9 +419,9 @@ struct Occlusion {
 
 /// Material `index`'s occlusion map, where its metallic-roughness map is
 /// `mr_slot`. SGL3D samples it where it is that map, its image through its
-/// sampler (ORM packing); another image or sampler is kept but listed in
-/// `ignored`, and a map on another UV set, which SGL3D has no material input
-/// for, is left out and listed.
+/// sampler at its UV set and transform (ORM packing); a slot that differs
+/// in any of them is kept but listed in `ignored`, and a map on a UV set
+/// past the second, which SGL3D has no input for, is left out and listed.
 fn read_occlusion(
     material: &gltf::Material<'_>,
     mr_slot: Option<MaterialTexture>,
@@ -467,7 +439,20 @@ fn read_occlusion(
         let name = material.name().unwrap_or("unnamed/default");
         return Err(format!("material {name}: occlusionTexture.strength must be in 0..1").into());
     }
-    let texture = (occlusion.tex_coord() == 0).then(|| slot(occlusion.texture()));
+    let name = material.name().unwrap_or("unnamed/default");
+    let error = |message: &str| format!("material {name}: occlusionTexture {message}");
+    let transform = occlusion.extension_value(TRANSFORM);
+    let set = texture_info::tex_coord(u64::from(occlusion.tex_coord()), transform, &error)?;
+    let texture = if set < 2 {
+        Some(texture_info::map(
+            occlusion.texture(),
+            set,
+            transform,
+            &error,
+        )?)
+    } else {
+        None
+    };
     if texture.is_none() || texture != mr_slot {
         ignored.push(Ignored::OcclusionMap { material: index });
     }
@@ -554,46 +539,5 @@ fn scalar(
                 ))
                 .into()
             }),
-    }
-}
-
-/// `texture`'s image and sampler, as glTF 2.0 defines a sampler's absent
-/// properties (3.8.4, `sampler.schema.json`): repeating on both axes, and
-/// filtering the implementation chooses, trilinear for SGL3D. three.js r187
-/// reads them alike (examples/jsm/loaders/GLTFLoader.js 3376–3383).
-fn slot(texture: gltf::Texture<'_>) -> MaterialTexture {
-    let sampler = texture.sampler();
-    let wrap = |mode| match mode {
-        WrappingMode::Repeat => TextureWrap::Repeat,
-        WrappingMode::MirroredRepeat => TextureWrap::MirroredRepeat,
-        WrappingMode::ClampToEdge => TextureWrap::ClampToEdge,
-    };
-    let (min_filter, mipmap_filter) = match sampler.min_filter() {
-        Some(MinFilter::Nearest) => (TextureFilter::Nearest, None),
-        Some(MinFilter::Linear) => (TextureFilter::Linear, None),
-        Some(MinFilter::NearestMipmapNearest) => {
-            (TextureFilter::Nearest, Some(TextureFilter::Nearest))
-        }
-        Some(MinFilter::LinearMipmapNearest) => {
-            (TextureFilter::Linear, Some(TextureFilter::Nearest))
-        }
-        Some(MinFilter::NearestMipmapLinear) => {
-            (TextureFilter::Nearest, Some(TextureFilter::Linear))
-        }
-        Some(MinFilter::LinearMipmapLinear) | None => {
-            (TextureFilter::Linear, Some(TextureFilter::Linear))
-        }
-    };
-    MaterialTexture {
-        image: texture.source().index(),
-        sampler: Sampler {
-            mag_filter: match sampler.mag_filter() {
-                Some(MagFilter::Nearest) => TextureFilter::Nearest,
-                Some(MagFilter::Linear) | None => TextureFilter::Linear,
-            },
-            min_filter,
-            mipmap_filter,
-            wrap: [wrap(sampler.wrap_s()), wrap(sampler.wrap_t())],
-        },
     }
 }

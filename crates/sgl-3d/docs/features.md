@@ -56,11 +56,18 @@ them through unrefracted. A probe captured on an
   places and installs, and `EXT_mesh_gpu_instancing` nodes as one model a
   mesh and its placements (`Asset::instanced`, `AssetIds::instanced`),
   which the game installs as instances
-  ([Instanced glTF nodes](../README.md#instanced-gltf-nodes)). Every map lies on `TEXCOORD_0` and keeps its
-  texture's sampler (`asset::MaterialTexture`: nearest or linear
-  filtering, mipmapped or not, and repeat, mirror or clamp on each axis;
-  [Material textures](../README.md#material-textures)); `TEXCOORD_1` loads
-  as `Vertex::lightmap_uv`, the static irradiance atlas chart.
+  ([Instanced glTF nodes](../README.md#instanced-gltf-nodes)). Each map
+  (`asset::MaterialTexture`) keeps its
+  texture's sampler (nearest or linear filtering, mipmapped or not, and
+  repeat, mirror or clamp on each axis), samples the UV set it names,
+  `TEXCOORD_0` or `TEXCOORD_1` (two sets; `TEXCOORD_2` on fails the load),
+  through its own `KHR_texture_transform`, on both binding tiers, so
+  quantised UVs sample at their authored range; a material with a map on
+  the second set or transformed draws with pipelines of its own, a second
+  set costs its meshes 4 bytes a vertex, and first-set content pays nothing
+  ([Material textures](../README.md#material-textures)). `TEXCOORD_1`
+  also loads as `Vertex::lightmap_uv`, the static irradiance atlas chart,
+  whatever the maps sample.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
   `load_with_options` and `load_slice_with_options` (`LoadOptions`: an
   independent checked source/decoded byte caps, an emissive strength cap,
@@ -75,7 +82,8 @@ them through unrefracted. A probe captured on an
   without weakening structural validation or changing GPU limits.
   [Loading details](../README.md#asset-and-environment-limits). A file that
   requires an extension SGL3D does not support fails to load; one it only uses is left out and listed in `Asset::ignored`,
-  with occlusion maps in an image of their own and specular textures, which
+  with occlusion maps not sampled as the metallic-roughness map and
+  specular textures, which
   SGL3D does not sample yet, the images no sampled map uses, which are
   neither read nor decoded, vertex attributes nothing reads
   (`TEXCOORD_2` on, `COLOR_1` on, `_NAME`), and morph target displacements

@@ -8,6 +8,7 @@ pub(crate) fn mesh(triangles: impl IntoIterator<Item = [Vec3; 3]>) -> CpuMesh {
         .into_iter()
         .flatten()
         .map(|p| Vertex {
+            uv1: [0.0; 2],
             tangent: [0.0; 4],
             lightmap_bounds: [0., 0., 1., 1.],
             lightmap_uv: [0.; 2],

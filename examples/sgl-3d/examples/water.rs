@@ -221,6 +221,7 @@ fn cuboid(center: Vec3, size: Vec3, rotation: Quat, material: usize) -> CpuMesh 
             let local = (normal + u * s + v * t) * half;
             let tangent = rotation * u;
             mesh.vertices.push(Vertex {
+                uv1: [0.0; 2],
                 tangent: [tangent.x, tangent.y, tangent.z, 1.],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -243,6 +244,7 @@ fn quad(origin: Vec3, u: Vec3, v: Vec3, material: usize) -> CpuMesh {
     CpuMesh {
         vertices: [[0., 0.], [1., 0.], [1., 1.], [0., 1.]]
             .map(|[s, t]| Vertex {
+                uv1: [0.0; 2],
                 tangent: [tangent.x, tangent.y, tangent.z, 1.],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -554,6 +556,7 @@ fn chunk(origin: Vec3, material: MaterialId, morph: bool) -> (ModelMesh, Vec<[f3
             let (x, z) = (i as f32 * step, j as f32 * step);
             let world = origin + Vec3::new(x, 0., z);
             vertices.push(Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -728,6 +731,7 @@ fn lake(seconds: f32, material: MaterialId) -> ModelMesh {
             }
             let normal = Vec3::new(-slope[0], 1., -slope[1]).normalize();
             vertices.push(Vertex {
+                uv1: [0.0; 2],
                 tangent: [1., 0., 0., 1.],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

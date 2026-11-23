@@ -185,6 +185,7 @@ fn floor() -> crate::asset::Asset {
     asset.meshes = vec![CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, z)| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -611,6 +612,7 @@ fn plane(
     let mut asset = floor();
     asset.meshes[0].vertices = [(x[0], z[0]), (x[1], z[0]), (x[1], z[1]), (x[0], z[1])]
         .map(|(x, z)| Vertex {
+            uv1: [0.0; 2],
             tangent: [0.; 4],
             lightmap_bounds: [0., 0., 1., 1.],
             lightmap_uv: [0.; 2],

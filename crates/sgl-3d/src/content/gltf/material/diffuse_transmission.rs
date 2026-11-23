@@ -1,14 +1,14 @@
 //! A material's `KHR_materials_diffuse_transmission`: the diffuse light it
 //! passes to its other side.
-use super::super::super::asset::Result;
+use super::super::super::asset::{MaterialTexture, Result};
 use super::{GLTF_PROPERTY_KEYS, color_factor, extension_texture, unit_factor};
 
 /// A material's diffuse transmission (KHR_materials_diffuse_transmission).
-pub(super) struct DiffuseTransmission<'a> {
+pub(super) struct DiffuseTransmission {
     pub factor: f32,
     pub color: [f32; 3],
-    pub texture: Option<gltf::Texture<'a>>,
-    pub color_texture: Option<gltf::Texture<'a>>,
+    pub texture: Option<MaterialTexture>,
+    pub color_texture: Option<MaterialTexture>,
 }
 
 // Authority: Khronos glTF acfcbe65e40c53d6d3aa55a7299982bf2c01c75d,
@@ -16,10 +16,10 @@ pub(super) struct DiffuseTransmission<'a> {
 // diffuseTransmissionFactor in 0..1, default 0;
 // diffuseTransmissionColorFactor three nonnegative numbers, default white;
 // diffuseTransmissionTexture and diffuseTransmissionColorTexture.
-pub(super) fn read_diffuse_transmission<'a>(
-    material: &gltf::Material<'a>,
-    document: &'a gltf::Document,
-) -> Result<DiffuseTransmission<'a>> {
+pub(super) fn read_diffuse_transmission(
+    material: &gltf::Material<'_>,
+    document: &gltf::Document,
+) -> Result<DiffuseTransmission> {
     let mut transmission = DiffuseTransmission {
         factor: 0.,
         color: [1.; 3],

@@ -4,6 +4,7 @@
 //! period of material animation, by which the frame's time is reduced.
 use crate::content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 use crate::shading::bind::group2::MaterialMap;
+use crate::shading::map_uvs::MapUvs;
 use crate::shading::samplers::MapSamplers;
 
 /// The seconds after which material animation repeats exactly: an hour, the
@@ -152,7 +153,9 @@ pub(crate) struct MaterialUniform {
     pub iridescence: f32,
     pub iridescence_ior: f32,
     pub iridescence_thickness: [f32; 2],
-    pub padding: [u32; 2],
+    /// Where its map bindings sample (`MapUvs::bits`).
+    pub map_uv_bits: u32,
+    pub padding: u32,
     /// Beer-Lambert's attenuation coefficient per metre on each channel
     /// (`attenuation_coefficient`).
     pub attenuation: [f32; 3],
@@ -182,8 +185,13 @@ pub(crate) struct MaterialUniform {
 
 impl MaterialUniform {
     /// `values` with its maps in effect, `maps`, sampled as `samplers`
-    /// says, as the shaders read them.
-    pub fn new(values: &SurfaceMaterial, maps: MaterialMaps, samplers: &MapSamplers) -> Self {
+    /// says where `uvs` says, as the shaders read them.
+    pub fn new(
+        values: &SurfaceMaterial,
+        maps: MaterialMaps,
+        samplers: &MapSamplers,
+        uvs: &MapUvs,
+    ) -> Self {
         let bit = |on: bool, bit: u32| if on { bit } else { 0 };
         let (alpha_cutoff, alpha) = match values.alpha {
             AlphaMode::Opaque => (0., 0),
@@ -234,7 +242,8 @@ impl MaterialUniform {
             iridescence: values.iridescence,
             iridescence_ior: values.iridescence_ior,
             iridescence_thickness: values.iridescence_thickness,
-            padding: [0; 2],
+            map_uv_bits: uvs.bits(),
+            padding: 0,
             attenuation: values
                 .attenuation_color
                 .map(|color| attenuation_coefficient(color, values.attenuation_distance)),

@@ -880,6 +880,7 @@ fn a_mirror_reflects_radiance_once() {
 fn tilted_mirror(rig: &mut Rig, reflector: PlanarReflectorId, tilt: f32) -> InstanceId {
     let [low, high] = [-MIRROR * 0.5, MIRROR * 0.5];
     let vertex = |x: f32, y: f32| Vertex {
+        uv1: [0.0; 2],
         position: [x, y, 0.],
         normal: [0., tilt.sin(), tilt.cos()],
         uv: [0.; 2],
@@ -1012,6 +1013,7 @@ fn a_floor_under_a_moving_viewer_reflects() {
         .unwrap();
     // A floor: a mesh in the plane y = `height`, facing up.
     let vertex = |x: f32, z: f32| Vertex {
+        uv1: [0.0; 2],
         position: [x, 0., z],
         normal: [0., 1., 0.],
         uv: [0.; 2],

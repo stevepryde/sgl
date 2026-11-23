@@ -566,6 +566,7 @@ fn one_rule_for_every_indirect_source() {
     let mut model = test_support::cube();
     model.meshes[0].vertices = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
         .map(|(x, z)| asset::Vertex {
+            uv1: [0.0; 2],
             tangent: [0.; 4],
             position: [x, -50., z],
             normal: [0., 1., 0.],

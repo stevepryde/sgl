@@ -13,16 +13,24 @@ struct SceneRayInstance {
 @group(1) @binding(1) var<storage,read> scene_source:array<u32>;
 @group(1) @binding(2) var<storage,read> scene_instances:array<SceneRayInstance>;
 
+// `tangent` and `bitangent` are its position's derivatives along U and V of
+// its first UV set. `uv1`, with `tangent1` and `bitangent1` along it, is its
+// second set, decoded only where a map of its material samples it
+// (scene_decode_hit), else zero.
 struct SceneHit {
  hit:bool, distance:f32, position:vec3<f32>, normal:vec3<f32>,
  geometric_normal:vec3<f32>, front_face:bool, uv:vec2<f32>, color:vec4<f32>,
  instance_id:u32, instance_flags:u32, mesh_id:u32, primitive_id:u32,
  material_word:u32, barycentrics:vec2<f32>,
  tangent:vec3<f32>, bitangent:vec3<f32>, lightmap_uv:vec2<f32>, lightmap_bounds:vec4<f32>, authored_tangent:vec4<f32>,
+ uv1:vec2<f32>, tangent1:vec3<f32>, bitangent1:vec3<f32>,
 }
+// A material's record: its values, textures and lightmap eligibility, and
+// the word it starts at, where its map bindings' transforms are read
+// (scene_map_uv).
 struct SceneMaterial {
  values:Material,
- textures:array<u32,SCENE_TEXTURES>, baked:u32,
+ textures:array<u32,SCENE_TEXTURES>, baked:u32, word:u32,
 }
 fn scene_f32(at:u32)->f32 {
  return bitcast<f32>(scene_source[at]);
@@ -51,6 +59,7 @@ fn scene_material_values(at:u32)->Material {
  array<NormalLayer,2>(scene_normal_layer(layers),scene_normal_layer(layers+SCENE_NORMAL_LAYER_WORDS)),
  scene_source[at+SCENE_MATERIAL_MAPS],scene_f32(at+SCENE_MATERIAL_COAT_NORMAL_SCALE),
  scene_f32(at+SCENE_MATERIAL_IRIDESCENCE),scene_f32(at+SCENE_MATERIAL_IRIDESCENCE_IOR),scene_v2(at+SCENE_MATERIAL_IRIDESCENCE_THICKNESS),
+ scene_source[at+SCENE_MATERIAL_MAP_UV_BITS],
  scene_v3(at+SCENE_MATERIAL_ATTENUATION),scene_f32(at+SCENE_MATERIAL_TRANSMISSION),
  scene_f32(at+SCENE_MATERIAL_THICKNESS),scene_f32(at+SCENE_MATERIAL_IOR),scene_f32(at+SCENE_MATERIAL_DISPERSION),
  scene_v3(at+SCENE_MATERIAL_SHEEN),scene_f32(at+SCENE_MATERIAL_SHEEN_ROUGHNESS),
@@ -63,7 +72,7 @@ fn scene_material(at:u32)->SceneMaterial {
  for (var texture=0u;texture<SCENE_TEXTURES;texture++) {
   textures[texture]=scene_source[first+texture];
  }
- return SceneMaterial(scene_material_values(at),textures,scene_source[at+SCENE_MATERIAL_BAKED]);
+ return SceneMaterial(scene_material_values(at),textures,scene_source[at+SCENE_MATERIAL_BAKED],at);
 }
 fn scene_image_size(image_word:u32)->vec2<u32> {
  return vec2(scene_source[image_word+SCENE_IMAGE_WIDTH],scene_source[image_word+SCENE_IMAGE_HEIGHT]);
@@ -113,10 +122,41 @@ fn scene_sample_texture(image_word:u32,uv:vec2<f32>,state:u32,srgb:bool)->vec4<f
 fn scene_sample_map(samplers:vec4<u32>,image_word:u32,slot:u32,uv:vec2<f32>,srgb:bool)->vec4<f32> {
  return scene_sample_texture(image_word,uv,material_map_sampler(samplers,slot),srgb);
 }
-// A ray hit's base colour at `uv` with vertex colour `color`: the material's
-// base times the vertex colour and its base map at LOD 0.
-fn scene_base_color(material:SceneMaterial,uv:vec2<f32>,color:vec4<f32>)->vec4<f32> {
- return material.values.base*color*scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BASE],MATERIAL_SLOT_BASE,uv,true);
+// Map binding `slot`'s transform of the material whose record is at word
+// `at`.
+fn scene_map_uv_rows(at:u32,slot:u32)->MapUv {
+ let rows=at+SCENE_MATERIAL_MAP_UVS+slot*SCENE_MAP_UV_WORDS;
+ return MapUv(scene_v3(rows+SCENE_MAP_UV_U),scene_v3(rows+SCENE_MAP_UV_V));
+}
+// Whether map binding `slot` of a record whose map_uv_bits are `bits`
+// samples the second UV set, and whether through a transform.
+fn scene_map_on_uv1(bits:u32,slot:u32)->bool {
+ return (bits&(1u<<slot))!=0u;
+}
+fn scene_map_transformed(bits:u32,slot:u32)->bool {
+ return (bits&(1u<<(slot+MAP_UV_TRANSFORMED_SHIFT)))!=0u;
+}
+// Where map binding `slot` (MATERIAL_SLOT_*) of `material` samples at a
+// point whose first and second UV sets are `uv` and `uv1`: its set, through
+// its transform, read from the record only where its bit is set. Ray hits'
+// one resolution, as material_map_uv is raster's
+// (specs/sgl3d-architecture.md, Material map coordinates).
+fn scene_map_uv(material:SceneMaterial,slot:u32,uv:vec2<f32>,uv1:vec2<f32>)->vec2<f32> {
+ let bits=material.values.map_uv_bits;
+ var coordinates=uv;
+ if scene_map_on_uv1(bits,slot) {
+  coordinates=uv1;
+ }
+ if scene_map_transformed(bits,slot) {
+  coordinates=map_uv_transform(scene_map_uv_rows(material.word,slot),coordinates);
+ }
+ return coordinates;
+}
+// A ray hit's base colour, where its first and second UV sets are `uv` and
+// `uv1`, with vertex colour `color`: the material's base times the vertex
+// colour and its base map at its binding's coordinates at LOD 0.
+fn scene_base_color(material:SceneMaterial,uv:vec2<f32>,uv1:vec2<f32>,color:vec4<f32>)->vec4<f32> {
+ return material.values.base*color*scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BASE],MATERIAL_SLOT_BASE,scene_map_uv(material,MATERIAL_SLOT_BASE,uv,uv1),true);
 }
 // The rectangle the packed UVs of the mesh whose record is at `mesh` span
 // (min in xy, extent in zw).
@@ -139,6 +179,15 @@ fn scene_vertex_color(at:u32)->vec4<f32> {
 }
 fn scene_vertex_lightmap_uv(at:u32)->vec2<f32> {
  return packed_vertex_lightmap_uv(scene_source[at+PACKED_VERTEX_LIGHTMAP_UV]);
+}
+// Vertex `vertex`'s second UV set of the mesh whose record is at `mesh`:
+// zero for a mesh without one.
+fn scene_vertex_uv1(mesh:u32,vertex:u32)->vec2<f32> {
+ let at=scene_source[mesh+SCENE_MESH_UV1];
+ if at==0u {
+  return vec2(0.);
+ }
+ return packed_vertex_uv(scene_source[at+SCENE_UV1_VERTICES+vertex],scene_v4(at+SCENE_UV1_RECT));
 }
 // Its lightmap chart's bounds, from the chart table of the mesh whose record
 // is at `mesh`.
@@ -205,6 +254,21 @@ fn scene_shown_frame(index:u32,mesh:u32,vertex:u32)->PackedFrame {
 // masked any-hit test read them.
 fn scene_interpolated_uv(rect:vec4<f32>,vertices:vec3<u32>,b:vec3<f32>)->vec2<f32> {
  return scene_vertex_uv(vertices.x,rect)*b.x+scene_vertex_uv(vertices.y,rect)*b.y+scene_vertex_uv(vertices.z,rect)*b.z;
+}
+// The second UV set of triangle `triangle`, its vertices' indices, of the
+// mesh whose record is at `mesh`, at barycentrics `b`.
+fn scene_interpolated_uv1(mesh:u32,triangle:vec3<u32>,b:vec3<f32>)->vec2<f32> {
+ return scene_vertex_uv1(mesh,triangle.x)*b.x+scene_vertex_uv1(mesh,triangle.y)*b.y+scene_vertex_uv1(mesh,triangle.z)*b.z;
+}
+// A triangle's position derivatives along a UV set, from its edges `dp1`
+// and `dp2` and the set's along them, `duv1` and `duv2`; zero where the
+// set does not span the triangle.
+fn scene_uv_frame(dp1:vec3<f32>,dp2:vec3<f32>,duv1:vec2<f32>,duv2:vec2<f32>)->MapUvFrame {
+ let determinant=duv1.x*duv2.y-duv1.y*duv2.x;
+ if abs(determinant)>1e-12 {
+  return MapUvFrame((dp1*duv2.y-dp2*duv1.y)/determinant,(dp2*duv1.x-dp1*duv2.x)/determinant);
+ }
+ return MapUvFrame(vec3(0.),vec3(0.));
 }
 fn scene_interpolated_color(vertices:vec3<u32>,b:vec3<f32>)->vec4<f32> {
  return scene_vertex_color(vertices.x)*b.x+scene_vertex_color(vertices.y)*b.y+scene_vertex_color(vertices.z)*b.z;
@@ -285,12 +349,18 @@ fn scene_decode_hit(raw:RawSceneHit,origin:vec3<f32>,direction:vec3<f32>)->Scene
  result.barycentrics=raw.coords.yz;
  let dp1=(world*vec4(positions[1]-positions[0],0.)).xyz;
  let dp2=(world*vec4(positions[2]-positions[0],0.)).xyz;
- let duv1=uv1-uv0;
- let duv2=uv2-uv0;
- let determinant=duv1.x*duv2.y-duv1.y*duv2.x;
- if abs(determinant)>1e-12 {
-  result.tangent=(dp1*duv2.y-dp2*duv1.y)/determinant;
-  result.bitangent=(dp2*duv1.x-dp1*duv2.x)/determinant;
+ let first=scene_uv_frame(dp1,dp2,uv1-uv0,uv2-uv0);
+ result.tangent=first.du;
+ result.bitangent=first.dv;
+ // Its second UV set, where a map binding of its material samples it.
+ if (scene_source[result.material_word+SCENE_MATERIAL_MAP_UV_BITS]&((1u<<MAP_UV_TRANSFORMED_SHIFT)-1u))!=0u {
+  let a=scene_vertex_uv1(mesh,triangle.x);
+  let c=scene_vertex_uv1(mesh,triangle.y);
+  let d=scene_vertex_uv1(mesh,triangle.z);
+  result.uv1=a*b.x+c*b.y+d*b.z;
+  let second=scene_uv_frame(dp1,dp2,c-a,d-a);
+  result.tangent1=second.du;
+  result.bitangent1=second.dv;
  }
  return result;
 }

@@ -20,6 +20,7 @@ fn square(z: f32, half: f32, material: crate::asset::Material) -> crate::asset::
     asset.meshes[0] = crate::asset::CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, y)| crate::asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -208,6 +209,7 @@ fn quad(origin: Vec3, u: Vec3, v: Vec3, material: crate::asset::Material) -> cra
     asset.meshes[0] = crate::asset::CpuMesh {
         vertices: [(0., 0.), (1., 0.), (1., 1.), (0., 1.)]
             .map(|(s, t)| crate::asset::Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

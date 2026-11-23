@@ -126,6 +126,7 @@ fn quad(corners: [Vec3; 4], normal: Vec3, material: usize) -> CpuMesh {
     CpuMesh {
         vertices: corners
             .map(|position| Vertex {
+                uv1: [0.0; 2],
                 tangent: [1., 0., 0., 1.],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],

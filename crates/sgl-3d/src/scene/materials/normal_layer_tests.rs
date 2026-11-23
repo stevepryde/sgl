@@ -75,6 +75,7 @@ fn plane(material: Material) -> Asset {
     asset.meshes = vec![CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, y)| Vertex {
+                uv1: [0.0; 2],
                 position: [x * HALF, y * HALF, -DEPTH],
                 normal: [0., 0., 1.],
                 uv: [(x + 1.) / 2., (y + 1.) / 2.],

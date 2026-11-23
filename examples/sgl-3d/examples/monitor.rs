@@ -40,6 +40,7 @@ const MEASURED: u32 = 240;
 
 fn vertex(position: Vec3, normal: Vec3, uv: [f32; 2], tangent: Vec3) -> Vertex {
     Vertex {
+        uv1: [0.0; 2],
         position: position.to_array(),
         normal: normal.to_array(),
         uv,
@@ -247,11 +248,11 @@ fn build(
     let glass = Material {
         emissive: [1.5; 3],
         emissive_texture: Some(MaterialTexture {
-            image: 0,
             sampler: Sampler {
                 wrap: [TextureWrap::ClampToEdge; 2],
                 ..Sampler::default()
             },
+            ..MaterialTexture::new(0)
         }),
         ..material([0., 0., 0.], 0.15)
     };

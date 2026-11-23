@@ -121,6 +121,7 @@ fn cuboid(center: Vec3, size: Vec3, material: usize) -> CpuMesh {
                     let s = (x as f32 + dx) / 8. * 2. - 1.;
                     let t = (y as f32 + dy) / 8. * 2. - 1.;
                     mesh.vertices.push(Vertex {
+                        uv1: [0.0; 2],
                         tangent: [u.x, u.y, u.z, 1.],
                         lightmap_bounds: [0., 0., 1., 1.],
                         lightmap_uv: [0.; 2],

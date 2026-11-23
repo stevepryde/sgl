@@ -24,6 +24,7 @@ fn sphere() -> crate::asset::Asset {
             let (theta, phi) = (u * 2. * PI, v * PI);
             let normal = Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin());
             vertices.push(Vertex {
+                uv1: [0.0; 2],
                 position: normal.to_array(),
                 normal: normal.to_array(),
                 uv: [u * 4., v * 4.],
@@ -158,6 +159,7 @@ fn square(z: f32, half: f32) -> CpuMesh {
     CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(x, y)| Vertex {
+                uv1: [0.0; 2],
                 position: [x * half, y * half, z],
                 normal: [0., 0., 1.],
                 uv: [(x + 1.) / 2., (1. - y) / 2.],

@@ -47,6 +47,7 @@ fn face(center: Vec3, u: Vec3, v: Vec3) -> CpuMesh {
     CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
             .map(|(a, b): (f32, f32)| Vertex {
+                uv1: [0.0; 2],
                 position: (center + u * a + v * b).to_array(),
                 normal: normal.to_array(),
                 uv: [(a + 1.) / 2., (1. - b) / 2.],

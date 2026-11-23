@@ -9,7 +9,7 @@ use gltf::accessor::DataType::{self, F32, I8, I16, U8, U16, U32};
 use gltf::accessor::Dimensions::{self, Scalar, Vec2, Vec4};
 use std::collections::HashMap;
 
-use super::super::asset::{CpuMesh, Material, Result, Vertex, tangent_off_normal};
+use super::super::asset::{CpuMesh, Material, Result, UvSet, Vertex, tangent_off_normal};
 use super::super::deformation::{MeshDeformation, MorphTarget};
 use super::attributes::{DIRECTION_TYPES, attribute, check_direction};
 use super::check_accessor;
@@ -293,7 +293,9 @@ fn read_primitives(
                     Semantic::Positions => (&[F32, I8, U8, I16, U16], &[Dimensions::Vec3]),
                     Semantic::Normals => (DIRECTION_TYPES, &[Dimensions::Vec3]),
                     Semantic::Tangents => (DIRECTION_TYPES, &[Vec4]),
-                    // TEXCOORD_1 is the lightmap UV (`Vertex::lightmap_uv`).
+                    // TEXCOORD_1 is the lightmap UV (`Vertex::lightmap_uv`)
+                    // and, where a map of the material samples it, the
+                    // second UV set (`Vertex::uv1`).
                     Semantic::TexCoords(0 | 1) => (&[F32, I8, U8, I16, U16], &[Vec2]),
                     Semantic::Colors(0) => (&[F32, U8, U16], &[Dimensions::Vec3, Vec4]),
                     Semantic::Joints(0) => (&[U8, U16], &[Vec4]),
@@ -365,9 +367,25 @@ fn read_primitives(
             let uvs: Option<Vec<[f32; 2]>> = attribute(&primitive, Semantic::TexCoords(0), buffers);
             let lightmap_uvs: Option<Vec<[f32; 2]>> =
                 attribute(&primitive, Semantic::TexCoords(1), buffers);
-            let textured = material.textures().iter().any(Option::is_some);
-            if textured && uvs.is_none() {
+            // Each UV set a map SGL3D samples names must be the
+            // primitive's (glTF 2.0 3.9.2); an occlusion map it leaves out
+            // asks for none.
+            let samples = |set: UvSet| {
+                material
+                    .sampled_textures()
+                    .any(|texture| texture.uv_set == set)
+            };
+            if samples(UvSet::Uv0) && uvs.is_none() {
                 return Err(format!("{label}: textured primitive is missing TEXCOORD_0").into());
+            }
+            // The second set is kept only where a map samples it.
+            let second = samples(UvSet::Uv1);
+            if second && lightmap_uvs.is_none() {
+                return Err(format!(
+                    "{label}: material {} samples TEXCOORD_1, which the primitive lacks",
+                    material.name
+                )
+                .into());
             }
             if normals.len() != positions.len()
                 || tangents
@@ -436,6 +454,10 @@ fn read_primitives(
                         position: position.to_array(),
                         normal: normal.to_array(),
                         uv: uvs.as_ref().map_or([0.0; 2], |uv| uv[i]),
+                        uv1: match &lightmap_uvs {
+                            Some(uv) if second => uv[i],
+                            _ => [0.0; 2],
+                        },
                         color: colors.as_ref().map_or([1.0; 4], |colors| colors[i]),
                     })
                 })

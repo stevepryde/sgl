@@ -5,7 +5,8 @@
 //!
 //! It creates a device with the adapter's limits, builds a scene and renders
 //! a few frames of it under several settings into an offscreen target. The
-//! scene holds a textured ground; a box that shades part of it from a
+//! scene holds a textured ground, its map on its second UV set through a
+//! transform; a box that shades part of it from a
 //! shadowed sun; a masked grate and a blended pane that receives
 //! screen-space reflections; a skinned and morphed box
 //! with an ambient cube; a box lit by a static irradiance atlas; point, spot
@@ -58,7 +59,7 @@ use sgl_3d::{
     SurfaceMaterial, View, ViewFrame, ViewOutput,
     asset::{
         Asset, CompressedImage, CpuMesh, Image, Material, MaterialTexture, Sampler, TextureFilter,
-        TextureWrap, Vertex,
+        TextureWrap, UvSet, UvTransform, Vertex,
     },
     deformation::{
         Influence, Joint, MeshDeformation, MorphDelta, MorphTarget, MorphWeight, Node, Rig,
@@ -120,6 +121,9 @@ fn cuboid(center: Vec3, size: Vec3, material: usize) -> CpuMesh {
         let start = mesh.vertices.len() as u32;
         for [s, t] in [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]] {
             mesh.vertices.push(Vertex {
+                // A second UV set, which the ground's base map samples
+                // (`world`).
+                uv1: [(t + 1.) * 0.5, (s + 1.) * 0.5],
                 tangent: [u.x, u.y, u.z, 1.],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -140,6 +144,7 @@ fn panel(center: Vec3, u: Vec3, v: Vec3, material: usize) -> CpuMesh {
     CpuMesh {
         vertices: [[-1., -1.], [1., -1.], [1., 1.], [-1., 1.]]
             .map(|[s, t]| Vertex {
+                uv1: [0.0; 2],
                 tangent: [u.x, u.y, u.z, 1.],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -161,23 +166,33 @@ fn panel(center: Vec3, u: Vec3, v: Vec3, material: usize) -> CpuMesh {
 /// pipelines that sample a map in the shader.
 fn black_emission_map() -> Option<MaterialTexture> {
     Some(MaterialTexture {
-        image: 0,
         sampler: Sampler {
             mag_filter: TextureFilter::Nearest,
             min_filter: TextureFilter::Nearest,
             mipmap_filter: None,
             wrap: [TextureWrap::ClampToEdge; 2],
         },
+        ..MaterialTexture::new(0)
     })
 }
 
 /// The textured ground and the box that shadows it. The ground's base
 /// texture is a uniform light grey, so its texels do not vary between the
-/// measured points; its black emission map is sampled in the shader
-/// (`black_emission_map`).
+/// measured points: it samples the mesh's second UV set through a rotating
+/// and tiling transform, which draws the ground through the pipelines that
+/// resolve a map's coordinates. Its black emission map is sampled in the
+/// shader (`black_emission_map`).
 fn world() -> Asset {
     let mut ground = material([1.; 4], 0., 0.8);
-    ground.base_texture = Some(MaterialTexture::new(0));
+    ground.base_texture = Some(MaterialTexture {
+        uv_set: UvSet::Uv1,
+        transform: UvTransform {
+            offset: [0.25, 0.5],
+            rotation: 0.6,
+            scale: [4., 4.],
+        },
+        ..MaterialTexture::new(0)
+    });
     ground.emissive_texture = black_emission_map();
     Asset {
         meshes: vec![
@@ -470,6 +485,7 @@ fn add_glass(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene) -> R
     let mesh = ModelMesh {
         vertices: corners
             .map(|(x, y)| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_bounds: [0., 0., 1., 1.],
                 lightmap_uv: [0.; 2],
@@ -1526,11 +1542,11 @@ fn emitter(emission: [f32; 3]) -> Material {
     Material {
         emissive: emission,
         emissive_texture: Some(MaterialTexture {
-            image: 0,
             sampler: Sampler {
                 wrap: [TextureWrap::ClampToEdge; 2],
                 ..Sampler::default()
             },
+            ..MaterialTexture::new(0)
         }),
         unlit: true,
         double_sided: true,

@@ -24,6 +24,7 @@ fn camera_surfaces_exclude_specular_ibl_and_keep_diffuse_and_emission() {
     world.meshes = vec![CpuMesh {
         vertices: [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
             .map(|[x, y]| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_uv: [0.; 2],
                 lightmap_bounds: [0., 0., 1., 1.],
@@ -174,6 +175,7 @@ fn captures_shade_scene_lights_by_the_ownership_rule() {
     floor.meshes = vec![CpuMesh {
         vertices: [[-2., -2.], [2., -2.], [2., 2.], [-2., 2.]]
             .map(|[x, z]| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_uv: [0.5; 2],
                 lightmap_bounds: [0., 0., 1., 1.],
@@ -842,6 +844,7 @@ fn captured_floor<const N: usize>(
     floor.meshes = vec![CpuMesh {
         vertices: [[-2., -2.], [2., -2.], [2., 2.], [-2., 2.]]
             .map(|[x, z]| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_uv: [0.; 2],
                 lightmap_bounds: [0., 0., 1., 1.],
@@ -1002,6 +1005,7 @@ fn a_capture_stores_a_sub_texel_emitter_at_its_solid_angle() {
     strip.meshes = vec![CpuMesh {
         vertices: [[x[0], y[0]], [x[1], y[0]], [x[1], y[1]], [x[0], y[1]]]
             .map(|[x, y]| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_uv: [0.; 2],
                 lightmap_bounds: [0., 0., 1., 1.],
@@ -1143,6 +1147,7 @@ fn captured_minified_floor(image: crate::asset::Image) -> Option<f32> {
     floor.meshes = vec![CpuMesh {
         vertices: [[-2., -2.], [2., -2.], [2., 2.], [-2., 2.]]
             .map(|[x, z]| Vertex {
+                uv1: [0.0; 2],
                 tangent: [0.; 4],
                 lightmap_uv: [0.; 2],
                 lightmap_bounds: [0., 0., 1., 1.],
@@ -1222,5 +1227,108 @@ fn a_capture_before_any_frame_samples_the_chains_of_decoded_images() {
     assert!(
         prepared > 1. && (decoded - prepared).abs() <= prepared * 0.02,
         "a capture holds {decoded} of the decoded floor and {prepared} of the prepared one"
+    );
+}
+
+// A probe capture's faces read each map where its slot samples, as the
+// camera's surfaces do (Material map coordinates). Plausible defects: the
+// capture's pipelines drawn without the material's second UV set or its
+// transform (their variant dropped for the probe faces), so a captured
+// surface shows another part of its map. An unlit floor's base map is
+// black over its left half and white over its right, sampled nearest, on
+// the second set, which holds U 0.4 everywhere, through u' = 1.5 u + 0.1:
+// U 0.7, white. Its first set holds U 0.1 (black), the second set
+// untransformed is black, and a second set that never reached the
+// fragment reads U 0.1, black. The oracle is equivalence: the capture
+// holds what it holds of the same floor untextured, white.
+#[test]
+fn a_capture_reads_a_map_where_its_slot_samples() {
+    use crate::asset::{
+        CpuMesh, Image, MaterialTexture, Sampler, TextureFilter, TextureWrap, UvSet, UvTransform,
+        Vertex,
+    };
+    use crate::baked_specular_probe::SpecularProbeTexels;
+    use crate::settings::Settings;
+    use crate::{Camera, FrameInput, Scene};
+    use glam::{Mat4, Vec3};
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let captured = |textured: bool| {
+        let mut floor = crate::test_support::cube();
+        floor.meshes = vec![CpuMesh {
+            vertices: [[-2., -2.], [2., -2.], [2., 2.], [-2., 2.]]
+                .map(|[x, z]| Vertex {
+                    position: [x, -1., z],
+                    normal: [0., 1., 0.],
+                    uv: [0.1, 0.5],
+                    uv1: [0.4, 0.5],
+                    color: [1.; 4],
+                    lightmap_bounds: [0., 0., 1., 1.],
+                    ..bytemuck::Zeroable::zeroed()
+                })
+                .to_vec(),
+            indices: vec![0, 2, 1, 0, 3, 2],
+            material: 0,
+            deformation: Default::default(),
+        }];
+        floor.materials[0] = crate::asset::Material {
+            unlit: true,
+            ..Default::default()
+        };
+        if textured {
+            floor.images = vec![Image::Rgba8(image::RgbaImage::from_fn(2, 1, |x, _| {
+                let value = if x == 0 { 0 } else { 255 };
+                image::Rgba([value, value, value, 255])
+            }))];
+            floor.materials[0].base_texture = Some(MaterialTexture {
+                sampler: Sampler {
+                    mag_filter: TextureFilter::Nearest,
+                    min_filter: TextureFilter::Nearest,
+                    mipmap_filter: None,
+                    wrap: [TextureWrap::ClampToEdge; 2],
+                },
+                uv_set: UvSet::Uv1,
+                transform: UvTransform {
+                    offset: [0.1, 0.],
+                    rotation: 0.,
+                    scale: [1.5, 1.],
+                },
+                ..MaterialTexture::new(0)
+            });
+        }
+        let mut scene = Scene::new(&device, &queue);
+        crate::test_support::add_static(&device, &queue, &mut scene, floor);
+        let input = FrameInput::new(Camera {
+            view: Mat4::IDENTITY,
+            projection: Mat4::IDENTITY,
+            eye: Vec3::ZERO,
+        });
+        let settings = Settings::default();
+        let mut renderer = TestRenderer::for_test(&device, &queue, [64, 64], &settings);
+        let radiance = renderer
+            .capture_specular_probe(
+                &device,
+                &queue,
+                &mut scene,
+                &input,
+                &settings,
+                Vec3::ZERO,
+                64,
+            )
+            .unwrap();
+        let SpecularProbeTexels::Rgba16Float(texels) = radiance.texels else {
+            unreachable!("captures return RGBA16F")
+        };
+        texels
+            .chunks_exact(4)
+            .map(|texel| crate::test_support::half(&texel[0].to_le_bytes()))
+            .sum::<f32>()
+    };
+    let white = captured(false);
+    let mapped = captured(true);
+    assert!(
+        white > 100. && (mapped - white).abs() < white * 1e-3,
+        "the capture holds {mapped} of the mapped floor and {white} of the white one"
     );
 }
