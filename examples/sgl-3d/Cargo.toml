@@ -29,7 +29,8 @@ futures.workspace = true
 js-sys.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
-# `browser_loading` presents its loading screen on the page's canvas.
+# `browser_loading` presents its loading screen on the page's canvas; the
+# startup comparison (`browser_baseline`) renders to it too.
 web-sys.workspace = true
 
 [[example]]

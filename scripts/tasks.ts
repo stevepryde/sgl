@@ -4,7 +4,8 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--baseline | --bistro | --loading [--ordinary] [--jobs-per-frame <count>]] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--depth-of-field off|low|medium|high] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>]";
+  "measure-browser [--baseline | --bistro | --loading [--ordinary] [--jobs-per-frame <count>]] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--depth-of-field off|low|medium|high] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>] | " +
+  "measure-browser --startup [--scene minimal|opening] [--runs <count>] [--startup-path ordinary|prepared] [--captures <directory>] [--output <json>] [--skip-build]";
 
 if (task === "check-browser") {
   if (options.length !== 0) throw new Error(USAGE);
@@ -324,9 +325,24 @@ async function measureBrowser(args: string[]): Promise<void> {
   let output: string | undefined;
   let radius = [4, 2];
   let occlusion = false;
+  let startup = false;
+  const startupOptions: {scenes:("minimal"|"opening")[];runs:number;path:"ordinary"|"prepared";captureDir?:string} = {scenes:["minimal","opening"],runs:3,path:"ordinary"};
   for (let at = 0; at < args.length; at += 1) {
     if (args[at] === "--baseline") baseline = true;
     else if (args[at] === "--bistro") bistro = true;
+    else if (args[at] === "--startup") startup = true;
+    else if (args[at] === "--scene" && at+1<args.length) {
+      const scene=args[++at];
+      if (scene!=="minimal" && scene!=="opening") throw new Error("--scene needs minimal|opening");
+      startupOptions.scenes=[scene];
+    }
+    else if (args[at] === "--runs" && at+1<args.length) startupOptions.runs=Number(args[++at]);
+    else if (args[at] === "--startup-path" && at+1<args.length) {
+      const path=args[++at];
+      if (path!=="ordinary" && path!=="prepared") throw new Error("--startup-path needs ordinary|prepared");
+      startupOptions.path=path;
+    }
+    else if (args[at] === "--captures" && at+1<args.length) startupOptions.captureDir=args[++at];
     else if (args[at] === "--asset-dir" && at+1<args.length) assetDir=args[++at];
     else if (args[at] === "--fixture" && at+1<args.length) fixturePath=args[++at];
     else if (args[at] === "--settings" && at+1<args.length) settingsPath=args[++at];
@@ -363,6 +379,8 @@ async function measureBrowser(args: string[]): Promise<void> {
     } else throw new Error(USAGE);
   }
   if (!Number.isInteger(frames) || frames < 60) throw new Error("--frames must be at least 60");
+  if (startup && (baseline || bistro)) throw new Error("--startup is a measurement of its own; drop --baseline and --bistro");
+  if (!Number.isInteger(startupOptions.runs) || startupOptions.runs < 1) throw new Error("--runs must be at least 1");
   if (radius.length !== 2 || !radius.every((r) => Number.isInteger(r) && r >= 0)) {
     throw new Error("--radius takes two whole numbers, across and up");
   }
@@ -382,9 +400,10 @@ async function measureBrowser(args: string[]): Promise<void> {
   if (!bistro && (Object.keys(sceneOptions).length || fixturePath || settingsPath || assetDir!=="target/bistro-browser-512")) throw new Error("scene options require --bistro or --fixture");
   if (bistro && (scaled || prepared || occlusion || localShadows)) throw new Error("--bistro uses explicit fixture/settings instead of --scaled, --prepared, --local-shadows or --occlusion");
   if ((baseline || bistro) && frames > 3600) throw new Error("--baseline --frames must not exceed 3600");
-  if ((scaled || prepared || capturePath || output) && !baseline && !bistro) throw new Error("--scaled, --prepared, --capture and --output require --baseline or --bistro");
+  if ((scaled || prepared || capturePath || output) && !baseline && !bistro && !(startup && !scaled && !prepared && !capturePath)) throw new Error("--scaled, --prepared and --capture require --baseline or --bistro; --output requires --baseline, --bistro or --startup");
   if (localShadows && !baseline) throw new Error("--local-shadows requires --baseline");
-  const example = bistro ? "browser_bistro" : baseline ? "browser_baseline" : "browser_streaming";
+  if (!startup && (startupOptions.captureDir || startupOptions.runs !== 3 || startupOptions.path !== "ordinary" || startupOptions.scenes.length !== 2)) throw new Error("--scene, --runs, --startup-path and --captures require --startup");
+  const example = bistro ? "browser_bistro" : baseline || startup ? "browser_baseline" : "browser_streaming";
   const buildMetadataPath = `${MEASURE_DIR}/${example}.build.json`;
   // Capture provenance at the build boundary, not when a saved binary is rerun.
   const buildSourceHash = skipBuild ? null : await measurementSourceHash();
@@ -405,6 +424,15 @@ async function measureBrowser(args: string[]): Promise<void> {
   }
   const moduleHash = new Bun.CryptoHasher("sha256").update(await Bun.file(`${MEASURE_DIR}/${example}_bg.wasm`).arrayBuffer()).digest("hex");
   if (!skipBuild) await Bun.write(buildMetadataPath, JSON.stringify({mode:"release",source_sha256:buildSourceHash,module_sha256:moduleHash}));
+  if (startup) {
+    const { runStartup, table, validateStartup } = await import("../browser/startup");
+    const summary = await runStartup({...startupOptions, wasmDir: MEASURE_DIR, dir: "target/browser-startup"});
+    (summary as Record<string, unknown>).build = {module_sha256: moduleHash, current_checkout_sha256: await measurementSourceHash()};
+    if (output) await Bun.write(output, JSON.stringify(summary, null, 2) + "\n");
+    console.log(table(summary));
+    validateStartup(summary);
+    return;
+  }
   const { runMeasurement, validateBaseline, validateScene } = await import("../browser/measurement");
   if (fixturePath) sceneOptions.fixture=await Bun.file(fixturePath).json();
   if (settingsPath) sceneOptions.settings=await Bun.file(settingsPath).json();
@@ -456,7 +484,7 @@ if (task === "measure-browser") {
 
 // Evidence provenance only; this does not reject content or trigger any bake.
 async function measurementSourceHash(): Promise<string> {
-  const paths = ["Cargo.toml", "Cargo.lock", "examples/sgl-3d/Cargo.toml", "examples/sgl-3d/examples/browser_baseline.rs", "examples/sgl-3d/examples/browser_bistro.rs", "examples/sgl-3d/examples/support/bistro_scene.rs", "browser/measurement.ts", "browser/bistro.html", "scripts/tasks.ts"];
+  const paths = ["Cargo.toml", "Cargo.lock", "examples/sgl-3d/Cargo.toml", "examples/sgl-3d/examples/browser_baseline.rs", "examples/sgl-3d/examples/browser_bistro.rs", "examples/sgl-3d/examples/support/bistro_scene.rs", "browser/measurement.ts", "browser/bistro.html", "scripts/tasks.ts", "examples/sgl-3d/examples/support/startup.rs", "browser/startup.ts", "browser/startup-fixture.ts", "browser/startup-harness.js", "browser/startup-three.js", "browser/startup-sgl.html", "browser/startup-three.html", "package.json", "bun.lock"];
   for await (const path of new Bun.Glob("crates/**/*.{rs,wgsl,toml}").scan(".")) paths.push(path);
   const hash = new Bun.CryptoHasher("sha256");
   for (const path of paths.sort()) { hash.update(path); hash.update(await Bun.file(path).arrayBuffer()); }

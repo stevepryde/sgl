@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SGL3D startup</title>
+<link rel="icon" href="data:,">
+<style>html,body{margin:0;background:#000}canvas{display:block;width:1280px;height:720px}</style>
+<canvas id="view" width="1280" height="720"></canvas>
+<script type="module">
+  import init, { Startup } from "./browser_baseline.js";
+  import { run } from "./startup-harness.js";
+  let startup;
+  run({
+    library: "sgl",
+    async init() { await init(); },
+    async device(canvas, path) {
+      // #851 adds SGL's prepared startup here.
+      if (path !== "ordinary") throw new Error(`SGL has no '${path}' startup path yet`);
+      startup = await Startup.create(canvas);
+      const device = startup.gpuDevice();
+      return { backend: device ? "WebGPU" : null, adapter: device ? { ...Object.fromEntries(["vendor","architecture","device","description"].map((k) => [k, device.adapterInfo[k]])) } : null };
+    },
+    async decode(glb) { startup.decode(glb); },
+    async upload(layout) { startup.upload(JSON.stringify(layout)); await startup.completion(); },
+    async view() { startup.view(); },
+    async prepare() {},
+    frame(seconds, state) { startup.frame(seconds, state.yaw, state.mask, state.effect); },
+    completion() { return startup.completion(); },
+    details() { return JSON.parse(startup.report()); },
+  });
+</script>

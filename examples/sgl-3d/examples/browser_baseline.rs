@@ -1,5 +1,9 @@
-//! Reproducible, bounded WebGPU workload. See ../BROWSER_BASELINE.md.
+//! Reproducible, bounded WebGPU workload, and SGL's side of the startup
+//! comparison against three.js. See ../BROWSER_BASELINE.md.
 #![cfg(target_arch = "wasm32")]
+
+#[path = "support/startup.rs"]
+mod startup;
 
 use serde_json::{Value, json};
 use sgl_3d::{
