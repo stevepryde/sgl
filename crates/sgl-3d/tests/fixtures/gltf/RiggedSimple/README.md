@@ -17,6 +17,10 @@ The other directories are that `glTF/` written by gltfpack 1.3 (npm
   fallback buffer. The fallback file, `RiggedSimple.fallback.bin`, is
   deliberately not kept: a loader that supports the extension never reads it.
 
+`glTF-Draco/` is that revision's `Models/RiggedSimple/glTF-Draco/`,
+unchanged: `KHR_draco_mesh_compression` required, Edgebreaker, positions
+on an 11-bit grid and `JOINTS_0` and `WEIGHTS_0` unquantized.
+
 The glTF loader's tests compare each with `glTF/`
-(`src/content/gltf/meshopt_tests.rs`). These files stay in the repository;
+(`src/content/gltf/meshopt_tests.rs`, `src/content/gltf/draco_tests.rs`). These files stay in the repository;
 the published crate does not include them.

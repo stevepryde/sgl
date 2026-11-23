@@ -954,11 +954,11 @@ fn used_extensions_are_listed_and_required_ones_honoured_or_refused() {
         "KHR_materials_specular": {"specularFactor": 0.5, "specularColorFactor": [1.0, 0.5, 2.0]}
     });
     let ours = ["KHR_materials_ior", "KHR_materials_specular"];
-    let used = [&ours[..], &["KHR_draco_mesh_compression"]].concat();
+    let used = [&ours[..], &["EXT_texture_webp"]].concat();
     let asset = load(&extension_fixture(material.clone(), &used, &[]).path()).unwrap();
     assert_eq!(
         asset.ignored,
-        [Ignored::Extension("KHR_draco_mesh_compression".into())]
+        [Ignored::Extension("EXT_texture_webp".into())]
     );
     let loaded = &asset.materials[0];
     assert_eq!(
@@ -967,11 +967,11 @@ fn used_extensions_are_listed_and_required_ones_honoured_or_refused() {
     );
     let asset = load(&extension_fixture(material.clone(), &used, &ours).path()).unwrap();
     assert_eq!(asset.materials[0].ior, 1.33, "required, and supported");
-    let refused = load(&extension_fixture(material, &used, &["KHR_draco_mesh_compression"]).path());
+    let refused = load(&extension_fixture(material, &used, &["EXT_texture_webp"]).path());
     assert!(
         refused
             .err()
-            .is_some_and(|error| error.to_string().contains("KHR_draco_mesh_compression")),
+            .is_some_and(|error| error.to_string().contains("EXT_texture_webp")),
         "a file that requires an unsupported extension loaded"
     );
     let infinite = serde_json::json!({"KHR_materials_ior": {"ior": 0}});

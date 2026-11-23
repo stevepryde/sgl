@@ -20,6 +20,10 @@ use rig::Rigging;
 mod attributes;
 #[cfg(test)]
 mod attributes_tests;
+#[cfg(feature = "draco")]
+mod draco;
+#[cfg(all(test, feature = "draco"))]
+mod draco_tests;
 mod lights;
 #[cfg(test)]
 mod lights_tests;
@@ -171,7 +175,8 @@ fn check(options: LoadOptions<'_>) -> Result<()> {
 /// The glTF extensions SGL3D honours: a file may require any of them. The
 /// loader reads each itself, from the extension's values, for
 /// `KHR_mesh_quantization` the integer attributes it allows (`attributes`),
-/// and for the meshopt pair the compressed buffer views (`meshopt`).
+/// and for the meshopt pair the compressed buffer views (`meshopt`). With
+/// the `draco` feature, `KHR_draco_mesh_compression` too ([`supported`]).
 const SUPPORTED_EXTENSIONS: [&str; 17] = [
     "KHR_lights_punctual",
     "KHR_materials_anisotropy",
@@ -191,6 +196,15 @@ const SUPPORTED_EXTENSIONS: [&str; 17] = [
     "EXT_materials_bump",
     "EXT_meshopt_compression",
 ];
+
+/// Whether SGL3D honours glTF extension `name`: one of
+/// [`SUPPORTED_EXTENSIONS`], or with the `draco` feature
+/// `KHR_draco_mesh_compression`, whose compressed primitives decode at
+/// import (`draco`).
+fn supported(name: &str) -> bool {
+    SUPPORTED_EXTENSIONS.contains(&name)
+        || (cfg!(feature = "draco") && name == "KHR_draco_mesh_compression")
+}
 
 /// Something in a glTF that SGL3D does not render and the file does not
 /// require, which glTF lets a loader leave out (glTF 2.0 5.17.1): the load
@@ -230,7 +244,9 @@ pub enum Ignored {
 }
 
 /// The document in `bytes`, validated, and its buffers, with compressed
-/// buffer views decoded (`meshopt`). glTF 2.0 5.17.2: a
+/// buffer views decoded (`meshopt`) and, with the `draco` feature,
+/// compressed primitives decoded into the accessors they name (`draco`).
+/// glTF 2.0 5.17.2: a
 /// file that requires an extension SGL3D does not support fails to load.
 /// The gltf crate's validation knows none of the material extensions SGL3D
 /// reads itself, so once every required one is known to be supported the
@@ -261,16 +277,27 @@ fn import(
     if let Some(extension) = root
         .extensions_required
         .iter()
-        .find(|extension| !SUPPORTED_EXTENSIONS.contains(&extension.as_str()))
+        .find(|extension| !supported(extension))
     {
+        if extension == "KHR_draco_mesh_compression" {
+            return Err("the file requires glTF extension KHR_draco_mesh_compression; enable sgl-3d's `draco` feature to load it, or export without Draco compression".into());
+        }
         return Err(format!("the file requires glTF extension {extension}, which SGL3D does not support; bake it into the export or add renderer support").into());
     }
     check_root(&root)?;
+    // Repoints the accessors Draco streams fill, before the document's
+    // validation reads them.
+    #[cfg(feature = "draco")]
+    let draco = draco::Draco::plan(&mut root)?;
     root.extensions_required.clear();
     let document = gltf::Document::from_json(root)?;
     let blob = glb.as_ref().and_then(|glb| glb.bin.as_deref());
     let compressed = meshopt::Compressed::find(&document)?;
     let unread = |buffer| {
+        #[cfg(feature = "draco")]
+        if draco.as_ref().is_some_and(|draco| draco.unread(buffer)) {
+            return true;
+        }
         compressed
             .as_ref()
             .is_some_and(|views| views.unread(buffer))
@@ -278,6 +305,10 @@ fn import(
     let mut buffers = sources::buffers(&document, base, blob, budget, unread)?;
     if let Some(compressed) = compressed {
         compressed.decode(&mut buffers, decoded_budget)?;
+    }
+    #[cfg(feature = "draco")]
+    if let Some(draco) = draco {
+        draco.decode(document.as_json(), &mut buffers, decoded_budget)?;
     }
     Ok((document, buffers))
 }
@@ -442,7 +473,7 @@ fn decode(
     // What the file uses but does not require (import refused the rest).
     let mut ignored: Vec<Ignored> = document
         .extensions_used()
-        .filter(|extension| !SUPPORTED_EXTENSIONS.contains(extension))
+        .filter(|extension| !supported(extension))
         .map(|extension| Ignored::Extension(extension.to_owned()))
         .collect();
     let mut materials = document
