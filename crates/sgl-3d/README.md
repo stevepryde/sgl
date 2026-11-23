@@ -3966,39 +3966,6 @@ before they are allocated, and a malformed or truncated stream fails the
 load naming its buffer view. A file using neither extension loads as
 before.
 
-With the `draco` cargo feature, `KHR_draco_mesh_compression` files load,
-as Blender's exporter, gltf-pipeline and other tools built on Google's
-Draco write them: Edgebreaker (standard and valence) and sequential
-streams of bitstream 2.2, with the prediction schemes and quantized or
-octahedral attributes Draco's encoder writes (not the deprecated schemes
-2 and 3 or older bitstreams). Enable it where a game loads such files:
-
-```toml
-sgl-3d = { version = "…", features = ["draco"] }
-```
-
-It is off by default because the decoder adds about 300 KB to a browser
-build (about 90 KB compressed). Each compressed primitive decodes once at
-import into the accessors the extension names, found by its attribute
-ids, so skins, morph targets, `KHR_mesh_quantization` integers and strips
-read them as an uncompressed file's; the accessors' component types and
-counts must match the decoded data. An uncompressed fallback buffer is
-never read, and an optional extension is decoded rather than its
-fallback loaded; an accessor something else also reads (a primitive
-without the extension, a morph target, a skin, an animation) keeps its
-own data for it. The decoded accessors are charged to the decoded budget
-before they are allocated, the budget must also hold 64 bytes a triangle
-of the decoder's connectivity, the decoder may not produce more triangles
-than the indices accessors declare nor more attribute bytes than the
-budget leaves, and a malformed stream fails the load naming its mesh,
-primitive and buffer view. Without
-the feature, a file that requires the extension fails to load naming the
-feature, and one that only uses it loads its fallback and lists the
-extension in `Asset::ignored`. The decoder is
-[`draco-core`](https://crates.io/crates/draco-core), a safe-Rust port of
-Google's Draco (Apache-2.0); generate the game's notices with the feature
-selected.
-
 A dielectric's reflectance at normal incidence (F0) follows its index of
 refraction, ((ior − 1) / (ior + 1))²: 0.04 at the default 1.5, 0.02 for water
 at 1.33, 0.17 for diamond at 2.42. `KHR_materials_specular` tints it

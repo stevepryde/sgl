@@ -96,22 +96,6 @@ settings SGL3D has today.
    are allocated. A stream that does not decode to exactly its view's
    `byteLength`, or breaks its extension's rules, fails the load naming
    the view. A file using neither extension reads its buffers as before.
-   With the cargo feature `draco`, `KHR_draco_mesh_compression` primitives
-   decode once at import, by `draco-core` (Draco bitstream 2.2, Edgebreaker
-   and sequential), into the accessors the extension names by attribute
-   id: before the document is validated each such accessor is repointed to
-   its own range of one new buffer, at its own component type, which with
-   its count must match the decoded data, and after the buffers are read
-   decoding fills it, so every reader after it is unchanged. An accessor
-   something else also reads keeps its data for that reader, and the Draco
-   primitive reads a repointed copy. A buffer only repointed accessors
-   referenced, such as a fallback, is never read; an optional extension is
-   decoded, not its fallback loaded. The new buffer is charged to the
-   decoded budget before it is allocated, beside 64 bytes a triangle of
-   the decoder's connectivity, and the decoder is limited to the indices
-   accessors' triangles and to the budget's remainder. Without the feature the
-   extension is unsupported: required, it fails the load naming the
-   feature; used, its fallback loads.
    A file's `KHR_lights_punctual` lights load as CPU data (`Asset::lights`):
    each light it defines, as authored, and each node of the loaded scene
    that places one, with the node's world transform at the scene's authored

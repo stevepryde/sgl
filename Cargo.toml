@@ -61,7 +61,6 @@ bcdec_rs = "0.2"
 blake3 = "1.8.3"
 block2 = "0.6.2"
 bytemuck = { version = "1.25.2", features = ["derive", "extern_crate_alloc"] }
-draco-core = { version = "2.4.0", default-features = false }
 fastrand = "2.4"
 fontdue = "0.9"
 futures = "0.3"

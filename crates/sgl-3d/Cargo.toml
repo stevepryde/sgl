@@ -32,16 +32,11 @@ include = [
 [features]
 default = []
 diagnostics = ["dep:js-sys"]
-# Loads glTF primitives compressed with KHR_draco_mesh_compression. Off by
-# default: the decoder adds about 300 KB to a browser build.
-draco = ["dep:draco-core"]
 
 [dependencies]
 # Decodes a BC7 material image's level 0 for the scene's ray source.
 bcdec_rs.workspace = true
 bytemuck.workspace = true
-# KHR_draco_mesh_compression's decoder (content::gltf::draco), behind `draco`.
-draco-core = { workspace = true, optional = true, features = ["decoder", "edgebreaker_valence_decode"] }
 sgl-post-fx.workspace = true
 glam.workspace = true
 gltf = { workspace = true, features = ["KHR_lights_punctual", "KHR_materials_emissive_strength", "KHR_materials_unlit", "extensions", "extras"] }
@@ -76,9 +71,9 @@ ruzstd = { workspace = true, features = ["std"] }
 naga = { workspace = true, features = ["wgsl-in", "spv-out", "hlsl-out"] }
 pollster.workspace = true
 wasm-bindgen-test.workspace = true
-# Unit tests exercise the diagnostics accessors and the Draco decoder.
+# Unit tests exercise the diagnostics accessors.
 # Keep this path-only: Cargo omits it when publishing, avoiding a registry self-dependency.
-sgl-3d = { path = ".", features = ["diagnostics", "draco"] }
+sgl-3d = { path = ".", features = ["diagnostics"] }
 
 # The floor tests validate frames on wgpu's noop backend, which reports the
 # floor's limits and runs wgpu's validation without a GPU or a backend's

@@ -35,12 +35,7 @@ them through unrefracted. A probe captured on an
 
 - **glTF 2.0 meshes**: triangles, strips and fans, their attributes floats or
   `KHR_mesh_quantization` integers, their buffers optionally compressed
-  with `EXT_meshopt_compression` or `KHR_meshopt_compression`, or the
-  primitives `KHR_draco_mesh_compression` (enable the cargo feature
-  `draco`, off by default because it adds about 300 KB to a browser build;
-  without it a file that requires the extension fails to load and one
-  that only uses it loads its fallback,
-  [README](../README.md#asset-and-environment-limits)), with
+  with `EXT_meshopt_compression` or `KHR_meshopt_compression`, with
   metallic/roughness, normal and bump maps (a bump usually shows stronger
   in world-space reflections and dynamic GI than to the camera: its
   strength is per pixel in raster, as three.js's, and per metre at ray

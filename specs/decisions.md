@@ -1497,8 +1497,10 @@ Use the [current specs](README.md) for implementation and the
   issue on a milestone is listed work, not the answer to the question.
   First applied the same day: IES light profiles (#872) were removed before
   release (a later case for them is a new issue naming the game and scene
-  that needs them), DLSS and MetalFX were not built (D-74), and planar reflections
-  (#866) were kept because they show off-screen and occluded content that
-  screen-space reflections cannot. Rationale: every feature is code in
-  every game's build and a surface agents must keep coherent; one no game
-  uses costs that for nothing.
+  that needs them), as was Draco loading (#856), since an agent can
+  re-export a Draco file or use Meshopt, which SGL loads; DLSS and MetalFX
+  were not built (D-74), and planar reflections (#866) were kept because
+  they show off-screen and occluded content that screen-space reflections
+  cannot. Rationale: every feature is code in every game's build and a
+  surface agents must keep coherent; one no game uses costs that for
+  nothing.
