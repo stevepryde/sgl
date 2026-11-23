@@ -8,10 +8,10 @@ use super::shared::Shared;
 use crate::settings::{Antialiasing, RenderPreset, Settings};
 use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
-    antialiasing, cull::Cull, exposure::Exposure, fog::VolumetricFog, motion_blur::MotionBlur,
-    opaque::Opaque, post::Post, reflections::Reflections, shadows::Shadows,
-    shadows::contact::ContactShadowStage, shadows::traced::TracedShadows, sky::Sky,
-    transparent::Transparent,
+    antialiasing, cull::Cull, depth_of_field::DepthOfField, exposure::Exposure, fog::VolumetricFog,
+    motion_blur::MotionBlur, opaque::Opaque, post::Post, reflections::Reflections,
+    shadows::Shadows, shadows::contact::ContactShadowStage, shadows::traced::TracedShadows,
+    sky::Sky, transparent::Transparent,
 };
 use crate::view::FrameViews;
 use crate::view::bindings::FrameBindings;
@@ -129,6 +129,7 @@ pub struct View {
     pub(crate) transparent: Transparent,
     pub(crate) exposure: Exposure,
     pub(crate) antialiasing: antialiasing::Antialiasing,
+    pub(crate) depth_of_field: DepthOfField,
     pub(crate) motion_blur: MotionBlur,
     pub(crate) post: Box<Post>,
     pub(crate) history: CameraHistory,
@@ -295,6 +296,7 @@ impl View {
             ),
             exposure,
             antialiasing,
+            depth_of_field: DepthOfField::new(device, first_frame.depth_of_field.is_some()),
             motion_blur: MotionBlur::new(device, first_frame.motion_blur.is_some()),
             post: Box::new(
                 Post::new(
@@ -356,6 +358,7 @@ impl View {
             self.pending_reset = true;
             self.targets_generation = self.targets_generation.wrapping_add(1);
             self.post.forget_inputs();
+            self.depth_of_field.forget_inputs();
             self.motion_blur.forget_inputs();
             self.antialiasing.forget_inputs();
         }
@@ -369,6 +372,7 @@ impl View {
         }
         self.targets = SharedTargets::new(device, render, self.targets.surface.is_some());
         self.exposure.forget_inputs();
+        self.depth_of_field.forget_inputs();
         self.motion_blur.forget_inputs();
         self.antialiasing.forget_inputs();
         self.post.resize(device, sizes, sizing.bloom_targets);
@@ -407,7 +411,8 @@ impl View {
         self.sizes.render
     }
 
-    /// The size motion blur, bloom, SMAA and tone mapping run at
+    /// The size depth of field, motion blur, bloom, SMAA and tone mapping
+    /// run at
     /// (`SceneResolution`).
     pub fn scene_size(&self) -> [u32; 2] {
         self.sizes.scene

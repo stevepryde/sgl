@@ -10,8 +10,9 @@
 //! output, SMAA's at the output size, or an output-size target the scene
 //! is tone mapped or resampled into. It keeps no history.
 //!
-//! Reads: the completed scene at the scene size, motion-blurred when motion
-//! blur ran (`stages::motion_blur`), within `shading::SCENE_COLOR`'s bound
+//! Reads: the completed scene at the scene size, focused and motion-blurred
+//! where depth of field and motion blur ran (`stages::depth_of_field`,
+//! `stages::motion_blur`), within `shading::SCENE_COLOR`'s bound
 //! (`inputs`), which antialiasing completed it (`Completed`), and the
 //! frame's exposure (`stages::exposure`).
 //! Writes: its own bloom chain, local exposure's grid and base while it

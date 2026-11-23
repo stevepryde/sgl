@@ -304,6 +304,30 @@ fn a_compiled_levels_first_frame_creates_no_program() {
     );
 }
 
+// Plausible defect: depth of field, a stage the view did not create its
+// pipelines for (it was off when the view was made), left out of the
+// planning pass or making them only when it draws, so a level that turns
+// it on for a photo mode compiles on the window thread after all. The
+// oracle is wgpu's count, as `a_compiled_levels_first_frame_creates_no_program`'s:
+// unchanged across the compiled level's first frame with depth of field
+// on, which the frame ran.
+#[test]
+fn a_compiled_level_with_depth_of_field_creates_no_program_at_its_first_frame() {
+    let Some(mut compiled) = Level::new() else {
+        return;
+    };
+    compiled.settings.depth_of_field = crate::settings::DepthOfField::High;
+    let input = Level::input(0.);
+    compiled.compile_all(&input);
+    let before = compiled.programs();
+    compiled.render(&input);
+    assert_eq!(compiled.programs(), before);
+    assert!(
+        compiled.view.depth_of_field.output().is_some(),
+        "the frame ran depth of field"
+    );
+}
+
 // Plausible defect: the planning passes leave something behind that the
 // first frames differ by (history advanced, a target written, a stage's
 // state changed), a pipeline a job made differs from the one a frame

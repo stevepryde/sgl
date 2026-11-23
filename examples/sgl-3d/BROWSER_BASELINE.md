@@ -8,8 +8,8 @@ bun scripts/tasks.ts measure-browser --baseline --frames 180 --output target/bro
 
 This extends the existing `measure-browser` Chromium/WebGPU runner; without
 `--baseline`, the voxel streaming workload remains the default. The baseline
-is a release WASM build. It renders an offscreen 1280×720 target, not a DOM
-canvas, through the ordinary caller-owned `Scene` / `Renderer` workflow.
+is a release WASM build. It renders an offscreen 1280×720 target (`--size WxH`
+another), not a DOM canvas, through the ordinary caller-owned `Scene` / `Renderer` workflow.
 
 ## Workload
 
@@ -40,6 +40,12 @@ bun scripts/tasks.ts measure-browser --baseline --prepared --frames 180 --output
 
 # The eight point lights cast shadows from the first measured frame.
 bun scripts/tasks.ts measure-browser --baseline --local-shadows --frames 180 --output target/browser-local-shadows.json
+```
+
+```sh
+# Depth of field at a level, through a wide-open large-format lens focused
+# 3 m ahead so most of the frame blurs, at another output size.
+bun scripts/tasks.ts measure-browser --baseline --depth-of-field high --size 1920x1080 --frames 180 --output target/browser-dof.json
 ```
 
 `--scaled` selects `SceneResolution::ThreeQuarter` and `Upscaling::On`; this

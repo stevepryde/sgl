@@ -26,7 +26,7 @@ This page is the detailed reference:
 - [Frame lifecycle](#retained-scene-and-frame-lifecycle), [several views](#several-views), [render textures](#render-textures), [data conventions](#dependencies-and-data-conventions), [browser differences](#browser-wasm--webgpu)
 - [Lights and look](#frame-lights-and-look), [procedural sky](#procedural-sky), [local lights](#point-spot-and-rectangle-lights), [shadows](#local-light-shadows), [decals](#decals)
 - [Reflections](#reflections), [TAA, SMAA and FSR](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion), [screen-space indirect light](#screen-space-indirect-light)
-- [Exposure and grading](#exposure-bloom-and-colour-grading), [motion blur](#motion-blur), [fog](#volumetric-fog)
+- [Exposure and grading](#exposure-bloom-and-colour-grading), [depth of field](#depth-of-field), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
 - [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [programmable surfaces](#programmable-surfaces), [mesh LOD](#spatial-mesh-lod), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
 - [Settings and fallbacks](#settings-and-capability-fallback), [binding tiers](#binding-tiers), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
@@ -388,6 +388,53 @@ frame.color_grading = ColorGrading {
   tone-mapped diagnostics capture is not. Timing group `tone map`.
 - `ColorGrading::global.hue` rotates in radians, wrapping either direction
   every 2π; negative angles and multiple turns need no game-side wrapping.
+
+## Depth of field
+
+```rust,ignore
+use sgl_3d::{DepthOfFieldParameters, settings::{DepthOfField, Settings}};
+let settings = Settings { depth_of_field: DepthOfField::Medium, ..Settings::default() };
+frame.depth_of_field = DepthOfFieldParameters {
+    focus_distance: 2.5, // metres along the view to the speaker
+    f_number: 1.4,
+    sensor_height: 0.024, // a full-frame sensor
+};
+```
+
+Through a 30° vertical view at 1080 pixels this blurs the distant
+background by a radius of about 13 pixels; a wider view is a shorter lens
+and blurs less.
+
+- A thin lens: a point `z` metres ahead blurs into a disc whose diameter on
+  the sensor is `f² |z − focus_distance| / (f_number z (focus_distance − f))`,
+  in pixels that over `sensor_height` times the scene's height. The focal
+  length `f` is the one `sensor_height` and the projection's vertical field
+  of view give (`0.5 sensor_height / tan(fov / 2)`), as Bevy derives it, so
+  a narrower view is a longer lens and blurs more. Lower f-numbers, nearer
+  focus and larger sensors blur more. The defaults are Bevy's: 10 m, f/1,
+  Super 35 (18.66 mm). A frame whose lens has a non-finite or non-positive
+  value, or focuses no farther than its focal length, is not focused; the
+  game moves the focus each frame (to a speaker, the photo subject).
+- It is Wicked Engine's tiled gather (Jimenez 2014): each 32-pixel tile's
+  largest and smallest blur and its 3×3 neighbourhood's steer, at half the
+  scene size, a gather of the level's rings (Low 2, Medium 3, High 4) that
+  sorts its samples into background and foreground, then a median filter,
+  then a composite at the scene size. A blurred foreground spreads over
+  what lies behind it; a sharp subject keeps its edge against a blurred
+  background. A tile whose neighbourhood blurs under a pixel is copied. A
+  blur's radius is at most 32 pixels of the scene size, which the
+  neighbourhood reaches.
+- It runs on the antialiased frame at the scene size, after TAA or FSR and
+  before motion blur, bloom, SMAA and tone mapping, as Wicked Engine and
+  Filament place it, reading the depth at the render size. It keeps no
+  history, so a cut, resize or second view needs nothing; each view focuses
+  through its own frame's lens, a view that draws a render texture
+  included. Blended surfaces write no depth and take
+  the focus of what lies behind them, except receivers of screen-space
+  reflections, which the receiver pass draws at their own depth while depth
+  of field runs. It needs `perspective`'s projection.
+  Off (the default) runs no pass and holds no target.
+- Timing group `depth of field`.
 
 ## Motion blur
 
@@ -2825,6 +2872,7 @@ stage (each stage's documentation lists its own), are:
   the composed frame; and `heat distortion`;
 - exposure: `exposure`, while automatic;
 - antialiasing: `TAA`, `FSR2` or `FSR3` (all passes of the selected upscaler);
+- depth of field: `depth of field`;
 - motion blur: `motion blur`;
 - post: `bloom`, `SMAA` and `tone map`;
 - DiligentFX's post-effect context, for TAA and Crystal: `DiligentFX inputs`,
@@ -3458,7 +3506,7 @@ WebGL is ever added it will be a minimal fallback.
   `View::antialiasing_in_effect` reports TAA and `fsr_error()` names the
   missing features. TAA, both screen-space reflection methods, world-space
   reflections, dynamic GI, ambient occlusion, screen-space indirect light,
-  fog, motion blur, bloom and
+  fog, depth of field, motion blur, bloom and
   SMAA run. For reduced-resolution browser rendering, use an explicit
   `SceneResolution` and opt into [spatial upscaling](#portable-spatial-upscaling).
 - **Inputs, not clocks or files.** Fetch asset bytes and load them with
@@ -3928,8 +3976,9 @@ not serialized: switches that turn a layer off, the numerical frame probe
 and the tone-target capture), `View::diagnostic_target` (the frame's
 targets: depth, normals, motion, source identity, the composite, ambient
 occlusion, the captured tone-mapped target, the exposure, and `Antialiased`,
-the completed linear HDR scene as antialiasing leaves it, before motion blur,
-bloom and tone mapping),
+the completed linear HDR scene as antialiasing leaves it, before depth of
+field, motion blur, bloom and tone mapping, and `DepthOfField`, the frame
+depth of field focused),
 `View::take_frame_probe_reports` (source-to-black comparisons run only
 when the actual observed textures have equal dimensions, including FSR
 fallbacks),

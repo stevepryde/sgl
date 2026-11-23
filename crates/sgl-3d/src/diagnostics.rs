@@ -170,9 +170,14 @@ pub enum DiagnosticTarget {
     /// and FSR read.
     Exposure,
     /// Rgba16Float: the completed linear HDR scene as antialiasing leaves
-    /// it, before motion blur, bloom and tone mapping: TAA's or FSR's output
-    /// at the scene size, else the composite at the render size.
+    /// it, before depth of field, motion blur, bloom and tone mapping: TAA's
+    /// or FSR's output at the scene size, else the composite at the render
+    /// size.
     Antialiased,
+    /// Rgba16Float at the scene size: the antialiased scene focused by depth
+    /// of field, before motion blur, bloom and tone mapping, when depth of
+    /// field ran.
+    DepthOfField,
 }
 
 /// `texture`'s rows, `bpp` bytes a texel, without row padding, once the GPU

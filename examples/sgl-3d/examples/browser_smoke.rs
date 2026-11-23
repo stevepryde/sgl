@@ -52,8 +52,9 @@ use sgl_3d::{
     glam::{Mat4, Vec3, Vec4},
     heat_distortion::HeatDistortion,
     settings::{
-        AmbientOcclusionQuality, Antialiasing, ContactShadows, DynamicGiQuality, MotionBlur,
-        ReflectionMethod, RenderPreset, ScreenSpaceReflections, Settings, WorldSpaceReflections,
+        AmbientOcclusionQuality, Antialiasing, ContactShadows, DepthOfField, DynamicGiQuality,
+        MotionBlur, ReflectionMethod, RenderPreset, ScreenSpaceReflections, Settings,
+        WorldSpaceReflections,
     },
     static_lighting::{AmbientCube, CompressedIrradianceAtlas, IrradianceAtlas},
     timing::GpuTiming,
@@ -1882,11 +1883,12 @@ async fn smoke(report: &mut String) -> Result<(), String> {
             Programs::Compiled,
         ),
         (
-            "high, Velvet and world-space reflections, fog, mist, motion blur, heat",
+            "high, Velvet and world-space reflections, fog, mist, depth of field, motion blur, heat",
             Settings {
                 screen_space_reflections: ScreenSpaceReflections::Half,
                 reflection_method: ReflectionMethod::Velvet,
                 world_space_reflections: WorldSpaceReflections::Moving,
+                depth_of_field: DepthOfField::High,
                 motion_blur: MotionBlur::Full,
                 heat_distortion: true,
                 ..high

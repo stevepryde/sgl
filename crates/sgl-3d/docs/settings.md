@@ -71,6 +71,7 @@ replace every choice with a complete bundle.
 | Dynamic GI | `Settings::dynamic_gi` | `High`, `Low`, `Off` | | The most rays each probe of the scene's dynamic GI volume traces on a turn, 256 or 128 at Low, and the frame's budget of rays, 32,768 or 16,384. Probes take turns, near the camera every frame and farther out less often, with fewer rays far away; turns past the budget are spaced out, so a large or busy volume costs at most its budget. A probe whose light has settled traces few at either; one whose light changes settles faster and with less noise at High. Off traces none, and surfaces take their indirect diffuse light as without a volume. Without a volume nothing runs. Off on a device of the `Basic` binding tier (`Renderer::dynamic_gi_in_effect`). |
 | Volume paths | `Settings::volume_paths` | `true`, `false` | | Measures how far each view ray travels inside a blended volume whose shader reads `scene_volume_path`, for its absorption. Costs frames that draw such a material three copies of the opaque depth and three depth passes over its meshes (timing group `volume layers`), and three render-size depth targets held from the first such frame until it is turned off. Off, or on a device of the `Basic` binding tier, the shader gets `VOLUME_NONE` and takes its own fallback thickness. `Renderer::volume_paths_in_effect` says whether it runs. |
 | Heat shimmer | `Settings::heat_distortion` | `false`, `true` | | Needs geometry from `Scene::update_heat_distortion`. |
+| Depth of field | `Settings::depth_of_field` | `Off`, `Low`, `Medium`, `High` | | Opt-in: no preset turns it on. Focuses the frame through `FrameInput::depth_of_field`'s lens. The levels are the rings of samples each blurred pixel gathers at half the scene size: 2, 3 or 4 (24, 48 or 80 samples); a pixel whose blur is smaller gathers fewer. On an Apple M5 natively on Metal, with most of the frame blurred by up to 32 pixels, it cost 0.79, 0.92 and 1.08 ms at 1920×1080 and 0.34, 0.38 and 0.38 ms at 1280×720; in Chrome 0.52, 0.72 and 0.92 ms and 0.20, 0.33 and 0.33 ms. Off runs no pass and holds no target. Needs a `perspective` camera. |
 | Motion blur | `Settings::motion_blur` | `Off`, `Reduced`, `Full` | | A comfort choice: Full blurs over `FrameInput::motion_blur`'s shutter, Reduced over half of it. Needs a `perspective` camera. |
 | Frame rate | the game's loop, from `settings::FrameRate` | `Display`, `Fps60` to `Fps240` | | Not part of `Settings`: SGL3D does not pace frames. `FrameRate::limit` gives the cap. |
 
@@ -104,6 +105,12 @@ is done (its algorithm and internal parameters) is SGL3D's.
   in-game values are 0.75 and 1. SGL3D owns the grid, blurs, blend and
   pivot. At 1 and 1 nothing runs; a cheaper tier authors 1 and 1.
 - `bloom`: intensity; SGL3D shapes the halo as Bevy's natural bloom.
+- `depth_of_field`: the lens, while `Settings::depth_of_field` is on: the
+  focus distance in metres along the view (10 by default), the f-number (1)
+  and the sensor height in metres (0.01866, Super 35); the focal length
+  follows from the sensor and the camera's vertical field of view. A lens
+  with a non-finite or non-positive value, or focused no farther than its
+  focal length, focuses nothing.
 - `motion_blur`: the shutter angle, the share of each frame's motion that
   blurs (0.5 by default).
 - `color_grading`: white balance, hue, post-saturation, the midtone range,

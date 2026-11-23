@@ -12,7 +12,8 @@
     await init();
     const initialized = performance.now();
     const query = new URLSearchParams(location.search);
-    const report = JSON.parse(await measure(Number(query.get("frames") ?? 180), query.get("scaled") === "1", query.get("prepared") === "1", query.get("capture") === "1", query.get("local_shadows") === "1"));
+    const report = JSON.parse(await measure(Number(query.get("frames") ?? 180), query.get("scaled") === "1", query.get("prepared") === "1", query.get("capture") === "1", query.get("local_shadows") === "1",
+      query.get("dof") ?? "off", new Uint32Array([Number(query.get("width") ?? 0), Number(query.get("height") ?? 0)])));
     report.browser = { user_agent: navigator.userAgent, hardware_concurrency: navigator.hardwareConcurrency,
       cross_origin_isolated: crossOriginIsolated, device_pixel_ratio: devicePixelRatio,
       wasm_init_ms: initialized - started, page_to_report_ms: performance.now() - started,
@@ -20,8 +21,11 @@
     if (query.get("capture") === "1" && !report.error) {
       const canvas = document.getElementById("capture");
       canvas.style.display = "block";
-      canvas.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(take_capture()),1280,720),0,0);
-      report.capture = {width:1280,height:720,frame:"final streamed-upload frame",excluded_from_timing:true};
+      const [width, height] = report.size;
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(take_capture()),width,height),0,0);
+      report.capture = {width,height,frame:"final streamed-upload frame",excluded_from_timing:true};
     }
     const adapter = await navigator.gpu?.requestAdapter();
     report.browser.adapter_info = adapter ? {vendor:adapter.info.vendor, architecture:adapter.info.architecture,

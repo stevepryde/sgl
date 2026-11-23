@@ -52,7 +52,7 @@
 //! - Sharpening: dispatched with `enableSharpening` false, so FSR's
 //!   accumulate pass writes the output and its RCAS never runs; post
 //!   sharpens the frame instead, once, after tone mapping, as it does every
-//!   antialiasing mode's (`Settings::sharpening`, Frame item 13), and
+//!   antialiasing mode's (`Settings::sharpening`, Frame item 14), and
 //!   `Settings::sharpness` is the sharpening slider the docs (110) ask
 //!   applications to expose. This departs from AMD's integration, in which
 //!   FSR's own RCAS sharpens, and from Godot and Wicked Engine, which pass
@@ -632,7 +632,7 @@ impl Context {
                     jitter_offset: frame.jitter_offset,
                     motion_vector_scale: frame.motion_vector_scale,
                     render_size: frame.render_size,
-                    // Post sharpens every frame once (Frame item 13).
+                    // Post sharpens every frame once (Frame item 14).
                     enable_sharpening: false,
                     frame_time_delta: frame.frame_time_delta,
                     pre_exposure: frame.pre_exposure,
@@ -673,7 +673,7 @@ impl Context {
                         jitter_offset: frame.jitter_offset,
                         motion_vector_scale: frame.motion_vector_scale,
                         render_size: frame.render_size,
-                        // Post sharpens every frame once (Frame item 13).
+                        // Post sharpens every frame once (Frame item 14).
                         enable_sharpening: false,
                         frame_time_delta: frame.frame_time_delta,
                         pre_exposure: frame.pre_exposure,

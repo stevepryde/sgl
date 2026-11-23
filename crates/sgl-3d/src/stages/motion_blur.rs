@@ -13,7 +13,8 @@
 //! `motion_blur/mod.rs`), and Wicked Engine 4323a33 after TAA and before
 //! tone mapping and bloom (`wiRenderPath3D.cpp` `Postprocess_MotionBlur`).
 //!
-//! Reads: the antialiased HDR frame (`Completed`), each texel at most
+//! Reads: the antialiased HDR frame (`Completed`), focused by depth of
+//! field where that ran, each texel at most
 //! `shading::SCENE_COLOR`'s bound, the surface's depth and
 //! motion at the render size (the Surface contract), the camera's
 //! projection and the frames since history restarted.
@@ -117,6 +118,13 @@ impl Filter {
 impl MotionBlur {
     pub fn new(device: &wgpu::Device, enabled: bool) -> Self {
         Self(enabled.then(|| Filter::new(device)))
+    }
+
+    /// How many filter groups it keeps, one for each frame view and
+    /// surface depth bound since the targets or the views were replaced.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn cached_groups(&self) -> usize {
+        self.0.as_ref().map_or(0, |filter| filter.groups.len())
     }
 
     /// The blurred frame, once the stage has run.

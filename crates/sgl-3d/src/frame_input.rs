@@ -6,8 +6,8 @@ mod look;
 
 pub use look::{
     AgxLook, AutoExposure, BloomParameters, ColorGrading, ColorGradingGlobal, ColorGradingSection,
-    CompensationCurve, CompensationCurveError, Exposure, LocalExposure, MeteringMask,
-    MotionBlurParameters,
+    CompensationCurve, CompensationCurveError, DepthOfFieldParameters, Exposure, LocalExposure,
+    MeteringMask, MotionBlurParameters,
 };
 
 use crate::content::lighting::{
@@ -159,6 +159,8 @@ pub struct FrameInput {
     /// Off (1, 1) by default.
     pub local_exposure: LocalExposure,
     pub bloom: BloomParameters,
+    /// The camera's lens, while `Settings::depth_of_field` is on.
+    pub depth_of_field: DepthOfFieldParameters,
     /// While `Settings::motion_blur` is on.
     pub motion_blur: MotionBlurParameters,
     pub color_grading: ColorGrading,
@@ -177,7 +179,7 @@ impl FrameInput {
     /// or environment; the environment's diffuse lighting, reflections and
     /// backdrop unturned at intensity 1; baked lighting on and atmosphere
     /// off; a 60 Hz frame time; a fixed exposure of 0 stops and no local
-    /// exposure; and the default bloom, motion blur and colour grading, an
+    /// exposure; and the default bloom, lens, motion blur and colour grading, an
     /// ambient occlusion radius of 0.5 m and a screen-space indirect light
     /// radius of 5 m.
     pub fn new(camera: Camera) -> Self {
@@ -203,6 +205,7 @@ impl FrameInput {
             exposure: Exposure::default(),
             local_exposure: LocalExposure::default(),
             bloom: BloomParameters::default(),
+            depth_of_field: DepthOfFieldParameters::default(),
             motion_blur: MotionBlurParameters::default(),
             color_grading: ColorGrading::default(),
             ambient_occlusion_radius: 0.5,

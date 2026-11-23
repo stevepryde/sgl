@@ -204,6 +204,33 @@ impl MotionBlur {
     }
 }
 
+/// Depth of field: the frame focused through a thin lens at the distance
+/// the frame authors (`FrameInput::depth_of_field`), what lies nearer or
+/// farther blurred by its circle of confusion, at most 32 pixels of the
+/// scene size in radius. Off by default and in no preset; it runs only
+/// under a `perspective` camera. The levels are how many rings of samples
+/// each blurred pixel gathers at half the scene size: Low 2 (24 samples),
+/// Medium 3 (48), High 4 (80).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DepthOfField {
+    #[default]
+    Off,
+    Low,
+    Medium,
+    High,
+}
+impl DepthOfField {
+    /// The gather's rings, or `None` while off.
+    pub(crate) fn rings(self) -> Option<u32> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some(2),
+            Self::Medium => Some(3),
+            Self::High => Some(4),
+        }
+    }
+}
+
 /// Current-frame diffuse visibility. The consumer persists this explicit choice.
 /// All enabled tiers use full scene resolution and upstream XeGTAO sample counts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -567,6 +594,9 @@ pub struct Settings {
     pub volume_paths: bool,
     /// Camera-path heat shimmer.
     pub heat_distortion: bool,
+    /// Off by default and in no preset; `FrameInput::depth_of_field` is
+    /// the lens.
+    pub depth_of_field: DepthOfField,
     pub motion_blur: MotionBlur,
     /// Layer isolation and frame observations for debug and test tooling;
     /// never saved.
@@ -579,8 +609,8 @@ impl Default for Settings {
     /// High, with atmosphere allowed and the fog filter and volume paths
     /// on, heat
     /// distortion, world-space reflections, hardware ray tracing,
-    /// ray-traced shadows, contact shadows, occlusion culling and motion
-    /// blur off, sharpness
+    /// ray-traced shadows, contact shadows, occlusion culling, depth of
+    /// field and motion blur off, sharpness
     /// AMD's FSR sample's 0.8 (`m_Sharpness`), and every other choice at its
     /// default.
     fn default() -> Self {
@@ -614,6 +644,7 @@ impl Default for Settings {
             fog_filter: true,
             volume_paths: true,
             heat_distortion: false,
+            depth_of_field: DepthOfField::Off,
             motion_blur: MotionBlur::Off,
             #[cfg(feature = "diagnostics")]
             diagnostics: Diagnostics::default(),

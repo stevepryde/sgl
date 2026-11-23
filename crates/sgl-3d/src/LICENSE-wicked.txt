@@ -5,7 +5,12 @@ its motion blur (motionblur_tileMaxVelocity_horizontalCS.hlsl,
 motionblur_tileMaxVelocity_verticalCS.hlsl, motionblur_neighborhoodMaxVelocityCS.hlsl,
 motionblurCS.hlsl and globals.hlsli's BayerMatrix8 and dither) in
 stages/motion_blur.wgsl and shading/motion_tiles.wgsl, whose tile passes TAA's
-motion reach also runs, and from revision 2ff1d9e7b36091d6edf9f823af77e6bc9af20e3b the RT reflection
+motion reach also runs, its depth of field (depthOfFieldHF.hlsli,
+depthoffield_tileMaxCOC_horizontalCS.hlsl, depthoffield_tileMaxCOC_verticalCS.hlsl,
+depthoffield_neighborhoodMaxCOCCS.hlsl, depthoffield_prepassCS.hlsl,
+depthoffield_mainCS.hlsl, depthoffield_postfilterCS.hlsl, depthoffield_upsampleCS.hlsl
+and wiRenderer.cpp's Postprocess_DepthOfField) in stages/depth_of_field.wgsl,
+and from revision 2ff1d9e7b36091d6edf9f823af77e6bc9af20e3b the RT reflection
 trace and denoiser (rtreflectionCS.hlsl, ssr_resolveCS.hlsl, ssr_temporalCS.hlsl,
 ssr_upsampleCS.hlsl, stochasticSSRHF.hlsli and brdf.hlsli in
 WickedEngine/shaders/) in world_reflections*.wgsl and temporal_reprojection.wgsl,

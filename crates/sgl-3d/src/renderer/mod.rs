@@ -87,7 +87,8 @@ impl Renderer {
     /// acceleration structures, the deform pass and the dynamic GI update),
     /// then each view, each as its `ViewFrame` describes it, into
     /// its output: prepare, shadows, fog, opaque, reflections and
-    /// transparent, exposure, antialiasing, motion blur, post. `views[0]` is
+    /// transparent, exposure, antialiasing, depth of field, motion blur,
+    /// post. `views[0]` is
     /// the primary view: its input and settings steer what a scene has one
     /// of (the architecture's Frame, "Views of one frame"). Nothing happens
     /// for an empty slice. Views render as listed, but a view that draws

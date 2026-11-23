@@ -3,12 +3,13 @@
 
 use serde_json::{Value, json};
 use sgl_3d::{
-    AlphaMode, Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight,
-    InstanceState, Light, LightShape, Mobility, Renderer, Scene, View, ViewFrame, ViewOutput,
+    AlphaMode, Camera, DepthOfFieldParameters, DirectionalLight, DirectionalShadow, FrameInput,
+    HemisphereLight, InstanceState, Light, LightShape, Mobility, Renderer, Scene, View, ViewFrame,
+    ViewOutput,
     asset::{Asset, CpuMesh, Image, Material, Rgba8MipChain, Vertex},
     glam::{Mat4, Vec3, camera},
     settings::{
-        AmbientOcclusionQuality, Antialiasing, DynamicGiQuality, SceneResolution,
+        AmbientOcclusionQuality, Antialiasing, DepthOfField, DynamicGiQuality, SceneResolution,
         ScreenSpaceReflections, Settings, Upscaling,
     },
     timing::{FrameTime, GpuTiming},
@@ -20,6 +21,7 @@ use std::{
 };
 use wasm_bindgen::prelude::*;
 
+/// The output size unless the page asks for another.
 const SIZE: [u32; 2] = [1280, 720];
 const WARMUP: usize = 60;
 const MATERIALS: usize = 16;
@@ -36,10 +38,11 @@ async fn capture(
     queue: &wgpu::Queue,
     output: &wgpu::Texture,
 ) -> Result<(), String> {
-    let row = (SIZE[0] * 4).div_ceil(256) * 256;
+    let size = [output.width(), output.height()];
+    let row = (size[0] * 4).div_ceil(256) * 256;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("baseline final capture"),
-        size: u64::from(row * SIZE[1]),
+        size: u64::from(row * size[1]),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -51,7 +54,7 @@ async fn capture(
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(row),
-                rows_per_image: Some(SIZE[1]),
+                rows_per_image: Some(size[1]),
             },
         },
         output.size(),
@@ -73,7 +76,7 @@ async fn capture(
         .map_err(|e| e.to_string())?;
     let pixels = mapped
         .chunks_exact(row as usize)
-        .flat_map(|row| row[..SIZE[0] as usize * 4].iter().copied())
+        .flat_map(|row| row[..size[0] as usize * 4].iter().copied())
         .collect();
     drop(mapped);
     buffer.unmap();
@@ -199,6 +202,8 @@ fn collect(
     }
 }
 
+/// `depth_of_field` is `off`, `low`, `medium` or `high`; `size` is the
+/// output's width and height, or `SIZE` unless both are given and above 0.
 #[wasm_bindgen]
 pub async fn measure(
     frames: u32,
@@ -206,14 +211,27 @@ pub async fn measure(
     prepared_upload: bool,
     capture_frame: bool,
     local_shadows: bool,
+    depth_of_field: String,
+    size: Vec<u32>,
 ) -> String {
     console_error_panic_hook::set_once();
+    let depth_of_field = match depth_of_field.as_str() {
+        "off" => DepthOfField::Off,
+        "low" => DepthOfField::Low,
+        "medium" => DepthOfField::Medium,
+        "high" => DepthOfField::High,
+        other => return json!({"error": format!("unknown depth of field {other}")}).to_string(),
+    };
+    let size = match size[..] {
+        [width, height] if width > 0 && height > 0 => [width, height],
+        _ => SIZE,
+    };
     match measured(
         frames as usize,
         scaled,
         prepared_upload,
         capture_frame,
-        local_shadows,
+        (local_shadows, depth_of_field, size),
     )
     .await
     {
@@ -226,7 +244,7 @@ async fn measured(
     scaled: bool,
     prepared_upload: bool,
     capture_frame: bool,
-    local_shadows: bool,
+    (local_shadows, depth_of_field, size): (bool, DepthOfField, [u32; 2]),
 ) -> Result<Value, String> {
     if !(60..=3600).contains(&frames) {
         return Err("frames must be in 60..=3600".into());
@@ -371,13 +389,14 @@ async fn measured(
         atmosphere: false,
         antialiasing: Antialiasing::Taa,
         dynamic_gi: DynamicGiQuality::Off,
+        depth_of_field,
         ..Default::default()
     };
     let output = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("baseline 720p offscreen output"),
+        label: Some("baseline offscreen output"),
         size: wgpu::Extent3d {
-            width: SIZE[0],
-            height: SIZE[1],
+            width: size[0],
+            height: size[1],
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -396,7 +415,7 @@ async fn measured(
             &device,
             &queue,
             output.format(),
-            SIZE,
+            size,
             1.,
             &settings,
         )
@@ -492,7 +511,7 @@ async fn measured(
             ),
             projection: sgl_3d::perspective(
                 65f32.to_radians(),
-                SIZE[0] as f32 / SIZE[1] as f32,
+                size[0] as f32 / size[1] as f32,
                 0.1,
             ),
         });
@@ -517,6 +536,14 @@ async fn measured(
             }),
             ..Default::default()
         });
+        // While depth of field runs: a large-format lens (10 cm sensor) wide
+        // open, focused 3 m ahead, so nearly every tile blurs, the distant
+        // grid by about 11 pixels at 1080p.
+        frame.depth_of_field = DepthOfFieldParameters {
+            focus_distance: 3.,
+            f_number: 1.,
+            sensor_height: 0.1,
+        };
         frame.hemisphere_light = HemisphereLight {
             sky_color: [0.3, 0.4, 0.6],
             ground_color: [0.1; 3],
@@ -586,7 +613,7 @@ async fn measured(
             "gpu_total_ms":gpu_frames.iter().find(|f| f.frame == WARMUP as u64 + 1).map(|f| f.total_ms)})
     });
     Ok(
-        json!({"schema":1,"scene":"textured-grid-v1","scaled":scaled,"prepared_upload":prepared_upload,"size":SIZE,"frames":frames,"warmup_frames":WARMUP,
+        json!({"schema":1,"scene":"textured-grid-v1","scaled":scaled,"prepared_upload":prepared_upload,"depth_of_field":format!("{depth_of_field:?}"),"size":size,"frames":frames,"warmup_frames":WARMUP,
         "adapter":{"name":info.name,"backend":format!("{:?}",info.backend),"device_type":format!("{:?}",info.device_type),
             "features":format!("{:?}",device.features()),"sampled_textures_per_stage":device.limits().max_sampled_textures_per_shader_stage},
         "settings":format!("{:?}",settings),

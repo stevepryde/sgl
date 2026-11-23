@@ -441,8 +441,10 @@ current capabilities and limits.
   ([Programmable surfaces](sgl3d-architecture.md#designs-that-span-stages));
   rays, bakes and static shadow layers see the rest geometry. See
   [programmable surfaces](../crates/sgl-3d/README.md#programmable-surfaces).
-- **Effects:** motion blur (9) and volumetric fog with light shafts (10).
-  See [motion blur](../crates/sgl-3d/README.md#motion-blur) and
+- **Effects:** motion blur (9), volumetric fog with light shafts (10) and
+  depth of field ([#870](https://github.com/stevepryde/sgl/issues/870)).
+  See [motion blur](../crates/sgl-3d/README.md#motion-blur),
+  [depth of field](../crates/sgl-3d/README.md#depth-of-field) and
   [fog](../crates/sgl-3d/README.md#volumetric-fog).
 - **Procedural sky ([#832](https://github.com/stevepryde/sgl/issues/832)):**
   a physically based sky a game names as its frame's environment in place of

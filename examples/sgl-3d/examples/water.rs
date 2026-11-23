@@ -12,7 +12,7 @@
 //! each run the render origin moves by whole chunks with the camera, which
 //! the waves cross unchanged.
 //!
-//! `cargo run --release -p sgl-3d-examples --example water [-- --frames N] [--run NAME]... [--chunks N] [--morph] [--size WxH]`
+//! `cargo run --release -p sgl-3d-examples --example water [-- --frames N] [--run NAME]... [--chunks N] [--morph] [--size WxH] [--every N]`
 //!
 //! Renders each run below at `--size` (1920×1080 by default) through the
 //! public `Scene` and `Renderer` API and prints, per run, the median and
@@ -25,18 +25,22 @@
 //! weights are set every frame and deformed by the deform pass, with a
 //! constant 2 m volume. `set-model` animates a 128×128 grid of the lake's
 //! normals replaced every frame with `Scene::set_model`, as before material
-//! layers and shaders existed. Every 30th frame and the last of each run are
-//! written to `target/water-example/<run>/` for the owner to judge.
+//! layers and shaders existed. `dof-low`, `dof-medium` and `dof-high` focus
+//! the frame at each `DepthOfField` level through a wide-open large-format
+//! lens 6 m ahead, so the near shore and the far one blur. Every 30th frame (every
+//! Nth with `--every N`, 1 for a moving sequence) and the last of each run
+//! are written to `target/water-example/<run>/` for the owner to judge.
 use sgl_3d::glam::{Mat4, Quat, Vec3, camera};
 use sgl_3d::{
-    AlphaMode, Camera, DirectionalLight, DirectionalShadow, Exposure, FrameEnvironment, FrameInput,
-    InstanceId, InstanceState, MaterialId, MaterialShader, Mobility, ModelMesh,
-    MotionBlurParameters, NormalLayer, PreparedModel, Renderer, Scene, ShaderSource, Sky,
-    SurfaceMaterial, View, ViewFrame, ViewOutput,
+    AlphaMode, Camera, DepthOfFieldParameters, DirectionalLight, DirectionalShadow, Exposure,
+    FrameEnvironment, FrameInput, InstanceId, InstanceState, MaterialId, MaterialShader, Mobility,
+    ModelMesh, MotionBlurParameters, NormalLayer, PreparedModel, Renderer, Scene, ShaderSource,
+    Sky, SurfaceMaterial, View, ViewFrame, ViewOutput,
     asset::{Asset, CpuMesh, Image, Material, Vertex},
     deformation::{MeshDeformation, MorphDelta, MorphTarget},
     settings::{
-        Antialiasing, FsrQuality, MotionBlur, ReflectionMethod, ScreenSpaceReflections, Settings,
+        Antialiasing, DepthOfField, FsrQuality, MotionBlur, ReflectionMethod,
+        ScreenSpaceReflections, Settings,
     },
     timing::{FrameTime, GpuTiming},
 };
@@ -142,6 +146,12 @@ fn runs(morph: bool) -> Vec<Run> {
             with(|s| s.reflection_method = ReflectionMethod::Crystal),
         ),
         run("motion-blur", with(|s| s.motion_blur = MotionBlur::Full)),
+        run("dof-low", with(|s| s.depth_of_field = DepthOfField::Low)),
+        run(
+            "dof-medium",
+            with(|s| s.depth_of_field = DepthOfField::Medium),
+        ),
+        run("dof-high", with(|s| s.depth_of_field = DepthOfField::High)),
         run(
             "fsr2",
             with(|s| {
@@ -920,6 +930,7 @@ impl Times {
             "TAA",
             "FSR2",
             "FSR3",
+            "depth of field",
             "motion blur",
         ] {
             if let Some(times) = self.groups.get(group) {
@@ -935,6 +946,8 @@ struct Options {
     frames: usize,
     chunks: usize,
     size: [u32; 2],
+    /// The frames written: every this many.
+    every: usize,
     directory: std::path::PathBuf,
 }
 
@@ -1086,6 +1099,15 @@ fn render(
             automatic: None,
         };
         input.motion_blur = MotionBlurParameters { shutter_angle: 0.5 };
+        // A large-format lens (10 cm sensor) wide open, focused 6 m ahead,
+        // for the `dof-*` runs: the near shore blurs by the most a pixel can
+        // and the far shore and sky by about 10 pixels at 1080p, so every
+        // level's rings run.
+        input.depth_of_field = DepthOfFieldParameters {
+            focus_distance: 6.,
+            f_number: 1.,
+            sensor_height: 0.1,
+        };
         input.directional_lights[0] = Some(DirectionalLight {
             direction: Vec3::new(-0.3, -1., -0.5),
             color: [1., 0.92, 0.8],
@@ -1124,7 +1146,7 @@ fn render(
             });
         }
         renderer.finish_frame(&mut scene);
-        if index % 30 == 29 || index + 1 == frames {
+        if index % options.every == options.every - 1 || index + 1 == frames {
             save(
                 device,
                 queue,
@@ -1175,6 +1197,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         frames: 120,
         chunks: 64,
         size: SIZE,
+        every: 30,
         directory: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/water-example"),
     };
     let mut morph = false;
@@ -1190,6 +1213,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 options.chunks = args.next().ok_or("--chunks requires a count")?.parse()?
             }
             "--morph" => morph = true,
+            "--every" => options.every = args.next().ok_or("--every requires a count")?.parse()?,
             "--size" => {
                 let size = args.next().ok_or("--size requires WxH")?;
                 let (width, height) = size.split_once('x').ok_or("--size requires WxH")?;
@@ -1203,6 +1227,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     if options.chunks == 0 {
         return Err("--chunks must be at least 1".into());
+    }
+    if options.every == 0 {
+        return Err("--every must be at least 1".into());
     }
     let adapter =
         pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default()))?;

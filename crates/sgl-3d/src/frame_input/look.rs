@@ -191,6 +191,37 @@ impl LocalExposure {
     }
 }
 
+/// The camera's lens, which depth of field focuses the frame through while
+/// `Settings::depth_of_field` is on: a thin lens whose focal length is the
+/// one `sensor_height` and the projection's vertical field of view give, as
+/// a physical camera's are related. A point `z` metres ahead along the view
+/// blurs into a disc whose diameter on the sensor is
+/// `f² |z − focus_distance| / (f_number z (focus_distance − f))`, scaled to
+/// the image by its height over `sensor_height`. A frame whose lens has a
+/// non-finite or non-positive value, or focuses no farther than its focal
+/// length, is not focused.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DepthOfFieldParameters {
+    /// Metres along the camera's view direction to the plane in focus.
+    pub focus_distance: f32,
+    /// The aperture's f-number: the focal length over the aperture's
+    /// diameter. Lower blurs more.
+    pub f_number: f32,
+    /// The image sensor's height in metres.
+    pub sensor_height: f32,
+}
+
+impl Default for DepthOfFieldParameters {
+    /// Bevy's: focused at 10 m, f/1, on a Super 35 sensor (18.66 mm high).
+    fn default() -> Self {
+        Self {
+            focus_distance: 10.,
+            f_number: 1.,
+            sensor_height: 0.01866,
+        }
+    }
+}
+
 /// Motion blur's authored strength, which `settings::MotionBlur` scales.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MotionBlurParameters {

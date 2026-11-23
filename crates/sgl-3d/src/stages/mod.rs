@@ -9,6 +9,7 @@
 pub(crate) mod antialiasing;
 pub(crate) mod cull;
 pub(crate) mod deform;
+pub(crate) mod depth_of_field;
 pub(crate) mod dynamic_gi;
 pub(crate) mod exposure;
 pub(crate) mod fog;

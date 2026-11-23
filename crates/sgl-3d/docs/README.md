@@ -221,7 +221,7 @@ lights installed, with the suns for the frame's two slots picked,
 [`examples/instances.rs`](../../../examples/sgl-3d/examples/instances.rs) many instances of a few
 models, [`examples/water.rs`](../../../examples/sgl-3d/examples/water.rs) a lake of 16 m
 chunks whose waves its own shader moves and whose surface receives
-screen-space reflections,
+screen-space reflections (its `dof-*` runs focus it with depth of field),
 [`examples/shaders.rs`](../../../examples/sgl-3d/examples/shaders.rs) vegetation bent by a wind
 shader and glass whose thickness varies across it,
 [`examples/volumes.rs`](../../../examples/sgl-3d/examples/volumes.rs) closed glass that absorbs

@@ -507,6 +507,17 @@ window thread.
   [Exposure, bloom and colour grading](../README.md#exposure-bloom-and-colour-grading).
 - **Bloom** (`FrameInput::bloom`): energy-conserving, through a mip chain;
   bright light scatters, with no threshold.
+- **Depth of field** (`Settings::depth_of_field`,
+  `FrameInput::depth_of_field`): the frame focused through a thin lens, for
+  dialogue and photo views: the game gives the focus distance, f-number and
+  sensor height, and the camera's field of view gives the focal length.
+  After TAA or FSR and before motion blur, bloom and SMAA. Wicked Engine's tiled
+  gather (Jimenez 2014) at half the scene size: a blurred foreground spreads
+  over what lies behind it, and a sharp subject keeps its edge against a
+  blurred background. Blur radius at most 32 pixels of the scene size;
+  blended surfaces take the focus of what lies behind them, receivers of
+  screen-space reflections their own. Off by default.
+  [Depth of field](../README.md#depth-of-field).
 - **Motion blur** (`Settings::motion_blur`, `FrameInput::motion_blur`): the
   camera's and moving instances' motion, over a shutter angle, after
   antialiasing. Wicked Engine's tile-max reconstruction filter: moving edges

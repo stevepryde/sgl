@@ -419,7 +419,7 @@ Geometry, the sky and blended receivers write unjittered motion into the G-buffe
 
 #### M-12 Receivers write their own motion
 
-- **Rule.** When the scene holds a blended receiver of screen-space reflections, a screen-space method, TAA, FSR or motion blur runs, and the camera's blended list holds receivers, the receiver pass draws them strictly nearer than the opaque depth and replaces the G-buffer's motion (RG, B and A) at their pixels with the receiver's unjittered motion; what is seen through a receiver then reprojects by the receiver.
+- **Rule.** When the scene holds a blended receiver of screen-space reflections, a screen-space method, TAA, FSR, depth of field or motion blur runs, and the camera's blended list holds receivers, the receiver pass draws them strictly nearer than the opaque depth and replaces the G-buffer's motion (RG, B and A) at their pixels with the receiver's unjittered motion; what is seen through a receiver then reprojects by the receiver.
 - **Raised by.** Glass, water and other blended receivers.
 - **Stays triggered while.** Nothing.
 - **Source.** HDRP's transparent depth prepass and motion vectors. Code: `stages/transparent/mod.rs` (`Transparent::encode_receivers`), `shading/geometry.wgsl` (`receiver_fs`).

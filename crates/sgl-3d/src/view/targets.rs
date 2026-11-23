@@ -5,8 +5,8 @@ use crate::shading::gbuffer;
 
 /// The frame's sizes. Every pass up to antialiasing renders at `render`;
 /// antialiasing writes `scene` (they differ only while FSR upscales), which
-/// motion blur, bloom, SMAA and tone mapping use; presentation writes
-/// `output`.
+/// depth of field, motion blur, bloom, SMAA and tone mapping use;
+/// presentation writes `output`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Sizes {
     pub render: [u32; 2],

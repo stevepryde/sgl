@@ -26,6 +26,22 @@ pub(crate) enum ShadowFilter {
     Soft,
 }
 
+/// Depth of field as a frame runs it: the frame's lens, the focal length
+/// its sensor and the camera's vertical field of view give, and the
+/// setting's rings.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DepthOfFieldFrame {
+    /// Metres along the view to the plane in focus.
+    pub focus_distance: f32,
+    pub f_number: f32,
+    /// Metres.
+    pub sensor_height: f32,
+    /// Metres, below `focus_distance`.
+    pub focal_length: f32,
+    /// The gather's rings (`Settings::depth_of_field`).
+    pub rings: u32,
+}
+
 /// The size-affecting choices `View::resize` resolves: what the stages'
 /// targets are made for.
 #[derive(Clone, Copy, Debug)]
@@ -162,8 +178,8 @@ pub(crate) struct Effective {
     /// takes its two-pass form.
     pub contact_shadows: Option<ContactShadows>,
     /// The receiver pass runs: the scene holds a blended receiver of
-    /// screen-space reflections, and a screen-space method, TAA, FSR or
-    /// motion blur reads the surface it draws.
+    /// screen-space reflections, and a screen-space method, TAA, FSR, depth
+    /// of field or motion blur reads the surface it draws.
     pub receivers: bool,
     /// The G-buffer and lighting are one pass: the device has the
     /// attachments, unless occlusion culling, the ray-traced shadow stage or
@@ -195,6 +211,9 @@ pub(crate) struct Effective {
     /// `Settings::volume_paths` on a device of the Extended binding tier.
     pub volume_paths: bool,
     pub bloom: bool,
+    /// Depth of field's lens and gather, while it runs: the setting is on,
+    /// the camera is `perspective`'s and the frame's lens is valid.
+    pub depth_of_field: Option<DepthOfFieldFrame>,
     /// The share of each pixel's motion that motion blur spreads it over:
     /// the authored shutter scaled by the setting, while positive.
     pub motion_blur: Option<f32>,

@@ -44,8 +44,8 @@ pub use content::{
 };
 pub use frame_input::{
     AgxLook, AutoExposure, BloomParameters, Camera, ColorGrading, ColorGradingGlobal,
-    ColorGradingSection, CompensationCurve, CompensationCurveError, Exposure, Fog, FrameInput,
-    LocalExposure, MeteringMask, MotionBlurParameters, perspective,
+    ColorGradingSection, CompensationCurve, CompensationCurveError, DepthOfFieldParameters,
+    Exposure, Fog, FrameInput, LocalExposure, MeteringMask, MotionBlurParameters, perspective,
 };
 pub use glam;
 #[cfg(all(test, not(target_arch = "wasm32")))]

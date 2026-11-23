@@ -335,3 +335,63 @@ fn a_view_drawing_a_removed_render_texture_is_refused() {
     let mut view = feed_view(&stage, FEED);
     draw(&mut stage, &mut view, None);
 }
+
+// Plausible defect: a view that draws a render texture skips depth of
+// field (or the stage runs at another view's size), so a feed a game
+// focuses (a camera's viewfinder, a photo mode's preview) shows unfocused,
+// or a validation error when its targets do not match the texture. The
+// oracle is the architecture's rule that a render texture's view runs its
+// stages like any view, from its own input and settings: in a frame where
+// the feed alone turns depth of field on, the feed focuses its picture at
+// the texture's size and the main view runs none.
+#[test]
+fn a_view_drawing_a_render_texture_focuses_its_own_picture() {
+    let Some(mut stage) = Stage::new() else {
+        return;
+    };
+    let main_settings = settings();
+    let feed_settings = Settings {
+        depth_of_field: crate::settings::DepthOfField::Medium,
+        ..settings()
+    };
+    let [main_input, feed_input] = [input(Vec3::ZERO), input(Vec3::X * 100.)];
+    let mut views = vec![
+        ViewFrame {
+            view: &mut stage.main,
+            input: &main_input,
+            settings: &main_settings,
+            output: ViewOutput::Texture(&stage.output),
+            timing: None,
+        },
+        ViewFrame {
+            view: &mut stage.feed,
+            input: &feed_input,
+            settings: &feed_settings,
+            output: ViewOutput::RenderTexture(stage.texture),
+            timing: None,
+        },
+    ];
+    let mut encoder = stage.device.create_command_encoder(&Default::default());
+    stage.renderer.render(
+        &stage.device,
+        &stage.queue,
+        &mut encoder,
+        &mut stage.scene,
+        &mut views,
+    );
+    stage.queue.submit([encoder.finish()]);
+    stage.renderer.finish_frame(&mut stage.scene);
+    let focused = stage
+        .feed
+        .depth_of_field
+        .output()
+        .expect("the feed focused");
+    assert_eq!(
+        [focused.texture().width(), focused.texture().height()],
+        FEED
+    );
+    assert!(
+        stage.main.depth_of_field.output().is_none(),
+        "the main view focused"
+    );
+}

@@ -374,6 +374,13 @@ pub(super) fn resolve(
         ShadowQuality::High => ShadowFilter::Gaussian,
     };
     let motion_blur = motion_blur(settings, input).filter(|_| post_fx_camera);
+    // Depth of field linearises `perspective`'s depth.
+    let depth_of_field = crate::stages::depth_of_field::resolve(
+        settings.depth_of_field,
+        &input.depth_of_field,
+        input.camera.projection,
+    )
+    .filter(|_| post_fx_camera);
     // What draws onto the composite, each of which marks the temporal
     // masks while the frame has them (Frame item 9). TAA reads the masks
     // only in a frame one of them can mark; FSR's dispatch binds them in
@@ -422,7 +429,11 @@ pub(super) fn resolve(
         ray_traced_shadow_quality: settings.ray_traced_shadow_quality.resolve(low),
         contact_shadows,
         receivers: content.receivers
-            && (screen_space.is_some() || taa || fsr || motion_blur.is_some()),
+            && (screen_space.is_some()
+                || taa
+                || fsr
+                || depth_of_field.is_some()
+                || motion_blur.is_some()),
         // Occlusion culling's late phase falls between the G-buffer passes,
         // so the opaque stage takes its two-pass form.
         fused: fused_supported && !disable.fused_opaque && !occlusion_culling,
@@ -436,6 +447,7 @@ pub(super) fn resolve(
             .filter(|_| content.dynamic_gi_volume),
         volume_paths: volume_paths(settings, tier),
         bloom: bloom(settings),
+        depth_of_field,
         motion_blur,
         composite,
         culling: !disable.culling,

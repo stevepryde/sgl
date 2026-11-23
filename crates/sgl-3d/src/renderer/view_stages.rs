@@ -93,6 +93,7 @@ pub(super) fn begin_view(
         shadows,
         fog,
         antialiasing,
+        depth_of_field,
         motion_blur,
         post,
         rendered,
@@ -117,6 +118,7 @@ pub(super) fn begin_view(
         if post_fx.take().is_some() {
             // Cached presentation groups may hold TAA's outputs.
             post.forget_inputs();
+            depth_of_field.forget_inputs();
             motion_blur.forget_inputs();
         }
     } else if post_fx
@@ -125,6 +127,7 @@ pub(super) fn begin_view(
     {
         *post_fx = Some(Box::new(PostFx::new(device, queue, effective.taa)));
         post.forget_inputs();
+        depth_of_field.forget_inputs();
         motion_blur.forget_inputs();
     }
     if let Some(post_fx) = post_fx.as_mut()
@@ -279,8 +282,8 @@ pub(super) fn begin_view(
 /// shadows between its G-buffer and lighting while they run), the
 /// transparent stage's receivers and volume layers, reflections with the
 /// transparent stage drawn into their input (while a screen-space method
-/// traces it) and onto their result, heat, exposure, antialiasing, motion
-/// blur, then post.
+/// traces it) and onto their result, heat, exposure, antialiasing, depth
+/// of field, motion blur, then post.
 pub(super) fn finish_view(
     shared: &mut Shared,
     view: &mut View,
@@ -325,6 +328,7 @@ pub(super) fn finish_view(
         transparent,
         exposure,
         antialiasing,
+        depth_of_field,
         motion_blur,
         post,
         #[cfg(feature = "diagnostics")]
@@ -456,6 +460,7 @@ pub(super) fn finish_view(
     let completed_kind = antialiasing.encode(&mut ctx, post_fx.as_deref_mut(), exposure.texture());
     if antialiasing.take_failure() {
         post.forget_inputs();
+        depth_of_field.forget_inputs();
         motion_blur.forget_inputs();
     }
     #[cfg(any(test, feature = "diagnostics"))]
@@ -463,9 +468,16 @@ pub(super) fn finish_view(
         *diagnostic_completed = Some(completed_kind);
     }
     let antialiased = completed(completed_kind, post_fx, antialiasing, targets);
-    let completed_view = motion_blur
-        .encode(&mut ctx, antialiased)
-        .unwrap_or(antialiased);
+    // The resolved HDR frame's chain: the lens's focus, then the shutter.
+    let focused = depth_of_field.encode(&mut ctx, antialiased).cloned();
+    if depth_of_field.take_replaced() {
+        // Motion blur's groups and post's may bind the focused frame it
+        // made or let go.
+        motion_blur.forget_inputs();
+        post.forget_inputs();
+    }
+    let focused = focused.as_ref().unwrap_or(antialiased);
+    let completed_view = motion_blur.encode(&mut ctx, focused).unwrap_or(focused);
     #[cfg(feature = "diagnostics")]
     if let Some(probe) = probe {
         probe.observe(

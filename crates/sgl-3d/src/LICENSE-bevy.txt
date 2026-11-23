@@ -8,7 +8,10 @@ multiscattering_lut.wesl, sky_view_lut.wesl, aerial_view_lut.wesl and render_sky
 fast_acos, fast_acos_4, fast_atan2 and ray_sphere_intersect from
 crates/bevy_render/src/maths.wesl) to shading/sky.wgsl, stages/sky/ and
 stages/opaque/backdrop.wgsl, and its environment.wesl capture to
-stages/sky/environment.wgsl.
+stages/sky/environment.wgsl. Depth of field's thin-lens circle of confusion
+(stages/depth_of_field.wgsl, renderer/effective.rs) is Bevy 706fdd9 (v0.17.3)
+crates/bevy_post_process/src/dof/dof.wgsl calculate_circle_of_confusion and
+mod.rs calculate_focal_length, with its lens defaults.
 
 MIT License
 

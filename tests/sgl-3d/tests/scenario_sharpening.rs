@@ -1,5 +1,5 @@
 //! The sharpening suite of the scenario harness (`specs/testing.md`, "SGL3D
-//! scenario harness"): post's RCAS (Frame item 13) under every antialiasing
+//! scenario harness"): post's RCAS (Frame item 14) under every antialiasing
 //! method, TAA, SMAA, none, FSR2 and FSR3 (where the device runs them), on
 //! the temporal suites' shared stage at rest (`scenario::temporal`). Each
 //! case renders the same script three times, unsharpened and at sharpness
