@@ -32,7 +32,10 @@ libraries and libudev.
 
 ## Make a change
 
-- Start with the existing implementation and a concrete consumer need.
+- Start with the existing implementation and a concrete consumer need:
+  say when a game would use the change and what it adds over what SGL
+  already gives ([D-76](specs/decisions.md)). A feature no game would
+  plausibly use is not built.
   Preserve the game/library boundary in [architecture](specs/architecture.md).
   Plan a feature, setting, public type, port or refactor with the
   [architect skill](.claude/skills/sgl-architect/SKILL.md) before building it,

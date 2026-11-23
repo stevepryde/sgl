@@ -141,7 +141,11 @@ compatibility shims solely to avoid updating consumers.
   capability is excluded in advance (D-47): an entity system, physics or a
   scripting runtime may join as a library a game can take or leave, once the
   architect skill has planned it. A piece need only be reusable in
-  principle; it does not have to be used by several games first (D-49). None
+  principle; it does not have to be used by several games first (D-49). It
+  must be worth having, though: a feature is built and kept only if a game
+  would plausibly use it and it adds something SGL does not already give.
+  Ask when a game would use it; where the answer is "probably never",
+  decline it, or remove it if it has landed (D-76). None
   of those three exists yet. Do not add a layer process or compatibility-lock
   machinery.
 - Baked and generated assets (lightmaps, probe captures, other bakes) are

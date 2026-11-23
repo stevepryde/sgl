@@ -33,7 +33,10 @@ this is the spirit they share.
   runtime SGL owns. SGL is one library or several, and a game can take or
   leave each. No capability is excluded in advance (D-47), and a piece need
   only be reusable in principle (D-49): nothing in it belongs to one game. It
-  does not have to be used by several games first, or by any yet.
+  does not have to be used by several games first, or by any yet. It does
+  have to be worth having (D-76): a game would plausibly use it, and it
+  adds something SGL does not already give. Reusable and never used is not
+  worth its place.
 - **Written, maintained and used entirely by AI agents.** The owner steers and
   writes none of it; the same goes for the games that use SGL and their
   assets (D-50). So nothing may assume a person: no step a human performs, no
@@ -105,7 +108,12 @@ each is cheap to settle on paper and expensive to reverse in code.
 
 1. **Outcome.** State what a game can do afterwards that it cannot do now. The
    need can be one game's, or the owner's for games to come; it does not have
-   to be shared by several games already.
+   to be shared by several games already. Then answer the owner's question
+   (D-76): when would a game use this, and what does it add over the ways
+   SGL already reaches the same result? Name the kind of game and scene. If
+   the honest answer is "probably never", or "nothing the existing feature
+   lacks", decline it here and say so in the issue; an issue being on a
+   milestone does not answer the question.
 2. **Does it belong in SGL?** It belongs when it is reusable in principle
    (D-49): another game could use it as it stands. It does not if it is one
    game's composition, policy or content, if no other game could use it
@@ -162,6 +170,7 @@ builds from:
 ```markdown
 ## Architecture fit
 - Outcome: …
+- Game use: <when a game would use it; what it adds over what SGL has>
 - Belongs in SGL because: …
 - Lives in: <crate> / <layer> / <stage, position>; reads …; writes …; owns …
 - Game-facing: <types and fields, each classified, with defaults>
@@ -213,6 +222,7 @@ not the test: a grep finds candidates, reading the code decides.
 | Tests that cannot fail; a feature nothing tests in motion | `specs/testing.md` | test oracles; each feature in the feature guide against the tests that render it |
 | A port without its header, licence or registered upstream | RD-2 | ported files, `licenses/upstreams.json` |
 | A step, a check or a piece of knowledge that needs a person | D-50 | workflows that say "manually", "by eye", "open in"; verification that is only a capture to look at; rules that exist only in an agent's memory or a past conversation |
+| A feature no game would plausibly use, or that adds nothing over another | D-76 | the feature guide and `settings.rs`, feature by feature: when would a game use each, and what does it add over its neighbours |
 | A feature left native-only that the web platform could run | D-48 | `target_arch` gates, `graphics_device` feature requests, the effective configuration's fallbacks, the feature guide's platform exceptions |
 
 For a large scope, hand independent sweeps to read-only agents, each with one
@@ -237,6 +247,8 @@ departure is itself wrong.
 - *A design question* (two reasonable structures, or a rule that no longer
   serves): do not decide it inside the pass. Put the options and a
   recommendation to the owner; what is decided becomes a D-n entry.
+- *A feature no game would use* (D-76): remove it with its settings, tests
+  and records, as one change with the reason in its commit.
 - *Fine*: leave it.
 
 If the same rule turns up breached again and again, the structure or the rule is

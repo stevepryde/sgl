@@ -47,7 +47,10 @@ library; their rules, content, and process layouts stay with the games.
    games can reuse it, and that a game can take it or leave it while owning
    its executable and loop ([D-47](decisions.md)). Reusable in principle is
    enough: a piece does not have to be shared by several games, or extracted
-   from more than one, before it belongs here ([D-49](decisions.md)).
+   from more than one, before it belongs here ([D-49](decisions.md)). It is
+   built and kept only if a game would plausibly use it and it adds
+   something SGL does not already give; one that fails that is declined,
+   or removed if it has landed ([D-76](decisions.md)).
 3. Each package must own an implemented reusable boundary. New modules appear
    when extracted code needs a home.
 

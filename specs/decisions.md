@@ -1484,3 +1484,20 @@ Use the [current specs](README.md) for implementation and the
   `wgpu::Device` from the one `sp-fidelity-wgpu` takes; raw twin pipelines
   (D-71). When wgpu exposes a call this crate added, the crate implements
   wgpu's trait method and its own entry point is deleted.
+
+- **D-76** Owner direction, 2026-11-23: a feature is built, and stays, only
+  if a game would plausibly use it and it adds something SGL does not
+  already give. A plan says when a game would use the feature and what it
+  adds over the ways SGL already reaches the same result; where the honest
+  answer is "probably never", or "nothing the existing feature lacks", the
+  architect declines it in the issue with that reason, and a landed feature
+  that turns out so is removed with its settings, tests and records (RD-3,
+  AR-11). Reusable in principle (D-49) is still required and is no longer
+  enough: it says where a piece belongs, not whether it is worth having. An
+  issue on a milestone is listed work, not the answer to the question.
+  First applied the same day: IES light profiles (#872) were removed before
+  release, DLSS and MetalFX were not built (D-74), and planar reflections
+  (#866) were kept because they show off-screen and occluded content that
+  screen-space reflections cannot. Rationale: every feature is code in
+  every game's build and a surface agents must keep coherent; one no game
+  uses costs that for nothing.
