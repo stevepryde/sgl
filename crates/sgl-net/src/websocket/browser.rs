@@ -94,7 +94,6 @@ impl BrowserWebSocketConfig {
 struct BrowserState {
     peer: PeerState,
     pacing: BufferedPacing,
-    opened: bool,
     connected_pending: bool,
     needs_reconnect: bool,
     local_close: bool,
@@ -105,7 +104,6 @@ impl BrowserState {
         Self {
             peer: PeerState::new(reliable),
             pacing: BufferedPacing::default(),
-            opened: false,
             connected_pending: false,
             needs_reconnect: false,
             local_close: false,
@@ -122,7 +120,6 @@ impl BrowserState {
     fn reset_for_reconnect(&mut self, reliable: &ReliableConfig) {
         self.peer = PeerState::new(reliable);
         self.pacing = BufferedPacing::default();
-        self.opened = false;
         self.connected_pending = false;
         self.needs_reconnect = false;
         self.local_close = false;
@@ -151,7 +148,6 @@ impl BrowserSocket {
         let on_open = Closure::wrap(Box::new(move |_event: Event| {
             let mut state = open_state.borrow_mut();
             if state.peer.terminal().is_none() {
-                state.opened = true;
                 state.connected_pending = true;
             }
         }) as Box<dyn FnMut(_)>);
@@ -279,15 +275,14 @@ impl BrowserWebSocketClient {
         // Every attempt reports its own end, including one whose `WebSocket`
         // constructor throws before a socket exists.
         self.terminal_announced = false;
-        match BrowserSocket::connect(&self.config.url, &self.config.identity, &self.state) {
-            Ok(socket) => {
-                self.socket = socket;
-                true
-            }
-            Err(_) => {
-                self.state.borrow_mut().fail(DisconnectReason::Transport);
-                false
-            }
+        if let Ok(socket) =
+            BrowserSocket::connect(&self.config.url, &self.config.identity, &self.state)
+        {
+            self.socket = socket;
+            true
+        } else {
+            self.state.borrow_mut().fail(DisconnectReason::Transport);
+            false
         }
     }
 
@@ -445,7 +440,7 @@ impl ClientIo for BrowserWebSocketClient {
         self.flush_released();
     }
 
-    fn disconnect(&mut self, _now_ms: u64) {
+    fn disconnect(&mut self, now_ms: u64) {
         // A local close is final: cancel any retry scheduled in backoff.
         self.reconnect.reset();
         if self.socket.socket.ready_state() != WebSocket::OPEN {
@@ -462,7 +457,7 @@ impl ClientIo for BrowserWebSocketClient {
             let mut state = self.state.borrow_mut();
             state.local_close = true;
             let _ = state.peer.release_outbound();
-            state.peer.begin_graceful_close(_now_ms);
+            state.peer.begin_graceful_close(now_ms);
             state.needs_reconnect = false;
         }
         self.flush_released();

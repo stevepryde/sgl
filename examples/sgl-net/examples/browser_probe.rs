@@ -26,6 +26,7 @@ use sgl_net::websocket::{
 use sgl_net::{
     ClientEvent, ClientIo, Delivery, DisconnectReason, Lane, MAX_LATEST_STATE_BYTES, SendError,
 };
+use std::fmt::Write as _;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
@@ -138,7 +139,9 @@ async fn reliable_binary_payloads_echo_in_order() -> Result<(), String> {
     let corpus: Vec<Vec<u8>> = vec![
         vec![],
         vec![0, 0xFF, 0x80, b'\n', 0xC0, 0xAF],
-        (0..1500u32).map(|i| (i * 7 % 256) as u8).collect(),
+        (0..1500u32)
+            .map(|i| u8::try_from(i * 7 % 256).expect("a byte"))
+            .collect(),
         b"last".to_vec(),
     ];
     for payload in &corpus {
@@ -173,13 +176,19 @@ async fn reliable_binary_payloads_echo_in_order() -> Result<(), String> {
 /// Message `index` of the lanes scenario on `lane`: short on lane 0, three
 /// WebSocket fragments on lane 1, one byte past a fragment on lane 3.
 fn lane_message(lane: Lane, index: u8) -> Vec<u8> {
-    let len = match lane.index() {
+    let len: u32 = match lane.index() {
         0 => 10,
         1 => 40_000,
         _ => 16 * 1024 + 1,
     };
-    let mut payload: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-    payload[..3].copy_from_slice(&[b'L', lane.index() as u8, index]);
+    let mut payload: Vec<u8> = (0..len)
+        .map(|i| u8::try_from(i % 251).expect("a byte"))
+        .collect();
+    payload[..3].copy_from_slice(&[
+        b'L',
+        u8::try_from(lane.index()).expect("lane index fits a byte"),
+        index,
+    ]);
     payload
 }
 
@@ -721,10 +730,11 @@ async fn a_local_disconnect_during_backoff_cancels_the_retry() -> Result<(), Str
 }
 
 fn record(report: &mut String, name: &str, result: Result<(), String>) {
-    match result {
-        Ok(()) => report.push_str(&format!("ok {name}\n")),
-        Err(detail) => report.push_str(&format!("FAIL {name}: {detail}\n")),
-    }
+    // Writing to a `String` cannot fail.
+    let _ = match result {
+        Ok(()) => writeln!(report, "ok {name}"),
+        Err(detail) => writeln!(report, "FAIL {name}: {detail}"),
+    };
 }
 
 /// Run every scenario and return one line per scenario: `ok <name>` or
