@@ -112,14 +112,13 @@ const IMAGE_RGBA8: u32 = 0;
 /// `ImageHeader::format` of BC7 blocks.
 const IMAGE_BC7: u32 = 1;
 
-/// A material's record in the source: its values, its textures, their wrap
-/// modes and whether lightmap charts light it.
+/// A material's record in the source: its values (its maps' sampler states
+/// among them), its textures and whether lightmap charts light it.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct MaterialRecord {
     material: MaterialUniform,
     textures: MaterialTextures,
-    wrap: [u32; 2],
     baked: u32,
 }
 
@@ -311,16 +310,10 @@ impl SceneRays {
         queue: &wgpu::Queue,
         values: &MaterialUniform,
         textures: MaterialTextures,
-        wrap: [gltf::texture::WrappingMode; 2],
     ) -> Result<Range<u32>, SceneError> {
         let record = MaterialRecord {
             material: *values,
             textures,
-            wrap: wrap.map(|w| match w {
-                gltf::texture::WrappingMode::Repeat => 0,
-                gltf::texture::WrappingMode::MirroredRepeat => 1,
-                gltf::texture::WrappingMode::ClampToEdge => 2,
-            }),
             baked: 0,
         };
         let range = self.allocate(device, queue, words::<MaterialRecord>())?;
@@ -418,3 +411,6 @@ mod instance_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod lod_receiver_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod sampler_tests;

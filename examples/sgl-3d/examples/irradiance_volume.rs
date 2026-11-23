@@ -53,7 +53,7 @@ use sgl_3d::{
     HemisphereLight, InstanceId, InstanceState, IrradianceCell, IrradianceVolume, MaterialId,
     Mobility, ModelId, ModelMesh, PreparedIrradianceRegion, PreparedModel, Renderer, Scene, View,
     ViewFrame, ViewOutput,
-    asset::{CpuMesh, Image, Material, Vertex},
+    asset::{CpuMesh, Image, Material, MaterialTexture, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     settings::{
         Antialiasing, ReflectionMethod, SceneResolution, ScreenSpaceReflections, Settings,
@@ -649,7 +649,7 @@ impl Game {
         let world = World::new();
         let block = |tile: usize| Material {
             name: ["grass", "dirt", "stone"][tile].into(),
-            base_texture: Some(tile),
+            base_texture: Some(MaterialTexture::new(tile)),
             metallic: 0.,
             roughness: 0.9,
             ..Default::default()

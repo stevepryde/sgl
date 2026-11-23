@@ -48,7 +48,7 @@ replace every choice with a complete bundle.
 | FSR quality | `Settings::fsr_quality` | `Quality`, `NativeAa`, `Balanced`, `Performance`, `UltraPerformance` | | Native AA renders every scene pixel; Quality, Balanced, Performance and Ultra Performance render 1/1.5, 1/1.7, 1/2 and 1/3 of it per axis. Set `FrameInput::frame_time_ms` every frame. |
 | Sharpening | `Settings::sharpening`, `Settings::sharpness` | `Preset`, `Off`, `On`; 0.8, any of 0..=1 | High: On. Low: On only where FSR is the antialiasing in effect or spatial upscaling is On | AMD's RCAS sharpening of the displayed image, once, after tone mapping, whichever antialiasing ran (TAA, SMAA, Off, FSR2/FSR3, spatial upscaling). `sharpness` is AMD's: 0 sharpens least, 1 most; values outside are clamped, NaN to 0. One full-screen pass at the output size, plus an output-size RGBA16F target where neither SMAA at the output size nor spatial upscaling gives it its input. |
 | SMAA quality | `Settings::smaa_quality` | `Medium`, `Low`, `High`, `Ultra` | | SMAA 2.8's presets: Low and Medium search up to 4 and 8 steps of two pixels each way along an edge; High up to 16 and also smooths diagonal lines and keeps sharp corners; Ultra up to 32 and finds fainter edges. Higher costs more. |
-| Anisotropic filtering | `Settings::anisotropic_filtering` | `X8`, `Off`, `X2`, `X4`, `X16` | | The most samples material textures take where a surface is seen at a grazing angle: sharper floors and walls at a distance, at more texture bandwidth. Off filters trilinearly. |
+| Anisotropic filtering | `Settings::anisotropic_filtering` | `X8`, `Off`, `X2`, `X4`, `X16` | | The most samples material textures take where a surface is seen at a grazing angle: sharper floors and walls at a distance, at more texture bandwidth. Off filters trilinearly. Applies to maps whose sampler is linear and mipmapped linearly; an authored nearest or non-mipmapped filter keeps its own. |
 | Scene resolution | `Settings::scene_resolution` | `Preset`, `Hd`, `FullHd`, `Full`, `ThreeQuarter`, `Half` | Low: one pixel per logical pixel. High: up to 1.75, never above the output | `Hd` and `FullHd` fit within 1280×720 and 1920×1080. Pass the window's scale factor to `View::new` and `resize`. The game's UI keeps the output size. |
 | Spatial upscaling | `Settings::upscaling` | `Off`, `On` | | Opt-in enlargement from scene to output size after tone mapping and SMAA. On uses SGL3D's portable spatial reconstruction (sharpened as Sharpening chooses); Off keeps linear presentation. Set the input size with `SceneResolution`. Equal-size frames bypass it; native FSR remains independent. |
 | Tone mapping | `Settings::tone_mapping` | `KhronosPbrNeutral` (default), `AcesFilmic`, `Agx` | Independent of quality preset | Standard display transforms; neutral grading by default. AgX alone uses `ColorGrading::agx_look`. |
@@ -81,7 +81,7 @@ The preset, scene resolution, antialiasing changes to, from or between FSR2/FSR3
 quality size the targets, so they apply at the next `View::resize`, which
 the game calls every frame. The rest apply on the next rendered frame; that
 frame rebuilds SMAA's pipelines after an SMAA quality change, and every
-material's sampler after an anisotropic filtering change. The first frame
+material sampler after an anisotropic filtering change. The first frame
 that uses volumetric fog or occlusion culling builds that effect's pipelines.
 The view reuses them when the effect is enabled again.
 `View::antialiasing_in_effect(&settings)` reports what actually runs and

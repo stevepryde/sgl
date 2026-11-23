@@ -217,9 +217,10 @@ pub struct SurfaceMaterial {
     /// authored material has none): the surface emits the picture, decoded
     /// to linear as an sRGB image is, times `emission`. An in-world
     /// monitor: set `emission` to the screen's brightness and `base` to
-    /// black, and add its material with `wrap` `ClampToEdge`, since the
-    /// picture is sampled through the material's sampler and the default
-    /// repeats. Raster passes, probe captures among them, sample the picture;
+    /// black, and add its material with an emission map whose sampler wraps
+    /// `ClampToEdge` (a white texel will do), since the picture is sampled
+    /// with the emission map's sampler, else the material's bound one, and
+    /// the default repeats. Raster passes, probe captures among them, sample the picture;
     /// rays and dynamic GI see the material as it was added, its emission
     /// map or none. While the picture changes, the surface counts as moving
     /// for the temporal composition mask. None by default.

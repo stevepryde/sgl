@@ -2678,11 +2678,11 @@ fn tilted_plane(coat: bool) -> Asset {
     }];
     let material = &mut asset.materials[0];
     material.double_sided = false;
-    material.normal_texture = Some(0);
+    material.normal_texture = Some(crate::asset::MaterialTexture::new(0));
     if coat {
         material.clearcoat = 1.;
         material.coat_roughness = 0.1;
-        material.coat_normal_texture = Some(1);
+        material.coat_normal_texture = Some(crate::asset::MaterialTexture::new(1));
     }
     asset.images = [204, 51]
         .map(|x| {

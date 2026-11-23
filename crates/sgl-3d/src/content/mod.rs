@@ -25,6 +25,7 @@ pub(crate) mod lighting;
 mod load_budget;
 pub mod lod;
 pub(crate) mod material;
+mod material_texture;
 pub(crate) mod model;
 pub(crate) mod render_texture;
 pub mod shader;

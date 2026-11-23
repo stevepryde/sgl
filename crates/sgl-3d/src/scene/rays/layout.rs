@@ -196,6 +196,10 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_MATERIAL_DIFFUSE_TRANSMISSION",
             material(offset_of!(MaterialUniform, diffuse_transmission)),
         ),
+        (
+            "SCENE_MATERIAL_MAP_SAMPLERS",
+            material(offset_of!(MaterialUniform, map_samplers)),
+        ),
         ("SCENE_NORMAL_LAYER_WORDS", size_of::<NormalLayerUniform>()),
         (
             "SCENE_NORMAL_LAYER_CYCLES",
@@ -213,7 +217,6 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_MATERIAL_TEXTURES",
             offset_of!(MaterialRecord, textures),
         ),
-        ("SCENE_MATERIAL_WRAP", offset_of!(MaterialRecord, wrap)),
         ("SCENE_MATERIAL_BAKED", offset_of!(MaterialRecord, baked)),
         ("SCENE_TEXTURE_BASE", offset_of!(MaterialTextures, base)),
         (

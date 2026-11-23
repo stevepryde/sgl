@@ -226,38 +226,38 @@ fn glass(normal: bool) -> Asset {
         keeps_specular: false,
     };
     material.base[3] = 0.5;
-    material.base_texture = Some(0);
-    material.mr_texture = Some(1);
-    material.occlusion_texture = Some(1);
-    material.emissive_texture = Some(2);
+    material.base_texture = Some(crate::asset::MaterialTexture::new(0));
+    material.mr_texture = Some(crate::asset::MaterialTexture::new(1));
+    material.occlusion_texture = Some(crate::asset::MaterialTexture::new(1));
+    material.emissive_texture = Some(crate::asset::MaterialTexture::new(2));
     if normal {
-        material.normal_texture = Some(3);
+        material.normal_texture = Some(crate::asset::MaterialTexture::new(3));
     } else {
-        material.bump_texture = Some(4);
+        material.bump_texture = Some(crate::asset::MaterialTexture::new(4));
         material.bump_scale = 1.;
     }
-    material.anisotropy_texture = Some(5);
+    material.anisotropy_texture = Some(crate::asset::MaterialTexture::new(5));
     material.anisotropy_strength = 0.5;
     material.clearcoat = 0.5;
-    material.clearcoat_texture = Some(6);
-    material.coat_roughness_texture = Some(7);
-    material.coat_normal_texture = Some(8);
+    material.clearcoat_texture = Some(crate::asset::MaterialTexture::new(6));
+    material.coat_roughness_texture = Some(crate::asset::MaterialTexture::new(7));
+    material.coat_normal_texture = Some(crate::asset::MaterialTexture::new(8));
     material.iridescence = 0.5;
-    material.iridescence_texture = Some(9);
-    material.iridescence_thickness_texture = Some(10);
+    material.iridescence_texture = Some(crate::asset::MaterialTexture::new(9));
+    material.iridescence_thickness_texture = Some(crate::asset::MaterialTexture::new(10));
     material.metallic = 0.;
     material.transmission = 1.;
-    material.transmission_texture = Some(11);
+    material.transmission_texture = Some(crate::asset::MaterialTexture::new(11));
     material.thickness = 0.2;
-    material.thickness_texture = Some(12);
+    material.thickness_texture = Some(crate::asset::MaterialTexture::new(12));
     material.attenuation_distance = 1.;
     material.attenuation_color = [0.8, 0.9, 1.];
     material.dispersion = 0.5;
     material.sheen_color = [0.5; 3];
-    material.sheen_color_texture = Some(13);
-    material.sheen_roughness_texture = Some(14);
+    material.sheen_color_texture = Some(crate::asset::MaterialTexture::new(13));
+    material.sheen_roughness_texture = Some(crate::asset::MaterialTexture::new(14));
     material.diffuse_transmission = 0.5;
-    material.diffuse_transmission_texture = Some(15);
-    material.diffuse_transmission_color_texture = Some(14);
+    material.diffuse_transmission_texture = Some(crate::asset::MaterialTexture::new(15));
+    material.diffuse_transmission_color_texture = Some(crate::asset::MaterialTexture::new(14));
     glass
 }

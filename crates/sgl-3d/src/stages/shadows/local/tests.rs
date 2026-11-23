@@ -1812,7 +1812,7 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,p:ShaderParams)->Materi
             asset.materials[0].alpha = crate::AlphaMode::Mask { cutoff: 0.5 };
             asset.materials[0].roughness = 1.;
             if normal {
-                asset.materials[0].normal_texture = Some(0);
+                asset.materials[0].normal_texture = Some(crate::asset::MaterialTexture::new(0));
                 for vertex in &mut asset.meshes[0].vertices {
                     vertex.tangent = [1., 0., 0., 1.];
                 }
@@ -1820,7 +1820,7 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,p:ShaderParams)->Materi
                 // world direction under the shadow camera's projection.
                 asset.materials[0].anisotropy_strength = 0.1;
             } else {
-                asset.materials[0].mr_texture = Some(0);
+                asset.materials[0].mr_texture = Some(crate::asset::MaterialTexture::new(0));
             }
             let ids = scene.add_asset(device, queue, asset).unwrap();
             test_support::set_shader(&mut scene, queue, ids.materials[0], (shader, 0.));

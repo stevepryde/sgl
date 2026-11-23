@@ -171,7 +171,7 @@ fn fixture(
         base: [0.5, 0.5, 0.5, 1.],
         metallic: 0.,
         roughness: 0.5,
-        normal_texture: Some(0),
+        normal_texture: Some(crate::asset::MaterialTexture::new(0)),
         normal_layers: Some(layers),
         ..Default::default()
     };
@@ -323,13 +323,14 @@ fn invalid_normal_layers_are_refused() {
     let layers = [NormalLayer::default(); 2];
     let (_, mut scene, _, material) = fixture(&device, &queue, layers);
     let mut clamped = plane(Material {
-        normal_texture: Some(0),
+        normal_texture: Some(crate::asset::MaterialTexture::new(0)),
         normal_layers: Some(layers),
         ..Default::default()
     });
-    clamped.materials[0].wrap[1] = gltf::texture::WrappingMode::ClampToEdge;
+    if let Some(normal) = &mut clamped.materials[0].normal_texture {
+        normal.sampler.wrap[1] = crate::asset::TextureWrap::ClampToEdge;
+    }
     let mut unmapped = clamped.clone();
-    unmapped.materials[0].wrap[1] = gltf::texture::WrappingMode::Repeat;
     unmapped.materials[0].normal_texture = None;
     for asset in [clamped, unmapped] {
         assert!(matches!(

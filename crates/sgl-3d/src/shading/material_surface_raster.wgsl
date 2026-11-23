@@ -56,11 +56,11 @@ fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
   var mapped:vec3<f32>;
   if (material.flags&MATERIAL_NORMAL_LAYERS)!=0u {
    let phase=frame.animation_phase;
-   let first=textureSampleBias(relief_map,tex_sampler,material_normal_layer_uv(material.normal_layers[0],i.uv,phase),view.mip_bias);
-   let second=textureSampleBias(relief_map,tex_sampler,material_normal_layer_uv(material.normal_layers[1],i.uv,phase),view.mip_bias);
+   let first=material_map_sample(relief_map,MATERIAL_SLOT_RELIEF,material_normal_layer_uv(material.normal_layers[0],i.uv,phase),view.mip_bias);
+   let second=material_map_sample(relief_map,MATERIAL_SLOT_RELIEF,material_normal_layer_uv(material.normal_layers[1],i.uv,phase),view.mip_bias);
    mapped=material_layered_normal(material,first,second);
   } else {
-   mapped=material_mapped_normal(material,textureSampleBias(relief_map,tex_sampler,i.uv,view.mip_bias));
+   mapped=material_mapped_normal(material,material_map_sample(relief_map,MATERIAL_SLOT_RELIEF,i.uv,view.mip_bias));
   }
   n=normalize(surface_map_frame(i,front)*mapped);
  }
@@ -71,7 +71,10 @@ fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
   // Three185.1 BumpMapNode: forward samples along GLSL screen derivatives,
   // with normalized position derivatives so authored bump does not scale
   // with world-space pixel size. WebGPU lowers GLSL dFdy to -dpdy.
-  n=pbr_bump_normal(relief_map,tex_sampler,i.world,n,i.uv,material.bump_scale,face);
+  let steps=pbr_bump_steps(i.uv);
+  let height=material_map_sample(relief_map,MATERIAL_SLOT_RELIEF,i.uv,0.).r;
+  let forward=vec2(material_map_sample(relief_map,MATERIAL_SLOT_RELIEF,i.uv+steps[0],0.).r,material_map_sample(relief_map,MATERIAL_SLOT_RELIEF,i.uv+steps[1],0.).r);
+  n=pbr_bump_normal(i.world,n,height,forward,material.bump_scale,face);
  }
  return n;
 }
@@ -105,8 +108,8 @@ fn raster_emission(i:Fragment,emission:vec3<f32>)->vec3<f32> {
 // Each Extended map is sampled only where its factor or flag leaves it
 // anything to scale.
 fn raster_material(i:Fragment,front:bool)->MaterialSurface {
- let mr=textureSampleBias(mr_map,tex_sampler,i.uv,view.mip_bias);
- let emission=textureSampleBias(emission_map,tex_sampler,i.uv,view.mip_bias).rgb;
+ let mr=material_map_sample(mr_map,MATERIAL_SLOT_METALLIC_ROUGHNESS,i.uv,view.mip_bias);
+ let emission=material_map_sample(emission_map,MATERIAL_SLOT_EMISSION,i.uv,view.mip_bias).rgb;
  var coat=vec4(1.);
  var coat_roughness=vec4(1.);
  if material.coat>0. {

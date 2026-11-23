@@ -119,10 +119,10 @@ fn plane_asset(has_normal_map: bool) -> Asset {
             occlusion_texture: None,
             occlusion_strength: 1.,
             emissive_texture: None,
-            normal_texture: has_normal_map.then_some(0),
+            normal_texture: has_normal_map.then_some(crate::asset::MaterialTexture::new(0)),
             normal_scale: 1.,
             normal_layers: None,
-            bump_texture: Some(1),
+            bump_texture: Some(crate::asset::MaterialTexture::new(1)),
             bump_scale: 1.,
             transmission: 0.,
             transmission_texture: None,
@@ -131,7 +131,6 @@ fn plane_asset(has_normal_map: bool) -> Asset {
             attenuation_distance: f32::INFINITY,
             attenuation_color: [1.; 3],
             dispersion: 0.,
-            wrap: [gltf::texture::WrappingMode::Repeat; 2],
             double_sided: true,
             unlit: false,
             emits_into_gi: true,
@@ -211,7 +210,7 @@ fn material_normal_oracle(
         };
         if coat {
             asset.materials[0].clearcoat = 1.;
-            asset.materials[0].coat_normal_texture = Some(2);
+            asset.materials[0].coat_normal_texture = Some(crate::asset::MaterialTexture::new(2));
             asset.materials[0].coat_normal_scale = 0.5;
         }
         if authored {
@@ -292,6 +291,7 @@ fn material_normal_oracle(
                     .into_iter()
                     .chain(coat.then_some(MaterialMap::CoatNormal)),
                 ),
+                &Default::default(),
             )),
             usage: wgpu::BufferUsages::UNIFORM,
         });

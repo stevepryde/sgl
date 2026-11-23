@@ -16,7 +16,6 @@
 use std::error::Error;
 
 use glam::Vec3;
-use gltf::texture::WrappingMode;
 
 use super::deformation::{MeshDeformation, Rig};
 pub use super::gltf::{
@@ -26,6 +25,7 @@ pub use super::gltf::{
 pub use super::images::{CompressedFormat, CompressedImage, Image, ImageError, Rgba8MipChain};
 pub use super::load_budget::LoadBudget;
 use super::material::{AlphaMode, NormalLayer};
+pub use super::material_texture::{MaterialTexture, Sampler, TextureFilter, TextureWrap};
 
 /// A loader failure, including the source asset path for file loads.
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -120,17 +120,17 @@ pub struct Material {
     /// Clearcoat perceptual roughness in `0..=1`
     /// (`clearcoatRoughnessFactor`).
     pub coat_roughness: f32,
-    /// Clearcoat image index, sampled as linear data: its red channel
+    /// Clearcoat map, sampled as linear data: its red channel
     /// multiplies `clearcoat` (`clearcoatTexture`).
-    pub clearcoat_texture: Option<usize>,
-    /// Clearcoat roughness image index, sampled as linear data: its green
+    pub clearcoat_texture: Option<MaterialTexture>,
+    /// Clearcoat roughness map, sampled as linear data: its green
     /// channel multiplies `coat_roughness` (`clearcoatRoughnessTexture`).
-    pub coat_roughness_texture: Option<usize>,
-    /// Tangent-space clearcoat normal image index, sampled as linear data
+    pub coat_roughness_texture: Option<MaterialTexture>,
+    /// Tangent-space clearcoat normal map, sampled as linear data
     /// (`clearcoatNormalTexture`): the coat's normal, on the base normal
     /// map's tangent frame. Without it the coat follows the geometry
     /// normal, whatever the base's normal map does.
-    pub coat_normal_texture: Option<usize>,
+    pub coat_normal_texture: Option<MaterialTexture>,
     /// Finite scale applied to the clearcoat normal map's tangent-space X and Y
     /// components (`clearcoatNormalTexture.scale`).
     pub coat_normal_scale: f32,
@@ -144,24 +144,24 @@ pub struct Material {
     /// finite and nonnegative: the thickness map's green channel mixes from
     /// the first to the second, and without the map the film is the second.
     pub iridescence_thickness: [f32; 2],
-    /// Iridescence image index, sampled as linear data: its red channel
+    /// Iridescence map, sampled as linear data: its red channel
     /// multiplies `iridescence` (`iridescenceTexture`).
-    pub iridescence_texture: Option<usize>,
-    /// Iridescence thickness image index, sampled as linear data: its green
+    pub iridescence_texture: Option<MaterialTexture>,
+    /// Iridescence thickness map, sampled as linear data: its green
     /// channel mixes `iridescence_thickness` (`iridescenceThicknessTexture`).
-    pub iridescence_thickness_texture: Option<usize>,
+    pub iridescence_thickness_texture: Option<MaterialTexture>,
     /// Linear colour of a sheen over the surface, each channel in `0..=1`
     /// (`KHR_materials_sheen`'s `sheenColorFactor`): black none. Fabric and
     /// cloth.
     pub sheen_color: [f32; 3],
     /// The sheen's perceptual roughness in `0..=1` (`sheenRoughnessFactor`).
     pub sheen_roughness: f32,
-    /// Sheen colour image index, sampled as sRGB: its RGB multiplies
+    /// Sheen colour map, sampled as sRGB: its RGB multiplies
     /// `sheen_color` (`sheenColorTexture`).
-    pub sheen_color_texture: Option<usize>,
-    /// Sheen roughness image index, sampled as linear data: its alpha
+    pub sheen_color_texture: Option<MaterialTexture>,
+    /// Sheen roughness map, sampled as linear data: its alpha
     /// channel multiplies `sheen_roughness` (`sheenRoughnessTexture`).
-    pub sheen_roughness_texture: Option<usize>,
+    pub sheen_roughness_texture: Option<MaterialTexture>,
     /// The share in `0..=1` of the light the base diffuses that passes
     /// through to the surface's other side
     /// (`KHR_materials_diffuse_transmission`'s `diffuseTransmissionFactor`):
@@ -170,42 +170,42 @@ pub struct Material {
     /// Linear colour of the light it passes through, each channel finite
     /// and nonnegative (`diffuseTransmissionColorFactor`).
     pub diffuse_transmission_color: [f32; 3],
-    /// Diffuse transmission image index, sampled as linear data: its alpha
+    /// Diffuse transmission map, sampled as linear data: its alpha
     /// channel multiplies `diffuse_transmission`
     /// (`diffuseTransmissionTexture`).
-    pub diffuse_transmission_texture: Option<usize>,
-    /// Diffuse transmission colour image index, sampled as sRGB: its RGB
+    pub diffuse_transmission_texture: Option<MaterialTexture>,
+    /// Diffuse transmission colour map, sampled as sRGB: its RGB
     /// multiplies `diffuse_transmission_color`
     /// (`diffuseTransmissionColorTexture`).
-    pub diffuse_transmission_color_texture: Option<usize>,
+    pub diffuse_transmission_color_texture: Option<MaterialTexture>,
     /// KHR_materials_anisotropy strength in `0..=1`; zero preserves isotropic shading.
     pub anisotropy_strength: f32,
     /// Counter-clockwise direction rotation in tangent/bitangent space, in radians.
     pub anisotropy_rotation: f32,
-    /// Linear image index: normalized remapped RG direction and B strength
+    /// Anisotropy map, sampled as linear data: normalized remapped RG direction and B strength
     /// multiplier. A device of the `Basic` binding tier binds no anisotropy
     /// map and shades the factors alone (`Renderer::binding_tier`).
-    pub anisotropy_texture: Option<usize>,
-    /// Base color image index into [`Asset::images`], sampled as sRGB.
-    pub base_texture: Option<usize>,
-    /// Metallic (blue) / roughness (green) image index, sampled as linear data.
-    pub mr_texture: Option<usize>,
-    /// Occlusion image index (glTF's `occlusionTexture` on `TEXCOORD_0`;
+    pub anisotropy_texture: Option<MaterialTexture>,
+    /// Base color map, sampled as sRGB.
+    pub base_texture: Option<MaterialTexture>,
+    /// Metallic (blue) / roughness (green) map, sampled as linear data.
+    pub mr_texture: Option<MaterialTexture>,
+    /// Occlusion map (glTF's `occlusionTexture` on `TEXCOORD_0`;
     /// the loader leaves out a map on another UV set): its red channel is
     /// the share of ambient light that reaches the surface, which occludes
     /// its ambient light, its baked light (lightmap, atlas chart or
     /// ambient cube) and its environment specular. SGL3D samples it where
-    /// it is `mr_texture`'s image (ORM packing: occlusion, roughness and
-    /// metallic in red, green and blue), and not yet from an image of its
-    /// own.
-    pub occlusion_texture: Option<usize>,
+    /// it is `mr_texture`, image and sampler (ORM packing: occlusion,
+    /// roughness and metallic in red, green and blue), and not yet from an
+    /// image or sampler of its own.
+    pub occlusion_texture: Option<MaterialTexture>,
     /// How much of the occlusion map applies, in `0..=1` (glTF's
     /// `occlusionTexture.strength`): 1 as authored, 0 none.
     pub occlusion_strength: f32,
-    /// Emissive image index, sampled as sRGB.
-    pub emissive_texture: Option<usize>,
-    /// Tangent-space normal image index, sampled as linear data.
-    pub normal_texture: Option<usize>,
+    /// Emissive map, sampled as sRGB.
+    pub emissive_texture: Option<MaterialTexture>,
+    /// Tangent-space normal map, sampled as linear data.
+    pub normal_texture: Option<MaterialTexture>,
     /// Finite scale applied to the normal map's tangent-space X and Y components.
     pub normal_scale: f32,
     /// The normal map drawn as two scrolling layers
@@ -213,8 +213,8 @@ pub struct Material {
     /// `None` draws it once. glTF has no such extension: the loader leaves
     /// it `None`.
     pub normal_layers: Option<[NormalLayer; 2]>,
-    /// Bump image index, sampled as linear height data.
-    pub bump_texture: Option<usize>,
+    /// Bump map, sampled as linear height data.
+    pub bump_texture: Option<MaterialTexture>,
     /// Finite bump height multiplier
     /// ([`SurfaceMaterial::bump_scale`](crate::SurfaceMaterial::bump_scale)).
     pub bump_scale: f32,
@@ -223,16 +223,16 @@ pub struct Material {
     /// `transmissionFactor`); see
     /// [`SurfaceMaterial::transmission`](crate::SurfaceMaterial::transmission).
     pub transmission: f32,
-    /// Transmission image index: its red channel multiplies `transmission`,
+    /// Transmission map: its red channel multiplies `transmission`,
     /// sampled as linear data. A device of the `Basic` binding tier binds
     /// none and takes the factor alone.
-    pub transmission_texture: Option<usize>,
+    pub transmission_texture: Option<MaterialTexture>,
     /// The thickness of the volume beneath the surface in the mesh's units,
     /// 0 for a thin wall (`KHR_materials_volume`'s `thicknessFactor`).
     pub thickness: f32,
-    /// Thickness image index: its green channel multiplies `thickness`,
+    /// Thickness map: its green channel multiplies `thickness`,
     /// sampled as linear data; `Basic` takes the factor alone.
-    pub thickness_texture: Option<usize>,
+    pub thickness_texture: Option<MaterialTexture>,
     /// The distance in metres light travels in the volume before it takes
     /// `attenuation_color`, positive or `f32::INFINITY` for none
     /// (`KHR_materials_volume`).
@@ -243,8 +243,6 @@ pub struct Material {
     /// How far transmitted light's colours spread, 20 over the Abbe number,
     /// nonnegative (`KHR_materials_dispersion`): 0 none.
     pub dispersion: f32,
-    /// U and V wrapping shared by all texture channels of this material.
-    pub wrap: [WrappingMode; 2],
     /// Whether both sides of each triangle are rendered.
     pub double_sided: bool,
     /// Whether the material bypasses lighting (`KHR_materials_unlit`).
@@ -261,14 +259,15 @@ pub struct Material {
 
 impl Material {
     /// Whether its occlusion map is the red channel of its metallic-roughness
-    /// image (ORM packing), the one place SGL3D samples occlusion from.
+    /// map, the same image sampled the same way (ORM packing), the one place
+    /// SGL3D samples occlusion from.
     pub(crate) fn packed_occlusion(&self) -> bool {
         self.occlusion_texture.is_some() && self.occlusion_texture == self.mr_texture
     }
 
-    /// Every image index it names, each field once: a new map's field
-    /// fails to compile here until it is listed.
-    pub(crate) fn texture_indices(&self) -> [Option<usize>; 18] {
+    /// Every map it names, each field once: a new map's field fails to
+    /// compile here until it is listed.
+    pub(crate) fn textures(&self) -> [Option<MaterialTexture>; 18] {
         let Self {
             name: _,
             visibility_group: _,
@@ -319,7 +318,6 @@ impl Material {
             attenuation_distance: _,
             attenuation_color: _,
             dispersion: _,
-            wrap: _,
             double_sided: _,
             unlit: _,
             emits_into_gi: _,
@@ -356,7 +354,7 @@ impl Default for Material {
     /// sheen, diffuse transmission (its colour white, as glTF's default),
     /// anisotropy, bump, transmission, thickness, attenuation or
     /// dispersion, no textures, normal, coat normal and occlusion scales 1,
-    /// no normal layers, repeating, single-sided, lit and opaque, in visibility
+    /// no normal layers, single-sided, lit and opaque, in visibility
     /// group 0, casting directional shadows and emitting into global
     /// illumination. Set what differs and take the rest with
     /// `..Default::default()`.
@@ -411,7 +409,6 @@ impl Default for Material {
             attenuation_distance: f32::INFINITY,
             attenuation_color: [1.0; 3],
             dispersion: 0.0,
-            wrap: [WrappingMode::Repeat; 2],
             double_sided: false,
             unlit: false,
             emits_into_gi: true,

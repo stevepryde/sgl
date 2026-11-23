@@ -2314,7 +2314,7 @@ fn wave_normals(slope: f32) -> sgl_3d::asset::Image {
 /// times across the plane moving `velocity` UV a second, the other still
 /// and of no strength.
 fn scrolling_plane(repeats: f32, velocity: f32) -> sgl_3d::asset::Asset {
-    use sgl_3d::asset::{Asset, CpuMesh, Material, Vertex};
+    use sgl_3d::asset::{Asset, CpuMesh, Material, MaterialTexture, Vertex};
     let (half_x, half_y) = (5., 3.);
     let vertices = [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
         .map(|(x, y): (f32, f32)| Vertex {
@@ -2339,7 +2339,7 @@ fn scrolling_plane(repeats: f32, velocity: f32) -> sgl_3d::asset::Asset {
             base: [0.5, 0.5, 0.5, 1.],
             metallic: 0.,
             roughness: 0.6,
-            normal_texture: Some(0),
+            normal_texture: Some(MaterialTexture::new(0)),
             normal_layers: Some([
                 sgl_3d::NormalLayer {
                     velocity: [velocity, 0.],

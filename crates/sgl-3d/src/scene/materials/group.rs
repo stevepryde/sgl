@@ -1,26 +1,33 @@
 //! A material's raster group 2: its values and lightmap eligibility
 //! buffers, the views of its maps in effect (white for the rest of the map
 //! bindings the device's binding tier binds; the render texture it names
-//! in its emission map's) and a sampler of their wrapping at the scene's
-//! anisotropic filtering.
+//! in its emission map's) and the sampler of their bound state at the
+//! scene's anisotropic filtering, shared by every material of that state
+//! (specs/sgl3d-architecture.md, Material samplers).
 use super::maps::InEffect;
 use super::params::ParamBlock;
+use crate::asset::Sampler;
 use crate::scene::render_textures::RenderTextures;
 use crate::scene::textures::{self, Textures};
 use crate::shading::bind::{BindingTier, group2};
-use gltf::texture::WrappingMode;
+use crate::shading::samplers::{self, MapSamplers};
+use std::collections::HashMap;
 
 /// What group 2 binds: the material's maps in effect, each a texture index,
-/// and their wrapping, which its sampler takes.
+/// and how they are sampled, whose bound state its sampler takes. A render
+/// texture in the emission map's binding is sampled in that binding's
+/// state.
 pub(super) struct Bound {
     pub maps: InEffect,
-    pub wrap: [WrappingMode; 2],
+    pub samplers: MapSamplers,
 }
 
 /// What every material's group 2 shares: the device, which a material's
 /// edit that changes its shader makes its new group on, its binding tier
 /// and its layout, the white fallback, the zero parameter block of a
-/// material without a shader and the samplers' anisotropy.
+/// material without a shader, the samplers' anisotropy and a GPU sampler
+/// of each state at it, as three.js r187 keeps one per state
+/// (`WebGPUTextureUtils.js` 162–207).
 pub(super) struct Groups {
     pub device: wgpu::Device,
     pub tier: BindingTier,
@@ -30,7 +37,9 @@ pub(super) struct Groups {
     /// Bound twice for a material without a shader.
     zero_params: wgpu::Buffer,
     /// The samplers' `anisotropy_clamp`.
-    pub anisotropy: u16,
+    anisotropy: u16,
+    /// The GPU sampler of each state a group has bound at `anisotropy`.
+    samplers: HashMap<Sampler, wgpu::Sampler>,
 }
 
 impl Groups {
@@ -44,14 +53,26 @@ impl Groups {
             fallback: textures::upload(device, queue, &white, false),
             zero_params: super::params::zero_block(device),
             anisotropy: crate::settings::AnisotropicFiltering::default().clamp(),
+            samplers: HashMap::new(),
         }
+    }
+
+    /// Samples with at most `anisotropy` anisotropic samples from now on;
+    /// whether that changes it, so every group must be made again.
+    pub fn set_anisotropy(&mut self, anisotropy: u16) -> bool {
+        if self.anisotropy == anisotropy {
+            return false;
+        }
+        self.anisotropy = anisotropy;
+        self.samplers.clear();
+        true
     }
 
     /// Group 2 of `material` as it stands: its maps in effect, its buffers,
     /// its shader's parameter blocks and the render texture it names, of
     /// `render_textures`.
     pub fn of(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         textures: &Textures,
         render_textures: &RenderTextures,
@@ -80,7 +101,7 @@ impl Groups {
     /// material names, fills the emission map's binding in place of its
     /// image.
     pub fn group(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         textures: &Textures,
         bound: &Bound,
@@ -102,21 +123,12 @@ impl Groups {
                 None => &self.fallback,
             }
         };
-        let address = |mode| match mode {
-            WrappingMode::Repeat => wgpu::AddressMode::Repeat,
-            WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
-            WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
-        };
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("authored material sampler"),
-            address_mode_u: address(bound.wrap[0]),
-            address_mode_v: address(bound.wrap[1]),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: self.anisotropy,
-            ..Default::default()
-        });
+        let state = bound.samplers.bound();
+        let anisotropy = self.anisotropy;
+        let sampler: &wgpu::Sampler = self
+            .samplers
+            .entry(state)
+            .or_insert_with(|| device.create_sampler(&samplers::descriptor(&state, anisotropy)));
         let mut entries = vec![
             wgpu::BindGroupEntry {
                 binding: group2::MATERIAL,
@@ -124,7 +136,7 @@ impl Groups {
             },
             wgpu::BindGroupEntry {
                 binding: group2::TEX_SAMPLER,
-                resource: wgpu::BindingResource::Sampler(&sampler),
+                resource: wgpu::BindingResource::Sampler(sampler),
             },
             wgpu::BindGroupEntry {
                 binding: group2::BAKED_MATERIAL,

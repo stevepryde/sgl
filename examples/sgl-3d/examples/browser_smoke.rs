@@ -42,7 +42,10 @@ use sgl_3d::{
     Mobility, ModelMesh, PreparedIrradianceRegion, PreparedModel, RenderTexture, Renderer, Scene,
     ShaderSource, SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels, SurfaceMaterial,
     View, ViewFrame, ViewOutput,
-    asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
+    asset::{
+        Asset, CompressedImage, CpuMesh, Image, Material, MaterialTexture, Sampler, TextureFilter,
+        TextureWrap, Vertex,
+    },
     deformation::{
         Influence, Joint, MeshDeformation, MorphDelta, MorphTarget, MorphWeight, Node, Rig,
         Transform,
@@ -138,12 +141,30 @@ fn panel(center: Vec3, u: Vec3, v: Vec3, material: usize) -> CpuMesh {
     }
 }
 
+/// A map of image 0 in a second sampler state, nearest and clamped, which
+/// the shader samples beside a map in glTF's default state, under a black
+/// emission factor, so it changes no pixel: the material draws through the
+/// pipelines that sample a map in the shader.
+fn black_emission_map() -> Option<MaterialTexture> {
+    Some(MaterialTexture {
+        image: 0,
+        sampler: Sampler {
+            mag_filter: TextureFilter::Nearest,
+            min_filter: TextureFilter::Nearest,
+            mipmap_filter: None,
+            wrap: [TextureWrap::ClampToEdge; 2],
+        },
+    })
+}
+
 /// The textured ground and the box that shadows it. The ground's base
 /// texture is a uniform light grey, so its texels do not vary between the
-/// measured points.
+/// measured points; its black emission map is sampled in the shader
+/// (`black_emission_map`).
 fn world() -> Asset {
     let mut ground = material([1.; 4], 0., 0.8);
-    ground.base_texture = Some(0);
+    ground.base_texture = Some(MaterialTexture::new(0));
+    ground.emissive_texture = black_emission_map();
     Asset {
         meshes: vec![
             cuboid(Vec3::new(0., -0.2, 0.), Vec3::new(14., 0.4, 14.), 0),
@@ -162,8 +183,9 @@ fn world() -> Asset {
 }
 
 /// A masked grate (the BC7 `grate.ktx2` where the device has BC, else an
-/// RGBA8 lattice) and a blended pane that receives screen-space reflections,
-/// both behind the box from the camera.
+/// RGBA8 lattice), whose black emission map is sampled in the shader
+/// (`black_emission_map`), and a blended pane that receives screen-space
+/// reflections, both behind the box from the camera.
 fn alpha_content(bc: bool) -> Result<Asset, String> {
     let image = if bc {
         Image::Compressed(
@@ -177,7 +199,8 @@ fn alpha_content(bc: bool) -> Result<Asset, String> {
         }))
     };
     let mut bars = material([0.6, 0.6, 0.62, 1.], 0.8, 0.35);
-    bars.base_texture = Some(0);
+    bars.base_texture = Some(MaterialTexture::new(0));
+    bars.emissive_texture = black_emission_map();
     bars.double_sided = true;
     bars.alpha = AlphaMode::Mask { cutoff: 0.5 };
     let mut glass = material([0.2, 0.5, 1., 0.4], 0., 0.05);
@@ -1139,12 +1162,20 @@ async fn completed(queue: &wgpu::Queue) -> Result<(), String> {
     receive.await.map_err(|e| e.to_string())
 }
 
-/// An unlit black panel that emits `emission` times its emission map,
-/// which it clamps at its edges.
+/// An unlit black panel that emits `emission` times its emission map: a
+/// white texel (image 0, `white`) until a render texture takes its place,
+/// clamped at its edges by the map's sampler, which the picture is sampled
+/// with.
 fn emitter(emission: [f32; 3]) -> Material {
     Material {
         emissive: emission,
-        wrap: [gltf::texture::WrappingMode::ClampToEdge; 2],
+        emissive_texture: Some(MaterialTexture {
+            image: 0,
+            sampler: Sampler {
+                wrap: [TextureWrap::ClampToEdge; 2],
+                ..Sampler::default()
+            },
+        }),
         unlit: true,
         double_sided: true,
         ..material([0., 0., 0., 1.], 0., 1.)
@@ -1169,10 +1200,11 @@ async fn monitor(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, S
     const MEASURED: u64 = 24;
     let far = Vec3::new(100., 0., 0.);
     let mut scene = Scene::new(device, queue);
+    let white = Image::Rgba8(image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4])));
     let asset = |mesh: CpuMesh, material: Material| Asset {
         meshes: vec![mesh],
         materials: vec![material],
-        images: Vec::new(),
+        images: vec![white.clone()],
         rig: Default::default(),
         ignored: Vec::new(),
         lights: Default::default(),
@@ -1662,7 +1694,7 @@ async fn compressed_materials(
                 let asset = Asset {
                     meshes: vec![mesh],
                     materials: vec![Material {
-                        base_texture: Some(0),
+                        base_texture: Some(MaterialTexture::new(0)),
                         unlit: true,
                         double_sided: true,
                         ..Default::default()

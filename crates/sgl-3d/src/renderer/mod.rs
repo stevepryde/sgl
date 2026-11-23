@@ -34,6 +34,8 @@ mod floor_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod render_texture_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod sampler_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod shader_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod size_tests;

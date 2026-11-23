@@ -152,6 +152,7 @@ fn draws_merge_only_with_the_same_ranges() {
             cull: Cull::Back,
             alpha: Alpha::Opaque,
             deformed: false,
+            shader_sampled: 0,
         },
         material: MaterialId::issue(0, 1),
         geometry: Geometry::Clusters {
@@ -215,6 +216,7 @@ fn draws_merge_only_with_the_same_mobility() {
             cull: Cull::Back,
             alpha: Alpha::Opaque,
             deformed: false,
+            shader_sampled: 0,
         },
         material: MaterialId::issue(0, 1),
         geometry: Geometry::Mesh {

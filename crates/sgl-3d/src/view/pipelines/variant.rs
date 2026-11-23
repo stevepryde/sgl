@@ -1,5 +1,6 @@
 //! What a draw batch's material and instance require of the pipeline that
-//! draws it: the faces it culls, the alpha mode and deformed vertices.
+//! draws it: the faces it culls, the alpha mode, deformed vertices and maps
+//! sampled in the shader.
 use crate::content::material::{AlphaMode, SurfaceMaterial};
 
 /// Hardware face culling, which each draw batch chooses from its
@@ -75,22 +76,30 @@ impl Alpha {
 
 /// What a draw batch's material and instance require of its pipeline: the
 /// faces it culls, from the material's side and the pose, the material's
-/// alpha mode, and whether the instance deforms, whose pulled vertices are
-/// its deformed ones (`deformed_vertices` in vertex_pull.wgsl). Casters read
-/// whichever positions they are given and ignore it.
+/// alpha mode, whether the instance deforms, whose pulled vertices are its
+/// deformed ones (`deformed_vertices` in vertex_pull.wgsl), and whether the
+/// material samples a map in the shader, in a state other than the one its
+/// group 2 sampler binds: a bit, by its map binding's index, for each such
+/// binding (`material_shader_sampled_maps` in material_sampling.wgsl;
+/// `scene::materials::Material::shader_sampled`), none for most materials.
+/// Casters read whichever positions they are given and ignore it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Variant {
     pub cull: Cull,
     pub alpha: Alpha,
     pub deformed: bool,
+    pub shader_sampled: u16,
 }
 
 impl Variant {
-    /// How many variants there are.
+    /// How many variants there are that sample no map in the shader.
     pub const COUNT: usize = 18;
 
-    /// Its index among the variants, for a draw's lookup table.
-    pub fn index(self) -> usize {
-        (usize::from(self.deformed) * 3 + self.cull as usize) * 3 + self.alpha as usize
+    /// Its index among those variants, for a draw's lookup table; none
+    /// where it samples a map in the shader.
+    pub fn index(self) -> Option<usize> {
+        (self.shader_sampled == 0).then(|| {
+            (usize::from(self.deformed) * 3 + self.cull as usize) * 3 + self.alpha as usize
+        })
     }
 }

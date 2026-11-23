@@ -1,5 +1,6 @@
 //! The glTF loader against hand-built documents.
 use super::*;
+use crate::asset::{Sampler, TextureFilter, TextureWrap};
 use glam::Vec3;
 use std::{
     path::PathBuf,
@@ -516,7 +517,7 @@ fn anisotropy_import_resolves_texture_image_and_rejects_unsupported_inputs() {
         &mut Vec::new(),
     )
     .unwrap();
-    assert_eq!(material.anisotropy_texture, Some(0));
+    assert_eq!(material.anisotropy_texture.map(|t| t.image), Some(0));
     assert!((material.anisotropy_rotation + 1.25).abs() < 1e-6);
     assert!((material.anisotropy_strength - 0.7).abs() < 1e-6);
     for extension in [
@@ -869,8 +870,11 @@ fn supplied_images_are_never_read_and_the_rest_decode() {
     assert_eq!(texels(&asset.images[0]), [1, 2, 3, 4]);
     assert_eq!(texels(&asset.images[1]), [10, 20, 30, 255, 40, 50, 60, 255]);
     assert_eq!(texels(&asset.images[2]), [70, 80, 90, 255]);
-    assert_eq!(asset.materials[0].base_texture, Some(0));
-    assert_eq!(asset.materials[0].emissive_texture, Some(1));
+    assert_eq!(asset.materials[0].base_texture.map(|t| t.image), Some(0));
+    assert_eq!(
+        asset.materials[0].emissive_texture.map(|t| t.image),
+        Some(1)
+    );
     assert_eq!(
         *seen.lock().unwrap(),
         [
@@ -976,12 +980,11 @@ fn used_extensions_are_listed_and_required_ones_honoured_or_refused() {
 }
 
 // Defects: an occlusion map packed in the metallic-roughness image (the
-// same image, through another texture) is taken for an image of its own,
-// or one in an image of its own, on another UV set or a specular texture is
-// left out without being listed in `Asset::ignored`; or its strength is
-// lost; or one SGL3D leaves out still constrains the material's wrapping.
-// The oracle is glTF 2.0's texture -> image indirection and the authored
-// values.
+// same image, through another texture of the same sampler) is taken for an
+// image of its own, or one in an image of its own, through another sampler,
+// on another UV set or a specular texture is left out without being listed
+// in `Asset::ignored`; or its strength is lost. The oracle is glTF 2.0's
+// texture -> image and sampler indirection and the authored values.
 #[test]
 fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
     let source = |occlusion: serde_json::Value, specular: serde_json::Value| {
@@ -1019,21 +1022,30 @@ fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
         unlisted.clone(),
     ));
     assert_eq!(
-        (packed.occlusion_texture, packed.occlusion_strength),
+        (
+            packed.occlusion_texture.map(|t| t.image),
+            packed.occlusion_strength
+        ),
         (Some(0), 0.6)
     );
     assert!(packed.packed_occlusion());
     assert!(ignored.is_empty());
     let (separate, ignored) = read(source(serde_json::json!({"index": 2}), unlisted.clone()));
-    assert_eq!(separate.occlusion_texture, Some(1));
+    assert_eq!(separate.occlusion_texture.map(|t| t.image), Some(1));
     assert!(!separate.packed_occlusion());
     assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
-    // Texture 3 clamps the metallic-roughness image the material repeats.
+    // Texture 3 clamps the metallic-roughness image the material repeats:
+    // the same image through another sampler, which the metallic-roughness
+    // binding cannot sample it with.
+    let (clamped, ignored) = read(source(serde_json::json!({"index": 3}), unlisted.clone()));
+    assert_eq!(clamped.occlusion_texture.map(|t| t.image), Some(0));
+    assert!(!clamped.packed_occlusion());
+    assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
     let (second_set, ignored) = read(source(
         serde_json::json!({"index": 3, "texCoord": 1}),
         unlisted,
     ));
-    assert_eq!(second_set.occlusion_texture, None);
+    assert_eq!(second_set.occlusion_texture.map(|t| t.image), None);
     assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
     let (_, ignored) = read(source(
         serde_json::json!({"index": 0}),
@@ -1044,11 +1056,10 @@ fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
 
 // Defects: a whole file refused over an occlusion map SGL3D leaves out:
 // its UV set's TEXCOORD_1 refused as an unsupported attribute (and not
-// kept as the lightmap UV), or its nearest sampling refused although SGL3D
-// never samples it; or, the other way, a map SGL3D samples loaded with
-// sampling it does not support. The oracle is the documented fallback (a
-// left-out map is listed in `Asset::ignored` and the rest loads) and the
-// authored values.
+// kept as the lightmap UV), or its sampling refused; or a map SGL3D samples
+// refused for its nearest sampling. The oracle is the documented fallback
+// (a left-out map is listed in `Asset::ignored` and the rest loads) and
+// the authored values.
 #[test]
 fn an_ignored_occlusion_map_constrains_neither_attributes_nor_sampling() {
     let uv0 = [0., 0., 1., 0., 0., 1.];
@@ -1129,17 +1140,120 @@ fn an_ignored_occlusion_map_constrains_neither_attributes_nor_sampling() {
     );
     assert_eq!(
         (
-            asset.materials[0].mr_texture,
-            asset.materials[0].occlusion_texture
+            asset.materials[0].mr_texture.map(|t| t.image),
+            asset.materials[0].occlusion_texture.map(|t| t.image)
         ),
         (Some(0), Some(1))
     );
     // The metallic-roughness map, which SGL3D samples, sampled nearest.
-    let error = load_triangle(serde_json::json!({"index": 1}), 0, false)
-        .err()
-        .expect("a sampled map's nearest sampling was accepted")
-        .to_string();
-    assert!(error.contains("unsupported sampling"), "{error}");
+    let asset = load_triangle(serde_json::json!({"index": 1}), 0, false)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let sampler = asset.materials[0].mr_texture.unwrap().sampler;
+    assert_eq!(
+        (
+            sampler.mag_filter,
+            sampler.min_filter,
+            sampler.mipmap_filter
+        ),
+        (TextureFilter::Nearest, TextureFilter::Nearest, None)
+    );
+}
+
+// Defects: the loader maps a glTF filter or wrap enum to the wrong mode,
+// gives a map another texture's sampler (one shared per material, as SGL3D
+// did), or refuses a legal state. The oracle is glTF 2.0's sampler schema
+// (sampler.schema.json): magFilter 9728 NEAREST and 9729 LINEAR; minFilter
+// 9728 NEAREST, 9729 LINEAR, 9984 NEAREST_MIPMAP_NEAREST, 9985
+// LINEAR_MIPMAP_NEAREST, 9986 NEAREST_MIPMAP_LINEAR and 9987
+// LINEAR_MIPMAP_LINEAR; wrapS and wrapT 33071 CLAMP_TO_EDGE, 33648
+// MIRRORED_REPEAT and 10497 REPEAT, the default; and 3.8.4, by which a
+// texture without a sampler repeats with filtering the implementation
+// chooses (SGL3D's: trilinear).
+#[test]
+fn each_map_takes_its_own_textures_sampler() {
+    let document = serde_json::json!({
+        "asset": {"version": "2.0"},
+        "extensionsUsed": ["KHR_materials_clearcoat"],
+        "images": [{"uri": "atlas.png"}],
+        "samplers": [
+            {"magFilter": 9728, "minFilter": 9984, "wrapS": 33071, "wrapT": 33648},
+            {"magFilter": 9729, "minFilter": 9729, "wrapT": 33071},
+            {"minFilter": 9985, "wrapS": 33648},
+            {"magFilter": 9728, "minFilter": 9986},
+            {"minFilter": 9728},
+            {"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}
+        ],
+        "textures": [
+            {"source": 0, "sampler": 0}, {"source": 0, "sampler": 1}, {"source": 0, "sampler": 2},
+            {"source": 0, "sampler": 3}, {"source": 0, "sampler": 4}, {"source": 0, "sampler": 5},
+            {"source": 0}
+        ],
+        "materials": [{
+            "pbrMetallicRoughness": {
+                "baseColorTexture": {"index": 0},
+                "metallicRoughnessTexture": {"index": 6}
+            },
+            "emissiveTexture": {"index": 1},
+            "normalTexture": {"index": 2},
+            "extensions": {"KHR_materials_clearcoat": {
+                "clearcoatFactor": 1,
+                "clearcoatTexture": {"index": 3},
+                "clearcoatRoughnessTexture": {"index": 4},
+                "clearcoatNormalTexture": {"index": 5}
+            }}
+        }]
+    });
+    let document = gltf::Gltf::from_slice(&serde_json::to_vec(&document).unwrap())
+        .unwrap()
+        .document;
+    let mut ignored = Vec::new();
+    let material = read_material(
+        document.materials().next().unwrap(),
+        &document,
+        0,
+        &mut ignored,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    use TextureFilter::{Linear, Nearest};
+    use TextureWrap::{ClampToEdge, MirroredRepeat, Repeat};
+    let sampler = |mag_filter, min_filter, mipmap_filter, wrap| Sampler {
+        mag_filter,
+        min_filter,
+        mipmap_filter,
+        wrap,
+    };
+    let maps = [
+        material.base_texture,
+        material.emissive_texture,
+        material.normal_texture,
+        material.clearcoat_texture,
+        material.coat_roughness_texture,
+        material.coat_normal_texture,
+        material.mr_texture,
+    ];
+    assert_eq!(
+        maps.map(|map| map.map(|map| map.image)),
+        [Some(0); 7],
+        "every map samples the one image"
+    );
+    assert_eq!(
+        maps.map(|map| map.unwrap().sampler),
+        [
+            sampler(
+                Nearest,
+                Nearest,
+                Some(Nearest),
+                [ClampToEdge, MirroredRepeat]
+            ),
+            sampler(Linear, Linear, None, [Repeat, ClampToEdge]),
+            sampler(Linear, Linear, Some(Nearest), [MirroredRepeat, Repeat]),
+            sampler(Nearest, Nearest, Some(Linear), [Repeat; 2]),
+            sampler(Linear, Nearest, None, [Repeat; 2]),
+            sampler(Linear, Linear, Some(Linear), [Repeat; 2]),
+            sampler(Linear, Linear, Some(Linear), [Repeat; 2]),
+        ]
+    );
+    assert!(ignored.is_empty());
 }
 
 // Defects: the loader misreads KHR_materials_transmission,
@@ -1188,9 +1302,9 @@ fn transmission_volume_and_dispersion_load_as_their_extensions_define() {
     assert_eq!(
         (
             material.transmission,
-            material.transmission_texture,
+            material.transmission_texture.map(|t| t.image),
             material.thickness,
-            material.thickness_texture,
+            material.thickness_texture.map(|t| t.image),
         ),
         (0.8, Some(0), 0.3, Some(1))
     );
@@ -1278,7 +1392,10 @@ fn a_bump_factor_defaults_to_one_and_may_exceed_one() {
         }))
     };
     let plain = bump(serde_json::json!({"bumpTexture": {"index": 0}})).unwrap();
-    assert_eq!((plain.bump_texture, plain.bump_scale), (Some(2), 1.));
+    assert_eq!(
+        (plain.bump_texture.map(|t| t.image), plain.bump_scale),
+        (Some(2), 1.)
+    );
     let strong = bump(serde_json::json!({"bumpTexture": {"index": 0}, "bumpFactor": 2.0})).unwrap();
     assert_eq!(strong.bump_scale, 2.);
     for refused in [-1.0, 101.0] {
@@ -1342,9 +1459,9 @@ fn clearcoat_maps_and_iridescence_load_with_their_defaults() {
         (
             plain.clearcoat,
             plain.coat_roughness,
-            plain.clearcoat_texture,
-            plain.coat_roughness_texture,
-            plain.coat_normal_texture,
+            plain.clearcoat_texture.map(|t| t.image),
+            plain.coat_roughness_texture.map(|t| t.image),
+            plain.coat_normal_texture.map(|t| t.image),
             plain.coat_normal_scale
         ),
         (0., 0., None, None, None, 1.)
@@ -1354,8 +1471,8 @@ fn clearcoat_maps_and_iridescence_load_with_their_defaults() {
             plain.iridescence,
             plain.iridescence_ior,
             plain.iridescence_thickness,
-            plain.iridescence_texture,
-            plain.iridescence_thickness_texture
+            plain.iridescence_texture.map(|t| t.image),
+            plain.iridescence_thickness_texture.map(|t| t.image)
         ),
         (0., 1.3, [100., 400.], None, None)
     );
@@ -1376,9 +1493,9 @@ fn clearcoat_maps_and_iridescence_load_with_their_defaults() {
         (
             authored.clearcoat,
             authored.coat_roughness,
-            authored.clearcoat_texture,
-            authored.coat_roughness_texture,
-            authored.coat_normal_texture,
+            authored.clearcoat_texture.map(|t| t.image),
+            authored.coat_roughness_texture.map(|t| t.image),
+            authored.coat_normal_texture.map(|t| t.image),
             authored.coat_normal_scale
         ),
         (0.5, 0.25, Some(2), Some(1), Some(0), 0.5)
@@ -1388,8 +1505,8 @@ fn clearcoat_maps_and_iridescence_load_with_their_defaults() {
             authored.iridescence,
             authored.iridescence_ior,
             authored.iridescence_thickness,
-            authored.iridescence_texture,
-            authored.iridescence_thickness_texture
+            authored.iridescence_texture.map(|t| t.image),
+            authored.iridescence_thickness_texture.map(|t| t.image)
         ),
         (0.75, 1.8, [500., 50.], Some(1), Some(2))
     );
@@ -1451,8 +1568,8 @@ fn sheen_and_diffuse_transmission_load_with_their_defaults() {
         (
             plain.sheen_color,
             plain.sheen_roughness,
-            plain.sheen_color_texture,
-            plain.sheen_roughness_texture
+            plain.sheen_color_texture.map(|t| t.image),
+            plain.sheen_roughness_texture.map(|t| t.image)
         ),
         ([0.; 3], 0., None, None)
     );
@@ -1460,8 +1577,8 @@ fn sheen_and_diffuse_transmission_load_with_their_defaults() {
         (
             plain.diffuse_transmission,
             plain.diffuse_transmission_color,
-            plain.diffuse_transmission_texture,
-            plain.diffuse_transmission_color_texture
+            plain.diffuse_transmission_texture.map(|t| t.image),
+            plain.diffuse_transmission_color_texture.map(|t| t.image)
         ),
         (0., [1.; 3], None, None)
     );
@@ -1480,8 +1597,8 @@ fn sheen_and_diffuse_transmission_load_with_their_defaults() {
         (
             authored.sheen_color,
             authored.sheen_roughness,
-            authored.sheen_color_texture,
-            authored.sheen_roughness_texture
+            authored.sheen_color_texture.map(|t| t.image),
+            authored.sheen_roughness_texture.map(|t| t.image)
         ),
         ([0.25, 0.5, 0.75], 0.5, Some(2), Some(1))
     );
@@ -1489,8 +1606,8 @@ fn sheen_and_diffuse_transmission_load_with_their_defaults() {
         (
             authored.diffuse_transmission,
             authored.diffuse_transmission_color,
-            authored.diffuse_transmission_texture,
-            authored.diffuse_transmission_color_texture
+            authored.diffuse_transmission_texture.map(|t| t.image),
+            authored.diffuse_transmission_color_texture.map(|t| t.image)
         ),
         (0.75, [1.5, 0.5, 0.], Some(0), Some(1))
     );
@@ -1696,7 +1813,7 @@ fn an_unsupported_texture_extensions_image_is_left_out_and_its_fallback_decodes(
         &["KHR_texture_basisu"],
     );
     let asset = load_slice(&fixture.embedded()).unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(asset.materials[0].base_texture, Some(0));
+    assert_eq!(asset.materials[0].base_texture.map(|t| t.image), Some(0));
     let Image::Rgba8(base) = &asset.images[0] else {
         panic!("expected RGBA8");
     };

@@ -4,7 +4,7 @@
 //! frame's targets, and opt-in dumps.
 use super::geometry::{FRAME_RATE, Pose, View};
 use super::image::Image;
-use sgl_3d::asset::{Asset, CpuMesh, Material, Vertex};
+use sgl_3d::asset::{Asset, CpuMesh, Material, MaterialTexture, Sampler, TextureWrap, Vertex};
 use sgl_3d::deformation::{MorphDelta, MorphTarget};
 use sgl_3d::diagnostics::{self, DiagnosticTarget};
 use sgl_3d::glam::{Mat4, Vec2, Vec3};
@@ -472,13 +472,25 @@ impl Rig {
                 name: "scenario emissive fixture".into(),
                 base: [0., 0., 0., 1.],
                 emissive: emission,
-                wrap: [gltf::texture::WrappingMode::ClampToEdge; 2],
+                // White, which rays see, until a render texture takes its
+                // place, sampled with this map's clamping sampler.
+                emissive_texture: Some(MaterialTexture {
+                    image: 0,
+                    sampler: Sampler {
+                        wrap: [TextureWrap::ClampToEdge; 2],
+                        ..Sampler::default()
+                    },
+                }),
                 metallic: 0.,
                 double_sided: true,
                 unlit: true,
                 ..Material::default()
             }],
-            images: Vec::new(),
+            images: vec![sgl_3d::asset::Image::Rgba8(image::RgbaImage::from_pixel(
+                1,
+                1,
+                image::Rgba([255; 4]),
+            ))],
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
@@ -558,7 +570,7 @@ impl Rig {
             materials: vec![Material {
                 name: "scenario textured fixture".into(),
                 base: [1.; 4],
-                base_texture: Some(0),
+                base_texture: Some(MaterialTexture::new(0)),
                 metallic: 0.,
                 double_sided: true,
                 unlit: true,

@@ -205,8 +205,9 @@ pub enum Ignored {
     Extension(String),
     /// Material `material`'s occlusion map (an index into
     /// [`Asset::materials`]): SGL3D samples occlusion only from the red
-    /// channel of the material's metallic-roughness image on `TEXCOORD_0`
-    /// (ORM packing), not yet from an image of its own.
+    /// channel of the material's metallic-roughness map on `TEXCOORD_0`
+    /// (ORM packing: the same image through the same sampler), not yet
+    /// from an image or sampler of its own.
     OcclusionMap { material: usize },
     /// Material `material`'s `KHR_materials_specular` specular or specular
     /// colour texture: SGL3D takes the extension's factors alone so far.
@@ -408,11 +409,16 @@ fn read_images(
 /// The images `material`'s maps sample: every one it names but an occlusion
 /// map's outside its metallic-roughness image, which SGL3D does not sample.
 fn sampled_images(material: &Material) -> Vec<usize> {
-    let mut images: Vec<usize> = material.texture_indices().into_iter().flatten().collect();
+    let mut images: Vec<usize> = material
+        .textures()
+        .into_iter()
+        .flatten()
+        .map(|texture| texture.image)
+        .collect();
     if let Some(occlusion) = material
         .occlusion_texture
         .filter(|_| !material.packed_occlusion())
-        && let Some(slot) = images.iter().position(|&image| image == occlusion)
+        && let Some(slot) = images.iter().position(|&image| image == occlusion.image)
     {
         images.swap_remove(slot);
     }

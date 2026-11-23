@@ -2,7 +2,7 @@
 //! The oracle is a world-space direction and equivalence of the public raster paths.
 #![cfg(not(target_arch = "wasm32"))]
 use sgl_3d::{
-    asset::{Asset, CpuMesh, Image, Material, Vertex},
+    asset::{Asset, CpuMesh, Image, Material, MaterialTexture, Vertex},
     diagnostics::{self, DiagnosticTarget},
     glam::{Mat4, Vec3},
     settings::{self, Settings},
@@ -41,7 +41,7 @@ fn asset(texel: [u8; 4], mapped: bool, tangent: u32) -> Asset {
             metallic: 0.,
             roughness: 1.,
             specular: 0.,
-            normal_texture: mapped.then_some(0),
+            normal_texture: mapped.then_some(MaterialTexture::new(0)),
             anisotropy_strength: if tangent == 2 { 0.2 } else { 0. },
             ..Default::default()
         }],

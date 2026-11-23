@@ -53,9 +53,11 @@ them through unrefracted. A probe captured on an
   gives 0.02), and `KHR_materials_transmission`, `KHR_materials_volume` and
   `KHR_materials_dispersion` (their maps on `Extended`), and
   `KHR_lights_punctual` lights as data (`Asset::lights`), which the game
-  places and installs. Every map lies on
-  `TEXCOORD_0`; `TEXCOORD_1` loads as `Vertex::lightmap_uv`, the static
-  irradiance atlas chart.
+  places and installs. Every map lies on `TEXCOORD_0` and keeps its
+  texture's sampler (`asset::MaterialTexture`: nearest or linear
+  filtering, mipmapped or not, and repeat, mirror or clamp on each axis;
+  [Material textures](../README.md#material-textures)); `TEXCOORD_1` loads
+  as `Vertex::lightmap_uv`, the static irradiance atlas chart.
   `asset::load` (a file), `load_slice` (bytes; the browser's way),
   `load_with_options` and `load_slice_with_options` (`LoadOptions`: an
   independent checked source/decoded byte caps, an emissive strength cap,
@@ -491,7 +493,8 @@ window thread.
 - **Sharpening**: AMD's RCAS over the displayed image after tone mapping,
   once, under every antialiasing mode and spatial upscaling; the game turns
   it on or off and sets its strength. [Sharpening](../README.md#sharpening).
-- **Anisotropic texture filtering** of materials, Off to 16×.
+- **Anisotropic texture filtering** of materials, Off to 16×, on maps whose
+  sampler filters linearly at every step.
 - **Scene resolution** scaling below the output size; the game's UI stays at
   full size.
 - **Exposure** (`FrameInput::exposure`): fixed stops, or automatic exposure

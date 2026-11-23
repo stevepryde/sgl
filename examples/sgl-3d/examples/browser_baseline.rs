@@ -6,7 +6,7 @@ use sgl_3d::{
     AlphaMode, Camera, DepthOfFieldParameters, DirectionalLight, DirectionalShadow, FrameInput,
     HemisphereLight, InstanceState, Light, LightShape, Mobility, Renderer, Scene, View, ViewFrame,
     ViewOutput,
-    asset::{Asset, CpuMesh, Image, Material, Rgba8MipChain, Vertex},
+    asset::{Asset, CpuMesh, Image, Material, MaterialTexture, Rgba8MipChain, Vertex},
     glam::{Mat4, Vec3, camera},
     settings::{
         AmbientOcclusionQuality, Antialiasing, DepthOfField, DynamicGiQuality, SceneResolution,
@@ -139,7 +139,7 @@ fn asset(number: usize) -> Asset {
         meshes: vec![cuboid(Vec3::new(0., 0.5, 0.), Vec3::ONE, 0)],
         materials: vec![Material {
             name: format!("baseline {number}"),
-            base_texture: Some(0),
+            base_texture: Some(MaterialTexture::new(0)),
             base: if number % MATERIALS >= 14 {
                 [1., 1., 1., 0.45]
             } else {

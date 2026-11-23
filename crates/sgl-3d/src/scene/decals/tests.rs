@@ -309,7 +309,7 @@ fn a_decal_out_of_view_leaves_the_frame_as_without_decals() {
     let mut asset = test_support::cube();
     asset.meshes = vec![square(Vec3::new(0., 0., -6.), 8.)];
     asset.images = vec![flat([166, 204, 255, 255])];
-    asset.materials[0].normal_texture = Some(0);
+    asset.materials[0].normal_texture = Some(crate::asset::MaterialTexture::new(0));
     test_support::add_static(&device, &queue, &mut scene, asset);
     let light = Light {
         position: Vec3::new(1., 1., -4.),

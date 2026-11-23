@@ -268,7 +268,7 @@ fn read_mesh_node(
             let uvs: Option<Vec<[f32; 2]>> = attribute(&primitive, Semantic::TexCoords(0), buffers);
             let lightmap_uvs: Option<Vec<[f32; 2]>> =
                 attribute(&primitive, Semantic::TexCoords(1), buffers);
-            let textured = material.texture_indices().iter().any(Option::is_some);
+            let textured = material.textures().iter().any(Option::is_some);
             if textured && uvs.is_none() {
                 return Err(format!("{label}: textured primitive is missing TEXCOORD_0").into());
             }

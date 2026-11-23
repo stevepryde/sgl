@@ -28,7 +28,7 @@ use sgl_3d::{
     AlphaMode, AutoExposure, Camera, CompensationCurve, Decal, DirectionalLight, DirectionalShadow,
     Fog, FogVolume, FrameInput, HemisphereLight, InstanceState, Light, LightCookie, LightShape,
     Mobility, Renderer, Scene, View, ViewFrame, ViewOutput,
-    asset::{Asset, CompressedImage, CpuMesh, Image, Material, Vertex},
+    asset::{Asset, CompressedImage, CpuMesh, Image, Material, MaterialTexture, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     glam::{Mat4, Quat, Vec3},
     settings::{MotionBlur, RenderPreset, Settings},
@@ -193,7 +193,7 @@ fn alpha_content() -> Result<Asset, Box<dyn Error>> {
     // alpha 0 in the holes.
     let grate = CompressedImage::from_ktx2(include_bytes!("grate.ktx2"))?;
     let mut bars = material([0.6, 0.6, 0.62, 1.], [0.; 3], 0.8, 0.35);
-    bars.base_texture = Some(0);
+    bars.base_texture = Some(MaterialTexture::new(0));
     bars.double_sided = true;
     bars.alpha = AlphaMode::Mask { cutoff: 0.5 };
     let glass = |base: [f32; 4]| Material {

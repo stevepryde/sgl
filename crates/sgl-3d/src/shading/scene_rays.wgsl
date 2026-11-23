@@ -22,7 +22,7 @@ struct SceneHit {
 }
 struct SceneMaterial {
  values:Material,
- textures:array<u32,SCENE_TEXTURES>, wrap:vec2<u32>, baked:u32,
+ textures:array<u32,SCENE_TEXTURES>, baked:u32,
 }
 fn scene_f32(at:u32)->f32 {
  return bitcast<f32>(scene_source[at]);
@@ -42,6 +42,7 @@ fn scene_normal_layer(at:u32)->NormalLayer {
 }
 fn scene_material_values(at:u32)->Material {
  let layers=at+SCENE_MATERIAL_NORMAL_LAYERS;
+ let samplers=at+SCENE_MATERIAL_MAP_SAMPLERS;
  return Material(scene_v4(at+SCENE_MATERIAL_BASE),scene_v3(at+SCENE_MATERIAL_EMISSION),scene_f32(at+SCENE_MATERIAL_ENVIRONMENT_SCALE),
  scene_f32(at+SCENE_MATERIAL_METALLIC),scene_f32(at+SCENE_MATERIAL_ROUGHNESS),scene_f32(at+SCENE_MATERIAL_COAT),scene_f32(at+SCENE_MATERIAL_COAT_ROUGHNESS),
  scene_f32(at+SCENE_MATERIAL_NORMAL_SCALE),scene_f32(at+SCENE_MATERIAL_BUMP_SCALE),scene_f32(at+SCENE_MATERIAL_ANISOTROPY_STRENGTH),scene_f32(at+SCENE_MATERIAL_ANISOTROPY_ROTATION),
@@ -53,7 +54,8 @@ fn scene_material_values(at:u32)->Material {
  scene_v3(at+SCENE_MATERIAL_ATTENUATION),scene_f32(at+SCENE_MATERIAL_TRANSMISSION),
  scene_f32(at+SCENE_MATERIAL_THICKNESS),scene_f32(at+SCENE_MATERIAL_IOR),scene_f32(at+SCENE_MATERIAL_DISPERSION),
  scene_v3(at+SCENE_MATERIAL_SHEEN),scene_f32(at+SCENE_MATERIAL_SHEEN_ROUGHNESS),
- scene_v3(at+SCENE_MATERIAL_DIFFUSE_TRANSMISSION_COLOR),scene_f32(at+SCENE_MATERIAL_DIFFUSE_TRANSMISSION));
+ scene_v3(at+SCENE_MATERIAL_DIFFUSE_TRANSMISSION_COLOR),scene_f32(at+SCENE_MATERIAL_DIFFUSE_TRANSMISSION),
+ vec4(scene_source[samplers],scene_source[samplers+1u],scene_source[samplers+2u],scene_source[samplers+3u]));
 }
 fn scene_material(at:u32)->SceneMaterial {
  let first=at+SCENE_MATERIAL_TEXTURES;
@@ -61,28 +63,17 @@ fn scene_material(at:u32)->SceneMaterial {
  for (var texture=0u;texture<SCENE_TEXTURES;texture++) {
   textures[texture]=scene_source[first+texture];
  }
- let wrap=at+SCENE_MATERIAL_WRAP;
- return SceneMaterial(scene_material_values(at),textures,vec2(scene_source[wrap],scene_source[wrap+1u]),scene_source[at+SCENE_MATERIAL_BAKED]);
-}
-fn scene_wrap_texel(p:i32,size:i32,mode:u32)->i32 {
- if mode==2u {
-  return clamp(p,0,size-1);
- }
- if mode==1u {
-  let q=((p%(size*2))+size*2)%(size*2);
-  return min(q,size*2-1-q);
- }
- return ((p%size)+size)%size;
+ return SceneMaterial(scene_material_values(at),textures,scene_source[at+SCENE_MATERIAL_BAKED]);
 }
 fn scene_image_size(image_word:u32)->vec2<u32> {
  return vec2(scene_source[image_word+SCENE_IMAGE_WIDTH],scene_source[image_word+SCENE_IMAGE_HEIGHT]);
 }
-// Texel `p` of an image's level 0, decoded from its block when the image is
-// BC7.
-fn scene_texel(image_word:u32,p:vec2<i32>,wrap:vec2<u32>,srgb:bool)->vec4<f32> {
+// Texel `p` of an image's level 0, wrapped by sampler state `state`
+// (sampler_state.wgsl), decoded from its block when the image is BC7.
+fn scene_texel(image_word:u32,p:vec2<i32>,state:u32,srgb:bool)->vec4<f32> {
  let size=vec2<i32>(scene_image_size(image_word));
- let x=scene_wrap_texel(p.x,size.x,wrap.x);
- let y=scene_wrap_texel(p.y,size.y,wrap.y);
+ let x=sampler_wrap(p.x,size.x,sampler_wrap_mode(state,0u));
+ let y=sampler_wrap(p.y,size.y,sampler_wrap_mode(state,1u));
  let texels=image_word+SCENE_IMAGE_TEXELS;
  var rgba:vec4<f32>;
  if scene_source[image_word+SCENE_IMAGE_FORMAT]==SCENE_IMAGE_BC7 {
@@ -97,23 +88,35 @@ fn scene_texel(image_word:u32,p:vec2<i32>,wrap:vec2<u32>,srgb:bool)->vec4<f32> {
  }
  return rgba;
 }
-// LOD 0 is explicit: no fragment derivatives exist at a secondary ray hit.
-// Decode color texels before filtering, matching sRGB sampled textures.
-fn scene_sample_texture(image_word:u32,uv:vec2<f32>,wrap:vec2<u32>,srgb:bool)->vec4<f32> {
+// An image at `uv` under its map binding's sampler state `state`, at LOD 0,
+// explicit since no fragment derivatives exist at a secondary ray hit: a
+// sample at level of detail 0 is magnified (Vulkan, Texel Filtering), so it
+// takes the state's magnification filter and wrapping. Decode color texels
+// before filtering, matching sRGB sampled textures.
+fn scene_sample_texture(image_word:u32,uv:vec2<f32>,state:u32,srgb:bool)->vec4<f32> {
  if image_word==0u {
   return vec4(1.);
  }
  let size=vec2<f32>(scene_image_size(image_word));
- let p=uv*size-vec2(0.5);
- let i=vec2<i32>(floor(p));
- let f=fract(p);
- return mix(mix(scene_texel(image_word,i,wrap,srgb),scene_texel(image_word,i+vec2(1,0),wrap,srgb),f.x),
- mix(scene_texel(image_word,i+vec2(0,1),wrap,srgb),scene_texel(image_word,i+vec2(1,1),wrap,srgb),f.x),f.y);
+ if (state&SAMPLER_MAG_LINEAR)==0u {
+  return scene_texel(image_word,vec2<i32>(floor(uv*size)),state,srgb);
+ }
+ let footprint=sampler_linear(uv*size);
+ let i=footprint.texel;
+ let f=footprint.weight;
+ return mix(mix(scene_texel(image_word,i,state,srgb),scene_texel(image_word,i+vec2(1,0),state,srgb),f.x),
+ mix(scene_texel(image_word,i+vec2(0,1),state,srgb),scene_texel(image_word,i+vec2(1,1),state,srgb),f.x),f.y);
+}
+// Image `image_word` at `uv` at a ray hit (scene_sample_texture), as map
+// binding `slot` (MATERIAL_SLOT_*) of a record whose map_samplers are
+// `samplers` samples it.
+fn scene_sample_map(samplers:vec4<u32>,image_word:u32,slot:u32,uv:vec2<f32>,srgb:bool)->vec4<f32> {
+ return scene_sample_texture(image_word,uv,material_map_sampler(samplers,slot),srgb);
 }
 // A ray hit's base colour at `uv` with vertex colour `color`: the material's
 // base times the vertex colour and its base map at LOD 0.
 fn scene_base_color(material:SceneMaterial,uv:vec2<f32>,color:vec4<f32>)->vec4<f32> {
- return material.values.base*color*scene_sample_texture(material.textures[SCENE_TEXTURE_BASE],uv,material.wrap,true);
+ return material.values.base*color*scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BASE],MATERIAL_SLOT_BASE,uv,true);
 }
 // The rectangle the packed UVs of the mesh whose record is at `mesh` span
 // (min in xy, extent in zw).

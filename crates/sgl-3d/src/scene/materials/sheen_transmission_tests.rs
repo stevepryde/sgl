@@ -77,14 +77,14 @@ fn square_asset(mapped: bool) -> Asset {
         ];
         material.sheen_color = SHEEN;
         material.sheen_roughness = SHEEN_ROUGHNESS;
-        material.sheen_color_texture = Some(0);
-        material.sheen_roughness_texture = Some(1);
+        material.sheen_color_texture = Some(crate::asset::MaterialTexture::new(0));
+        material.sheen_roughness_texture = Some(crate::asset::MaterialTexture::new(1));
         material.diffuse_transmission = TRANSMISSION;
         material.diffuse_transmission_color = TRANSMISSION_COLOR;
-        material.diffuse_transmission_texture = Some(2);
-        material.diffuse_transmission_color_texture = Some(3);
+        material.diffuse_transmission_texture = Some(crate::asset::MaterialTexture::new(2));
+        material.diffuse_transmission_color_texture = Some(crate::asset::MaterialTexture::new(3));
         material.thickness = THICKNESS;
-        material.thickness_texture = Some(4);
+        material.thickness_texture = Some(crate::asset::MaterialTexture::new(4));
     } else {
         let (sheen, transmission) = products();
         material.sheen_color = sheen.0;

@@ -22,7 +22,7 @@ use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight,
     InstanceState, Light, LightShape, MaterialId, MaterialShader, Mobility, ModelMesh,
     PreparedModel, Renderer, Scene, ShaderSource, SurfaceMaterial, View, ViewFrame, ViewOutput,
-    asset::{Asset, CpuMesh, Image, Material, Vertex},
+    asset::{Asset, CpuMesh, Image, Material, MaterialTexture, Vertex},
     settings::{Antialiasing, Settings},
     timing::GpuTiming,
 };
@@ -235,7 +235,7 @@ fn build(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Scene, Box<dyn Er
     // Masked leaves through the wind shader, and the glass through its own.
     let leaf_material = |name: &str, image| Material {
         name: name.into(),
-        base_texture: Some(image),
+        base_texture: Some(MaterialTexture::new(image)),
         alpha: AlphaMode::Mask { cutoff: 0.5 },
         double_sided: true,
         metallic: 0.,

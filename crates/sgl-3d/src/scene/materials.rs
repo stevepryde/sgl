@@ -8,13 +8,13 @@ use super::shaders::Shaders;
 use super::slots::Slots;
 use super::textures::{self, Textures};
 use super::{Scene, SceneError, buffer};
-use crate::asset::{Image, Material as AuthoredMaterial};
+use crate::asset::{Image, Material as AuthoredMaterial, TextureWrap};
 use crate::content::identity::{MaterialId, ModelId, RenderTextureId};
 use crate::content::material::{AlphaMode, SurfaceMaterial};
 use crate::shading::bind::group2::MaterialMap;
-use crate::shading::material::{MaterialMaps, MaterialUniform};
+use crate::shading::material::MaterialUniform;
 use group::{Bound, Groups};
-use maps::{InEffect, authored, authored_maps};
+use maps::{InEffect, authored, normal_wrap};
 use params::ParamBlock;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -47,8 +47,9 @@ pub(crate) fn group_enabled(group: u32, mask: Option<u32>) -> bool {
 
 pub(crate) struct Material {
     pub values: SurfaceMaterial,
-    /// The maps it was added with, which validation reads.
-    maps: MaterialMaps,
+    /// The wrapping of the normal map it was added with, which normal
+    /// layers' validation reads; none without one.
+    normal_wrap: Option<[TextureWrap; 2]>,
     /// Group 2.
     pub group: wgpu::BindGroup,
     /// What group 2 binds besides its buffers: its maps in effect.
@@ -88,7 +89,14 @@ impl Material {
 
     /// Its values as the shaders read them, with its maps in effect.
     fn uniform(&self) -> MaterialUniform {
-        MaterialUniform::new(&self.values, self.bound.maps.maps())
+        MaterialUniform::new(&self.values, self.bound.maps.maps(), &self.bound.samplers)
+    }
+
+    /// Whether raster samples one of its maps in the shader, in a state
+    /// other than the one group 2's sampler binds
+    /// (`Variant::shader_sampled`).
+    pub fn shader_sampled(&self) -> u16 {
+        self.bound.samplers.shader_sampled()
     }
 
     /// Whether its shader's parameter block differs from the last
@@ -351,8 +359,9 @@ impl Materials {
     ) -> Result<(), SceneError> {
         for material in materials {
             for map in MaterialMap::ALL {
-                if let Some(index) = authored(material, map) {
-                    textures::validate(device, images.get(index).ok_or(SceneError::MissingImage)?)?;
+                if let Some(texture) = authored(material, map) {
+                    let image = images.get(texture.image).ok_or(SceneError::MissingImage)?;
+                    textures::validate(device, image)?;
                 }
             }
             let values = SurfaceMaterial::authored(material);
@@ -364,7 +373,7 @@ impl Materials {
             validate_transmission(&values)?;
             validate_sheen(&values)?;
             validate_diffuse_transmission(&values)?;
-            validate_normal_layers(&values, authored_maps(material), material.wrap)?;
+            validate_normal_layers(&values, normal_wrap(material))?;
         }
         Ok(())
     }
@@ -453,13 +462,13 @@ impl Materials {
         maps: InEffect,
     ) -> Result<MaterialId, SceneError> {
         let values = SurfaceMaterial::authored(material);
-        let uniform = MaterialUniform::new(&values, maps.maps());
+        let samplers = maps.samplers();
+        let uniform = MaterialUniform::new(&values, maps.maps(), &samplers);
         let record = rays.add_material(
             device,
             queue,
             &uniform,
             maps.ray_textures(|texture| self.textures.get(texture).ray.start),
-            material.wrap,
         )?;
         let values_buffer = buffer(
             device,
@@ -473,10 +482,7 @@ impl Materials {
             bytemuck::cast_slice(&[0u32; 4]),
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
-        let bound = Bound {
-            maps,
-            wrap: material.wrap,
-        };
+        let bound = Bound { maps, samplers };
         let group = self.groups.group(
             device,
             &self.textures,
@@ -494,7 +500,7 @@ impl Materials {
         self.count(&values, uniform.surface_moves(), 1);
         Ok(self.slots.insert(Material {
             values,
-            maps: authored_maps(material),
+            normal_wrap: normal_wrap(material),
             group,
             bound,
             buffer: values_buffer,
@@ -517,10 +523,9 @@ impl Materials {
         render_textures: &RenderTextures,
         anisotropy: u16,
     ) {
-        if self.groups.anisotropy == anisotropy {
+        if !self.groups.set_anisotropy(anisotropy) {
             return;
         }
-        self.groups.anisotropy = anisotropy;
         self.regroup(device, render_textures, |_| true);
     }
 
@@ -584,7 +589,7 @@ impl Materials {
         validate_transmission(&values)?;
         validate_sheen(&values)?;
         validate_diffuse_transmission(&values)?;
-        validate_normal_layers(&values, material.maps, material.bound.wrap)?;
+        validate_normal_layers(&values, material.normal_wrap)?;
         if material.values != values {
             if material.values.draws_other_geometry(&values) {
                 self.casters = super::next_generation();
@@ -595,7 +600,7 @@ impl Materials {
             crate::counters::write_buffer(queue, &material.buffer, 0, bytemuck::bytes_of(&uniform));
             rays.write_material(queue, material.word(), &uniform);
             let shader = |values: &SurfaceMaterial| values.shader.map(|shader| shader.shader);
-            let device = &self.groups.device;
+            let device = &self.groups.device.clone();
             let reshaded = shader(&old.0) != shader(&values);
             if reshaded {
                 material.params = params_block(device, shaders, &values);

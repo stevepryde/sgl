@@ -19,6 +19,7 @@ pub(crate) static SCENE_RAYS: Module = Module {
         &BIND_SCENE,
         &BC7,
         &DEFORMATION,
+        &super::samplers::SAMPLER_STATE,
     ],
 };
 /// The one acceptance predicate of every scene ray, the ray's validity test

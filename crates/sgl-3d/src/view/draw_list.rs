@@ -203,8 +203,7 @@ impl DrawList {
             if !population.draws(material, mask) {
                 continue;
             }
-            let variant =
-                population.variant(&material.values, mirrored, instance.deformation.is_some());
+            let variant = population.variant(material, mirrored, instance.deformation.is_some());
             // A deforming instance draws its model's own meshes, deformed.
             let lod = lod.filter(|_| instance.deformation.is_none());
             let (drawn_model, drawn_index) =
@@ -313,11 +312,7 @@ impl DrawList {
             }
             self.batcher.push(InstanceDraw {
                 key: BatchKey {
-                    variant: population.variant(
-                        &material.values,
-                        mirrored,
-                        instance.deformation.is_some(),
-                    ),
+                    variant: population.variant(material, mirrored, instance.deformation.is_some()),
                     material: mesh.material,
                     geometry: Geometry::Clusters {
                         model: instance.state.model,
@@ -361,11 +356,7 @@ impl DrawList {
             self.ranges.push(0..mesh.count);
             self.batcher.push(InstanceDraw {
                 key: BatchKey {
-                    variant: population.variant(
-                        &material.values,
-                        mirrored,
-                        instance.deformation.is_some(),
-                    ),
+                    variant: population.variant(material, mirrored, instance.deformation.is_some()),
                     material: mesh.material,
                     geometry: Geometry::of(index, instance, instance.state.model, mesh_index),
                     mobility: instance.mobility,

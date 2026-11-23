@@ -632,7 +632,8 @@ fn moving_cube_uses_shaded_normals_in_raster_and_secondary() {
         for v in &mut mapped.meshes[0].vertices {
             v.normal = [0., 0., 1.];
         }
-        mapped.materials[0].normal_texture = Some(mapped.images.len());
+        mapped.materials[0].normal_texture =
+            Some(crate::asset::MaterialTexture::new(mapped.images.len()));
         mapped
             .images
             .push(crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(
@@ -775,7 +776,8 @@ fn fixed_bakes_use_material_normal_texels_in_raster_and_secondary() {
             vertex.normal = [0., 0., 1.];
             vertex.lightmap_uv = [0.5; 2];
         }
-        model.materials[0].normal_texture = Some(model.images.len());
+        model.materials[0].normal_texture =
+            Some(crate::asset::MaterialTexture::new(model.images.len()));
         // Two wide, constant normal regions avoid the filter seam. The tangent
         // follows +X, and these texels tilt the normal toward -X and +X.
         model

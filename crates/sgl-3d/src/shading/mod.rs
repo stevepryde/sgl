@@ -43,6 +43,7 @@ mod packed_vertex_tests;
 pub(crate) mod programs;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod rect_light_tests;
+pub(crate) mod samplers;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod scene_ray_valid_tests;
 mod scene_rays;
@@ -195,7 +196,11 @@ pub(crate) static MATERIAL: Module = Module {
 pub(crate) static MATERIAL_RASTER: Module = Module {
     name: "material_raster",
     source: include_str!("material_raster.wgsl"),
-    deps: &[&BIND_MATERIAL, &shader::SHADER_CONTRACT],
+    deps: &[
+        &BIND_MATERIAL,
+        &samplers::MATERIAL_SAMPLING,
+        &shader::SHADER_CONTRACT,
+    ],
 };
 /// Rec. 709 luminance of linear RGB, for SGL3D's own shaders; ports keep
 /// their upstream helpers.

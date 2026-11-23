@@ -647,7 +647,6 @@ pub(crate) fn cube() -> crate::asset::Asset {
             attenuation_distance: f32::INFINITY,
             attenuation_color: [1.; 3],
             dispersion: 0.,
-            wrap: [gltf::texture::WrappingMode::Repeat; 2],
             double_sided: true,
             unlit: false,
             emits_into_gi: true,
@@ -702,7 +701,7 @@ pub(crate) fn half_cut_out() -> image::RgbaImage {
 /// `half_cut_out`, which its meshes' UVs map.
 pub(crate) fn masked(mut asset: crate::asset::Asset, cutoff: f32) -> crate::asset::Asset {
     asset.images = vec![crate::asset::Image::Rgba8(half_cut_out())];
-    asset.materials[0].base_texture = Some(0);
+    asset.materials[0].base_texture = Some(crate::asset::MaterialTexture::new(0));
     asset.materials[0].alpha = crate::AlphaMode::Mask { cutoff };
     asset
 }
@@ -970,4 +969,71 @@ pub(crate) fn set_test_params(
     scene
         .set_shader_parameters(queue, material, bytemuck::bytes_of(&params))
         .unwrap();
+}
+
+// The material sampler tests' oracle (renderer::sampler_tests,
+// scene::rays::sampler_tests): a labelled image and the Vulkan
+// specification's texel filtering over it.
+use crate::asset::{Image, Sampler, TextureFilter, TextureWrap};
+
+/// sRGB-encoded `byte` in linear light (IEC 61966-2-1).
+pub(crate) fn linear(byte: u8) -> f32 {
+    let c = f32::from(byte) / 255.;
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Texel `i` of an axis `size` texels long, wrapped by `mode` (glTF 2.0
+/// 3.8.4; the Vulkan specification's wrapping operation).
+fn wrapped(i: i32, size: i32, mode: TextureWrap) -> i32 {
+    match mode {
+        TextureWrap::Repeat => i.rem_euclid(size),
+        TextureWrap::ClampToEdge => i.clamp(0, size - 1),
+        TextureWrap::MirroredRepeat => {
+            let q = i.rem_euclid(2 * size);
+            q.min(2 * size - 1 - q)
+        }
+    }
+}
+
+/// The labelled image's side: 4 by 4 texels.
+const LABELLED: i32 = 4;
+
+/// Texel `[x, y]`'s sRGB label, distinct for each texel.
+fn label([x, y]: [i32; 2]) -> u8 {
+    (20 + 15 * (x + LABELLED * y)) as u8
+}
+
+/// The labelled image: each texel its label in every channel.
+pub(crate) fn labelled() -> Image {
+    Image::Rgba8(image::RgbaImage::from_fn(4, 4, |x, y| {
+        let label = label([x as i32, y as i32]);
+        image::Rgba([label, label, label, 255])
+    }))
+}
+
+/// The labelled image magnified at `uv` under `sampler`, in linear light:
+/// its texel there, or the four nearest blended (Vulkan, Texel Nearest and
+/// Linear Filtering), each wrapped.
+pub(crate) fn magnified(uv: [f32; 2], sampler: Sampler) -> f32 {
+    let p = uv.map(|c| c * LABELLED as f32);
+    let texel = |i: [i32; 2]| {
+        linear(label([
+            wrapped(i[0], LABELLED, sampler.wrap[0]),
+            wrapped(i[1], LABELLED, sampler.wrap[1]),
+        ]))
+    };
+    match sampler.mag_filter {
+        TextureFilter::Nearest => texel(p.map(|c| c.floor() as i32)),
+        TextureFilter::Linear => {
+            let q = p.map(|c| c - 0.5);
+            let [i, j] = q.map(|c| c.floor() as i32);
+            let [a, b] = q.map(|c| c - c.floor());
+            let row = |j| texel([i, j]) * (1. - a) + texel([i + 1, j]) * a;
+            row(j) * (1. - b) + row(j + 1) * b
+        }
+    }
 }

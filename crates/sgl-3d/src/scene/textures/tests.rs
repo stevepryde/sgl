@@ -163,8 +163,8 @@ fn compressed_chain_samples_its_stored_levels() {
     assert_eq!(image.levels, levels, "the stored levels, level 0 first");
     for [color, data] in [[true, false], [false, true], [true, true]] {
         let mut material = test_support::cube().materials[0].clone();
-        material.base_texture = color.then_some(0);
-        material.mr_texture = data.then_some(0);
+        material.base_texture = color.then_some(crate::asset::MaterialTexture::new(0));
+        material.mr_texture = data.then_some(crate::asset::MaterialTexture::new(0));
         let mut scene = Scene::new(&device, &queue);
         scene
             .add_materials(
@@ -243,7 +243,7 @@ fn rays_decode_every_bc7_mode_and_partition_as_level_0_samples() {
         levels: vec![blocks],
     };
     let mut material = test_support::cube().materials[0].clone();
-    material.mr_texture = Some(0);
+    material.mr_texture = Some(crate::asset::MaterialTexture::new(0));
     let mut scene = Scene::new(&device, &queue);
     scene
         .add_materials(
@@ -304,7 +304,7 @@ fn ray_texels(
 @group(0) @binding(1) var<uniform> pick:vec4<u32>;
 @compute @workgroup_size(8,8) fn read_texels(@builtin(global_invocation_id) id:vec3<u32>) {{
  if id.x>=pick.y || id.y>=pick.z {{return;}}
- texels[id.y*pick.y+id.x]=scene_texel(pick.x,vec2<i32>(id.xy),vec2(0u),false);
+ texels[id.y*pick.y+id.x]=scene_texel(pick.x,vec2<i32>(id.xy),0u,false);
 }}"
             )
             .into(),
@@ -442,7 +442,7 @@ fn a_compressed_chain_the_device_cannot_upload_is_refused() {
     let mut short_level = chain([8, 8], 2);
     short_level.levels[1].pop();
     let mut material = test_support::cube().materials[0].clone();
-    material.base_texture = Some(0);
+    material.base_texture = Some(crate::asset::MaterialTexture::new(0));
     let mut scene = Scene::new(&device, &queue);
     for image in [
         chain([6, 8], 1),
@@ -522,7 +522,7 @@ fn rays_pass_the_cut_out_texels_of_a_compressed_masked_material() {
     asset.images = vec![Image::Compressed(
         CompressedImage::from_ktx2(&file).unwrap(),
     )];
-    asset.materials[0].base_texture = Some(0);
+    asset.materials[0].base_texture = Some(crate::asset::MaterialTexture::new(0));
     asset.materials[0].alpha = AlphaMode::Mask { cutoff: 0.5 };
     asset.materials[0].double_sided = true;
     let mut scene = Scene::new(&device, &queue);
@@ -610,8 +610,8 @@ fn browser_formats_sample_stored_mips_and_rgba_ray_companions() {
             decoded_level_0: Some(image::RgbaImage::from_pixel(4, 4, image::Rgba(pixel))),
         };
         let mut material = test_support::cube().materials[0].clone();
-        material.base_texture = Some(0);
-        material.mr_texture = Some(0);
+        material.base_texture = Some(crate::asset::MaterialTexture::new(0));
+        material.mr_texture = Some(crate::asset::MaterialTexture::new(0));
         let mut scene = Scene::new(&device, &queue);
         scene
             .add_materials(&device, &queue, &[material], &[Image::Compressed(image)])
@@ -662,8 +662,8 @@ fn prepared_rgba_chains_upload_their_distinct_colour_and_data_levels() {
         image::RgbaImage::from_fn(2, 1, |x, _| image::Rgba([if x == 0 { 0 } else { 255 }; 4]));
     let image = crate::asset::Rgba8MipChain::new(source).unwrap();
     let mut material = test_support::cube().materials[0].clone();
-    material.base_texture = Some(0);
-    material.mr_texture = Some(0);
+    material.base_texture = Some(crate::asset::MaterialTexture::new(0));
+    material.mr_texture = Some(crate::asset::MaterialTexture::new(0));
     let mut scene = Scene::new(&device, &queue);
     scene
         .add_materials(&device, &queue, &[material], &[Image::Rgba8Mips(image)])

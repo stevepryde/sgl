@@ -1,6 +1,8 @@
 //! glTF materials and the material extensions SGL3D supports.
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 
+use super::super::asset::{MaterialTexture, Sampler, TextureFilter, TextureWrap};
+
 use super::super::asset::{Material, Result};
 use super::super::material::AlphaMode;
 use super::Ignored;
@@ -60,11 +62,11 @@ pub(super) fn read_material(
     let dispersion = read_dispersion(&material)?;
     let (specular, specular_color) = read_specular(&material, index, ignored)?;
     let pbr = material.pbr_metallic_roughness();
-    let mr_image = pbr
+    let mr_slot = pbr
         .metallic_roughness_texture()
-        .map(|info| info.texture().source().index());
-    let occlusion = read_occlusion(&material, mr_image, index, ignored)?;
-    let texture_index = |info: gltf::texture::Info<'_>| -> Result<usize> {
+        .map(|info| slot(info.texture()));
+    let occlusion = read_occlusion(&material, mr_slot, index, ignored)?;
+    let texture_slot = |info: gltf::texture::Info<'_>| -> Result<MaterialTexture> {
         if info.tex_coord() != 0 {
             return Err(format!(
                 "material {name}: TEXCOORD_{} is unsupported; export UV0",
@@ -72,15 +74,15 @@ pub(super) fn read_material(
             )
             .into());
         }
-        Ok(info.texture().source().index())
+        Ok(slot(info.texture()))
     };
     let normal_texture = material
         .normal_texture()
-        .map(|info| -> Result<usize> {
+        .map(|info| -> Result<MaterialTexture> {
             if info.tex_coord() != 0 {
                 return Err(format!("material {name}: normal map requires UV0").into());
             }
-            Ok(info.texture().source().index())
+            Ok(slot(info.texture()))
         })
         .transpose()?;
     let bump = material.extension_value("EXT_materials_bump");
@@ -92,50 +94,6 @@ pub(super) fn read_material(
         })
         .transpose()?
         .flatten();
-    let textures = [
-        pbr.base_color_texture().map(|t| t.texture()),
-        pbr.metallic_roughness_texture().map(|t| t.texture()),
-        material.emissive_texture().map(|t| t.texture()),
-        material.normal_texture().map(|t| t.texture()),
-        bump_texture.clone(),
-        anisotropy_texture.clone(),
-        clearcoat.texture.clone(),
-        clearcoat.roughness_texture.clone(),
-        clearcoat.normal_texture.clone(),
-        iridescence.texture.clone(),
-        iridescence.thickness_texture.clone(),
-        transmission.texture.clone(),
-        volume.thickness_texture.clone(),
-        sheen.color_texture.clone(),
-        sheen.roughness_texture.clone(),
-        diffuse.texture.clone(),
-        diffuse.color_texture.clone(),
-        // An occlusion map SGL3D samples, the metallic-roughness image on
-        // TEXCOORD_0, takes its sampler; an ignored one constrains nothing.
-        material
-            .occlusion_texture()
-            .map(|t| t.texture())
-            .filter(|_| occlusion.texture.is_some() && occlusion.texture == mr_image),
-    ];
-    // The textures SGL3D samples, and only those (an ignored map's sampler
-    // constrains nothing), share one wrapping and its trilinear filtering.
-    let mut wrap = None;
-    for texture in textures.into_iter().flatten() {
-        let sampler = texture.sampler();
-        if !matches!(sampler.mag_filter(), None | Some(MagFilter::Linear))
-            || !matches!(
-                sampler.min_filter(),
-                None | Some(MinFilter::LinearMipmapLinear)
-            )
-        {
-            return Err(format!("material {name}: texture {} uses unsupported sampling; export linear magnification and trilinear minification", texture.index()).into());
-        }
-        let modes = [sampler.wrap_s(), sampler.wrap_t()];
-        if wrap.is_some_and(|existing| existing != modes) {
-            return Err(format!("material {name}: texture channels use different wrapping").into());
-        }
-        wrap = Some(modes);
-    }
     // The core factors the scene refuses (`validate_core`), which the gltf
     // crate does not check: base colour RGB and emission finite and
     // nonnegative (either may exceed glTF's 1 for HDR), base alpha in 0..1,
@@ -183,38 +141,38 @@ pub(super) fn read_material(
         specular_color,
         clearcoat: clearcoat.factor,
         coat_roughness: clearcoat.roughness,
-        clearcoat_texture: clearcoat.texture.map(|t| t.source().index()),
-        coat_roughness_texture: clearcoat.roughness_texture.map(|t| t.source().index()),
-        coat_normal_texture: clearcoat.normal_texture.map(|t| t.source().index()),
+        clearcoat_texture: clearcoat.texture.map(slot),
+        coat_roughness_texture: clearcoat.roughness_texture.map(slot),
+        coat_normal_texture: clearcoat.normal_texture.map(slot),
         coat_normal_scale: clearcoat.normal_scale,
         iridescence: iridescence.factor,
         iridescence_ior: iridescence.ior,
         iridescence_thickness: iridescence.thickness,
-        iridescence_texture: iridescence.texture.map(|t| t.source().index()),
-        iridescence_thickness_texture: iridescence.thickness_texture.map(|t| t.source().index()),
+        iridescence_texture: iridescence.texture.map(slot),
+        iridescence_thickness_texture: iridescence.thickness_texture.map(slot),
         sheen_color: sheen.color,
         sheen_roughness: sheen.roughness,
-        sheen_color_texture: sheen.color_texture.map(|t| t.source().index()),
-        sheen_roughness_texture: sheen.roughness_texture.map(|t| t.source().index()),
+        sheen_color_texture: sheen.color_texture.map(slot),
+        sheen_roughness_texture: sheen.roughness_texture.map(slot),
         diffuse_transmission: diffuse.factor,
         diffuse_transmission_color: diffuse.color,
-        diffuse_transmission_texture: diffuse.texture.map(|t| t.source().index()),
-        diffuse_transmission_color_texture: diffuse.color_texture.map(|t| t.source().index()),
+        diffuse_transmission_texture: diffuse.texture.map(slot),
+        diffuse_transmission_color_texture: diffuse.color_texture.map(slot),
         anisotropy_strength,
         anisotropy_rotation,
-        anisotropy_texture: anisotropy_texture.map(|t| t.source().index()),
-        base_texture: pbr.base_color_texture().map(texture_index).transpose()?,
+        anisotropy_texture: anisotropy_texture.map(slot),
+        base_texture: pbr.base_color_texture().map(texture_slot).transpose()?,
         mr_texture: pbr
             .metallic_roughness_texture()
-            .map(texture_index)
+            .map(texture_slot)
             .transpose()?,
         occlusion_texture: occlusion.texture,
         occlusion_strength: occlusion.strength,
-        emissive_texture: material.emissive_texture().map(texture_index).transpose()?,
+        emissive_texture: material.emissive_texture().map(texture_slot).transpose()?,
         normal_texture,
         normal_scale: material.normal_texture().map_or(1.0, |t| t.scale()),
         normal_layers: None,
-        bump_texture: bump_texture.map(|t| t.source().index()),
+        bump_texture: bump_texture.map(slot),
         // Authority: EXT_materials_bump's schema (KhronosGroup/glTF#2339):
         // bumpFactor in 0..100, default 1.
         bump_scale: bump
@@ -226,13 +184,12 @@ pub(super) fn read_material(
             .transpose()?
             .unwrap_or(1.0),
         transmission: transmission.factor,
-        transmission_texture: transmission.texture.map(|t| t.source().index()),
+        transmission_texture: transmission.texture.map(slot),
         thickness: volume.thickness,
-        thickness_texture: volume.thickness_texture.map(|t| t.source().index()),
+        thickness_texture: volume.thickness_texture.map(slot),
         attenuation_distance: volume.attenuation_distance,
         attenuation_color: volume.attenuation_color,
         dispersion,
-        wrap: wrap.unwrap_or([WrappingMode::Repeat; 2]),
         double_sided: material.double_sided(),
         unlit: material.unlit(),
         // glTF has no such property: whether a light stands for a surface
@@ -482,19 +439,20 @@ fn color_factor(value: &serde_json::Value, most: f32) -> Option<[f32; 3]> {
 
 /// A material's occlusion map (glTF 2.0 `occlusionTexture`).
 struct Occlusion {
-    /// Its image, where it lies on `TEXCOORD_0`.
-    texture: Option<usize>,
+    /// Its image and sampler, where it lies on `TEXCOORD_0`.
+    texture: Option<MaterialTexture>,
     /// glTF's `strength`, in `0..=1`; 1 without a map.
     strength: f32,
 }
 
-/// Material `index`'s occlusion map, where the image of its metallic-roughness
-/// map is `mr_image`. SGL3D samples it where it is that image (ORM packing);
-/// another image is kept but listed in `ignored`, and a map on another UV
-/// set, which SGL3D has no material input for, is left out and listed.
+/// Material `index`'s occlusion map, where its metallic-roughness map is
+/// `mr_slot`. SGL3D samples it where it is that map, its image through its
+/// sampler (ORM packing); another image or sampler is kept but listed in
+/// `ignored`, and a map on another UV set, which SGL3D has no material input
+/// for, is left out and listed.
 fn read_occlusion(
     material: &gltf::Material<'_>,
-    mr_image: Option<usize>,
+    mr_slot: Option<MaterialTexture>,
     index: usize,
     ignored: &mut Vec<Ignored>,
 ) -> Result<Occlusion> {
@@ -509,9 +467,8 @@ fn read_occlusion(
         let name = material.name().unwrap_or("unnamed/default");
         return Err(format!("material {name}: occlusionTexture.strength must be in 0..1").into());
     }
-    let image = occlusion.texture().source().index();
-    let texture = (occlusion.tex_coord() == 0).then_some(image);
-    if texture.is_none() || texture != mr_image {
+    let texture = (occlusion.tex_coord() == 0).then(|| slot(occlusion.texture()));
+    if texture.is_none() || texture != mr_slot {
         ignored.push(Ignored::OcclusionMap { material: index });
     }
     Ok(Occlusion { texture, strength })
@@ -597,5 +554,46 @@ fn scalar(
                 ))
                 .into()
             }),
+    }
+}
+
+/// `texture`'s image and sampler, as glTF 2.0 defines a sampler's absent
+/// properties (3.8.4, `sampler.schema.json`): repeating on both axes, and
+/// filtering the implementation chooses, trilinear for SGL3D. three.js r187
+/// reads them alike (examples/jsm/loaders/GLTFLoader.js 3376–3383).
+fn slot(texture: gltf::Texture<'_>) -> MaterialTexture {
+    let sampler = texture.sampler();
+    let wrap = |mode| match mode {
+        WrappingMode::Repeat => TextureWrap::Repeat,
+        WrappingMode::MirroredRepeat => TextureWrap::MirroredRepeat,
+        WrappingMode::ClampToEdge => TextureWrap::ClampToEdge,
+    };
+    let (min_filter, mipmap_filter) = match sampler.min_filter() {
+        Some(MinFilter::Nearest) => (TextureFilter::Nearest, None),
+        Some(MinFilter::Linear) => (TextureFilter::Linear, None),
+        Some(MinFilter::NearestMipmapNearest) => {
+            (TextureFilter::Nearest, Some(TextureFilter::Nearest))
+        }
+        Some(MinFilter::LinearMipmapNearest) => {
+            (TextureFilter::Linear, Some(TextureFilter::Nearest))
+        }
+        Some(MinFilter::NearestMipmapLinear) => {
+            (TextureFilter::Nearest, Some(TextureFilter::Linear))
+        }
+        Some(MinFilter::LinearMipmapLinear) | None => {
+            (TextureFilter::Linear, Some(TextureFilter::Linear))
+        }
+    };
+    MaterialTexture {
+        image: texture.source().index(),
+        sampler: Sampler {
+            mag_filter: match sampler.mag_filter() {
+                Some(MagFilter::Nearest) => TextureFilter::Nearest,
+                Some(MagFilter::Linear) | None => TextureFilter::Linear,
+            },
+            min_filter,
+            mipmap_filter,
+            wrap: [wrap(sampler.wrap_s()), wrap(sampler.wrap_t())],
+        },
     }
 }

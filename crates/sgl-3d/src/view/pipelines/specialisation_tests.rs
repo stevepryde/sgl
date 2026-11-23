@@ -56,6 +56,7 @@ fn pipelines_of_the_current_and_previous_specialisation_stay() {
                 cull: Cull::Back,
                 alpha: Alpha::Opaque,
                 deformed: false,
+                shader_sampled: 0,
             },
             None,
             Clone::clone,

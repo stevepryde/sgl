@@ -2,17 +2,19 @@
 //! and in effect on the device's binding tier, the one list that decides
 //! what is uploaded, what group 2 binds, the ray-source texture words and
 //! the record's `maps` bits (specs/sgl3d-architecture.md, Binding tiers).
-use crate::asset::Material as AuthoredMaterial;
+use crate::asset::{Material as AuthoredMaterial, MaterialTexture, TextureWrap};
 use crate::scene::rays::MaterialTextures;
 use crate::shading::bind::BindingTier;
-use crate::shading::bind::group2::MaterialMap;
+use crate::shading::bind::group2::{MAP_BINDINGS, MaterialMap};
 use crate::shading::material::MaterialMaps;
+use crate::shading::samplers::MapSamplers;
 
-/// The image `material` was authored with for `map`, an index into the
-/// images added with it. Its occlusion map is SGL3D's only in its
-/// metallic-roughness map's image (ORM packing); one in an image of its own
-/// is not sampled (the glTF loader lists it as ignored).
-pub(super) fn authored(material: &AuthoredMaterial, map: MaterialMap) -> Option<usize> {
+/// The map `material` was authored with for `map`: its image, an index into
+/// the images added with it, and its sampler. Its occlusion map is SGL3D's
+/// only where it is its metallic-roughness map (ORM packing); one in an
+/// image or sampler of its own is not sampled (the glTF loader lists it as
+/// ignored).
+pub(super) fn authored(material: &AuthoredMaterial, map: MaterialMap) -> Option<MaterialTexture> {
     match map {
         MaterialMap::Base => material.base_texture,
         MaterialMap::MetallicRoughness => material.mr_texture,
@@ -37,21 +39,18 @@ pub(super) fn authored(material: &AuthoredMaterial, map: MaterialMap) -> Option<
     }
 }
 
-/// The maps `material` was authored with.
-pub(super) fn authored_maps(material: &AuthoredMaterial) -> MaterialMaps {
-    MaterialMaps::of(
-        MaterialMap::ALL
-            .into_iter()
-            .filter(|&map| authored(material, map).is_some()),
-    )
+/// The wrapping of the normal map `material` is authored with, if any,
+/// which its normal layers need to repeat.
+pub(super) fn normal_wrap(material: &AuthoredMaterial) -> Option<[TextureWrap; 2]> {
+    authored(material, MaterialMap::Normal).map(|texture| texture.sampler.wrap)
 }
 
-/// A material's maps in effect, each one's image or none: those it was
-/// authored with whose binding a device of its tier binds, less a bump map
-/// beside a normal map, which shading never takes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A material's maps in effect, each one's image and sampler or none: those
+/// it was authored with whose binding a device of its tier binds, less a
+/// bump map beside a normal map, which shading never takes.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct InEffect {
-    images: [Option<usize>; MaterialMap::ALL.len()],
+    images: [Option<MaterialTexture>; MaterialMap::ALL.len()],
 }
 
 impl InEffect {
@@ -70,13 +69,18 @@ impl InEffect {
 
     /// `map`'s image, where it is in effect.
     pub fn get(&self, map: MaterialMap) -> Option<usize> {
-        self.images[map as usize]
+        self.images[map as usize].map(|texture| texture.image)
     }
 
     /// The same maps, each image `image` maps to.
     pub fn map(self, image: impl Fn(usize) -> usize) -> Self {
         Self {
-            images: self.images.map(|index| index.map(&image)),
+            images: self.images.map(|texture| {
+                texture.map(|texture| MaterialTexture {
+                    image: image(texture.image),
+                    ..texture
+                })
+            }),
         }
     }
 
@@ -87,15 +91,26 @@ impl InEffect {
             .filter_map(|map| Some((self.get(map)?, map.binding().colour)))
     }
 
-    /// The image group 2 binds at `binding`: that of the map in effect that
-    /// fills it, if any. Two maps fill one binding only from one image
-    /// (the metallic-roughness map and its packed occlusion) or one at a
-    /// time (a normal map, else a bump map).
-    pub fn bound(&self, binding: u32) -> Option<usize> {
+    /// The map group 2 binds at `binding`: the map in effect that fills it,
+    /// if any. Two maps fill one binding only as one map (the
+    /// metallic-roughness map and its packed occlusion) or one at a time (a
+    /// normal map, else a bump map).
+    fn slot(&self, binding: u32) -> Option<MaterialTexture> {
         MaterialMap::ALL
             .into_iter()
             .filter(|map| map.binding().binding == binding)
-            .find_map(|map| self.get(map))
+            .find_map(|map| self.images[map as usize])
+    }
+
+    /// The image group 2 binds at `binding`, if any.
+    pub fn bound(&self, binding: u32) -> Option<usize> {
+        self.slot(binding).map(|texture| texture.image)
+    }
+
+    /// How group 2 and ray hits sample the maps in effect: each binding's
+    /// sampler.
+    pub fn samplers(&self) -> MapSamplers {
+        MapSamplers::new(MAP_BINDINGS.map(|map| self.slot(map.binding).map(|t| t.sampler)))
     }
 
     /// The record's `maps` bits.

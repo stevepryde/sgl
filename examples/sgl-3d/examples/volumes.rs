@@ -37,7 +37,7 @@ use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight,
     InstanceState, MaterialId, MaterialShader, Mobility, ModelMesh, PreparedModel, Renderer, Scene,
     ShaderSource, SurfaceMaterial, View, ViewFrame, ViewOutput,
-    asset::{Asset, CpuMesh, Image, Material, Vertex},
+    asset::{Asset, CpuMesh, Image, Material, MaterialTexture, Vertex},
     settings::{Antialiasing, Settings},
     timing::GpuTiming,
 };
@@ -252,7 +252,7 @@ fn add_opaque(
             materials: vec![
                 Material {
                     name: "wall".into(),
-                    base_texture: Some(0),
+                    base_texture: Some(MaterialTexture::new(0)),
                     metallic: 0.,
                     roughness: 0.7,
                     ..Default::default()

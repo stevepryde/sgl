@@ -500,7 +500,8 @@ fn portable_scene_material_edits_restore_near_and_far_occluders() {
             materials[0].double_sided = double_sided;
             materials[0].visibility_group = group;
             for (&word, material) in scene.materials[0].iter().zip(&materials) {
-                let uniform = MaterialUniform::new(material, Default::default());
+                let uniform =
+                    MaterialUniform::new(material, Default::default(), &Default::default());
                 scene.rays.write_material(&queue, word, &uniform);
             }
             scene.rays.set_visibility_mask(&queue, enabled);

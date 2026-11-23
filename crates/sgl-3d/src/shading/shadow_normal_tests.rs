@@ -52,7 +52,7 @@ fn white(mesh: CpuMesh, tilted: bool) -> Asset {
         metallic: 0.,
         roughness: 1.,
         // X 0.6, Y 0, Z 0.8.
-        normal_texture: tilted.then_some(0),
+        normal_texture: tilted.then_some(crate::asset::MaterialTexture::new(0)),
         ..Default::default()
     }];
     asset.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(

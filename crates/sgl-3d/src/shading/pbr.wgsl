@@ -30,16 +30,21 @@ fn pbr_filtered_roughness(rough:f32,geometry_normal:vec3<f32>)->f32 {
  let square_roughness=saturate(roughness*roughness+kernel_roughness);
  return sqrt(sqrt(square_roughness));
 }
-fn pbr_bump_normal(map:texture_2d<f32>,filtering:sampler,world:vec3<f32>,n:vec3<f32>,uv:vec2<f32>,scale:f32,face:f32)->vec3<f32> {
+// The UV steps of a bump map's forward samples at `uv`: one pixel along
+// GLSL's screen axes, whose dFdy is -dpdy on the WebGPU coordinate system
+// (three.js r185 BumpMapNode).
+fn pbr_bump_steps(uv:vec2<f32>)->array<vec2<f32>,2> {
+ return array(dpdx(uv),-dpdy(uv));
+}
+// The normal `n` at `world` tilted by a bump map whose heights are `height`
+// at the fragment and `forward` one step along each screen axis
+// (pbr_bump_steps), scaled by `scale`.
+fn pbr_bump_normal(world:vec3<f32>,n:vec3<f32>,height:f32,forward:vec2<f32>,scale:f32,face:f32)->vec3<f32> {
  // Three r185 BumpMapNode: normalized positional derivatives and forward
  // texture samples. GLSL dFdy is -dpdy on the WebGPU coordinate system.
  let sx=normalize(dpdx(world));
  let sy=normalize(-dpdy(world));
- let uv_dx=dpdx(uv);
- let uv_dy=-dpdy(uv);
- let height=textureSample(map,filtering,uv).r;
- let gradient=vec2(textureSample(map,filtering,uv+uv_dx).r-height,
-  textureSample(map,filtering,uv+uv_dy).r-height)*scale;
+ let gradient=(forward-vec2(height))*scale;
  let a=cross(sy,n);
  let b=cross(n,sx);
  let determinant=dot(sx,a)*face;

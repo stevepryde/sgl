@@ -113,8 +113,8 @@ fn box_on_floor(
             4,
             image::Rgba([red, 255, 255, 255]),
         ))];
-        world.materials[0].mr_texture = Some(0);
-        world.materials[0].occlusion_texture = Some(0);
+        world.materials[0].mr_texture = Some(crate::asset::MaterialTexture::new(0));
+        world.materials[0].occlusion_texture = Some(crate::asset::MaterialTexture::new(0));
     }
     let mut scene = Scene::new(device, queue);
     let (world, _) = test_support::add_static(device, queue, &mut scene, world);

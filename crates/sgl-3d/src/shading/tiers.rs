@@ -46,7 +46,7 @@ pub(crate) static BIND_MATERIAL_EXTENDED: Module = Module {
 pub(crate) static MATERIAL_MAPS_EXTENDED: Module = Module {
     name: "material_maps_extended",
     source: include_str!("material_maps_extended.wgsl"),
-    deps: &[&BIND_MATERIAL_EXTENDED],
+    deps: &[&BIND_MATERIAL_EXTENDED, &super::samplers::MATERIAL_SAMPLING],
 };
 /// The material-map provider of the Basic binding tier: each Extended map
 /// reads white.

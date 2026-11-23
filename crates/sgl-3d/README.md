@@ -2755,12 +2755,15 @@ renderer.render(&device, &queue, &mut encoder, &mut scene, &mut [
   while a material names it. A new device is a new scene: add it again.
 - **The screen** is any material: `emission_render_texture` puts the picture
   in its emission map's place, sampled with the mesh's UVs (the picture's
-  top left at UV 0, 0) through the material's own sampler, and multiplied by
-  `emission`, the screen's brightness. Give the screen a black `base`, and
-  author its material with `wrap: [ClampToEdge; 2]`
-  (`gltf::texture::WrappingMode`): the default repeats, which blends the
-  picture's opposite edges into each other along the screen's border. A
-  wall that tiles the picture keeps `Repeat`. It works alike on both
+  top left at UV 0, 0) with its emission map's sampler (the material's
+  bound one where it has no emission map; [material textures](#material-textures)),
+  and multiplied by `emission`, the screen's brightness. Give the screen a
+  black `base`, and author an emission map whose sampler clamps, a white
+  texel being enough (rays see it in the picture's place):
+  `emissive_texture: Some(MaterialTexture { image, sampler: Sampler { wrap:
+  [TextureWrap::ClampToEdge; 2], ..Sampler::default() } })`. The default
+  repeats, which blends the picture's opposite edges into each other along
+  the screen's border. A wall that tiles the picture keeps `Repeat`. It works alike on both
   binding tiers and in the browser.
 - **Colour.** The texture holds the feed view's displayed picture, tone
   mapped and graded by the feed's own `FrameInput` and settings, and the
@@ -3580,9 +3583,9 @@ emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_diffuse_transmission`, the `KHR_materials_ior` and
 `KHR_materials_specular` factors, and `KHR_lights_punctual` lights as data
 ([Authored glTF lights](#authored-gltf-lights)). A primitive whose material has any map
-needs `TEXCOORD_0`. Each map SGL3D samples needs linear magnification and
-trilinear minification (or none set); a map it leaves out may sample any
-way. `TEXCOORD_1` is the mesh's static irradiance atlas chart: on a static
+needs `TEXCOORD_0`. Each map keeps its texture's sampler, any filtering and
+wrapping glTF allows ([material textures](#material-textures)).
+`TEXCOORD_1` is the mesh's static irradiance atlas chart: on a static
 instance while an atlas is installed, a vertex it charts samples the atlas
 and takes no baked lights, so set `lightmap_uv` to `[0, 0]` on models the
 bake does not chart (one exported with a second UV map for AO, say).
@@ -3665,8 +3668,8 @@ with an asset-path error. One it lists only in `extensionsUsed` is left out,
 as glTF lets a loader do: a texture keeps its core image and a material its
 core values, and `Asset::ignored` lists it (`Ignored::Extension`). The list
 also names each material whose occlusion map SGL3D does not sample
-(`Ignored::OcclusionMap`): one in an image of its own on `TEXCOORD_0`,
-whose image stays in `Material::occlusion_texture`, or one on another UV
+(`Ignored::OcclusionMap`): one in an image or sampler of its own on
+`TEXCOORD_0`, which stays in `Material::occlusion_texture`, or one on another UV
 set, which the load leaves out (`occlusion_texture` `None`). It names each
 material whose specular textures SGL3D does not sample
 (`Ignored::SpecularMap`). To have occlusion drawn, pack it
@@ -3765,10 +3768,42 @@ most 65,536 distinct `lightmap_bounds` (`SceneError::TooManyLightmapCharts`,
 which names the mesh's index); a model's meshes together may name any
 number.
 
-Material textures are filtered trilinearly with the material's glTF
-wrapping, and anisotropically up to `Settings::anisotropic_filtering`
-(`settings::AnisotropicFiltering`: Off, 2×, 4×, 8× by default, or 16×, as
-Godot's levels).
+### Material textures
+
+Each map of an `asset::Material` is an `asset::MaterialTexture`: its image
+and its `asset::Sampler`, glTF's sampler for that texture. A sampler sets
+the magnification and minification filters (`TextureFilter::Nearest` or
+`Linear`), the mipmap filter (`None` samples level 0 alone, glTF's
+non-mipmapped `NEAREST` and `LINEAR` minification) and the wrapping on U and
+V (`TextureWrap::Repeat`, `MirroredRepeat` or `ClampToEdge`).
+`MaterialTexture::new(image)` takes glTF's default: trilinear and repeating.
+Two maps may sample one image in different states; the image is uploaded
+once.
+
+```rust
+let pixel_art = asset::Material {
+    base_texture: Some(asset::MaterialTexture {
+        image: 0,
+        sampler: asset::Sampler {
+            mag_filter: asset::TextureFilter::Nearest,
+            ..asset::Sampler::default()
+        },
+    }),
+    ..Default::default()
+};
+```
+
+Maps whose three filters are linear are also filtered anisotropically, up
+to `Settings::anisotropic_filtering` (`settings::AnisotropicFiltering`: Off,
+2×, 4×, 8× by default, or 16×, as Godot's levels); a nearest or
+non-mipmapped filter turns that off for its map, as WebGPU requires. A
+material whose maps all share one sampler costs nothing more than a default
+one, whatever the state. Where its maps take two or more states, those
+outside the state most of them share are sampled in the shader: correct,
+but without anisotropic filtering and at up to eight texel reads a sample
+(four a level), in pipelines of their own: about 0.5 ms at 1920×1080 on an
+Apple M5 for one trilinear map over most of the frame. Ray hits (world-space reflections, dynamic GI)
+sample level 0 with each map's magnification filter and wrapping.
 
 ### Compressed material images
 

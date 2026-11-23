@@ -52,11 +52,11 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
   var mapped:vec3<f32>;
   if (material.values.flags&MATERIAL_NORMAL_LAYERS)!=0u {
    let phase=frame.animation_phase;
-   let first=scene_sample_texture(normal_map,material_normal_layer_uv(material.values.normal_layers[0],hit.uv,phase),material.wrap,false);
-   let second=scene_sample_texture(normal_map,material_normal_layer_uv(material.values.normal_layers[1],hit.uv,phase),material.wrap,false);
+   let first=scene_sample_map(material.values.map_samplers,normal_map,MATERIAL_SLOT_RELIEF,material_normal_layer_uv(material.values.normal_layers[0],hit.uv,phase),false);
+   let second=scene_sample_map(material.values.map_samplers,normal_map,MATERIAL_SLOT_RELIEF,material_normal_layer_uv(material.values.normal_layers[1],hit.uv,phase),false);
    mapped=material_layered_normal(material.values,first,second);
   } else {
-   mapped=material_mapped_normal(material.values,scene_sample_texture(normal_map,hit.uv,material.wrap,false));
+   mapped=material_mapped_normal(material.values,scene_sample_map(material.values.map_samplers,normal_map,MATERIAL_SLOT_RELIEF,hit.uv,false));
   }
   n=normalize(ray_map_frame(hit,material)*mapped);
  }
@@ -69,8 +69,8 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
   let step=1./vec2<f32>(scene_texture_size(material.textures[SCENE_TEXTURE_BUMP]));
   let u=vec2(step.x,0.);
   let v=vec2(0.,step.y);
-  let dhdu=(scene_sample_texture(material.textures[SCENE_TEXTURE_BUMP],hit.uv+u,material.wrap,false).r-scene_sample_texture(material.textures[SCENE_TEXTURE_BUMP],hit.uv-u,material.wrap,false).r)/(2.*step.x)*material.values.bump_scale;
-  let dhdv=(scene_sample_texture(material.textures[SCENE_TEXTURE_BUMP],hit.uv+v,material.wrap,false).r-scene_sample_texture(material.textures[SCENE_TEXTURE_BUMP],hit.uv-v,material.wrap,false).r)/(2.*step.y)*material.values.bump_scale;
+  let dhdu=(scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,hit.uv+u,false).r-scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,hit.uv-u,false).r)/(2.*step.x)*material.values.bump_scale;
+  let dhdv=(scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,hit.uv+v,false).r-scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_BUMP],MATERIAL_SLOT_RELIEF,hit.uv-v,false).r)/(2.*step.y)*material.values.bump_scale;
   // Match Three's faceDirection correction while retaining the physical UV
   // height-gradient contract and current central-difference samples.
   let a=cross(dv,n);
@@ -84,7 +84,7 @@ fn ray_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
 // on ray_map_frame where the hit has one.
 fn ray_coat_normal(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
  if normal_maps_enabled && (material.values.maps&MATERIAL_MAP_COAT_NORMAL)!=0u && ray_has_map_frame(hit,material) {
-  return normalize(ray_map_frame(hit,material)*material_coat_normal(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_COAT_NORMAL],hit.uv,material.wrap,false)));
+  return normalize(ray_map_frame(hit,material)*material_coat_normal(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_COAT_NORMAL],MATERIAL_SLOT_COAT_NORMAL,hit.uv,false)));
  }
  return hit.normal;
 }
@@ -92,7 +92,7 @@ fn ray_base_color(hit:SceneHit,material:SceneMaterial)->vec4<f32> {
  return scene_base_color(material,hit.uv,hit.color);
 }
 fn ray_emission(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
- var emission=material.values.emission*scene_sample_texture(material.textures[SCENE_TEXTURE_EMISSION],hit.uv,material.wrap,true).rgb;
+ var emission=material.values.emission*scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_EMISSION],MATERIAL_SLOT_EMISSION,hit.uv,true).rgb;
  // A hit's flags are its object record's, so a hit is moving exactly where
  // raster's object.flags say so.
  if !instance_emission_enabled && (hit.instance_flags&OBJECT_STATIC)==0u {
@@ -102,7 +102,7 @@ fn ray_emission(hit:SceneHit,material:SceneMaterial)->vec3<f32> {
 }
 // Its decals are those of `clusters`, the ray hits' lists.
 fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<f32>,outgoing:vec3<f32>,clusters:ClusterRange)->Surface {
- let mr=scene_sample_texture(material.textures[SCENE_TEXTURE_METALLIC_ROUGHNESS],hit.uv,material.wrap,false);
+ let mr=scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_METALLIC_ROUGHNESS],MATERIAL_SLOT_METALLIC_ROUGHNESS,hit.uv,false);
  let unlit=(material.values.flags&MATERIAL_UNLIT)!=0u;
  var decaled=DecalSurface(base.rgb,ray_normal(hit,material),material.values.roughness*mr.g,material.values.metallic*mr.b);
  if !unlit {
@@ -111,7 +111,7 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  let n=decaled.normal;
  var anisotropy=vec4(0.);
  if material.values.anisotropy_strength>0. {
-  anisotropy=pbr_resolve_anisotropy(n,ray_tangent_frame(hit),material.values.anisotropy_strength,material.values.anisotropy_rotation,(material.values.maps&MATERIAL_MAP_ANISOTROPY)!=0u,scene_sample_texture(material.textures[SCENE_TEXTURE_ANISOTROPY],hit.uv,material.wrap,false).rgb);
+  anisotropy=pbr_resolve_anisotropy(n,ray_tangent_frame(hit),material.values.anisotropy_strength,material.values.anisotropy_rotation,(material.values.maps&MATERIAL_MAP_ANISOTROPY)!=0u,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_ANISOTROPY],MATERIAL_SLOT_ANISOTROPY,hit.uv,false).rgb);
  }
  var s:Surface;
  s.position=hit.position;
@@ -128,8 +128,8 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  var coat_roughness=material.values.coat_roughness;
  s.coat_normal=hit.normal;
  if material.values.coat>0. {
-  s.coat=material_coat(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_CLEARCOAT],hit.uv,material.wrap,false));
-  coat_roughness=material_coat_roughness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_COAT_ROUGHNESS],hit.uv,material.wrap,false));
+  s.coat=material_coat(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_CLEARCOAT],MATERIAL_SLOT_CLEARCOAT,hit.uv,false));
+  coat_roughness=material_coat_roughness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_COAT_ROUGHNESS],MATERIAL_SLOT_COAT_ROUGHNESS,hit.uv,false));
   s.coat_normal=ray_coat_normal(hit,material);
  }
  // A coatless surface's coat normal is its base normal (Surface).
@@ -141,16 +141,16 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  // sRGB.
  var sheen_roughness=material.values.sheen_roughness;
  if any(material.values.sheen>vec3(0.)) {
-  s.sheen=material_sheen(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_SHEEN_COLOR],hit.uv,material.wrap,true));
-  sheen_roughness=material_sheen_roughness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_SHEEN_ROUGHNESS],hit.uv,material.wrap,false));
+  s.sheen=material_sheen(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_SHEEN_COLOR],MATERIAL_SLOT_SHEEN_COLOR,hit.uv,true));
+  sheen_roughness=material_sheen_roughness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_SHEEN_ROUGHNESS],MATERIAL_SLOT_SHEEN_ROUGHNESS,hit.uv,false));
  }
  s.sheen_roughness=clamp(sheen_roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
  s.diffuse_transmission_color=material.values.diffuse_transmission_color;
  if material.values.diffuse_transmission>0. {
-  s.diffuse_transmission=material_diffuse_transmission(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION],hit.uv,material.wrap,false));
-  s.diffuse_transmission_color=material_diffuse_transmission_color(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR],hit.uv,material.wrap,true));
+  s.diffuse_transmission=material_diffuse_transmission(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION],MATERIAL_SLOT_DIFFUSE_TRANSMISSION,hit.uv,false));
+  s.diffuse_transmission_color=material_diffuse_transmission_color(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR],MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR,hit.uv,true));
   // Its volume, as raster_surface takes it.
-  let thickness=material_thickness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_THICKNESS],hit.uv,material.wrap,false));
+  let thickness=material_thickness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_THICKNESS],MATERIAL_SLOT_THICKNESS,hit.uv,false));
   s.volume_thickness=transmission_world_thickness(thickness,objects[hit.instance_id].model);
   s.volume_attenuation=material.values.attenuation;
  }
@@ -167,8 +167,8 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.lightmap_bounds=hit.lightmap_bounds;
  s.baked_irradiance=objects[hit.instance_id].baked_irradiance;
  if films_enabled && material.values.iridescence>0. {
-  let strength=material_iridescence(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_IRIDESCENCE],hit.uv,material.wrap,false));
-  let thickness=material_iridescence_thickness(material.values,scene_sample_texture(material.textures[SCENE_TEXTURE_IRIDESCENCE_THICKNESS],hit.uv,material.wrap,false));
+  let strength=material_iridescence(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_IRIDESCENCE],MATERIAL_SLOT_IRIDESCENCE,hit.uv,false));
+  let thickness=material_iridescence_thickness(material.values,scene_sample_map(material.values.map_samplers,material.textures[SCENE_TEXTURE_IRIDESCENCE_THICKNESS],MATERIAL_SLOT_IRIDESCENCE_THICKNESS,hit.uv,false));
   s.film=surface_film(s,strength,material.values.iridescence_ior,thickness);
  }
  return s;

@@ -865,8 +865,8 @@ fn captured_floor<const N: usize>(
     }
     floor.materials[0].metallic = metallic;
     floor.materials[0].roughness = roughness;
-    floor.materials[0].mr_texture = Some(0);
-    floor.materials[0].occlusion_texture = Some(0);
+    floor.materials[0].mr_texture = Some(crate::asset::MaterialTexture::new(0));
+    floor.materials[0].occlusion_texture = Some(crate::asset::MaterialTexture::new(0));
     let mut scene = Scene::new(&device, &queue);
     let (ids, _) = crate::test_support::add_static(&device, &queue, &mut scene, floor);
     let mut input = FrameInput::new(Camera {

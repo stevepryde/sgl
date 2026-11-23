@@ -1346,3 +1346,39 @@ Use the [current specs](README.md) for implementation and the
   answers the synchronous call at once (measured: 0.1 ms), was not taken:
   it rests on one browser's unspecified behaviour and a second copy of
   wgpu's descriptor mapping.
+- **D-72** Decision, 2026-11-23 (#859): a material's maps in a sampler
+  state other than the one its group 2 sampler binds are sampled in the
+  shader (`material_sampling.wgsl`: `textureLoad` at the texels and level
+  Vulkan's texel filtering and image level selection give), not through a
+  sampler binding per map as three.js r187 (`WebGPUTextureUtils.js`),
+  Bevy and Filament bind them. Lit group 0 binds five samplers to a fragment
+  stage. A sampler for each map would bind three more to every material on
+  Basic and fifteen on Extended, 21 samplers a stage there, past WebGPU's
+  and Metal's 16, and default materials would bind them too. Extra sampler
+  bindings in the shader-sampled pipelines' layout alone would spare
+  default materials, but take a second group 2 layout and pipeline layout
+  for every pass, and still hold at most eleven states a material where
+  glTF allows sixteen, so the shader path would be needed beside them. With
+  one bound sampler, the state most of a material's maps take (a trilinear
+  one winning a tie), a material whose maps share a state costs what a
+  default one does: group 2 keeps 9 entries on Basic and 21 on Extended,
+  one bind group, the same pipelines, and one GPU sampler a state for the
+  scene where each material made its own (the irradiance volume example's
+  five materials: one sampler, from five). Its record grows 16 bytes (224
+  to 240; 77 ray words from 75). The irradiance volume example's walk at
+  1920×1080 (Apple M5, Metal, shared machine, provisional), opaque
+  geometry and lighting, median / p95 ms: 1.365 / 1.999 before, 1.335 /
+  1.964 and 1.336 / 1.967 after; in its cave 1.309 / 1.428 before, 1.304
+  / 1.356 and 1.303 / 1.356 after. The dynamic GI example's probe rays,
+  whose hits now read each map's state: 0.133 / 0.160 ms before, 0.134 /
+  0.163 after. A shader-sampled map takes no anisotropic filtering and up
+  to eight texel loads a sample, in pipelines keyed by the bindings it
+  samples so (`Variant::shader_sampled`). Its cost, the irradiance volume
+  walk with each block material's metallic-roughness map on its base map's
+  image, clamped where the base repeats, against both repeating, 300
+  frames, two runs each: opaque geometry and lighting 2.329 and 2.366 ms
+  median against 1.879 and 1.880. A first form that compiled the shader
+  path into every map's sample, switched on one pipeline constant, cost
+  3.979 against 1.855: the inlined paths took the whole lighting shader's
+  registers, so each pipeline now compiles it into its shader-sampled
+  bindings alone.

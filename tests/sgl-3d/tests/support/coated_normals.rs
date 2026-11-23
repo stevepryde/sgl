@@ -37,7 +37,8 @@ fn coated_base_normal_and_geometry_coat_see_separate_probe_faces() {
                             1,
                             image::Rgba([218, 128, 218, 255]),
                         )));
-                    asset.materials[0].normal_texture = Some(0);
+                    asset.materials[0].normal_texture =
+                        Some(sgl_3d::asset::MaterialTexture::new(0));
                 }
                 let Some(mut frames) = Frames::new(asset, environment(0.), method.is_some(), SIZE)
                 else {

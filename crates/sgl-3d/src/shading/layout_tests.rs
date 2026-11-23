@@ -920,6 +920,7 @@ fn rust_mirrors_match_wgsl_layouts() {
                 sheen_roughness,
                 diffuse_transmission_color,
                 diffuse_transmission,
+                map_samplers,
             ]
         ),
         mirror!(
@@ -1573,6 +1574,7 @@ fn rust_constants_match_wgsl_twins() {
     .into_iter()
     .chain(super::lights::constants())
     .chain(super::clusters::constants())
+    .chain(super::samplers::constants())
     .chain(super::dynamic_gi::constants())
     .chain(super::vertex::constants())
     .chain(super::culling::constants())

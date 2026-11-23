@@ -4,6 +4,7 @@
 //! period of material animation, by which the frame's time is reduced.
 use crate::content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 use crate::shading::bind::group2::MaterialMap;
+use crate::shading::samplers::MapSamplers;
 
 /// The seconds after which material animation repeats exactly: an hour, the
 /// period at which Godot b130438 rolls its shader `TIME` over
@@ -66,10 +67,6 @@ impl MaterialMaps {
     /// The set of `maps`.
     pub fn of(maps: impl IntoIterator<Item = MaterialMap>) -> Self {
         Self(maps.into_iter().fold(0, |bits, map| bits | map.bit()))
-    }
-
-    pub fn contains(self, map: MaterialMap) -> bool {
-        self.0 & map.bit() != 0
     }
 }
 
@@ -178,11 +175,15 @@ pub(crate) struct MaterialUniform {
     /// light the base diffuses that it passes to its other side (0 none).
     pub diffuse_transmission_color: [f32; 3],
     pub diffuse_transmission: f32,
+    /// Each map binding's sampler state, a byte each
+    /// (`MapSamplers::codes`).
+    pub map_samplers: [u32; 4],
 }
 
 impl MaterialUniform {
-    /// `values` with its maps in effect, `maps`, as the shaders read them.
-    pub fn new(values: &SurfaceMaterial, maps: MaterialMaps) -> Self {
+    /// `values` with its maps in effect, `maps`, sampled as `samplers`
+    /// says, as the shaders read them.
+    pub fn new(values: &SurfaceMaterial, maps: MaterialMaps, samplers: &MapSamplers) -> Self {
         let bit = |on: bool, bit: u32| if on { bit } else { 0 };
         let (alpha_cutoff, alpha) = match values.alpha {
             AlphaMode::Opaque => (0., 0),
@@ -250,6 +251,7 @@ impl MaterialUniform {
             sheen_roughness: values.sheen_roughness,
             diffuse_transmission_color: values.diffuse_transmission_color,
             diffuse_transmission: values.diffuse_transmission,
+            map_samplers: samplers.codes(),
         }
     }
 

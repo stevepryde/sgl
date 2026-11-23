@@ -7,7 +7,7 @@ use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3, camera};
 use sgl_3d::{
     AlphaMode, Camera, DirectionalLight, DirectionalShadow, EnvironmentId, Exposure, FrameInput,
     Light, LightShape, MaterialId, ModelMesh, PreparedModel, Scene, SceneError,
-    asset::{CpuMesh, Image, Material, Vertex},
+    asset::{CpuMesh, Image, Material, MaterialTexture, Sampler, TextureFilter, Vertex},
     environment::{EnvironmentMap, PmremAtlas},
     settings::{
         Antialiasing, ReflectionMethod, ScreenSpaceReflections, Settings, WorldSpaceReflections,
@@ -314,9 +314,17 @@ pub fn add_materials(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     per_block: bool,
 ) -> Result<Materials, SceneError> {
-    let block = |name: &str, texture| Material {
+    // The blocks' 16-texel tiles are pixel art: magnified, each texel stays
+    // a sharp square, as a block game draws them.
+    let block = |name: &str, image| Material {
         name: name.into(),
-        base_texture: Some(texture),
+        base_texture: Some(MaterialTexture {
+            image,
+            sampler: Sampler {
+                mag_filter: TextureFilter::Nearest,
+                ..Sampler::default()
+            },
+        }),
         roughness: 0.9,
         ..Default::default()
     };

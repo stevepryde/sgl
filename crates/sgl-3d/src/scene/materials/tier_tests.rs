@@ -50,7 +50,7 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
     .map(|texel| Image::Rgba8(image::RgbaImage::from_pixel(4, 4, image::Rgba(texel))))
     .into();
     let plain = crate::asset::Material {
-        base_texture: Some(0),
+        base_texture: Some(crate::asset::MaterialTexture::new(0)),
         anisotropy_strength: 0.5,
         bump_scale: 1.,
         transmission: 0.5,
@@ -59,28 +59,28 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
     };
     let materials = [
         crate::asset::Material {
-            anisotropy_texture: Some(3),
-            clearcoat_texture: Some(3),
-            coat_roughness_texture: Some(3),
-            coat_normal_texture: Some(1),
-            iridescence_texture: Some(3),
-            iridescence_thickness_texture: Some(3),
-            transmission_texture: Some(4),
-            thickness_texture: Some(5),
-            sheen_color_texture: Some(0),
-            sheen_roughness_texture: Some(3),
-            diffuse_transmission_texture: Some(3),
-            diffuse_transmission_color_texture: Some(0),
+            anisotropy_texture: Some(crate::asset::MaterialTexture::new(3)),
+            clearcoat_texture: Some(crate::asset::MaterialTexture::new(3)),
+            coat_roughness_texture: Some(crate::asset::MaterialTexture::new(3)),
+            coat_normal_texture: Some(crate::asset::MaterialTexture::new(1)),
+            iridescence_texture: Some(crate::asset::MaterialTexture::new(3)),
+            iridescence_thickness_texture: Some(crate::asset::MaterialTexture::new(3)),
+            transmission_texture: Some(crate::asset::MaterialTexture::new(4)),
+            thickness_texture: Some(crate::asset::MaterialTexture::new(5)),
+            sheen_color_texture: Some(crate::asset::MaterialTexture::new(0)),
+            sheen_roughness_texture: Some(crate::asset::MaterialTexture::new(3)),
+            diffuse_transmission_texture: Some(crate::asset::MaterialTexture::new(3)),
+            diffuse_transmission_color_texture: Some(crate::asset::MaterialTexture::new(0)),
             ..plain.clone()
         },
         plain.clone(),
         crate::asset::Material {
-            normal_texture: Some(1),
-            bump_texture: Some(2),
+            normal_texture: Some(crate::asset::MaterialTexture::new(1)),
+            bump_texture: Some(crate::asset::MaterialTexture::new(2)),
             ..plain.clone()
         },
         crate::asset::Material {
-            normal_texture: Some(1),
+            normal_texture: Some(crate::asset::MaterialTexture::new(1)),
             ..plain
         },
     ];

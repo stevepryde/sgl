@@ -82,7 +82,7 @@ fn textured_grid() -> Asset {
         material: 0,
         deformation: Default::default(),
     }];
-    asset.materials[0].base_texture = Some(0);
+    asset.materials[0].base_texture = Some(crate::asset::MaterialTexture::new(0));
     asset.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(
         256,
         256,
@@ -178,9 +178,9 @@ fn missing_compressed_companions_are_refused_before_retained_mutation() {
         }
         let mut asset = test_support::cube();
         asset.images = vec![Image::Rgba8(image::RgbaImage::new(4, 4)), image.clone()];
-        asset.materials[0].base_texture = Some(0);
+        asset.materials[0].base_texture = Some(crate::asset::MaterialTexture::new(0));
         let mut second = asset.materials[0].clone();
-        second.base_texture = Some(1);
+        second.base_texture = Some(crate::asset::MaterialTexture::new(1));
         asset.materials.push(second);
         let counters = crate::counters::snapshot();
         assert!(matches!(

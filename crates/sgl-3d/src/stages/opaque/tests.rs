@@ -819,7 +819,7 @@ fn an_anisotropic_metal_completes_opaque_as_it_shades_blended() {
         // A mapped normal followed by a normal-changing decal requires
         // resolving the authored anisotropy axis against the final normal.
         // Reprojecting the already-resolved pre-decal axis is different.
-        material.normal_texture = Some(0);
+        material.normal_texture = Some(crate::asset::MaterialTexture::new(0));
         asset.images = vec![crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(
             1,
             1,

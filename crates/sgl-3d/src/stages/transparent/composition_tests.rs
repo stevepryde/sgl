@@ -57,7 +57,8 @@ fn square(z: f32, half: f32) -> Asset {
     };
     let flat = image::RgbaImage::from_pixel(4, 4, image::Rgba([128, 128, 255, 255]));
     asset.images.push(Image::Rgba8(flat));
-    asset.materials[0].normal_texture = Some(asset.images.len() - 1);
+    asset.materials[0].normal_texture =
+        Some(crate::asset::MaterialTexture::new(asset.images.len() - 1));
     asset
 }
 
@@ -266,7 +267,7 @@ fn moving_opaque_surfaces_mark_fsrs_composition_mask() {
     // over its right half.
     let mut cut = layered(MOVING, false);
     cut.images.push(Image::Rgba8(test_support::half_cut_out()));
-    cut.materials[0].base_texture = Some(cut.images.len() - 1);
+    cut.materials[0].base_texture = Some(crate::asset::MaterialTexture::new(cut.images.len() - 1));
     cut.materials[0].alpha = AlphaMode::Mask { cutoff: 0.5 };
     place(
         &device,

@@ -6,7 +6,8 @@ use crate::content::identity::{MaterialId, ShaderId};
 use crate::view::pipelines::{GeometryPass, GeometryPipelines, Variant};
 
 /// What a geometry pass has bound for its draws so far: the pipeline of
-/// each variant of materials without a shader, looked up once, and the
+/// each variant of materials without a shader that sample no map in the
+/// shader, looked up once, and the
 /// bound variant, shader and material, which both executors bind only when
 /// they change.
 pub(crate) struct Binder<'a> {
@@ -54,21 +55,23 @@ impl<'a> Binder<'a> {
         let drawn = scene.drawn_material(material);
         let shader = drawn.values.shader.map(|shader| shader.shader);
         if self.pipeline != Some((variant, shader)) {
-            let slot = &mut self.by_variant[variant.index()];
-            self.bound = match (shader, &*slot) {
-                (None, Some(pipeline)) => {
-                    pass.set_pipeline(pipeline);
-                    true
-                }
-                (None, None) => {
-                    *slot =
-                        self.pipelines
-                            .with_pipeline(scene, self.kind, variant, None, Clone::clone);
+            self.bound = match (shader, variant.index()) {
+                (None, Some(index)) => {
+                    let slot = &mut self.by_variant[index];
+                    if slot.is_none() {
+                        *slot = self.pipelines.with_pipeline(
+                            scene,
+                            self.kind,
+                            variant,
+                            None,
+                            Clone::clone,
+                        );
+                    }
                     slot.as_ref()
                         .map(|pipeline| pass.set_pipeline(pipeline))
                         .is_some()
                 }
-                (Some(_), _) => self
+                _ => self
                     .pipelines
                     .with_pipeline(scene, self.kind, variant, shader, |pipeline| {
                         pass.set_pipeline(pipeline)

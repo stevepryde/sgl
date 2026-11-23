@@ -36,7 +36,7 @@ use sgl_3d::{
     FrameEnvironment, FrameInput, InstanceId, InstanceState, MaterialId, MaterialShader, Mobility,
     ModelMesh, MotionBlurParameters, NormalLayer, PreparedModel, Renderer, Scene, ShaderSource,
     Sky, SurfaceMaterial, View, ViewFrame, ViewOutput,
-    asset::{Asset, CpuMesh, Image, Material, Vertex},
+    asset::{Asset, CpuMesh, Image, Material, MaterialTexture, Vertex},
     deformation::{MeshDeformation, MorphDelta, MorphTarget},
     settings::{
         Antialiasing, DepthOfField, FsrQuality, MotionBlur, ReflectionMethod,
@@ -989,7 +989,7 @@ fn render(
             })?;
             check_layout(&scene, shader)?;
             let water = Material {
-                normal_texture: Some(0),
+                normal_texture: Some(MaterialTexture::new(0)),
                 normal_layers: Some(water_layers()),
                 // The shader replaces this constant slab with the column.
                 thickness: 1.,
@@ -1011,7 +1011,7 @@ fn render(
         }
         Waves::Morph => {
             let water = Material {
-                normal_texture: Some(0),
+                normal_texture: Some(MaterialTexture::new(0)),
                 normal_layers: Some(water_layers()),
                 thickness: 2.,
                 ..water

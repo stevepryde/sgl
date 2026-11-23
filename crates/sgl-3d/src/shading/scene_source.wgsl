@@ -55,8 +55,8 @@ const SCENE_SECTION_PAIRED:u32=2147483648u;
 // then max.
 const SCENE_CHART_WORDS:u32=4u;
 // A material record's: its values (material.wgsl's Material, each member's
-// word), then its textures' image words, wraps and whether lightmap charts
-// light it.
+// word, its maps' sampler states among them), then its textures' image words
+// and whether lightmap charts light it.
 const SCENE_MATERIAL_BASE:u32=0u;
 const SCENE_MATERIAL_EMISSION:u32=4u;
 const SCENE_MATERIAL_ENVIRONMENT_SCALE:u32=7u;
@@ -89,9 +89,9 @@ const SCENE_MATERIAL_SHEEN:u32=48u;
 const SCENE_MATERIAL_SHEEN_ROUGHNESS:u32=51u;
 const SCENE_MATERIAL_DIFFUSE_TRANSMISSION_COLOR:u32=52u;
 const SCENE_MATERIAL_DIFFUSE_TRANSMISSION:u32=55u;
-const SCENE_MATERIAL_TEXTURES:u32=56u;
-const SCENE_MATERIAL_WRAP:u32=72u;
-const SCENE_MATERIAL_BAKED:u32=74u;
+const SCENE_MATERIAL_MAP_SAMPLERS:u32=56u;
+const SCENE_MATERIAL_TEXTURES:u32=60u;
+const SCENE_MATERIAL_BAKED:u32=76u;
 // A normal layer's (material.wgsl's NormalLayer): its words, each member's
 // word.
 const SCENE_NORMAL_LAYER_WORDS:u32=4u;

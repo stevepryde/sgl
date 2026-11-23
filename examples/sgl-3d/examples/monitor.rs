@@ -22,7 +22,7 @@ use sgl_3d::{
     Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceId,
     InstanceState, MaterialId, Mobility, RenderTexture, RenderTextureId, Renderer, Scene,
     SurfaceMaterial, View, ViewFrame, ViewOutput,
-    asset::{Asset, CpuMesh, Material, Vertex},
+    asset::{Asset, CpuMesh, Image, Material, MaterialTexture, Sampler, TextureWrap, Vertex},
 };
 use std::{error::Error, path::PathBuf};
 
@@ -193,7 +193,11 @@ fn build(
         let asset = Asset {
             meshes,
             materials,
-            images: Vec::new(),
+            images: vec![Image::Rgba8(image::RgbaImage::from_pixel(
+                1,
+                1,
+                image::Rgba([255; 4]),
+            ))],
             rig: Default::default(),
             ignored: Vec::new(),
             lights: Default::default(),
@@ -235,12 +239,19 @@ fn build(
         Mobility::Moving,
     )?;
     // The screen emits the picture at this brightness; its black, glossy
-    // base reflects the room as a real screen's glass does. The picture is
-    // sampled through the material's sampler: clamped, so its opposite
-    // edges do not blend along the screen's border.
+    // base reflects the room as a real screen's glass does. The picture
+    // takes its emission map's place (a white texel, which rays see) and is
+    // sampled with that map's sampler: clamped, so its opposite edges do not
+    // blend along the screen's border.
     let glass = Material {
         emissive: [1.5; 3],
-        wrap: [gltf::texture::WrappingMode::ClampToEdge; 2],
+        emissive_texture: Some(MaterialTexture {
+            image: 0,
+            sampler: Sampler {
+                wrap: [TextureWrap::ClampToEdge; 2],
+                ..Sampler::default()
+            },
+        }),
         ..material([0., 0., 0.], 0.15)
     };
     let (_, _, materials) = add(

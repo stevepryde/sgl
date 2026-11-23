@@ -1350,7 +1350,7 @@ fn content_survives_buffer_growth() {
         64,
         image::Rgba([9; 4]),
     ))];
-    textured.materials[0].base_texture = Some(0);
+    textured.materials[0].base_texture = Some(crate::asset::MaterialTexture::new(0));
     for _ in 0..40 {
         let ids = scene.add_asset(&device, &queue, textured.clone()).unwrap();
         for _ in 0..8 {
@@ -1767,7 +1767,7 @@ fn anisotropic_filtering_keeps_a_receding_textures_detail() {
         |x, y| image::Rgba([if (x + y) % 2 == 0 { 255 } else { 0 }; 4]),
     ))];
     floor.materials[0].base = [1.; 4];
-    floor.materials[0].base_texture = Some(0);
+    floor.materials[0].base_texture = Some(crate::asset::MaterialTexture::new(0));
     floor.materials[0].unlit = true;
     let mut scene = Scene::new(&device, &queue);
     test_support::add_static(&device, &queue, &mut scene, floor);

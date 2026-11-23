@@ -32,10 +32,14 @@ struct Level {
 
 impl Level {
     fn new() -> Option<Self> {
+        Self::with_opaque(test_support::cube())
+    }
+
+    /// The level with `opaque` as its opaque cube.
+    fn with_opaque(opaque: crate::asset::Asset) -> Option<Self> {
         let (instance, device, queue) = test_support::counted_device()?;
         let mut scene = Scene::new(&device, &queue);
-        let (opaque, _) =
-            test_support::add_static(&device, &queue, &mut scene, test_support::cube());
+        let (opaque, _) = test_support::add_static(&device, &queue, &mut scene, opaque);
         let (_, masked) = test_support::add_static(
             &device,
             &queue,
@@ -435,4 +439,37 @@ fn a_view_that_draws_a_render_texture_is_compiled_with_the_view_that_shows_it() 
     assert_eq!(compiled.programs(), before);
     assert_eq!(drawn, ordinary.render(&input));
     assert_eq!(compiled.programs(), ordinary.programs());
+}
+
+// Plausible defect: the planning pass reaches a material's pipelines
+// without the maps it samples in the shader (`Variant::shader_sampled`),
+// so the first frame creates them on the window thread. The opaque cube's
+// base map repeats and its emission map, on the same image, clamps, so
+// the shader samples the emission map. The oracle is wgpu's count of the
+// pipelines and shader modules, unchanged across the compiled first frame.
+#[test]
+fn a_compiled_frame_with_a_map_sampled_in_the_shader_creates_no_program() {
+    use crate::asset::{Image, MaterialTexture, Sampler, TextureWrap};
+    let mut cube = test_support::cube();
+    cube.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(
+        2,
+        2,
+        image::Rgba([200; 4]),
+    ))];
+    cube.materials[0].base_texture = Some(MaterialTexture::new(0));
+    cube.materials[0].emissive_texture = Some(MaterialTexture {
+        image: 0,
+        sampler: Sampler {
+            wrap: [TextureWrap::ClampToEdge; 2],
+            ..Sampler::default()
+        },
+    });
+    let Some(mut level) = Level::with_opaque(cube) else {
+        return;
+    };
+    let input = Level::input(0.);
+    level.compile_all(&input);
+    let before = level.programs();
+    level.render(&input);
+    assert_eq!(level.programs(), before);
 }

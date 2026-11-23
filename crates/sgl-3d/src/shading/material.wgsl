@@ -64,6 +64,9 @@ struct Material {
  // the base diffuses that it passes to its other side (0 none).
  diffuse_transmission_color:vec3<f32>,
  diffuse_transmission:f32,
+ // Each map binding's sampler state (sampler_state.wgsl), a byte by
+ // MATERIAL_SLOT_*, four to a word (material_map_sampler).
+ map_samplers:vec4<u32>,
 }
 const MATERIAL_UNLIT:u32=1u;
 const MATERIAL_DOUBLE_SIDED:u32=2u;
@@ -110,6 +113,31 @@ const MATERIAL_MAP_SHEEN_COLOR:u32=16384u;
 const MATERIAL_MAP_SHEEN_ROUGHNESS:u32=32768u;
 const MATERIAL_MAP_DIFFUSE_TRANSMISSION:u32=65536u;
 const MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR:u32=131072u;
+// Each map binding's slot: its index in shading::bind::group2::MAP_BINDINGS,
+// which names its byte of map_samplers and its bit of
+// material_shader_sampled_maps (material_sampling.wgsl). The
+// relief binding holds the normal map, else the bump map; the
+// metallic-roughness binding its packed occlusion too.
+const MATERIAL_SLOT_BASE:u32=0u;
+const MATERIAL_SLOT_METALLIC_ROUGHNESS:u32=1u;
+const MATERIAL_SLOT_EMISSION:u32=2u;
+const MATERIAL_SLOT_RELIEF:u32=3u;
+const MATERIAL_SLOT_ANISOTROPY:u32=4u;
+const MATERIAL_SLOT_CLEARCOAT:u32=5u;
+const MATERIAL_SLOT_COAT_ROUGHNESS:u32=6u;
+const MATERIAL_SLOT_COAT_NORMAL:u32=7u;
+const MATERIAL_SLOT_IRIDESCENCE:u32=8u;
+const MATERIAL_SLOT_IRIDESCENCE_THICKNESS:u32=9u;
+const MATERIAL_SLOT_TRANSMISSION:u32=10u;
+const MATERIAL_SLOT_THICKNESS:u32=11u;
+const MATERIAL_SLOT_SHEEN_COLOR:u32=12u;
+const MATERIAL_SLOT_SHEEN_ROUGHNESS:u32=13u;
+const MATERIAL_SLOT_DIFFUSE_TRANSMISSION:u32=14u;
+const MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR:u32=15u;
+// Map binding `slot`'s sampler state in a record's map_samplers.
+fn material_map_sampler(samplers:vec4<u32>,slot:u32)->u32 {
+ return (samplers[slot/4u]>>(8u*(slot%4u)))&255u;
+}
 // The share of ambient light that reaches a texel of material `m` whose
 // metallic-roughness map reads `mr`: with MATERIAL_MAP_OCCLUSION its red
 // channel at occlusion_strength, as glTF 2.0 applies occlusionTexture

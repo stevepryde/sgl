@@ -3335,7 +3335,7 @@ fn the_clock_changes_the_probes_inputs_only_where_a_surface_moves() {
         let flat = image::RgbaImage::from_pixel(4, 4, image::Rgba([128, 128, 255, 255]));
         cube.images.push(crate::asset::Image::Rgba8(flat));
         let material = &mut cube.materials[0];
-        material.normal_texture = Some(0);
+        material.normal_texture = Some(crate::asset::MaterialTexture::new(0));
         material.normal_layers = Some(layers);
         material.unlit = unlit;
         material.alpha = alpha;

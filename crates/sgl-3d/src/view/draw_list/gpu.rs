@@ -304,7 +304,7 @@ impl GpuList {
             self.drawn.push(DrawnSet {
                 index,
                 region,
-                variant: camera_variant(&material.values, key.mirrored, key.deforms),
+                variant: camera_variant(material, key.mirrored, key.deforms),
                 material: key.material,
                 positions: key.positions,
             });

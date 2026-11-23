@@ -177,6 +177,11 @@ impl PipelineKey {
             shader,
             variant: Variant {
                 deformed: variant.deformed && pass.pulled(),
+                shader_sampled: if samples_maps(pass, variant.alpha) {
+                    variant.shader_sampled
+                } else {
+                    0
+                },
                 cull: if pass.volume() {
                     Cull::None
                 } else {
@@ -242,8 +247,12 @@ impl PipelineKey {
             ) && !self.pass.volume();
             constants.push(("motion_vertices", f64::from(u8::from(motion))));
         }
-        if !self.pass.caster() || self.variant.alpha == Alpha::Mask {
+        if samples_maps(self.pass, self.variant.alpha) {
             constants.push(masked);
+            constants.push((
+                "material_shader_sampled_maps",
+                f64::from(self.variant.shader_sampled),
+            ));
         }
         if self.pass.pulled() {
             constants.push(deformed);
@@ -256,4 +265,12 @@ impl PipelineKey {
         }
         constants
     }
+}
+
+/// Whether `pass`'s programs sample a material of `alpha`'s maps
+/// (material_raster.wgsl), so take its `alpha_mask` and
+/// `material_shader_sampled_maps` constants: every pass but a caster of an
+/// opaque material, which reads no texel.
+fn samples_maps(pass: GeometryPass, alpha: Alpha) -> bool {
+    !pass.caster() || alpha == Alpha::Mask
 }

@@ -7,7 +7,6 @@ use super::culling::clip_intersects;
 use super::lod::LodSelector;
 use super::pipelines::{Alpha, Cull, Variant};
 use crate::content::identity::Identity;
-use crate::content::material::SurfaceMaterial;
 use crate::scene::instances::Instance;
 use crate::scene::materials::Material;
 use crate::scene::static_edits::{posed_bounds, posed_grown};
@@ -150,15 +149,12 @@ pub(crate) fn moving_caster_reaches(
 /// A transmissive volume draws its front faces alone, whatever its side, as
 /// KHR_materials_volume says `doubleSided` does not apply to a volume
 /// boundary (Khronos glTF acfcbe65, README 112).
-pub(crate) fn camera_variant(
-    material: &SurfaceMaterial,
-    mirrored: bool,
-    deformed: bool,
-) -> Variant {
+pub(crate) fn camera_variant(material: &Material, mirrored: bool, deformed: bool) -> Variant {
     Variant {
-        cull: Cull::of(Cull::Back, material.two_sided(), mirrored),
-        alpha: Alpha::of(material),
+        cull: Cull::of(Cull::Back, material.values.two_sided(), mirrored),
+        alpha: Alpha::of(&material.values),
         deformed,
+        shader_sampled: material.shader_sampled(),
     }
 }
 
@@ -180,17 +176,13 @@ impl Population<'_> {
     /// The pipeline variant of a mesh with `material` at a pose that is
     /// `mirrored`, of an instance that is `deformed`: the camera's
     /// (`camera_variant`), but a probe face, which draws both sides.
-    pub(super) fn variant(
-        &self,
-        material: &SurfaceMaterial,
-        mirrored: bool,
-        deformed: bool,
-    ) -> Variant {
+    pub(super) fn variant(&self, material: &Material, mirrored: bool, deformed: bool) -> Variant {
         match self {
             Self::ProbeFace => Variant {
                 cull: Cull::None,
-                alpha: Alpha::of(material),
+                alpha: Alpha::of(&material.values),
                 deformed,
+                shader_sampled: material.shader_sampled(),
             },
             Self::Blended { .. } | Self::CaptureShadow | Self::LocalShadow { .. } => {
                 camera_variant(material, mirrored, deformed)

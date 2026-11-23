@@ -4,7 +4,7 @@ use sgl_3d::glam::camera;
 use sgl_3d::{
     Backdrop, Camera, FrameInput, InstanceState, Mobility, ModelId, Renderer, Scene,
     SpecularProbeTexels, View, ViewFrame, ViewOutput,
-    asset::{Asset, CpuMesh, Material, Vertex},
+    asset::{Asset, CpuMesh, Material, MaterialTexture, Vertex},
     diagnostics::DiagnosticTarget,
     environment::{EnvironmentMap, PmremAtlas},
     glam::{Mat4, Vec2, Vec3},
@@ -115,7 +115,6 @@ fn material(base: [f32; 4], metallic: f32, roughness: f32) -> Material {
         attenuation_distance: f32::INFINITY,
         attenuation_color: [1.; 3],
         dispersion: 0.,
-        wrap: [gltf::texture::WrappingMode::Repeat; 2],
         double_sided: true,
         unlit: false,
         emits_into_gi: true,
@@ -729,7 +728,8 @@ fn coated_floor_reflects_with_its_geometry_normal_despite_its_normal_map() {
                 for vertex in &mut world.meshes[0].vertices {
                     vertex.uv = [vertex.position[0], vertex.position[2]];
                 }
-                world.materials[0].normal_texture = Some(world.images.len() - 1);
+                world.materials[0].normal_texture =
+                    Some(MaterialTexture::new(world.images.len() - 1));
                 world
             };
             let Some(mut frames) = Frames::new(world(40.), environment(0.), true, SIZE) else {

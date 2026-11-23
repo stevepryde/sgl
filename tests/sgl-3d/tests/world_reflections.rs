@@ -91,7 +91,6 @@ fn material(base: [f32; 4], metallic: f32, roughness: f32) -> Material {
         attenuation_distance: f32::INFINITY,
         attenuation_color: [1.; 3],
         dispersion: 0.,
-        wrap: [gltf::texture::WrappingMode::Repeat; 2],
         double_sided: true,
         unlit: false,
         emits_into_gi: true,

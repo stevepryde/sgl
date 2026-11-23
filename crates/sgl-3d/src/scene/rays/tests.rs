@@ -58,9 +58,12 @@ impl Fixture {
                     rays.add_material(
                         device,
                         queue,
-                        &MaterialUniform::new(&crate::SurfaceMaterial::authored(m), maps.maps()),
+                        &MaterialUniform::new(
+                            &crate::SurfaceMaterial::authored(m),
+                            maps.maps(),
+                            &maps.samplers(),
+                        ),
                         maps.ray_textures(|index| images[index]),
-                        m.wrap,
                     )
                     .unwrap()
                     .start
@@ -224,7 +227,7 @@ fn material(double_sided: bool) -> Material {
         diffuse_transmission_color: [1.; 3],
         diffuse_transmission_texture: None,
         diffuse_transmission_color_texture: None,
-        base_texture: Some(0),
+        base_texture: Some(crate::asset::MaterialTexture::new(0)),
         mr_texture: None,
         occlusion_texture: None,
         occlusion_strength: 1.,
@@ -241,7 +244,6 @@ fn material(double_sided: bool) -> Material {
         attenuation_distance: f32::INFINITY,
         attenuation_color: [1.; 3],
         dispersion: 0.,
-        wrap: [gltf::texture::WrappingMode::Repeat; 2],
         double_sided,
         unlit: false,
         emits_into_gi: true,
@@ -359,7 +361,7 @@ struct TestResult { position_t:vec4<f32>, normal_front:vec4<f32>, ids:vec4<f32>,
   let m=scene_material(h.material_word);
   out.position_t=vec4(h.position,h.distance);out.normal_front=vec4(h.normal,select(0.,1.,h.front_face));
   out.ids=vec4(f32(h.instance_id),f32(h.mesh_id),0.,1.);
-  out.uv_sample=vec4(h.uv,h.color.xy);out.tex_color=scene_sample_texture(m.textures[0],h.uv,m.wrap,true);
+  out.uv_sample=vec4(h.uv,h.color.xy);out.tex_color=scene_sample_map(m.values.map_samplers,m.textures[0],MATERIAL_SLOT_BASE,h.uv,true);
  }
  test_results[id.x]=out;
 }

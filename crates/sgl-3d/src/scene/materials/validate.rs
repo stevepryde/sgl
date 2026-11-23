@@ -1,11 +1,10 @@
 //! What a material's values may be: the checks `Scene::add_materials` and
 //! `Scene::set_material` make before they change anything.
 use crate::asset;
+use crate::asset::TextureWrap;
 use crate::content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 use crate::scene::SceneError;
-use crate::shading::bind::group2::MaterialMap;
-use crate::shading::material::{MAX_LAYER_CYCLES, MaterialMaps, layer_cycles};
-use gltf::texture::WrappingMode;
+use crate::shading::material::{MAX_LAYER_CYCLES, layer_cycles};
 
 /// The core values `values` may take, as glTF 2.0 and KHR_materials_
 /// clearcoat bound them: a metallic, roughness, clearcoat and clearcoat
@@ -150,14 +149,14 @@ pub(super) fn validate_diffuse_transmission(values: &SurfaceMaterial) -> Result<
     }
 }
 
-/// Normal layers `values` may take on a material added with `maps` and
-/// `wrap`: they scroll its normal map, which must be there and repeat on both
-/// axes, at finite velocities and strengths, positive finite scales, and
-/// speeds whose whole repeats per period the record holds exactly.
+/// Normal layers `values` may take on a material added with a normal map
+/// wrapped by `normal_wrap`, none without one: they scroll its normal map,
+/// which must be there and repeat on both axes, at finite velocities and
+/// strengths, positive finite scales, and speeds whose whole repeats per
+/// period the record holds exactly.
 pub(super) fn validate_normal_layers(
     values: &SurfaceMaterial,
-    maps: MaterialMaps,
-    wrap: [WrappingMode; 2],
+    normal_wrap: Option<[TextureWrap; 2]>,
 ) -> Result<(), SceneError> {
     let Some(layers) = values.normal_layers else {
         return Ok(());
@@ -171,10 +170,7 @@ pub(super) fn validate_normal_layers(
                 .iter()
                 .all(|cycles| cycles.abs() <= MAX_LAYER_CYCLES)
     };
-    if maps.contains(MaterialMap::Normal)
-        && wrap == [WrappingMode::Repeat; 2]
-        && layers.iter().all(valid)
-    {
+    if normal_wrap == Some([TextureWrap::Repeat; 2]) && layers.iter().all(valid) {
         Ok(())
     } else {
         Err(SceneError::InvalidNormalLayers)
