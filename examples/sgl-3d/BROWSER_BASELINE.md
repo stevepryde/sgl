@@ -64,8 +64,19 @@ bun scripts/tasks.ts measure-browser --baseline --outline sparse --size 1920x108
 
 `--scaled` selects `SceneResolution::ThreeQuarter` and `Upscaling::On`; this
 changes the render-resolution/quality tradeoff, so report it separately from
-an identical-settings renderer before/after comparison. Native FSR is not
+an identical-settings renderer before/after comparison. FSR is not
 selected.
+
+`--aa fsr2` or `--aa fsr3` (default `taa`) with
+`--fsr-quality native|quality|balanced|performance|ultra` (default `native`)
+selects the antialiasing; the report's `antialiasing` gives the one in effect
+and `fsr_error`, `fsr_resource_set` the port's resource set, and
+`gpu.passes` its `FSR2` or `FSR3` group. `--fsr-set core` requests the
+device without the browser's `texture-formats-tier2`, so FSR runs on the
+port's core set as it does in a browser without that feature. In a browser
+the group leaves out two full-resolution transfer passes that both of the
+port's browser resource sets record around FSR's depth reconstruction,
+which no timestamp pair covers.
 
 `--local-shadows` turns on the point lights' `casts_shadow` at the first
 measured frame, so the warmup runs without local shadows and that frame is

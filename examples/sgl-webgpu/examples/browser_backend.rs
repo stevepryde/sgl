@@ -139,6 +139,11 @@ pub async fn run() -> String {
         compilation_info(&gpu).await,
     );
     record(&mut report, "surface present", surface_present(&gpu).await);
+    record(
+        &mut report,
+        "texture format tiers",
+        texture_format_tiers(&gpu).await,
+    );
     report
 }
 
@@ -1075,6 +1080,188 @@ async fn error_scopes(gpu: &Gpu) -> Result<String, String> {
         "16-byte binding: {}",
         description.lines().next().unwrap_or_default()
     ))
+}
+
+/// What the adapter's `get_texture_format_features` reports for every plain
+/// colour format, on a device requested with every feature the adapter
+/// reports, `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` (the browser's
+/// `texture-formats-tier2`) among them, is what the browser accepts: each storage
+/// access in a bind group layout, and the storage, render-attachment and
+/// 4x multisample usages in a texture. The browser's own validation is the
+/// oracle, so a capability the backend claims that the browser refuses, or
+/// one it withholds that the browser grants, fails.
+async fn texture_format_tiers(gpu: &Gpu) -> Result<String, String> {
+    let feature = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    let adapter = gpu
+        .instance
+        .request_adapter(&wgpu::RequestAdapterOptions::default())
+        .await
+        .map_err(|error| format!("no second adapter: {error}"))?;
+    ensure!(
+        adapter.features().contains(feature),
+        "the adapter does not report texture-formats-tier2 as {feature:?}"
+    );
+    let (device, _queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            required_features: adapter.features(),
+            ..Default::default()
+        })
+        .await
+        .map_err(|error| format!("no device with {feature:?}: {error}"))?;
+    ensure!(
+        device.features().contains(feature),
+        "the device lacks {feature:?}"
+    );
+    let mut mismatches = Vec::new();
+    let mut checked = 0;
+    for format in PLAIN_COLOR_FORMATS {
+        let claimed = adapter.get_texture_format_features(format);
+        for (capability, claim) in capabilities(claimed) {
+            let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+            capability.create(&device, format);
+            let granted = scope.pop().await.is_none();
+            checked += 1;
+            if claim != granted {
+                mismatches.push(format!("{format:?} {capability:?}: claimed {claim}"));
+            }
+        }
+    }
+    ensure!(
+        mismatches.is_empty(),
+        "{} of {checked} capabilities differ from the browser's: {}",
+        mismatches.len(),
+        mismatches.join("; ")
+    );
+    Ok(format!(
+        "{checked} capabilities of {} formats as the browser grants them",
+        PLAIN_COLOR_FORMATS.len()
+    ))
+}
+
+/// WebGPU's plain colour formats (§26.1.1) but the 16-bit normalized ones,
+/// whose feature this backend does not map.
+const PLAIN_COLOR_FORMATS: [wgpu::TextureFormat; 36] = {
+    use wgpu::TextureFormat as F;
+    [
+        F::R8Unorm,
+        F::R8Snorm,
+        F::R8Uint,
+        F::R8Sint,
+        F::Rg8Unorm,
+        F::Rg8Snorm,
+        F::Rg8Uint,
+        F::Rg8Sint,
+        F::Rgba8Unorm,
+        F::Rgba8UnormSrgb,
+        F::Rgba8Snorm,
+        F::Rgba8Uint,
+        F::Rgba8Sint,
+        F::Bgra8Unorm,
+        F::Bgra8UnormSrgb,
+        F::R16Uint,
+        F::R16Sint,
+        F::R16Float,
+        F::Rg16Uint,
+        F::Rg16Sint,
+        F::Rg16Float,
+        F::Rgba16Uint,
+        F::Rgba16Sint,
+        F::Rgba16Float,
+        F::R32Uint,
+        F::R32Sint,
+        F::R32Float,
+        F::Rg32Uint,
+        F::Rg32Sint,
+        F::Rg32Float,
+        F::Rgba32Uint,
+        F::Rgba32Sint,
+        F::Rgba32Float,
+        F::Rgb10a2Uint,
+        F::Rgb10a2Unorm,
+        F::Rg11b10Ufloat,
+    ]
+};
+
+/// One format capability the browser validates when an object is created.
+#[derive(Clone, Copy, Debug)]
+enum Capability {
+    /// A bind group layout entry of this storage access.
+    Storage(wgpu::StorageTextureAccess),
+    /// A texture of this usage and sample count.
+    Texture(wgpu::TextureUsages, u32),
+}
+
+impl Capability {
+    fn create(self, device: &wgpu::Device, format: wgpu::TextureFormat) {
+        match self {
+            Self::Storage(access) => {
+                let _ = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("format tier"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access,
+                            format,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    }],
+                });
+            }
+            Self::Texture(usage, sample_count) => {
+                let _ = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("format tier"),
+                    size: wgpu::Extent3d {
+                        width: SIZE,
+                        height: SIZE,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage,
+                    view_formats: &[],
+                });
+            }
+        }
+    }
+}
+
+/// The capabilities checked, each with whether `claimed` grants it.
+fn capabilities(claimed: wgpu::TextureFormatFeatures) -> [(Capability, bool); 6] {
+    use wgpu::StorageTextureAccess as Access;
+    use wgpu::TextureFormatFeatureFlags as Flags;
+    use wgpu::TextureUsages as Usages;
+    let flag = |flag| claimed.flags.contains(flag);
+    let usage = |usage| claimed.allowed_usages.contains(usage);
+    [
+        (
+            Capability::Storage(Access::ReadOnly),
+            flag(Flags::STORAGE_READ_ONLY),
+        ),
+        (
+            Capability::Storage(Access::WriteOnly),
+            flag(Flags::STORAGE_WRITE_ONLY),
+        ),
+        (
+            Capability::Storage(Access::ReadWrite),
+            flag(Flags::STORAGE_READ_WRITE),
+        ),
+        (
+            Capability::Texture(Usages::STORAGE_BINDING, 1),
+            usage(Usages::STORAGE_BINDING),
+        ),
+        (
+            Capability::Texture(Usages::RENDER_ATTACHMENT, 1),
+            usage(Usages::RENDER_ATTACHMENT),
+        ),
+        (
+            Capability::Texture(Usages::RENDER_ATTACHMENT, 4),
+            flag(Flags::MULTISAMPLE_X4),
+        ),
+    ]
 }
 
 /// The browser's compilation message for an unresolved name points, in

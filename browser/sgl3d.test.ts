@@ -69,12 +69,26 @@ test(
       expect(lines.some((line) => line.startsWith("ok browser image decode:"))).toBe(true);
       // The frame compiled ahead ran its jobs and passed the same checks.
       expect(lines.find((line) => line.includes("compiled ahead:"))).toMatch(/^ok .* compile jobs run ahead/);
-      // WebGPU cannot expose the native SDK's required features. Observe the
-      // renderer's effective AA and diagnostic, not the number of report lines.
+      // Chromium grants texture-formats-tier2, which sgl-webgpu maps, so the
+      // page's device runs the port's SDK-formats set; a device requested
+      // without it runs the core set. A device that silently fell to the
+      // core set would pass every other check.
+      expect(lines).toContain("ok FSR resource set: SdkFormats");
+      expect(lines).toContain("ok FSR resource set without tier2: Core");
       for (const method of ["FSR2", "FSR3"]) {
-        const fallback = lines.find((line) => line.startsWith(`ok ${method} chosen:`));
-        expect(fallback).toContain("antialiasing Taa");
-        expect(fallback).toContain(`FSR off: the device lacks ${method}'s features`);
+        const ran = lines.find((line) => line.startsWith(`ok ${method} Quality, core set:`));
+        expect(ran).toContain(`antialiasing ${method[0]}${method.slice(1).toLowerCase()},`);
+        expect(ran).not.toContain("FSR off");
+      }
+      // Chromium grants what FSR's resource sets need, so FSR runs:
+      // the renderer's effective antialiasing is the one selected, with no
+      // reason for a fallback, at Native AA and at an upscaling quality.
+      for (const method of ["FSR2", "FSR3"]) {
+        for (const quality of ["Native AA", "Quality"]) {
+          const ran = lines.find((line) => line.startsWith(`ok ${method} ${quality}:`));
+          expect(ran).toContain(`antialiasing ${method[0]}${method.slice(1).toLowerCase()},`);
+          expect(ran).not.toContain("FSR off");
+        }
       }
       expect(errors).toEqual([]);
     } finally {

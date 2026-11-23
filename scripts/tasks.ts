@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--baseline | --bistro | --loading [--ordinary] [--jobs-per-frame <count>]] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--depth-of-field off|low|medium|high] [--hdr-effect] [--outline off|sparse|dense] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>] | " +
+  "measure-browser [--baseline | --bistro | --loading [--ordinary] [--jobs-per-frame <count>]] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--depth-of-field off|low|medium|high] [--hdr-effect] [--outline off|sparse|dense] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--fsr-quality native|quality|balanced|performance|ultra] [--fsr-set selected|core] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>] | " +
   "measure-browser --sprites [--count <sprites>] [--frames <count>] [--skip-build] | " +
   "measure-browser --startup [--scene minimal|opening] [--runs <count>] [--startup-path ordinary|prepared] [--captures <directory>] [--output <json>] [--skip-build]";
 
@@ -382,6 +382,10 @@ async function measureBrowser(args: string[]): Promise<void> {
   let occlusion = false;
   let startup = false;
   const startupOptions: {scenes:("minimal"|"opening")[];runs:number;path:"ordinary"|"prepared";captureDir?:string} = {scenes:["minimal","opening"],runs:3,path:"ordinary"};
+  // The baseline's antialiasing (taa, fsr2 or fsr3) and FSR quality.
+  let baselineAa = "";
+  let fsrQuality = "";
+  let fsrSet = "";
   for (let at = 0; at < args.length; at += 1) {
     if (args[at] === "--baseline") baseline = true;
     else if (args[at] === "--bistro") bistro = true;
@@ -403,6 +407,8 @@ async function measureBrowser(args: string[]): Promise<void> {
     else if (args[at] === "--settings" && at+1<args.length) settingsPath=args[++at];
     else if (args[at] === "--view" && at+1<args.length) sceneOptions.view=args[++at];
     else if (args[at] === "--aa" && at+1<args.length) sceneOptions.aa=args[++at];
+    else if (args[at] === "--fsr-quality" && at+1<args.length) fsrQuality=args[++at];
+    else if (args[at] === "--fsr-set" && at+1<args.length) fsrSet=args[++at];
     else if (args[at] === "--warmup" && at+1<args.length) sceneOptions.warmup=Number(args[++at]);
     else if (args[at] === "--exposure" && at+1<args.length) sceneOptions.exposure=Number(args[++at]);
     else if (args[at] === "--cascades" && at+1<args.length) sceneOptions.cascades=Number(args[++at]);
@@ -454,6 +460,15 @@ async function measureBrowser(args: string[]): Promise<void> {
   // The baseline takes its size in the page's query, not as a scene option.
   const baselineSize = baseline && sceneOptions.width !== undefined ? [sceneOptions.width, sceneOptions.height] : [0, 0];
   if (baseline) { delete sceneOptions.width; delete sceneOptions.height; }
+  if (baseline && sceneOptions.aa !== undefined) {
+    baselineAa = String(sceneOptions.aa);
+    delete sceneOptions.aa;
+    if (!["taa","fsr2","fsr3"].includes(baselineAa)) throw new Error("--baseline --aa needs taa|fsr2|fsr3");
+  }
+  if (fsrQuality && !baseline) throw new Error("--fsr-quality requires --baseline");
+  if (fsrSet && !baseline) throw new Error("--fsr-set requires --baseline");
+  if (fsrSet && !["selected","core"].includes(fsrSet)) throw new Error("--fsr-set needs selected|core");
+  if (fsrQuality && !["native","quality","balanced","performance","ultra"].includes(fsrQuality)) throw new Error("--fsr-quality needs native|quality|balanced|performance|ultra");
   if (!bistro && (Object.keys(sceneOptions).length || fixturePath || settingsPath || assetDir!=="target/bistro-browser-512")) throw new Error("scene options require --bistro or --fixture");
   if (bistro && (scaled || prepared || occlusion || localShadows)) throw new Error("--bistro uses explicit fixture/settings instead of --scaled, --prepared, --local-shadows or --occlusion");
   if ((baseline || bistro) && frames > 3600) throw new Error("--baseline --frames must not exceed 3600");
@@ -498,7 +513,7 @@ async function measureBrowser(args: string[]): Promise<void> {
   if (bistro) sceneOptions.frames=frames;
   const result = await runMeasurement({page: bistro ? "bistro" : baseline ? "baseline" : "streaming", dist: MEASURE_DIR, capturePath, sequenceDir,
     assetDir:bistro?assetDir:undefined,run:bistro?sceneOptions:undefined,
-    query: `frames=${frames}&across=${radius[0]}&up=${radius[1]}&occlusion=${occlusion ? 1 : 0}&scaled=${scaled ? 1 : 0}&prepared=${prepared ? 1 : 0}&local_shadows=${localShadows ? 1 : 0}&capture=${capturePath ? 1 : 0}&dof=${depthOfField}&hdr_effect=${hdrEffect ? 1 : 0}&outline=${outline}&width=${baselineSize[0]}&height=${baselineSize[1]}`});
+    query: `frames=${frames}&across=${radius[0]}&up=${radius[1]}&occlusion=${occlusion ? 1 : 0}&scaled=${scaled ? 1 : 0}&prepared=${prepared ? 1 : 0}&local_shadows=${localShadows ? 1 : 0}&capture=${capturePath ? 1 : 0}&dof=${depthOfField}&hdr_effect=${hdrEffect ? 1 : 0}&outline=${outline}&width=${baselineSize[0]}&height=${baselineSize[1]}&aa=${baselineAa}&fsr_quality=${fsrQuality}&fsr_set=${fsrSet}`});
   if (baseline || bistro) {
     const report = JSON.parse(result.report);
     if (bistro) {

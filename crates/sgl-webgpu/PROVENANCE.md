@@ -23,7 +23,8 @@ pedantic group in the ported module for the same reason.
 ## Departures
 
 Each is forced by the custom-backend interface or by compiling beside wgpu's
-own backend, except the upstream defects fixed last.
+own backend, except the upstream defects fixed and the browser features
+mapped last.
 
 - **Wrapping.** Upstream converts its objects into wgpu's `Dispatch*` types
   with `.into()` and unwraps them with `as_webgpu()`. Here `custom_types!`
@@ -103,6 +104,32 @@ own backend, except the upstream defects fixed last.
   `copy_external_image_to_texture` encoded into sRGB. The port sets
   `GPUCopyExternalImageDestInfo.colorSpace` (`"srgb"` or `"display-p3"`)
   by reflection, since the vendored bindings have no setter for it.
+- **Texture format tiers (SGL addition, [D-82](../../specs/decisions.md)).**
+  Upstream maps neither of the browser's `texture-formats-tier1` and
+  `texture-formats-tier2`, so a device could not use the storage formats and
+  read-write accesses they add. The
+  port maps `Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` to
+  `"texture-formats-tier2"`, which implies tier1 and
+  `"rg11b10ufloat-renderable"` (WebGPU §3.6.1.2), and its adapter's
+  `get_texture_format_features` adds what the two tiers give each format
+  (`texture_formats_tiers`): read-only and write-only storage on the 8-bit,
+  16-bit integer and float, two-component 16-bit, 10-bit and 11/11/10
+  formats (§25.19); render attachment, blending, multisampling and resolve
+  on the 8-bit snorm formats (§25.19); read-write storage on r8unorm,
+  r8uint, r8sint, r16uint, r16sint, r16float and the four-component
+  unorm, uint and sint 8-bit, uint, sint and float 16-bit and 32-bit formats
+  (§25.20). The source is the WebGPU specification's Editor's Draft
+  of 21 November 2026, §25.19, §25.20 and the plain colour format table of
+  §26.1.1. Tier1's 16-bit normalized formats are not reported:
+  `Features::TEXTURE_FORMAT_16BIT_NORM` would enable them, and wgpu calls
+  them filterable where WebGPU makes them `"unfilterable-float"`, so that
+  feature stays unmapped. Nor is `"subgroups"` mapped to `Features::SUBGROUP`
+  (gfx-rs/wgpu#10265 does so after v30): the browser takes a subgroup
+  built-in only after `enable subgroups;`, which naga 30's WGSL front end
+  rejects. The browser lane's backend page checks the reported storage
+  accesses and usages of every plain colour format but the 16-bit
+  normalized ones against what the browser accepts, on a device with every
+  feature the adapter reports.
 
 ## Upgrading wgpu
 

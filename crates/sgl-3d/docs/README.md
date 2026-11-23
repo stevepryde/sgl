@@ -324,8 +324,9 @@ and an asynchronous readback.
   parameters). In a `const`, use `..DirectionalShadow::DEFAULT`.
 - Report the effective state honestly:
   `View::antialiasing_in_effect(&settings)` and `fsr_error()` say when
-  the device fell back (FSR always does in the browser). To reduce browser
-  rendering resolution, choose `SceneResolution` explicitly and opt into
+  the device fell back (FSR does where a browser's adapter lacks
+  `float32-filterable` or six storage textures a stage). Where FSR does not
+  run, choose `SceneResolution` explicitly and opt into
   `Settings::upscaling` for portable spatial enlargement to the output.
 - In the browser, pass what a native game would read: asset bytes, and the
   frame time in `FrameInput::frame_time_ms`, and await readbacks

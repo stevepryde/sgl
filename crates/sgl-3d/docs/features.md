@@ -6,12 +6,15 @@ settings a game chooses are listed in [settings](settings.md).
 ## Platforms
 
 Native (Metal, Vulkan, DX12) and the browser (WASM + WebGPU) run the same
-features, with these exceptions. FSR2 and FSR3 need texture atomics, which
-WebGPU lacks, and subgroup operations and storage formats that wgpu's
-browser backend does not request, so the browser runs TAA in their place
-and `View::fsr_error` says why. Hardware ray tracing needs ray queries, which
-WebGPU does not have: there, as on any device without them, rays trace the
-software BVHs. WebGL2 is not a target: SGL3D needs compute.
+features, with these exceptions. FSR2 and FSR3 run in both where the
+adapter has `float32-filterable` and six storage textures a stage, as
+Chrome's does on Apple silicon. A browser has no texture atomics, so the
+port keeps the reconstructed depth's atomics in a buffer; with
+`texture-formats-tier2` (Chrome) it keeps the SDK's formats, and without it
+it takes WebGPU's core formats for about 1.6 times the memory. Anywhere else
+TAA runs in their place and `View::fsr_error` says why. Hardware ray tracing
+needs ray queries, which WebGPU does not have: there, as on any device
+without them, rays trace the software BVHs. WebGL2 is not a target: SGL3D needs compute.
 [Browser](../README.md#browser-wasm--webgpu).
 
 A device takes a binding tier by its sampled textures per shader stage,

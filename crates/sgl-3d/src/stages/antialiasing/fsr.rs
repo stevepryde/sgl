@@ -95,6 +95,18 @@
 //! back to TAA. So does a dispatch whose job fails, which the backend
 //! reports through `take_job_error`, since `ffxFsr2ContextDispatch` ignores
 //! its jobs' result.
+//!
+//! Resource sets (`sp_fidelity_wgpu::FfxWgpuResourceSet`): the port's backend
+//! runs the SDK's own formats, texture atomics and wave operations on a
+//! device with every feature of its `required_features`, as native devices
+//! have; the SDK's formats with the depth atomics in a storage buffer on one
+//! with `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`, as a browser with
+//! `texture-formats-tier2` has through `sgl-webgpu`; and its core set
+//! (WebGPU's core storage formats, buffer atomics) on one with
+//! `core_required_features` only, as any other browser has. Which runs is the
+//! backend's, from the device's features; `features` requests the first the
+//! adapter has. FSR3's three shared textures are the backend's allocations
+//! for the same reason.
 use crate::settings::{FsrQuality, FsrVersion};
 use crate::view::history::Kept;
 use sp_fidelity::fsr2::{
@@ -107,25 +119,29 @@ use sp_fidelity::fsr2::{
 use sp_fidelity::fsr3upscaler::*;
 use sp_fidelity::types::{
     FFX_RESOURCE_STATE_COMPUTE_READ, FFX_RESOURCE_STATE_UNORDERED_ACCESS, FfxCommandList,
-    FfxDimensions2D, FfxFloatCoords2D, FfxResource,
+    FfxDimensions2D, FfxEffect, FfxFloatCoords2D, FfxResource, FfxResourceDescription,
 };
 use sp_fidelity_wgpu::{FfxWgpuBackend, FfxWgpuPassTimestamps, ffx_get_interface_wgpu};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-/// The device features FSR2 needs: the wgpu backend's.
+/// The device features FSR cannot run without: the wgpu backend's core set.
 fn required_features() -> wgpu::Features {
-    sp_fidelity_wgpu::required_features()
+    sp_fidelity_wgpu::core_required_features()
 }
 
 /// `graphics_device::fsr_features`.
 pub(crate) fn features(adapter: &wgpu::Adapter) -> wgpu::Features {
     let available = adapter.features();
-    if available.contains(required_features()) {
-        required_features() | (available & sp_fidelity_wgpu::optional_features())
-    } else {
-        wgpu::Features::empty()
-    }
+    sp_fidelity_wgpu::features_for(available).map_or(wgpu::Features::empty(), |features| {
+        features | (available & sp_fidelity_wgpu::optional_features())
+    })
+}
+
+/// Whether FSR runs on a device with `features`.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn supported(features: wgpu::Features) -> bool {
+    features.contains(required_features())
 }
 
 /// The SDK quality mode, `None` for Native AA (the sample's `NativeAA`
@@ -176,19 +192,35 @@ pub(crate) fn mip_bias(render: [u32; 2], display: [u32; 2]) -> f32 {
 /// sample profiles the whole upscale.
 const MAX_TIMED_PASSES: u32 = 24;
 
-/// Validation errors caught by `scope`. Native wgpu reports them when the
-/// scope is popped, so the future is ready at once. WebGPU's would not be,
-/// but FSR2 is never created there: `fsr_features` is empty and `Fsr::new`
-/// refuses a device without them before pushing a scope.
-fn validation_error(scope: wgpu::ErrorScopeGuard) -> Option<wgpu::Error> {
-    let mut future = std::pin::pin!(scope.pop());
-    match future
+/// A validation error scope around the port's calls. Native wgpu reports its
+/// error when the scope is popped, so FSR falls back to TAA at once with
+/// wgpu's message. WebGPU resolves a pop after the call returns: the error is
+/// then read at the next dispatch (`Fsr::deferred_error`), and FSR falls back
+/// a frame late with the same message.
+struct ValidationScope(wgpu::ErrorScopeGuard);
+
+/// A popped scope whose error wgpu has not reported yet.
+type PendingError = std::pin::Pin<Box<dyn Future<Output = Option<wgpu::Error>>>>;
+
+impl ValidationScope {
+    fn push(device: &wgpu::Device) -> Self {
+        Self(device.push_error_scope(wgpu::ErrorFilter::Validation))
+    }
+
+    /// The scope's error, or the pop to ask again where wgpu reports later.
+    fn pop(self) -> Result<Option<wgpu::Error>, PendingError> {
+        let mut pending: PendingError = Box::pin(self.0.pop());
+        match ready(&mut pending) {
+            std::task::Poll::Ready(error) => Ok(error),
+            std::task::Poll::Pending => Err(pending),
+        }
+    }
+}
+
+fn ready(pending: &mut PendingError) -> std::task::Poll<Option<wgpu::Error>> {
+    pending
         .as_mut()
         .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
-    {
-        std::task::Poll::Ready(error) => error,
-        std::task::Poll::Pending => None,
-    }
 }
 
 /// What FSR's accumulation continues from: the render size of a frame it
@@ -215,6 +247,9 @@ pub(crate) struct Inputs<'a> {
 pub(crate) struct Fsr {
     backend: Rc<RefCell<FfxWgpuBackend>>,
     context: Context,
+    /// Scopes popped around the context's creation and earlier dispatches
+    /// whose errors wgpu had not reported yet (WebGPU).
+    pending: Vec<PendingError>,
     display_size: [u32; 2],
     output: wgpu::TextureView,
     jitter_index: i32,
@@ -240,7 +275,23 @@ impl Fsr {
                 required_features() - device.features()
             ));
         }
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        // WebGPU's default is four; `graphics_device::limits` requests the
+        // adapter's. The browser would report a pass over the limit only
+        // after the frame.
+        let storage_textures = sp_fidelity_wgpu::storage_textures_per_stage(match version {
+            FsrVersion::Fsr2 => FfxEffect::Fsr2,
+            FsrVersion::Fsr3 => FfxEffect::Fsr3Upscaler,
+        })
+        .expect("the port states FSR2's and FSR3's storage textures a stage");
+        let available = device.limits().max_storage_textures_per_shader_stage;
+        if available < storage_textures {
+            return Err(format!(
+                "the device binds {available} storage textures a shader stage and {} needs \
+                 {storage_textures}",
+                version.label()
+            ));
+        }
+        let scope = ValidationScope::push(device);
         let (backend, interface) = ffx_get_interface_wgpu(device);
         let size = FfxDimensions2D {
             width: display_size[0],
@@ -265,7 +316,7 @@ impl Fsr {
             }
             FsrVersion::Fsr3 => {
                 let mut context = FfxFsr3UpscalerContext::default();
-                let mut created = ffx_fsr3_upscaler_context_create(
+                let created = ffx_fsr3_upscaler_context_create(
                     &mut context,
                     &FfxFsr3UpscalerContextDescription {
                         flags: FFX_FSR3UPSCALER_ENABLE_HIGH_DYNAMIC_RANGE
@@ -280,55 +331,31 @@ impl Fsr {
                 // Standalone FSR3 exposes these three scratch outputs to its
                 // caller (ffxFsr3UpscalerGetSharedResourceDescriptions). They
                 // belong to this context, even without frame generation.
-                let shared = if created.is_ok() {
-                    ffx_fsr3_upscaler_get_shared_resource_descriptions(&context)
-                        .inspect_err(|&error| {
-                            created = Err(error);
-                        })
-                        .ok()
-                        .map(|descs| {
-                            let texture =
-                                |desc: sp_fidelity::types::FfxCreateResourceDescription<'_>,
-                                 format,
-                                 atomic| {
-                                    device.create_texture(&wgpu::TextureDescriptor {
-                                        label: Some(desc.name),
-                                        size: wgpu::Extent3d {
-                                            width: desc.resource_description.width,
-                                            height: desc.resource_description.height,
-                                            depth_or_array_layers: 1,
-                                        },
-                                        mip_level_count: 1,
-                                        sample_count: 1,
-                                        dimension: wgpu::TextureDimension::D2,
-                                        format,
-                                        usage: wgpu::TextureUsages::TEXTURE_BINDING
-                                            | wgpu::TextureUsages::STORAGE_BINDING
-                                            | wgpu::TextureUsages::COPY_DST
-                                            | atomic,
-                                        view_formats: &[],
-                                    })
-                                };
-                            Shared {
-                                depth: texture(
-                                    descs.dilated_depth,
-                                    wgpu::TextureFormat::R32Float,
-                                    wgpu::TextureUsages::empty(),
-                                ),
-                                motion: texture(
-                                    descs.dilated_motion_vectors,
-                                    wgpu::TextureFormat::Rg16Float,
-                                    wgpu::TextureUsages::empty(),
-                                ),
-                                previous_depth: texture(
-                                    descs.reconstructed_prev_nearest_depth,
-                                    wgpu::TextureFormat::R32Uint,
-                                    wgpu::TextureUsages::STORAGE_ATOMIC,
-                                ),
-                            }
-                        })
-                } else {
-                    None
+                // The backend allocates them as it does the context's own:
+                // in the SDK's formats, or its core resource set's where the
+                // device lacks them.
+                let shared = created.and_then(|()| {
+                    let descs = ffx_fsr3_upscaler_get_shared_resource_descriptions(&context)?;
+                    let texture =
+                        |description: sp_fidelity::types::FfxCreateResourceDescription<'_>| {
+                            backend
+                                .borrow()
+                                .ffx_create_texture_wgpu(FfxEffect::Fsr3Upscaler, &description)
+                                .map(|texture| SharedTexture {
+                                    texture,
+                                    description: description.resource_description,
+                                    name: description.name,
+                                })
+                        };
+                    Ok(Shared {
+                        depth: texture(descs.dilated_depth)?,
+                        motion: texture(descs.dilated_motion_vectors)?,
+                        previous_depth: texture(descs.reconstructed_prev_nearest_depth)?,
+                    })
+                });
+                let (shared, created) = match shared {
+                    Ok(shared) => (Some(shared), Ok(())),
+                    Err(error) => (None, Err(error)),
                 };
                 (
                     Context::Fsr3 {
@@ -365,10 +392,14 @@ impl Fsr {
                 | wgpu::TextureUsages::COPY_SRC,
         )
         .create_view(&Default::default());
-        let error = validation_error(scope);
+        let (error, pending) = match scope.pop() {
+            Ok(error) => (error, Vec::new()),
+            Err(pending) => (None, vec![pending]),
+        };
         let fsr = Self {
             backend,
             context,
+            pending,
             display_size,
             output,
             jitter_index: 0,
@@ -451,6 +482,20 @@ impl Fsr {
         [2. * x / width as f32, -2. * y / height as f32]
     }
 
+    /// The first error of a scope popped earlier that wgpu has reported
+    /// since, dropping every scope it has answered.
+    fn deferred_error(&mut self) -> Option<wgpu::Error> {
+        let mut first = None;
+        self.pending.retain_mut(|pending| match ready(pending) {
+            std::task::Poll::Ready(error) => {
+                first = first.take().or(error);
+                false
+            }
+            std::task::Poll::Pending => true,
+        });
+        first
+    }
+
     /// Upscales `inputs.color` into `output`. An error leaves the output
     /// undefined for this frame. A job that fails, one whose bind group wgpu
     /// rejects among them, records nothing invalid and stops the jobs after
@@ -465,7 +510,12 @@ impl Fsr {
     ) -> Result<(), String> {
         let projection = inputs.projection;
         let label = self.version().label();
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        // What WebGPU has reported since about the context's creation or an
+        // earlier frame's dispatch: FSR stops here, a frame late.
+        if let Some(error) = self.deferred_error() {
+            return Err(format!("{label} failed: {error}"));
+        }
+        let scope = ValidationScope::push(device);
         // The backend records into an encoder it owns while it dispatches;
         // lend it the frame's encoder and take it back afterwards.
         let recorded = std::mem::replace(
@@ -549,7 +599,10 @@ impl Fsr {
         // `ffxFsr2ContextDispatch` ignores its jobs' result, as AMD's does.
         let job_error = backend.take_job_error();
         drop(backend);
-        let error = validation_error(scope);
+        let error = scope.pop().unwrap_or_else(|pending| {
+            self.pending.push(pending);
+            None
+        });
         match (result, job_error, error) {
             (Ok(()), None, None) => Ok(()),
             (Err(code), _, _) => Err(format!("{label} dispatch failed ({code:#x})")),
@@ -574,10 +627,18 @@ impl Drop for Fsr {
     }
 }
 
+/// One of FSR3's shared textures, with the SDK's description of it, which
+/// the texture's own format differs from on the backend's core resource set.
+struct SharedTexture {
+    texture: wgpu::Texture,
+    description: FfxResourceDescription,
+    name: &'static str,
+}
+
 struct Shared {
-    depth: wgpu::Texture,
-    motion: wgpu::Texture,
-    previous_depth: wgpu::Texture,
+    depth: SharedTexture,
+    motion: SharedTexture,
+    previous_depth: SharedTexture,
 }
 
 enum Context {
@@ -649,14 +710,18 @@ impl Context {
                 let write = FFX_RESOURCE_STATE_UNORDERED_ACCESS;
                 let (depth, motion, previous_depth) = {
                     let mut backend = backend.borrow_mut();
-                    (
-                        backend.ffx_get_resource_wgpu(&shared.depth, "FSR3 dilated depth", write),
-                        backend.ffx_get_resource_wgpu(&shared.motion, "FSR3 dilated motion", write),
-                        backend.ffx_get_resource_wgpu(
-                            &shared.previous_depth,
-                            "FSR3 previous depth",
+                    let mut register = |shared: &SharedTexture| {
+                        backend.ffx_get_described_resource_wgpu(
+                            &shared.texture,
+                            shared.description,
+                            shared.name,
                             write,
-                        ),
+                        )
+                    };
+                    (
+                        register(&shared.depth),
+                        register(&shared.motion),
+                        register(&shared.previous_depth),
                     )
                 };
                 ffx_fsr3_upscaler_context_dispatch(

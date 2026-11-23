@@ -29,7 +29,13 @@ fn scene(device: &wgpu::Device, queue: &wgpu::Queue) -> (Scene, EnvironmentId) {
 // and the validity from wgpu's validation.
 #[test]
 fn fsr_renders_each_quality_or_falls_back_to_taa() {
-    for request in [test_support::device, test_support::fsr_device] {
+    // Without FSR's features, with the adapter's (the SDK's resource set on
+    // a native adapter), and with a browser's (the port's core set).
+    for request in [
+        test_support::device,
+        test_support::fsr_device,
+        test_support::fsr_core_device,
+    ] {
         let Some((device, queue)) = request() else {
             continue;
         };
@@ -101,10 +107,7 @@ fn fsr_renders_each_quality_or_falls_back_to_taa() {
                     let size = view.texture().size();
                     [size.width, size.height]
                 };
-                if device
-                    .features()
-                    .contains(sp_fidelity_wgpu::required_features())
-                {
+                if crate::stages::antialiasing::fsr::supported(device.features()) {
                     assert_eq!(
                         renderer.view.antialiasing_in_effect(&settings),
                         method,
@@ -152,10 +155,7 @@ fn additive_effects_mark_fsr_reactivity_for_their_frame_only_for(method: Antiali
     let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
-    if !device
-        .features()
-        .contains(sp_fidelity_wgpu::required_features())
-    {
+    if !crate::stages::antialiasing::fsr::supported(device.features()) {
         eprintln!("skipping: the device lacks FSR's features");
         return;
     }
@@ -280,10 +280,7 @@ fn fsr_runs_below_a_64_pixel_render_size_for(method: Antialiasing) {
     let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
-    if !device
-        .features()
-        .contains(sp_fidelity_wgpu::required_features())
-    {
+    if !crate::stages::antialiasing::fsr::supported(device.features()) {
         eprintln!("skipping: the device lacks FSR's features");
         return;
     }
@@ -358,10 +355,7 @@ fn a_failed_fsr_dispatch_completes_the_frame_and_taa_takes_over_for(method: Anti
     let Some((device, queue)) = test_support::fsr_device() else {
         return;
     };
-    if !device
-        .features()
-        .contains(sp_fidelity_wgpu::required_features())
-    {
+    if !crate::stages::antialiasing::fsr::supported(device.features()) {
         eprintln!("skipping: the device lacks FSR's features");
         return;
     }

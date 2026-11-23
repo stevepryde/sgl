@@ -56,7 +56,7 @@ settings SGL3D has today.
    controls its input size, and `Settings::upscaling` controls whether it
    reconstructs that scene to output size, sharpened as
    `Settings::sharpening` chooses. It adds no temporal
-   history and does not replace native FSR; the default remains linear
+   history and does not replace FSR; the default remains linear
    presentation. Its placement and transfer-space owner are defined by the
    [post stage](sgl3d-architecture.md#frame). What the browser cannot do is an input, not a
    platform fork: the game passes bytes rather than paths and the frame

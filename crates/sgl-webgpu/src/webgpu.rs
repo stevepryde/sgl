@@ -879,7 +879,7 @@ fn map_map_mode(mode: wgpu::MapMode) -> u32 {
     }
 }
 
-const FEATURES_MAPPING: [(wgt::Features, webgpu_sys::GpuFeatureName); 16] = [
+const FEATURES_MAPPING: [(wgt::Features, webgpu_sys::GpuFeatureName); 17] = [
     (
         wgt::Features::DEPTH_CLIP_CONTROL,
         webgpu_sys::GpuFeatureName::DepthClipControl,
@@ -944,7 +944,79 @@ const FEATURES_MAPPING: [(wgt::Features, webgpu_sys::GpuFeatureName); 16] = [
         wgt::Features::CLIP_DISTANCES,
         webgpu_sys::GpuFeatureName::ClipDistances,
     ),
+    // SGL: the browser's format tiers (PROVENANCE.md, "Texture format
+    // tiers"). A device requested with tier2 also has tier1 and
+    // `rg11b10ufloat-renderable` (WebGPU §3.6.1.2), and the adapter reports
+    // what they add to each format (`texture_formats_tiers`).
+    (
+        wgt::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+        webgpu_sys::GpuFeatureName::TextureFormatsTier2,
+    ),
 ];
+
+/// What `texture-formats-tier1` and `texture-formats-tier2` add to `format`'s
+/// guaranteed capabilities, where the adapter has tier2 (and so tier1,
+/// WebGPU §3.6.1.2). From the WebGPU specification, Editor's Draft of
+/// 21 November 2026: §25.19 and §25.20, and the plain colour format table of
+/// §26.1.1. Tier1's 16-bit normalized formats are left out: wgpu needs
+/// `TEXTURE_FORMAT_16BIT_NORM` for them and calls them filterable, which
+/// WebGPU's are not, so that feature is not mapped.
+fn texture_formats_tiers(format: wgt::TextureFormat, features: &mut wgt::TextureFormatFeatures) {
+    use wgt::TextureFormat as F;
+    use wgt::TextureFormatFeatureFlags as Flags;
+    use wgt::TextureUsages as Usages;
+    // §25.19: "read-only" and "write-only" storage.
+    if matches!(
+        format,
+        F::R8Unorm
+            | F::R8Snorm
+            | F::R8Uint
+            | F::R8Sint
+            | F::Rg8Unorm
+            | F::Rg8Snorm
+            | F::Rg8Uint
+            | F::Rg8Sint
+            | F::R16Uint
+            | F::R16Sint
+            | F::R16Float
+            | F::Rg16Uint
+            | F::Rg16Sint
+            | F::Rg16Float
+            | F::Rgb10a2Uint
+            | F::Rgb10a2Unorm
+            | F::Rg11b10Ufloat
+    ) {
+        features.allowed_usages |= Usages::STORAGE_BINDING;
+        features.flags |= Flags::STORAGE_READ_ONLY | Flags::STORAGE_WRITE_ONLY;
+    }
+    // §25.19: render attachment, blendable, multisampling and resolve.
+    if matches!(format, F::R8Snorm | F::Rg8Snorm | F::Rgba8Snorm) {
+        features.allowed_usages |= Usages::RENDER_ATTACHMENT | Usages::TRANSIENT_ATTACHMENT;
+        features.flags |= Flags::MULTISAMPLE_X4 | Flags::MULTISAMPLE_RESOLVE | Flags::BLENDABLE;
+    }
+    // §25.20: "read-write" storage.
+    if matches!(
+        format,
+        F::R8Unorm
+            | F::R8Uint
+            | F::R8Sint
+            | F::Rgba8Unorm
+            | F::Rgba8Uint
+            | F::Rgba8Sint
+            | F::R16Uint
+            | F::R16Sint
+            | F::R16Float
+            | F::Rgba16Uint
+            | F::Rgba16Sint
+            | F::Rgba16Float
+            | F::Rgba32Uint
+            | F::Rgba32Sint
+            | F::Rgba32Float
+    ) {
+        features.allowed_usages |= Usages::STORAGE_BINDING;
+        features.flags |= Flags::STORAGE_READ_WRITE;
+    }
+}
 
 fn map_wgt_features(supported_features: webgpu_sys::GpuSupportedFeatures) -> wgt::Features {
     let mut features = wgt::Features::empty();
@@ -1818,7 +1890,13 @@ impl dispatch::AdapterInterface for WebAdapter {
         &self,
         format: wgpu::TextureFormat,
     ) -> wgpu::TextureFormatFeatures {
-        format.guaranteed_format_features(dispatch::AdapterInterface::features(self))
+        let adapter_features = dispatch::AdapterInterface::features(self);
+        let mut features = format.guaranteed_format_features(adapter_features);
+        // SGL: the adapter's format tiers, which upstream does not report.
+        if adapter_features.contains(wgt::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
+            texture_formats_tiers(format, &mut features);
+        }
+        features
     }
 
     fn get_presentation_timestamp(&self) -> wgpu::PresentationTimestamp {

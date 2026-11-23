@@ -1782,3 +1782,25 @@ Use the [current specs](README.md) for implementation and the
   adds a copy and a write per image; decoding in a worker, which keeps the
   `image` crate's ~45 ms of work, adds a module instantiation and a
   transfer, and has the game own the worker.
+- **D-82** Decision, 2026-11-23 (#803): in the browser SGL3D runs FSR2 and
+  FSR3 on `sp-fidelity-wgpu`'s reduced resource sets (0.3.4; the port's
+  SDK-P38), and `sgl-webgpu` maps the browser's `texture-formats-tier2` to
+  `Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` and reports the
+  capabilities the two format tiers give each format
+  (`crates/sgl-webgpu/PROVENANCE.md`). WebGPU has no texture atomics, so
+  the port keeps the reconstructed depth's atomics in a storage buffer and
+  runs SPD as two dispatches; with tier2 (Chrome) it keeps the SDK's
+  storage formats, without it it takes WebGPU's core formats. Why: FSR is a
+  feature WebGPU can run, so it is not left native-only (D-48); every pass
+  writes what the SDK's set writes (the port's `storage_tests` and oracle).
+  Measured on Apple M5 in Chromium 149 at 1920×1080: tier2's set takes the
+  native memory (FSR2 158 MB, FSR3 96 MB, and 8 MB of depth words) where
+  the core set takes 258 and 154 MB, and FSR's GPU time on it is the core
+  set's or up to 0.13 ms less (FSR2 Native AA 2.56 against 2.62 ms, FSR3
+  3.34 against 3.47). Not taken: TAA in FSR's place in a browser (D-48);
+  mapping `texture-formats-tier1` to `TEXTURE_FORMAT_16BIT_NORM`, which
+  wgpu calls filterable where WebGPU makes `r16snorm` unfilterable;
+  subgroups, whose `enable subgroups;` naga 30 does not implement, so the
+  browser sets report no wave lanes and run AMD's permutations for hardware
+  without 64-wide waves; a `quantizeToF16` or wider float stand-in for the
+  narrow formats, which is not exact (SDK-P38).

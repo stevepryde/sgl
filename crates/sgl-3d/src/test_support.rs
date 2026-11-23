@@ -765,6 +765,16 @@ pub(crate) fn fsr_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     })
 }
 
+/// `device`, with only the features of the FSR port's core resource set, as
+/// a browser's device has: FSR runs on it without the SDK's storage formats,
+/// texture atomics or subgroups.
+pub(crate) fn fsr_core_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    device_choosing(|adapter| {
+        crate::graphics_device::features(adapter)
+            | (adapter.features() & sp_fidelity_wgpu::core_required_features())
+    })
+}
+
 /// A device that traces rays in hardware, with the renderer's limits as
 /// `limits` changes them and its optional features, or `None` after printing
 /// that the adapter has no ray queries: a test then reports itself

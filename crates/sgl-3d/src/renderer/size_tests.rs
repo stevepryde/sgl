@@ -125,9 +125,7 @@ fn resize_between_render_and_finish_restarts_history() {
         )
         .unwrap();
         if before != Antialiasing::Taa
-            && !device
-                .features()
-                .contains(sp_fidelity_wgpu::required_features())
+            && !crate::stages::antialiasing::fsr::supported(device.features())
         {
             continue;
         }

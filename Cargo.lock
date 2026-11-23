@@ -2293,6 +2293,7 @@ dependencies = [
  "serde_json",
  "sgl-3d",
  "sgl-webgpu",
+ "sp-fidelity-wgpu",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -2544,15 +2545,15 @@ dependencies = [
 
 [[package]]
 name = "sp-fidelity"
-version = "0.3.2"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d916c7e8444a0299c5b503d134965490d94af35b1bd2ed1ab71574d4de6ad673"
+checksum = "60564979323c59f843858d88a5ffbd28a1a365652e98d42a016c68047d67309d"
 
 [[package]]
 name = "sp-fidelity-wgpu"
-version = "0.3.2"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d9fc4216b67d97acc14d283e26fbc1cd2ee456b8c133d21be475e278e6ce4d6"
+checksum = "a5382d72efe518e2b340b4de381fd3a71cc160340613a9f30c92b8ae356e697a"
 dependencies = [
  "bytemuck",
  "naga",

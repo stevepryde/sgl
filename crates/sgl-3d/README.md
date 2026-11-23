@@ -1562,7 +1562,8 @@ SMAA on Low. They antialias like TAA while upscaling:
   which creates the selected FSR context. Switching versions destroys the
   previous context and resets temporal history, even at the same resolution.
   A failure is retained per version; switching to the other remains possible.
-  Where the device lacks the features or the
+  Where the device lacks the features or the storage textures a stage FSR
+  needs ([Browser](#browser-wasm--webgpu)), or the
   context cannot be created, TAA runs at the scene size:
   `View::antialiasing_in_effect(&settings)` reports it and `fsr_error()`
   says why. A frame whose FSR dispatch fails is scaled to the scene size
@@ -1589,9 +1590,9 @@ whether to upscale and the scene resolution; the filter's parameters remain
 SGL3D's. Measure the combined rendering and upscaling cost
 on the game's camera routes, including moving thin geometry and transparency.
 
-This does not make FSR available in WebGPU. Native FSR still reconstructs
-the HDR frame from render size to scene size; spatial upscaling, when chosen,
-only enlarges the final scene to output size. Existing settings retain their
+This is apart from FSR, on native devices and in the browser alike. FSR
+reconstructs the HDR frame from render size to scene size; spatial upscaling,
+when chosen, only enlarges the final scene to output size. Existing settings retain their
 presentation behavior because spatial upscaling is opt-in.
 
 ### Sharpening
@@ -3930,16 +3931,36 @@ fallback.
   it. Ship the appropriate fallback assets for the device. Without
   `TIMESTAMP_QUERY` `GpuTiming::new` returns `None`. Chrome quantizes
   timestamps, so browser pass times are coarse.
-- **FSR** needs texture atomics, which WebGPU lacks, and subgroup operations,
-  16-bit normalized formats and storage formats beyond WebGPU's core set,
-  which wgpu's browser backend does not request: chosen in the browser it
-  resolves to TAA,
-  `View::antialiasing_in_effect` reports TAA and `fsr_error()` names the
-  missing features. TAA, both screen-space reflection methods, world-space
-  reflections, dynamic GI, ambient occlusion, screen-space indirect light,
-  fog, depth of field, motion blur, bloom and
-  SMAA run. For reduced-resolution browser rendering, use an explicit
-  `SceneResolution` and opt into [spatial upscaling](#portable-spatial-upscaling).
+- **FSR2 and FSR3** run in the browser at every quality. WebGPU has no
+  texture atomics, so `sp-fidelity-wgpu` keeps the reconstructed depth's
+  atomics in a storage buffer there and runs its luminance pyramids without
+  subgroup operations; each pass writes what the SDK's formats would. Where
+  the browser has `texture-formats-tier2` (Chrome), which `sgl-webgpu` maps
+  to `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`, the port keeps the SDK's
+  formats and their memory (FSR2 at 1920×1080: 158 MB; FSR3: 96 MB).
+  Without it the port takes WebGPU's core formats, for about 1.6 times that
+  (FSR2: 258 MB; FSR3: 154 MB). Either adds an 8 MB buffer for the depth
+  atomics. With no wave lanes to report, either runs AMD's
+  permutations for hardware without 64-wide waves (FSR2 reprojects with
+  its analytic Lanczos kernel, not the lookup a Mac's native device
+  selects), and records two more full-resolution passes a frame, which
+  `GpuTiming`'s `FSR2` and `FSR3` groups do not include. It needs
+  `float32-filterable`, which `graphics_device::fsr_features` requests
+  with tier2 where the adapter has it, and six storage textures a shader
+  stage (FSR2 five), which `graphics_device::limits` requests from the
+  adapter; Chrome 149 on Apple silicon, the one browser and GPU tested,
+  grants all three. On an adapter without them FSR resolves to TAA:
+  `View::antialiasing_in_effect` reports TAA and `fsr_error()` names what
+  is missing. A WebGPU validation error is not known until after the frame:
+  where a native device falls back to TAA in the frame that raised it, a
+  browser renders that frame without a valid FSR output and falls back at
+  the next, with the same message in `fsr_error()`. An adapter that is not
+  a browser's but lacks the native features runs FSR the same way. TAA, both screen-space reflection
+  methods, world-space reflections, dynamic GI, ambient occlusion,
+  screen-space indirect light, fog, depth of field, motion blur, bloom and
+  SMAA run. Where
+  FSR does not, use an explicit `SceneResolution` and opt into
+  [spatial upscaling](#portable-spatial-upscaling).
 - **Inputs, not clocks or files.** Fetch asset bytes and load them with
   `asset::load_slice_in_browser(&bytes, options).await`: the same loader as
   `load_slice_with_options`, with each PNG and JPEG the game does not

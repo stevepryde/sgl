@@ -25,6 +25,7 @@ const CHECKS = [
   "error scopes",
   "compilation info",
   "surface present",
+  "texture format tiers",
 ];
 
 function servePage() {

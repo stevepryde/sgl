@@ -37,9 +37,15 @@ pub fn features(adapter: &wgpu::Adapter) -> wgpu::Features {
 }
 
 /// The features to request for FSR on `adapter`: its wgpu backend's, and the
-/// FP16 permutations' when the adapter has every required one; otherwise
-/// none, and TAA replaces FSR. AMD recommends the FP16 permutations wherever
-/// they are supported (docs 484–499).
+/// FP16 permutations' where the adapter has them. The backend's are those of
+/// the first of its resource sets the adapter has: the SDK's own (native
+/// adapters), the SDK's formats (`TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`
+/// and `FLOAT32_FILTERABLE`, which a browser with `texture-formats-tier2`
+/// grants through `sgl-webgpu`), or the core set (`FLOAT32_FILTERABLE`); none
+/// where the adapter lacks those too, and TAA replaces FSR. FSR also binds
+/// six storage textures a shader stage (FSR2 five), which `limits` requests.
+/// AMD recommends the FP16 permutations wherever they are supported (docs
+/// 484–499).
 pub fn fsr_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     crate::stages::antialiasing::fsr::features(adapter)
 }

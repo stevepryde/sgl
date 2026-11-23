@@ -77,7 +77,7 @@ use sgl_3d::{
     heat_distortion::HeatDistortion,
     settings::{
         AmbientOcclusionQuality, Antialiasing, ContactShadows, DepthOfField, DynamicGiQuality,
-        MotionBlur, ReflectionMethod, RenderPreset, ScreenSpaceReflections, Settings,
+        FsrQuality, MotionBlur, ReflectionMethod, RenderPreset, ScreenSpaceReflections, Settings,
         WorldSpaceReflections,
     },
     static_lighting::{AmbientCube, CompressedIrradianceAtlas, IrradianceAtlas},
@@ -982,6 +982,7 @@ async fn configuration(
     timing: &mut Option<GpuTiming>,
     settings: &Settings,
     atmosphere: bool,
+    fsr_requested: bool,
     programs: Programs,
 ) -> Result<String, String> {
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -1011,15 +1012,23 @@ async fn configuration(
             "the sunlit ground (luma {lit:.1}) is not clearly brighter than the shadowed ground ({shadowed:.1})"
         ));
     }
-    // FSR either runs or reports why not: a silent fallback fails.
+    // FSR runs on a device requested with its features, and otherwise
+    // reports why not: a fallback there, or a silent one anywhere, fails.
     if matches!(
         settings.antialiasing,
         Antialiasing::Fsr2 | Antialiasing::Fsr3
-    ) && (rendered.antialiasing == settings.antialiasing) == rendered.fsr_error.is_some()
+    ) && ((rendered.antialiasing == settings.antialiasing) == rendered.fsr_error.is_some()
+        || (fsr_requested && rendered.antialiasing != settings.antialiasing))
     {
         return Err(format!(
-            "FSR chosen: {:?} in effect with reason {:?}",
-            rendered.antialiasing, rendered.fsr_error
+            "FSR chosen{}: {:?} in effect with reason {:?}",
+            if fsr_requested {
+                " on a device with its features"
+            } else {
+                ""
+            },
+            rendered.antialiasing,
+            rendered.fsr_error
         ));
     }
     let mut report = format!(
@@ -2786,6 +2795,7 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         limits.max_storage_buffers_per_shader_stage,
         adapter.features()
     );
+    let fsr_requested = !sgl_3d::graphics_device::fsr_features(&adapter).is_empty();
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("SGL3D browser smoke"),
@@ -2798,6 +2808,14 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         })
         .await
         .map_err(|e| format!("request_device: {e}"))?;
+    // Which of the port's resource sets FSR runs on this device: the
+    // lane asserts it, since a device that silently fell to the core set
+    // would still pass every check below.
+    let _ = writeln!(
+        report,
+        "ok FSR resource set: {:?}",
+        sp_fidelity_wgpu::resource_set(device.features())
+    );
     let uncaptured = Arc::new(Mutex::new(Vec::<String>::new()));
     device.on_uncaptured_error(Arc::new({
         let uncaptured = uncaptured.clone();
@@ -2940,19 +2958,43 @@ async fn smoke(report: &mut String) -> Result<(), String> {
             true,
             Programs::Ordinary,
         ),
+        // FSR at Native AA, where it only antialiases, and at a quality
+        // that upscales.
         (
-            "FSR2 chosen",
+            "FSR2 Native AA",
             Settings {
                 antialiasing: Antialiasing::Fsr2,
+                fsr_quality: FsrQuality::NativeAa,
                 ..high
             },
             false,
             Programs::Ordinary,
         ),
         (
-            "FSR3 chosen",
+            "FSR2 Quality",
+            Settings {
+                antialiasing: Antialiasing::Fsr2,
+                fsr_quality: FsrQuality::Quality,
+                ..high
+            },
+            false,
+            Programs::Ordinary,
+        ),
+        (
+            "FSR3 Native AA",
             Settings {
                 antialiasing: Antialiasing::Fsr3,
+                fsr_quality: FsrQuality::NativeAa,
+                ..high
+            },
+            false,
+            Programs::Ordinary,
+        ),
+        (
+            "FSR3 Quality",
+            Settings {
+                antialiasing: Antialiasing::Fsr3,
+                fsr_quality: FsrQuality::Quality,
                 ..high
             },
             false,
@@ -2979,7 +3021,80 @@ async fn smoke(report: &mut String) -> Result<(), String> {
             &mut timing,
             &settings,
             atmosphere,
+            fsr_requested,
             programs,
+        )
+        .await;
+        let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
+        match result {
+            Ok(_) if !errors.is_empty() => {
+                let _ = writeln!(report, "FAIL {name}: uncaptured {errors:?}");
+            }
+            Ok(detail) => {
+                let _ = writeln!(report, "ok {name}: {detail}");
+            }
+            Err(error) => {
+                let _ = writeln!(report, "FAIL {name}: {error}");
+            }
+        }
+    }
+    core_set(report).await
+}
+
+/// FSR on the port's core resource set, which a browser without
+/// `texture-formats-tier2` runs: a second device, requested
+/// with FSR's features less that one, renders FSR2 and FSR3 at Quality and
+/// passes the same checks.
+async fn core_set(report: &mut String) -> Result<(), String> {
+    let adapter = sgl_webgpu::instance(&wgpu::InstanceDescriptor::new_without_display_handle())
+        .request_adapter(&Default::default())
+        .await
+        .map_err(|e| format!("no second WebGPU adapter: {e}"))?;
+    let fsr = sgl_3d::graphics_device::fsr_features(&adapter)
+        - wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("SGL3D browser smoke, FSR's core set"),
+            required_features: sgl_3d::graphics_device::features(&adapter) | fsr,
+            required_limits: sgl_3d::graphics_device::limits(&adapter),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| format!("request_device without tier2: {e}"))?;
+    let _ = writeln!(
+        report,
+        "ok FSR resource set without tier2: {:?}",
+        sp_fidelity_wgpu::resource_set(device.features())
+    );
+    let uncaptured = Arc::new(Mutex::new(Vec::<String>::new()));
+    device.on_uncaptured_error(Arc::new({
+        let uncaptured = uncaptured.clone();
+        move |error| uncaptured.lock().unwrap().push(error.to_string())
+    }));
+    let mut timing = None;
+    let mut scene = Scene::new(&device, &queue);
+    let content = add_content(&device, &queue, &mut scene)?;
+    for (name, antialiasing) in [
+        ("FSR2 Quality, core set", Antialiasing::Fsr2),
+        ("FSR3 Quality, core set", Antialiasing::Fsr3),
+    ] {
+        let settings = Settings {
+            screen_space_reflections: ScreenSpaceReflections::Full,
+            ambient_occlusion: AmbientOcclusionQuality::High,
+            antialiasing,
+            fsr_quality: FsrQuality::Quality,
+            ..Settings::default()
+        };
+        let result = configuration(
+            &device,
+            &queue,
+            &mut scene,
+            content,
+            &mut timing,
+            &settings,
+            false,
+            !fsr.is_empty(),
+            Programs::Ordinary,
         )
         .await;
         let errors = std::mem::take(&mut *uncaptured.lock().unwrap());

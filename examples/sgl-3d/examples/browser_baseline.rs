@@ -13,8 +13,8 @@ use sgl_3d::{
     asset::{Asset, CpuMesh, Image, Material, MaterialTexture, Rgba8MipChain, Vertex},
     glam::{Mat4, Vec3, camera},
     settings::{
-        AmbientOcclusionQuality, Antialiasing, DepthOfField, DynamicGiQuality, SceneResolution,
-        ScreenSpaceReflections, Settings, Upscaling,
+        AmbientOcclusionQuality, Antialiasing, DepthOfField, DynamicGiQuality, FsrQuality,
+        SceneResolution, ScreenSpaceReflections, Settings, Upscaling,
     },
     timing::{FrameTime, GpuTiming},
 };
@@ -236,8 +236,30 @@ pub async fn measure(
     size: Vec<u32>,
     hdr_effect: bool,
     outline: String,
+    antialiasing: String,
+    fsr_quality: String,
+    fsr_set: String,
 ) -> String {
     console_error_panic_hook::set_once();
+    let antialiasing = match antialiasing.as_str() {
+        "" | "taa" => Antialiasing::Taa,
+        "fsr2" => Antialiasing::Fsr2,
+        "fsr3" => Antialiasing::Fsr3,
+        other => return json!({"error": format!("aa={other}: taa, fsr2 or fsr3")}).to_string(),
+    };
+    let fsr_quality = match fsr_quality.as_str() {
+        "" | "native" => FsrQuality::NativeAa,
+        "quality" => FsrQuality::Quality,
+        "balanced" => FsrQuality::Balanced,
+        "performance" => FsrQuality::Performance,
+        "ultra" => FsrQuality::UltraPerformance,
+        other => {
+            return json!({"error": format!(
+                "fsr_quality={other}: native, quality, balanced, performance or ultra"
+            )})
+            .to_string();
+        }
+    };
     let depth_of_field = match depth_of_field.as_str() {
         "off" => DepthOfField::Off,
         "low" => DepthOfField::Low,
@@ -261,6 +283,7 @@ pub async fn measure(
         prepared_upload,
         capture_frame,
         (local_shadows, depth_of_field, size, hdr_effect, outline),
+        (antialiasing, fsr_quality, fsr_set == "core"),
     )
     .await
     {
@@ -288,6 +311,7 @@ async fn measured(
         bool,
         Selected,
     ),
+    (antialiasing, fsr_quality, core_set): (Antialiasing, FsrQuality, bool),
 ) -> Result<Value, String> {
     if !(60..=3600).contains(&frames) {
         return Err("frames must be in 60..=3600".into());
@@ -302,6 +326,14 @@ async fn measured(
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("browser baseline"),
             required_features: sgl_3d::graphics_device::features(&adapter)
+                // `fsr_set=core`: without the browser's texture-formats-tier2,
+                // so FSR runs on the port's core set, as in a browser without it.
+                | (sgl_3d::graphics_device::fsr_features(&adapter)
+                    - if core_set {
+                        wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                    } else {
+                        wgpu::Features::empty()
+                    })
                 | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY),
             required_limits: sgl_3d::graphics_device::limits(&adapter),
             ..Default::default()
@@ -462,7 +494,8 @@ async fn measured(
         ambient_occlusion: AmbientOcclusionQuality::High,
         screen_space_reflections: ScreenSpaceReflections::Half,
         atmosphere: false,
-        antialiasing: Antialiasing::Taa,
+        antialiasing,
+        fsr_quality,
         dynamic_gi: DynamicGiQuality::Off,
         depth_of_field,
         ..Default::default()
@@ -692,6 +725,8 @@ async fn measured(
         "adapter":{"name":info.name,"backend":format!("{:?}",info.backend),"device_type":format!("{:?}",info.device_type),
             "features":format!("{:?}",device.features()),"sampled_textures_per_stage":device.limits().max_sampled_textures_per_shader_stage},
         "settings":format!("{:?}",settings),
+        "antialiasing":{"in_effect":format!("{:?}",scene_view.antialiasing_in_effect(&settings)),"fsr_error":scene_view.fsr_error(),
+            "fsr_resource_set":format!("{:?}",sp_fidelity_wgpu::resource_set(device.features()))},
         "content":{"instances":257,"opaque_instances":225,"blended_instances":32,"moving_instances":moving.len(),"materials":MATERIALS,"textures":MATERIALS,
             "texture_size":TEXTURE,"source_texture_bytes":MATERIALS*TEXTURE as usize*TEXTURE as usize*4,"triangles":257*768,"local_lights":8,"shadow_cascades":4},
         "local_shadows":{"cast_from_frame":local_shadows.then_some(WARMUP),"activation":activation},

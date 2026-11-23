@@ -50,7 +50,7 @@ library boundary to its governing contract.
 - **3D rendering:** glTF PBR materials, skinning and morph targets, instancing,
   mesh LOD, decals, clustered lights, cascaded and local shadows, baked diffuse
   lighting, reflection probes, and screen-space and software-ray reflections.
-- **Image quality:** TAA, SMAA, native FSR2 upscaling, XeGTAO ambient occlusion,
+- **Image quality:** TAA, SMAA, FSR2 and FSR3 upscaling, XeGTAO ambient occlusion,
   volumetric fog, depth of field, motion blur, bloom, automatic exposure,
   Khronos PBR Neutral,
   ACES Filmic and AgX tone mapping, colour grading, and per-pass GPU timings.

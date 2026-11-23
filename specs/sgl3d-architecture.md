@@ -75,9 +75,18 @@ Masks, exposure, jitter, history, completion and fallback have one owner and
 one path for both versions. Changing version at `resize` destroys the old
 context and resets temporal history even when the render dimensions match.
 A failure is remembered per version, so an unavailable FSR3 does not prevent
-FSR2 from running. `graphics_device::fsr_features` requests the common native
-features; `View::fsr_error` describes the selection from the last `View::resize`.
-Browser WebGPU falls back to TAA. FSR3 here means FSR3.1 upscaling only:
+FSR2 from running. `graphics_device::fsr_features` requests the port's
+features for the first of its resource sets the adapter has: the SDK's own, as
+native adapters do; the SDK's formats with buffer atomics, which a browser with
+`texture-formats-tier2` grants through `sgl-webgpu`; and the core set (core
+storage formats, buffer atomics), which any browser can grant. Which runs is
+the port backend's choice from the device's features; the stage is the same,
+and each pass writes what the SDK's formats would for the permutation it runs
+(the reduced sets report no wave lanes, so they take AMD's permutations for
+hardware without 64-wide waves; [D-82](decisions.md)). `View::fsr_error`
+describes the selection from the last `View::resize`: a device without the
+core set's feature or FSR's storage textures a stage falls back to TAA. FSR3 here means
+FSR3.1 upscaling only:
 FSR frame generation is unsupported. The consumer owns surface acquisition,
 UI composition, queue submission and presentation for native and browser alike.
 `View::output_encodes_srgb` exposes the post stage's selected transfer for
