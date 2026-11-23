@@ -656,9 +656,9 @@ DLSS and MetalFX upscaling are [not planned](../../../specs/sgl3d.md#planned).
 The directional cascades cull by frustum alone.
 
 Compressed material images are BC7, ETC2 RGBA8 or ASTC 4×4 chains the game
-prepares ([compressed images](../README.md#compressed-material-images));
-transcoding Basis Universal (UASTC) KTX2 is not provided
-([#857](https://github.com/stevepryde/sgl/issues/857)). Transmissive surfaces
+prepares and SGL3D uploads whole; Basis Universal KTX2 is not transcoded at
+run time, by decision (D-76, #857): convert it offline with `ktx transcode`
+([export recipe](../README.md#compressed-material-images)). Transmissive surfaces
 refract on `Extended` and blend through unrefracted on `Basic`
 ([transmission](../README.md#transmissive-glass-and-water)). Specular probes
 are captured between frames, offline or while a level loads:

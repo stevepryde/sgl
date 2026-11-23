@@ -4260,6 +4260,37 @@ Bevy's glTF loader resolves each image's source; a supplied image takes the glTF
 which its materials address. An embedded glTF (`load_slice_with_options`)
 may refer to external image files when each one a sampled map uses is
 supplied.
+
+**Export recipe.** KTX-Software's `ktx` (measured with 4.4.2) turns a PNG or
+JPEG into chains `from_ktx2` reads, colour mips filtered in linear light:
+
+```sh
+# Colour maps. Normal and other data maps: --format R8G8B8A8_UNORM --assign-tf linear
+ktx create --format R8G8B8A8_SRGB --assign-tf srgb --generate-mipmap \
+  --encode uastc --uastc-quality 2 base.png master.ktx2
+ktx transcode --target bc7 --zstd 19 master.ktx2 base.bc7.ktx2    # every desktop GPU
+ktx transcode --target astc --zstd 19 master.ktx2 base.astc.ktx2  # GPUs without BC
+```
+
+The BC7 file serves native and browser builds on every desktop GPU, Apple
+silicon included; ship the ASTC one too only for devices whose adapter lacks
+BC (phones and tablets), chosen by `graphics_device::compressed_image_feature`, with the
+companion rays need (below). `--encode basis-lz --clevel 2 --qlevel 128` in
+place of UASTC makes under a third of the bytes at visibly lower quality,
+worst on normal maps. A third-party Basis Universal KTX2 (glTF's
+`KHR_texture_basisu`) converts offline the same way, `ktx transcode --target
+bc7 --zstd 19 in.ktx2 out.ktx2`, supplied for the image the texture's core
+`source` names: SGL3D does not transcode Basis at run time
+([#857](https://github.com/stevepryde/sgl/issues/857)) and refuses a file
+that requires the extension. Measured on Intel Sponza's 80 maps at 1024²:
+
+| | PNG | BC7 + Zstandard |
+|---|---:|---:|
+| Download | 174 MB | 83 MB |
+| GPU memory, with mips | 447 MB | 112 MB |
+| Load CPU, native, all 80 | 529 ms decoding, then GPU mips | 129 ms |
+| Load CPU, wasm32, one 2048² chain | 28–36 ms decoding, then GPU mips | 4–9 ms |
+
 `CompressedImage::from_ktx2(bytes)` rejects malformed data format descriptors
 with an error, then reads a KTX2
 file of one supported 2D compressed image, including BC7

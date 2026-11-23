@@ -1501,7 +1501,11 @@ Use the [current specs](README.md) for implementation and the
   re-export a Draco file or use Meshopt, which SGL loads; DLSS and MetalFX
   were not built (D-74), and planar reflections (#866) were kept because
   they show off-screen and occluded content that screen-space reflections
-  cannot. Rationale: every feature is code in every game's build and a
+  cannot. Basis Universal transcoding (#857) was declined under the same
+  rule: UASTC with Zstandard ships no fewer bytes than the BC7 with
+  Zstandard SGL loads, and most of ETC1S's saving survives converting it
+  offline to BC7 (`ktx transcode`), with no transcoder in a browser game's
+  download. Rationale: every feature is code in every game's build and a
   surface agents must keep coherent; one no game uses costs that for
   nothing.
 - **D-77** Decision, 2026-11-23 (#866): planar reflections. A planar
