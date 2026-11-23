@@ -1746,3 +1746,39 @@ Use the [current specs](README.md) for implementation and the
   as measured above; a second program set without it was not taken for a
   difference the measurements do not show. It leaves the fragment 13 of
   WebGPU's 16 inter-stage locations (`Fragment`, vertex.wgsl).
+- **D-81** Decision, 2026-11-23 (#886): in the browser SGL3D has the
+  browser decode a glTF's PNG and JPEG images (`createImageBitmap` with
+  `premultiplyAlpha: "none"` and `colorSpaceConversion: "none"`, as three.js
+  r187's `ImageBitmapLoader` does for its `GLTFLoader`) and copies each
+  into its texture on the GPU (`copyExternalImageToTexture`, unpremultiplied,
+  sRGB), with no CPU texels; its level 0 reaches the ray source by a GPU
+  copy from that texture ([S3D-2](sgl3d.md), `asset::load_slice_in_browser`).
+  Natively the `image` crate still decodes, unchanged (D-27). Why: on
+  #852's opening scene (16 PNGs at 512², Apple M5, Chromium 149, shared
+  machine, provisional) the `image` crate's decode was about 45 of the
+  53 ms `load_slice` blocked the page's thread for (7–8 ms glTF parse, the
+  rest images); with this change `asset_decode` fell from 57 to 20 ms cold
+  and warm (three.js 20 to 21), the longest the page went without an
+  animation frame during it from 57 to 12 ms (three.js 8), `asset_upload`
+  rose from 14 to 24 ms cold and 21 warm, of which `add_materials`' CPU
+  time 2.7 to 3.5 ms and the rest the browser's copies in the queue it
+  waits on, and the first visible world fell from 281 to 265 ms
+  cold and 176 to 150 warm (median of 2; three.js 236 to 240 and 198 to
+  201 in the same runs). The minimal scene (one 256² PNG) moved within
+  noise: `asset_decode` 8.4 to 7.5 ms, first visible world 172 to 172 ms
+  cold, 99 to 106 warm, the warm difference in phases the change does not
+  touch. Measured in Chromium 149: the browser's texels equal the `image`
+  crate's for PNG with alpha 0 to 255 and with gamma and chromaticity
+  chunks, in `rgba8unorm` and `rgba8unorm-srgb`, where default options
+  changed up to 3052 of 4096 bytes; a 4:4:4 JPEG differs by at most 1 and
+  a 4:2:0 one from libjpeg-turbo by at most 3. Chromium applies a JPEG's
+  EXIF orientation whatever `imageOrientation` asks, so the `image` crate
+  decodes an image with one, as it does one the browser refuses or decodes
+  to another size; every file a native load accepts then loads, with the
+  native texels, and a failing load fails with the native errors, though
+  where several images fail it may name a later one.
+  Not taken: decoding in the browser and reading the texels back, which a
+  2D canvas cannot do exactly for alpha (it stores premultiplied) and which
+  adds a copy and a write per image; decoding in a worker, which keeps the
+  `image` crate's ~45 ms of work, adds a module instantiation and a
+  transfer, and has the game own the worker.

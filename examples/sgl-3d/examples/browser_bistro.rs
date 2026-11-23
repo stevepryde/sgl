@@ -435,7 +435,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
             .remove(&image.index)
             .map_or(asset::ImageSource::Decode, asset::ImageSource::Supplied))
     };
-    let mut loaded = asset::load_slice_with_options(
+    let mut loaded = asset::load_slice_in_browser(
         &glb,
         asset::LoadOptions {
             budget,
@@ -443,6 +443,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
             ..Default::default()
         },
     )
+    .await
     .map_err(|e| e.to_string())?;
     if !supplied.lock().unwrap().is_empty() {
         return Err("compressed manifest supplies image indices absent from the asset".into());
@@ -473,6 +474,11 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
                 .flat_map(|srgb| image.levels(srgb))
                 .map(|l| l.as_raw().len())
                 .sum(),
+            // Held by the browser, not in WASM memory.
+            asset::Image::Browser(image) => {
+                let [width, height] = image.size();
+                width as usize * height as usize * 4
+            }
         })
         .sum();
     let ignored: Vec<_> = loaded

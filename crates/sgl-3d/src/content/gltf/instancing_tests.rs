@@ -12,7 +12,7 @@
 //! in their READMEs.
 use super::attributes_tests::embedded;
 use super::*;
-use crate::asset::LoadBudget;
+use crate::asset::{LoadBudget, Vertex};
 use glam::{Mat3, Mat4, Vec3};
 use serde_json::{Value, json};
 use wasm_bindgen_test::wasm_bindgen_test;

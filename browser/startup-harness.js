@@ -10,6 +10,26 @@
 
 const FRAMES_AFTER = 30;
 
+// The longest the page went without an animation frame while `work` ran,
+// from its start to its end: how long a loading screen drawn each frame
+// would stall. A library that decodes on the page's thread blocks it.
+async function framesDuring(work) {
+  const times = [performance.now()];
+  let running = true;
+  const tick = () => {
+    if (!running) return;
+    times.push(performance.now());
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  await work();
+  running = false;
+  times.push(performance.now());
+  let longest = 0;
+  for (let i = 1; i < times.length; i++) longest = Math.max(longest, times[i] - times[i - 1]);
+  return longest;
+}
+
 export function run(adapter) {
   const query = new URLSearchParams(location.search);
   const scene = query.get("scene");
@@ -126,7 +146,7 @@ export function run(adapter) {
     layout = await (await fetch(`${scene}.json`)).json();
     const glb = new Uint8Array(await (await fetch(`${scene}.glb`)).arrayBuffer());
     mark("asset_fetched");
-    await adapter.decode(glb, layout);
+    report.asset_decode_longest_frame_gap_ms = await framesDuring(() => adapter.decode(glb, layout));
     mark("asset_decoded");
     await adapter.upload(layout);
     mark("asset_uploaded");

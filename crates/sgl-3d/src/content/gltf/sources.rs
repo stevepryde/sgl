@@ -1,5 +1,6 @@
 //! URI confinement and bounded source reads. Import validates the document
 //! before using these readers; gltf's file importer allows unbounded reads.
+use std::borrow::Cow;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
@@ -188,19 +189,21 @@ pub(super) fn buffers(
         .collect()
 }
 
-pub(super) fn image(
-    source: gltf::image::Source<'_>,
+/// An image's encoded bytes, read under `budget` (a buffer view's are
+/// borrowed: they were charged with their buffer), and its MIME type: the
+/// authored one, else a data URI's.
+pub(super) fn encoded<'a>(
+    source: gltf::image::Source<'a>,
     base: Option<&Path>,
-    buffers: &[gltf::buffer::Data],
+    buffers: &'a [gltf::buffer::Data],
     budget: &mut Budget,
-    decoded_budget: &mut Budget,
-) -> Result<image::DynamicImage> {
+) -> Result<(Cow<'a, [u8]>, Option<&'a str>)> {
     let (uri, mime_type) = match source {
         gltf::image::Source::View { view, mime_type } => {
             // Its buffer view has already been bounds-checked and charged once.
             let bytes =
                 &buffers[view.buffer().index()].0[view.offset()..view.offset() + view.length()];
-            return decode_image(bytes, Some(mime_type), decoded_budget);
+            return Ok((Cow::Borrowed(bytes), Some(mime_type)));
         }
         gltf::image::Source::Uri { uri, mime_type } => (uri, mime_type),
     };
@@ -217,14 +220,34 @@ pub(super) fn image(
             .split_once(';')
             .map(|(mime, _)| mime)
     });
-    decode_image(&bytes, mime_type, decoded_budget)
+    Ok((Cow::Owned(bytes), mime_type))
 }
 
-fn decode_image(
+/// `bytes` decoded by the `image` crate, after [`open`]'s checks.
+pub(super) fn decode_image(
     bytes: &[u8],
     mime_type: Option<&str>,
     budget: &mut Budget,
 ) -> Result<image::DynamicImage> {
+    let (mut decoder, mut limits) = open(bytes, mime_type, budget)?;
+    // ImageReader::decode reserves its output separately from the decoder's
+    // working memory; do the same when using its header decoder directly.
+    limits.reserve(decoder.total_bytes())?;
+    decoder.set_limits(limits)?;
+    Ok(image::DynamicImage::from_decoder(decoder)?)
+}
+
+/// The checks every image passes before its pixels are decoded, by the
+/// `image` crate or by the browser (`browser`): a PNG or JPEG, by
+/// `mime_type` or else by its bytes, of 8-bit pixels and sides at most
+/// [`MAX_IMAGE_SIDE`], its retained RGBA bytes charged to `budget`. Returns
+/// its header's decoder, which has decoded no pixels, and the allocation
+/// limits it decodes them under.
+pub(super) fn open<'a>(
+    bytes: &'a [u8],
+    mime_type: Option<&str>,
+    budget: &mut Budget,
+) -> Result<(impl ImageDecoder + 'a, image::Limits)> {
     let format = match mime_type {
         Some("image/png") => image::ImageFormat::Png,
         Some("image/jpeg") => image::ImageFormat::Jpeg,
@@ -242,7 +265,7 @@ fn decode_image(
     reader.limits(limits.clone());
     // into_decoder reads the header and enforces strict dimension limits;
     // it does not decode the pixels (image's PNG/JPEG decoders).
-    let mut decoder = reader
+    let decoder = reader
         .into_decoder()
         .map_err(|error| format!("PNG/JPEG header (maximum side {MAX_IMAGE_SIDE}): {error}"))?;
     let (width, height) = decoder.dimensions();
@@ -262,11 +285,7 @@ fn decode_image(
     // Account for the retained RGBA result, including greyscale's fourfold
     // expansion, before any pixel decoding or conversion allocates it.
     budget.charge(u64::from(width) * u64::from(height) * 4)?;
-    // ImageReader::decode reserves its output separately from the decoder's
-    // working memory; do the same when using its header decoder directly.
-    limits.reserve(decoder.total_bytes())?;
-    decoder.set_limits(limits)?;
-    Ok(image::DynamicImage::from_decoder(decoder)?)
+    Ok((decoder, limits))
 }
 
 #[cfg(test)]

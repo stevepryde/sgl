@@ -28,6 +28,30 @@ pub enum Image {
     Compressed(CompressedImage),
     /// RGBA8 levels prepared on a caller-owned worker, uploaded without filtering.
     Rgba8Mips(Rgba8MipChain),
+    /// A PNG or JPEG the browser decoded (`asset::load_slice_in_browser`,
+    /// `asset::decode_image_in_browser`). The scene copies it into its
+    /// texture on the GPU, where its mip chain is built as `Rgba8`'s is,
+    /// and its level 0 into the ray source on the GPU. It has no CPU
+    /// texels, so `Scene::add_decal_image` refuses it.
+    #[cfg(target_arch = "wasm32")]
+    Browser(BrowserImage),
+}
+
+/// Texels the browser decoded and holds, without premultiplied alpha or a
+/// colour profile applied: the browser's `ImageBitmap`. Made by
+/// `asset::load_slice_in_browser` and `asset::decode_image_in_browser`.
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Debug)]
+pub struct BrowserImage {
+    pub(crate) bitmap: web_sys::ImageBitmap,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl BrowserImage {
+    /// Its width and height in texels.
+    pub fn size(&self) -> [u32; 2] {
+        [self.bitmap.width(), self.bitmap.height()]
+    }
 }
 
 /// A block-compressed image's encoding.
@@ -143,6 +167,11 @@ impl Image {
                 }
                 Ok(())
             }
+            #[cfg(target_arch = "wasm32")]
+            Self::Browser(image) => {
+                let [width, height] = image.size();
+                budget.charge_count(u64::from(width) * u64::from(height), 4)
+            }
         }
     }
 
@@ -155,11 +184,14 @@ impl Image {
                 image.levels(false)[0].height(),
             ],
             Self::Compressed(image) => [image.width, image.height],
+            #[cfg(target_arch = "wasm32")]
+            Self::Browser(image) => image.size(),
         }
     }
 
     /// Level 0's texels for the decal atlas. BC7 decodes its own blocks;
-    /// ETC2/ASTC return none without their offline decoded companion.
+    /// ETC2/ASTC return none without their offline decoded companion, and
+    /// a browser image none.
     pub(crate) fn texels(&self) -> Option<Cow<'_, image::RgbaImage>> {
         Some(match self {
             Self::Rgba8(image) => Cow::Borrowed(image),
@@ -169,6 +201,8 @@ impl Image {
                 None if image.format == CompressedFormat::Bc7 => Cow::Owned(image.decode_level_0()),
                 None => return None,
             },
+            #[cfg(target_arch = "wasm32")]
+            Self::Browser(_) => return None,
         })
     }
 }

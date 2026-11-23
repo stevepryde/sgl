@@ -370,6 +370,27 @@ impl Materials {
         self.slots.get_mut(id).ok_or(SceneError::UnknownMaterial)
     }
 
+    /// The texture `id`'s `map` samples, as colour or data as the map
+    /// samples it, and the words of its image's record in the ray source
+    /// (none without ray data), if it has the map.
+    #[cfg(any(test, feature = "diagnostics"))]
+    pub fn map_texture(
+        &self,
+        id: MaterialId,
+        map: MaterialMap,
+    ) -> Result<Option<(&wgpu::Texture, Range<u32>)>, SceneError> {
+        Ok(self.get(id)?.bound.maps.get(map).map(|index| {
+            let texture = self.textures.get(index);
+            let view = if map.binding().colour {
+                &texture.color
+            } else {
+                &texture.data
+            };
+            let view = view.as_ref().expect("a map's texture is made for its use");
+            (view.texture(), texture.ray.clone())
+        }))
+    }
+
     /// Validates `materials` and the images they were authored with, on
     /// every binding tier alike, without uploading.
     fn validate(

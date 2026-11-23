@@ -2730,8 +2730,8 @@ describes each view's camera, the authored look and per-frame state in a
    token ([Hardware ray tracing](#hardware-ray-tracing)). The game owns
    surface acquisition, device failure, and window handling.
 2. Load assets through `asset::load` (files) or `asset::load_slice`
-   (embedded glTF/GLB bytes, as a browser fetches them), each with a
-   `_with_options` form, or build an `asset::Asset` from
+   (embedded glTF/GLB bytes), each with a `_with_options` form, or in the
+   browser `asset::load_slice_in_browser` (the browser decodes the images), or build an `asset::Asset` from
    `CpuMesh`, `Material` (`Material::default()` is glTF's default
    material), and images: decoded RGBA8, or BC7 mip chains
    ([Compressed material images](#compressed-material-images)). Apply game-specific adaptations
@@ -3931,8 +3931,22 @@ fallback.
   SMAA run. For reduced-resolution browser rendering, use an explicit
   `SceneResolution` and opt into [spatial upscaling](#portable-spatial-upscaling).
 - **Inputs, not clocks or files.** Fetch asset bytes and load them with
-  `asset::load_slice` or `load_slice_with_options`; `asset::load` reads a file
-  and fails in the browser. The frame time comes from
+  `asset::load_slice_in_browser(&bytes, options).await`: the same loader as
+  `load_slice_with_options`, with each PNG and JPEG the game does not
+  supply compressed ([Compressed material images](#compressed-material-images),
+  the faster path: nothing to decode) decoded by the browser
+  off the page's thread (`createImageBitmap`) while the loader reads the
+  rest, so the page keeps drawing; the images stay the browser's
+  (`Image::Browser`) and the scene copies them into their textures on the
+  GPU. Their texels equal the native decoder's for PNG; an image the browser
+  would turn by its EXIF orientation, or cannot decode, is decoded in WASM
+  as natively. A browser image has no CPU texels, so decal and cookie
+  images, which the scene packs on the CPU, are decoded by the game
+  (`Image::Rgba8`). `asset::decode_image_in_browser(&bytes).await` decodes
+  one PNG or JPEG the same way, such as a `.gltf`'s external image the game
+  fetched and supplies through `LoadOptions::images`, or a sprite image.
+  `load_slice` still decodes in WASM on the calling thread; `asset::load`
+  reads a file and fails in the browser. The frame time comes from
   `FrameInput::frame_time_ms`; SGL3D reads no clock.
 - **Readbacks are awaited.** A browser cannot block on WebGPU, so it awaits
   `Renderer::capture_specular_probe_async` and the `diagnostics` feature's
@@ -3949,8 +3963,11 @@ glow, heat shimmer, mist, a fog volume, a glass pane through a game's shader,
 which naga validates in the browser, and an environment);
 frames under four settings configurations, read through
 `diagnostics::read_async`; a specular probe capture, every texel of which
-must hold the uniform emission of the enclosure around it; and error
-scopes. It loads no glTF and sets no lightmap or mesh LODs.
+must hold the uniform emission of the enclosure around it; error scopes;
+and, first, a GLB of PNG and JPEG images loaded with
+`load_slice_in_browser`, whose texels in their textures and the ray source
+(`diagnostics::read_map_async`) must equal the `image` crate's decode,
+exactly for PNG. It sets no lightmap or mesh LODs.
 
 For repeatable performance measurements, run
 `bun scripts/tasks.ts measure-browser --baseline --frames 180`.
@@ -4270,8 +4287,11 @@ sample level 0 with each map's magnification filter and wrapping.
 `asset::Image` accepts decoded RGBA8 texels (`Image::Rgba8`, what glTF
 loading yields), whose first level the scene uploads when the image is
 added and whose mip chain the GPU builds before any draw samples it;
-prepared RGBA8 chains (`Image::Rgba8Mips`); or a block-compressed chain
-(`Image::Compressed`), uploaded as stored with no mip generation. BC7,
+in the browser, an image the browser decoded (`Image::Browser`, what
+`load_slice_in_browser` yields), copied into its first level on the GPU
+and built the same way; prepared RGBA8 chains (`Image::Rgba8Mips`); or a
+block-compressed chain (`Image::Compressed`), uploaded as stored with no
+mip generation. BC7,
 ETC2 RGBA8 and ASTC 4×4 each use 16 bytes per 4×4 raster block, one quarter
 of RGBA8's raster texel storage before allocation padding. Their ray and
 CPU storage have different costs, described below. Games compress in their
@@ -4298,6 +4318,12 @@ Bevy's glTF loader resolves each image's source; a supplied image takes the glTF
 which its materials address. An embedded glTF (`load_slice_with_options`)
 may refer to external image files when each one a sampled map uses is
 supplied.
+
+This is the faster path on both platforms: a game that ships its images
+as compressed KTX2 chains has none to decode, and the scene uploads them
+as stored. In the browser, `load_slice_in_browser` has the browser decode
+whatever PNG and JPEG images the game does not supply, off the page's
+thread; that is the path for images not exported compressed.
 
 **Export recipe.** KTX-Software's `ktx` (measured with 4.4.2) turns a PNG or
 JPEG into chains `from_ktx2` reads, colour mips filtered in linear light:

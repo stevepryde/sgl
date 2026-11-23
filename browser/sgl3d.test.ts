@@ -66,6 +66,7 @@ test(
       expect(lines.some((line) => line.startsWith("ok HDR effect:"))).toBe(true);
       expect(lines.some((line) => line.startsWith("ok outline:"))).toBe(true);
       expect(lines.some((line) => line.startsWith("ok live specular probe:"))).toBe(true);
+      expect(lines.some((line) => line.startsWith("ok browser image decode:"))).toBe(true);
       // The frame compiled ahead ran its jobs and passed the same checks.
       expect(lines.find((line) => line.includes("compiled ahead:"))).toMatch(/^ok .* compile jobs run ahead/);
       // WebGPU cannot expose the native SDK's required features. Observe the

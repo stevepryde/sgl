@@ -76,6 +76,16 @@ settings SGL3D has today.
    loader do, and listed with the asset (`Asset::ignored`); file and embedded-byte imports share
    one decoder, which decodes each image a sampled map uses that the game
    does not supply, and never reads one it does or one no sampled map uses.
+   In the browser, `asset::load_slice_in_browser` is that decoder with its
+   image step specialised: each such image passes the same checks, then
+   the browser decodes it off the page's thread without premultiplying its
+   alpha or applying its colour profile, and it stays the browser's
+   (`Image::Browser`), copied into its texture on the GPU; one the browser
+   cannot decode, or whose EXIF orientation the browser would apply, is
+   decoded as natively. Its texels equal the native decoder's for PNG; for
+   JPEG they differ by at most 6 levels where its chroma is whole, as two
+   decoders ITU-T T.83 allows may, and where its chroma is subsampled also
+   by how each decoder upsamples it, which JPEG leaves to the decoder.
    A primitive's TRIANGLE_STRIP or TRIANGLE_FAN indices (at least three)
    become the triangle list glTF 2.0 3.7.2.1 defines once at import, after
    the decoded budget is charged for that list, with triangles that repeat

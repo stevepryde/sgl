@@ -9,10 +9,11 @@ use super::rays::SceneRays;
 use crate::asset::{CompressedFormat, CompressedImage, Image};
 use std::ops::Range;
 
-/// Tests read an RGBA8 texture's levels back.
-#[cfg(test)]
+/// Tests and `diagnostics::read_map_async` read an RGBA8 texture's levels
+/// back.
+#[cfg(any(test, feature = "diagnostics"))]
 const READBACK: wgpu::TextureUsages = wgpu::TextureUsages::COPY_SRC;
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "diagnostics")))]
 const READBACK: wgpu::TextureUsages = wgpu::TextureUsages::empty();
 
 /// An RGBA8 texture of `levels` levels with `first`, its first level,
@@ -24,11 +25,28 @@ fn rgba8_texture(
     (levels, usage): (u32, wgpu::TextureUsages),
     srgb: bool,
 ) -> wgpu::Texture {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = empty_rgba8_texture(
+        device,
+        [first.width(), first.height()],
+        (levels, usage),
+        srgb,
+    );
+    write_level(queue, &texture, 0, first);
+    texture
+}
+
+/// An RGBA8 texture of `size` and `levels` levels, none written.
+fn empty_rgba8_texture(
+    device: &wgpu::Device,
+    [width, height]: [u32; 2],
+    (levels, usage): (u32, wgpu::TextureUsages),
+    srgb: bool,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
         label: Some("retained material map"),
         size: wgpu::Extent3d {
-            width: first.width(),
-            height: first.height(),
+            width,
+            height,
             depth_or_array_layers: 1,
         },
         mip_level_count: levels,
@@ -44,9 +62,7 @@ fn rgba8_texture(
             | READBACK
             | usage,
         view_formats: &[],
-    });
-    write_level(queue, &texture, 0, first);
-    texture
+    })
 }
 
 fn write_level(
@@ -111,6 +127,8 @@ pub(crate) fn upload_color(
             let [color, _] = upload_compressed(device, queue, image, [true, false]);
             color.expect("a colour view was asked for")
         }
+        #[cfg(target_arch = "wasm32")]
+        Image::Browser(image) => chains.upload_browser(device, queue, image, true),
     }
 }
 
@@ -162,6 +180,53 @@ impl Chains {
         let texture = rgba8_texture(device, queue, image, (levels, usage), srgb);
         let view = texture.create_view(&Default::default());
         self.waiting.push(texture);
+        view
+    }
+
+    /// A browser's image as [`Chains::upload`] uploads decoded texels: the
+    /// browser copies it into the first level on the GPU, as decoded, its
+    /// alpha not premultiplied (WebGPU's `copyExternalImageToTexture`, as
+    /// three.js r187's `WebGPUTextureUtils` uploads an image bitmap). The
+    /// texture can be copied from (`COPY_SRC`) for the ray source.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn upload_browser(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        image: &crate::asset::BrowserImage,
+        srgb: bool,
+    ) -> wgpu::TextureView {
+        let [width, height] = image.size();
+        let levels = 32 - width.max(height).leading_zeros();
+        // The copy draws into its destination, which needs RENDER_ATTACHMENT
+        // even with one level.
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
+        let texture = empty_rgba8_texture(device, [width, height], (levels, usage), srgb);
+        crate::counters::copy_external_image(
+            queue,
+            &wgpu::CopyExternalImageSourceInfo {
+                source: wgpu::ExternalImageSource::ImageBitmap(image.bitmap.clone()),
+                origin: wgpu::Origin2d::ZERO,
+                flip_y: false,
+            },
+            wgpu::CopyExternalImageDestInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+                color_space: wgpu::PredefinedColorSpace::Srgb,
+                premultiplied_alpha: false,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let view = texture.create_view(&Default::default());
+        if levels > 1 {
+            self.waiting.push(texture);
+        }
         view
     }
 
@@ -338,17 +403,51 @@ impl Textures {
         image: &Image,
         [color, data]: [bool; 2],
     ) -> Result<usize, SceneError> {
-        let ray = rays.add_image(device, queue, image)?;
-        let [color, data] = match image {
-            Image::Rgba8(image) => [
-                color.then(|| self.chains.upload(device, queue, image, true)),
-                data.then(|| self.chains.upload(device, queue, image, false)),
-            ],
-            Image::Rgba8Mips(image) => [
-                color.then(|| upload_rgba8_levels(device, queue, image.levels(true), true)),
-                data.then(|| upload_rgba8_levels(device, queue, image.levels(false), false)),
-            ],
-            Image::Compressed(image) => upload_compressed(device, queue, image, [color, data]),
+        let (ray, [color, data]) = match image {
+            Image::Rgba8(texels) => {
+                let ray = rays.add_image(device, queue, image)?;
+                let views = [
+                    color.then(|| self.chains.upload(device, queue, texels, true)),
+                    data.then(|| self.chains.upload(device, queue, texels, false)),
+                ];
+                (ray, views)
+            }
+            Image::Rgba8Mips(levels) => {
+                let ray = rays.add_image(device, queue, image)?;
+                let views = [
+                    color.then(|| upload_rgba8_levels(device, queue, levels.levels(true), true)),
+                    data.then(|| upload_rgba8_levels(device, queue, levels.levels(false), false)),
+                ];
+                (ray, views)
+            }
+            Image::Compressed(compressed) => {
+                let ray = rays.add_image(device, queue, image)?;
+                (
+                    ray,
+                    upload_compressed(device, queue, compressed, [color, data]),
+                )
+            }
+            // Its level 0 reaches the ray source from its texture.
+            #[cfg(target_arch = "wasm32")]
+            Image::Browser(browser) => {
+                let views = [
+                    color.then(|| self.chains.upload_browser(device, queue, browser, true)),
+                    data.then(|| self.chains.upload_browser(device, queue, browser, false)),
+                ];
+                let source = views
+                    .iter()
+                    .flatten()
+                    .next()
+                    .expect("a texture is added for a use")
+                    .texture();
+                let ray = rays.add_texture_image(device, queue, source);
+                if ray.is_err() {
+                    for view in views.iter().flatten() {
+                        self.chains.forget(view.texture());
+                    }
+                }
+                (ray?, views)
+            }
         };
         let texture = Texture {
             color,

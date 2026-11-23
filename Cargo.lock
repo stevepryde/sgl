@@ -2269,7 +2269,10 @@ dependencies = [
  "sgl-post-fx",
  "sp-fidelity",
  "sp-fidelity-wgpu",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
+ "web-sys",
  "wgpu",
 ]
 

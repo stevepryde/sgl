@@ -4,11 +4,11 @@
 <link rel="icon" href="data:,">
 <pre id="report">running…</pre>
 <script type="module">
-  import init, { run } from "./browser_smoke.js";
+  import init, { images, run } from "./browser_smoke.js";
   const out = document.getElementById("report");
   try {
     await init();
-    const report = await run();
+    const report = (await images()) + (await run());
     out.textContent = report;
     window.__sglReport = report;
   } catch (error) {

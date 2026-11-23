@@ -59,9 +59,10 @@ captures on the same renderer reuse the cached pipelines.
    give way to their factors and transmission is blended through unrefracted
    ([features](features.md#platforms)).
 2. Load: `Scene::new` starts empty. Add content between frames and keep the
-   identities it returns: `asset::load` (a file) or `asset::load_slice` (bytes,
-   as a browser fetches them; `Asset::ignored` lists what the file uses
-   that SGL3D leaves out) into
+   identities it returns: `asset::load` (a file), `asset::load_slice`
+   (bytes), or in the browser `asset::load_slice_in_browser` (bytes, its
+   images decoded by the browser off the page's thread; awaited)
+   (`Asset::ignored` lists what the file uses that SGL3D leaves out) into
    `Scene::add_asset`, instances with `add_instance` (static or moving;
    a glTF's instanced nodes, `Asset::instanced`, are a model each,
    `AssetIds::instanced`, with a transform per placement to install),

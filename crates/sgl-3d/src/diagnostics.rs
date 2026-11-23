@@ -230,6 +230,85 @@ pub async fn read_async(
     pixels
 }
 
+/// A material map `read_map_async` reads: one sampled as sRGB colour and
+/// one sampled as linear data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiagnosticMap {
+    BaseColor,
+    MetallicRoughness,
+}
+
+/// A material map's level 0 as the scene holds it, RGBA8 row by row
+/// without padding (`read_map_async`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MapTexels {
+    /// In the texture the map samples.
+    pub texture: Vec<u8>,
+    /// In its image's record in the scene's ray source; `None` where the
+    /// scene keeps no ray data.
+    pub rays: Option<Vec<u8>>,
+}
+
+/// `material`'s `map`'s level 0, once the GPU copies of it complete;
+/// `None` where the material has no such map or its image is
+/// block-compressed. With the `diagnostics` feature, material textures can
+/// be copied from for it. Panics if a copy cannot be mapped.
+pub async fn read_map_async(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &crate::Scene,
+    material: crate::MaterialId,
+    map: DiagnosticMap,
+) -> Result<Option<MapTexels>, crate::SceneError> {
+    use crate::shading::bind::group2::MaterialMap;
+    let map = match map {
+        DiagnosticMap::BaseColor => MaterialMap::Base,
+        DiagnosticMap::MetallicRoughness => MaterialMap::MetallicRoughness,
+    };
+    let Some((texture, ray)) = scene.materials.map_texture(material, map)? else {
+        return Ok(None);
+    };
+    if !matches!(
+        texture.format(),
+        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb
+    ) {
+        return Ok(None);
+    }
+    let texels = read_async(device, queue, texture, 4).await;
+    let rays = if ray.is_empty() {
+        None
+    } else {
+        let bytes = crate::scene::rays::SceneRays::image_texel_bytes(&ray);
+        let buffer = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("ray image evidence"),
+                size: bytes.end - bytes.start,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(
+            scene.rays.source(),
+            bytes.start,
+            &buffer,
+            0,
+            bytes.end - bytes.start,
+        );
+        queue.submit([encoder.finish()]);
+        if let Err(e) = crate::readback::map_read(device, &buffer).await {
+            panic!("ray image evidence readback: {e}");
+        }
+        let mapped = buffer.get_mapped_range(..).expect("mapped readback");
+        Some(mapped.to_vec())
+    };
+    Ok(Some(MapTexels {
+        texture: texels,
+        rays,
+    }))
+}
+
 /// [`read_async`], blocking until it completes. Native-only: a browser
 /// cannot block on WebGPU, and awaits `read_async`.
 #[cfg(not(target_arch = "wasm32"))]

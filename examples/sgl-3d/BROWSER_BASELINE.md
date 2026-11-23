@@ -207,12 +207,15 @@ which library goes first.
 `code_ready` (SGL: `init()` compiled and instantiated the WASM; three.js: its
 bundle evaluated) and `first_visible_world` are times since navigation; the
 rest are durations: `device` (adapter, device, canvas; three.js
-`renderer.init()`), `asset_fetch`, `asset_decode` (SGL `asset::load_slice`
-decodes the PNGs in WASM on the page's thread, #886; three.js `GLTFLoader`
-uses `createImageBitmap`), `asset_upload` (SGL's scene adds until the queue
-completes, split by `asset_upload_cpu_*`, where `materials` uploads each
-image's first level; three.js uploads inside its first frame, so this is
-only its scene graph), `view_setup`,
+`renderer.init()`), `asset_fetch`, `asset_decode` (both have the browser
+decode the PNGs off the page's thread with `createImageBitmap`: SGL through
+`asset::load_slice_in_browser`, three.js through `GLTFLoader`),
+`asset_decode_longest_frame_gap` (the longest the page went without an
+animation frame from the start of `asset_decode` to its end: what a loading
+screen would stall), `asset_upload` (SGL's scene adds until the queue
+completes, split by `asset_upload_cpu_*`, where `materials` copies each
+image into its first level on the GPU; three.js uploads inside its first
+frame, so this is only its scene graph), `view_setup`,
 `prepare` (prepared path only), `first_frame_encode_submit`,
 `first_frame_gpu_complete_proxy` and `first_frame_presented_after_submit`.
 Both libraries build their textures' mip chains on the GPU ahead of the

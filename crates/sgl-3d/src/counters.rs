@@ -220,6 +220,21 @@ pub(crate) fn write_texture(
     queue.write_texture(texture, data, layout, size);
 }
 
+/// `queue.copy_external_image_to_texture`, counted as an upload of the
+/// texels it copies.
+#[cfg(target_arch = "wasm32")]
+#[cfg_attr(any(test, feature = "diagnostics"), track_caller)]
+pub(crate) fn copy_external_image(
+    queue: &wgpu::Queue,
+    source: &wgpu::CopyExternalImageSourceInfo,
+    dest: wgpu::CopyExternalImageDestInfo<&wgpu::Texture>,
+    size: wgpu::Extent3d,
+) {
+    #[cfg(any(test, feature = "diagnostics"))]
+    upload(size.width as usize * size.height as usize * 4);
+    queue.copy_external_image_to_texture(source, dest, size);
+}
+
 /// `device.create_buffer`, counted as a buffer created.
 #[cfg_attr(any(test, feature = "diagnostics"), track_caller)]
 pub(crate) fn buffer(

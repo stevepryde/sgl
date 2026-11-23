@@ -24,6 +24,10 @@ pub use super::gltf::{
     LoadOptions, PlacedLight, PunctualKind, PunctualLight, load, load_slice,
     load_slice_with_options, load_with_options,
 };
+#[cfg(target_arch = "wasm32")]
+pub use super::gltf::{decode_image_in_browser, load_slice_in_browser};
+#[cfg(target_arch = "wasm32")]
+pub use super::images::BrowserImage;
 pub use super::images::{CompressedFormat, CompressedImage, Image, ImageError, Rgba8MipChain};
 pub use super::load_budget::LoadBudget;
 use super::material::{AlphaMode, NormalLayer};

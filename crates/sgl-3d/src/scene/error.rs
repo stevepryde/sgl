@@ -42,8 +42,10 @@ pub enum SceneError {
     MissingMesh,
     /// An image has no texels.
     EmptyImage,
-    /// An ETC2/ASTC image needs decoded level 0 for material ray sampling
-    /// or the CPU decal atlas, but supplied none.
+    /// An image has no CPU texels where they are needed: an ETC2/ASTC
+    /// image without its decoded level 0, for material ray sampling or the
+    /// CPU decal atlas, or a browser image (`asset::Image::Browser`) for
+    /// the decal atlas.
     MissingDecodedImage,
     /// A prepared model's ray-data capability differs from this scene's.
     RayDataMismatch,
@@ -252,7 +254,10 @@ impl std::fmt::Display for SceneError {
             Self::MissingMaterial => "a mesh names a material the asset does not have",
             Self::MissingMesh => "the model has no mesh at that index",
             Self::EmptyImage => "an image has no texels",
+            #[cfg(not(target_arch = "wasm32"))]
             Self::MissingDecodedImage => "ETC2/ASTC material rays and decals need a matching decoded level 0 companion",
+            #[cfg(target_arch = "wasm32")]
+            Self::MissingDecodedImage => "ETC2/ASTC material rays and decals need a matching decoded level 0 companion, and decals decoded texels, which a browser image lacks",
             Self::RayDataMismatch => "the prepared model and scene must use the same ray-data capability",
             Self::CompressedImageViews => {
                 "a compressed image sampled as both colour and data needs DownlevelFlags::VIEW_FORMATS"

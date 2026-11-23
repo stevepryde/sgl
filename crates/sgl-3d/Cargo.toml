@@ -29,9 +29,13 @@ include = [
 # defaults make clippy's pedantic group pervasive noise here. Unsafe code stays
 # denied as specs/stack.md records (`#![deny(unsafe_code)]` in src/lib.rs).
 
+# The browser loader (`asset::load_slice_in_browser`) is wasm32's alone.
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+
 [features]
 default = []
-diagnostics = ["dep:js-sys"]
+diagnostics = []
 
 [dependencies]
 # Decodes a BC7 material image's level 0 for the scene's ray source.
@@ -59,9 +63,24 @@ wgpu = { workspace = true, features = ["std", "wgsl", "dx12", "metal", "vulkan",
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster.workspace = true
 
-# The diagnostics clock in the browser: the page's `performance.now()`.
+# In the browser `asset::load_slice_in_browser` has the browser decode a
+# glTF's images (`createImageBitmap`), which the scene copies into their
+# textures (`copy_external_image_to_texture`, wgpu's `web` feature). The
+# diagnostics clock is the page's `performance.now()`.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys = { workspace = true, optional = true }
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = [
+    "Blob",
+    "ColorSpaceConversion",
+    "ImageBitmap",
+    "ImageBitmapOptions",
+    "PremultiplyAlpha",
+    "Window",
+    "WorkerGlobalScope",
+] }
+wgpu = { workspace = true, features = ["web"] }
 
 [dev-dependencies]
 # Existing encoder for the KTX2 fixtures.

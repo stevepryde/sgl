@@ -54,6 +54,20 @@ fn matrix(value: &Value) -> Result<Mat4, JsError> {
     Ok(Mat4::from_cols_array(&values))
 }
 
+/// A GLB loaded by `decode_glb`.
+#[wasm_bindgen]
+pub struct DecodedGlb(Asset);
+
+/// The GLB, its PNGs decoded by the browser off the page's thread, as a
+/// browser game loads one (`asset::load_slice_in_browser`).
+#[wasm_bindgen(js_name = decodeGlb)]
+pub async fn decode_glb(glb: Vec<u8>) -> Result<DecodedGlb, JsError> {
+    asset::load_slice_in_browser(&glb, asset::LoadOptions::default())
+        .await
+        .map(DecodedGlb)
+        .map_err(error)
+}
+
 /// The page's canvas, its device and SGL's scene, renderer and view.
 #[wasm_bindgen]
 pub struct Startup {
@@ -143,10 +157,10 @@ impl Startup {
         sgl_webgpu::device_as_webgpu(&self.device).unwrap_or(JsValue::NULL)
     }
 
-    /// The GLB, its PNGs decoded as `asset::load_slice` does.
-    pub fn decode(&mut self, glb: &[u8]) -> Result<(), JsError> {
-        self.asset = Some(asset::load_slice(glb).map_err(error)?);
-        Ok(())
+    /// The asset `decode_glb` loaded.
+    #[wasm_bindgen(js_name = setAsset)]
+    pub fn set_asset(&mut self, asset: DecodedGlb) {
+        self.asset = Some(asset.0);
     }
 
     /// The scene: materials once, each prototype mesh as a model, then the

@@ -5,12 +5,9 @@
 //! and animation clips, and its authored lights (`lights`).
 use std::path::Path;
 
-use glam::{Mat4, Quat, Vec3};
-use gltf::accessor::{DataType, Dimensions};
-use gltf::animation::Property;
+use glam::Mat4;
 
-use super::asset::{Asset, Material, Result, Vertex};
-use super::deformation;
+use super::asset::{Asset, Material, Result};
 use super::images::Image;
 use super::load_budget::{Budget, LoadBudget};
 pub use instancing::{InstancedMesh, InstancedNode};
@@ -19,9 +16,21 @@ use material::read_material;
 use meshes::{Walk, batch, ignored_attribute, read_node};
 use rig::Rigging;
 
+use accessors::{check_accessor, in_buffer};
+use image_step::{ImageStep, decode_here, read_images};
+use import::{Unread, import};
+use scene_checks::{charge_scene, check_roots};
+
+mod accessors;
 mod attributes;
 #[cfg(test)]
 mod attributes_tests;
+#[cfg(target_arch = "wasm32")]
+mod browser;
+#[cfg(target_arch = "wasm32")]
+pub use browser::{decode_image_in_browser, load_slice_in_browser};
+mod image_step;
+mod import;
 mod instancing;
 #[cfg(test)]
 mod instancing_tests;
@@ -36,6 +45,7 @@ mod meshopt_tests;
 mod rig;
 #[cfg(test)]
 mod rig_tests;
+mod scene_checks;
 mod sources;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
@@ -136,6 +146,7 @@ fn load_inner(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
         path.parent(),
         options,
         (&mut budget, decoded_budget),
+        &mut decode_here,
     )
 }
 
@@ -150,6 +161,15 @@ pub fn load_slice(bytes: &[u8]) -> Result<Asset> {
 /// the same rules as [`load_with_options`]. An image the options supply
 /// may be an external file the bytes cannot resolve.
 pub fn load_slice_with_options(bytes: &[u8], options: LoadOptions<'_>) -> Result<Asset> {
+    load_slice_with_step(bytes, options, &mut decode_here)
+}
+
+/// [`load_slice_with_options`] with `step` taking each image it decodes.
+fn load_slice_with_step(
+    bytes: &[u8],
+    options: LoadOptions<'_>,
+    step: ImageStep<'_>,
+) -> Result<Asset> {
     check(options)?;
     let mut budget = Budget::source(options.budget);
     let mut decoded_budget = Budget::decoded(options.budget);
@@ -162,6 +182,7 @@ pub fn load_slice_with_options(bytes: &[u8], options: LoadOptions<'_>) -> Result
         None,
         options,
         (&mut budget, decoded_budget),
+        step,
     )
 }
 
@@ -260,233 +281,13 @@ pub enum Ignored {
     InstanceAttribute { node: usize, name: String },
 }
 
-/// The document in `bytes`, validated, its buffers, with compressed
-/// buffer views decoded (`meshopt`), and whether it requires
-/// `EXT_mesh_gpu_instancing`, which decides what an instanced node SGL3D
-/// cannot instance does (`instancing::Plan`). glTF 2.0 5.17.2: a
-/// file that requires an extension SGL3D does not support fails to load.
-/// The gltf crate's validation knows none of the material extensions SGL3D
-/// reads itself, so once every required one is known to be supported the
-/// list is cleared for it; all its structural validation remains.
-fn import(
-    bytes: &[u8],
-    base: Option<&Path>,
-    (budget, decoded_budget): (&mut Budget, &mut Budget),
-) -> Result<(gltf::Document, Vec<gltf::buffer::Data>, Unread)> {
-    // The gltf crate subtracts the 12-byte header from the length the GLB
-    // header declares unchecked, so a header declaring less is refused here.
-    if bytes.starts_with(b"glTF") {
-        let length = bytes
-            .get(8..12)
-            .and_then(|length| <[u8; 4]>::try_from(length).ok())
-            .map(u32::from_le_bytes);
-        if length.is_none_or(|length| length < 12) {
-            return Err("the GLB header is truncated or declares a length below its own 12 bytes; re-export valid glTF".into());
-        }
-    }
-    // Keep the BIN chunk borrowed until its size has passed the source budget.
-    let glb = bytes
-        .starts_with(b"glTF")
-        .then(|| gltf::binary::Glb::from_slice(bytes))
-        .transpose()?;
-    let json = glb.as_ref().map_or(bytes, |glb| glb.json.as_ref());
-    let mut root: gltf::json::Root = serde_json::from_slice(json)?;
-    if let Some(extension) = root
-        .extensions_required
-        .iter()
-        .find(|extension| !SUPPORTED_EXTENSIONS.contains(&extension.as_str()))
-    {
-        return Err(format!("the file requires glTF extension {extension}, which SGL3D does not support; bake it into the export or add renderer support").into());
-    }
-    check_root(&root)?;
-    let morph_attributes = rig::ignored_morph_attributes(json, &root)?;
-    let instancing_required = root
-        .extensions_required
-        .iter()
-        .any(|name| name == instancing::EXTENSION);
-    root.extensions_required.clear();
-    let document = gltf::Document::from_json(root)?;
-    let blob = glb.as_ref().and_then(|glb| glb.bin.as_deref());
-    let compressed = meshopt::Compressed::find(&document)?;
-    let unread = |buffer| {
-        compressed
-            .as_ref()
-            .is_some_and(|views| views.unread(buffer))
-    };
-    let mut buffers = sources::buffers(&document, base, blob, budget, unread)?;
-    if let Some(compressed) = compressed {
-        compressed.decode(&mut buffers, decoded_budget)?;
-    }
-    Ok((
-        document,
-        buffers,
-        Unread {
-            instancing_required,
-            morph_attributes,
-        },
-    ))
-}
-
-/// What the import found in the document's JSON that the parsed document
-/// no longer holds.
-struct Unread {
-    /// Whether the file requires `EXT_mesh_gpu_instancing`, a requirement
-    /// cleared from the document for the gltf crate's validation.
-    instancing_required: bool,
-    /// The morph target attributes gltf-json drops as it parses
-    /// (`Ignored::MorphTargetAttribute`).
-    morph_attributes: Vec<Ignored>,
-}
-
-/// Check the references and source variants gltf-json 1.4.1 leaves unchecked
-/// before its own validation indexes POSITION or its readers unwrap them.
-fn check_root(root: &gltf::json::Root) -> Result<()> {
-    use gltf::json::validation::Checked;
-    for (mesh, data) in root.meshes.iter().enumerate() {
-        for (primitive, data) in data.primitives.iter().enumerate() {
-            for (attribute, accessor) in &data.attributes {
-                if accessor.value() >= root.accessors.len() {
-                    return Err(format!("mesh {mesh} primitive {primitive} attribute {attribute:?}: accessor {} is out of range", accessor.value()).into());
-                }
-            }
-            for (target, data) in data.targets.iter().flatten().enumerate() {
-                for (attribute, accessor) in [
-                    ("POSITION", data.positions),
-                    ("NORMAL", data.normals),
-                    ("TANGENT", data.tangents),
-                ] {
-                    if let Some(accessor) = accessor
-                        && accessor.value() >= root.accessors.len()
-                    {
-                        return Err(format!("mesh {mesh} primitive {primitive} morph target {target} {attribute}: accessor {} is out of range", accessor.value()).into());
-                    }
-                }
-            }
-        }
-    }
-    for (animation, data) in root.animations.iter().enumerate() {
-        for (channel, data) in data.channels.iter().enumerate() {
-            if data.target.node.value() >= root.nodes.len() {
-                return Err(format!(
-                    "animation {animation} channel {channel}: target node {} is out of range",
-                    data.target.node.value()
-                )
-                .into());
-            }
-            if !matches!(data.target.path, Checked::Valid(_)) {
-                return Err(format!(
-                    "animation {animation} channel {channel}: invalid target path"
-                )
-                .into());
-            }
-        }
-    }
-    for (image, data) in root.images.iter().enumerate() {
-        if data.uri.is_some() == data.buffer_view.is_some() {
-            return Err(
-                format!("image {image}: exactly one of uri and bufferView is required").into(),
-            );
-        }
-        if data.buffer_view.is_some() && data.mime_type.is_none() {
-            return Err(format!("image {image}: bufferView requires mimeType").into());
-        }
-    }
-    Ok(())
-}
-
-/// `document`'s images, each one `materials` sample from where
-/// `options.images` says, decoded where it says nothing. Bevy's glTF loader
-/// resolves each image's source as it loads (9d12036
-/// `crates/bevy_gltf/src/loader/mod.rs` `load_image`): it decodes an
-/// embedded image and leaves an external one to its asset server, so the
-/// loader never decodes it. Here the game, which has no asset server,
-/// chooses for each image. A file's images resolve beside it (`base`). An
-/// image no material samples is a placeholder, listed in `ignored`: glTF
-/// lets a loader leave out what an unsupported extension adds (glTF 2.0
-/// 5.17.1), such as a texture's `KHR_texture_basisu` or `EXT_texture_webp`
-/// source, which a loader without it replaces with the core `source`, and
-/// SGL3D never binds an ignored map's image.
-fn read_images(
-    document: &gltf::Document,
-    buffers: &[gltf::buffer::Data],
-    base: Option<&Path>,
-    options: LoadOptions<'_>,
-    materials: &[Material],
-    ignored: &mut Vec<Ignored>,
-    budgets: (&mut Budget, &mut Budget),
-) -> Result<Vec<Image>> {
-    let (budget, decoded_budget) = budgets;
-    let mut sampled = vec![false; document.images().len()];
-    for image in materials.iter().flat_map(sampled_images) {
-        sampled[image] = true;
-    }
-    document
-        .images()
-        .map(|image| {
-            let index = image.index();
-            if !sampled[index] {
-                ignored.push(Ignored::Image { image: index });
-                return Ok(Image::Rgba8(image::RgbaImage::new(1, 1)));
-            }
-            let file = match image.source() {
-                gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => Some(uri),
-                _ => None,
-            };
-            let source = match options.images {
-                None => ImageSource::Decode,
-                Some(sources) => sources(GltfImage {
-                    index,
-                    name: image.name(),
-                    uri: file,
-                })
-                .map_err(|error| format!("image {index}: {error}"))?,
-            };
-            match source {
-                ImageSource::Supplied(supplied) => {
-                    supplied.charge_bytes(decoded_budget)
-                        .map_err(|error| format!("supplied image {index}: {error}"))?;
-                    Ok(supplied)
-                },
-                ImageSource::Decode => {
-                    if let gltf::image::Source::View { view, .. } = image.source()
-                        && !in_buffer(&view)
-                    {
-                        return Err(format!("image {index}'s buffer view does not fit its buffer; re-export valid glTF").into());
-                    }
-                    let data = sources::image(image.source(), base, buffers, budget, decoded_budget)
-                        .map_err(|error| format!("image {index} import failed: {error}; check referenced files and re-export valid glTF from the Blender source"))?;
-                    Ok(Image::Rgba8(data.into_rgba8()))
-                }
-            }
-        })
-        .collect()
-}
-
-/// The images `material`'s maps sample: every one it names but an occlusion
-/// map's outside its metallic-roughness image, which SGL3D does not sample.
-fn sampled_images(material: &Material) -> Vec<usize> {
-    let mut images: Vec<usize> = material
-        .textures()
-        .into_iter()
-        .flatten()
-        .map(|texture| texture.image)
-        .collect();
-    if let Some(occlusion) = material
-        .occlusion_texture
-        .filter(|_| !material.packed_occlusion())
-        && let Some(slot) = images.iter().position(|&image| image == occlusion.image)
-    {
-        images.swap_remove(slot);
-    }
-    images
-}
-
 fn decode(
     (document, unread): (gltf::Document, Unread),
     buffers: &[gltf::buffer::Data],
     base: Option<&Path>,
     options: LoadOptions<'_>,
     (budget, mut decoded_budget): (&mut Budget, Budget),
+    step: ImageStep<'_>,
 ) -> Result<Asset> {
     let scene = document
         .default_scene()
@@ -527,7 +328,7 @@ fn decode(
         options,
         &materials,
         &mut ignored,
-        (budget, &mut decoded_budget),
+        (budget, &mut decoded_budget, step),
     )?;
     for mesh in document.meshes() {
         for primitive in mesh.primitives() {
@@ -587,238 +388,4 @@ fn decode(
         lights,
         instanced,
     })
-}
-
-/// Refuses a scene whose walks would read a subtree more than once, before
-/// any walk of it: one that lists a node among its roots more than once or
-/// a node with a parent, which glTF 2.0 forbids (3.5.1, and the scene
-/// schema's `uniqueItems`: a scene's `nodes` are distinct root nodes) and
-/// which would read a subtree's meshes, instancing and lights again each
-/// time it is listed. `parents` holds each node's parent, its hierarchy a
-/// set of trees. What the load decodes is charged after it
-/// (`charge_scene`).
-fn check_roots(scene: &gltf::Scene<'_>, parents: &[Option<usize>]) -> Result<()> {
-    let mut listed = vec![false; parents.len()];
-    for node in scene.nodes().map(|node| node.index()) {
-        if std::mem::replace(&mut listed[node], true) {
-            return Err(format!(
-                "scene {} lists root node {node} more than once; re-export valid glTF",
-                scene.index()
-            )
-            .into());
-        }
-        if let Some(parent) = parents[node] {
-            return Err(format!("scene {} lists node {node} as a root, but node {parent} is its parent; re-export valid glTF", scene.index()).into());
-        }
-    }
-    Ok(())
-}
-
-/// Charge the bytes a load produces before reading accessors: each scene
-/// node's primitive vertices, indices, skin influences and morph deltas;
-/// every skin's joints and every animation channel's keys. An instanced
-/// node's mesh is charged once however many instanced nodes use it, and
-/// each instanced node its instances' transforms, by its accessors'
-/// declared count (`plan`). Selected and
-/// unselected nodes count, as before. Minimum one-element charges also bound
-/// the counting work for empty declarations. Byte products and accumulation
-/// are checked, and the vertex index boundary remains independent of budget.
-fn charge_scene(
-    document: &gltf::Document,
-    scene: &gltf::Scene<'_>,
-    plan: &instancing::Plan,
-    budget: &mut Budget,
-) -> Result<()> {
-    use std::mem::size_of;
-    let mut vertices_total = 0u64;
-    let mut instanced_meshes = vec![false; document.meshes().len()];
-    let mut nodes: Vec<gltf::Node<'_>> = scene.nodes().collect();
-    while let Some(node) = nodes.pop() {
-        nodes.extend(node.children());
-        if let Some(instancing::NodeUse::Instanced { count, .. }) = plan.node(node.index()) {
-            budget.charge_count(*count as u64, size_of::<Mat4>() as u64)?;
-            if let Some(mesh) = node.mesh()
-                && std::mem::replace(&mut instanced_meshes[mesh.index()], true)
-            {
-                continue;
-            }
-        }
-        let vertex_size = size_of::<Vertex>()
-            + node
-                .skin()
-                .map_or(0, |_| size_of::<deformation::Influence>());
-        for primitive in node.mesh().into_iter().flat_map(|mesh| mesh.primitives()) {
-            let vertices = primitive
-                .get(&gltf::Semantic::Positions)
-                .map_or(0, |positions| positions.count()) as u64;
-            vertices_total = vertices_total
-                .checked_add(vertices)
-                .filter(|&count| count <= u64::from(u32::MAX))
-                .ok_or("scene vertices exceed the u32 index range; split the asset")?;
-            let authored = primitive
-                .indices()
-                .map_or(vertices, |indices| indices.count() as u64);
-            // A strip or fan is charged as the triangle list it becomes;
-            // a mode the read refuses, as authored.
-            let indices =
-                topology::triangle_list_len(primitive.mode(), authored).unwrap_or(authored);
-            budget.charge_count(vertices.max(1), vertex_size as u64)?;
-            budget.charge_count(indices.max(1), size_of::<u32>() as u64)?;
-            let delta_size = (size_of::<deformation::MorphDelta>() as u64)
-                .checked_mul(primitive.morph_targets().count() as u64)
-                .ok_or("morph target byte count overflow")?;
-            budget.charge_count(vertices.max(1), delta_size)?;
-        }
-    }
-    for skin in document.skins() {
-        budget.charge_count(
-            skin.joints().count().max(1) as u64,
-            size_of::<deformation::Joint>() as u64,
-        )?;
-    }
-    for channel in document
-        .animations()
-        .flat_map(|animation| animation.channels())
-    {
-        let value = match channel.target().property() {
-            Property::Translation | Property::Scale => size_of::<Vec3>(),
-            Property::Rotation => size_of::<Quat>(),
-            Property::MorphTargetWeights => size_of::<f32>(),
-        };
-        let sampler = channel.sampler();
-        budget.charge_count(
-            sampler.input().count().max(1) as u64,
-            size_of::<f32>() as u64,
-        )?;
-        budget.charge_count(sampler.output().count().max(1) as u64, value as u64)?;
-    }
-    Ok(())
-}
-
-/// Refuses an accessor the gltf crate's readers cannot read, which its
-/// validation lets through and its readers (gltf 1.4.1 `mesh::Reader`,
-/// `skin::Reader`, `animation::util::Reader` and `accessor::util::Iter`)
-/// assume away, panicking or misreading otherwise: one holding a component
-/// type or shape glTF 2.0 does not allow for its use (`types`, `shapes`),
-/// one of no elements, and one whose elements or sparse substitutions do
-/// not lie within their buffer views at a stride no narrower than an
-/// element, whose views do not lie within their buffers, or whose sparse
-/// indices are not strictly increasing and below its count (glTF 2.0
-/// 3.6.2.3). `what` names its use.
-///
-/// It also refuses one whose element count its use does not allow, before
-/// gltf's readers allocate that many, so what each use reads stays in
-/// proportion to the file's data: `count` is the count glTF requires (the
-/// primitive's vertices, the skin's joints, the sampler's keyframes),
-/// itself fixed by data or the document, or None where nothing fixes it.
-/// An accessor without a buffer view (a sparse one) declares its count
-/// without data; where nothing fixes that count, its elements may take no
-/// more bytes than the file's buffers hold (`buffer_bytes`, their total),
-/// the bound its elements would meet in a buffer view.
-fn check_accessor(
-    accessor: &gltf::Accessor<'_>,
-    what: &str,
-    types: &[DataType],
-    shapes: &[Dimensions],
-    count: Option<usize>,
-    (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
-) -> Result<()> {
-    let index = accessor.index();
-    let (data_type, shape) = (accessor.data_type(), accessor.dimensions());
-    if !types.contains(&data_type) || !shapes.contains(&shape) {
-        return Err(format!("{what} accessor {index} holds {data_type:?} {shape:?}, where glTF allows {types:?} {shapes:?}; re-export valid glTF").into());
-    }
-    let sparse = accessor.sparse();
-    if accessor.count() == 0 || sparse.as_ref().is_some_and(|sparse| sparse.count() == 0) {
-        return Err(
-            format!("{what} accessor {index} has no elements; re-export valid glTF").into(),
-        );
-    }
-    let elements = accessor.count();
-    if let Some(count) = count
-        && elements != count
-    {
-        return Err(format!("{what} accessor {index} has {elements} elements where its use needs {count}; re-export valid glTF").into());
-    }
-    if count.is_none()
-        && accessor.view().is_none()
-        && elements
-            .checked_mul(accessor.size())
-            .is_none_or(|bytes| bytes > buffer_bytes)
-    {
-        return Err(format!("{what} accessor {index} has {elements} elements without a buffer view, more than the file's {buffer_bytes} buffer bytes would hold; re-export valid glTF").into());
-    }
-    let size = accessor.size();
-    let within = accessor
-        .view()
-        .is_none_or(|view| fits(&view, accessor.offset(), accessor.count(), size))
-        && sparse.as_ref().is_none_or(|sparse| {
-            let (indices, values) = (sparse.indices(), sparse.values());
-            fits(
-                &indices.view(),
-                indices.offset(),
-                sparse.count(),
-                indices.index_type().size(),
-            ) && fits(&values.view(), values.offset(), sparse.count(), size)
-        });
-    if !within {
-        return Err(format!(
-            "{what} accessor {index} does not fit its buffer view and buffer; re-export valid glTF"
-        )
-        .into());
-    }
-    if let Some(sparse) = sparse {
-        use gltf::accessor::sparse::IndexType;
-        use gltf::accessor::util::{ItemIter, SparseIndicesIter};
-
-        let indices = sparse.indices();
-        let view = indices.view();
-        let stride = view.stride().unwrap_or(indices.index_type().size());
-        // `fits` proved these offsets and every index are inside the
-        // imported buffer. Use the same typed iterator and stride as gltf's
-        // sparse reader, which otherwise silently drops invalid indices.
-        let bytes = &buffers[view.buffer().index()].0
-            [view.offset() + indices.offset()..view.offset() + view.length()];
-        let indices = match indices.index_type() {
-            IndexType::U8 => SparseIndicesIter::U8(ItemIter::new(bytes, stride)),
-            IndexType::U16 => SparseIndicesIter::U16(ItemIter::new(bytes, stride)),
-            IndexType::U32 => SparseIndicesIter::U32(ItemIter::new(bytes, stride)),
-        };
-        let mut previous = None;
-        for sparse_index in indices.take(sparse.count()) {
-            if sparse_index as usize >= elements
-                || previous.is_some_and(|previous| sparse_index <= previous)
-            {
-                return Err(format!("{what} accessor {index} has sparse indices that are not strictly increasing and below its {elements} elements; re-export valid glTF").into());
-            }
-            previous = Some(sparse_index);
-        }
-    }
-    Ok(())
-}
-
-/// Whether `count` elements of `size` bytes from `offset` lie within `view`
-/// at its stride, an element's when it has none, as gltf's
-/// `accessor::util::Iter::new` reads them, and `view` within its buffer.
-fn fits(view: &gltf::buffer::View<'_>, offset: usize, count: usize, size: usize) -> bool {
-    let stride = view.stride().unwrap_or(size);
-    in_buffer(view)
-        && stride >= size
-        && count
-            .checked_sub(1)
-            .and_then(|last| last.checked_mul(stride))
-            .and_then(|start| start.checked_add(offset))
-            .and_then(|start| start.checked_add(size))
-            .is_some_and(|end| end <= view.length())
-}
-
-/// Whether `view` lies within its buffer, which gltf slices it from
-/// unchecked (gltf 1.4.1 `accessor::util::buffer_view_slice` and
-/// `image::Data::from_source` add its offset and length unchecked, and the
-/// latter indexes the buffer's data with them). `import_buffers` holds each
-/// buffer's data to at least its declared length.
-fn in_buffer(view: &gltf::buffer::View<'_>) -> bool {
-    view.offset()
-        .checked_add(view.length())
-        .is_some_and(|end| end <= view.buffer().length())
 }

@@ -288,6 +288,12 @@ impl SceneRays {
                     (IMAGE_RGBA8, texels.as_raw().as_slice())
                 }
             },
+            #[cfg(target_arch = "wasm32")]
+            Image::Browser(_) => {
+                unreachable!(
+                    "a browser image's level 0 is copied from its texture (`add_texture_image`)"
+                )
+            }
         };
         let header = ImageHeader {
             width,
@@ -304,6 +310,83 @@ impl SceneRays {
         );
         self.write(queue, range.start, &record);
         Ok(range)
+    }
+
+    /// A browser image's record, its level 0 copied on the GPU from
+    /// `texture`'s first level, where the browser decoded it
+    /// (`Image::Browser`); its word starts the range. `texture` is RGBA8
+    /// and can be copied from. The copy is submitted, so it lands after the
+    /// browser's and before any frame that reads it.
+    #[cfg(target_arch = "wasm32")]
+    pub fn add_texture_image(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+    ) -> Result<Range<u32>, SceneError> {
+        if self.ray_data == RayData::Disabled {
+            return Ok(0..0);
+        }
+        let (width, height) = (texture.width(), texture.height());
+        let header = ImageHeader {
+            width,
+            height,
+            format: IMAGE_RGBA8,
+        };
+        let texels = width as usize * height as usize;
+        let range = self.allocate(device, queue, words::<ImageHeader>() + texels)?;
+        self.write(queue, range.start, bytemuck::cast_slice(&[header]));
+        let start = u64::from(range.start) * 4 + std::mem::size_of::<ImageHeader>() as u64;
+        let row = width * 4;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("browser image ray texels"),
+        });
+        let mut copy = |origin_y: u32, rows: u32| {
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: origin_y,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &self.source,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: start + u64::from(origin_y) * u64::from(row),
+                        bytes_per_row: (rows > 1).then_some(row),
+                        rows_per_image: None,
+                    },
+                },
+                wgpu::Extent3d {
+                    width,
+                    height: rows,
+                    depth_or_array_layers: 1,
+                },
+            );
+        };
+        // A buffer copy's rows lie 256 bytes apart; the record's are packed,
+        // so a row whose bytes are not a multiple of 256 is copied alone.
+        if row % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0 {
+            copy(0, height);
+        } else {
+            for y in 0..height {
+                copy(y, 1);
+            }
+        }
+        queue.submit([encoder.finish()]);
+        Ok(range)
+    }
+
+    /// The source's bytes holding the texels of the image record at
+    /// `range`, after its header.
+    #[cfg(any(test, feature = "diagnostics"))]
+    pub fn image_texel_bytes(range: &Range<u32>) -> Range<u64> {
+        u64::from(range.start) * 4 + std::mem::size_of::<ImageHeader>() as u64
+            ..u64::from(range.end) * 4
     }
 
     /// A material's record, which lightmap charts do not light; its word

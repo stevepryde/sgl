@@ -3,7 +3,10 @@
 //! and driven by Playwright from `browser/sgl3d.test.ts` via
 //! `bun scripts/tasks.ts check-browser`.
 //!
-//! It creates a device with the adapter's limits, builds a scene and renders
+//! First, on a device of its own, it loads a GLB of PNG and JPEG images
+//! with the browser's decoder and compares their texels with the `image`
+//! crate's (`images`, `support/browser_images.rs`). Then it creates a
+//! device with the adapter's limits, builds a scene and renders
 //! a few frames of it under several settings into an offscreen target. The
 //! scene holds a textured ground, its map on its second UV set through a
 //! transform; a box that shades part of it from a
@@ -48,6 +51,9 @@
 //! reflected view draws (`mirror`).
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
+
+#[path = "support/browser_images.rs"]
+mod browser_images;
 
 use sgl_3d::glam::camera;
 use sgl_3d::{
@@ -2713,6 +2719,46 @@ async fn compressed_materials(
     Ok(detail)
 }
 
+/// The browser's image decoding (`support/browser_images.rs`), on a
+/// device of its own. The page calls it before `run`, so the `image`
+/// crate's decodes it compares with run on a shallow stack, not under the
+/// smoke test's futures.
+#[wasm_bindgen]
+pub async fn images() -> String {
+    console_error_panic_hook::set_once();
+    let checked = async {
+        let adapter = sgl_webgpu::instance(&wgpu::InstanceDescriptor::new_without_display_handle())
+            .request_adapter(&Default::default())
+            .await
+            .map_err(|e| format!("no WebGPU adapter: {e}"))?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("SGL3D browser images"),
+                required_features: sgl_3d::graphics_device::features(&adapter),
+                required_limits: sgl_3d::graphics_device::limits(&adapter),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| format!("request_device: {e}"))?;
+        let uncaptured = Arc::new(Mutex::new(Vec::<String>::new()));
+        device.on_uncaptured_error(Arc::new({
+            let uncaptured = uncaptured.clone();
+            move |error| uncaptured.lock().unwrap().push(error.to_string())
+        }));
+        let detail = browser_images::check(&device, &queue).await?;
+        let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
+        if errors.is_empty() {
+            Ok(detail)
+        } else {
+            Err(format!("uncaptured {errors:?}"))
+        }
+    };
+    match checked.await {
+        Ok(detail) => format!("ok browser image decode: {detail}\n"),
+        Err(error) => format!("FAIL browser image decode: {error}\n"),
+    }
+}
+
 #[wasm_bindgen]
 pub async fn run() -> String {
     console_error_panic_hook::set_once();
@@ -2767,6 +2813,7 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         report,
         "ok browser compressed material formats: {compressed}"
     );
+
     let probe = probe_capture(&device, &queue).await;
     let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
     match probe {

@@ -82,6 +82,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             Image::Rgba8Mips(_) => {
                 unreachable!("export inspection does not supply prepared RGBA mips")
             }
+            #[cfg(target_arch = "wasm32")]
+            Image::Browser(_) => unreachable!("load_slice_with_options decodes in WASM"),
         })
         .sum();
     let path = directory.join("asset-stats.json");

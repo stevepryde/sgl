@@ -22,8 +22,9 @@ native game that opts in to hardware ray tracing also requests
 `graphics_device::ray_tracing_features` with wgpu's experimental token and
 turns `Settings::hardware_ray_tracing` on, and `Settings::ray_traced_shadows`
 for ray-traced shadows.
-In the browser, fetch asset bytes and load them with `asset::load_slice` or
-`asset::load_slice_with_options`, pass the measured frame time in
+In the browser, fetch asset bytes and await
+`asset::load_slice_in_browser(&bytes, options)`, which has the browser
+decode the images off the page's thread, pass the measured frame time in
 `FrameInput::frame_time_ms`, and await readbacks, which WebGPU cannot block
 on: `Renderer::capture_specular_probe_async` captures a specular probe with
 a `View`'s shadow maps, as

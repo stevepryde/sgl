@@ -68,7 +68,9 @@ them through unrefracted. A probe captured on an
   ([Material textures](../README.md#material-textures)). `TEXCOORD_1`
   also loads as `Vertex::lightmap_uv`, the static irradiance atlas chart,
   whatever the maps sample.
-  `asset::load` (a file), `load_slice` (bytes; the browser's way),
+  `asset::load` (a file), `load_slice` (bytes), `load_slice_in_browser`
+  (bytes; the browser's way, its images decoded by the browser off the
+  page's thread into `Image::Browser`, which decals cannot take),
   `load_with_options` and `load_slice_with_options` (`LoadOptions`: an
   independent checked source/decoded byte caps, an emissive strength cap,
   images the game supplies, which are never decoded,
@@ -654,7 +656,8 @@ size, and record counts must fit `u32`.
   `Renderer::take_dynamic_gi_reports` (`Diagnostics::dynamic_gi`: the dynamic GI
   volume's probes, rays, BVH visits and budget stride, by frame) return what
   they observed; `diagnostics::read_async` reads a target back (natively
-  also blocking, `diagnostics::read`). Configuration only:
+  also blocking, `diagnostics::read`), and `diagnostics::read_map_async` a
+  material map's texels from its texture and the ray source. Configuration only:
   no environment variables or files. Shipping builds leave it off.
 
 ## Not provided

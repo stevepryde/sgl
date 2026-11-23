@@ -178,6 +178,7 @@ export function phases(report: any) {
     device: m.device_ready - m.code_ready,
     asset_fetch: m.asset_fetched - m.device_ready,
     asset_decode: m.asset_decoded - m.asset_fetched,
+    asset_decode_longest_frame_gap: report.asset_decode_longest_frame_gap_ms ?? null,
     asset_upload: m.asset_uploaded - m.asset_decoded,
     view_setup: m.view_ready - m.asset_uploaded,
     prepare: m.prepared === undefined ? null : m.prepared - m.view_ready,
