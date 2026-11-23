@@ -211,6 +211,8 @@ pub enum SceneError {
     Shader(crate::shader::ShaderError),
     /// The HDR effect was removed, or another scene issued its identity.
     UnknownHdrEffect,
+    /// The selection was removed, or another scene issued its identity.
+    UnknownSelection,
     /// `Scene::hdr_effect` was given `given` bytes for an effect whose
     /// `EffectParams` takes `expected`.
     HdrEffectParameters { expected: u32, given: u32 },
@@ -376,6 +378,7 @@ impl std::fmt::Display for SceneError {
             }
             Self::Shader(error) => return error.fmt(f),
             Self::UnknownHdrEffect => "the HDR effect is not in this scene",
+            Self::UnknownSelection => "the selection is not in this scene",
             Self::HdrEffectParameters { expected, given } => {
                 return write!(
                     f,

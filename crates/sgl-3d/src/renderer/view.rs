@@ -9,8 +9,8 @@ use crate::settings::{Antialiasing, RenderPreset, Settings};
 use crate::stages::shadows::local::LocalShadowStats;
 use crate::stages::{
     antialiasing, cull::Cull, depth_of_field::DepthOfField, exposure::Exposure, fog::VolumetricFog,
-    hdr_effect::HdrEffectStage, motion_blur::MotionBlur, opaque::Opaque, post::Post,
-    reflections::Reflections, shadows::Shadows, shadows::contact::ContactShadowStage,
+    hdr_effect::HdrEffectStage, motion_blur::MotionBlur, opaque::Opaque, outline::OutlineStage,
+    post::Post, reflections::Reflections, shadows::Shadows, shadows::contact::ContactShadowStage,
     shadows::traced::TracedShadows, sky::Sky, transparent::Transparent,
 };
 use crate::view::FrameViews;
@@ -133,6 +133,7 @@ pub struct View {
     pub(crate) depth_of_field: DepthOfField,
     pub(crate) motion_blur: MotionBlur,
     pub(crate) post: Box<Post>,
+    pub(crate) outline: OutlineStage,
     pub(crate) history: CameraHistory,
     /// History restarts: the targets changed since the last finished frame
     /// was rendered, or the view's last render was a reset that was not
@@ -317,6 +318,7 @@ impl View {
                 )
                 .map_err(ViewError::LookupTextures)?,
             ),
+            outline: OutlineStage::default(),
             cull,
             sky: Sky::default(),
             statistics: StatisticsReadback::default(),

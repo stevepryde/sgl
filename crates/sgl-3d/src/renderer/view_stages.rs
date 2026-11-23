@@ -103,6 +103,7 @@ pub(super) fn begin_view(
         depth_of_field,
         motion_blur,
         post,
+        outline,
         rendered,
         targets_generation,
         #[cfg(feature = "diagnostics")]
@@ -191,6 +192,17 @@ pub(super) fn begin_view(
             layers: effective.layers,
         },
         effective.local_lights,
+    );
+    // The outline's mask, of the selected instances alone.
+    outline.prepare(
+        scene,
+        input,
+        &values,
+        (
+            *sizes,
+            effective.world_space != crate::settings::WorldSpaceReflections::Off,
+        ),
+        &mut views.instances,
     );
     // Every list the frame draws is built.
     views.instances.upload(device, queue);
@@ -293,7 +305,7 @@ pub(super) fn begin_view(
 /// transparent stage's receivers and volume layers, reflections with the
 /// transparent stage drawn into their input (while a screen-space method
 /// traces it) and onto their result, heat, exposure, antialiasing, the HDR
-/// effect, depth of field, motion blur, then post. A planar reflector's
+/// effect, depth of field, motion blur, post, then the outline. A planar reflector's
 /// reflected view stops after the transparent stage: its composite,
 /// scene-referred radiance before exposure, is its picture (the
 /// architecture's Frame, "Planar reflections").
@@ -348,6 +360,9 @@ pub(super) fn finish_view(
         depth_of_field,
         motion_blur,
         post,
+        outline,
+        output_format,
+        output_encodes_srgb,
         #[cfg(feature = "diagnostics")]
         probe,
         #[cfg(any(test, feature = "diagnostics"))]
@@ -553,6 +568,8 @@ pub(super) fn finish_view(
         );
         probe.finish(ctx.encoder);
     }
+    // Over the finished picture, before the game's HUD.
+    outline.encode(&mut ctx, output, (*output_format, *output_encodes_srgb));
 }
 
 /// The opaque stage in the stage order's named parts: the G-buffer, then,

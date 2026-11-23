@@ -1,6 +1,6 @@
 //! Populations: what a CPU-built view draws of the scene, a filter over its
-//! instances and materials, and the static casters a local light's range
-//! reaches. The camera's opaque and masked surfaces and the frame's
+//! instances (or a selection of them) and materials, and the static casters
+//! a local light's range reaches. The camera's opaque and masked surfaces and the frame's
 //! directional cascades are GPU-built (`draw_list::gpu`), and filter the
 //! same way on the GPU (`stages::cull`).
 use super::culling::clip_intersects;
@@ -14,8 +14,9 @@ use crate::{Mobility, Scene};
 use glam::{Mat4, Vec3};
 
 /// What a view draws of the scene, and how: a filter over the instances,
-/// walked in index order, and over materials by the visibility mask and
-/// alpha mode. Blended materials are the `Blended` population's alone.
+/// walked in index order (or a selection's instances, in its order), and
+/// over materials by the visibility mask and alpha mode. Blended materials
+/// are the `Blended` population's and an outline mask's alone.
 pub(crate) enum Population<'a> {
     /// The main camera's blended surfaces: `visible` instances among those
     /// the scene indexes as holding a blended mesh, each blended mesh whose
@@ -53,6 +54,16 @@ pub(crate) enum Population<'a> {
         range: f32,
         casters: Casters,
         reach: &'a LightReach,
+    },
+    /// A view's outline mask (`stages::outline`): the `visible` instances
+    /// among `instances` alone, walked in their order, each mesh whose
+    /// material's groups the mask enables, whatever its alpha mode (a
+    /// blended one's triangles whole, a masked one's cut-out texels
+    /// discarded), culled against the view per instance and drawn at the
+    /// selected LOD, as the camera's blended surfaces are.
+    Selection {
+        instances: &'a [crate::InstanceId],
+        lod: Option<LodSelector>,
     },
 }
 
@@ -170,7 +181,7 @@ impl Population<'_> {
     pub(super) fn shows(&self, instance: &Instance) -> bool {
         let state = &instance.state;
         match self {
-            Self::Blended { .. } => state.visible,
+            Self::Blended { .. } | Self::Selection { .. } => state.visible,
             Self::ProbeFace {
                 content: casters, ..
             }
@@ -195,15 +206,30 @@ impl Population<'_> {
             Self::Blended { .. } | Self::CaptureShadow(_) | Self::LocalShadow { .. } => {
                 camera_variant(material, mirrored, deformed)
             }
+            // Depth-only through the casters, which discard a masked
+            // material's cut-out texels whatever else it is: a masked
+            // transmissive one included, which the camera draws blended
+            // and cut.
+            Self::Selection { .. } => Variant {
+                alpha: if matches!(material.values.alpha, crate::AlphaMode::Mask { .. }) {
+                    Alpha::Mask
+                } else {
+                    Alpha::of(&material.values)
+                },
+                ..camera_variant(material, mirrored, deformed)
+            },
         }
     }
 
     /// Whether this population draws meshes with `material` under the
     /// frame's `mask`: blended ones only `Blended`, which draws nothing
-    /// else, and shadows only casters.
+    /// else, and `Selection`, which draws every alpha mode, and shadows only
+    /// casters.
     pub(super) fn draws(&self, material: &Material, mask: Option<u32>) -> bool {
-        if let Self::LocalShadow { .. } = self {
-            return material.casts_local_shadow(mask);
+        match self {
+            Self::LocalShadow { .. } => return material.casts_local_shadow(mask),
+            Self::Selection { .. } => return material.enabled(mask),
+            _ => {}
         }
         if material.values.blended() != matches!(self, Self::Blended { .. }) {
             return false;

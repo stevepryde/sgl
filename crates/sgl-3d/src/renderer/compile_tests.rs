@@ -26,6 +26,8 @@ struct Level {
     feed: Option<(View, crate::RenderTextureId)>,
     /// The opaque cube's material.
     opaque: crate::MaterialId,
+    /// The opaque, masked and blended cubes.
+    cubes: [crate::InstanceId; 3],
     output: wgpu::Texture,
     settings: Settings,
 }
@@ -39,7 +41,7 @@ impl Level {
     fn with_opaque(opaque: crate::asset::Asset) -> Option<Self> {
         let (instance, device, queue) = test_support::counted_device()?;
         let mut scene = Scene::new(&device, &queue);
-        let (opaque, _) = test_support::add_static(&device, &queue, &mut scene, opaque);
+        let (opaque, opaque_cube) = test_support::add_static(&device, &queue, &mut scene, opaque);
         let (_, masked) = test_support::add_static(
             &device,
             &queue,
@@ -115,6 +117,7 @@ impl Level {
             view,
             feed: None,
             opaque: opaque.materials[0],
+            cubes: [opaque_cube, masked, blended],
             output,
             settings,
         })
@@ -458,6 +461,79 @@ fn a_removed_hdr_effect_applies_none_and_its_pipeline_goes() {
         plain.render(&Level::input(0.)) == bytes,
         "the frame differs from one with no effect"
     );
+}
+
+// Plausible defects: a view that outlines nothing paying for the stage (a
+// target, buffer, pipeline or bind group made at the view, or for a
+// selection the scene holds that no frame names, or kept after its last
+// outlined frame), or an outline costing more than its three passes'
+// targets, buffers, groups and two programs. The oracle is wgpu's own
+// count of what the device holds: a level whose scene holds a selection
+// that no frame names holds what a level without one holds, frame for
+// frame, and draws the same bytes; a frame that outlines the opaque cube,
+// whose caster pipeline the point light's shadow already made, adds
+// exactly two textures (the mask and the rows), two buffers (the view and
+// the outline), three bind groups and two render pipelines, and no compute
+// pipeline or shader module; the frame after, without it, holds what it
+// held before.
+#[test]
+fn an_outline_costs_nothing_unnamed_and_two_targets_named() {
+    let (Some(mut plain), Some(mut holding)) = (Level::new(), Level::new()) else {
+        return;
+    };
+    let selection = holding.scene.add_selection(&[holding.cubes[0]]).unwrap();
+    for along in [0., 0.1] {
+        let input = Level::input(along);
+        let bytes = [plain.render(&input), holding.render(&input)];
+        assert_eq!(plain.held(), holding.held(), "frame at {along}");
+        assert!(bytes[0] == bytes[1], "the frames differ at {along}");
+    }
+    let before = holding.held();
+    let mut outlined = Level::input(0.2);
+    outlined.outline = Some(crate::Outline::new(selection));
+    holding.render(&outlined);
+    let after = holding.held();
+    assert!(holding.view.outline.holds_targets(), "the outline ran");
+    let expected = Held {
+        textures: before.textures + 2,
+        buffers: before.buffers + 2,
+        bind_groups: before.bind_groups + 3,
+        render_pipelines: before.render_pipelines + 2,
+        ..before
+    };
+    assert_eq!(after, expected, "{before:?} to {after:?}");
+    holding.render(&Level::input(0.3));
+    let released = holding.held();
+    assert_eq!(
+        (released.textures, released.buffers, released.bind_groups),
+        (before.textures, before.buffers, before.bind_groups),
+        "what the outline held is released"
+    );
+}
+
+// Plausible defect: the outline's programs, or the mask's caster pipelines
+// for a selected material the frame draws no other caster of (a blended
+// one, which casts no shadow), left out of the planning pass or created
+// where the stage draws, so a game that highlights its first target
+// compiles on the window thread after all. The oracle is wgpu's count, as
+// `a_compiled_levels_first_frame_creates_no_program`'s: unchanged across
+// the compiled level's first frame with every cube outlined, which the
+// frame ran; and the planning pass found more jobs than the same level
+// without the outline.
+#[test]
+fn a_compiled_level_with_an_outline_creates_no_program_at_its_first_frame() {
+    let (Some(mut compiled), Some(mut without)) = (Level::new(), Level::new()) else {
+        return;
+    };
+    let selection = compiled.scene.add_selection(&compiled.cubes).unwrap();
+    let mut input = Level::input(0.);
+    input.outline = Some(crate::Outline::new(selection));
+    let jobs = compiled.compile_all(&input);
+    let before = compiled.programs();
+    compiled.render(&input);
+    assert_eq!(compiled.programs(), before);
+    assert!(compiled.view.outline.holds_targets(), "the frame outlined");
+    assert!(jobs > without.compile_all(&Level::input(0.)));
 }
 
 // Plausible defect: the planning passes leave something behind that the

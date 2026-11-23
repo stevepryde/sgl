@@ -485,3 +485,95 @@ fn hdr_effect(color:vec3<f32>,ctx:EffectContext,params:EffectParams)->vec3<f32> 
         "the main view applied the feed's effect"
     );
 }
+
+// Plausible defects: a view that draws a render texture skipping the
+// outline (its picture written only by post), the outline's composite
+// refused by the render texture's sRGB format, or the main view outlining
+// what only the feed's input names. The fixture: the feed, 100 m along
+// +X, sees an unlit black square 3 m ahead over a black backdrop, its
+// selection outlined red; the main view shows the feed's picture on its
+// screen and names no outline. The oracle is the contract: with the
+// feed's outline the screen shows red (the ring, emitted), and without it
+// nothing red; the feed held the outline's targets, the main view none.
+#[test]
+fn a_view_drawing_a_render_texture_outlines_its_own_picture() {
+    let Some(mut stage) = Stage::new() else {
+        return;
+    };
+    let main_settings = Settings {
+        antialiasing: Antialiasing::Off,
+        ..settings()
+    };
+    let feed_settings = settings();
+    let mut square = screen();
+    for vertex in &mut square.meshes[0].vertices {
+        vertex.position[0] += 100.;
+    }
+    square.materials[0].emissive = [0.; 3];
+    let ids = stage
+        .scene
+        .add_asset(&stage.device, &stage.queue, square)
+        .unwrap();
+    let selected = stage
+        .scene
+        .add_instance(
+            &stage.device,
+            &stage.queue,
+            InstanceState::new(ids.model),
+            Mobility::Static,
+        )
+        .unwrap();
+    let selection = stage.scene.add_selection(&[selected]).unwrap();
+    let main_input = input(Vec3::ZERO);
+    let mut feed_input = input(Vec3::X * 100.);
+    feed_input.backdrop = crate::Backdrop::Color([0.; 3]);
+    // The main view's pixels that show red.
+    let red = |stage: &mut Stage, feed_input: &FrameInput| {
+        let mut views = vec![
+            ViewFrame {
+                view: &mut stage.main,
+                input: &main_input,
+                settings: &main_settings,
+                output: ViewOutput::Texture(&stage.output),
+                timing: None,
+            },
+            ViewFrame {
+                view: &mut stage.feed,
+                input: feed_input,
+                settings: &feed_settings,
+                output: ViewOutput::RenderTexture(stage.texture),
+                timing: None,
+            },
+        ];
+        let mut encoder = stage.device.create_command_encoder(&Default::default());
+        stage.renderer.render(
+            &stage.device,
+            &stage.queue,
+            &mut encoder,
+            &mut stage.scene,
+            &mut views,
+        );
+        stage.queue.submit([encoder.finish()]);
+        stage.renderer.finish_frame(&mut stage.scene);
+        let bytes = test_support::read(&stage.device, &stage.queue, stage.output.texture(), 8);
+        bytes
+            .chunks_exact(8)
+            .filter(|texel| {
+                let [r, g] = [0, 2].map(|at| test_support::half(&texel[at..]));
+                r > 0.2 && g < 0.05
+            })
+            .count()
+    };
+    assert_eq!(red(&mut stage, &feed_input), 0, "red without an outline");
+    feed_input.outline = Some(crate::Outline {
+        visible_color: [1., 0., 0., 1.],
+        ..crate::Outline::new(selection)
+    });
+    let outlined = red(&mut stage, &feed_input);
+    assert!(outlined > 4, "{outlined} red pixels on the screen");
+    assert!(stage.feed.outline.holds_targets(), "the feed outlined");
+    assert!(
+        !stage.main.outline.holds_targets(),
+        "the main view outlined the feed's selection"
+    );
+}

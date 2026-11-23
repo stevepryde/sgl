@@ -6,7 +6,8 @@
 //! each directional cascade's from the scene's draw candidates, culled on
 //! the GPU (`stages::cull`). The CPU builder here walks the instances for
 //! the rest (`view::population`): the camera's blended surfaces, the
-//! local-light shadow faces and a probe capture's faces and cascades. It
+//! local-light shadow faces, a view's outline mask and a probe capture's
+//! faces and cascades. It
 //! finds each shown instance's draws (culled and LOD-selected per
 //! instance), then merges the draws of equal geometry, material, pipeline
 //! variant and mobility that draw the same index ranges into one instanced
@@ -120,6 +121,12 @@ impl DrawList {
                 let instance = scene.instances.slots.at(index);
                 (index, instance.expect("an indexed instance lives"))
             })),
+            // A selection walks its own instances, those still in the scene.
+            Population::Selection { instances, .. } => Box::new(
+                instances
+                    .iter()
+                    .filter_map(|&id| Some((id.index(), scene.instances.slots.get(id)?))),
+            ),
             _ => Box::new(
                 scene
                     .instances
@@ -181,8 +188,8 @@ impl DrawList {
         self.first = drawn.append(&self.instances);
     }
 
-    /// The camera's blended draws of one instance, and a probe capture's
-    /// faces' and cascades': a face of a live refresh culled as the
+    /// The camera's blended draws of one instance, an outline mask's, and a
+    /// probe capture's faces' and cascades': a face of a live refresh culled as the
     /// camera's are, a bake's and every cascade's whole.
     fn object(
         &mut self,
@@ -197,6 +204,7 @@ impl DrawList {
         // blended surfaces and a culled probe face do, or whole.
         let (camera, lod, culled) = match population {
             Population::Blended { lod, cull, .. } => (true, lod.as_ref(), *cull),
+            Population::Selection { lod, .. } => (true, lod.as_ref(), true),
             Population::ProbeFace { culled: true, .. } => (true, None, true),
             _ => (false, None, false),
         };

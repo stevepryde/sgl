@@ -550,6 +550,70 @@ frame.motion_blur.shutter_angle = 0.5; // the default, film's 180° shutter
   moves.
 - Timing group `motion blur`.
 
+## Outlines
+
+A line around chosen instances over a view's finished picture: the block
+a player targets, the unit under the cursor, an interactable in reach,
+shown through a wall in a second colour. The game decides which instances,
+when, the width and the colours; SGL3D draws the line. The `outline`
+example outlines a targeted block half behind a wall, then a box-select of
+every block.
+
+```rust,ignore
+let targeted = scene.add_selection(&[block])?;           // once
+scene.set_selection(targeted, &[other_block])?;          // when the target changes
+frame.outline = Some(Outline {
+    width: 3.,                                           // output pixels
+    visible_color: [1., 0.6, 0.1, 1.],                   // sRGB, straight alpha
+    hidden_color: [1., 0.6, 0.1, 0.35],                  // alpha 0: in sight only
+    ..Outline::new(targeted)
+});
+```
+
+- A selection is scene content: `Scene::add_selection(&[InstanceId])`,
+  `set_selection` and `remove_selection`. Every id must be an instance of
+  the scene (`SceneError::UnknownInstance`, the selection left as it was);
+  one named twice counts once. A removed instance is no longer outlined,
+  and a frame that names a removed selection (`UnknownSelection` on an
+  edit) or an empty one outlines nothing. Each view's frame names its own
+  (`FrameInput::outline`, `None` by default), so two views can outline
+  different instances, or the same ones differently; a view drawing a
+  render texture outlines its picture by its own input.
+- The line surrounds the selected instances' combined silhouette:
+  instances that touch on screen share one outline, with no line between
+  them. Each instance is outlined as the camera draws it: at this frame's
+  skinning and morph weights, its alpha-masked material's cut-out texels
+  left out (transmissive or not), a blended material's triangles whole, its material's vertex
+  function applied; an instance that is not `visible`, or whose material's
+  group the frame's `visibility_mask` leaves out, is not outlined.
+- `width` is in physical pixels of the view's output, clamped to
+  `Outline::MAX_WIDTH` (32), whatever `SceneResolution`, FSR or upscaling
+  the view renders at; 0 draws nothing. A pixel outside the silhouette
+  within `width` pixels of it takes the colour whole, and the next pixel
+  out its share of the remaining distance, so the edge is soft by one
+  pixel. The colours are sRGB-encoded with straight alpha, as a HUD's,
+  blended over the displayed picture: no exposure, tone map, bloom, depth
+  of field or motion blur changes them.
+- `visible_color` borders what is in sight; `hidden_color` what opaque or
+  alpha-cut surfaces hide (blended surfaces and the sky hide nothing). The
+  line itself is drawn over whatever is in front of it. Where an occluder's
+  edge crosses the selection, the boundary between the two colours may
+  move by a render pixel from frame to frame under TAA or FSR jitter; the
+  line itself does not move while nothing does.
+- An output the device cannot blend into (`Rgba32Float` without
+  `FLOAT32_BLENDABLE`) shows no outline.
+- It runs after post, before the game's HUD: draw the HUD over the view's
+  output afterwards as usual. It is part of the view's picture, not of the
+  scene, so reflections of the scene do not show it.
+- Cost: nothing while no frame names a selection, or while none of its
+  instances is drawn. With one: a depth-only pass over the selected
+  instances alone, at the output size, then two full-screen passes
+  scissored to the on-screen selection's projected bounds grown by the
+  width; two targets at the output size (5 bytes a pixel), held while the
+  view outlines, and two pipelines from its first outlined frame
+  (`Renderer::compile` queues them; [compiling
+  ahead](docs/README.md#compiling-ahead)). Timing group `outline`.
+
 ## Volumetric fog
 
 ```rust,ignore

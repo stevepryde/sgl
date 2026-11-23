@@ -13,7 +13,7 @@
     const initialized = performance.now();
     const query = new URLSearchParams(location.search);
     const report = JSON.parse(await measure(Number(query.get("frames") ?? 180), query.get("scaled") === "1", query.get("prepared") === "1", query.get("capture") === "1", query.get("local_shadows") === "1",
-      query.get("dof") ?? "off", new Uint32Array([Number(query.get("width") ?? 0), Number(query.get("height") ?? 0)]), query.get("hdr_effect") === "1"));
+      query.get("dof") ?? "off", new Uint32Array([Number(query.get("width") ?? 0), Number(query.get("height") ?? 0)]), query.get("hdr_effect") === "1", query.get("outline") ?? "off"));
     report.browser = { user_agent: navigator.userAgent, hardware_concurrency: navigator.hardwareConcurrency,
       cross_origin_isolated: crossOriginIsolated, device_pixel_ratio: devicePixelRatio,
       wasm_init_ms: initialized - started, page_to_report_ms: performance.now() - started,

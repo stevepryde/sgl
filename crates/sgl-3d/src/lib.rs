@@ -26,7 +26,7 @@ pub use content::dynamic_gi::DynamicGiVolume;
 pub use content::hdr_effect::HdrEffect;
 pub use content::identity::{
     DecalId, DecalImageId, EnvironmentId, HdrEffectId, InstanceId, LightId, LiveSpecularProbeId,
-    MaterialId, ModelId, PlanarReflectorId, RenderTextureId, ShaderId, SpriteBatchId,
+    MaterialId, ModelId, PlanarReflectorId, RenderTextureId, SelectionId, ShaderId, SpriteBatchId,
     SpriteImageId,
 };
 pub use content::instance::{InstanceState, Mobility};
@@ -39,6 +39,7 @@ pub use content::lighting::{
 pub use content::live_specular_probe::{LiveSpecularProbe, ProbeRefresh, ProbeRefreshPace};
 pub use content::material::{AlphaMode, NormalLayer, SurfaceMaterial};
 pub use content::model::{AssetIds, ModelMesh};
+pub use content::outline::Outline;
 pub use content::planar_reflector::PlanarReflector;
 pub use content::render_texture::RenderTexture;
 pub use content::shader::{MaterialShader, ShaderSource};

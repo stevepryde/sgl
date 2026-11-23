@@ -56,8 +56,9 @@ pub(crate) enum Alpha {
     /// Fragments discard the texels the material cuts out (`alpha_mask`),
     /// in every opaque pass and caster.
     Mask,
-    /// Only `GeometryPass::Blended` draws it: a blended or transmissive
-    /// material (`SurfaceMaterial::blended`).
+    /// A blended or transmissive material (`SurfaceMaterial::blended`),
+    /// which `GeometryPass::Blended` draws, and an outline mask draws
+    /// depth-only through `GeometryPass::LocalShadow`'s casters, whole.
     Blend,
 }
 

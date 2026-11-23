@@ -243,6 +243,13 @@ them through unrefracted. A probe captured on an
   Effects on the displayed picture (grain, vignette) take the game's own
   pass over the view's output texture instead.
   [HDR effects](../README.md#hdr-effects).
+- **Outlines** (`Scene::add_selection`, `FrameInput::outline`): a line a
+  stated number of output pixels wide around chosen instances, over the
+  view's finished picture before the HUD, in one colour where they are in
+  sight and another where opaque surfaces hide them: a targeted block or
+  entity, a unit under the cursor. Skinned, morphed and alpha-cut
+  instances are outlined as drawn; per view and per frame.
+  [Outlines](../README.md#outlines).
 - **Decals**: boxes that project the game's images onto the lit surfaces
   inside them, changing base colour and, with their maps, normal, roughness
   and metallic before lighting, so reflections and SSR see them

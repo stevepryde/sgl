@@ -1668,3 +1668,21 @@ Use the [current specs](README.md) for implementation and the
   where WebGPU's default is four and cannot write an sRGB format; a faster
   CPU path alone, which still blocks the thread and uploads a third more; a
   bilinear tap, which drops a row of an odd level.
+
+- **D-79** Decision, 2026-11-23 (#869): selection outlines are composited
+  after the tone map, at the output size, from a mask of the selected
+  instances drawn unjittered at that size, with the line an exact distance
+  within its width (a row and a column pass), not three.js r187
+  `OutlineNode`'s half-resolution edge detect and separable blur before the
+  output transform. The mask's occlusion reads the frame's own opaque
+  depth, not a pre-pass of the other objects. Why: the game states the
+  width in output pixels and the colour as displayed; a blur radius is
+  neither, a colour before the tone map follows exposure and grading, a
+  mask before antialiasing either jitters or is smeared by its history,
+  and a pre-pass redraws the scene. Cost: a depth-only pass over the
+  selected instances, and two passes of at most 2 × 32 + 1 taps a pixel
+  over the selection's projected rectangle; jump flooding, the route to
+  wider lines, is not needed at the 32-pixel cap. Not taken: an inverted
+  hull (Godot's stencil outline), whose width is in metres and which
+  misses cut-outs; outline groups of their own colours in one view, which
+  need a stencil or identity target, until a game needs them.

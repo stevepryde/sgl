@@ -56,6 +56,12 @@ bun scripts/tasks.ts measure-browser --baseline --depth-of-field high --size 192
 bun scripts/tasks.ts measure-browser --baseline --hdr-effect --size 1920x1080 --frames 180 --output target/browser-hdr-effect.json
 ```
 
+```sh
+# An outline (`FrameInput::outline`) of one block (sparse) or of all 256
+# (dense); its passes are the `outline` timing group.
+bun scripts/tasks.ts measure-browser --baseline --outline sparse --size 1920x1080 --frames 180 --output target/browser-outline-sparse.json
+```
+
 `--scaled` selects `SceneResolution::ThreeQuarter` and `Upscaling::On`; this
 changes the render-resolution/quality tradeoff, so report it separately from
 an identical-settings renderer before/after comparison. Native FSR is not

@@ -217,7 +217,9 @@ fn collect(
 
 /// `depth_of_field` is `off`, `low`, `medium` or `high`; `size` is the
 /// output's width and height, or `SIZE` unless both are given and above 0;
-/// `hdr_effect` applies an underwater HDR effect (`UNDERWATER`).
+/// `hdr_effect` applies an underwater HDR effect (`UNDERWATER`); `outline`
+/// is `off`, `sparse` (one block outlined) or `dense` (every block of the
+/// grid outlined).
 #[wasm_bindgen]
 #[allow(
     clippy::too_many_arguments,
@@ -232,6 +234,7 @@ pub async fn measure(
     depth_of_field: String,
     size: Vec<u32>,
     hdr_effect: bool,
+    outline: String,
 ) -> String {
     console_error_panic_hook::set_once();
     let depth_of_field = match depth_of_field.as_str() {
@@ -240,6 +243,12 @@ pub async fn measure(
         "medium" => DepthOfField::Medium,
         "high" => DepthOfField::High,
         other => return json!({"error": format!("unknown depth of field {other}")}).to_string(),
+    };
+    let outline = match outline.as_str() {
+        "off" => Selected::Off,
+        "sparse" => Selected::Sparse,
+        "dense" => Selected::Dense,
+        other => return json!({"error": format!("unknown outline {other}")}).to_string(),
     };
     let size = match size[..] {
         [width, height] if width > 0 && height > 0 => [width, height],
@@ -250,7 +259,7 @@ pub async fn measure(
         scaled,
         prepared_upload,
         capture_frame,
-        (local_shadows, depth_of_field, size, hdr_effect),
+        (local_shadows, depth_of_field, size, hdr_effect, outline),
     )
     .await
     {
@@ -258,12 +267,26 @@ pub async fn measure(
         Err(error) => json!({"error": error}).to_string(),
     }
 }
+/// The selection the measured frames outline.
+#[derive(Clone, Copy, Debug)]
+enum Selected {
+    Off,
+    Sparse,
+    Dense,
+}
+
 async fn measured(
     frames: usize,
     scaled: bool,
     prepared_upload: bool,
     capture_frame: bool,
-    (local_shadows, depth_of_field, size, hdr_effect): (bool, DepthOfField, [u32; 2], bool),
+    (local_shadows, depth_of_field, size, hdr_effect, outline): (
+        bool,
+        DepthOfField,
+        [u32; 2],
+        bool,
+        Selected,
+    ),
 ) -> Result<Value, String> {
     if !(60..=3600).contains(&frames) {
         return Err("frames must be in 60..=3600".into());
@@ -352,6 +375,7 @@ async fn measured(
         );
     }
     let mut moving = Vec::new();
+    let mut grid = Vec::new();
     for number in 0..256 {
         let model = models[number % MATERIALS];
         let position = Vec3::new(
@@ -373,10 +397,24 @@ async fn measured(
         let instance = scene
             .add_instance(&device, &queue, state, mobility)
             .map_err(|e| e.to_string())?;
+        grid.push(instance);
         if mobility == Mobility::Moving {
             moving.push((instance, model, pose));
         }
     }
+    // The outline's selection: one static block near the grid's middle, or
+    // every block.
+    let selected = match outline {
+        Selected::Off => None,
+        Selected::Sparse => Some(&grid[8 * 16 + 9..8 * 16 + 10]),
+        Selected::Dense => Some(&grid[..]),
+    };
+    let outlined = match selected {
+        Some(instances) => Some(sgl_3d::Outline::new(
+            scene.add_selection(instances).map_err(|e| e.to_string())?,
+        )),
+        None => None,
+    };
     let ground = InstanceState {
         pose: Mat4::from_scale(Vec3::new(34., 0.1, 34.))
             * Mat4::from_translation(Vec3::new(0., -1., 0.)),
@@ -552,6 +590,7 @@ async fn measured(
             ),
         });
         frame.hdr_effect = underwater;
+        frame.outline = outlined;
         // The camera module takes a unit direction. Independently enforce
         // a rigid view basis so an accidentally scaled look vector fails
         // the fixture instead of producing misleading timing evidence.
@@ -650,7 +689,7 @@ async fn measured(
             "gpu_total_ms":gpu_frames.iter().find(|f| f.frame == WARMUP as u64 + 1).map(|f| f.total_ms)})
     });
     Ok(
-        json!({"schema":1,"scene":"textured-grid-v1","scaled":scaled,"prepared_upload":prepared_upload,"depth_of_field":format!("{depth_of_field:?}"),"hdr_effect":hdr_effect,"size":size,"frames":frames,"warmup_frames":WARMUP,
+        json!({"schema":1,"scene":"textured-grid-v1","scaled":scaled,"prepared_upload":prepared_upload,"depth_of_field":format!("{depth_of_field:?}"),"hdr_effect":hdr_effect,"outline":format!("{outline:?}"),"size":size,"frames":frames,"warmup_frames":WARMUP,
         "adapter":{"name":info.name,"backend":format!("{:?}",info.backend),"device_type":format!("{:?}",info.device_type),
             "features":format!("{:?}",device.features()),"sampled_textures_per_stage":device.limits().max_sampled_textures_per_shader_stage},
         "settings":format!("{:?}",settings),

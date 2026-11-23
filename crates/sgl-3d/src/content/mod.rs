@@ -4,7 +4,7 @@
 //! them, instance states, lights, decals, environments, baked lighting,
 //! specular probes, the dynamic GI volume's placement, the irradiance
 //! volume's placement and cells, mesh alternatives, material shaders,
-//! render textures' sizes and transient geometry;
+//! render textures' sizes, selections' outlines and transient geometry;
 //! and the frame's lights and authored look it describes in `FrameInput`.
 //! Plain data and its validation; nothing here touches the GPU.
 pub mod animation;
@@ -29,6 +29,7 @@ pub mod lod;
 pub(crate) mod material;
 mod material_texture;
 pub(crate) mod model;
+pub(crate) mod outline;
 pub(crate) mod planar_reflector;
 pub(crate) mod render_texture;
 pub mod shader;

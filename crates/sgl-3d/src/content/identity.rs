@@ -97,3 +97,8 @@ identity!(
     /// the GPU.
     LiveSpecularProbeId
 );
+identity!(
+    /// A selection of a scene: instances a view's frame outlines
+    /// (`FrameInput::outline`).
+    SelectionId
+);

@@ -1,5 +1,6 @@
 //! The scene layer: [`Scene`], the retained content a game adds, edits and
-//! removes (shaders, materials, models, instances, lights, decals, environments,
+//! removes (shaders, materials, models, instances, selections, lights,
+//! decals, environments,
 //! baked lighting, probes, the irradiance volume, the dynamic GI volume's
 //! placement and transient geometry), with the GPU buffers that mirror it
 //! and the ray-query structures built from its geometry. Nothing here
@@ -36,6 +37,7 @@ pub(crate) mod ranges;
 pub(crate) mod ray_class;
 pub(crate) mod rays;
 pub(crate) mod render_textures;
+pub(crate) mod selections;
 pub(crate) mod shaders;
 pub(crate) mod shadow_clusters;
 mod slots;
@@ -96,6 +98,8 @@ pub struct Scene {
     ray_data: RayData,
     pub(crate) shaders: shaders::Shaders,
     pub(crate) hdr_effects: hdr_effects::HdrEffects,
+    /// The instances each selection holds, which a frame outlines.
+    pub(crate) selections: selections::Selections,
     pub(crate) materials: materials::Materials,
     /// The pictures views draw for materials to sample.
     pub(crate) render_textures: render_textures::RenderTextures,
@@ -215,6 +219,7 @@ impl Scene {
             ray_data: options.ray_data,
             shaders: shaders::Shaders::default(),
             hdr_effects: hdr_effects::HdrEffects::default(),
+            selections: selections::Selections::default(),
             materials: materials::Materials::new(device, queue),
             render_textures: render_textures::RenderTextures::default(),
             planar_reflectors: planar_reflectors::PlanarReflectors::default(),

@@ -62,6 +62,7 @@ test(
       expect(lines.filter((line) => line.startsWith("FAIL"))).toEqual([]);
       expect(lines.some((line) => line.startsWith("ok specular probe capture:"))).toBe(true);
       expect(lines.some((line) => line.startsWith("ok HDR effect:"))).toBe(true);
+      expect(lines.some((line) => line.startsWith("ok outline:"))).toBe(true);
       expect(lines.some((line) => line.startsWith("ok live specular probe:"))).toBe(true);
       // The frame compiled ahead ran its jobs and passed the same checks.
       expect(lines.find((line) => line.includes("compiled ahead:"))).toMatch(/^ok .* compile jobs run ahead/);

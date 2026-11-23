@@ -142,9 +142,10 @@ if compilation.ready() { /* `render` with these arguments creates nothing */ }
   (`Renderer::refresh_specular_probe`) creates its own filter and face
   pipelines, so make one while the level loads too.
 - Geometry pipelines, each view's HDR effect pipelines (for an input
-  whose `hdr_effect` names one) and, while a decoded image added since the
-  last frame waits for its mip chain, the mip chain programs are the
-  compile jobs. Every other stage's programs are
+  whose `hdr_effect` names one), its outline's (for an input whose
+  `outline` names a selection with instances) and, while a decoded image
+  added since the last frame waits for its mip chain, the mip chain
+  programs are the compile jobs. Every other stage's programs are
   created by the call that first meets them, on the calling thread: that
   call blocks for them (seconds on a first run of the game, before the
   graphics driver has cached them), once, and the frame then creates none.
@@ -278,6 +279,7 @@ and an asynchronous readback.
 | Bounce light without a bake | [Dynamic diffuse GI](../README.md#dynamic-diffuse-gi) |
 | A sky and sun colour for any time of day, without a panorama | [Procedural sky](../README.md#procedural-sky) |
 | A look over the whole lit scene before the tone map (underwater, a tint by distance), or one over the displayed picture | [HDR effects](../README.md#hdr-effects) |
+| Highlight a targeted block, entity or interactable, through walls too | [Outlines](../README.md#outlines) |
 | A feature's API, data format and limits | Its section in the [package README](../README.md) |
 | Rendering rules and roadmap | [SGL3D spec](../../../specs/sgl3d.md) |
 | How SGL3D's code is structured, for changing SGL3D itself | [SGL3D architecture](../../../specs/sgl3d-architecture.md), [code structure](../README.md#code-structure) |

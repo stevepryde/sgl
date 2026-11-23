@@ -38,7 +38,9 @@ pub(crate) enum GeometryPass {
     /// A probe capture's directional cascades' casters, from a CPU-built
     /// list, indexed from the geometry slabs.
     CaptureShadow,
-    /// A local-light shadow face's casters, indexed from the geometry slabs.
+    /// A local-light shadow face's casters, indexed from the geometry slabs,
+    /// and an outline's mask of its selected instances
+    /// (`stages::outline`), drawn the same way from the camera.
     LocalShadow,
     /// Blended surfaces' lit colour over the beauty, premultiplied by their
     /// alpha, tested against the opaque depth without writing it, with the blended group 3

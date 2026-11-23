@@ -40,7 +40,7 @@ pub(crate) use mirror;
 
 /// Every program the crate composes, by its root module's name.
 fn programs() -> Vec<(&'static str, String)> {
-    let roots: [&'static super::Module; 45] = [
+    let roots: [&'static super::Module; 46] = [
         &crate::shading::PACKED_VERTEX,
         &crate::stages::opaque::backdrop::BACKDROP,
         &crate::stages::sky::TRANSMITTANCE,
@@ -74,6 +74,7 @@ fn programs() -> Vec<(&'static str, String)> {
         &crate::stages::dynamic_gi::pipelines::ALLOCATE,
         &crate::stages::dynamic_gi::pipelines::UPDATE,
         &crate::stages::depth_of_field::DEPTH_OF_FIELD,
+        &crate::stages::outline::OUTLINE,
         &crate::stages::motion_blur::MOTION_BLUR,
         &crate::shading::motion_tiles::MOTION_TILES,
         &crate::stages::shadows::traced::TEMPORAL,
@@ -533,6 +534,14 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             crate::stages::depth_of_field::ENTRY_POINTS.to_vec(),
         ),
         (
+            crate::stages::outline::OUTLINE.name,
+            vec![
+                crate::shading::FULLSCREEN_VS_ENTRY,
+                crate::stages::outline::ROWS_ENTRY,
+                crate::stages::outline::COMPOSITE_ENTRY,
+            ],
+        ),
+        (
             motion_blur::MOTION_BLUR.name,
             [
                 crate::shading::motion_tiles::ENTRY_POINTS.as_slice(),
@@ -981,6 +990,7 @@ fn rust_mirrors_match_wgsl_layouts() {
     .chain(crate::stages::exposure::mirrors())
     .chain(super::hdr_effect::mirrors())
     .chain(crate::stages::depth_of_field::mirrors())
+    .chain(crate::stages::outline::mirrors())
     .chain(crate::stages::motion_blur::mirrors())
     .chain(super::motion_tiles::mirrors())
     .chain(crate::stages::fog::mirrors())
@@ -1627,6 +1637,7 @@ fn rust_constants_match_wgsl_twins() {
     .chain(crate::stages::reflections::world::classify::constants())
     .chain(crate::stages::reflections::velvet::constants())
     .chain(crate::stages::exposure::constants())
+    .chain(crate::stages::outline::constants())
     .chain(crate::stages::post::local_exposure::constants())
     .chain(crate::stages::opaque::ambient_occlusion::constants())
     .chain(crate::stages::opaque::screen_indirect::constants())

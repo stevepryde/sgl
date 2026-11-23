@@ -188,6 +188,9 @@ settings SGL3D has today.
    (`Scene::add_hdr_effect`: a WGSL function SGL3D runs over each view's
    resolved HDR frame, an underwater colour shift): the game supplies it
    and its parameters, SGL3D owns its pass, inputs, target and place.
+   Selection policy is the game's too: which instances a view outlines,
+   when, its width and colours (`Scene::add_selection`,
+   `FrameInput::outline`); SGL3D owns how the outline is drawn.
 3. **S3D-3 — Coordinates and state.** The boundary uses metres, +Y up,
    right-handed view/projection matrices, camera-local forward −Z, reversed-Z
    device depth (1 at the near plane, 0 at the far plane; `sgl_3d::perspective`
@@ -469,10 +472,13 @@ current capabilities and limits.
 - **Effects:** motion blur (9), volumetric fog with light shafts (10),
   depth of field ([#870](https://github.com/stevepryde/sgl/issues/870)) and
   a game's own HDR effect over the resolved scene before them
-  ([#871](https://github.com/stevepryde/sgl/issues/871)).
+  ([#871](https://github.com/stevepryde/sgl/issues/871)), and outlines of
+  selected instances over the displayed picture
+  ([#869](https://github.com/stevepryde/sgl/issues/869)).
   See [motion blur](../crates/sgl-3d/README.md#motion-blur),
   [depth of field](../crates/sgl-3d/README.md#depth-of-field),
-  [HDR effects](../crates/sgl-3d/README.md#hdr-effects) and
+  [HDR effects](../crates/sgl-3d/README.md#hdr-effects),
+  [outlines](../crates/sgl-3d/README.md#outlines) and
   [fog](../crates/sgl-3d/README.md#volumetric-fog).
 - **Procedural sky ([#832](https://github.com/stevepryde/sgl/issues/832)):**
   a physically based sky a game names as its frame's environment in place of

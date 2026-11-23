@@ -34,6 +34,9 @@
 //! Then a game's HDR effect, compiled ahead, attenuates a near and a far
 //! panel of one radiance by distance: the far one must show darker than
 //! the near one, which it does not without the effect (`hdr_effect`).
+//! Then an outline, compiled ahead, rings a selected panel half behind an
+//! occluder: beside its sight the visible colour, beside its hidden part
+//! the hidden one, and nothing farther than its width (`outline`).
 //! Then a mirror shows a live specular probe refreshed under each pace: its
 //! centre must hold the colour of the last published cube in every frame,
 //! and the report gives the refresh passes' GPU time (`live_probe`).
@@ -46,12 +49,12 @@
 
 use sgl_3d::glam::camera;
 use sgl_3d::{
-    AlphaMode, BakedSpecularProbe, Camera, Decal, DirectionalLight, DirectionalShadow,
+    AlphaMode, Backdrop, BakedSpecularProbe, Camera, Decal, DirectionalLight, DirectionalShadow,
     DynamicGiVolume, EnvironmentId, Fog, FogVolume, FrameInput, HemisphereLight, InstanceId,
     InstanceState, IrradianceCell, IrradianceVolume, Light, LightShape, MaterialShader, Mist,
-    Mobility, ModelMesh, PreparedIrradianceRegion, PreparedModel, RenderTexture, Renderer, Scene,
-    ShaderSource, SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels, SurfaceMaterial,
-    View, ViewFrame, ViewOutput,
+    Mobility, ModelMesh, Outline, PreparedIrradianceRegion, PreparedModel, RenderTexture, Renderer,
+    Scene, ShaderSource, SpecularProbeBox, SpecularProbeRadiance, SpecularProbeTexels,
+    SurfaceMaterial, View, ViewFrame, ViewOutput,
     asset::{
         Asset, CompressedImage, CpuMesh, Image, Material, MaterialTexture, Sampler, TextureFilter,
         TextureWrap, Vertex,
@@ -1333,6 +1336,174 @@ fn hdr_effect(color:vec3<f32>,ctx:EffectContext,params:EffectParams)->vec3<f32> 
     }
     Ok(format!(
         "near luma {near_affected:.1}, far {far_affected:.1}, {near:.1} without; {jobs} compile jobs"
+    ))
+}
+
+/// `outline`'s future, on the heap: a debug build lays out every future an
+/// async function awaits in that function's own stack frame, and the smoke
+/// test's frame has little stack to spare (#893).
+fn outline_boxed<'a>(
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + 'a>> {
+    Box::pin(outline(device, queue))
+}
+
+// An outline on the browser's WebGPU (the architecture's Frame, item 16),
+// its programs compiled ahead as a job. Plausible defects there: its
+// program or its R8Uint rows target refused by Dawn, the mask's depth
+// read rejected, or its pass not reaching the picture. The fixture: under
+// a camera at the origin looking down -Z, an unlit black panel 4 m ahead
+// spanning x and y of +-1 and +-0.75 m, whose picture is pixels 84.1 to
+// 171.9 across and 63.1 to 128.9 down of 256 by 192, and an unlit black
+// occluder 3 m ahead from x = 0.2 m rightward, whose picture starts at
+// pixel 139.7 and covers the frame's height, over a black backdrop; the
+// panel is outlined 3 pixels wide, red in sight and green hidden. The
+// oracle is that geometry: the pixel 3 to the left of the panel's left
+// column is red, 3 to the right of its right column green, both whole;
+// one 14 pixels out and one inside the panel stay black.
+async fn outline(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, String> {
+    let mut scene = Scene::new(device, queue);
+    let mut add = |mesh: CpuMesh| {
+        let ids = scene.add_asset(
+            device,
+            queue,
+            Asset {
+                meshes: vec![mesh],
+                materials: vec![Material {
+                    unlit: true,
+                    double_sided: true,
+                    ..material([0., 0., 0., 1.], 0., 1.)
+                }],
+                images: Vec::new(),
+                rig: Default::default(),
+                ignored: Vec::new(),
+                lights: Default::default(),
+                instanced: Vec::new(),
+            },
+        )?;
+        scene.add_instance(
+            device,
+            queue,
+            InstanceState::new(ids.model),
+            Mobility::Static,
+        )
+    };
+    let panel_id = add(panel(Vec3::new(0., 0., -4.), Vec3::X, Vec3::Y * 0.75, 0))
+        .map_err(|e| format!("panel: {e}"))?;
+    add(panel(
+        Vec3::new(1.6, 0., -3.),
+        Vec3::X * 1.4,
+        Vec3::Y * 3.,
+        0,
+    ))
+    .map_err(|e| format!("occluder: {e}"))?;
+    let selection = scene
+        .add_selection(&[panel_id])
+        .map_err(|e| format!("add_selection: {e}"))?;
+    let output = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("outline fixture output"),
+        size: wgpu::Extent3d {
+            width: SIZE[0],
+            height: SIZE[1],
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let target = output.create_view(&Default::default());
+    let settings = Settings::default();
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut renderer = Renderer::new(device);
+    let mut view = View::new(
+        &renderer,
+        device,
+        queue,
+        output.format(),
+        SIZE,
+        1.,
+        &settings,
+    )
+    .map_err(|e| format!("View::new: {e}"))?;
+    let mut input = FrameInput::new(Camera {
+        eye: Vec3::ZERO,
+        view: Mat4::IDENTITY,
+        projection: sgl_3d::perspective(1., SIZE[0] as f32 / SIZE[1] as f32, 0.1),
+    });
+    input.backdrop = Backdrop::Color([0.; 3]);
+    input.outline = Some(Outline {
+        width: 3.,
+        visible_color: [1., 0., 0., 1.],
+        hidden_color: [0., 1., 0., 1.],
+        ..Outline::new(selection)
+    });
+    let mut jobs = 0;
+    loop {
+        let compilation = renderer.compile(
+            device,
+            queue,
+            &mut scene,
+            &mut [ViewFrame {
+                view: &mut view,
+                input: &input,
+                settings: &settings,
+                output: ViewOutput::Texture(&target),
+                timing: None,
+            }],
+        );
+        if compilation.ready() {
+            break;
+        }
+        jobs += compilation.jobs.len();
+        compilation.jobs.into_iter().for_each(|job| job.run());
+    }
+    for index in 0..FRAMES {
+        input.camera_cut = index == 0;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            device,
+            queue,
+            &mut encoder,
+            &mut scene,
+            &mut [ViewFrame {
+                view: &mut view,
+                input: &input,
+                settings: &settings,
+                output: ViewOutput::Texture(&target),
+                timing: None,
+            }],
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(&mut scene);
+    }
+    let pixels = sgl_3d::diagnostics::read_async(device, queue, &output, 4).await;
+    if let Some(error) = validation.pop().await {
+        return Err(format!("validation error: {error}"));
+    }
+    let at = |x: u32, y: u32| {
+        let index = ((y * SIZE[0] + x) * 4) as usize;
+        [pixels[index], pixels[index + 1], pixels[index + 2]]
+    };
+    let row = SIZE[1] / 2;
+    let checks = [
+        ("left of the panel", at(81, row), [255, 0]),
+        ("right of the panel, hidden", at(174, row), [0, 255]),
+        ("beyond the width", at(70, row), [0, 0]),
+        ("inside the panel", at(100, row), [0, 0]),
+    ];
+    for (name, [r, g, b], [want_r, want_g]) in checks {
+        if r.abs_diff(want_r) > 3 || g.abs_diff(want_g) > 3 || b > 3 {
+            return Err(format!(
+                "{name}: ({r}, {g}, {b}), expected ({want_r}, {want_g}, 0)"
+            ));
+        }
+    }
+    Ok(format!(
+        "red beside the panel, green beside its hidden part; {jobs} compile jobs"
     ))
 }
 
@@ -2625,6 +2796,19 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         }
         Err(error) => {
             let _ = writeln!(report, "FAIL HDR effect: {error}");
+        }
+    }
+    let outlined = outline_boxed(&device, &queue).await;
+    let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
+    match outlined {
+        Ok(_) if !errors.is_empty() => {
+            let _ = writeln!(report, "FAIL outline: uncaptured {errors:?}");
+        }
+        Ok(detail) => {
+            let _ = writeln!(report, "ok outline: {detail}");
+        }
+        Err(error) => {
+            let _ = writeln!(report, "FAIL outline: {error}");
         }
     }
     let refreshed = live_probe(&device, &queue).await;

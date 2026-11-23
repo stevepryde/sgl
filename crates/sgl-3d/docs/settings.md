@@ -121,6 +121,16 @@ is done (its algorithm and internal parameters) is SGL3D's.
   the example's underwater effect 0.08 ms at 1920×1080 and 0.04 ms at
   1280×720 natively on Metal, one 0.07 ms step of Chrome's timer at
   either); `None` runs no pass and holds no target.
+- `outline`: an outline of one of the scene's selections
+  (`Scene::add_selection`) with its width in output pixels (2 by default,
+  at most 32) and its colours in sight and hidden (white, and white at
+  40%), `None` by default: the game's choice of what to highlight, not a
+  setting; SGL3D owns how the line is drawn. With one it costs a depth-only
+  pass over the selected instances and two scissored full-screen passes at
+  the output size (on an Apple M5 at 1920×1080: one targeted block
+  0.005 ms natively on Metal and one 0.07 ms step of Chrome's timer, a
+  selection covering much of the frame 0.06 ms and 0.20 ms); `None` runs no
+  pass and holds nothing.
 - `color_grading`: white balance, hue, post-saturation, the midtone range,
   each section's saturation, contrast, gamma, gain and lift, and the AgX
   look (`AgxLook::None` by default, `Punchy` or `Golden`), applied only

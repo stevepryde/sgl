@@ -19,6 +19,7 @@ pub(crate) mod hdr_effect;
 pub(crate) mod mip_chains;
 pub(crate) mod motion_blur;
 pub(crate) mod opaque;
+pub(crate) mod outline;
 pub(crate) mod post;
 pub(crate) mod prepare;
 pub(crate) mod probe_prefilter;
