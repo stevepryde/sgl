@@ -3948,7 +3948,10 @@ the list names it (`Ignored::Image`). A vertex attribute nothing SGL3D
 draws reads (`TEXCOORD_2` on, `COLOR_1` on, or an application-specific
 `_NAME`) is neither checked nor read, and the list names it with its mesh
 and primitive (`Ignored::Attribute`); a second joint and weight set still
-fails the load. Other unsupported visible features return asset-path errors.
+fails the load. A morph target displaces positions, normals and tangents;
+any other displacement it carries, such as a `TEXCOORD_n` or `COLOR_n`
+one, is left out and named with its mesh, primitive and target
+(`Ignored::MorphTargetAttribute`). Other unsupported visible features return asset-path errors.
 
 `KHR_mesh_quantization` files load: integer `POSITION`, `NORMAL`,
 `TANGENT`, `TEXCOORD_0`/`TEXCOORD_1` and morph displacements in the

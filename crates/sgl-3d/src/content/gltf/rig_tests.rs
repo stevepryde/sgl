@@ -611,6 +611,61 @@ fn morph_targets_leave_absent_tangents_undisplaced() {
     crate::PreparedModel::new(meshes).unwrap_or_else(|error| panic!("{error}"));
 }
 
+// Plausible defect: a morph target's TEXCOORD_n or COLOR_n displacement,
+// which gltf-json drops as it parses, left out without being listed, so the
+// UV or colour animation the file authors never shows and nothing says so
+// (#876). The oracle is S3D-2 and the document: each displaced attribute
+// but POSITION, NORMAL and TANGENT is listed with its mesh, primitive and
+// target, once, and the target's position displacement still applies.
+#[wasm_bindgen_test(unsupported = test)]
+fn morph_target_attributes_not_applied_are_listed() {
+    let plain = load_slice(&rigged(|_, _| {})).unwrap();
+    assert!(
+        !plain
+            .ignored
+            .iter()
+            .any(|ignored| matches!(ignored, Ignored::MorphTargetAttribute { .. })),
+        "{:?}",
+        plain.ignored
+    );
+    let displaced = |document: &mut Value, buffer: &mut Buffer| {
+        let uvs = buffer.floats(&[0., 0., 1., 0., 0., 1.], "VEC2", 2);
+        let colours = buffer.floats(&[1.; 12], "VEC4", 4);
+        let uv_shift = buffer.floats(&[0.5; 6], "VEC2", 2);
+        let colour_shift = buffer.floats(&[-0.5; 12], "VEC4", 4);
+        let lid = &mut document["meshes"][1]["primitives"][0];
+        lid["attributes"]["TEXCOORD_0"] = json!(uvs);
+        lid["attributes"]["COLOR_0"] = json!(colours);
+        lid["targets"][0]["TEXCOORD_0"] = json!(uv_shift);
+        lid["targets"][0]["COLOR_0"] = json!(colour_shift);
+    };
+    let asset = load_slice(&rigged(displaced)).unwrap_or_else(|error| panic!("{error}"));
+    let mut listed: Vec<_> = asset
+        .ignored
+        .iter()
+        .filter_map(|ignored| match ignored {
+            Ignored::MorphTargetAttribute {
+                mesh,
+                primitive,
+                target,
+                name,
+            } => Some((*mesh, *primitive, *target, name.as_str())),
+            _ => None,
+        })
+        .collect();
+    listed.sort_unstable();
+    assert_eq!(listed, [(1, 0, 0, "COLOR_0"), (1, 0, 0, "TEXCOORD_0")]);
+    let lid = asset
+        .meshes
+        .iter()
+        .find(|mesh| !mesh.deformation.morph_targets.is_empty())
+        .unwrap();
+    // The lid's node scales it by two; its lift is one along +Z.
+    for delta in &lid.deformation.morph_targets[0].deltas {
+        assert_eq!(delta.position, [0., 0., 2.]);
+    }
+}
+
 // Plausible defects: a node hierarchy that is not a set of trees walked as
 // one: the scene's walk recursing forever through a node that is its own
 // child; a cycle the scene never reaches loaded, so posing a joint on it

@@ -125,11 +125,11 @@ fn load_inner(path: &Path, options: LoadOptions<'_>) -> Result<Asset> {
     let mut budget = Budget::source(options.budget);
     let mut decoded_budget = Budget::decoded(options.budget);
     let bytes = budget.read_file(path, None)?;
-    let (document, buffers, required) = import(&bytes, path.parent(), (&mut budget, &mut decoded_budget)).map_err(|error| {
+    let (document, buffers, unread) = import(&bytes, path.parent(), (&mut budget, &mut decoded_budget)).map_err(|error| {
         format!("glTF import failed: {error}; check referenced files and re-export valid glTF from the Blender source")
     })?;
     decode(
-        (document, required),
+        (document, unread),
         &buffers,
         path.parent(),
         options,
@@ -152,10 +152,10 @@ pub fn load_slice_with_options(bytes: &[u8], options: LoadOptions<'_>) -> Result
     let mut budget = Budget::source(options.budget);
     let mut decoded_budget = Budget::decoded(options.budget);
     budget.charge(bytes.len() as u64)?;
-    let (document, buffers, required) = import(bytes, None, (&mut budget, &mut decoded_budget))
+    let (document, buffers, unread) = import(bytes, None, (&mut budget, &mut decoded_budget))
         .map_err(|error| format!("embedded glTF import failed: {error}"))?;
     decode(
-        (document, required),
+        (document, unread),
         &buffers,
         None,
         options,
@@ -239,6 +239,17 @@ pub enum Ignored {
     /// loader without the extension draws it. A file that requires the
     /// extension fails to load instead.
     Instancing { node: usize },
+    /// Attribute `name` of morph target `target` of mesh `mesh`'s primitive
+    /// `primitive`, whose displacement SGL3D does not apply: any but
+    /// `POSITION`, `NORMAL` and `TANGENT`, such as a `TEXCOORD_n` or
+    /// `COLOR_n`, which glTF lets a loader leave out (glTF 2.0 3.7.2.2).
+    /// The target's other displacements still apply.
+    MorphTargetAttribute {
+        mesh: usize,
+        primitive: usize,
+        target: usize,
+        name: String,
+    },
     /// Instance attribute `name` of node `node`'s `EXT_mesh_gpu_instancing`,
     /// which SGL3D does not read: an application-specific one (`_ID`) or
     /// any other but `TRANSLATION`, `ROTATION` and `SCALE`. It is checked
@@ -258,7 +269,7 @@ fn import(
     bytes: &[u8],
     base: Option<&Path>,
     (budget, decoded_budget): (&mut Budget, &mut Budget),
-) -> Result<(gltf::Document, Vec<gltf::buffer::Data>, bool)> {
+) -> Result<(gltf::Document, Vec<gltf::buffer::Data>, Unread)> {
     // The gltf crate subtracts the 12-byte header from the length the GLB
     // header declares unchecked, so a header declaring less is refused here.
     if bytes.starts_with(b"glTF") {
@@ -285,6 +296,7 @@ fn import(
         return Err(format!("the file requires glTF extension {extension}, which SGL3D does not support; bake it into the export or add renderer support").into());
     }
     check_root(&root)?;
+    let morph_attributes = rig::ignored_morph_attributes(json, &root)?;
     let instancing_required = root
         .extensions_required
         .iter()
@@ -302,7 +314,25 @@ fn import(
     if let Some(compressed) = compressed {
         compressed.decode(&mut buffers, decoded_budget)?;
     }
-    Ok((document, buffers, instancing_required))
+    Ok((
+        document,
+        buffers,
+        Unread {
+            instancing_required,
+            morph_attributes,
+        },
+    ))
+}
+
+/// What the import found in the document's JSON that the parsed document
+/// no longer holds.
+struct Unread {
+    /// Whether the file requires `EXT_mesh_gpu_instancing`, a requirement
+    /// cleared from the document for the gltf crate's validation.
+    instancing_required: bool,
+    /// The morph target attributes gltf-json drops as it parses
+    /// (`Ignored::MorphTargetAttribute`).
+    morph_attributes: Vec<Ignored>,
 }
 
 /// Check the references and source variants gltf-json 1.4.1 leaves unchecked
@@ -449,7 +479,7 @@ fn sampled_images(material: &Material) -> Vec<usize> {
 }
 
 fn decode(
-    (document, instancing_required): (gltf::Document, bool),
+    (document, unread): (gltf::Document, Unread),
     buffers: &[gltf::buffer::Data],
     base: Option<&Path>,
     options: LoadOptions<'_>,
@@ -469,7 +499,7 @@ fn decode(
     // The roots first: every walk after it, the plan's included, then
     // visits each node of the scene once.
     check_roots(&scene, &parents)?;
-    let plan = instancing::Plan::read(&document, &scene, instancing_required, &mut ignored)?;
+    let plan = instancing::Plan::read(&document, &scene, unread.instancing_required, &mut ignored)?;
     charge_scene(&document, &scene, &plan, &mut decoded_budget)
         .map_err(|error| format!("scene {}: {error}", scene.index()))?;
     let lights = lights::read(&document, &scene)?;
@@ -510,6 +540,7 @@ fn decode(
             );
         }
     }
+    ignored.extend(unread.morph_attributes);
     // glTF primitives may omit a material; retain the specification default.
     let default_material = materials.len();
     materials.push(Material::default());

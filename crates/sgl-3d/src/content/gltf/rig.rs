@@ -12,6 +12,7 @@ use super::super::deformation::{
     Channel, ChannelValues, Clip, Influence, Interpolation, Joint, MAX_INDEX, MorphDelta,
     MorphTarget, MorphWeight, Node, Rig, Transform,
 };
+use super::Ignored;
 use super::attributes;
 use super::check_accessor;
 
@@ -409,6 +410,63 @@ where
 /// the baked normal, each at the factor that normalized its baked vector.
 /// A target displaces no tangent of a `baked` vertex whose tangent is
 /// absent (zero), as when it was not authored or lay along its normal.
+/// Each morph target attribute of `root`'s primitives whose displacement
+/// SGL3D does not apply (`Ignored::MorphTargetAttribute`): any but
+/// `POSITION`, `NORMAL` and `TANGENT`. gltf-json 1.4.1's `MorphTarget`
+/// keeps only those three and drops the rest as it parses, so the targets'
+/// keys are read again from the document's JSON, `json`, and only when a
+/// primitive has targets.
+pub(super) fn ignored_morph_attributes(
+    json: &[u8],
+    root: &gltf::json::Root,
+) -> Result<Vec<Ignored>> {
+    use serde::Deserialize;
+    use serde::de::IgnoredAny;
+    use std::collections::BTreeMap;
+    #[derive(Deserialize)]
+    struct Document {
+        #[serde(default)]
+        meshes: Vec<Mesh>,
+    }
+    #[derive(Deserialize)]
+    struct Mesh {
+        #[serde(default)]
+        primitives: Vec<Primitive>,
+    }
+    #[derive(Deserialize)]
+    struct Primitive {
+        targets: Option<Vec<BTreeMap<String, IgnoredAny>>>,
+    }
+    let morphed = root
+        .meshes
+        .iter()
+        .flat_map(|mesh| &mesh.primitives)
+        .any(|primitive| primitive.targets.is_some());
+    if !morphed {
+        return Ok(Vec::new());
+    }
+    let document: Document = serde_json::from_slice(json)?;
+    let mut ignored = Vec::new();
+    for (mesh, data) in document.meshes.iter().enumerate() {
+        for (primitive, data) in data.primitives.iter().enumerate() {
+            for (target, attributes) in data.targets.iter().flatten().enumerate() {
+                ignored.extend(
+                    attributes
+                        .keys()
+                        .filter(|name| !matches!(name.as_str(), "POSITION" | "NORMAL" | "TANGENT"))
+                        .map(|name| Ignored::MorphTargetAttribute {
+                            mesh,
+                            primitive,
+                            target,
+                            name: name.clone(),
+                        }),
+                );
+            }
+        }
+    }
+    Ok(ignored)
+}
+
 pub(super) fn read_morph_targets(
     (primitive, buffers): (&gltf::Primitive<'_>, &[gltf::buffer::Data]),
     first: u32,
