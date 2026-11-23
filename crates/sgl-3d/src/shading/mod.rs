@@ -16,6 +16,8 @@ pub(crate) mod deformation;
 mod diffuse_transmission_tests;
 pub(crate) mod dynamic_gi;
 pub(crate) mod fog;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod fog_plane_tests;
 pub(crate) mod gbuffer;
 pub(crate) mod hdr_effect;
 #[cfg(all(test, not(target_arch = "wasm32")))]

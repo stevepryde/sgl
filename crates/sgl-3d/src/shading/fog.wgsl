@@ -107,6 +107,57 @@ fn fog_sky_coordinate(uv:vec2<f32>,volume_layout:FogLayout)->vec3<f32> {
  let slices=f32(fog_volume_slices(volume_layout));
  return vec3(uv,(slices-.5)/slices);
 }
+// Where a planar reflector's reflected view's medium begins (the
+// architecture's Frame, "Planar reflections"): at the reflector's `plane`
+// (unit normal, d, positive on the reflecting side), which a reflected
+// view's fog takes and every other view's holds zero. Its light passes
+// through the medium between the plane and what it reflects; the viewer's
+// own fog takes the stretch from its eye to the mirror. The one owner of
+// that rule, which the fog's injection (whether a froxel holds medium, and
+// whether it is wholly out of it) and its integration (where a column's air
+// begins) take.
+// Whether `plane` bounds the medium: a reflected view's, not zero.
+fn fog_has_plane(plane:vec4<f32>)->bool {
+ return any(plane!=vec4(0.));
+}
+// Whether the point `position` lies in the medium: on the plane's
+// reflecting side, or anywhere without a plane.
+fn fog_in_medium(position:vec3<f32>,plane:vec4<f32>)->bool {
+ return !fog_has_plane(plane) || dot(plane.xyz,position)+plane.w>=0.;
+}
+// Whether a froxel lies wholly out of the medium, behind `view_plane`, the
+// plane in the view's space: the froxel spans view depths `near` to `far`
+// and, across the frame, the column positions `low` to `high` (frame
+// position plus the projection's offset, at whose depth d the view point is
+// (position × d / `scale`, -d), fog_froxel_view_position). The plane's
+// signed distance is linear across the froxel's box, so it is greatest at a
+// corner: at depth d, d (across · position - view_plane.z) + view_plane.w,
+// where across is view_plane.xy / scale and position the column corner its
+// signs pick, and so at near or at far. Out only where that greatest
+// distance is negative: a froxel that touches the plane is in.
+fn fog_froxel_behind(view_plane:vec4<f32>,scale:vec2<f32>,low:vec2<f32>,high:vec2<f32>,near:f32,far:f32)->bool {
+ let across=view_plane.xy/scale;
+ let corner=select(min(low,high),max(low,high),across>vec2(0.));
+ let per_depth=dot(across,corner)-view_plane.z;
+ return max(near*per_depth,far*per_depth)+view_plane.w<0.;
+}
+// How far along the ray from `origin` in the unit `direction` the medium
+// begins: 0 without a plane or from an origin on its reflecting side, where
+// the ray crosses the plane from behind it, and FOG_NEVER for a ray that
+// never reaches it.
+fn fog_medium_begins(origin:vec3<f32>,direction:vec3<f32>,plane:vec4<f32>)->f32 {
+ let side=dot(plane.xyz,origin)+plane.w;
+ if !fog_has_plane(plane) || side>=0. {
+  return 0.;
+ }
+ let toward=dot(plane.xyz,direction);
+ if toward<=0. {
+  return FOG_NEVER;
+ }
+ return -side/toward;
+}
+// A distance no ray reaches.
+const FOG_NEVER:f32=1e30;
 // `color` seen through `fog`: the light the fog scatters toward the camera
 // (rgb) and its transmittance (a).
 fn fog_composite(color:vec3<f32>,fog:vec4<f32>)->vec3<f32> {

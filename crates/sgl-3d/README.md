@@ -3198,10 +3198,11 @@ scene.set_material(&queue, marble, SurfaceMaterial {
   the mirror: with the eye within centimetres of the plane, distant
   reflected surfaces may z-fight. Geometry that crosses the plane is cut
   at it. A displaced surface (waves from a shader) is shown the picture of
-  its plane. Fog in the picture is the frame's medium seen from the
-  mirrored eye: right for a uniform medium, but the stretch from the eye to
-  the surface is fogged twice, and a fog volume behind the plane fogs the
-  whole reflection (#887). Rays, dynamic GI and probe captures see the
+  its plane. Fog and air take each stretch of the reflected path once:
+  the picture's begin at the mirror's plane, so a fog volume behind it
+  fogs nothing in it, and the view's own reach the mirror. The sky in the
+  picture holds the air seen from the mirrored eye. Rays, dynamic GI and
+  probe captures see the
   material without the picture. While a view shows the picture the surface
   is marked for TAA and FSR, as moving water is, and a view's `GpuTiming`
   spans its reflected views' passes, in the groups of its own.

@@ -14,11 +14,21 @@
 //! resize, each level, both binding tiers, a screen-space method beside the
 //! picture, a jittered viewer, two viewers, two mirrors in one view, two
 //! facing mirrors, the roughness cutoff, the visibility mask and a moved
-//! reflector. It does not cover a masked reflector's cut-out texels, a
-//! viewer that itself draws a render texture, world-space rays beside a
-//! picture, nor a reflector under fog, shadows, probes or dynamic GI, which
-//! light a reflected view as they light any view; the clipped projection's
-//! depth is covered where it is owned (`shading::view_depth_tests`,
+//! reflector, and fog (of a card and a sprite) and aerial perspective along a
+//! reflected path (#887).
+//! It does not cover a masked reflector's cut-out texels, a viewer that
+//! itself draws a render texture, world-space rays beside a picture, nor a
+//! reflector under shadows, probes or dynamic GI, which light a reflected
+//! view as they light any view. Of the fog it does not cover a tilted
+//! plane (water), whose bound on the froxels behind it is tested against a
+//! brute-force model (`shading::fog_plane_tests`), fog under the viewer's or
+//! the reflector's motion, nor the per-sample medium test within the froxel
+//! the plane crosses: that moves the result by at most one slice's medium,
+//! the order to which the integration's slice steps already place any
+//! change of density, so no fixture separates the two (the viewer's own fog
+//! at a surface takes medium from up to half a slice behind it). The
+//! clipped projection's depth is covered where it is owned
+//! (`shading::view_depth_tests`,
 //! `probe_tiles_keep_their_probes_under_a_clipped_projection`).
 #![cfg(not(target_arch = "wasm32"))]
 mod scenario;
@@ -1077,4 +1087,243 @@ fn a_floor_under_a_moving_viewer_reflects() {
         });
     }
     failures.assert();
+}
+
+/// The viewer's and the reflected views' fog: a uniform medium of
+/// `density` that absorbs and scatters nothing (albedo 0, no ambient), so
+/// light through it falls by its transmittance alone, over `length` metres
+/// of 64 slices; or, with no density, the medium of the scene's fog
+/// volumes alone.
+fn fog(rig: &mut Rig, density: f32) {
+    let view = &mut rig.views[0];
+    view.settings.atmosphere = true;
+    view.input.atmosphere = true;
+    view.input.fog = sgl_3d::Fog {
+        density,
+        albedo: [0.; 3],
+        ambient: 0.,
+        length: FOG_LENGTH,
+        ..sgl_3d::Fog::default()
+    };
+}
+
+/// The fog's reach in metres: its 64 slices spread by the square over it.
+const FOG_LENGTH: f32 = 32.;
+
+/// The depth of the fog's slice at `depth` metres: 64 slices over
+/// `FOG_LENGTH`, slice `i` ending at `FOG_LENGTH × (i / 64)²`
+/// (shading/fog.wgsl `fog_slice_depth`, spread 2), so one is
+/// 2 × FOG_LENGTH × u / 64 deep where u = √(depth / FOG_LENGTH).
+fn fog_slice(depth: f32) -> f32 {
+    2. * FOG_LENGTH * (depth / FOG_LENGTH).sqrt() / 64.
+}
+
+/// #887. Plausible defect: the reflected view fogs the reflected path from
+/// the mirrored eye, which the viewer then fogs again from its eye to the
+/// mirror, so that stretch counts twice (three.js r187's and Wicked
+/// Engine's practice), or the viewer's stretch is skipped. The fixture:
+/// `Hall` with an emitter behind the viewer, outside its frustum, in a
+/// uniform medium that only absorbs. The oracle is Beer–Lambert over the
+/// path the light takes, computed here from the placement: eye to mirror
+/// to object, the eye's distance to the object's mirror image (4 m to the
+/// mirror's plane and about 6 m back to the object, 10 m in all). The
+/// object's image in the mirror holds, fogged over unfogged, the
+/// transmittance of that path, within the slices' depth at the three
+/// places a stretch ends (the mirror for the viewer, the plane and the
+/// object for the reflected view), each at most a slice of absorption;
+/// counting the eye-to-mirror stretch twice falls 4 m of absorption short.
+#[test]
+fn a_reflection_is_fogged_once_along_its_path() {
+    fogged_once(false);
+}
+
+/// The case above with the emitter a sprite (a blended sprite of the
+/// card's size and colour, alpha 1), which takes the frame's fog in the
+/// transparent stage rather than in shading (plausible defect besides the
+/// above: the reflected view's sprites sample its fog at a depth its
+/// clipped projection skews).
+#[test]
+fn a_sprite_in_a_reflection_is_fogged_once_along_its_path() {
+    fogged_once(true);
+}
+
+fn fogged_once(sprite: bool) {
+    let Some(gpu) = gpu() else { return };
+    let density = 0.08;
+    let at = Vec3::new(0.6, 0.3, 2.);
+    let radiance = |fogged: bool| {
+        let mut hall = Hall::new(&gpu);
+        if sprite {
+            let (device, queue) = (hall.rig.gpu.device.clone(), hall.rig.gpu.queue.clone());
+            let white = sgl_3d::asset::Image::Rgba8(image::RgbaImage::from_pixel(
+                1,
+                1,
+                image::Rgba([255; 4]),
+            ));
+            let image = hall
+                .rig
+                .scene
+                .add_sprite_image(&device, &queue, &white)
+                .unwrap();
+            let batch = hall
+                .rig
+                .scene
+                .add_sprite_batch(&sgl_3d::sprite::SpriteBatch::new(image))
+                .unwrap();
+            let [r, g, b] = COLOURS[0];
+            let card = sgl_3d::sprite::Sprite {
+                tint: [r, g, b, 1.],
+                ..sgl_3d::sprite::Sprite::new(at, OBJECT)
+            };
+            hall.rig
+                .scene
+                .set_sprites(&device, &queue, batch, &[card])
+                .unwrap();
+        } else {
+            hall.object(0, at);
+        }
+        fog(&mut hall.rig, if fogged { density } else { 0. });
+        if !fogged {
+            hall.rig.views[0].input.atmosphere = false;
+        }
+        // The medium's temporal blend settles over its history.
+        for frame in 0..24 {
+            hall.rig.render(frame);
+        }
+        let pixel = hall.image_pixel(0, at);
+        radiance(&hall.rig, 0, pixel)[0]
+    };
+    let clear = radiance(false);
+    let fogged = radiance(true);
+    assert!(clear > 0.3, "the mirror shows the object: {clear}");
+    let eye = Vec3::ZERO;
+    let path = (image(MIRROR_CENTRE, Vec3::Z, at) - eye).length();
+    let to_mirror = path * DEPTH / (DEPTH + at.z + DEPTH);
+    let slack = density * (fog_slice(DEPTH) + fog_slice(DEPTH) + fog_slice(path));
+    let measured = (fogged / clear).ln();
+    let expected = -density * path;
+    assert!(
+        (measured - expected).abs() <= slack,
+        "the reflection's fog is {measured} of optical depth, not the path's {expected} (± {slack}); \
+         counting the {to_mirror} m to the mirror twice gives {}",
+        expected - density * to_mirror
+    );
+}
+
+/// #887. Plausible defect: the reflected view's fog takes the medium of a
+/// fog volume that lies behind the mirror's plane, between the mirrored eye
+/// and the plane, where no reflected light passes. The fixture: `Hall`
+/// with an emitter behind the viewer, and a dense fog volume (extinction
+/// 1 per metre, absorbing alone) 2.7 m deep wholly behind the mirror's
+/// plane, which the mirror hides from the viewer; the frame's own medium
+/// has no density. The oracle is the contract: the object's image in the
+/// mirror holds the radiance it holds without the volume, to within a
+/// hundredth (the equality the contract states, with margin for the
+/// temporal blend's settling and rounding); through the volume it would
+/// hold e^-2.7, under a tenth.
+#[test]
+fn a_fog_volume_behind_the_mirror_does_not_fog_its_reflection() {
+    let Some(gpu) = gpu() else { return };
+    let at = Vec3::new(0.6, 0.3, 2.);
+    let radiance = |volume: bool| {
+        let mut hall = Hall::new(&gpu);
+        hall.object(1, at);
+        fog(&mut hall.rig, 0.);
+        let volumes = if volume {
+            vec![sgl_3d::FogVolume {
+                center: Vec3::new(0., 0., -DEPTH - 2.15),
+                size: Vec3::new(20., 20., 2.7),
+                density: 1.,
+                albedo: [0.; 3],
+                edge_fade: 0.,
+                ..Default::default()
+            }]
+        } else {
+            Vec::new()
+        };
+        hall.rig
+            .scene
+            .update_fog_volumes(&hall.rig.gpu.device, &hall.rig.gpu.queue, &volumes)
+            .expect("the fog volume");
+        for frame in 0..12 {
+            hall.rig.render(frame);
+        }
+        radiance(&hall.rig, 0, hall.image_pixel(0, at))[1]
+    };
+    let without = radiance(false);
+    let with = radiance(true);
+    assert!(without > 0.3, "the mirror shows the object: {without}");
+    assert!(
+        (with - without).abs() <= without * 0.01,
+        "the reflection holds {with} with a fog volume behind the mirror, {without} without"
+    );
+}
+
+/// What one view without antialiasing holds, under a procedural sky's
+/// aerial perspective with no sun (so the air only absorbs) or under no
+/// sky, at the pixel where the eye sees `seen`: the blue channel, which the
+/// air dims most, of a white emitter at `emitter` (a 600 m card), with a
+/// one-sided perfect mirror 3 km wide facing the eye 2 km ahead where
+/// `mirrored`.
+fn kilometres(gpu: &Gpu, air: bool, mirrored: bool, emitter: Vec3, seen: Vec3) -> f32 {
+    let mut rig = Rig::new(gpu, VIEW, Antialiasing::Off, SKY);
+    level(&mut rig, 0, PlanarReflections::Full);
+    if air {
+        rig.views[0].input.environment = sgl_3d::FrameEnvironment::Sky(sgl_3d::Sky::default());
+    }
+    let mirror_at = Vec3::new(0., 0., -2000.);
+    if mirrored {
+        let reflector = rig
+            .scene
+            .add_planar_reflector(PlanarReflector::new(mirror_at, Vec3::Z))
+            .unwrap();
+        let (_, material) = rig.add_emissive(Vec2::new(3000., 2000.), [0.; 3], Pose::at(mirror_at));
+        mirror_material(&mut rig, material, reflector);
+    }
+    rig.add_emissive(Vec2::splat(600.), [0.6; 3], Pose::at(emitter));
+    for frame in 0..4 {
+        rig.render(frame);
+    }
+    radiance(&rig, 0, pixel(&rig, 0, seen))[2]
+}
+
+/// #887, for the air. Plausible defect: the reflected view takes the sky's
+/// aerial perspective from the mirrored eye, so the air between the eye
+/// and the mirror dims the reflection twice. The fixture: an emitter 1 km
+/// behind the viewer, a mirror 2 km ahead, under a procedural sky with no
+/// sun, whose air then only absorbs. The oracle is an equivalence: light
+/// reflected along a path is dimmed by the air as light seen directly
+/// along a path of the same length and height is, so the reflection's
+/// air (with over without) matches that of the same emitter seen directly
+/// at its mirror image, 5 km out. The threshold is comparative: a third
+/// of the air of the 2 km from the eye to the mirror, measured as that of
+/// an emitter seen directly at the mirror's distance, which the doubled
+/// stretch would add.
+#[test]
+fn a_reflection_takes_the_air_once_along_its_path() {
+    let Some(gpu) = gpu() else { return };
+    let behind = Vec3::new(300., 0., 1000.);
+    let image = image(Vec3::new(0., 0., -2000.), Vec3::Z, behind);
+    let air = |emitter: Vec3, seen: Vec3, mirrored: bool| {
+        let with = kilometres(&gpu, true, mirrored, emitter, seen);
+        let without = kilometres(&gpu, false, mirrored, emitter, seen);
+        assert!(without > 0.3, "the emitter shows: {without}");
+        (with / without).ln()
+    };
+    let reflected = air(behind, image, true);
+    let direct = air(image, image, false);
+    let to_mirror = air(
+        Vec3::new(120., 0., -2000.),
+        Vec3::new(120., 0., -2000.),
+        false,
+    );
+    assert!(
+        to_mirror < -0.01,
+        "the fixture's air dims 2 km: {to_mirror}"
+    );
+    assert!(
+        (reflected - direct).abs() <= to_mirror.abs() / 3.,
+        "the reflection takes {reflected} of air, the same path seen directly {direct}; \
+         the 2 km to the mirror twice would add {to_mirror}"
+    );
 }

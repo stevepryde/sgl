@@ -86,6 +86,9 @@ pub(crate) struct FroxelVolumeUniform {
     world_from_view: [[f32; 4]; 4],
     previous_clip_from_world: [[f32; 4]; 4],
     projection: [f32; 4],
+    /// Where the medium begins: a planar reflector's plane in its reflected
+    /// view, zero in any other (shading/fog.wgsl `fog_in_medium`).
+    medium_plane: [f32; 4],
     size: [u32; 3],
     frame: u32,
     albedo: [f32; 3],
@@ -118,6 +121,7 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
             world_from_view,
             previous_clip_from_world,
             projection,
+            medium_plane,
             size,
             frame,
             albedo,
@@ -485,6 +489,10 @@ impl VolumetricFog {
             world_from_view: camera.view.inverse().to_cols_array_2d(),
             previous_clip_from_world: history.previous.to_cols_array_2d(),
             projection: crate::shading::fog::froxel_projection(camera.projection),
+            medium_plane: ctx
+                .views
+                .reflected
+                .map_or([0.; 4], |reflected| reflected.plane.to_array()),
             size: match held {
                 Some(_) => volumes.size,
                 None => [width, height, 0],

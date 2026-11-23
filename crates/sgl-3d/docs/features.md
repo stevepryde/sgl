@@ -164,8 +164,9 @@ them through unrefracted. A probe captured on an
   view a render, occluded or not. Normal maps bend the
   picture. Limits: perspective cameras only, one level deep (a mirror in a
   mirror shows its environment specular), no blur for roughness, no
-  blended materials, the picture is not antialiased, fog between the eye
-  and the surface counts twice.
+  blended materials, the picture is not antialiased. Fog and aerial
+  perspective are taken once along the reflected path, from the eye to the
+  mirror and on to what it shows.
   [Planar reflections](../README.md#planar-reflections),
   `examples/planar_reflections.rs`.
 - **Instances**: model placements (`InstanceState`; `InstanceState::new(model)`

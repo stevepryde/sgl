@@ -10,7 +10,9 @@
 //!
 //! Run with `cargo run -p sgl-3d-examples --example planar_reflections -- target/planar.png`.
 //! Optional `--frames N` sets how many frames run and `--level
-//! off|quarter|half|full` the pictures' level (`half`, the default).
+//! off|quarter|half|full` the pictures' level (`half`, the default);
+//! `--fog` fills the scene with a thin uniform medium, which the mirror and
+//! the pond show as the fog along the whole reflected path.
 //! `--measure` (use
 //! `--release`) prints, where the device has timestamp queries, the timed
 //! passes and GPU time a frame takes at each level and with the reflectors
@@ -20,9 +22,9 @@ use sgl_3d::glam::{Mat4, Vec3, camera};
 use sgl_3d::settings::{PlanarReflections, Settings};
 use sgl_3d::timing::{FrameTime, GpuTiming};
 use sgl_3d::{
-    Backdrop, Camera, DirectionalLight, DirectionalShadow, FrameInput, HemisphereLight, InstanceId,
-    InstanceState, MaterialId, Mobility, NormalLayer, PlanarReflector, PlanarReflectorId, Renderer,
-    Scene, SurfaceMaterial, View, ViewFrame, ViewOutput,
+    Backdrop, Camera, DirectionalLight, DirectionalShadow, Fog, FrameInput, HemisphereLight,
+    InstanceId, InstanceState, MaterialId, Mobility, NormalLayer, PlanarReflector,
+    PlanarReflectorId, Renderer, Scene, SurfaceMaterial, View, ViewFrame, ViewOutput,
     asset::{Asset, CpuMesh, Image, Material, MaterialTexture, Vertex},
 };
 use std::{error::Error, path::PathBuf};
@@ -378,6 +380,8 @@ struct Stage {
     frame: u32,
     /// How long the last frame's `Renderer::render` took on the CPU.
     encoded: std::time::Duration,
+    /// The scene holds a uniform medium (`--fog`).
+    fog: bool,
 }
 
 impl Stage {
@@ -413,6 +417,14 @@ impl Stage {
         });
         // A plain sky, which the pond and the mirror show beyond the scene.
         input.backdrop = Backdrop::Color([0.22, 0.4, 0.75]);
+        if self.fog {
+            input.atmosphere = true;
+            input.fog = Fog {
+                density: 0.03,
+                ambient: 0.2,
+                ..Fog::default()
+            };
+        }
         input.hemisphere_light = HemisphereLight {
             sky_color: [0.3, 0.4, 0.6],
             ground_color: [0.1, 0.08, 0.06],
@@ -599,6 +611,7 @@ async fn run(
     frames: u32,
     level: PlanarReflections,
     measuring: Option<bool>,
+    fog: bool,
 ) -> Result<(), Box<dyn Error>> {
     let adapter = wgpu::Instance::default()
         .request_adapter(&Default::default())
@@ -638,6 +651,7 @@ async fn run(
         cart: (cart, cart_state),
         frame: 0,
         encoded: Default::default(),
+        fog,
     };
     if let Some(by_pass) = measuring {
         return measure(&mut stage, by_pass);
@@ -664,6 +678,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut output: PathBuf = "target/sgl-3d-planar-reflections.png".into();
     let mut frames = 60;
     let mut level = PlanarReflections::default();
+    let mut fog = false;
     // Whether to measure, and then whether by pass group too.
     let mut measuring = None;
     let mut args = std::env::args().skip(1);
@@ -680,10 +695,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             "--measure" => measuring = measuring.or(Some(false)),
+            "--fog" => fog = true,
             "--passes" => measuring = Some(true),
             flag if flag.starts_with('-') => return Err(format!("unknown option {flag}").into()),
             _ => output = arg.into(),
         }
     }
-    pollster::block_on(run(output, frames.max(1), level, measuring))
+    pollster::block_on(run(output, frames.max(1), level, measuring, fog))
 }

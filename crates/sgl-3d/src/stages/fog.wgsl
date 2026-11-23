@@ -34,6 +34,13 @@
 //   1 - exp(-density (d - start)) for a uniform medium, already rises
 //   continuously from the start. A froxel straddling the start takes its
 //   share of the medium over the jitter cycle through the temporal blend.
+// - In a planar reflector's reflected view the medium, fog volumes
+//   included, begins at the reflector's plane (shading/fog.wgsl
+//   fog_in_medium): a froxel wholly behind it stores nothing and does
+//   nothing more, and the integration takes the aerial volume's air from
+//   where each column crosses it, so each stretch of the reflected path is
+//   fogged once (the architecture's Frame, "Planar reflections"). SGL3D's
+//   own; Godot has no planar reflections.
 // - A fog volume is a box with a FogMaterial's density, albedo and edge
 //   fade; emission (the frame medium's too), height falloff, density
 //   textures, negative density and other shapes are not ported. The box's
@@ -136,6 +143,9 @@ struct FroxelVolume {
  // the view point at depth d under frame position ndc is
  // ((ndc + offset) * d / scale, -d).
  projection:vec4<f32>,
+ // Where the medium begins (shading/fog.wgsl fog_in_medium): a planar
+ // reflector's plane in its reflected view, zero in any other.
+ medium_plane:vec4<f32>,
  size:vec3<u32>,
  // This frame's offset in FOG_HALTON.
  frame:u32,
@@ -306,6 +316,21 @@ var<workgroup> fog_ambient_light:vec3<f32>;
   return;
  }
  let size=vec3<f32>(froxels.size);
+ // The froxel's box: its slice's ends in view depth, and across the frame
+ // its columns' corners (frame position plus the projection's offset).
+ let z0=fog_slice_depth(f32(id.z)/size.z,froxels.length,froxels.detail_spread);
+ let z1=fog_slice_depth(f32(id.z+1u)/size.z,froxels.length,froxels.detail_spread);
+ let n0=fog_froxel_ndc(vec2<f32>(id.xy)/size.xy)+froxels.projection.zw;
+ let n1=fog_froxel_ndc(vec2<f32>(id.xy+vec2(1u))/size.xy)+froxels.projection.zw;
+ // A froxel wholly behind a reflected view's plane holds nothing and does
+ // nothing more: no history, medium, volume or light.
+ if fog_has_plane(froxels.medium_plane) {
+  let view_plane=transpose(froxels.world_from_view)*froxels.medium_plane;
+  if fog_froxel_behind(view_plane,froxels.projection.xy,n0,n1,z0,z1) {
+   textureStore(scattering,id,vec4(0.));
+   return;
+  }
+ }
  var unit=(vec3<f32>(id)+vec3(.5))/size;
  var reprojected=vec4(0.);
  var reproject_amount=0.;
@@ -326,15 +351,17 @@ var<workgroup> fog_ambient_light:vec3<f32>;
  let position=froxel_world(unit);
  let view_ray=normalize(position-view.eye);
  let pixel=unit.xy*froxels.render_size;
- // The frame's medium, absent nearer the eye than its start.
- let medium=select(froxels.density,0.,distance(position,view.eye)<froxels.start);
+ // The frame's medium, absent nearer the eye than its start, and in a
+ // reflected view behind its plane, where fog volumes are absent too.
+ let in_medium=fog_in_medium(position,froxels.medium_plane);
+ let medium=select(froxels.density,0.,!in_medium || distance(position,view.eye)<froxels.start);
  var density=medium*clamp(exp2(-froxels.height_falloff*(position.y-froxels.height)),0.,1.);
  // The scattering: each medium's albedo weighted by its density, as Godot
  // weights its environment medium's.
  var albedo=froxels.albedo*density;
  // At most FOG_MOST_VOLUMES, all within the bound list, so the loop ends
  // whatever the count says (AR-12).
- let volume_count=min(min(froxels.volume_count,FOG_MOST_VOLUMES),arrayLength(&fog_volume_froxels));
+ let volume_count=select(0u,min(min(froxels.volume_count,FOG_MOST_VOLUMES),arrayLength(&fog_volume_froxels)),in_medium);
  for(var index=0u;index<volume_count;index++) {
   let reached=fog_volume_froxels[index];
   if any(id<reached.first) || any(id>reached.last) {
@@ -361,10 +388,6 @@ var<workgroup> fog_ambient_light:vec3<f32>;
   // depth between its slice's ends, and across the frame, on each axis, the
   // extent of its corners at both ends, which the frustum shears apart off
   // its axis, so the bias is as large wherever the froxel lies on screen.
-  let z0=fog_slice_depth(f32(id.z)/size.z,froxels.length,froxels.detail_spread);
-  let z1=fog_slice_depth(f32(id.z+1u)/size.z,froxels.length,froxels.detail_spread);
-  let n0=fog_froxel_ndc(vec2<f32>(id.xy)/size.xy)+froxels.projection.zw;
-  let n1=fog_froxel_ndc(vec2<f32>(id.xy+vec2(1u))/size.xy)+froxels.projection.zw;
   let high=max(max(n0*z0,n0*z1),max(n1*z0,n1*z1));
   let low=min(min(n0*z0,n0*z1),min(n1*z0,n1*z1));
   let lateral=(high-low)/froxels.projection.xy;
@@ -471,6 +494,27 @@ fn filter_gauss(t0:vec4<f32>,t1:vec4<f32>,t2:vec4<f32>,t3:vec4<f32>,t4:vec4<f32>
 fn fog_over_air(fog:vec4<f32>,air:vec4<f32>)->vec4<f32> {
  return vec4(fog.rgb+fog.a*air.rgb,fog.a*air.a);
 }
+// `whole`, the air from the eye to a point beyond where the medium begins,
+// with `before`, the air from the eye to where it begins, taken out: the air
+// from there to the point, fog_over_air's inverse, (I_whole - I_before) /
+// T_before and T_whole / T_before.
+fn air_beyond(whole:vec4<f32>,before:vec4<f32>)->vec4<f32> {
+ let through=max(before.a,.00001);
+ return vec4(max(whole.rgb-before.rgb,vec3(0.))/through,clamp(whole.a/through,0.,1.));
+}
+// The sky stage's air over a column to `distance` metres along its ray,
+// from where the medium begins, `begins` metres along it, whose air is
+// `before`: none nearer, and air_beyond past it.
+fn column_air(unit:vec2<f32>,distance:f32,begins:f32,before:vec4<f32>)->vec4<f32> {
+ if distance<=begins {
+  return vec4(0.,0.,0.,1.);
+ }
+ let air=sample_aerial_volume(aerial_volume,aerial_sampler,unit,distance);
+ if begins<=0. {
+  return air;
+ }
+ return air_beyond(air,before);
+}
 // One slice of the integrated volume, bounded as the volume stores it.
 fn store_integrated(position:vec3<u32>,value:vec4<f32>) {
  textureStore(integrated,position,select(vec4(0.),clamp(value,vec4(0.),vec4(65504.)),all_finite(value)));
@@ -489,6 +533,14 @@ fn store_integrated(position:vec3<u32>,value:vec4<f32>) {
  let ray_scale=length(froxel_view_position(fog_froxel_ndc(unit),1.));
  let volume_layout=froxels.volume_layout;
  let aerial=volume_layout.aerial_slices>0u;
+ // Where the column's medium and air begin (shading/fog.wgsl
+ // fog_medium_begins): at a reflected view's plane, else at the eye.
+ let column=normalize((froxels.world_from_view*vec4(froxel_view_position(fog_froxel_ndc(unit),1.),0.)).xyz);
+ let begins=fog_medium_begins(froxels.world_from_view[3].xyz,column,froxels.medium_plane);
+ var before=vec4(0.,0.,0.,1.);
+ if aerial && begins>0. && begins<FOG_NEVER {
+  before=sample_aerial_volume(aerial_volume,aerial_sampler,unit,begins);
+ }
  var accumulated=vec4(0.,0.,0.,1.);
  var previous_depth=0.;
  // At most FOG_MOST_SLICES and the volume's own, so the loop ends whatever
@@ -504,7 +556,7 @@ fn store_integrated(position:vec3<u32>,value:vec4<f32>) {
   accumulated=vec4(accumulated.rgb+(froxel.rgb-froxel.rgb*transmittance)/max(froxel.a,.00001)*accumulated.a,accumulated.a*transmittance);
   previous_depth=depth;
   if aerial {
-   store_integrated(position,fog_over_air(accumulated,sample_aerial_volume(aerial_volume,aerial_sampler,unit,depth*ray_scale)));
+   store_integrated(position,fog_over_air(accumulated,column_air(unit,depth*ray_scale,begins,before)));
   } else {
    store_integrated(position,accumulated);
   }
@@ -516,7 +568,7 @@ fn store_integrated(position:vec3<u32>,value:vec4<f32>) {
  let aerial_slices=min(volume_layout.aerial_slices,AERIAL_SLICES);
  for(var k=0u;k<aerial_slices;k++) {
   let depth=fog_layout_aerial_depth(k,volume_layout);
-  let air=sample_aerial_volume(aerial_volume,aerial_sampler,unit,depth*ray_scale);
+  let air=column_air(unit,depth*ray_scale,begins,before);
   store_integrated(vec3(id.xy,slices+k),fog_over_air(accumulated,air));
  }
  store_integrated(vec3(id.xy,slices+aerial_slices),accumulated);

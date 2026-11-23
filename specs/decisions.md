@@ -1606,10 +1606,20 @@ Use the [current specs](README.md) for implementation and the
   FSR only in the views and frames that show its picture, so a scene's
   reflectors hold no view's temporal masks while out of view or at `Off`.
   (14) Only a perspective viewer shows a reflector: the clip and the
-  lookup take view rays from an eye. (15) The picture's fog is the frame's
-  medium from the mirrored eye, exact for a uniform medium but for the
-  eye-to-surface stretch, which composition's fog counts again, as
-  three.js's and Wicked's do; a medium that begins at the plane is #887.
+  lookup take view rays from an eye. (15) The picture's fog and air begin at
+  the reflector's plane, and the viewer's own reach the surface, so each
+  stretch of the reflected path is fogged once, as Unreal's 4.13 preview
+  notes say its height fog's ray is clipped at the reflection plane (as a
+  user quoted them on Epic's forum; #887); three.js and Wicked fog the path
+  from the mirrored eye and the surface again. As first landed, the
+  picture was fogged from the mirrored eye: in a uniform absorbing medium
+  of 0.08 per metre the reflection of an emitter 10 m along the path
+  measured 1.121 of optical depth (the path's is 0.802, the doubled
+  stretch's 1.123), and a fog volume behind the mirror dimmed it to a
+  twelfth; with the plane it measures 0.812. The sky-view table is not
+  clipped, and the air is taken from the mirrored eye's height clamped
+  to 1 m above the ground, which for a reflector at ground height seen
+  from h metres up evaluates the reflected air about h + 1 m too high.
   Measured numbers are in the change that landed it.
 - **D-78** Decision, 2026-11-23 (#884): SGL3D builds a decoded RGBA8 image's
   mip chain on the GPU, a render pass a level drawn in the texture's own

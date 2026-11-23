@@ -42,8 +42,9 @@
 //! and the report gives the refresh passes' GPU time (`live_probe`).
 //! Then a mirror shows a source behind the viewer through a planar
 //! reflector: its centre must hold the colour the source has in that
-//! frame, and the report gives the frame's GPU time at two levels and
-//! without the picture, and what the reflected view draws (`mirror`).
+//! frame, at each level and in fog, and the report gives the frame's GPU
+//! time at two levels, in fog and without the picture, and what the
+//! reflected view draws (`mirror`).
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -2184,25 +2185,34 @@ async fn mirror(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, St
         &settings,
     )
     .map_err(|e| format!("View::new: {e}"))?;
-    let input = FrameInput::new(Camera {
+    let mut input = FrameInput::new(Camera {
         eye: Vec3::ZERO,
         view: camera::rh::view::look_at_mat4(Vec3::ZERO, -Vec3::Z, Vec3::Y),
         projection: sgl_3d::perspective(1., MAIN[0] as f32 / MAIN[1] as f32, 0.1),
     });
     let mut timing = GpuTiming::new(device, queue);
     let mut frames = 0u64;
+    // Each level, and `Half` in a thin absorbing fog, which the reflected
+    // view takes from the mirror's plane on.
     let levels = [
-        PlanarReflections::Half,
-        PlanarReflections::Full,
-        PlanarReflections::Off,
+        (PlanarReflections::Half, false),
+        (PlanarReflections::Full, false),
+        (PlanarReflections::Half, true),
+        (PlanarReflections::Off, false),
     ];
-    let mut times: [Vec<f64>; 3] = Default::default();
+    let mut times: [Vec<f64>; 4] = Default::default();
     let mut pictures = [String::new(), String::new()];
     let colours = [[0.6, 0.02, 0.02], [0.02, 0.6, 0.02], [0.02, 0.02, 0.6]];
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    for (kind, level) in levels.into_iter().enumerate() {
+    for (kind, (level, fog)) in levels.into_iter().enumerate() {
         settings.planar_reflections = level;
-        for index in 0..WARM_UP + MEASURED + if kind == 2 { 12 } else { 0 } {
+        input.atmosphere = fog;
+        input.fog = sgl_3d::Fog {
+            density: if fog { 0.03 } else { 0. },
+            albedo: [0.; 3],
+            ..sgl_3d::Fog::default()
+        };
+        for index in 0..WARM_UP + MEASURED + if kind == 3 { 12 } else { 0 } {
             if let Some(timing) = timing.as_mut() {
                 for timed in timing.begin_frame(device, queue) {
                     // `GpuTiming` counts frames from 1.
@@ -2211,7 +2221,7 @@ async fn mirror(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, St
                         (frame / (WARM_UP + MEASURED)) as usize,
                         frame % (WARM_UP + MEASURED),
                     );
-                    if arrangement < 3 && within >= WARM_UP {
+                    if arrangement < 4 && within >= WARM_UP {
                         times[arrangement].push(timed.total_ms);
                     }
                 }
@@ -2259,7 +2269,7 @@ async fn mirror(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, St
             }
             // The first frames of each level with a picture: the mirror
             // holds this frame's colour.
-            if kind < 2 && index < 3 {
+            if kind < 3 && index < 3 {
                 let pixels = sgl_3d::diagnostics::read_async(device, queue, &output, 4).await;
                 let at = ((MAIN[1] / 2 * MAIN[0] + MAIN[0] / 2) * 4) as usize;
                 let texel = &pixels[at..at + 3];
@@ -2292,11 +2302,11 @@ async fn mirror(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, St
         values.sort_by(f64::total_cmp);
         values.get(values.len() / 2).copied()
     };
-    let [half, full, off] = times.each_mut().map(median);
+    let [half, full, fogged, off] = times.each_mut().map(median);
     let [half_picture, full_picture] = pictures;
-    Ok(match (half, full, off) {
-        (Some(half), Some(full), Some(off)) => format!(
-            "this frame's colour in 3 frames at each level; GPU median {half:.3} ms at Half ({half_picture}), {full:.3} ms at Full ({full_picture}), {off:.3} ms at Off ({MEASURED} frames each, view {}x{})",
+    Ok(match (half, full, fogged, off) {
+        (Some(half), Some(full), Some(fogged), Some(off)) => format!(
+            "this frame's colour in 3 frames at each level and in fog; GPU median {half:.3} ms at Half ({half_picture}), {full:.3} ms at Full ({full_picture}), {fogged:.3} ms at Half in fog, {off:.3} ms at Off ({MEASURED} frames each, view {}x{})",
             MAIN[0], MAIN[1]
         ),
         _ => format!(
