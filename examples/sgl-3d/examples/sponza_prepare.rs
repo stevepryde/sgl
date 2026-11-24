@@ -32,6 +32,18 @@ fn linear_to_srgb(value: f32) -> f32 {
 fn convert(input: &image::RgbaImage, role: Role, maximum: u32) -> image::RgbaImage {
     let mut linear: Rgba32FImage = ImageBuffer::from_fn(input.width(), input.height(), |x, y| {
         let mut pixel = input.get_pixel(x, y).0.map(|v| f32::from(v) / 255.);
+        if role == Role::Normal {
+            // Intel's Sponza and Colorful Curtains normal maps are authored
+            // green down (DirectX), though their glTF files reference them
+            // as they are (Babylon.js's 3ds Max exporter converts nothing).
+            // A height field's normals are integrable read the right way
+            // up: at 128 px, 24 of the 25 maps the two files reference have
+            // a curl under 0.75 of their divergence read green down and
+            // 0.58 to 1.40 read green up (the curtains' 0.39 against 1.08);
+            // Khronos's NormalTangentTest, green up by glTF's rule, reads
+            // 0.20 up and 1.23 down (#907). glTF puts +Y up the image.
+            pixel[1] = 1. - pixel[1];
+        }
         if role == Role::Color {
             for channel in 0..3 {
                 pixel[channel] = srgb_to_linear(pixel[channel]) * pixel[3];
@@ -55,8 +67,8 @@ fn convert(input: &image::RgbaImage, role: Role, maximum: u32) -> image::RgbaIma
                 pixel[channel] = linear_to_srgb(pixel[channel].max(0.) / pixel[3].max(1e-8));
             }
         } else if role == Role::Normal {
-            // glTF tangent-space XYZ is linear and +Y-up. Renormalize after
-            // filtering without channel reconstruction or inversion.
+            // glTF tangent-space XYZ is linear and +Y-up (green turned up
+            // above). Renormalize after filtering.
             let mut normal =
                 glam::Vec3::new(pixel[0] * 2. - 1., pixel[1] * 2. - 1., pixel[2] * 2. - 1.);
             normal = normal.try_normalize().unwrap_or(glam::Vec3::Z);
@@ -691,13 +703,16 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn filtering_preserves_gltf_normal_y_and_uses_linear_premultiplied_color() {
+    fn filtering_turns_intels_green_down_normals_up_and_uses_linear_premultiplied_color() {
+        // A texel leaning toward the image's top in Intel's green-down
+        // encoding (green below mid) leans the same way in glTF's green-up
+        // one: green above mid, unit length after filtering.
         let tilted = image::RgbaImage::from_pixel(2, 1, Rgba([128, 37, 218, 255]));
         let normal = convert(&tilted, Role::Normal, 1).get_pixel(0, 0).0;
         let v = glam::Vec3::from_array(
             [normal[0], normal[1], normal[2]].map(|x| f32::from(x) / 127.5 - 1.),
         );
-        assert!(v.y < -0.69 && v.z > 0.69 && (v.length() - 1.).abs() < 0.01);
+        assert!(v.y > 0.69 && v.z > 0.69 && (v.length() - 1.).abs() < 0.01);
         let pair = image::RgbaImage::from_fn(2, 1, |x, _| {
             Rgba(if x == 0 {
                 [0, 0, 0, 255]

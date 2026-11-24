@@ -43,8 +43,10 @@ Preparation retains geometry, authored node transforms, UVs, material bindings,
 cameras and punctual lights. It combines the two scenes with remapped indices
 and one binary buffer. PNG color/emission is resized in linear light with
 premultiplied alpha; data maps stay linear and filtered normal vectors are
-renormalized. It does not apply Bistro-specific channel corrections or reduce
-geometry. The 512-pixel export retains 5,744,384 triangles in a 244.6 MiB GLB,
+renormalized. Intel authors its normal maps green down (DirectX) and its glTF
+files reference them unconverted, so the export turns their green channel up,
+glTF's convention; re-export a prepared directory made before that. It does
+not apply Bistro-specific channel corrections or reduce geometry. The 512-pixel export retains 5,744,384 triangles in a 244.6 MiB GLB,
 with 80 MiB of level-zero decoded images. Native CPU inspection reports about
 407 MiB of decoded geometry and images together, before transient copies,
 GPU mip chains, render targets or optional ray data. `asset-stats.json` records
