@@ -317,6 +317,9 @@ and an asynchronous readback.
   V) or a zero tangent, which shades on each triangle's frame; only the
   glTF loader generates tangents
   ([material textures](../README.md#material-textures)).
+  Check a map, a texture directory or a glTF/GLB's normal maps with
+  `cargo run --release -p sgl-3d-examples --example normal_convention -- PATH...`
+  ([source](../../../examples/sgl-3d/examples/normal_convention.rs)).
 - Supply finite material normal/bump scales and lightmap chart scales/offsets,
   and ambient-cube channels in finite `0..=65504`; scene setters reject
   invalid values and retain the previous content (see the package README).

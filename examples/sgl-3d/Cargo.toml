@@ -9,10 +9,13 @@ publish = false
 # package. Like sgl-3d, exempt from `[workspace.lints]`.
 
 [dev-dependencies]
+# `normal_convention` decodes BC7 and BC5 KTX2 levels as sgl-3d does.
+bcdec_rs.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
-# A material's texture wrapping (`asset::Material::wrap`) is glTF's type.
-gltf.workspace = true
+# A material's texture wrapping (`asset::Material::wrap`) is glTF's type;
+# `normal_convention` reads a material's clearcoat extension.
+gltf = { workspace = true, features = ["extensions"] }
 image = { workspace = true, features = ["hdr"] }
 # Existing encoder for the KTX2 export example.
 ktx2.workspace = true

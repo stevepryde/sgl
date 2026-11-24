@@ -2230,6 +2230,7 @@ dependencies = [
 name = "sgl-3d-examples"
 version = "0.9.3"
 dependencies = [
+ "bcdec_rs",
  "bytemuck",
  "console_error_panic_hook",
  "futures-channel",
