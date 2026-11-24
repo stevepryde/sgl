@@ -13,7 +13,9 @@ use glam::Mat4;
 use wgpu::util::DeviceExt;
 
 /// What a probe reads: the base normal, the anisotropy axis about it, or
-/// the coat's normal.
+/// the coat's normal. The axis is the material's for a direction texel
+/// (0.5, 1, 1), which KHR_materials_anisotropy reads as the bitangent at
+/// full strength (red along T, green along B).
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Observe {
     Base = 0,
@@ -34,7 +36,12 @@ pub(super) struct Probe<'a> {
     pub normal_maps_enabled: bool,
     pub observe: Observe,
     /// WGSL defining `fixture_vs(v: FixtureVertex, @builtin(instance_index)
-    /// view: u32) -> Fragment`, drawn `views` times into a target of `size`.
+    /// view: u32) -> Fragment`, drawn `views` times into a target of `size`,
+    /// and `fixture_front(raster: bool) -> bool`, the material's side of a
+    /// face raster takes as `raster`: production's `object_front` where
+    /// `fixture_vs` projects the posed positions, as every pass does, so a
+    /// mirroring pose reverses raster's winding; `raster` itself where it
+    /// projects the mesh's own.
     pub vertex: &'a str,
     pub views: u32,
     pub size: [u32; 2],
@@ -141,10 +148,11 @@ struct FixtureVertex {
  @location(5) lightmap_bounds:vec4<f32>,
  @location(6) tangent:vec4<f32>,
 }
-@fragment fn fixture_fs(i:Fragment,@builtin(front_facing) front:bool)->@location(0) vec4<f32> {
+@fragment fn fixture_fs(i:Fragment,@builtin(front_facing) raster_front:bool)->@location(0) vec4<f32> {
+ let front=fixture_front(raster_front);
  if fixture_observe==2u {return vec4(surface_coat_normal(i,front),select(-1.,1.,front));}
  let n=surface_normal(i,front);
- if fixture_observe==1u {return pbr_resolve_anisotropy(n,surface_tangent_frame(i,front),material.anisotropy_strength,material.anisotropy_rotation,false,vec3(1.,.5,1.));}
+ if fixture_observe==1u {return pbr_resolve_anisotropy(n,surface_tangent_frame(i,front),material.anisotropy_strength,material.anisotropy_rotation,true,vec3(.5,1.,1.));}
  return vec4(n,select(-1.,1.,front));
 }
 "#,
@@ -352,7 +360,7 @@ override fixture_observe:u32=0u;
  if id.x>=arrayLength(&fixture_rays) {return;}
  let ray=fixture_rays[id.x];let hit=scene_decode_hit(fixture_hits[id.x],ray.origin.xyz,ray.direction.xyz);
  let m=scene_material(hit.material_word);let n=ray_normal(hit,m);
- if fixture_observe==1u {fixture_normals[id.x]=pbr_resolve_anisotropy(n,ray_tangent_frame(hit),m.values.anisotropy_strength,m.values.anisotropy_rotation,false,vec3(1.,.5,1.));}
+ if fixture_observe==1u {fixture_normals[id.x]=pbr_resolve_anisotropy(n,ray_tangent_frame(hit),m.values.anisotropy_strength,m.values.anisotropy_rotation,true,vec3(.5,1.,1.));}
  else if fixture_observe==2u {fixture_normals[id.x]=vec4(ray_coat_normal(hit,m),select(-1.,1.,hit.front_face));}
  else {fixture_normals[id.x]=vec4(n,select(-1.,1.,hit.front_face));}
 }

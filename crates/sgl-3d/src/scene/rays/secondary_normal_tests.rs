@@ -41,6 +41,11 @@ const VERTEX: &str = r#"
  o.world=(model*vec4(v.position,1.)).xyz;o.normal=object_normal(model,v.normal);o.tangent=object_tangent(model,v.tangent,v.normal);o.uv=v.uv;o.color=v.color;
  return o;
 }
+// The screen is the mesh's own positions, so raster's side is the
+// material's under the authored case's mirroring pose too.
+fn fixture_front(raster:bool)->bool {
+ return raster;
+}
 "#;
 
 /// The four planes, their maps' coordinates as the module header says, or
@@ -391,7 +396,10 @@ fn material_normal_oracle(
                 let b = n.cross(t) * n.cross(t).dot(Vec3::new(1., 3., 0.2)).signum();
                 let mapped = (t * texel.x + b * texel.y + n * texel.z).normalize() * side;
                 if observe_axis {
-                    let direction = (t + b) * side;
+                    // The probe's direction texel points along B, which
+                    // the rotation (π/4, counter-clockwise: from T toward
+                    // B) turns halfway to -T (KHR_materials_anisotropy).
+                    let direction = (b - t) * side;
                     (direction - mapped * direction.dot(mapped)).normalize()
                 } else {
                     mapped
