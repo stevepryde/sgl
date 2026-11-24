@@ -189,17 +189,6 @@ pub(crate) struct Sprites {
 }
 
 impl Sprites {
-    /// Whether any batch has a sprite to draw, or a masked batch where
-    /// its last submitted sprites stood to mark.
-    pub fn any(&self) -> bool {
-        !self.departed.is_empty()
-            || self.batches.iter().any(|(_, batch)| {
-                !batch.sprites().is_empty()
-                    || (matches!(batch.look.blend, SpriteBlend::Masked { .. })
-                        && batch.previous().is_some())
-            })
-    }
-
     pub fn begin_frame(&mut self) {
         for (_, batch) in self.batches.iter_mut() {
             batch.rendered = Some(batch.revision());

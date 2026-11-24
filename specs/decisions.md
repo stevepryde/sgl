@@ -1311,7 +1311,10 @@ Use the [current specs](README.md) for implementation and the
   scene that holds a screen keeps the temporal masks in every frame, as
   one that holds a shader material does (F-15), which costs a TAA or FSR
   view its composition pass and masked resolve while the picture stands
-  still. Measured numbers are in the change that landed it.
+  still. Measured numbers are in the change that landed it. Amended
+  2026-11-23 (#877): a frame binds the masks only where something marks
+  them in its view (F-15), so a screen whose picture stands still costs
+  neither.
 
 - **D-71** Decision, 2026-11-23 (#851): SGL3D readies a frame's shaders and
   pipelines ahead of it with `Renderer::compile`, a planning pass over the

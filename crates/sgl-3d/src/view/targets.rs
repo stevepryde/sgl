@@ -97,10 +97,11 @@ pub(crate) struct SharedTargets {
     /// The beauty reflections complete.
     pub composite: wgpu::TextureView,
     /// R8: the temporal masks, AMD's reactive mask and its transparency and
-    /// composition mask, written by the composite's transparent draws while
-    /// the temporal antialiasing in effect reads them (FSR, and TAA in a
-    /// frame that can mark them).
-    pub temporal_masks: Option<[wgpu::TextureView; 2]>,
+    /// composition mask, made in the first frame that binds them and kept
+    /// while the view's antialiasing reads masks (`set_temporal_masks`).
+    temporal_masks: Option<[wgpu::TextureView; 2]>,
+    /// Whether this frame binds `temporal_masks`.
+    masks_bound: bool,
     /// The surface's own targets, from the first frame of a scene that
     /// holds a blended receiver of screen-space reflections.
     pub surface: Option<SurfaceTargets>,
@@ -171,23 +172,39 @@ impl SharedTargets {
                 wgpu::TextureUsages::STORAGE_BINDING,
             ),
             temporal_masks: None,
+            masks_bound: false,
             surface: surface.then(|| SurfaceTargets::new(device, size)),
         }
     }
 
-    /// The temporal masks exist only for frames whose antialiasing reads
-    /// them (`Effective::temporal_masks`). Releasing them also releases the
-    /// two render-size R8 allocations.
-    pub fn set_temporal_masks(&mut self, device: &wgpu::Device, enabled: bool) {
-        if enabled {
+    /// Binds the temporal masks in this frame where `bind`
+    /// (`Effective::temporal_masks`), making them if absent. Unbound, they
+    /// are kept while `keep` (TAA or FSR runs), so content that marks them
+    /// now and then makes no targets each time, and released otherwise: two
+    /// bytes a render pixel (the register's F-15).
+    pub fn set_temporal_masks(&mut self, device: &wgpu::Device, bind: bool, keep: bool) {
+        if bind {
             self.temporal_masks.get_or_insert_with(|| {
                 let size = self.depth.texture().size();
                 ["reactive mask", "transparency and composition mask"]
                     .map(|label| target(device, label, [size.width, size.height], MASK_FORMAT))
             });
-        } else {
+        } else if !keep {
             self.temporal_masks = None;
         }
+        self.masks_bound = bind;
+    }
+
+    /// The temporal masks this frame binds, which its draws onto the
+    /// composite write and its antialiasing reads.
+    pub fn temporal_masks(&self) -> Option<&[wgpu::TextureView; 2]> {
+        self.temporal_masks.as_ref().filter(|_| self.masks_bound)
+    }
+
+    /// The temporal masks held, bound in this frame or not.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn held_temporal_masks(&self) -> Option<&[wgpu::TextureView; 2]> {
+        self.temporal_masks.as_ref()
     }
 
     /// Allocates the surface's own targets, once a scene holds a receiver.
@@ -299,35 +316,46 @@ pub(crate) fn attachment(view: &wgpu::TextureView) -> Option<wgpu::RenderPassCol
 mod tests {
     use super::*;
 
+    // Plausible defects: the masks made before a frame binds them, made
+    // again for each frame that binds them after one that did not (two
+    // targets created and dropped per spawn), still bound in a frame that
+    // binds none, or held once neither TAA nor FSR reads them. The oracle
+    // is the register's F-15: made at the first bind, R8 at the render
+    // size, kept unbound while kept, released otherwise.
     #[test]
-    fn temporal_masks_are_allocated_only_while_enabled() {
+    fn temporal_masks_are_kept_once_made_and_bound_per_frame() {
         let Some((device, _queue)) = crate::test_support::device() else {
             return;
         };
         for size in [[8, 6], [13, 9]] {
             let mut targets = SharedTargets::new(&device, size, false);
-            assert!(targets.temporal_masks.is_none());
-            targets.set_temporal_masks(&device, false);
-            assert!(targets.temporal_masks.is_none());
-            targets.set_temporal_masks(&device, true);
-            let previous = targets.temporal_masks.as_ref().unwrap().clone();
-            for mask in &previous {
+            targets.set_temporal_masks(&device, false, true);
+            assert!(
+                targets.held_temporal_masks().is_none(),
+                "nothing bound them yet"
+            );
+            targets.set_temporal_masks(&device, true, true);
+            let made = targets.temporal_masks().unwrap().clone();
+            for mask in &made {
                 assert_eq!(mask.texture().format(), wgpu::TextureFormat::R8Unorm);
                 assert_eq!([mask.texture().width(), mask.texture().height()], size);
             }
-            targets.set_temporal_masks(&device, true);
+            targets.set_temporal_masks(&device, false, true);
+            assert!(targets.temporal_masks().is_none(), "unbound");
+            assert!(targets.held_temporal_masks().is_some(), "kept");
+            targets.set_temporal_masks(&device, true, true);
             assert_eq!(
-                &previous,
-                targets.temporal_masks.as_ref().unwrap(),
-                "enabled frames reuse masks"
+                &made,
+                targets.temporal_masks().unwrap(),
+                "bound again, the kept masks"
             );
-            targets.set_temporal_masks(&device, false);
-            assert!(targets.temporal_masks.is_none());
-            targets.set_temporal_masks(&device, true);
+            targets.set_temporal_masks(&device, false, false);
+            assert!(targets.held_temporal_masks().is_none(), "released");
+            targets.set_temporal_masks(&device, true, true);
             assert_ne!(
-                &previous,
-                targets.temporal_masks.as_ref().unwrap(),
-                "re-enable allocates fresh masks"
+                &made,
+                targets.temporal_masks().unwrap(),
+                "made again after a release"
             );
         }
     }

@@ -840,12 +840,96 @@ fn a_compiled_level_whose_masks_follow_its_footprints_creates_no_program_as_they
     level.spawn();
     level.render(&still);
     assert!(
-        level.view.targets.temporal_masks.is_some(),
+        level.view.targets.temporal_masks().is_some(),
         "the spawn's frame held the masks"
     );
     level.render(&still);
     assert!(level.scene.footprints.is_empty());
     assert_eq!(level.programs(), before);
+}
+
+// Plausible defect (#877): a level's first frame readies only the TAA
+// resolve it binds, so the first frame after it in which nothing marks the
+// masks (the blended cube turned out of view) creates the resolve without
+// them on the window thread. The oracle is wgpu's count, as
+// `a_compiled_levels_first_frame_creates_no_program`'s: unchanged across a
+// compiled level's first frame, which binds the masks for its blended
+// cube, and a frame turned away from everything that marks them, which
+// binds none.
+#[test]
+fn a_compiled_level_whose_masks_come_and_go_creates_no_program() {
+    let Some(mut level) = Level::new() else {
+        return;
+    };
+    let first = Level::input(0.);
+    level.compile_all(&first);
+    let before = level.programs();
+    level.render(&first);
+    assert!(
+        level.view.targets.temporal_masks().is_some(),
+        "the blended cube marks the first frame"
+    );
+    let mut away = FrameInput {
+        camera_cut: false,
+        ..first
+    };
+    let eye = away.camera.eye;
+    away.camera.view = glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::Z, Vec3::Y);
+    level.render(&away);
+    assert!(
+        level.view.targets.temporal_masks().is_none(),
+        "nothing marks the frame turned away"
+    );
+    assert_eq!(level.programs(), before);
+}
+
+// Plausible defect (#877): the mask targets follow each frame's answer, so
+// content that marks the masks now and then, a spawn every few frames,
+// creates and drops two render-size targets each time. The oracle is
+// wgpu's count of the textures the device holds against the register's
+// F-15: the first frame that binds the masks makes two targets, and frames
+// that bind none or bind them again after it make and drop none.
+#[test]
+fn the_mask_targets_are_made_once_however_often_spawns_come_and_go() {
+    let Some(mut level) = Level::without_mask_writers() else {
+        return;
+    };
+    let model = level
+        .scene
+        .add_asset(&level.device, &level.queue, test_support::cube())
+        .unwrap()
+        .model;
+    let first = Level::input(0.);
+    let still = FrameInput {
+        camera_cut: false,
+        ..first
+    };
+    level.render(&first);
+    level.render(&still);
+    let before = level.held().textures;
+    for spawn in 0..3 {
+        let state = crate::InstanceState {
+            pose: Mat4::from_translation(Vec3::new(0.25 + 0.5 * spawn as f32, 1., 0.)),
+            ..crate::InstanceState::new(model)
+        };
+        level
+            .scene
+            .add_instance(&level.device, &level.queue, state, crate::Mobility::Moving)
+            .unwrap();
+        for (frame, bound) in [(0, true), (1, false)] {
+            level.render(&still);
+            assert_eq!(
+                level.view.targets.temporal_masks().is_some(),
+                bound,
+                "spawn {spawn}, frame {frame}: the frame binds the masks"
+            );
+            assert_eq!(
+                level.held().textures,
+                before + 2,
+                "spawn {spawn}, frame {frame}: the two targets, made once"
+            );
+        }
+    }
 }
 
 // Plausible defect: the planning pass reaches a material's pipelines

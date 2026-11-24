@@ -181,14 +181,13 @@ pub(crate) struct Materials {
     /// Changes when an edit changes what casters draw
     /// (`SurfaceMaterial::draws_other_geometry`).
     pub casters: u64,
-    /// How many of its materials are blended and how many
-    /// of those receive screen-space reflections, how many opaque or masked
+    /// How many of its blended materials receive screen-space
+    /// reflections, how many opaque or masked
     /// ones' surfaces may move from frame to frame (their records move, they
     /// have a shader or they name a render texture: `Scene::shading_changes`)
     /// and of those how many
     /// records do (`Material::record_moves`), and how many have an
     /// iridescent film.
-    blended: usize,
     receivers: usize,
     moving: usize,
     moving_records: usize,
@@ -205,7 +204,6 @@ impl Materials {
         Self {
             slots: Slots::default(),
             casters: 0,
-            blended: 0,
             receivers: 0,
             moving: 0,
             moving_records: 0,
@@ -216,11 +214,6 @@ impl Materials {
             textures: Textures::default(),
             groups: Groups::new(device, queue),
         }
-    }
-
-    /// Whether a material is blended.
-    pub fn holds_blended(&self) -> bool {
-        self.blended > 0
     }
 
     /// Whether a material is a blended receiver of screen-space reflections.
@@ -318,8 +311,8 @@ impl Materials {
     /// Counts `by` more materials of `values` whose record moves or not
     /// (`record_moves`): one with an iridescent film among the films, one
     /// with a sheen among the sheens, one that passes diffuse light through
-    /// among those; a blended or transmissive one among the blended (and the
-    /// receivers where it is one), else one
+    /// among those; a blended one among the receivers where it is one, else
+    /// one
     /// whose surface moves (its record, with a shader or naming a render
     /// texture) among the moving and one whose record moves among those.
     fn count(&mut self, values: &SurfaceMaterial, record_moves: bool, by: isize) {
@@ -337,7 +330,6 @@ impl Materials {
             add(&mut self.transmissive);
         }
         if values.blended() {
-            add(&mut self.blended);
             if values.receives_screen_space_reflections() {
                 add(&mut self.receivers);
             }

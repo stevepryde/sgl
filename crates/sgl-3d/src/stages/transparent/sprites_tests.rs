@@ -570,8 +570,7 @@ fn masks(frames: &Frames, device: &wgpu::Device, queue: &wgpu::Queue, p: Vec2) -
     let masks = frames
         .renderer
         .targets()
-        .temporal_masks
-        .as_ref()
+        .temporal_masks()
         .expect("a TAA frame with sprites holds the masks");
     masks
         .each_ref()
@@ -641,6 +640,54 @@ fn sprites_mark_the_temporal_masks_as_they_change() {
             "{frame:?}"
         );
     }
+}
+
+// Plausible defects (#877): a TAA frame binds the temporal masks, and TAA
+// reads them, for a masked batch that did not change, as every frame did
+// while the scene held a sprite; or binds none in the frame a masked batch
+// changed, or while a blended batch is drawn; or for a blended batch out of
+// the view. The oracle is the register's F-15 with M-21 and M-22: a masked
+// batch marks the masks in the frames after it is added or changes, a
+// blended batch in every frame the view draws it, and nothing else does.
+#[test]
+fn sprites_bind_the_masks_only_in_frames_they_mark() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let ahead = camera(Vec3::ZERO, Vec3::NEG_Z);
+    let behind = camera(Vec3::ZERO, Vec3::Z);
+    let left = Vec3::new(-1.2, 0., -5.);
+    let mut scene = Scene::new(&device, &queue);
+    let masked = batch(
+        &device,
+        &queue,
+        &mut scene,
+        &white(),
+        MASKED,
+        &[Sprite::new(left, Vec2::splat(2.))],
+    );
+    let mut frames = Frames::new(&device, &queue, settings(settings::Antialiasing::Taa));
+    let mut bound = |scene: &mut Scene, camera| {
+        frames.render(&device, &queue, scene, camera);
+        frames.renderer.targets().temporal_masks().is_some()
+    };
+    assert!(bound(&mut scene, ahead), "a masked batch added");
+    assert!(!bound(&mut scene, ahead), "the masked batch still");
+    let moved = [Sprite::new(left + Vec3::Y * 0.1, Vec2::splat(2.))];
+    scene.set_sprites(&device, &queue, masked, &moved).unwrap();
+    assert!(bound(&mut scene, ahead), "the masked batch moved");
+    assert!(!bound(&mut scene, ahead), "the masked batch still again");
+    batch(
+        &device,
+        &queue,
+        &mut scene,
+        &white(),
+        SpriteBlend::Blended,
+        &[Sprite::new(Vec3::new(1.2, 0., -5.), Vec2::splat(2.))],
+    );
+    assert!(bound(&mut scene, ahead), "a blended batch in view");
+    assert!(bound(&mut scene, ahead), "the blended batch still in view");
+    assert!(!bound(&mut scene, behind), "both behind the view");
 }
 
 // Plausible defect: an empty batch, or a scene's sprite image with no
@@ -777,7 +824,7 @@ fn removing_or_restyling_a_masked_batch_marks_what_it_drew_and_nothing_else() {
 /// The transparency-and-composition mask at each pixel, 0..=255, of the
 /// last frame.
 fn composition(frames: &Frames, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<u8> {
-    let masks = frames.renderer.targets().temporal_masks.as_ref().unwrap();
+    let masks = frames.renderer.targets().temporal_masks().unwrap();
     test_support::read(device, queue, masks[1].texture(), 1)
 }
 
@@ -821,8 +868,7 @@ fn a_changed_masked_batch_marks_where_its_sprites_stood() {
         let after = frames
             .renderer
             .targets()
-            .temporal_masks
-            .as_ref()
+            .temporal_masks()
             .map(|_| at(&composition(&frames, &device, &queue), pixel(&camera, left)));
         assert_eq!(marked, 255, "{name}: where it stood");
         assert!(

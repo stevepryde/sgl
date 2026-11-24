@@ -440,9 +440,10 @@ impl Prepare {
         // list where they stand.
         views.sprites.build(scene, &camera_view);
         // Where changed instances stood and stand, which the frame marks
-        // while it has the temporal masks and continues the view's history
-        // (M-23).
-        if effective.temporal_masks && history.valid {
+        // where its antialiasing reads the temporal masks and it continues
+        // the view's history (M-23); a footprint listed has the frame bind
+        // them (F-15).
+        if (effective.taa || effective.fsr) && history.valid {
             views
                 .footprints
                 .build(&mut views.instances, scene, &camera_view, mask);

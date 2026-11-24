@@ -10,9 +10,11 @@ pub(crate) mod transmission;
 pub(crate) mod volumes;
 
 use crate::content::material::AlphaMode;
-use crate::scene::shaders::ShadingChange;
+use crate::scene::shaders::{ShadingChange, ShadingChanges};
 use crate::shading::bind::{self, BindingTier, BlendedTrace};
+use crate::view::FrameViews;
 use crate::view::cached_group::CachedGroup;
+use crate::view::effective::CompositeDraws;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::GeometryPass;
 use crate::view::targets::{SharedTargets, attachment};
@@ -24,12 +26,12 @@ pub(crate) enum Beauty<'a> {
     Incident(&'a wgpu::TextureView),
     /// The shared composite, after reflections are composed, with what the
     /// screen-space method returned while one ran, which receivers that are
-    /// the surface compose into their traced lobe. While the frame has the
+    /// the surface compose into their traced lobe. While the frame binds the
     /// temporal masks (`Effective::temporal_masks`), these draws also write
     /// them, AMD's reactive and transparency and composition masks, which
-    /// are cleared here and, while the scene holds an opaque surface whose
-    /// shading moves or the view draws an instance footprint, marked by
-    /// them first.
+    /// are cleared here and, where the view's camera list holds a set the
+    /// temporal composition marks (`composed`) or the view draws an
+    /// instance footprint, marked by that pass first.
     Composite {
         reflections: Option<&'a wgpu::TextureView>,
     },
@@ -302,12 +304,12 @@ impl Transparent {
             self.footprints.programs(ctx);
         }
         // The first pass that writes the temporal masks clears them: the
-        // temporal composition's while the scene holds a moving opaque
-        // surface or the view draws a footprint, else the blended
-        // surfaces', else the additive effects'.
-        let composition = temporal_masks.filter(|_| {
-            ctx.effective.composite.moving_surfaces || !ctx.views.footprints.is_empty()
-        });
+        // temporal composition's where the view's frame marks a surface
+        // whose shading changes or a footprint, else the blended surfaces',
+        // else the additive effects'.
+        let composite = ctx.effective.composite;
+        let composition =
+            temporal_masks.filter(|_| composite.moving_surfaces || composite.footprints);
         if let Some(masks) = composition {
             self.encode_composition(ctx, masks);
         }
@@ -484,8 +486,7 @@ impl Transparent {
     }
 
     /// The temporal `masks`, cleared, with the camera's opaque and masked
-    /// surfaces whose material's shading changes in this frame where their
-    /// geometry stands still (`Scene::shading_changes`) marked in its
+    /// surfaces the temporal composition marks (`composed`) marked in its
     /// transparency and composition mask, drawn at the opaque depth, which
     /// they test for equality without writing it; a masked material whose
     /// shader's inputs were edited is drawn over its footprint at or in
@@ -528,16 +529,7 @@ impl Transparent {
         pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
         let scene = ctx.scene;
         let changes = scene.shading_changes();
-        // A planar reflector's surface the view shows in this frame: its
-        // picture moves while its surface's motion vectors stand still.
         let mirrors = &ctx.views.mirrors;
-        let mirrored = |material| {
-            scene
-                .drawn_material(material)
-                .values
-                .planar_reflector
-                .is_some_and(|reflector| mirrors.contains(&reflector))
-        };
         // Whether a material's edit marks its footprint: a masked one's, whose
         // coverage the edit may have changed.
         let footprint = |material| {
@@ -552,10 +544,7 @@ impl Transparent {
             ctx.pipelines,
             &mut pass,
             GeometryPass::TemporalComposition { footprint: false },
-            &|material| {
-                (changes.of(scene, material) != ShadingChange::None || mirrored(material))
-                    && !footprint(material)
-            },
+            &|material| composed(scene, &changes, mirrors, material) && !footprint(material),
         );
         ctx.views.camera.list.draw_materials(
             scene,
@@ -659,14 +648,70 @@ impl Transparent {
     }
 }
 
-/// The temporal masks, while the frame's draws onto the composite write
-/// them (`Effective::temporal_masks`): the one condition the blended
-/// surfaces, additive effects, mist and heat distortion all follow.
+/// The temporal masks, while the frame binds them
+/// (`Effective::temporal_masks`): the one condition the blended surfaces,
+/// additive effects, mist and heat distortion all follow.
 fn composite_masks<'a>(ctx: &FrameContext<'a>) -> Option<&'a [wgpu::TextureView; 2]> {
-    ctx.targets
-        .temporal_masks
-        .as_ref()
-        .filter(|_| ctx.effective.temporal_masks)
+    ctx.targets.temporal_masks()
+}
+
+/// What marks the temporal masks in a view's frame (Frame item 9, the
+/// register's F-15): `frame`'s glow, mist and heat, which the frame's input
+/// decides, and from the view's lists, which prepare built: a blended or
+/// transmissive surface its blended list holds (M-11); a set its camera
+/// list holds of an opaque or masked material whose shading changes in this
+/// frame, or a planar reflector's picture it shows (M-16); a blended sprite
+/// batch it lists, a masked one that changed, or the footprint of one
+/// (M-21, M-22); an instance footprint it lists (M-23). The camera list is
+/// culled on the GPU, so a set counts wherever the view's visibility mask
+/// enables it.
+pub(crate) fn writers(
+    frame: CompositeDraws,
+    scene: &crate::Scene,
+    views: &FrameViews,
+) -> CompositeDraws {
+    let composes = || {
+        let changes = scene.shading_changes();
+        views
+            .camera
+            .list
+            .holds_materials(&|material| composed(scene, &changes, &views.mirrors, material))
+    };
+    let sprites = &views.sprites;
+    CompositeDraws {
+        blended: !views.blended.is_empty(),
+        moving_surfaces: (scene.materials.holds_moving_surfaces() || !views.mirrors.is_empty())
+            && composes(),
+        sprites: !sprites.blended().is_empty()
+            || !sprites.footprints.is_empty()
+            || sprites
+                .masked()
+                .iter()
+                .any(|listed| sprites::batch_changed(scene, listed)),
+        footprints: !views.footprints.is_empty(),
+        ..frame
+    }
+}
+
+/// Whether the temporal composition marks the camera's sets of `material`
+/// in a frame of `scene` whose shading changes are `changes` and whose view
+/// shows the planar reflectors `mirrors` (the register's M-16): its shading
+/// changes in this frame where its geometry stands still, or it names a
+/// reflector whose picture the view shows, which moves while its surface's
+/// motion vectors stand still. The one test the pass draws by and
+/// `writers` counts by.
+fn composed(
+    scene: &crate::Scene,
+    changes: &ShadingChanges,
+    mirrors: &[crate::PlanarReflectorId],
+    material: crate::MaterialId,
+) -> bool {
+    changes.of(scene, material) != ShadingChange::None
+        || scene
+            .drawn_material(material)
+            .values
+            .planar_reflector
+            .is_some_and(|reflector| mirrors.contains(&reflector))
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -683,6 +728,8 @@ mod receiver_tests;
 mod sprites_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod transmission_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod writers_tests;
 
 /// `target`, keeping what it holds when `load`.
 fn loaded(

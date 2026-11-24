@@ -157,9 +157,8 @@ impl Antialiasing {
                 // `PostFx::begin`'s; footprints reach it through the masks.
                 ctx.scene.rigid_objects_changed() || ctx.history.visibility_changed,
                 Responsive {
-                    masks: ctx.targets.temporal_masks.as_ref(),
+                    masks: ctx.targets.temporal_masks(),
                     reach: &reach,
-                    ready_masked: !ctx.effective.composite.lasting(),
                 },
                 ctx.timing,
             );
@@ -171,11 +170,7 @@ impl Antialiasing {
                 color,
                 depth: ctx.surface.depth,
                 motion: &ctx.targets.motion,
-                masks: ctx
-                    .targets
-                    .temporal_masks
-                    .as_ref()
-                    .expect("FSR frame masks"),
+                masks: ctx.targets.temporal_masks().expect("FSR frame masks"),
                 projection: glam::Mat4::from_cols_array_2d(&ctx.values.view.projection),
                 frame_time_ms: ctx.input.frame_time_ms,
                 exposure,

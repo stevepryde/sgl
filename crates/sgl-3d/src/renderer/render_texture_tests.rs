@@ -158,9 +158,12 @@ impl Stage {
     }
 
     /// The main view's transparency and composition mask at texel
-    /// (column, row), in 0..=1.
+    /// (column, row), in 0..=1: 0 where its frame binds none, as TAA's
+    /// resolve then reads none (the register's F-15).
     fn composition(&self, (column, row): (u32, u32)) -> f32 {
-        let masks = self.main.targets.temporal_masks.as_ref().unwrap();
+        let Some(masks) = self.main.targets.temporal_masks() else {
+            return 0.;
+        };
         let texels = test_support::read(&self.device, &self.queue, masks[1].texture(), 1);
         f32::from(texels[(row * SIZE[0] + column) as usize]) / 255.
     }
@@ -169,23 +172,34 @@ impl Stage {
 // M-16, at the renderer. Plausible defects: the frame never tells the scene
 // which render textures it draws, or tells it after the views that show
 // them have marked their masks, so a screen whose picture changes is never
-// marked, or a frame late; or a screen is marked in every frame. The
-// fixture: a main view under TAA before a screen, and a feed that draws
-// the screen's render texture in frames 0, 1 and 4 and is not listed in
-// frames 2 and 3. The oracle is the register's rule: the screen's texels
-// are marked transparency and composition 1 in the frames its producer
-// renders and in the frame after it stops (frame 2), and 0 in frame 3; a
-// texel beside the screen is never marked.
+// marked, or a frame late; or a screen is marked in every frame; or the
+// main view binds the masks, and TAA reads them, in a frame in which the
+// screen's picture stands still and nothing else marks them, as every
+// frame did while the scene held a screen (#877), or the targets are made
+// again when the producer resumes. The fixture: a main view under TAA
+// before a screen, and a feed that draws the screen's render texture in
+// frames 0, 1 and 4 and is not listed in frames 2 and 3. The oracle is the
+// register's rules (M-16, F-15): the screen's texels are marked
+// transparency and composition 1 in the frames its producer renders and
+// in the frame after it stops (frame 2), and 0 in frame 3; a texel beside
+// the screen is never marked; the main view binds the masks in exactly the
+// marked frames, and keeps the targets it made in frame 0 throughout.
 #[test]
 fn a_screen_is_marked_in_the_frames_its_producer_draws_and_the_next() {
     let Some(mut stage) = Stage::new() else {
         return;
     };
+    let mut made = None;
     for (frame, (feed, marked)) in [(true, 1.), (true, 1.), (false, 1.), (false, 0.), (true, 1.)]
         .into_iter()
         .enumerate()
     {
         stage.frame(feed);
+        assert_eq!(
+            stage.main.targets.temporal_masks().is_some(),
+            marked == 1.,
+            "frame {frame}: the frame binds the masks"
+        );
         let screen = stage.composition((32, 32));
         assert!(
             (screen - marked).abs() <= 1. / 255.,
@@ -196,6 +210,9 @@ fn a_screen_is_marked_in_the_frames_its_producer_draws_and_the_next() {
             beside <= 1. / 255.,
             "frame {frame}: the composition mask beside the screen is {beside}"
         );
+        let held = stage.main.targets.held_temporal_masks().unwrap();
+        let made = made.get_or_insert_with(|| held.clone());
+        assert_eq!(made, held, "frame {frame}: the targets frame 0 made");
     }
 }
 

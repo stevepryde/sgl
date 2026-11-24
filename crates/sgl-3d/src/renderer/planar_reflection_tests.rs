@@ -224,7 +224,7 @@ impl Stage {
     /// The main view's transparency and composition mask at texel
     /// (column, row), in 0..=1.
     fn composition(&self, (column, row): (u32, u32)) -> f32 {
-        let masks = self.main.targets.temporal_masks.as_ref().unwrap();
+        let masks = self.main.targets.temporal_masks().unwrap();
         let texels = test_support::read(&self.device, &self.queue, masks[1].texture(), 1);
         f32::from(texels[(row * SIZE[0] + column) as usize]) / 255.
     }
@@ -236,7 +236,7 @@ impl Stage {
         (
             self.main.reflected.len(),
             self.main.reflections.holds_planar(),
-            self.main.targets.temporal_masks.is_some(),
+            self.main.targets.temporal_masks().is_some(),
         )
     }
 }
@@ -387,7 +387,7 @@ fn a_reflectors_surface_is_marked_while_its_picture_shows() {
         return;
     };
     plain.frame(false, PlanarReflections::Half);
-    assert!(plain.main.targets.temporal_masks.is_none());
+    assert!(plain.main.targets.temporal_masks().is_none());
 }
 
 // Plausible defect: a view whose projection is not a perspective one shows

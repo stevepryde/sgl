@@ -75,18 +75,11 @@ const TAA_FEATURE_FLAGS: temporal_anti_aliasing::FeatureFlags =
 #[derive(Clone, Copy)]
 pub(crate) struct Responsive<'a> {
     /// The reactive and the transparency and composition masks (R8, the
-    /// render size), while the frame has them (`SharedTargets`).
+    /// render size), while the frame binds them (`SharedTargets`).
     pub masks: Option<&'a [wgpu::TextureView; 2]>,
     /// The motion reach: the largest motion, in render pixels a frame, in
     /// the 3x3 neighbourhood of each `TILE_SIZE` tile.
     pub reach: &'a wgpu::TextureView,
-    /// Also ready the resolve that binds the masks where the frame binds
-    /// none: in a view whose masks follow instance footprints alone, which
-    /// any instance edit brings into a frame (the register's M-23), so its
-    /// first frame, planned (`Renderer::compile`) or not, makes it. The
-    /// resolve without them is that first frame's, which restarts history
-    /// and so marks no footprint.
-    pub ready_masked: bool,
 }
 
 pub(crate) struct PostFx {
@@ -550,15 +543,17 @@ impl PostFx {
             responsive.masks.iter().flat_map(|m| m.iter()).collect();
         let timestamps =
             |pass: &'static str| timing.and_then(|timing| timing.render_pass(pass_group(pass)));
-        if responsive.ready_masked && masks.is_empty() {
-            taa.prepare_responsive_variant(
-                device,
-                &self.context,
-                TAA_FEATURE_FLAGS,
-                2,
-                Some(crate::shading::motion_tiles::TILE_SIZE),
-            );
-        }
+        // The resolve the frame does not bind too, made in the view's first
+        // TAA frame, planned (`Renderer::compile`) or not: any later frame
+        // may bind the masks or not, as what marks them comes and goes
+        // (the register's F-15).
+        taa.prepare_responsive_variant(
+            device,
+            &self.context,
+            TAA_FEATURE_FLAGS,
+            if masks.is_empty() { 2 } else { 0 },
+            Some(crate::shading::motion_tiles::TILE_SIZE),
+        );
         taa.execute(&mut temporal_anti_aliasing::RenderAttributes {
             device,
             queue,

@@ -110,7 +110,6 @@ pub(super) fn begin_view(
         probe,
         ..
     } = view;
-    let targets: &SharedTargets = targets;
     #[cfg(feature = "diagnostics")]
     if let Some(probe) =
         crate::stages::frame_probe::FrameProbe::for_frame(probe, device, effective.frame_probe)
@@ -179,6 +178,24 @@ pub(super) fn begin_view(
         views,
         &bindings.frame,
     );
+    // What marks the temporal masks in the view's frame, from the lists
+    // prepare built, and so whether the frame binds them, where its
+    // antialiasing reads them; the targets stay made, unbound, while TAA or
+    // FSR runs (the register's F-15).
+    let effective = if effective.taa || effective.fsr {
+        super::effective::temporal_masks(
+            effective,
+            crate::stages::transparent::writers(effective.composite, scene, views),
+        )
+    } else {
+        effective
+    };
+    targets.set_temporal_masks(
+        device,
+        effective.temporal_masks,
+        effective.taa || effective.fsr,
+    );
+    let targets: &SharedTargets = targets;
     shadows.resize(device, effective.shadow_quality);
     shadows.local.prepare(
         device,

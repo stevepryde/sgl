@@ -104,17 +104,18 @@ pub(crate) struct ScreenIndirect {
     pub pyramid_radius: f32,
 }
 
-/// What the frame draws onto the composite (Frame item 9), each of which
-/// marks the temporal masks while the frame has them: the one condition
-/// each draw and the masks' allocation read.
+/// What the view's frame draws that marks the temporal masks (Frame item
+/// 9, the register's F-15): glow, mist and heat from the frame's input
+/// (`renderer::effective::resolve`), the rest from the view's lists once
+/// prepare has built them (`stages::transparent::writers`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CompositeDraws {
-    /// The scene holds blended or transmissive materials, which the camera's
-    /// blended list draws where it holds them.
+    /// The camera's blended list holds a blended or transmissive surface.
     pub blended: bool,
-    /// The scene holds an opaque or masked material whose shading moves
-    /// (`Materials::holds_moving_surfaces`), which the temporal composition
-    /// marks in the frames it changes (`Scene::shading_changes`).
+    /// The camera's list holds a set of an opaque or masked material whose
+    /// shading changes in this frame (`Scene::shading_changes`), or the
+    /// view shows a planar reflector's picture: the temporal composition
+    /// marks them.
     pub moving_surfaces: bool,
     /// Glow is drawn: the scene holds some and effects draw (a diagnostics
     /// layer).
@@ -124,25 +125,24 @@ pub(crate) struct CompositeDraws {
     /// Heat distortion is drawn: the scene holds some and
     /// `Settings::heat_distortion` is on.
     pub heat: bool,
-    /// The scene holds a sprite batch with sprites.
+    /// The camera lists a blended sprite batch, a masked one that changed
+    /// or the footprint of one.
     pub sprites: bool,
-    /// The scene holds instance footprints, which the temporal composition
-    /// marks (`Scene::footprints`, the register's M-23).
+    /// The camera lists an instance footprint, which the temporal
+    /// composition marks (`view::footprints`, the register's M-23).
     pub footprints: bool,
 }
 
 impl CompositeDraws {
     /// Whether anything draws that marks the masks.
     pub fn any(self) -> bool {
-        self.lasting() || self.footprints
-    }
-
-    /// Whether anything draws that marks the masks but instance
-    /// footprints, which an instance edit makes and the next finished frame
-    /// retires (`Scene::footprints`): while nothing does, a TAA view holds
-    /// the masks in exactly the frames with footprints.
-    pub fn lasting(self) -> bool {
-        self.blended || self.moving_surfaces || self.glow || self.mist || self.heat || self.sprites
+        self.blended
+            || self.moving_surfaces
+            || self.glow
+            || self.mist
+            || self.heat
+            || self.sprites
+            || self.footprints
     }
 }
 
@@ -153,8 +153,10 @@ pub(crate) struct Effective {
     pub antialiasing: Antialiasing,
     pub taa: bool,
     pub fsr: bool,
-    /// The temporal masks are drawn and read: while FSR runs, and while TAA
-    /// runs and the frame can mark them (Frame item 9).
+    /// The frame binds the temporal masks: while FSR runs, and while TAA
+    /// runs and something marks them in the view's frame (`composite`, Frame
+    /// item 9), settled once prepare has built the view's lists
+    /// (`renderer::effective::temporal_masks`); false before.
     pub temporal_masks: bool,
     /// Post's RCAS sharpness in 0..=1, while it sharpens the frame.
     pub sharpness: Option<f32>,

@@ -11,10 +11,10 @@ use crate::{
 };
 use glam::{Mat4, Vec3};
 
-const SIZE: [u32; 2] = [64, 64];
+pub(super) const SIZE: [u32; 2] = [64, 64];
 
 /// Two layers that move: 180 and 108 whole repeats an hour.
-const MOVING: [NormalLayer; 2] = [
+pub(super) const MOVING: [NormalLayer; 2] = [
     NormalLayer {
         velocity: [0.05, 0.],
         scale: 1.,
@@ -28,7 +28,7 @@ const MOVING: [NormalLayer; 2] = [
 ];
 
 /// Two layers that stand still.
-const STILL: [NormalLayer; 2] = [NormalLayer {
+pub(super) const STILL: [NormalLayer; 2] = [NormalLayer {
     velocity: [0.; 2],
     scale: 1.,
     strength: 1.,
@@ -37,7 +37,7 @@ const STILL: [NormalLayer; 2] = [NormalLayer {
 /// A square facing +Z at depth `z`, `half` metres from its centre to each
 /// side, its U rising along +X, with the fixture material over a flat
 /// normal map that repeats.
-fn square(z: f32, half: f32) -> Asset {
+pub(super) fn square(z: f32, half: f32) -> Asset {
     let mut asset = test_support::cube();
     asset.meshes[0] = crate::asset::CpuMesh {
         vertices: [(-1., -1.), (1., -1.), (1., 1.), (-1., 1.)]
@@ -65,7 +65,7 @@ fn square(z: f32, half: f32) -> Asset {
 
 /// `asset` placed whole at `offset` as a moving instance, its identities
 /// and the instance's state.
-fn place(
+pub(super) fn place(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     scene: &mut Scene,
@@ -86,7 +86,7 @@ fn place(
 }
 
 /// A square at 3 m in front of the camera whose layers are `layers`.
-fn layered(layers: [NormalLayer; 2], unlit: bool) -> Asset {
+pub(super) fn layered(layers: [NormalLayer; 2], unlit: bool) -> Asset {
     let mut asset = square(-3., 0.4);
     asset.materials[0].normal_layers = Some(layers);
     asset.materials[0].unlit = unlit;
@@ -94,7 +94,7 @@ fn layered(layers: [NormalLayer; 2], unlit: bool) -> Asset {
 }
 
 /// A blended square of alpha 0.4 at 2 m in front of the camera.
-fn glass() -> Asset {
+pub(super) fn glass() -> Asset {
     let mut glass = square(-2., 0.2);
     glass.materials[0].base = [0.2, 0.9, 0.3, 0.4];
     glass.materials[0].alpha = AlphaMode::Blend {
@@ -111,7 +111,7 @@ fn fsr_renderer(device: &wgpu::Device, queue: &wgpu::Queue) -> Option<(TestRende
 
 /// A renderer running `antialiasing`, a temporal method, at the scene size,
 /// or `None` where it cannot.
-fn temporal_renderer(
+pub(super) fn temporal_renderer(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     antialiasing: settings::Antialiasing,
@@ -134,9 +134,10 @@ fn temporal_renderer(
     Some((renderer, settings))
 }
 
-/// One frame of `scene` from the origin looking down -Z, and FSR's
-/// reactive and transparency and composition masks after it, each texel in
-/// 0..=1.
+/// One frame of `scene` from the origin looking down -Z, and the reactive
+/// and transparency and composition masks after it, each texel in 0..=1:
+/// all 0 where the frame binds none, as TAA's resolve then reads none (the
+/// register's F-15).
 fn masks(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -186,18 +187,16 @@ fn exposed_masks(
     );
     queue.submit([encoder.finish()]);
     renderer.finish_frame(scene);
-    renderer
-        .targets()
-        .temporal_masks
-        .as_ref()
-        .unwrap()
-        .each_ref()
-        .map(|mask| {
-            test_support::read(device, queue, mask.texture(), 1)
-                .into_iter()
-                .map(|byte| f32::from(byte) / 255.)
-                .collect()
-        })
+    let Some(masks) = renderer.targets().temporal_masks() else {
+        let texels = (SIZE[0] * SIZE[1]) as usize;
+        return [vec![0.; texels], vec![0.; texels]];
+    };
+    masks.each_ref().map(|mask| {
+        test_support::read(device, queue, mask.texture(), 1)
+            .into_iter()
+            .map(|byte| f32::from(byte) / 255.)
+            .collect()
+    })
 }
 
 /// Asserts that `masks` hold `expected` (reactive, transparency and
@@ -558,7 +557,7 @@ fn heat_distortion_marks_the_composition_mask_under(
 /// fragments left of `uv.x` = its parameters' `cut` or its instance's
 /// data's x, whichever is larger (a masked material's coverage; an opaque
 /// one ignores alpha).
-const CUTTING_SHADER: &str = r#"
+pub(super) const CUTTING_SHADER: &str = r#"
 struct ShaderParams {
  cut:f32,
  unused:f32,
@@ -576,7 +575,7 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
 
 /// A game's shader that reads the frame's time, without changing what it
 /// draws by it.
-const TIMED_SHADER: &str = r#"
+pub(super) const TIMED_SHADER: &str = r#"
 struct ShaderParams {
  unused:vec4<f32>,
 }
@@ -591,7 +590,7 @@ fn material_surface(s:MaterialSurface,ctx:SurfaceContext,params:ShaderParams)->M
 "#;
 
 /// `wgsl`, a game's shader, added to `scene`.
-fn add_shader(scene: &mut Scene, wgsl: &str) -> crate::ShaderId {
+pub(super) fn add_shader(scene: &mut Scene, wgsl: &str) -> crate::ShaderId {
     scene
         .add_shader(crate::ShaderSource {
             wgsl: wgsl.into(),
@@ -602,7 +601,7 @@ fn add_shader(scene: &mut Scene, wgsl: &str) -> crate::ShaderId {
 
 /// `asset` placed as `place` places it, drawn through `shader` with the
 /// parameters `params`; its material and instance.
-fn shaded(
+pub(super) fn shaded(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     scene: &mut Scene,
     (asset, offset): (Asset, Vec3),

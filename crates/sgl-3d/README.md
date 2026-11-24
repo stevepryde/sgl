@@ -1487,9 +1487,14 @@ integrated as Diligent's Hydrogent renderer does:
   (motion blur's tile reduction, at the render size), so a deforming or
   skinned surface leaves no ghost where it was. Slower motion is left to the
   resolve's own closest-motion search.
-  Elsewhere at rest TAA keeps its resting stability. The masks are held
-  only while the frame can mark them; the reduction's tile targets, 1/32 of
-  the render size, while TAA runs (timing group `TAA motion reach`).
+  Elsewhere at rest TAA keeps its resting stability. TAA reads the masks,
+  and the passes that mark them run, only in frames in which something
+  marks them: a screen whose picture stands still, a shader whose inputs
+  did not change, a masked sprite batch that did not, or a blended surface
+  or sprite out of view costs nothing. Their two targets, two bytes a render
+  pixel, are kept once made while TAA or FSR runs; the reduction's tile
+  targets, 1/32 of the render size, while TAA runs (timing group `TAA
+  motion reach`).
 
 SSR and TAA share DiligentFX's post-effect context. History restarts with
 SSR's, and a restarted frame renders without jitter. As Godot's TAA, it keeps

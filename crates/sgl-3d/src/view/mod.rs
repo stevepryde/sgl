@@ -608,8 +608,8 @@ pub(crate) struct FrameViews {
     pub blended: draw_list::DrawList,
     /// The camera's sprite batches.
     pub sprites: sprites::SpriteList,
-    /// The camera's instance footprints, while its frame has the temporal
-    /// masks (the register's M-23).
+    /// The camera's instance footprints, while TAA or FSR runs and its
+    /// frame continues its history (the register's M-23).
     pub footprints: footprints::FootprintList,
     /// The scene lights and decals that reach each of the camera's
     /// clusters.

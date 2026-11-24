@@ -406,6 +406,12 @@ impl GpuList {
         self.issue(scene, pipelines, pass, kind, self.phases(), &|_| true)
     }
 
+    /// Whether it holds a set whose material `drawn` holds for: one
+    /// `draw_materials` would draw.
+    pub fn holds_materials(&self, drawn: &dyn Fn(MaterialId) -> bool) -> bool {
+        self.drawn.iter().any(|set| drawn(set.material))
+    }
+
     /// Issues every phase's draws of the sets whose material `drawn`
     /// holds for, as `draw` issues them, and returns how many it issued.
     pub fn draw_materials(

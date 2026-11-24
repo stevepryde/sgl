@@ -43,6 +43,19 @@ pub(super) fn shadow_stages(
     }
 }
 
+/// `effective` for a view's frame whose draws that mark the temporal masks
+/// are `composite`, which prepare's lists settle
+/// (`stages::transparent::writers`): the frame binds them where FSR runs,
+/// whose dispatch binds them every frame, and where TAA runs and anything
+/// marks them (the register's F-15).
+pub(super) fn temporal_masks(effective: Effective, composite: CompositeDraws) -> Effective {
+    Effective {
+        composite,
+        temporal_masks: effective.fsr || effective.taa && composite.any(),
+        ..effective
+    }
+}
+
 fn bloom(settings: &Settings) -> bool {
     settings.bloom.enabled(settings.low()) && !settings.diagnostics_in_effect().disable.bloom
 }
@@ -244,19 +257,10 @@ pub(super) struct SceneContent {
     pub receivers: bool,
     /// A dynamic GI volume.
     pub dynamic_gi_volume: bool,
-    /// Blended or transmissive materials.
-    pub blended: bool,
-    /// An opaque or masked material whose shading may change where its
-    /// geometry stands still (`Materials::holds_moving_surfaces`).
-    pub moving_surfaces: bool,
     /// Glow, mist and heat distortion to draw.
     pub glow: bool,
     pub mist: bool,
     pub heat: bool,
-    /// A sprite batch with sprites.
-    pub sprites: bool,
-    /// Instance footprints pending (`Scene::footprints`).
-    pub footprints: bool,
     /// A planar reflector's surface the view shows in this frame, which
     /// the frame adds (`renderer::reflected`).
     pub planar: bool,
@@ -271,13 +275,9 @@ impl SceneContent {
             fog_volumes: !scene.transient.fog_volume_corners.is_empty(),
             receivers: scene.materials.holds_receivers(),
             dynamic_gi_volume: scene.dynamic_gi.is_some(),
-            blended: scene.materials.holds_blended() || scene.materials.holds_transmissive(),
-            moving_surfaces: scene.materials.holds_moving_surfaces(),
             glow: scene.transient.glow_count > 0,
             mist: !scene.transient.mist_positions.is_empty(),
             heat: scene.transient.heat_count > 0,
-            sprites: scene.sprites.any(),
-            footprints: !scene.footprints.is_empty(),
             planar: false,
             hdr_effect: scene.applied_hdr_effect(input.hdr_effect).is_some(),
         }
@@ -400,22 +400,16 @@ pub(super) fn resolve(
         input.camera.projection,
     )
     .filter(|_| post_fx_camera);
-    // What draws onto the composite, each of which marks the temporal
-    // masks while the frame has them (Frame item 9). TAA reads the masks
-    // only in a frame one of them can mark; FSR's dispatch binds them in
-    // every frame.
+    // What the frame draws that marks the temporal masks: glow, mist and
+    // heat from its input; the rest from the view's lists, and whether the
+    // frame binds them, once prepare has built them (`temporal_masks`,
+    // Frame item 9).
     let composite = CompositeDraws {
-        blended: content.blended,
-        // A planar reflector's surface the view shows counts in the frames
-        // it is shown: its picture moves where its geometry stands still.
-        moving_surfaces: content.moving_surfaces || content.planar,
         glow: content.glow && !disable.effects,
         mist: content.mist && atmosphere(settings, input),
         heat: content.heat && settings.heat_distortion,
-        sprites: content.sprites,
-        footprints: content.footprints,
+        ..CompositeDraws::default()
     };
-    let temporal_masks = fsr || taa && composite.any();
     let hardware_ray_tracing = match (settings.hardware_ray_tracing, content.ray_data, ray_queries)
     {
         (false, _, _) => HardwareRayTracing::Off,
@@ -438,7 +432,7 @@ pub(super) fn resolve(
         antialiasing,
         taa,
         fsr,
-        temporal_masks,
+        temporal_masks: false,
         sharpness: sharpness(settings, antialiasing),
         post_fx: taa || crystal,
         shadow_quality: settings.shadow_quality,
@@ -658,16 +652,17 @@ mod temporal_mask_tests {
     use crate::settings::{Antialiasing, FsrVersion};
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    // Plausible defects: TAA frames allocate the temporal masks though
-    // nothing draws into them, or not when one writer alone draws; a writer
-    // counted although its own draw is off (glow with effects disabled, mist
-    // without the frame's atmosphere, heat with the setting off); FSR frames
-    // left without the masks their dispatch binds. The oracle is Frame item
-    // 8's rule as a table: the masks are held for every FSR frame, and for a
-    // TAA frame exactly when blended or moving-shading materials, sprites,
-    // instance footprints, or glow, mist or heat that draws, can mark them.
+    // Plausible defects: a TAA frame binds the temporal masks though nothing
+    // of its input draws into them, or not when glow, mist or heat alone
+    // draws; one counted although its own draw is off (glow with effects
+    // disabled, mist without the frame's atmosphere, heat with the setting
+    // off); FSR frames left without the masks their dispatch binds. The
+    // oracle is the register's F-15 as a table for the writers the frame's
+    // input decides (the view's lists decide the rest after prepare): the
+    // masks are bound in every FSR frame, and in a TAA frame exactly when
+    // glow, mist or heat that draws marks them.
     #[wasm_bindgen_test(unsupported = test)]
-    fn the_temporal_masks_are_held_exactly_while_a_writer_can_mark_them() {
+    fn the_frame_wide_writers_bind_the_masks_only_where_they_draw() {
         let camera = crate::Camera {
             view: glam::Mat4::IDENTITY,
             projection: crate::perspective(1., 1., 0.1),
@@ -690,28 +685,14 @@ mod temporal_mask_tests {
         };
         let none = SceneContent::default();
         let alone = [
-            SceneContent {
-                blended: true,
-                ..none
-            },
-            SceneContent {
-                moving_surfaces: true,
-                ..none
-            },
             SceneContent { glow: true, ..none },
             SceneContent { mist: true, ..none },
             SceneContent { heat: true, ..none },
-            SceneContent {
-                sprites: true,
-                ..none
-            },
-            SceneContent {
-                footprints: true,
-                ..none
-            },
         ];
+        // As the frame settles it, from what its input draws alone.
         let held = |settings: &Settings, content| {
-            resolve(settings, &input, content, device).temporal_masks
+            let effective = resolve(settings, &input, content, device);
+            temporal_masks(effective, effective.composite).temporal_masks
         };
         assert!(!held(&taa, none), "a TAA frame nothing can mark");
         for content in alone {
@@ -719,17 +700,17 @@ mod temporal_mask_tests {
         }
         let mut no_effects = taa;
         no_effects.diagnostics.disable.effects = true;
-        assert!(!held(&no_effects, alone[2]), "glow with effects disabled");
+        assert!(!held(&no_effects, alone[0]), "glow with effects disabled");
         let no_atmosphere = Settings {
             atmosphere: false,
             ..taa
         };
-        assert!(!held(&no_atmosphere, alone[3]), "mist without atmosphere");
+        assert!(!held(&no_atmosphere, alone[1]), "mist without atmosphere");
         let no_heat = Settings {
             heat_distortion: false,
             ..taa
         };
-        assert!(!held(&no_heat, alone[4]), "heat with the setting off");
+        assert!(!held(&no_heat, alone[2]), "heat with the setting off");
         let fsr = Settings {
             antialiasing: Antialiasing::Fsr2,
             ..taa

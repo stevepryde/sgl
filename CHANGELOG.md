@@ -15,6 +15,7 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` TAA and FSR: a scene holding a material whose shading may change (a game shader, moving normal layers, a render-texture screen), a blended material or a sprite batch made every TAA frame bind the temporal masks and run the masked resolve, and every TAA and FSR frame with such a material run the temporal composition pass; now only frames in which something marks them in that view do, and the two mask targets, once made, are kept while TAA or FSR runs. No game-code changes are needed.
 - `sgl-3d` and `sgl-post-fx`, built without debug assertions, embed their WGSL without comments, indentation or trailing whitespace, every line kept so naga reports the same lines. No game-code changes are needed; build a browser game with the `web` profile in [Distributing a game](crates/sgl-3d/docs/README.md#distributing-a-game).
 - `sgl-post-fx` `PostFXContext::new` uploads its blue-noise tables from stored bytes instead of parsing DiligentFX's C++ text. No game-code changes are needed.
 - `sgl-3d`'s licence notices reproduce the 2008 INRIA notice of the Bruneton sky functions, which only the embedded shader carried. Regenerate the game's distribution notices.

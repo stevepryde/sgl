@@ -99,7 +99,7 @@ fn renderer(
 }
 
 /// One frame of `scene`, finished, and its transparency and composition
-/// mask, 0..=255 at each pixel; none where the frame held no masks.
+/// mask, 0..=255 at each pixel; none where the frame bound no masks.
 fn frame(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -120,7 +120,7 @@ fn frame(
     );
     queue.submit([encoder.finish()]);
     renderer.finish_frame(scene);
-    let masks = renderer.targets().temporal_masks.as_ref()?;
+    let masks = renderer.targets().temporal_masks()?;
     Some(test_support::read(device, queue, masks[1].texture(), 1))
 }
 
@@ -198,9 +198,10 @@ fn card_below() -> Asset {
 // M-23: in the frame after the edit the transparency and composition mask
 // is 255 where the card stood and where it stands, hand-projected, and 0
 // far from both; the scene raises nothing view-wide; a frame later nothing
-// is marked or pending and, under TAA, the masks are released, as in every
-// frame without a change. FSR, which holds the masks every frame, runs the
-// removal and the addition where the device has it.
+// is marked or pending and, under TAA, the frame binds no masks, as every
+// frame without a change, since nothing else marks them (F-15). FSR, which
+// binds the masks every frame, runs the removal and the addition where the
+// device has it.
 #[test]
 fn a_changed_instance_marks_where_it_stood_and_stands_and_nothing_else() {
     let Some((device, queue)) = test_support::fsr_device() else {
@@ -314,7 +315,7 @@ fn a_changed_instance_marks_where_it_stood_and_stands_and_nothing_else() {
             if method == settings::Antialiasing::Taa {
                 assert!(
                     frame(&device, &queue, &mut frames, &mut scene).is_none(),
-                    "{name}: a TAA frame without a change holds no masks"
+                    "{name}: a TAA frame without a change binds no masks"
                 );
             }
             edit(&mut scene, &device, &queue, &f);
@@ -323,7 +324,7 @@ fn a_changed_instance_marks_where_it_stood_and_stands_and_nothing_else() {
                 "{method:?} {name}: nothing view-wide"
             );
             let marks = frame(&device, &queue, &mut frames, &mut scene)
-                .unwrap_or_else(|| panic!("{method:?} {name}: the frame holds the masks"));
+                .unwrap_or_else(|| panic!("{method:?} {name}: the frame binds the masks"));
             for &p in marked {
                 assert_eq!(at(&marks, p), 255, "{method:?} {name}: {p}");
             }
@@ -336,6 +337,9 @@ fn a_changed_instance_marks_where_it_stood_and_stands_and_nothing_else() {
             );
             match after {
                 None => assert_eq!(method, settings::Antialiasing::Taa),
+                Some(_) if method == settings::Antialiasing::Taa => {
+                    panic!("{name}: a TAA frame a frame later binds masks nothing marks")
+                }
                 Some(marks) => {
                     for &p in marked {
                         assert_eq!(at(&marks, p), 0, "{method:?} {name}: a frame later, {p}");

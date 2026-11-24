@@ -493,7 +493,7 @@ impl Sprites {
 }
 
 /// Whether `listed`'s batch changed since the last submitted frame.
-fn batch_changed(scene: &crate::Scene, listed: &ListedBatch) -> bool {
+pub(super) fn batch_changed(scene: &crate::Scene, listed: &ListedBatch) -> bool {
     scene
         .sprites
         .batches

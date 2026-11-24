@@ -202,8 +202,7 @@ fn blended_surfaces_write_fsrs_masks() {
     renderer.finish_frame(&mut scene);
     let [reactive, composition] = renderer
         .targets()
-        .temporal_masks
-        .as_ref()
+        .temporal_masks()
         .unwrap()
         .each_ref()
         .map(|mask| test_support::read(&device, &queue, mask.texture(), 1));

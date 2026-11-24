@@ -468,8 +468,8 @@ impl View {
     /// camera cut, a resize, an unfinished reset, and a frame that does not
     /// follow its own last finished frame), and resolves its effective
     /// configuration, holding the surface's targets from a scene's first
-    /// receiver on and the temporal masks while a writer can mark them.
-    /// `planar`: the frame shows a planar reflector's picture in it.
+    /// receiver on. `planar`: the frame shows a planar reflector's picture
+    /// in it.
     pub(super) fn begin(
         &mut self,
         device: &wgpu::Device,
@@ -484,24 +484,18 @@ impl View {
         if scene.materials.holds_receivers() {
             self.targets.hold_surface(device);
         }
-        let content = effective::SceneContent::of(scene, input);
         let effective = effective::resolve(
             settings,
             input,
             effective::SceneContent {
                 planar,
-                // A frame that restarts the view's history has none the
-                // footprints protect (the register's M-23).
-                footprints: content.footprints && history.valid,
-                ..content
+                ..effective::SceneContent::of(scene, input)
             },
             shared.device(
                 self.antialiasing.fsr_running(),
                 self.cull.occlusion_supported(),
             ),
         );
-        self.targets
-            .set_temporal_masks(device, effective.temporal_masks);
         (history, effective)
     }
 
