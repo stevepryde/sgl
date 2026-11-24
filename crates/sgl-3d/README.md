@@ -1902,12 +1902,13 @@ match renderer.refresh_specular_probe(
   frame; `set_live_specular_probe` writes one small record.
 - **When to call.** Like a bake, a refresh borrows `view`'s shadow maps and
   opaque stage: call it between frames, with the settings `view`'s frames
-  use. The first refresh creates the staging, the buffers every later one
-  writes and its own programs, so make it while a level loads.
-  `Renderer::compile` readies a frame's programs, not a refresh's: after it
-  a first refresh still creates the filter's shader and two pipelines and
-  the pipeline variants its faces and cascades draw with, and it never
-  waits on a frame's compile jobs. A refresh of a warmed probe creates no
+  use. The first refresh creates the staging and the buffers every later
+  one writes, and the programs it lacks: the filter's shader and two
+  pipelines and the pipeline variants its faces and cascades draw with.
+  `Renderer::compile` makes those compile jobs, planning a refresh of each
+  live probe through its first view from where the probe is, so after its
+  jobs a first refresh through that view creates none; without it the
+  first refresh creates them on its thread. A refresh of a warmed probe creates no
   buffer, texture or pipeline: only each face's two bind groups, which bind
   what may change between calls. Pass a `GpuTiming` begun for the frame as
   `timing` to see its passes (`probe refresh shadows`, `probe refresh
@@ -2941,8 +2942,8 @@ again. A diagnostics capture uses a different final pipeline from direct
 presentation.
 
 `Renderer::compile` readies a frame's shaders and pipelines before it, for
-the actual scene, views, settings, frame input and output, so the frame
-creates none. It takes `render`'s arguments without the encoder, each view
+the actual scene, views, settings, frame input and output, and those of the
+first refresh of each live probe, so neither creates any. It takes `render`'s arguments without the encoder, each view
 resized first as before `render`, and returns a `Compilation`: `jobs` to
 run, `pending` (how many programs it waits for, one a job not finished;
 `ready()` at 0) and `errors` (jobs that failed, on native, each once). Call
@@ -2986,6 +2987,14 @@ transition (another level's scene, a settings change, a resize).
   blur; the camera's lighting with screen-space indirect light's kept
   result) is a job too, queued with the first frame's. Most resizes need no
   program.
+- Where the scene holds live probes, each call also plans their first
+  refresh (`Renderer::refresh_specular_probe`): a refresh's own capture,
+  through the first view with its input and settings, from each probe's
+  centre now, into the dropped encoder with views and targets of its own.
+  The probe prefilter's programs and the variants the faces and cascades
+  draw with are jobs, so that refresh creates none, and nothing a refresh
+  in flight keeps changes. A refresh from elsewhere that first shows a
+  material creates its variant, as a frame does.
 - In the browser a job creates its pipelines with WebGPU's asynchronous
   calls (`createRenderPipelineAsync`, `createComputePipelineAsync`, through
   `sgl_webgpu::create_render_pipeline_async` and its compute twin): `run`

@@ -1,14 +1,17 @@
 //! The level the `loading` examples load: a block world
 //! (`voxel_world.rs`: terrain, water, torches, creatures, a sun with four
 //! cascades, TAA and screen- and world-space reflections) about a camera,
-//! with what a game does with it: compile a frame's programs ahead
-//! (`Renderer::compile`), and render one.
+//! with a live specular probe at the camera's start, and what a game does
+//! with it: compile a frame's programs ahead (`Renderer::compile`, which
+//! readies the probe's first refresh too), render one, and refresh the
+//! probe.
 use super::voxel_world::{self, CHUNK, Mesher, World};
-use sgl_3d::glam::{DVec3, IVec3, Mat4};
+use sgl_3d::glam::{DVec3, IVec3, Mat4, Vec3};
 use sgl_3d::settings::{ContactShadows, MotionBlur, Settings};
 use sgl_3d::{
-    EnvironmentId, FrameInput, InstanceState, Mobility, ModelMesh, PreparedModel, Renderer, Scene,
-    View, ViewFrame, ViewOutput,
+    EnvironmentId, FrameInput, InstanceState, LiveSpecularProbe, LiveSpecularProbeId, Mobility,
+    ModelMesh, PreparedModel, ProbeRefreshPace, Renderer, Scene, SpecularProbeBox, View, ViewFrame,
+    ViewOutput,
 };
 
 /// The output's size, and the chunks the level holds about the camera:
@@ -18,6 +21,8 @@ const ACROSS: i32 = 3;
 const UP: i32 = 1;
 const SHADOW_DISTANCE: f32 = 150.;
 const CREATURES: usize = 20;
+/// Each face of the live probe's cube, in texels.
+const PROBE_FACE_SIZE: u32 = 128;
 
 /// The level: what a game holds once its content is loaded.
 pub struct Level {
@@ -29,6 +34,9 @@ pub struct Level {
     pub origin: DVec3,
     pub sky: EnvironmentId,
     pub settings: Settings,
+    /// A live probe at the camera's start, as a game refreshes one that
+    /// follows a moving object.
+    pub probe: LiveSpecularProbeId,
 }
 
 impl Level {
@@ -106,6 +114,25 @@ impl Level {
                 .add_instance(device, queue, state, Mobility::Moving)
                 .map_err(error)?;
         }
+        let center = (eye - origin).as_vec3();
+        let probe = scene
+            .add_live_specular_probe(
+                device,
+                queue,
+                LiveSpecularProbe {
+                    center,
+                    world_to_local: Mat4::from_translation(-center),
+                    influence: SpecularProbeBox {
+                        min: Vec3::splat(-8.),
+                        max: Vec3::splat(8.),
+                    },
+                    blend: Vec3::splat(2.),
+                    proxy: None,
+                    face_size: PROBE_FACE_SIZE,
+                    hidden_groups: 0,
+                },
+            )
+            .map_err(error)?;
         let settings = voxel_world::settings();
         let output = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("level output"),
@@ -141,6 +168,7 @@ impl Level {
             origin,
             sky,
             settings,
+            probe,
         })
     }
 
@@ -197,6 +225,30 @@ impl Level {
         );
         queue.submit([encoder.finish()]);
         self.renderer.finish_frame(&mut self.scene);
+    }
+
+    /// Refreshes the live probe whole, between frames, with the frame
+    /// `input`'s lights and the view's last frame's shadows and sky.
+    pub fn refresh(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        input: &FrameInput,
+    ) -> Result<(), String> {
+        self.renderer
+            .refresh_specular_probe(
+                device,
+                queue,
+                &mut self.scene,
+                &mut self.view,
+                input,
+                &self.settings,
+                None,
+                self.probe,
+                ProbeRefreshPace::Whole,
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     /// The settings change the run measures: contact shadows, which give

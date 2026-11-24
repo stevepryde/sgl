@@ -32,11 +32,16 @@
 //! its 2048-texel targets are not affordable, and a later refresh corrects
 //! what one aliased (D-73).
 //!
+//! Its programs (`Programs`) are one set a renderer holds for every
+//! capture (`PrefilterPrograms`): a bake, a live refresh, and the planning
+//! capture of `Renderer::compile`, which queues them as a compile job.
+//!
 //! Reads: the captured face. Writes: its own face target, cube, mip chain
 //! and prefiltered cube, and a live probe's cube. Honours: nothing. Timing
 //! groups: `probe refresh filter` (a live refresh's; a bake is untimed).
 use crate::baked_specular_probe::{LEVELS, ProbeError};
 use crate::scene::probes::payload_size;
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 use crate::view::targets::CaptureFace;
 
 /// The side, in texels, a capture face renders at least: each face renders
@@ -91,6 +96,98 @@ pub(crate) static PREFILTER: crate::shading::Module = crate::shading::Module {
 /// The entry points the prefilter's pipelines are created with.
 pub(crate) const PREFILTER_ENTRY: &str = "prefilter";
 pub(crate) const MIP_REDUCE_ENTRY: &str = "mip_reduce";
+
+/// The prefilter's programs: the GGX level's pipeline and the 2x2 box
+/// chain's, from one module, each with the bind group layout its module
+/// implies. Clones share them.
+#[derive(Clone)]
+pub(crate) struct Programs {
+    pipeline: wgpu::ComputePipeline,
+    mip_pipeline: wgpu::ComputePipeline,
+}
+
+impl Programs {
+    pub fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let shader = creator
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("specular probe GGX prefilter"),
+                source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&PREFILTER]).into()),
+            });
+        let compute = |entry_point| {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry_point),
+                layout: None,
+                module: &shader,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        compute(PREFILTER_ENTRY)
+            .zip(compute(MIP_REDUCE_ENTRY))
+            .map(|(pipeline, mip_pipeline)| Self {
+                pipeline,
+                mip_pipeline,
+            })
+    }
+}
+
+/// The slot a renderer holds the prefilter's programs in, which every
+/// capture shares: a bake, a live refresh and the planning capture of
+/// `Renderer::compile`. Kept once made, as a stage keeps its programs.
+#[derive(Default)]
+pub(crate) struct PrefilterPrograms(Compiled<Programs>);
+
+impl PrefilterPrograms {
+    /// The programs, made in place where a capture first needs them, or by
+    /// the job a planning capture queued; none in a planning pass while
+    /// they are missing.
+    pub fn get(&mut self, compiler: &Compiler) -> Option<Programs> {
+        self.0
+            .get(compiler, "specular probe prefilter", || Programs::new)
+            .map(|programs| programs.clone())
+    }
+}
+
+/// A face's attachments at `size`, over `color`, a view of one
+/// `gbuffer::COLOR` level that size: the motion attachment the capture's
+/// pass writes and nothing reads, and its depth.
+fn face(device: &wgpu::Device, color: wgpu::TextureView, size: u32) -> CaptureFace {
+    let auxiliary = |format, label| {
+        image(device, size, 1, 1, format, ATTACHMENT, label).create_view(&Default::default())
+    };
+    CaptureFace {
+        color,
+        motion: auxiliary(
+            crate::shading::gbuffer::MOTION,
+            "specular probe unused motion attachment",
+        ),
+        depth: auxiliary(crate::shading::gbuffer::DEPTH, "specular probe depth"),
+    }
+}
+
+/// The attachments a live refresh's face renders into, at `face_size`,
+/// for a planning capture (`Renderer::compile`), which draws into them in
+/// an encoder it drops: nothing resolves or reads them.
+pub(crate) fn planning_face(device: &wgpu::Device, face_size: u32) -> CaptureFace {
+    let color = image(
+        device,
+        face_size,
+        1,
+        1,
+        crate::shading::gbuffer::COLOR,
+        ATTACHMENT,
+        "planned specular probe capture face",
+    );
+    face(device, color.create_view(&Default::default()), face_size)
+}
+
+/// What a capture's attachments may be used for: rendered, sampled by the
+/// box chain, copied from.
+const ATTACHMENT: wgpu::TextureUsages = wgpu::TextureUsages::RENDER_ATTACHMENT
+    .union(wgpu::TextureUsages::TEXTURE_BINDING)
+    .union(wgpu::TextureUsages::COPY_SRC);
 
 pub(crate) struct ProbePrefilter {
     face_size: u32,
@@ -160,16 +257,15 @@ fn mip_views(texture: &wgpu::Texture, mips: u32) -> Vec<wgpu::TextureView> {
 impl ProbePrefilter {
     /// `face_size` is a power of two of at least 2^(LEVELS - 1), and each
     /// face renders at `capture_size`, a power of two no smaller
-    /// (`capture_size(face_size)` for a probe).
-    pub fn new(device: &wgpu::Device, face_size: u32, capture_size: u32) -> Self {
+    /// (`capture_size(face_size)` for a probe), filtered by `programs`.
+    pub fn new(
+        device: &wgpu::Device,
+        programs: Programs,
+        face_size: u32,
+        capture_size: u32,
+    ) -> Self {
         debug_assert!(capture_size >= face_size && capture_size.is_power_of_two());
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("specular probe GGX prefilter"),
-            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&PREFILTER]).into()),
-        });
-        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC;
+        let usage = ATTACHMENT;
         // The box chain writes both as storage. The cube takes each resolved
         // face by copy; the face target's COPY_DST is for the prefilter
         // test, which writes its samples with `write_texture`.
@@ -194,21 +290,10 @@ impl ProbePrefilter {
             reduced,
             "specular probe capture cube",
         );
-        let auxiliary = |format, label| {
-            image(device, capture_size, 1, 1, format, usage, label).create_view(&Default::default())
-        };
-        let compute = |entry_point| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry_point),
-                layout: None,
-                module: &shader,
-                entry_point: Some(entry_point),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
-        let pipeline = compute(PREFILTER_ENTRY);
-        let mip_pipeline = compute(MIP_REDUCE_ENTRY);
+        let Programs {
+            pipeline,
+            mip_pipeline,
+        } = programs;
         let mip_layout = mip_pipeline.get_bind_group_layout(0);
         // Each of a chain's mips after the first, from the one before.
         let chain = |mips: &[wgpu::TextureView]| -> Vec<_> {
@@ -300,18 +385,15 @@ impl ProbePrefilter {
             face_size,
             face_reduce: chain(&rendered_mips),
             cube_reduce: chain(&cube_mips),
-            face: CaptureFace {
-                color: rendered.create_view(&wgpu::TextureViewDescriptor {
+            face: face(
+                device,
+                rendered.create_view(&wgpu::TextureViewDescriptor {
                     dimension: Some(wgpu::TextureViewDimension::D2),
                     mip_level_count: Some(1),
                     ..Default::default()
                 }),
-                motion: auxiliary(
-                    crate::shading::gbuffer::MOTION,
-                    "specular probe unused motion attachment",
-                ),
-                depth: auxiliary(crate::shading::gbuffer::DEPTH, "specular probe depth"),
-            },
+                capture_size,
+            ),
             rendered,
             cube,
             filtered,

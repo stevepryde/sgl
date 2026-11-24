@@ -34,6 +34,10 @@ struct Level {
     effect: Option<crate::HdrEffect>,
     /// The outline the rich level's frames draw, where it has one.
     outline: Option<crate::Outline>,
+    /// Its live specular probes.
+    probes: Vec<crate::LiveSpecularProbeId>,
+    /// The environment `probe_input` frames are under.
+    environment: crate::FrameEnvironment,
 }
 
 /// The optional device features a level's device is requested with.
@@ -160,6 +164,8 @@ impl Level {
             feed: None,
             effect: None,
             outline: None,
+            probes: Vec::new(),
+            environment: crate::FrameEnvironment::None,
             opaque: opaque.materials[0],
             cubes: [opaque_cube, masked, blended],
             output,
@@ -924,6 +930,7 @@ fn taa() -> Stages {
             "presentation",
             "reflection source completion",
             "shadow caster",
+            "specular probe prefilter",
             "sprites",
             "specular probe culling",
             "temporal composition of moving surfaces",
@@ -1048,8 +1055,8 @@ impl Level {
     /// The level with every kind of content a stage draws or reads: a
     /// transmissive surface, a material with a game's shader and a decoded
     /// base map, a deforming instance, a decal, glow, heat and mist, a
-    /// masked and a blended sprite batch, a baked specular probe and a
-    /// dynamic GI volume.
+    /// masked and a blended sprite batch, a baked specular probe, a live
+    /// one and a dynamic GI volume.
     fn rich(stages: &Stages) -> Option<Self> {
         let mut level = Self::on(stages.gpu, test_support::cube())?;
         let (device, queue) = (&level.device, &level.queue);
@@ -1193,6 +1200,9 @@ impl Level {
                 }),
             )
             .unwrap();
+        // A live probe among the cubes, which the guard refreshes after its
+        // frames.
+        level.add_probe(Vec3::new(0.75, 0.5, 2.), 0);
         level.settings = stages.settings;
         level.view.resize(&level.device, SIZE, 1., &level.settings);
         if stages.extras {
@@ -1275,6 +1285,127 @@ impl Level {
         );
         result
     }
+
+    /// Compiles the frame `input` until nothing is pending, each job on a
+    /// thread of its own, with wgpu's count checked unchanged across every
+    /// `compile` call (`creates_nothing`). Returns the labels of the jobs
+    /// run, sorted, once each.
+    fn compile_in_jobs(&mut self, name: &str, input: &FrameInput) -> Vec<String> {
+        let mut ran = Vec::new();
+        for pass in 0.. {
+            assert!(pass < 12, "{name}: the frame was never ready");
+            let compilation = self.creates_nothing(&format!("{name}: compile {pass}"), |level| {
+                level.compile(input)
+            });
+            assert_eq!(compilation.errors, [], "{name}");
+            if compilation.ready() {
+                break;
+            }
+            ran.extend(compilation.jobs.iter().map(|job| job.label().to_owned()));
+            let workers: Vec<_> = compilation
+                .jobs
+                .into_iter()
+                .map(|job| std::thread::spawn(move || job.run()))
+                .collect();
+            workers
+                .into_iter()
+                .for_each(|worker| worker.join().unwrap());
+        }
+        ran.sort();
+        ran.dedup();
+        ran
+    }
+
+    /// Adds a live specular probe at `center` that hides the materials of
+    /// `hidden` and whose influence holds the level.
+    fn add_probe(&mut self, center: Vec3, hidden: u32) {
+        let probe = self
+            .scene
+            .add_live_specular_probe(
+                &self.device,
+                &self.queue,
+                crate::LiveSpecularProbe {
+                    center,
+                    world_to_local: Mat4::from_translation(-center),
+                    influence: crate::SpecularProbeBox {
+                        min: Vec3::splat(-4.),
+                        max: Vec3::splat(4.),
+                    },
+                    blend: Vec3::splat(0.5),
+                    proxy: None,
+                    face_size: 64,
+                    hidden_groups: hidden,
+                },
+            )
+            .unwrap();
+        self.probes.push(probe);
+    }
+
+    /// Refreshes live probe `probe` whole through the level's view, with
+    /// the frame `input`.
+    fn refresh(&mut self, probe: crate::LiveSpecularProbeId, input: &FrameInput) {
+        let refreshed = self
+            .renderer
+            .refresh_specular_probe(
+                &self.device,
+                &self.queue,
+                &mut self.scene,
+                &mut self.view,
+                input,
+                &self.settings,
+                None,
+                probe,
+                crate::ProbeRefreshPace::Whole,
+            )
+            .unwrap();
+        assert_eq!(refreshed, crate::ProbeRefresh::Published);
+    }
+
+    /// Every level of the scene's probe cube array, read back: the live
+    /// probes' cubes as consumers sample them.
+    fn cubes(&self) -> Vec<u8> {
+        let texture = self.scene.live_probe_cube(self.probes[0]).unwrap().texture;
+        let mut bytes = Vec::new();
+        for level in 0..texture.mip_level_count() {
+            let size = texture
+                .size()
+                .mip_level_size(level, wgpu::TextureDimension::D2);
+            // Rgba16Float.
+            let row = (size.width * 8).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+            let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("live probe cubes"),
+                size: u64::from(row * size.height * size.depth_or_array_layers),
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    mip_level: level,
+                    ..texture.as_image_copy()
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(row),
+                        rows_per_image: Some(size.height),
+                    },
+                },
+                size,
+            );
+            self.queue.submit([encoder.finish()]);
+            buffer.map_async(wgpu::MapMode::Read, .., |result| result.unwrap());
+            self.device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .unwrap();
+            let mapped = buffer.get_mapped_range(..).unwrap();
+            for line in mapped.chunks(row as usize) {
+                bytes.extend_from_slice(&line[..size.width as usize * 8]);
+            }
+        }
+        bytes
+    }
 }
 
 /// The guard, for one configuration.
@@ -1291,7 +1422,10 @@ impl Level {
 /// device holds, so a step that freed as many programs as it created
 /// would pass; the fixture's settings hold still, and no frame frees one.
 /// The second and third frames catch a stage that waits for the view's
-/// history before it asks.
+/// history before it asks. The level's live probe is refreshed after them,
+/// and its first refresh must not change the count either: `compile`
+/// plans it (its faces' and cascades' variants, under each
+/// configuration's content and settings, and the prefilter's programs).
 ///
 /// The one exception is FSR's: its upscaler (sp-fidelity) is not SGL's to
 /// make jobs of, and its backend creates a few helper pipelines where it
@@ -1303,28 +1437,7 @@ fn compiles_in_jobs(stages: &Stages) {
     };
     let name = stages.name;
     let inputs = [0., 0.25, 0.5].map(|along| level.rich_input(along, stages.sky));
-    let mut ran = Vec::new();
-    for pass in 0.. {
-        assert!(pass < 12, "{name}: the frame was never ready");
-        let compilation = level.creates_nothing(&format!("{name}: compile {pass}"), |level| {
-            level.compile(&inputs[0])
-        });
-        assert_eq!(compilation.errors, [], "{name}");
-        if compilation.ready() {
-            break;
-        }
-        ran.extend(compilation.jobs.iter().map(|job| job.label().to_owned()));
-        let workers: Vec<_> = compilation
-            .jobs
-            .into_iter()
-            .map(|job| std::thread::spawn(move || job.run()))
-            .collect();
-        workers
-            .into_iter()
-            .for_each(|worker| worker.join().unwrap());
-    }
-    ran.sort();
-    ran.dedup();
+    let ran = level.compile_in_jobs(name, &inputs[0]);
     for label in stages.reaches {
         assert!(
             ran.iter().any(|ran| ran == label),
@@ -1348,6 +1461,13 @@ fn compiles_in_jobs(stages: &Stages) {
             &format!("{name}: frame {frame} (jobs ran: {ran:?})"),
             |level| level.render(input),
         );
+    }
+    // The live probe's first refresh, after the frames whose shadows and
+    // sky it takes.
+    for probe in level.probes.clone() {
+        level.creates_nothing(&format!("{name}: the probe's first refresh"), |level| {
+            level.refresh(probe, &inputs[2]);
+        });
     }
 }
 
@@ -1476,9 +1596,10 @@ fn only_an_fsr_views_upscaler_creates_programs_before_a_frame() {
 /// Plausible defect: a planning pass changes what the frames draw (history
 /// advanced, a target written, a stage left in another state, a selector's
 /// value taken before its programs exist), or asks for programs no frame
-/// uses, so compiling costs more than drawing. The oracle is an ordinary
-/// level given the same three frames: the same bytes each frame, and the
-/// same programs held after the last.
+/// or refresh uses, so compiling costs more than drawing. The oracle is an
+/// ordinary level given the same three frames and then its live probe's
+/// first refresh: the same bytes each frame, the same refreshed cube, and
+/// the same programs held after it.
 fn draws_what_an_ordinary_level_does(stages: Stages) {
     let (Some(mut compiled), Some(mut ordinary)) = (Level::rich(&stages), Level::rich(&stages))
     else {
@@ -1496,10 +1617,24 @@ fn draws_what_an_ordinary_level_does(stages: Stages) {
             "{name}: bytes of frame {frame} that differ from an ordinary level's"
         );
     }
+    // The live probe's first refresh, which `compile` planned.
+    for (probe, ordinary_probe) in compiled
+        .probes
+        .clone()
+        .into_iter()
+        .zip(ordinary.probes.clone())
+    {
+        compiled.refresh(probe, &inputs[2]);
+        ordinary.refresh(ordinary_probe, &ordinary_inputs[2]);
+    }
+    assert!(
+        compiled.cubes() == ordinary.cubes(),
+        "{name}: the refreshed probe differs from an ordinary level's"
+    );
     assert_eq!(
         compiled.programs(),
         ordinary.programs(),
-        "{name}: the programs compiled ahead are not the ones the frames use"
+        "{name}: the programs compiled ahead are not the ones the frames and the refresh use"
     );
 }
 
@@ -1531,6 +1666,165 @@ fn long_a_compiled_level_draws_what_an_ordinary_one_does_at_the_low_preset() {
 #[ignore = "an ordinary level compiles every stage's programs one after another: 20 s"]
 fn long_a_compiled_level_draws_what_an_ordinary_one_does_with_hardware_rays() {
     draws_what_an_ordinary_level_does(hardware_rays());
+}
+
+/// The visibility group of `Level::with_probes`'s shaded cube, which its
+/// first probe hides.
+const HIDDEN: u32 = 2;
+
+impl Level {
+    /// The level with two live probes beside its cubes, and a cube whose
+    /// material has a game's shader in a group of its own (`HIDDEN`) above
+    /// them, which the first probe hides and the second shows: only the
+    /// second's faces draw that material's variant. Under a uniform
+    /// environment of radiance 1, which receivers take until a probe is
+    /// published.
+    fn with_probes() -> Option<Self> {
+        let mut level = Self::new()?;
+        let environment = level
+            .scene
+            .add_environment(
+                &level.device,
+                &level.queue,
+                &test_support::environment([255; 4], &0x3c00u16.to_le_bytes()),
+            )
+            .unwrap();
+        level.environment = crate::FrameEnvironment::Map(environment);
+        let mut shown = test_support::cube();
+        shown.materials[0].visibility_group = HIDDEN;
+        let (ids, cube) =
+            test_support::add_static(&level.device, &level.queue, &mut level.scene, shown);
+        let shader = test_support::add_test_shader(&mut level.scene);
+        test_support::set_shader(
+            &mut level.scene,
+            &level.queue,
+            ids.materials[0],
+            (shader, 0.5),
+        );
+        let state = crate::InstanceState {
+            pose: Mat4::from_translation(Vec3::new(0., 2.5, 0.)),
+            ..*level.scene.instance(cube).unwrap()
+        };
+        level.scene.set_instance(&level.queue, cube, state).unwrap();
+        level.add_probe(Vec3::new(1.5, 1., 2.), HIDDEN);
+        level.add_probe(Vec3::new(-1.5, 1., 2.), 0);
+        Some(level)
+    }
+
+    /// The frame `along` the camera's track under the level's environment,
+    /// with `HIDDEN` shown.
+    fn probe_input(&self, along: f32) -> FrameInput {
+        FrameInput {
+            visibility_mask: HIDDEN,
+            environment: self.environment,
+            ..Self::input(along)
+        }
+    }
+}
+
+// Plausible defects: `compile` plans no probe capture, or only the first
+// live probe's, or the prefilter creates its programs outside its slot, so
+// a live probe's first refresh compiles on the thread that calls it after
+// the level was compiled ahead. The second probe shows a cube with a game's
+// shader that the first hides, whose variant only its faces draw. The oracle is wgpu's
+// own count of the device's shader modules and pipelines: unchanged across
+// every `compile` call, the first frame and each probe's first refresh,
+// with the jobs joined between; raised by an ordinary level's first
+// refreshes after its first frame, which shows the count sees what a
+// refresh creates; and equal to that ordinary level's after them, so the
+// planning asks for nothing the frame and the refreshes do not create.
+#[test]
+fn a_compiled_levels_first_probe_refreshes_create_no_program() {
+    let (Some(mut compiled), Some(mut ordinary)) = (Level::with_probes(), Level::with_probes())
+    else {
+        return;
+    };
+    let input = compiled.probe_input(0.);
+    let ran = compiled.compile_in_jobs("two live probes", &input);
+    assert!(
+        ran.iter().any(|label| label == "specular probe prefilter"),
+        "the prefilter's programs are a job: {ran:?}"
+    );
+    compiled.creates_nothing("the first frame", |level| level.render(&input));
+    for (index, probe) in compiled.probes.clone().into_iter().enumerate() {
+        compiled.creates_nothing(&format!("probe {index}'s first refresh"), |level| {
+            level.refresh(probe, &input);
+        });
+    }
+    ordinary.render(&input);
+    let before = ordinary.programs();
+    for probe in ordinary.probes.clone() {
+        ordinary.refresh(probe, &input);
+    }
+    let after = ordinary.programs();
+    assert!(
+        after.0 > before.0,
+        "an ordinary level's first refreshes create pipelines: {before:?} to {after:?}"
+    );
+    assert_eq!(
+        compiled.programs(),
+        after,
+        "the programs compiled ahead are not the ones the frame and the refreshes use"
+    );
+}
+
+// Plausible defect: a planning capture that leaves the scene changed for
+// the frames and refreshes after it, such as one that publishes a probe
+// (its record then places a cube nothing filled, which receivers take in
+// place of the environment). The oracle is an ordinary level given the
+// same frames and refreshes: the same bytes in the frame before the
+// refreshes and the frame after, and the same cubes, which are not zero.
+#[test]
+fn a_compiled_level_refreshes_its_probes_as_an_ordinary_one_does() {
+    let (Some(mut compiled), Some(mut ordinary)) = (Level::with_probes(), Level::with_probes())
+    else {
+        return;
+    };
+    compiled.compile_all(&compiled.probe_input(0.));
+    let run = |level: &mut Level| {
+        let input = level.probe_input(0.);
+        let before = level.render(&input);
+        for probe in level.probes.clone() {
+            level.refresh(probe, &input);
+        }
+        let cubes = level.cubes();
+        (before, cubes, level.render(&level.probe_input(0.25)))
+    };
+    let (before, cubes, after) = run(&mut compiled);
+    let expected = run(&mut ordinary);
+    assert!(
+        cubes.iter().any(|&byte| byte != 0),
+        "the refreshes show the level"
+    );
+    assert!(
+        before == expected.0,
+        "the frame before the refreshes differs"
+    );
+    assert!(cubes == expected.1, "the refreshed cubes differ");
+    assert!(after == expected.2, "the frame after the refreshes differs");
+}
+
+// Plausible defect: `compile` asks for a probe capture's programs (the
+// prefilter's, a capture's variants) or makes its staging for a scene
+// without a live probe, so a level without one pays for them. The oracle
+// is an ordinary level given the same three frames: after them the
+// compiled level holds what it holds, textures, buffers, bind groups and
+// programs alike, and no job was the prefilter's.
+#[test]
+fn a_compiled_level_without_a_live_probe_compiles_nothing_for_one() {
+    let (Some(mut compiled), Some(mut ordinary)) = (Level::new(), Level::new()) else {
+        return;
+    };
+    let ran = compiled.compile_in_jobs("no live probe", &Level::input(0.));
+    assert!(
+        !ran.iter().any(|label| label == "specular probe prefilter"),
+        "{ran:?}"
+    );
+    for along in [0., 0.25, 0.5] {
+        compiled.render(&Level::input(along));
+        ordinary.render(&Level::input(along));
+    }
+    assert_eq!(compiled.held(), ordinary.held());
 }
 
 // Plausible defects: the mip chain stage creating its programs in place

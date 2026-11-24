@@ -126,9 +126,10 @@ captures on the same renderer reuse the cached pipelines.
 ### Compiling ahead
 
 A frame creates the shaders and pipelines it first needs, which stalls the
-thread that renders: the first frame of a level, or of a settings change.
-`Renderer::compile` takes the arguments of `render` (no encoder) and readies
-them before that frame, behind the game's loading screen. Each loading
+thread that renders: the first frame of a level, or of a settings change,
+and a live probe's first refresh. `Renderer::compile` takes the arguments
+of `render` (no encoder) and readies them before that frame, behind the
+game's loading screen. Each loading
 frame, after `View::resize` as before `render`:
 
 ```rust
@@ -151,9 +152,10 @@ if compilation.ready() { /* `render` with these arguments creates nothing */ }
   screen is up.
 - A `View` stays on the thread that created it; `compile` runs there and
   only plans.
-- It readies frames, not probe captures: a live probe's first refresh
-  (`Renderer::refresh_specular_probe`) creates its own filter and face
-  pipelines, so make one while the level loads too (#889).
+- It readies each live probe's first refresh too
+  (`Renderer::refresh_specular_probe` through `views[0]`, from where the
+  probe is), so that refresh creates no program, and it changes nothing a
+  refresh in flight keeps.
 - Draw once `ready()`. `pending` can rise between calls: a stage whose
   programs are missing leaves out what it feeds, which is asked for once
   its job has finished.

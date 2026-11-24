@@ -3,7 +3,9 @@
 //! refresh in flight, and each call does as much of it as its pace allows;
 //! the call that completes the filter copies the cube into the scene's
 //! probe array, whole (the architecture's Frame, "Live probe refresh").
-//! It follows Godot b130438's `RendererSceneCull::render_probes` (an update
+//! `Renderer::compile` plans a refresh of each live probe (`plan_refreshes`)
+//! so that a first refresh after its jobs creates no program. It follows
+//! Godot b130438's `RendererSceneCull::render_probes` (an update
 //! a probe at a time, faces and then the filter over frames) and three.js
 //! r187's `CubeCamera.update` (explicit, six faces, `layers` to leave the
 //! reflecting object out) in practice; no code of theirs is here.
@@ -14,7 +16,7 @@ use crate::content::live_specular_probe::{ProbeRefresh, ProbeRefreshPace};
 use crate::renderer::{Renderer, View};
 use crate::settings::Settings;
 use crate::stages::prepare::CaptureViews;
-use crate::stages::probe_prefilter::ProbePrefilter;
+use crate::stages::probe_prefilter::{ProbePrefilter, planning_face};
 use crate::stages::shadows::local::RefreshRecords;
 use crate::timing::GpuTiming;
 use crate::{FrameInput, Scene};
@@ -97,14 +99,15 @@ impl Renderer {
     /// with the settings `view`'s frames use: another shadow quality
     /// reallocates the maps. It is not a frame: it takes nothing from, and
     /// commits nothing to, any view's history or shadow cache. The first
-    /// refresh creates the staging, the buffers later ones write and its
-    /// own programs (the filter's, and the pipeline variants its faces and
-    /// cascades draw with, which [`Self::compile`] does not ready), so make
-    /// it while a level loads; a refresh of a warmed probe creates only
-    /// each face's two bind groups. It submits its own commands; pass a
-    /// `timing`
-    /// begun for the frame to time its passes (`probe refresh shadows`,
-    /// `probe refresh faces`, `probe refresh filter`).
+    /// refresh creates the staging and the buffers later ones write, and
+    /// the programs it lacks (the filter's, and the pipeline variants its
+    /// faces and cascades draw with): none once [`Self::compile`] has
+    /// readied a frame of the scene with `view` first and its jobs have
+    /// run, since it plans a refresh of each live probe. A refresh of a warmed
+    /// probe creates only each face's two bind groups. It submits its own
+    /// commands; pass a `timing` begun for the frame to time its passes
+    /// (`probe refresh shadows`, `probe refresh faces`, `probe refresh
+    /// filter`).
     ///
     /// `ProbeError::InvalidProbe` for a probe the scene does not hold.
     ///
@@ -142,7 +145,12 @@ impl Renderer {
             .unwrap_or_else(|| {
                 Box::new(LiveRefresh {
                     scene: scene.id,
-                    prefilter: ProbePrefilter::new(device, face_size, face_size),
+                    prefilter: ProbePrefilter::new(
+                        device,
+                        self.prefilter_programs(),
+                        face_size,
+                        face_size,
+                    ),
                     views: CaptureViews::new(device),
                     records: RefreshRecords::default(),
                     flight: None,
@@ -196,10 +204,10 @@ impl Renderer {
                     },
                 ),
                 &mut state.views,
-                (&state.prefilter, sky),
+                (state.prefilter.face(), sky),
                 (faces, timing),
                 &mut encoder,
-                |_| {},
+                |encoder, face| state.prefilter.resolve_face(encoder, timing, face),
             );
         }
         if filter {
@@ -220,6 +228,59 @@ impl Renderer {
         } else {
             ProbeRefresh::InFlight
         })
+    }
+
+    /// `Renderer::compile`'s planning capture, in its planning pass after
+    /// the views: a refresh of each of `scene`'s live probes as one would
+    /// start now (at its centre, leaving out its hidden groups, all six
+    /// faces), through the primary view `view` with its `input` and `settings`,
+    /// into the pass's `encoder`, which is dropped, and a request for the
+    /// filter's programs. So the pass queues what a first refresh would
+    /// create. It fills capture views, a shadow-record copy and a face
+    /// target of its own, made here and dropped, and leaves what a refresh
+    /// keeps (`Renderer::refresh`) alone. Nothing for a scene without live
+    /// probes.
+    pub(in crate::renderer) fn plan_refreshes(
+        &mut self,
+        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        scene: &mut Scene,
+        view: &mut View,
+        (input, settings): (&FrameInput, &Settings),
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let probes: Vec<_> = scene.live_probe_placements().collect();
+        // Every live probe of a scene has one face size.
+        let Some(face_size) = probes.first().map(|probe| probe.face_size) else {
+            return;
+        };
+        self.shared.probe_prefilter.get(&self.shared.compiler);
+        // A refresh settles `view` first (`View::settle(false)`), which does
+        // nothing after this pass's own frame, a render not finished.
+        self.ready_capture(device, queue, scene, view, (settings, None));
+        let face = planning_face(device, face_size);
+        let mut views = CaptureViews::new(device);
+        let mut records = RefreshRecords::default();
+        let sky = view.sky.views().map(|views| views.map(Clone::clone));
+        for probe in probes {
+            self.encode_capture(
+                (device, queue),
+                scene,
+                view,
+                (input, settings),
+                (
+                    probe.center,
+                    Capture::Refresh {
+                        hidden: probe.hidden_groups,
+                        records: &mut records,
+                    },
+                ),
+                &mut views,
+                (&face, sky.clone()),
+                (0..6, None),
+                encoder,
+                |_, _| {},
+            );
+        }
     }
 }
 

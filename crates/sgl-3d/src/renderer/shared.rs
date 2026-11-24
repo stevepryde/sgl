@@ -1,7 +1,7 @@
 //! What every view of a scene shares: the bind group layouts and the
 //! geometry pipeline cache, prepare's scene part, the mip chain stage, the
-//! deform stage, the dynamic GI stage with its probes and the device's
-//! ray-query form. A
+//! deform stage, the dynamic GI stage with its probes, the probe
+//! prefilter's programs and the device's ray-query form. A
 //! frame's scene work runs once, in its primary view's stage order
 //! (`view_stages::begin_view`, `Role`).
 use super::effective;
@@ -10,6 +10,7 @@ use crate::Scene;
 use crate::stages::post::smaa::Tables as SmaaTables;
 use crate::stages::{
     deform::Deform, dynamic_gi::DynamicGi, mip_chains::MipChains, prepare::Prepare,
+    probe_prefilter::PrefilterPrograms,
 };
 use crate::view::bindings::Layouts;
 use crate::view::compile::Compiler;
@@ -36,6 +37,9 @@ pub(super) struct Shared {
     /// SMAA's lookup tables, from the first frame a view may run SMAA
     /// (`frame::render`).
     pub smaa_tables: Option<SmaaTables>,
+    /// The probe prefilter's programs, which every capture shares: a bake,
+    /// a live refresh and `Renderer::compile`'s planning capture.
+    pub probe_prefilter: PrefilterPrograms,
 }
 
 impl Shared {
@@ -78,6 +82,7 @@ impl Shared {
             dynamic_gi,
             ray_form,
             smaa_tables: None,
+            probe_prefilter: PrefilterPrograms::default(),
         }
     }
 

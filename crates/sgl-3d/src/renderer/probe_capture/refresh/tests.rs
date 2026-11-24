@@ -1612,6 +1612,106 @@ fn a_refresh_beside_a_frame_compiled_ahead_publishes_the_same_cube() {
     );
 }
 
+// A `compile` in the middle of a refresh changes nothing the refresh keeps:
+// its staging, the refresh in flight and the centre it latched, its views'
+// buffers and its copy of the shadow records. A refresh spread a face a
+// call, with `compile` run to ready (its jobs run) after the third face,
+// once the emitter and the probe have moved, holds the scene's cube at
+// every call as the same sequence without the `compile` holds it, bit for
+// bit, and publishes at the same call. Under a sun with a shadow, so
+// cascades are among what the planning capture draws. Defects: a planning
+// capture that ends or restarts the flight, or latches the probe's new
+// centre. (Writes into the refresh's own views or records would not show:
+// each call rewrites them before it draws.) Oracle: the sequence without
+// the `compile`.
+#[test]
+fn a_compile_during_a_refresh_changes_nothing_it_keeps() {
+    use crate::{DirectionalLight, DirectionalShadow, ViewFrame, ViewOutput};
+    let sequence = |compile: bool| {
+        let mut fixture = Fixture::new()?;
+        slab(
+            &mut fixture,
+            CENTER - Vec3::Y,
+            Vec3::new(12., 0.1, 12.),
+            Mobility::Static,
+        );
+        fixture.input.directional_lights[0] = Some(DirectionalLight {
+            direction: Vec3::new(0.3, -1., 0.2).normalize(),
+            color: [1.; 3],
+            illuminance: 1.,
+            shadow: Some(DirectionalShadow {
+                distance: 20.,
+                cascades: 2,
+            }),
+            ..Default::default()
+        });
+        let output = crate::view::targets::target(
+            &fixture.device,
+            "frame compiled during the refresh",
+            [64, 64],
+            crate::shading::gbuffer::COLOR,
+        );
+        // A published cube, which the scene holds while the next refresh
+        // is in flight.
+        fixture.refresh(fixture.probe, ProbeRefreshPace::Whole);
+        let mut steps = Vec::new();
+        for call in 0..7 {
+            if call == 3 {
+                fixture.place(toward(Vec3::Y, Vec3::ZERO));
+                let moved = LiveSpecularProbe {
+                    center: CENTER + Vec3::X * 0.25,
+                    ..probe()
+                };
+                fixture
+                    .scene
+                    .set_live_specular_probe(&fixture.queue, fixture.probe, moved)
+                    .unwrap();
+                for pass in 0.. {
+                    if !compile {
+                        break;
+                    }
+                    assert!(pass < 8, "the frame was never ready");
+                    let compilation = fixture.renderer.renderer.compile(
+                        &fixture.device,
+                        &fixture.queue,
+                        &mut fixture.scene,
+                        &mut [ViewFrame {
+                            view: &mut fixture.renderer.view,
+                            input: &fixture.input,
+                            settings: &fixture.settings,
+                            output: ViewOutput::Texture(&output),
+                            timing: None,
+                        }],
+                    );
+                    if compilation.ready() {
+                        break;
+                    }
+                    compilation.jobs.into_iter().for_each(|job| job.run());
+                }
+            }
+            let state = fixture.refresh(fixture.probe, ProbeRefreshPace::FacePerCall);
+            steps.push((state, fixture.cube(fixture.probe)));
+        }
+        Some(steps)
+    };
+    let Some(without) = sequence(false) else {
+        return;
+    };
+    let with = sequence(true).unwrap();
+    assert_eq!(without.last().unwrap().0, ProbeRefresh::Published);
+    assert!(
+        without[2].1 != without[6].1,
+        "the publication replaces the cube the scene held"
+    );
+    for (call, (with, without)) in with.iter().zip(&without).enumerate() {
+        assert_eq!(with.0, without.0, "call {call}");
+        assert!(
+            with.1 == without.1,
+            "call {call}: the scene's cube differs from the one without `compile`"
+        );
+    }
+}
+
 /// How many times `name(` begins an action or command in a wgpu trace.
 fn count(trace: &str, name: &str) -> usize {
     trace.matches(&format!("{name}(")).count()

@@ -16,7 +16,8 @@ fn sharp_level_holds_each_texels_box_average_through_cube_sampling() {
     let size = 1 << (LEVELS - 1);
     let samples = 4;
     let capture_size = size * samples;
-    let capture = ProbePrefilter::new(&device, size, capture_size);
+    let programs = Programs::new(&crate::view::compile::Creator::now(&device)).now();
+    let capture = ProbePrefilter::new(&device, programs, size, capture_size);
     // Every texel of every face distinct, its face, column and row in R, G
     // and B, and every sample within it apart from the others.
     let value = |face: u32, x: u32, y: u32| {

@@ -2,7 +2,8 @@
 //! its first frame (`Renderer::compile`), and what that costs and buys: a
 //! block world (`support/voxel_world.rs`: terrain, water, torches,
 //! creatures, a sun with four cascades, TAA and screen- and world-space
-//! reflections) whose opening frame creates no pipeline.
+//! reflections) with a live specular probe, whose opening frame and the
+//! probe's first refresh create no pipeline.
 //!
 //! `cargo run --release -p sgl-3d-examples --example loading [-- --ordinary] [--workers N]`
 //!
@@ -23,9 +24,10 @@
 //! took for the first level frame, for the first frame after the camera
 //! moved, and for the first frame after a settings change (contact
 //! shadows and motion blur turned on, compiled the same way behind the
-//! loading screen first unless `--ordinary`); and how many pipelines and
-//! shader modules wgpu holds
-//! after each step (`wgpu::Instance::generate_report`).
+//! loading screen first unless `--ordinary`), and for the live probe's
+//! first refresh after the first level frame; and how many pipelines and
+//! shader modules wgpu holds after each step
+//! (`wgpu::Instance::generate_report`).
 //!
 //! The graphics driver caches compiled shaders across runs, so these
 //! times are a warm start's unless its cache was cleared first. On macOS
@@ -285,6 +287,19 @@ mod native {
             "longest gap between loading-screen frames: {:.1} ms over {} frames",
             milliseconds(screen.longest),
             screen.frames
+        );
+        // The live probe's first refresh, which `compile` readied too.
+        let before = programs(&instance);
+        let refreshing = Instant::now();
+        level.refresh(&device, &queue, &first)?;
+        let first_refresh = refreshing.elapsed();
+        settle(&device);
+        let after = programs(&instance);
+        println!(
+            "first live probe refresh: {:.1} ms, created {} pipelines and {} shader modules",
+            milliseconds(first_refresh),
+            after.0 - before.0,
+            after.1 - before.1
         );
         // The camera's first movement.
         let before = programs(&instance);

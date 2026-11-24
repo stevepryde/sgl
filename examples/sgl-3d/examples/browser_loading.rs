@@ -20,9 +20,10 @@
 //! It reports the wall time from the loop's start to the first level
 //! frame's completion on the GPU, the longest gap between two animation
 //! frames and the longest wait for a loading-screen frame to complete on
-//! the GPU over that time, and the same for the first frame after the
-//! camera moved and after a settings change (contact shadows and motion
-//! blur turned on, compiled the same way first unless `--ordinary`).
+//! the GPU over that time, and the same for the level's live probe's
+//! first refresh, for the first frame after the camera moved and after a
+//! settings change (contact shadows and motion blur turned on, compiled
+//! the same way first unless `--ordinary`).
 #![cfg(target_arch = "wasm32")]
 
 #[path = "support/level.rs"]
@@ -264,6 +265,18 @@ async fn measured(ordinary: bool, jobs_per_frame: usize) -> Result<String, Strin
         report,
         "startup, loop start to the first level frame complete: {:.0} ms; {}",
         now() - start,
+        screen.report()
+    );
+    // The live probe's first refresh, which `compile` readied too.
+    screen.restart();
+    let refreshing = now();
+    level.refresh(&device, &queue, &first)?;
+    let refresh = now() - refreshing;
+    settle(&device, &queue, &mut screen).await;
+    let _ = writeln!(
+        report,
+        "first live probe refresh: {refresh:.1} ms, complete {:.0} ms later; {}",
+        now() - refreshing - refresh,
         screen.report()
     );
     // The camera's first movement.

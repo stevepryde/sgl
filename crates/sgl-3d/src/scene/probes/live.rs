@@ -149,6 +149,12 @@ impl Scene {
         !self.live_probes().is_empty()
     }
 
+    /// Every live probe's placement, as a refresh of it would latch it
+    /// now.
+    pub(crate) fn live_probe_placements(&self) -> impl Iterator<Item = LiveSpecularProbe> + '_ {
+        self.live_probes().iter().map(|live| live.probe)
+    }
+
     /// Live probe `id`'s cube and placement; none for a probe the scene
     /// does not hold.
     pub(crate) fn live_probe_cube(&self, id: LiveSpecularProbeId) -> Option<LiveCube> {

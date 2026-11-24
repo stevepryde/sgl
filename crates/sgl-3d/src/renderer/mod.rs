@@ -10,10 +10,10 @@
 //! `order.rs` gives them: those that draw render textures before the views
 //! that show them. `Renderer::compile` runs that same frame as a planning
 //! pass whose commands are dropped, to ready its programs ahead
-//! (`view::compile`). A probe capture (`probe_capture.rs`), a bake or a live
-//! probe's refresh, orders the prepare, shadow and opaque stages and the
-//! probe prefilter over its own views. It holds no pipelines or shaders of
-//! its own.
+//! (`view::compile`), and plans a refresh of each live probe in that pass. A
+//! probe capture (`probe_capture.rs`), a bake or a live probe's refresh,
+//! orders the prepare, shadow and opaque stages and the probe prefilter over
+//! its own views. It holds no pipelines or shaders of its own.
 #[cfg(any(test, feature = "diagnostics"))]
 mod diagnostics;
 pub(crate) mod effective;
@@ -163,8 +163,10 @@ impl Renderer {
     }
 
     /// Readies, before the frame, the shaders and pipelines `render` would
-    /// create for the same arguments: at start, on entering a level, after
-    /// a settings change. Call it once per loading frame, each view
+    /// create for the same arguments, and those the first refresh of each of
+    /// the scene's live probes through `views[0]` would create
+    /// ([`Self::refresh_specular_probe`]): at start, on entering a level,
+    /// after a settings change. Call it once per loading frame, each view
     /// resized first as before `render`, until it is ready, running the
     /// jobs it returns:
     ///
@@ -189,7 +191,13 @@ impl Renderer {
     /// For each view it is a render that was not finished: `finish_frame`
     /// commits nothing for it, and a view being presented restarts what an
     /// unfinished render restarts. Call it between frames, after
-    /// `finish_frame`: it supersedes a render not yet finished.
+    /// `finish_frame`: it supersedes a render not yet finished. Where the
+    /// scene holds live probes, the pass then runs a refresh's own capture
+    /// for each, at its centre now, into the same encoder, with views and a
+    /// face target of its own: it changes nothing a refresh keeps (its
+    /// staging, the refresh in flight and its latched centre, its buffers).
+    /// The pass is still the view's last prepared frame, whose local-light
+    /// shadow records a refresh takes.
     ///
     /// The pass creates no shader module and no pipeline: every one the
     /// frame needs is a job, returned once, and again if it was dropped
@@ -249,6 +257,15 @@ impl Renderer {
                 scene,
                 views,
                 &finished,
+            );
+            // The captures the scene may refresh, through the primary view.
+            let primary = &mut views[0];
+            self.plan_refreshes(
+                (device, queue),
+                scene,
+                primary.view,
+                (primary.input, primary.settings),
+                &mut encoder,
             );
         });
         Compilation {

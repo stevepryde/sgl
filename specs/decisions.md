@@ -1909,7 +1909,7 @@ Use the [current specs](README.md) for implementation and the
   material mip chains, outlines, instance footprints)
   joined the same way. Probe captures, a live probe's
   refresh among them, still create their own programs: `compile` readies
-  frames (#889). A job's body is where #880 starts WebGPU's asynchronous
+  frames (#889; for live probes, superseded by D-90). A job's body is where #880 starts WebGPU's asynchronous
   creation through `sgl-webgpu` (D-75); `Compilation` and `CompileJob`
   keep their shape.
   As built (Apple M5, Metal; Chromium 149 through `sgl-webgpu`; shared
@@ -2071,3 +2071,42 @@ Use the [current specs](README.md) for implementation and the
   ms against 91 to 98 ms, ordinary 113 to 179 ms against 110 to 210 ms.
   The asynchronous creation's shape follows gfx-rs/wgpu#10438; the
   creator began on the `t3/evaluate-sgl3d-renderer-alternatives` branch.
+- **D-90** Decision, 2026-11-24 (#889): `Renderer::compile` readies the
+  first refresh of each of the scene's live probes as well as the frame,
+  so after its jobs that refresh creates no shader module or pipeline on
+  the thread that calls it. In its planning pass, after the views, it
+  runs a planning capture for each live probe: the refresh's own
+  `encode_capture`, through the primary view with its input and settings,
+  at the probe's centre now and leaving out its hidden groups, all six
+  faces, into the dropped encoder, with capture views, a shadow-record
+  copy and a face target of its own made for the call. The probe prefilter's
+  programs become one `Compiled` slot the renderer holds for every
+  capture, a bake's too, kept once made as a stage keeps its programs;
+  its sized targets stay in `ProbePrefilter`. A scene without live probes
+  plans nothing more, and a game that never calls `compile` creates at its
+  first refresh what it did. Not taken: the guide's advice until now, a
+  refresh made while the level loads, which compiles the capture's
+  programs one after another on the loading thread and publishes a cube
+  lit before any frame (no procedural sky, no local-light shadows, which
+  a refresh takes from the view's last frame); a planning capture with
+  unculled faces or without the probes' hidden groups, which asks for
+  variants no refresh draws; planning into the refresh's own staging and
+  views, which changes what a refresh in flight keeps; planning only one
+  probe, which leaves another's variants (a material only it shows) to
+  its first refresh; planning bakes, which `compile` cannot foresee.
+  Measured (Apple M5, Metal; Chromium 149 through `sgl-webgpu`; shared
+  machine, provisional) on the `loading` example's block world with a
+  live probe at the camera's start, warm unless said. Natively, the first
+  refresh took 7.9 to 10.6 ms on the calling thread and created 4
+  pipelines without `compile`, as on the commit before (7.8 to 8.0 ms,
+  4 pipelines), and 623 to 637 ms on a start where the driver compiled;
+  after `compile` it took 2.0 to 2.4 ms and created none, on such a start
+  too. `compile` ran 42 jobs, against 38 with the probe removed: three are
+  the capture's (the prefilter's set of two pipelines, and two geometry
+  variants) and one the frames' probe culling; its calls took 1.3 to 2.0
+  ms each on the loop's thread with the probe and 2.0 to 3.3 ms without,
+  within the machine's noise. In Chromium, with D-89's asynchronous jobs,
+  the call took 1.1 to 1.6 ms either way; without `compile` the refresh
+  completed on the GPU 23 ms later and held a loading-screen frame 11 to
+  12 ms while the browser compiled, and after it 15 to 16 ms later,
+  holding none.

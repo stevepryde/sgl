@@ -6,7 +6,10 @@
 //! (`capture_specular_probe_async`), for authoring, shows the static
 //! content and reads the cube back; a live probe's refresh (`refresh`)
 //! shows the moving content too and copies the cube into the scene's probe
-//! array on the GPU. Both encode one capture (`encode_capture`).
+//! array on the GPU; and `Renderer::compile`'s planning capture runs a
+//! refresh's capture into an encoder it drops, to queue its programs as
+//! compile jobs. Each encodes one capture (`encode_capture`), and filters
+//! with the programs the renderer holds for every capture.
 mod refresh;
 
 use super::{Renderer, View};
@@ -14,10 +17,13 @@ use crate::baked_specular_probe::{ProbeError, SpecularProbeRadiance, SpecularPro
 use crate::scene::probes::validate_face_size;
 use crate::settings::Settings;
 use crate::stages::prepare::CaptureViews;
-use crate::stages::probe_prefilter::{ProbePrefilter, capture_size, validate_readback_size};
+use crate::stages::probe_prefilter::{
+    ProbePrefilter, Programs, capture_size, validate_readback_size,
+};
 use crate::stages::shadows::local::RefreshRecords;
 use crate::view::pipelines::LayerConstants;
 use crate::view::population::Casters;
+use crate::view::targets::CaptureFace;
 use crate::{FrameInput, Scene};
 use glam::Vec3;
 pub(crate) use refresh::LiveRefresh;
@@ -111,7 +117,12 @@ impl Renderer {
         validate_readback_size(face_size, &device.limits())?;
         self.ready_capture(device, queue, scene, view, (settings, None));
         let scene = &*scene;
-        let prefilter = ProbePrefilter::new(device, face_size, capture_size(face_size));
+        let prefilter = ProbePrefilter::new(
+            device,
+            self.prefilter_programs(),
+            face_size,
+            capture_size(face_size),
+        );
         let label = wgpu::CommandEncoderDescriptor {
             label: Some("author static specular probe"),
         };
@@ -140,10 +151,11 @@ impl Renderer {
             (center, Capture::Bake),
             // A bake's views are its own: it is no part of a frame loop.
             &mut CaptureViews::new(device),
-            (&prefilter, sky),
+            (prefilter.face(), sky),
             (0..6, None),
             &mut encoder,
-            |encoder| {
+            |encoder, face| {
+                prefilter.resolve_face(encoder, None, face);
                 let face = std::mem::replace(encoder, device.create_command_encoder(&label));
                 queue.submit([face.finish()]);
             },
@@ -156,6 +168,15 @@ impl Renderer {
             face_size,
             texels: SpecularProbeTexels::Rgba16Float(rgba16),
         })
+    }
+
+    /// The prefilter's programs, made in place if no capture or compile job
+    /// has made them: a bake or a refresh is never a planning pass.
+    fn prefilter_programs(&mut self) -> Programs {
+        self.shared
+            .probe_prefilter
+            .get(&self.shared.compiler)
+            .expect("only a planning pass finds programs missing")
     }
 
     /// Readies `scene`, `view` and the pipelines for a capture with
@@ -192,14 +213,14 @@ impl Renderer {
 
     /// Encodes a capture at `center`, a bake or a live refresh
     /// (`capture`): its directional cascades, a bake's static local-light
-    /// layers, and its faces `faces` (of 0..6), each rendered into
-    /// `prefilter`'s face target under a procedural sky's views `sky` (its
-    /// sky-view table and environment atlas), resolved into its cube and
-    /// followed by `face_done`. It fills `views`, the capture's views and
-    /// what they draw, and writes their buffers: a bake's own, or those a
-    /// renderer keeps across its refreshes, which so create none. A bake's
-    /// caller commits its shadow layers once they are submitted
-    /// (`finish_capture`).
+    /// layers, and its faces `faces` (of 0..6), each rendered into the
+    /// face target `face` under a procedural sky's views `sky` (its
+    /// sky-view table and environment atlas) and handed to `face_done`
+    /// with its index, which resolves it. It fills `views`, the capture's
+    /// views and what they draw, and writes their buffers: a bake's own,
+    /// a planning capture's own, or those a renderer keeps across its
+    /// refreshes, which so create none. A bake's caller commits its shadow
+    /// layers once they are submitted (`finish_capture`).
     #[allow(clippy::too_many_arguments)]
     fn encode_capture(
         &mut self,
@@ -209,10 +230,10 @@ impl Renderer {
         (input, settings): (&FrameInput, &Settings),
         (center, capture): (Vec3, Capture<'_>),
         views: &mut CaptureViews,
-        (prefilter, sky): (&ProbePrefilter, Option<[wgpu::TextureView; 2]>),
+        (target, sky): (&CaptureFace, Option<[wgpu::TextureView; 2]>),
         (faces, timing): (std::ops::Range<u32>, Option<&crate::timing::GpuTiming>),
         encoder: &mut wgpu::CommandEncoder,
-        mut face_done: impl FnMut(&mut wgpu::CommandEncoder),
+        mut face_done: impl FnMut(&mut wgpu::CommandEncoder, u32),
     ) {
         let local_lights = !settings.diagnostics_in_effect().disable.local_lights;
         // The volume the committed probes light, and those probes: what the
@@ -333,13 +354,12 @@ impl Renderer {
                 scene,
                 &mut self.shared.pipelines,
                 (&views.lists[face.list], &views.instances),
-                prefilter.face(),
+                target,
                 &unlit,
                 &lit,
                 timing,
             );
-            prefilter.resolve_face(encoder, timing, face.face);
-            face_done(encoder);
+            face_done(encoder, face.face);
         }
     }
 
