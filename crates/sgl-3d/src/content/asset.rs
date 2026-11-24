@@ -237,7 +237,10 @@ pub struct Material {
     pub occlusion_strength: f32,
     /// Emissive map, sampled as sRGB.
     pub emissive_texture: Option<MaterialTexture>,
-    /// Tangent-space normal map, sampled as linear data.
+    /// Tangent-space normal map, sampled as linear data, in glTF's
+    /// convention: X, Y and Z in red, green and blue (no Z is rebuilt), +Y
+    /// toward decreasing V, up the image ("green up"; invert a DirectX
+    /// map's green).
     pub normal_texture: Option<MaterialTexture>,
     /// Finite scale applied to the normal map's tangent-space X and Y components.
     pub normal_scale: f32,

@@ -739,7 +739,11 @@ impl SpritePass {
     /// Register `normal_handle`/`tex` as the companion normal map of the
     /// already-uploaded `diffuse` texture (R-6): the normal pixels are
     /// written into the page's normal companion at the diffuse's placement,
-    /// so instances sample it with the same UVs. A different
+    /// so instances sample it with the same UVs. The map is tangent-space
+    /// XYZ in RGB, +X toward the image's right and +Y toward its top
+    /// (green up, as glTF and SGL3D read them); lighting takes it as drawn
+    /// upright, not turned by the sprite's rotation or mirrored by its
+    /// flips. A different
     /// `normal_handle` replaces the diffuse's current normal map, pixels and
     /// handle; the same handle again changes nothing (use
     /// [`replace`](Self::replace) to update its pixels). An invalid texture,

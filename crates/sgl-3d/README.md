@@ -4363,6 +4363,11 @@ coordinates otherwise, which turns at triangle edges where a baked map
 expects a smooth frame. Every frame reads a
 normal map as glTF defines it, its green channel toward decreasing V (up
 the image), with or without authored tangents, in raster and at ray hits.
+A material's normal map holds linear X, Y and Z in red, green and blue,
+`normal_scale` 1 being the relief as authored; SGL3D rebuilds no Z for it
+(a decal's normal map it does), so a two-channel map (RG, BC5) needs its Z
+written at export, and a DirectX map, green toward increasing V ("green
+down"), needs its green inverted there (`255 - g`).
 A set and a transform are fixed when the material is added, as its maps
 are: to scroll a normal map use `normal_layers`, and to move any map use a
 material shader, whose `SurfaceContext.uv` is the first set as the mesh

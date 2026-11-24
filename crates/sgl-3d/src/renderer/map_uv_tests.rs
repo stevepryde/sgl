@@ -305,8 +305,9 @@ fn a_scaled_map_selects_the_level_its_coordinates_give_basic() {
     a_scaled_map_selects_the_level_its_coordinates_give(true);
 }
 
-/// A normal map of one texel, tilted along +U and +V: [204, 153, 230]
-/// decodes to (0.6, 0.2, 0.8).
+/// A normal map of one texel, tilted toward increasing U and toward
+/// decreasing V (its +Y, up the image): [204, 153, 230] decodes to
+/// (0.6, 0.2, 0.8).
 fn tilted() -> Image {
     Image::Rgba8(image::RgbaImage::from_pixel(
         2,

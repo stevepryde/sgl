@@ -307,6 +307,16 @@ and an asynchronous readback.
   material chains also require an explicitly prepared decoded level-zero
   companion for rays and decals; SGL3D does not transcode them in the browser.
   Keep fetches, exports and bounded scene chunks game-owned.
+- Author normal maps green up, as glTF does: linear XYZ in RGB with Z in
+  blue, +Y toward the image's top (decreasing V). Convert a DirectX
+  (green-down) map at export by inverting green, and write Z for a
+  two-channel one. A raised feature's upper edge is green in a green-up
+  map and its lower edge in a green-down one. A mesh built in code takes
+  glTF's UVs (V down the image) and either glTF's tangent frame in
+  `Vertex::tangent` (T along increasing U, B = (N × T)·w toward decreasing
+  V) or a zero tangent, which shades on each triangle's frame; only the
+  glTF loader generates tangents
+  ([material textures](../README.md#material-textures)).
 - Supply finite material normal/bump scales and lightmap chart scales/offsets,
   and ambient-cube channels in finite `0..=65504`; scene setters reject
   invalid values and retain the previous content (see the package README).
