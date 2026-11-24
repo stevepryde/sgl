@@ -38,7 +38,7 @@ use volumes::Volumes;
 /// which bind no group 0.
 pub(crate) static VOLUMETRIC_FOG: crate::shading::Module = crate::shading::Module {
     name: "volumetric_fog",
-    source: include_str!("fog.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("fog.wgsl"),
     deps: &[
         &crate::shading::BIND_LIT,
         &crate::shading::LIGHTS,

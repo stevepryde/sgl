@@ -51,7 +51,7 @@ use glam::{Mat4, Vec3};
 
 pub(crate) static OUTLINE: crate::shading::Module = crate::shading::Module {
     name: "outline",
-    source: include_str!("outline.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("outline.wgsl"),
     deps: &[&crate::shading::FULLSCREEN_VS, &crate::shading::SRGB],
 };
 /// The row pass's entry point.

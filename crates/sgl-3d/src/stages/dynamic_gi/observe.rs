@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 pub(crate) static OBSERVE: crate::shading::Module = crate::shading::Module {
     name: "dynamic_gi_observe",
-    source: include_str!("observe.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("observe.wgsl"),
     deps: &[&super::pipelines::COMMON],
 };
 /// The entry point the observation's pipeline is created with.

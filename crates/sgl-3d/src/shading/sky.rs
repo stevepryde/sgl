@@ -11,13 +11,13 @@ use glam::Vec3;
 /// Bruneton's transmittance mapping and distances, part of [`SKY`].
 pub(crate) static SKY_BRUNETON: super::Module = super::Module {
     name: "sky_bruneton",
-    source: include_str!("sky_bruneton.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("sky_bruneton.wgsl"),
     deps: &[],
 };
 /// The sky's model: its medium, tables and mappings.
 pub(crate) static SKY: super::Module = super::Module {
     name: "sky",
-    source: include_str!("sky.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("sky.wgsl"),
     deps: &[&SKY_BRUNETON],
 };
 

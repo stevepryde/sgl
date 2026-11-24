@@ -27,13 +27,13 @@ use crate::shading::gbuffer::COLOR as HDR;
 /// The constants, V mapping and lookup the passes and the tone map share.
 pub(crate) static LOCAL_EXPOSURE: crate::shading::Module = crate::shading::Module {
     name: "local_exposure",
-    source: include_str!("local_exposure.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("local_exposure.wgsl"),
     deps: &[&crate::shading::LUMINANCE],
 };
 /// The passes.
 pub(crate) static LOCAL_EXPOSURE_PASSES: crate::shading::Module = crate::shading::Module {
     name: "local_exposure_passes",
-    source: include_str!("local_exposure_passes.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("local_exposure_passes.wgsl"),
     deps: &[&LOCAL_EXPOSURE, &crate::shading::SCENE_COLOR],
 };
 /// The entry points the passes' pipelines are created with.

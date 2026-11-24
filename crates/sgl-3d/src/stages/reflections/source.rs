@@ -12,7 +12,7 @@ use crate::view::reflection_camera;
 /// (`fullscreen_vs`, `compose_screen_space`).
 pub(crate) static COMPLETION: shading::Module = shading::Module {
     name: "reflection_source",
-    source: include_str!("source.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("source.wgsl"),
     deps: &[
         &shading::GBUFFER,
         &shading::PROBE_SAMPLING,

@@ -39,7 +39,7 @@ const EXTENDED_SAMPLED_TEXTURES: u32 = 48;
 // device reports the Basic tier, and dynamic GI is reported off.
 #[test]
 fn a_device_at_webgpus_default_limits_runs_every_pipeline() {
-    let (tier, dynamic_gi) = heaviest_frame(wgpu::Limits::default());
+    let (tier, dynamic_gi) = heaviest_frame(wgpu::Limits::default(), wgpu::Trace::Off);
     assert_eq!(tier, BindingTier::Basic);
     assert_eq!(dynamic_gi, DynamicGiQuality::Off);
 }
@@ -60,18 +60,139 @@ fn a_device_at_the_extended_threshold_binds_the_extended_tier() {
         max_sampled_textures_per_shader_stage: EXTENDED_SAMPLED_TEXTURES,
         ..wgpu::Limits::default()
     };
-    let (tier, dynamic_gi) = heaviest_frame(limits);
+    let (tier, dynamic_gi) = heaviest_frame(limits, wgpu::Trace::Off);
     assert_eq!(tier, BindingTier::Extended);
     assert_eq!(dynamic_gi, DynamicGiQuality::High);
 }
 
+// #895: a build without debug assertions embeds SGL's WGSL with its
+// comments, indentation and trailing whitespace removed
+// (`sgl_post_fx::wgsl`), and this one embeds it whole. Plausible defects:
+// stripping joins two tokens a comment separated, ends a comment early or
+// late (nested, `/*/`, a line comment at a carriage return), drops or
+// merges a line so errors move, or removes a line `compose` or
+// `sgl-post-fx`'s preprocessor reads. Every shader module the heaviest
+// frames create on each binding tier, as wgpu's API trace records its
+// source, must keep its line count and parse through naga to the same
+// module stripped: the oracle is naga's parse of the whole source. The
+// modules are composed whole and stripped after; a release build composes
+// stripped files, which line for line is the same text but for the
+// composition's own comments.
+#[test]
+fn every_program_of_the_heaviest_frames_parses_the_same_stripped() {
+    let extended = wgpu::Limits {
+        max_sampled_textures_per_shader_stage: EXTENDED_SAMPLED_TEXTURES,
+        ..wgpu::Limits::default()
+    };
+    // Each tier's programs, once each: most are the same on both. The
+    // tiers' devices, and then the comparisons, run on threads of their
+    // own, to keep the test to seconds.
+    let tiers = [("basic", wgpu::Limits::default()), ("extended", extended)];
+    let traced: Vec<Vec<String>> = std::thread::scope(|scope| {
+        let threads: Vec<_> = tiers
+            .into_iter()
+            .map(|(tier, limits)| scope.spawn(move || traced_programs(tier, limits)))
+            .collect();
+        threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .collect()
+    });
+    let programs: Vec<String> = traced
+        .into_iter()
+        .flatten()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
+    let stripped_programs: usize = std::thread::scope(|scope| {
+        let threads: Vec<_> = programs
+            .chunks(programs.len().div_ceil(workers))
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .filter(|source| strips_alike(source.as_str()))
+                        .count()
+                })
+            })
+            .collect();
+        threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .sum()
+    });
+    // Stripping removed something.
+    assert!(stripped_programs > 0);
+}
+
+/// The source of every shader module the heaviest frames create on a
+/// device of `limits`, from wgpu's API trace of it.
+fn traced_programs(tier: &str, limits: wgpu::Limits) -> Vec<String> {
+    // Under the workspace's `target/`, where test output goes.
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/tmp")
+        .join(format!("sgl-wgsl-strip-{tier}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    heaviest_frame(limits, wgpu::Trace::Directory(directory.clone()));
+    let mut programs = Vec::new();
+    for entry in std::fs::read_dir(&directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "wgsl")
+        {
+            programs.push(std::fs::read_to_string(&path).unwrap());
+        }
+    }
+    std::fs::remove_dir_all(&directory).unwrap();
+    assert!(!programs.is_empty(), "{tier} created no program");
+    programs
+}
+
+/// Panics unless `source` stripped keeps its lines and parses to the same
+/// module; whether stripping removed anything.
+fn strips_alike(source: &str) -> bool {
+    let parse = |text: &str| {
+        naga::front::wgsl::parse_str(text)
+            .unwrap_or_else(|error| panic!("{}", error.emit_to_string(text)))
+    };
+    let stripped = sgl_post_fx::wgsl::stripped(source);
+    let first = source.lines().find(|line| !line.trim().is_empty());
+    assert_eq!(
+        stripped.lines().count(),
+        source.lines().count(),
+        "{first:?}"
+    );
+    assert!(
+        without_spans(&parse(source)) == without_spans(&parse(&stripped)),
+        "the program starting {first:?} parses to another module stripped"
+    );
+    stripped.len() < source.len()
+}
+
+/// `module` as its `Debug` text without the source spans naga keeps for
+/// errors (`Span { start, end }`), which stripping moves.
+fn without_spans(module: &naga::Module) -> String {
+    let debug = format!("{module:?}");
+    let mut text = String::with_capacity(debug.len());
+    let mut rest = debug.as_str();
+    while let Some(at) = rest.find("Span { start: ") {
+        text.push_str(&rest[..at]);
+        rest = &rest[at + rest[at..].find('}').unwrap() + 1..];
+    }
+    text.push_str(rest);
+    text
+}
+
 /// The binding tier and the dynamic GI in effect of a device of `limits`
 /// and no optional feature, after it draws two frames of the heaviest
-/// pipelines with no validation error. The device is wgpu's noop backend,
+/// pipelines with no validation error, `trace` recording what it was asked
+/// to do. The device is wgpu's noop backend,
 /// whose adapter offers just `limits` and no feature: wgpu validates every
 /// call as it does on a GPU and skips only the backend's shader translation
 /// and compile, which is most of a GPU's time and no part of the oracle.
-fn heaviest_frame(limits: wgpu::Limits) -> (BindingTier, DynamicGiQuality) {
+fn heaviest_frame(limits: wgpu::Limits, trace: wgpu::Trace) -> (BindingTier, DynamicGiQuality) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::NOOP,
         backend_options: wgpu::BackendOptions {
@@ -88,6 +209,7 @@ fn heaviest_frame(limits: wgpu::Limits) -> (BindingTier, DynamicGiQuality) {
     let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_limits: limits,
+        trace,
         ..Default::default()
     }))
     .unwrap();

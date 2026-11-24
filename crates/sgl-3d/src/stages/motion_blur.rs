@@ -32,7 +32,7 @@ use crate::view::targets::target_with_usage;
 /// The tile passes and the filter.
 pub(crate) static MOTION_BLUR: crate::shading::Module = crate::shading::Module {
     name: "motion_blur",
-    source: include_str!("motion_blur.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("motion_blur.wgsl"),
     deps: &[
         &MOTION_TILES,
         &crate::shading::DEPTH,

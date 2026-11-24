@@ -10,7 +10,7 @@ use super::{
 /// from.
 pub(crate) static SCENE_RAYS: Module = Module {
     name: "scene_rays",
-    source: include_str!("scene_rays.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("scene_rays.wgsl"),
     deps: &[
         &MATERIAL,
         &SCENE_SOURCE,
@@ -26,14 +26,14 @@ pub(crate) static SCENE_RAYS: Module = Module {
 /// and the side policies (`SCENE_SIDES_*`), which every trace composes.
 pub(crate) static SCENE_RAYS_PREDICATE: Module = Module {
     name: "scene_rays_predicate",
-    source: include_str!("scene_rays_predicate.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("scene_rays_predicate.wgsl"),
     deps: &[&SCENE_RAYS, &FINITE],
 };
 /// The portable walk: the BVH traversal over the source header's roots,
 /// which the portable function set and the hardware module both compose.
 pub(crate) static SCENE_RAYS_WALK: Module = Module {
     name: "scene_rays_walk",
-    source: include_str!("scene_rays_walk.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("scene_rays_walk.wgsl"),
     deps: &[&SCENE_RAYS_PREDICATE],
 };
 /// The scene ray function set through the portable walk alone: a tracing
@@ -41,7 +41,7 @@ pub(crate) static SCENE_RAYS_WALK: Module = Module {
 /// (`ray_trace_root`).
 pub(crate) static SCENE_RAYS_PORTABLE: Module = Module {
     name: "scene_rays_portable",
-    source: include_str!("scene_rays_portable.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("scene_rays_portable.wgsl"),
     deps: &[&SCENE_RAYS_WALK],
 };
 /// The hardware path's shared module: the TLAS binding, the re-trace, the
@@ -51,7 +51,7 @@ pub(crate) static SCENE_RAYS_PORTABLE: Module = Module {
 /// forever on a cycle.
 pub(crate) static SCENE_RAYS_HARDWARE: Module = Module {
     name: "scene_rays_hardware",
-    source: include_str!("scene_rays_hardware.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("scene_rays_hardware.wgsl"),
     deps: &[&SCENE_RAYS_WALK],
 };
 /// The baseline form's query (`RayQueryForm::Baseline`), the root of a
@@ -59,7 +59,7 @@ pub(crate) static SCENE_RAYS_HARDWARE: Module = Module {
 /// device that fell back from the candidate form.
 pub(crate) static SCENE_RAYS_QUERY_OPAQUE: Module = Module {
     name: "scene_rays_query_opaque",
-    source: include_str!("scene_rays_query_opaque.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("scene_rays_query_opaque.wgsl"),
     deps: &[&SCENE_RAYS_HARDWARE],
 };
 /// The candidate form's query (`RayQueryForm::Candidates`), the root of a
@@ -67,7 +67,7 @@ pub(crate) static SCENE_RAYS_QUERY_OPAQUE: Module = Module {
 /// (`RayQueryForm::of_backend`: Metal).
 pub(crate) static SCENE_RAYS_QUERY_CANDIDATES: Module = Module {
     name: "scene_rays_query_candidates",
-    source: include_str!("scene_rays_query_candidates.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("scene_rays_query_candidates.wgsl"),
     deps: &[&SCENE_RAYS_HARDWARE],
 };
 

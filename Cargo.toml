@@ -139,6 +139,17 @@ opt-level = 2
 [profile.release]
 overflow-checks = true
 
+# The build settings the guides give a browser game (#895; crates/sgl-3d/docs
+# "Distributing a game"), with which `measure-browser` builds so it measures
+# what a game ships. A game's own release profile has no overflow checks.
+[profile.web]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+strip = "symbols"
+overflow-checks = false
+
 [profile.test]
 overflow-checks = true
 

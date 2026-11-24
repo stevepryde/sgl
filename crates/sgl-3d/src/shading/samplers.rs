@@ -24,14 +24,14 @@ pub(crate) const MIP_LINEAR: u32 = 2;
 /// ray hits take.
 pub(crate) static SAMPLER_STATE: Module = Module {
     name: "sampler_state",
-    source: include_str!("sampler_state.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("sampler_state.wgsl"),
     deps: &[],
 };
 /// A rasterized fragment's sample of a material map, through group 2's
 /// sampler or, for a map in another state, in the shader.
 pub(crate) static MATERIAL_SAMPLING: Module = Module {
     name: "material_sampling",
-    source: include_str!("material_sampling.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("material_sampling.wgsl"),
     deps: &[&super::BIND_MATERIAL, &SAMPLER_STATE],
 };
 

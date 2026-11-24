@@ -55,33 +55,33 @@ struct Params {
 
 static READS_SHORT: shading::Module = shading::Module {
     name: "contact_reads_short",
-    source: include_str!("contact/contact_reads_short.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("contact/contact_reads_short.wgsl"),
     deps: &[],
 };
 static READS_MEDIUM: shading::Module = shading::Module {
     name: "contact_reads_medium",
-    source: include_str!("contact/contact_reads_medium.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("contact/contact_reads_medium.wgsl"),
     deps: &[],
 };
 static READS_LONG: shading::Module = shading::Module {
     name: "contact_reads_long",
-    source: include_str!("contact/contact_reads_long.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("contact/contact_reads_long.wgsl"),
     deps: &[],
 };
 /// The pass at each reach: one source, its read steps its program's.
 pub(crate) static SHORT: shading::Module = shading::Module {
     name: "contact_shadows_short",
-    source: include_str!("contact/contact.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("contact/contact.wgsl"),
     deps: &[&shading::NOISE, &READS_SHORT],
 };
 pub(crate) static MEDIUM: shading::Module = shading::Module {
     name: "contact_shadows_medium",
-    source: include_str!("contact/contact.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("contact/contact.wgsl"),
     deps: &[&shading::NOISE, &READS_MEDIUM],
 };
 pub(crate) static LONG: shading::Module = shading::Module {
     name: "contact_shadows_long",
-    source: include_str!("contact/contact.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("contact/contact.wgsl"),
     deps: &[&shading::NOISE, &READS_LONG],
 };
 /// The entry point the pass's pipelines are created with.

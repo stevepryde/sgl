@@ -183,7 +183,7 @@ pub(crate) struct WorldReflections {
 
 pub(crate) static COMMON: shading::Module = shading::Module {
     name: "world_reflections_common",
-    source: include_str!("world/world_reflections_common.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("world/world_reflections_common.wgsl"),
     deps: &[&shading::GBUFFER, &shading::DEPTH, &shading::HASH],
 };
 /// The trace, a compute pass over the classification's ray list: the lit
@@ -194,7 +194,7 @@ pub(crate) static COMMON: shading::Module = shading::Module {
 /// denoiser's receivers are at group 3 too, its own bindings at group 0.
 pub(crate) static TRACE: shading::Module = shading::Module {
     name: "world_reflections",
-    source: include_str!("world/world_reflections.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("world/world_reflections.wgsl"),
     deps: &[
         &shading::BIND_LIT,
         &shading::SURFACE_RAY,
@@ -207,7 +207,7 @@ pub(crate) static TRACE: shading::Module = shading::Module {
 pub(crate) const WORLD_TRACE_ENTRY: &str = "world_trace";
 pub(crate) static DENOISE: shading::Module = shading::Module {
     name: "world_reflections_denoise",
-    source: include_str!("world/world_reflections_denoise.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("world/world_reflections_denoise.wgsl"),
     deps: &[
         &COMMON,
         &super::TEMPORAL_REPROJECTION,

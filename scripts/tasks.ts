@@ -55,6 +55,13 @@ const commands: Array<{ argv: string[]; env?: Record<string, string>; capMinutes
   },
   // Release semantics differ (debug_assertions off); sgl-net must hold there.
   { argv: ["cargo", "test", "-p", "sgl-net", "-p", "sgl-net-tests", "--release"] },
+  // Without debug assertions SGL embeds its WGSL stripped (sgl_post_fx::wgsl,
+  // #895): the programs a frame composes from stripped files must validate
+  // and render there too.
+  {
+    argv: ["cargo", "test", "-p", "sgl-3d", "--lib", "--release", "--", "renderer::floor_tests", "renderer::shader_tests", "shading::shader"],
+    env: requireGpu ? { SGL_REQUIRE_GPU: "1" } : undefined,
+  },
   // Example unit tests are not run by `cargo test --workspace` by default.
   // Exercise the shared fixture reports and offline scene converter without
   // downloading the optional multi-gigabyte source assets.
@@ -277,11 +284,25 @@ if (task === "check" || task === "check-browser") {
 
 // --- Browser measurement (#24): the streaming example's world on the
 // browser's WebGPU in headless Chromium, as the browser lane runs SGL3D,
-// built in release. It prints what the CPU spends building and recording
-// each view's draw list there. Not part of `check`; it needs the browser
-// lane's setup and a GPU.
+// built with the root `Cargo.toml`'s `web` profile, the build settings the
+// guides give a browser game (#895), so it measures what a game ships. It
+// prints what the CPU spends building and recording each view's draw list
+// there. Not part of `check`; it needs the browser lane's setup and a GPU.
 
 const MEASURE_DIR = process.env.SGL_BROWSER_MEASURE_DIR ?? "target/browser-measure";
+const MEASURE_PROFILE = "web";
+
+// The cargo build of `example` with the measurement profile, then the
+// path of its module.
+function measureBuild(example: string): string[][] {
+  return [
+    ["cargo", "build", "--profile", MEASURE_PROFILE, "-p", "sgl-3d-examples", "--example", example, "--target", "wasm32-unknown-unknown"],
+    [
+      "wasm-bindgen", "--target", "web", "--out-dir", MEASURE_DIR,
+      `${process.env.CARGO_TARGET_DIR ?? "target"}/wasm32-unknown-unknown/${MEASURE_PROFILE}/examples/${example}.wasm`,
+    ],
+  ];
+}
 
 // The loading example's loop (`Renderer::compile` against ordinary
 // rendering): startup wall time and the longest gap between animation
@@ -298,14 +319,7 @@ async function measureLoading(args: string[]): Promise<void> {
     else throw new Error(USAGE);
   }
   if (!Number.isInteger(jobs) || jobs < 1) throw new Error("--jobs-per-frame must be at least 1");
-  const steps: string[][] = [
-    ["bun", "install", "--frozen-lockfile"],
-    ["cargo", "build", "--release", "-p", "sgl-3d-examples", "--example", "browser_loading", "--target", "wasm32-unknown-unknown"],
-    [
-      "wasm-bindgen", "--target", "web", "--out-dir", MEASURE_DIR,
-      `${process.env.CARGO_TARGET_DIR ?? "target"}/wasm32-unknown-unknown/release/examples/browser_loading.wasm`,
-    ],
-  ];
+  const steps: string[][] = [["bun", "install", "--frozen-lockfile"], ...measureBuild("browser_loading")];
   for (const argv of skipBuild ? [] : steps) {
     const result = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
     if (result.exitCode !== 0) process.exit(result.exitCode ?? 1);
@@ -336,14 +350,7 @@ async function measureSprites(args: string[]): Promise<void> {
   if (!Number.isInteger(count) || count < 1 || !Number.isInteger(frames) || frames < 1) {
     throw new Error("--count and --frames must be positive integers");
   }
-  const steps: string[][] = [
-    ["bun", "install", "--frozen-lockfile"],
-    ["cargo", "build", "--release", "-p", "sgl-3d-examples", "--example", "browser_sprites", "--target", "wasm32-unknown-unknown"],
-    [
-      "wasm-bindgen", "--target", "web", "--out-dir", MEASURE_DIR,
-      `${process.env.CARGO_TARGET_DIR ?? "target"}/wasm32-unknown-unknown/release/examples/browser_sprites.wasm`,
-    ],
-  ];
+  const steps: string[][] = [["bun", "install", "--frozen-lockfile"], ...measureBuild("browser_sprites")];
   for (const argv of skipBuild ? [] : steps) {
     const result = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
     if (result.exitCode !== 0) process.exit(result.exitCode ?? 1);
@@ -481,23 +488,13 @@ async function measureBrowser(args: string[]): Promise<void> {
   const buildMetadataPath = `${MEASURE_DIR}/${example}.build.json`;
   // Capture provenance at the build boundary, not when a saved binary is rerun.
   const buildSourceHash = skipBuild ? null : await measurementSourceHash();
-  const steps: string[][] = [
-    ["bun", "install", "--frozen-lockfile"],
-    [
-      "cargo", "build", "--release", "-p", "sgl-3d-examples", "--example", example,
-      "--target", "wasm32-unknown-unknown",
-    ],
-    [
-      "wasm-bindgen", "--target", "web", "--out-dir", MEASURE_DIR,
-      `${process.env.CARGO_TARGET_DIR ?? "target"}/wasm32-unknown-unknown/release/examples/${example}.wasm`,
-    ],
-  ];
+  const steps: string[][] = [["bun", "install", "--frozen-lockfile"], ...measureBuild(example)];
   for (const argv of skipBuild ? [] : steps) {
     const result = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
     if (result.exitCode !== 0) process.exit(result.exitCode ?? 1);
   }
   const moduleHash = new Bun.CryptoHasher("sha256").update(await Bun.file(`${MEASURE_DIR}/${example}_bg.wasm`).arrayBuffer()).digest("hex");
-  if (!skipBuild) await Bun.write(buildMetadataPath, JSON.stringify({mode:"release",source_sha256:buildSourceHash,module_sha256:moduleHash}));
+  if (!skipBuild) await Bun.write(buildMetadataPath, JSON.stringify({mode:MEASURE_PROFILE,source_sha256:buildSourceHash,module_sha256:moduleHash}));
   if (startup) {
     const { runStartup, table, validateStartup } = await import("../browser/startup");
     const summary = await runStartup({...startupOptions, wasmDir: MEASURE_DIR, dir: "target/browser-startup"});

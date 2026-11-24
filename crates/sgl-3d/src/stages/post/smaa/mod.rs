@@ -6,7 +6,7 @@ use crate::settings::SmaaQuality;
 
 pub(crate) static SMAA: crate::shading::Module = crate::shading::Module {
     name: "smaa",
-    source: include_str!("smaa.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("smaa.wgsl"),
     deps: &[&crate::shading::SRGB],
 };
 /// The entry points SMAA's pipelines are created with: each pass's

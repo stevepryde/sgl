@@ -9,13 +9,13 @@ use crate::{
 /// indirect light both take.
 pub(crate) static XE_GTAO_KERNELS: crate::shading::Module = crate::shading::Module {
     name: "xegtao_kernels",
-    source: include_str!("xegtao_kernels.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("xegtao_kernels.wgsl"),
     deps: &[],
 };
 /// XeGTAO's passes.
 pub(crate) static XE_GTAO: crate::shading::Module = crate::shading::Module {
     name: "ambient_occlusion",
-    source: include_str!("ambient_occlusion.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("ambient_occlusion.wgsl"),
     deps: &[&crate::shading::GBUFFER, &XE_GTAO_KERNELS],
 };
 /// The entry points XeGTAO's pipelines are created with.

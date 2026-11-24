@@ -10,7 +10,7 @@ use crate::view::history::{HistoryFrame, Kept, StageRun};
 /// The pass's four dispatches.
 pub(crate) static SCREEN_INDIRECT_PASS: crate::shading::Module = crate::shading::Module {
     name: "screen_indirect_pass",
-    source: include_str!("screen_indirect.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("screen_indirect.wgsl"),
     deps: &[
         &crate::shading::GBUFFER,
         &crate::shading::SCREEN_INDIRECT,

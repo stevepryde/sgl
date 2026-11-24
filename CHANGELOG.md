@@ -15,6 +15,9 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-3d` and `sgl-post-fx`, built without debug assertions, embed their WGSL without comments, indentation or trailing whitespace, every line kept so naga reports the same lines. No game-code changes are needed; build a browser game with the `web` profile in [Distributing a game](crates/sgl-3d/docs/README.md#distributing-a-game).
+- `sgl-post-fx` `PostFXContext::new` uploads its blue-noise tables from stored bytes instead of parsing DiligentFX's C++ text. No game-code changes are needed.
+- `sgl-3d`'s licence notices reproduce the 2008 INRIA notice of the Bruneton sky functions, which only the embedded shader carried. Regenerate the game's distribution notices.
 - `sgl-3d` `asset::Material::normal_texture` and `coat_normal_texture` on every material that does not use authored tangents (all but anisotropic ones) were read with their green channel toward increasing V, glTF's opposite, flattened along the less dense axis of a stretched unwrap and turned by a sheared one, and in raster flattened at fine pixel sizes; they are now read on glTF's unit frame (green up the image), as on authored tangents, in raster and at ray hits, so normal-mapped surfaces look different. No game-code changes are needed for glTF-convention maps; invert the green channel of a map made to look right under the old behaviour.
 - `sgl-net` now exposes `udp` and `websocket` as independent, default-on Cargo features. Games using `default-features = false` must enable the transports they use. No game-code changes are needed.
 - `sgl-2d` builds `fetch_runtime_bundle` with the narrower futures utility dependency and `TextRenderer` with fontdue’s standard-library maps. No game-code changes are needed.

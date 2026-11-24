@@ -23,7 +23,7 @@ use std::ops::Range;
 /// The capture and the filter.
 pub(crate) static SKY_ENVIRONMENT: crate::shading::Module = crate::shading::Module {
     name: "sky_environment",
-    source: include_str!("environment.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("environment.wgsl"),
     deps: &[&super::SKY_COMMON, &PMREM_FILTER],
 };
 /// The entry points the atlas's pipelines are created with.

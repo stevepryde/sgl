@@ -10,14 +10,14 @@ use std::collections::HashMap;
 /// What the stage's passes share.
 pub(crate) static COMMON: shading::Module = shading::Module {
     name: "dynamic_gi_common",
-    source: include_str!("common.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("common.wgsl"),
     deps: &[&shading::DYNAMIC_GI],
 };
 /// The ray allocation and the trace's indirect dispatch, at the stage's own
 /// group 0.
 pub(crate) static ALLOCATE: shading::Module = shading::Module {
     name: "dynamic_gi_allocate",
-    source: include_str!("allocate.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("allocate.wgsl"),
     deps: &[&COMMON],
 };
 /// The entry points the allocation's pipelines are created with.
@@ -30,7 +30,7 @@ pub(crate) const PREPARE_TRACE_ENTRY: &str = "prepare_trace";
 /// stage's own group 3.
 pub(crate) static TRACE: shading::Module = shading::Module {
     name: "dynamic_gi_trace",
-    source: include_str!("trace.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("trace.wgsl"),
     deps: &[
         &shading::tiers::BIND_LIT_EXTENDED,
         &shading::SURFACE_RAY,
@@ -48,7 +48,7 @@ pub(crate) const TRACE_OBSERVED_ENTRY: &str = "trace_observed";
 /// The irradiance and depth blends, at the stage's own group 0.
 pub(crate) static UPDATE: shading::Module = shading::Module {
     name: "dynamic_gi_update",
-    source: include_str!("update.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("update.wgsl"),
     deps: &[&COMMON],
 };
 /// The entry points the blends' pipelines are created with.

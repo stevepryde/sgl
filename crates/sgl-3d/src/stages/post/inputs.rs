@@ -10,7 +10,7 @@ use std::cell::RefCell;
 /// Group 0 of every post pass and its full-screen vertex.
 pub(crate) static INPUTS: crate::shading::Module = crate::shading::Module {
     name: "post_inputs",
-    source: include_str!("inputs.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("inputs.wgsl"),
     deps: &[
         &crate::shading::FULLSCREEN,
         &crate::shading::SCENE_COLOR,

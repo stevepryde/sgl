@@ -9,7 +9,7 @@ use crate::asset::{MaterialTexture, UvSet, UvTransform};
 /// The transform's WGSL twin, with raster's pipeline constants.
 pub(crate) static MAP_UV: Module = Module {
     name: "map_uv",
-    source: include_str!("map_uv.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("map_uv.wgsl"),
     deps: &[],
 };
 

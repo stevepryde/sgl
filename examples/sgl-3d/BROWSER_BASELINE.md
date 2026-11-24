@@ -7,9 +7,13 @@ bun scripts/tasks.ts measure-browser --baseline --frames 180 --output target/bro
 ```
 
 This extends the existing `measure-browser` Chromium/WebGPU runner; without
-`--baseline`, the voxel streaming workload remains the default. The baseline
-is a release WASM build. It renders an offscreen 1280×720 target (`--size WxH`
-another), not a DOM canvas, through the ordinary caller-owned `Scene` / `Renderer` workflow.
+`--baseline`, the voxel streaming workload remains the default. Every
+`measure-browser` module is built with the root `Cargo.toml`'s `web` profile,
+the build settings a browser game uses
+([Distributing a game](../../crates/sgl-3d/docs/README.md#distributing-a-game)),
+so it measures what a game ships. The baseline renders an offscreen 1280×720
+target (`--size WxH` another), not a DOM canvas, through the ordinary
+caller-owned `Scene` / `Renderer` workflow.
 
 ## Workload
 
@@ -170,6 +174,14 @@ ETC2/ASTC supported-feature upload coverage belongs to the existing
 workload. Unsupported compression is reported explicitly; these measurements
 do not establish mobile-device performance.
 
+## Module size
+
+The report records the module's SHA-256, not its size. To size the module,
+compress the `_bg.wasm` the run writes to `SGL_BROWSER_MEASURE_DIR` (by
+default `target/browser-measure`) as a server would: `brotli -q 11` and
+`gzip -9`. With the `web` profile at #895, the baseline's module was
+4,834,453 bytes: 1,343,797 brotli and 1,707,479 gzip.
+
 ## Startup against three.js
 
 A developer measurement of what a player waits for: from navigation to the
@@ -270,8 +282,8 @@ three.js has no contact-hardening soft shadows (PCF), a different bloom and
 temporal filter, its own GTAO, and mips of one bilinear tap a texel, where
 SGL weighs the texels an odd level's footprint spans; SGL uses an infinite
 far plane, three.js 200 m. Each library requests
-its device as it normally does. SGL's module is wasm-bindgen output from a
-release build without `wasm-opt`.
+its device as it normally does. SGL's module is wasm-bindgen output from the
+`web` profile without `wasm-opt`.
 
 three.js (MIT) is a development dependency in the root `package.json` used
 only by this measurement. Bun fetches it; nothing of it is copied into the

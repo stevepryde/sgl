@@ -85,7 +85,7 @@ pub(crate) fn validate_readback_size(
 /// The GGX prefilter of a captured cube.
 pub(crate) static PREFILTER: crate::shading::Module = crate::shading::Module {
     name: "probe_prefilter",
-    source: include_str!("probe_prefilter.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("probe_prefilter.wgsl"),
     deps: &[&crate::shading::SPECULAR_PROBE_LEVELS],
 };
 /// The entry points the prefilter's pipelines are created with.

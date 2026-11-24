@@ -20,19 +20,19 @@ use std::{
 /// The counters both probe programs write.
 static STATS: crate::shading::Module = crate::shading::Module {
     name: "frame_probe_stats",
-    source: include_str!("frame_probe_stats.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("frame_probe_stats.wgsl"),
     deps: &[],
 };
 /// Each observed stage's IEEE-754 classification.
 pub(crate) static PROBE: crate::shading::Module = crate::shading::Module {
     name: "frame_probe",
-    source: include_str!("frame_probe.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("frame_probe.wgsl"),
     deps: &[&STATS, &crate::shading::FINITE],
 };
 /// The primary raster's coverage.
 pub(crate) static COVERAGE: crate::shading::Module = crate::shading::Module {
     name: "frame_probe_coverage",
-    source: include_str!("frame_probe_coverage.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("frame_probe_coverage.wgsl"),
     deps: &[&STATS],
 };
 /// The entry point both programs' pipelines are created with.

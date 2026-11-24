@@ -6,7 +6,7 @@ use super::Module;
 
 pub(crate) static MOTION_TILES: Module = Module {
     name: "motion_tiles",
-    source: include_str!("motion_tiles.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("motion_tiles.wgsl"),
     deps: &[],
 };
 

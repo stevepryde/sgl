@@ -9,7 +9,7 @@ use crate::view::targets::{attachment, hold, mask_targets, target};
 
 pub(crate) static HEAT: crate::shading::Module = crate::shading::Module {
     name: "heat_distortion",
-    source: include_str!("heat.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("heat.wgsl"),
     deps: &[],
 };
 /// The entry points the shimmer's pipeline is created with.

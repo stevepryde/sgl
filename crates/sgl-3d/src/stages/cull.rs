@@ -39,7 +39,7 @@ use pyramid::{Builder, Pyramid, SUPPORTED_STORAGE_TEXTURES};
 
 pub(crate) static CULL: Module = Module {
     name: "cull",
-    source: include_str!("cull.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("cull.wgsl"),
     deps: &[
         &crate::shading::CULLING,
         &crate::shading::UNIFORMS,

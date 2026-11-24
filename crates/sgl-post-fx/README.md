@@ -17,7 +17,9 @@ integration. It has no dependency on SGL3D.
 [PROVENANCE.md](PROVENANCE.md) records the source revisions and useful
 algorithm and implementation notes. `vendor/` in the repository retains the
 original reference files unedited; the published crate keeps only their
-licences, source revisions and the blue-noise table source it reads.
+licences, source revisions and the blue-noise table source from which
+`scripts/blue-noise-tables.ts` writes the bytes it uploads
+(`src/blue_noise/`).
 
 - SSR is AMD's FidelityFX SSSR tracing with a confidence output and its own
   energy-preserving denoiser (spatial reconstruction, temporal accumulation,

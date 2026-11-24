@@ -49,7 +49,7 @@ pub(crate) const ENTRY_POINTS: [&str; 7] = [
 
 pub(crate) static DEPTH_OF_FIELD: crate::shading::Module = crate::shading::Module {
     name: "depth_of_field",
-    source: include_str!("depth_of_field.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("depth_of_field.wgsl"),
     deps: &[&crate::shading::DEPTH, &crate::shading::SCENE_COLOR],
 };
 

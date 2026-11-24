@@ -10,13 +10,13 @@ use glam::{Mat4, Vec3};
 
 static MIST_NOISE: crate::shading::Module = crate::shading::Module {
     name: "mist_noise",
-    source: include_str!("mist_noise.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("mist_noise.wgsl"),
     deps: &[],
 };
 /// The mist, under the unlit group 0.
 pub(crate) static MIST: crate::shading::Module = crate::shading::Module {
     name: "mist",
-    source: include_str!("mist.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("mist.wgsl"),
     deps: &[
         &crate::shading::BIND_UNLIT,
         &crate::shading::FRAME_FOG,

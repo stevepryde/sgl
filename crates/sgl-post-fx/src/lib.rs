@@ -19,6 +19,8 @@ pub mod screen_space_reflection;
 pub mod shaders;
 pub mod structures;
 pub mod temporal_anti_aliasing;
+#[doc(hidden)]
+pub mod wgsl;
 
 pub use post_fx_context::PostFXContext;
 pub use screen_space_reflection::ScreenSpaceReflection;

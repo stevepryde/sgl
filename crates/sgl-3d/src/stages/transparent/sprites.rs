@@ -20,7 +20,7 @@ use std::collections::HashMap;
 /// The sprite programs, under the unlit group 0.
 pub(crate) static SPRITES: crate::shading::Module = crate::shading::Module {
     name: "sprites",
-    source: include_str!("sprites.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("sprites.wgsl"),
     deps: &[
         &crate::shading::BIND_UNLIT,
         &crate::shading::FRAME_FOG,

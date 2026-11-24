@@ -140,7 +140,7 @@ pub(crate) struct Local {
 /// static layer.
 pub(crate) static COPY: crate::shading::Module = crate::shading::Module {
     name: "local_shadow_copy",
-    source: include_str!("local/copy.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("local/copy.wgsl"),
     deps: &[&crate::shading::FULLSCREEN_VS],
 };
 /// The entry point the copy's pipeline is created with, beside

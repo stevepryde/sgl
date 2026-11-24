@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 /// The downsamples, upsamples and composite.
 pub(crate) static BLOOM: crate::shading::Module = crate::shading::Module {
     name: "bloom",
-    source: include_str!("bloom.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("bloom.wgsl"),
     deps: &[&super::inputs::INPUTS, &crate::shading::LUMINANCE],
 };
 /// The entry points bloom's pipelines are created with, beside

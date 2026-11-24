@@ -10,20 +10,20 @@ use super::{
 /// Lit group 0's bindings of the Extended binding tier alone.
 pub(crate) static BIND_LIT_EXTENDED: Module = Module {
     name: "bind_lit_extended",
-    source: include_str!("bind_lit_extended.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("bind_lit_extended.wgsl"),
     deps: &[&BIND_LIT],
 };
 /// The lit provider of the Extended binding tier: the baked maps'
 /// directional lobes and the dynamic GI volume's irradiance.
 pub(crate) static LIT_EXTENDED: Module = Module {
     name: "lit_extended",
-    source: include_str!("lit_extended.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("lit_extended.wgsl"),
     deps: &[&BIND_LIT_EXTENDED, &DYNAMIC_GI_SAMPLE],
 };
 /// The lit provider of the Basic binding tier: no lobe and no dynamic GI.
 pub(crate) static LIT_BASIC: Module = Module {
     name: "lit_basic",
-    source: include_str!("lit_basic.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("lit_basic.wgsl"),
     deps: &[&VOLUME_SHARE],
 };
 /// The lit provider a program that composes `SURFACE` composes on a device
@@ -38,21 +38,21 @@ pub(crate) fn lit_provider(tier: BindingTier) -> &'static Module {
 /// Group 2's maps of the Extended binding tier alone.
 pub(crate) static BIND_MATERIAL_EXTENDED: Module = Module {
     name: "bind_material_extended",
-    source: include_str!("bind_material_extended.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("bind_material_extended.wgsl"),
     deps: &[&BIND_MATERIAL],
 };
 /// The material-map provider of the Extended binding tier: samples its
 /// maps.
 pub(crate) static MATERIAL_MAPS_EXTENDED: Module = Module {
     name: "material_maps_extended",
-    source: include_str!("material_maps_extended.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("material_maps_extended.wgsl"),
     deps: &[&BIND_MATERIAL_EXTENDED, &super::samplers::MATERIAL_SAMPLING],
 };
 /// The material-map provider of the Basic binding tier: each Extended map
 /// reads white.
 pub(crate) static MATERIAL_MAPS_BASIC: Module = Module {
     name: "material_maps_basic",
-    source: include_str!("material_maps_basic.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("material_maps_basic.wgsl"),
     deps: &[],
 };
 /// The material-map provider a program that composes `SURFACE_RASTER`
@@ -69,7 +69,7 @@ pub(crate) fn material_provider(tier: BindingTier) -> &'static Module {
 /// depth and the volume layers.
 pub(crate) static BIND_BLENDED_EXTENDED: Module = Module {
     name: "bind_blended_extended",
-    source: include_str!("bind_blended_extended.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("bind_blended_extended.wgsl"),
     deps: &[&BIND_BLENDED],
 };
 /// The transmission provider of the Extended binding tier: the frame behind
@@ -77,14 +77,14 @@ pub(crate) static BIND_BLENDED_EXTENDED: Module = Module {
 /// volume layer the second exit layer's pass reads.
 pub(crate) static TRANSMISSION_EXTENDED: Module = Module {
     name: "transmission_extended",
-    source: include_str!("transmission_extended.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("transmission_extended.wgsl"),
     deps: &[&BIND_BLENDED_EXTENDED, &BIND_LIT],
 };
 /// The transmission provider of the Basic binding tier: no copy, so the
 /// blend passes the light behind a transmissive surface.
 pub(crate) static TRANSMISSION_BASIC: Module = Module {
     name: "transmission_basic",
-    source: include_str!("transmission_basic.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("transmission_basic.wgsl"),
     deps: &[],
 };
 /// The transmission provider a program that composes `TRANSMISSION`

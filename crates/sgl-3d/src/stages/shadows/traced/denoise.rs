@@ -25,42 +25,42 @@ pub(super) const DENOISED_SLOTS: u32 = 4;
 
 static UTIL: shading::Module = shading::Module {
     name: "ffx_denoiser_shadows_util",
-    source: include_str!("ffx_denoiser_shadows_util.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("ffx_denoiser_shadows_util.wgsl"),
     deps: &[],
 };
 static FFX_TILE_CLASSIFICATION: shading::Module = shading::Module {
     name: "ffx_denoiser_shadows_tileclassification",
-    source: include_str!("ffx_denoiser_shadows_tileclassification.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("ffx_denoiser_shadows_tileclassification.wgsl"),
     deps: &[&UTIL],
 };
 static FFX_FILTER: shading::Module = shading::Module {
     name: "ffx_denoiser_shadows_filter",
-    source: include_str!("ffx_denoiser_shadows_filter.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("ffx_denoiser_shadows_filter.wgsl"),
     deps: &[&UTIL],
 };
 /// The passes' reading of the trace's half-resolution depth and normals for
 /// AMD's callbacks, and the scratch layout's pack and unpack.
 static COMMON: shading::Module = shading::Module {
     name: "traced_denoise_common",
-    source: include_str!("traced_denoise_common.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced_denoise_common.wgsl"),
     deps: &[&super::COMMON],
 };
 /// The lanes a program's invocation filters: slots 0 to 3, or slot 0.
 static LANES_FOUR: shading::Module = shading::Module {
     name: "traced_denoise_lanes_four",
-    source: include_str!("traced_denoise_lanes_four.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced_denoise_lanes_four.wgsl"),
     deps: &[],
 };
 static LANES_ONE: shading::Module = shading::Module {
     name: "traced_denoise_lanes_one",
-    source: include_str!("traced_denoise_lanes_one.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced_denoise_lanes_one.wgsl"),
     deps: &[],
 };
 /// The tile classification and the filter, with four lanes and with one:
 /// one source each, its lanes its program's.
 pub(crate) static TILE_CLASSIFICATION_FOUR: shading::Module = shading::Module {
     name: "traced_denoise_tileclassification_four",
-    source: include_str!("traced_denoise_tileclassification.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced_denoise_tileclassification.wgsl"),
     deps: &[
         &FFX_TILE_CLASSIFICATION,
         &shading::SHADOW_MASK_SLOTS,
@@ -70,7 +70,7 @@ pub(crate) static TILE_CLASSIFICATION_FOUR: shading::Module = shading::Module {
 };
 pub(crate) static TILE_CLASSIFICATION_ONE: shading::Module = shading::Module {
     name: "traced_denoise_tileclassification_one",
-    source: include_str!("traced_denoise_tileclassification.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced_denoise_tileclassification.wgsl"),
     deps: &[
         &FFX_TILE_CLASSIFICATION,
         &shading::SHADOW_MASK_SLOTS,
@@ -80,12 +80,12 @@ pub(crate) static TILE_CLASSIFICATION_ONE: shading::Module = shading::Module {
 };
 pub(crate) static FILTER_FOUR: shading::Module = shading::Module {
     name: "traced_denoise_filter_four",
-    source: include_str!("traced_denoise_filter.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced_denoise_filter.wgsl"),
     deps: &[&FFX_FILTER, &COMMON, &LANES_FOUR],
 };
 pub(crate) static FILTER_ONE: shading::Module = shading::Module {
     name: "traced_denoise_filter_one",
-    source: include_str!("traced_denoise_filter.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced_denoise_filter.wgsl"),
     deps: &[&FFX_FILTER, &COMMON, &LANES_ONE],
 };
 

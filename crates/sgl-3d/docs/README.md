@@ -361,6 +361,23 @@ Follow the [licence-notice workflow](../../../docs/licensing.md). Include this
 crate's [bundled-code notices](../THIRD_PARTY_NOTICES.txt), the game's resolved
 Cargo dependency notices and any game-asset licences in the shipped files.
 
+Build the browser game with a profile of its own (Cargo ignores a
+dependency's profile), run `wasm-bindgen --target web` on the module without
+`wasm-opt`, and serve the `.wasm` brotli-encoded, or gzip where the server
+cannot:
+
+```toml
+[profile.web]          # cargo build --profile web --target wasm32-unknown-unknown
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+strip = "symbols"
+```
+
+[Browser](../README.md#browser-wasm--webgpu) gives its measured effect on the
+download and on CPU time.
+
 ## Math types
 
 Use `sgl_3d::glam`; SGL3D, `sgl-2d` and `sgl-core` share the workspace glam

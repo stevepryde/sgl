@@ -2,3 +2,5 @@
 # in every checkout. Vendored licences keep their original bytes.
 THIRD_PARTY_NOTICES.txt text eol=lf
 DISTRIBUTION_NOTICES.txt text eol=lf
+# Generated binary tables (sgl-post-fx's blue noise).
+*.bin binary

@@ -7,7 +7,7 @@
 /// The texel directions and the GGX filter.
 pub(crate) static PMREM_FILTER: super::Module = super::Module {
     name: "pmrem_filter",
-    source: include_str!("pmrem_filter.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("pmrem_filter.wgsl"),
     deps: &[&super::PROBE_SAMPLING],
 };
 

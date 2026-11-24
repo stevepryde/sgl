@@ -6,7 +6,7 @@ use crate::shading;
 /// SGL3D's G-buffer as DiligentFX's inputs.
 pub(crate) static INPUTS: shading::Module = shading::Module {
     name: "post_fx_inputs",
-    source: include_str!("../post_fx_inputs.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("../post_fx_inputs.wgsl"),
     deps: &[&shading::GBUFFER, &shading::FULLSCREEN_VS],
 };
 /// The entry point the inputs' pipeline is created with, beside

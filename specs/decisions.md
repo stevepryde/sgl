@@ -1829,3 +1829,17 @@ Use the [current specs](README.md) for implementation and the
   glTF's frame is unit and square whatever the unwrap. Left to #861: a
   per-triangle frame turns at triangle edges where an authored one
   interpolates, up to 52° off the Avocado's own tangents on its rim.
+- **D-84** Decision, 2026-11-24 (#895): the build recipe the guides give a
+  browser game, and `measure-browser`'s `web` profile, is fat LTO, one
+  codegen unit, `strip = "symbols"` and `opt-level = "s"`, served brotli-
+  or gzip-encoded, without `wasm-opt`. Why `"s"`: on `browser_baseline`
+  it encoded frames and added assets as fast as opt-level 3 and was 172 KB
+  brotli smaller. `"z"` saved another 78 KB but decoded PNGs 15–25% slower
+  and added assets about 45% slower (provisional timings on a shared
+  machine). `wasm-opt -Oz` shrank raw bytes but not the brotli download.
+  In the same change, builds without debug assertions embed SGL's WGSL with
+  comments, indentation and trailing whitespace removed at compile time
+  (`sgl_post_fx::embed_wgsl!`), every line kept so naga's lines match the
+  files. Debug builds embed it whole. Not taken: a build script in each
+  crate, with every call site's path changed, and stripping at
+  composition, which saves nothing in the binary.

@@ -16,7 +16,7 @@ use crate::view::targets::{attachment, hold};
 
 pub(crate) static COPY: crate::shading::Module = crate::shading::Module {
     name: "transmission_copy",
-    source: include_str!("transmission.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("transmission.wgsl"),
     deps: &[&crate::shading::FULLSCREEN_VS, &crate::shading::SCENE_COLOR],
 };
 /// The entry points the copy's pipelines are created with, beside

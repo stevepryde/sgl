@@ -19,7 +19,7 @@ use crate::view::targets::SharedTargets;
 /// The virtual-point depth shared by the reflection methods.
 static REPROJECTION: crate::shading::Module = crate::shading::Module {
     name: "reflection_reprojection",
-    source: include_str!("reprojection.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("reprojection.wgsl"),
     deps: &[],
 };
 
@@ -28,7 +28,7 @@ static REPROJECTION: crate::shading::Module = crate::shading::Module {
 /// `temporal_depth_history` and `linear_sampler`.
 static TEMPORAL_REPROJECTION: crate::shading::Module = crate::shading::Module {
     name: "temporal_reprojection",
-    source: include_str!("temporal_reprojection.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("temporal_reprojection.wgsl"),
     deps: &[&crate::shading::LUMINANCE, &crate::shading::DEPTH],
 };
 

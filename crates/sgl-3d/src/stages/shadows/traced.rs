@@ -57,7 +57,7 @@ struct Params {
 
 static COMMON: shading::Module = shading::Module {
     name: "traced_shadows_common",
-    source: include_str!("traced/traced_common.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced/traced_common.wgsl"),
     deps: &[&shading::SHADOW_MASK_SLOTS],
 };
 /// The trace: the camera's lit group 0, the scene at group 1 and the
@@ -65,7 +65,7 @@ static COMMON: shading::Module = shading::Module {
 /// query module (`TracePaths`).
 pub(crate) static TRACE: shading::Module = shading::Module {
     name: "traced_shadows_trace",
-    source: include_str!("traced/traced_trace.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced/traced_trace.wgsl"),
     deps: &[
         &shading::BIND_LIT,
         &shading::GBUFFER,
@@ -83,12 +83,12 @@ pub(crate) const TEMPORAL_ENTRY: &str = "traced_shadow_temporal";
 pub(crate) const UPSAMPLE_ENTRY: &str = "traced_shadow_upsample";
 pub(crate) static TEMPORAL: shading::Module = shading::Module {
     name: "traced_shadows_temporal",
-    source: include_str!("traced/traced_temporal.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced/traced_temporal.wgsl"),
     deps: &[&shading::SHADOW_MASK_SLOTS, &COMMON],
 };
 pub(crate) static UPSAMPLE: shading::Module = shading::Module {
     name: "traced_shadows_upsample",
-    source: include_str!("traced/traced_upsample.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("traced/traced_upsample.wgsl"),
     deps: &[&shading::SHADOW_MASK_SLOTS, &COMMON],
 };
 

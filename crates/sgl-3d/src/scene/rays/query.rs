@@ -9,7 +9,7 @@
 /// A pipeline composes it with the path's root.
 pub(crate) static QUERY: crate::shading::Module = crate::shading::Module {
     name: "scene_rays_query",
-    source: include_str!("query.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("query.wgsl"),
     deps: &[&crate::shading::SCENE_RAYS_PREDICATE],
 };
 /// The entry point the dispatch's pipeline is created with.

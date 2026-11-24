@@ -5,6 +5,15 @@ The initial Rust/WGSL implementation was ported from DiligentFX revision
 DiligentCore revision `18bfa7b7563a0ef5b5fe074d37c2e8304100e965`
 (`HLSLDefinitions.fxh`), retained unedited in `vendor/`.
 
+The blue-noise tables of
+`vendor/DiligentFX/PostProcess/Common/src/SamplerBlueNoiseErrorDistribution_128x128_OptimizedFor_2d2d2d2d_1spp.cpp`
+(`Sobol_256d` and `ScramblingTile`) ship as `src/blue_noise/*.bin`, the
+same bytes without the C++ text. `scripts/blue-noise-tables.ts` writes them from that
+file, and `post_fx_context::tests` compares them with it entry for entry
+(#895). A build without debug assertions embeds `shaders/wgsl/` without its
+comments, indentation or trailing whitespace (`src/wgsl.rs`); the files keep
+the port's text.
+
 `sgl-post-fx` is now an SGL-owned effects library, evolving under
 [RD-2](../../specs/sgl3d.md#rendering-development). Upstream equivalence and
 feature parity are not requirements. Keep source attribution and licences,

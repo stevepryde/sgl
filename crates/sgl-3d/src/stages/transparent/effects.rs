@@ -8,7 +8,7 @@ use crate::view::targets::mask_targets;
 /// Additive glow, under the unlit group 0.
 pub(crate) static GLOW: crate::shading::Module = crate::shading::Module {
     name: "glow",
-    source: include_str!("glow.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("glow.wgsl"),
     deps: &[
         &crate::shading::BIND_UNLIT,
         &crate::shading::FRAME_FOG,

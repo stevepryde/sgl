@@ -18,7 +18,7 @@ use glam::{Mat3, Vec2, Vec3, vec2, vec3};
 /// Exposure, grading, tone mapping and the tone-mapped target's copy.
 pub(crate) static TONE_MAP: crate::shading::Module = crate::shading::Module {
     name: "tone_map",
-    source: include_str!("tone_map.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("tone_map.wgsl"),
     deps: &[
         &inputs::INPUTS,
         &crate::shading::LUMINANCE,

@@ -8,7 +8,7 @@ use crate::view::reflection_camera;
 
 pub(crate) static PROBE_CULLING: shading::Module = shading::Module {
     name: "probe_culling",
-    source: include_str!("probe_culling.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("probe_culling.wgsl"),
     deps: &[&shading::PROBE_SAMPLING],
 };
 /// The entry point its pipeline is created with.

@@ -9,21 +9,21 @@ use super::{Module, compose};
 /// The struct a game's effect evaluates at, and its far depth.
 pub(crate) static HDR_EFFECT_CONTRACT: Module = Module {
     name: "hdr_effect_contract",
-    source: include_str!("hdr_effect_contract.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("hdr_effect_contract.wgsl"),
     deps: &[&super::VIEW_DEPTH],
 };
 /// The contract's functions without bindings, which a game's module is
 /// parsed against alone.
 pub(crate) static HDR_EFFECT_INPUTS_NONE: Module = Module {
     name: "hdr_effect_inputs_none",
-    source: include_str!("hdr_effect_inputs_none.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("hdr_effect_inputs_none.wgsl"),
     deps: &[&HDR_EFFECT_CONTRACT],
 };
 /// The pass: its bindings, the contract's functions over them and its
 /// fragment entry point, which calls the game's `hdr_effect`.
 pub(crate) static HDR_EFFECT_PASS: Module = Module {
     name: "hdr_effect_pass",
-    source: include_str!("hdr_effect_pass.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("hdr_effect_pass.wgsl"),
     deps: &[
         &HDR_EFFECT_CONTRACT,
         &super::FULLSCREEN_VS,

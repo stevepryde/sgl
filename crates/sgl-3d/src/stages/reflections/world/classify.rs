@@ -18,7 +18,7 @@ pub(crate) const GROUP_ROW: u32 = 64;
 
 pub(crate) static CLASSIFY: shading::Module = shading::Module {
     name: "world_reflections_classify",
-    source: include_str!("world_reflections_classify.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("world_reflections_classify.wgsl"),
     deps: &[&super::COMMON],
 };
 /// The entry points the classification's pipelines are created with.

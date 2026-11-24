@@ -12,7 +12,7 @@ use crate::view::frame::FrameContext;
 
 pub(crate) static DEFORM: crate::shading::Module = crate::shading::Module {
     name: "deform",
-    source: include_str!("deform.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("deform.wgsl"),
     deps: &[
         &crate::shading::SCENE_SOURCE,
         &crate::shading::PACKED_VERTEX,

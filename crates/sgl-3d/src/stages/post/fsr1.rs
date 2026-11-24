@@ -8,7 +8,7 @@ use crate::view::targets::target;
 
 pub(crate) static FSR1: crate::shading::Module = crate::shading::Module {
     name: "fsr1",
-    source: include_str!("fsr1.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("fsr1.wgsl"),
     deps: &[&inputs::INPUTS],
 };
 

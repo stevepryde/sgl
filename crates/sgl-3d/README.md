@@ -3961,6 +3961,17 @@ fallback.
   SMAA run. Where
   FSR does not, use an explicit `SceneResolution` and opt into
   [spatial upscaling](#portable-spatial-upscaling).
+- **Build settings.** Build with the `web` profile in
+  [Distributing a game](docs/README.md#distributing-a-game). On
+  `browser_baseline` (Chromium 149, Apple M5) it takes the module from
+  8.60 MB raw (1.90 MB brotli), as `--release` builds it, to 5.91 MB
+  (1.54 MB brotli). At its `opt-level = "s"` frames encode as fast as at
+  opt-level 3 and assets add as fast. `opt-level = "z"` saves
+  another 78 KB brotli, but it decodes PNGs 15–25% slower and adds assets
+  about 45% slower. Opt-level 3 is 172 KB brotli larger and decodes PNGs
+  about 20% faster. `wasm-opt -Oz` shrinks the raw module but not the
+  brotli download. In a build without debug assertions, SGL embeds its WGSL
+  without comments or indentation ([Code structure](#code-structure)).
 - **Inputs, not clocks or files.** Fetch asset bytes and load them with
   `asset::load_slice_in_browser(&bytes, options).await`: the same loader as
   `load_slice_with_options`, with each PNG and JPEG the game does not
@@ -4550,6 +4561,12 @@ documentation states what it reads, writes and honours) and `src/renderer/`
 frame's order in `frame.rs`, the effective configuration's
 resolution in `effective.rs` and the probe capture's order in
 `probe_capture.rs`).
+
+Every WGSL file is embedded through `sgl_post_fx::embed_wgsl!`. A build
+without debug assertions embeds the file without its comments, indentation or
+trailing whitespace, and keeps every line, so naga reports the file's lines.
+A build with debug assertions embeds it whole. A game's own shader source is
+never stripped.
 
 ## Validation and diagnostics
 

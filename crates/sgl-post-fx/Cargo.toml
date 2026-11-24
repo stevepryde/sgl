@@ -12,7 +12,7 @@ license = "Apache-2.0"
 description = "SGL wgpu post-processing effects: screen-space reflections and temporal anti-aliasing derived from DiligentFX"
 # The vendored DiligentFX/DiligentCore references stay in the repository; the
 # package keeps their licences, source revisions and the blue-noise source
-# `post_fx_context.rs` reads.
+# `src/blue_noise/` is generated from (scripts/blue-noise-tables.ts).
 include = [
     "/src",
     "/shaders",

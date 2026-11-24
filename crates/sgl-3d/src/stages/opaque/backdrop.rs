@@ -6,7 +6,7 @@ use crate::shading::{self, gbuffer};
 
 pub(crate) static BACKDROP: shading::Module = shading::Module {
     name: "backdrop",
-    source: include_str!("backdrop.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("backdrop.wgsl"),
     deps: &[
         &shading::BIND_UNLIT,
         &shading::ENVIRONMENT,

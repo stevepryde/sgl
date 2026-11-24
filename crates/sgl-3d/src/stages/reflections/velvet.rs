@@ -23,43 +23,43 @@ use targets::Targets;
 
 static INPUTS: Module = Module {
     name: "godot_reflections_inputs",
-    source: include_str!("velvet/godot_reflections_inputs.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("velvet/godot_reflections_inputs.wgsl"),
     deps: &[&crate::shading::GBUFFER],
 };
 static DOWNSAMPLE: Module = Module {
     name: "godot_reflections_downsample",
-    source: include_str!("velvet/godot_reflections_downsample.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("velvet/godot_reflections_downsample.wgsl"),
     deps: &[],
 };
 static HIZ: Module = Module {
     name: "godot_reflections_hiz",
-    source: include_str!("velvet/godot_reflections_hiz.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("velvet/godot_reflections_hiz.wgsl"),
     deps: &[],
 };
 /// The roughness cutoff the trace and the temporal pass share.
 static CUTOFF: Module = Module {
     name: "godot_reflections_cutoff",
-    source: include_str!("velvet/godot_reflections_cutoff.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("velvet/godot_reflections_cutoff.wgsl"),
     deps: &[],
 };
 static TRACE: Module = Module {
     name: "godot_reflections_trace",
-    source: include_str!("velvet/godot_reflections_trace.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("velvet/godot_reflections_trace.wgsl"),
     deps: &[&super::REPROJECTION, &CUTOFF],
 };
 static TEMPORAL: Module = Module {
     name: "godot_reflections_temporal",
-    source: include_str!("velvet/godot_reflections_temporal.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("velvet/godot_reflections_temporal.wgsl"),
     deps: &[&super::TEMPORAL_REPROJECTION, &CUTOFF],
 };
 static FILTER: Module = Module {
     name: "godot_reflections_filter",
-    source: include_str!("velvet/godot_reflections_filter.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("velvet/godot_reflections_filter.wgsl"),
     deps: &[],
 };
 static RESOLVE: Module = Module {
     name: "godot_reflections_resolve",
-    source: include_str!("velvet/godot_reflections_resolve.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("velvet/godot_reflections_resolve.wgsl"),
     deps: &[],
 };
 /// The entry points the programs' pipelines are created with: each one's

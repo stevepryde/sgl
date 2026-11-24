@@ -7,7 +7,7 @@ use glam::{Mat4, Vec3};
 /// `sprite.wgsl`, the facing and corner maths.
 pub(crate) static SPRITE: super::Module = super::Module {
     name: "sprite",
-    source: include_str!("sprite.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("sprite.wgsl"),
     deps: &[],
 };
 

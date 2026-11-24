@@ -7,34 +7,34 @@ use super::*;
 /// Diagnostic switches shared by raster materials and ray-hit surfaces.
 static SURFACE_OPTIONS: Module = Module {
     name: "surface_options",
-    source: include_str!("surface_options.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("surface_options.wgsl"),
     deps: &[],
 };
 pub(crate) static ANISOTROPY: Module = Module {
     name: "anisotropy",
-    source: include_str!("anisotropy.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("anisotropy.wgsl"),
     deps: &[],
 };
 pub(crate) static IRIDESCENCE: Module = Module {
     name: "iridescence",
-    source: include_str!("iridescence.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("iridescence.wgsl"),
     deps: &[],
 };
 pub(crate) static SHEEN: Module = Module {
     name: "sheen",
-    source: include_str!("sheen.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("sheen.wgsl"),
     deps: &[],
 };
 /// Lit group 0's lookup tables: their layers and the DFG table's lookup.
 pub(crate) static LOOKUP_TABLES: Module = Module {
     name: "lookup_tables",
-    source: include_str!("lookup_tables.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("lookup_tables.wgsl"),
     deps: &[],
 };
 /// Reads `lookup_tables` and `environment_sampler`.
 pub(crate) static DFG: Module = Module {
     name: "dfg",
-    source: include_str!("dfg.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("dfg.wgsl"),
     deps: &[&LOOKUP_TABLES],
 };
 /// A surface's specular lobes, the lobe a screen-space method traces and
@@ -42,7 +42,7 @@ pub(crate) static DFG: Module = Module {
 /// composition and lit shading.
 pub(crate) static SPECULAR_LOBES: Module = Module {
     name: "specular_lobes",
-    source: include_str!("specular_lobes.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("specular_lobes.wgsl"),
     deps: &[&PBR, &ANISOTROPY, &LOOKUP_TABLES],
 };
 /// Ambient occlusion of a receiver's ambient light and environment
@@ -52,7 +52,7 @@ pub(crate) static SPECULAR_LOBES: Module = Module {
 /// and lit shading.
 pub(crate) static OCCLUSION: Module = Module {
     name: "occlusion",
-    source: include_str!("occlusion.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("occlusion.wgsl"),
     deps: &[&SPECULAR_LOBES],
 };
 /// One `Surface` and its shading for every view. Reads the lit bindings, and
@@ -60,7 +60,7 @@ pub(crate) static OCCLUSION: Module = Module {
 /// (`lit_provider`).
 pub(crate) static SURFACE: Module = Module {
     name: "surface",
-    source: include_str!("surface.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("surface.wgsl"),
     deps: &[
         &SURFACE_OPTIONS,
         &ANISOTROPY,
@@ -89,14 +89,14 @@ pub(crate) static SURFACE: Module = Module {
 /// table.
 pub(crate) static TRANSMISSION: Module = Module {
     name: "transmission",
-    source: include_str!("transmission.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("transmission.wgsl"),
     deps: &[&VERTEX, &PBR, &DFG, &SPECULAR_LOBES],
 };
 /// A rasterized material and its mapped normals, shared by camera geometry
 /// and shader-driven masked casters; no lighting or decal bindings.
 pub(crate) static MATERIAL_SURFACE_RASTER: Module = Module {
     name: "material_surface_raster",
-    source: include_str!("material_surface_raster.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("material_surface_raster.wgsl"),
     deps: &[
         &SURFACE_OPTIONS,
         &VERTEX,
@@ -111,7 +111,7 @@ pub(crate) static MATERIAL_SURFACE_RASTER: Module = Module {
 /// the program composes (`material_provider`).
 pub(crate) static SURFACE_RASTER: Module = Module {
     name: "surface_raster",
-    source: include_str!("surface_raster.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("surface_raster.wgsl"),
     deps: &[
         &VERTEX,
         &PBR,
@@ -127,7 +127,7 @@ pub(crate) static SURFACE_RASTER: Module = Module {
 /// Reads the lit bindings and the scene's ray buffers.
 pub(crate) static SURFACE_RAY: Module = Module {
     name: "surface_ray",
-    source: include_str!("surface_ray.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("surface_ray.wgsl"),
     deps: &[
         &SCENE_RAYS,
         &SCENE_RAYS_PREDICATE,

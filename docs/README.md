@@ -91,6 +91,11 @@ poses to instances or sprites when presenting.
 
 ## Distributing a game
 
+Build a browser game with the `web` profile and serve it as
+[SGL3D's guide](../crates/sgl-3d/docs/README.md#distributing-a-game) says;
+the settings apply to any SGL browser game, though only SGL3D's module was
+measured.
+
 Follow [shipping licence notices](licensing.md). Generate the combined notices
 for the game's locked dependencies and build selection, include licences for
 its assets, and ship the files with the native build or browser site. Carry

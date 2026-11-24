@@ -58,25 +58,25 @@ use std::ops::Range;
 /// The stage's bindings and shared marches.
 pub(crate) static SKY_COMMON: crate::shading::Module = crate::shading::Module {
     name: "sky_common",
-    source: include_str!("sky/common.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("sky/common.wgsl"),
     deps: &[&crate::shading::sky::SKY, &crate::shading::UNIFORMS],
 };
 /// The transmittance table's pass.
 pub(crate) static TRANSMITTANCE: crate::shading::Module = crate::shading::Module {
     name: "sky_transmittance",
-    source: include_str!("sky/transmittance_lut.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("sky/transmittance_lut.wgsl"),
     deps: &[&SKY_COMMON],
 };
 /// The multiple-scattering table's pass.
 pub(crate) static MULTISCATTERING: crate::shading::Module = crate::shading::Module {
     name: "sky_multiscattering",
-    source: include_str!("sky/multiscattering_lut.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("sky/multiscattering_lut.wgsl"),
     deps: &[&SKY_COMMON],
 };
 /// The sky-view table's pass.
 pub(crate) static SKY_VIEW: crate::shading::Module = crate::shading::Module {
     name: "sky_view",
-    source: include_str!("sky/sky_view_lut.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("sky/sky_view_lut.wgsl"),
     deps: &[&SKY_COMMON],
 };
 /// The entry points the stage's pipelines are created with.

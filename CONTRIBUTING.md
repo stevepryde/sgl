@@ -97,7 +97,7 @@ bun scripts/tasks.ts check
 ```
 
 It is licence notices, formatting, Clippy, every native test including the
-long ones, release-mode networking tests, repository tooling tests, WASM
+long ones, release-mode networking and SGL3D shader tests, repository tooling tests, WASM
 builds and tests, and the browser lane. A failure it finds is filed and
 fixed like any defect.
 

@@ -15,42 +15,42 @@ pub(crate) use validate::{validate, validate_hdr_effect};
 /// The structs a game's module takes and returns.
 pub(crate) static SHADER_CONTRACT: Module = Module {
     name: "shader_contract",
-    source: include_str!("shader_contract.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("shader_contract.wgsl"),
     deps: &[&super::VIEW_DEPTH],
 };
 /// The default provider: `ShaderParams` and functions that return their
 /// argument, composed by every program of a material without a shader.
 pub(crate) static SHADER_DEFAULT: Module = Module {
     name: "shader_default",
-    source: include_str!("shader_default.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("shader_default.wgsl"),
     deps: &[&SHADER_CONTRACT],
 };
 /// The inputs of the default provider's programs: a zero parameter block
 /// and zero instance data, no binding.
 pub(crate) static SHADER_INPUTS_NONE: Module = Module {
     name: "shader_inputs_none",
-    source: include_str!("shader_inputs_none.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("shader_inputs_none.wgsl"),
     deps: &[],
 };
 /// The inputs of a game's shader's programs: group 2's two parameter blocks
 /// and group 1's instance shader data.
 pub(crate) static SHADER_INPUTS_BOUND: Module = Module {
     name: "shader_inputs_bound",
-    source: include_str!("shader_inputs_bound.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("shader_inputs_bound.wgsl"),
     deps: &[],
 };
 /// The scene depth provider of every pass but a game's shader's blended
 /// draws on the Extended binding tier: none available.
 pub(crate) static SHADER_SCENE_DEPTH_NONE: Module = Module {
     name: "shader_scene_depth_none",
-    source: include_str!("shader_scene_depth_none.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("shader_scene_depth_none.wgsl"),
     deps: &[&SHADER_CONTRACT],
 };
 /// The scene depth provider of a game's shader's blended draws on the
 /// Extended binding tier: the opaque depth.
 pub(crate) static SHADER_SCENE_DEPTH: Module = Module {
     name: "shader_scene_depth",
-    source: include_str!("shader_scene_depth.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("shader_scene_depth.wgsl"),
     deps: &[
         &SHADER_CONTRACT,
         &super::tiers::BIND_BLENDED_EXTENDED,
@@ -64,5 +64,7 @@ pub(crate) const CONTRACT_NAMES: [&str; 3] =
 
 #[cfg(test)]
 mod hdr_effect_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod strip_tests;
 #[cfg(test)]
 pub(crate) mod tests;

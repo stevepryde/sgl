@@ -25,7 +25,7 @@ use crate::view::targets::attachment;
 
 pub(crate) static MIP_CHAIN: crate::shading::Module = crate::shading::Module {
     name: "mip_chain",
-    source: include_str!("mip_chains.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("mip_chains.wgsl"),
     deps: &[&crate::shading::FULLSCREEN_VS],
 };
 /// The entry points the stage's pipelines are created with, beside

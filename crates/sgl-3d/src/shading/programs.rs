@@ -106,7 +106,7 @@ impl GeometryForm {
 /// one transmission provider (`geometry_program`).
 pub(crate) static GEOMETRY: Module = Module {
     name: "geometry",
-    source: include_str!("geometry.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("geometry.wgsl"),
     deps: &[
         &super::BIND_LIT,
         &super::BIND_SCENE,
@@ -200,7 +200,7 @@ pub(crate) fn geometry_program(
 /// The directional and local-light shadow casters.
 pub(crate) static CASTER: Module = Module {
     name: "caster",
-    source: include_str!("caster.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("caster.wgsl"),
     deps: &[
         &super::BIND_SHADOW,
         &super::BIND_SCENE,

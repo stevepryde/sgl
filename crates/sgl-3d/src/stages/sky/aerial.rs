@@ -15,7 +15,7 @@ use glam::Mat4;
 /// The pass.
 pub(crate) static AERIAL_VIEW: crate::shading::Module = crate::shading::Module {
     name: "sky_aerial_view",
-    source: include_str!("aerial_view_lut.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("aerial_view_lut.wgsl"),
     deps: &[&super::SKY_COMMON, &crate::shading::FOG],
 };
 /// The entry point its pipeline is created with.

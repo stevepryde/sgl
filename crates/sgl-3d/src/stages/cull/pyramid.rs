@@ -9,7 +9,7 @@
 
 pub(crate) static PYRAMID: crate::shading::Module = crate::shading::Module {
     name: "depth_pyramid",
-    source: include_str!("pyramid.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("pyramid.wgsl"),
     deps: &[],
 };
 /// The entry points the pyramid's pipelines are created with.

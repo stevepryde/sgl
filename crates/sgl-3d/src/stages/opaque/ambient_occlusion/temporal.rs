@@ -34,7 +34,7 @@ impl Temporal {
     pub fn new(device: &wgpu::Device) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("AO temporal accumulation"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("temporal.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(sgl_post_fx::embed_wgsl!("temporal.wgsl").into()),
         });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("AO temporal accumulation"),

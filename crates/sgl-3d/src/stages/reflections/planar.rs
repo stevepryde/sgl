@@ -15,7 +15,7 @@ use glam::{Mat4, Vec4};
 
 static PLANAR: shading::Module = shading::Module {
     name: "planar_reflections",
-    source: include_str!("planar.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("planar.wgsl"),
     deps: &[&shading::GBUFFER, &shading::FULLSCREEN_VS],
 };
 const PICTURE_ENTRY: &str = "planar_fs";

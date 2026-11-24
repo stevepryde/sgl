@@ -17,7 +17,7 @@ use crate::view::targets::composition_targets;
 /// The footprint program, under the unlit group 0 and the scene's group 1.
 pub(crate) static FOOTPRINTS: crate::shading::Module = crate::shading::Module {
     name: "footprints",
-    source: include_str!("footprints.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("footprints.wgsl"),
     deps: &[&crate::shading::BIND_UNLIT, &crate::shading::VERTEX_PULL],
 };
 

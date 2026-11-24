@@ -33,7 +33,7 @@ use crate::view::frame::FrameContext;
 /// The histogram and adaptation.
 pub(crate) static EXPOSURE: crate::shading::Module = crate::shading::Module {
     name: "exposure",
-    source: include_str!("exposure.wgsl"),
+    source: sgl_post_fx::embed_wgsl!("exposure.wgsl"),
     deps: &[&crate::shading::LUMINANCE],
 };
 /// The entry points the exposure's pipelines are created with.

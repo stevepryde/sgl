@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 macro_rules! modules {
     ($($path:literal),* $(,)?) => {
-        &[$(($path, include_str!(concat!("../shaders/wgsl/", $path)))),*]
+        &[$(($path, crate::embed_wgsl!(concat!("../shaders/wgsl/", $path)))),*]
     };
 }
 
