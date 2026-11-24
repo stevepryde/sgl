@@ -37,7 +37,8 @@
 //   (the stride, up to 2^(DDGI_STRIDES-1)) under which the blended probes'
 //   requests on their turns fit the budget beside the probes that start,
 //   so every probe keeps its turns and none starves; the request past the
-//   budget that remains traces nothing, as Wicked's. A probe's phase is
+//   budget that remains traces nothing, as Wicked's, but in the claim's
+//   order (`claim`), not dispatch order. A probe's phase is
 //   Wicked's within its period plus whole periods its hash's high bits
 //   choose, so its turns under a stride are among its turns under every
 //   shorter one and a stride that changes from frame to frame never skips
@@ -87,11 +88,20 @@
 // settle), as RTXGI's sample pauses a volume whose variability has settled
 // (samples/test-harness/src/graphics/DDGI_VK.cpp 1629-1637 and
 // DDGI_D3D12.cpp 1239-1246).
+// Changed: Wicked reserves its rays by atomics in the order the GPU runs its
+// probes (ddgi_rayallocationCS.hlsl 63-80, surfel_updateCS.hlsl 263-268),
+// which differs from run to run. Here each limit is shared by a claim in a
+// fixed order (`claim`), an exclusive prefix sum over the probes that
+// compete for it, the deterministic form of stream compaction (Harris,
+// Sengupta and Owens, GPU Gems 3 chapter 39), so the probes that trace,
+// and how many rays each, are a function of the frame alone.
 @group(0) @binding(0) var<uniform> volume:DdgiVolume;
 @group(0) @binding(1) var<storage,read> variance:array<u32>;
 @group(0) @binding(2) var<storage,read> probe_states:array<vec4<u32>>;
-// Each blended probe's request and periods (`rank`), then the rays it
-// traces this frame beside its fixed rays (`allocate`), which it blends.
+// Each blended probe's request and periods, and each probe not yet
+// blended's starting rays and bin (`rank`), which the claim reads so that
+// every pass agrees on them; then the rays it traces this frame beside its
+// fixed rays (`claim`), which it blends.
 @group(0) @binding(3) var<storage,read_write> ray_counts:array<u32>;
 @group(0) @binding(4) var<storage,read_write> allocation:DdgiAllocation;
 @group(0) @binding(5) var ray_list:texture_storage_2d<rg32uint,write>;
@@ -129,12 +139,12 @@ const DDGI_PERIOD_MAX:f32=8.;
 const DDGI_PERIOD_CAP:f32=32.;
 // The trace's indirect dispatch and the rays the frame traces; the blends'
 // and the probes that trace them; the starting probes: the nearer bins
-// whose probes all start, how many rays of the probes in the bin after
-// them start, how many of those have, the probes not yet blended and the
-// rays they start with; whether the volume pauses, the stride the frame's
-// periods take (as a power of two), the rays the frame reserves against the
-// budget, the rays the shortened turns may take and have taken, the blended
-// probes' requests on their turns under each stride, and each bin's rays.
+// whose probes all start and how many rays of the probes in the bin after
+// them may start, the probes not yet blended and the rays they start with;
+// whether the volume pauses, the stride the frame's periods take (as a
+// power of two), the rays the turns may take, the rays the shortened turns
+// may take, the blended probes' requests on their turns under each stride,
+// each bin's rays, and each block of the claim order's rays in each pool.
 struct DdgiAllocation {
  groups:array<u32,3>,
  rays:atomic<u32>,
@@ -142,17 +152,16 @@ struct DdgiAllocation {
  traced:atomic<u32>,
  ramp_bins:u32,
  ramp_room:u32,
- ramp_taken:atomic<u32>,
  // The probes not yet blended, and the rays they start with.
  unblended:atomic<u32>,
  unblended_rays:atomic<u32>,
  paused:u32,
  stride:u32,
- reserved:atomic<u32>,
+ turn_room:u32,
  spare:u32,
- spare_taken:atomic<u32>,
  demand:array<atomic<u32>,DDGI_STRIDES>,
  bins:array<atomic<u32>,RAMP_BINS>,
+ claims:array<vec4<u32>>,
 }
 const ALLOCATION_THREADS:u32=32u;
 var<workgroup> shared_entry_rays:u32;
@@ -291,7 +300,9 @@ fn rank(@builtin(global_invocation_id) id:vec3<u32>,@builtin(num_workgroups) gro
  let spacings=ddgi_spacings_away(ddgi_probe_position_rest(lattice,volume.origin,volume.spacing));
  if !probe.blended {
   let starting=ddgi_most_rays(spacings);
-  atomicAdd(&allocation.bins[ramp_bin(spacings)],starting);
+  let bin=ramp_bin(spacings);
+  ray_counts[probe_index]=starting|(bin<<16u);
+  atomicAdd(&allocation.bins[bin],starting);
   atomicAdd(&allocation.unblended,1u);
   atomicAdd(&allocation.unblended_rays,starting);
   return;
@@ -333,7 +344,11 @@ fn threshold() {
  }
  allocation.stride=stride;
  atomicStore(&convergence.longest,atomicLoad(&convergence.longest)<<stride);
- let starts=budget-min(atomicLoad(&allocation.demand[stride]),room);
+ // The turns take their requests, or the room where those exceed it at
+ // the longest stride; the starting probes and the shortened turns what
+ // that leaves, so the frame's rays never pass the budget.
+ allocation.turn_room=min(atomicLoad(&allocation.demand[stride]),room);
+ let starts=budget-allocation.turn_room;
  // What the blended probes' turns and the starting probes leave, which the
  // shortened turns take: nothing while probes wait to start.
  allocation.spare=select(0u,starts-unblended_rays,unblended_rays<=starts);
@@ -357,64 +372,175 @@ fn threshold() {
  allocation.ramp_bins=bin;
  allocation.ramp_room=starts-started;
 }
-// The reservations below each take `rays` from a shared count within its
-// limit, or take nothing: a refused reservation gives its rays back, and so
-// does a probe the budget then refuses (`reserve_turn`), so a later request
-// that fits still does, where Wicked's surfels keep a refused request's
-// count (surfel_updateCS.hlsl 263–268). Only a request made while a refused
-// one is outstanding can still see it, for a few instructions.
-// Whether a probe was granted its turn, and the rays that took from the
-// starting probes' room or the shortened turns' spare.
-struct DdgiReservation {
- granted:bool,
- counted:u32,
+// The pools in which probes compete for the frame's rays (`claim`): a
+// probe not yet blended in the boundary bin for the starting probes' room,
+// a blended probe on its turn for the turns' room, and one on a shortened
+// turn for the spare. A probe in none traces its rays without competing,
+// or traces none. Each pool is a lane of the claim's sums.
+const DDGI_POOL_NONE:u32=0u;
+const DDGI_POOL_RAMP:u32=1u;
+const DDGI_POOL_TURN:u32=2u;
+const DDGI_POOL_SPARE:u32=3u;
+// A probe's claim on the frame's rays: its pool, the rays it traces if it
+// is granted them, its fixed rays included, and those it blends.
+struct DdgiAsk {
+ pool:u32,
+ traced:u32,
+ blended:u32,
 }
-// Whether a probe not yet blended that far away, which starts with
-// `rays`, starts this frame: those in the nearer bins all do, uncounted;
-// those in the boundary bin within its room.
-fn ramp_starts(spacings:f32,rays:u32)->DdgiReservation {
- let bin=ramp_bin(spacings);
- if bin<allocation.ramp_bins {
-  return DdgiReservation(true,0u);
+// Probe `probe_index`'s claim this frame.
+fn ddgi_ask(probe_index:u32)->DdgiAsk {
+ // A paused volume traces nothing; its probes keep what they hold.
+ if allocation.paused!=0u {
+  return DdgiAsk(DDGI_POOL_NONE,0u,0u);
  }
- if bin!=allocation.ramp_bins {
-  return DdgiReservation(false,0u);
+ let probe=ddgi_unpack_probe(probe_states[probe_index]);
+ if !probe.blended {
+  // Those in the nearer bins all start; those in the boundary bin within
+  // its room. Its first turn traces no fixed rays. Its starting rays and
+  // bin are `rank`'s, in integers, so the claim counts what the bins do.
+  let starting=ray_counts[probe_index]&0xffffu;
+  let bin=ray_counts[probe_index]>>16u;
+  if bin<allocation.ramp_bins {
+   return DdgiAsk(DDGI_POOL_NONE,starting,starting);
+  }
+  if bin==allocation.ramp_bins {
+   return DdgiAsk(DDGI_POOL_RAMP,starting,starting);
+  }
+  return DdgiAsk(DDGI_POOL_NONE,0u,0u);
  }
- if atomicAdd(&allocation.ramp_taken,rays)+rays<=allocation.ramp_room {
-  return DdgiReservation(true,rays);
+ let requested=ray_counts[probe_index];
+ let rays=min(requested&0xffffu,min(volume.max_rays,DDGI_MOST_RAYS));
+ let period=(requested>>16u)&0xffu;
+ let shortened=requested>>24u;
+ let fixed_rays=ddgi_turn_fixed_rays(probe);
+ let turn_rays=ddgi_turn_rays(rays,fixed_rays);
+ // Its fixed rays after its others: on its turn, or on its turn at
+ // `shortened` where that is shorter than its distance's `period`.
+ if ddgi_turn(probe_index,period,allocation.stride,volume.frame) {
+  return DdgiAsk(DDGI_POOL_TURN,turn_rays+fixed_rays,turn_rays);
  }
- atomicSub(&allocation.ramp_taken,rays);
- return DdgiReservation(false,0u);
+ if shortened<period && ddgi_turn(probe_index,shortened,0u,volume.frame) {
+  return DdgiAsk(DDGI_POOL_SPARE,turn_rays+fixed_rays,turn_rays);
+ }
+ return DdgiAsk(DDGI_POOL_NONE,0u,0u);
 }
-// Whether a blended probe takes a shortened turn this frame with `rays`
-// rays: on its turn at `shortened` where that is shorter than its
-// distance's `period`, within what the frame leaves the shortened turns.
-fn ddgi_shortened_turn(probe_index:u32,period:u32,shortened:u32,rays:u32)->DdgiReservation {
- if shortened>=period || !ddgi_turn(probe_index,shortened,0u,volume.frame) {
-  return DdgiReservation(false,0u);
- }
- if atomicAdd(&allocation.spare_taken,rays)+rays<=allocation.spare {
-  return DdgiReservation(true,rays);
- }
- atomicSub(&allocation.spare_taken,rays);
- return DdgiReservation(false,0u);
-}
-// Whether a probe granted its turn with `turn` traces its `rays` within the
-// frame's budget; refused, it gives back what its turn counted too.
-fn reserve_turn(rays:u32,turn:DdgiReservation,ramp:bool)->bool {
- if atomicAdd(&allocation.reserved,rays)+rays<=volume.budget {
-  return true;
- }
- atomicSub(&allocation.reserved,rays);
- if turn.counted>0u {
-  if ramp {
-   atomicSub(&allocation.ramp_taken,turn.counted);
-  } else {
-   atomicSub(&allocation.spare_taken,turn.counted);
+// The rays a pool's probes may take this frame.
+fn ddgi_pool_room(pool:u32)->u32 {
+ switch pool {
+  case DDGI_POOL_RAMP: {
+   return allocation.ramp_room;
+  }
+  case DDGI_POOL_TURN: {
+   return allocation.turn_room;
+  }
+  default: {
+   return allocation.spare;
   }
  }
- return false;
 }
+// A claim's rays in its pool's lane.
+fn ddgi_pool_rays(ask:DdgiAsk)->vec4<u32> {
+ let lanes=vec4(DDGI_POOL_NONE,DDGI_POOL_RAMP,DDGI_POOL_TURN,DDGI_POOL_SPARE);
+ var rays=select(vec4(0u),vec4(ask.traced),lanes==vec4(ask.pool));
+ rays.x=0u;
+ return rays;
+}
+// The probe at `position` of the frame's claim order: every probe once, in
+// index order from one the frame's hash chooses, so no probe always claims
+// last.
+fn ddgi_claimant(position:u32)->u32 {
+ return (position+ddgi_phase_hash(volume.frame)%volume.probe_count)%volume.probe_count;
+}
+// The claim's workgroups each take DDGI_CLAIM_THREADS probes of the claim
+// order, a block.
+const DDGI_CLAIM_THREADS:u32=256u;
+// The blocks each invocation of `claim` sums before its own block, at
+// most: 256 times 256 blocks of 256 probes, past the 16.5 million probes
+// whose rays at the most fit a u32 (`shading::dynamic_gi::fits`), the most
+// a volume holds (AR-12).
+const DDGI_CLAIM_WALK:u32=256u;
+var<workgroup> claim_rays:array<vec4<u32>,DDGI_CLAIM_THREADS>;
+var<workgroup> claim_earlier:array<vec4<u32>,DDGI_CLAIM_THREADS>;
+// Each block of the claim order's rays in each pool, which `claim` sums
+// over the blocks before its own.
+@compute @workgroup_size(DDGI_CLAIM_THREADS)
+fn claim_sums(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
+ let block=ddgi_group_probe(group);
+ let position=block*DDGI_CLAIM_THREADS+lane;
+ var rays=vec4(0u);
+ if position<volume.probe_count {
+  rays=ddgi_pool_rays(ddgi_ask(ddgi_claimant(position)));
+ }
+ claim_rays[lane]=rays;
+ for (var half=DDGI_CLAIM_THREADS/2u;half>0u;half/=2u) {
+  workgroupBarrier();
+  if lane<half {
+   claim_rays[lane]+=claim_rays[lane+half];
+  }
+ }
+ if lane==0u && block*DDGI_CLAIM_THREADS<volume.probe_count {
+  allocation.claims[block]=claim_rays[0];
+ }
+}
+// Grants each probe its claim where it fits its pool: where the rays of the
+// probes before it in the claim order that claim in its pool, and its own,
+// fit the pool's room. Each probe's grant is a function of the frame, not
+// of the order its invocations run in, and the rays the frame traces never
+// pass its budget, which the pools' rooms share. A claim past its room
+// traces nothing, as does every later one in its pool that frame, leaving
+// the pool less than one claim's rays.
+@compute @workgroup_size(DDGI_CLAIM_THREADS)
+fn claim(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) lane:u32) {
+ let block=ddgi_group_probe(group);
+ let position=block*DDGI_CLAIM_THREADS+lane;
+ var ask=DdgiAsk(DDGI_POOL_NONE,0u,0u);
+ if position<volume.probe_count {
+  ask=ddgi_ask(ddgi_claimant(position));
+ }
+ let rays=ddgi_pool_rays(ask);
+ // The earlier blocks' rays in each pool, summed by the workgroup.
+ var earlier=vec4(0u);
+ for (var walk=0u;walk<DDGI_CLAIM_WALK;walk++) {
+  let before=lane+walk*DDGI_CLAIM_THREADS;
+  if before>=block {
+   break;
+  }
+  earlier+=allocation.claims[before];
+ }
+ claim_earlier[lane]=earlier;
+ claim_rays[lane]=rays;
+ for (var half=DDGI_CLAIM_THREADS/2u;half>0u;half/=2u) {
+  workgroupBarrier();
+  if lane<half {
+   claim_earlier[lane]+=claim_earlier[lane+half];
+  }
+ }
+ // The block's own, through the claim order (Hillis and Steele's scan).
+ for (var reach=1u;reach<DDGI_CLAIM_THREADS;reach*=2u) {
+  workgroupBarrier();
+  var behind=vec4(0u);
+  if lane>=reach {
+   behind=claim_rays[lane-reach];
+  }
+  workgroupBarrier();
+  claim_rays[lane]+=behind;
+ }
+ workgroupBarrier();
+ if position>=volume.probe_count {
+  return;
+ }
+ // Every pool's rays claimed before this probe's.
+ let before=claim_earlier[0]+claim_rays[lane]-rays;
+ var granted=ask.traced>0u;
+ if ask.pool!=DDGI_POOL_NONE {
+  // A block past the walk's cap refuses: its sum would be short.
+  granted=block<=DDGI_CLAIM_WALK*DDGI_CLAIM_THREADS && before[ask.pool]+ask.traced<=ddgi_pool_room(ask.pool);
+ }
+ ray_counts[ddgi_claimant(position)]=select(0u,ask.blended,granted);
+}
+// Lists the rays of each probe its claim granted: the rays it blends, then
+// its fixed rays, and the probes that trace them.
 @compute @workgroup_size(ALLOCATION_THREADS)
 fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_index) group_index:u32) {
  let probe_index=ddgi_group_probe(group);
@@ -423,58 +549,15 @@ fn allocate(@builtin(workgroup_id) group:vec3<u32>,@builtin(local_invocation_ind
  }
  if group_index==0u {
   let probe=ddgi_unpack_probe(probe_states[probe_index]);
-  // The rays it traces, its fixed rays included; those it blends; those
-  // before its fixed rays; and which of its cycle's fixed rays it traces.
-  var traced=0u;
-  var blended=0u;
-  var entry_rays=0u;
-  var cycle=probe.fixed_frames;
-  // Its turn, and what that counted.
-  var turn=DdgiReservation(false,0u);
-  if !probe.blended {
-   let lattice=ddgi_probe_lattice(ddgi_probe_coord(probe_index,volume.probes),volume.probes,volume.scroll);
-   let spacings=ddgi_spacings_away(ddgi_probe_position_rest(lattice,volume.origin,volume.spacing));
-   let starting=ddgi_most_rays(spacings);
-   turn=ramp_starts(spacings,starting);
-   // Its first turn traces no fixed rays.
-   if turn.granted {
-    traced=starting;
-    blended=starting;
-    entry_rays=starting;
-   }
-  } else {
-   let requested=ray_counts[probe_index];
-   let rays=min(requested&0xffffu,min(volume.max_rays,DDGI_MOST_RAYS));
-   let period=(requested>>16u)&0xffu;
-   let shortened=requested>>24u;
-   let fixed_rays=ddgi_turn_fixed_rays(probe);
-   let turn_rays=ddgi_turn_rays(rays,fixed_rays);
-   turn.granted=ddgi_turn(probe_index,period,allocation.stride,volume.frame);
-   if !turn.granted {
-    turn=ddgi_shortened_turn(probe_index,period,shortened,turn_rays+fixed_rays);
-   }
-   if turn.granted {
-    // Its fixed rays after its others, a whole cycle's marked
-    // DDGI_FIXED_CYCLE.
-    traced=turn_rays+fixed_rays;
-    blended=turn_rays;
-    entry_rays=turn_rays;
-    if fixed_rays==DDGI_FIXED_RAYS {
-     cycle=DDGI_FIXED_CYCLE;
-    }
-   }
-  }
-  // A paused volume traces nothing; its probes keep what they hold. A
-  // probe traces within the budget, past which it traces nothing, as
-  // Wicked's surfels do.
-  if allocation.paused!=0u || (traced>0u && !reserve_turn(traced,turn,!probe.blended)) {
-   traced=0u;
-   blended=0u;
-  }
-  ray_counts[probe_index]=blended;
-  shared_entry_rays=entry_rays;
+  // The rays it blends, before its fixed rays, its fixed rays, and which of
+  // its cycle's it traces, a whole cycle's marked DDGI_FIXED_CYCLE. A
+  // probe not yet blended traces none.
+  let blended=ray_counts[probe_index];
+  let fixed_rays=select(0u,ddgi_turn_fixed_rays(probe),blended>0u);
+  let traced=blended+fixed_rays;
+  shared_entry_rays=blended;
   shared_traced=traced;
-  shared_cycle=cycle;
+  shared_cycle=select(probe.fixed_frames,DDGI_FIXED_CYCLE,fixed_rays==DDGI_FIXED_RAYS);
   shared_ray_allocation=atomicAdd(&allocation.rays,traced);
   if traced>0u {
    traced_probes[atomicAdd(&allocation.traced,1u)]=probe_index;

@@ -1,7 +1,7 @@
 //! The resources of one dynamic GI volume's probes and the layouts of the
 //! groups that bind them.
 use super::Key;
-use super::buffers::{ALLOCATION_BYTES, CONVERGENCE_BYTES};
+use super::buffers::{CONVERGENCE_BYTES, allocation_bytes};
 use crate::scene::dynamic_gi::InstalledVolume;
 use crate::shading::dynamic_gi as layout;
 
@@ -249,7 +249,7 @@ impl Volume {
             device,
             &wgpu::BufferDescriptor {
                 label: Some("dynamic GI ray allocation"),
-                size: ALLOCATION_BYTES,
+                size: allocation_bytes(count),
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::INDIRECT
                     | wgpu::BufferUsages::COPY_DST

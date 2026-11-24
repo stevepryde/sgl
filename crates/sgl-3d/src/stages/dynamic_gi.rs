@@ -42,8 +42,9 @@ use crate::view::effective::Effective;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::LitConstants;
 use buffers::{
-    ALLOCATION_BLEND_GROUPS, ALLOCATION_RAYS, ALLOCATION_TRACED, BoundsUniform, CONVERGENCE_SUMS,
-    MOST_MOVING_BOUNDS, UNIFORM_RAYS, UNIFORM_TRACED, VolumeUniform, budget, dispatch,
+    ALLOCATION_BLEND_GROUPS, ALLOCATION_RAYS, ALLOCATION_TRACED, BoundsUniform, CLAIM_THREADS,
+    CONVERGENCE_SUMS, MOST_MOVING_BOUNDS, UNIFORM_RAYS, UNIFORM_TRACED, VolumeUniform, budget,
+    dispatch,
 };
 use frame::{frustum, moving_bounds, rotation};
 use glam::{I64Vec3, IVec3};
@@ -375,6 +376,11 @@ impl DynamicGi {
             pass.dispatch_workgroups(uniform.probe_count.div_ceil(64), 1, 1);
             pass.set_pipeline(&pipelines.threshold);
             pass.dispatch_workgroups(1, 1, 1);
+            let claims = dispatch(uniform.probe_count.div_ceil(CLAIM_THREADS));
+            pass.set_pipeline(&pipelines.claim_sums);
+            pass.dispatch_workgroups(claims[0], claims[1], 1);
+            pass.set_pipeline(&pipelines.claim);
+            pass.dispatch_workgroups(claims[0], claims[1], 1);
             pass.set_pipeline(&pipelines.allocate);
             pass.dispatch_workgroups(probes[0], probes[1], 1);
             pass.set_pipeline(&pipelines.prepare_trace);
@@ -486,6 +492,36 @@ impl DynamicGi {
         };
         let count = volume::probe_count(volume.installed.probes) as usize;
         crate::test_support::read_words(device, queue, &volume.ray_counts)[..count].to_vec()
+    }
+
+    /// What the probes hold after the last frame that ran the stage, each
+    /// resource's words by its name: the probe texture every view samples,
+    /// the blends' history, the probes' states, the rays each traced and
+    /// their results.
+    pub fn test_state(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Vec<(&'static str, Vec<u32>)> {
+        let volume = match (&self.rendered, &self.committed) {
+            (Some(Rendered::Fresh(volume)), _) => volume,
+            (_, Some((volume, _))) => volume,
+            _ => return Vec::new(),
+        };
+        let words = |buffer| crate::test_support::read_words(device, queue, buffer);
+        let probes = crate::test_support::read(device, queue, volume.probes.texture(), 8);
+        let mut state = vec![
+            ("probe texture", bytemuck::pod_collect_to_vec(&probes)),
+            ("irradiance estimators", words(&volume.variance)),
+            ("depth moments", words(&volume.depth_history)),
+            ("probe states", words(&volume.probe_states)),
+            ("ray counts", words(&volume.ray_counts)),
+        ];
+        if let Some(rays) = &volume.rays {
+            let results = crate::test_support::read(device, queue, rays.results.texture(), 16);
+            state.push(("ray results", bytemuck::pod_collect_to_vec(&results)));
+        }
+        state
     }
 
     /// Each probe's share of back faces (`DdgiProbe::backfaces`), by its

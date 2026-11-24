@@ -23,6 +23,8 @@ pub(crate) static ALLOCATE: shading::Module = shading::Module {
 /// The entry points the allocation's pipelines are created with.
 pub(crate) const RANK_ENTRY: &str = "rank";
 pub(crate) const THRESHOLD_ENTRY: &str = "threshold";
+pub(crate) const CLAIM_SUMS_ENTRY: &str = "claim_sums";
+pub(crate) const CLAIM_ENTRY: &str = "claim";
 pub(crate) const ALLOCATE_ENTRY: &str = "allocate";
 pub(crate) const PREPARE_TRACE_ENTRY: &str = "prepare_trace";
 /// The trace: the volume's lit group 0 of the Extended binding tier, whose
@@ -61,6 +63,8 @@ pub(crate) const SCROLL_ENTRY: &str = "scroll";
 pub(super) struct Pipelines {
     pub rank: wgpu::ComputePipeline,
     pub threshold: wgpu::ComputePipeline,
+    pub claim_sums: wgpu::ComputePipeline,
+    pub claim: wgpu::ComputePipeline,
     pub allocate: wgpu::ComputePipeline,
     pub prepare_trace: wgpu::ComputePipeline,
     pub update_irradiance: wgpu::ComputePipeline,
@@ -120,6 +124,18 @@ impl Pipelines {
             &allocate_shader,
             THRESHOLD_ENTRY,
         );
+        let claim_sums = pipeline(
+            "dynamic GI claim sums",
+            &layouts.allocate,
+            &allocate_shader,
+            CLAIM_SUMS_ENTRY,
+        );
+        let claim = pipeline(
+            "dynamic GI claim",
+            &layouts.allocate,
+            &allocate_shader,
+            CLAIM_ENTRY,
+        );
         let allocate = pipeline(
             "dynamic GI allocation",
             &layouts.allocate,
@@ -162,6 +178,8 @@ impl Pipelines {
             specialisations: PipelineSpecialisations::default(),
             rank,
             threshold,
+            claim_sums,
+            claim,
             allocate,
             prepare_trace,
             update_irradiance,

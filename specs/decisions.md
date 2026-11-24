@@ -1846,3 +1846,41 @@ Use the [current specs](README.md) for implementation and the
   files. Debug builds embed it whole. Not taken: a build script in each
   crate, with every call site's path changed, and stripping at
   composition, which saves nothing in the binary.
+- **D-85** Decision, 2026-11-24 (#890): the dynamic GI volume is
+  deterministic: two renderers given the same scene, settings and frames
+  hold the same probes, word for word, on one device. Two orders the GPU
+  chooses had decided what they held. Each ray's random numbers, which
+  draw a probe hit's light and its point on that light, were seeded by the
+  ray's place in the frame's list, which an atomic counter fills in
+  whatever order the probes' workgroups run, as Wicked Engine seeds them
+  (4323a33 `ddgi_raytraceCS.hlsl` 47, `ddgi_rayallocationCS.hlsl` 66);
+  they are seeded by the ray's slot, its probe and its index among the
+  probe's rays. And the starting probes' room in the boundary bin, the shortened
+  turns' spare and the budget were reserved first come, first served; the
+  budget is now shared out as rooms that together never pass it, the
+  turns' among them, and each room by a claim: its probes, in index order
+  from one a hash of the frame chooses, are granted while their rays and
+  those before them fit, an exclusive prefix sum over blocks of 256 probes
+  (`claim_sums`, `claim`). Why: nothing could compare dynamic GI's output
+  across a change (#879's equivalence tests left it out), nor could a game
+  reproduce a frame. Measured on Apple M5 (Metal), two renderers at Low:
+  before, about 2,000 probe hits' light differed on the first frame under a
+  sun and a point light, and the rays of 10 to 28 of 1,024 starting
+  probes; now nothing differs, in 20 runs each on the portable and the
+  hardware path, with the same state in every run. A converged picture of
+  the `dynamic_gi` example differs from the old one's by what two old runs
+  differ by (mean 1.29–2.17 and 0.76–1.04 a channel at Low and High,
+  against 1.37–1.72 and 0.84–1.19). The two dispatches cost a frame about
+  0.015 ms at any size, their latency rather than their work: 0.018 ms
+  timed alone; the allocation's group 0.0095–0.025 ms before and
+  0.026–0.042 ms after for 320 probes at High over five runs of each,
+  alternated (provisional, a shared machine). Not taken, each measured no cheaper: the claim folded into a
+  threshold and an allocation each over blocks, which writes the ray list
+  from a workgroup a block and cost a 320-probe volume 0.043 ms; a
+  threshold over blocks that keeps each probe's claims for a per-probe
+  allocation; and the claim's scan with 9 barriers in place of 25.
+  Skipping the claim when no room is short, through indirect dispatches of
+  no workgroups, would add the pass wgpu runs to validate each indirect
+  dispatch. Nor kept: a refused request's rays for a later, smaller one,
+  which only a probe-by-probe walk keeps deterministically; the prefix
+  leaves a room less than one claim's rays.

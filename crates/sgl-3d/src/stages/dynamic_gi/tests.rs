@@ -769,9 +769,7 @@ fn a_lights_size_lets_its_visibility_rays_past_an_occluder() {
 // so the probes hold what they hold when the light casts no shadow, on
 // the portable path and in hardware. The fixture's bounds are exact in
 // binary, so its underside lies in the light's plane exactly. The frames
-// are deterministic, within the volume's ray budget (50 probes of
-// BUDGET_PROBES' 128): four runs of the unshadowed scene agreed bit for
-// bit on each path, so the bound is exact. Before the fix the probes held
+// are deterministic (D-85), so the bound is exact. Before the fix the probes held
 // 15–25 % of the unshadowed light on the portable path and 79–82 % in
 // hardware.
 #[test]
@@ -3439,4 +3437,121 @@ fn a_sky_atlas_refreshing_under_held_lights_changes_the_probes_environment() {
     expected.extend([environment; 15]);
     expected.push(held);
     assert_eq!(changes, expected);
+}
+
+/// `floor_scene` with a point light beside the sun, so a probe hit draws
+/// which of the two lights it takes from the trace's random numbers.
+fn two_lights(device: &wgpu::Device, queue: &wgpu::Queue) -> (Scene, FrameInput) {
+    let (mut scene, input, _) = floor_scene(device, queue);
+    scene
+        .add_light(
+            device,
+            queue,
+            crate::Light {
+                position: Vec3::new(0.75, 2., 2.),
+                shape: crate::LightShape::Point {
+                    radius: crate::LightShape::DEFAULT_RADIUS,
+                },
+                intensity: 20.,
+                range: 8.,
+                casts_shadow: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    (scene, input)
+}
+
+/// Renders `frames` frames of the scene `make` builds on two renderers of
+/// one device, each with a scene of its own, returns the rays each probe
+/// blended in the first, and requires the two volumes
+/// to hold the same words after each frame: the probe texture every view
+/// samples, the blends' history, the probes' states, the rays each traced
+/// and their results.
+fn hold_the_same_probes(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    make: fn(&wgpu::Device, &wgpu::Queue) -> (Scene, FrameInput),
+    settings: &Settings,
+    frames: usize,
+) -> Vec<u32> {
+    let mut first_rays = Vec::new();
+    let mut renderers = [(); 2].map(|()| {
+        let (scene, input) = make(device, queue);
+        let renderer = TestRenderer::for_test(device, queue, SIZE, settings);
+        (scene, input, renderer)
+    });
+    for frame in 0..frames {
+        let [first, second] = renderers.each_mut().map(|(scene, input, renderer)| {
+            render(device, queue, renderer, scene, input, settings, 1);
+            assert_eq!(
+                renderer.ray_tracing_in_effect(settings, scene),
+                settings.hardware_ray_tracing
+            );
+            renderer.test_dynamic_gi().test_state(device, queue)
+        });
+        let names = |state: &[(&str, Vec<u32>)]| -> Vec<(String, usize)> {
+            state
+                .iter()
+                .map(|(name, words)| (name.to_string(), words.len()))
+                .collect()
+        };
+        assert!(!first.is_empty(), "frame {frame}: no volume");
+        assert_eq!(names(&first), names(&second), "frame {frame}");
+        for ((name, first), (_, second)) in first.iter().zip(&second) {
+            let differ = first.iter().zip(second).filter(|(a, b)| a != b).count();
+            assert_eq!(
+                differ, 0,
+                "frame {frame}: {differ} words of the {name} differ"
+            );
+        }
+        if frame == 0 {
+            first_rays = renderers[0]
+                .2
+                .test_dynamic_gi()
+                .test_probe_rays(device, queue);
+        }
+    }
+    first_rays
+}
+
+// Two renderers given the same scene, settings and frames hold the same
+// probes, word for word, so they draw the same bytes. A probe hit's light is
+// drawn by the trace's random numbers, seeded by the ray's probe and index
+// (here between the sun and a point light), and a volume larger than the
+// budget's starting probes starts the same ones. (Seeded by the ray's place
+// in the frame's list, and the starting probes' room taken first come,
+// first served, both followed the order the GPU ran the probes in: about
+// 2,000 hits' light and 10 to 30 probes' rays differed on the first frame.)
+#[test]
+fn two_renderers_given_the_same_frames_hold_the_same_probes() {
+    let Some((device, queue)) = test_support::device() else {
+        return;
+    };
+    let settings = settings(DynamicGiQuality::Low);
+    two_renderers_hold_the_same_probes((&device, &queue), &settings);
+}
+
+/// `hold_the_same_probes` over the lit fixture, every probe tracing from
+/// the first frame, and the large volume, whose first frame leaves probes
+/// waiting to start, so the starting probes' room is contested.
+fn two_renderers_hold_the_same_probes(gpu: (&wgpu::Device, &wgpu::Queue), settings: &Settings) {
+    let rays = hold_the_same_probes(gpu, two_lights, settings, 6);
+    assert!(rays.iter().all(|&rays| rays > 0), "{rays:?}");
+    let rays = hold_the_same_probes(gpu, large_scene, settings, 6);
+    let started = rays.iter().filter(|&&rays| rays > 0).count();
+    assert!(started > 0 && started < rays.len(), "{started} started");
+}
+
+// As `two_renderers_given_the_same_frames_hold_the_same_probes`, with the
+// probes' rays traced in hardware.
+#[test]
+fn two_renderers_given_the_same_frames_hold_the_same_probes_tracing_in_hardware() {
+    let Some((device, queue)) = test_support::ray_tracing_device(|limits| limits) else {
+        return;
+    };
+    let settings = Settings {
+        hardware_ray_tracing: true,
+        ..settings(DynamicGiQuality::Low)
+    };
+    two_renderers_hold_the_same_probes((&device, &queue), &settings);
 }

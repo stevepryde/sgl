@@ -2384,11 +2384,19 @@ last, after everything it may use, and refuses a directive in it.
   chooses, so its turns under a longer stride are among its turns under a
   shorter one and a stride that changes from frame to frame skips none
   (phases that did not nest starved probes while the stride alternated);
-  what still exceeds the budget traces nothing, as Wicked's, but a refused
-  request gives its rays back (to the budget, the starting probes' room and
-  the shortened turns' spare alike, and a start or shortened turn the budget
-  then refuses to the room or spare it took), where Wicked's keeps them
-  counted, so a later request that fits still traces. A probe whose
+  what still exceeds the budget traces nothing, as Wicked's, but the same
+  requests on every run: Wicked reserves its rays by atomics in the order
+  the GPU runs its probes, which differs from run to run, so two renderers
+  given the same frames lit their probes differently ([D-85](decisions.md)).
+  The budget is shared out as rooms (the turns', the boundary bin's
+  starting probes', and the shortened turns' spare, which together never
+  pass it), and each room by a claim: its probes, in index order from one
+  a hash of the frame chooses, are granted their rays while those before
+  them and their own fit, an exclusive prefix sum over each block of 256
+  probes and the blocks before it (the deterministic form of stream
+  compaction, Harris, Sengupta and Owens, GPU Gems 3 chapter 39). A claim
+  past its room traces nothing, nor does a later one in it that frame,
+  which leaves the room less than one claim's rays. A probe whose
   light is changing, its most inconsistent texel above the estimator's
   noise (0.2, below which Wicked's estimator catches a texel up at its
   least), also takes turns at its period shortened toward one as its
@@ -2443,7 +2451,11 @@ last, after everything it may use, and refuses a directive in it.
   (`scene_segment_visible`; on the hardware path a query whose traversal
   ends at its first accepted hit, `TERMINATE_ON_FIRST_HIT`),
   as Wicked's `ddgi_raytraceCS` samples one light per hit with one shadow
-  ray, and never a shadow map; that visibility takes the light's shadow
+  ray, and never a shadow map, the light and its point drawn by Wicked's
+  random numbers, seeded by the ray's probe and its index among the probe's
+  rays, where Wicked's seed is the ray's place in the frame's list, which
+  its atomic allocation orders differently on every run
+  ([D-85](decisions.md)); that visibility takes the light's shadow
   opacity through `shadow_opacity_visibility`, and at or below
   `SHADOW_OPACITY_CUTOFF`, or for a light that casts no shadow (a scene
   light without `casts_shadow`, a directional light without the frame's

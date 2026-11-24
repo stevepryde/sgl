@@ -6,7 +6,10 @@
 //! the camera, every eighth at 128 spacings, with an eighth of the tier's
 //! most rays there.
 use super::DynamicGi;
-use super::buffers::{Allocation, Convergence, STRIDES, VolumeUniform, budget, dispatch};
+use super::buffers::{
+    Allocation, CLAIM_THREADS, Convergence, STRIDES, VolumeUniform, allocation_bytes, budget,
+    dispatch,
+};
 use super::frame::{frustum, rotation};
 use super::pipelines::{ALLOCATE, Pipelines};
 use crate::shading::dynamic_gi as layout;
@@ -43,6 +46,17 @@ fn allocate(
     inconsistency: impl Fn(usize) -> f32,
     frames: u32,
 ) -> Option<Vec<Frame>> {
+    allocate_from(placement, eye, inconsistency, surfaced_probe(), frames)
+}
+
+/// `allocate`, with every probe in `state` (`ddgi_pack_probe`'s words).
+fn allocate_from(
+    placement: DynamicGiVolume,
+    eye: Vec3,
+    inconsistency: impl Fn(usize) -> f32,
+    state: [u32; 4],
+    frames: u32,
+) -> Option<Vec<Frame>> {
     let (device, queue) = test_support::device()?;
     let stage = DynamicGi::new(&device);
     let layouts = crate::view::bindings::Layouts::new(&device);
@@ -67,11 +81,14 @@ fn allocate(
         }
     }
     let variance = storage("variance", bytemuck::cast_slice(&variance));
-    let states = vec![surfaced_probe(); count as usize];
+    let states = vec![state; count as usize];
     let states = storage("probe states", bytemuck::cast_slice(&states));
     let ray_counts = storage("ray counts", &vec![0; count as usize * 4]);
     let traced_probes = storage("traced probes", &vec![0; count as usize * 4]);
-    let allocation = storage("allocation", &[0; std::mem::size_of::<Allocation>()]);
+    let allocation = storage(
+        "allocation",
+        &vec![0; allocation_bytes(u64::from(count)) as usize],
+    );
     let convergence = storage("convergence", &[0; std::mem::size_of::<Convergence>()]);
     let list = super::volume::texture(
         &device,
@@ -134,6 +151,11 @@ fn allocate(
                 pass.dispatch_workgroups(count.div_ceil(64), 1, 1);
                 pass.set_pipeline(&pipelines.threshold);
                 pass.dispatch_workgroups(1, 1, 1);
+                let [x, y] = dispatch(count.div_ceil(CLAIM_THREADS));
+                pass.set_pipeline(&pipelines.claim_sums);
+                pass.dispatch_workgroups(x, y, 1);
+                pass.set_pipeline(&pipelines.claim);
+                pass.dispatch_workgroups(x, y, 1);
                 pass.set_pipeline(&pipelines.allocate);
                 let [x, y] = dispatch(count);
                 pass.dispatch_workgroups(x, y, 1);
@@ -333,138 +355,54 @@ fn test_turn(@builtin(global_invocation_id) id:vec3<u32>) {{
     }
 }
 
-// With each of the frame's shared counts (its budget, the starting probes'
-// room in the boundary bin and the shortened turns' spare rays) 68 rays
-// short of its limit, a probe asking for 132 is refused and a later one
-// asking for 36 still takes them, leaving the count where the first found it
-// plus 36. (A refused request that kept its rays left the later probe
-// refused, under-using the frame.) And a probe granted its start or its
-// shortened turn that the full budget then refuses leaves the room or spare
-// where it found it. The requests are made one after another, by one
-// invocation, so their order is the test's.
+// Two runs of the allocation over the same probes and frames trace the
+// same probes with the same rays, while the rays they ask for pass what
+// each pool may take: 4,000 probes not yet blended, all over 1,000 spacings
+// away, so in the ramp's last bin, each starting with 32 rays at High, and
+// 4,000 changing probes whose shortened turns ask for more than the
+// distance turns leave. (Reserved first come, first served, which probes
+// took the starting room and the spare followed the order the GPU ran
+// them in, which differs between runs.) The starting probes fill the
+// budget exactly: their claims are equal, so each frame starts as many as
+// it holds, 1,024.
 #[test]
-fn a_refused_request_leaves_its_rays_to_a_later_one_that_fits() {
-    let Some((device, queue)) = test_support::device() else {
-        return;
-    };
-    const ROOM: u32 = 1000;
-    let source = format!(
-        "{}
-@group(1) @binding(0) var<storage,read_write> test_results:array<u32>;
-@compute @workgroup_size(1)
-fn test_reserve() {{
- let distance_turn=DdgiReservation(true,0u);
- atomicStore(&allocation.reserved,volume.budget-68u);
- test_results[0]=u32(reserve_turn(132u,distance_turn,false));
- test_results[1]=u32(reserve_turn(36u,distance_turn,false));
- test_results[2]=atomicLoad(&allocation.reserved);
- allocation.ramp_bins=ramp_bin(2.);
- allocation.ramp_room={ROOM}u;
- atomicStore(&allocation.ramp_taken,{ROOM}u-68u);
- test_results[3]=u32(ramp_starts(2.,132u).granted);
- test_results[4]=u32(ramp_starts(2.,36u).granted);
- test_results[5]=atomicLoad(&allocation.ramp_taken);
- allocation.spare={ROOM}u;
- atomicStore(&allocation.spare_taken,{ROOM}u-68u);
- test_results[6]=u32(ddgi_shortened_turn(0u,2u,1u,132u).granted);
- test_results[7]=u32(ddgi_shortened_turn(0u,2u,1u,36u).granted);
- test_results[8]=atomicLoad(&allocation.spare_taken);
- // The budget full: granted, refused, and the count as it was.
- atomicStore(&allocation.reserved,volume.budget);
- atomicStore(&allocation.ramp_taken,{ROOM}u-68u);
- let start=ramp_starts(2.,36u);
- test_results[9]=u32(start.granted);
- test_results[10]=u32(reserve_turn(36u,start,true));
- test_results[11]=atomicLoad(&allocation.ramp_taken);
- atomicStore(&allocation.spare_taken,{ROOM}u-68u);
- let shortened=ddgi_shortened_turn(0u,2u,1u,36u);
- test_results[12]=u32(shortened.granted);
- test_results[13]=u32(reserve_turn(36u,shortened,false));
- test_results[14]=atomicLoad(&allocation.spare_taken);
-}}",
-        crate::shading::compose(&[&ALLOCATE]),
-    );
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("dynamic GI reservations"),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("dynamic GI reservations"),
-        layout: None,
-        module: &module,
-        entry_point: Some("test_reserve"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let budget = budget(MOST_RAYS);
-    let volume = VolumeUniform {
-        budget,
-        ..bytemuck::Zeroable::zeroed()
-    };
-    let buffer = |label, contents: &[u8], usage| {
-        crate::scene::buffer(
-            &device,
-            label,
-            contents,
-            usage | wgpu::BufferUsages::COPY_SRC,
+fn two_runs_trace_the_same_probes_where_their_requests_pass_the_budget() {
+    let far = block(Vec3::new(0., 0., -1100.), [40, 10, 10]);
+    let starting = || allocate_from(far, Vec3::ZERO, |_| 0., [0; 4], 4);
+    let changing = || {
+        allocate(
+            block(Vec3::new(0., 0., -12.), [40, 10, 10]),
+            Vec3::ZERO,
+            |_| 1.,
+            8,
         )
     };
-    let volume = buffer(
-        "volume",
-        bytemuck::bytes_of(&volume),
-        wgpu::BufferUsages::UNIFORM,
-    );
-    let allocation = buffer(
-        "allocation",
-        &[0; std::mem::size_of::<Allocation>()],
-        wgpu::BufferUsages::STORAGE,
-    );
-    let results = buffer("results", &[0; 15 * 4], wgpu::BufferUsages::STORAGE);
-    fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-        wgpu::BindGroupEntry {
-            binding,
-            resource: buffer.as_entire_binding(),
-        }
-    }
-    let stage_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[entry(0, &volume), entry(4, &allocation)],
-    });
-    let test_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &pipeline.get_bind_group_layout(1),
-        entries: &[entry(0, &results)],
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &stage_group, &[]);
-        pass.set_bind_group(1, &test_group, &[]);
-        pass.dispatch_workgroups(1, 1, 1);
-    }
-    queue.submit([encoder.finish()]);
-    let results = test_support::read_words(&device, &queue, &results);
-    for (name, limit, taken) in [
-        ("budget", budget, &results[0..3]),
-        ("starting room", ROOM, &results[3..6]),
-        ("spare", ROOM, &results[6..9]),
-    ] {
-        assert_eq!(
-            taken,
-            [0, 1, limit - 68 + 36],
-            "{name}: refused, taken, count"
+    let (Some(first), Some(second)) = (starting(), starting()) else {
+        return;
+    };
+    for (frame, (first, second)) in first.iter().zip(&second).enumerate() {
+        let started = first.rays.iter().filter(|&&rays| rays > 0).count();
+        assert_eq!(started, 1024, "frame {frame}: {started} started");
+        assert!(
+            first
+                .rays
+                .iter()
+                .all(|&rays| rays == 0 || rays == MOST_RAYS / 8)
+        );
+        assert_eq!(first.traced, budget(MOST_RAYS), "frame {frame}");
+        assert!(
+            first.rays == second.rays,
+            "frame {frame}: the starting probes differ"
         );
     }
-    for (name, taken) in [
-        ("starting room", &results[9..12]),
-        ("spare", &results[12..15]),
-    ] {
-        assert_eq!(
-            taken,
-            [1, 0, ROOM - 68],
-            "{name} past a full budget: granted, traced, count"
+    let (Some(first), Some(second)) = (changing(), changing()) else {
+        return;
+    };
+    for (frame, (first, second)) in first.iter().zip(&second).enumerate() {
+        assert!(first.traced <= budget(MOST_RAYS), "frame {frame}");
+        assert!(
+            first.rays == second.rays,
+            "frame {frame}: the probes that trace differ"
         );
     }
 }

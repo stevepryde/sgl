@@ -551,11 +551,7 @@ fn place_lit_card(rig: &mut Rig, id: InstanceId, frame: u32) {
         .expect("the lit card's pose");
 }
 
-/// A dynamic GI volume of 18 probes over the lit stage. Few enough that
-/// the frame's ray budget refuses none: a budget that refuses some admits
-/// probes first-come through atomics (`allocate.wgsl`, as Wicked's surfel
-/// budget), which two identical runs need not order alike, so their frames
-/// would differ whatever the views.
+/// A dynamic GI volume of 18 probes over the lit stage.
 fn add_volume(rig: &mut Rig) {
     rig.scene
         .set_dynamic_gi_volume(

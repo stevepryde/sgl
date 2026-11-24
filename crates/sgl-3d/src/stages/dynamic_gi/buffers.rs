@@ -54,11 +54,11 @@ pub(super) const MOST_MOVING_BOUNDS: u32 = 256;
 /// The allocation's buffer (`DdgiAllocation` in allocate.wgsl): the
 /// trace's indirect dispatch and ray count, the blends' dispatch and the
 /// count of probes that trace, the starting probes' words and rays, whether
-/// the volume paused, the stride the frame's periods take, the rays
-/// reserved against the budget, the rays the shortened turns may take and
-/// have taken, the blended probes' requests under each stride, and the
-/// starting probes' bins. The trace and the blends read the counts in the
-/// volume's uniform.
+/// the volume paused, the stride the frame's periods take, the rays the
+/// turns and the shortened turns may take, the blended probes' requests
+/// under each stride and the starting probes' bins; then, past this, each
+/// block of `CLAIM_THREADS` probes' claims (`allocation_bytes`). The trace
+/// and the blends read the counts in the volume's uniform.
 #[repr(C)]
 pub(super) struct Allocation {
     pub groups: [u32; 3],
@@ -67,22 +67,29 @@ pub(super) struct Allocation {
     pub traced: u32,
     pub ramp_bins: u32,
     pub ramp_room: u32,
-    pub ramp_taken: u32,
     pub unblended: u32,
     pub unblended_rays: u32,
     pub paused: u32,
     pub stride: u32,
-    pub reserved: u32,
+    pub turn_room: u32,
     pub spare: u32,
-    pub spare_taken: u32,
     pub demand: [u32; STRIDES as usize],
     pub bins: [u32; RAMP_BINS as usize],
+    /// To the claims' four-word alignment.
+    pub padding_claims: u32,
 }
 pub(super) const ALLOCATION_RAYS: u64 = std::mem::offset_of!(Allocation, rays) as u64;
 pub(super) const ALLOCATION_BLEND_GROUPS: u64 =
     std::mem::offset_of!(Allocation, blend_groups) as u64;
 pub(super) const ALLOCATION_TRACED: u64 = std::mem::offset_of!(Allocation, traced) as u64;
-pub(super) const ALLOCATION_BYTES: u64 = std::mem::size_of::<Allocation>() as u64;
+/// Probes to a block of the claim, each workgroup's (`DDGI_CLAIM_THREADS`).
+pub(super) const CLAIM_THREADS: u32 = 256;
+
+/// The allocation's buffer for `probes` probes: its counts and each
+/// block's claims in each pool, four words.
+pub(super) fn allocation_bytes(probes: u64) -> u64 {
+    std::mem::size_of::<Allocation>() as u64 + probes.div_ceil(u64::from(CLAIM_THREADS)) * 16
+}
 
 /// `DdgiConvergence` in common.wgsl: the frame's sums of the active probes'
 /// variability and their longest period, which the allocation and the
@@ -210,14 +217,12 @@ pub(super) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
                 traced,
                 ramp_bins,
                 ramp_room,
-                ramp_taken,
                 unblended,
                 unblended_rays,
                 paused,
                 stride,
-                reserved,
+                turn_room,
                 spare,
-                spare_taken,
                 demand,
                 bins,
             ]
@@ -244,6 +249,11 @@ pub(super) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "dynamic_gi_allocate",
             "DDGI_STRIDES",
             naga::Literal::U32(STRIDES),
+        ),
+        Constant::new(
+            "dynamic_gi_allocate",
+            "DDGI_CLAIM_THREADS",
+            naga::Literal::U32(CLAIM_THREADS),
         ),
         Constant::new(
             "dynamic_gi_allocate",

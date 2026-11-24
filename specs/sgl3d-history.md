@@ -3736,12 +3736,21 @@ unsnapped or float-noisy placement (G-2) restarts it every frame.
 
 - **Rule.** A probe traces once in a period that grows with its distance from the camera (up to
   `DDGI_PERIOD_CAP` frames), shortened while its light is inconsistent beyond 0.2, and lengthened by a
-  power of two when requests exceed the budget; between turns it keeps its light.
+  power of two when requests exceed the budget; between turns it keeps its light. Where a room of the
+  budget still holds less than its probes ask (the boundary bin's starting probes, the shortened
+  turns' spare, or the turns at the longest stride), the probes that trace are those whose claims fit
+  in a claim order fixed by the frame alone ([D-85](decisions.md)), so the same frames update the same
+  probes on every run.
 - **Raised by.** Distance and the ray budget.
 - **Stays triggered while.** Not a rejection: far probes answer a lighting change later.
-- **Source.** Wicked Engine surfel GI ray budget and periods, modified. Code:
-  `src/stages/dynamic_gi/allocate.wgsl` (`ddgi_period`, `ddgi_turn`, `ddgi_shortened_period`).
-- **Guard.** `requests_past_the_budget_lengthen_every_period_and_starve_none` (`src/stages/dynamic_gi/allocation_tests.rs`).
+- **Source.** Wicked Engine surfel GI ray budget and periods, modified (Wicked reserves rays by
+  atomics in dispatch order). Code: `src/stages/dynamic_gi/allocate.wgsl` (`ddgi_period`,
+  `ddgi_turn`, `ddgi_shortened_period`, `claim`).
+- **Guard.** `requests_past_the_budget_lengthen_every_period_and_starve_none`,
+  `two_runs_trace_the_same_probes_where_their_requests_pass_the_budget`
+  (`src/stages/dynamic_gi/allocation_tests.rs`);
+  `two_renderers_given_the_same_frames_hold_the_same_probes` and its `_tracing_in_hardware` twin
+  (`src/stages/dynamic_gi/tests.rs`).
 - **Status.** Rule.
 
 ## Exposure and other stages

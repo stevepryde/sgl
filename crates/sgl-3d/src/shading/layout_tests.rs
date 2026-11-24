@@ -516,6 +516,8 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             vec![
                 gi::RANK_ENTRY,
                 gi::THRESHOLD_ENTRY,
+                gi::CLAIM_SUMS_ENTRY,
+                gi::CLAIM_ENTRY,
                 gi::ALLOCATE_ENTRY,
                 gi::PREPARE_TRACE_ENTRY,
             ],

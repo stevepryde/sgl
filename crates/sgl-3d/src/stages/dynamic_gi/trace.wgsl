@@ -26,6 +26,11 @@
 // radiance blend and takes |0.2 t| only as their distance, where here they
 // count black at their full cosine weight in the irradiance blend, which
 // darkens a probe that sees back faces rather than brightening it.
+// Changed: each ray's random numbers are seeded by its slot, its probe and
+// its index among the probe's rays, where Wicked seeds them by the ray's
+// place in the frame's list (`rng.init(DTid.xx, ...)`, 4323a33 47), which
+// its atomic allocation orders differently on every run, so the same
+// frames lit the probes differently (D-85).
 @group(3) @binding(0) var<uniform> volume:DdgiVolume;
 @group(3) @binding(1) var ray_list:texture_2d<u32>;
 @group(3) @binding(2) var ray_results:texture_storage_2d<rgba32uint,write>;
@@ -94,7 +99,8 @@ fn ddgi_trace_ray(id:u32)->DdgiTraced {
  let probe_data=textureLoad(dynamic_gi_probes,ddgi_probe_data_pixel(stored,volume.probes),0);
  let lattice=ddgi_probe_lattice(stored,volume.probes,volume.scroll);
  let probe_pos=ddgi_probe_position(lattice,volume.origin,volume.spacing,probe_data.rgb);
- var rng=ddgi_rng_init(vec2(id,id),volume.frame);
+ // Seeded by the ray's own slot, which no other ray of the frame shares.
+ var rng=ddgi_rng_init(vec2(0u,ddgi_ray_slot(probe_index,ray_index,volume.max_rays)),volume.frame);
  // Past its rays, its fixed rays, unrotated, which classify it and bring
  // no light: this turn's of its cycle, or all of them where the turn
  // traces a whole cycle's (DDGI_FIXED_CYCLE).
