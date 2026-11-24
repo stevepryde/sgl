@@ -52,7 +52,7 @@ Dependency versions live in the [workspace manifest](../../Cargo.toml); the
 | Matrix arrays | Column-major; view-projection is projection × view |
 | Camera cuts | `FrameInput::camera_cut` restarts history; no renderer-owned camera movement |
 | Pose | Final presentation transform, after game-owned interpolation |
-| Light/material values | Linear RGB; base/emissive images are sampled as sRGB |
+| Light/material values | Linear RGB; base, emissive, sheen colour, diffuse transmission colour and specular colour images are sampled as sRGB |
 | Light directions | Where the light shines (directional lights, spots, rectangles' faces) |
 | Light units | Point, spot and rectangle intensity in candela (a rectangle's along its normal), directional illuminance in lux, on one scale |
 | Environment/backdrop yaw | Radians about +Y |
@@ -3893,7 +3893,7 @@ setting chooses it.
 | Tier | Sampled textures per stage | Lighting | Material maps |
 | --- | --- | --- | --- |
 | `Basic` | 16 (WebGPU's default, S3D-1's floor) to 47: a browser's default WebGPU adapter, iOS GPUs older than Apple4 (23) | baked light non-directional; no dynamic GI; transmission blended through, unrefracted; no scene depth or volume path for a shader | base, metallic-roughness (with packed occlusion), emission, normal, bump |
-| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission; scene depth and volume paths for a blended shader | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission, thickness, sheen colour, sheen roughness, diffuse transmission and diffuse transmission colour maps |
+| `Extended` | 48 or more: Metal on macOS and Apple4 and later, DX12, Chrome's upper tier | directional baked light; dynamic GI; refracted transmission; scene depth and volume paths for a blended shader | those and the anisotropy, clearcoat, clearcoat roughness, clearcoat normal, iridescence, iridescence thickness, transmission, thickness, sheen colour, sheen roughness, diffuse transmission, diffuse transmission colour, specular and specular colour maps, and an occlusion map in an image of its own |
 
 A Vulkan driver lands in either tier, by its `maxPerStageResources`.
 
@@ -3905,7 +3905,14 @@ read.
 A map a device does not bind gives way to its factors, as glTF defines a
 material without that texture, in raster, probe captures and ray hits
 alike; validation still reads every map, so content errors do not depend on
-the device. A probe or other bake captured on an `Extended` device keeps
+the device. On `Basic` that makes an occlusion map in an image of its own
+(or one that samples the metallic-roughness image another way) no
+occlusion at all, ambient light unoccluded and direct light not
+micro-shadowed, so content meant for `Basic` packs occlusion into the
+metallic-roughness image (ORM), read from that map's sample on both tiers;
+the specular and specular colour maps leave `specular` and
+`specular_color` alone. `Asset::ignored` does not list these: the loader
+knows no device. A probe or other bake captured on an `Extended` device keeps
 what its maps and lights did there.
 
 ## Browser (WASM + WebGPU)
@@ -4066,12 +4073,12 @@ two UV sets, `TEXCOORD_0` and `TEXCOORD_1`, each map on the set it names
 through its own `KHR_texture_transform` ([material textures](#material-textures)),
 `TEXCOORD_1` also as `Vertex::lightmap_uv`, metallic/roughness materials, the
 opaque, masked and blended alpha modes,
-normal and bump maps, an occlusion map packed in the red channel of the
-metallic-roughness image (ORM), `KHR_materials_clearcoat` with its maps,
-emissive strength, unlit materials, `KHR_materials_anisotropy`,
+normal and bump maps, an occlusion map ([occlusion and specular
+maps](#occlusion-and-specular-maps)), `KHR_materials_clearcoat` with its
+maps, emissive strength, unlit materials, `KHR_materials_anisotropy`,
 `KHR_materials_iridescence`, `KHR_materials_sheen`,
-`KHR_materials_diffuse_transmission`, the `KHR_materials_ior` and
-`KHR_materials_specular` factors, `KHR_lights_punctual` lights as data
+`KHR_materials_diffuse_transmission`, `KHR_materials_ior`,
+`KHR_materials_specular` with its maps, `KHR_lights_punctual` lights as data
 ([Authored glTF lights](#authored-gltf-lights)), and `EXT_mesh_gpu_instancing`
 nodes as shared geometry and placements
 ([Instanced glTF nodes](#instanced-gltf-nodes)). A primitive needs each UV
@@ -4162,14 +4169,10 @@ extension in `extensionsRequired` that SGL3D does not support fails to load
 with an asset-path error. One it lists only in `extensionsUsed` is left out,
 as glTF lets a loader do: a texture keeps its core image and a material its
 core values, and `Asset::ignored` lists it (`Ignored::Extension`). The list
-also names each material whose occlusion map SGL3D does not sample
-(`Ignored::OcclusionMap`): one in an image, sampler, UV set or transform of
-its own, which stays in `Material::occlusion_texture`, or one on
-`TEXCOORD_2` or above, which the load leaves out (`occlusion_texture`
-`None`). It names each material whose specular textures SGL3D does not
-sample (`Ignored::SpecularMap`). To have occlusion drawn, pack it into the
-metallic-roughness image's red channel, sampled as that map is, in the
-export step. The load reads and decodes only the images a map it samples
+also names each material whose occlusion map is on `TEXCOORD_2` or above,
+which SGL3D has no input for and the load leaves out (`occlusion_texture`
+`None`, `Ignored::OcclusionMap`), as glTF lets a client leave occlusion
+out; any other map on such a set fails the load. The load reads and decodes only the images a map it samples
 uses; each other image, such as a texture extension's source or an
 ignored map's image, is a one-texel placeholder that is never bound, and
 the list names it (`Ignored::Image`). A vertex attribute nothing SGL3D
@@ -4338,6 +4341,39 @@ but without anisotropic filtering and at up to eight texel reads a sample
 Apple M5 for one trilinear map over most of the frame. Ray hits (world-space reflections, dynamic GI)
 sample level 0 with each map's magnification filter and wrapping.
 
+### Occlusion and specular maps
+
+An occlusion map's red channel (`Material::occlusion_texture`, linear) is
+the share of ambient light that reaches the surface: glTF's
+1 + `occlusion_strength` × (texel − 1) occludes its ambient, baked and
+environment light and micro-shadows its direct light
+([D-66](../../specs/decisions.md)). Where its slot is the
+metallic-roughness map's, image, sampler, UV set and transform (ORM
+packing), it is read from that map's sample on both tiers and costs
+nothing; any other is sampled on its own, on `Extended`.
+`KHR_materials_specular`'s maps scale its factors: the specular map's alpha
+(`specular_texture`, linear) the strength, and the specular colour map's
+RGB (`specular_color_texture`, sRGB) the colour, so a dielectric's F0 is
+min(((ior − 1) / (ior + 1))² × colour, 1) × strength and its F90 the
+strength; a metal takes neither. A material with any of the three draws
+with pipelines of its own, one variant whichever it has, whose programs
+sample each it has, one sample a map, and ray hits sample them only while
+the scene holds such a material; every other material keeps the programs
+and pipelines it had before these maps existed. On `Basic` the
+three give way to their factors ([binding tiers](#binding-tiers)).
+
+```rust
+let worn = asset::Material {
+    mr_texture: Some(asset::MaterialTexture::new(1)),
+    // Packed: the metallic-roughness image's red channel, no sample of its own.
+    occlusion_texture: Some(asset::MaterialTexture::new(1)),
+    // Highlights masked where paint is chipped, tinted where it is lacquered.
+    specular_texture: Some(asset::MaterialTexture::new(2)),
+    specular_color_texture: Some(asset::MaterialTexture::new(3)),
+    ..Default::default()
+};
+```
+
 ### Compressed material images
 
 `asset::Image` accepts decoded RGBA8 texels (`Image::Rgba8`, what glTF
@@ -4435,8 +4471,9 @@ maximum before growing buffers. The private decoder is vendored from `zstd-rs` u
 the reviewed source. Its notices ship with SGL3D’s bundled-code notices.
 The budget counts decoded bytes; bounded decoder working buffers and
 allocator capacity are additional, so it is not a peak-memory limit.
-As for RGBA8, the channel picks the colour space: base and emissive
-maps sample it as sRGB, the others as linear data. Filter a colour image's
+As for RGBA8, the channel picks the colour space: base, emissive, sheen
+colour, diffuse transmission colour and specular colour maps sample it as
+sRGB, the others as linear data. Filter a colour image's
 levels in linear light. Its stored levels serve every channel that samples
 it, so a data channel sampling an image also used as colour reads the
 colour-filtered levels: a data use that needs its own filtering needs its

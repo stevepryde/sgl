@@ -147,6 +147,85 @@ fn a_hit_reads_each_map_at_its_slots_set_through_its_transform() {
     }
 }
 
+/// Traces each probe's ray down -Z from z = 3 and writes its hit's
+/// occlusion map, a map binding past the record's sixteen, where it samples,
+/// and 1; -1 for a miss.
+const TRACE_MORE: &str = r#"
+@group(0) @binding(0) var<storage,read> probes:array<vec4<f32>>;
+@group(0) @binding(1) var<storage,read_write> colors:array<vec4<f32>>;
+@compute @workgroup_size(1) fn sample(@builtin(global_invocation_id) id:vec3<u32>) {
+ let origin=vec3(probes[id.x].xy,3.);
+ let direction=vec3(0.,0.,-1.);
+ let raw=scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,10.)),SCENE_SIDES_AS_RASTER);
+ let hit=scene_decode_hit(raw,origin,direction);
+ if !hit.hit {
+  colors[id.x]=vec4(-1.);
+  return;
+ }
+ let m=scene_material(hit.material_word);
+ let occlusion=scene_sample_more_map(scene_hit_more_maps(hit,m),hit.uv,m,scene_material_texture(m,SCENE_TEXTURE_OCCLUSION),MATERIAL_SLOT_OCCLUSION,true);
+ colors[id.x]=vec4(occlusion.r,0.,0.,1.);
+}
+"#;
+
+// A map binding past the record's sixteen (an occlusion map of its own) on
+// the second UV set, where none of the first sixteen samples it, so the hit
+// decodes no second set and the binding takes it from the triangle
+// (scene_hit_uv1). Plausible defects: that map read at the first set or at
+// zero, its second set interpolated from other vertices or from the first
+// set's rectangle, or its transform or set bit read from the wrong word.
+// The occlusion map is on the second set through KHR_texture_transform's
+// first worked example, at (0.5 v, 1 - 0.5 u); the base map on the first.
+// The oracle is the labelled image's texel there.
+#[test]
+fn a_hit_reads_a_map_past_the_records_sixteen_on_the_second_set() {
+    let second = ([0.2, 0.1], [0.8, 0.9]);
+    let material = Material {
+        base_texture: Some(MaterialTexture {
+            sampler: nearest(),
+            ..MaterialTexture::new(0)
+        }),
+        occlusion_texture: Some(MaterialTexture {
+            sampler: nearest(),
+            uv_set: UvSet::Uv1,
+            transform: UvTransform {
+                offset: [0., 1.],
+                rotation: std::f32::consts::FRAC_PI_2,
+                scale: [0.5, 0.5],
+            },
+            ..MaterialTexture::new(0)
+        }),
+        ..Default::default()
+    };
+    let points = [[-0.7, 0.55], [0.3, 0.35], [-0.15, -0.6], [0.72, -0.8]];
+    let Some(colors) = run(
+        &asset(square(second), material, labelled()),
+        &crate::shading::SCENE_RAYS_PORTABLE,
+        TRACE_MORE,
+        |_| {
+            points
+                .iter()
+                .flat_map(|&[x, y]| [x, y, 0., 0.].map(f32::to_bits))
+                .collect()
+        },
+        points.len(),
+    ) else {
+        return;
+    };
+    for ([x, y], color) in points.into_iter().zip(colors) {
+        let [s, t] = [(x + 1.) * 0.5, (1. - y) * 0.5];
+        let [u1, v1] = [
+            second.0[0] + s * (second.1[0] - second.0[0]),
+            second.0[1] + t * (second.1[1] - second.0[1]),
+        ];
+        let expected = magnified([0.5 * v1, 1. - 0.5 * u1], nearest());
+        assert!(
+            (color[0] - expected).abs() < 1e-3,
+            "the hit at {x}, {y}: {color:?}, expected {expected}"
+        );
+    }
+}
+
 // A material on its first UV set alone leaves a hit's second set
 // undecoded: a mesh may still carry one (another material's, or a game's),
 // and the hit's maps must not read it. Plausible defect: the hit decode or
@@ -225,7 +304,12 @@ struct Probe { material:u32, map:u32, uv:vec2<f32>, uv1:vec2<f32> }
  let probe=probes[id.x];
  let m=scene_material(probe.material);
  let map=test_map(m,probe.map);
- colors[id.x]=scene_sample_map(m.values.map_samplers,map.x,map.y,scene_map_uv(m,map.y,probe.uv,probe.uv1),true);
+ if map.y<MATERIAL_FIRST_MORE_SLOT {
+  colors[id.x]=scene_sample_map(m.values.map_samplers,map.x,map.y,scene_map_uv(m,map.y,probe.uv,probe.uv1),true);
+ } else {
+  let word=scene_material_more_maps(m);
+  colors[id.x]=scene_sample_texture(map.x,scene_more_map_uv(m,word,map.y,probe.uv,probe.uv1),material_more_map_sampler(word,map.y),true);
+ }
 }
 "#;
 
@@ -233,10 +317,10 @@ struct Probe { material:u32, map:u32, uv:vec2<f32>, uv1:vec2<f32> }
 // Plausible defects: a binding's bit or rows taken from its neighbour's
 // (the record's bits shifted, the rows indexed by texture word rather than
 // binding), a transform read past the first few bindings wrongly, or the
-// set and the transform halves of the bits swapped. Each of the fifteen
-// maps a hit reads samples the labelled image on the first set (even
-// maps) or the second (odd), moved by its own whole texels: map k by
-// (k mod 4, k / 4) quarters of the image, none for map 0. The oracle is the
+// set and the transform bits swapped. Each of the eighteen maps a hit
+// reads samples the labelled image on the first set (even maps) or the
+// second (odd), moved by its own whole texels: map k by ((k / 2) mod 4,
+// k / 8) quarters of the image, none for maps 0 and 1. The oracle is the
 // texel at its set's coordinates plus its offset; no two maps on a set
 // read the same texel.
 #[test]
@@ -250,7 +334,7 @@ fn every_map_binding_carries_its_own_set_and_transform_to_ray_hits() {
             UvSet::Uv1
         },
         transform: UvTransform {
-            offset: [(map % 4) as f32 * 0.25, (map / 4) as f32 * 0.25],
+            offset: [(map / 2 % 4) as f32 * 0.25, (map / 8) as f32 * 0.25],
             ..UvTransform::IDENTITY
         },
         ..MaterialTexture::new(0)

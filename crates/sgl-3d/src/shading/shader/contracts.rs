@@ -45,7 +45,7 @@ pub(super) struct Contract {
     /// The modules the game's module is parsed against alone.
     pub context: &'static [&'static super::super::Module],
     /// Every program a device of a tier composes the module into, by label.
-    pub programs: fn(BindingTier, &str) -> Vec<(&'static str, String)>,
+    pub programs: fn(BindingTier, &str) -> Vec<(String, String)>,
     /// The names SGL3D's programs declare that the module may not.
     pub reserved: fn() -> &'static HashSet<String>,
 }
@@ -96,7 +96,7 @@ pub(super) static HDR_EFFECT: Contract = Contract {
     }],
     max_params: HDR_EFFECT_PARAMS_MAX_BYTES,
     context: &[&hdr_effect::HDR_EFFECT_INPUTS_NONE],
-    programs: |_, source| vec![("HDR effect", hdr_effect::program(source))],
+    programs: |_, source| vec![("HDR effect".into(), hdr_effect::program(source))],
     reserved: effect_reserved_names,
 };
 

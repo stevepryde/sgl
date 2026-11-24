@@ -10,7 +10,8 @@
 //! a few frames of it under several settings into an offscreen target. The
 //! scene holds a textured ground, its map on its second UV set through a
 //! transform; a box that shades part of it from a
-//! shadowed sun; a masked grate and a blended pane that receives
+//! shadowed sun, its occlusion and specular maps in an image of their own;
+//! a masked grate and a blended pane that receives
 //! screen-space reflections; a skinned and morphed box
 //! with an ambient cube; a box lit by a static irradiance atlas; point, spot
 //! and rectangle lights; a decal; a baked specular probe; a dynamic GI volume
@@ -187,7 +188,9 @@ fn black_emission_map() -> Option<MaterialTexture> {
 /// measured points: it samples the mesh's second UV set through a rotating
 /// and tiling transform, which draws the ground through the pipelines that
 /// resolve a map's coordinates. Its black emission map is sampled in the
-/// shader (`black_emission_map`).
+/// shader (`black_emission_map`). The box takes the same grey as an
+/// occlusion map of its own and as its specular and specular colour maps,
+/// which the `Extended` tier binds and samples beside its other maps.
 fn world() -> Asset {
     let mut ground = material([1.; 4], 0., 0.8);
     ground.base_texture = Some(MaterialTexture {
@@ -200,12 +203,16 @@ fn world() -> Asset {
         ..MaterialTexture::new(0)
     });
     ground.emissive_texture = black_emission_map();
+    let mut shade = material([0.6, 0.3, 0.2, 1.], 0., 0.5);
+    shade.occlusion_texture = Some(MaterialTexture::new(0));
+    shade.specular_texture = Some(MaterialTexture::new(0));
+    shade.specular_color_texture = Some(MaterialTexture::new(0));
     Asset {
         meshes: vec![
             cuboid(Vec3::new(0., -0.2, 0.), Vec3::new(14., 0.4, 14.), 0),
             cuboid(Vec3::new(0., 1., 0.), Vec3::new(1., 2., 1.), 1),
         ],
-        materials: vec![ground, material([0.6, 0.3, 0.2, 1.], 0., 0.5)],
+        materials: vec![ground, shade],
         images: vec![Image::Rgba8(image::RgbaImage::from_pixel(
             8,
             8,

@@ -92,3 +92,23 @@ fn material_map_sample(map:texture_2d<f32>,slot:u32,uv:vec2<f32>,bias:f32)->vec4
  }
  return textureSampleBias(map,tex_sampler,uv,bias);
 }
+// The bound material's map `map`, in binding `slot` one past the record's
+// sixteen (MATERIAL_FIRST_MORE_SLOT on), at a fragment whose first and second
+// UV sets are `uv` and `uv1`, with level-of-detail bias `bias`: its set,
+// transform and sampler state from group 2's word for those bindings
+// (material_more_map_*), which only these samples read; material_map_uv's
+// and material_map_sample's twin for them.
+fn material_more_map_sample(map:texture_2d<f32>,slot:u32,uv:vec2<f32>,uv1:vec2<f32>,bias:f32)->vec4<f32> {
+ let word=material_bindings.more_maps;
+ var coordinates=uv;
+ if material_uv1_enabled && material_more_map_on_uv1(word,slot) {
+  coordinates=uv1;
+ }
+ if material_transforms_enabled && material_more_map_transformed(word,slot) {
+  coordinates=map_uv_transform(material_bindings.map_uvs[slot],coordinates);
+ }
+ if (material_shader_sampled_maps&(1u<<slot))!=0u {
+  return material_sample_in_shader(map,coordinates,bias,material_more_map_sampler(word,slot));
+ }
+ return textureSampleBias(map,tex_sampler,coordinates,bias);
+}

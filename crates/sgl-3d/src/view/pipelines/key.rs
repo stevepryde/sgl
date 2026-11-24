@@ -103,6 +103,14 @@ pub(crate) struct LitConstants {
     /// specialises its forward pipelines on `use_light_projector` (for each
     /// drawn element a projector reaches, where this follows the scene).
     pub light_cookies: bool,
+    /// An occlusion map of its own and the specular and specular colour
+    /// maps at ray hits (`occlusion_specular_maps_enabled`, declared in
+    /// surface.wgsl and read in surface_ray.wgsl), sampled only while a
+    /// material has one in effect,
+    /// so a scene without them traces what it did before they existed.
+    /// Raster takes them by material (`Variant::occlusion_specular`), so
+    /// the geometry pipelines' keys leave this out.
+    pub occlusion_specular: bool,
 }
 
 impl LitConstants {
@@ -115,10 +123,11 @@ impl LitConstants {
             sheens: scene.materials.holds_sheens(),
             diffuse_transmission: scene.materials.holds_diffuse_transmission(),
             light_cookies: scene.lights.holds_cookie(),
+            occlusion_specular: scene.materials.holds_occlusion_specular(),
         }
     }
 
-    pub fn constants(self) -> [(&'static str, f64); 6] {
+    pub fn constants(self) -> [(&'static str, f64); 7] {
         [
             ("rect_lights_enabled", f64::from(u8::from(self.rect_lights))),
             ("decals_enabled", f64::from(u8::from(self.decals))),
@@ -131,6 +140,10 @@ impl LitConstants {
             (
                 "light_cookies_enabled",
                 f64::from(u8::from(self.light_cookies)),
+            ),
+            (
+                "occlusion_specular_maps_enabled",
+                f64::from(u8::from(self.occlusion_specular)),
             ),
         ]
     }
@@ -176,12 +189,35 @@ impl PipelineKey {
         // The map bindings the pass's programs sample: none for a caster of
         // an opaque material, the base map alone for a masked material's
         // caster without a shader (material_base_color), else every one.
-        let sampled: u16 = if !samples_maps(pass, variant.alpha) {
+        let sampled: u32 = if !samples_maps(pass, variant.alpha) {
             0
         } else if pass.caster() && shader.is_none() {
             1 << group2::map_slot(group2::BASE_MAP)
         } else {
-            u16::MAX
+            u32::MAX
+        };
+        // Whether the pass's programs read the occlusion and specular maps:
+        // every pass that samples every map but those whose outputs take
+        // neither occlusion nor F0 (the receivers' traced lobe, which takes
+        // only the G-buffer's lit bit of them, the temporal composition's
+        // coverage and the anisotropy target), unless a game's shader, which
+        // may read them for coverage, runs there; never the volume layers,
+        // which evaluate no material. Where they are not read, their
+        // bindings are no binding the pass samples, so they key none of its
+        // variants.
+        let reads_occlusion_specular = sampled == u32::MAX
+            && !pass.volume()
+            && (shader.is_some()
+                || !matches!(
+                    pass,
+                    GeometryPass::Receivers
+                        | GeometryPass::TemporalComposition { .. }
+                        | GeometryPass::GBufferAnisotropy
+                ));
+        let sampled = if reads_occlusion_specular {
+            sampled
+        } else {
+            sampled & !occlusion_specular_slots()
         };
         Self {
             pass,
@@ -204,6 +240,7 @@ impl PipelineKey {
                 } else {
                     0
                 },
+                occlusion_specular: variant.occlusion_specular && reads_occlusion_specular,
                 cull: if pass.volume() {
                     Cull::None
                 } else {
@@ -221,7 +258,10 @@ impl PipelineKey {
             lit: if constant {
                 LitConstants::default()
             } else {
-                lit
+                LitConstants {
+                    occlusion_specular: false,
+                    ..lit
+                }
             },
             transmission: transmission && matches!(pass, GeometryPass::Blended { .. }),
         }
@@ -295,6 +335,19 @@ impl PipelineKey {
         }
         constants
     }
+}
+
+/// The map bindings of an occlusion map of its own and the specular and
+/// specular colour maps, a bit by `MAP_BINDINGS` index: those a program
+/// samples only with their sampling provider (`Variant::occlusion_specular`).
+fn occlusion_specular_slots() -> u32 {
+    [
+        group2::OCCLUSION_MAP,
+        group2::SPECULAR_MAP,
+        group2::SPECULAR_COLOR_MAP,
+    ]
+    .into_iter()
+    .fold(0, |bits, binding| bits | 1 << group2::map_slot(binding))
 }
 
 /// Whether `pass`'s programs sample a material of `alpha`'s maps

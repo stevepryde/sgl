@@ -88,16 +88,22 @@ impl Alpha {
 /// (`scene::materials::Material::map_uvs`), none for a material on its
 /// first UV set untransformed, which a pipeline's key reduces to whether a
 /// map its programs sample does (`material_uv1_enabled` and
-/// `material_transforms_enabled` in map_uv.wgsl, `PipelineKey::new`).
-/// Casters read whichever positions they are given and ignore `deformed`.
+/// `material_transforms_enabled` in map_uv.wgsl, `PipelineKey::new`); and
+/// whether it samples an occlusion map of its own or a specular or specular
+/// colour map (`occlusion_specular`), whose pipelines alone are created
+/// from programs that compose those maps' sampling provider
+/// (`shading::occlusion_specular_provider`), so a material without them
+/// draws with the programs it always did. Casters read whichever positions they are given and ignore
+/// `deformed`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Variant {
     pub cull: Cull,
     pub alpha: Alpha,
     pub deformed: bool,
-    pub shader_sampled: u16,
-    pub uv1: u16,
-    pub transformed: u16,
+    pub shader_sampled: u32,
+    pub uv1: u32,
+    pub transformed: u32,
+    pub occlusion_specular: bool,
 }
 
 impl Variant {
@@ -107,10 +113,15 @@ impl Variant {
 
     /// Its index among those variants, for a draw's lookup table; none
     /// where a map of it samples in the shader, the second UV set or
-    /// through a transform.
+    /// through a transform, or it samples occlusion or specular maps of
+    /// their own.
     pub fn index(self) -> Option<usize> {
-        (self.shader_sampled == 0 && self.uv1 == 0 && self.transformed == 0).then(|| {
-            (usize::from(self.deformed) * 3 + self.cull as usize) * 3 + self.alpha as usize
-        })
+        (self.shader_sampled == 0
+            && self.uv1 == 0
+            && self.transformed == 0
+            && !self.occlusion_specular)
+            .then(|| {
+                (usize::from(self.deformed) * 3 + self.cull as usize) * 3 + self.alpha as usize
+            })
     }
 }

@@ -64,8 +64,8 @@ impl MapUv {
 /// first set untransformed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct MapUvs {
-    uv1: u16,
-    transformed: u16,
+    uv1: u32,
+    transformed: u32,
     rows: [MapUv; MAP_BINDINGS.len()],
 }
 
@@ -89,20 +89,22 @@ impl MapUvs {
 
     /// A bit, by `MAP_BINDINGS` index, for each map binding that samples
     /// the second UV set (`Variant::uv1`).
-    pub fn uv1(&self) -> u16 {
+    pub fn uv1(&self) -> u32 {
         self.uv1
     }
 
     /// A bit, by `MAP_BINDINGS` index, for each map binding whose transform
     /// is not the identity (`Variant::transformed`).
-    pub fn transformed(&self) -> u16 {
+    pub fn transformed(&self) -> u32 {
         self.transformed
     }
 
-    /// The record's `map_uv_bits`: `uv1` in its low half and `transformed`
-    /// in its high half.
+    /// The record's `map_uv_bits`: the first sixteen bindings' `uv1` bits
+    /// in its low half and `transformed` bits in its high half (the rest are
+    /// `shading::material::more_maps`').
     pub fn bits(&self) -> u32 {
-        u32::from(self.uv1) | u32::from(self.transformed) << TRANSFORMED_SHIFT
+        let half = (1 << TRANSFORMED_SHIFT) - 1;
+        self.uv1 & half | (self.transformed & half) << TRANSFORMED_SHIFT
     }
 
     /// Each binding's transform, the identity for one without.
@@ -123,8 +125,12 @@ impl Default for MapUvs {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct MaterialBindings {
-    /// Whether lightmap charts light it, in its first word.
-    pub baked: [u32; 4],
+    /// Whether lightmap charts light it.
+    pub baked: u32,
+    /// The map bindings past the record's sixteen
+    /// (`shading::material::more_maps`).
+    pub more_maps: u32,
+    pub padding: [u32; 2],
     pub map_uvs: [MapUv; MAP_BINDINGS.len()],
 }
 
@@ -132,9 +138,19 @@ pub(crate) struct MaterialBindings {
 #[cfg(test)]
 pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
     use crate::shading::layout_tests::Constant;
+    use crate::shading::material;
     [
         ("MAP_UV_TRANSFORMED_SHIFT", TRANSFORMED_SHIFT),
         ("MATERIAL_SLOTS", MAP_BINDINGS.len() as u32),
+        ("MATERIAL_FIRST_MORE_SLOT", material::FIRST_MORE_SLOT as u32),
+        (
+            "MATERIAL_MORE_MAPS_TRANSFORMED_SHIFT",
+            material::MORE_MAPS_TRANSFORMED_SHIFT,
+        ),
+        (
+            "MATERIAL_MORE_MAPS_SAMPLER_SHIFT",
+            material::MORE_MAPS_SAMPLER_SHIFT,
+        ),
     ]
     .map(|(name, value)| Constant::new("geometry", name, naga::Literal::U32(value)))
     .into()
@@ -150,7 +166,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
             "geometry",
             "MaterialBindings",
             MaterialBindings,
-            [baked, map_uvs]
+            [baked, more_maps, map_uvs]
         ),
     ]
 }
@@ -240,9 +256,13 @@ mod tests {
         maps[2] = map(UvSet::Uv1, UvTransform::IDENTITY);
         maps[3] = map(UvSet::Uv0, scaled);
         maps[5] = map(UvSet::Uv1, scaled);
+        // Past the sixteenth, which the record's word does not hold.
+        maps[18] = map(UvSet::Uv1, scaled);
         let uvs = MapUvs::new(maps);
-        assert_eq!(uvs.uv1(), 0b10_0100);
-        assert_eq!(uvs.transformed(), 0b10_1000);
+        let high = 1 << 18;
+        assert_eq!(uvs.uv1(), 0b10_0100 | high);
+        assert_eq!(uvs.transformed(), 0b10_1000 | high);
+        // The record's word holds the first sixteen bindings' alone.
         assert_eq!(uvs.bits(), 0b10_0100 | 0b10_1000 << 16);
         assert_eq!(uvs.rows()[3].u, [2., 0., 0.]);
         // An untransformed binding's rows are the identity's: u' = u, v' = v.

@@ -94,6 +94,8 @@ fn plane_asset(has_normal_map: bool, stretched: bool) -> Asset {
             ior: 1.5,
             specular: 1.,
             specular_color: [1.; 3],
+            specular_texture: None,
+            specular_color_texture: None,
             clearcoat: 0.,
             coat_roughness: 0.,
             clearcoat_texture: None,

@@ -63,7 +63,8 @@ const SCENE_SECTION_PAIRED:u32=2147483648u;
 const SCENE_CHART_WORDS:u32=4u;
 // A material record's: its values (material.wgsl's Material, each member's
 // word, its maps' sampler states among them), then its textures' image words,
-// whether lightmap charts light it and each map binding's transform
+// whether lightmap charts light it, the word of its map bindings past the
+// record's sixteen (material_more_map_*) and each map binding's transform
 // (map_uv.wgsl's MapUv, SCENE_MAP_UV_WORDS each, its rows' words).
 const SCENE_MATERIAL_BASE:u32=0u;
 const SCENE_MATERIAL_EMISSION:u32=4u;
@@ -100,8 +101,9 @@ const SCENE_MATERIAL_DIFFUSE_TRANSMISSION_COLOR:u32=52u;
 const SCENE_MATERIAL_DIFFUSE_TRANSMISSION:u32=55u;
 const SCENE_MATERIAL_MAP_SAMPLERS:u32=56u;
 const SCENE_MATERIAL_TEXTURES:u32=60u;
-const SCENE_MATERIAL_BAKED:u32=76u;
-const SCENE_MATERIAL_MAP_UVS:u32=77u;
+const SCENE_MATERIAL_BAKED:u32=79u;
+const SCENE_MATERIAL_MORE_MAPS:u32=80u;
+const SCENE_MATERIAL_MAP_UVS:u32=81u;
 const SCENE_MAP_UV_WORDS:u32=8u;
 const SCENE_MAP_UV_U:u32=0u;
 const SCENE_MAP_UV_V:u32=4u;
@@ -111,7 +113,10 @@ const SCENE_NORMAL_LAYER_WORDS:u32=4u;
 const SCENE_NORMAL_LAYER_CYCLES:u32=0u;
 const SCENE_NORMAL_LAYER_SCALE:u32=2u;
 const SCENE_NORMAL_LAYER_STRENGTH:u32=3u;
-// Each texture's index in `SceneMaterial::textures`, and their count.
+// Each texture's index in the record's texture words: the first
+// SCENE_TEXTURES, which `SceneMaterial::textures` holds for every hit, then
+// the occlusion and specular maps', which a hit reads only where the
+// record's bit says the map is in effect (scene_material_texture).
 const SCENE_TEXTURES:u32=16u;
 const SCENE_TEXTURE_BASE:u32=0u;
 const SCENE_TEXTURE_METALLIC_ROUGHNESS:u32=1u;
@@ -129,3 +134,6 @@ const SCENE_TEXTURE_SHEEN_ROUGHNESS:u32=12u;
 const SCENE_TEXTURE_DIFFUSE_TRANSMISSION:u32=13u;
 const SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR:u32=14u;
 const SCENE_TEXTURE_THICKNESS:u32=15u;
+const SCENE_TEXTURE_OCCLUSION:u32=16u;
+const SCENE_TEXTURE_SPECULAR:u32=17u;
+const SCENE_TEXTURE_SPECULAR_COLOR:u32=18u;

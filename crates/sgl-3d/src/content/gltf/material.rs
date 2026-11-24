@@ -58,7 +58,7 @@ pub(super) fn read_material(
     let transmission = read_transmission(&material, document)?;
     let volume = read_volume(&material, document)?;
     let dispersion = read_dispersion(&material)?;
-    let (specular, specular_color) = read_specular(&material, index, ignored)?;
+    let specular = read_specular(&material, document)?;
     let pbr = material.pbr_metallic_roughness();
     // A core textureInfo `what` as a map: its texture, the UV set it names
     // and its KHR_texture_transform.
@@ -74,7 +74,7 @@ pub(super) fn read_material(
         .metallic_roughness_texture()
         .map(|info| texture_slot(info, "metallicRoughnessTexture"))
         .transpose()?;
-    let occlusion = read_occlusion(&material, mr_texture, index, ignored)?;
+    let occlusion = read_occlusion(&material, index, ignored)?;
     let normal_texture = material
         .normal_texture()
         .map(|info| {
@@ -138,8 +138,10 @@ pub(super) fn read_material(
         metallic: pbr.metallic_factor(),
         roughness: pbr.roughness_factor(),
         ior,
-        specular,
-        specular_color,
+        specular: specular.factor,
+        specular_color: specular.color,
+        specular_texture: specular.texture,
+        specular_color_texture: specular.color_texture,
         clearcoat: clearcoat.factor,
         coat_roughness: clearcoat.roughness,
         clearcoat_texture: clearcoat.texture,
@@ -417,14 +419,12 @@ struct Occlusion {
     strength: f32,
 }
 
-/// Material `index`'s occlusion map, where its metallic-roughness map is
-/// `mr_slot`. SGL3D samples it where it is that map, its image through its
-/// sampler at its UV set and transform (ORM packing); a slot that differs
-/// in any of them is kept but listed in `ignored`, and a map on a UV set
-/// past the second, which SGL3D has no input for, is left out and listed.
+/// Material `index`'s occlusion map. A map on a UV set past the second,
+/// which SGL3D has no input for, is left out and listed in `ignored`: glTF
+/// lets a client leave occlusion out, where every other map on such a set
+/// fails the load.
 fn read_occlusion(
     material: &gltf::Material<'_>,
-    mr_slot: Option<MaterialTexture>,
     index: usize,
     ignored: &mut Vec<Ignored>,
 ) -> Result<Occlusion> {
@@ -453,7 +453,7 @@ fn read_occlusion(
     } else {
         None
     };
-    if texture.is_none() || texture != mr_slot {
+    if texture.is_none() {
         ignored.push(Ignored::OcclusionMap { material: index });
     }
     Ok(Occlusion { texture, strength })
@@ -476,16 +476,26 @@ fn read_ior(material: &gltf::Material<'_>) -> Result<f32> {
     }
 }
 
-// Authority: Khronos glTF KHR_materials_specular/README.md: specularFactor
-// in 0..1, default 1; specularColorFactor linear RGB, nonnegative, default
-// white. Its textures are listed in `ignored`.
-fn read_specular(
-    material: &gltf::Material<'_>,
-    index: usize,
-    ignored: &mut Vec<Ignored>,
-) -> Result<(f32, [f32; 3])> {
+/// A material's specular strength and colour (KHR_materials_specular).
+struct Specular {
+    factor: f32,
+    color: [f32; 3],
+    texture: Option<MaterialTexture>,
+    color_texture: Option<MaterialTexture>,
+}
+
+// Authority: Khronos glTF 5b00b91, KHR_materials_specular/README.md and
+// schema: specularFactor in 0..1, default 1; specularColorFactor linear
+// RGB, nonnegative, default white; specularTexture (its alpha) and
+// specularColorTexture (its RGB, sRGB), each multiplying its factor.
+fn read_specular(material: &gltf::Material<'_>, document: &gltf::Document) -> Result<Specular> {
     let Some(value) = material.extension_value("KHR_materials_specular") else {
-        return Ok((1., [1.; 3]));
+        return Ok(Specular {
+            factor: 1.,
+            color: [1.; 3],
+            texture: None,
+            color_texture: None,
+        });
     };
     let name = material.name().unwrap_or("unnamed/default");
     let error = |message: &str| format!("material {name}: specular {message}");
@@ -511,10 +521,12 @@ fn read_specular(
             })
             .ok_or_else(|| error("specularColorFactor must be three finite nonnegative numbers"))?,
     };
-    if value.get("specularTexture").is_some() || value.get("specularColorTexture").is_some() {
-        ignored.push(Ignored::SpecularMap { material: index });
-    }
-    Ok((factor as f32, color))
+    Ok(Specular {
+        factor: factor as f32,
+        color,
+        texture: extension_texture(value, "specularTexture", document, &error)?,
+        color_texture: extension_texture(value, "specularColorTexture", document, &error)?,
+    })
 }
 
 /// The number `key` in `range`, `default` when absent.

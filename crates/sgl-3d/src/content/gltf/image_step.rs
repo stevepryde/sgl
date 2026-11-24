@@ -106,21 +106,12 @@ pub(super) fn read_images(
         .collect()
 }
 
-/// The images `material`'s maps sample: every one it names but an occlusion
-/// map's outside its metallic-roughness image, which SGL3D does not sample.
+/// The images `material`'s maps sample: every one it names.
 fn sampled_images(material: &Material) -> Vec<usize> {
-    let mut images: Vec<usize> = material
+    material
         .textures()
         .into_iter()
         .flatten()
         .map(|texture| texture.image)
-        .collect();
-    if let Some(occlusion) = material
-        .occlusion_texture
-        .filter(|_| !material.packed_occlusion())
-        && let Some(slot) = images.iter().position(|&image| image == occlusion.image)
-    {
-        images.swap_remove(slot);
-    }
-    images
+        .collect()
 }

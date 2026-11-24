@@ -151,6 +151,7 @@ fn draws_merge_only_with_the_same_ranges() {
         variant: Variant {
             uv1: 0,
             transformed: 0,
+            occlusion_specular: false,
             cull: Cull::Back,
             alpha: Alpha::Opaque,
             deformed: false,
@@ -218,6 +219,7 @@ fn draws_merge_only_with_the_same_mobility() {
         variant: Variant {
             uv1: 0,
             transformed: 0,
+            occlusion_specular: false,
             cull: Cull::Back,
             alpha: Alpha::Opaque,
             deformed: false,

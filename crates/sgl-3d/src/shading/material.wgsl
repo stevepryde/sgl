@@ -28,10 +28,12 @@ struct Material {
  alpha_cutoff:f32,
  visibility_group:u32,
  flags:u32,
- // glTF's occlusionTexture.strength, with MATERIAL_MAP_OCCLUSION.
+ // glTF's occlusionTexture.strength, with MATERIAL_MAP_PACKED_OCCLUSION or
+ // MATERIAL_MAP_OCCLUSION (material_occlusion).
  occlusion_strength:f32,
- // KHR_materials_ior's F0 times KHR_materials_specular's specular colour,
- // and its specular strength (material_dielectric_f0).
+ // KHR_materials_ior's F0 times KHR_materials_specular's specular colour
+ // factor, and its specular strength factor (material_specular,
+ // material_dielectric_f0).
  specular_f0:vec3<f32>,
  specular:f32,
  normal_layers:array<NormalLayer,2>,
@@ -43,9 +45,11 @@ struct Material {
  iridescence:f32,
  iridescence_ior:f32,
  iridescence_thickness:vec2<f32>,
- // Where its map bindings sample (map_uv.wgsl): a bit, by MATERIAL_SLOT_*,
- // for each on the second UV set, and from MAP_UV_TRANSFORMED_SHIFT for
- // each whose transform is not the identity.
+ // Where its first sixteen map bindings sample (map_uv.wgsl): a bit, by
+ // MATERIAL_SLOT_*, for each on the second UV set, and from
+ // MAP_UV_TRANSFORMED_SHIFT for each whose transform is not the identity;
+ // the rest are in the word of the map bindings past them
+ // (material_more_map_*).
  map_uv_bits:u32,
  // KHR_materials_volume's Beer-Lambert attenuation coefficient per metre on
  // each channel, -ln(attenuation colour) / attenuation distance, finite
@@ -68,8 +72,9 @@ struct Material {
  // the base diffuses that it passes to its other side (0 none).
  diffuse_transmission_color:vec3<f32>,
  diffuse_transmission:f32,
- // Each map binding's sampler state (sampler_state.wgsl), a byte by
- // MATERIAL_SLOT_*, four to a word (material_map_sampler).
+ // The first sixteen map bindings' sampler states (sampler_state.wgsl), a
+ // byte by MATERIAL_SLOT_*, four to a word (material_map_sampler); the rest
+ // are in the word of the map bindings past them.
  map_samplers:vec4<u32>,
 }
 const MATERIAL_UNLIT:u32=1u;
@@ -94,14 +99,17 @@ const MATERIAL_KEEPS_SPECULAR:u32=1024u;
 const MATERIAL_TRANSMISSIVE:u32=2048u;
 // Its maps in effect (shading::bind::group2::MaterialMap::bit): those it
 // was added with whose binding the device binds, a bump map only without a
-// normal map, and an occlusion map in the red channel of its
-// metallic-roughness map (ORM packing). A map whose white texel is not its
-// neutral (the normal, bump and clearcoat normal maps, the anisotropy
-// direction) is read only with its bit, on the raster and ray paths alike;
-// every other map's white texel leaves its factor alone.
+// normal map, and an occlusion map either in the red channel of its
+// metallic-roughness map (ORM packing, MATERIAL_MAP_PACKED_OCCLUSION) or
+// in its own binding (MATERIAL_MAP_OCCLUSION). A map whose white texel is
+// not its neutral (the normal, bump and clearcoat normal maps, the
+// anisotropy direction) is read only with its bit, on the raster and ray
+// paths alike; every other map's white texel leaves its factor alone, and
+// the occlusion and specular maps are sampled only with their bits, so a
+// material without them takes no sample for them.
 const MATERIAL_MAP_BASE:u32=1u;
 const MATERIAL_MAP_METALLIC_ROUGHNESS:u32=2u;
-const MATERIAL_MAP_OCCLUSION:u32=4u;
+const MATERIAL_MAP_PACKED_OCCLUSION:u32=4u;
 const MATERIAL_MAP_EMISSION:u32=8u;
 const MATERIAL_MAP_NORMAL:u32=16u;
 const MATERIAL_MAP_BUMP:u32=32u;
@@ -117,6 +125,9 @@ const MATERIAL_MAP_SHEEN_COLOR:u32=16384u;
 const MATERIAL_MAP_SHEEN_ROUGHNESS:u32=32768u;
 const MATERIAL_MAP_DIFFUSE_TRANSMISSION:u32=65536u;
 const MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR:u32=131072u;
+const MATERIAL_MAP_OCCLUSION:u32=262144u;
+const MATERIAL_MAP_SPECULAR:u32=524288u;
+const MATERIAL_MAP_SPECULAR_COLOR:u32=1048576u;
 // Each map binding's slot: its index in shading::bind::group2::MAP_BINDINGS,
 // which names its byte of map_samplers, its bits of map_uv_bits and its bit
 // of material_shader_sampled_maps (material_sampling.wgsl). The
@@ -138,21 +149,49 @@ const MATERIAL_SLOT_SHEEN_COLOR:u32=12u;
 const MATERIAL_SLOT_SHEEN_ROUGHNESS:u32=13u;
 const MATERIAL_SLOT_DIFFUSE_TRANSMISSION:u32=14u;
 const MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR:u32=15u;
+const MATERIAL_SLOT_OCCLUSION:u32=16u;
+const MATERIAL_SLOT_SPECULAR:u32=17u;
+const MATERIAL_SLOT_SPECULAR_COLOR:u32=18u;
 // How many map bindings there are.
-const MATERIAL_SLOTS:u32=16u;
-// Map binding `slot`'s sampler state in a record's map_samplers.
+const MATERIAL_SLOTS:u32=19u;
+// Map binding `slot`'s sampler state in a record's map_samplers, one of its
+// first sixteen.
 fn material_map_sampler(samplers:vec4<u32>,slot:u32)->u32 {
  return (samplers[slot/4u]>>(8u*(slot%4u)))&255u;
 }
+// The word of the map bindings past the record's sixteen, from
+// MATERIAL_FIRST_MORE_SLOT (an occlusion map of its own and the specular
+// maps): for each a bit for the second UV set, one from
+// MATERIAL_MORE_MAPS_TRANSFORMED_SHIFT for a transform and its sampler
+// state's byte from MATERIAL_MORE_MAPS_SAMPLER_SHIFT. Rust owner:
+// shading::material::more_maps. Group 2's material_bindings.more_maps and
+// the ray record's word after baked hold it, which only those maps' samples
+// read, so the record is what it was before them.
+const MATERIAL_FIRST_MORE_SLOT:u32=16u;
+const MATERIAL_MORE_MAPS_TRANSFORMED_SHIFT:u32=3u;
+const MATERIAL_MORE_MAPS_SAMPLER_SHIFT:u32=8u;
+fn material_more_map_on_uv1(word:u32,slot:u32)->bool {
+ return ((word>>(slot-MATERIAL_FIRST_MORE_SLOT))&1u)!=0u;
+}
+fn material_more_map_transformed(word:u32,slot:u32)->bool {
+ return ((word>>(slot-MATERIAL_FIRST_MORE_SLOT+MATERIAL_MORE_MAPS_TRANSFORMED_SHIFT))&1u)!=0u;
+}
+fn material_more_map_sampler(word:u32,slot:u32)->u32 {
+ return (word>>(MATERIAL_MORE_MAPS_SAMPLER_SHIFT+8u*(slot-MATERIAL_FIRST_MORE_SLOT)))&255u;
+}
 // The share of ambient light that reaches a texel of material `m` whose
-// metallic-roughness map reads `mr`: with MATERIAL_MAP_OCCLUSION its red
-// channel at occlusion_strength, as glTF 2.0 applies occlusionTexture
-// (lerp(1, occlusion, strength)); else all of it.
-fn material_occlusion(m:Material,mr:vec4<f32>)->f32 {
- if (m.maps&MATERIAL_MAP_OCCLUSION)==0u {
+// occlusion map reads `texel`: with MATERIAL_MAP_PACKED_OCCLUSION or
+// MATERIAL_MAP_OCCLUSION its red channel at occlusion_strength, as glTF 2.0
+// (3.9.3) defines it, 1 + strength * (texel - 1); else all of it. The
+// caller passes the metallic-roughness map's texel where the occlusion is
+// packed there, as it does where the material has no occlusion map of its
+// own, and the occlusion map's own texel where it has one, so packed and
+// absent occlusion take one test and no sample.
+fn material_occlusion(m:Material,texel:vec4<f32>)->f32 {
+ if (m.maps&(MATERIAL_MAP_PACKED_OCCLUSION|MATERIAL_MAP_OCCLUSION))==0u {
   return 1.;
  }
- return mix(1.,mr.r,m.occlusion_strength);
+ return mix(1.,texel.r,m.occlusion_strength);
 }
 // Material `m`'s transmission and its volume's thickness at texels
 // `transmission` and `thickness` of its transmission and thickness maps:
@@ -167,12 +206,24 @@ fn material_transmission(m:Material,transmission:vec4<f32>)->f32 {
 fn material_thickness(m:Material,thickness:vec4<f32>)->f32 {
  return m.thickness*thickness.g;
 }
-// Material `m`'s dielectric reflectance at normal incidence: the IOR's F0
-// tinted by its specular colour, at most 1, times its specular strength, as
-// KHR_materials_specular defines it and three.js 0.185.1 takes it
-// (MeshPhysicalNodeMaterial.setupSpecular's specularColor).
-fn material_dielectric_f0(m:Material)->vec3<f32> {
- return min(m.specular_f0,vec3(1.))*m.specular;
+// Material `m`'s specular strength at a texel whose specular map reads
+// `texel` (white without one): its factor times the alpha channel, as
+// KHR_materials_specular defines specularTexture and three.js r187 reads it
+// (MaterialNode.SPECULAR_INTENSITY). The dielectric's F90, and the scale of
+// its F0 (material_dielectric_f0).
+fn material_specular(m:Material,texel:vec4<f32>)->f32 {
+ return m.specular*texel.a;
+}
+// Material `m`'s dielectric reflectance at normal incidence at a texel
+// whose specular colour map reads `color` (white without one; its RGB
+// decoded from sRGB) and whose specular strength is `specular`
+// (material_specular): the IOR's F0 times the colour factor and the map's
+// RGB, at most 1, times the strength, as KHR_materials_specular defines it
+// (min(f0_ior * specularColor, 1) * specular) and three.js r187 takes it
+// (MeshPhysicalNodeMaterial.setupSpecular). Metallic mixes it toward the
+// base, so a metal takes none of it (surface_f0).
+fn material_dielectric_f0(m:Material,color:vec4<f32>,specular:f32)->vec3<f32> {
+ return min(m.specular_f0*color.rgb,vec3(1.))*specular;
 }
 // The reflectance at normal incidence of a dielectric of index of
 // refraction `ior` seen from air, ((ior − 1) / (ior + 1))², 1 for the
@@ -185,17 +236,18 @@ fn material_ior_f0(ior:f32)->f32 {
  return r*r;
 }
 // Material `m`'s dielectric reflectance at normal incidence
-// (material_dielectric_f0) at the IOR `ior` and specular strength
-// `specular` its shader gives a fragment (shader_contract.wgsl's
-// MaterialSurface): the record's at its own IOR, else its specular colour's
-// tint of its IOR's F0 at `ior`, untinted where its IOR reflects nothing.
-fn material_surface_f0(m:Material,ior:f32,specular:f32)->vec3<f32> {
+// (material_dielectric_f0) at a texel whose specular colour map reads
+// `color`, at the IOR `ior` and specular strength `specular` its shader
+// gives a fragment (shader_contract.wgsl's MaterialSurface): the record's at
+// its own IOR, else its specular colour's tint of its IOR's F0 at `ior`,
+// untinted where its IOR reflects nothing, times the map's RGB.
+fn material_surface_f0(m:Material,color:vec4<f32>,ior:f32,specular:f32)->vec3<f32> {
  if ior==m.ior {
-  return min(m.specular_f0,vec3(1.))*specular;
+  return material_dielectric_f0(m,color,specular);
  }
  let recorded=material_ior_f0(m.ior);
  let tint=select(vec3(1.),m.specular_f0/max(recorded,1e-6),recorded>0.);
- return min(tint*material_ior_f0(ior),vec3(1.))*specular;
+ return min(tint*color.rgb*material_ior_f0(ior),vec3(1.))*specular;
 }
 // The tangent-space normal of material `m`'s normal map texel `texel`: its X
 // and Y scaled by normal_scale, as glTF's normalTexture.scale scales them.

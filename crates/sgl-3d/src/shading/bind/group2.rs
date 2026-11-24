@@ -31,13 +31,20 @@ pub(crate) const DIFFUSE_TRANSMISSION_COLOR_MAP: u32 = 19;
 /// vertex and fragment stages read.
 pub(crate) const SHADER_PARAMS: u32 = 20;
 pub(crate) const PREVIOUS_SHADER_PARAMS: u32 = 21;
+/// An occlusion map in its own binding, not the metallic-roughness map's
+/// red channel (glTF's `occlusionTexture`, red), and
+/// `KHR_materials_specular`'s specular map (alpha) and specular colour map
+/// (RGB).
+pub(crate) const OCCLUSION_MAP: u32 = 22;
+pub(crate) const SPECULAR_MAP: u32 = 23;
+pub(crate) const SPECULAR_COLOR_MAP: u32 = 24;
 
 /// Which bindings SGL3D binds on a device, by its sampled textures per
 /// shader stage: `Basic` from S3D-1's floor up to 47, where the bindings
 /// of `Extended` alone (lit group 0's directionality and dynamic GI probes,
-/// the anisotropy, clearcoat, iridescence, transmission, thickness, sheen
-/// and diffuse transmission maps, and the transparent stage's copy of the
-/// frame) give way to their
+/// the anisotropy, clearcoat, iridescence, transmission, thickness, sheen,
+/// diffuse transmission and specular maps, an occlusion map in its own
+/// image, and the transparent stage's copy of the frame) give way to their
 /// fallbacks, and `Extended` from 48, with every binding. A device's tier
 /// is fixed;
 /// `Renderer::binding_tier` reports it.
@@ -73,7 +80,7 @@ pub(crate) struct MapBinding {
 }
 
 /// Group 2's map bindings: the one declaration of each one's tier.
-pub(crate) const MAP_BINDINGS: [MapBinding; 16] = [
+pub(crate) const MAP_BINDINGS: [MapBinding; 19] = [
     MapBinding {
         binding: BASE_MAP,
         colour: true,
@@ -154,6 +161,21 @@ pub(crate) const MAP_BINDINGS: [MapBinding; 16] = [
         colour: true,
         tier: BindingTier::Extended,
     },
+    MapBinding {
+        binding: OCCLUSION_MAP,
+        colour: false,
+        tier: BindingTier::Extended,
+    },
+    MapBinding {
+        binding: SPECULAR_MAP,
+        colour: false,
+        tier: BindingTier::Extended,
+    },
+    MapBinding {
+        binding: SPECULAR_COLOR_MAP,
+        colour: true,
+        tier: BindingTier::Extended,
+    },
 ];
 
 /// Map binding `binding`'s slot: its index in `MAP_BINDINGS`, by which the
@@ -178,9 +200,10 @@ pub(crate) fn map_bindings(tier: BindingTier) -> impl Iterator<Item = &'static M
 pub(crate) enum MaterialMap {
     Base,
     MetallicRoughness,
-    /// An occlusion map in the red channel of the metallic-roughness map's
-    /// image (ORM packing), the one place SGL3D samples occlusion from.
-    Occlusion,
+    /// An occlusion map that is the metallic-roughness map (ORM packing:
+    /// its image's red channel, sampled the same way at the same
+    /// coordinates), read from that map's sample.
+    PackedOcclusion,
     Emission,
     Normal,
     Bump,
@@ -198,13 +221,19 @@ pub(crate) enum MaterialMap {
     SheenRoughness,
     DiffuseTransmission,
     DiffuseTransmissionColor,
+    /// Any other occlusion map, in its own binding, its red channel.
+    Occlusion,
+    /// KHR_materials_specular's specular map, in its alpha channel.
+    Specular,
+    /// KHR_materials_specular's specular colour map, in its RGB.
+    SpecularColor,
 }
 
 impl MaterialMap {
-    pub(crate) const ALL: [Self; 18] = [
+    pub(crate) const ALL: [Self; 21] = [
         Self::Base,
         Self::MetallicRoughness,
-        Self::Occlusion,
+        Self::PackedOcclusion,
         Self::Emission,
         Self::Normal,
         Self::Bump,
@@ -220,13 +249,16 @@ impl MaterialMap {
         Self::SheenRoughness,
         Self::DiffuseTransmission,
         Self::DiffuseTransmissionColor,
+        Self::Occlusion,
+        Self::Specular,
+        Self::SpecularColor,
     ];
 
     /// The map binding it fills.
     pub(crate) fn binding(self) -> &'static MapBinding {
         let number = match self {
             Self::Base => BASE_MAP,
-            Self::MetallicRoughness | Self::Occlusion => MR_MAP,
+            Self::MetallicRoughness | Self::PackedOcclusion => MR_MAP,
             Self::Emission => EMISSION_MAP,
             Self::Normal | Self::Bump => RELIEF_MAP,
             Self::Anisotropy => ANISOTROPY_MAP,
@@ -241,6 +273,9 @@ impl MaterialMap {
             Self::SheenRoughness => SHEEN_ROUGHNESS_MAP,
             Self::DiffuseTransmission => DIFFUSE_TRANSMISSION_MAP,
             Self::DiffuseTransmissionColor => DIFFUSE_TRANSMISSION_COLOR_MAP,
+            Self::Occlusion => OCCLUSION_MAP,
+            Self::Specular => SPECULAR_MAP,
+            Self::SpecularColor => SPECULAR_COLOR_MAP,
         };
         MAP_BINDINGS
             .iter()

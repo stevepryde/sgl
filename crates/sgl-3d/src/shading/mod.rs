@@ -38,7 +38,9 @@ mod micro_shadow_tests;
 pub(crate) mod motion_tiles;
 pub(crate) mod pmrem_filter;
 pub(crate) mod tiers;
-pub(crate) use tiers::{lit_provider, material_provider, transmission_provider};
+pub(crate) use tiers::{
+    lit_provider, material_provider, occlusion_specular_provider, transmission_provider,
+};
 // Wired into the ray source and its readers with #135's prepared models.
 pub(crate) mod map_uvs;
 pub(crate) mod packed_vertex;

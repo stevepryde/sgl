@@ -33,7 +33,11 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
  s.geometry_normal=geometry_normal;
  s.base=vec4(decaled.base,m.base_color.a);
  s.metallic=decaled.metallic;
- s.dielectric_f0=material_surface_f0(material,m.ior,m.specular);
+ // The specular colour map's texel, from the program's occlusion and
+ // specular provider, as raster_material takes the specular map's, whose
+ // strength is the material surface's.
+ let specular_color=material_specular_color_texel(i.uv,i.uv1);
+ s.dielectric_f0=material_surface_f0(material,specular_color,m.ior,m.specular);
  s.specular=m.specular;
  s.roughness=surface_roughness(decaled.roughness,n,i);
  // The coat's normal is the record's coat's, taken only where the record
@@ -76,7 +80,7 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
  s.unlit=unlit;
  s.front=front;
  s.moving=(objects[object].flags&OBJECT_STATIC)==0u;
- s.baked=material_bindings.baked.x!=0u;
+ s.baked=material_bindings.baked!=0u;
  s.uv=i.uv;
  s.lightmap_uv=i.lightmap_uv;
  s.lightmap_bounds=i.lightmap_bounds;

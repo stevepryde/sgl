@@ -124,6 +124,7 @@ pub(super) fn observe(device: &wgpu::Device, queue: &wgpu::Queue, probe: &Probe)
                     &shading::SHADOW_MASK_NONE,
                     &shading::CONTACT_SHADOW_NONE,
                     &shading::tiers::MATERIAL_MAPS_EXTENDED,
+                    &shading::tiers::MATERIAL_OCCLUSION_SPECULAR_NONE,
                     &shading::tiers::LIT_BASIC,
                     &shading::shader::SHADER_DEFAULT,
                     &shading::shader::SHADER_INPUTS_NONE,
@@ -251,7 +252,9 @@ struct FixtureVertex {
     let bindings = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("material bindings"),
         contents: bytemuck::bytes_of(&shading::map_uvs::MaterialBindings {
-            baked: [0; 4],
+            baked: 0,
+            more_maps: 0,
+            padding: [0; 2],
             map_uvs: *shading::map_uvs::MapUvs::default().rows(),
         }),
         usage: wgpu::BufferUsages::UNIFORM,

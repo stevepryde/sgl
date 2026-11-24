@@ -111,7 +111,7 @@ pub(crate) fn descriptor(sampler: &Sampler, anisotropy: u16) -> wgpu::SamplerDes
 pub(crate) struct MapSamplers {
     bound: Sampler,
     states: [Sampler; MAP_BINDINGS.len()],
-    shader_sampled: u16,
+    shader_sampled: u32,
 }
 
 impl MapSamplers {
@@ -154,17 +154,23 @@ impl MapSamplers {
     /// A bit, by `MAP_BINDINGS` index, for each map binding in a state
     /// other than the bound one, which raster samples in the shader
     /// (`Variant::shader_sampled`).
-    pub fn shader_sampled(&self) -> u16 {
+    pub fn shader_sampled(&self) -> u32 {
         self.shader_sampled
     }
 
-    /// The record's `map_samplers`: each binding's byte, four to a word.
+    /// The record's `map_samplers`: the first sixteen bindings' bytes,
+    /// four to a word (the rest are `shading::material::more_maps`').
     pub fn codes(&self) -> [u32; 4] {
         let mut words = [0; 4];
-        for (index, state) in self.states.iter().enumerate() {
+        for (index, state) in self.states.iter().take(16).enumerate() {
             words[index / 4] |= code(state) << (8 * (index % 4));
         }
         words
+    }
+
+    /// Binding `slot`'s byte.
+    pub fn state(&self, slot: usize) -> u32 {
+        code(&self.states[slot])
     }
 }
 
@@ -223,6 +229,9 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR",
             slot(DIFFUSE_TRANSMISSION_COLOR_MAP),
         ),
+        ("MATERIAL_SLOT_OCCLUSION", slot(OCCLUSION_MAP)),
+        ("MATERIAL_SLOT_SPECULAR", slot(SPECULAR_MAP)),
+        ("MATERIAL_SLOT_SPECULAR_COLOR", slot(SPECULAR_COLOR_MAP)),
     ]
     .map(|(name, value)| Constant::new("geometry", name, naga::Literal::U32(value)))
     .into()

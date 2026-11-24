@@ -102,8 +102,8 @@ fn programs() -> Vec<(&'static str, String)> {
     // contact provider (the contact mask's for the lighting pass while
     // contact shadows run, never with the shadow mask), each screen-space
     // indirect light provider (exactly one, the kept result's for the camera
-    // lighting while it has one), and each
-    // binding tier's material-map provider, and the caster program, each
+    // lighting while it has one), each binding tier's material-map provider
+    // and each occlusion and specular provider, and the caster program, each
     // with the default shader provider and with a game's module (a fixture
     // that reads every part of the contract), the blended draws' with its
     // scene depth on Extended.
@@ -127,65 +127,92 @@ fn programs() -> Vec<(&'static str, String)> {
         let shadow_mask = camera(ShadowMask, false);
         let contact = camera(ContactMask, false);
         programs.extend([
-            ("geometry", geometry_program(Plain, Extended, Default)),
-            ("geometry_basic", geometry_program(Plain, Basic, Default)),
+            (
+                "geometry",
+                geometry_program(Plain, Extended, Default, false),
+            ),
+            (
+                "geometry_basic",
+                geometry_program(Plain, Basic, Default, false),
+            ),
             (
                 "geometry_shadow_mask",
-                geometry_program(shadow_mask, Extended, Default),
+                geometry_program(shadow_mask, Extended, Default, false),
             ),
             (
                 "geometry_shadow_mask_basic",
-                geometry_program(shadow_mask, Basic, Default),
+                geometry_program(shadow_mask, Basic, Default, false),
             ),
             (
                 "geometry_screen_indirect",
-                geometry_program(camera(Maps, true), Extended, Default),
+                geometry_program(camera(Maps, true), Extended, Default, false),
             ),
             (
                 "geometry_screen_indirect_basic",
-                geometry_program(camera(Maps, true), Basic, Default),
+                geometry_program(camera(Maps, true), Basic, Default, false),
             ),
             (
                 "geometry_shadow_mask_screen_indirect_basic",
-                geometry_program(camera(ShadowMask, true), Basic, Default),
+                geometry_program(camera(ShadowMask, true), Basic, Default, false),
             ),
             (
                 "geometry_shader_screen_indirect",
-                geometry_program(camera(ShadowMask, true), Extended, game),
+                geometry_program(camera(ShadowMask, true), Extended, game, false),
             ),
             (
                 "geometry_contact_shadow_screen_indirect_basic",
-                geometry_program(camera(ContactMask, true), Basic, Default),
+                geometry_program(camera(ContactMask, true), Basic, Default, false),
             ),
             (
                 "geometry_contact_shadow",
-                geometry_program(contact, Extended, Default),
+                geometry_program(contact, Extended, Default, false),
             ),
             (
                 "geometry_contact_shadow_basic",
-                geometry_program(contact, Basic, Default),
+                geometry_program(contact, Basic, Default, false),
             ),
-            ("caster", caster_program(Extended, Default)),
-            ("caster_basic", caster_program(Basic, Default)),
-            ("geometry_shader", geometry_program(Plain, Extended, game)),
+            ("caster", caster_program(Extended, Default, false)),
+            ("caster_basic", caster_program(Basic, Default, false)),
+            (
+                "geometry_shader",
+                geometry_program(Plain, Extended, game, false),
+            ),
             (
                 "geometry_shader_basic",
-                geometry_program(Plain, Basic, game),
+                geometry_program(Plain, Basic, game, false),
             ),
             (
                 "geometry_shader_shadow_mask",
-                geometry_program(shadow_mask, Extended, game),
+                geometry_program(shadow_mask, Extended, game, false),
             ),
             (
                 "geometry_shader_contact_shadow",
-                geometry_program(contact, Extended, game),
+                geometry_program(contact, Extended, game, false),
             ),
             (
                 "geometry_shader_blended",
-                geometry_program(Blended, Extended, game),
+                geometry_program(Blended, Extended, game, false),
             ),
-            ("caster_shader", caster_program(Extended, game)),
-            ("caster_shader_basic", caster_program(Basic, game)),
+            ("caster_shader", caster_program(Extended, game, false)),
+            ("caster_shader_basic", caster_program(Basic, game, false)),
+            // With the occlusion and specular maps' sampling provider, which
+            // Extended alone composes.
+            (
+                "geometry_occlusion_specular",
+                geometry_program(Plain, Extended, Default, true),
+            ),
+            (
+                "geometry_occlusion_specular_shader",
+                geometry_program(camera(ShadowMask, true), Extended, game, true),
+            ),
+            (
+                "blended_occlusion_specular_shader",
+                geometry_program(Blended, Extended, game, true),
+            ),
+            (
+                "caster_occlusion_specular_shader",
+                caster_program(Extended, game, true),
+            ),
         ]);
     }
     // The tracing stages' programs on each path their rays take, with the
@@ -297,7 +324,11 @@ fn pipeline_entries() -> Vec<(&'static str, Vec<&'static str>)> {
             "geometry_contact_shadow_screen_indirect_basic",
             geometry.clone(),
         ),
-        ("geometry_shader_blended", geometry),
+        ("geometry_shader_blended", geometry.clone()),
+        ("geometry_occlusion_specular", geometry.clone()),
+        ("geometry_occlusion_specular_shader", geometry.clone()),
+        ("blended_occlusion_specular_shader", geometry),
+        ("caster_occlusion_specular_shader", caster.clone()),
         ("caster_shader", caster.clone()),
         ("caster_shader_basic", caster.clone()),
         ("caster_basic", caster.clone()),
@@ -1117,7 +1148,7 @@ fn rust_mirrors_match_wgsl_layouts() {
         let name = match map {
             Base => "MATERIAL_MAP_BASE",
             MetallicRoughness => "MATERIAL_MAP_METALLIC_ROUGHNESS",
-            Occlusion => "MATERIAL_MAP_OCCLUSION",
+            PackedOcclusion => "MATERIAL_MAP_PACKED_OCCLUSION",
             Emission => "MATERIAL_MAP_EMISSION",
             Normal => "MATERIAL_MAP_NORMAL",
             Bump => "MATERIAL_MAP_BUMP",
@@ -1133,6 +1164,9 @@ fn rust_mirrors_match_wgsl_layouts() {
             SheenRoughness => "MATERIAL_MAP_SHEEN_ROUGHNESS",
             DiffuseTransmission => "MATERIAL_MAP_DIFFUSE_TRANSMISSION",
             DiffuseTransmissionColor => "MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR",
+            Occlusion => "MATERIAL_MAP_OCCLUSION",
+            Specular => "MATERIAL_MAP_SPECULAR",
+            SpecularColor => "MATERIAL_MAP_SPECULAR_COLOR",
         };
         (name, map.bit())
     })) {
@@ -1393,6 +1427,9 @@ fn rust_binding_names_match_wgsl_bindings() {
             "diffuse_transmission_color_map",
             group2::DIFFUSE_TRANSMISSION_COLOR_MAP,
         ),
+        (2, "occlusion_map", group2::OCCLUSION_MAP),
+        (2, "specular_map", group2::SPECULAR_MAP),
+        (2, "specular_color_map", group2::SPECULAR_COLOR_MAP),
         (2, "shader_params", group2::SHADER_PARAMS),
         (2, "previous_shader_params", group2::PREVIOUS_SHADER_PARAMS),
         (3, "blended_reflections", blended::REFLECTIONS),

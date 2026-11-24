@@ -178,9 +178,15 @@ impl GeometryPipelines {
     /// previous specialisations, and only shaders still named by a material
     /// of this scene. Shader generations are unique across scenes.
     pub fn specialise(&mut self, layers: LayerConstants, scene: &Scene) {
+        // The geometry pipelines' keys leave out what only the ray traces
+        // read (`LitConstants::occlusion_specular`), so it is no change of
+        // their specialisation.
         let next = (
             layers,
-            LitConstants::of(scene),
+            LitConstants {
+                occlusion_specular: false,
+                ..LitConstants::of(scene)
+            },
             scene.materials.holds_transmissive(),
         );
         let changed = next != self.current;
@@ -353,7 +359,7 @@ impl GeometryPipelines {
                 .or_insert_with(|| ProgramSet::of(scene, id)),
             None => &mut self.programs,
         };
-        let module = programs.module(tier, program);
+        let module = programs.module(tier, program, key.variant.occlusion_specular);
         let layout = layout.clone();
         // Casters are depth-only: their cull selects the side that casts. A
         // directional cascade's depth is unclipped, so casters between the

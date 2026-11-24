@@ -227,6 +227,10 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
         ),
         ("SCENE_MATERIAL_BAKED", offset_of!(MaterialRecord, baked)),
         (
+            "SCENE_MATERIAL_MORE_MAPS",
+            offset_of!(MaterialRecord, more_maps),
+        ),
+        (
             "SCENE_MATERIAL_MAP_UVS",
             offset_of!(MaterialRecord, map_uvs),
         ),
@@ -288,7 +292,21 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_TEXTURE_THICKNESS",
             offset_of!(MaterialTextures, thickness),
         ),
-        ("SCENE_TEXTURES", size_of::<MaterialTextures>()),
+        (
+            "SCENE_TEXTURE_OCCLUSION",
+            offset_of!(MaterialTextures, occlusion),
+        ),
+        (
+            "SCENE_TEXTURE_SPECULAR",
+            offset_of!(MaterialTextures, specular),
+        ),
+        (
+            "SCENE_TEXTURE_SPECULAR_COLOR",
+            offset_of!(MaterialTextures, specular_color),
+        ),
+        // The words a hit reads with every material: those before the
+        // occlusion map's.
+        ("SCENE_TEXTURES", offset_of!(MaterialTextures, occlusion)),
     ];
     // The BVH is declared beside the portable traversal that reads it.
     source

@@ -315,11 +315,24 @@ fn texcoord_1_fills_the_second_set_only_where_a_map_samples_it() {
         [0, 1, 2].map(|i| (first[i], [0.; 2], second[i]))
     );
     // An occlusion map on TEXCOORD_1 that is not the metallic-roughness
-    // map, which SGL3D leaves out, asks for no second set.
-    let ignored = load_triangle(
+    // map samples the second set as any map does.
+    let occluded = load_triangle(
         serde_json::json!({
             "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
             "occlusionTexture": {"index": 0, "texCoord": 1}
+        }),
+        true,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(
+        uvs(&occluded),
+        [0, 1, 2].map(|i| (first[i], second[i], second[i]))
+    );
+    // One on TEXCOORD_2, which SGL3D leaves out, asks for no second set.
+    let ignored = load_triangle(
+        serde_json::json!({
+            "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}},
+            "occlusionTexture": {"index": 0, "texCoord": 2}
         }),
         false,
     )

@@ -10,7 +10,7 @@
 //! the file only uses is left out and listed in [`Asset::ignored`]. Opaque,
 //! masked and blended alpha modes are supported. Supported material
 //! extensions are scalar clearcoat, anisotropy with authored tangents,
-//! emissive strength, unlit, bump mapping, IOR and specular factors.
+//! emissive strength, unlit, bump mapping, IOR, and specular with its maps.
 //! Authored punctual lights (`KHR_lights_punctual`) load as data in
 //! [`Asset::lights`], and `EXT_mesh_gpu_instancing` nodes as shared
 //! geometry and placements in [`Asset::instanced`], for the game to install.
@@ -132,6 +132,15 @@ pub struct Material {
     /// nonnegative (`KHR_materials_specular`'s `specularColorFactor`): the
     /// F0 is the IOR's times this, at most 1, times `specular`.
     pub specular_color: [f32; 3],
+    /// Specular map (`KHR_materials_specular`'s `specularTexture`), sampled
+    /// as linear data: its alpha channel multiplies `specular`, the F0's
+    /// scale and the F90 alike. A device of the `Basic` binding tier binds
+    /// none and takes the factor alone.
+    pub specular_texture: Option<MaterialTexture>,
+    /// Specular colour map (`specularColorTexture`), sampled as sRGB: its
+    /// RGB multiplies `specular_color` within the F0's clamp to 1. `Basic`
+    /// takes the factor alone.
+    pub specular_color_texture: Option<MaterialTexture>,
     /// Clearcoat intensity in `0..=1` (`KHR_materials_clearcoat`'s
     /// `clearcoatFactor`).
     pub clearcoat: f32,
@@ -208,13 +217,16 @@ pub struct Material {
     pub base_texture: Option<MaterialTexture>,
     /// Metallic (blue) / roughness (green) map, sampled as linear data.
     pub mr_texture: Option<MaterialTexture>,
-    /// Occlusion map (glTF's `occlusionTexture`): its red channel is
-    /// the share of ambient light that reaches the surface, which occludes
-    /// its ambient light, its baked light (lightmap, atlas chart or
-    /// ambient cube) and its environment specular. SGL3D samples it where
-    /// it is `mr_texture`, image, sampler, UV set and transform (ORM
+    /// Occlusion map (glTF's `occlusionTexture`), sampled as linear data:
+    /// its red channel is the share of ambient light that reaches the
+    /// surface, which occludes its ambient light, its baked light
+    /// (lightmap, atlas chart or ambient cube) and its environment
+    /// specular, and shadows its direct light's cavities (micro-shadowing).
+    /// Where it is `mr_texture`, image, sampler, UV set and transform (ORM
     /// packing: occlusion, roughness and metallic in red, green and blue),
-    /// and not yet from a slot of its own.
+    /// it is read from that map's sample on both binding tiers; any other
+    /// is sampled on its own on the `Extended` tier, and a `Basic` device
+    /// takes none.
     pub occlusion_texture: Option<MaterialTexture>,
     /// How much of the occlusion map applies, in `0..=1` (glTF's
     /// `occlusionTexture.strength`): 1 as authored, 0 none.
@@ -276,20 +288,18 @@ pub struct Material {
 
 impl Material {
     /// Whether its occlusion map is the red channel of its metallic-roughness
-    /// map, the same image sampled the same way (ORM packing), the one place
-    /// SGL3D samples occlusion from.
+    /// map, the same image sampled the same way at the same coordinates (ORM
+    /// packing), which shading reads from that map's sample.
     pub(crate) fn packed_occlusion(&self) -> bool {
         self.occlusion_texture.is_some() && self.occlusion_texture == self.mr_texture
     }
 
-    /// Every map SGL3D samples: each it names but an occlusion map, which
-    /// SGL3D samples only as its metallic-roughness map
-    /// (`packed_occlusion`), and that map is listed; and but a bump map
-    /// beside a normal map, which shading never takes.
+    /// Every map SGL3D samples: each it names but a bump map beside a
+    /// normal map, which shading never takes.
     pub(crate) fn sampled_textures(&self) -> impl Iterator<Item = MaterialTexture> {
-        let [base, mr, _occlusion, emissive, normal, bump, rest @ ..] = self.textures();
+        let [base, mr, occlusion, emissive, normal, bump, rest @ ..] = self.textures();
         let bump = bump.filter(|_| normal.is_none());
-        [base, mr, emissive, normal, bump]
+        [base, mr, occlusion, emissive, normal, bump]
             .into_iter()
             .chain(rest)
             .flatten()
@@ -297,7 +307,7 @@ impl Material {
 
     /// Every map it names, each field once, the occlusion map third: a new
     /// map's field fails to compile here until it is listed.
-    pub(crate) fn textures(&self) -> [Option<MaterialTexture>; 18] {
+    pub(crate) fn textures(&self) -> [Option<MaterialTexture>; 20] {
         let Self {
             name: _,
             visibility_group: _,
@@ -309,6 +319,8 @@ impl Material {
             ior: _,
             specular: _,
             specular_color: _,
+            specular_texture,
+            specular_color_texture,
             clearcoat: _,
             coat_roughness: _,
             clearcoat_texture,
@@ -372,6 +384,8 @@ impl Material {
             *sheen_roughness_texture,
             *diffuse_transmission_texture,
             *diffuse_transmission_color_texture,
+            *specular_texture,
+            *specular_color_texture,
         ]
     }
 }
@@ -400,6 +414,8 @@ impl Default for Material {
             ior: 1.5,
             specular: 1.0,
             specular_color: [1.0; 3],
+            specular_texture: None,
+            specular_color_texture: None,
             clearcoat: 0.0,
             coat_roughness: 0.0,
             clearcoat_texture: None,

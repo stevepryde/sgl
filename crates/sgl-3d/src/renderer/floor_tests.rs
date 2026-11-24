@@ -350,20 +350,22 @@ fn heaviest_frame(limits: wgpu::Limits, trace: wgpu::Trace) -> (BindingTier, Dyn
 
 /// A transmissive, dispersive blended receiver of screen-space reflections
 /// carrying the maps a material takes, each its own image: base,
-/// metallic-roughness with its occlusion packed, emission, anisotropy,
-/// clearcoat, clearcoat roughness and normal, iridescence and its
-/// thickness, transmission, thickness, sheen colour and roughness, diffuse
-/// transmission and its colour, and a normal map where `normal`, else a
-/// bump map, which a material takes only without a normal map; on a cube
-/// with authored tangents, which anisotropy needs. On the Extended tier the
-/// transparent stage copies the frame for it, binding its copy.
+/// metallic-roughness, emission, anisotropy, clearcoat, clearcoat roughness
+/// and normal, iridescence and its thickness, transmission, thickness,
+/// sheen colour and roughness, diffuse transmission and its colour,
+/// specular and specular colour, and where `normal` a normal map and its
+/// occlusion packed in the metallic-roughness map, else a bump map, which
+/// a material takes only without a normal map, and an occlusion map of its
+/// own; on a cube with authored tangents, which anisotropy needs. On the
+/// Extended tier the transparent stage copies the frame for it, binding its
+/// copy.
 fn glass(normal: bool) -> Asset {
     let mut glass = test_support::cube();
     for vertex in &mut glass.meshes[0].vertices {
         let tangent = Vec3::from_array(vertex.normal).any_orthonormal_vector();
         vertex.tangent = tangent.extend(1.).to_array();
     }
-    glass.images = (0..17)
+    glass.images = (0..19)
         .map(|_| Image::Rgba8(image::RgbaImage::from_pixel(4, 4, image::Rgba([200; 4]))))
         .collect();
     let material = &mut glass.materials[0];
@@ -374,14 +376,17 @@ fn glass(normal: bool) -> Asset {
     material.base[3] = 0.5;
     material.base_texture = Some(crate::asset::MaterialTexture::new(0));
     material.mr_texture = Some(crate::asset::MaterialTexture::new(1));
-    material.occlusion_texture = Some(crate::asset::MaterialTexture::new(1));
     material.emissive_texture = Some(crate::asset::MaterialTexture::new(2));
     if normal {
         material.normal_texture = Some(crate::asset::MaterialTexture::new(3));
+        material.occlusion_texture = Some(crate::asset::MaterialTexture::new(1));
     } else {
         material.bump_texture = Some(crate::asset::MaterialTexture::new(4));
         material.bump_scale = 1.;
+        material.occlusion_texture = Some(crate::asset::MaterialTexture::new(16));
     }
+    material.specular_texture = Some(crate::asset::MaterialTexture::new(17));
+    material.specular_color_texture = Some(crate::asset::MaterialTexture::new(18));
     material.anisotropy_texture = Some(crate::asset::MaterialTexture::new(5));
     material.anisotropy_strength = 0.5;
     material.clearcoat = 0.5;

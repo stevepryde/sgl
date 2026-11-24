@@ -123,10 +123,16 @@ struct MaterialRecord {
     material: MaterialUniform,
     textures: MaterialTextures,
     baked: u32,
+    /// The map bindings past the record's sixteen
+    /// (`shading::material::more_maps`), which only their samples read.
+    more_maps: u32,
     map_uvs: [MapUv; MAP_BINDINGS.len()],
 }
 
-/// Each texture's image word, zero when absent.
+/// Each texture's image word, zero when absent. A hit reads the words
+/// before `occlusion` with every material (`SCENE_TEXTURES`), and the
+/// occlusion and specular maps' only where the record's bit says the map
+/// is in effect.
 #[repr(C)]
 #[derive(Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct MaterialTextures {
@@ -147,6 +153,11 @@ pub(crate) struct MaterialTextures {
     pub diffuse_transmission_color: u32,
     /// The volume's thickness map, which a ray hit's transmitted lobe takes.
     pub thickness: u32,
+    /// An occlusion map in its own image, and the specular and specular
+    /// colour maps.
+    pub occlusion: u32,
+    pub specular: u32,
+    pub specular_color: u32,
 }
 
 /// Words of `T`.
@@ -397,12 +408,13 @@ impl SceneRays {
         queue: &wgpu::Queue,
         values: &MaterialUniform,
         textures: MaterialTextures,
-        map_uvs: &MapUvs,
+        (more_maps, map_uvs): (u32, &MapUvs),
     ) -> Result<Range<u32>, SceneError> {
         let record = MaterialRecord {
             material: *values,
             textures,
             baked: 0,
+            more_maps,
             map_uvs: *map_uvs.rows(),
         };
         let range = self.allocate(device, queue, words::<MaterialRecord>())?;

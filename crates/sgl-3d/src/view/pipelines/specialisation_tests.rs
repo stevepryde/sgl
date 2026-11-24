@@ -55,6 +55,7 @@ fn pipelines_of_the_current_and_previous_specialisation_stay() {
             Variant {
                 uv1: 0,
                 transformed: 0,
+                occlusion_specular: false,
                 cull: Cull::Back,
                 alpha: Alpha::Opaque,
                 deformed: false,
@@ -107,4 +108,57 @@ fn pipelines_of_the_current_and_previous_specialisation_stay() {
     );
     let c = request(&mut pipelines, &scene);
     assert_ne!(c, b, "films require different lit shading");
+}
+
+// A pass whose programs sample none of an occlusion map of its own and the
+// specular maps keys none of their variants, so materials that differ only
+// in them share that pass's pipelines. Plausible defects: the key keeping
+// `Variant::occlusion_specular`, or those maps' second UV set, transform or
+// shader-sampled state, for the receivers, the temporal composition mask,
+// the anisotropy target or a volume layer. The oracle is that sharing: for
+// each such pass the key of a material whose own occlusion map takes all
+// three equals that of the same material without the map; and the G-buffer
+// pass, which records the occlusion, keys it.
+#[test]
+fn passes_that_sample_none_of_these_maps_key_none_of_them() {
+    use super::{LitConstants, PipelineKey};
+    use crate::shading::bind::group2;
+    let slot = 1 << group2::map_slot(group2::OCCLUSION_MAP);
+    let plain = Variant {
+        cull: Cull::Back,
+        alpha: Alpha::Opaque,
+        deformed: false,
+        shader_sampled: 0,
+        uv1: 0,
+        transformed: 0,
+        occlusion_specular: false,
+    };
+    let mapped = Variant {
+        shader_sampled: slot,
+        uv1: slot,
+        transformed: slot,
+        occlusion_specular: true,
+        ..plain
+    };
+    let key = |pass, variant| {
+        PipelineKey::new(
+            pass,
+            variant,
+            None,
+            (LayerConstants::ALL, LitConstants::default()),
+            false,
+        )
+    };
+    for pass in [
+        GeometryPass::Receivers,
+        GeometryPass::TemporalComposition { footprint: false },
+        GeometryPass::GBufferAnisotropy,
+        GeometryPass::VolumeEntry,
+    ] {
+        assert_eq!(key(pass, mapped), key(pass, plain), "{pass:?}");
+    }
+    assert_ne!(
+        key(GeometryPass::GBuffer, mapped),
+        key(GeometryPass::GBuffer, plain)
+    );
 }

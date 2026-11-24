@@ -108,7 +108,9 @@ pub(crate) static MATERIAL_SURFACE_RASTER: Module = Module {
 };
 /// A rasterized fragment's `Surface`. Reads `view`, `object` and the
 /// material, and the Extended tier's maps through the material-map provider
-/// the program composes (`material_provider`).
+/// the program composes (`material_provider`) and the occlusion and
+/// specular maps through its occlusion and specular provider
+/// (`occlusion_specular_provider`).
 pub(crate) static SURFACE_RASTER: Module = Module {
     name: "surface_raster",
     source: sgl_post_fx::embed_wgsl!("surface_raster.wgsl"),

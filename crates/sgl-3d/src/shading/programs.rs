@@ -148,12 +148,16 @@ pub(crate) const VOLUME_SECOND_EXIT_FS_ENTRY: &str = "volume_second_exit_fs";
 /// provider for a camera form with the contact mask, else the one that
 /// leaves the maps alone; screen-space indirect light's provider for a
 /// camera form with it, else the one that gives none; the tier's lit,
-/// material-map and transmission providers; and the scene depth provider of
-/// a game's shader's blended draws on the Extended tier, else none.
+/// material-map and transmission providers; the occlusion and specular
+/// provider that samples those maps where `occlusion_specular`
+/// (`view::pipelines::Variant::occlusion_specular`), else their fallbacks';
+/// and the scene depth provider of a game's shader's blended draws on the
+/// Extended tier, else none.
 pub(crate) fn geometry_program(
     form: GeometryForm,
     tier: BindingTier,
     shader: ProgramShader<'_>,
+    occlusion_specular: bool,
 ) -> String {
     let (shadows, screen_indirect) = match form {
         GeometryForm::Camera {
@@ -190,6 +194,7 @@ pub(crate) fn geometry_program(
             bounce,
             super::lit_provider(tier),
             super::material_provider(tier),
+            super::occlusion_specular_provider(tier, occlusion_specular),
             super::transmission_provider(tier),
             depth,
         ],
@@ -240,12 +245,19 @@ pub(crate) const SHADOW_SHADED_MASKED_FS_ENTRY: &str = "shadow_shaded_masked_fs"
 pub(crate) const SHADOW_SHADED_MASKED_UNCLIPPED_FS_ENTRY: &str =
     "shadow_shaded_masked_unclipped_fs";
 
-/// The caster program with `shader`.
-pub(crate) fn caster_program(tier: BindingTier, shader: ProgramShader<'_>) -> String {
+/// The caster program with `shader`, with the occlusion and specular
+/// provider `geometry_program` takes for `occlusion_specular`: a shader's
+/// masked casters evaluate its material whole.
+pub(crate) fn caster_program(
+    tier: BindingTier,
+    shader: ProgramShader<'_>,
+    occlusion_specular: bool,
+) -> String {
     shaded(
         &[
             &CASTER,
             super::material_provider(tier),
+            super::occlusion_specular_provider(tier, occlusion_specular),
             &SHADER_SCENE_DEPTH_NONE,
         ],
         shader,

@@ -12,6 +12,12 @@ override films_enabled:bool=true;
 // back-side shadows and indirect light, compiles out.
 override sheens_enabled:bool=true;
 override diffuse_transmission_enabled:bool=true;
+// Whether a material of the scene has an occlusion map of its own or a
+// specular or specular colour map (LitConstants::occlusion_specular): where
+// none does, ray hits (surface_ray.wgsl) compile their sampling out. Raster
+// takes them by material, through its occlusion and specular provider, and
+// reads no such constant.
+override occlusion_specular_maps_enabled:bool=true;
 struct Surface {
  position:vec3<f32>,
  // Unit direction toward the viewer: the camera for a fragment, back along

@@ -1,9 +1,11 @@
 //! The shader modules the geometry pipelines are created from: one program
 //! set for materials without a shader, and one for each shader a material
 //! of the scene names, each holding the geometry program of each form
-//! (`shading::programs::GeometryForm`) and the caster program, made when a
-//! pipeline first needs it, on the thread that creates that pipeline, and
-//! dropped with the set and the last pipeline job holding it.
+//! (`shading::programs::GeometryForm`) and the caster program, without and
+//! with the occlusion and specular maps' sampling
+//! (`Variant::occlusion_specular`), made when a pipeline first needs it, on
+//! the thread that creates that pipeline, and dropped with the set and the
+//! last pipeline job holding it.
 use crate::Scene;
 use crate::content::identity::ShaderId;
 use crate::shading::bind::BindingTier;
@@ -37,12 +39,10 @@ fn camera_slot(shadows: CameraShadows, screen_indirect: bool) -> usize {
 
 type Slot = Option<SharedModule>;
 
-/// One material shader's programs: SGL3D's default provider's, or a game's
-/// module's.
-pub(super) struct ProgramSet {
-    /// The game's module, none for the default provider.
-    source: Option<Arc<str>>,
-    label: String,
+/// The programs of one material shader with one occlusion and specular
+/// provider.
+#[derive(Default)]
+struct Programs {
     geometry: Slot,
     /// The camera lighting's, one for each combination of what it binds
     /// at group 3, indexed by `camera_slot`.
@@ -51,16 +51,23 @@ pub(super) struct ProgramSet {
     caster: Slot,
 }
 
+/// One material shader's programs: SGL3D's default provider's, or a game's
+/// module's, without and with the occlusion and specular maps' sampling.
+pub(super) struct ProgramSet {
+    /// The game's module, none for the default provider.
+    source: Option<Arc<str>>,
+    label: String,
+    /// By `Variant::occlusion_specular`.
+    programs: [Programs; 2],
+}
+
 impl ProgramSet {
     /// The default provider's programs.
     pub fn default_set() -> Self {
         Self {
             source: None,
             label: "SGL material".into(),
-            geometry: Slot::default(),
-            camera: std::array::from_fn(|_| Slot::default()),
-            blended: Slot::default(),
-            caster: Slot::default(),
+            programs: Default::default(),
         }
     }
 
@@ -83,18 +90,25 @@ impl ProgramSet {
             .map_or(ProgramShader::Default, ProgramShader::Game)
     }
 
-    /// The module of `program` on a device of `tier`: a form that does not
-    /// differ from the plain geometry program (`GeometryForm::distinct`)
-    /// takes that one.
-    pub fn module(&mut self, tier: BindingTier, program: Program) -> SharedModule {
+    /// The module of `program` on a device of `tier`, with the occlusion
+    /// and specular maps' sampling where `occlusion_specular`: a form that
+    /// does not differ from the plain geometry program
+    /// (`GeometryForm::distinct`) takes that one.
+    pub fn module(
+        &mut self,
+        tier: BindingTier,
+        program: Program,
+        occlusion_specular: bool,
+    ) -> SharedModule {
         let program = match program {
             Program::Geometry(form) if !form.distinct(tier, self.shader()) => {
                 Program::Geometry(GeometryForm::Plain)
             }
             program => program,
         };
+        let programs = &mut self.programs[usize::from(occlusion_specular)];
         let (slot, name) = match program {
-            Program::Geometry(GeometryForm::Plain) => (&mut self.geometry, "geometry"),
+            Program::Geometry(GeometryForm::Plain) => (&mut programs.geometry, "geometry"),
             Program::Geometry(GeometryForm::Camera {
                 shadows,
                 screen_indirect,
@@ -112,23 +126,30 @@ impl ProgramSet {
                     }
                 };
                 (
-                    &mut self.camera[camera_slot(shadows, screen_indirect)],
+                    &mut programs.camera[camera_slot(shadows, screen_indirect)],
                     name,
                 )
             }
-            Program::Geometry(GeometryForm::Blended) => (&mut self.blended, "blended geometry"),
-            Program::Caster => (&mut self.caster, "casters"),
+            Program::Geometry(GeometryForm::Blended) => (&mut programs.blended, "blended geometry"),
+            Program::Caster => (&mut programs.caster, "casters"),
+        };
+        let maps = if occlusion_specular {
+            " with occlusion and specular maps"
+        } else {
+            ""
         };
         let (source, label) = (&self.source, &self.label);
         slot.get_or_insert_with(|| {
             let source = source.clone();
-            SharedModule::new(format!("{label} {name}"), move || {
+            SharedModule::new(format!("{label} {name}{maps}"), move || {
                 let shader = source
                     .as_deref()
                     .map_or(ProgramShader::Default, ProgramShader::Game);
                 match program {
-                    Program::Geometry(form) => geometry_program(form, tier, shader),
-                    Program::Caster => caster_program(tier, shader),
+                    Program::Geometry(form) => {
+                        geometry_program(form, tier, shader, occlusion_specular)
+                    }
+                    Program::Caster => caster_program(tier, shader, occlusion_specular),
                 }
             })
         })
@@ -138,9 +159,13 @@ impl ProgramSet {
     /// How many modules it holds.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn modules(&self) -> usize {
-        [&self.geometry, &self.blended, &self.caster]
-            .into_iter()
-            .chain(&self.camera)
+        self.programs
+            .iter()
+            .flat_map(|programs| {
+                [&programs.geometry, &programs.blended, &programs.caster]
+                    .into_iter()
+                    .chain(&programs.camera)
+            })
             .filter(|module| module.as_ref().is_some_and(SharedModule::created))
             .count()
     }

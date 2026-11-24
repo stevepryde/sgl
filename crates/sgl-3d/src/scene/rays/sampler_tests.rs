@@ -29,7 +29,10 @@ fn test_map(m:SceneMaterial,map:u32)->vec2<u32> {
   case 11u { return vec2(m.textures[SCENE_TEXTURE_SHEEN_COLOR],MATERIAL_SLOT_SHEEN_COLOR); }
   case 12u { return vec2(m.textures[SCENE_TEXTURE_SHEEN_ROUGHNESS],MATERIAL_SLOT_SHEEN_ROUGHNESS); }
   case 13u { return vec2(m.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION],MATERIAL_SLOT_DIFFUSE_TRANSMISSION); }
-  default { return vec2(m.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR],MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR); }
+  case 14u { return vec2(m.textures[SCENE_TEXTURE_DIFFUSE_TRANSMISSION_COLOR],MATERIAL_SLOT_DIFFUSE_TRANSMISSION_COLOR); }
+  case 15u { return vec2(scene_material_texture(m,SCENE_TEXTURE_OCCLUSION),MATERIAL_SLOT_OCCLUSION); }
+  case 16u { return vec2(scene_material_texture(m,SCENE_TEXTURE_SPECULAR),MATERIAL_SLOT_SPECULAR); }
+  default { return vec2(scene_material_texture(m,SCENE_TEXTURE_SPECULAR_COLOR),MATERIAL_SLOT_SPECULAR_COLOR); }
  }
 }
 "#;
@@ -43,7 +46,11 @@ struct Probe { material:u32, map:u32, uv:vec2<f32> }
  let probe=probes[id.x];
  let m=scene_material(probe.material);
  let map=test_map(m,probe.map);
- colors[id.x]=scene_sample_map(m.values.map_samplers,map.x,map.y,probe.uv,true);
+ if map.y<MATERIAL_FIRST_MORE_SLOT {
+  colors[id.x]=scene_sample_map(m.values.map_samplers,map.x,map.y,probe.uv,true);
+ } else {
+  colors[id.x]=scene_sample_texture(map.x,probe.uv,material_more_map_sampler(scene_material_more_maps(m),map.y),true);
+ }
 }
 "#;
 
@@ -64,12 +71,15 @@ pub(super) fn map_field(material: &mut Material, map: usize) -> &mut Option<Mate
         11 => &mut material.sheen_color_texture,
         12 => &mut material.sheen_roughness_texture,
         13 => &mut material.diffuse_transmission_texture,
-        _ => &mut material.diffuse_transmission_color_texture,
+        14 => &mut material.diffuse_transmission_color_texture,
+        15 => &mut material.occlusion_texture,
+        16 => &mut material.specular_texture,
+        _ => &mut material.specular_color_texture,
     }
 }
 
 /// How many maps `TEST_MAP` names.
-pub(super) const MAP_COUNT: usize = 15;
+pub(super) const MAP_COUNT: usize = 18;
 
 /// The ray source of one triangle and `materials`, which sample the
 /// labelled image (`labelled`), and each probe's sample, as a ray hit

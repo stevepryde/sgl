@@ -269,15 +269,18 @@ fn reads_time(module: &naga::Module, info: &naga::valid::ModuleInfo) -> bool {
 
 /// Every program a device of `tier` composes `shader` into, by label: the
 /// geometry program of each form that differs (`GeometryForm::distinct`)
-/// and the caster program.
-pub(crate) fn programs(
-    tier: BindingTier,
-    shader: ProgramShader<'_>,
-) -> Vec<(&'static str, String)> {
+/// and the caster program, with the occlusion and specular maps' fallback
+/// provider. Their sampling provider (`Variant::occlusion_specular`), which
+/// a game's module may also be composed with, differs only in that
+/// provider's function bodies, which name SGL3D's declarations alone, all
+/// of them reserved from a game's module (`reserved_names`), so a module
+/// these programs accept is accepted there too; the layout tests validate
+/// those programs with a game's module.
+pub(crate) fn programs(tier: BindingTier, shader: ProgramShader<'_>) -> Vec<(String, String)> {
     use crate::shading::programs::CameraShadows::{ContactMask, Maps, ShadowMask};
     let mut programs = vec![(
-        "geometry",
-        geometry_program(GeometryForm::Plain, tier, shader),
+        "geometry".to_owned(),
+        geometry_program(GeometryForm::Plain, tier, shader, false),
     )];
     for (label, shadows, screen_indirect) in [
         ("geometry with the shadow mask", ShadowMask, false),
@@ -298,15 +301,18 @@ pub(crate) fn programs(
             shadows,
             screen_indirect,
         };
-        programs.push((label, geometry_program(form, tier, shader)));
+        programs.push((
+            label.to_owned(),
+            geometry_program(form, tier, shader, false),
+        ));
     }
     if GeometryForm::Blended.distinct(tier, shader) {
         programs.push((
-            "blended geometry",
-            geometry_program(GeometryForm::Blended, tier, shader),
+            "blended geometry".to_owned(),
+            geometry_program(GeometryForm::Blended, tier, shader, false),
         ));
     }
-    programs.push(("casters", caster_program(tier, shader)));
+    programs.push(("casters".to_owned(), caster_program(tier, shader, false)));
     programs
 }
 

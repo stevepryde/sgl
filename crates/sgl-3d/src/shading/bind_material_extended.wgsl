@@ -15,3 +15,9 @@
 @group(2) @binding(17) var sheen_roughness_map:texture_2d<f32>;
 @group(2) @binding(18) var diffuse_transmission_map:texture_2d<f32>;
 @group(2) @binding(19) var diffuse_transmission_color_map:texture_2d<f32>;
+// An occlusion map of its own (glTF's occlusionTexture, red), where it is
+// not the metallic-roughness map, and KHR_materials_specular's specular
+// (alpha) and specular colour (RGB) maps.
+@group(2) @binding(22) var occlusion_map:texture_2d<f32>;
+@group(2) @binding(23) var specular_map:texture_2d<f32>;
+@group(2) @binding(24) var specular_color_map:texture_2d<f32>;

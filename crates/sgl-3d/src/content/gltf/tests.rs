@@ -981,16 +981,19 @@ fn used_extensions_are_listed_and_required_ones_honoured_or_refused() {
 
 // Defects: an occlusion map packed in the metallic-roughness image (the
 // same image, through another texture of the same sampler) is taken for an
-// image of its own, or one in an image of its own, through another sampler,
-// on another UV set or a specular texture is left out without being listed
-// in `Asset::ignored`; or its strength is lost. The oracle is glTF 2.0's
-// texture -> image and sampler indirection and the authored values.
+// image of its own, or one in an image of its own, through another sampler
+// or on another UV set is taken for the packed one, left out or listed in
+// `Asset::ignored`; one on a third UV set is kept or not listed; its
+// strength is lost; or a KHR_materials_specular texture is left out, read
+// from the other key or without its UV set and transform. The oracle is
+// glTF 2.0's texture -> image and sampler indirection and the authored
+// values.
 #[test]
-fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
+fn occlusion_and_specular_maps_load_as_authored() {
     let source = |occlusion: serde_json::Value, specular: serde_json::Value| {
         serde_json::json!({
             "asset": {"version": "2.0"},
-            "extensionsUsed": ["KHR_materials_specular"],
+            "extensionsUsed": ["KHR_materials_specular", "KHR_texture_transform"],
             "images": [{"uri": "orm.png"}, {"uri": "occlusion.png"}],
             "samplers": [{"wrapS": 33071, "wrapT": 33071}],
             "textures": [{"source": 0}, {"source": 0}, {"source": 1}, {"source": 0, "sampler": 0}],
@@ -1033,14 +1036,13 @@ fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
     let (separate, ignored) = read(source(serde_json::json!({"index": 2}), unlisted.clone()));
     assert_eq!(separate.occlusion_texture.map(|t| t.image), Some(1));
     assert!(!separate.packed_occlusion());
-    assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
+    assert!(ignored.is_empty());
     // Texture 3 clamps the metallic-roughness image the material repeats:
-    // the same image through another sampler, which the metallic-roughness
-    // binding cannot sample it with.
+    // the same image through another sampler, a sample of its own.
     let (clamped, ignored) = read(source(serde_json::json!({"index": 3}), unlisted.clone()));
     assert_eq!(clamped.occlusion_texture.map(|t| t.image), Some(0));
     assert!(!clamped.packed_occlusion());
-    assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
+    assert!(ignored.is_empty());
     // On the second UV set, where the metallic-roughness map is on the
     // first: kept as authored, and not that map's.
     let (second_set, ignored) = read(source(
@@ -1052,29 +1054,70 @@ fn occlusion_and_specular_maps_sgl3d_does_not_sample_are_listed() {
         Some((0, UvSet::Uv1))
     );
     assert!(!second_set.packed_occlusion());
-    assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
-    // On a third set, which SGL3D has no input for: left out.
+    assert!(ignored.is_empty());
+    // On a third set, which SGL3D has no input for: left out and listed.
     let (third_set, ignored) = read(source(
         serde_json::json!({"index": 3, "texCoord": 2}),
         unlisted,
     ));
     assert_eq!(third_set.occlusion_texture.map(|t| t.image), None);
     assert_eq!(ignored, [Ignored::OcclusionMap { material: 0 }]);
-    let (_, ignored) = read(source(
+    // The specular map on the second set, the colour map through a
+    // transform, each its own texture's image and sampler.
+    let (specular, ignored) = read(source(
         serde_json::json!({"index": 0}),
-        serde_json::json!({"specularColorTexture": {"index": 2}}),
+        serde_json::json!({
+            "specularFactor": 0.5,
+            "specularTexture": {"index": 2, "texCoord": 1},
+            "specularColorTexture": {"index": 3, "extensions": {
+                "KHR_texture_transform": {"offset": [0.25, 0.5], "scale": [2, 2]}
+            }}
+        }),
     ));
-    assert_eq!(ignored, [Ignored::SpecularMap { material: 0 }]);
+    assert!(ignored.is_empty());
+    assert_eq!(specular.specular, 0.5);
+    let strength = specular.specular_texture.unwrap();
+    assert_eq!(
+        (strength.image, strength.uv_set, strength.sampler.wrap),
+        (1, UvSet::Uv1, [TextureWrap::Repeat; 2])
+    );
+    let color = specular.specular_color_texture.unwrap();
+    assert_eq!(
+        (color.image, color.uv_set, color.sampler.wrap),
+        (0, UvSet::Uv0, [TextureWrap::ClampToEdge; 2])
+    );
+    assert_eq!(
+        (color.transform.offset, color.transform.scale),
+        ([0.25, 0.5], [2., 2.])
+    );
+    // On a third set: refused, as any map but occlusion is there.
+    let document = source(
+        serde_json::json!({"index": 0}),
+        serde_json::json!({"specularTexture": {"index": 2, "texCoord": 2}}),
+    );
+    let document = gltf::Gltf::from_slice(&serde_json::to_vec(&document).unwrap())
+        .unwrap()
+        .document;
+    let error = read_material(
+        document.materials().next().unwrap(),
+        &document,
+        0,
+        &mut Vec::new(),
+    )
+    .err()
+    .expect("a specular map on TEXCOORD_2 loaded")
+    .to_string();
+    assert!(error.contains("TEXCOORD_2"), "{error}");
 }
 
-// Defects: a whole file refused over an occlusion map SGL3D leaves out:
-// its UV set's TEXCOORD_1 refused as an unsupported attribute (and not
-// kept as the lightmap UV), or its sampling refused; or a map SGL3D samples
-// refused for its nearest sampling. The oracle is the documented fallback
-// (a left-out map is listed in `Asset::ignored` and the rest loads) and
-// the authored values.
+// Defects: an occlusion map in an image of its own loses its UV set (its
+// TEXCOORD_1 not kept as the second set, or no longer as the lightmap UV)
+// or its sampler; or one on a third set, which SGL3D leaves out, still
+// constrains the primitive's attributes. The oracle is the authored values
+// and the documented fallback (a left-out map is listed in
+// `Asset::ignored` and the rest loads).
 #[test]
-fn an_ignored_occlusion_map_constrains_neither_attributes_nor_sampling() {
+fn an_occlusion_maps_own_uv_set_and_sampler_load_as_authored() {
     let uv0 = [0., 0., 1., 0., 0., 1.];
     let uv1 = [0.25, 0.5, 0.75, 0.5, 0.25, 0.75];
     let load_triangle = |occlusion: serde_json::Value, nearest: usize, lightmap_uv: bool| {
@@ -1126,23 +1169,29 @@ fn an_ignored_occlusion_map_constrains_neither_attributes_nor_sampling() {
         )
     };
     // On TEXCOORD_1, which the mesh carries, and sampled nearest: its UVs
-    // are the lightmap UVs.
+    // are the second set and still the lightmap UVs.
     let asset = load_triangle(serde_json::json!({"index": 1, "texCoord": 1}), 1, true)
         .unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(
-        asset.ignored,
-        [
-            Ignored::OcclusionMap { material: 0 },
-            Ignored::Image { image: 1 }
-        ]
-    );
+    assert!(asset.ignored.is_empty(), "{:?}", asset.ignored);
     let vertices = &asset.meshes[0].vertices;
     let uvs: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.uv).collect();
+    let second: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.uv1).collect();
     let lightmap_uvs: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.lightmap_uv).collect();
     assert_eq!(uvs.concat(), uv0);
+    assert_eq!(second.concat(), uv1);
     assert_eq!(lightmap_uvs.concat(), uv1);
-    // An image of its own, sampled nearest, which SGL3D never samples.
-    let asset = load_triangle(serde_json::json!({"index": 1}), 1, false)
+    let occlusion = asset.materials[0].occlusion_texture.unwrap();
+    assert_eq!(
+        (
+            occlusion.image,
+            occlusion.uv_set,
+            occlusion.sampler.mag_filter
+        ),
+        (1, UvSet::Uv1, TextureFilter::Nearest)
+    );
+    // On TEXCOORD_2, which the mesh does not carry: left out, it asks for
+    // no attribute.
+    let asset = load_triangle(serde_json::json!({"index": 1, "texCoord": 2}), 1, false)
         .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(
         asset.ignored,
@@ -1151,13 +1200,7 @@ fn an_ignored_occlusion_map_constrains_neither_attributes_nor_sampling() {
             Ignored::Image { image: 1 }
         ]
     );
-    assert_eq!(
-        (
-            asset.materials[0].mr_texture.map(|t| t.image),
-            asset.materials[0].occlusion_texture.map(|t| t.image)
-        ),
-        (Some(0), Some(1))
-    );
+    assert_eq!(asset.materials[0].occlusion_texture, None);
     // The metallic-roughness map, which SGL3D samples, sampled nearest.
     let asset = load_triangle(serde_json::json!({"index": 1}), 0, false)
         .unwrap_or_else(|error| panic!("{error}"));
@@ -1841,12 +1884,13 @@ fn an_unsupported_texture_extensions_image_is_left_out_and_its_fallback_decodes(
 }
 
 // Defects: a 16-bit PNG, which SGL3D does not decode, fails the load though
-// only a map SGL3D leaves out (an occlusion map in an image of its own, a
-// KHR_materials_specular texture) uses it, or the game is asked for it; or,
-// the other way, the same image loads unnoticed where a map SGL3D samples
-// uses it. The oracle is the documented fallback (a left-out map constrains
-// nothing and is listed in `Asset::ignored`) and the error for an image in
-// effect that cannot decode.
+// only a map SGL3D leaves out (an occlusion map on a third UV set) uses it,
+// or the game is asked for it; or, the other way, the same image loads
+// unnoticed where a map SGL3D samples uses it, an occlusion map in an image
+// of its own and a KHR_materials_specular texture among them. The oracle is
+// the documented fallback (a left-out map constrains nothing and is listed
+// in `Asset::ignored`) and the error for an image in effect that cannot
+// decode.
 #[test]
 fn an_image_only_ignored_maps_use_is_not_decoded() {
     let images = serde_json::json!([{"uri": "orm.png"}, {"uri": "deep.png"}]);
@@ -1880,7 +1924,7 @@ fn an_image_only_ignored_maps_use_is_not_decoded() {
     let mr = serde_json::json!({"metallicRoughnessTexture": {"index": 0}});
     let (asset, asked) = load_material(serde_json::json!({
         "pbrMetallicRoughness": mr,
-        "occlusionTexture": {"index": 1}
+        "occlusionTexture": {"index": 1, "texCoord": 2}
     }));
     let asset = asset.unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(
@@ -1891,30 +1935,22 @@ fn an_image_only_ignored_maps_use_is_not_decoded() {
         ]
     );
     assert_eq!(asked, [0]);
-    let (asset, asked) = load_material(serde_json::json!({
-        "pbrMetallicRoughness": mr,
-        "extensions": {"KHR_materials_specular": {"specularTexture": {"index": 1}}}
-    }));
-    let asset = asset.unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(
-        asset.ignored,
-        [
-            Ignored::SpecularMap { material: 0 },
-            Ignored::Image { image: 1 }
-        ]
-    );
-    assert_eq!(asked, [0]);
-    let (asset, _) = load_material(serde_json::json!({
-        "pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}
-    }));
-    let error = asset
-        .err()
-        .expect("a sampled 16-bit image loaded")
-        .to_string();
-    assert!(
-        error.contains("image 1") && error.contains("unsupported Rgb16"),
-        "{error}"
-    );
+    for material in [
+        serde_json::json!({"pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}}),
+        serde_json::json!({"pbrMetallicRoughness": mr, "occlusionTexture": {"index": 1}}),
+        serde_json::json!({"extensions": {"KHR_materials_specular": {"specularTexture": {"index": 1}}}}),
+        serde_json::json!({"extensions": {"KHR_materials_specular": {"specularColorTexture": {"index": 1}}}}),
+    ] {
+        let (asset, _) = load_material(material.clone());
+        let error = asset
+            .err()
+            .unwrap_or_else(|| panic!("a sampled 16-bit image loaded: {material}"))
+            .to_string();
+        assert!(
+            error.contains("image 1") && error.contains("unsupported Rgb16"),
+            "{error}"
+        );
+    }
 }
 
 // Defect: a compressed image header reaches pixel decoding before the fixed

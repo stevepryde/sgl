@@ -154,8 +154,31 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.geometry_normal=hit.normal;
  s.base=vec4(decaled.base,base.a);
  s.metallic=decaled.metallic;
- s.dielectric_f0=material_dielectric_f0(material.values);
- s.specular=material.values.specular;
+ // The specular and specular colour maps and an occlusion map of its own,
+ // as raster_material and raster_surface take them: only while the scene
+ // holds a material with one (occlusion_specular_maps_enabled), and then
+ // where their bits are set, their words read there alone; else the record's
+ // factors and the metallic-roughness texel, as before those maps existed.
+ var specular=vec4(1.);
+ var specular_color=vec4(1.);
+ var occlusion=mr;
+ if occlusion_specular_maps_enabled {
+  let maps=material.values.maps;
+  if (maps&(MATERIAL_MAP_SPECULAR|MATERIAL_MAP_SPECULAR_COLOR|MATERIAL_MAP_OCCLUSION))!=0u {
+   let more=scene_hit_more_maps(hit,material);
+   if (maps&MATERIAL_MAP_SPECULAR)!=0u {
+    specular=scene_sample_more_map(more,hit.uv,material,scene_material_texture(material,SCENE_TEXTURE_SPECULAR),MATERIAL_SLOT_SPECULAR,false);
+   }
+   if (maps&MATERIAL_MAP_SPECULAR_COLOR)!=0u {
+    specular_color=scene_sample_more_map(more,hit.uv,material,scene_material_texture(material,SCENE_TEXTURE_SPECULAR_COLOR),MATERIAL_SLOT_SPECULAR_COLOR,true);
+   }
+   if (maps&MATERIAL_MAP_OCCLUSION)!=0u {
+    occlusion=scene_sample_more_map(more,hit.uv,material,scene_material_texture(material,SCENE_TEXTURE_OCCLUSION),MATERIAL_SLOT_OCCLUSION,false);
+   }
+  }
+ }
+ s.specular=material_specular(material.values,specular);
+ s.dielectric_f0=material_dielectric_f0(material.values,specular_color,s.specular);
  s.roughness=clamp(decaled.roughness,PBR_MIN_PERCEPTUAL_ROUGHNESS,1.);
  // The coat's and the film's maps, as raster_surface takes them; a map
  // not in effect reads white (texture word 0).
@@ -191,7 +214,7 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.anisotropy=anisotropy;
  s.emission=emission;
  s.environment_scale=material.values.environment_scale;
- s.occlusion=material_occlusion(material.values,mr);
+ s.occlusion=material_occlusion(material.values,occlusion);
  s.unlit=unlit;
  s.front=hit.front_face;
  s.moving=(hit.instance_flags&OBJECT_STATIC)==0u;

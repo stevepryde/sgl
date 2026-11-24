@@ -234,14 +234,11 @@ pub enum Ignored {
     /// values.
     Extension(String),
     /// Material `material`'s occlusion map (an index into
-    /// [`Asset::materials`]): SGL3D samples occlusion only from the red
-    /// channel of the material's metallic-roughness map on `TEXCOORD_0`
-    /// (ORM packing: the same image through the same sampler), not yet
-    /// from an image or sampler of its own.
+    /// [`Asset::materials`]) on `TEXCOORD_2` or above, which SGL3D has no
+    /// input for: the load leaves it out (`occlusion_texture` `None`), as
+    /// glTF lets a client leave occlusion out, where any other map on such
+    /// a set fails the load.
     OcclusionMap { material: usize },
-    /// Material `material`'s `KHR_materials_specular` specular or specular
-    /// colour texture: SGL3D takes the extension's factors alone so far.
-    SpecularMap { material: usize },
     /// Image `image` (an index into [`Asset::images`]), which no material
     /// map SGL3D samples uses, such as an extension's texture source or an
     /// ignored map's image: it is neither asked of

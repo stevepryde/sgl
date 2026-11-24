@@ -59,6 +59,33 @@ pub(crate) fn attenuation_coefficient(color: f32, distance: f32) -> f32 {
     (-color.ln() / distance).min(OPAQUE_ATTENUATION)
 }
 
+/// The first map binding past the sixteen the record describes
+/// (`MATERIAL_FIRST_MORE_SLOT`): an occlusion map of its own's, then the
+/// specular and specular colour maps'.
+pub(crate) const FIRST_MORE_SLOT: usize = 16;
+/// Where `more_maps` holds the bindings' transform bits and sampler bytes
+/// (`MATERIAL_MORE_MAPS_TRANSFORMED_SHIFT`, `MATERIAL_MORE_MAPS_SAMPLER_SHIFT`).
+pub(crate) const MORE_MAPS_TRANSFORMED_SHIFT: u32 = 3;
+pub(crate) const MORE_MAPS_SAMPLER_SHIFT: u32 = 8;
+
+/// The word of the map bindings past the record's sixteen: for each, from
+/// `FIRST_MORE_SLOT`, a bit for the second UV set, a bit from
+/// `MORE_MAPS_TRANSFORMED_SHIFT` for a transform that is not the identity,
+/// and its sampler state's byte from `MORE_MAPS_SAMPLER_SHIFT`. Group 2's
+/// second uniform and the ray record carry it outside the record
+/// (`MaterialBindings::more_maps`, `SCENE_MATERIAL_MORE_MAPS`), and only
+/// those maps' samples read it, so the record that raster reads and a ray
+/// hit decodes is what it was before those maps existed. material.wgsl's
+/// `material_more_map_*` read it.
+pub(crate) fn more_maps(samplers: &MapSamplers, uvs: &MapUvs) -> u32 {
+    (FIRST_MORE_SLOT..crate::shading::bind::group2::MAP_BINDINGS.len()).fold(0, |word, slot| {
+        let index = (slot - FIRST_MORE_SLOT) as u32;
+        word | (uvs.uv1() >> slot & 1) << index
+            | (uvs.transformed() >> slot & 1) << (MORE_MAPS_TRANSFORMED_SHIFT + index)
+            | samplers.state(slot) << (MORE_MAPS_SAMPLER_SHIFT + 8 * index)
+    })
+}
+
 /// A set of a material's maps, as the record's `maps` word holds them
 /// (`MaterialMap::bit`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -135,10 +162,12 @@ pub(crate) struct MaterialUniform {
     pub alpha_cutoff: f32,
     pub visibility_group: u32,
     pub flags: u32,
-    /// glTF's `occlusionTexture.strength`, read with `MATERIAL_MAP_OCCLUSION`.
+    /// glTF's `occlusionTexture.strength`, read with
+    /// `MATERIAL_MAP_PACKED_OCCLUSION` or `MATERIAL_MAP_OCCLUSION`.
     pub occlusion_strength: f32,
-    /// The IOR's F0 times the specular colour, which the shaders clamp to 1
-    /// and scale by `specular` (`material_dielectric_f0`).
+    /// The IOR's F0 times the specular colour, which the shaders multiply
+    /// by the specular colour map, clamp to 1 and scale by `specular`
+    /// times the specular map (`material_dielectric_f0`).
     pub specular_f0: [f32; 3],
     pub specular: f32,
     /// With `MATERIAL_NORMAL_LAYERS`; zero otherwise.
@@ -153,7 +182,7 @@ pub(crate) struct MaterialUniform {
     pub iridescence: f32,
     pub iridescence_ior: f32,
     pub iridescence_thickness: [f32; 2],
-    /// Where its map bindings sample (`MapUvs::bits`).
+    /// Where its first sixteen map bindings sample (`MapUvs::bits`).
     pub map_uv_bits: u32,
     pub padding: u32,
     /// Beer-Lambert's attenuation coefficient per metre on each channel
@@ -178,8 +207,8 @@ pub(crate) struct MaterialUniform {
     /// light the base diffuses that it passes to its other side (0 none).
     pub diffuse_transmission_color: [f32; 3],
     pub diffuse_transmission: f32,
-    /// Each map binding's sampler state, a byte each
-    /// (`MapSamplers::codes`).
+    /// The first sixteen map bindings' sampler states, a byte each
+    /// (`MapSamplers::codes`); the rest are `more_maps`'.
     pub map_samplers: [u32; 4],
 }
 

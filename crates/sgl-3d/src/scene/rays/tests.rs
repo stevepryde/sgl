@@ -65,7 +65,10 @@ impl Fixture {
                             &maps.uvs(),
                         ),
                         maps.ray_textures(|index| images[index]),
-                        &maps.uvs(),
+                        (
+                            crate::shading::material::more_maps(&maps.samplers(), &maps.uvs()),
+                            &maps.uvs(),
+                        ),
                     )
                     .unwrap()
                     .start
@@ -211,6 +214,8 @@ fn material(double_sided: bool) -> Material {
         ior: 1.5,
         specular: 1.,
         specular_color: [1.; 3],
+        specular_texture: None,
+        specular_color_texture: None,
         clearcoat: 0.5,
         coat_roughness: 0.6,
         clearcoat_texture: None,

@@ -103,15 +103,21 @@ impl Material {
     /// The map bindings that sample its meshes' second UV set, and those
     /// that sample through a transform (`Variant::uv1`,
     /// `Variant::transformed`).
-    pub fn map_uvs(&self) -> (u16, u16) {
+    pub fn map_uvs(&self) -> (u32, u32) {
         (self.bound.uvs.uv1(), self.bound.uvs.transformed())
     }
 
     /// Whether raster samples one of its maps in the shader, in a state
     /// other than the one group 2's sampler binds
     /// (`Variant::shader_sampled`).
-    pub fn shader_sampled(&self) -> u16 {
+    pub fn shader_sampled(&self) -> u32 {
         self.bound.samplers.shader_sampled()
+    }
+
+    /// Whether an occlusion map of its own or a specular or specular colour
+    /// map is in effect (`Variant::occlusion_specular`).
+    pub fn occlusion_specular(&self) -> bool {
+        self.bound.maps.occlusion_specular()
     }
 
     /// Whether its shader's parameter block differs from the last
@@ -195,6 +201,9 @@ pub(crate) struct Materials {
     sheens: usize,
     diffuse_transmission: usize,
     transmissive: usize,
+    /// How many have an occlusion map of its own or a specular or specular
+    /// colour map in effect (`holds_occlusion_specular`).
+    occlusion_specular: usize,
     textures: Textures,
     groups: Groups,
 }
@@ -211,6 +220,7 @@ impl Materials {
             sheens: 0,
             diffuse_transmission: 0,
             transmissive: 0,
+            occlusion_specular: 0,
             textures: Textures::default(),
             groups: Groups::new(device, queue),
         }
@@ -306,6 +316,13 @@ impl Materials {
     /// transmission in only while one is.
     pub fn holds_transmissive(&self) -> bool {
         self.transmissive > 0
+    }
+
+    /// Whether a material has an occlusion map of its own or a specular or
+    /// specular colour map in effect: ray hits sample them only while one
+    /// does (`LitConstants::occlusion_specular`).
+    pub fn holds_occlusion_specular(&self) -> bool {
+        self.occlusion_specular > 0
     }
 
     /// Counts `by` more materials of `values` whose record moves or not
@@ -499,12 +516,13 @@ impl Materials {
         let samplers = maps.samplers();
         let uvs = maps.uvs();
         let uniform = MaterialUniform::new(&values, maps.maps(), &samplers, &uvs);
+        let more_maps = crate::shading::material::more_maps(&samplers, &uvs);
         let record = rays.add_material(
             device,
             queue,
             &uniform,
             maps.ray_textures(|texture| self.textures.get(texture).ray.start),
-            &uvs,
+            (more_maps, &uvs),
         )?;
         let values_buffer = buffer(
             device,
@@ -516,7 +534,9 @@ impl Materials {
             device,
             "material bindings",
             bytemuck::bytes_of(&MaterialBindings {
-                baked: [0; 4],
+                baked: 0,
+                more_maps,
+                padding: [0; 2],
                 map_uvs: *uvs.rows(),
             }),
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -541,6 +561,9 @@ impl Materials {
             self.textures.use_texture(texture);
         }
         self.count(&values, uniform.surface_moves(), 1);
+        if maps.occlusion_specular() {
+            self.occlusion_specular += 1;
+        }
         Ok(self.slots.insert(Material {
             values,
             normal_wrap: normal_wrap(material),
@@ -692,7 +715,7 @@ impl Materials {
             queue,
             &material.baked,
             0,
-            bytemuck::cast_slice(&[u32::from(baked), 0, 0, 0]),
+            bytemuck::cast_slice(&[u32::from(baked)]),
         );
         rays.write_baked(queue, material.word(), baked);
     }
@@ -703,6 +726,9 @@ impl Materials {
         }
         let material = self.slots.remove(id).unwrap();
         self.count(&material.values, material.record_moves(), -1);
+        if material.occlusion_specular() {
+            self.occlusion_specular -= 1;
+        }
         rays.free(material.record);
         for texture in material.textures {
             self.textures.release(rays, texture);
@@ -728,6 +754,8 @@ mod group;
 pub(crate) mod maps;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod normal_layer_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod occlusion_specular_tests;
 mod params;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod sheen_transmission_tests;

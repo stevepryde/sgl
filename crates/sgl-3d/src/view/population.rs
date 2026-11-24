@@ -175,6 +175,7 @@ pub(crate) fn camera_variant(material: &Material, mirrored: bool, deformed: bool
         shader_sampled: material.shader_sampled(),
         uv1: material.map_uvs().0,
         transformed: material.map_uvs().1,
+        occlusion_specular: material.occlusion_specular(),
     }
 }
 

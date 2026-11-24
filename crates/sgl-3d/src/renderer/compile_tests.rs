@@ -1874,3 +1874,112 @@ fn materials_whose_maps_take_transforms_differently_share_pipelines() {
     assert_eq!(two, one);
     assert!(one.0 > none.0, "{one:?} programs transformed, {none:?} not");
 }
+
+// A material that samples an occlusion map of its own or a specular map
+// draws with one pipeline variant whichever of those maps it takes
+// (`Variant::occlusion_specular`), which compiles their sampling in, so a
+// material without them keeps the pipelines it always drew with.
+// Plausible defects: no variant (the sampling compiled into every
+// material's pipelines), a variant for each combination of the maps, or
+// the planning pass missing the variant, so the first frame creates it.
+// The oracle is wgpu's count of the pipelines and shader modules a
+// compiled level holds, each beside a plain cube: a level that adds a cube
+// with all three maps holds more than one that adds none, so the count sees
+// the variant; one that adds that cube, one with an occlusion map alone and
+// one with a specular colour map alone holds as many as the first; and its
+// compiled first frame creates none.
+#[test]
+fn occlusion_and_specular_maps_take_one_variant() {
+    use crate::asset::{Image, MaterialTexture};
+    let level = |maps: &[[bool; 3]]| {
+        let mut asset = test_support::cube();
+        let mesh = asset.meshes[0].clone();
+        let material = asset.materials[0].clone();
+        asset.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([200, 150, 100, 180]),
+        ))];
+        asset.meshes.clear();
+        asset.materials.clear();
+        for (index, &[occlusion, specular, color]) in maps.iter().enumerate() {
+            asset.meshes.push(crate::asset::CpuMesh {
+                material: index,
+                ..mesh.clone()
+            });
+            let map = |on: bool| on.then(|| MaterialTexture::new(0));
+            asset.materials.push(crate::asset::Material {
+                base_texture: Some(MaterialTexture::new(0)),
+                occlusion_texture: map(occlusion),
+                specular_texture: map(specular),
+                specular_color_texture: map(color),
+                ..material.clone()
+            });
+        }
+        let mut level = Level::with_opaque(asset)?;
+        level.compile_all(&Level::input(0.));
+        Some(level)
+    };
+    let plain = [false; 3];
+    let Some(none) = level(&[plain]) else {
+        return;
+    };
+    let one = level(&[plain, [true; 3]]).unwrap();
+    let mut three = level(&[plain, [true; 3], [true, false, false], [false, false, true]]).unwrap();
+    assert!(
+        one.programs().0 > none.programs().0,
+        "{:?} programs with the maps, {:?} without",
+        one.programs(),
+        none.programs()
+    );
+    let compiled = three.programs();
+    assert_eq!(compiled, one.programs(), "three combinations, one");
+    three.render(&Level::input(0.));
+    assert_eq!(three.programs(), compiled, "the compiled first frame");
+}
+
+// An occlusion map packed in the metallic-roughness map (ORM) is read from
+// that map's sample: its material draws with the pipelines of the same
+// material without it. Plausible defect: packed occlusion taken for an
+// occlusion map of its own (`MaterialMap::Occlusion`), or counted by
+// `Variant::occlusion_specular`, which would sample the image again with
+// pipelines of their own. The oracle is wgpu's count of the pipelines and
+// shader modules a compiled level holds, beside a plain cube: a level that
+// adds a cube with packed occlusion holds as many as one that adds the same
+// cube with its metallic-roughness map alone.
+#[test]
+fn packed_occlusion_takes_no_variant() {
+    use crate::asset::{Image, MaterialTexture};
+    let level = |packed: bool| {
+        let mut asset = test_support::cube();
+        let mesh = asset.meshes[0].clone();
+        let material = asset.materials[0].clone();
+        asset.images = vec![Image::Rgba8(image::RgbaImage::from_pixel(
+            2,
+            2,
+            image::Rgba([120, 200, 60, 255]),
+        ))];
+        asset.meshes = vec![
+            mesh.clone(),
+            crate::asset::CpuMesh {
+                material: 1,
+                ..mesh
+            },
+        ];
+        asset.materials = vec![
+            material.clone(),
+            crate::asset::Material {
+                mr_texture: Some(MaterialTexture::new(0)),
+                occlusion_texture: packed.then(|| MaterialTexture::new(0)),
+                ..material
+            },
+        ];
+        let mut level = Level::with_opaque(asset)?;
+        level.compile_all(&Level::input(0.));
+        Some(level.programs())
+    };
+    let Some(packed) = level(true) else {
+        return;
+    };
+    assert_eq!(packed, level(false).unwrap());
+}

@@ -9,16 +9,20 @@ const BASIC_SAMPLED_TEXTURES: u32 = 47;
 
 // Plausible defects: a map the device does not bind keeps its ray-source
 // texture word or its `maps` bit, so ray hits shade it where raster gives
-// way to its factor (S3D-5); the Extended tier starts below 48; or a bump
-// map beside a normal map stays in effect, so the relief binding may take
-// the wrong one. The oracle is the same material added without that map on
-// the same device: on a device of 47 sampled textures a stage, the record
-// of a material with the Extended tier's maps (anisotropy, clearcoat,
-// clearcoat roughness and normal, iridescence and its thickness,
-// transmission and volume thickness, sheen colour and roughness, diffuse
-// transmission and its colour) holds the words of the same material
-// without them, and that of a material with a normal and a bump map the
-// words of the material with the normal map alone.
+// way to its factor (S3D-5); the Extended tier starts below 48; a bump map
+// beside a normal map stays in effect, so the relief binding may take the
+// wrong one; or packed occlusion, which Basic binds, is dropped with an
+// occlusion map of its own, which it does not. The oracle is the same
+// material added without that map on the same device: on a device of 47
+// sampled textures a stage, the record of a material with the Extended
+// tier's maps (anisotropy, clearcoat, clearcoat roughness and normal,
+// iridescence and its thickness, transmission and volume thickness, sheen
+// colour and roughness, diffuse transmission and its colour, an occlusion
+// map in an image of its own, specular and specular colour) holds the
+// words of the same material without them, and that of a material with a
+// normal and a bump map the words of the material with the normal map
+// alone; a material whose occlusion map is its metallic-roughness map
+// holds other words than the same material without the occlusion map.
 #[test]
 fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
     let Some(adapter) = test_support::adapter() else {
@@ -71,6 +75,9 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
             sheen_roughness_texture: Some(crate::asset::MaterialTexture::new(3)),
             diffuse_transmission_texture: Some(crate::asset::MaterialTexture::new(3)),
             diffuse_transmission_color_texture: Some(crate::asset::MaterialTexture::new(0)),
+            occlusion_texture: Some(crate::asset::MaterialTexture::new(4)),
+            specular_texture: Some(crate::asset::MaterialTexture::new(3)),
+            specular_color_texture: Some(crate::asset::MaterialTexture::new(0)),
             ..plain.clone()
         },
         plain.clone(),
@@ -81,6 +88,15 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
         },
         crate::asset::Material {
             normal_texture: Some(crate::asset::MaterialTexture::new(1)),
+            ..plain.clone()
+        },
+        crate::asset::Material {
+            mr_texture: Some(crate::asset::MaterialTexture::new(4)),
+            occlusion_texture: Some(crate::asset::MaterialTexture::new(4)),
+            ..plain.clone()
+        },
+        crate::asset::Material {
+            mr_texture: Some(crate::asset::MaterialTexture::new(4)),
             ..plain
         },
     ];
@@ -94,4 +110,5 @@ fn a_basic_device_records_a_material_as_without_the_maps_it_drops() {
     };
     assert_eq!(record(0), record(1), "the Extended tier's maps on Basic");
     assert_eq!(record(2), record(3), "a bump map beside a normal map");
+    assert_ne!(record(4), record(5), "packed occlusion on Basic");
 }

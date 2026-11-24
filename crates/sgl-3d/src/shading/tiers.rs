@@ -64,6 +64,37 @@ pub(crate) fn material_provider(tier: BindingTier) -> &'static Module {
     }
 }
 
+/// The occlusion and specular provider of a material that samples an
+/// occlusion map of its own or a specular or specular colour map: samples
+/// them where their bits are set, on the Extended tier, which binds them.
+pub(crate) static MATERIAL_OCCLUSION_SPECULAR: Module = Module {
+    name: "material_occlusion_specular",
+    source: sgl_post_fx::embed_wgsl!("material_occlusion_specular.wgsl"),
+    deps: &[&BIND_MATERIAL_EXTENDED, &super::samplers::MATERIAL_SAMPLING],
+};
+/// The occlusion and specular provider of every other material: their
+/// fallbacks, referencing none of their bindings.
+pub(crate) static MATERIAL_OCCLUSION_SPECULAR_NONE: Module = Module {
+    name: "material_occlusion_specular_none",
+    source: sgl_post_fx::embed_wgsl!("material_occlusion_specular_none.wgsl"),
+    deps: &[],
+};
+/// The occlusion and specular provider a program that composes
+/// `SURFACE_RASTER` composes on a device of `tier` for pipelines whose key
+/// samples those maps where `occlusion_specular`
+/// (`view::pipelines::Variant::occlusion_specular`): the sampling one only
+/// on `Extended`, the one tier that binds them.
+pub(crate) fn occlusion_specular_provider(
+    tier: BindingTier,
+    occlusion_specular: bool,
+) -> &'static Module {
+    if occlusion_specular && tier == BindingTier::Extended {
+        &MATERIAL_OCCLUSION_SPECULAR
+    } else {
+        &MATERIAL_OCCLUSION_SPECULAR_NONE
+    }
+}
+
 /// The blended pipelines' group 3 bindings of the Extended binding tier
 /// alone: the transparent stage's copy of the composed frame, the opaque
 /// depth and the volume layers.

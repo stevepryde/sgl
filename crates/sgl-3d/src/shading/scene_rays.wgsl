@@ -66,6 +66,12 @@ fn scene_material_values(at:u32)->Material {
  scene_v3(at+SCENE_MATERIAL_DIFFUSE_TRANSMISSION_COLOR),scene_f32(at+SCENE_MATERIAL_DIFFUSE_TRANSMISSION),
  vec4(scene_source[samplers],scene_source[samplers+1u],scene_source[samplers+2u],scene_source[samplers+3u]));
 }
+// Texture word `texture` (SCENE_TEXTURE_*) of `material`'s record, read
+// from the source: the occlusion and specular maps', which a hit reads only
+// where their bits are set.
+fn scene_material_texture(material:SceneMaterial,texture:u32)->u32 {
+ return scene_source[material.word+SCENE_MATERIAL_TEXTURES+texture];
+}
 fn scene_material(at:u32)->SceneMaterial {
  let first=at+SCENE_MATERIAL_TEXTURES;
  var textures:array<u32,SCENE_TEXTURES>;
@@ -151,6 +157,59 @@ fn scene_map_uv(material:SceneMaterial,slot:u32,uv:vec2<f32>,uv1:vec2<f32>)->vec
   coordinates=map_uv_transform(scene_map_uv_rows(material.word,slot),coordinates);
  }
  return coordinates;
+}
+// The second UV set at `hit`, from its triangle: what scene_decode_hit
+// leaves zero where none of the record's first sixteen map bindings samples
+// it, for a map binding past them that does.
+fn scene_hit_uv1(hit:SceneHit)->vec2<f32> {
+ let mesh=scene_instances[hit.instance_id].mesh_word+hit.mesh_id*SCENE_MESH_WORDS;
+ let triangle=scene_triangle(mesh,hit.primitive_id);
+ let b=vec3(1.-hit.barycentrics.x-hit.barycentrics.y,hit.barycentrics);
+ return scene_vertex_uv1(mesh,triangle.x)*b.x+scene_vertex_uv1(mesh,triangle.y)*b.y+scene_vertex_uv1(mesh,triangle.z)*b.z;
+}
+// Where map binding `slot` of `material`, one past the record's sixteen
+// (MATERIAL_FIRST_MORE_SLOT on), samples at a point whose first and second
+// UV sets are `uv` and `uv1`, as the record's word for those bindings
+// `word` (material_more_map_*) says: scene_map_uv's twin for them.
+fn scene_more_map_uv(material:SceneMaterial,word:u32,slot:u32,uv:vec2<f32>,uv1:vec2<f32>)->vec2<f32> {
+ var coordinates=uv;
+ if material_more_map_on_uv1(word,slot) {
+  coordinates=uv1;
+ }
+ if material_more_map_transformed(word,slot) {
+  coordinates=map_uv_transform(scene_map_uv_rows(material.word,slot),coordinates);
+ }
+ return coordinates;
+}
+// The record's word of `material`'s map bindings past its sixteen, which
+// only their samples read.
+fn scene_material_more_maps(material:SceneMaterial)->u32 {
+ return scene_source[material.word+SCENE_MATERIAL_MORE_MAPS];
+}
+// What the map bindings past the record's sixteen read at a hit, once for
+// all of them: the record's word for them, and the hit's second UV set where
+// one of them samples it, scene_decode_hit's where one of the first sixteen
+// does too, else from the triangle (scene_hit_uv1).
+struct SceneMoreMaps {
+ word:u32,
+ uv1:vec2<f32>,
+}
+fn scene_hit_more_maps(hit:SceneHit,material:SceneMaterial)->SceneMoreMaps {
+ let word=scene_material_more_maps(material);
+ var uv1=hit.uv1;
+ let first_sixteen=(material.values.map_uv_bits&((1u<<MAP_UV_TRANSFORMED_SHIFT)-1u))!=0u;
+ if (word&((1u<<MATERIAL_MORE_MAPS_TRANSFORMED_SHIFT)-1u))!=0u && !first_sixteen {
+  uv1=scene_hit_uv1(hit);
+ }
+ return SceneMoreMaps(word,uv1);
+}
+// Image `image_word` at a hit whose first UV set is `uv` as map binding
+// `slot` of `material`, one past the record's sixteen, samples it: at its
+// set and transform (scene_more_map_uv) in its sampler state, from `more`
+// (scene_hit_more_maps); scene_map_uv's and scene_sample_map's twin for
+// those bindings.
+fn scene_sample_more_map(more:SceneMoreMaps,uv:vec2<f32>,material:SceneMaterial,image_word:u32,slot:u32,srgb:bool)->vec4<f32> {
+ return scene_sample_texture(image_word,scene_more_map_uv(material,more.word,slot,uv,more.uv1),material_more_map_sampler(more.word,slot),srgb);
 }
 // A ray hit's base colour, where its first and second UV sets are `uv` and
 // `uv1`, with vertex colour `color`: the material's base times the vertex

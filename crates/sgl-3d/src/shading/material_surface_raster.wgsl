@@ -6,7 +6,8 @@
 // shader-driven masked casters evaluate their material through this owner.
 // Reads `view`, `frame`, object records, the material and the tier's maps
 // through the program's material-map provider (material_maps_basic.wgsl,
-// material_maps_extended.wgsl).
+// material_maps_extended.wgsl) and its occlusion and specular provider
+// (material_occlusion_specular.wgsl, material_occlusion_specular_none.wgsl).
 fn surface_tangent_frame(i:Fragment,front:bool)->mat3x3<f32> {
  let f=pbr_tangent_frame(normalize(i.normal),i.tangent);
  let side=select(-1.,1.,front);
@@ -124,10 +125,18 @@ fn raster_emission(i:Fragment,emission:vec3<f32>)->vec3<f32> {
 // here; a material without a shader takes its record and maps unchanged.
 // Each map is read where its binding samples (surface_map_uv).
 // Each Extended map is sampled only where its factor or flag leaves it
-// anything to scale.
+// anything to scale, the occlusion and specular maps only by programs that
+// compose their sampling provider (material_occlusion_specular.wgsl) and
+// where their bits put them in effect, so a material without them takes no
+// sample for them.
 fn raster_material(i:Fragment,front:bool)->MaterialSurface {
  let mr=material_map_sample(mr_map,MATERIAL_SLOT_METALLIC_ROUGHNESS,surface_map_uv(i,MATERIAL_SLOT_METALLIC_ROUGHNESS),view.mip_bias);
  let emission=material_map_sample(emission_map,MATERIAL_SLOT_EMISSION,surface_map_uv(i,MATERIAL_SLOT_EMISSION),view.mip_bias).rgb;
+ // The occlusion texel (the metallic-roughness map's but for an occlusion
+ // map of its own) and the specular map's, from the program's occlusion and
+ // specular provider.
+ let occlusion=material_occlusion_texel(i.uv,i.uv1,mr);
+ let specular=material_specular_texel(i.uv,i.uv1);
  var coat=vec4(1.);
  var coat_roughness=vec4(1.);
  if material.coat>0. {
@@ -142,7 +151,7 @@ fn raster_material(i:Fragment,front:bool)->MaterialSurface {
  if (material.flags&MATERIAL_TRANSMISSIVE)!=0u || material.diffuse_transmission>0. {
   thickness=material_thickness_texel(i.uv,i.uv1);
  }
- let texels=MaterialTexels(material_base_color(i.uv,i.uv1,i.color),emission,mr,coat,coat_roughness,transmission,thickness);
+ let texels=MaterialTexels(material_base_color(i.uv,i.uv1,i.color),emission,mr,occlusion,specular,coat,coat_roughness,transmission,thickness);
  let recorded=material_texel_surface(texels,surface_normal(i,front));
  return material_surface(recorded,material_surface_context(i,front),material_shader_params(false));
 }

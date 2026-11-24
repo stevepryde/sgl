@@ -1931,3 +1931,55 @@ Use the [current specs](README.md) for implementation and the
   prepared path (#852's harness) readies SGL in 109 ms cold and 26 ms
   warm, its longest startup frame gap 15 to 18 ms, where three.js r187's
   `compileAsync` took 330 and 53 ms with a gap of 75 to 84 ms.
+- **D-87** Decision, 2026-11-24 (#860): a material's occlusion map in an
+  image, sampler, UV set or transform of its own and `KHR_materials_specular`'s
+  specular and specular colour maps shade on the Extended binding tier, in
+  group 2 bindings of their own (22–24, map slots 16–18); on Basic they give
+  way to their factors, and an occlusion map that is the metallic-roughness
+  map's slot (ORM) is read from that map's sample on both tiers. glTF 2.0
+  (3.9.3) and the extension define them: occlusion 1 + strength · (red − 1);
+  a dielectric's F0 min(the IOR's F0 · colour factor · the colour map's
+  sRGB-decoded RGB, 1) · strength factor · the specular map's alpha, its F90
+  that strength, and a metal untouched; three.js r187 and Filament ef1a133
+  read the same channels in the same colour spaces. A material without
+  them costs what it cost before, by construction: raster samples them in
+  programs that compose their sampling provider, which only a material that
+  has one draws with (`Variant::occlusion_specular`, one variant whichever
+  it has); every other material's programs compose a fallback that
+  references none of their bindings; ray hits sample them behind a lit
+  constant only a scene that holds one sets (`LitConstants::occlusion_specular`,
+  which the geometry pipelines' keys leave out); and the record keeps its
+  layout, the three bindings' sets, transforms and sampler states in one
+  word outside it that only their samples read (group 2's `more_maps`, the
+  ray record's word after `baked`), a hit on that set taking it from its
+  triangle. Compared program by program from wgpu-hal's generated MSL for
+  scenes without the maps, against the base: every program but the opaque
+  fragment program is the base's but for unused constants and the order of
+  two functions, and that one, and the dynamic GI trace, execute the base's
+  code but for multiplications by a constant 1 and a mask's value; group 2
+  binds three more white textures, which those programs do not reference,
+  and its transform rows grow from 528 to 624 bytes, unread. Measured
+  (Apple M5, Metal, 1920×1080, alternating before/after pairs under the
+  shared lock on a busy machine; a lit scene whose 16 materials sample base,
+  metallic-roughness and normal maps; after − before, median and range):
+  without the maps, the opaque geometry and lighting −0.10 ms (−0.42 to
+  −0.02, six pairs; 3.56 ms against 3.65) and the dynamic GI probe rays
+  +0.004 ms (−0.006 to +0.012, six pairs; 0.144 ms against 0.142), each
+  inside the pairs' own spread. Packed occlusion draws with those programs.
+  With the three maps on every material, as 256² noise images, the opaque
+  geometry and lighting take +0.80 ms (+0.66 to +1.26, five pairs; 4.58 ms
+  against 3.58), and on one-texel images, which stay in cache, +0.07 ms
+  (−0.08 to +0.34): the rest is their texels' memory traffic. Not taken,
+  each built and measured first: the sampling gated by the record's bits in
+  every program, then by a pipeline
+  constant over one program, which left the bindings and dead code in every
+  program and cost a material without the maps about 0.03 ms of 3.0 in the
+  first measurements; the new slots' bits and sampler states in the
+  record's padding, which made every ray hit decode two words more and pass
+  the whole record to each map sample, about 0.016 ms of 0.13 on the
+  dynamic GI probe rays; a second group 2 layout for materials with them,
+  which would double group 2's pipeline layouts for three textures other
+  programs never read; and a packed fast path for the two specular maps,
+  which neither the extension nor its exporters define. Game shaders are
+  validated against the fallback programs only: the sampling provider
+  differs in function bodies that name SGL3D's own, reserved declarations.

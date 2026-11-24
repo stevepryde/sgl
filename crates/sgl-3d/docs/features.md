@@ -27,9 +27,11 @@ Vulkan driver lands in either, by its `maxPerStageResources`.
 lightmap or irradiance atlas is non-directional, dynamic GI is off
 (`Renderer::dynamic_gi_in_effect`), so are volume paths
 (`Renderer::volume_paths_in_effect`), a material's anisotropy, clearcoat,
-iridescence, transmission, thickness, sheen and diffuse transmission maps
-give way to their factors (a clearcoat normal map to the geometry normal),
-in raster and rays alike, and transmissive surfaces blend the light behind
+iridescence, transmission, thickness, sheen, diffuse transmission, specular
+and specular colour maps give way to their factors (a clearcoat normal map
+to the geometry normal), and an occlusion map in an image of its own to no
+occlusion while one packed in the metallic-roughness map still shades, in
+raster and rays alike, and transmissive surfaces blend the light behind
 them through unrefracted. A probe captured on an
 `Extended` device keeps what its maps and lights did there.
 [Binding tiers](../README.md#binding-tiers).
@@ -43,17 +45,20 @@ them through unrefracted. A probe captured on an
   in world-space reflections and dynamic GI than to the camera: its
   strength is per pixel in raster, as three.js's, and per metre at ray
   hits, [D-45](../../../specs/decisions.md)), an
-  occlusion map packed in the metallic-roughness image's red channel
-  (ORM), which also shadows direct light (micro-shadowing,
-  [D-66](../../../specs/decisions.md)), `KHR_materials_clearcoat` (its
+  occlusion map, which also shadows direct light (micro-shadowing,
+  [D-66](../../../specs/decisions.md)): packed in the metallic-roughness
+  image's red channel (ORM, read from that map's sample, no sample of its
+  own) on both tiers, in an image of its own on `Extended`,
+  `KHR_materials_clearcoat` (its
   clearcoat, roughness and normal maps on the `Extended` binding tier),
   emission, unlit,
   `KHR_materials_anisotropy`, `KHR_materials_iridescence` (a thin film
   over the base, its maps on `Extended`), `KHR_materials_sheen` (cloth) and
   `KHR_materials_diffuse_transmission` (leaves and paper lit from behind),
-  their maps on `Extended`, the `KHR_materials_ior` and
-  `KHR_materials_specular` factors (a dielectric's F0: water's IOR 1.33
-  gives 0.02), and `KHR_materials_transmission`, `KHR_materials_volume` and
+  their maps on `Extended`, `KHR_materials_ior` and
+  `KHR_materials_specular` (a dielectric's F0: water's IOR 1.33 gives
+  0.02; the specular strength and colour maps on `Extended`, a metal
+  untouched by them), and `KHR_materials_transmission`, `KHR_materials_volume` and
   `KHR_materials_dispersion` (their maps on `Extended`), and
   `KHR_lights_punctual` lights as data (`Asset::lights`), which the game
   places and installs, and `EXT_mesh_gpu_instancing` nodes as one model a
@@ -87,9 +92,8 @@ them through unrefracted. A probe captured on an
   without weakening structural validation or changing GPU limits.
   [Loading details](../README.md#asset-and-environment-limits). A file that
   requires an extension SGL3D does not support fails to load; one it only uses is left out and listed in `Asset::ignored`,
-  with occlusion maps not sampled as the metallic-roughness map and
-  specular textures, which
-  SGL3D does not sample yet, the images no sampled map uses, which are
+  with occlusion maps on `TEXCOORD_2` or above, which load as none, the
+  images no sampled map uses, which are
   neither read nor decoded, vertex attributes nothing reads
   (`TEXCOORD_2` on, `COLOR_1` on, `_NAME`), and morph target displacements
   other than position, normal and tangent (`TEXCOORD_n`, `COLOR_n`). A tangent along its normal
@@ -682,5 +686,4 @@ are captured between frames, offline or while a level loads:
 what moves is a [live probe](../README.md#live-specular-probes), which the
 game refreshes when it chooses.
 
-Also not provided: occlusion maps in an image of their own, specular
-textures, tangent generation and order-independent transparency.
+Also not provided: tangent generation and order-independent transparency.
