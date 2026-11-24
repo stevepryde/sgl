@@ -7,6 +7,7 @@ use crate::content::identity::PlanarReflectorId;
 use crate::shading;
 use crate::shading::gbuffer;
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::{Compiled, SharedModule};
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::GeometryPass;
 use crate::view::reflected_camera::{self, Rect};
@@ -54,10 +55,11 @@ pub(crate) struct PlanarParameters {
 /// One of the stage's fragment pipelines.
 fn pipeline(
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
+    shader: &SharedModule,
     entry: &str,
     label: &str,
 ) -> wgpu::RenderPipeline {
+    let shader = shader.get(device);
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: None,
@@ -98,11 +100,12 @@ struct Slot {
 /// Timing group: `planar reflection`.
 /// History: none.
 pub(crate) struct Planar {
-    picture: wgpu::RenderPipeline,
+    picture: Compiled<wgpu::RenderPipeline>,
     /// Copies the screen-space method's result, from the first frame one
-    /// runs beside a picture.
-    method: Option<(wgpu::RenderPipeline, CachedGroup)>,
-    shader: wgpu::ShaderModule,
+    /// runs beside a picture, and its group.
+    method: Compiled<wgpu::RenderPipeline>,
+    method_group: Option<CachedGroup>,
+    shader: SharedModule,
     sampler: wgpu::Sampler,
     /// Its targets, in frames that show a picture: released while the
     /// view only keeps its reflected views, which take a fraction of a
@@ -135,14 +138,11 @@ impl Targets {
 
 impl Planar {
     pub fn new(device: &wgpu::Device) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("planar reflections"),
-            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&PLANAR]).into()),
-        });
         Self {
-            picture: pipeline(device, &shader, PICTURE_ENTRY, "planar reflection"),
-            method: None,
-            shader,
+            picture: Compiled::default(),
+            method: Compiled::default(),
+            method_group: None,
+            shader: SharedModule::composed("planar reflections", &PLANAR),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("planar reflection picture"),
                 mag_filter: wgpu::FilterMode::Linear,
@@ -161,7 +161,7 @@ impl Planar {
         for slot in &mut self.slots {
             slot.group.forget();
         }
-        if let Some((_, group)) = &mut self.method {
+        if let Some(group) = &mut self.method_group {
             group.forget();
         }
     }
@@ -172,7 +172,9 @@ impl Planar {
     /// the materials that name its reflector, drawn again at the opaque
     /// depth, tested equal, into the coverage mask (the temporal
     /// composition's pipeline, `GeometryPass::TemporalComposition`), then
-    /// one pass over the reflector's bounds on screen.
+    /// one pass over the reflector's bounds on screen. A planning pass
+    /// (`Renderer::compile`) whose pipelines are compiling draws the
+    /// coverage, which asks for its geometry pipelines, and no picture.
     pub fn encode(
         &mut self,
         ctx: &mut FrameContext<'_>,
@@ -188,7 +190,32 @@ impl Planar {
         {
             self.targets = Some(Targets::new(device, size));
         }
-        while self.slots.len() < pictures.len() {
+        let shader = &self.shader;
+        let picture_pipeline = self
+            .picture
+            .get(ctx.compiler, "planar reflection", || {
+                let shader = shader.clone();
+                move |device: &wgpu::Device| {
+                    pipeline(device, &shader, PICTURE_ENTRY, "planar reflection")
+                }
+            })
+            .cloned();
+        let method_pipeline = match method {
+            Some(_) => self
+                .method
+                .get(ctx.compiler, "planar reflection method", || {
+                    let shader = shader.clone();
+                    move |device: &wgpu::Device| {
+                        pipeline(device, &shader, METHOD_ENTRY, "planar reflection method")
+                    }
+                })
+                .cloned(),
+            None => None,
+        };
+        while let Some(picture) = picture_pipeline
+            .as_ref()
+            .filter(|_| self.slots.len() < pictures.len())
+        {
             self.slots.push(Slot {
                 parameters: crate::counters::buffer(
                     device,
@@ -199,11 +226,11 @@ impl Planar {
                         mapped_at_creation: false,
                     },
                 ),
-                group: CachedGroup::new(self.picture.get_bind_group_layout(0)),
+                group: CachedGroup::new(picture.get_bind_group_layout(0)),
             });
         }
         // A picture the frame no longer shows lets go of its views.
-        for slot in &mut self.slots[pictures.len()..] {
+        for slot in self.slots.iter_mut().skip(pictures.len()) {
             slot.group.forget();
         }
         let texture = wgpu::BindingResource::TextureView;
@@ -245,6 +272,9 @@ impl Planar {
                 },
             );
             drop(coverage);
+            let Some(picture_pipeline) = &picture_pipeline else {
+                continue;
+            };
             crate::counters::write_buffer(
                 ctx.queue,
                 &self.slots[index].parameters,
@@ -282,17 +312,10 @@ impl Planar {
                 timestamp_writes: ctx.timing.and_then(|t| t.render_pass("planar reflection")),
                 ..Default::default()
             });
-            if let Some(method) = method.filter(|_| first) {
-                let (copy, group) = self.method.get_or_insert_with(|| {
-                    let copy = pipeline(
-                        device,
-                        &self.shader,
-                        METHOD_ENTRY,
-                        "planar reflection method",
-                    );
-                    let group = CachedGroup::new(copy.get_bind_group_layout(0));
-                    (copy, group)
-                });
+            if let Some((method, copy)) = method.zip(method_pipeline.as_ref()).filter(|_| first) {
+                let group = self
+                    .method_group
+                    .get_or_insert_with(|| CachedGroup::new(copy.get_bind_group_layout(0)));
                 let group = group.get(device, "planar reflection method", &[(9, texture(method))]);
                 pass.set_pipeline(copy);
                 pass.set_bind_group(0, group, &[]);
@@ -315,7 +338,7 @@ impl Planar {
             let [(x, columns), (y, rows)] =
                 reflected_camera::texels(picture.bounds, [width, height]);
             pass.set_scissor_rect(x, y, columns, rows);
-            pass.set_pipeline(&self.picture);
+            pass.set_pipeline(picture_pipeline);
             pass.set_bind_group(0, group, &[]);
             pass.draw(0..3, 0..1);
         }

@@ -49,6 +49,7 @@ pub(crate) mod environment;
 use crate::FrameInput;
 use crate::content::lighting::{DirectionalLight, FrameEnvironment, Sky as SkyLook};
 use crate::shading::sky::SkyAtmosphereUniform;
+use crate::view::compile::{Compiled, Compiler};
 use crate::view::frame::FrameContext;
 use aerial::{AerialPipeline, AerialVolume, SkyAerialUniform};
 use environment::{AtlasCycle, EnvironmentAtlas, EnvironmentPipelines};
@@ -440,14 +441,14 @@ struct Plan {
 /// The stage of one view (or one probe capture).
 #[derive(Default)]
 pub(crate) struct Sky {
-    pipelines: Option<Pipelines>,
+    pipelines: Compiled<Pipelines>,
     tables: Option<Tables>,
     /// What the tables hold.
     held: Held,
     /// The environment atlas's cycle.
     cycle: AtlasCycle,
     /// The aerial volume's pipeline, compiled on its first frame.
-    aerial_pipeline: Option<AerialPipeline>,
+    aerial_pipeline: Compiled<AerialPipeline>,
     /// The aerial volume, while aerial perspective is in effect.
     aerial: Option<AerialVolume>,
     /// What the frame being rendered computes, as `prepare` planned it.
@@ -464,7 +465,7 @@ impl Sky {
     /// sky, the tables, atlas and volume are dropped.
     pub fn prepare(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         input: &FrameInput,
         eye: Vec3,
         (restart, aerial): (bool, bool),
@@ -478,7 +479,24 @@ impl Sky {
             }
             return;
         };
-        let pipelines = self.pipelines.get_or_insert_with(|| Pipelines::new(device));
+        // Both sets are asked for before a planning pass that lacks one
+        // leaves the frame's sky unplanned.
+        let pipelines = self.pipelines.get(compiler, "sky", || Pipelines::new);
+        let aerial_pipeline = match aerial {
+            true => {
+                let pipeline = self
+                    .aerial_pipeline
+                    .get(compiler, "aerial perspective", || AerialPipeline::new);
+                if pipeline.is_none() {
+                    return;
+                }
+                pipeline
+            }
+            false => None,
+        };
+        let Some(pipelines) = pipelines else {
+            return;
+        };
         if self.tables.is_none() {
             self.tables = Some(Tables::new(device, pipelines));
             self.held = Held::default();
@@ -486,10 +504,7 @@ impl Sky {
             self.aerial = None;
         }
         let tables = self.tables.as_ref().unwrap();
-        let aerial = aerial.then(|| {
-            let pipeline = self
-                .aerial_pipeline
-                .get_or_insert_with(|| AerialPipeline::new(device));
+        let aerial = aerial_pipeline.map(|pipeline| {
             if self.aerial.is_none() {
                 let [transmittance, multiscattering] = &tables.table_views;
                 self.aerial = Some(AerialVolume::new(
@@ -559,7 +574,7 @@ impl Sky {
         timing: Option<&crate::timing::GpuTiming>,
     ) {
         let (Some(pipelines), Some(tables), Some(plan)) =
-            (&self.pipelines, &self.tables, self.plan.clone())
+            (self.pipelines.ready(), &self.tables, self.plan.clone())
         else {
             return;
         };
@@ -608,7 +623,7 @@ impl Sky {
             );
         }
         if let (Some(uniform), Some(volume), Some(pipeline)) =
-            (aerial, &self.aerial, &self.aerial_pipeline)
+            (aerial, &self.aerial, self.aerial_pipeline.ready())
         {
             volume.encode(pipeline, (queue, encoder), &uniform, timing);
         }

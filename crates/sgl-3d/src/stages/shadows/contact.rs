@@ -32,6 +32,7 @@
 use crate::settings::ContactShadows;
 use crate::shading;
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::Compiled;
 use crate::view::frame::FrameContext;
 
 /// Godot's wave: the pixels a workgroup walks toward the light together.
@@ -164,7 +165,7 @@ fn light_coordinate(
 /// first used, its parameters and the contact mask while it runs.
 pub(crate) struct ContactShadowStage {
     pipeline_layout: wgpu::PipelineLayout,
-    pipelines: [Option<wgpu::ComputePipeline>; 3],
+    pipelines: [Compiled<wgpu::ComputePipeline>; 3],
     params: wgpu::Buffer,
     group: CachedGroup,
     /// The contact mask and its size, while the stage runs.
@@ -214,7 +215,7 @@ impl ContactShadowStage {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             }),
-            pipelines: [None, None, None],
+            pipelines: Default::default(),
             params: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -253,23 +254,28 @@ impl ContactShadowStage {
         if self.mask.as_ref().is_none_or(|(held, _)| *held != size) {
             self.mask = Some((size, Self::mask(ctx, size)));
         }
-        let pipeline = self.pipelines[index].get_or_insert_with(|| {
-            let shader = ctx
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
+        let pipeline = self.pipelines[index].get(ctx.compiler, "contact shadows", || {
+            let layout = self.pipeline_layout.clone();
+            move |device: &wgpu::Device| {
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(module.name),
                     source: wgpu::ShaderSource::Wgsl(shading::compose(&[module]).into()),
                 });
-            ctx.device
-                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(module.name),
-                    layout: Some(&self.pipeline_layout),
+                    layout: Some(&layout),
                     module: &shader,
                     entry_point: Some(ENTRY),
                     compilation_options: Default::default(),
                     cache: None,
                 })
+            }
         });
+        // A planning pass that lacks the pipeline leaves the pass out: the
+        // lighting pass still takes the mask, whose pipeline it selects.
+        let Some(pipeline) = pipeline else {
+            return self.mask.as_ref().map(|(_, mask)| mask);
+        };
         // The direction toward the light, projected as the depth was
         // drawn: by the frame's jittered view-projection.
         let toward =

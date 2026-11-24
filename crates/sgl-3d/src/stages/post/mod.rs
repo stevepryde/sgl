@@ -48,6 +48,7 @@ pub(crate) use output::Output;
 
 use crate::settings::{Antialiasing, SmaaQuality};
 use crate::shading::gbuffer::COLOR as HDR;
+use crate::view::compile::Compiler;
 use crate::view::effective::Effective;
 use crate::view::frame::{Completed, FrameContext};
 use crate::view::targets::{Sizes, target};
@@ -112,18 +113,13 @@ pub(crate) struct Post {
 }
 
 impl Post {
-    /// Presentation for `sizes`, with the selected bloom and SMAA pipelines prepared.
-    pub fn new(
-        device: &wgpu::Device,
-        output: Output,
-        sizes: Sizes,
-        bloom_enabled: bool,
-        smaa_quality: Option<SmaaQuality>,
-    ) -> Self {
+    /// Presentation for `sizes`, bloom's targets full size with
+    /// `bloom_enabled`.
+    pub fn new(device: &wgpu::Device, output: Output, sizes: Sizes, bloom_enabled: bool) -> Self {
         let inputs = inputs::Inputs::new(device);
         Self {
-            bloom: bloom::Bloom::new(device, &inputs, sizes.scene, bloom_enabled),
-            smaa: smaa::Smaa::new(device, sizes.scene[0], sizes.scene[1], HDR, smaa_quality),
+            bloom: bloom::Bloom::new(device, sizes.scene, bloom_enabled),
+            smaa: smaa::Smaa::new(device, sizes.scene[0], sizes.scene[1], HDR),
             scene_size: sizes.scene,
             output_size: sizes.output,
             fsr1: fsr1::Fsr1::default(),
@@ -200,7 +196,7 @@ impl Post {
             local_exposure: ctx.input.local_exposure,
         };
         self.present(
-            ctx.device,
+            (ctx.device, ctx.compiler),
             ctx.queue,
             ctx.encoder,
             completed,
@@ -217,7 +213,7 @@ impl Post {
     #[allow(clippy::too_many_arguments)]
     fn present(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         completed: &wgpu::TextureView,
@@ -238,23 +234,30 @@ impl Post {
                 0,
                 bytemuck::bytes_of(&bloom::settings(look.bloom, look.stops)),
             );
-            self.bloom
-                .encode(device, encoder, &self.inputs, completed, look.bloom, timing)
+            self.bloom.encode(
+                (device, compiler),
+                encoder,
+                &self.inputs,
+                completed,
+                look.bloom,
+                timing,
+            )
         } else {
-            completed
+            completed.clone()
         };
+        let combined = &combined;
         // Local exposure's base, from the image the tone map is about to
         // read, at the frame's exposure.
-        let lookup = look.local_exposure.contrasts().map(|contrasts| {
+        let lookup = look.local_exposure.contrasts().and_then(|contrasts| {
             let (grid, base) = self.local_exposure.encode(
-                device,
+                (device, compiler),
                 encoder,
                 combined,
                 look.exposure,
                 self.scene_size,
                 timing,
-            );
-            (grid, base, contrasts)
+            )?;
+            Some((grid, base, contrasts))
         });
         if lookup.is_none() {
             self.local_exposure.release();
@@ -291,7 +294,7 @@ impl Post {
             }
             let Some(last) = sharpen(false) else {
                 self.tone_map.encode(
-                    device,
+                    (device, compiler),
                     queue,
                     encoder,
                     &self.inputs,
@@ -312,7 +315,7 @@ impl Post {
                 .sharpening_input
                 .get_or_insert_with(|| target(device, "sharpening input", output_size, HDR));
             self.tone_map.encode(
-                device,
+                (device, compiler),
                 queue,
                 encoder,
                 &self.inputs,
@@ -325,7 +328,7 @@ impl Post {
                 timing,
             );
             self.tone_map.present_final(
-                device,
+                (device, compiler),
                 queue,
                 encoder,
                 &self.inputs,
@@ -343,7 +346,7 @@ impl Post {
             .smaa_targets
             .get_or_insert_with(|| SmaaTargets::new(device, scene_size));
         self.tone_map.encode(
-            device,
+            (device, compiler),
             queue,
             encoder,
             &self.inputs,
@@ -363,7 +366,7 @@ impl Post {
                 .antialiased
                 .get_or_insert_with(|| target(device, "antialiased scene", scene_size, HDR));
             self.smaa.encode(
-                device,
+                (device, compiler),
                 encoder,
                 &targets.tone_mapped,
                 antialiased,
@@ -376,7 +379,7 @@ impl Post {
         };
         let (scene, last) = if presentation.spatial {
             let upscaled = self.fsr1.encode(
-                device,
+                (device, compiler),
                 encoder,
                 &self.inputs,
                 scene,
@@ -390,7 +393,7 @@ impl Post {
                 .sharpening_input
                 .get_or_insert_with(|| target(device, "sharpening input", output_size, HDR));
             self.tone_map.resample_into(
-                device,
+                (device, compiler),
                 encoder,
                 &self.inputs,
                 scene,
@@ -403,7 +406,7 @@ impl Post {
             (scene, sharpen(false).unwrap_or(tone_map::Final::Resample))
         };
         self.tone_map.present_final(
-            device,
+            (device, compiler),
             queue,
             encoder,
             &self.inputs,

@@ -10,10 +10,12 @@
 //! the previous frame's depth. TAA finds the closest motion vectors itself
 //! (PROVENANCE.md DFX-13).
 use crate::render_technique::{
-    DepthStencilStateDesc, PostFXRenderTechnique, Resource, Shader, create_shader,
+    DepthStencilStateDesc, InPlace, Pipelines, PostFXRenderTechnique, Resource, Shader,
+    create_shader,
 };
 use crate::structures::CameraAttribs;
 use std::collections::HashMap;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 /// `PostFXContext::FEATURE_FLAGS`.
@@ -147,6 +149,8 @@ pub struct PostFXContext {
     feature_flags: FeatureFlags,
     pso_ready: bool,
     render_tech: HashMap<RenderTechniqueKey, PostFXRenderTechnique>,
+    /// Who creates the techniques' pipelines.
+    pipelines: Pipelines,
     vs_copy_texture: Shader,
 
     sobol_buffer: wgpu::TextureView,
@@ -244,7 +248,8 @@ impl PostFXContext {
             feature_flags: FeatureFlags::NONE,
             pso_ready: false,
             render_tech: HashMap::new(),
-            vs_copy_texture: create_shader(device, "PostFXContext_ScreenTriangleVS", "main", &[]),
+            pipelines: Arc::new(InPlace),
+            vs_copy_texture: create_shader("PostFXContext_ScreenTriangleVS", "main", &[]),
             sobol_buffer: upload("PostFXContext::SobolBuffer", 256, 1, SOBOL_256D),
             scrambling_tile_buffer: upload(
                 "PostFXContext::ScramblingTileBuffer",
@@ -268,6 +273,13 @@ impl PostFXContext {
                 wgpu::MipmapFilterMode::Linear,
             ),
         }
+    }
+
+    /// Gives the effect's techniques another pipeline compiler than
+    /// `InPlace` (`render_technique::PipelineCompiler`), before its first
+    /// `execute`.
+    pub fn set_pipeline_compiler(&mut self, pipelines: Pipelines) {
+        self.pipelines = pipelines;
     }
 
     /// Records the latest frame description, rebuilding render-size depths
@@ -456,15 +468,16 @@ impl PostFXContext {
             texture_format: Some(rtv_format),
         };
         let vs_copy_texture = &self.vs_copy_texture;
+        let pipelines = self.pipelines.clone();
         let render_tech = self.render_tech.entry(key).or_default();
         if !render_tech.is_initialized_pso() {
             let ps = create_shader(
-                attribs.device,
                 "PostFXContext_CopyTexturePS",
                 "main",
                 &[("COPY_TEXTURE_DEPTH", if depth { "1" } else { "0" })],
             );
             render_tech.initialize_pso(
+                &*pipelines,
                 attribs.device,
                 if depth {
                     "PostFXContext::CopyTextureDepth"
@@ -488,6 +501,10 @@ impl PostFXContext {
                 None,
                 DepthStencilStateDesc::DisableDepth,
             );
+        }
+        // Its pipeline is still compiling: the copy is left out.
+        if !render_tech.is_initialized_pso() {
+            return;
         }
         let group = render_tech.bind_group(
             attribs.device,
@@ -537,24 +554,18 @@ impl PostFXContext {
         device: &wgpu::Device,
         feature_flags: FeatureFlags,
     ) -> bool {
-        let vs = || {
-            create_shader(
-                device,
-                "FullScreenTriangleVS.fx",
-                "FullScreenTriangleVS",
-                &[],
-            )
-        };
+        let pipelines = self.pipelines.clone();
+        let vs = || create_shader("FullScreenTriangleVS.fx", "FullScreenTriangleVS", &[]);
         {
             let tech = self.render_technique(RenderTech::ComputeBlueNoiseTexture, feature_flags);
             if !tech.is_initialized_pso() {
                 let ps = create_shader(
-                    device,
                     "ComputeBlueNoiseTexture.fx",
                     "ComputeBlueNoiseTexturePS",
                     &[],
                 );
                 tech.initialize_pso(
+                    &*pipelines,
                     device,
                     "PreparePostFX::ComputeBlueNoiseTexture",
                     &vs(),
@@ -573,12 +584,12 @@ impl PostFXContext {
             let tech = self.render_technique(RenderTech::ComputeReprojectedDepth, feature_flags);
             if !tech.is_initialized_pso() {
                 let ps = create_shader(
-                    device,
                     "ComputeReprojectedDepth.fx",
                     "ComputeReprojectedDepthPS",
                     &[],
                 );
                 tech.initialize_pso(
+                    &*pipelines,
                     device,
                     "PreparePostFX::ComputeReprojectedDepth",
                     &vs(),
@@ -603,12 +614,12 @@ impl PostFXContext {
                 // The input is the previous depth buffer: the depth
                 // permutation of CopyTexturePS, sampled at texel centres.
                 let ps = create_shader(
-                    device,
                     "PostFXContext_CopyTexturePS",
                     "main",
                     &[("COPY_TEXTURE_DEPTH", "1")],
                 );
                 tech.initialize_pso(
+                    &*pipelines,
                     device,
                     "PostFXContext::ComputePreviousDepth",
                     &self.vs_copy_texture,
@@ -623,7 +634,23 @@ impl PostFXContext {
                 );
             }
         }
-        true
+        // Ready once every technique has its pipeline (PROVENANCE DFX-2).
+        [
+            RenderTech::ComputeBlueNoiseTexture,
+            RenderTech::ComputeReprojectedDepth,
+        ]
+        .into_iter()
+        .all(|tech| {
+            self.render_technique(tech, feature_flags)
+                .is_initialized_pso()
+        }) && self
+            .render_tech
+            .get(&RenderTechniqueKey {
+                render_tech: RenderTech::ComputePreviousDepth,
+                feature_flags,
+                texture_format: None,
+            })
+            .is_some_and(PostFXRenderTechnique::is_initialized_pso)
     }
 
     fn compute_blue_noise_texture(&mut self, render_attribs: &mut RenderAttributes<'_, '_>) {

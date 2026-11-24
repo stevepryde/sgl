@@ -79,8 +79,8 @@ pub(super) fn begin_view(
 ) -> Begun {
     let primary = role == Role::Primary;
     let Shared {
-        pipelines,
         compiler,
+        pipelines,
         prepare,
         deform,
         dynamic_gi,
@@ -133,7 +133,12 @@ pub(super) fn begin_view(
         .as_ref()
         .is_none_or(|post_fx| post_fx.taa() != effective.taa)
     {
-        *post_fx = Some(Box::new(PostFx::new(device, queue, effective.taa)));
+        *post_fx = Some(Box::new(PostFx::new(
+            device,
+            queue,
+            effective.taa,
+            compiler,
+        )));
         post.forget_inputs();
         hdr_effect.forget_inputs();
         depth_of_field.forget_inputs();
@@ -152,7 +157,7 @@ pub(super) fn begin_view(
         *sizes,
         history,
         post_fx.as_deref_mut(),
-        context_jitter,
+        (context_jitter, compiler.planning()),
     );
     // The camera history commits the jitter this frame applies.
     history.camera.jitter = jitter.map_or([0.; 2], |jitter| jitter.ndc);
@@ -240,7 +245,7 @@ pub(super) fn begin_view(
     // The sky stage's tables, made on its first sky frame and dropped on a
     // frame without one, which the environment's resolver binds.
     sky.prepare(
-        device,
+        (device, compiler),
         input,
         input.camera.eye,
         (!history.valid, effective.aerial_perspective),
@@ -349,8 +354,8 @@ pub(super) fn finish_view(
         environment_revision,
     } = begun;
     let Shared {
-        pipelines,
         compiler,
+        pipelines,
         prepare,
         ray_form,
         ..

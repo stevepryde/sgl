@@ -5,6 +5,7 @@
 //! their own size and place in the frame (Frame items 11 and 14).
 use crate::shading::gbuffer::COLOR;
 use crate::shading::motion_tiles::{ENTRY_POINTS, GROUP_SIZE, MotionTilesUniform, TILE_SIZE};
+use crate::view::compile::{Compiled, Compiler, SharedModule};
 use crate::view::targets::target_with_usage;
 
 /// The tile targets for one frame size.
@@ -40,7 +41,11 @@ impl Targets {
 }
 
 pub(crate) struct MotionTiles {
-    pipelines: [wgpu::ComputePipeline; 3],
+    /// The passes' pipelines, apart from the targets: the neighbourhood
+    /// they write is handed on whether or not they are compiled yet.
+    pipelines: Compiled<[wgpu::ComputePipeline; 3]>,
+    /// The program composing `motion_tiles` they are entry points of.
+    module: SharedModule,
     uniform: wgpu::Buffer,
     targets: Option<Targets>,
     /// Each pass's group for a motion target and a frame, until the targets
@@ -49,23 +54,13 @@ pub(crate) struct MotionTiles {
 }
 
 impl MotionTiles {
-    /// The tile passes of `module`, a program composing `motion_tiles`.
-    pub fn new(device: &wgpu::Device, module: &wgpu::ShaderModule) -> Self {
-        let pipelines = ENTRY_POINTS.map(|entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: None,
-                module,
-                entry_point: Some(entry),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[("MOTIONBLUR_TILESIZE", f64::from(TILE_SIZE))],
-                    ..Default::default()
-                },
-                cache: None,
-            })
-        });
+    /// The tile passes of `module`, a program composing `motion_tiles`:
+    /// their pipelines are made where a frame first tiles, or by their
+    /// compile job.
+    pub fn new(device: &wgpu::Device, module: SharedModule) -> Self {
         Self {
-            pipelines,
+            pipelines: Compiled::default(),
+            module,
             uniform: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -78,6 +73,29 @@ impl MotionTiles {
             targets: None,
             groups: Vec::new(),
         }
+    }
+
+    /// With its pipelines made here: for an owner that is itself made
+    /// inside a compile job.
+    pub fn compiled(mut self, device: &wgpu::Device) -> Self {
+        self.pipelines = Self::pipelines(device, self.module.get(device)).into();
+        self
+    }
+
+    fn pipelines(device: &wgpu::Device, module: &wgpu::ShaderModule) -> [wgpu::ComputePipeline; 3] {
+        ENTRY_POINTS.map(|entry| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: None,
+                module,
+                entry_point: Some(entry),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &[("MOTIONBLUR_TILESIZE", f64::from(TILE_SIZE))],
+                    ..Default::default()
+                },
+                cache: None,
+            })
+        })
     }
 
     /// The scales the passes read (`MotionTiles`), which a program's other
@@ -104,7 +122,7 @@ impl MotionTiles {
     /// velocity (xy) and smallest (zw), in `TILE_SIZE` tiles of `frame`.
     pub fn encode(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         queue: &wgpu::Queue,
         pass: &mut wgpu::ComputePass<'_>,
         [motion, frame]: [&wgpu::TextureView; 2],
@@ -117,10 +135,20 @@ impl MotionTiles {
             self.targets = Some(Targets::new(device, size));
             self.groups.clear();
         }
-        let groups = self.groups(device, motion, frame);
+        // A planning pass that lacks the pipelines leaves the passes out
+        // and hands on the neighbourhood, which selects TAA's resolve.
+        let module = &self.module;
+        let pipelines = self.pipelines.get(compiler, "motion tiles", || {
+            let module = module.clone();
+            move |device: &wgpu::Device| Self::pipelines(device, module.get(device))
+        });
+        let Some(pipelines) = pipelines.map(|pipelines| pipelines.clone()) else {
+            return &self.targets.as_ref().unwrap().neighborhood;
+        };
+        let groups = self.groups(device, &pipelines, motion, frame);
         let tiles = size.map(|v| v.div_ceil(TILE_SIZE));
         let dispatches = [[tiles[0], size[1]], tiles, tiles];
-        for ((pipeline, group), extent) in self.pipelines.iter().zip(&groups).zip(dispatches) {
+        for ((pipeline, group), extent) in pipelines.iter().zip(&groups).zip(dispatches) {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(
@@ -137,6 +165,7 @@ impl MotionTiles {
     fn groups(
         &mut self,
         device: &wgpu::Device,
+        pipelines: &[wgpu::ComputePipeline; 3],
         motion: &wgpu::TextureView,
         frame: &wgpu::TextureView,
     ) -> [wgpu::BindGroup; 3] {
@@ -167,7 +196,7 @@ impl MotionTiles {
             ],
         ];
         let mut entries = entries.into_iter();
-        let groups = self.pipelines.each_ref().map(|pipeline| {
+        let groups = pipelines.each_ref().map(|pipeline| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("motion tiles"),
                 layout: &pipeline.get_bind_group_layout(0),

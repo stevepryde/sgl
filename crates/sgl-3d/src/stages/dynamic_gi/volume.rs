@@ -6,6 +6,7 @@ use crate::scene::dynamic_gi::InstalledVolume;
 use crate::shading::dynamic_gi as layout;
 
 /// The bind group layouts of the stage's own groups.
+#[derive(Clone)]
 pub(super) struct Layouts {
     pub allocate: wgpu::BindGroupLayout,
     /// The trace's group 3, which `TracePaths` lays out for each path.

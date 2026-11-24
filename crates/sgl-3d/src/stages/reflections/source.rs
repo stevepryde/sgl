@@ -6,6 +6,7 @@ use super::probe_culling::ProbeCulling;
 use crate::shading;
 use crate::view::bindings::FogVolume;
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::{Compiled, Compiler, SharedModule};
 use crate::view::reflection_camera;
 
 /// Source completion (`main`) and screen-space composition
@@ -267,8 +268,9 @@ fn composition(
 pub(crate) struct ReflectionSource {
     /// Culls the probe collection per screen tile before completion.
     culling: ProbeCulling,
-    shader: wgpu::ShaderModule,
-    completions: std::collections::HashMap<Variant, Completion>,
+    shader: SharedModule,
+    /// Each variant's passes, a compile job a variant.
+    completions: std::collections::HashMap<Variant, Compiled<Completion>>,
     /// The variant used for this frame.
     variant: Variant,
     camera: wgpu::Buffer,
@@ -282,17 +284,12 @@ pub(crate) struct ReflectionSource {
     no_world: wgpu::TextureView,
 }
 impl ReflectionSource {
-    /// Culling, and completion and composition compiled for `variant`, at
-    /// `size`.
+    /// Culling, and completion and composition for `variant`, at `size`.
     pub fn new(device: &wgpu::Device, size: [u32; 2], variant: Variant) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("reflection source completion"),
-            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&COMPLETION]).into()),
-        });
         let mut source = Self {
             culling: ProbeCulling::new(device, size),
-            completions: [(variant, completion(device, &shader, variant))].into(),
-            shader,
+            completions: Default::default(),
+            shader: SharedModule::composed("reflection source completion", &COMPLETION),
             variant,
             camera: crate::counters::buffer(
                 device,
@@ -331,21 +328,45 @@ impl ReflectionSource {
             })
             .create_view(&Default::default())
     }
-    /// Prepares a newly selected variant once, releases its predecessor's input groups, and
+    /// Selects a variant, releases its predecessor's input groups, and
     /// sizes the incident radiance for it.
     pub fn use_variant(&mut self, device: &wgpu::Device, variant: Variant) {
         if self.variant != variant {
-            let old = self.completions.get_mut(&self.variant).unwrap();
-            old.group.forget();
-            if let Some(composition) = &mut old.composition {
-                composition.group.forget();
+            let old = self.completions.get_mut(&self.variant);
+            if let Some(old) = old.and_then(Compiled::ready_mut) {
+                old.group.forget();
+                if let Some(composition) = &mut old.composition {
+                    composition.group.forget();
+                }
             }
-            self.completions
-                .entry(variant)
-                .or_insert_with(|| completion(device, &self.shader, variant));
             self.variant = variant;
         }
         self.fit_incident(device);
+    }
+
+    /// The selected variant's passes: made where a frame first needs them
+    /// or by their compile job; none in a planning pass while missing.
+    fn completion(&mut self, compiler: &Compiler) -> Option<&mut Completion> {
+        self.passes(compiler, self.variant)
+    }
+
+    /// `variant`'s passes without selecting it, for a variant the view
+    /// takes in a later frame: made in place by a frame, queued by a
+    /// planning pass.
+    pub fn ask_variant(&mut self, compiler: &Compiler, variant: Variant) {
+        self.passes(compiler, variant);
+    }
+
+    fn passes(&mut self, compiler: &Compiler, variant: Variant) -> Option<&mut Completion> {
+        let shader = &self.shader;
+        self.completions.entry(variant).or_default().get(
+            compiler,
+            "reflection source completion",
+            || {
+                let shader = shader.clone();
+                move |device: &wgpu::Device| completion(device, shader.get(device), variant)
+            },
+        )
     }
     pub fn resize(&mut self, device: &wgpu::Device, size: [u32; 2]) {
         self.size = size;
@@ -373,7 +394,7 @@ impl ReflectionSource {
     pub fn encode(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         queue: &wgpu::Queue,
         input: Inputs<'_>,
         timing: Option<&crate::timing::GpuTiming>,
@@ -389,7 +410,7 @@ impl ReflectionSource {
         if self.variant.environment && !input.environment.probes.is_empty() {
             self.culling.encode(
                 encoder,
-                device,
+                (device, compiler),
                 queue,
                 input.depth,
                 input.camera,
@@ -398,6 +419,9 @@ impl ReflectionSource {
             );
         } else {
             self.culling.forget_inputs();
+        }
+        if self.completion(compiler).is_none() {
+            return;
         }
         let texture = wgpu::BindingResource::TextureView;
         let fog = input.fog;
@@ -426,7 +450,13 @@ impl ReflectionSource {
             (25, texture(fog.view)),
             (26, wgpu::BindingResource::Sampler(fog.sampler)),
         ];
-        let completion = self.completions.get_mut(&self.variant).unwrap();
+        let Some(completion) = self
+            .completions
+            .get_mut(&self.variant)
+            .and_then(Compiled::ready_mut)
+        else {
+            return;
+        };
         let group = completion
             .group
             .get(device, "reflection source inputs", &resources);
@@ -487,10 +517,17 @@ impl ReflectionSource {
             (26, wgpu::BindingResource::Sampler(fog.sampler)),
             (27, texture(surface_depth)),
         ];
-        let composition = self
+        // Not in a planning pass whose completion is still compiling.
+        let Some(passes) = self
             .completions
             .get_mut(&self.variant)
-            .and_then(|passes| passes.composition.as_mut())
+            .and_then(Compiled::ready_mut)
+        else {
+            return;
+        };
+        let composition = passes
+            .composition
+            .as_mut()
             .expect("the variant composes a method's result");
         let group =
             composition

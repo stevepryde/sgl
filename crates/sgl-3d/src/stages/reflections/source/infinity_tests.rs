@@ -237,7 +237,13 @@ fn infinite_lit_colour_completes_as_the_scene_colour_bound() {
             },
         };
         let mut encoder = device.create_command_encoder(&Default::default());
-        source.encode(&mut encoder, &device, &queue, input, None);
+        source.encode(
+            &mut encoder,
+            (&device, &crate::view::compile::Compiler::new(&device)),
+            &queue,
+            input,
+            None,
+        );
         queue.submit([encoder.finish()]);
         [output.texture(), source.incident.texture()]
             .into_iter()

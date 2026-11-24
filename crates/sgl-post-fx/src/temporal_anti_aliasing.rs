@@ -8,11 +8,12 @@
 //! Implements [temporal anti-aliasing post-process effect](https://github.com/DiligentGraphics/DiligentFX/tree/master/PostProcess/TemporalAntiAliasing).
 use crate::post_fx_context::{self, PostFXContext, TextureOperationAttribs, draw};
 use crate::render_technique::{
-    DepthStencilStateDesc, PostFXRenderTechnique, Resource, Shader, create_shader,
+    DepthStencilStateDesc, InPlace, Pipelines, PostFXRenderTechnique, Resource, create_shader,
 };
 use crate::screen_space_reflection::PostFxExecutionStatus;
 use crate::structures::{CameraAttribs, TemporalAntiAliasingAttribs};
 use std::collections::HashMap;
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 /// `TemporalAntiAliasing::FEATURE_FLAGS`: feature flags that control the
@@ -412,6 +413,8 @@ fn halton_sequence(base: u32, mut index: u32) -> f32 {
 
 pub struct TemporalAntiAliasing {
     render_tech: HashMap<RenderTechniqueKey, PostFXRenderTechnique>,
+    /// Who creates the techniques' pipelines.
+    pipelines: Pipelines,
     accumulation_buffers: HashMap<u32, AccumulationBufferInfo>,
 
     all_psos_ready: bool,
@@ -423,6 +426,7 @@ impl TemporalAntiAliasing {
     pub fn new(device: &wgpu::Device) -> Self {
         Self {
             render_tech: HashMap::new(),
+            pipelines: Arc::new(InPlace),
             accumulation_buffers: HashMap::new(),
             all_psos_ready: false,
             linear_clamp: device.create_sampler(&wgpu::SamplerDescriptor {
@@ -433,6 +437,13 @@ impl TemporalAntiAliasing {
                 ..Default::default()
             }),
         }
+    }
+
+    /// Gives the effect's techniques another pipeline compiler than
+    /// `InPlace` (`render_technique::PipelineCompiler`), before its first
+    /// `execute`.
+    pub fn set_pipeline_compiler(&mut self, pipelines: Pipelines) {
+        self.pipelines = pipelines;
     }
 
     /// Returns the jitter offset for the specified accumulation buffer index:
@@ -479,11 +490,11 @@ impl TemporalAntiAliasing {
                 feature_flags,
             );
 
-        // wgpu creates pipelines synchronously, so a created technique is
-        // ready (PROVENANCE.md DFX-2).
-        // The responsive inputs are not known before `execute`, whose
-        // variant is created synchronously with the rest: any of these
-        // flags' techniques is ready.
+        // A technique is ready once its pipeline compiler has given it its
+        // pipeline: at once with the default, in place (PROVENANCE.md
+        // DFX-2). The responsive inputs are not known before `execute`,
+        // whose variant is asked for with the rest: any of these flags'
+        // techniques that is ready counts.
         let reversed_depth = reversed_depth(post_fx_context);
         self.all_psos_ready = RENDER_TECHS.iter().all(|&render_tech| {
             self.render_tech.iter().any(|(key, tech)| {
@@ -570,7 +581,10 @@ impl TemporalAntiAliasing {
             );
         }
         let responsive = Responsive::of(render_attribs, feature_flags);
-        self.prepare_shaders_and_pso(
+        // The frame's own resolve, whose inputs `prepare_resources` did not
+        // know: it draws only once its pipeline is there too (PROVENANCE
+        // DFX-2), which with the default compiler it is from here on.
+        let resolve_ready = self.prepare_shaders_and_pso(
             render_attribs.device,
             feature_flags,
             reversed_depth(render_attribs.post_fx_context),
@@ -583,7 +597,8 @@ impl TemporalAntiAliasing {
             .unwrap();
         acc_buffer.update_constant_buffer(render_attribs.queue, render_attribs.taa_attribs);
 
-        let all_psos_ready = self.all_psos_ready && render_attribs.post_fx_context.is_psos_ready();
+        let all_psos_ready =
+            self.all_psos_ready && resolve_ready && render_attribs.post_fx_context.is_psos_ready();
         let acc_buffer = &self.accumulation_buffers[&render_attribs.accumulation_buffer_idx];
         if all_psos_ready {
             self.compute_temporal_accumulation(render_attribs, acc_buffer, responsive);
@@ -679,18 +694,27 @@ impl TemporalAntiAliasing {
         feature_flags: FeatureFlags,
         reversed_depth: bool,
         responsive: Responsive,
-    ) {
+    ) -> bool {
         let key = |render_tech| RenderTechniqueKey {
             render_tech,
             feature_flags,
             reversed_depth,
             responsive,
         };
+        let pipelines = self.pipelines.clone();
+        // Both are initialized until both have their pipelines.
+        let ready = |techniques: &HashMap<RenderTechniqueKey, PostFXRenderTechnique>, tech| {
+            techniques
+                .get(&key(tech))
+                .is_some_and(PostFXRenderTechnique::is_initialized_pso)
+        };
+        let both = ready(&self.render_tech, RenderTech::ComputeTemporalAccumulation)
+            && ready(&self.render_tech, RenderTech::ComputePlaceholder);
         let tech = self
             .render_tech
             .entry(key(RenderTech::ComputeTemporalAccumulation))
             .or_default();
-        if !tech.is_initialized_pso() {
+        if !both {
             let responsive_masks = responsive.masks.to_string();
             let neighborhood_tile = responsive.neighborhood_tile.to_string();
             let flag = |flag: FeatureFlags| {
@@ -725,21 +749,16 @@ impl TemporalAntiAliasing {
                 ("TAA_OPTION_NEIGHBORHOOD_MOTION_TILE", &neighborhood_tile),
             ];
 
-            let vs = create_shader(
-                device,
-                "FullScreenTriangleVS.fx",
-                "FullScreenTriangleVS",
-                &[],
-            );
+            let vs = create_shader("FullScreenTriangleVS.fx", "FullScreenTriangleVS", &[]);
 
             let ps = create_shader(
-                device,
                 "TAA_ComputeTemporalAccumulation.fx",
                 "ComputeTemporalAccumulationPS",
                 &macros,
             );
 
             tech.initialize_pso(
+                &*pipelines,
                 device,
                 "TemporalAntiAliasing::ComputeTemporalAccumulation",
                 &vs,
@@ -770,14 +789,12 @@ impl TemporalAntiAliasing {
 
             // PROVENANCE.md DFX-47: the placeholder reads the colour through
             // the resolve's unfilterable binding.
-            let placeholder_ps = Shader {
-                module: ps.module,
-                entry_point: "ComputePlaceholderPS",
-            };
+            let placeholder_ps = ps.with_entry_point("ComputePlaceholderPS");
             self.render_tech
                 .entry(key(RenderTech::ComputePlaceholder))
                 .or_default()
                 .initialize_pso(
+                    &*pipelines,
                     device,
                     "TemporalAntiAliasing::ComputePlaceholder",
                     &vs,
@@ -791,6 +808,7 @@ impl TemporalAntiAliasing {
                     DepthStencilStateDesc::DisableDepth,
                 );
         }
+        ready(&self.render_tech, RenderTech::ComputeTemporalAccumulation)
     }
 
     fn compute_temporal_accumulation(
@@ -917,6 +935,10 @@ impl TemporalAntiAliasing {
             reversed_depth: reversed_depth(render_attribs.post_fx_context),
             responsive,
         }];
+        // Its own pipeline may still be compiling: nothing is drawn then.
+        if !tech.is_initialized_pso() {
+            return;
+        }
         let group = tech.bind_group(
             render_attribs.device,
             "ComputePlaceholder",

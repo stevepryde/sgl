@@ -191,7 +191,7 @@ fn depth_of_field_holds_targets_only_while_it_runs() {
     };
     let mut renderer = TestRenderer::for_test(&device, &queue, size, &off);
     assert!(
-        renderer.view.depth_of_field.0.is_none(),
+        renderer.view.depth_of_field.0.ready().is_none(),
         "a view created with depth of field off made its pipelines"
     );
     let mut scene = Scene::new(&device, &queue);

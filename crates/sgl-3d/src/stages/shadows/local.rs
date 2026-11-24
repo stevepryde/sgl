@@ -50,13 +50,13 @@ use crate::Scene;
 use crate::shading::lights::{LOCAL_SHADOW_NONE, LocalShadowRecord};
 use crate::timing::GpuTiming;
 use crate::view::bindings::FrameBindings;
+use crate::view::compile::{Compiled, Compiler, SharedModule};
 use crate::view::draw_list::DrawInstances;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::{GeometryPass, GeometryPipelines};
 use glam::{Mat4, Vec3};
 pub(crate) use plan::ShadowFrame;
 use plan::{Face, Work};
-use std::sync::OnceLock;
 use textures::Atlases;
 
 /// The last rendered frame's local-light shadows
@@ -127,9 +127,9 @@ pub(crate) struct Local {
     /// frame atlas were last prepared for; none before a frame and after
     /// the atlases are released.
     placed: Option<(u64, glam::DVec3)>,
-    face_shader: OnceLock<wgpu::ShaderModule>,
-    clear: OnceLock<wgpu::RenderPipeline>,
-    copy: OnceLock<wgpu::RenderPipeline>,
+    face_shader: SharedModule,
+    clear: Compiled<wgpu::RenderPipeline>,
+    copy: Compiled<wgpu::RenderPipeline>,
     copy_layout: wgpu::BindGroupLayout,
     plan: plan::Plan,
     /// The view of each face drawn, by its place in the plan's faces.
@@ -157,6 +157,13 @@ fn records_buffer(device: &wgpu::Device, count: usize) -> wgpu::Buffer {
             mapped_at_creation: false,
         },
     )
+}
+
+/// The clear and the copy the planned faces draw with
+/// (`Local::face_pipelines`).
+struct FacePipelines {
+    clear: Option<wgpu::RenderPipeline>,
+    copy: Option<wgpu::RenderPipeline>,
 }
 
 /// A depth-only pipeline over `layout` that writes every texel of the
@@ -226,46 +233,62 @@ impl Local {
             records: records_buffer(device, 1),
             written: vec![LocalShadowRecord::NONE],
             placed: None,
-            face_shader: OnceLock::new(),
-            clear: OnceLock::new(),
-            copy: OnceLock::new(),
+            face_shader: SharedModule::composed("local light shadow copy", &COPY),
+            clear: Compiled::default(),
+            copy: Compiled::default(),
             copy_layout,
             plan: plan::Plan::new(size),
             views: Vec::new(),
         }
     }
 
-    fn face_shader(&self, device: &wgpu::Device) -> &wgpu::ShaderModule {
-        self.face_shader.get_or_init(|| {
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("local light shadow copy"),
-                source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&COPY]).into()),
+    /// The pipelines the planned faces draw with before their casters:
+    /// the clear, for a face drawn whole and a static layer, and the copy,
+    /// for a face that starts from its static layer. Each is none where
+    /// no planned face needs it, and in a planning pass while it is
+    /// missing, where the faces' own draws are left out.
+    fn face_pipelines(&mut self, compiler: &Compiler) -> FacePipelines {
+        let faces = self.plan.faces();
+        let clears = faces.iter().any(|face| face.work != Work::Moving);
+        let copies = faces.iter().any(|face| face.work != Work::Full);
+        let shader = &self.face_shader;
+        let clear = clears
+            .then(|| {
+                self.clear.get(compiler, "local shadow clear", || {
+                    let shader = shader.clone();
+                    move |device: &wgpu::Device| {
+                        face_pipeline(
+                            device,
+                            "local light shadow face clear",
+                            shader.get(device),
+                            &[],
+                            None,
+                        )
+                    }
+                })
             })
-        })
-    }
-
-    fn clear_pipeline(&self, device: &wgpu::Device) -> &wgpu::RenderPipeline {
-        self.clear.get_or_init(|| {
-            face_pipeline(
-                device,
-                "local light shadow face clear",
-                self.face_shader(device),
-                &[],
-                None,
-            )
-        })
-    }
-
-    fn copy_pipeline(&self, device: &wgpu::Device) -> &wgpu::RenderPipeline {
-        self.copy.get_or_init(|| {
-            face_pipeline(
-                device,
-                "local light shadow layer copy",
-                self.face_shader(device),
-                &[Some(&self.copy_layout)],
-                Some(COPY_FS_ENTRY),
-            )
-        })
+            .flatten();
+        let copy_layout = &self.copy_layout;
+        let copy = copies
+            .then(|| {
+                self.copy.get(compiler, "local shadow layer copy", || {
+                    let (shader, layout) = (shader.clone(), copy_layout.clone());
+                    move |device: &wgpu::Device| {
+                        face_pipeline(
+                            device,
+                            "local light shadow layer copy",
+                            shader.get(device),
+                            &[Some(&layout)],
+                            Some(COPY_FS_ENTRY),
+                        )
+                    }
+                })
+            })
+            .flatten();
+        FacePipelines {
+            clear: clear.map(|pipeline| pipeline.clone()),
+            copy: copy.map(|pipeline| pipeline.clone()),
+        }
     }
 
     /// Makes the atlases `size` texels a side unless they are that size:
@@ -452,15 +475,16 @@ impl Local {
     /// Draws the planned capture's static layers into `encoder` with its
     /// groups, from the uploaded draw instances it was planned with.
     pub fn encode_capture(
-        &self,
-        device: &wgpu::Device,
+        &mut self,
+        compiler: &Compiler,
         encoder: &mut wgpu::CommandEncoder,
         capture: &CaptureShadows,
         (scene, pipelines): (&Scene, &mut GeometryPipelines),
         drawn: &DrawInstances,
     ) {
+        let face_pipelines = self.face_pipelines(compiler);
         self.encode_layers(
-            device,
+            &face_pipelines,
             encoder,
             None,
             |index| &capture.groups[index],
@@ -501,8 +525,9 @@ impl Local {
     /// frame's faces.
     pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
         let (scene, pipelines, drawn) = (ctx.scene, &mut *ctx.pipelines, &ctx.views.instances);
+        let face_pipelines = self.face_pipelines(ctx.compiler);
         let mut draws = self.encode_layers(
-            ctx.device,
+            &face_pipelines,
             ctx.encoder,
             ctx.timing,
             |index| &self.views[index].group,
@@ -519,15 +544,17 @@ impl Local {
             );
             for (index, face) in faces.iter().enumerate() {
                 limit(&mut pass, face);
-                let casters = if face.work == Work::Full {
-                    pass.set_pipeline(self.clear_pipeline(ctx.device));
-                    &face.casters
+                let (casters, pipeline) = if face.work == Work::Full {
+                    (&face.casters, &face_pipelines.clear)
                 } else {
-                    pass.set_pipeline(self.copy_pipeline(ctx.device));
                     pass.set_bind_group(0, &atlases.copy_group, &[]);
-                    &face.moving
+                    (&face.moving, &face_pipelines.copy)
                 };
-                pass.draw(0..3, 0..1);
+                // Not in a planning pass whose pipeline is still compiling.
+                if let Some(pipeline) = pipeline {
+                    pass.set_pipeline(pipeline);
+                    pass.draw(0..3, 0..1);
+                }
                 pass.set_bind_group(0, &self.views[index].group, &[]);
                 draws += 1 + casters.draw(
                     scene,
@@ -546,7 +573,7 @@ impl Local {
     /// many draws it encoded.
     fn encode_layers<'a>(
         &self,
-        device: &wgpu::Device,
+        face_pipelines: &FacePipelines,
         encoder: &mut wgpu::CommandEncoder,
         timing: Option<&GpuTiming>,
         group: impl Fn(usize) -> &'a wgpu::BindGroup,
@@ -571,8 +598,10 @@ impl Local {
         );
         for (index, face) in layers {
             limit(&mut pass, face);
-            pass.set_pipeline(self.clear_pipeline(device));
-            pass.draw(0..3, 0..1);
+            if let Some(clear) = &face_pipelines.clear {
+                pass.set_pipeline(clear);
+                pass.draw(0..3, 0..1);
+            }
             pass.set_bind_group(0, group(index), &[]);
             draws += 1 + face.casters.draw(
                 scene,

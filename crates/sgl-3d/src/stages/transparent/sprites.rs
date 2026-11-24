@@ -238,12 +238,12 @@ impl Sprites {
     /// The programs, where the frame has them: none in a planning pass
     /// whose job is still queued, which leaves the draws out.
     fn programs(&mut self, ctx: &FrameContext<'_>) -> Option<&Programs> {
-        let device = ctx.device.clone();
         let unlit = ctx.bindings.unlit.clone();
         self.programs
-            .get(ctx.pipelines.compiler(), "sprites", move || {
-                move || Programs::new(&device, &unlit)
+            .get(ctx.compiler, "sprites", move || {
+                move |device: &wgpu::Device| Programs::new(device, &unlit)
             })
+            .map(|programs| &*programs)
     }
 
     /// Orders each of the camera's blended batches back to front from its

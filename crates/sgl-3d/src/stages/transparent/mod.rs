@@ -14,6 +14,7 @@ use crate::scene::shaders::{ShadingChange, ShadingChanges};
 use crate::shading::bind::{self, BindingTier, BlendedTrace};
 use crate::view::FrameViews;
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::Compiled;
 use crate::view::effective::CompositeDraws;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::GeometryPass;
@@ -102,13 +103,16 @@ pub(crate) enum Beauty<'a> {
 /// frame they run.
 pub(crate) struct Transparent {
     /// Glow pipelines and the group binding the current opaque depth and exposure.
-    glow: Option<(effects::Effects, wgpu::BindGroup)>,
-    mist: Option<mist::Mist>,
+    glow: Compiled<effects::Effects>,
+    /// The glow's group over the frame's depth and `exposure`, made with
+    /// its programs and again when the targets are.
+    glow_group: Option<wgpu::BindGroup>,
+    mist: Compiled<mist::Mist>,
     /// Sprite batches' pipelines and this view's orders of them.
     sprites: sprites::Sprites,
     /// The instance footprints' pipelines.
     footprints: footprints::Footprints,
-    heat: Option<heat::Heat>,
+    heat: Compiled<heat::Heat>,
     /// The frame exposure that glow reads.
     exposure: wgpu::TextureView,
     /// No screen-space result, which the blended draws bind while none
@@ -119,7 +123,7 @@ pub(crate) struct Transparent {
     /// composes nothing, and of the draw onto the composite.
     blended: [BlendedGroup; 2],
     /// The copy of the composed frame transmissive surfaces sample.
-    transmission: Option<transmission::Transmission>,
+    transmission: Compiled<transmission::Transmission>,
     /// The volume layers a game's shader measures its volume path from.
     volumes: volumes::Volumes,
     /// The device's binding tier, which binds the copy on `Extended`.
@@ -161,11 +165,12 @@ impl Transparent {
         };
         Self {
             exposure: exposure.clone(),
-            glow: None,
-            mist: None,
+            glow: Compiled::default(),
+            glow_group: None,
+            mist: Compiled::default(),
             sprites: Default::default(),
             footprints: Default::default(),
-            heat: None,
+            heat: Compiled::default(),
             no_reflections: crate::view::targets::target(
                 device,
                 "no screen-space reflections",
@@ -176,7 +181,7 @@ impl Transparent {
                 group("blended incident trace"),
                 group("blended composite trace"),
             ],
-            transmission: None,
+            transmission: Compiled::default(),
             volumes: volumes::Volumes::new(device, blended),
             tier,
         }
@@ -269,20 +274,24 @@ impl Transparent {
     /// (`encode`), in a frame that draws it.
     pub fn order_mist(&mut self, ctx: &FrameContext<'_>) {
         if ctx.effective.composite.mist {
-            self.mist
-                .get_or_insert_with(|| mist::Mist::new(ctx.device, &ctx.bindings.unlit))
-                .order(
+            let mist = self.mist.get(ctx.compiler, "mist", || {
+                let unlit = ctx.bindings.unlit.clone();
+                move |device: &wgpu::Device| mist::Mist::new(device, &unlit)
+            });
+            if let Some(mist) = mist {
+                mist.order(
                     ctx.device,
                     ctx.queue,
                     &ctx.scene.transient,
                     &glam::Mat4::from_cols_array_2d(&ctx.values.view.view),
                 );
+            }
         }
     }
 
     /// Rebinds the depth the glow reads, beside the frame's `exposure`.
     pub fn resize(&mut self, device: &wgpu::Device, targets: &SharedTargets) {
-        if let Some((effects, group)) = &mut self.glow {
+        if let (Some(effects), Some(group)) = (self.glow.ready(), &mut self.glow_group) {
             *group = effects.depth_group(device, &targets.depth, &self.exposure);
         }
     }
@@ -328,11 +337,16 @@ impl Transparent {
                 && self.tier == BindingTier::Extended
                 && ctx.views.blended.holds_transmissive(ctx.scene))
             .then(|| {
-                self.transmission
-                    .get_or_insert_with(|| transmission::Transmission::new(ctx.device))
-                    .encode(ctx.device, ctx.encoder, &targets.composite, ctx.timing)
-                    .clone()
-            });
+                let transmission = self.transmission.get(ctx.compiler, "transmission", || {
+                    transmission::Transmission::new
+                })?;
+                Some(
+                    transmission
+                        .encode(ctx.device, ctx.encoder, &targets.composite, ctx.timing)
+                        .clone(),
+                )
+            })
+            .flatten();
             let group = (!ctx.views.blended.is_empty()).then(|| {
                 Self::blended_group(
                     ctx,
@@ -354,6 +368,20 @@ impl Transparent {
             cleared = true;
         }
         let draw = ctx.effective.composite.glow;
+        // The glow's programs, before its pass begins: none where it does
+        // not draw, and in a planning pass while they are missing.
+        let glow = draw
+            .then(|| {
+                let effects = self.glow.get(ctx.compiler, "additive glow", || {
+                    let unlit = ctx.bindings.unlit.clone();
+                    move |device: &wgpu::Device| effects::Effects::new(device, &unlit)
+                })?;
+                let group = self.glow_group.get_or_insert_with(|| {
+                    effects.depth_group(ctx.device, &targets.depth, &self.exposure)
+                });
+                Some((&*effects, &*group))
+            })
+            .flatten();
         if draw || (temporal_masks.is_some() && !cleared) {
             let mut color = attachment(beauty).unwrap();
             color.ops.load = wgpu::LoadOp::Load;
@@ -375,12 +403,7 @@ impl Transparent {
                 timestamp_writes: ctx.timing.and_then(|t| t.render_pass("transparent")),
                 ..Default::default()
             });
-            if draw {
-                let (effects, depth_group) = self.glow.get_or_insert_with(|| {
-                    let effects = effects::Effects::new(ctx.device, &ctx.bindings.unlit);
-                    let group = effects.depth_group(ctx.device, &targets.depth, &self.exposure);
-                    (effects, group)
-                });
+            if let Some((effects, depth_group)) = glow {
                 effects.draw(
                     &mut pass,
                     ctx.bindings.camera_unlit(),
@@ -391,10 +414,10 @@ impl Transparent {
             }
         }
         if ctx.effective.composite.mist {
-            self.mist
-                .as_ref()
-                .expect("mist ordered before drawing")
-                .encode(
+            // Ordered before drawing, but in a planning pass whose mist is
+            // still compiling.
+            if let Some(mist) = self.mist.ready() {
+                mist.encode(
                     ctx.encoder,
                     ctx.bindings.camera_unlit(),
                     beauty,
@@ -403,6 +426,7 @@ impl Transparent {
                     ctx.timing,
                     "transparent",
                 );
+            }
         }
     }
 
@@ -631,20 +655,24 @@ impl Transparent {
     /// the temporal masks under the condition the draws onto the composite
     /// mark them (`composite_masks`).
     pub fn encode_heat(&mut self, ctx: &mut FrameContext<'_>, color: &wgpu::TextureView) {
-        self.heat
-            .get_or_insert_with(|| heat::Heat::new(ctx.device))
-            .encode(
-                ctx.device,
-                ctx.queue,
-                ctx.encoder,
-                &ctx.scene.transient,
-                &ctx.values.view.view_projection,
-                ctx.sizes.scene,
-                color,
-                &ctx.targets.depth,
-                composite_masks(ctx),
-                ctx.timing,
-            );
+        let Some(heat) = self
+            .heat
+            .get(ctx.compiler, "heat distortion", || heat::Heat::new)
+        else {
+            return;
+        };
+        heat.encode(
+            ctx.device,
+            ctx.queue,
+            ctx.encoder,
+            &ctx.scene.transient,
+            &ctx.values.view.view_projection,
+            ctx.sizes.scene,
+            color,
+            &ctx.targets.depth,
+            composite_masks(ctx),
+            ctx.timing,
+        );
     }
 }
 

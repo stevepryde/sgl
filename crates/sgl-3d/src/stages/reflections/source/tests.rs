@@ -288,7 +288,7 @@ fn source_environment_blends_overlapping_probes_and_the_sky_by_influence() {
             let mut encoder = device.create_command_encoder(&Default::default());
             source.encode(
                 &mut encoder,
-                &device,
+                (&device, &crate::view::compile::Compiler::new(&device)),
                 &queue,
                 Inputs {
                     fog: FogVolume {
@@ -423,7 +423,7 @@ fn probe_tiles_keep_the_probes_whose_influence_reaches_their_geometry() {
         }));
         culling.encode(
             &mut encoder,
-            &device,
+            (&device, &crate::view::compile::Compiler::new(&device)),
             &queue,
             depth,
             reflection_camera::Camera::new(view, projection),
@@ -552,7 +552,7 @@ fn probe_tiles_keep_their_probes_under_a_clipped_projection() {
     }));
     culling.encode(
         &mut encoder,
-        &device,
+        (&device, &crate::view::compile::Compiler::new(&device)),
         &queue,
         &depth,
         reflection_camera::Camera::clipped(reflected.view, clipped, reflected.projection),
@@ -577,11 +577,15 @@ fn probe_tiles_keep_their_probes_under_a_clipped_projection() {
     assert_eq!(tiles, expected, "left then right tile buckets");
 }
 
-// A renderer builds source completion for its settings' screen-space method
-// and ambient occlusion, so a first frame from a `perspective` camera keeps
-// the pipeline it was created with.
+// A view is created with the completion variant its settings' screen-space
+// method and ambient occlusion select, and creates no program for it: the
+// first frame from a `perspective` camera compiles that variant alone.
+// Plausible defect: the view expects another variant than its first frame
+// uses, so a variant no frame draws with is compiled as well. The oracle
+// is the contract (AR-13): one completion, the frame's, after the frame,
+// and none before it.
 #[test]
-fn first_frame_keeps_the_source_completion_built_for_the_settings() {
+fn the_first_frame_compiles_the_one_source_completion_its_settings_select() {
     use crate::settings::{
         AmbientOcclusionQuality, Antialiasing, Bloom, ReflectionMethod, ScreenSpaceReflections,
         Settings,
@@ -624,7 +628,11 @@ fn first_frame_keeps_the_source_completion_built_for_the_settings() {
         };
         let mut renderer = crate::TestRenderer::for_test(&device, &queue, size, &settings);
         let source = &renderer.test_reflections().source;
-        let created = source.completions[&source.variant].pipeline.clone();
+        let expected = source.variant;
+        assert!(
+            source.completions.is_empty(),
+            "a view compiles nothing before a frame"
+        );
         let mut scene = crate::Scene::new(&device, &queue);
         let input = crate::FrameInput::new(crate::Camera {
             view: Mat4::IDENTITY,
@@ -651,10 +659,16 @@ fn first_frame_keeps_the_source_completion_built_for_the_settings() {
         queue.submit([encoder.finish()]);
         renderer.finish_frame(&mut scene);
         let source = &renderer.test_reflections().source;
-        assert_eq!(
-            source.completions[&source.variant].pipeline, created,
+        let compiled: Vec<_> = source
+            .completions
+            .iter()
+            .filter(|(_, completion)| completion.ready().is_some())
+            .map(|(variant, _)| *variant)
+            .collect();
+        assert!(
+            compiled == [expected] && source.variant == expected,
             "{screen_space_reflections:?} {reflection_method:?} with \
-             {ambient_occlusion:?} ambient occlusion rebuilt source completion",
+             {ambient_occlusion:?} ambient occlusion compiled another source completion",
         );
     }
 }

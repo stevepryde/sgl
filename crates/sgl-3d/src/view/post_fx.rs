@@ -14,6 +14,7 @@ mod inputs;
 pub(crate) use inputs::{FS_MAIN_ENTRY, INPUTS};
 use inputs::{Inputs, MATERIAL_FORMAT, MOTION_FORMAT, NORMAL_FORMAT};
 
+use super::compile::{Compiled, Compiler};
 use super::history::{CameraFrame, Kept};
 use super::targets::{SharedTargets, Surface};
 use crate::shading;
@@ -91,7 +92,12 @@ pub(crate) struct PostFx {
     /// effects' history refers to.
     history: Kept<u32>,
     inputs: Option<Inputs>,
-    prepare: wgpu::RenderPipeline,
+    /// The inputs pass's pipeline.
+    prepare: Compiled<wgpu::RenderPipeline>,
+    /// The renderer's compiler, which the inputs pass's slot follows.
+    compiler: Compiler,
+    /// It again, as the effects' techniques ask it for their pipelines.
+    pipelines: sgl_post_fx::render_technique::Pipelines,
     /// The inputs pass's near and far planes.
     planes: wgpu::Buffer,
     /// This frame's index and NDC jitter, and whether the effects' history
@@ -176,65 +182,43 @@ fn pass_group(pass: &str) -> &'static str {
 }
 
 impl PostFx {
-    /// With `taa`, the effects include TAA.
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, taa: bool) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("DiligentFX inputs"),
-            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&INPUTS]).into()),
-        });
-        let target = |format| {
-            Some(wgpu::ColorTargetState {
-                format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })
-        };
+    /// With `taa`, the effects include TAA. Their techniques' pipelines
+    /// and the inputs pass's are made as `compiler` says: where a frame
+    /// first needs them, or by compile jobs.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(
+            clippy::arc_with_non_send_sync,
+            reason = "one type for both targets: jobs cross threads on native"
+        )
+    )]
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, taa: bool, compiler: &Compiler) -> Self {
+        let pipelines: sgl_post_fx::render_technique::Pipelines =
+            std::sync::Arc::new(TechniqueCompiler(compiler.clone()));
+        let mut context = PostFXContext::new(
+            device,
+            queue,
+            // No frame draws with a pipeline that is not ready, so there is
+            // no pending state for the transition to hide; it would fade SSR
+            // in over wall-clock time.
+            post_fx_context::CreateInfo {
+                transition_duration: 0.,
+            },
+        );
+        context.set_pipeline_compiler(pipelines.clone());
         Self {
-            context: PostFXContext::new(
-                device,
-                queue,
-                // PSOs are created synchronously, so there is no pending state
-                // for the transition to hide; it would fade SSR in over
-                // wall-clock time.
-                post_fx_context::CreateInfo {
-                    transition_duration: 0.,
-                },
-            ),
+            context,
             ssr: None,
-            taa: taa.then(|| TemporalAntiAliasing::new(device)),
+            taa: taa.then(|| {
+                let mut taa = TemporalAntiAliasing::new(device);
+                taa.set_pipeline_compiler(pipelines.clone());
+                taa
+            }),
             history: Kept::default(),
             inputs: None,
-            prepare: device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("DiligentFX inputs from the G-buffer"),
-                layout: None,
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some(shading::FULLSCREEN_VS_ENTRY),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some(FS_MAIN_ENTRY),
-                    compilation_options: Default::default(),
-                    targets: &[
-                        target(NORMAL_FORMAT),
-                        target(MATERIAL_FORMAT),
-                        target(MOTION_FORMAT),
-                    ],
-                }),
-                primitive: Default::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Always),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                multiview_mask: None,
-                cache: None,
-            }),
+            prepare: Compiled::default(),
+            compiler: compiler.clone(),
+            pipelines,
             planes: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -249,6 +233,52 @@ impl PostFx {
             camera_moved: false,
             reset_accumulation: true,
         }
+    }
+
+    /// The inputs pass's pipeline.
+    fn prepare_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("DiligentFX inputs"),
+            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&INPUTS]).into()),
+        });
+        let target = |format| {
+            Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })
+        };
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("DiligentFX inputs from the G-buffer"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some(shading::FULLSCREEN_VS_ENTRY),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some(FS_MAIN_ENTRY),
+                compilation_options: Default::default(),
+                targets: &[
+                    target(NORMAL_FORMAT),
+                    target(MATERIAL_FORMAT),
+                    target(MOTION_FORMAT),
+                ],
+            }),
+            primitive: Default::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        })
     }
 
     pub fn taa(&self) -> bool {
@@ -357,10 +387,13 @@ impl PostFx {
             binding,
             resource: wgpu::BindingResource::TextureView(view),
         };
-        {
+        // Not in a planning pass whose pipeline is still compiling.
+        if let Some(prepare) = self.prepare.get(&self.compiler, "DiligentFX inputs", || {
+            Self::prepare_pipeline
+        }) {
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("DiligentFX inputs"),
-                layout: &self.prepare.get_bind_group_layout(0),
+                layout: &prepare.get_bind_group_layout(0),
                 entries: &[
                     resource(0, &t.normal),
                     resource(1, &t.material),
@@ -405,7 +438,7 @@ impl PostFx {
                 timestamp_writes: timing.and_then(|t| t.render_pass("DiligentFX inputs")),
                 ..Default::default()
             });
-            pass.set_pipeline(&self.prepare);
+            pass.set_pipeline(prepare);
             pass.set_bind_group(0, &group, &[]);
             pass.draw(0..3, 0..1);
         }
@@ -486,9 +519,11 @@ impl PostFx {
         } else {
             FeatureFlags::NONE
         };
-        let ssr = self
-            .ssr
-            .get_or_insert_with(|| ScreenSpaceReflection::new(device));
+        let ssr = self.ssr.get_or_insert_with(|| {
+            let mut ssr = ScreenSpaceReflection::new(device);
+            ssr.set_pipeline_compiler(self.pipelines.clone());
+            ssr
+        });
         ssr.prepare_resources(device, encoder, &mut self.context, feature_flags);
         let depth_view = &inputs.depth[(self.frame_index & 1) as usize];
         let timestamps =
@@ -578,5 +613,25 @@ impl PostFx {
             pass_timestamps: Some(&timestamps),
         });
         taa.get_accumulated_frame_srv(false, 0)
+    }
+}
+
+/// The renderer's compiler as `sgl-post-fx`'s: a technique's pipeline is a
+/// `Compiled` slot kept in the technique, so a frame creates it in place
+/// and a planning pass queues it as a compile job (the architecture's
+/// Program compilation).
+struct TechniqueCompiler(Compiler);
+
+impl sgl_post_fx::render_technique::PipelineCompiler for TechniqueCompiler {
+    fn compile(
+        &self,
+        _: &wgpu::Device,
+        slot: &mut sgl_post_fx::render_technique::PipelineSlot,
+        label: &'static str,
+        create: sgl_post_fx::render_technique::CreatePipeline,
+    ) -> Option<wgpu::RenderPipeline> {
+        slot.get_or_insert_with(Compiled::<wgpu::RenderPipeline>::default)
+            .get(&self.0, label, || create)
+            .map(|pipeline| pipeline.clone())
     }
 }

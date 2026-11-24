@@ -134,25 +134,29 @@ frame, after `View::resize` as before `render`:
 ```rust
 let compilation = renderer.compile(&device, &queue, &mut scene, &mut views);
 for job in compilation.jobs {
-    workers.send(job); // the game's threads run `job.run()`; in the browser, run a few here each frame
+    workers.send(job); // the game's threads run `job.run()`; in the browser, run a few here (below)
 }
 if compilation.ready() { /* `render` with these arguments creates nothing */ }
 ```
 
+- Every shader module and pipeline the frame needs is a compile job
+  (`job.label()` names its stage). The call creates none itself, and
+  neither does the frame once it is ready, so no thread of the game stalls
+  for one; on native, give the jobs to several threads and they compile in
+  parallel.
+- FSR is the exception: its upscaler creates its own pipelines on the
+  calling thread, its passes' in the `View::new` or `View::resize` that
+  selects FSR (or changes its version or the view's scene size), and a few
+  small helpers in the first frame after. Select FSR while the loading
+  screen is up.
+- A `View` stays on the thread that created it; `compile` runs there and
+  only plans.
 - It readies frames, not probe captures: a live probe's first refresh
   (`Renderer::refresh_specular_probe`) creates its own filter and face
-  pipelines, so make one while the level loads too.
-- Geometry pipelines, each view's HDR effect pipelines (for an input
-  whose `hdr_effect` names one), its outline's (for an input whose
-  `outline` names a selection with instances) and, while a decoded image
-  added since the last frame waits for its mip chain, the mip chain
-  programs are the compile jobs. Every other stage's programs are
-  created by the call that first meets them, on the calling thread: that
-  call blocks for them (seconds on a first run of the game, before the
-  graphics driver has cached them), once, and the frame then creates none.
-- A `View` stays on the thread that created it. On native, a game that
-  creates its view and calls `compile` and `render` on a rendering thread
-  keeps all of it off its window thread.
+  pipelines, so make one while the level loads too (#889).
+- Draw once `ready()`. `pending` can rise between calls: a stage whose
+  programs are missing leaves out what it feeds, which is asked for once
+  its job has finished.
 - It submits none of the frame's commands and commits no history; the
   scene's own uploads happen as in a frame. For each view it is a render
   that was not finished (step 3), so compile a view while the loading
@@ -163,19 +167,15 @@ if compilation.ready() { /* `render` with these arguments creates nothing */ }
   `Compilation::errors` lists failed jobs (native), each once.
 - Call it again after a settings change, a resize or for another level's
   scene, with a renderer that draws no other scene meanwhile. Most resizes
-  need nothing; `View::resize` itself builds FSR's context. A program a
-  stage takes only once a frame has finished (screen-space indirect light
-  in the camera's lighting) is created by that frame.
-- In the browser, pipeline creation returns at once and the browser
-  compiles in its GPU process, presenting nothing until it has. What a
-  browser game gets today: a first frame that creates nothing; geometry
-  pipelines paced a job at a time (run one or a few an animation frame),
-  each stalling the page for its own compile only; and the other stages'
-  programs compiled together after the first call, one stall behind the
-  loading screen instead of at the first frame. What it will get, with no
-  change to its code: every program paced the same way once the other
-  stages' are jobs, and no stall at all once wgpu exposes WebGPU's
-  asynchronous pipeline creation (gfx-rs/wgpu#3794), which a job then uses.
+  need nothing.
+- In the browser, run one job or a few, then no more until
+  `queue.on_submitted_work_done` reports the browser has created them:
+  pipeline creation returns at once and the browser compiles in its GPU
+  process, presenting nothing until it has. Paced so, each batch stalls
+  the page for its own compile only; jobs run every animation frame
+  without that wait pile up and stall it for all of them together.
+  WebGPU's asynchronous pipeline creation, which `sgl-webgpu` makes
+  reachable, will remove the stall with no change to game code (#880).
 
 [`examples/loading.rs`](../../../examples/sgl-3d/examples/loading.rs) is the loop to copy, and
 [`examples/browser_loading.rs`](../../../examples/sgl-3d/examples/browser_loading.rs) the browser's.

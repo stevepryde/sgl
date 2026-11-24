@@ -221,10 +221,10 @@ impl MipChains {
         if chains.is_empty() {
             return;
         }
-        let Some(programs) = self.programs.get(compiler, "material mip chains", || {
-            let device = device.clone();
-            move || Programs::new(&device)
-        }) else {
+        let Some(programs) = self
+            .programs
+            .get(compiler, "material mip chains", || Programs::new)
+        else {
             return;
         };
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

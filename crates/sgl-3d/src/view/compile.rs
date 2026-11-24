@@ -45,7 +45,9 @@ pub struct Compilation {
     pub jobs: Vec<CompileJob>,
     /// How many programs the frame still waits for: one for each job not
     /// finished, these included. At 0 a `render` with the same arguments
-    /// creates none, but for those in `errors`.
+    /// creates none, but for those in `errors`. It can rise again between
+    /// calls: a stage whose programs are missing leaves its commands out,
+    /// so what it feeds may be asked for only once its job has finished.
     pub pending: usize,
     /// Programs whose jobs failed since the last call (native; in the
     /// browser a failure reaches the device as drawing's does). Each is
@@ -79,6 +81,12 @@ impl CompileJob {
         self.ran = true;
         self.cell.run();
     }
+
+    /// The program set it compiles, as [`CompileError::label`] names it:
+    /// the stage's name for it, for a loading screen to show.
+    pub fn label(&self) -> &str {
+        self.cell.label()
+    }
 }
 
 impl Drop for CompileJob {
@@ -103,9 +111,9 @@ type Erased = Arc<dyn Run + Send + Sync>;
 type Erased = Arc<dyn Run>;
 
 #[cfg(not(target_arch = "wasm32"))]
-type Make<T> = Box<dyn FnOnce() -> T + Send>;
+type Make<T> = Box<dyn FnOnce(&wgpu::Device) -> T + Send>;
 #[cfg(target_arch = "wasm32")]
-type Make<T> = Box<dyn FnOnce() -> T>;
+type Make<T> = Box<dyn FnOnce(&wgpu::Device) -> T>;
 
 trait Run {
     fn run(&self);
@@ -206,8 +214,10 @@ impl Compiler {
 }
 
 /// A stage's shader modules and pipelines, compiled where they are first
-/// needed or by a [`CompileJob`]. `T` holds programs only: no target, bind
-/// group or history.
+/// needed or by a [`CompileJob`]. The closure that makes `T` creates the
+/// programs and what the stage makes once beside them from the device
+/// alone, and nothing sized by a view; where `T` is the stage's whole
+/// bundle, the stage adds its targets and bind groups where it encodes.
 pub(crate) struct Compiled<T> {
     state: State<T>,
 }
@@ -239,6 +249,15 @@ enum Progress<T> {
     Taken,
 }
 
+/// Programs made where their owner is, itself inside a compile job.
+impl<T> From<T> for Compiled<T> {
+    fn from(value: T) -> Self {
+        Self {
+            state: State::Ready(value),
+        }
+    }
+}
+
 impl<T> Default for Compiled<T> {
     fn default() -> Self {
         Self {
@@ -256,13 +275,27 @@ impl<T: WasmNotSend + 'static> Compiled<T> {
         }
     }
 
+    /// `ready`, to change what the stage keeps beside its programs.
+    pub fn ready_mut(&mut self) -> Option<&mut T> {
+        match &mut self.state {
+            State::Ready(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Drops the programs, or leaves their job to finish for nothing.
+    pub fn clear(&mut self) {
+        self.state = State::Empty;
+    }
+
     /// The programs. In a frame, always: created by `make`'s closure in
     /// place where no job made them, or by the job a planning pass queued,
     /// run in place if it has not started and waited for if a thread is
     /// running it. In a planning pass, none while they are missing: the
     /// pass queues `make`'s closure as a job and counts the slot, once
     /// however often the pass asks. `make` runs only for a slot that is
-    /// empty or whose job failed, and its closure owns what it reads.
+    /// empty or whose job failed, and its closure owns what it reads but
+    /// the device, which it is lent where it runs.
     #[cfg_attr(
         target_arch = "wasm32",
         allow(
@@ -275,9 +308,9 @@ impl<T: WasmNotSend + 'static> Compiled<T> {
         compiler: &Compiler,
         label: &'static str,
         make: impl FnOnce() -> F,
-    ) -> Option<&T>
+    ) -> Option<&mut T>
     where
-        F: FnOnce() -> T + WasmNotSend + 'static,
+        F: FnOnce(&wgpu::Device) -> T + WasmNotSend + 'static,
     {
         let planning = compiler.planning();
         if let State::Job(cell) = &self.state {
@@ -305,10 +338,14 @@ impl<T: WasmNotSend + 'static> Compiled<T> {
                 self.state = State::Job(cell);
                 return None;
             }
-            State::Empty | State::Failed => self.state = State::Ready(make()()),
+            State::Empty | State::Failed => {
+                #[cfg(all(test, not(target_arch = "wasm32")))]
+                in_place::record(label);
+                self.state = State::Ready(make()(&compiler.shared.device));
+            }
             State::Job(_) => unreachable!("a job's slot was settled above"),
         }
-        self.ready()
+        self.ready_mut()
     }
 }
 
@@ -336,7 +373,9 @@ impl<T: WasmNotSend + 'static> Cell<T> {
                     // errors reach the device's handler, not a scope.
                     drop(progress);
                     self.release();
-                    return Settled::Done(make());
+                    #[cfg(all(test, not(target_arch = "wasm32")))]
+                    in_place::record(self.label);
+                    return Settled::Done(make(&self.shared.device));
                 }
                 Progress::Running if !planning => {
                     *progress = Progress::Running;
@@ -440,7 +479,7 @@ impl<T: WasmNotSend + 'static> Run for Cell<T> {
 fn scoped<T>(device: &wgpu::Device, make: Make<T>) -> (T, Option<String>) {
     let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let value = make();
+    let value = make(device);
     let validation = pollster::block_on(validation.pop());
     let internal = pollster::block_on(internal.pop());
     (
@@ -452,8 +491,86 @@ fn scoped<T>(device: &wgpu::Device, make: Make<T>) -> (T, Option<String>) {
 /// In the browser an error scope's result arrives later, and wgpu's
 /// synchronous creation reports through the device as drawing does.
 #[cfg(target_arch = "wasm32")]
-fn scoped<T>(_: &wgpu::Device, make: Make<T>) -> (T, Option<String>) {
-    (make(), None)
+fn scoped<T>(device: &wgpu::Device, make: Make<T>) -> (T, Option<String>) {
+    (make(device), None)
+}
+
+/// A shader module that program sets compiling apart share: composed and
+/// created by the first of them that needs it, on its thread, so never
+/// where a planning pass asks. Clones share the module.
+#[derive(Clone)]
+pub(crate) struct SharedModule {
+    label: std::borrow::Cow<'static, str>,
+    source: Source,
+    module: Arc<std::sync::OnceLock<wgpu::ShaderModule>>,
+}
+
+type Source = Arc<dyn Fn() -> String + Send + Sync>;
+
+impl SharedModule {
+    /// The module of `source`'s WGSL, which it composes where the module
+    /// is first needed.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(
+            clippy::arc_with_non_send_sync,
+            reason = "one type for both targets: jobs cross threads on native"
+        )
+    )]
+    pub fn new(
+        label: impl Into<std::borrow::Cow<'static, str>>,
+        source: impl Fn() -> String + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            source: Arc::new(source),
+            module: Arc::default(),
+        }
+    }
+
+    /// The module of the shading library's `root` composed with what it
+    /// uses.
+    pub fn composed(label: &'static str, root: &'static crate::shading::Module) -> Self {
+        Self::new(label, move || crate::shading::compose(&[root]))
+    }
+
+    /// The module, created on the calling thread if nothing has needed it
+    /// yet: call it where a pipeline is created, inside a slot's closure.
+    pub fn get(&self, device: &wgpu::Device) -> &wgpu::ShaderModule {
+        self.module.get_or_init(|| {
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(&self.label),
+                source: wgpu::ShaderSource::Wgsl((self.source)().into()),
+            })
+        })
+    }
+
+    /// Whether a pipeline has needed it.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn created(&self) -> bool {
+        self.module.get().is_some()
+    }
+}
+
+/// The sets this thread created in place, for a test's failure message to
+/// name: its oracle is elsewhere (wgpu's own counts).
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod in_place {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static CREATED: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn record(label: &'static str) {
+        CREATED.with_borrow_mut(|created| created.push(label));
+    }
+
+    /// The labels of the sets created in place on this thread since the
+    /// last call.
+    pub fn take() -> Vec<&'static str> {
+        CREATED.with_borrow_mut(std::mem::take)
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

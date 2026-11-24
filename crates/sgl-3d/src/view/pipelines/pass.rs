@@ -80,6 +80,27 @@ pub(crate) enum GeometryPass {
 }
 
 impl GeometryPass {
+    /// The pass as the camera's lighting takes it once screen-space
+    /// indirect light has a kept result, where this is that lighting
+    /// without one: the frame after a first frame's.
+    pub(super) fn with_screen_indirect(self) -> Option<Self> {
+        match self {
+            Self::Fused {
+                screen_indirect: false,
+            } => Some(Self::Fused {
+                screen_indirect: true,
+            }),
+            Self::Lighting {
+                shadows,
+                screen_indirect: false,
+            } => Some(Self::Lighting {
+                shadows,
+                screen_indirect: true,
+            }),
+            _ => None,
+        }
+    }
+
     pub(super) fn caster(self) -> bool {
         matches!(
             self,

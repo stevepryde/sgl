@@ -299,7 +299,7 @@ impl TestRenderer {
             &slot_lights,
         );
         view.sky.prepare(
-            device,
+            (device, &crate::view::compile::Compiler::new(device)),
             &input,
             input.camera.eye,
             (!history.valid, effective.aerial_perspective),
@@ -366,9 +366,13 @@ impl TestRenderer {
         frame: &TestFrame,
     ) {
         let mut encoder = device.create_command_encoder(&Default::default());
-        self.shared
-            .deform
-            .dispatch(device, queue, &mut encoder, scene, None);
+        self.shared.deform.dispatch(
+            (device, &crate::view::compile::Compiler::new(device)),
+            queue,
+            &mut encoder,
+            scene,
+            None,
+        );
         let mut ctx = context!(self, device, queue, &mut encoder, scene, frame);
         self.view.cull.encode_early(&mut ctx);
         queue.submit([encoder.finish()]);
@@ -477,9 +481,11 @@ impl TestRenderer {
         kind: GeometryPass,
     ) {
         if kind == GeometryPass::Forward {
-            self.view
-                .opaque
-                .draw_backdrop(pass, self.view.bindings.camera_unlit());
+            self.view.opaque.draw_backdrop(
+                &self.renderer.shared.compiler,
+                pass,
+                self.view.bindings.camera_unlit(),
+            );
         }
         pass.set_bind_group(0, self.view.bindings.camera_lit(), &[]);
         self.view

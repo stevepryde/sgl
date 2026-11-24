@@ -38,6 +38,7 @@
 use crate::Scene;
 use crate::scene::dynamic_gi::{InstalledVolume, ProbePlacement};
 use crate::shading::dynamic_gi as layout;
+use crate::view::compile::Compiled;
 use crate::view::effective::Effective;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::LitConstants;
@@ -51,7 +52,7 @@ use glam::{I64Vec3, IVec3};
 #[cfg(feature = "diagnostics")]
 pub use inputs::DynamicGiChanges;
 use inputs::Inputs;
-use pipelines::Pipelines;
+use pipelines::{Pipelines, Trace};
 use volume::{Layouts, Volume, texture};
 
 mod buffers;
@@ -88,7 +89,9 @@ impl Key {
 /// state, and a stand-in lit group 0 binds while no volume runs.
 pub(crate) struct DynamicGi {
     layouts: Layouts,
-    pipelines: Option<Pipelines>,
+    pipelines: Compiled<Pipelines>,
+    /// The trace's programs, laid out on the first frame that traces.
+    trace: Option<Trace>,
     uniform: wgpu::Buffer,
     /// The moving instances' bounds the allocation takes.
     moving_bounds: wgpu::Buffer,
@@ -128,7 +131,8 @@ impl DynamicGi {
     pub fn new(device: &wgpu::Device) -> Self {
         let layouts = Layouts::new(device);
         Self {
-            pipelines: None,
+            pipelines: Compiled::default(),
+            trace: None,
             uniform: crate::counters::buffer(
                 device,
                 &wgpu::BufferDescriptor {
@@ -275,19 +279,23 @@ impl DynamicGi {
             return;
         };
         let lit = LitConstants::of(ctx.scene);
-        let pipelines = self.pipelines.get_or_insert_with(|| {
-            Pipelines::new(
-                ctx.device,
-                &self.layouts,
-                &ctx.bindings.lit,
-                &ctx.bindings.scene,
-            )
+        // Both sets are asked for before a planning pass that lacks one
+        // leaves the update out.
+        let pipelines = self.pipelines.get(ctx.compiler, "dynamic GI", || {
+            let layouts = self.layouts.clone();
+            move |device: &wgpu::Device| Pipelines::new(device, &layouts)
         });
-        let form = pipelines.trace_pipeline(ctx.device, lit, ctx.hardware_rays);
+        let trace = self.trace.get_or_insert_with(|| {
+            Trace::new(&self.layouts, &ctx.bindings.lit, &ctx.bindings.scene)
+        });
+        let form = trace.pipeline((ctx.device, ctx.compiler), lit, ctx.hardware_rays);
+        let (Some(pipelines), Some(form)) = (pipelines, form) else {
+            return;
+        };
         #[cfg(feature = "diagnostics")]
         let mut observer = observe::Observer::for_frame(
             &mut self.observer,
-            &mut pipelines.paths,
+            &mut trace.paths,
             &self.layouts.trace,
             ctx,
             (lit, form),
@@ -327,7 +335,7 @@ impl DynamicGi {
         };
         let bounds = moving_bounds(ctx.scene, &placement, camera.eye);
         let inputs = Inputs::of(ctx, max_rays);
-        let trace_group = pipelines.paths.group(
+        let trace_group = trace.paths.group(
             ctx.device,
             ctx.hardware_rays,
             &[
@@ -405,7 +413,11 @@ impl DynamicGi {
                 label: Some("dynamic GI rays"),
                 timestamp_writes: timing.and_then(|t| t.compute_pass("dynamic GI rays")),
             });
-            pass.set_pipeline(&pipelines.trace[&(lit, form)]);
+            pass.set_pipeline(
+                trace.pipelines[&(lit, form)]
+                    .ready()
+                    .expect("the trace's pipeline was made above"),
+            );
             #[cfg(feature = "diagnostics")]
             if let Some(observer) = observer.as_deref_mut() {
                 observer.bind_trace(ctx.device, &mut pass, lit, rays);

@@ -13,6 +13,7 @@
 //! targets, 1/32 of the render size, held while TAA runs. Timing group:
 //! `TAA motion reach`.
 use crate::shading::motion_tiles::{MOTION_TILES, MotionTilesUniform};
+use crate::view::compile::SharedModule;
 use crate::view::frame::FrameContext;
 use crate::view::motion_tiles::MotionTiles;
 
@@ -22,12 +23,11 @@ pub(crate) struct Reach {
 
 impl Reach {
     pub fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("TAA motion reach"),
-            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&MOTION_TILES]).into()),
-        });
         Self {
-            tiles: MotionTiles::new(device, &module),
+            tiles: MotionTiles::new(
+                device,
+                SharedModule::composed("TAA motion reach", &MOTION_TILES),
+            ),
         }
     }
 
@@ -59,7 +59,13 @@ impl Reach {
                 timestamp_writes: ctx.timing.and_then(|t| t.compute_pass("TAA motion reach")),
             });
         self.tiles
-            .encode(ctx.device, ctx.queue, &mut pass, [motion, motion], values)
+            .encode(
+                (ctx.device, ctx.compiler),
+                ctx.queue,
+                &mut pass,
+                [motion, motion],
+                values,
+            )
             .clone()
     }
 }

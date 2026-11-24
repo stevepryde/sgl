@@ -12,8 +12,6 @@
     library: "sgl",
     async init() { await init(); },
     async device(canvas, path) {
-      // #851 adds SGL's prepared startup here.
-      if (path !== "ordinary") throw new Error(`SGL has no '${path}' startup path yet`);
       startup = await Startup.create(canvas);
       const device = startup.gpuDevice();
       return { backend: device ? "WebGPU" : null, adapter: device ? { ...Object.fromEntries(["vendor","architecture","device","description"].map((k) => [k, device.adapterInfo[k]])) } : null };
@@ -21,7 +19,9 @@
     async decode(glb) { startup.setAsset(await decodeGlb(glb)); },
     async upload(layout) { startup.upload(JSON.stringify(layout)); await startup.completion(); },
     async view() { startup.view(); },
-    async prepare() {},
+    // The prepared path: the first frame's programs compiled ahead
+    // (`Renderer::compile`), each pass's jobs created before the next.
+    async prepare() { while (!startup.prepare()) await startup.completion(); },
     frame(seconds, state) { startup.frame(seconds, state.yaw, state.mask, state.effect); },
     completion() { return startup.completion(); },
     details() { return JSON.parse(startup.report()); },

@@ -175,7 +175,8 @@ impl Renderer {
     /// let compilation = renderer.compile(device, queue, scene, views);
     /// for job in compilation.jobs {
     ///     // A worker thread of the game's runs `job.run()`. In the
-    ///     // browser, run a few here each animation frame.
+    ///     // browser, run a few here, then wait for the queue's
+    ///     // `on_submitted_work_done` before running more.
     ///     let _ = workers.send(job);
     /// }
     /// compilation.pending == 0 // then `render` creates nothing
@@ -190,12 +191,17 @@ impl Renderer {
     /// unfinished render restarts. Call it between frames, after
     /// `finish_frame`: it supersedes a render not yet finished.
     ///
-    /// A geometry pipeline is not created by the pass, nor are the mip
-    /// chain stage's programs while a decoded image waits for its chain:
-    /// its job is returned, once, and again if it was dropped without
-    /// running. Every other program the frame needs is created by the
-    /// pass, on this thread, which blocks for it. While jobs returned earlier are neither
-    /// finished nor dropped, a call runs no pass and only reports them.
+    /// The pass creates no shader module and no pipeline: every one the
+    /// frame needs is a job, returned once, and again if it was dropped
+    /// without running, so the call only plans and does not block for a
+    /// compile. FSR's upscaler is the exception: it creates its own
+    /// pipelines on the thread that calls `View::new` or `View::resize`
+    /// when either builds its context, and a few more in the first frame
+    /// after. While jobs returned earlier are neither finished nor
+    /// dropped, a call runs no pass and only reports them. A stage whose
+    /// programs are missing leaves its commands out of the pass, so what
+    /// it feeds can be asked for by the call after its job finished:
+    /// `pending` may rise again, and 0 is the only sign of completion.
     ///
     /// `render` never waits on this: it creates a missing program where it
     /// needs it, runs a job that has not started in place, and waits for

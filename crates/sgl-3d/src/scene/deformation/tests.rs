@@ -78,7 +78,13 @@ fn deformed(
 ) -> Vec<(Vec3, Vec3, Vec4)> {
     scene.begin_frame(device, queue);
     let mut encoder = device.create_command_encoder(&Default::default());
-    Deform::new(device).dispatch(device, queue, &mut encoder, scene, None);
+    Deform::new(device).dispatch(
+        (device, &crate::view::compile::Compiler::new(device)),
+        queue,
+        &mut encoder,
+        scene,
+        None,
+    );
     queue.submit([encoder.finish()]);
     let words = crate::test_support::read_words(device, queue, scene.rays.source());
     let f = |at: u32| f32::from_bits(words[at as usize]);
@@ -582,7 +588,13 @@ fn deformed_casters_cast_at_their_deformed_depth() {
             renderer.prepare_test_frame(&device, &queue, &mut scene, &frame, &Settings::default());
         renderer.set_test_cascade((&device, &queue), &scene, &prepared, Mat4::IDENTITY);
         let mut encoder = device.create_command_encoder(&Default::default());
-        Deform::new(&device).dispatch(&device, &queue, &mut encoder, &scene, None);
+        Deform::new(&device).dispatch(
+            (&device, &crate::view::compile::Compiler::new(&device)),
+            &queue,
+            &mut encoder,
+            &scene,
+            None,
+        );
         renderer.encode_test_shadows(
             &device,
             &queue,

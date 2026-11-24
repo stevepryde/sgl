@@ -343,7 +343,11 @@ fn infinite_texels_blur_into_a_finite_frame() {
         ..Default::default()
     });
     blur.dispatch(
-        (&device, &queue),
+        (
+            &device,
+            &crate::view::compile::Compiler::new(&device),
+            &queue,
+        ),
         &mut encoder,
         &frame,
         [&motion, &depth],

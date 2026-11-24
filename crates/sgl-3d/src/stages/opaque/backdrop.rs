@@ -3,6 +3,7 @@
 //! stage's sky-view table, bound where a panorama is, and the lights'
 //! discs). Its timing group is `sky`.
 use crate::shading::{self, gbuffer};
+use crate::view::compile::{Compiled, Compiler};
 
 pub(crate) static BACKDROP: shading::Module = shading::Module {
     name: "backdrop",
@@ -21,11 +22,33 @@ pub(crate) const BACKDROP_VS_ENTRY: &str = "backdrop_vs";
 pub(crate) const BACKDROP_FS_ENTRY: &str = "backdrop_fs";
 
 pub(crate) struct BackdropDraw {
-    pipeline: wgpu::RenderPipeline,
+    pipeline: Compiled<wgpu::RenderPipeline>,
+    /// The unlit group 0's layout, which the pipeline is created over.
+    unlit: wgpu::BindGroupLayout,
 }
 
 impl BackdropDraw {
-    pub fn new(device: &wgpu::Device, unlit: &wgpu::BindGroupLayout) -> Self {
+    pub fn new(unlit: &wgpu::BindGroupLayout) -> Self {
+        Self {
+            pipeline: Compiled::default(),
+            unlit: unlit.clone(),
+        }
+    }
+
+    /// The backdrop's pipeline, made where a frame or capture first draws
+    /// it or by its compile job; none in a planning pass while it is
+    /// missing, where the caller leaves the draw out.
+    pub fn pipeline(&mut self, compiler: &Compiler) -> Option<wgpu::RenderPipeline> {
+        let unlit = &self.unlit;
+        self.pipeline
+            .get(compiler, "backdrop", || {
+                let unlit = unlit.clone();
+                move |device: &wgpu::Device| Self::create(device, &unlit)
+            })
+            .map(|pipeline| pipeline.clone())
+    }
+
+    fn create(device: &wgpu::Device, unlit: &wgpu::BindGroupLayout) -> wgpu::RenderPipeline {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("backdrop"),
             source: wgpu::ShaderSource::Wgsl(shading::compose(&[&BACKDROP]).into()),
@@ -42,44 +65,46 @@ impl BackdropDraw {
                 write_mask: wgpu::ColorWrites::ALL,
             })
         });
-        Self {
-            pipeline: device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("backdrop"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(BACKDROP_VS_ENTRY),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(BACKDROP_FS_ENTRY),
-                    compilation_options: Default::default(),
-                    targets: &targets,
-                }),
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: gbuffer::DEPTH,
-                    depth_write_enabled: Some(false),
-                    depth_compare: Some(wgpu::CompareFunction::Always),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                multiview_mask: None,
-                cache: None,
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("backdrop"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some(BACKDROP_VS_ENTRY),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some(BACKDROP_FS_ENTRY),
+                compilation_options: Default::default(),
+                targets: &targets,
             }),
-        }
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: gbuffer::DEPTH,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        })
     }
 
-    /// Draws the backdrop into colour and motion targets, under `unlit`
-    /// group 0.
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, unlit: &wgpu::BindGroup) {
-        pass.set_pipeline(&self.pipeline);
+    /// Draws the backdrop with its `pipeline` into colour and motion
+    /// targets, under `unlit` group 0.
+    pub fn draw(
+        pipeline: &wgpu::RenderPipeline,
+        pass: &mut wgpu::RenderPass<'_>,
+        unlit: &wgpu::BindGroup,
+    ) {
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, unlit, &[]);
         pass.draw(0..3, 0..1);
     }

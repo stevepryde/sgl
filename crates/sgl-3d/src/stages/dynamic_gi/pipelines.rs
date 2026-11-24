@@ -2,9 +2,10 @@
 //! the blends', and the trace's for each path its rays take.
 use super::volume::Layouts;
 use crate::shading::{self, RayQueryForm};
+use crate::view::compile::Compiler;
 use crate::view::frame::HardwareRays;
 use crate::view::pipelines::{LitConstants, PipelineSpecialisations};
-use crate::view::trace_paths::{TracePath, TracePaths};
+use crate::view::trace_paths::{TracePaths, TracePipelines};
 use std::collections::HashMap;
 
 /// What the stage's passes share.
@@ -71,24 +72,24 @@ pub(super) struct Pipelines {
     pub update_depth: wgpu::ComputePipeline,
     pub settle: wgpu::ComputePipeline,
     pub scroll: wgpu::ComputePipeline,
+}
+
+/// The trace's programs, which compile apart from the update's: one for
+/// each path its rays take and set of lit constants.
+pub(super) struct Trace {
     /// The trace's programs for each path its rays take.
     pub paths: TracePaths,
     /// The trace's pipelines for each set of lit constants and path, each
-    /// created when a frame first needs it, as the geometry pipelines
-    /// specialise on the scene's rectangle lights and decals.
-    pub trace: HashMap<(LitConstants, Option<RayQueryForm>), wgpu::ComputePipeline>,
+    /// created when a frame first needs it or in a compile job, as the
+    /// geometry pipelines specialise on the scene's rectangle lights and
+    /// decals.
+    pub pipelines: TracePipelines<LitConstants>,
     specialisations: PipelineSpecialisations<LitConstants>,
 }
 
 impl Pipelines {
-    /// `layouts` are the stage's own groups', and `lit` and `scene` group
-    /// 0's lit layout and group 1's.
-    pub fn new(
-        device: &wgpu::Device,
-        layouts: &Layouts,
-        lit: &shading::bind::LitLayout,
-        scene: &wgpu::BindGroupLayout,
-    ) -> Self {
+    /// `layouts` are the stage's own groups'.
+    pub fn new(device: &wgpu::Device, layouts: &Layouts) -> Self {
         let module = |label, root| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
@@ -173,9 +174,6 @@ impl Pipelines {
             SCROLL_ENTRY,
         );
         Self {
-            paths: TracePaths::new("dynamic GI rays", &TRACE, &layouts.trace, lit, scene),
-            trace: HashMap::new(),
-            specialisations: PipelineSpecialisations::default(),
             rank,
             threshold,
             claim_sums,
@@ -188,22 +186,40 @@ impl Pipelines {
             scroll,
         }
     }
+}
+
+impl Trace {
+    /// `layouts` are the stage's own groups', and `lit` and `scene` group
+    /// 0's lit layout and group 1's.
+    pub fn new(
+        layouts: &Layouts,
+        lit: &shading::bind::LitLayout,
+        scene: &wgpu::BindGroupLayout,
+    ) -> Self {
+        Self {
+            paths: TracePaths::new("dynamic GI rays", &TRACE, &layouts.trace, lit, scene),
+            pipelines: HashMap::new(),
+            specialisations: PipelineSpecialisations::default(),
+        }
+    }
 
     /// Makes the trace's pipeline compiled with `lit` for the path
-    /// `hardware` takes; returns the path it took (`TracePaths::pipeline`).
-    pub fn trace_pipeline(
+    /// `hardware` takes; returns the path it took, or none in a planning
+    /// pass while the pipeline is missing (`TracePaths::pipeline`).
+    pub fn pipeline(
         &mut self,
-        device: &wgpu::Device,
+        gpu: (&wgpu::Device, &Compiler),
         lit: LitConstants,
         hardware: Option<HardwareRays<'_>>,
-    ) -> Option<RayQueryForm> {
+    ) -> Option<Option<RayQueryForm>> {
         self.specialisations
-            .retain(&mut self.trace, lit, |&(lit, _)| lit);
+            .retain(&mut self.pipelines, lit, |&(lit, _)| lit);
         self.paths.pipeline(
-            device,
+            gpu,
             hardware,
-            (&mut self.trace, lit),
-            |TracePath { shader, layout, .. }| {
+            (&mut self.pipelines, lit),
+            "dynamic GI rays",
+            move |device, shader, layout| {
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("dynamic GI rays"),
                     layout: Some(layout),
@@ -237,7 +253,9 @@ mod specialisation_tests {
         }
         let lit = shading::bind::lit(&device, shading::bind::BindingTier::Extended);
         let scene = shading::bind::scene(&device);
-        let mut pipelines = Pipelines::new(&device, &Layouts::new(&device), &lit, &scene);
+        let compiler = Compiler::new(&device);
+        let gpu = (&device, &compiler);
+        let mut trace = Trace::new(&Layouts::new(&device), &lit, &scene);
         let a = LitConstants::default();
         let b = LitConstants {
             rect_lights: true,
@@ -248,25 +266,25 @@ mod specialisation_tests {
             films: true,
             ..a
         };
-        pipelines.trace_pipeline(&device, a, None);
-        let original = pipelines.trace[&(a, None)].clone();
-        pipelines.trace_pipeline(&device, b, None);
-        pipelines.trace_pipeline(&device, b, None);
-        pipelines.trace_pipeline(&device, a, None);
+        trace.pipeline(gpu, a, None);
+        let original = trace.pipelines[&(a, None)].ready().cloned();
+        trace.pipeline(gpu, b, None);
+        trace.pipeline(gpu, b, None);
+        trace.pipeline(gpu, a, None);
         assert_eq!(
-            pipelines.trace[&(a, None)],
+            trace.pipelines[&(a, None)].ready().cloned(),
             original,
             "returning to A reuses its pipeline"
         );
-        pipelines.trace_pipeline(&device, b, None);
-        let previous = pipelines.trace[&(b, None)].clone();
-        pipelines.trace_pipeline(&device, c, None);
-        assert!(!pipelines.trace.contains_key(&(a, None)), "C drops A");
+        trace.pipeline(gpu, b, None);
+        let previous = trace.pipelines[&(b, None)].ready().cloned();
+        trace.pipeline(gpu, c, None);
+        assert!(!trace.pipelines.contains_key(&(a, None)), "C drops A");
         assert_eq!(
-            pipelines.trace[&(b, None)],
+            trace.pipelines[&(b, None)].ready().cloned(),
             previous,
             "C keeps B's pipeline"
         );
-        assert!(pipelines.trace.contains_key(&(c, None)), "C is compiled");
+        assert!(trace.pipelines.contains_key(&(c, None)), "C is compiled");
     }
 }

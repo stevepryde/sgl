@@ -15,6 +15,7 @@ use super::{Pass, texture};
 use crate::settings::RayTracedShadowQuality;
 use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::{Compiled, Compiler};
 
 /// The entry points the denoiser's pipelines are created with.
 pub(crate) const TILE_CLASSIFICATION_ENTRY: &str = "traced_denoise_tile_classification";
@@ -326,23 +327,40 @@ impl Chain {
 /// that a light that joins or leaves slots 1 to 3 makes no pipeline.
 #[derive(Default)]
 pub(super) struct Denoiser {
-    chains: Vec<(Shape, Chain)>,
+    chains: Vec<(Shape, Compiled<Chain>)>,
 }
 
 impl Denoiser {
-    /// Makes the passes of every shape `quality` (resolved) takes.
-    pub fn prepare(&mut self, device: &wgpu::Device, quality: RayTracedShadowQuality) {
+    /// Makes the passes of every shape `quality` (resolved) takes, each a
+    /// compile job in a planning pass: whether it has them all.
+    pub fn prepare(&mut self, compiler: &Compiler, quality: RayTracedShadowQuality) -> bool {
+        let mut ready = true;
         for &shape in Shape::all(quality) {
             if !self.chains.iter().any(|(made, _)| *made == shape) {
-                self.chains.push((shape, Chain::new(device, shape)));
+                self.chains.push((shape, Compiled::default()));
             }
+            let (_, chain) = self
+                .chains
+                .iter_mut()
+                .find(|(made, _)| *made == shape)
+                .unwrap();
+            ready &= chain
+                .get(compiler, "ray-traced shadow denoiser", || {
+                    move |device: &wgpu::Device| Chain::new(device, shape)
+                })
+                .is_some();
         }
+        ready
     }
 
     /// Lets go of every shape's bind groups, which hold the targets they
     /// bound, as the stage's targets are made anew.
     pub fn forget_groups(&mut self) {
-        for (_, chain) in &mut self.chains {
+        for chain in self
+            .chains
+            .iter_mut()
+            .filter_map(|(_, chain)| chain.ready_mut())
+        {
             for pass in std::iter::once(&mut chain.classification).chain(&mut chain.filters) {
                 for group in &mut pass.groups {
                     group.forget();
@@ -367,6 +385,7 @@ impl Denoiser {
             .chains
             .iter_mut()
             .find_map(|(made, chain)| (*made == shape).then_some(chain))
+            .and_then(Compiled::ready_mut)
             .expect("the shape's passes are prepared");
         let resource = wgpu::BindingResource::TextureView;
         let (current, previous) = (inputs.current, 1 - inputs.current);

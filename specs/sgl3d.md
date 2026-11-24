@@ -260,8 +260,11 @@ settings SGL3D has today.
    `Renderer::compile` readies ahead of time the shaders and pipelines a
    frame would create, for the same scene, views, settings, frame inputs
    and output as `Renderer::render`, without submitting the frame's
-   commands or committing history; the game runs the compile jobs it
-   returns and owns their threads and pacing. Drawing without it, or
+   commands or committing history. Every one of them is a compile job it
+   returns, which the game runs on threads and at a pace of its choosing;
+   neither the call nor the frame it readied creates one on its own
+   thread (FSR's upscaler apart, which creates its own pipelines:
+   [architecture](sgl3d-architecture.md), Shape). Drawing without it, or
    before it is ready, creates what is missing in place.
 5. **S3D-5 — Coherent shading.** One physically based material and lighting
    model serves primary shading, reflections, probes, bakes and GI. Fix a wrong

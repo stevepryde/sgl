@@ -67,7 +67,13 @@ fn cull(
         cascades.iter().copied(),
     );
     let mut encoder = device.create_command_encoder(&Default::default());
-    Cull::new(device).encode(device, &mut encoder, scene, &views, None);
+    Cull::new(device).encode(
+        (device, &crate::view::compile::Compiler::new(device)),
+        &mut encoder,
+        scene,
+        &views,
+        None,
+    );
     queue.submit([encoder.finish()]);
     // Pulled and paired alike.
     let read = |list: &crate::view::draw_list::gpu::GpuList| {

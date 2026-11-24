@@ -179,7 +179,7 @@ impl Pass {
             motion,
         };
         stage.encode(
-            device,
+            (device, &crate::view::compile::Compiler::new(device)),
             queue,
             &mut encoder,
             &inputs,

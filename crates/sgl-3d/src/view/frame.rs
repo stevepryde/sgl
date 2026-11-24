@@ -34,9 +34,8 @@ pub(crate) struct FrameContext<'a> {
     pub views: &'a FrameViews,
     pub bindings: &'a mut FrameBindings,
     pub pipelines: &'a mut GeometryPipelines,
-    /// Whether this pass is a frame or a planning pass
-    /// (`Renderer::compile`), which a stage asks its `Compiled` slots
-    /// through.
+    /// Whether this is a frame or a planning pass, which every stage's
+    /// `Compiled` slots follow (`view::compile`, AR-13).
     pub compiler: &'a Compiler,
     /// The camera history every stage continues or restarts with.
     pub history: HistoryFrame,

@@ -79,13 +79,7 @@ fn antialiasing_off_preserves_captured_pixels() {
             let mut post = with_tables(
                 &device,
                 &queue,
-                Post::new(
-                    &device,
-                    Output::texture(format),
-                    sizes([80, 64]),
-                    true,
-                    None,
-                ),
+                Post::new(&device, Output::texture(format), sizes([80, 64]), true),
             );
             for size in [[80, 64], [37, 29]] {
                 post.resize(&device, sizes(size), true);
@@ -105,7 +99,7 @@ fn antialiasing_off_preserves_captured_pixels() {
                 {
                     let mut encoder = device.create_command_encoder(&Default::default());
                     post.tone_map.present_output(
-                        &device,
+                        (&device, &crate::view::compile::Compiler::new(&device)),
                         &mut encoder,
                         &post.inputs,
                         post.bloom.halo(),
@@ -191,7 +185,7 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
         let mut post = with_tables(
             &device,
             &queue,
-            Post::new(&device, Output::texture(HDR), sizes([64, 64]), false, None),
+            Post::new(&device, Output::texture(HDR), sizes([64, 64]), false),
         );
         let output = target(&device, "bloom switch result", [64, 64], HDR);
         let exposure = exposure_texture(&device, &queue, 1.);
@@ -225,7 +219,7 @@ fn bloom_switch_removes_halos_and_preserves_low_override() {
                     sharpness: None,
                 };
                 post.present(
-                    &device,
+                    (&device, &crate::view::compile::Compiler::new(&device)),
                     &queue,
                     &mut encoder,
                     &scene,
@@ -348,7 +342,7 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
     let mut post = with_tables(
         &device,
         &queue,
-        Post::new(&device, Output::texture(HDR), sizes, false, None),
+        Post::new(&device, Output::texture(HDR), sizes, false),
     );
     let output = target(&device, "SMAA exposure result", sizes.output, HDR);
     // A dark field and a bright one across a shallow diagonal: 0.05 and 0.8
@@ -370,7 +364,7 @@ fn smaa_antialiases_the_displayed_image_whatever_the_exposure() {
         let exposure = exposure_texture(&device, &queue, 1. / scale);
         let mut encoder = device.create_command_encoder(&Default::default());
         post.present(
-            &device,
+            (&device, &crate::view::compile::Compiler::new(&device)),
             &queue,
             &mut encoder,
             &scene,
@@ -485,7 +479,7 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
     let mut post = with_tables(
         &device,
         &queue,
-        Post::new(&device, Output::texture(HDR), sizes, false, None),
+        Post::new(&device, Output::texture(HDR), sizes, false),
     );
     assert!(!post.tone_map.holds_capture());
     assert!(!post.fsr1.target_is_held());
@@ -513,7 +507,7 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
                 crate::test_support::hdr_texture(&device, &queue, scene_size, &vec![color; 48]);
             let mut reference = device.create_command_encoder(&Default::default());
             post.present(
-                &device,
+                (&device, &crate::view::compile::Compiler::new(&device)),
                 &queue,
                 &mut reference,
                 &scene,
@@ -532,7 +526,7 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
             let expected = read(&device, &queue, post.tone_map.tone_mapped().texture(), 8);
             let mut encoder = device.create_command_encoder(&Default::default());
             post.present(
-                &device,
+                (&device, &crate::view::compile::Compiler::new(&device)),
                 &queue,
                 &mut encoder,
                 &scene,
@@ -587,7 +581,7 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
             for _ in 0..2 {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 post.present(
-                    &device,
+                    (&device, &crate::view::compile::Compiler::new(&device)),
                     &queue,
                     &mut encoder,
                     &scene,
@@ -617,7 +611,7 @@ fn spatial_upscaling_runs_on_baseline_device_and_releases_optional_targets() {
         for spatial in [true, false, true] {
             let mut encoder = device.create_command_encoder(&Default::default());
             post.present(
-                &device,
+                (&device, &crate::view::compile::Compiler::new(&device)),
                 &queue,
                 &mut encoder,
                 &scene,
@@ -668,7 +662,7 @@ fn smaa_holds_scene_size_targets_only_while_it_runs() {
     let mut post = with_tables(
         &device,
         &queue,
-        Post::new(&device, Output::texture(HDR), sizes, false, None),
+        Post::new(&device, Output::texture(HDR), sizes, false),
     );
     let exposure = exposure_texture(&device, &queue, 1.);
     let frame = |post: &mut Post, sizes: Sizes, smaa: Option<SmaaQuality>| {
@@ -681,7 +675,7 @@ fn smaa_holds_scene_size_targets_only_while_it_runs() {
         let output = target(&device, "SMAA lifetime output", sizes.output, HDR);
         let mut encoder = device.create_command_encoder(&Default::default());
         post.present(
-            &device,
+            (&device, &crate::view::compile::Compiler::new(&device)),
             &queue,
             &mut encoder,
             &scene,
@@ -792,7 +786,7 @@ fn sharpening_runs_in_every_final_path() {
         let mut post = with_tables(
             &device,
             &queue,
-            Post::new(&device, Output::texture(HDR), sizes, false, None),
+            Post::new(&device, Output::texture(HDR), sizes, false),
         );
         let scene = crate::test_support::hdr_texture(
             &device,
@@ -804,7 +798,7 @@ fn sharpening_runs_in_every_final_path() {
             let variation = |sharpness| {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 post.present(
-                    &device,
+                    (&device, &crate::view::compile::Compiler::new(&device)),
                     &queue,
                     &mut encoder,
                     &scene,
@@ -871,7 +865,7 @@ fn a_flat_colour_sharpened_on_the_display_path_presents_unchanged() {
         let mut post = with_tables(
             &device,
             &queue,
-            Post::new(&device, Output::texture(HDR), sizes, false, None),
+            Post::new(&device, Output::texture(HDR), sizes, false),
         );
         for color in [[0., 0., 0., 1.], [1., 1., 1., 1.], [0.18, 0.5, 0.75, 1.]] {
             let texels = vec![color; (scene_size[0] * scene_size[1]) as usize];
@@ -879,7 +873,7 @@ fn a_flat_colour_sharpened_on_the_display_path_presents_unchanged() {
             let [unsharpened, sharpened] = [None, Some(0.8)].map(|sharpness| {
                 let mut encoder = device.create_command_encoder(&Default::default());
                 post.present(
-                    &device,
+                    (&device, &crate::view::compile::Compiler::new(&device)),
                     &queue,
                     &mut encoder,
                     &scene,
@@ -952,7 +946,7 @@ fn the_sharpening_input_is_held_only_while_rcas_reads_it() {
     let mut post = with_tables(
         &device,
         &queue,
-        Post::new(&device, Output::texture(HDR), equal, false, None),
+        Post::new(&device, Output::texture(HDR), equal, false),
     );
     let exposure = exposure_texture(&device, &queue, 1.);
     let mut current = equal;
@@ -971,7 +965,7 @@ fn the_sharpening_input_is_held_only_while_rcas_reads_it() {
         let output = target(&device, "sharpening lifetime output", sizes.output, HDR);
         let mut encoder = device.create_command_encoder(&Default::default());
         post.present(
-            &device,
+            (&device, &crate::view::compile::Compiler::new(&device)),
             &queue,
             &mut encoder,
             &scene,
@@ -1083,13 +1077,7 @@ fn infinite_scene_texels_present_finite_as_each_curves_white() {
     let mut post = with_tables(
         &device,
         &queue,
-        Post::new(
-            &device,
-            Output::texture(HDR),
-            sizes(INFINITE_SCENE),
-            true,
-            None,
-        ),
+        Post::new(&device, Output::texture(HDR), sizes(INFINITE_SCENE), true),
     );
     let output = target(&device, "infinite scene output", INFINITE_SCENE, HDR);
     let bloom = crate::BloomParameters::default();
@@ -1104,7 +1092,7 @@ fn infinite_scene_texels_present_finite_as_each_curves_white() {
                     };
                     let mut encoder = device.create_command_encoder(&Default::default());
                     post.present(
-                        &device,
+                        (&device, &crate::view::compile::Compiler::new(&device)),
                         &queue,
                         &mut encoder,
                         &scene,

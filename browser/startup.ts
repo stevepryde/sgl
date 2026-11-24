@@ -56,8 +56,6 @@ export async function runStartup(options: StartupOptions) {
       // Alternate which library goes first, so drift does not favour one.
       const order: Library[] = run % 2 === 0 ? ["sgl", "three"] : ["three", "sgl"];
       for (const scene of options.scenes) for (const library of order) {
-        // SGL's prepared startup arrives with #851, in browser/startup-sgl.html.
-        if (library === "sgl" && options.path !== "ordinary") continue;
         // On a shared machine a headless browser occasionally stops
         // responding; its pair is measured again in a fresh browser.
         for (let attempt = 1; ; attempt++) {

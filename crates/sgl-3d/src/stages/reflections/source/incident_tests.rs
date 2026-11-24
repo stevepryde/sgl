@@ -189,7 +189,13 @@ fn incident_environment_is_complete_without_doubling_primary() {
                         },
                     };
                     let mut encoder = device.create_command_encoder(&Default::default());
-                    source.encode(&mut encoder, &device, &queue, input(), None);
+                    source.encode(
+                        &mut encoder,
+                        (&device, &crate::view::compile::Compiler::new(&device)),
+                        &queue,
+                        input(),
+                        None,
+                    );
                     queue.submit([encoder.finish()]);
                     let incident = read(&source.incident);
                     let base = read(&output);

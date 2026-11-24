@@ -455,15 +455,24 @@ impl Fsr {
     /// Before the frame's geometry: decides whether history continues and
     /// returns the frame's projection jitter in NDC. It continues from the
     /// view's last finished frame where FSR ran at this render size, unless
-    /// `history_valid` is false.
-    pub fn prepare(&mut self, render_size: [u32; 2], history_valid: bool) -> [f32; 2] {
-        self.reset = !history_valid
-            || self
-                .history
-                .last()
-                .is_none_or(|history| history.render_size != render_size);
-        self.history.leave(FsrRun { render_size });
-        self.render_size = render_size;
+    /// `history_valid` is false. A planning pass (`Renderer::compile`)
+    /// returns the jitter the next frame applies and changes nothing: FSR
+    /// does not run in one.
+    pub fn prepare(
+        &mut self,
+        render_size: [u32; 2],
+        history_valid: bool,
+        planning: bool,
+    ) -> [f32; 2] {
+        if !planning {
+            self.reset = !history_valid
+                || self
+                    .history
+                    .last()
+                    .is_none_or(|history| history.render_size != render_size);
+            self.history.leave(FsrRun { render_size });
+            self.render_size = render_size;
+        }
         let [width, height] = render_size.map(|v| i32::try_from(v).unwrap_or(i32::MAX));
         let display_width = i32::try_from(self.display_size[0]).unwrap_or(i32::MAX);
         let (x, y) = match self.version() {
@@ -477,6 +486,9 @@ impl Fsr {
             ),
         }
         .expect("the SDK's jitter phase count is positive");
+        if planning {
+            return [2. * x / width as f32, -2. * y / height as f32];
+        }
         self.jitter_index = self.jitter_index.wrapping_add(1).max(0);
         self.jitter = [x, y];
         [2. * x / width as f32, -2. * y / height as f32]

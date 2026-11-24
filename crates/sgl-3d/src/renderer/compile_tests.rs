@@ -30,16 +30,58 @@ struct Level {
     cubes: [crate::InstanceId; 3],
     output: wgpu::Texture,
     settings: Settings,
+    /// A game's HDR effect the rich level's frames apply, where it has one.
+    effect: Option<crate::HdrEffect>,
+    /// The outline the rich level's frames draw, where it has one.
+    outline: Option<crate::Outline>,
+}
+
+/// The optional device features a level's device is requested with.
+#[derive(Clone, Copy, Debug)]
+enum Gpu {
+    Plain,
+    /// `graphics_device::fsr_features`.
+    Fsr,
+    /// `graphics_device::ray_tracing_features`.
+    RayTracing,
+    /// A device that refuses a compute shader with more than one
+    /// invocation in a workgroup, which every compute stage's has.
+    NoWorkgroups,
 }
 
 impl Level {
     fn new() -> Option<Self> {
-        Self::with_opaque(test_support::cube())
+        Self::on(Gpu::Plain, test_support::cube())
     }
 
     /// The level with `opaque` as its opaque cube.
     fn with_opaque(opaque: crate::asset::Asset) -> Option<Self> {
-        let (instance, device, queue) = test_support::counted_device()?;
+        Self::on(Gpu::Plain, opaque)
+    }
+
+    /// The level, with `opaque` as its opaque cube, on a device with
+    /// `gpu`'s features, or `None` after printing that the adapter lacks
+    /// them.
+    fn on(gpu: Gpu, opaque: crate::asset::Asset) -> Option<Self> {
+        let mut supported = true;
+        let (instance, device, queue) =
+            test_support::counted_device_choosing(|adapter, limits| {
+                let features = match gpu {
+                    Gpu::Plain => return wgpu::Features::empty(),
+                    Gpu::Fsr => crate::graphics_device::fsr_features(adapter),
+                    Gpu::RayTracing => crate::graphics_device::ray_tracing_features(adapter),
+                    Gpu::NoWorkgroups => {
+                        limits.max_compute_invocations_per_workgroup = 1;
+                        return wgpu::Features::empty();
+                    }
+                };
+                supported = !features.is_empty();
+                features
+            })?;
+        if !supported {
+            eprintln!("unsupported: the adapter lacks the features of {gpu:?}");
+            return None;
+        }
         let mut scene = Scene::new(&device, &queue);
         let (opaque, opaque_cube) = test_support::add_static(&device, &queue, &mut scene, opaque);
         let (_, masked) = test_support::add_static(
@@ -116,6 +158,8 @@ impl Level {
             renderer,
             view,
             feed: None,
+            effect: None,
+            outline: None,
             opaque: opaque.materials[0],
             cubes: [opaque_cube, masked, blended],
             output,
@@ -127,18 +171,23 @@ impl Level {
     /// a second view, which a frame renders before the view that shows it.
     fn with_feed() -> Option<Self> {
         let mut level = Self::new()?;
+        level.add_feed();
+        Some(level)
+    }
+
+    /// Adds `with_feed`'s render texture and view, with the level's
+    /// settings.
+    fn add_feed(&mut self) {
         let description = crate::RenderTexture::new([16, 16]);
-        let texture = level
+        let texture = self
             .scene
-            .add_render_texture(&level.device, description)
+            .add_render_texture(&self.device, description)
             .unwrap();
-        let material = level.opaque;
-        let values = level.scene.material(material).unwrap();
-        level
-            .scene
+        let values = self.scene.material(self.opaque).unwrap();
+        self.scene
             .set_material(
-                &level.queue,
-                material,
+                &self.queue,
+                self.opaque,
                 crate::SurfaceMaterial {
                     emission_render_texture: Some(texture),
                     ..values
@@ -146,17 +195,16 @@ impl Level {
             )
             .unwrap();
         let feed = View::new(
-            &level.renderer,
-            &level.device,
-            &level.queue,
+            &self.renderer,
+            &self.device,
+            &self.queue,
             description.format(),
             [16, 16],
             1.,
-            &level.settings,
+            &self.settings,
         )
         .unwrap();
-        level.feed = Some((feed, texture));
-        Some(level)
+        self.feed = Some((feed, texture));
     }
 
     /// The frame's views for `render` or `compile`: the level's view into
@@ -676,6 +724,813 @@ fn a_compiled_frame_with_a_map_sampled_in_the_shader_creates_no_program() {
     let before = level.programs();
     level.render(&input);
     assert_eq!(level.programs(), before);
+}
+
+// Plausible defect: a view composes its reflections with one source
+// completion variant while it shows a planar reflector and another once the
+// reflector leaves it, and `compile` readies only the first, so a level
+// whose first frame shows a mirror creates the second on the window thread
+// the first time the camera turns away. The oracle is wgpu's count,
+// unchanged across that frame, after the level was compiled and drawn
+// facing the mirror.
+#[test]
+fn a_compiled_level_creates_nothing_when_its_mirror_leaves_the_view() {
+    let Some(mut level) = Level::new() else {
+        return;
+    };
+    let reflector = level
+        .scene
+        .add_planar_reflector(crate::PlanarReflector::new(Vec3::new(0., 0., 0.5), Vec3::Z))
+        .unwrap();
+    let values = level.scene.material(level.opaque).unwrap();
+    level
+        .scene
+        .set_material(
+            &level.queue,
+            level.opaque,
+            crate::SurfaceMaterial {
+                planar_reflector: Some(reflector),
+                ..values
+            },
+        )
+        .unwrap();
+    let facing = Level::input(0.);
+    level.compile_all(&facing);
+    level.render(&facing);
+    let mut away = Level::input(0.);
+    let eye = away.camera.eye;
+    away.camera.view = glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::Z, Vec3::Y);
+    away.camera_cut = false;
+    let before = level.programs();
+    level.render(&away);
+    assert_eq!(level.programs(), before);
+}
+
+// Plausible defect: a stage's slot keeps a job of programs built for a
+// setting the game has since changed (SMAA's preset), so `compile` settles
+// that job and reports ready, and the first frame drops it and creates the
+// new preset's programs on the window thread. The oracle is wgpu's count,
+// unchanged across that frame, after compiling at Medium with its jobs run
+// and then at High.
+#[test]
+fn a_preset_changed_between_compiles_is_compiled_again() {
+    use crate::settings::{Antialiasing, SmaaQuality};
+    let Some(mut level) = Level::new() else {
+        return;
+    };
+    level.settings.antialiasing = Antialiasing::Smaa;
+    level.settings.smaa_quality = SmaaQuality::Medium;
+    let input = Level::input(0.);
+    level.compile_all(&input);
+    level.settings.smaa_quality = SmaaQuality::High;
+    assert!(level.compile_all(&input) > 0, "High's preset is new");
+    let before = level.programs();
+    level.render(&input);
+    assert_eq!(level.programs(), before);
+}
+
+// Plausible defect: a planning pass dispatches FSR, whose context advances
+// its frame state where a dispatch is recorded and cannot take it back
+// (history register U-2), or draws the next jitter of its sequence, so
+// compiling restarts an FSR view's accumulation or shifts every frame
+// after it by a jitter phase. The oracle is an ordinary FSR level given
+// the same three frames: the same bytes each frame, with the level
+// compiled before its first frame and again between the second and third,
+// when FSR has a history to lose.
+#[test]
+fn compiling_leaves_an_fsr_views_accumulation_and_jitter_alone() {
+    let level = || {
+        let mut level = Level::on(Gpu::Fsr, test_support::cube())?;
+        level.settings.antialiasing = crate::settings::Antialiasing::Fsr2;
+        level.view.resize(&level.device, SIZE, 1., &level.settings);
+        Some(level)
+    };
+    let (Some(mut compiled), Some(mut ordinary)) = (level(), level()) else {
+        return;
+    };
+    assert!(compiled.view.antialiasing.fsr_running().is_some());
+    let inputs = [0., 0.25, 0.5].map(Level::input);
+    compiled.compile_all(&inputs[0]);
+    for (frame, input) in inputs.iter().enumerate() {
+        if frame == 2 {
+            assert!(compiled.compile(input).ready());
+        }
+        assert!(
+            compiled.render(input) == ordinary.render(input),
+            "frame {frame} differs from an ordinary FSR level's"
+        );
+    }
+}
+
+/// One of the guard's configurations: what it turns on, which exclude
+/// what another does.
+struct Stages {
+    name: &'static str,
+    gpu: Gpu,
+    settings: Settings,
+    /// A procedural sky with aerial perspective, where the frame has one.
+    sky: bool,
+    /// A second view, which draws a render texture the first shows.
+    feed: bool,
+    /// A planar reflector on the opaque cube, a game's HDR effect and an
+    /// outline of every cube.
+    extras: bool,
+    /// Compile jobs the configuration must run, by label: what it adds to
+    /// the configurations before it. A fixture that stopped reaching a
+    /// stage would pass the guard for it vacuously.
+    reaches: &'static [&'static str],
+}
+
+/// The settings every configuration starts from: each optional pass on, at
+/// the level that runs it.
+fn every_pass() -> Settings {
+    use crate::settings::*;
+    Settings {
+        preset: RenderPreset::High,
+        scene_resolution: SceneResolution::Full,
+        antialiasing: Antialiasing::Taa,
+        bloom: Bloom::On,
+        ambient_occlusion: AmbientOcclusionQuality::High,
+        screen_space_indirect: ScreenSpaceIndirect::Low,
+        screen_space_reflections: ScreenSpaceReflections::Full,
+        reflection_method: ReflectionMethod::Crystal,
+        world_space_reflections: WorldSpaceReflections::All,
+        atmosphere: true,
+        dynamic_gi: DynamicGiQuality::Low,
+        heat_distortion: true,
+        depth_of_field: DepthOfField::High,
+        motion_blur: MotionBlur::Full,
+        sharpening: Sharpening::On,
+        ..Settings::default()
+    }
+}
+
+// The frame's every stage the tests can reach, over the choices that
+// exclude one another: the antialiasing methods, the screen-space
+// reflection methods, the fused and the two-pass opaque forms, the software
+// and the hardware rays, one view and two. Each configuration turns on what
+// it adds and leaves out what another covers, so each test runs alone in
+// seconds. A new stage joins by turning itself on in `every_pass` (or in the
+// configuration that can run it), by adding its content to `Level::rich`,
+// and by naming its jobs in that configuration's `reaches` (AR-13).
+
+/// `every_pass` without what the low-preset configuration covers, for the
+/// configurations that add one choice to it: each guard test stays cheap.
+fn fewer_passes() -> Settings {
+    use crate::settings::*;
+    Settings {
+        dynamic_gi: DynamicGiQuality::Off,
+        screen_space_indirect: ScreenSpaceIndirect::Off,
+        heat_distortion: false,
+        ..every_pass()
+    }
+}
+
+fn taa() -> Stages {
+    Stages {
+        name: "TAA, Crystal reflections, the fused opaque pass, a planar reflector, \
+               a game's HDR effect, an outline",
+        gpu: Gpu::Plain,
+        settings: fewer_passes(),
+        sky: false,
+        feed: false,
+        extras: true,
+        reaches: &[
+            "DiligentFX inputs",
+            "HDR effect",
+            "ScreenSpaceReflection::ComputeIntersection",
+            "TemporalAntiAliasing::ComputeTemporalAccumulation",
+            "additive glow",
+            "ambient occlusion",
+            "auto exposure",
+            "backdrop",
+            "blended scene geometry",
+            "bloom",
+            "cull",
+            "deform",
+            "depth of field",
+            "fused scene geometry and lighting",
+            "instance footprints",
+            "local exposure",
+            "local shadow clear",
+            "local shadow layer copy",
+            "material mip chains",
+            "mist",
+            "motion blur",
+            "motion tiles",
+            "outline",
+            "planar reflection",
+            "planar reflection method",
+            "presentation",
+            "reflection source completion",
+            "shadow caster",
+            "sprites",
+            "specular probe culling",
+            "temporal composition of moving surfaces",
+            "transmission",
+            "volumetric fog",
+            "world-space reflection rays",
+            "world-space reflections",
+        ],
+    }
+}
+
+fn smaa() -> Stages {
+    use crate::settings::*;
+    Stages {
+        name: "SMAA, Velvet reflections, two opaque passes with occlusion culling, \
+               contact shadows, a scene below the output's size",
+        gpu: Gpu::Plain,
+        settings: Settings {
+            antialiasing: Antialiasing::Smaa,
+            reflection_method: ReflectionMethod::Velvet,
+            screen_space_reflections: ScreenSpaceReflections::Half,
+            world_space_reflections: WorldSpaceReflections::Off,
+            contact_shadows: ContactShadows::Medium,
+            occlusion_culling: true,
+            scene_resolution: SceneResolution::Half,
+            upscaling: Upscaling::On,
+            motion_blur: MotionBlur::Off,
+            depth_of_field: DepthOfField::Off,
+            ..fewer_passes()
+        },
+        sky: false,
+        feed: false,
+        extras: false,
+        reaches: &[
+            "FSR1 EASU",
+            "SMAA",
+            "SMAA blend",
+            "Velvet reflections",
+            "contact shadows",
+            "depth pyramid",
+            "late cull",
+            "lit scene geometry",
+            "scene lighting",
+        ],
+    }
+}
+
+fn low() -> Stages {
+    use crate::settings::*;
+    Stages {
+        name: "no antialiasing, the low preset, a sky, two views",
+        gpu: Gpu::Plain,
+        settings: Settings {
+            preset: RenderPreset::Low,
+            antialiasing: Antialiasing::Off,
+            screen_space_reflections: ScreenSpaceReflections::Off,
+            world_space_reflections: WorldSpaceReflections::Off,
+            motion_blur: MotionBlur::Off,
+            depth_of_field: DepthOfField::Off,
+            ..every_pass()
+        },
+        sky: true,
+        feed: true,
+        extras: false,
+        reaches: &[
+            "aerial perspective",
+            "dynamic GI",
+            "dynamic GI rays",
+            "heat distortion",
+            "screen-space indirect light",
+            "sky",
+        ],
+    }
+}
+
+fn fsr(antialiasing: crate::settings::Antialiasing) -> Stages {
+    Stages {
+        name: "FSR",
+        gpu: Gpu::Fsr,
+        settings: Settings {
+            antialiasing,
+            fsr_quality: crate::settings::FsrQuality::Quality,
+            motion_blur: crate::settings::MotionBlur::Off,
+            depth_of_field: crate::settings::DepthOfField::Off,
+            ..fewer_passes()
+        },
+        sky: false,
+        feed: false,
+        extras: false,
+        reaches: &[],
+    }
+}
+
+fn hardware_rays() -> Stages {
+    Stages {
+        name: "hardware ray tracing: shadows, reflections and the GI volume",
+        gpu: Gpu::RayTracing,
+        settings: Settings {
+            hardware_ray_tracing: true,
+            ray_traced_shadows: true,
+            dynamic_gi: crate::settings::DynamicGiQuality::Low,
+            antialiasing: crate::settings::Antialiasing::Off,
+            reflection_method: crate::settings::ReflectionMethod::Velvet,
+            motion_blur: crate::settings::MotionBlur::Off,
+            depth_of_field: crate::settings::DepthOfField::Off,
+            bloom: crate::settings::Bloom::Off,
+            ..fewer_passes()
+        },
+        sky: false,
+        feed: false,
+        extras: false,
+        reaches: &[
+            "ray-traced shadow denoiser",
+            "ray-traced shadow rays",
+            "ray-traced shadow temporal",
+            "ray-traced shadow upsample",
+        ],
+    }
+}
+
+impl Level {
+    /// The level with every kind of content a stage draws or reads: a
+    /// transmissive surface, a material with a game's shader and a decoded
+    /// base map, a deforming instance, a decal, glow, heat and mist, a
+    /// masked and a blended sprite batch, a baked specular probe and a
+    /// dynamic GI volume.
+    fn rich(stages: &Stages) -> Option<Self> {
+        let mut level = Self::on(stages.gpu, test_support::cube())?;
+        let (device, queue) = (&level.device, &level.queue);
+        let scene = &mut level.scene;
+        let place = |scene: &mut Scene, instance, at: Vec3| {
+            let state = crate::InstanceState {
+                pose: Mat4::from_translation(at),
+                ..*scene.instance(instance).unwrap()
+            };
+            scene.set_instance(queue, instance, state).unwrap();
+        };
+        let mut glass = test_support::cube();
+        glass.materials[0].transmission = 1.;
+        glass.materials[0].thickness = 0.5;
+        let (_, glass) = test_support::add_static(device, queue, scene, glass);
+        place(scene, glass, Vec3::new(0.75, 1.5, 0.));
+        // A decoded image, whose mip chain the GPU builds.
+        let mut mapped = test_support::cube();
+        mapped.images = vec![crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(
+            4,
+            4,
+            image::Rgba([200, 100, 50, 255]),
+        ))];
+        mapped.materials[0].base_texture = Some(crate::asset::MaterialTexture::new(0));
+        let (shaded, instance) = test_support::add_static(device, queue, scene, mapped);
+        place(scene, instance, Vec3::new(0.75, -1.5, 0.));
+        let shader = test_support::add_test_shader(scene);
+        test_support::set_shader(scene, queue, shaded.materials[0], (shader, 0.5));
+        let mut deforming = test_support::cube();
+        for mesh in &mut deforming.meshes {
+            mesh.deformation.influences = vec![
+                crate::deformation::Influence {
+                    joints: [0; 4],
+                    weights: [1., 0., 0., 0.],
+                };
+                mesh.vertices.len()
+            ];
+        }
+        let deforming = scene.add_asset(device, queue, deforming).unwrap();
+        let deformed = scene
+            .add_instance(
+                device,
+                queue,
+                crate::InstanceState {
+                    pose: Mat4::from_translation(Vec3::new(3., 0., 0.)),
+                    ..crate::InstanceState::new(deforming.model)
+                },
+                crate::Mobility::Moving,
+            )
+            .unwrap();
+        scene
+            .set_instance_deformation(queue, deformed, &[Mat4::IDENTITY], &[])
+            .unwrap();
+        let image = scene
+            .add_decal_image(crate::asset::Image::Rgba8(test_support::half_cut_out()))
+            .unwrap();
+        scene
+            .add_decal(
+                device,
+                queue,
+                crate::Decal {
+                    size: Vec3::splat(2.),
+                    ..crate::Decal::new(image)
+                },
+            )
+            .unwrap();
+        let glow =
+            [[0., 2., 1.], [1., 2., 1.], [0.5, 3., 1.]].map(|position| crate::effects::Glow {
+                position,
+                color: [1., 0.5, 0.2, 1.],
+                kind: crate::effects::GlowKind::Uniform,
+                soft_distance: 0.,
+            });
+        scene.update_effects(device, queue, &glow).unwrap();
+        let heat = [[0., 0., 2.], [1., 0., 2.], [0.5, 1., 2.]].map(|position| {
+            crate::heat_distortion::HeatDistortion {
+                position,
+                displacement: [4., 0.],
+                weight: 1.,
+            }
+        });
+        scene.update_heat_distortion(queue, &heat).unwrap();
+        scene
+            .update_mist(device, &[[0., -0.5, 0.], [1., -0.5, 1.]])
+            .unwrap();
+        let sprite_image = scene
+            .add_sprite_image(
+                device,
+                queue,
+                &crate::asset::Image::Rgba8(image::RgbaImage::from_pixel(
+                    2,
+                    2,
+                    image::Rgba([255; 4]),
+                )),
+            )
+            .unwrap();
+        for (blend, x) in [
+            (crate::sprite::SpriteBlend::Masked { cutoff: 0.5 }, 0.),
+            (crate::sprite::SpriteBlend::Blended, 1.5),
+        ] {
+            let batch = scene
+                .add_sprite_batch(&crate::sprite::SpriteBatch {
+                    blend,
+                    ..crate::sprite::SpriteBatch::new(sprite_image)
+                })
+                .unwrap();
+            let sprite = crate::sprite::Sprite::new(Vec3::new(x, 1.2, 0.), glam::Vec2::splat(0.5));
+            scene.set_sprites(device, queue, batch, &[sprite]).unwrap();
+        }
+        let face_size = 64_usize;
+        let texels: usize = (0..7)
+            .map(|level| (face_size >> level) * (face_size >> level) * 6)
+            .sum();
+        scene
+            .set_baked_specular_probes(
+                device,
+                queue,
+                &[crate::BakedSpecularProbe {
+                    center: Vec3::ZERO,
+                    world_to_local: Mat4::IDENTITY,
+                    influence: crate::SpecularProbeBox {
+                        min: Vec3::splat(-4.),
+                        max: Vec3::splat(4.),
+                    },
+                    blend: Vec3::splat(0.5),
+                    proxy: None,
+                    radiance: crate::SpecularProbeRadiance {
+                        face_size: face_size as u32,
+                        texels: crate::SpecularProbeTexels::Rgba16Float(vec![0; texels * 4]),
+                    },
+                }],
+            )
+            .unwrap();
+        scene
+            .set_dynamic_gi_volume(
+                device,
+                Some(crate::DynamicGiVolume {
+                    origin: Vec3::splat(-3.),
+                    spacing: Vec3::splat(2.),
+                    probes: [4, 4, 4],
+                }),
+            )
+            .unwrap();
+        level.settings = stages.settings;
+        level.view.resize(&level.device, SIZE, 1., &level.settings);
+        if stages.extras {
+            let reflector = level
+                .scene
+                .add_planar_reflector(crate::PlanarReflector::new(Vec3::new(0., 0., 0.5), Vec3::Z))
+                .unwrap();
+            let values = level.scene.material(level.opaque).unwrap();
+            level
+                .scene
+                .set_material(
+                    &level.queue,
+                    level.opaque,
+                    crate::SurfaceMaterial {
+                        planar_reflector: Some(reflector),
+                        ..values
+                    },
+                )
+                .unwrap();
+            level.effect = Some(test_support::test_effect(&mut level.scene, [0.1; 3]));
+            let selection = level.scene.add_selection(&level.cubes).unwrap();
+            level.outline = Some(crate::Outline::new(selection));
+        }
+        if stages.feed {
+            level.add_feed();
+        }
+        Some(level)
+    }
+
+    /// The rich level's frame `along` the camera's track: fog, mist, local
+    /// exposure and automatic exposure beside the sun, under a procedural
+    /// sky where `sky`, applying the level's HDR effect where it has one.
+    fn rich_input(&self, along: f32, sky: bool) -> FrameInput {
+        let mut input = Self::input(along);
+        input.hdr_effect = self.effect;
+        input.outline = self.outline;
+        input.frame_time_ms = 16.;
+        input.elapsed_seconds = f64::from(along);
+        input.atmosphere = true;
+        input.fog = crate::Fog {
+            density: 0.05,
+            length: 30.,
+            ..Default::default()
+        };
+        input.mist = crate::Mist {
+            opacity: 0.5,
+            height: 1.,
+            ..Default::default()
+        };
+        input.local_exposure = crate::LocalExposure {
+            highlight_contrast: 0.8,
+            shadow_contrast: 0.9,
+        };
+        input.exposure.automatic = Some(crate::AutoExposure::default());
+        input.depth_of_field = crate::DepthOfFieldParameters {
+            focus_distance: 4.,
+            f_number: 1.,
+            sensor_height: 0.2,
+        };
+        if sky {
+            input.environment = crate::FrameEnvironment::Sky(crate::Sky::default());
+        }
+        input
+    }
+
+    /// wgpu's own count of the device's shader modules and pipelines,
+    /// which must not change across `step`: no thread but this one runs,
+    /// so a change is a program this thread created outside a job.
+    fn creates_nothing<T>(&mut self, what: &str, step: impl FnOnce(&mut Self) -> T) -> T {
+        crate::view::compile::in_place::take();
+        let before = self.programs();
+        let result = step(self);
+        let after = self.programs();
+        assert_eq!(
+            after,
+            before,
+            "{what} created programs (pipelines, shader modules) on its thread; \
+             slots created in place: {:?}",
+            crate::view::compile::in_place::take()
+        );
+        result
+    }
+}
+
+/// The guard, for one configuration.
+///
+/// Plausible defect: a stage creates a shader module or a pipeline outside
+/// a compile job (with the device where it encodes, or in a slot a
+/// planning pass does not reach), so `compile` or the frames after it
+/// stall the thread that calls them, which is what `compile` exists to
+/// prevent (AR-13). The oracle is wgpu's own registry
+/// (`wgpu::Instance::generate_report`): the device's count of shader
+/// modules and pipelines is read before and after every `compile` call and
+/// each of the first three frames, with every job joined in between, and
+/// must not change; it changes only while jobs run. It counts what the
+/// device holds, so a step that freed as many programs as it created
+/// would pass; the fixture's settings hold still, and no frame frees one.
+/// The second and third frames catch a stage that waits for the view's
+/// history before it asks.
+///
+/// The one exception is FSR's: its upscaler (sp-fidelity) is not SGL's to
+/// make jobs of, and its backend creates a few helper pipelines where it
+/// first dispatches, which is the view's first frame (no planning pass
+/// dispatches it). That frame alone may create pipelines for an FSR view.
+fn compiles_in_jobs(stages: &Stages) {
+    let Some(mut level) = Level::rich(stages) else {
+        return;
+    };
+    let name = stages.name;
+    let inputs = [0., 0.25, 0.5].map(|along| level.rich_input(along, stages.sky));
+    let mut ran = Vec::new();
+    for pass in 0.. {
+        assert!(pass < 12, "{name}: the frame was never ready");
+        let compilation = level.creates_nothing(&format!("{name}: compile {pass}"), |level| {
+            level.compile(&inputs[0])
+        });
+        assert_eq!(compilation.errors, [], "{name}");
+        if compilation.ready() {
+            break;
+        }
+        ran.extend(compilation.jobs.iter().map(|job| job.label().to_owned()));
+        let workers: Vec<_> = compilation
+            .jobs
+            .into_iter()
+            .map(|job| std::thread::spawn(move || job.run()))
+            .collect();
+        workers
+            .into_iter()
+            .for_each(|worker| worker.join().unwrap());
+    }
+    ran.sort();
+    ran.dedup();
+    for label in stages.reaches {
+        assert!(
+            ran.iter().any(|ran| ran == label),
+            "{name}: the fixture no longer runs {label:?}; its jobs were {ran:?}"
+        );
+    }
+    for (frame, input) in inputs.iter().enumerate() {
+        if frame == 0 && matches!(stages.gpu, Gpu::Fsr) {
+            let helpers = fsr_helpers(stages.settings.antialiasing);
+            let before = level.programs();
+            level.render(input);
+            let after = level.programs();
+            assert_eq!(
+                (after.0 - before.0, after.1 - before.1),
+                (helpers, 0),
+                "{name}: the first frame created programs beside FSR's own helpers"
+            );
+            continue;
+        }
+        level.creates_nothing(
+            &format!("{name}: frame {frame} (jobs ran: {ran:?})"),
+            |level| level.render(input),
+        );
+    }
+}
+
+/// How many pipelines FSR's upscaler (`sp-fidelity`) creates at its first
+/// dispatch with `antialiasing`, read from wgpu across the first frame of
+/// the plain level with FSR, compiled ahead: its other programs are jobs,
+/// so the frame creates only those. Positive, or the exception is stale.
+fn fsr_helpers(antialiasing: crate::settings::Antialiasing) -> usize {
+    let mut level = Level::on(Gpu::Fsr, test_support::cube()).expect("the adapter ran FSR");
+    level.settings.antialiasing = antialiasing;
+    level.view.resize(&level.device, SIZE, 1., &level.settings);
+    let input = Level::input(0.);
+    level.compile_all(&input);
+    let before = level.programs();
+    level.render(&input);
+    let after = level.programs();
+    assert!(
+        after.0 > before.0 && after.1 == before.1,
+        "FSR's first dispatch creates its helper pipelines and no shader module \
+         SGL holds: {before:?} to {after:?}"
+    );
+    after.0 - before.0
+}
+
+#[test]
+fn every_stage_compiles_in_jobs_with_taa() {
+    compiles_in_jobs(&taa());
+}
+
+#[test]
+fn every_stage_compiles_in_jobs_with_smaa() {
+    compiles_in_jobs(&smaa());
+}
+
+#[test]
+fn every_stage_compiles_in_jobs_at_the_low_preset_with_two_views() {
+    compiles_in_jobs(&low());
+}
+
+#[test]
+fn every_stage_compiles_in_jobs_with_fsr2() {
+    compiles_in_jobs(&fsr(crate::settings::Antialiasing::Fsr2));
+}
+
+#[test]
+fn every_stage_compiles_in_jobs_with_fsr3() {
+    compiles_in_jobs(&fsr(crate::settings::Antialiasing::Fsr3));
+}
+
+#[test]
+fn every_stage_compiles_in_jobs_with_hardware_rays() {
+    compiles_in_jobs(&hardware_rays());
+}
+
+// Plausible defect: a stage's job runs outside the compiler's error scope
+// or loses its label, so a program the device refuses is reported nowhere,
+// or without the stage a game would look at. The oracle is wgpu's own
+// validation, on a device whose limits refuse every compute stage's
+// shader: the errors `compile` reports after the jobs ran name the cull
+// stage, whose lists the level's opaque surfaces draw from, with wgpu's
+// message.
+#[test]
+fn a_stage_job_the_device_refuses_is_reported_by_its_stage() {
+    let Some(mut level) = Level::on(Gpu::NoWorkgroups, test_support::cube()) else {
+        return;
+    };
+    let input = Level::input(0.);
+    let compilation = level.compile(&input);
+    assert_eq!(compilation.errors, []);
+    compilation.jobs.into_iter().for_each(|job| job.run());
+    let errors = level.compile(&input).errors;
+    let cull = errors
+        .iter()
+        .find(|error| error.label == "cull")
+        .unwrap_or_else(|| panic!("no error names the cull stage: {errors:?}"));
+    assert!(
+        cull.message.contains("invocations"),
+        "wgpu's message: {}",
+        cull.message
+    );
+}
+
+// Plausible defect: a constructor creates a shader module or a pipeline, so
+// creating the renderer, a scene or a view stalls the thread that does,
+// where the guard above cannot see it (it reads the counts afterwards).
+// The oracle is wgpu's count, zero on a device that has only been given a
+// level's content, its renderer and views of every antialiasing but FSR.
+// FSR is the exception, and this is where it creates its upscaler's
+// pipelines: the `View::new` or `View::resize` that creates its context.
+// The count shows it, which also shows the count sees a constructor's
+// pipelines.
+#[test]
+fn only_an_fsr_views_upscaler_creates_programs_before_a_frame() {
+    let Some(level) = Level::rich(&Stages {
+        gpu: Gpu::Fsr,
+        ..taa()
+    }) else {
+        return;
+    };
+    let view = |settings: &Settings| {
+        View::new(
+            &level.renderer,
+            &level.device,
+            &level.queue,
+            FORMAT,
+            SIZE,
+            1.,
+            settings,
+        )
+        .unwrap()
+    };
+    // Held, so that nothing they created is freed before it is counted.
+    let (mut other, _low) = (view(&smaa().settings), view(&low().settings));
+    assert_eq!(level.programs(), (0, 0));
+    let fsr = fsr(crate::settings::Antialiasing::Fsr2).settings;
+    other.resize(&level.device, SIZE, 1., &fsr);
+    let resized = level.programs();
+    assert!(
+        resized.0 > 0,
+        "FSR's context creates its pipelines where the view takes it"
+    );
+    let _created = view(&fsr);
+    assert!(level.programs().0 > resized.0);
+}
+
+/// Plausible defect: a planning pass changes what the frames draw (history
+/// advanced, a target written, a stage left in another state, a selector's
+/// value taken before its programs exist), or asks for programs no frame
+/// uses, so compiling costs more than drawing. The oracle is an ordinary
+/// level given the same three frames: the same bytes each frame, and the
+/// same programs held after the last.
+fn draws_what_an_ordinary_level_does(stages: Stages) {
+    let (Some(mut compiled), Some(mut ordinary)) = (Level::rich(&stages), Level::rich(&stages))
+    else {
+        return;
+    };
+    let name = stages.name;
+    let inputs = [0., 0.25, 0.5].map(|along| compiled.rich_input(along, stages.sky));
+    let ordinary_inputs = [0., 0.25, 0.5].map(|along| ordinary.rich_input(along, stages.sky));
+    compiled.compile_all(&inputs[0]);
+    for (frame, (input, ordinary_input)) in inputs.iter().zip(&ordinary_inputs).enumerate() {
+        let (drawn, expected) = (compiled.render(input), ordinary.render(ordinary_input));
+        let differing = drawn.iter().zip(&expected).filter(|(a, b)| a != b).count();
+        assert_eq!(
+            differing, 0,
+            "{name}: bytes of frame {frame} that differ from an ordinary level's"
+        );
+    }
+    assert_eq!(
+        compiled.programs(),
+        ordinary.programs(),
+        "{name}: the programs compiled ahead are not the ones the frames use"
+    );
+}
+
+#[test]
+#[ignore = "an ordinary level compiles every stage's programs one after another: 15 s"]
+fn long_a_compiled_level_draws_what_an_ordinary_one_does_with_taa() {
+    draws_what_an_ordinary_level_does(taa());
+}
+
+#[test]
+#[ignore = "an ordinary level compiles every stage's programs one after another: 15 s"]
+fn long_a_compiled_level_draws_what_an_ordinary_one_does_with_smaa() {
+    draws_what_an_ordinary_level_does(smaa());
+}
+
+#[test]
+#[ignore = "an ordinary level compiles every stage's programs one after another: 15 s"]
+fn long_a_compiled_level_draws_what_an_ordinary_one_does_with_fsr2() {
+    draws_what_an_ordinary_level_does(fsr(crate::settings::Antialiasing::Fsr2));
+}
+
+#[test]
+#[ignore = "an ordinary level compiles every stage's programs one after another: 15 s"]
+fn long_a_compiled_level_draws_what_an_ordinary_one_does_at_the_low_preset() {
+    draws_what_an_ordinary_level_does(low());
+}
+
+#[test]
+#[ignore = "an ordinary level compiles every stage's programs one after another: 20 s"]
+fn long_a_compiled_level_draws_what_an_ordinary_one_does_with_hardware_rays() {
+    draws_what_an_ordinary_level_does(hardware_rays());
 }
 
 // Plausible defects: the mip chain stage creating its programs in place

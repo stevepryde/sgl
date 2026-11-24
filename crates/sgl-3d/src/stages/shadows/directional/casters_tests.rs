@@ -180,7 +180,13 @@ fn a_gpu_built_cascade_draws_the_depth_its_cpu_built_casters_draw() {
         std::iter::once(cascade),
     );
     let mut encoder = device.create_command_encoder(&Default::default());
-    Cull::new(&device).encode(&device, &mut encoder, &scene, &views, None);
+    Cull::new(&device).encode(
+        (&device, &crate::view::compile::Compiler::new(&device)),
+        &mut encoder,
+        &scene,
+        &views,
+        None,
+    );
     queue.submit([encoder.finish()]);
 
     let tier = crate::shading::bind::BindingTier::of(&device.limits());

@@ -52,7 +52,7 @@ fn color_local_contrast_matches_reference_pixel_pairs() {
         return;
     };
     let size = [8, 8];
-    let mut smaa = Smaa::new(&device, size[0], size[1], FORMAT, None);
+    let mut smaa = Smaa::new(&device, size[0], size[1], FORMAT);
     smaa.hold_tables(&Tables::new(&device, &queue));
     let output = image_target(&device, size).create_view(&Default::default());
     for quality in QUALITIES {
@@ -76,7 +76,14 @@ fn color_local_contrast_matches_reference_pixel_pairs() {
                     }
                     let input = hdr_texture(&device, &queue, size, &texels);
                     let mut encoder = device.create_command_encoder(&Default::default());
-                    smaa.encode(&device, &mut encoder, &input, &output, quality, None);
+                    smaa.encode(
+                        (&device, &crate::view::compile::Compiler::new(&device)),
+                        &mut encoder,
+                        &input,
+                        &output,
+                        quality,
+                        None,
+                    );
                     queue.submit([encoder.finish()]);
                     let edges = read(
                         &device,
@@ -210,7 +217,7 @@ fn coverage(
     render(&supersampled);
     let mut encoder = device.create_command_encoder(&Default::default());
     smaa.encode(
-        device,
+        (device, &crate::view::compile::Compiler::new(device)),
         &mut encoder,
         &input.create_view(&Default::default()),
         &output.create_view(&Default::default()),
@@ -272,7 +279,7 @@ fn every_preset_approaches_supersampled_rasterization() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut smaa = Smaa::new(&device, 1, 1, FORMAT, None);
+    let mut smaa = Smaa::new(&device, 1, 1, FORMAT);
     smaa.hold_tables(&Tables::new(&device, &queue));
     let faint_edge = Edge {
         level: faint(),

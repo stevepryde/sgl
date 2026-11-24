@@ -4,6 +4,7 @@
 //! and composition read.
 use crate::shading;
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::{Compiled, Compiler};
 use crate::view::reflection_camera;
 
 pub(crate) static PROBE_CULLING: shading::Module = shading::Module {
@@ -79,7 +80,7 @@ fn tiles(device: &wgpu::Device, size: [u32; 2]) -> wgpu::Buffer {
 
 /// Culls the probe collection per screen tile.
 pub(super) struct ProbeCulling {
-    pass: Option<CullPass>,
+    pass: Compiled<CullPass>,
     /// Each tile's probe buckets, which completion and composition bind.
     pub tiles: wgpu::Buffer,
     /// The render size the tiles cover.
@@ -126,7 +127,7 @@ impl ProbeCulling {
     /// Culling into the tiles of `size`.
     pub fn new(device: &wgpu::Device, size: [u32; 2]) -> Self {
         Self {
-            pass: None,
+            pass: Compiled::default(),
             tiles: tiles(device, size),
             size,
         }
@@ -134,7 +135,7 @@ impl ProbeCulling {
 
     /// Releases groups retaining a previous collection or depth target.
     pub fn forget_inputs(&mut self) {
-        if let Some(pass) = &mut self.pass {
+        if let Some(pass) = self.pass.ready_mut() {
             pass.group.forget();
         }
     }
@@ -150,14 +151,19 @@ impl ProbeCulling {
     pub fn encode(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         queue: &wgpu::Queue,
         depth: &wgpu::TextureView,
         camera: reflection_camera::Camera,
         collection: &wgpu::Buffer,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        let cull = self.pass.get_or_insert_with(|| CullPass::new(device));
+        let Some(cull) = self
+            .pass
+            .get(compiler, "specular probe culling", || CullPass::new)
+        else {
+            return;
+        };
         crate::counters::write_buffer(
             queue,
             &cull.camera,

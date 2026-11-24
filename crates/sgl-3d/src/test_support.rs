@@ -842,15 +842,34 @@ fn adapter_of(instance: &wgpu::Instance) -> Option<wgpu::Adapter> {
     }
 }
 
-/// `device`, with the instance that made it, whose report counts what the
-/// device holds (`wgpu::Instance::generate_report`).
+/// A device with the renderer's features and limits, with the instance
+/// that made it, whose report counts what the device holds
+/// (`wgpu::Instance::generate_report`).
 pub(crate) fn counted_device() -> Option<(wgpu::Instance, wgpu::Device, wgpu::Queue)> {
+    counted_device_choosing(|_, _| wgpu::Features::empty())
+}
+
+/// `counted_device`, with the optional features `choose` returns for the
+/// adapter, which may also lower the limits.
+#[allow(unsafe_code)]
+pub(crate) fn counted_device_choosing(
+    choose: impl FnOnce(&wgpu::Adapter, &mut wgpu::Limits) -> wgpu::Features,
+) -> Option<(wgpu::Instance, wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::default();
     let adapter = adapter_of(&instance)?;
+    let mut limits = crate::graphics_device::limits(&adapter);
+    let optional = choose(&adapter, &mut limits);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: (adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC)
-            | crate::graphics_device::features(&adapter),
-        required_limits: crate::graphics_device::limits(&adapter),
+            | crate::graphics_device::features(&adapter)
+            | optional,
+        required_limits: limits,
+        experimental_features: if optional.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
+            // SAFETY: the tests accept wgpu's experimental ray queries.
+            unsafe { wgpu::ExperimentalFeatures::enabled() }
+        } else {
+            wgpu::ExperimentalFeatures::disabled()
+        },
         ..Default::default()
     }))
     .unwrap();

@@ -26,7 +26,7 @@ fn coloured_edges_match_the_independent_amd_header_oracle() {
     let bloom = target(&device, "unused bloom", [1, 1], HDR);
     let mut encoder = device.create_command_encoder(&Default::default());
     let easu = fsr.encode(
-        &device,
+        (&device, &crate::view::compile::Compiler::new(&device)),
         &mut encoder,
         &inputs,
         &source,
@@ -37,7 +37,7 @@ fn coloured_edges_match_the_independent_amd_header_oracle() {
     let output = target(&device, "oracle output", [7, 5], HDR);
     let mut mapper = tone_map::ToneMap::new(&device, &inputs, Output::texture(HDR), [7, 5]);
     mapper.present_final(
-        &device,
+        (&device, &crate::view::compile::Compiler::new(&device)),
         &queue,
         &mut encoder,
         &inputs,
@@ -99,7 +99,7 @@ fn direct_black_and_white_are_finite_and_keep_the_sdk_flat_response() {
         let source = hdr_texture(&device, &queue, [4, 3], &[[input, input, input, 1.]; 12]);
         let mut encoder = device.create_command_encoder(&Default::default());
         let easu = fsr.encode(
-            &device,
+            (&device, &crate::view::compile::Compiler::new(&device)),
             &mut encoder,
             &inputs,
             &source,
@@ -108,7 +108,7 @@ fn direct_black_and_white_are_finite_and_keep_the_sdk_flat_response() {
             None,
         );
         mapper.present_final(
-            &device,
+            (&device, &crate::view::compile::Compiler::new(&device)),
             &queue,
             &mut encoder,
             &inputs,

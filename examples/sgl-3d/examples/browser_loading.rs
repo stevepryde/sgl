@@ -6,14 +6,16 @@
 //! [--jobs-per-frame N]`, which prints its report.
 //!
 //! Each animation frame the page draws its loading screen (a pass that
-//! clears the page's canvas, standing in for one), asks the renderer what
-//! the level's first frame still lacks, and runs up to `jobs_per_frame` of
-//! the compile jobs returned (1 unless asked). The browser's pipeline
-//! creation returns at once and compiles in its GPU process, which
-//! presents nothing until it has, so the page paces jobs between frames:
-//! the longest stall is then one job's compile. A program no job covers is
-//! created by the first `compile`, all in that frame. `--ordinary` skips
-//! `compile`: the first `render` creates everything in one frame.
+//! clears the page's canvas, standing in for one) and asks the renderer
+//! what the level's first frame still lacks. It runs up to
+//! `jobs_per_frame` of the compile jobs returned (1 unless asked), then no
+//! more until the browser has created those (`on_submitted_work_done`):
+//! pipeline creation returns at once and compiles in the browser's GPU
+//! process, which presents nothing until it has, so jobs run without that
+//! wait pile up there and stall the page for all of them together. Paced,
+//! the longest stall is one batch's compile. Every program the frame
+//! needs is a job. `--ordinary` skips `compile`: the first `render`
+//! creates everything in one frame.
 //!
 //! It reports the wall time from the loop's start to the first level
 //! frame's completion on the GPU, the longest gap between two animation
@@ -131,9 +133,10 @@ impl LoadingScreen {
     }
 }
 
-/// Loading frames until the frame `input` lacks nothing: each draws the
-/// loading screen, asks what is pending and runs up to `jobs_per_frame`
-/// of the jobs returned. Returns the jobs run.
+/// Loading frames until the frame `input` lacks nothing and the browser
+/// has created its programs: each draws the loading screen and asks what
+/// is pending, and once the browser has created the last batch runs up to
+/// `jobs_per_frame` of the jobs returned. Returns the jobs run.
 async fn compile(
     level: &mut Level,
     (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -143,16 +146,28 @@ async fn compile(
 ) -> Result<usize, String> {
     let mut queued: VecDeque<CompileJob> = VecDeque::new();
     let mut ran = 0;
+    // Whether the browser has created the programs of the jobs run so far:
+    // the queue reports work done only after the creations before it.
+    let created = Arc::new(AtomicBool::new(true));
     loop {
         screen.frame(device, queue).await;
+        if !created.load(Ordering::Acquire) {
+            continue;
+        }
         let compilation = level.compile(device, queue, input);
         if compilation.ready() {
             return Ok(ran);
         }
         queued.extend(compilation.jobs);
-        for job in queued.drain(..jobs_per_frame.min(queued.len())) {
+        let batch = jobs_per_frame.min(queued.len());
+        for job in queued.drain(..batch) {
             job.run();
             ran += 1;
+        }
+        if batch > 0 {
+            created.store(false, Ordering::Release);
+            let created = created.clone();
+            queue.on_submitted_work_done(move || created.store(true, Ordering::Release));
         }
     }
 }

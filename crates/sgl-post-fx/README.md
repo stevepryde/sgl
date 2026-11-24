@@ -119,6 +119,17 @@ taa.execute(&mut temporal_anti_aliasing::RenderAttributes { /* color, depth, mot
 // taa.get_accumulated_frame_srv(false, 0): the anti-aliased frame
 ```
 
+A technique's pipeline is created where the technique is first used, in
+place, so an effect is ready the frame it first executes. A caller that
+compiles off its rendering thread gives the context and each effect a
+`render_technique::PipelineCompiler` (`set_pipeline_compiler`). It is handed
+each pipeline's creation as a closure that owns everything it reads but the
+device, with a slot in the technique to keep its own state in, and returns
+the pipeline once it has one. Until every technique of an effect has its
+pipeline the effect leaves its passes out and `execute` returns
+`PostFxExecutionStatus::Pending`, as DiligentFX's effects do while their
+pipelines compile asynchronously (PROVENANCE DFX-2).
+
 `post_fx_context::RenderAttributes::camera_attribs_cb` supplies a read-only
 current/previous camera pair instead of inline `curr_camera` and `prev_camera`.
 A context may alternate between these sources each frame; it uploads inline

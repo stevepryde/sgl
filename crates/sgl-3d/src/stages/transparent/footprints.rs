@@ -95,13 +95,13 @@ impl Footprints {
     /// The programs, where the frame has them: none in a planning pass
     /// whose job is still queued, which leaves the draws out.
     pub fn programs(&mut self, ctx: &FrameContext<'_>) -> Option<&Programs> {
-        let device = ctx.device.clone();
         let unlit = ctx.bindings.unlit.clone();
         let scene = ctx.bindings.scene.clone();
         self.programs
-            .get(ctx.pipelines.compiler(), "instance footprints", move || {
-                move || Programs::new(&device, &unlit, &scene)
+            .get(ctx.compiler, "instance footprints", move || {
+                move |device: &wgpu::Device| Programs::new(device, &unlit, &scene)
             })
+            .map(|programs| &*programs)
     }
 
     /// Draws `views`' footprints of `scene` in `pass`, the temporal

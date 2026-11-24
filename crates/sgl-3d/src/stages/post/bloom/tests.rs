@@ -49,7 +49,7 @@ fn conserves(device: &wgpu::Device, queue: &wgpu::Queue) {
         .collect();
     let scene = hdr_texture(device, queue, size, &texels);
     let inputs = Inputs::new(device);
-    let bloom = Bloom::new(device, &inputs, size, true);
+    let mut bloom = Bloom::new(device, size, true);
     // The scene as the texture holds it.
     let input: Vec<u8> = texels
         .iter()
@@ -67,7 +67,14 @@ fn conserves(device: &wgpu::Device, queue: &wgpu::Queue) {
             bytemuck::bytes_of(&settings(&parameters, 0.)),
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        let combined = bloom.encode(device, &mut encoder, &inputs, &scene, &parameters, None);
+        let combined = bloom.encode(
+            (device, &crate::view::compile::Compiler::new(device)),
+            &mut encoder,
+            &inputs,
+            &scene,
+            &parameters,
+            None,
+        );
         queue.submit([encoder.finish()]);
         let actual = read(device, queue, combined.texture(), 8);
         if parameters.intensity == 0. {
@@ -159,7 +166,7 @@ fn infinite_texels_leave_every_mip_finite() {
             &crate::stages::post::tests::infinite_scene(),
         );
         let inputs = Inputs::new(&device);
-        let bloom = Bloom::new(&device, &inputs, size, true);
+        let mut bloom = Bloom::new(&device, size, true);
         let parameters = BloomParameters::default();
         queue.write_buffer(
             &inputs.settings,
@@ -167,7 +174,14 @@ fn infinite_texels_leave_every_mip_finite() {
             bytemuck::bytes_of(&settings(&parameters, 0.)),
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        let combined = bloom.encode(&device, &mut encoder, &inputs, &scene, &parameters, None);
+        let combined = bloom.encode(
+            (&device, &crate::view::compile::Compiler::new(&device)),
+            &mut encoder,
+            &inputs,
+            &scene,
+            &parameters,
+            None,
+        );
         queue.submit([encoder.finish()]);
         let mut failures = Vec::new();
         for (mip, view) in bloom.targets.mips.iter().enumerate() {

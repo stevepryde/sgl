@@ -42,7 +42,12 @@ fn texels(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -
 /// The tables of `input`'s sky computed by a stage of their own.
 fn tables(device: &wgpu::Device, queue: &wgpu::Queue, input: &FrameInput) -> Sky {
     let mut sky = Sky::default();
-    sky.prepare(device, input, input.camera.eye, (true, false));
+    sky.prepare(
+        (device, &crate::view::compile::Compiler::new(device)),
+        input,
+        input.camera.eye,
+        (true, false),
+    );
     let mut encoder = device.create_command_encoder(&Default::default());
     sky.encode_planned((queue, &mut encoder), None);
     queue.submit([encoder.finish()]);
@@ -111,7 +116,12 @@ fn multiple_scattering_is_finite_and_non_negative_from_empty_to_dense_air() {
                     ..SkyLook::default()
                 };
                 let input = sky_input(look, Vec3::Y, 0.3);
-                sky.prepare(&device, &input, Vec3::Y, (true, false));
+                sky.prepare(
+                    (&device, &crate::view::compile::Compiler::new(&device)),
+                    &input,
+                    Vec3::Y,
+                    (true, false),
+                );
                 let mut encoder = device.create_command_encoder(&Default::default());
                 sky.encode_planned((&queue, &mut encoder), None);
                 queue.submit([encoder.finish()]);
@@ -403,7 +413,12 @@ fn level_aerial(device: &wgpu::Device, queue: &wgpu::Queue, look: SkyLook) -> Ve
         Vec3::Y,
     );
     let mut sky = Sky::default();
-    sky.prepare(device, &input, input.camera.eye, (true, true));
+    sky.prepare(
+        (device, &crate::view::compile::Compiler::new(device)),
+        &input,
+        input.camera.eye,
+        (true, true),
+    );
     let mut encoder = device.create_command_encoder(&Default::default());
     sky.encode_planned((queue, &mut encoder), None);
     queue.submit([encoder.finish()]);

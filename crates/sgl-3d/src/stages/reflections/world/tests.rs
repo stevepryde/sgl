@@ -1121,31 +1121,61 @@ fn world_trace_pipelines_retain_current_and_previous() {
         ..a
     };
     for all in [false, true] {
-        stage.trace(&device, a, None, all);
+        stage.trace(
+            (&device, &crate::view::compile::Compiler::new(&device)),
+            a,
+            None,
+            all,
+        );
     }
-    let originals = [false, true].map(|all| stage.trace[&((a, all), None)].clone());
-    stage.trace(&device, b, None, false);
-    stage.trace(&device, b, None, true);
-    stage.trace(&device, a, None, false);
+    let originals = [false, true].map(|all| stage.trace[&((a, all), None)].ready().cloned());
+    stage.trace(
+        (&device, &crate::view::compile::Compiler::new(&device)),
+        b,
+        None,
+        false,
+    );
+    stage.trace(
+        (&device, &crate::view::compile::Compiler::new(&device)),
+        b,
+        None,
+        true,
+    );
+    stage.trace(
+        (&device, &crate::view::compile::Compiler::new(&device)),
+        a,
+        None,
+        false,
+    );
     for (all, original) in [false, true].into_iter().zip(originals) {
         assert_eq!(
-            stage.trace[&((a, all), None)],
+            stage.trace[&((a, all), None)].ready().cloned(),
             original,
             "returning to A reuses each reach's pipeline"
         );
     }
     for all in [false, true] {
-        stage.trace(&device, b, None, all);
+        stage.trace(
+            (&device, &crate::view::compile::Compiler::new(&device)),
+            b,
+            None,
+            all,
+        );
     }
-    let previous = [false, true].map(|all| stage.trace[&((b, all), None)].clone());
-    stage.trace(&device, c, None, false);
+    let previous = [false, true].map(|all| stage.trace[&((b, all), None)].ready().cloned());
+    stage.trace(
+        (&device, &crate::view::compile::Compiler::new(&device)),
+        c,
+        None,
+        false,
+    );
     assert!(
         !stage.trace.keys().any(|&((lit, _), _)| lit == a),
         "C drops every A reach"
     );
     for (all, pipeline) in [false, true].into_iter().zip(previous) {
         assert_eq!(
-            stage.trace[&((b, all), None)],
+            stage.trace[&((b, all), None)].ready().cloned(),
             pipeline,
             "C keeps every B reach"
         );

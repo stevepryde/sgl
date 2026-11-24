@@ -283,7 +283,6 @@ impl View {
             output_format: output.format,
             opaque: boxed(|| {
                 Opaque::new(
-                    device,
                     &bindings.unlit,
                     [
                         &bindings.shadow_mask,
@@ -308,20 +307,9 @@ impl View {
             exposure,
             antialiasing,
             hdr_effect: Box::default(),
-            depth_of_field: boxed(|| {
-                DepthOfField::new(device, first_frame.depth_of_field.is_some())
-            }),
-            motion_blur: boxed(|| MotionBlur::new(device, first_frame.motion_blur.is_some())),
-            post: boxed(|| {
-                Post::new(
-                    device,
-                    output,
-                    sizes,
-                    first_frame.bloom,
-                    (first_frame.antialiasing == Antialiasing::Smaa && first_frame.smaa)
-                        .then_some(settings.smaa_quality),
-                )
-            }),
+            depth_of_field: boxed(DepthOfField::new),
+            motion_blur: boxed(MotionBlur::new),
+            post: boxed(|| Post::new(device, output, sizes, first_frame.bloom)),
             outline: OutlineStage::default(),
             cull,
             sky: Box::default(),

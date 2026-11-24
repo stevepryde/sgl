@@ -10,11 +10,12 @@
 //! its loading screen (here a pass that clears a small texture, standing
 //! in for one), asks the renderer what the level's first frame still
 //! lacks, and hands the returned compile jobs to its own worker threads.
-//! When nothing is pending it draws the level. The geometry pipelines
-//! are the jobs; every other stage's programs are created by the first
-//! `compile` call, on the loop's thread, which is the loop's longest gap.
-//! `--ordinary` skips `compile`, so the first `render` creates everything
-//! on the loop's thread, as a game without a loading step does.
+//! When nothing is pending it draws the level. Every shader and pipeline
+//! the frame needs is one of those jobs, so the loop's thread creates none
+//! and the loading screen keeps its pace while they compile; `--workers 1`
+//! against the default four shows what several threads save in startup
+//! time. `--ordinary` skips `compile`, so the first `render` creates
+//! everything on the loop's thread, as a game without a loading step does.
 //!
 //! It prints, for the run: the wall time from the loop's start to the
 //! first level frame's completion on the GPU; the longest gap between two

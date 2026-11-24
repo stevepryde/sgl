@@ -142,7 +142,7 @@ Each view keeps its camera history (`View`, `view/history.rs`, `CameraHistory`):
 #### F-3 A frame rendered again as the same frame restarts nothing but FSR
 
 - **Rule.** When a frame is rendered and `finish_frame` does not follow, the scene commits nothing, and the next render begins with the same `frames`, previous camera and previous time. Where that render is the same frame again (the same views, with the same stages in effect), every stage continues from the state its last finished frame left (`view::history::Kept`): the DiligentFX context (TAA, Crystal SSR) from its last finished frame index, Velvet, world-space rays, ambient occlusion's temporal pass and the ray-traced shadows from their kept run (frame count and the half of each pair it writes), the shadows' slots, quality and seed too. A frame rendered again therefore reads and writes the same halves of every pair as the first rendering did. Two exceptions: FSR restarts (U-2), and filtered fog does not reproject for one frame (V-5). Where the unfinished render differs in kind from the next, the contract is narrower: an unfinished reset holds, so the next render resets too (F-1); and a stage that did not run in the unfinished render restarts on the next where that render released its targets (F-4), as do TAA and Crystal where that render rebuilt their context for a different TAA flag (F-5). Each view settles every stage's kept state once per render (`View::settle`): finished at the view's first `&mut self` method after `Renderer::finish_frame` committed that frame (each render holds its attempt's own flag, which `finish_frame` sets, so a view left out of later frames still settles its own as finished), unfinished when the view renders again first. A view method called between `render` and `finish_frame` leaves the render pending.
-- **Raised by.** Dropping an encoded frame; rendering a frame twice; omitting `finish_frame`; `Renderer::compile`, whose every planning pass is a render of its views that is not finished and whose commands are never submitted.
+- **Raised by.** Dropping an encoded frame; rendering a frame twice; omitting `finish_frame`; `Renderer::compile`, whose every planning pass is a render of its views that is not finished and whose commands are never submitted. FSR does not run in a planning pass (U-2), so `compile` does not restart it.
 - **Stays triggered while.** The game never finishes: camera motion is always zero and nothing accumulates.
 - **Source.** SGL3D's own (S3D-4; the History contract's "What a frame commits"). Code: `view/history.rs` (`Kept`, `StageHistory`), `renderer/view.rs` (`View::settle`).
 - **Guard.** `an_unfinished_frame_restarts_nothing`, `an_unfinished_cut_holds_until_a_frame_is_finished` (`tests/sgl-3d/tests/scenario_temporal_antialiasing.rs`), `kept_state_survives_an_unfinished_frame_and_ends_when_the_stage_skips_one` (`view/history.rs`), and the stages' own: `crystal_keeps_its_history_across_an_unfinished_frame`, `velvet_keeps_its_history_across_an_unfinished_frame`, `world_reflections_keep_their_history_across_an_unfinished_frame`, `accumulated_visibility_survives_an_unfinished_frame`, `the_shadow_mask_survives_an_unfinished_frame`, `the_kept_result_survives_an_unfinished_frame`.
@@ -1346,15 +1346,19 @@ units, with `view_space_to_meters_factor` 1. AMD file names abbreviate
   (`first_execution`, its resource frame index, the previous jitter offset and its constants) inside
   dispatch, when the commands are recorded (`sp-fidelity-0.3.2/src/fsr2/component.rs:1510, 1669,
   1700, 1933`), that state is private to sp-fidelity, and AMD's SDK offers no way to take it back.
-  Recovery as U-1.
+  Recovery as U-1. A planning pass (`Renderer::compile`) is the one unfinished render that leaves
+  FSR alone: it records no dispatch, leaves no run and draws the jitter the next frame applies
+  without advancing the sequence, so compiling neither restarts FSR nor shifts the frames after it
+  by a jitter phase.
 - **Raised by.** Frames in which FSR did not run (a camera other than `perspective`, U-6; the
   `disable.fsr` diagnostics layer; TAA running in its place); a frame rendered and not finished
-  (dropped, rendered again, or `finish_frame` omitted).
+  (dropped, rendered again, or `finish_frame` omitted), a planning pass excepted.
 - **Stays triggered while.** The game leaves frames unfinished: each restarts FSR once.
 - **Source.** SGL3D's own. Code: `crates/sgl-3d/src/stages/antialiasing/fsr.rs` (`Fsr::prepare`,
   `Fsr::settle`), `crates/sgl-3d/src/view/history.rs` (`Kept`).
 - **Guard.** `upscaled_restarts` with `Restart::Unfinished`
-  (`tests/sgl-3d/tests/scenario_fsr_upscaling.rs`).
+  (`tests/sgl-3d/tests/scenario_fsr_upscaling.rs`);
+  `compiling_leaves_an_fsr_views_accumulation_and_jitter_alone` (`renderer/compile_tests.rs`).
 - **Status.** Rule.
 
 #### U-3 A reset ends FSR's history in a frame FSR does not run

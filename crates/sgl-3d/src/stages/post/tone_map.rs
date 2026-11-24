@@ -12,6 +12,7 @@ use super::inputs::{self, Inputs, draw, sampled, uniform_entry};
 use crate::frame_input::{AgxLook, ColorGrading};
 use crate::settings::ToneMapping;
 use crate::shading::gbuffer::COLOR as HDR;
+use crate::view::compile::{Compiler, SharedModule};
 use crate::view::targets::target;
 use glam::{Mat3, Vec2, Vec3, vec2, vec3};
 
@@ -224,10 +225,7 @@ impl ToneMap {
         destination: super::Output,
         output_size: [u32; 2],
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("HDR presentation"),
-            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&TONE_MAP]).into()),
-        });
+        let shader = SharedModule::composed("HDR presentation", &TONE_MAP);
         let look_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tone map exposure, grading and local exposure"),
             entries: &[
@@ -451,7 +449,7 @@ impl ToneMap {
     #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         inputs: &Inputs,
@@ -506,19 +504,21 @@ impl ToneMap {
                 }
             }
         };
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(label),
-            timestamp_writes: timing.and_then(|t| t.render_pass("tone map")),
-            color_attachments: &[crate::view::targets::attachment(target)],
-            ..Default::default()
-        });
-        pass.set_pipeline(self.pipelines.get(device, pipeline));
-        pass.set_bind_group(0, &group, &[]);
-        pass.set_bind_group(1, &look, &[]);
-        pass.draw(0..3, 0..1);
-        drop(pass);
+        // Not in a planning pass whose pipeline is still compiling.
+        if let Some(pipeline) = self.pipelines.get(compiler, pipeline) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(label),
+                timestamp_writes: timing.and_then(|t| t.render_pass("tone map")),
+                color_attachments: &[crate::view::targets::attachment(target)],
+                ..Default::default()
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.set_bind_group(1, &look, &[]);
+            pass.draw(0..3, 0..1);
+        }
         if let Some(output) = presented {
-            self.present_output(device, encoder, inputs, bloom, output, timing);
+            self.present_output((device, compiler), encoder, inputs, bloom, output, timing);
         }
     }
 
@@ -527,7 +527,7 @@ impl ToneMap {
     #[allow(clippy::too_many_arguments)]
     pub fn resample_into(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         encoder: &mut wgpu::CommandEncoder,
         inputs: &Inputs,
         scene: &wgpu::TextureView,
@@ -535,14 +535,16 @@ impl ToneMap {
         target: &wgpu::TextureView,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        draw(
-            encoder,
-            self.pipelines.get(device, Pass::Resample(Target::Linear)),
-            &inputs.group(device, scene, bloom),
-            target,
-            "resample the scene for sharpening",
-            timing.and_then(|t| t.render_pass("tone map")),
-        );
+        if let Some(pipeline) = self.pipelines.get(compiler, Pass::Resample(Target::Linear)) {
+            draw(
+                encoder,
+                &pipeline,
+                &inputs.group(device, scene, bloom),
+                target,
+                "resample the scene for sharpening",
+                timing.and_then(|t| t.render_pass("tone map")),
+            );
+        }
     }
 
     /// The final pass: `scene`, display-referred, through `last` to
@@ -550,7 +552,7 @@ impl ToneMap {
     #[allow(clippy::too_many_arguments)]
     pub fn present_final(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         inputs: &Inputs,
@@ -602,28 +604,30 @@ impl ToneMap {
             output
         };
         let group = inputs.group(device, scene, bloom);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(label),
-            timestamp_writes: timing.and_then(|t| t.render_pass(timing_group)),
-            color_attachments: &[crate::view::targets::attachment(target)],
-            ..Default::default()
-        });
-        pass.set_pipeline(self.pipelines.get(device, pipeline));
-        pass.set_bind_group(0, &group, &[]);
-        if matches!(last, Final::Sharpen { .. }) {
-            pass.set_bind_group(1, &self.sharpening_group, &[]);
+        // Not in a planning pass whose pipeline is still compiling.
+        if let Some(pipeline) = self.pipelines.get(compiler, pipeline) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(label),
+                timestamp_writes: timing.and_then(|t| t.render_pass(timing_group)),
+                color_attachments: &[crate::view::targets::attachment(target)],
+                ..Default::default()
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            if matches!(last, Final::Sharpen { .. }) {
+                pass.set_bind_group(1, &self.sharpening_group, &[]);
+            }
+            pass.draw(0..3, 0..1);
         }
-        pass.draw(0..3, 0..1);
-        drop(pass);
         if capture {
-            self.present_output(device, encoder, inputs, bloom, output, timing);
+            self.present_output((device, compiler), encoder, inputs, bloom, output, timing);
         }
     }
 
     /// The tone-mapped target to `output`, texel for texel, dithered.
     pub(super) fn present_output(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         encoder: &mut wgpu::CommandEncoder,
         inputs: &Inputs,
         bloom: &wgpu::TextureView,
@@ -631,14 +635,16 @@ impl ToneMap {
         timing: Option<&crate::timing::GpuTiming>,
     ) {
         let group = inputs.group(device, self.tone_mapped.as_ref().unwrap(), bloom);
-        draw(
-            encoder,
-            self.pipelines.get(device, Pass::Copy),
-            &group,
-            output,
-            "present tone-mapped texels",
-            timing.and_then(|t| t.render_pass("tone map")),
-        );
+        if let Some(pipeline) = self.pipelines.get(compiler, Pass::Copy) {
+            draw(
+                encoder,
+                &pipeline,
+                &group,
+                output,
+                "present tone-mapped texels",
+                timing.and_then(|t| t.render_pass("tone map")),
+            );
+        }
     }
 }
 

@@ -25,7 +25,7 @@ fn post_of(device: &wgpu::Device, size: [u32; 2]) -> Post {
         scene: size,
         output: size,
     };
-    Post::new(device, Output::texture(HDR), sizes, false, None)
+    Post::new(device, Output::texture(HDR), sizes, false)
 }
 
 /// A grey frame of `SIZE` whose texel at x, y has the linear value `value(x, y)`.
@@ -66,7 +66,7 @@ fn render(
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     post.present(
-        device,
+        (device, &crate::view::compile::Compiler::new(device)),
         queue,
         &mut encoder,
         &scene,

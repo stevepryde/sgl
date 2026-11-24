@@ -8,6 +8,7 @@
 //! in the scene source. Honours: nothing. Timing group: "deform".
 use crate::shading::culling::dispatch_side;
 use crate::shading::deformation::DeformDispatch;
+use crate::view::compile::{Compiled, Compiler};
 use crate::view::frame::FrameContext;
 
 pub(crate) static DEFORM: crate::shading::Module = crate::shading::Module {
@@ -37,7 +38,7 @@ fn stride(alignment: u32) -> u64 {
 }
 
 pub(crate) struct Deform {
-    pipeline: Option<wgpu::ComputePipeline>,
+    pipeline: Compiled<wgpu::ComputePipeline>,
     layout: wgpu::BindGroupLayout,
     /// The frame's dispatch records, one per `stride`.
     records: wgpu::Buffer,
@@ -68,7 +69,7 @@ impl Deform {
         });
         let stride = stride(device.limits().min_uniform_buffer_offset_alignment);
         Self {
-            pipeline: None,
+            pipeline: Compiled::default(),
             layout,
             records: records(device, stride),
             stride,
@@ -100,13 +101,19 @@ impl Deform {
     /// Writes the frame's deformations, before any pass draws scene
     /// geometry.
     pub fn encode(&mut self, ctx: &mut FrameContext<'_>) {
-        self.dispatch(ctx.device, ctx.queue, ctx.encoder, ctx.scene, ctx.timing);
+        self.dispatch(
+            (ctx.device, ctx.compiler),
+            ctx.queue,
+            ctx.encoder,
+            ctx.scene,
+            ctx.timing,
+        );
     }
 
     /// Writes `scene`'s deformations for the frame it prepared.
     pub(crate) fn dispatch(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         scene: &crate::Scene,
@@ -116,6 +123,12 @@ impl Deform {
         if work.is_empty() {
             return;
         }
+        let Some(pipeline) = self.pipeline.get(compiler, "deform", || {
+            let layout = self.layout.clone();
+            move |device: &wgpu::Device| Self::pipeline(device, &layout)
+        }) else {
+            return;
+        };
         crate::counters::deformed(work.len());
         let size = work.len() as u64 * self.stride;
         if self.records.size() < size {
@@ -161,10 +174,7 @@ impl Deform {
             label: Some("deform"),
             timestamp_writes: timing.and_then(|t| t.compute_pass("deform")),
         });
-        pass.set_pipeline(
-            self.pipeline
-                .get_or_insert_with(|| Self::pipeline(device, &self.layout)),
-        );
+        pass.set_pipeline(pipeline);
         for (index, record) in work.iter().enumerate() {
             pass.set_bind_group(0, group, &[(index as u64 * self.stride) as u32]);
             let [x, y] = workgroups(record.vertex_count);

@@ -207,11 +207,10 @@ impl HdrEffectStage {
             ctx.compiler,
             "HDR effect",
             || {
-                let device = ctx.device.clone();
                 let layout = pass.pipeline_layout.clone();
                 let source = program(&module.source);
                 let label = module.label.clone();
-                move || create_pipeline(&device, &layout, &source, &label)
+                move |device: &wgpu::Device| create_pipeline(device, &layout, &source, &label)
             },
         )?;
         pass.dispatch(ctx, effect, pipeline, frame, exposure);

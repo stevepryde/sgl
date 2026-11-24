@@ -98,7 +98,7 @@ impl Antialiasing {
         sizes: Sizes,
         history: HistoryFrame,
         post_fx: Option<&mut PostFx>,
-        context_jitter: Option<[f32; 2]>,
+        (context_jitter, planning): (Option<[f32; 2]>, bool),
     ) -> Option<Jitter> {
         if effective.taa {
             Some(Jitter {
@@ -108,7 +108,7 @@ impl Antialiasing {
         } else if effective.fsr {
             let upscaler = self.fsr.as_mut().unwrap();
             let jitter = Jitter {
-                ndc: upscaler.prepare(sizes.render, history.valid),
+                ndc: upscaler.prepare(sizes.render, history.valid, planning),
                 mip_bias: fsr::mip_bias(sizes.render, sizes.scene),
             };
             if let Some(post_fx) = post_fx {
@@ -164,6 +164,13 @@ impl Antialiasing {
             );
             Completed::Taa
         } else if ctx.effective.fsr {
+            // A planning pass leaves FSR alone: AMD's context advances its
+            // frame state where a dispatch is recorded and cannot take it
+            // back (`Fsr::settle`), so one recorded here would end the
+            // view's accumulation and shift its jitter sequence.
+            if ctx.compiler.planning() {
+                return Completed::Fsr;
+            }
             // FSR upscales the same linear HDR frame (AMD's FSR placement).
             let upscaler = self.fsr.as_mut().unwrap();
             let inputs = fsr::Inputs {

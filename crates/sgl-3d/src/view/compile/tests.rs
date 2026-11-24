@@ -10,9 +10,9 @@ const LABEL: &str = "test programs";
 
 /// A slot's creating closure, which counts its runs in `runs` and returns
 /// the run's number.
-fn counting(runs: &Arc<AtomicUsize>) -> impl FnOnce() -> usize + Send + 'static {
+fn counting(runs: &Arc<AtomicUsize>) -> impl FnOnce(&wgpu::Device) -> usize + Send + 'static {
     let runs = runs.clone();
-    move || runs.fetch_add(1, Ordering::SeqCst) + 1
+    move |_| runs.fetch_add(1, Ordering::SeqCst) + 1
 }
 
 // Plausible defect: a planning pass creates the programs on its own thread
@@ -41,10 +41,10 @@ fn a_planning_pass_queues_what_a_frame_would_create() {
     }
     assert_eq!(compiler.outstanding(), 0);
     let (jobs, missing) = compiler.plan(|| {
-        assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&1));
+        assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&mut 1));
     });
     assert_eq!((jobs.len(), missing), (0, 0));
-    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&1));
+    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&mut 1));
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
@@ -63,7 +63,7 @@ fn a_frame_runs_a_job_that_has_not_started_in_place() {
     let (jobs, _) = compiler.plan(|| {
         slot.get(&compiler, LABEL, || counting(&runs));
     });
-    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&1));
+    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&mut 1));
     assert_eq!(compiler.outstanding(), 0, "the frame settled the job");
     for job in jobs {
         job.run();
@@ -73,7 +73,7 @@ fn a_frame_runs_a_job_that_has_not_started_in_place() {
         1,
         "the late job compiled nothing"
     );
-    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&1));
+    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&mut 1));
 }
 
 // Plausible defect: a frame that meets a job a worker is running compiles
@@ -95,10 +95,10 @@ fn a_frame_waits_for_a_job_a_thread_is_running() {
     let (jobs, _) = compiler.plan(|| {
         let count = counting(&runs);
         slot.get(&compiler, LABEL, || {
-            move || {
+            move |device: &wgpu::Device| {
                 started.send(()).unwrap();
                 released.recv().unwrap();
-                count()
+                count(device)
             }
         });
     });
@@ -106,7 +106,7 @@ fn a_frame_waits_for_a_job_a_thread_is_running() {
     has_started.recv().unwrap();
     // Released as the frame asks: it finds the job running or just done.
     let releaser = std::thread::spawn(move || release.send(()).unwrap());
-    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&1));
+    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&mut 1));
     releaser.join().unwrap();
     worker.join().unwrap();
     assert_eq!(runs.load(Ordering::SeqCst), 1);
@@ -138,7 +138,7 @@ fn a_dropped_job_is_offered_again() {
     });
     assert_eq!((again.len(), missing), (0, 1));
     jobs.into_iter().for_each(|job| job.run());
-    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&1));
+    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&mut 1));
 }
 
 // Plausible defect: a program wgpu rejects is kept as compiled, its error
@@ -156,8 +156,7 @@ fn a_failed_job_is_reported_once_and_leaves_drawing_as_it_was() {
     let runs = Arc::new(AtomicUsize::new(0));
     let mut slot = Compiled::<usize>::default();
     let invalid = {
-        let device = device.clone();
-        move || {
+        move |device: &wgpu::Device| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
                 source: wgpu::ShaderSource::Wgsl("@compute @workgroup_size(1) fn main() {}".into()),
@@ -192,7 +191,7 @@ fn a_failed_job_is_reported_once_and_leaves_drawing_as_it_was() {
         assert!(slot.get(&compiler, LABEL, || counting(&runs)).is_none());
     });
     assert_eq!((jobs.len(), missing), (0, 0), "a failure is settled");
-    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&1));
+    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&mut 1));
 }
 
 // Plausible defect: a job whose closure panics leaves its slot running for
@@ -209,8 +208,8 @@ fn a_job_that_panics_leaves_its_programs_to_the_frame() {
     let runs = Arc::new(AtomicUsize::new(0));
     let mut slot = Compiled::<usize>::default();
     let (jobs, _) = compiler.plan(|| {
-        slot.get(&compiler, LABEL, || -> fn() -> usize {
-            || panic!("the job's own failure, for the test")
+        slot.get(&compiler, LABEL, || -> fn(&wgpu::Device) -> usize {
+            |_| panic!("the job's own failure, for the test")
         });
     });
     for job in jobs {
@@ -221,7 +220,7 @@ fn a_job_that_panics_leaves_its_programs_to_the_frame() {
         slot.get(&compiler, LABEL, || counting(&runs));
     });
     assert_eq!((jobs.len(), missing), (0, 0));
-    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&1));
+    assert_eq!(slot.get(&compiler, LABEL, || counting(&runs)), Some(&mut 1));
 }
 
 // Plausible defect: a slot its cache dropped while its job was out (the

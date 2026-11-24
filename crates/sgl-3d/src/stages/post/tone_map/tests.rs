@@ -160,7 +160,7 @@ fn tone_maps_as_filaments_agx_with_each_look_after_the_exposure() {
             let exposure = exposure_texture(&device, &queue, multiplier);
             let mut encoder = device.create_command_encoder(&Default::default());
             tone_map.encode(
-                &device,
+                (&device, &crate::view::compile::Compiler::new(&device)),
                 &queue,
                 &mut encoder,
                 &inputs,
@@ -230,7 +230,7 @@ fn dark_transition_blends_shadows_with_midtones_without_highlights() {
     let mut render = |grading: &ColorGrading| {
         let mut encoder = device.create_command_encoder(&Default::default());
         tone_map.encode(
-            &device,
+            (&device, &crate::view::compile::Compiler::new(&device)),
             &queue,
             &mut encoder,
             &inputs,
@@ -350,7 +350,7 @@ fn dithers_into(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::Textur
         let output = target(&device, "dither fixture output", size, format);
         let mut encoder = device.create_command_encoder(&Default::default());
         tone_map.encode(
-            &device,
+            (&device, &crate::view::compile::Compiler::new(&device)),
             &queue,
             &mut encoder,
             &inputs,
@@ -451,7 +451,7 @@ fn negative_hue_rotations_wrap_like_positive_and_multiple_turns() {
         grading.global.hue = hue;
         let mut encoder = device.create_command_encoder(&Default::default());
         tone_map.encode(
-            &device,
+            (&device, &crate::view::compile::Compiler::new(&device)),
             &queue,
             &mut encoder,
             &inputs,
@@ -606,7 +606,7 @@ fn aces_and_default_khronos_match_original_upstream_glsl() {
             let exposure = exposure_texture(&device, &queue, multiplier);
             let mut encoder = device.create_command_encoder(&Default::default());
             mapper.encode(
-                &device,
+                (&device, &crate::view::compile::Compiler::new(&device)),
                 &queue,
                 &mut encoder,
                 &inputs,
@@ -786,7 +786,14 @@ fn float_composition_and_surface_outputs_apply_one_display_transfer() {
             (None, &[]),
         );
         let mut encoder = device.create_command_encoder(&Default::default());
-        mapper.present_output(&device, &mut encoder, &inputs, &bloom, &intermediate, None);
+        mapper.present_output(
+            (&device, &crate::view::compile::Compiler::new(&device)),
+            &mut encoder,
+            &inputs,
+            &bloom,
+            &intermediate,
+            None,
+        );
         let group = inputs.group(&device, &intermediate, &bloom);
         draw(
             &mut encoder,

@@ -25,6 +25,7 @@
 //! Timing group: `motion blur`.
 use crate::shading::gbuffer::COLOR;
 use crate::shading::motion_tiles::{GROUP_SIZE, MOTION_TILES, MotionTilesUniform};
+use crate::view::compile::{Compiled, Compiler, SharedModule};
 use crate::view::frame::FrameContext;
 use crate::view::motion_tiles::MotionTiles;
 use crate::view::targets::target_with_usage;
@@ -64,7 +65,10 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
     )]
 }
 
-pub(crate) struct MotionBlur(Option<Filter>);
+pub(crate) struct MotionBlur(Compiled<Filter>);
+
+/// The stage's program set, as a compile job and its errors name it.
+const LABEL: &str = "motion blur";
 
 struct Filter {
     tiles: MotionTiles,
@@ -79,14 +83,11 @@ struct Filter {
 
 impl Filter {
     fn new(device: &wgpu::Device) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("motion blur"),
-            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&MOTION_BLUR]).into()),
-        });
+        let shader = SharedModule::composed("motion blur", &MOTION_BLUR);
         let filter = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(FILTER_ENTRY),
             layout: None,
-            module: &shader,
+            module: shader.get(device),
             entry_point: Some(FILTER_ENTRY),
             compilation_options: wgpu::PipelineCompilationOptions {
                 constants: &[(
@@ -98,7 +99,7 @@ impl Filter {
             cache: None,
         });
         Self {
-            tiles: MotionTiles::new(device, &shader),
+            tiles: MotionTiles::new(device, shader).compiled(device),
             filter,
             uniform: crate::counters::buffer(
                 device,
@@ -116,27 +117,27 @@ impl Filter {
 }
 
 impl MotionBlur {
-    pub fn new(device: &wgpu::Device, enabled: bool) -> Self {
-        Self(enabled.then(|| Filter::new(device)))
+    pub fn new() -> Self {
+        Self(Compiled::default())
     }
 
     /// How many filter groups it keeps, one for each frame view and
     /// surface depth bound since the targets or the views were replaced.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn cached_groups(&self) -> usize {
-        self.0.as_ref().map_or(0, |filter| filter.groups.len())
+        self.0.ready().map_or(0, |filter| filter.groups.len())
     }
 
     /// The blurred frame, once the stage has run.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn output(&self) -> Option<&wgpu::TextureView> {
-        self.0.as_ref()?.output.as_ref()
+        self.0.ready()?.output.as_ref()
     }
 
     /// Drops the bind groups, which hold frame views and shared targets
     /// that a resize or a new antialiasing context replaces.
     pub fn forget_inputs(&mut self) {
-        if let Some(filter) = &mut self.0 {
+        if let Some(filter) = self.0.ready_mut() {
             filter.tiles.forget_inputs();
             filter.groups.clear();
         }
@@ -153,6 +154,9 @@ impl MotionBlur {
     ) -> Option<&wgpu::TextureView> {
         let shutter = ctx.effective.motion_blur?;
         if !ctx.history.valid {
+            // The frame after this one blurs: its programs are asked for
+            // now, with the first frame's, in a frame or a planning pass.
+            self.0.get(ctx.compiler, LABEL, || Filter::new);
             return None;
         }
         let size = frame.texture().size();
@@ -168,9 +172,9 @@ impl MotionBlur {
             near: ctx.input.camera.projection.w_axis.z,
             frame: ctx.history.frames,
         };
-        let filter = self.0.get_or_insert_with(|| Filter::new(ctx.device));
+        let filter = self.0.get(ctx.compiler, LABEL, || Filter::new)?;
         filter.dispatch(
-            (ctx.device, ctx.queue),
+            (ctx.device, ctx.compiler, ctx.queue),
             ctx.encoder,
             frame,
             [&ctx.targets.motion, ctx.surface.depth],
@@ -186,7 +190,7 @@ impl Filter {
     /// `depth` targets and the passes' values.
     fn dispatch(
         &mut self,
-        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        (device, compiler, queue): (&wgpu::Device, &Compiler, &wgpu::Queue),
         encoder: &mut wgpu::CommandEncoder,
         frame: &wgpu::TextureView,
         [motion, depth]: [&wgpu::TextureView; 2],
@@ -215,7 +219,7 @@ impl Filter {
         });
         let neighborhood = self
             .tiles
-            .encode(device, queue, &mut pass, [motion, frame], tiles)
+            .encode((device, compiler), queue, &mut pass, [motion, frame], tiles)
             .clone();
         let group = self.group(device, [motion, depth, frame], &neighborhood);
         pass.set_pipeline(&self.filter);

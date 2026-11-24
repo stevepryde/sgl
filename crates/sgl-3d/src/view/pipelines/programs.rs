@@ -10,7 +10,8 @@ use crate::shading::bind::BindingTier;
 use crate::shading::programs::{
     CameraShadows, GeometryForm, ProgramShader, caster_program, geometry_program,
 };
-use std::sync::{Arc, OnceLock};
+use crate::view::compile::SharedModule;
+use std::sync::Arc;
 
 /// Which program of a set a pipeline is created from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,41 +35,7 @@ fn camera_slot(shadows: CameraShadows, screen_indirect: bool) -> usize {
     shadows * 2 + usize::from(screen_indirect)
 }
 
-/// One program's shader module, created where a pipeline first needs it:
-/// by the frame that draws with it, or by the compile job that makes its
-/// pipeline, whichever comes first. Clones share the module.
-#[derive(Clone)]
-pub(super) struct ProgramModule {
-    module: Arc<OnceLock<wgpu::ShaderModule>>,
-    /// The game's module, none for the default provider.
-    source: Option<Arc<str>>,
-    label: String,
-    program: Program,
-    tier: BindingTier,
-}
-
-impl ProgramModule {
-    /// The module, composed and created on the calling thread if no
-    /// pipeline has needed it yet.
-    pub fn get(&self, device: &wgpu::Device) -> &wgpu::ShaderModule {
-        self.module.get_or_init(|| {
-            let shader = self
-                .source
-                .as_deref()
-                .map_or(ProgramShader::Default, ProgramShader::Game);
-            let source = match self.program {
-                Program::Geometry(form) => geometry_program(form, self.tier, shader),
-                Program::Caster => caster_program(self.tier, shader),
-            };
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(&self.label),
-                source: wgpu::ShaderSource::Wgsl(source.into()),
-            })
-        })
-    }
-}
-
-type Slot = Arc<OnceLock<wgpu::ShaderModule>>;
+type Slot = Option<SharedModule>;
 
 /// One material shader's programs: SGL3D's default provider's, or a game's
 /// module's.
@@ -119,7 +86,7 @@ impl ProgramSet {
     /// The module of `program` on a device of `tier`: a form that does not
     /// differ from the plain geometry program (`GeometryForm::distinct`)
     /// takes that one.
-    pub fn module(&self, tier: BindingTier, program: Program) -> ProgramModule {
+    pub fn module(&mut self, tier: BindingTier, program: Program) -> SharedModule {
         let program = match program {
             Program::Geometry(form) if !form.distinct(tier, self.shader()) => {
                 Program::Geometry(GeometryForm::Plain)
@@ -127,7 +94,7 @@ impl ProgramSet {
             program => program,
         };
         let (slot, name) = match program {
-            Program::Geometry(GeometryForm::Plain) => (&self.geometry, "geometry"),
+            Program::Geometry(GeometryForm::Plain) => (&mut self.geometry, "geometry"),
             Program::Geometry(GeometryForm::Camera {
                 shadows,
                 screen_indirect,
@@ -144,18 +111,28 @@ impl ProgramSet {
                         "geometry with the contact mask and screen-space indirect light"
                     }
                 };
-                (&self.camera[camera_slot(shadows, screen_indirect)], name)
+                (
+                    &mut self.camera[camera_slot(shadows, screen_indirect)],
+                    name,
+                )
             }
-            Program::Geometry(GeometryForm::Blended) => (&self.blended, "blended geometry"),
-            Program::Caster => (&self.caster, "casters"),
+            Program::Geometry(GeometryForm::Blended) => (&mut self.blended, "blended geometry"),
+            Program::Caster => (&mut self.caster, "casters"),
         };
-        ProgramModule {
-            module: slot.clone(),
-            source: self.source.clone(),
-            label: format!("{} {name}", self.label),
-            program,
-            tier,
-        }
+        let (source, label) = (&self.source, &self.label);
+        slot.get_or_insert_with(|| {
+            let source = source.clone();
+            SharedModule::new(format!("{label} {name}"), move || {
+                let shader = source
+                    .as_deref()
+                    .map_or(ProgramShader::Default, ProgramShader::Game);
+                match program {
+                    Program::Geometry(form) => geometry_program(form, tier, shader),
+                    Program::Caster => caster_program(tier, shader),
+                }
+            })
+        })
+        .clone()
     }
 
     /// How many modules it holds.
@@ -164,7 +141,7 @@ impl ProgramSet {
         [&self.geometry, &self.blended, &self.caster]
             .into_iter()
             .chain(&self.camera)
-            .filter(|module| module.get().is_some())
+            .filter(|module| module.as_ref().is_some_and(SharedModule::created))
             .count()
     }
 }

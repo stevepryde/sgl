@@ -325,8 +325,6 @@ impl Startup {
     ) -> Result<(), JsError> {
         let (device, queue) = (&self.device, &self.queue);
         let scene = self.scene.as_mut().ok_or_else(|| error("upload first"))?;
-        let renderer = self.renderer.as_mut().ok_or_else(|| error("view first"))?;
-        let view = self.view.as_mut().ok_or_else(|| error("view first"))?;
         for &(instance, model, pose) in &self.moving {
             scene
                 .set_instance(
@@ -364,6 +362,98 @@ impl Startup {
         } else {
             AmbientOcclusionQuality::Off
         };
+        let input = self.input(seconds, yaw_degrees)?;
+        let texture = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(texture)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            other => return Err(error(format!("no canvas texture: {other:?}"))),
+        };
+        let output = texture.texture.create_view(&Default::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let scene = self.scene.as_mut().ok_or_else(|| error("upload first"))?;
+        let renderer = self.renderer.as_mut().ok_or_else(|| error("view first"))?;
+        let view = self.view.as_mut().ok_or_else(|| error("view first"))?;
+        renderer.render(
+            device,
+            queue,
+            &mut encoder,
+            scene,
+            &mut [ViewFrame {
+                view,
+                input: &input,
+                settings: &self.settings,
+                output: sgl_3d::ViewOutput::Texture(&output),
+                timing: None,
+            }],
+        );
+        queue.submit([encoder.finish()]);
+        queue.present(texture);
+        renderer.finish_frame(scene);
+        self.frames += 1;
+        Ok(())
+    }
+
+    /// The prepared path's preparation, one step: compiles the first
+    /// frame's shaders and pipelines ahead of it (`Renderer::compile`) and
+    /// runs every job the step returns. True once nothing is pending; until
+    /// then the page awaits `completion()`, by which the browser has
+    /// created the jobs' pipelines, and calls it again.
+    pub fn prepare(&mut self) -> Result<bool, JsError> {
+        let input = self.input(0., 0.)?;
+        // The first frame's settings: the harness starts with every effect
+        // key up.
+        self.settings.ambient_occlusion = AmbientOcclusionQuality::Off;
+        // A target of the canvas's format and size, standing in for the
+        // canvas texture the first frame draws into.
+        let output = self
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("startup compile target"),
+                size: wgpu::Extent3d {
+                    width: self.config.width,
+                    height: self.config.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: self.config.usage,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        let scene = self.scene.as_mut().ok_or_else(|| error("upload first"))?;
+        let renderer = self.renderer.as_mut().ok_or_else(|| error("view first"))?;
+        let view = self.view.as_mut().ok_or_else(|| error("view first"))?;
+        let compilation = renderer.compile(
+            &self.device,
+            &self.queue,
+            scene,
+            &mut [ViewFrame {
+                view,
+                input: &input,
+                settings: &self.settings,
+                output: sgl_3d::ViewOutput::Texture(&output),
+                timing: None,
+            }],
+        );
+        if let Some(failed) = compilation.errors.first() {
+            return Err(error(failed));
+        }
+        let ready = compilation.ready();
+        // Nothing is on screen yet, so every job runs at once.
+        compilation
+            .jobs
+            .into_iter()
+            .for_each(sgl_3d::CompileJob::run);
+        Ok(ready)
+    }
+}
+
+impl Startup {
+    /// The frame `seconds` in, its camera turned `yaw_degrees` about the
+    /// layout's target.
+    fn input(&self, seconds: f64, yaw_degrees: f32) -> Result<FrameInput, JsError> {
         let camera_layout = &self.layout["camera"];
         let target = vec3(&camera_layout["target"])?;
         let eye = target
@@ -400,33 +490,12 @@ impl Startup {
             ground_color: vec3(&hemisphere["ground"])?.to_array(),
             intensity: hemisphere["intensity"].as_f64().unwrap_or(0.) as f32,
         };
-        let texture = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            other => return Err(error(format!("no canvas texture: {other:?}"))),
-        };
-        let output = texture.texture.create_view(&Default::default());
-        let mut encoder = device.create_command_encoder(&Default::default());
-        renderer.render(
-            device,
-            queue,
-            &mut encoder,
-            scene,
-            &mut [ViewFrame {
-                view,
-                input: &input,
-                settings: &self.settings,
-                output: sgl_3d::ViewOutput::Texture(&output),
-                timing: None,
-            }],
-        );
-        queue.submit([encoder.finish()]);
-        queue.present(texture);
-        renderer.finish_frame(scene);
-        self.frames += 1;
-        Ok(())
+        Ok(input)
     }
+}
 
+#[wasm_bindgen]
+impl Startup {
     /// What ran: the adapter, canvas, settings and any WebGPU errors.
     pub fn report(&self) -> String {
         json!({

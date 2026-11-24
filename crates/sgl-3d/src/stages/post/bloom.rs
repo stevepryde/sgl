@@ -10,8 +10,8 @@
 use super::inputs::{Inputs, draw, pipeline};
 use crate::BloomParameters;
 use crate::shading::gbuffer::COLOR as HDR;
+use crate::view::compile::{Compiled, Compiler};
 use crate::view::targets::target;
-use std::sync::OnceLock;
 
 /// The downsamples, upsamples and composite.
 pub(crate) static BLOOM: crate::shading::Module = crate::shading::Module {
@@ -172,7 +172,7 @@ impl Targets {
 }
 
 pub(super) struct Bloom {
-    pipelines: OnceLock<Pipelines>,
+    pipelines: Compiled<Pipelines>,
     /// The mip chain's format: Bevy's `Rg11b10Ufloat` where the device
     /// renders to it, else RGBA16F.
     format: wgpu::TextureFormat,
@@ -188,12 +188,16 @@ struct Pipelines {
 }
 
 impl Pipelines {
-    fn new(device: &wgpu::Device, inputs: &Inputs, format: wgpu::TextureFormat) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        inputs: &wgpu::BindGroupLayout,
+        format: wgpu::TextureFormat,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("HDR bloom"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&BLOOM]).into()),
         });
-        let input = [Some(inputs.layout())];
+        let input = [Some(inputs)];
         // Bevy's energy-conserving upsample blend: the constant's share of
         // the coarser level over the finer one.
         let blend = wgpu::BlendState {
@@ -247,13 +251,8 @@ impl Pipelines {
 
 impl Bloom {
     /// Bloom of a `scene_size` scene; its targets are full size when
-    /// `enabled`, alongside its pipelines, and 1×1 otherwise.
-    pub fn new(
-        device: &wgpu::Device,
-        inputs: &Inputs,
-        scene_size: [u32; 2],
-        enabled: bool,
-    ) -> Self {
+    /// `enabled`, and 1×1 otherwise.
+    pub fn new(device: &wgpu::Device, scene_size: [u32; 2], enabled: bool) -> Self {
         let format = if device
             .features()
             .contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE)
@@ -262,12 +261,8 @@ impl Bloom {
         } else {
             HDR
         };
-        let pipelines = OnceLock::new();
-        if enabled {
-            pipelines.get_or_init(|| Pipelines::new(device, inputs, format));
-        }
         Self {
-            pipelines,
+            pipelines: Compiled::default(),
             format,
             targets: Targets::new(device, format, scene_size, enabled),
             scene_size,
@@ -300,18 +295,24 @@ impl Bloom {
     /// which it returns. The composite's blend is `settings(bloom)` in the
     /// inputs' uniform.
     pub fn encode(
-        &self,
-        device: &wgpu::Device,
+        &mut self,
+        (device, compiler): (&wgpu::Device, &Compiler),
         encoder: &mut wgpu::CommandEncoder,
         inputs: &Inputs,
         completed: &wgpu::TextureView,
         bloom: &BloomParameters,
         timing: Option<&crate::timing::GpuTiming>,
-    ) -> &wgpu::TextureView {
-        let pipelines = self
-            .pipelines
-            .get_or_init(|| Pipelines::new(device, inputs, self.format));
+    ) -> wgpu::TextureView {
         let t = &self.targets;
+        let format = self.format;
+        // A planning pass that lacks the pipelines leaves the passes out:
+        // the combined target is handed on either way.
+        let Some(pipelines) = self.pipelines.get(compiler, "bloom", || {
+            let layout = inputs.layout().clone();
+            move |device: &wgpu::Device| Pipelines::new(device, &layout, format)
+        }) else {
+            return t.combined.clone();
+        };
         // Mip passes bind the combined target, which none of them writes, as
         // the group's unread bloom view.
         let group = inputs.group(device, completed, &t.combined);
@@ -370,7 +371,7 @@ impl Bloom {
             "bloom composite",
             timing.and_then(|t| t.render_pass("bloom")),
         );
-        &t.combined
+        t.combined.clone()
     }
 }
 

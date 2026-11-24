@@ -26,6 +26,7 @@
 use crate::DepthOfFieldParameters;
 use crate::settings::DepthOfField as Level;
 use crate::shading::gbuffer::COLOR;
+use crate::view::compile::{Compiled, SharedModule};
 use crate::view::effective::DepthOfFieldFrame;
 use crate::view::frame::FrameContext;
 use crate::view::targets::target_with_usage;
@@ -127,8 +128,11 @@ pub(crate) fn mirrors() -> Vec<crate::shading::layout_tests::Mirror> {
     )]
 }
 
-/// The stage: nothing until a frame runs it.
-pub(crate) struct DepthOfField(Option<Filter>);
+/// The stage: nothing until a frame runs it. Its programs, constant buffer
+/// and sampler are one compiled bundle, with the targets they fill.
+pub(crate) struct DepthOfField(Compiled<Filter>);
+
+const LABEL: &str = "depth of field";
 
 /// The targets for one frame size.
 struct Targets {
@@ -202,15 +206,12 @@ struct Filter {
 
 impl Filter {
     fn new(device: &wgpu::Device) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("depth of field"),
-            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&DEPTH_OF_FIELD]).into()),
-        });
+        let shader = SharedModule::composed(LABEL, &DEPTH_OF_FIELD);
         let pipelines = ENTRY_POINTS.map(|entry| {
             device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: None,
-                module: &shader,
+                module: shader.get(device),
                 entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &[("DOF_TILESIZE", f64::from(TILE_SIZE))],
@@ -244,20 +245,20 @@ impl Filter {
 }
 
 impl DepthOfField {
-    pub fn new(device: &wgpu::Device, enabled: bool) -> Self {
-        Self(enabled.then(|| Filter::new(device)))
+    pub fn new() -> Self {
+        Self(Compiled::default())
     }
 
     /// The focused frame, while the stage holds one.
     #[cfg(any(test, feature = "diagnostics"))]
     pub fn output(&self) -> Option<&wgpu::TextureView> {
-        Some(&self.0.as_ref()?.targets.as_ref()?.output)
+        Some(&self.0.ready()?.targets.as_ref()?.output)
     }
 
     /// Drops the bind groups, which hold frame views and shared targets
     /// that a resize or a new antialiasing context replaces.
     pub fn forget_inputs(&mut self) {
-        if let Some(filter) = &mut self.0 {
+        if let Some(filter) = self.0.ready_mut() {
             filter.groups.clear();
         }
     }
@@ -266,20 +267,22 @@ impl DepthOfField {
     /// the stages that read it then drop the groups that bind the old one.
     pub fn take_replaced(&mut self) -> bool {
         self.0
-            .as_mut()
+            .ready_mut()
             .is_some_and(|filter| std::mem::take(&mut filter.replaced))
     }
 
     /// Focuses `frame`, the antialiased HDR frame, while the frame runs
     /// depth of field: the focused frame, or `None` when it did not run, in
     /// which case the stage releases its targets and keeps its pipelines.
+    /// A planning pass that finds the pipelines missing queues them and
+    /// runs nothing (`Renderer::compile`).
     pub fn encode(
         &mut self,
         ctx: &mut FrameContext<'_>,
         frame: &wgpu::TextureView,
     ) -> Option<&wgpu::TextureView> {
         let Some(lens) = ctx.effective.depth_of_field else {
-            if let Some(filter) = &mut self.0
+            if let Some(filter) = self.0.ready_mut()
                 && filter.targets.take().is_some()
             {
                 filter.replaced = true;
@@ -297,7 +300,7 @@ impl DepthOfField {
             size,
             ctx.sizes.render,
         );
-        let filter = self.0.get_or_insert_with(|| Filter::new(ctx.device));
+        let filter = self.0.get(ctx.compiler, LABEL, || Filter::new)?;
         filter.dispatch(
             (ctx.device, ctx.queue),
             ctx.encoder,

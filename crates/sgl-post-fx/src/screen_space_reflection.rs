@@ -8,10 +8,11 @@
 //! Implements [screen-space reflection post-process effect](https://github.com/DiligentGraphics/DiligentFX/tree/master/PostProcess/ScreenSpaceReflection).
 use crate::post_fx_context::{self, BlueNoiseDimension, PostFXContext, TextureOperationAttribs};
 use crate::render_technique::{
-    DepthStencilStateDesc, PostFXRenderTechnique, Resource, create_shader,
+    DepthStencilStateDesc, InPlace, Pipelines, PostFXRenderTechnique, Resource, create_shader,
 };
 use crate::structures::ScreenSpaceReflectionAttribs;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Maximum mip level of depth buffer used in the Hi-Z tracing
 /// (`SSR_DEPTH_HIERARCHY_MAX_MIP`).
@@ -148,6 +149,8 @@ struct Resources {
 
 pub struct ScreenSpaceReflection {
     render_tech: HashMap<RenderTechniqueKey, PostFXRenderTechnique>,
+    /// Who creates the techniques' pipelines.
+    pipelines: Pipelines,
     ssr_attribs: ScreenSpaceReflectionAttribs,
     constant_buffer: wgpu::Buffer,
     resources: Option<Resources>,
@@ -295,6 +298,7 @@ impl ScreenSpaceReflection {
         };
         Self {
             render_tech: HashMap::new(),
+            pipelines: Arc::new(InPlace),
             ssr_attribs,
             constant_buffer,
             resources: None,
@@ -323,6 +327,13 @@ impl ScreenSpaceReflection {
                 ..Default::default()
             }),
         }
+    }
+
+    /// Gives the effect's techniques another pipeline compiler than
+    /// `InPlace` (`render_technique::PipelineCompiler`), before its first
+    /// `execute`.
+    pub fn set_pipeline_compiler(&mut self, pipelines: Pipelines) {
+        self.pipelines = pipelines;
     }
 
     /// Prepares resources for the effect.
@@ -620,6 +631,9 @@ impl ScreenSpaceReflection {
     }
 
     fn prepare_shaders_and_pso(&mut self, device: &wgpu::Device) -> bool {
+        let pipelines = self.pipelines.clone();
+        // Ready once every technique has its pipeline (PROVENANCE DFX-2).
+        let mut ready = true;
         let flag = |set: bool| if set { "1" } else { "0" };
         let tile_size = DENOISER_TILE_SIZE.to_string();
         let macros = [
@@ -641,19 +655,15 @@ impl ScreenSpaceReflection {
         let triangle_depth_05 = [("TRIANGLE_DEPTH", "0.5")];
         let triangle_depth_10 = [("TRIANGLE_DEPTH", "1.0")];
         let vs = |macros: &[(&str, &str)]| {
-            create_shader(
-                device,
-                "FullScreenTriangleVS.fx",
-                "FullScreenTriangleVS",
-                macros,
-            )
+            create_shader("FullScreenTriangleVS.fx", "FullScreenTriangleVS", macros)
         };
-        let ps = |file: &str, entry: &'static str| create_shader(device, file, entry, &macros);
+        let ps = |file: &str, entry: &'static str| create_shader(file, entry, &macros);
 
         {
             let tech = self.render_technique(RenderTech::ComputeHierarchicalDepthBuffer);
             if !tech.is_initialized_pso() {
                 tech.initialize_pso(
+                    &*pipelines,
                     device,
                     "ScreenSpaceReflection::ComputeHierarchicalDepthBuffer",
                     &vs(&[]),
@@ -667,11 +677,13 @@ impl ScreenSpaceReflection {
                     DepthStencilStateDesc::DisableDepth,
                 );
             }
+            ready &= tech.is_initialized_pso();
         }
         {
             let tech = self.render_technique(RenderTech::ComputeStencilMaskAndExtractRoughness);
             if !tech.is_initialized_pso() {
                 tech.initialize_pso(
+                    &*pipelines,
                     device,
                     "ScreenSpaceReflection::ComputeStencilMaskAndExtractRoughness",
                     &vs(&triangle_depth_10),
@@ -689,11 +701,13 @@ impl ScreenSpaceReflection {
                     DepthStencilStateDesc::WriteAlways,
                 );
             }
+            ready &= tech.is_initialized_pso();
         }
         {
             let tech = self.render_technique(RenderTech::ComputeDownsampledStencilMask);
             if !tech.is_initialized_pso() {
                 tech.initialize_pso(
+                    &*pipelines,
                     device,
                     "ScreenSpaceReflection::ComputeDownsampledStencilMask",
                     &vs(&triangle_depth_10),
@@ -708,6 +722,7 @@ impl ScreenSpaceReflection {
                     DepthStencilStateDesc::WriteAlways,
                 );
             }
+            ready &= tech.is_initialized_pso();
         }
         {
             let mut layout = vec![
@@ -728,6 +743,7 @@ impl ScreenSpaceReflection {
             let tech = self.render_technique(RenderTech::ComputeIntersection);
             if !tech.is_initialized_pso() {
                 tech.initialize_pso(
+                    &*pipelines,
                     device,
                     "ScreenSpaceReflection::ComputeIntersection",
                     &vs(&triangle_depth_05),
@@ -742,6 +758,7 @@ impl ScreenSpaceReflection {
                     DepthStencilStateDesc::EnableDepthNoWrites,
                 );
             }
+            ready &= tech.is_initialized_pso();
         }
         {
             let classify: &[_] = &[
@@ -768,6 +785,7 @@ impl ScreenSpaceReflection {
                 let tech = self.render_technique(render_tech);
                 if !tech.is_initialized_pso() {
                     tech.initialize_pso(
+                        &*pipelines,
                         device,
                         "ScreenSpaceReflection::DenoiserTiles",
                         &vs(&[]),
@@ -778,6 +796,7 @@ impl ScreenSpaceReflection {
                         DepthStencilStateDesc::DisableDepth,
                     );
                 }
+                ready &= tech.is_initialized_pso();
             }
         }
         {
@@ -785,6 +804,7 @@ impl ScreenSpaceReflection {
             let tech = self.render_technique(RenderTech::ComputeSpatialReconstruction);
             if !tech.is_initialized_pso() {
                 tech.initialize_pso(
+                    &*pipelines,
                     device,
                     "ScreenSpaceReflection::ComputeSpatialReconstruction",
                     &vs(&triangle_depth_05),
@@ -812,11 +832,13 @@ impl ScreenSpaceReflection {
                     DepthStencilStateDesc::EnableDepthNoWrites,
                 );
             }
+            ready &= tech.is_initialized_pso();
         }
         {
             let tech = self.render_technique(RenderTech::ComputeTemporalAccumulation);
             if !tech.is_initialized_pso() {
                 tech.initialize_pso(
+                    &*pipelines,
                     device,
                     "ScreenSpaceReflection::ComputeTemporalAccumulation",
                     &vs(&triangle_depth_05),
@@ -847,11 +869,13 @@ impl ScreenSpaceReflection {
                     DepthStencilStateDesc::EnableDepthNoWrites,
                 );
             }
+            ready &= tech.is_initialized_pso();
         }
         {
             let tech = self.render_technique(RenderTech::ComputeBilateralCleanup);
             if !tech.is_initialized_pso() {
                 tech.initialize_pso(
+                    &*pipelines,
                     device,
                     "ScreenSpaceReflection::ComputeBilateralCleanup",
                     &vs(&triangle_depth_05),
@@ -877,9 +901,9 @@ impl ScreenSpaceReflection {
                     DepthStencilStateDesc::EnableDepthNoWrites,
                 );
             }
+            ready &= tech.is_initialized_pso();
         }
-        // wgpu creates pipelines synchronously.
-        true
+        ready
     }
 
     /// DFX-12: DiligentFX's TAA rule for when history is invalid

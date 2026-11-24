@@ -8,11 +8,12 @@ use crate::settings::WorldSpaceReflections;
 use crate::shading;
 use crate::shading::RayQueryForm;
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::{Compiled, Compiler};
 use crate::view::frame::HardwareRays;
 use crate::view::history::{HistoryFrame, StageHistory};
 use crate::view::pipelines::{LitConstants, PipelineSpecialisations};
 use crate::view::reflection_camera;
-use crate::view::trace_paths::{TracePath, TracePaths};
+use crate::view::trace_paths::{TracePaths, TracePipelines};
 use glam::Mat4;
 use std::collections::HashMap;
 
@@ -156,6 +157,42 @@ impl Denoise {
     }
 }
 
+/// The classification's and the denoiser's programs, which compile apart
+/// from the trace's.
+struct Programs {
+    classify: classify::Classify,
+    resolve: Denoise,
+    temporal: Denoise,
+    upsample: Denoise,
+}
+
+impl Programs {
+    fn new(device: &wgpu::Device) -> Self {
+        let denoise_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("world-space reflection denoise"),
+            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&DENOISE]).into()),
+        });
+        let compute = |entry_point| {
+            Denoise::new(
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(entry_point),
+                    layout: None,
+                    module: &denoise_shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    cache: None,
+                }),
+            )
+        };
+        Self {
+            classify: classify::Classify::new(device),
+            resolve: compute(WORLD_RESOLVE_ENTRY),
+            temporal: compute(WORLD_TEMPORAL_ENTRY),
+            upsample: compute(WORLD_UPSAMPLE_ENTRY),
+        }
+    }
+}
+
 /// World-space rays and their denoiser. Owns its pipelines and their groups,
 /// its targets (reallocated when the render size changes) and its history,
 /// which continues across consecutive valid frames.
@@ -167,12 +204,10 @@ pub(crate) struct WorldReflections {
     /// rays reach static geometry (`world_reach_all`) and path, each
     /// created when a frame first needs it, as the geometry pipelines
     /// specialise on the scene's rectangle lights and decals.
-    trace: HashMap<((LitConstants, bool), Option<RayQueryForm>), wgpu::ComputePipeline>,
+    trace: TracePipelines<(LitConstants, bool)>,
     specialisations: PipelineSpecialisations<LitConstants>,
-    classify: classify::Classify,
-    resolve: Denoise,
-    temporal: Denoise,
-    upsample: Denoise,
+    /// The classification's and the denoiser's programs.
+    programs: Compiled<Programs>,
     sampler: wgpu::Sampler,
     params: wgpu::Buffer,
     targets: Targets,
@@ -228,10 +263,6 @@ impl WorldReflections {
         scene: &wgpu::BindGroupLayout,
         size: [u32; 2],
     ) -> Self {
-        let denoise_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("world-space reflection denoise"),
-            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&DENOISE]).into()),
-        });
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -268,18 +299,6 @@ impl WorldReflections {
             entry(11, write(crate::shading::gbuffer::COLOR)),
             entry(12, write(wgpu::TextureFormat::R32Float)),
         ];
-        let compute = |entry_point| {
-            Denoise::new(
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(entry_point),
-                    layout: None,
-                    module: &denoise_shader,
-                    entry_point: Some(entry_point),
-                    compilation_options: Default::default(),
-                    cache: None,
-                }),
-            )
-        };
         Self {
             paths: TracePaths::new(
                 "world-space reflection rays",
@@ -290,10 +309,7 @@ impl WorldReflections {
             ),
             trace: HashMap::new(),
             specialisations: PipelineSpecialisations::default(),
-            classify: classify::Classify::new(device),
-            resolve: compute(WORLD_RESOLVE_ENTRY),
-            temporal: compute(WORLD_TEMPORAL_ENTRY),
-            upsample: compute(WORLD_UPSAMPLE_ENTRY),
+            programs: Compiled::default(),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
@@ -326,21 +342,23 @@ impl WorldReflections {
 
     /// Makes the trace's pipeline compiled with `lit` for the path
     /// `hardware` takes, its rays reaching static geometry where `all`;
-    /// returns the path it took (`TracePaths::pipeline`).
+    /// returns the path it took, or none in a planning pass while the
+    /// pipeline is missing (`TracePaths::pipeline`).
     fn trace(
         &mut self,
-        device: &wgpu::Device,
+        gpu: (&wgpu::Device, &Compiler),
         lit: LitConstants,
         hardware: Option<HardwareRays<'_>>,
         all: bool,
-    ) -> Option<RayQueryForm> {
+    ) -> Option<Option<RayQueryForm>> {
         self.specialisations
             .retain(&mut self.trace, lit, |&((lit, _), _)| lit);
         self.paths.pipeline(
-            device,
+            gpu,
             hardware,
             (&mut self.trace, (lit, all)),
-            |TracePath { shader, layout, .. }| {
+            "world-space reflection rays",
+            move |device, shader, layout| {
                 let constants = [
                     lit.constants().as_slice(),
                     &[("world_reach_all", f64::from(u8::from(all)))],
@@ -365,11 +383,30 @@ impl WorldReflections {
     /// probes) and the scene's group 1; `lit_constants`, the scene's
     /// (`LitConstants::of`); `hardware`, the hardware path the frame's rays
     /// take, if any; `reach`, what they reach (`Moving` or `All`).
+    /// Asks for the trace's pipeline and the other programs: the form the
+    /// rays take, or none in a planning pass while either is missing.
+    pub fn programs(
+        &mut self,
+        gpu: (&wgpu::Device, &Compiler),
+        lit_constants: LitConstants,
+        hardware: Option<HardwareRays<'_>>,
+        reach: WorldSpaceReflections,
+    ) -> Option<Option<RayQueryForm>> {
+        let all = reach == WorldSpaceReflections::All;
+        // Both are asked for before a planning pass that lacks one leaves
+        // the stage out.
+        let form = self.trace(gpu, lit_constants, hardware, all);
+        let programs = self
+            .programs
+            .get(gpu.1, "world-space reflections", || Programs::new);
+        programs.and(form)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         queue: &wgpu::Queue,
         [lit, scene]: [&wgpu::BindGroup; 2],
         lit_constants: LitConstants,
@@ -380,8 +417,11 @@ impl WorldReflections {
         input: Inputs<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
+        let Some(form) = self.programs((device, compiler), lit_constants, hardware, reach) else {
+            return;
+        };
+        let programs = self.programs.ready_mut().expect("asked for above");
         let all = reach == WorldSpaceReflections::All;
-        let form = self.trace(device, lit_constants, hardware, all);
         let resized = self.targets.full != size;
         if resized {
             self.targets = Targets::new(device, size);
@@ -439,7 +479,7 @@ impl WorldReflections {
             (3, view(input.f0)),
             (4, self.params.as_entire_binding()),
         ];
-        self.classify.encode(
+        programs.classify.encode(
             device,
             encoder,
             t.reduced,
@@ -482,7 +522,11 @@ impl WorldReflections {
                 label: Some("world-space reflection rays"),
                 timestamp_writes: timing.and_then(|t| t.compute_pass("world reflection rays")),
             });
-            pass.set_pipeline(&self.trace[&((lit_constants, all), form)]);
+            pass.set_pipeline(
+                self.trace[&((lit_constants, all), form)]
+                    .ready()
+                    .expect("the trace's pipeline was made above"),
+            );
             pass.set_bind_group(0, lit, &[]);
             pass.set_bind_group(1, scene, &[]);
             pass.set_bind_group(3, trace_group, &[]);
@@ -512,7 +556,7 @@ impl WorldReflections {
             pass.dispatch_workgroups(grid[0].div_ceil(8), grid[1].div_ceil(8), 1);
         };
         dispatch(
-            &mut self.resolve,
+            &mut programs.resolve,
             0,
             "world reflection resolve",
             &[
@@ -528,7 +572,7 @@ impl WorldReflections {
             encoder,
         );
         dispatch(
-            &mut self.temporal,
+            &mut programs.temporal,
             current,
             "world reflection temporal",
             &[
@@ -549,7 +593,7 @@ impl WorldReflections {
             encoder,
         );
         dispatch(
-            &mut self.upsample,
+            &mut programs.upsample,
             current,
             "world reflection upsample",
             &[

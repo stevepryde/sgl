@@ -205,7 +205,7 @@ impl Builder {
     }
 
     /// A pyramid over a depth of `size`.
-    pub fn pyramid(&self, device: &wgpu::Device, size: [u32; 2]) -> Pyramid {
+    pub fn pyramid(device: &wgpu::Device, size: [u32; 2]) -> Pyramid {
         let first = first_level(size);
         let levels = levels(first);
         let texture = device.create_texture(&wgpu::TextureDescriptor {

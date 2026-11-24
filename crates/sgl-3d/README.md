@@ -2929,14 +2929,15 @@ submission. Run probe captures between frames, never between a frame's
 `render` and its `finish_frame`. Skip rendering zero-sized or minimized
 outputs in the game.
 
-Creating a view sets up one camera's rendering resources. SGL can create
-shaders and pipelines synchronously during that call or the first frame that
-uses an effect. Dynamic GI, deformation and GPU culling skip pipeline creation
-until they have work. Transparent effects such as heat shimmer need visible
-content, and settings such as motion blur and SMAA select their own pipelines.
-A view builds its local exposure and presentation pipelines on their first
-use and keeps them across toggles and resizes. A diagnostics capture uses a
-different final pipeline from direct presentation.
+Creating a view sets up one camera's rendering resources and no shader or
+pipeline (FSR's upscaler apart, below). A stage creates its shaders and
+pipelines in the first frame that uses it: dynamic GI, deformation and GPU
+culling once they have work, transparent effects such as heat shimmer once
+they have visible content, and settings such as motion blur and SMAA when
+they are selected. A view keeps most of them across toggles and resizes;
+Velvet, the post-effect context on a TAA toggle and SMAA's preset are made
+again. A diagnostics capture uses a different final pipeline from direct
+presentation.
 
 `Renderer::compile` readies a frame's shaders and pipelines before it, for
 the actual scene, views, settings, frame input and output, so the frame
@@ -2953,42 +2954,47 @@ transition (another level's scene, a settings change, a resize).
   frame. For each view it is a render that was not finished, with what that
   restarts, so compile a view while the loading screen is what the player
   sees, and between frames: after `finish_frame`, before the next `render`.
-- Geometry pipelines, with their shader modules, and the mip chain stage's
-  programs, while a decoded image waits for its chain, are the jobs
-  (`CompileJob::run`): `Send` on native, where the game runs them on its own
-  threads and the device keeps serving the loading screen meanwhile. A
-  call after the mip chain job has run builds the waiting chains.
-- Every other stage's programs are created by the call itself, on the
-  calling thread, the first time a pass meets them: that call blocks for as
-  long as they take, which is seconds before the graphics driver has cached
-  them and tens of milliseconds after, and the frame then creates none.
+- Every shader module and pipeline the frame needs is a job
+  (`CompileJob::run`; `CompileJob::label` names its stage's program set):
+  `Send` on native, where the game runs them on its own threads, in
+  parallel on several, and the device keeps serving the loading screen
+  meanwhile. Neither the call nor the frame it readied creates one on its
+  own thread.
+- FSR is the exception. Its upscaler (`sp-fidelity`) creates its own
+  pipelines on the calling thread: its passes' in the `View::new` or
+  `View::resize` that builds its context (FSR selected, its version
+  changed, or the view's scene size changed), and a few small helper
+  pipelines where that context first dispatches, in the first frame after
+  it. A
+  planning pass does not run FSR, so `compile` neither restarts its
+  accumulation nor moves its jitter sequence.
 - A `View` stays on the thread that created it (its FSR context is not
-  `Send`). On native, a game that creates its view and calls `compile` and
-  `render` on a rendering thread keeps the whole of it off its window
-  thread, which handles input and loading feedback meanwhile.
+  `Send`), and `compile` runs there; it only plans.
 - `render` never waits on it. A program still missing is created where it
   is drawn; a job that has not started runs in place; one a thread is
   running is waited for. A job dropped without running is offered again by
   the next call, and a failed one is reported once and created in place by
   the frame that draws it, which reports through the device as before.
 - While jobs it returned are neither finished nor dropped, a call runs no
-  pass and reports them as pending.
+  pass and reports them as pending. `pending` can rise between calls: a
+  stage whose programs are missing leaves out what it feeds, which a later
+  call asks for. Only 0 says the frame is ready.
 - A renderer shows one scene at a time: compile a level with a renderer
   that draws no other scene meanwhile, or it drops what the other needs.
-- A program a stage takes only once a frame has finished (the camera's
-  lighting with screen-space indirect light's kept result) is created by
-  that frame. Most resizes need no program; FSR's context is built by
-  `View::resize` itself.
+- A program a stage first uses once the view has a finished frame (motion
+  blur; the camera's lighting with screen-space indirect light's kept
+  result) is a job too, queued with the first frame's. Most resizes need no
+  program.
 - In the browser, pipeline creation returns at once and the browser compiles
-  in its GPU process, which presents nothing until it has. Today a browser
-  game gets a first frame that creates nothing, geometry pipelines (and the
-  mip chain programs) paced a job at a time (run one or a few an animation frame, so each stall is one
-  job's compile), and the other stages' programs compiled together after
-  the first call: one stall behind the loading screen, where it was at the
-  first frame. With no change to game code it will get every program paced
-  that way once the other stages' are jobs, and no stall once wgpu exposes
-  WebGPU's asynchronous pipeline creation (gfx-rs/wgpu#3794), which a job
-  then uses; `Compilation::errors` is filled in the browser from then too.
+  in its GPU process, which presents nothing until it has. A browser game
+  runs one job or a few, then waits for `Queue::on_submitted_work_done`,
+  which fires once the browser has created them, before it runs more: each
+  stall is then one batch's compile, where jobs run every animation frame
+  without that wait pile up in the GPU process and stall the page for all
+  of them together. The first frame then creates nothing. WebGPU's
+  asynchronous pipeline creation, which `sgl-webgpu` makes reachable, will
+  remove the stall with no change to game code, and fill
+  `Compilation::errors` in the browser too (#880).
 
 The [loading example](../../examples/sgl-3d/examples/loading.rs) is the loop to copy, with
 the game's worker threads and what the run costs, and

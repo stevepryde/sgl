@@ -5,6 +5,7 @@
 use crate::settings::ScreenSpaceIndirect;
 use crate::shading::uniforms::ViewUniform;
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::{Compiled, Compiler};
 use crate::view::history::{HistoryFrame, Kept, StageRun};
 
 /// The pass's four dispatches.
@@ -209,7 +210,9 @@ pub(crate) struct Inputs<'a> {
     pub motion: &'a wgpu::TextureView,
 }
 
-pub(crate) struct ScreenIndirect {
+/// The pass's programs, apart from the kept result, which selects the
+/// camera lighting's pipeline whether or not they are compiled yet.
+struct Programs {
     prefilter: wgpu::ComputePipeline,
     gather: wgpu::ComputePipeline,
     denoise: wgpu::ComputePipeline,
@@ -217,6 +220,13 @@ pub(crate) struct ScreenIndirect {
     /// The prefilter's, gather's and denoise's groups, and the
     /// accumulation's for each half it writes.
     groups: [CachedGroup; 5],
+}
+
+/// The set's name for its compile job.
+const LABEL: &str = "screen-space indirect light";
+
+pub(crate) struct ScreenIndirect {
+    programs: Compiled<Programs>,
     params: wgpu::Buffer,
     kept_view: wgpu::Buffer,
     targets: Option<Targets>,
@@ -226,8 +236,8 @@ pub(crate) struct ScreenIndirect {
     history: Kept<(StageRun, crate::view::effective::ScreenIndirect)>,
 }
 
-impl ScreenIndirect {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+impl Programs {
+    fn new(device: &wgpu::Device) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("screen-space indirect light"),
             source: wgpu::ShaderSource::Wgsl(
@@ -255,6 +265,18 @@ impl ScreenIndirect {
             CachedGroup::new(accumulate.get_bind_group_layout(0)),
             CachedGroup::new(accumulate.get_bind_group_layout(0)),
         ];
+        Self {
+            prefilter,
+            gather,
+            denoise,
+            accumulate,
+            groups,
+        }
+    }
+}
+
+impl ScreenIndirect {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
         let uniform = |label, size| {
             crate::counters::buffer(
                 device,
@@ -267,11 +289,7 @@ impl ScreenIndirect {
             )
         };
         Self {
-            prefilter,
-            gather,
-            denoise,
-            accumulate,
-            groups,
+            programs: Compiled::default(),
             params: uniform(
                 "screen-space indirect parameters",
                 std::mem::size_of::<Params>() as u64,
@@ -347,7 +365,7 @@ impl ScreenIndirect {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         inputs: &Inputs<'_>,
@@ -356,6 +374,9 @@ impl ScreenIndirect {
         settings: crate::view::effective::ScreenIndirect,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
+        let Some(programs) = self.programs.get(compiler, LABEL, || Programs::new) else {
+            return;
+        };
         let &(run, ..) = self
             .history
             .left()
@@ -394,7 +415,7 @@ impl ScreenIndirect {
         crate::counters::write_buffer(queue, &self.params, 0, bytemuck::bytes_of(&params));
         let texture = |binding, view| (binding, wgpu::BindingResource::TextureView(view));
         let workgroups = targets.half.map(|extent| extent.div_ceil(8));
-        let group = self.groups[0].get(
+        let group = programs.groups[0].get(
             device,
             "screen-space indirect bounce sources",
             &[
@@ -407,8 +428,8 @@ impl ScreenIndirect {
                 texture(20, &targets.source_levels[3]),
             ],
         );
-        dispatch(encoder, &self.prefilter, group, workgroups, timing);
-        let group = self.groups[1].get(
+        dispatch(encoder, &programs.prefilter, group, workgroups, timing);
+        let group = programs.groups[1].get(
             device,
             "screen-space indirect gather",
             &[
@@ -421,8 +442,8 @@ impl ScreenIndirect {
                 texture(21, &targets.sources),
             ],
         );
-        dispatch(encoder, &self.gather, group, workgroups, timing);
-        let group = self.groups[2].get(
+        dispatch(encoder, &programs.gather, group, workgroups, timing);
+        let group = programs.groups[2].get(
             device,
             "screen-space indirect denoise",
             &[
@@ -432,9 +453,9 @@ impl ScreenIndirect {
                 texture(10, &targets.denoised),
             ],
         );
-        dispatch(encoder, &self.denoise, group, workgroups, timing);
+        dispatch(encoder, &programs.denoise, group, workgroups, timing);
         let current = run.current;
-        let group = self.groups[3 + current].get(
+        let group = programs.groups[3 + current].get(
             device,
             "screen-space indirect accumulation",
             &[
@@ -449,7 +470,13 @@ impl ScreenIndirect {
                 (16, self.kept_view.as_entire_binding()),
             ],
         );
-        dispatch(encoder, &self.accumulate, group, workgroups, timing);
+        dispatch(encoder, &programs.accumulate, group, workgroups, timing);
+    }
+
+    /// Asks for the programs in a planning pass that cannot encode the
+    /// pass yet (its depth pyramid's stage is still compiling).
+    pub(crate) fn plan(&mut self, compiler: &Compiler) {
+        self.programs.get(compiler, LABEL, || Programs::new);
     }
 
     /// Settles the last render's run: see `Kept::settle`.

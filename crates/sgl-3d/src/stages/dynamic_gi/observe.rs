@@ -242,7 +242,11 @@ impl Observer {
             observer.skipping = true;
             return None;
         }
-        observer.trace_pipeline(ctx.device, lit, &paths.path(ctx.device, None).shader);
+        observer.trace_pipeline(
+            ctx.device,
+            lit,
+            paths.path(ctx.device, None).shader(ctx.device),
+        );
         Some(observer)
     }
 

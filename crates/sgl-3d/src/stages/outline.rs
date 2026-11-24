@@ -475,8 +475,7 @@ impl Outlining {
             );
         }
         let Some(programs) = self.programs.get(ctx.compiler, "outline", || {
-            let device = ctx.device.clone();
-            move || Programs::new(&device, format, encodes_srgb)
+            move |device: &wgpu::Device| Programs::new(device, format, encodes_srgb)
         }) else {
             // A planning pass: the job is queued and the passes left out.
             return;

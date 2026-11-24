@@ -149,7 +149,13 @@ fn opaque_surfaces_under_a_receiver_keep_their_environment_specular_once() {
             },
         };
         let mut encoder = device.create_command_encoder(&Default::default());
-        source.encode(&mut encoder, &device, &queue, input(), None);
+        source.encode(
+            &mut encoder,
+            (&device, &crate::view::compile::Compiler::new(&device)),
+            &queue,
+            input(),
+            None,
+        );
         source.compose(
             &mut encoder,
             &device,

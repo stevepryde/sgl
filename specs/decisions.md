@@ -1884,3 +1884,50 @@ Use the [current specs](README.md) for implementation and the
   dispatch. Nor kept: a refused request's rays for a later, smaller one,
   which only a probe-by-probe walk keeps deterministically; the prefix
   leaves a room less than one claim's rays.
+- **D-86** Decision, 2026-11-24 (#879): every shader module and pipeline a
+  frame's stages create is a compile job (AR-13), which completes D-71:
+  after `Renderer::compile` and its jobs, neither a `compile` call nor the
+  frames it readied create one on their thread. A stage holds its programs
+  in the `Compiled` slot built for the geometry cache, as a set or as its
+  whole lazily made bundle, and leaves a planning pass's commands out
+  while they are missing; a stage whose result selects another's programs
+  keeps that result outside the slot, and a program first used the frame
+  after is asked for in the planning pass of the frame before. Not taken:
+  splitting every stage's programs from its targets and bind groups,
+  which restructures each stage for no gain over the bundle; and a list of
+  variants to precompile, which restates the stages' choices apart from
+  their drawing (D-71). `sgl-post-fx` gets a `PipelineCompiler` of its
+  own, restoring DiligentFX's pending state (PROVENANCE DFX-2), so it
+  still knows nothing of SGL3D. `sp-fidelity`'s pipelines stay the port's:
+  an FSR view creates its context's (10 for FSR2, 12 for FSR3 at 0.3.3) in
+  the `View::new` or `View::resize` that builds the context, and a few
+  helpers at that context's first dispatch, in the frame after. A
+  planning pass no longer runs FSR: one that did restarted the view's
+  accumulation and moved its jitter sequence, so a compiled FSR view's
+  frames differed from an ordinary one's. Stages that landed while this
+  was built (depth of field, planar reflections, a game's HDR effect, sprites,
+  material mip chains, outlines, instance footprints)
+  joined the same way. Probe captures, a live probe's
+  refresh among them, still create their own programs: `compile` readies
+  frames (#889). A job's body is where #880 starts WebGPU's asynchronous
+  creation through `sgl-webgpu` (D-75); `Compilation` and `CompileJob`
+  keep their shape.
+  As built (Apple M5, Metal; Chromium 149 through `sgl-webgpu`; shared
+  machine, provisional), the `loading` example's block world needs 46
+  pipelines and 9 shader modules for its first frame, 34 jobs. Warm, from
+  the loop's start to the first level frame complete: 76 to 79 ms with
+  four or eight job threads (45 to 48 ms compiling) and 117 to 129 ms with
+  one, against 112 to 129 ms ordinary, whose first `render` takes 91 to
+  105 ms on the loop's thread; the longest gap between loading-screen
+  frames is 29 to 32 ms compiled (the planning pass's own frame setup)
+  against 118 to 134 ms ordinary. On starts where the driver compiled
+  (1.4 to 5.2 s of compiling) the longest gap stayed 29 to 41 ms, where
+  D-71's first step stalled 2.5 to 5.9 s. In Chromium, warm, jobs paced on
+  the queue's work-done callback: one job a batch, startup 442 to 450 ms
+  and a longest gap between animation frames of 23 to 28 ms; four, 275 ms
+  and 34 to 37 ms; ordinary, 217 to 225 ms and 156 to 160 ms. Jobs run
+  every animation frame without that wait piled up in the browser's GPU
+  process: one cold start stalled 5.0 s. The startup comparison's
+  prepared path (#852's harness) readies SGL in 109 ms cold and 26 ms
+  warm, its longest startup frame gap 15 to 18 ms, where three.js r187's
+  `compileAsync` took 330 and 53 ms with a gap of 75 to 84 ms.

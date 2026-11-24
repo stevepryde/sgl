@@ -10,6 +10,7 @@ pub(crate) mod world;
 use crate::scene::probes::UploadedProbes;
 use crate::settings::{ReflectionMethod, WorldSpaceReflections};
 use crate::view::bindings::FogVolume;
+use crate::view::compile::Compiled;
 use crate::view::effective::{Effective, ScreenSpace};
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::LitConstants;
@@ -72,7 +73,7 @@ pub(crate) struct Reflections {
     /// Completion's and composition's `source::ReflectionEnvironment`.
     environment_parameters: wgpu::Buffer,
     /// While Velvet is the screen-space method.
-    velvet: Option<velvet::Velvet>,
+    velvet: Compiled<velvet::Velvet>,
     /// While world-space rays run.
     world: Option<world::WorldReflections>,
     /// While the view shows a planar reflector's picture.
@@ -108,7 +109,7 @@ impl Reflections {
         Self {
             source: source::ReflectionSource::new(device, size, variant),
             environment_parameters: source::environment_uniform(device, 0., 1.),
-            velvet: None,
+            velvet: Compiled::default(),
             world: None,
             planar: None,
             full_visibility: crate::counters::texture_init(
@@ -177,8 +178,18 @@ impl Reflections {
             .scene
             .specular_probes()
             .unwrap_or(&ctx.bindings.empty_probes);
-        self.source
-            .use_variant(ctx.device, source_variant(ctx.effective));
+        let variant = source_variant(ctx.effective);
+        self.source.use_variant(ctx.device, variant);
+        // While the view shows a planar reflector it composes with a
+        // variant of its own; the one it takes when the reflector leaves
+        // is asked for with it, so turning away creates nothing.
+        let without_planar = source::Variant {
+            composition: ctx.effective.screen_space.is_some(),
+            ..variant
+        };
+        if without_planar != variant {
+            self.source.ask_variant(ctx.compiler, without_planar);
+        }
         let visibility = ambient_occlusion.unwrap_or(&self.full_visibility).clone();
         let fog = ctx.bindings.fog();
         let sky = ctx.bindings.environment().pmrem.clone();
@@ -189,13 +200,18 @@ impl Reflections {
             &self.environment_parameters,
             &visibility,
         );
-        self.source
-            .encode(ctx.encoder, ctx.device, ctx.queue, inputs, ctx.timing);
+        self.source.encode(
+            ctx.encoder,
+            (ctx.device, ctx.compiler),
+            ctx.queue,
+            inputs,
+            ctx.timing,
+        );
     }
 
     /// Settles the last render's histories: see `Kept::settle`.
     pub fn settle(&mut self, finished: bool) {
-        if let Some(velvet) = &mut self.velvet {
+        if let Some(velvet) = self.velvet.ready_mut() {
             velvet.settle(finished);
         }
         if let Some(world) = &mut self.world {
@@ -221,7 +237,7 @@ impl Reflections {
         let screen_space = ctx.effective.screen_space;
         // A method that does not run keeps no history.
         if !screen_space.is_some_and(|ssr| ssr.method == ReflectionMethod::Velvet) {
-            self.velvet = None;
+            self.velvet.clear();
         }
         let reach = ctx.effective.world_space;
         if reach == WorldSpaceReflections::Off {
@@ -238,6 +254,25 @@ impl Reflections {
             planar.release_targets();
         }
         let (traced, fade) = traced(ctx);
+        // World-space rays are asked for before the screen-space method,
+        // which a planning pass may end while Velvet's programs compile.
+        if reach != WorldSpaceReflections::Off {
+            self.world
+                .get_or_insert_with(|| {
+                    world::WorldReflections::new(
+                        ctx.device,
+                        &ctx.bindings.lit,
+                        &ctx.bindings.scene,
+                        ctx.sizes.render,
+                    )
+                })
+                .programs(
+                    (ctx.device, ctx.compiler),
+                    LitConstants::of(ctx.scene),
+                    ctx.hardware_rays,
+                    reach,
+                );
+        }
         let t = ctx.targets;
         let surface = ctx.surface;
         let camera = ctx.views.reflection_camera;
@@ -260,9 +295,11 @@ impl Reflections {
                         ctx.timing,
                     )
                     .clone(),
+                // A planning pass that lacks Velvet's programs leaves the
+                // rest of the stage to the pass after its job.
                 ReflectionMethod::Velvet => self
                     .velvet
-                    .get_or_insert_with(|| velvet::Velvet::new(ctx.device))
+                    .get(ctx.compiler, "Velvet reflections", || velvet::Velvet::new)?
                     .encode(
                         ctx.device,
                         ctx.queue,
@@ -300,17 +337,10 @@ impl Reflections {
         };
         let reflected = &reflected;
         let world_space = if reach != WorldSpaceReflections::Off {
-            let world = self.world.get_or_insert_with(|| {
-                world::WorldReflections::new(
-                    ctx.device,
-                    &ctx.bindings.lit,
-                    &ctx.bindings.scene,
-                    ctx.sizes.render,
-                )
-            });
+            let world = self.world.as_mut().expect("asked for its programs above");
             world.encode(
                 ctx.encoder,
-                ctx.device,
+                (ctx.device, ctx.compiler),
                 ctx.queue,
                 [ctx.bindings.ray_hit_lit(), &ctx.scene.scene_group],
                 LitConstants::of(ctx.scene),

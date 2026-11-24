@@ -23,6 +23,7 @@
 //! They exist from the first frame whose contrasts are below 1 and are
 //! released by the first at 1, 1 and at resize. No history.
 use crate::shading::gbuffer::COLOR as HDR;
+use crate::view::compile::{Compiled, Compiler};
 
 /// The constants, V mapping and lookup the passes and the tone map share.
 pub(crate) static LOCAL_EXPOSURE: crate::shading::Module = crate::shading::Module {
@@ -205,7 +206,7 @@ struct Targets {
 
 #[derive(Default)]
 pub(super) struct LocalExposure {
-    pipelines: Option<Pipelines>,
+    pipelines: Compiled<Pipelines>,
     targets: Option<Targets>,
 }
 
@@ -406,16 +407,19 @@ impl LocalExposure {
     /// The base layer of `scene`, the image the tone map is about to read
     /// at `scene_size`, under the frame's `exposure`: the blurred grid and
     /// the upsampled Gaussian, which the tone map's lookup samples.
+    /// None in a planning pass while its pipelines are missing.
     pub fn encode(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         encoder: &mut wgpu::CommandEncoder,
         scene: &wgpu::TextureView,
         exposure: &wgpu::TextureView,
         scene_size: [u32; 2],
         timing: Option<&crate::timing::GpuTiming>,
-    ) -> (wgpu::TextureView, wgpu::TextureView) {
-        let pipelines = self.pipelines.get_or_insert_with(|| Pipelines::new(device));
+    ) -> Option<(wgpu::TextureView, wgpu::TextureView)> {
+        let pipelines = self
+            .pipelines
+            .get(compiler, "local exposure", || Pipelines::new)?;
         if self
             .targets
             .as_ref()
@@ -466,7 +470,7 @@ impl LocalExposure {
         pass.set_bind_group(0, &targets.groups[5], &[]);
         pass.dispatch_workgroups(base[0].div_ceil(8), base[1].div_ceil(8), 1);
         drop(pass);
-        (targets.grid_blurred.clone(), targets.base.clone())
+        Some((targets.grid_blurred.clone(), targets.base.clone()))
     }
 }
 

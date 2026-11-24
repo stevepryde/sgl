@@ -10,7 +10,14 @@ fn histogram_of(
     frame: &wgpu::TextureView,
     automatic: &AutoExposure,
 ) -> Vec<u32> {
-    let meter = exposure.metering.get_or_insert_with(|| Meter::new(device));
+    let meter = exposure
+        .metering
+        .get(
+            &crate::view::compile::Compiler::new(device),
+            "auto exposure",
+            || Meter::new,
+        )
+        .unwrap();
     meter.upload(
         queue,
         Metering {
@@ -51,7 +58,14 @@ fn adapt(
     metering: Metering<'_>,
 ) -> f32 {
     let mut encoder = device.create_command_encoder(&Default::default());
-    exposure.meter(device, queue, &mut encoder, frame, metering, None);
+    exposure.meter(
+        (device, &crate::view::compile::Compiler::new(device)),
+        queue,
+        &mut encoder,
+        frame,
+        metering,
+        None,
+    );
     queue.submit([encoder.finish()]);
     let multiplier: f32 = bytemuck::pod_read_unaligned(&read(device, queue, &exposure.exposure, 4));
     multiplier.log2() - metering.stops

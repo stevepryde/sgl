@@ -28,12 +28,12 @@ pub(crate) mod denoise;
 pub(crate) mod slots;
 
 use crate::settings::RayTracedShadowQuality;
-use crate::shading::RayQueryForm;
 use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::Compiled;
 use crate::view::frame::{FrameContext, ShadowMask};
 use crate::view::history::{Kept, StageRun};
-use crate::view::trace_paths::{TracePath, TracePaths};
+use crate::view::trace_paths::{TracePaths, TracePipelines};
 use std::collections::HashMap;
 
 /// Wicked's `DOWNSAMPLE`: the trace runs at half the render size.
@@ -205,9 +205,9 @@ pub(crate) struct TracedShadows {
     /// The trace's programs, with its group 3.
     paths: TracePaths,
     /// The trace's pipeline for each form a frame's rays took.
-    trace: HashMap<((), Option<RayQueryForm>), wgpu::ComputePipeline>,
-    temporal: Option<Pass>,
-    upsample: Option<Pass>,
+    trace: TracePipelines<()>,
+    temporal: Compiled<Pass>,
+    upsample: Compiled<Pass>,
     /// AMD's shadow denoiser over the first slots.
     denoiser: denoise::Denoiser,
     params: wgpu::Buffer,
@@ -291,8 +291,8 @@ impl TracedShadows {
         Self {
             paths: TracePaths::new("ray-traced shadow rays", &TRACE, &entries, lit, scene),
             trace: HashMap::new(),
-            temporal: None,
-            upsample: None,
+            temporal: Compiled::default(),
+            upsample: Compiled::default(),
             denoiser: denoise::Denoiser::default(),
             params: uniform_buffer(
                 "ray-traced shadow parameters",
@@ -361,7 +361,7 @@ impl TracedShadows {
             seed,
         });
         self.table = table;
-        self.denoiser.prepare(ctx.device, quality);
+        let denoiser = self.denoiser.prepare(ctx.compiler, quality);
         let shape = denoise::Shape::of(quality, table.lights[0]);
         crate::counters::write_buffer(ctx.queue, &self.slot_table, 0, bytemuck::bytes_of(&table));
         let targets = self.targets.as_ref().unwrap();
@@ -405,12 +405,12 @@ impl TracedShadows {
         // The trace's pipeline for the device's form, made through
         // `TracePaths::pipeline`, so that a candidate program that fails
         // falls the device back to the baseline before the group is made.
-        let device = ctx.device;
         let form = self.paths.pipeline(
-            device,
+            (ctx.device, ctx.compiler),
             Some(hardware),
             (&mut self.trace, ()),
-            |TracePath { shader, layout, .. }| {
+            "ray-traced shadow rays",
+            |device, shader, layout| {
                 device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("ray-traced shadow rays"),
                     layout: Some(layout),
@@ -421,6 +421,27 @@ impl TracedShadows {
                 })
             },
         );
+        let temporal = self
+            .temporal
+            .get(ctx.compiler, "ray-traced shadow temporal", || {
+                |device: &wgpu::Device| Pass::new(device, &TEMPORAL, TEMPORAL_ENTRY, &[])
+            });
+        let upsample = self
+            .upsample
+            .get(ctx.compiler, "ray-traced shadow upsample", || {
+                |device: &wgpu::Device| Pass::new(device, &UPSAMPLE, UPSAMPLE_ENTRY, &[])
+            });
+        // Every program is asked for before a planning pass that lacks one
+        // leaves the stage's commands out: the lighting pass still takes
+        // the mask, whose pipeline it selects.
+        let (Some(form), Some(temporal), Some(upsample), true) =
+            (form, temporal, upsample, denoiser)
+        else {
+            return Some(ShadowMask {
+                mask: &targets.mask,
+                slots: &self.slot_table,
+            });
+        };
         let trace_group = self.paths.group(
             ctx.device,
             Some(hardware),
@@ -445,7 +466,11 @@ impl TracedShadows {
                         .timing
                         .and_then(|t| t.compute_pass("ray-traced shadow rays")),
                 });
-            pass.set_pipeline(&self.trace[&((), form)]);
+            pass.set_pipeline(
+                self.trace[&((), form)]
+                    .ready()
+                    .expect("the trace's pipeline was made above"),
+            );
             pass.set_bind_group(0, ctx.bindings.camera_lit(), &[]);
             pass.set_bind_group(1, &ctx.scene.scene_group, &[]);
             pass.set_bind_group(3, trace_group, &[]);
@@ -476,9 +501,6 @@ impl TracedShadows {
                 },
             );
         }
-        let temporal = self
-            .temporal
-            .get_or_insert_with(|| Pass::new(device, &TEMPORAL, TEMPORAL_ENTRY, &[]));
         let temporal_group = temporal.groups[current].get(
             ctx.device,
             "ray-traced shadow temporal",
@@ -513,9 +535,6 @@ impl TracedShadows {
                 1,
             );
         }
-        let upsample = self
-            .upsample
-            .get_or_insert_with(|| Pass::new(device, &UPSAMPLE, UPSAMPLE_ENTRY, &[]));
         let upsample_group = upsample.groups[current].get(
             ctx.device,
             "ray-traced shadow upsample",

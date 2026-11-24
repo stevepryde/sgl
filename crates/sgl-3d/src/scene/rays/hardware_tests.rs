@@ -439,7 +439,13 @@ fn frame(
     scene.update_rays(device, queue, mask, true);
     let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut encoder = device.create_command_encoder(&Default::default());
-    deform.dispatch(device, queue, &mut encoder, scene, None);
+    deform.dispatch(
+        (device, &crate::view::compile::Compiler::new(device)),
+        queue,
+        &mut encoder,
+        scene,
+        None,
+    );
     scene.encode_acceleration_structures(&mut encoder);
     let tlas = scene
         .acceleration_structures()

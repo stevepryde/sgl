@@ -13,9 +13,11 @@ use super::cached_group::CachedGroup;
 use super::frame::HardwareRays;
 use crate::shading::bind::{BindingTier, LitLayout};
 use crate::shading::{self, Module, RayQueryForm};
+use crate::view::compile::{Compiled, Compiler, SharedModule};
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
+use wgpu::WasmNotSend;
 
 /// The hardware path's form on the renderer's device (the architecture's
 /// Hardware ray tracing, *Candidate form*): its backend's
@@ -24,8 +26,9 @@ use std::sync::OnceLock;
 /// same programs would fail again.
 pub(crate) struct DeviceRayForm {
     backend: RayQueryForm,
-    /// Why the candidate form failed, once it did.
-    failure: OnceLock<String>,
+    /// Why the candidate form failed, once it did: set by whichever thread
+    /// compiled the failing program.
+    failure: Arc<OnceLock<String>>,
 }
 
 impl DeviceRayForm {
@@ -33,7 +36,7 @@ impl DeviceRayForm {
     pub fn new(backend: RayQueryForm) -> Self {
         Self {
             backend,
-            failure: OnceLock::new(),
+            failure: Arc::default(),
         }
     }
 
@@ -54,10 +57,24 @@ impl DeviceRayForm {
 
 /// One path's program: its shader, its pipeline layout and its group 3.
 pub(crate) struct TracePath {
-    pub shader: wgpu::ShaderModule,
-    pub layout: wgpu::PipelineLayout,
+    shader: SharedModule,
+    layout: wgpu::PipelineLayout,
     group: CachedGroup,
 }
+
+impl TracePath {
+    /// The path's module, created here if no pipeline has needed it: for a
+    /// diagnostic that composes its own pipeline from it.
+    #[cfg(feature = "diagnostics")]
+    pub fn shader(&self, device: &wgpu::Device) -> &wgpu::ShaderModule {
+        self.shader.get(device)
+    }
+}
+
+/// A stage's trace pipelines: a slot for each of its own keys and ray
+/// query form (`None` the software BVHs).
+pub(crate) type TracePipelines<K, P = wgpu::ComputePipeline> =
+    HashMap<(K, Option<RayQueryForm>), Compiled<P>>;
 
 /// A tracing stage's programs, one for each path a frame took.
 pub(crate) struct TracePaths {
@@ -136,16 +153,13 @@ impl TracePaths {
                     bind_group_layouts: &[Some(lit), Some(scene), None, Some(&group)],
                     immediate_size: 0,
                 });
-                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some(self.label),
-                    source: wgpu::ShaderSource::Wgsl(
-                        shading::compose(&[
-                            self.root,
-                            shading::ray_trace_root(form),
-                            shading::lit_provider(self.tier),
-                        ])
-                        .into(),
-                    ),
+                let (root, tier) = (self.root, self.tier);
+                let shader = SharedModule::new(self.label, move || {
+                    shading::compose(&[
+                        root,
+                        shading::ray_trace_root(form),
+                        shading::lit_provider(tier),
+                    ])
                 });
                 self.paths.push((
                     form,
@@ -162,45 +176,71 @@ impl TracePaths {
     }
 
     /// The path the frame's rays take on `hardware`, whose pipeline for
-    /// `key` `pipelines` then holds: made by `create` from the path's
-    /// program when first needed. The candidate form's program and pipeline
-    /// are made inside error scopes; a compile, validation or internal error
-    /// falls the device back to the baseline form for good, which
-    /// `hardware`'s form then names, and the baseline's pipeline is made
-    /// instead. A failure is one naga's or the driver's compiler (Metal's
-    /// shader compiler, Vulkan's driver, DX12's DXC) raises; a wrong result
-    /// or a driver fault is no failure.
-    pub fn pipeline<K: Copy + Eq + Hash, P>(
+    /// `key` `pipelines` then holds, or none in a planning pass while it is
+    /// missing: `create` makes it from the path's module and layout, where
+    /// first needed or in a compile job named `label`. The candidate
+    /// form's program and pipeline are made inside error scopes; a compile,
+    /// validation or internal error falls the device back to the baseline
+    /// form for good, which `hardware`'s form then names, and the
+    /// baseline's pipeline is made instead. A failure is one naga's or the
+    /// driver's compiler (Metal's shader compiler, Vulkan's driver, DX12's
+    /// DXC) raises; a wrong result or a driver fault is no failure.
+    pub fn pipeline<K: Copy + Eq + Hash, P: WasmNotSend + 'static>(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         hardware: Option<HardwareRays<'_>>,
-        (pipelines, key): (&mut HashMap<(K, Option<RayQueryForm>), P>, K),
-        create: impl Fn(&TracePath) -> P,
-    ) -> Option<RayQueryForm> {
+        (pipelines, key): (&mut TracePipelines<K, P>, K),
+        label: &'static str,
+        create: impl Fn(&wgpu::Device, &wgpu::ShaderModule, &wgpu::PipelineLayout) -> P
+        + Clone
+        + WasmNotSend
+        + 'static,
+    ) -> Option<Option<RayQueryForm>> {
         let form = hardware.map(|rays| rays.form());
         if let Some(rays) = hardware
             && form == Some(RayQueryForm::Candidates)
-            && !pipelines.contains_key(&(key, form))
         {
-            let (pipeline, error) = scoped(device, || create(self.path(device, form)));
-            match error {
-                None => {
-                    pipelines.insert((key, form), pipeline);
-                }
-                Some(error) => {
-                    let _ = rays.device_form.failure.set(format!(
-                        "a tracing program of the candidate form failed on this device, so \
-                         rays trace in the baseline form: {error}"
-                    ));
-                    self.paths.retain(|(path, _)| *path != form);
-                }
+            let path = self.path(device, form);
+            let ready = pipelines
+                .entry((key, form))
+                .or_default()
+                .get(compiler, label, || {
+                    let (shader, layout) = (path.shader.clone(), path.layout.clone());
+                    let (create, failure) = (create.clone(), rays.device_form.failure.clone());
+                    move |device: &wgpu::Device| {
+                        let (pipeline, error) =
+                            scoped(device, || create(device, shader.get(device), &layout));
+                        if let Some(error) = error {
+                            let _ = failure.set(format!(
+                                "a tracing program of the candidate form failed on this device, \
+                                 so rays trace in the baseline form: {error}"
+                            ));
+                        }
+                        pipeline
+                    }
+                })
+                .is_some();
+            if !ready {
+                return None;
             }
+            if rays.form() == RayQueryForm::Candidates {
+                return Some(form);
+            }
+            // It failed, here or in its job: the baseline's instead.
+            pipelines.retain(|(_, path), _| *path != form);
+            self.paths.retain(|(path, _)| *path != form);
         }
         let form = hardware.map(|rays| rays.form());
+        let path = self.path(device, form);
         pipelines
             .entry((key, form))
-            .or_insert_with(|| create(self.path(device, form)));
-        form
+            .or_default()
+            .get(compiler, label, || {
+                let (shader, layout) = (path.shader.clone(), path.layout.clone());
+                move |device: &wgpu::Device| create(device, shader.get(device), &layout)
+            })
+            .is_some()
+            .then_some(form)
     }
 
     /// Group 3 of the path `hardware` takes, binding `entries` and, on the
@@ -231,12 +271,14 @@ impl TracePaths {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::{BindingTier, DeviceRayForm, TracePath, TracePaths};
+    use super::{BindingTier, DeviceRayForm, TracePaths};
     use crate::shading::{Module, RayQueryForm};
     use crate::test_support;
+    use crate::view::compile::{Compiled, Compiler};
     use crate::view::frame::HardwareRays;
-    use std::cell::Cell;
     use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// A program that traces one ray through the scene ray function set.
     static TRACE_ONE: Module = Module {
@@ -276,32 +318,39 @@ mod tests {
         let scene = crate::shading::bind::scene(&device);
         let lit = crate::shading::bind::lit(&device, BindingTier::Basic);
         let mut paths = TracePaths::new("trace paths test", &TRACE_ONE, &[], &lit, &scene);
-        let mut pipelines = HashMap::new();
+        let compiler = Compiler::new(&device);
+        let mut pipelines: HashMap<_, Compiled<wgpu::ComputePipeline>> = HashMap::new();
         // The first pipeline asked for fails; every later one is valid.
-        let made = Cell::new(0);
-        let create = |path: &TracePath| {
-            made.set(made.get() + 1);
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: None,
-                layout: Some(&path.layout),
-                module: &path.shader,
-                entry_point: Some(if made.get() == 1 {
-                    "no_such_entry"
-                } else {
-                    "trace_one"
-                }),
-                compilation_options: Default::default(),
-                cache: None,
-            })
+        let made = Arc::new(AtomicUsize::new(0));
+        let create = {
+            let made = made.clone();
+            move |device: &wgpu::Device,
+                  shader: &wgpu::ShaderModule,
+                  layout: &wgpu::PipelineLayout| {
+                let first = made.fetch_add(1, Ordering::SeqCst) == 0;
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: None,
+                    layout: Some(layout),
+                    module: shader,
+                    entry_point: Some(if first { "no_such_entry" } else { "trace_one" }),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            }
         };
-        let form = paths.pipeline(&device, hardware, (&mut pipelines, 0), create);
-        assert_eq!(form, Some(RayQueryForm::Baseline));
-        assert_eq!(made.get(), 2, "the candidate pipeline, then the baseline's");
+        let gpu = (&device, &compiler);
+        let form = paths.pipeline(gpu, hardware, (&mut pipelines, 0), "test", create.clone());
+        assert_eq!(form, Some(Some(RayQueryForm::Baseline)));
+        assert_eq!(
+            made.load(Ordering::SeqCst),
+            2,
+            "the candidate pipeline, then the baseline's"
+        );
         assert!(device_form.failure().is_some());
         // A later pipeline does not try the candidate form again.
-        let form = paths.pipeline(&device, hardware, (&mut pipelines, 1), create);
-        assert_eq!(form, Some(RayQueryForm::Baseline));
-        assert_eq!(made.get(), 3);
+        let form = paths.pipeline(gpu, hardware, (&mut pipelines, 1), "test", create);
+        assert_eq!(form, Some(Some(RayQueryForm::Baseline)));
+        assert_eq!(made.load(Ordering::SeqCst), 3);
         assert_eq!(
             pipelines
                 .keys()

@@ -28,6 +28,7 @@
 use crate::frame_input::{
     AutoExposure, CompensationCurve, Exposure as AuthoredExposure, MeteringMask,
 };
+use crate::view::compile::{Compiled, Compiler};
 use crate::view::frame::FrameContext;
 
 /// The histogram and adaptation.
@@ -184,7 +185,7 @@ struct Metering<'a> {
 }
 
 pub(crate) struct Exposure {
-    metering: Option<Meter>,
+    metering: Compiled<Meter>,
     exposure: wgpu::Texture,
     exposure_view: wgpu::TextureView,
     /// The fixed exposure last written, while exposure is fixed.
@@ -348,7 +349,7 @@ impl Exposure {
             exposure,
             fixed: None,
             pending_reset: false,
-            metering: None,
+            metering: Compiled::default(),
         }
     }
 
@@ -364,7 +365,7 @@ impl Exposure {
 
     /// Drops the bind groups of the frame views, which a resize replaces.
     pub fn forget_inputs(&mut self) {
-        if let Some(meter) = &mut self.metering {
+        if let Some(meter) = self.metering.ready_mut() {
             meter.groups.clear();
         }
     }
@@ -391,7 +392,7 @@ impl Exposure {
         self.pending_reset |= self.fixed.take().is_some();
         let reset = !ctx.history.valid || self.pending_reset;
         self.meter(
-            ctx.device,
+            (ctx.device, ctx.compiler),
             ctx.queue,
             ctx.encoder,
             frame,
@@ -416,14 +417,16 @@ impl Exposure {
     /// Auto exposure of `frame` as `metering` asks.
     fn meter(
         &mut self,
-        device: &wgpu::Device,
+        (device, compiler): (&wgpu::Device, &Compiler),
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         frame: &wgpu::TextureView,
         metering: Metering<'_>,
         timing: Option<&crate::timing::GpuTiming>,
     ) {
-        let meter = self.metering.get_or_insert_with(|| Meter::new(device));
+        let Some(meter) = self.metering.get(compiler, "auto exposure", || Meter::new) else {
+            return;
+        };
         meter.upload(queue, metering);
         let group = meter.group(device, frame, &self.exposure_view);
         let size = frame.texture().size();

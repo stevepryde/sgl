@@ -44,7 +44,6 @@ pub(crate) use retention::PipelineSpecialisations;
 pub(crate) use variant::{Alpha, Cull, Variant};
 
 pub(crate) struct GeometryPipelines {
-    device: wgpu::Device,
     /// Group 0 lit, then scene and material.
     lit: wgpu::PipelineLayout,
     /// `lit`'s, then the blended group 3.
@@ -73,6 +72,10 @@ pub(crate) struct GeometryPipelines {
     /// and a planning pass queues it as a compile job.
     cache: HashMap<PipelineKey, Compiled<wgpu::RenderPipeline>>,
     compiler: Compiler,
+    /// Whether the frame's camera lighting will take screen-space indirect
+    /// light's kept result from the next frame on and does not yet: a
+    /// planning pass then queues those pipelines beside this frame's.
+    pub plans_screen_indirect: bool,
     current: Specialisation,
     /// A light or material toggled back can reuse its previous pipelines.
     previous: Option<Specialisation>,
@@ -120,7 +123,6 @@ impl GeometryPipelines {
         let limits = device.limits();
         let material = &shading::bind::material(device, tier);
         Self {
-            device: device.clone(),
             lit: layout("lit scene geometry", &[lit, scene, material]),
             blended: layout("blended scene geometry", &[lit, scene, material, blended]),
             shadow_masked: layout(
@@ -152,6 +154,7 @@ impl GeometryPipelines {
             shader_programs: HashMap::new(),
             cache: HashMap::new(),
             compiler: compiler.clone(),
+            plans_screen_indirect: false,
             current: (LayerConstants::ALL, LitConstants::default(), false),
             previous: None,
             anisotropy_inline: attachments_fit(&limits, &targets(GeometryPass::GBuffer, true)),
@@ -212,8 +215,31 @@ impl GeometryPipelines {
     ) -> Option<T> {
         let (layers, lit, transmission) = self.current;
         let key = PipelineKey::new(pass, variant, shader, (layers, lit), transmission);
+        // The next frame's lighting, which a planning pass readies with
+        // this frame's.
+        if self.plans_screen_indirect
+            && self.compiler.planning()
+            && let Some(next) = pass.with_screen_indirect()
+        {
+            let next = PipelineKey::new(next, variant, shader, (layers, lit), transmission);
+            self.pipeline(scene, next);
+        }
         if let Some(pipeline) = self.cache.get(&key).and_then(Compiled::ready) {
             return Some(use_pipeline(pipeline));
+        }
+        self.pipeline(scene, key)
+            .map(|pipeline| use_pipeline(pipeline))
+    }
+
+    /// `key`'s pipeline: created in place by a frame, queued by a planning
+    /// pass.
+    fn pipeline(&mut self, scene: &Scene, key: PipelineKey) -> Option<&mut wgpu::RenderPipeline> {
+        if self
+            .cache
+            .get(&key)
+            .is_some_and(|slot| slot.ready().is_some())
+        {
+            return self.cache.get_mut(&key).and_then(Compiled::ready_mut);
         }
         let (label, job) = self.job(scene, key);
         let compiler = self.compiler.clone();
@@ -221,14 +247,6 @@ impl GeometryPipelines {
             .entry(key)
             .or_default()
             .get(&compiler, label, || job)
-            .map(use_pipeline)
-    }
-
-    /// The compiler a frame's programs are created through
-    /// (`view::compile`), which the stages that hold slots of their own ask
-    /// too.
-    pub fn compiler(&self) -> &Compiler {
-        &self.compiler
     }
 
     /// The shader modules and pipelines it holds for game shaders.
@@ -252,10 +270,10 @@ impl GeometryPipelines {
         key: PipelineKey,
     ) -> (
         &'static str,
-        impl FnOnce() -> wgpu::RenderPipeline + wgpu::WasmNotSend + 'static,
+        impl FnOnce(&wgpu::Device) -> wgpu::RenderPipeline + wgpu::WasmNotSend + 'static,
     ) {
         use GeometryPass::*;
-        let device = self.device.clone();
+
         let masked = key.variant.alpha == Alpha::Mask;
         let shaded = key.shader.is_some();
         let vertex_buffers = &shading::vertex::GEOMETRY_BUFFERS;
@@ -443,8 +461,8 @@ impl GeometryPipelines {
         let (depth_write, depth_compare) = depth(key.pass);
         let pulled = key.pass.pulled();
         let cull_mode = key.variant.cull.face();
-        let create = move || {
-            let module = module.get(&device);
+        let create = move |device: &wgpu::Device| {
+            let module = module.get(device);
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&layout),

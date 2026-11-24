@@ -31,6 +31,7 @@
 //! Timing groups: `fog injection`, `fog filter`, `fog integration`.
 use crate::settings::FogQuality;
 use crate::view::bindings::FogVolume;
+use crate::view::compile::Compiled;
 use crate::view::frame::FrameContext;
 use volumes::Volumes;
 
@@ -173,7 +174,7 @@ struct Pipelines {
 }
 
 pub(crate) struct VolumetricFog {
-    pipelines: Option<Pipelines>,
+    pipelines: Compiled<Pipelines>,
     /// The aerial volume the integration binds while aerial perspective is
     /// not in effect, which it then does not sample.
     no_aerial: wgpu::TextureView,
@@ -359,7 +360,7 @@ impl VolumetricFog {
             })
             .create_view(&Default::default());
         Self {
-            pipelines: None,
+            pipelines: Compiled::default(),
             no_aerial,
             inject_layout,
             filter_layout,
@@ -473,15 +474,21 @@ impl VolumetricFog {
             return;
         };
         let aerial = aerial.filter(|_| layout.aerial_slices > 0);
-        let pipelines = self.pipelines.get_or_insert_with(|| {
-            Pipelines::new(
-                ctx.device,
+        let Some(pipelines) = self.pipelines.get(ctx.compiler, "volumetric fog", || {
+            let layouts = [
                 &ctx.bindings.lit.layout,
                 &self.inject_layout,
                 &self.filter_layout,
                 &self.integrate_layout,
-            )
-        });
+            ]
+            .map(Clone::clone);
+            move |device: &wgpu::Device| {
+                let [lit, inject, filter, integrate] = &layouts;
+                Pipelines::new(device, lit, inject, filter, integrate)
+            }
+        }) else {
+            return;
+        };
         let fog = ctx.input.fog;
         let camera = ctx.input.camera;
         let [width, height, _] = volumes.integrated_size;

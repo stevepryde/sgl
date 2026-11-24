@@ -121,7 +121,12 @@ impl Renderer {
         // backdrop draw records the reflection sky (`VIEW_PROBE_CAPTURE` in
         // backdrop.wgsl): under a procedural sky, that atlas.
         let mut sky = crate::stages::sky::Sky::default();
-        sky.prepare(device, input, center, (true, false));
+        sky.prepare(
+            (device, &self.shared.compiler),
+            input,
+            center,
+            (true, false),
+        );
         sky.encode_planned((queue, &mut encoder), None);
         let sky = sky.views().map(|views| views.map(Clone::clone));
         // Each face renders at the capture size and is averaged into the
@@ -277,7 +282,7 @@ impl Renderer {
         );
         if let Some(local) = &local {
             view.shadows.local.encode_capture(
-                device,
+                &self.shared.compiler,
                 encoder,
                 local,
                 (scene, &mut self.shared.pipelines),
@@ -321,6 +326,7 @@ impl Renderer {
                 &views.frame,
             );
             view.opaque.encode_capture(
+                &self.shared.compiler,
                 encoder,
                 scene,
                 &mut self.shared.pipelines,

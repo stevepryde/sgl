@@ -50,6 +50,7 @@ pub(crate) mod screen_indirect;
 
 use crate::counters::Moment;
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::{Compiled, Compiler};
 use crate::view::draw_list::gpu::Phase;
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::frame::{CameraMask, FrameContext};
@@ -58,7 +59,7 @@ use crate::view::targets::{CaptureFace, attachment};
 
 pub(crate) struct Opaque {
     backdrop: backdrop::BackdropDraw,
-    ambient_occlusion: Option<ambient_occlusion::AmbientOcclusion>,
+    ambient_occlusion: Compiled<ambient_occlusion::AmbientOcclusion>,
     /// Whether ambient occlusion ran this frame.
     ambient_occlusion_ran: bool,
     /// Screen-space indirect light, made the first frame it runs.
@@ -99,7 +100,6 @@ impl Opaque {
     /// light (`screen_indirect`), and the lighting pass's with it and either
     /// mask (`shadow_mask_screen_indirect`, `contact_screen_indirect`).
     pub fn new(
-        device: &wgpu::Device,
         unlit: &wgpu::BindGroupLayout,
         [
             shadow_mask,
@@ -110,8 +110,8 @@ impl Opaque {
         ]: [&wgpu::BindGroupLayout; 5],
     ) -> Self {
         Self {
-            backdrop: backdrop::BackdropDraw::new(device, unlit),
-            ambient_occlusion: None,
+            backdrop: backdrop::BackdropDraw::new(unlit),
+            ambient_occlusion: Compiled::default(),
             ambient_occlusion_ran: false,
             screen_indirect: None,
             screen_indirect_read: false,
@@ -129,8 +129,9 @@ impl Opaque {
     /// Begins the frame's screen-space indirect light, before any pass
     /// lights a surface: whether the camera lighting takes the last
     /// finished frame's (SI-1, SI-2).
-    fn begin_screen_indirect(&mut self, ctx: &FrameContext<'_>) {
+    fn begin_screen_indirect(&mut self, ctx: &mut FrameContext<'_>) {
         let settings = ctx.effective.screen_indirect;
+        ctx.pipelines.plans_screen_indirect = false;
         if settings.is_none() && self.screen_indirect.is_none() {
             self.screen_indirect_read = false;
             return;
@@ -145,6 +146,9 @@ impl Opaque {
             ctx.sizes.render,
             &ctx.history,
         );
+        // A frame that runs the pass without reading it yet is followed
+        // by one that reads it, with other lighting pipelines.
+        ctx.pipelines.plans_screen_indirect = settings.is_some() && !self.screen_indirect_read;
     }
 
     /// The fused or lighting pass's group 3 while it takes the last
@@ -242,16 +246,24 @@ impl Opaque {
             (None, None) => {
                 // Release the pyramid and the stage when only screen-space
                 // indirect light made them; ambient occlusion keeps its own.
-                if self.ambient_occlusion.as_ref().is_some_and(|ao| !ao.ran()) {
-                    self.ambient_occlusion = None;
+                if self.ambient_occlusion.ready().is_some_and(|ao| !ao.ran()) {
+                    self.ambient_occlusion.clear();
                 }
                 return;
             }
         };
         let targets = ctx.targets;
-        let ao = self
+        let Some(ao) = self
             .ambient_occlusion
-            .get_or_insert_with(|| ambient_occlusion::AmbientOcclusion::new(ctx.device, ctx.queue));
+            .get(ctx.compiler, "ambient occlusion", || {
+                let queue = ctx.queue.clone();
+                move |device: &wgpu::Device| {
+                    ambient_occlusion::AmbientOcclusion::new(device, &queue)
+                }
+            })
+        else {
+            return;
+        };
         ao.encode_depth_pyramid(
             ctx.device,
             ctx.queue,
@@ -294,10 +306,16 @@ impl Opaque {
         let Some(settings) = ctx.effective.screen_indirect else {
             return;
         };
-        let ao = self
-            .ambient_occlusion
-            .as_ref()
-            .expect("the frame built the depth pyramid");
+        let bounce = self
+            .screen_indirect
+            .as_mut()
+            .expect("the frame began screen-space indirect light");
+        // A planning pass whose depth pyramid's stage is still compiling
+        // asks for the pass's programs and leaves it out.
+        let Some(ao) = self.ambient_occlusion.ready() else {
+            bounce.plan(ctx.compiler);
+            return;
+        };
         let targets = ctx.targets;
         let inputs = screen_indirect::Inputs {
             depth_pyramid: ao.depth_view().expect("the frame built the depth pyramid"),
@@ -307,25 +325,22 @@ impl Opaque {
             color: &targets.color,
             motion: &targets.motion,
         };
-        self.screen_indirect
-            .as_mut()
-            .expect("the frame began screen-space indirect light")
-            .encode(
-                ctx.device,
-                ctx.queue,
-                ctx.encoder,
-                &inputs,
-                &ctx.views.camera.view.uniform,
-                &ctx.history,
-                settings,
-                ctx.timing,
-            );
+        bounce.encode(
+            (ctx.device, ctx.compiler),
+            ctx.queue,
+            ctx.encoder,
+            &inputs,
+            &ctx.views.camera.view.uniform,
+            &ctx.history,
+            settings,
+            ctx.timing,
+        );
     }
 
     /// Settles the last render's ambient occlusion and screen-space
     /// indirect light histories: see `Kept::settle`.
     pub fn settle(&mut self, finished: bool) {
-        if let Some(ambient_occlusion) = &mut self.ambient_occlusion {
+        if let Some(ambient_occlusion) = self.ambient_occlusion.ready_mut() {
             ambient_occlusion.settle(finished);
         }
         if let Some(screen_indirect) = &mut self.screen_indirect {
@@ -338,7 +353,7 @@ impl Opaque {
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn holds_occlusion_and_bounce(&self) -> (bool, bool) {
         (
-            self.ambient_occlusion.is_some(),
+            self.ambient_occlusion.ready().is_some(),
             self.screen_indirect
                 .as_ref()
                 .is_some_and(screen_indirect::ScreenIndirect::holds_targets),
@@ -348,7 +363,7 @@ impl Opaque {
     /// This frame's ambient visibility, when ambient occlusion ran.
     pub fn visibility(&self) -> Option<&wgpu::TextureView> {
         self.ambient_occlusion
-            .as_ref()
+            .ready()
             .filter(|_| self.ambient_occlusion_ran)
             .and_then(|ambient_occlusion| ambient_occlusion.output())
     }
@@ -356,6 +371,7 @@ impl Opaque {
     fn encode_fused(&mut self, ctx: &mut FrameContext<'_>) {
         let targets = ctx.targets;
         {
+            let backdrop = self.backdrop.pipeline(ctx.compiler);
             let sky = [attachment(&targets.color), attachment(&targets.motion)];
             let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("fused scene sky and depth clear"),
@@ -371,7 +387,9 @@ impl Opaque {
                 timestamp_writes: ctx.timing.and_then(|t| t.render_pass("sky")),
                 ..Default::default()
             });
-            self.backdrop.draw(&mut pass, ctx.bindings.camera_unlit());
+            if let Some(backdrop) = &backdrop {
+                backdrop::BackdropDraw::draw(backdrop, &mut pass, ctx.bindings.camera_unlit());
+            }
         }
         let views = [
             &targets.normal,
@@ -525,6 +543,7 @@ impl Opaque {
         {
             let mut motion = attachment(&targets.motion);
             motion.as_mut().unwrap().ops.load = wgpu::LoadOp::Load;
+            let backdrop = self.backdrop.pipeline(ctx.compiler);
             let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("source sky background"),
                 color_attachments: &[attachment(&targets.color), motion],
@@ -539,7 +558,9 @@ impl Opaque {
                 timestamp_writes: ctx.timing.and_then(|t| t.render_pass("sky")),
                 ..Default::default()
             });
-            self.backdrop.draw(&mut pass, ctx.bindings.camera_unlit());
+            if let Some(backdrop) = &backdrop {
+                backdrop::BackdropDraw::draw(backdrop, &mut pass, ctx.bindings.camera_unlit());
+            }
         }
         let colors = [
             &targets.color,
@@ -632,7 +653,8 @@ impl Opaque {
     /// faces`.
     #[allow(clippy::too_many_arguments)]
     pub fn encode_capture(
-        &self,
+        &mut self,
+        compiler: &Compiler,
         encoder: &mut wgpu::CommandEncoder,
         scene: &crate::Scene,
         pipelines: &mut GeometryPipelines,
@@ -656,31 +678,23 @@ impl Opaque {
             }),
             ..Default::default()
         });
-        self.encode_forward(&mut pass, scene, pipelines, list, unlit, lit);
+        self.draw_backdrop(compiler, &mut pass, unlit);
+        pass.set_bind_group(0, lit, &[]);
+        list.0
+            .draw(scene, pipelines, list.1, &mut pass, GeometryPass::Forward);
     }
 
     /// The sky under `unlit`, in the caller's pass, as a probe capture face
     /// draws it first.
-    #[cfg(all(test, not(target_arch = "wasm32")))]
-    pub fn draw_backdrop(&self, pass: &mut wgpu::RenderPass<'_>, unlit: &wgpu::BindGroup) {
-        self.backdrop.draw(pass, unlit);
-    }
-
-    /// A probe capture face: the sky, then `list`'s lit colour and motion
-    /// with depth (`GeometryPass::Forward`) from `drawn`, in the caller's
-    /// pass.
-    fn encode_forward(
-        &self,
+    pub fn draw_backdrop(
+        &mut self,
+        compiler: &Compiler,
         pass: &mut wgpu::RenderPass<'_>,
-        scene: &crate::Scene,
-        pipelines: &mut GeometryPipelines,
-        (list, drawn): (&DrawList, &DrawInstances),
         unlit: &wgpu::BindGroup,
-        lit: &wgpu::BindGroup,
     ) {
-        self.backdrop.draw(pass, unlit);
-        pass.set_bind_group(0, lit, &[]);
-        list.draw(scene, pipelines, drawn, pass, GeometryPass::Forward);
+        if let Some(backdrop) = self.backdrop.pipeline(compiler) {
+            backdrop::BackdropDraw::draw(&backdrop, pass, unlit);
+        }
     }
 }
 
