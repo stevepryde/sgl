@@ -11,24 +11,24 @@
 // - fs_main: single-target (the screen/UI channel — bypasses lighting).
 // - fs_scene: the world channel's MRT scene pass (R-6/PR-4). Besides the
 //   albedo it writes:
-//   * a screen-space **normal** target: the sprite's normal map decoded,
-//     y flipped (normal maps are +G = up, screen space is y-down), re-encoded
-//     to [0,1] and premultiplied by alpha — so translucent sprites lerp their
-//     normal over what's below. Sprites without a normal map write the flat
-//     +Z encoding.
+//   * a screen-space **normal** target: the sprite's normal map decoded
+//     (+R along its image's right, +G up its image) and turned onto the
+//     screen (y-down) along the instance's `normal_axes`, which follow its
+//     rotation, flips and any negative scale, re-encoded to [0,1] and
+//     premultiplied by alpha — so translucent sprites lerp their normal over
+//     what's below. Sprites without a normal map write the flat +Z
+//     encoding.
 //   * a **mask** target: rgb = the sprite's light-mask layers (1/2/4) and
 //     a = the "has normal map" weight, both premultiplied by alpha — giving
 //     the light pass fractional per-pixel layer coverage and normal weight.
-//   Limitation (documented): normals are not rotated by sprite rotation nor
-//   mirrored by flips — no normal-mapped sprite in the game rotates or flips
-//   (tiles and the menu title background only, PR-4/PR-11).
 // - fs_scene_linear: fs_scene with the page texel decoded sRGB → linear
 //   before the modulate (the `LightingSpace::Linear` scene pipeline, whose
 //   albedo target is half-float). The modulate is taken as linear; the
 //   normal and mask outputs are identical.
 //
-// Flips are folded into the per-instance UV rect on the CPU (uv_min/uv_max
-// may arrive swapped per axis), so there is no flip attribute here.
+// Flips are folded on the CPU into the per-instance UV rect (uv_min/uv_max
+// may arrive swapped per axis) and the normal axes, so there is no flip
+// attribute here.
 //
 // Every page sample goes through `page_uv`: the interpolated UV clamped to
 // half a texel inside the instance's UV rect. Interior fragments sample
@@ -83,6 +83,9 @@ struct InstanceInput {
     @location(8) shape: vec4<f32>,
     // Shape border RGBA (straight alpha).
     @location(9) border_color: vec4<f32>,
+    // Where the normal map's +X (xy) and +Y (zw) point on the screen,
+    // y-down: unit vectors (sprite.rs `normal_axes`).
+    @location(10) normal_axes: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -94,6 +97,7 @@ struct VertexOutput {
     @location(4) @interpolate(flat) border_color: vec4<f32>,
     // The instance's UV rect (uv_min, uv_max), for `page_uv`.
     @location(5) @interpolate(flat) uv_rect: vec4<f32>,
+    @location(6) @interpolate(flat) normal_axes: vec4<f32>,
 };
 
 @vertex
@@ -112,6 +116,7 @@ fn vs_main(vert: VertexInput, inst: InstanceInput) -> VertexOutput {
     out.shape = inst.shape;
     out.border_color = inst.border_color;
     out.uv_rect = vec4<f32>(inst.uv_min, inst.uv_max);
+    out.normal_axes = inst.normal_axes;
     return out;
 }
 
@@ -172,11 +177,13 @@ fn scene_output(in: VertexOutput, uv: vec2<f32>, texel: vec4<f32>) -> SceneOutpu
     var out: SceneOutput;
     out.albedo = vec4<f32>(rgba.rgb * a, a);
 
-    // Screen-space normal: decode the map, flip G (+up → -y on screen),
-    // re-encode; flat +Z where the instance has no normal map. Sampled
-    // unconditionally (uniform control flow), selected by the flag.
+    // Screen-space normal: decode the map, turn its X and Y onto the
+    // screen along the sprite's axes, re-encode; flat +Z where the instance
+    // has no normal map. Sampled unconditionally (uniform control flow),
+    // selected by the flag.
     let nm = textureSample(page_normal_tex, page_samp, uv).rgb * 2.0 - vec3<f32>(1.0);
-    let mapped = vec3<f32>(nm.x, -nm.y, nm.z) * 0.5 + vec3<f32>(0.5);
+    let turned = in.normal_axes.xy * nm.x + in.normal_axes.zw * nm.y;
+    let mapped = vec3<f32>(turned, nm.z) * 0.5 + vec3<f32>(0.5);
     let enc = mix(vec3<f32>(0.5, 0.5, 1.0), mapped, in.misc.w);
     out.normal = vec4<f32>(enc * a, a);
 

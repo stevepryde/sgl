@@ -103,6 +103,9 @@ struct InstanceRaw {
     shape: [f32; 4],
     /// Shape border RGBA (straight alpha).
     border_color: [f32; 4],
+    /// Where the normal map's +X and +Y point in the normal target
+    /// ([`normal_axes`]), xy and zw.
+    normal_axes: [f32; 4],
     // Pad the stride to 16-byte alignment.
     _pad: [f32; 2],
 }
@@ -459,6 +462,7 @@ impl SpritePass {
                 7 => Float32x4, // misc (mask bits + has_normal)
                 8 => Float32x4, // shape (half size, radius, border)
                 9 => Float32x4, // shape border color
+                10 => Float32x4, // normal axes
             ],
         };
 
@@ -741,9 +745,9 @@ impl SpritePass {
     /// written into the page's normal companion at the diffuse's placement,
     /// so instances sample it with the same UVs. The map is tangent-space
     /// XYZ in RGB, +X toward the image's right and +Y toward its top
-    /// (green up, as glTF and SGL3D read them); lighting takes it as drawn
-    /// upright, not turned by the sprite's rotation or mirrored by its
-    /// flips. A different
+    /// (green up, as glTF and SGL3D read them); lighting turns it with the
+    /// sprite's rotation and mirrors it with its flips and a negative
+    /// scale. A different
     /// `normal_handle` replaces the diffuse's current normal map, pixels and
     /// handle; the same handle again changes nothing (use
     /// [`replace`](Self::replace) to update its pixels). An invalid texture,
@@ -1251,8 +1255,28 @@ fn to_raw(inst: &SpriteInstance, entry: &Entry, page_size: Vec2, units: WorldUni
         ],
         shape: [0.0; 4],
         border_color: [0.0; 4],
+        normal_axes: normal_axes(affine, inst.flip_x, inst.flip_y, units),
         _pad: [0.0; 2],
     }
+}
+
+/// Where a sprite's normal map's +X (its image's right) and +Y (its image's
+/// up, toward its top row) point in the normal target, whose space is the
+/// screen's, y down, in world units: unit vectors, xy and zw. They are the
+/// quad's texture-right and texture-up axes as `affine` (from
+/// [`sprite_affine`]) places them, a negative scale's mirror included,
+/// reversed where the sprite is flipped, with world y turned screen-down by
+/// `units`, as the light pass turns its light vectors. Godot b130438 turns a
+/// `CanvasItem`'s normal so (`servers/rendering/renderer_rd/shaders/
+/// canvas.glsl` 653–661, 708–712: x and y reversed by a flipped source
+/// rect's sign, then the item's normalized world axes). The camera does
+/// not rotate, so nothing more turns them.
+fn normal_axes(affine: Affine2, flip_x: bool, flip_y: bool, units: WorldUnits) -> [f32; 4] {
+    let screen = |axis: Vec2| Vec2::new(axis.x, axis.y * units.screen_y_sign()).normalize_or_zero();
+    let flipped = |flip: bool| if flip { -1.0 } else { 1.0 };
+    let right = screen(affine.matrix2.x_axis) * flipped(flip_x);
+    let up = -screen(affine.matrix2.y_axis) * flipped(flip_y);
+    [right.x, right.y, up.x, up.y]
 }
 
 /// How far, in local pixels, a shape's quad extends past its box so the
@@ -1288,6 +1312,8 @@ fn shape_raw(
         misc: [bits[0], bits[1], bits[2], 0.0],
         shape: [half.x, half.y, shape.radius, shape.border.max(0.0)],
         border_color: shape.border_color,
+        // A shape writes the flat normal.
+        normal_axes: [0.0; 4],
         _pad: [0.0; 2],
     })
 }
@@ -1422,17 +1448,30 @@ mod gpu_tests {
         albedo_format: wgpu::TextureFormat,
         bytes_per_pixel: u32,
     ) -> (Vec<u8>, Vec<u8>) {
-        let vp = Camera::new(SIZE, SIZE).view_proj();
-        pass.prepare(
+        draw_targets_in(
             device,
             queue,
+            pass,
             list,
-            vp,
+            albedo_format,
+            bytes_per_pixel,
             WorldUnits::default(),
-            vp,
-            (SIZE, SIZE),
-            1.0,
-        );
+        )
+    }
+
+    /// [`draw_targets`] through a world camera in `units`.
+    fn draw_targets_in(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pass: &mut SpritePass,
+        list: &DrawList,
+        albedo_format: wgpu::TextureFormat,
+        bytes_per_pixel: u32,
+        units: WorldUnits,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let world = Camera::new(SIZE, SIZE).with_units(units).view_proj();
+        let screen = Camera::new(SIZE, SIZE).view_proj();
+        pass.prepare(device, queue, list, world, units, screen, (SIZE, SIZE), 1.0);
 
         let target = |format: wgpu::TextureFormat, extra: wgpu::TextureUsages| {
             device.create_texture(&wgpu::TextureDescriptor {
@@ -1852,6 +1891,138 @@ mod gpu_tests {
                 .all(|pixel| pixel == [128, 128, 255, 255]),
             "the replaced handle still lights the diffuse"
         );
+    }
+
+    /// A normal-mapped sprite's normal target holds its map's +X along its
+    /// image's right and its +Y up its image, as the sprite shows on the
+    /// screen (y down), as Godot b130438 turns a `CanvasItem`'s normal
+    /// (canvas.glsl 653–661, 708–712). Plausible defects: the map read as
+    /// if every sprite were upright and unflipped, so a flipped sprite is lit
+    /// from the wrong side and a turned one along the wrong axis; a y-up
+    /// camera's world y taken as the screen's. The oracle is each sprite's
+    /// placement as `SpriteInstance` documents it: a flip or a negative
+    /// scale mirrors the image, a rotation turns it clockwise on the screen
+    /// under the pixel convention and anticlockwise under a y-up camera.
+    #[test]
+    fn a_sprites_normal_map_turns_with_its_flips_rotation_and_camera() {
+        let Some((device, queue)) = device() else {
+            return;
+        };
+        let mut pass = SpritePass::new(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8Unorm,
+            LightingSpace::Gamma,
+        );
+        let mut assets = Assets::<Texture>::new();
+        let diffuse = assets.insert("diffuse.png".into(), flat(1, 1, [255; 4]));
+        // Tilted along +X and +Y: (0.6, 0.302, 0.741).
+        let texel = [204u8, 166, 222];
+        let normal = assets.insert(
+            "normal.png".into(),
+            flat(1, 1, [texel[0], texel[1], texel[2], 255]),
+        );
+        pass.upload(&device, &queue, diffuse, assets.get(diffuse).unwrap())
+            .unwrap();
+        pass.upload_normal(
+            &device,
+            &queue,
+            diffuse,
+            normal,
+            assets.get(normal).unwrap(),
+        )
+        .unwrap();
+        let [x, y, z] = texel.map(|c| f32::from(c) / 255.0 * 2.0 - 1.0);
+        let pixels = WorldUnits::default();
+        let y_up = WorldUnits {
+            y_up: true,
+            ..WorldUnits::default()
+        };
+        let quarter = std::f32::consts::FRAC_PI_2;
+        let plain = SpriteInstance {
+            scale: Vec2::splat(SIZE as f32),
+            normal: Some(normal),
+            ..SpriteInstance::new(diffuse, Vec2::splat(2.0))
+        };
+        // Each sprite, its camera's units, and the screen (y-down) normal
+        // its image's right (R) and up (U) give: R·x + U·y.
+        let cases = [
+            ("upright", plain, pixels, [x, -y]),
+            (
+                "flipped in x",
+                SpriteInstance {
+                    flip_x: true,
+                    ..plain
+                },
+                pixels,
+                [-x, -y],
+            ),
+            (
+                "flipped in y",
+                SpriteInstance {
+                    flip_y: true,
+                    ..plain
+                },
+                pixels,
+                [x, y],
+            ),
+            (
+                "scaled by -1 in x",
+                SpriteInstance {
+                    scale: Vec2::new(-(SIZE as f32), SIZE as f32),
+                    ..plain
+                },
+                pixels,
+                [-x, -y],
+            ),
+            // Clockwise: R down the screen, U to its right.
+            (
+                "turned a quarter",
+                SpriteInstance {
+                    rot: quarter,
+                    ..plain
+                },
+                pixels,
+                [y, x],
+            ),
+            ("upright, y up", plain, y_up, [x, -y]),
+            // Anticlockwise: R up the screen, U to its left.
+            (
+                "turned a quarter, y up",
+                SpriteInstance {
+                    rot: quarter,
+                    ..plain
+                },
+                y_up,
+                [-y, -x],
+            ),
+        ];
+        let encode = |value: f32| (value * 0.5 + 0.5) * 255.0;
+        for (label, sprite, units, [nx, ny]) in cases {
+            let mut list = DrawList::new();
+            list.push(sprite);
+            let (_, normal_pixels) = draw_targets_in(
+                &device,
+                &queue,
+                &mut pass,
+                &list,
+                wgpu::TextureFormat::Rgba8Unorm,
+                4,
+                units,
+            );
+            for pixel in normal_pixels.chunks_exact(4) {
+                let held = [nx, ny, z]
+                    .iter()
+                    .zip(pixel)
+                    .all(|(&value, &byte)| (encode(value) - f32::from(byte)).abs() <= 1.0);
+                assert!(
+                    held && pixel[3] == 255,
+                    "{label}: normal target {pixel:?}, expected {:?}",
+                    [nx, ny, z].map(encode)
+                );
+            }
+        }
     }
 
     /// #320: an empty, short or oversized texture through `upload` or
