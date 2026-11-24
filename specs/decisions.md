@@ -2133,3 +2133,19 @@ Use the [current specs](README.md) for implementation and the
   the spacing fix changed neither measurably.
   Rationale: the radius a level uses is the distance out to which it finds
   a surface, and a feature that is off holds nothing.
+- **D-92** Decision, 2026-11-24 (#881, closed not planned): a `View` is
+  not made `Send`. #881 asked for it so a native game could run
+  `Renderer::compile` on a loading thread; since then every stage's
+  programs compile in jobs the game runs on threads of its choosing (D-86),
+  and `compile` itself only plans. What is left on the thread that owns the
+  view is FSR's own pipelines, which `sp-fidelity` creates where
+  `View::new` or `View::resize` builds its context, behind the game's
+  loading screen, and nothing for a view that does not select FSR. Against
+  that, `View: Send` would bind every field of every later stage and
+  anything a game hands a view, need a breaking release of the port for its
+  shared handles, and hold on native only, since WebGPU's objects do not
+  cross threads. If FSR's hold at context creation comes to matter, the
+  route is narrower: `sp-fidelity` hands its pipeline creation out as jobs,
+  as every stage of SGL3D does (AR-13), which removes the one exception
+  without constraining the view. Not built now: no game has shown the hold
+  to matter (D-76).
