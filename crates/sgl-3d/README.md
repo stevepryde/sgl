@@ -154,7 +154,9 @@ frame.backdrop = Backdrop::Environment { yaw: 0.5, brightness: 1. };
   spiral's, so a shadow is sharp where its caster touches and softens with
   height, the same in every cascade for the casters found. Each of those
   taps is compared at the depth the receiver's plane has there, so a slope
-  under a wide sun neither shadows itself nor narrows its penumbrae. A sun
+  under a wide sun neither shadows itself nor narrows its penumbrae; the
+  plane is followed no steeper than 10 m toward the sun per metre across,
+  so a surface nearly edge on to it keeps an occluder's shadow. A sun
   of no angular diameter keeps the
   fixed spiral. At the
   Low shadow quality the camera's surfaces take one hardware 2×2 comparison
@@ -1262,8 +1264,9 @@ than half way to the receiver casts a wider penumbra than that search
 reaches, so its lit side is cut off about the radius from the hard edge. A spot's taps lie on its face; a point light's lie across the
 direction to it, each in the cube face it falls in, so a shadow is the same
 across a face's edge. Either's taps are compared at the depth the
-receiver's plane has where they land, so a surface tilted to a large light
-does not shadow itself; a cube whose penumbra is within the fixed filter's
+receiver's plane has where they land, no steeper than 10 m toward the
+light per metre across, so a surface tilted to a large light does not
+shadow itself and one nearly edge on to it keeps an occluder's shadow; a cube whose penumbra is within the fixed filter's
 radius keeps the fixed filter's one depth. A rectangle's shadow, cast from its centre, keeps the
 fixed spiral. Probe
 captures and world-space ray hits, which show static content, sample the

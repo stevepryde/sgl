@@ -2642,3 +2642,59 @@ fn a_local_penumbra_on_a_slope_is_the_lights() {
         assert!(observed[3] < 0.01, "{label}: 2.4 m downhill");
     }
 }
+
+// A surface a point or spot light meets almost edge on, beneath a roof,
+// stays in the roof's shadow (#905). Plausible defect: the receiver's
+// plane followed without bound, so that for a plane nearly parallel to the
+// direction to the light its uphill taps are compared nearer the light
+// than the roof and count as lit, along a spot's face or along a cube's
+// taps' rays. The oracle is geometric: a double-sided wall in the plane
+// x = 0 hangs from a roof 1.5 m above the floor that reaches 3 m either
+// side of it and 6 m along it; lights of radius 0.1 and 0.2 m hang 4 m up,
+// in the wall's plane and 0.03 m to either side of it. From points 0.3 and
+// 0.5 m beneath the roof a ray toward any part of such a light meets the
+// roof within 0.04 m of the wall: no light reaches them. Unbounded, they
+// took 0.19 to 0.47 of the spots and up to 0.26 of the point lights.
+#[test]
+fn a_surface_a_light_meets_edge_on_beneath_a_roof_takes_its_shadow() {
+    let Some(mut harness) = soft_harness(true) else {
+        return;
+    };
+    let world = vec![
+        plane(Vec3::new(0., 1.5, 0.), Vec3::X * 3., Vec3::Z * 6.),
+        plane(Vec3::new(0., 0.75, 0.), Vec3::Y * 0.75, Vec3::Z * 6.),
+    ];
+    let (mut scene, _) = scene(&harness, world);
+    let (device, queue) = (harness.device.clone(), harness.queue.clone());
+    let lights: Vec<_> = [-0.03, 0., 0.03]
+        .into_iter()
+        .flat_map(|x| [0.1, 0.2].map(|radius| (x, radius)))
+        .flat_map(|(x, radius)| {
+            let position = Vec3::new(x, 4., 0.);
+            let spot = Light {
+                position,
+                ..spot_above(radius)
+            };
+            let point = Light {
+                shape: LightShape::Point { radius },
+                ..point(position, 9.)
+            };
+            [("spot", x, radius, spot), ("point", x, radius, point)]
+        })
+        .map(|(label, x, radius, light)| {
+            let light = scene.add_light(&device, &queue, light).unwrap();
+            (label, x, radius, light)
+        })
+        .collect();
+    harness.frame(&mut scene, &soft_input());
+    let receivers = [(0., 1.2), (0., 1.), (0.5, 1.2), (-0.5, 1.)].map(|(z, y)| Vec3::new(0., y, z));
+    for (label, x, radius, light) in lights {
+        let observed = harness.mean_visibility_on(light, &receivers, Vec3::X);
+        for (receiver, visibility) in receivers.iter().zip(observed) {
+            assert!(
+                visibility < 0.01,
+                "a {label} light of radius {radius} m at x = {x}, at {receiver:?} beneath the roof: visibility {visibility}"
+            );
+        }
+    }
+}

@@ -34,7 +34,8 @@
 // measure depth along different axes.
 //
 // The soft filter's taps follow the receiver's plane (shadow_sampling.wgsl's
-// receiver plane depth bias). A spot's face is a perspective map, whose
+// receiver plane depth bias, no steeper than receiver_plane_normal
+// allows). A spot's face is a perspective map, whose
 // depth is affine in its UV across a plane, so the slope at the receiver
 // is the plane's across the face (local_shadow_spot_plane_slope). A cube's
 // taps are compared each at the plane's point on its own ray from the
@@ -243,7 +244,7 @@ fn local_shadow_visibility(index:u32,light_position:vec3<f32>,light_radius:f32,r
   }
   lookup=local_shadow_cube_lookup(shadow,range,frag_ls);
   if soft {
-   return local_shadow_cube_soft(shadow,range,frag_ls,normal,lookup,pixel,light_radius);
+   return local_shadow_cube_soft(shadow,range,frag_ls,receiver_plane_normal(normal,toward_light),lookup,pixel,light_radius);
   }
  } else {
   // The spot face's w is the distance along the spot's direction.
@@ -258,7 +259,7 @@ fn local_shadow_visibility(index:u32,light_position:vec3<f32>,light_radius:f32,r
   let corner=local_shadow_corner(shadow,0u);
   lookup=LocalShadowLookup(corner+face_uv*shadow.size,ndc.z,local_shadow_bounds(shadow,corner));
   if soft {
-   return local_shadow_spot_soft(shadow,range,lookup,local_shadow_spot_plane_slope(shadow,clip,normal),pixel,light_radius);
+   return local_shadow_spot_soft(shadow,range,lookup,local_shadow_spot_plane_slope(shadow,clip,receiver_plane_normal(normal,toward_light)),pixel,light_radius);
   }
  }
  return sample_shadow_map(local_shadow_atlas,shadow_sampler,lookup.uv,lookup.depth,0,lookup.bounds,pixel,SPOT_SHADOW_TEXEL_SIZE,shadow_filtering);

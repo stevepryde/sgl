@@ -55,12 +55,11 @@
 // written as the cross product of the map-space derivatives along two
 // directions across the plane, as DiligentFX f26cfe5 writes it
 // (Shaders/Common/public/Shadows.fxh ComputeReceiverPlaneDepthBias,
-// Apache-2.0, src/LICENSE-diligent.txt), whose slope clamp
-// (fReceiverPlaneDepthBiasClamp, 10) is not taken: flat ground under a sun
-// lower than 5.7 degrees is steeper, and only the division is guarded; a
-// tap clamped to its map's rectangle is compared at the plane's depth
-// where it was read, where Filament biases by the unclamped offset; and
-// the depth compared is kept in the map's range, beyond whose far plane an
+// Apache-2.0, src/LICENSE-diligent.txt); the plane is followed no steeper
+// than Diligent's clamp allows (receiver_plane_normal, #905); a tap
+// clamped to its map's rectangle is compared at the plane's depth where
+// it was read, where Filament biases by the unclamped offset; and the
+// depth compared is kept in the map's range, beyond whose far plane an
 // empty texel would count as a blocker. Each shadow kind gives its map's
 // slope, and a cube follows the plane along each tap's ray
 // (directional_shadow.wgsl, local_shadow.wgsl). The fixed filters compare
@@ -286,6 +285,46 @@ fn soft_shadow_radius(fixed:vec2<f32>,penumbra:vec2<f32>)->vec2<f32> {
  return max(fixed,penumbra);
 }
 
+// The steepest the soft filter follows a receiver's plane: DiligentFX
+// f26cfe5's default fReceiverPlaneDepthBiasClamp (Shaders/Common/public/
+// BasicStructures.fxh 53, applied in Shadows.fxh 190-193), metres toward
+// the light per metre across the direction to it. An unbounded plane
+// nearly edge on to its light compares the uphill taps metres nearer the
+// light, past any occluder there, and counts them lit: a wall under a
+// roof that the sun meets within a degree of edge on took 0.2 to 0.5 of
+// the sun through the roof (#905). Bounded, a plane steeper than this, one
+// the light grazes within 5.7 degrees of edge on, is followed at this
+// steepness and counts some of its own uphill texels as blockers again.
+// Open ground, which reads 1 unbounded, reads under a sun of the default
+// 0.53 degree disc 0.91 at 2 degrees high, 0.98 at 3 and 1 from 4; under
+// a 2 degree disc 0.64 to 0.71, 0.74 to 0.87 and 0.89 to 0.94 at 2, 3 and
+// 4 degrees high; under 6 and 10 degree discs 0.22 to 0.86 from 2 to 5
+// degrees high; and 1 from 6 degrees up. The fixed filters read 0.81 to
+// 0.89 there up to 8 degrees. Limit: the bound still lets a tap r metres
+// across reach 10 r nearer the light, so a receiver nearly edge on less
+// than ten filter radii (never below the fixed filter's, which grows with
+// the map's texels) beneath an occluder still sees past it: points 0.3 to
+// 0.5 m beneath a roof that a light of radius 0.5 m, 2.5 m above the roof,
+// meets edge on take 0.08 to 0.17 of it (0.34 to 0.49 unbounded), where
+// lights of 0.1 and 0.2 m take under 0.01.
+const RECEIVER_PLANE_STEEPEST:f32=10.;
+// The normal of the plane the soft filter follows for a receiver with unit
+// `normal`, lit from the unit direction `toward_light`: `normal` where its
+// plane rises at most RECEIVER_PLANE_STEEPEST toward the light per metre
+// across the direction to it, else turned toward the light, on its side
+// of the edge-on plane, until it rises that much. Diligent clamps the
+// slope along each of its map's axes; here the plane's steepness is bounded
+// whatever its heading, as a cube's taps lie in no one map's axes. A zero
+// normal (a point in the fog) stays zero.
+fn receiver_plane_normal(normal:vec3<f32>,toward_light:vec3<f32>)->vec3<f32> {
+ let along=dot(normal,toward_light);
+ let across=normal-toward_light*along;
+ let least=length(across)/RECEIVER_PLANE_STEEPEST;
+ if abs(along)>=least {
+  return normal;
+ }
+ return normalize(across+toward_light*(least*select(-1.,1.,along>=0.)));
+}
 // Two directions across the plane of unit `normal`, neither a unit vector
 // nor zero: the normal crossed with the axis it lies least along, and with
 // that.
@@ -297,8 +336,10 @@ fn receiver_plane_directions(normal:vec3<f32>)->mat2x3<f32> {
 }
 // The least of a plane's normal along a map's depth that
 // receiver_plane_depth_slope divides by: far below any plane a light sees
-// but edge on, it only keeps the quotient finite. The slope has no other
-// bound: receiver_plane_depth keeps what it gives in the map's range.
+// but edge on, it only keeps the quotient finite (a zero normal's slope is
+// 0 / 0 without it). Callers bound the plane's steepness first
+// (receiver_plane_normal); receiver_plane_depth keeps what the slope gives
+// in the map's range.
 const RECEIVER_PLANE_EDGE_ON:f32=1e-20;
 // Filament's computeReceiverPlaneDepthBias (Isidoro's chain rule): the
 // depth a plane gains per unit along each of a map's two axes, from its

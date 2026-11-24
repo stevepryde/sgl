@@ -1813,3 +1813,58 @@ fn a_directional_penumbra_on_a_slope_is_the_discs() {
     let observed = camera_sun_on(&mut fixture, &input, &points, normal);
     expect_zones(&observed, &[1., 0.5, 0.5, 0.], "an edge 4 m above a slope");
 }
+
+/// `sun_frame` for a sun shining along `direction`.
+fn sun_frame_along(eye: Vec3, angular_diameter: f32, direction: Vec3) -> FrameInput {
+    let mut input = sun_frame(eye, angular_diameter);
+    input.directional_lights[0].as_mut().unwrap().direction = direction.normalize();
+    input
+}
+
+// A surface the sun meets almost edge on, beneath a roof, stays in the
+// roof's shadow (#905). Plausible defect: the receiver's plane followed
+// without bound, so that for a plane nearly parallel to the light its
+// uphill taps are compared at depths metres nearer the light, beyond the
+// roof, and count as lit: Sponza's curtains under its arcades took about
+// half the sun through the roof under TAA, which the normal maps' mapped
+// cosine then showed as bright speckles. The oracle is geometric: a
+// double-sided wall facing +Z, the camera, hangs from a roof 1 m above
+// the floor that reaches 3 m either side of it and 15 m along it; the sun
+// shines down 0.01 and 0.05 off the wall's plane, on its seen side and on
+// its far side, and straight along it. From points 0.3 and 0.5 m beneath the roof
+// a ray toward any part of a disc up to 6 degrees across leaves the wall
+// less than 0.06 m from it, so it meets the roof: no light reaches them.
+// Unbounded, they took 0.2 to 0.33 of the sun within 0.01 of edge on and
+// 0.5 exactly edge on.
+#[test]
+fn a_surface_the_sun_meets_edge_on_beneath_a_roof_takes_its_shadow() {
+    let Some(device) = test_support::device() else {
+        return;
+    };
+    let mut fixture = Fixture::with_settings(device, SIZE, soft_settings(true));
+    let wall_z = -SOFT_DEPTH;
+    let roof = SOFT_FLOOR + 1.;
+    fixture.place(rectangle(Vec3::new(0., roof, wall_z), 15., 3.), false);
+    let mut wall = quad(Vec3::ZERO, 1.);
+    for vertex in &mut wall.vertices {
+        let [x, y, _] = vertex.position;
+        vertex.position = [x * 15., SOFT_FLOOR + (y + 1.) * 0.5, wall_z];
+    }
+    let mut wall = Fixture::white(wall);
+    wall.materials[0].double_sided = true;
+    fixture.place_asset(wall, false);
+    let points = [(0., 0.3), (0., 0.5), (0.3, 0.3), (-0.3, 0.5)]
+        .map(|(x, below)| Vec3::new(x, roof - below, wall_z));
+    for z in [-0.05, -0.01, 0., 0.01, 0.05] {
+        for diameter in [0.5, 2., 6.] {
+            let input = sun_frame_along(Vec3::ZERO, diameter, Vec3::new(0., -1., z));
+            let observed = camera_sun_on(&mut fixture, &input, &points, Vec3::Z);
+            for (point, [visibility, ..]) in points.iter().zip(&observed) {
+                assert!(
+                    *visibility < 0.01,
+                    "a sun of {diameter}° along (0, -1, {z}), at {point:?} beneath the roof: visibility {visibility}"
+                );
+            }
+        }
+    }
+}

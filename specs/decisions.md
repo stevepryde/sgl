@@ -2149,3 +2149,19 @@ Use the [current specs](README.md) for implementation and the
   as every stage of SGL3D does (AR-13), which removes the one exception
   without constraining the view. Not built now: no game has shown the hold
   to matter (D-76).
+- **D-93** Decision, 2026-11-24 (#905): the soft shadow filter follows a
+  receiver's plane no steeper than 10 m toward the light per metre across
+  (`receiver_plane_normal`), DiligentFX's default
+  `fReceiverPlaneDepthBiasClamp`, which #841 had left out. Unbounded, a
+  receiver nearly edge on to its light compared its uphill taps past any
+  occluder above it and took up to half the light through it, which
+  Sponza's normal-mapped curtains showed as speckles. Known limit, accepted:
+  a surface the light grazes within 5.7° of edge on counts some of its own
+  texels as blockers again, so open ground under the default 0.53° sun
+  keeps 0.91 of its light at 2° high and all of it from 4°, and under a sun
+  widened to 6–10° keeps 0.22–0.86 from 2° to 5° high (1 unbounded; the
+  fixed filters 0.81–0.89). A light of radius 0.5 m still lights points
+  0.3–0.5 m beneath a roof it meets edge on at 0.08–0.17.
+  Rationale: a leak of up to half the light through a solid occluder is
+  worse than dimmer open ground under a sun below 6°, and the bound is the
+  ported reference's own.

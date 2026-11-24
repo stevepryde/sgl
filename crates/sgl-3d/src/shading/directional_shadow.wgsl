@@ -27,11 +27,11 @@
 // the two cascades search different footprints and, among several
 // casters, can find different blockers: the penumbra is the same in every
 // cascade for a given set of blockers. Its taps follow the receiver's
-// plane (shadow_sampling.wgsl's receiver plane depth bias): a cascade is
-// orthographic, so the plane has one slope across its map
-// (directional_cascade_plane_slope), which an unoccluded 45 degree slope
-// under a sun of 6 to 10 degrees holds at 1 (0.997 to 0.84 at the
-// receiver's one depth, #841).
+// plane (shadow_sampling.wgsl's receiver plane depth bias, no steeper than
+// receiver_plane_normal allows): a cascade is orthographic, so the plane
+// has one slope across its map (directional_cascade_plane_slope), which an
+// unoccluded 45 degree slope under a sun of 6 to 10 degrees holds at 1
+// (0.997 to 0.84 at the receiver's one depth, #841).
 //
 // The camera's fog takes Godot b130438's lookup instead
 // (directional_shadow_medium, from servers/rendering/renderer_rd/shaders/
@@ -156,7 +156,8 @@ fn sample_directional_cascade(light_id:u32,cascade_index:u32,frag_position:vec3<
  }
  let disc_radius=frame.directional_lights[light_id].disc_radius;
  if shadow_filtering==SHADOW_FILTER_SOFT && disc_radius>0. {
-  return sample_directional_soft(cascade_index,light_local.xyz,surface_normal,frag_coord_xy,disc_radius);
+  let toward_light=normalize(frame.directional_lights[light_id].direction_to_light);
+  return sample_directional_soft(cascade_index,light_local.xyz,receiver_plane_normal(surface_normal,toward_light),frag_coord_xy,disc_radius);
  }
  let texel_size=frame.shadow_cascades[cascade_index].texel_size;
  return sample_shadow_map(directional_shadow_map,shadow_sampler,light_local.xy,light_local.z,i32(cascade_index),DIRECTIONAL_SHADOW_BOUNDS,frag_coord_xy,texel_size,shadow_filtering);
