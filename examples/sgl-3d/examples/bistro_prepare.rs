@@ -16,9 +16,50 @@ use serde_json::{Value, json};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Role {
     Color,
-    Normal,
+    /// A normal map, by which way its source image's green points.
+    Normal(Green),
     Data,
 }
+
+/// Which way a source normal map's green (+Y) points up its image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Green {
+    /// DirectX: +Y toward the image's bottom. Inverted for glTF.
+    Down,
+    /// glTF: +Y toward the image's top. Kept.
+    Up,
+}
+
+/// The source normal maps authored green up, though the conversion's README
+/// calls every Bistro normal map DirectX (#910). A height field's normal map
+/// is integrable (near-zero curl) only read the right way up; Khronos's
+/// NormalTangentTest, green up by glTF's rule, has a curl to divergence ratio
+/// of 0.20 read green up against 1.23 read green down (#907). Decoded at
+/// BISTRO_REVISION and averaged to 64-2048 px, each map here reads lower
+/// green up at every size but at most one (Plantpots at 64 px, the main door
+/// at 2048) and under 0.75 of its green-down ratio at two to six sizes: the
+/// curtains 0.03-0.32 against 0.20-0.44, the ivy leaf 0.08-0.48 against
+/// 1.25-1.48; the weakest, the doors, 0.32-0.53 against 0.44-0.61. The two
+/// antenna plastics are one fine, near-flat image reading 0.68-0.78 against
+/// 1.17-1.36 at 512-2048 px. The other maps read green down wherever the
+/// measure decides. Those it cannot keep the README's DirectX: flat,
+/// constant (Paris_LiquorBottle_01_Labels), axis-aligned hard-surface relief
+/// it is blind to, and atlases reading one way coarse and the other fine
+/// (Paris_TrafficSign_A, Paris_StreetSign_01, Foliage_Flowers).
+const GREEN_UP_SOURCES: [&str; 12] = [
+    "Textures/Antenna_Plastic_Blue_Normal.ktx2",
+    "Textures/Antenna_Plastic_Normal.ktx2",
+    "Textures/Foliage_Ivy_branches_Normal.ktx2",
+    "Textures/Foliage_Ivy_leaf_a_Normal.ktx2",
+    "Textures/MASTER_Bistro_Main_Door_Normal.ktx2",
+    "Textures/MASTER_Curtains_Normal.ktx2",
+    "Textures/MASTER_Doors_Normal.ktx2",
+    "Textures/MASTER_Frosted_Glass_Normal.ktx2",
+    "Textures/Pavement_Curbstones_Normal.ktx2",
+    "Textures/Plantpots_Normal.ktx2",
+    "Textures/Shopsign_Bakery_Normal.ktx2",
+    "Textures/Spotlight_Glass_Emissive_Normal.ktx2",
+];
 
 fn image_index(document: &Value, texture: &Value) -> Option<usize> {
     let texture = &document["textures"][texture["index"].as_u64()? as usize];
@@ -57,6 +98,11 @@ fn adapt(document: &mut Value) -> Result<BTreeMap<usize, Role>, Box<dyn Error>> 
         }
     }
     let mut roles = BTreeMap::new();
+    let images = document["images"].as_array().ok_or("missing images")?;
+    let green = |image: usize| match images[image]["uri"].as_str() {
+        Some(uri) if GREEN_UP_SOURCES.contains(&uri) => Green::Up,
+        _ => Green::Down,
+    };
     for material in document["materials"].as_array().unwrap() {
         for (texture, role) in [
             (
@@ -64,15 +110,21 @@ fn adapt(document: &mut Value) -> Result<BTreeMap<usize, Role>, Box<dyn Error>> 
                 Role::Color,
             ),
             (&material["emissiveTexture"], Role::Color),
-            (&material["normalTexture"], Role::Normal),
+            (&material["normalTexture"], Role::Normal(Green::Down)),
             (
                 &material["pbrMetallicRoughness"]["metallicRoughnessTexture"],
                 Role::Data,
             ),
             (&material["occlusionTexture"], Role::Data),
         ] {
-            if let Some(image) = image_index(document, texture)
-                && let Some(previous) = roles.insert(image, role)
+            let Some(image) = image_index(document, texture) else {
+                continue;
+            };
+            let role = match role {
+                Role::Normal(_) => Role::Normal(green(image)),
+                role => role,
+            };
+            if let Some(previous) = roles.insert(image, role)
                 && previous != role
             {
                 return Err(
@@ -135,16 +187,19 @@ fn convert(input: &image::RgbaImage, role: Role, maximum: u32) -> image::RgbaIma
     // constant zero B (e.g. Vespa_Normal). Decode their positive Z before
     // filtering; treating the absent B as signed -1 reverses the normals.
     // Full RGB normal maps, including the small flat defaults, keep their Z.
-    let normal_rg = role == Role::Normal && input.pixels().all(|p| p[2] == 0);
+    let normal_rg = matches!(role, Role::Normal(_)) && input.pixels().all(|p| p[2] == 0);
     let mut linear: Rgba32FImage = ImageBuffer::from_fn(input.width(), input.height(), |x, y| {
         let mut pixel = input.get_pixel(x, y).0.map(|v| f32::from(v) / 255.);
         if role == Role::Color {
             for channel in 0..3 {
                 pixel[channel] = srgb_to_linear(pixel[channel]) * pixel[3];
             }
-        } else if role == Role::Normal {
+        } else if let Role::Normal(green) = role {
             let nx = pixel[0] * 2. - 1.;
-            let ny = 1. - pixel[1] * 2.; // DirectX Y-down to glTF Y-up.
+            let ny = match green {
+                Green::Down => 1. - pixel[1] * 2., // DirectX Y-down to glTF Y-up.
+                Green::Up => pixel[1] * 2. - 1.,
+            };
             let nz = if normal_rg {
                 (1. - nx * nx - ny * ny).max(0.).sqrt()
             } else {
@@ -172,7 +227,7 @@ fn convert(input: &image::RgbaImage, role: Role, maximum: u32) -> image::RgbaIma
             for channel in 0..3 {
                 pixel[channel] = linear_to_srgb(pixel[channel].max(0.) / pixel[3].max(1e-8));
             }
-        } else if role == Role::Normal {
+        } else if matches!(role, Role::Normal(_)) {
             // Re-normalize the already decoded, Y-corrected vectors after
             // linear filtering, never gamma-correct normal data.
             let mut normal =
@@ -876,7 +931,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     std::fs::write(
         output.join("SGL-ATTRIBUTION.txt"),
         format!(
-            "Amazon Lumberyard Bistro, Open Research Content Archive (ORCA)\nAmazon Lumberyard, July 2017\nhttps://developer.nvidia.com/orca/amazon-lumberyard-bistro\nCC BY 4.0: https://creativecommons.org/licenses/by/4.0/\nSee LICENSE.txt for the complete licence.\n\nglTF conversion: https://github.com/qian-o/GLTF-Assets\nSource revision: 816a1d6533c55787b3fabc9b75660c0d0c57ebc6\n\nSGL adaptations: Basis/KTX2 decoded with Khronos KTX-Software to PNG;\nTwo-channel normal positive Z reconstructed before filtering; DirectX normal\nY inverted and resized normals renormalized; packed G/B\nrestored to metallicRoughnessTexture with unit factors; {occlusion_note}\ntextures limited to {maximum} pixels (linear-light, premultiplied-alpha colour resize);\ngeometry, authored transforms, alpha and transmission preserved.\nNo geometry simplification or automatic cache-staleness rejection.\n\nEnvironment: San Giuseppe Bridge by Greg Zaal, HDRIHaven / Poly Haven, CC0.\nhttps://polyhaven.com/a/san_giuseppe_bridge\nhttps://polyhaven.com/license\nPMREM atlas generated with Three.js 0.185.1 (MIT; THREE-LICENSE.txt).\n"
+            "Amazon Lumberyard Bistro, Open Research Content Archive (ORCA)\nAmazon Lumberyard, July 2017\nhttps://developer.nvidia.com/orca/amazon-lumberyard-bistro\nCC BY 4.0: https://creativecommons.org/licenses/by/4.0/\nSee LICENSE.txt for the complete licence.\n\nglTF conversion: https://github.com/qian-o/GLTF-Assets\nSource revision: 816a1d6533c55787b3fabc9b75660c0d0c57ebc6\n\nSGL adaptations: Basis/KTX2 decoded with Khronos KTX-Software to PNG;\nTwo-channel normal positive Z reconstructed before filtering; DirectX normal\nY inverted (twelve maps authored green up kept) and resized normals renormalized; packed G/B\nrestored to metallicRoughnessTexture with unit factors; {occlusion_note}\ntextures limited to {maximum} pixels (linear-light, premultiplied-alpha colour resize);\ngeometry, authored transforms, alpha and transmission preserved.\nNo geometry simplification or automatic cache-staleness rejection.\n\nEnvironment: San Giuseppe Bridge by Greg Zaal, HDRIHaven / Poly Haven, CC0.\nhttps://polyhaven.com/a/san_giuseppe_bridge\nhttps://polyhaven.com/license\nPMREM atlas generated with Three.js 0.185.1 (MIT; THREE-LICENSE.txt).\n"
         ),
     )?;
     std::fs::write(
@@ -1001,28 +1056,59 @@ mod tests {
     #[test]
     fn a_directx_normal_toward_negative_y_becomes_positive_y() {
         let image = image::RgbaImage::from_pixel(1, 1, Rgba([128, 37, 218, 255]));
-        let result = convert(&image, Role::Normal, 1024);
+        let result = convert(&image, Role::Normal(Green::Down), 1024);
         let [x, y, z, _] = result.get_pixel(0, 0).0;
         let vector = glam::Vec3::from_array([x, y, z].map(|v| f32::from(v) / 127.5 - 1.));
         assert!(vector.y > 0.69 && vector.z > 0.69 && vector.x.abs() < 0.01);
         assert!((vector.length() - 1.).abs() < 0.01);
     }
     #[test]
+    fn green_up_sources_keep_their_green_and_the_rest_are_inverted() {
+        // MASTER_Curtains_Normal is authored green up (#910), Vespa_Normal
+        // green down, as the conversion's README says of all of them. A
+        // two-channel texel leaning up its image in each one's encoding
+        // leans up (glTF's +Y) after export.
+        let mut document = json!({
+            "images":[
+                {"uri":"Textures/MASTER_Curtains_Normal.ktx2"},
+                {"uri":"Textures/Vespa_Normal.ktx2"}
+            ],
+            "textures":[
+                {"extensions":{"KHR_texture_basisu":{"source":0}}},
+                {"extensions":{"KHR_texture_basisu":{"source":1}}}
+            ],
+            "materials":[
+                {"normalTexture":{"index":0}},
+                {"normalTexture":{"index":1}}
+            ]
+        });
+        let roles = adapt(&mut document).unwrap();
+        for (image, green) in [(0, 218), (1, 37)] {
+            let texel = image::RgbaImage::from_pixel(1, 1, Rgba([128, green, 0, 255]));
+            let [x, y, z, _] = convert(&texel, roles[&image], 1024).get_pixel(0, 0).0;
+            let vector = glam::Vec3::from_array([x, y, z].map(|v| f32::from(v) / 127.5 - 1.));
+            assert!(
+                vector.y > 0.69 && vector.z > 0.69,
+                "image {image}: {vector}"
+            );
+        }
+    }
+    #[test]
     fn two_channel_normals_reconstruct_positive_z_before_resizing() {
         let flat = image::RgbaImage::from_pixel(1, 1, Rgba([128, 128, 0, 255]));
-        let result = convert(&flat, Role::Normal, 1024);
+        let result = convert(&flat, Role::Normal(Green::Down), 1024);
         let pixel = result.get_pixel(0, 0);
         assert!(pixel[0].abs_diff(128) <= 1 && pixel[1].abs_diff(128) <= 1);
         assert_eq!(pixel[2], 255);
         let tilted = image::RgbaImage::from_pixel(1, 1, Rgba([204, 51, 0, 255]));
-        let result = convert(&tilted, Role::Normal, 1024);
+        let result = convert(&tilted, Role::Normal(Green::Down), 1024);
         let pixel = result.get_pixel(0, 0);
         assert!(pixel[0].abs_diff(204) <= 1 && pixel[1].abs_diff(204) <= 1);
         assert!((194..=196).contains(&pixel[2])); // sqrt(1 - 0.6² - 0.6²)
         let pair = image::RgbaImage::from_fn(2, 1, |x, _| {
             Rgba([if x == 0 { 204 } else { 51 }, 128, 0, 255])
         });
-        let filtered = convert(&pair, Role::Normal, 1);
+        let filtered = convert(&pair, Role::Normal(Green::Down), 1);
         assert!(filtered.get_pixel(0, 0)[2] >= 254);
         // The average of (0.8, 0, 0.6) and (0, 0.6, 0.8), then
         // normalized, differs from reconstructing Z from their mean XY.
@@ -1033,7 +1119,7 @@ mod tests {
                 [128, 51, 0, 255]
             })
         });
-        let filtered = convert(&asymmetric, Role::Normal, 1);
+        let filtered = convert(&asymmetric, Role::Normal(Green::Down), 1);
         let pixel = filtered.get_pixel(0, 0);
         assert!((186..=188).contains(&pixel[0]));
         assert!((171..=173).contains(&pixel[1]));
@@ -1041,7 +1127,7 @@ mod tests {
         // Lossy XY values can stray beyond the unit disk: keep a finite
         // tangent vector rather than taking a square root of a negative.
         let outside = image::RgbaImage::from_pixel(1, 1, Rgba([255, 0, 0, 255]));
-        let result = convert(&outside, Role::Normal, 1);
+        let result = convert(&outside, Role::Normal(Green::Down), 1);
         let pixel = result.get_pixel(0, 0);
         assert!((217..=218).contains(&pixel[0]) && (217..=218).contains(&pixel[1]));
         assert_eq!(pixel[2], 128);

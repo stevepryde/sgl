@@ -45,8 +45,15 @@ Allow several GiB of RAM. Everything downloaded/generated stays in ignored
   light. Red is preserved unused, not inverted or assigned a guessed meaning.
 - This conversion's XY-only normal images have a constant zero blue channel;
   their positive Z is reconstructed from RG before filtering. Full RGB normal
-  images keep their Z. DirectX tangent-space normals have green inverted for
-  glTF's +Y convention. Resized normals are renormalized; data textures are filtered as linear data.
+  images keep their Z. The conversion's README calls every normal map
+  DirectX (green down), and the export inverts green for glTF's +Y, except
+  twelve source images authored green up, which it keeps: the ivy leaf and
+  branches, curtains, frosted glass, main and other doors, curbstones, plant
+  pots, bakery sign, spotlight glass and the two antenna plastics. `GREEN_UP_SOURCES` in
+  `bistro_prepare.rs` names them with the measured evidence (#910). Content
+  prepared before that fix has those ten inside out: re-export it, including
+  any package and probe bakes made from it. Resized normals are
+  renormalized; data textures are filtered as linear data.
   Base colour and emission resize in linear light with premultiplied alpha.
 - Textures are limited to 1024 pixels by default, with no geometry reduction.
   Authored geometry, transforms, UVs, alpha and transmission are retained.
