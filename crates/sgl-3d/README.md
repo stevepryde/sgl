@@ -1712,14 +1712,11 @@ Blended surfaces, probe captures and ray hits take none. It needs a centred
 reversed-Z perspective camera, as ambient occlusion does; any other camera
 leaves it off. A camera cut, a resize, a level or radius change and a frame
 without it restart it (its history: [SI-1 to SI-6](../../specs/sgl3d-history.md)).
-It holds no targets while off, and while on 16 bytes a render pixel at half
+It holds nothing while off (its targets, bind groups and pipelines go the
+first frame it does not run; call `Renderer::compile` after turning it back
+on, as after any settings change), and while on 16 bytes a render pixel at half
 size, with ambient occlusion's depth pyramid (about 5 bytes a render pixel)
-where ambient occlusion is off. On an Apple M5 at 1920×1080 on Bistro (`bistro-golden`,
-the least-contended of several runs on a shared machine) its passes took
-2.2–2.9 ms at Low and 3.7–5.1 ms at High natively, the depth pyramid
-included, against 2.2–2.7 ms for ambient occlusion at Medium, and the fused
-opaque pass took about 1.1 ms longer to read the kept result; in Chrome the
-passes took 2.7–3.2 and 3.4–4.2 ms. Measure the game's own routes.
+where ambient occlusion is off. On an Apple M5 at 1920×1080 on `bistro-daylight` (ambient occlusion at Medium, median and range of four interleaved runs) `Low` adds 4.1 (3.7–5.1) ms to the frame on `street` and 3.8 (3.5–5.2) ms on `bevy`, and `High` 5.4 (5.1–6.2) and 4.6 (4.5–5.4) ms; of `Low`'s, reading the kept result costs the fused opaque pass 1.4 (1.3–2.1) and 1.7 (1.6–2.4) ms, and the split lighting pass 1.1 (1.1–3.4) and 1.2 (1.1–1.5) ms. In Chrome its passes took 2.7–3.2 ms at Low and 3.4–4.2 ms at High (`bistro-golden`). Measure the game's own routes.
 [The port's provenance and departures](src/stages/opaque/screen_indirect/README.md).
 
 ## Baked specular probes

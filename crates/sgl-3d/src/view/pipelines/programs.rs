@@ -156,6 +156,20 @@ impl ProgramSet {
         .clone()
     }
 
+    /// Lets go of its camera lighting programs that take screen-space
+    /// indirect light, with and without the occlusion and specular maps.
+    pub fn forget_screen_indirect(&mut self) {
+        for programs in &mut self.programs {
+            for shadows in [
+                CameraShadows::Maps,
+                CameraShadows::ShadowMask,
+                CameraShadows::ContactMask,
+            ] {
+                programs.camera[camera_slot(shadows, true)] = Slot::default();
+            }
+        }
+    }
+
     /// How many modules it holds.
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub fn modules(&self) -> usize {

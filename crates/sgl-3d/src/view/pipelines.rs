@@ -15,7 +15,9 @@
 //! (`shading::CONTACT_SHADOW_NONE`). The fused and
 //! lighting passes while screen-space indirect light has a kept result
 //! compose its provider (`shading::CAMERA_SCREEN_INDIRECT`) and bind it at
-//! their group 3 too; every other pass composes the one that gives none. Every program
+//! their group 3 too; every other pass composes the one that gives none.
+//! Those pipelines and their programs go in the first frame no view runs
+//! it (`screen_indirect_runs`). Every program
 //! composes the lit and material-map providers of the device's binding tier
 //! (`shading::lit_provider`, `shading::material_provider`), and every
 //! pipeline layout takes group 0's and group 2's layouts of that tier, fixed
@@ -79,6 +81,10 @@ pub(crate) struct GeometryPipelines {
     current: Specialisation,
     /// A light or material toggled back can reuse its previous pipelines.
     previous: Option<Specialisation>,
+    /// Whether `cache` may hold a pipeline that takes screen-space indirect
+    /// light, so the first frame no view runs it drops them
+    /// (`screen_indirect_runs`) and a frame after that does nothing.
+    screen_indirect: bool,
     /// Whether `GBuffer` writes anisotropy itself; otherwise
     /// `GBufferAnisotropy` does.
     pub anisotropy_inline: bool,
@@ -157,6 +163,7 @@ impl GeometryPipelines {
             plans_screen_indirect: false,
             current: (LayerConstants::ALL, LitConstants::default(), false),
             previous: None,
+            screen_indirect: false,
             anisotropy_inline: attachments_fit(&limits, &targets(GeometryPass::GBuffer, true)),
             fused_supported: attachments_fit(
                 &limits,
@@ -247,12 +254,40 @@ impl GeometryPipelines {
         {
             return self.cache.get_mut(&key).and_then(Compiled::ready_mut);
         }
+        self.screen_indirect |= key.pass.takes_screen_indirect();
         let (label, job) = self.job(scene, key);
         let compiler = self.compiler.clone();
         self.cache
             .entry(key)
             .or_default()
             .get(&compiler, label, || job)
+    }
+
+    /// Drops the fused and lighting pipelines that take screen-space
+    /// indirect light, with their programs, in the first frame no view
+    /// runs it (`running` false), so it holds nothing while off; whether it
+    /// runs follows only the settings and the projection. The shadow-mask
+    /// and contact-mask pipelines stay with their specialisation, since
+    /// whether they run follows the scene's lights.
+    pub fn screen_indirect_runs(&mut self, running: bool) {
+        if running || !std::mem::take(&mut self.screen_indirect) {
+            return;
+        }
+        self.cache
+            .retain(|key, _| !key.pass.takes_screen_indirect());
+        self.programs.forget_screen_indirect();
+        self.shader_programs
+            .values_mut()
+            .for_each(ProgramSet::forget_screen_indirect);
+    }
+
+    /// The pipelines it holds that take screen-space indirect light.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub fn screen_indirect_held(&self) -> usize {
+        self.cache
+            .keys()
+            .filter(|key| key.pass.takes_screen_indirect())
+            .count()
     }
 
     /// The shader modules and pipelines it holds for game shaders.

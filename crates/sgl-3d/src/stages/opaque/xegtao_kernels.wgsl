@@ -1,8 +1,9 @@
 // XeGTAO, Copyright (C) 2016-2021 Intel Corporation, SPDX-License-Identifier: MIT.
 // XeGTAO's pure kernels that ambient occlusion and screen-space indirect light
 // both take, one owner for each (XeGTAO.hlsli a5b1686: XeGTAO_FastACos, the
-// Hilbert R2 noise of SpatioTemporalNoise, XeGTAO_CalculateEdges and
-// XeGTAO_PackEdges, and XeGTAO_Denoise's edge weights). Binds nothing.
+// Hilbert R2 noise of SpatioTemporalNoise, where a slice's samples sit,
+// XeGTAO_CalculateEdges and XeGTAO_PackEdges, and XeGTAO_Denoise's edge
+// weights). Binds nothing.
 fn fast_acos(v:f32)->f32 {
     let x=abs(v);
     let root=bitcast<f32>(0x1fbd1df5i+(bitcast<i32>(1.0-x)>>1u));
@@ -14,6 +15,21 @@ fn fast_acos(v:f32)->f32 {
 fn xegtao_noise(hilbert_index:u32,frame:u32)->vec2<f32> {
     let index=hilbert_index+288u*(frame%64u);
     return fract(vec2(0.5)+f32(index)*vec2(0.75487766624669276005,0.5698402909980532659114));
+}
+// XeGTAO's pixelTooCloseThreshold (XeGTAO.hlsli 335): every sample lies at
+// least this many pixels from its receiver, so none reads the receiver's
+// own pixel, which tells it nothing.
+const XEGTAO_PIXEL_TOO_CLOSE: f32 = 1.3;
+// Where sample `step` of a slice's `steps` a side lies, as a share of the
+// projected radius `radius_pixels`: (step + noise) / steps, `noise` in
+// [0, 1), raised to `power`, then XeGTAO's pixel floor added, so the last
+// sample reaches the radius (XeGTAO.hlsli 420 to 433: s = pow((step +
+// stepNoise) / stepsPerSlice, sampleDistributionPower) + minS, minS =
+// pixelTooCloseThreshold / screenspaceRadius; Bevy 9d12036 ssao.wesl 180
+// and 181 square it the same way). A `noise` shared by a slice's steps keeps
+// its samples in order outward.
+fn xegtao_sample_s(step:u32,steps:u32,noise:f32,power:f32,radius_pixels:f32)->f32 {
+    return pow((f32(step)+noise)/f32(steps),power)+XEGTAO_PIXEL_TOO_CLOSE/radius_pixels;
 }
 // A pixel's edges toward its left, right, top and bottom neighbours from its
 // view depth `z` and theirs, 1 where the surface continues and 0 across a

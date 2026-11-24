@@ -315,21 +315,15 @@ impl ScreenIndirect {
     /// with the pass running as `settings` says: leaves the frame's run
     /// and returns whether its camera lighting takes the last finished
     /// frame's kept result (`read`), where the frame continues it (SI-1,
-    /// SI-2). Off, it releases its targets and leaves nothing, so the next
-    /// frame that runs it restarts.
+    /// SI-2). The opaque stage drops it in a frame that does not run it.
     pub(crate) fn begin(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        settings: Option<crate::view::effective::ScreenIndirect>,
+        settings: crate::view::effective::ScreenIndirect,
         size: [u32; 2],
         history: &HistoryFrame,
     ) -> bool {
-        let Some(settings) = settings else {
-            self.targets = None;
-            self.history.forget();
-            return false;
-        };
         if self.targets.as_ref().is_none_or(|t| t.size != size) {
             self.targets = Some(Targets::new(device, size));
             self.history.forget();

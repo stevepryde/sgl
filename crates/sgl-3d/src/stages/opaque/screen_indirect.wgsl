@@ -9,7 +9,8 @@
 // Gilet 2023), CDRIN SSRT3 b38d821 HDRP/Shaders/Resources/SSRTCS.compute
 // (CSMain's slice loop, HorizonSampling, ComputeOccludedBitfield; MIT,
 // Copyright (c) 2024 CDRIN, src/LICENSE-ssrt3.txt) at SSRT_HDRP.cs's shipped
-// steps, spacing, thickness and sectors, with Bevy 9d12036
+// steps, thickness, sectors and depth mips, with XeGTAO's spacing
+// (xegtao_kernels.wgsl), and with Bevy 9d12036
 // crates/bevy_pbr/src/ssao/ssao.wesl (updateSectors, processSample, the
 // slice setup, the Hilbert and R2 noise; MIT, src/LICENSE-bevy.txt) as the
 // WGSL model of the same search, over ambient occlusion's depth pyramid and
@@ -55,6 +56,12 @@ const SCREEN_INDIRECT_THICKNESS: f32 = 1.0;
 // HorizonSampling's coarsest depth mip, min((j + 1) / 2, 4): the pyramid's
 // last.
 const SCREEN_INDIRECT_LAST_MIP: u32 = 4u;
+// The power a slice's sample spacing takes (xegtao_sample_s): 1 spaces the
+// samples evenly out to the radius, as the visibility-bitmask reference
+// does (Therrien, Levesque and Gilet 2023, sampleStep = currentSample /
+// sampleCount + sampleOffset). XeGTAO and Bevy take 2 for occlusion, which
+// measured no quieter here (D-91).
+const SCREEN_INDIRECT_SAMPLE_DISTRIBUTION_POWER: f32 = 1.0;
 // The frames accumulated at most.
 const SCREEN_INDIRECT_MOST_HISTORY: f32 = 16.0;
 // The view depth ambient occlusion's pyramid gives the sky (view_depth's
@@ -280,13 +287,11 @@ fn gather(@builtin(global_invocation_id) id: vec3<u32>) {
     let local_noise = xegtao_noise(textureLoad(hilbert_lut, id.xy % vec2(SCREEN_INDIRECT_HILBERT_WIDTH), 0).x, p.noise_index);
     let slices = min(p.slices, SCREEN_INDIRECT_MOST_SLICES);
     let steps = min(p.steps, SCREEN_INDIRECT_MOST_STEPS);
-    // HorizonSampling's stepRadius in pixels: the radius at the receiver's
-    // depth over steps + 1, at least a pixel a step. The radius is projected
+    // The radius at the receiver's depth in full-size pixels, projected
     // whole, as Bevy's and XeGTAO's are, so the search spans the reach that
     // cuts its samples; SSRT_HDRP.cs's _HalfProjScale halves it, and its
     // search spans half its radius across the view (D-65).
-    let pixel_view_size = z * p.ndc_mul.x * p.pixel_size.x;
-    let step_pixels = max(p.radius / pixel_view_size, f32(steps)) / f32(steps + 1u);
+    let radius_pixels = p.radius / (z * p.ndc_mul.x * p.pixel_size.x);
     var light = vec3(0.0);
     var coverage = 0.0;
     for (var slice = 0u; slice < slices; slice++) {
@@ -305,14 +310,18 @@ fn gather(@builtin(global_invocation_id) id: vec3<u32>) {
         let gamma = sign_norm * horizon_acos(cos_norm);
         // The projected normal's sector coordinate (Bevy's n).
         let normal_sector = (HALF_PI - gamma) / PI;
-        // Linear spacing, jittered per slice (SSRT3's initialRayStep).
+        // The slice's spacing noise, shared by its steps (SSRT3's
+        // initialRayStep), so its samples stay in order outward.
         let jitter = fract(local_noise.y + f32(slice) * 0.6180339887498948482);
         var bitmask = 0u;
         for (var side = 0u; side < SCREEN_INDIRECT_SIDES; side++) {
             // Bevy's sampling_direction: -1 toward +omega, 1 toward -omega.
             let sampling_direction = select(1.0, -1.0, side == 0u);
             for (var step = 0u; step < steps; step++) {
-                let offset = max(step_pixels * (f32(step) + jitter), f32(step + 1u));
+                // XeGTAO's spacing, which reaches the radius: SSRTCS.compute's
+                // stepRadius, radius / (steps + 1), never samples the last
+                // step of it.
+                let offset = xegtao_sample_s(step, steps, jitter, SCREEN_INDIRECT_SAMPLE_DISTRIBUTION_POWER, radius_pixels) * radius_pixels;
                 let sample_uv = uv - omega * offset * sampling_direction;
                 // A sample off screen ends its side.
                 if any(sample_uv <= vec2(0.0)) || any(sample_uv >= vec2(1.0)) {

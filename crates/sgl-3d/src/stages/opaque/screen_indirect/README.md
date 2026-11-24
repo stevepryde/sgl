@@ -16,11 +16,11 @@ pass and the lit programs both compose.
   [`b38d82140acf646ee485f9ab16a5fa84906f2231`](https://github.com/cdrinmatane/SSRT3/tree/b38d82140acf646ee485f9ab16a5fa84906f2231),
   `HDRP/Shaders/Resources/SSRTCS.compute`: `CSMain`'s slice loop,
   `HorizonSampling` and `ComputeOccludedBitfield`, at `HDRP/Scripts/SSRT_HDRP.cs`'s
-  shipped defaults as one set: 12 steps a side (`stepCount`), linear spacing
-  (`expFactor` 1) jittered from the step's start, a constant 1 m thickness
+  shipped defaults: 12 steps a side (`stepCount`), a constant 1 m thickness
   (`thickness`, `linearThickness` off), 32 sectors (`MAX_RAY`), depth mip
-  `min((j + 1) / 2, 4)` (`mipOptimization`), one slice at Low (`rotationCount`)
-  and two at High. MIT, copyright 2024 CDRIN (`src/LICENSE-ssrt3.txt`).
+  `min((j + 1) / 2, 4)` (`mipOptimization`), one slice at Low
+  (`rotationCount`) and two at High. MIT, copyright 2024 CDRIN
+  (`src/LICENSE-ssrt3.txt`).
   `SSRTCS.compute` includes Unity HDRP headers: no helper from them is
   ported, nor SSRT3's denoiser, probe fallback, noise texture or
   `GIIntensity` (HDRP code or its parameters, which RD-2 excludes).
@@ -80,10 +80,18 @@ pass and the lit programs both compose.
   leaves a receiver's own tangent plane covering a sliver of its horizon
   off the view axis (`an_open_plane_gathers_nothing`,
   `the_sky_gives_no_light_and_covers_nothing`).
+- **Spacing** ([D-91](../../../../../../specs/decisions.md)). SSRT3 steps
+  `radius / (steps + 1)` from a jittered start, so no sample lies past
+  `steps / (steps + 1)` of the radius. Sample `k` of `n` sits at
+  `(k + noise) / n` of the projected radius plus XeGTAO's 1.3-pixel floor
+  (`xegtao_sample_s`, XeGTAO a5b1686 `XeGTAO.hlsli` 420–433), which ambient
+  occlusion takes too, so the last sample reaches the radius. The spacing is
+  linear, as the visibility-bitmask paper's; XeGTAO and Bevy 9d12036
+  (`ssao.wesl` 180–181) square it, which measured no quieter here.
 - **Noise.** Bevy's Hilbert R2 noise turns the slices (`noise.x`) and jitters
-  each slice's first step (`noise.y`, advanced by the golden ratio per
-  slice) in place of SSRT3's spatial offsets, interleaved gradient noise and
-  `rand`.
+  each slice's samples (`noise.y`, advanced by the golden ratio per slice,
+  one value for all of a slice's samples so they stay in order outward) in
+  place of SSRT3's spatial offsets, interleaved gradient noise and `rand`.
 - **Bounce sources at half size.** SSRT3's light and normal pyramids start
   at the full size; SGL3D's start at half (the pass's own size), each level
   one below the depth mip it pairs with, the full-size depth mip pairing

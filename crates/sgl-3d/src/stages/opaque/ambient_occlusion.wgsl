@@ -17,6 +17,10 @@ struct Params {
 // loops end whatever the parameters say.
 const MOST_SLICES: u32 = 9u;
 const MOST_STEPS: u32 = 3u;
+// XeGTAO's default sample distribution (XeGTAO.h 109,
+// XE_GTAO_DEFAULT_SAMPLE_DISTRIBUTION_POWER): "small crevices more
+// important than big surfaces".
+const SAMPLE_DISTRIBUTION_POWER: f32 = 2.0;
 // The Hilbert curve's tile, texels across: hilbert_lut's extent.
 const HILBERT_WIDTH: u32 = 64u;
 @group(0) @binding(0) var<uniform> p: Params;
@@ -150,7 +154,6 @@ fn main_pass(@builtin(global_invocation_id) id:vec3<u32>) {
     let screen_radius=radius/(z*p.ndc_mul.x*p.pixel_size.x);
     var visibility=sat((10.0-screen_radius)/100.0)*0.5;
     let local_noise=noise(id.xy);
-    let min_s=1.3/screen_radius;
     let slices=min(p.slices,MOST_SLICES);
     let steps=min(p.steps,MOST_STEPS);
     for(var slice=0u;slice<slices;slice++) {
@@ -168,7 +171,7 @@ fn main_pass(@builtin(global_invocation_id) id:vec3<u32>) {
         var horizon=low;
         for(var step=0u;step<steps;step++) {
             let step_noise=fract(local_noise.y+f32(slice+step*steps)*0.6180339887498948482);
-            let sample_s=pow((f32(step)+step_noise)/f32(steps),2.0)+min_s;
+            let sample_s=xegtao_sample_s(step,steps,step_noise,SAMPLE_DISTRIBUTION_POWER,screen_radius);
             var offset=sample_s*omega;
             let mip=clamp(log2(length(offset))-3.30,0.0,5.0);
             offset=round(offset)*p.pixel_size;

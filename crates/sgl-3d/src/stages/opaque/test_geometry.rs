@@ -15,14 +15,16 @@ pub(crate) enum Wall {
 }
 
 /// The plane z = -3 m facing the camera (normal +z), with an optional wall
-/// (`Wall`) and an optional plate 1 m from the camera, facing it, over the
-/// rows `plate`; `rotated` turns the camera and scene together by 180°
-/// about y, which keeps what is projected and turns the world normals.
+/// (`Wall`) and an optional plate 1 m from the camera over the rows
+/// `plate`, facing the camera, or the plane where `plate_faces_plane`;
+/// `rotated` turns the camera and scene together by 180° about y, which
+/// keeps what is projected and turns the world normals.
 #[derive(Clone)]
 pub(crate) struct PlaneAndWall {
     pub wall: Option<Wall>,
     pub rotated: bool,
     pub plate: Option<Range<u32>>,
+    pub plate_faces_plane: bool,
     pub plane_color: [f32; 3],
     pub plate_color: [f32; 3],
 }
@@ -34,6 +36,7 @@ impl PlaneAndWall {
             wall: None,
             rotated: false,
             plate: None,
+            plate_faces_plane: false,
             plane_color: [0.; 3],
             plate_color: [0.; 3],
         }
@@ -83,7 +86,7 @@ pub(crate) fn plane_and_wall(
  var t=3.; var n=vec3(0.,0.,1.); var c={plane};
  var sky=false;
  if ({wall} || {sky}) && ray.x>0. {{ let wt=0.6/ray.x; if wt<t {{ t=wt; n=vec3(-1.,0.,0.); c={wall_color}; sky={sky}; }} }}
- if pixel.y>={plate_top}. && pixel.y<{plate_bottom}. {{ t=1.; n=vec3(0.,0.,1.); c={plate}; sky=false; }}
+ if pixel.y>={plate_top}. && pixel.y<{plate_bottom}. {{ t=1.; n=vec3(0.,0.,{plate_normal}); c={plate}; sky=false; }}
  let z=ray.z*t;
  if {rotated} {{ n=vec3(-n.x,n.y,-n.z); }}
  var o:Output; o.normal=gbuffer_encode_normals(n,n); o.color=vec4(c,1.); o.depth=select(({pz}*z+{pw})/(-z),0.,sky); return o;
@@ -98,6 +101,11 @@ pub(crate) fn plane_and_wall(
         plane = vector(fixture.plane_color),
         wall_color = vector(wall_color),
         plate = vector(fixture.plate_color),
+        plate_normal = if fixture.plate_faces_plane {
+            "-1."
+        } else {
+            "1."
+        },
         plate_top = fixture.plate.as_ref().map_or(0, |rows| rows.start),
         plate_bottom = fixture.plate.as_ref().map_or(0, |rows| rows.end),
     );

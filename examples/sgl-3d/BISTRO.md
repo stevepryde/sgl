@@ -613,7 +613,7 @@ frame total from interleaved runs):
 | Sharpening | on | 0.16-0.19 ms | 0.13 ms |
 | Fog with `start` | on | 0.4 ms | 0.3 ms |
 | Contact shadows, Medium | off | 2.4-2.5 ms | 1.8 ms |
-| Screen-space indirect, Low | off | 0.9-4 ms, in the AO and opaque passes | 3.3-4.4 ms of frame total (its own pass 0.39 ms) |
+| Screen-space indirect, Low | off | 4.1 (3.7-5.1) ms of frame total on `street`, 3.8 (3.5-5.2) on `bevy`; the opaque pass's read 1.4 and 1.7 ms of it | 3.3-4.4 ms of frame total (its own pass 0.39 ms) |
 | Local exposure 0.75/1.0 | off | 0.3-0.4 ms | 0.26 ms |
 | Window glass as SSR receiver | off | 1.0-1.2 ms | 0.2-0.33 ms |
 

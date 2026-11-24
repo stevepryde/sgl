@@ -200,19 +200,27 @@ pub(super) fn render(
             frame.view.post.hold_smaa_tables(tables);
         }
     }
-    // Update ray instances when any view of the frame traces.
-    let traced = begun
+    let mut effectives = begun
         .iter()
         .flatten()
         .chain(reflections.iter().flatten().map(|(_, begun)| begun))
-        .any(|(_, effective)| Prepare::traces(scene, effective));
+        .map(|(_, effective)| effective);
+    // Update ray instances when any view of the frame traces.
+    let traced = effectives
+        .clone()
+        .any(|effective| Prepare::traces(scene, effective));
+    let screen_indirect = effectives.any(|effective| effective.screen_indirect.is_some());
     shared.run_scene(
         (device, queue),
         scene,
         &primary_effective,
         views[0].input,
         // A planning pass's commands are never submitted.
-        (traced, views[0].timing.filter(|_| !planning)),
+        (
+            traced,
+            screen_indirect,
+            views[0].timing.filter(|_| !planning),
+        ),
     );
     // The render textures the frame's views draw into, whose pictures
     // change with it.

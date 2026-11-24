@@ -1,6 +1,6 @@
 //! Which specialisations' pipelines the cache keeps as the scene's lit
-//! constants change.
-use super::{Alpha, Cull, GeometryPass, GeometryPipelines, LayerConstants, Variant};
+//! constants change, and which it keeps as a feature stops.
+use super::{Alpha, CameraShadows, Cull, GeometryPass, GeometryPipelines, LayerConstants, Variant};
 use crate::Scene;
 use glam::Vec3;
 
@@ -108,6 +108,57 @@ fn pipelines_of_the_current_and_previous_specialisation_stay() {
     );
     let c = request(&mut pipelines, &scene);
     assert_ne!(c, b, "films require different lit shading");
+}
+
+// Plausible defect: the fused and lighting pipelines that read screen-space
+// indirect light, and their camera programs, outlive the feature, held
+// while it is off. Oracle: the cache's pipelines and the default programs'
+// modules before the feature's were requested, against theirs after the
+// first frame that does not run it; while it runs they stay.
+#[test]
+fn screen_indirect_pipelines_go_with_the_feature() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let scene = Scene::new(&device, &queue);
+    let mut pipelines = pipelines(&device);
+    pipelines.specialise(LayerConstants::ALL, &scene);
+    let request = |pipelines: &mut GeometryPipelines, pass| {
+        let variant = Variant {
+            uv1: 0,
+            transformed: 0,
+            cull: Cull::Back,
+            alpha: Alpha::Opaque,
+            deformed: false,
+            shader_sampled: 0,
+            occlusion_specular: false,
+        };
+        pipelines.with_pipeline(&scene, pass, variant, None, |_| ());
+    };
+    let lighting = |shadows, screen_indirect| GeometryPass::Lighting {
+        shadows,
+        screen_indirect,
+    };
+    request(&mut pipelines, GeometryPass::GBuffer);
+    request(&mut pipelines, lighting(CameraShadows::Maps, false));
+    let held =
+        |pipelines: &GeometryPipelines| (pipelines.cache.len(), pipelines.programs.modules());
+    let before = held(&pipelines);
+    request(&mut pipelines, lighting(CameraShadows::Maps, true));
+    request(&mut pipelines, lighting(CameraShadows::ShadowMask, true));
+    let running = held(&pipelines);
+    assert!(
+        running.0 > before.0 && running.1 > before.1,
+        "the feature's pipelines and programs are made: {before:?} then {running:?}"
+    );
+    pipelines.screen_indirect_runs(true);
+    assert_eq!(held(&pipelines), running, "they stay while it runs");
+    pipelines.screen_indirect_runs(false);
+    assert_eq!(
+        held(&pipelines),
+        before,
+        "the feature's pipelines and programs outlive it"
+    );
 }
 
 // A pass whose programs sample none of an occlusion map of its own and the

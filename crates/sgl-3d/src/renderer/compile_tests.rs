@@ -678,6 +678,72 @@ fn a_settings_change_compiles_what_is_new_and_a_resize_nothing() {
     assert_eq!(compiled.programs(), before);
 }
 
+// Plausible defects (#901): turning screen-space indirect light off lets
+// its programs go (the gather's, and the camera lighting's variants that
+// read its kept result, which a planning pass queued a frame ahead), but
+// keeps the queued variants, so it holds them while off; or `compile`
+// after turning it back on does not ready them again, so the frames after
+// create them on the window thread. The oracles are the release's contract
+// and wgpu's count, as the guard's: after the feature runs, the frame
+// without it leaves no pipeline that reads its kept result and the device
+// fewer programs; with it back on, `compile` runs jobs, and neither its
+// calls nor the next three frames, the second the first to read the kept
+// result, create a program.
+#[test]
+fn a_compiled_level_creates_nothing_when_screen_space_indirect_light_turns_back_on() {
+    use crate::settings::ScreenSpaceIndirect;
+    let Some(mut level) = Level::new() else {
+        return;
+    };
+    let inputs = [0., 0.25, 0.5].map(Level::input);
+    level.settings.screen_space_indirect = ScreenSpaceIndirect::Low;
+    level.compile_all(&inputs[0]);
+    inputs.iter().for_each(|input| {
+        level.render(input);
+    });
+    assert!(
+        level.renderer.shared.pipelines.screen_indirect_held() > 0,
+        "the feature's lighting pipelines ran"
+    );
+    let running = level.programs();
+    level.settings.screen_space_indirect = ScreenSpaceIndirect::Off;
+    level.render(&inputs[1]);
+    assert_eq!(
+        level.renderer.shared.pipelines.screen_indirect_held(),
+        0,
+        "pipelines that read the kept result outlive the feature"
+    );
+    let off = level.programs();
+    assert!(
+        off.0 < running.0 && off.1 <= running.1,
+        "turning it off released programs: {running:?} to {off:?}"
+    );
+    level.settings.screen_space_indirect = ScreenSpaceIndirect::Low;
+    let mut ran = 0;
+    for pass in 0.. {
+        assert!(pass < 8, "the frame was never ready");
+        let compilation = level.creates_nothing(&format!("compile {pass}"), |level| {
+            level.compile(&inputs[0])
+        });
+        assert_eq!(compilation.errors, []);
+        if compilation.ready() {
+            break;
+        }
+        ran += compilation.jobs.len();
+        compilation
+            .jobs
+            .into_iter()
+            .for_each(crate::view::compile::CompileJob::run);
+    }
+    assert!(ran > 0, "turning it back on needs its programs again");
+    for (frame, input) in inputs.iter().enumerate() {
+        level.creates_nothing(
+            &format!("frame {frame} after turning it back on"),
+            |level| level.render(input),
+        );
+    }
+}
+
 // Plausible defect: a planning pass renders the views as listed, not in
 // the frame's order, or leaves out the view that draws a render texture,
 // so the programs of the frame's second view (its own stages') are

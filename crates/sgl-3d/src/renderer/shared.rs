@@ -104,16 +104,19 @@ impl Shared {
 
     /// Select the primary view's geometry specialisation and material
     /// filtering, build the mip chains that wait, then prepare the scene.
-    /// Update ray instances when any view traces (`Prepare::traces`).
+    /// Update ray instances when any view traces (`Prepare::traces`), and
+    /// keep screen-space indirect light's pipelines only while one runs it
+    /// (`screen_indirect`).
     pub fn run_scene(
         &mut self,
         (device, queue): (&wgpu::Device, &wgpu::Queue),
         scene: &mut Scene,
         effective: &Effective,
         input: &FrameInput,
-        (traced, timing): (bool, Option<&crate::timing::GpuTiming>),
+        (traced, screen_indirect, timing): (bool, bool, Option<&crate::timing::GpuTiming>),
     ) {
         self.pipelines.specialise(effective.layers, scene);
+        self.pipelines.screen_indirect_runs(screen_indirect);
         scene
             .materials
             .set_anisotropy(device, &scene.render_textures, effective.anisotropy);

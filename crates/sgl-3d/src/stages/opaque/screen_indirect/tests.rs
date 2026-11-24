@@ -10,6 +10,9 @@ use glam::{Mat4, Vec3, Vec4};
 const SIZE: [u32; 2] = [129, 113];
 /// The least reach the pass takes, which the fixture's wall spans.
 const RADIUS: f32 = 1.;
+/// The frames the pass accumulates at most, `SCREEN_INDIRECT_MOST_HISTORY`:
+/// a level's output once a still view has settled.
+const SETTLED_FRAMES: u32 = 16;
 
 fn projection() -> Mat4 {
     crate::perspective(60f32.to_radians(), SIZE[0] as f32 / SIZE[1] as f32, 0.1)
@@ -157,7 +160,7 @@ impl Pass {
             radius,
             pyramid_radius: radius,
         };
-        stage.begin(device, queue, Some(settings), SIZE, history);
+        stage.begin(device, queue, settings, SIZE, history);
         let mut view: crate::shading::uniforms::ViewUniform = bytemuck::Zeroable::zeroed();
         view.view = camera_view(rotated).to_cols_array_2d();
         view.projection = projection().to_cols_array_2d();
@@ -194,6 +197,32 @@ impl Pass {
         let bytes = crate::test_support::read(device, queue, written.texture(), 16);
         stage.settle(finished);
         (texels(&bytes), written)
+    }
+
+    /// What `level` keeps of `fixture`, with the least radius, after
+    /// `SETTLED_FRAMES` frames of a still camera and scene: each frame takes
+    /// the last one's history, its depth motion valid, and draws the next
+    /// frame's noise, as a game's still frames do.
+    fn settled(&mut self, fixture: &PlaneAndWall, level: ScreenSpaceIndirect) -> KeptTexels {
+        let still = crate::test_support::hdr_texture(
+            &self.device,
+            &self.queue,
+            SIZE,
+            &vec![[0., 0., 0., 1.]; (SIZE[0] * SIZE[1]) as usize],
+        );
+        let none = std::mem::replace(&mut self.motion, still);
+        self.stage = ScreenIndirect::new(&self.device);
+        let mut kept = None;
+        for frame in 0..SETTLED_FRAMES {
+            let history = HistoryFrame {
+                frames: frame,
+                ..history(frame > 0, fixture.rotated)
+            };
+            kept = Some(self.frame(fixture, (level, RADIUS), &history, true).0);
+        }
+        self.motion = none;
+        self.stage = ScreenIndirect::new(&self.device);
+        kept.expect("at least one frame")
     }
 
     /// The first frame of `fixture` at `level` with the least radius.
@@ -295,18 +324,28 @@ fn gathered_light_matches_an_independent_hemisphere_integral() {
 }
 
 // Defect: the search spans less than the radius that cuts its samples (as
-// SSRT3's halved projection of it does, D-65), so a surface between half
-// the radius and the radius from a receiver goes unseen. Oracle: the
-// hemisphere integral (`wall_visibility`) is above 0 for every receiver
-// closer to the wall than the 1 m radius, so on the plane every receiver
-// 0.6 to 0.95 m from the wall takes some coverage, at both levels.
+// SSRT3's halved projection of it does, D-65, or its spacing, radius /
+// (steps + 1), which never samples the last step of it), so a surface
+// between half the radius and the radius from a receiver goes unseen.
+// Oracle: the hemisphere integral (`wall_visibility`) is above 0 for every
+// receiver closer to the wall than the 1 m radius, so on the plane every
+// receiver 0.6 to 0.95 m from the wall takes some coverage, at both levels.
+// High is held to its first frame, the stricter read, which its two slices
+// a frame pass. Low is read once settled, as a still view shows it: its one
+// slice a frame is one direction, and a receiver 0.9 m from the wall meets
+// the wall within the radius in about one direction of four, so its single
+// frame shows the noise draw, not the reach (D-91).
 #[test]
 fn receivers_toward_the_radius_take_coverage() {
     let Some(mut pass) = Pass::new() else {
         return;
     };
+    let fixture = red_wall(Wall::Facing([1., 0., 0.]));
     for level in [ScreenSpaceIndirect::Low, ScreenSpaceIndirect::High] {
-        let kept = pass.first(&red_wall(Wall::Facing([1., 0., 0.])), level);
+        let kept = match level {
+            ScreenSpaceIndirect::Low => pass.settled(&fixture, level),
+            _ => pass.first(&fixture, level),
+        };
         let far: Vec<_> = beside_wall()
             .into_iter()
             .filter(|&(_, distance)| (0.6..=0.95).contains(&distance))
@@ -386,33 +425,53 @@ fn the_bounce_keeps_its_emitters_colour_and_creates_no_energy() {
 // emitter's normal ignored), or the facing test also drops its coverage.
 // Oracle: a lit card 1 m from the camera, facing it and so away from the
 // plane 2 m behind it, within a 3 m radius, gives the plane exactly no
-// light and still covers the plane beside it.
+// light. Coverage is a property of the geometry alone, so the plane beside
+// the card takes the same coverage, above 0, whichever way the card faces.
 #[test]
 fn a_surface_facing_away_gives_no_light() {
     let Some(mut pass) = Pass::new() else {
         return;
     };
     let rows = 50..65;
-    let fixture = PlaneAndWall {
+    let card = |plate_faces_plane| PlaneAndWall {
         plate: Some(rows.clone()),
+        plate_faces_plane,
         plate_color: [1., 0., 0.],
         ..PlaneAndWall::plane()
     };
+    // The coverage of the plane's rows beside the card.
+    let beside = |kept: &KeptTexels| -> Vec<f32> {
+        (0..KeptTexels::half()[0])
+            .flat_map(|x| {
+                [
+                    kept.at(x, rows.start / 2 - 2)[3],
+                    kept.at(x, rows.end / 2 + 2)[3],
+                ]
+            })
+            .collect()
+    };
     for level in [ScreenSpaceIndirect::Low, ScreenSpaceIndirect::High] {
-        let (kept, _) = pass.frame(&fixture, (level, 3.), &history(false, false), true);
-        for (index, texel) in kept.light.iter().enumerate() {
+        let mut frame = |plate_faces_plane| {
+            pass.frame(
+                &card(plate_faces_plane),
+                (level, 3.),
+                &history(false, false),
+                true,
+            )
+            .0
+        };
+        let (away, toward) = (frame(false), frame(true));
+        for (index, texel) in away.light.iter().enumerate() {
             assert_eq!(texel[..3], [0.; 3], "{level:?}: texel {index} lit");
         }
-        // The plane's rows beside the card.
-        let beside = (0..KeptTexels::half()[0]).flat_map(|x| {
-            [
-                kept.at(x, rows.start / 2 - 2)[3],
-                kept.at(x, rows.end / 2 + 2)[3],
-            ]
-        });
-        let mean = beside.clone().sum::<f32>() / beside.count() as f32;
+        let (away, toward) = (beside(&away), beside(&toward));
+        let mean = away.iter().sum::<f32>() / away.len() as f32;
         println!("{level:?}: coverage beside the card {mean:.4}");
-        assert!(mean > 0.05, "{level:?}: the card covers nothing: {mean}");
+        assert!(mean > 0., "{level:?}: the card covers nothing");
+        assert_eq!(
+            away, toward,
+            "{level:?}: the card's coverage depends on which way it faces"
+        );
     }
 }
 
@@ -670,13 +729,16 @@ fn observe_source(@builtin(global_invocation_id) id:vec3<u32>) {
 
 // Defect: a fragment reads the kept result at the wrong place (its current
 // position, flipped rows, the wrong texel scale), or reads across an edge
-// into another surface's light, or reads where nothing passes. Oracle:
-// authored texels of two surfaces, red at 2 m on the left and green at 4 m
-// on the right, both facing the camera, and a row whose count is 0: a
-// point on either surface reads its own light and coverage exactly, at its
-// centre and at the edge where its footprint straddles the other; a point
-// between them, one behind the camera, one off screen, one whose normal
-// opposes the texels', and one over the uncounted row read none.
+// into another surface's light, or reads where nothing passes, or weighs
+// the texels about it other than bilinearly. Oracle: authored texels of
+// two surfaces, red
+// at 2 m on the left, its blue rising by 0.25 a texel, and green at 4 m on
+// the right, both facing the camera, and a row whose count is 0: a point on
+// either surface reads its own light and coverage exactly, at its centre
+// and at the edge where its footprint straddles the other; a point between
+// them, one behind the camera, one off screen, one whose normal opposes the
+// texels', and one over the uncounted row read none. Between two of the
+// left surface's texel centres a point reads the ramp's linear value.
 #[test]
 fn a_fragment_reads_the_light_kept_at_its_previous_position_and_none_across_an_edge() {
     let Some((device, queue)) = crate::test_support::device() else {
@@ -691,7 +753,11 @@ fn a_fragment_reads_the_light_kept_at_its_previous_position_and_none_across_an_e
     let mut geometry = Vec::new();
     for y in 0..half[1] {
         for x in 0..half[0] {
-            let (texel, depth) = if x < 4 { (red, 2.) } else { (green, 4.) };
+            let (texel, depth) = if x < 4 {
+                ([red[0], red[1], 0.25 * x as f32, red[3]], 2.)
+            } else {
+                (green, 4.)
+            };
             light.push(texel);
             // Normal +z, octahedral (0, 0); the last row counts nothing.
             geometry.push([depth, if y == 3 { 0. } else { 4. }, 0., 0.]);
@@ -734,14 +800,11 @@ fn a_fragment_reads_the_light_kept_at_its_previous_position_and_none_across_an_e
         },
         kept.size(),
     );
-    let view = super::KeptView::of(
-        &CameraFrame {
-            view: Mat4::IDENTITY,
-            projection,
-            jitter: [0.; 2],
-        },
-        render,
-    );
+    let camera = CameraFrame {
+        view: Mat4::IDENTITY,
+        projection,
+        jitter: [0.; 2],
+    };
     // A point at render pixel position `pixel` (centres at .5) and view
     // depth `depth`, as its last frame's clip position.
     let clip = |pixel: [f32; 2], depth: f32| {
@@ -758,11 +821,14 @@ fn a_fragment_reads_the_light_kept_at_its_previous_position_and_none_across_an_e
     };
     let facing = Vec4::Z;
     let none = [0.; 4];
+    // The left surface's light with the ramp's blue `blue`.
+    let left = |blue| [red[0], red[1], blue, red[3]];
     let cases = [
-        ("left centre", clip([2.5, 2.5], 2.), facing, red),
+        // Texel 1.
+        ("left centre", clip([2.5, 2.5], 2.), facing, left(0.25)),
         ("right centre", clip([12.5, 2.5], 4.), facing, green),
         // Texel 3.5: half its weight on each surface's texels.
-        ("left at the edge", clip([7.5, 2.5], 2.), facing, red),
+        ("left at the edge", clip([7.5, 2.5], 2.), facing, left(0.75)),
         ("right at the edge", clip([7.5, 2.5], 4.), facing, green),
         ("between them", clip([7.5, 2.5], 3.), facing, none),
         (
@@ -774,29 +840,31 @@ fn a_fragment_reads_the_light_kept_at_its_previous_position_and_none_across_an_e
         ("off screen", clip([-4., 2.5], 2.), facing, none),
         ("opposed", clip([2.5, 2.5], 2.), -Vec4::Z, none),
         ("uncounted row", clip([2.5, 6.5], 2.), facing, none),
+        // Texels 1.25 and 1.75: a quarter of the way from texel 1 to 2,
+        // and three quarters.
+        (
+            "left a quarter on",
+            clip([3., 2.5], 2.),
+            facing,
+            left(0.3125),
+        ),
+        (
+            "left three quarters on",
+            clip([4., 2.5], 2.),
+            facing,
+            left(0.4375),
+        ),
     ];
     let queries: Vec<[[f32; 4]; 2]> = cases
         .iter()
         .map(|&(_, c, n, _)| [c.to_array(), n.to_array()])
         .collect();
-    let uniform = crate::scene::buffer(
-        &device,
-        "kept view",
-        bytemuck::bytes_of(&view),
-        wgpu::BufferUsages::UNIFORM,
-    );
     let inputs = crate::scene::buffer(
         &device,
         "reads",
         bytemuck::cast_slice(&queries),
         wgpu::BufferUsages::STORAGE,
     );
-    let results = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("read light"),
-        size: (cases.len() * 16) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
     let source = format!(
         "{}\n{}",
         crate::shading::compose(&[&crate::shading::SCREEN_INDIRECT]),
@@ -826,43 +894,57 @@ fn observe(@builtin(global_invocation_id) id:vec3<u32>) {
         cache: None,
     });
     let kept_view = kept.create_view(&Default::default());
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("kept result read"),
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&kept_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: uniform.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: inputs.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: results.as_entire_binding(),
-            },
-        ],
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(cases.len() as u32, 1, 1);
-    }
-    queue.submit([encoder.finish()]);
-    let words = crate::test_support::read_words(&device, &queue, &results);
-    for (index, (name, _, _, expected)) in cases.iter().enumerate() {
-        let read: Vec<f32> = words[index * 4..index * 4 + 4]
-            .iter()
-            .map(|&w| f32::from_bits(w))
-            .collect();
-        for (channel, (&got, &want)) in read.iter().zip(expected).enumerate() {
+    // Each case's read.
+    let read = || -> Vec<[f32; 4]> {
+        let uniform = crate::scene::buffer(
+            &device,
+            "kept view",
+            bytemuck::bytes_of(&super::KeptView::of(&camera, render)),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        let results = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("read light"),
+            size: (cases.len() * 16) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("kept result read"),
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&kept_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: inputs.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: results.as_entire_binding(),
+                },
+            ],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(cases.len() as u32, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+        crate::test_support::read_words(&device, &queue, &results)
+            .chunks_exact(4)
+            .map(|texel| std::array::from_fn(|channel| f32::from_bits(texel[channel])))
+            .collect()
+    };
+    for ((name, _, _, expected), got) in cases.iter().zip(&read()) {
+        for (channel, (&got, &want)) in got.iter().zip(expected).enumerate() {
             assert!(
                 (got - want).abs() <= 1e-6,
                 "{name}: channel {channel} read {got}, expected {want}"
@@ -907,7 +989,7 @@ fn the_kept_result_survives_an_unfinished_frame() {
     assert!(pass.stage.begin(
         &pass.device,
         &pass.queue,
-        Some(settings_frame),
+        settings_frame,
         SIZE,
         &history(true, false),
     ));
@@ -927,12 +1009,16 @@ fn the_kept_result_survives_an_unfinished_frame() {
 }
 
 // Defect: turning the setting off leaves what it made allocated: its own
-// targets, or, where ambient occlusion is off, the ambient occlusion stage
-// and its depth pyramid it created to read (about 11 MB at 1080p), though
-// it holds no targets while off. Oracle: the frames' stages, read after
-// each frame: with ambient occlusion off, a frame with the setting off
-// holds neither; with ambient occlusion on, its stage stays, as ambient
-// occlusion keeps it, and the bounce's targets go.
+// targets, the groups that bind its kept result (which keep that and the
+// last frame's G-buffer inputs alive), the lighting pipelines that read it,
+// or, where ambient occlusion is off, the ambient occlusion stage and its
+// depth pyramid it created to read (about 11 MB at 1080p), though it holds
+// nothing while off. Oracle: the frames' stages and pipelines, read after
+// each frame over a cube in view: with ambient occlusion off, a frame with
+// the setting off holds none of them; with ambient occlusion on, its stage
+// stays, as ambient occlusion keeps it, and the bounce's targets, groups
+// and pipelines go. The second frame is the first that reads a kept
+// result, so the first to take those pipelines.
 #[test]
 fn turning_the_bounce_off_releases_what_it_made() {
     let Some((device, queue)) = crate::test_support::device() else {
@@ -940,6 +1026,20 @@ fn turning_the_bounce_off_releases_what_it_made() {
     };
     let size = [32, 24];
     let mut scene = crate::Scene::new(&device, &queue);
+    let cube = scene
+        .add_asset(&device, &queue, crate::test_support::cube())
+        .unwrap();
+    scene
+        .add_instance(
+            &device,
+            &queue,
+            crate::InstanceState {
+                pose: Mat4::from_translation(Vec3::new(0., 0., -4.)),
+                ..crate::InstanceState::new(cube.model)
+            },
+            crate::Mobility::Static,
+        )
+        .unwrap();
     let input = crate::FrameInput::new(crate::Camera {
         view: Mat4::IDENTITY,
         projection: crate::perspective(1., 4. / 3., 0.1),
@@ -954,16 +1054,13 @@ fn turning_the_bounce_off_releases_what_it_made() {
     };
     use crate::settings::AmbientOcclusionQuality as Occlusion;
     let (on, off) = (ScreenSpaceIndirect::Low, ScreenSpaceIndirect::Off);
-    for (occlusion, held_while_off) in [
-        (Occlusion::Off, (false, false)),
-        (Occlusion::Medium, (true, false)),
-    ] {
+    for (occlusion, occlusion_while_off) in [(Occlusion::Off, false), (Occlusion::Medium, true)] {
         let mut renderer =
             crate::TestRenderer::for_test(&device, &queue, size, &settings(on, occlusion));
         for (bounce, held) in [
-            (on, (true, true)),
-            (on, (true, true)),
-            (off, held_while_off),
+            (on, (true, true, false)),
+            (on, (true, true, true)),
+            (off, (occlusion_while_off, false, false)),
         ] {
             let settings = settings(bounce, occlusion);
             let mut encoder = device.create_command_encoder(&Default::default());
@@ -979,10 +1076,16 @@ fn turning_the_bounce_off_releases_what_it_made() {
             );
             queue.submit([encoder.finish()]);
             renderer.finish_frame(&mut scene);
+            let (occlusion_held, bounce_held) = renderer.view.opaque.holds_occlusion_and_bounce();
             assert_eq!(
-                renderer.view.opaque.holds_occlusion_and_bounce(),
+                (
+                    occlusion_held,
+                    bounce_held,
+                    renderer.test_screen_indirect_pipelines() > 0
+                ),
                 held,
-                "ambient occlusion {occlusion:?}, bounce {bounce:?}: (occlusion stage, bounce targets)"
+                "ambient occlusion {occlusion:?}, bounce {bounce:?}: \
+                 (occlusion stage, bounce targets or groups, bounce pipelines)"
             );
         }
     }

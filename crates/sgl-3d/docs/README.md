@@ -169,7 +169,9 @@ if compilation.ready() { /* `render` with these arguments creates nothing */ }
   `Compilation::errors` lists failed jobs, each once.
 - Call it again after a settings change, a resize or for another level's
   scene, with a renderer that draws no other scene meanwhile. Most resizes
-  need nothing.
+  need nothing. A feature that holds nothing while off (screen-space
+  indirect light) lets its programs go when it is turned off, so call it
+  after turning the feature back on too.
 - In the browser, run the jobs here and keep presenting until `ready()`,
   calling `compile` once a frame: a job starts WebGPU's asynchronous
   pipeline creation and returns, the browser compiles while the page runs,

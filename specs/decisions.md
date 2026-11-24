@@ -2110,3 +2110,26 @@ Use the [current specs](README.md) for implementation and the
   completed on the GPU 23 ms later and held a loading-screen frame 11 to
   12 ms while the browser compiled, and after it 15 to 16 ms later,
   holding none.
+- **D-91** Decision, 2026-11-24 (#842, #901): screen-space indirect light
+  places a slice's samples at `(k + noise) / n` of the projected radius
+  plus XeGTAO's 1.3-pixel floor, evenly as the visibility-bitmask paper
+  spaces them (`xegtao_sample_s` in `xegtao_kernels.wgsl`, which ambient
+  occlusion shares, squared); it releases its pipelines, programs and bind
+  groups with its targets in the first frame no view runs it, and
+  `Renderer::compile` readies them again as jobs once it is back on.
+  SSRT3's `radius / (steps + 1)` never sampled the last step of the
+  radius. `receivers_toward_the_radius_take_coverage` reads `Low` once
+  settled (16 frames): `Low`'s one slice a frame is one direction, so a
+  single frame shows its noise draw. The steps planned to make `Low` cost
+  what ambient occlusion does were dropped: choosing the depth mip by
+  distance (XeGTAO's rule) and `Low`'s nearest-texel read showed no
+  measurable saving, and `Low` at 5 steps a side, about 0.6 ms on `street`
+  and nothing measurable on `bevy`, made the bounce by a wall 38% dimmer.
+  The cost target was not reached; the timing was stopped at the owner's
+  word after four clean rounds. On an Apple M5 at 1920x1080 on
+  `bistro-daylight` (ambient occlusion at Medium, median and range of four
+  interleaved runs) `Low` adds 4.1 (3.7–5.1) ms to the frame on `street`
+  and 3.8 (3.5–5.2) on `bevy`, `High` 5.4 (5.1–6.2) and 4.6 (4.5–5.4), and
+  the spacing fix changed neither measurably.
+  Rationale: the radius a level uses is the distance out to which it finds
+  a surface, and a feature that is off holds nothing.

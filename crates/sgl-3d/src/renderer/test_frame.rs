@@ -532,12 +532,18 @@ impl TestRenderer {
         self.view.cull.pyramid()
     }
 
-    /// Whether this device writes the G-buffer and lighting in one pass.
     /// The shader modules and pipelines it holds for game shaders.
     pub(crate) fn test_shader_programs(&self) -> (usize, usize) {
         self.renderer.shared.pipelines.shader_programs()
     }
 
+    /// The geometry pipelines it holds that take screen-space indirect
+    /// light.
+    pub(crate) fn test_screen_indirect_pipelines(&self) -> usize {
+        self.renderer.shared.pipelines.screen_indirect_held()
+    }
+
+    /// Whether this device writes the G-buffer and lighting in one pass.
     pub(crate) fn test_fused_supported(&self) -> bool {
         self.renderer.shared.pipelines.fused_supported
     }
