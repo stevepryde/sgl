@@ -59,13 +59,14 @@ fn sphere(latitude: u32, longitude: u32) -> crate::asset::Asset {
     asset
 }
 
+/// The hits of `rays`, each through `function` leaving its own receiver, in
+/// one submission: a dispatch per ray, since a dispatch binds one receiver.
 fn trace(
     (device, queue): (&wgpu::Device, &wgpu::Queue),
     scene: &mut Scene,
     form: Option<RayQueryForm>,
     function: Function,
-    receiver: [u32; 2],
-    rays: &[[f32; 8]],
+    rays: &[([f32; 8], [u32; 2])],
 ) -> Vec<[u32; 8]> {
     scene.begin_frame(device, queue);
     if let Some(form) = form {
@@ -75,15 +76,10 @@ fn trace(
     }
     scene.update_rays(device, queue, u32::MAX, form.is_some());
     let query = Query::with_path(device, form);
-    let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("LOD receiver geometric rays"),
-        contents: bytemuck::cast_slice(rays),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let output = device.create_buffer(&wgpu::BufferDescriptor {
+    let hits = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("LOD receiver geometric hits"),
-        size: input.size(),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        size: 32 * rays.len() as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -91,16 +87,25 @@ fn trace(
         scene.encode_acceleration_structures(&mut encoder);
     }
     let tlas = form.map(|_| scene.acceleration_structures().unwrap().tlas().0);
-    let bindings = query.bind(device, (&input, &output), (function, 0, receiver), tlas);
-    query.trace(
-        &mut encoder,
-        &scene.scene_group,
-        &bindings,
-        rays.len() as u32,
-    );
+    for (at, (ray, receiver)) in rays.iter().enumerate() {
+        let input = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("LOD receiver geometric ray"),
+            contents: bytemuck::cast_slice(&[*ray]),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let output = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("LOD receiver geometric hit"),
+            size: input.size(),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let bindings = query.bind(device, (&input, &output), (function, 0, *receiver), tlas);
+        query.trace(&mut encoder, &scene.scene_group, &bindings, 1);
+        encoder.copy_buffer_to_buffer(&output, 0, &hits, 32 * at as u64, 32);
+    }
     queue.submit([encoder.finish()]);
     scene.finish_open_frame();
-    test_support::read_words(device, queue, &output)
+    test_support::read_words(device, queue, &hits)
         .chunks_exact(8)
         .map(|words| words.try_into().unwrap())
         .collect()
@@ -330,32 +335,29 @@ fn convex_receiver(gpu: (&wgpu::Device, &wgpu::Queue), form: Option<RayQueryForm
         // reflected directions leave a convex surface. t_min handles the
         // depth/normal reconstruction's roundoff; exact-triangle exclusion
         // remains intact because raster and the base BVH/BLAS now match.
-        let mut self_hits = 0;
-        for (&ray, &receiver) in sphere_rays.iter().zip(&receivers) {
-            let hit = trace(
-                gpu,
-                &mut scene,
-                form,
-                Function::NearestExceptReceiver,
-                receiver,
-                &[ray],
-            )[0];
-            self_hits += usize::from(hit[0] != 0);
-            if active {
+        let rays: Vec<_> = sphere_rays
+            .iter()
+            .copied()
+            .zip(receivers.iter().copied())
+            .collect();
+        let hits = trace(
+            gpu,
+            &mut scene,
+            form,
+            Function::NearestExceptReceiver,
+            &rays,
+        );
+        let self_hits = hits.iter().filter(|hit| hit[0] != 0).count();
+        if active {
+            for hit in &hits {
                 assert_eq!(
                     hit[0],
                     0,
                     "{form:?}/{reach:?}: outward sphere ray self-hit at {}",
                     f32::from_bits(hit[4])
                 );
-                let visible = trace(
-                    gpu,
-                    &mut scene,
-                    form,
-                    Function::StaticVisible,
-                    receiver,
-                    &[ray],
-                )[0];
+            }
+            for visible in trace(gpu, &mut scene, form, Function::StaticVisible, &rays) {
                 assert_ne!(
                     visible[0], 0,
                     "Moving reach must not be blocked by its own base receiver"
@@ -389,8 +391,7 @@ fn convex_receiver(gpu: (&wgpu::Device, &wgpu::Queue), form: Option<RayQueryForm
                 &mut scene,
                 form,
                 Function::NearestExceptReceiver,
-                receiver,
-                &[ray],
+                &[(ray, receiver)],
             )[0];
             assert_eq!(
                 hit[1] + 1,
@@ -407,8 +408,7 @@ fn convex_receiver(gpu: (&wgpu::Device, &wgpu::Queue), form: Option<RayQueryForm
                 &mut scene,
                 form,
                 Function::StaticVisible,
-                receiver,
-                &[ray],
+                &[(ray, receiver)],
             )[0];
             assert_eq!(
                 visibility[0], 0,
@@ -438,8 +438,7 @@ fn convex_receiver(gpu: (&wgpu::Device, &wgpu::Queue), form: Option<RayQueryForm
                 &mut scene,
                 form,
                 Function::NearestExceptReceiver,
-                receiver,
-                &[ray],
+                &[(ray, receiver)],
             )[0];
             assert_ne!(distant[0], 0);
             assert_eq!(
