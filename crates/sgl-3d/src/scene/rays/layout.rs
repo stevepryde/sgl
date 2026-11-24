@@ -225,7 +225,10 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
             "SCENE_MATERIAL_TEXTURES",
             offset_of!(MaterialRecord, textures),
         ),
-        ("SCENE_MATERIAL_BAKED", offset_of!(MaterialRecord, baked)),
+        (
+            "SCENE_MATERIAL_BINDING_FLAGS",
+            offset_of!(MaterialRecord, flags),
+        ),
         (
             "SCENE_MATERIAL_MORE_MAPS",
             offset_of!(MaterialRecord, more_maps),

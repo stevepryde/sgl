@@ -11,6 +11,8 @@ use std::collections::HashMap;
 
 use super::super::asset::{CpuMesh, Material, Result, UvSet, Vertex, tangent_off_normal};
 use super::super::deformation::{MeshDeformation, MorphTarget};
+use super::super::tangents;
+use super::TangentFrames;
 use super::attributes::{DIRECTION_TYPES, attribute, check_direction};
 use super::check_accessor;
 use super::instancing::{InstancedNode, NodeUse, Plan, transforms};
@@ -112,6 +114,30 @@ pub(super) struct Walk {
     pub(super) instanced: Vec<InstancedRead>,
     /// Each instanced glTF mesh's entry in `instanced`.
     by_mesh: HashMap<usize, usize>,
+    /// The tangent frames generated for each glTF mesh's primitive (by
+    /// their indices), which every node that uses it takes.
+    generated: Generated,
+}
+
+/// Tangent frames generated for glTF primitives, by mesh and primitive
+/// index: in the mesh's own space and winding, whichever node uses it;
+/// none where too many triangles share a vertex.
+type Generated = HashMap<(usize, usize), Option<tangents::Framed>>;
+
+impl Walk {
+    /// The primitives (mesh and primitive index) whose frames were not
+    /// generated because too many triangles share one of their vertices,
+    /// in order.
+    pub(super) fn unframed(&self) -> Vec<(usize, usize)> {
+        let mut unframed: Vec<_> = self
+            .generated
+            .iter()
+            .filter(|(_, framed)| framed.is_none())
+            .map(|(&key, _)| key)
+            .collect();
+        unframed.sort_unstable();
+        unframed
+    }
 }
 
 /// Which mesh nodes load, asked with each one's name (`LoadOptions::nodes`).
@@ -130,7 +156,7 @@ pub(super) fn read_node(
     parent: Mat4,
     (document, plan, include_node): (&gltf::Document, &Plan, NodeFilter<'_>),
     (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
-    (default_material, materials): (usize, &[Material]),
+    (default_material, materials, frames): (usize, &[Material], TangentFrames),
     rigging: &mut Rigging,
     walk: &mut Walk,
 ) -> Result<()> {
@@ -159,9 +185,9 @@ pub(super) fn read_node(
                             &mesh,
                             (Mat4::IDENTITY, None),
                             (buffers, buffer_bytes),
-                            (default_material, materials),
+                            (default_material, materials, frames),
                             rigging,
-                            &mut primitives,
+                            (&mut primitives, &mut walk.generated),
                         )?;
                         walk.instanced.push(InstancedRead {
                             mesh: mesh.index(),
@@ -183,9 +209,9 @@ pub(super) fn read_node(
                 &node,
                 global,
                 (buffers, buffer_bytes),
-                (default_material, materials),
+                (default_material, materials, frames),
                 rigging,
-                &mut walk.meshes,
+                (&mut walk.meshes, &mut walk.generated),
                 include_node,
             )?;
         }
@@ -215,9 +241,9 @@ fn read_mesh_node(
     node: &gltf::Node<'_>,
     global: Mat4,
     (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
-    (default_material, materials): (usize, &[Material]),
+    (default_material, materials, frames): (usize, &[Material], TangentFrames),
     rigging: &mut Rigging,
-    meshes: &mut Vec<(BatchKey, CpuMesh)>,
+    (meshes, generated): (&mut Vec<(BatchKey, CpuMesh)>, &mut Generated),
     include_node: &dyn Fn(Option<&str>) -> bool,
 ) -> Result<()> {
     if let Some(mesh) = node.mesh()
@@ -243,9 +269,9 @@ fn read_mesh_node(
             &mesh,
             (transform, skin),
             (buffers, buffer_bytes),
-            (default_material, materials),
+            (default_material, materials, frames),
             rigging,
-            meshes,
+            (meshes, generated),
         )?;
     }
     Ok(())
@@ -258,9 +284,9 @@ fn read_primitives(
     mesh: &gltf::Mesh<'_>,
     (transform, skin): (Mat4, Option<(u32, u32)>),
     (buffers, buffer_bytes): (&[gltf::buffer::Data], usize),
-    (default_material, materials): (usize, &[Material]),
+    (default_material, materials, frames): (usize, &[Material], TangentFrames),
     rigging: &mut Rigging,
-    meshes: &mut Vec<(BatchKey, CpuMesh)>,
+    (meshes, generated): (&mut Vec<(BatchKey, CpuMesh)>, &mut Generated),
 ) -> Result<()> {
     {
         let normal_transform = Mat4::from_mat3(Mat3::from_mat4(transform).inverse().transpose());
@@ -361,12 +387,24 @@ fn read_primitives(
             let material = &materials[material_index];
             let tangents: Option<Vec<[f32; 4]>> =
                 attribute(&primitive, Semantic::Tangents, buffers);
-            if material.anisotropy_strength > 0.0 && tangents.is_none() {
-                return Err(format!("{label}: anisotropic material {} requires authored TANGENT; export tangents from Blender with vertex normals", material.name).into());
-            }
             let uvs: Option<Vec<[f32; 2]>> = attribute(&primitive, Semantic::TexCoords(0), buffers);
             let lightmap_uvs: Option<Vec<[f32; 2]>> =
                 attribute(&primitive, Semantic::TexCoords(1), buffers);
+            // A primitive without TANGENT whose material takes a vertex
+            // frame gets MikkTSpace's on the frame's set: the normal map's,
+            // the first without one (glTF 2.0 3.7.2.1).
+            let frame_set = material.frame_set();
+            let frame_uvs = match frame_set {
+                UvSet::Uv0 => uvs.as_deref(),
+                UvSet::Uv1 => lightmap_uvs.as_deref(),
+            };
+            let generate = tangents.is_none()
+                && frames == TangentFrames::Generate
+                && material.takes_vertex_frame()
+                && frame_uvs.is_some();
+            if material.anisotropy_strength > 0.0 && tangents.is_none() && !generate {
+                return Err(format!("{label}: anisotropic material {} requires TANGENT; export tangents, or load with LoadOptions::tangents Generate and texture coordinates on its frame's set", material.name).into());
+            }
             // Each UV set a map SGL3D samples names must be the
             // primitive's (glTF 2.0 3.9.2); an occlusion map it leaves out
             // asks for none.
@@ -473,16 +511,11 @@ fn read_primitives(
                 return Err(format!("{label}: invalid triangle indices").into());
             }
             let mut indices = triangle_list(primitive.mode(), indices, &label)?;
-            if transform.determinant() < 0.0 {
-                for triangle in indices.as_chunks_mut::<3>().0 {
-                    triangle.swap(1, 2);
-                }
-            }
-            let influences = match skin {
+            let mut influences = match skin {
                 Some(skin) => read_influences(&reader, skin, vertices.len(), &label)?,
                 None => Vec::new(),
             };
-            let morph_targets = if target_count == 0 {
+            let mut morph_targets = if target_count == 0 {
                 Vec::new()
             } else {
                 let first = rigging.morph_weights(node, target_count)?;
@@ -495,6 +528,79 @@ fn read_primitives(
                     &label,
                 )?
             };
+            let mut vertices = vertices;
+            // None where too many triangles share a vertex
+            // (`tangents::MOST_TRIANGLES_AT_A_VERTEX`): the primitive keeps
+            // the frame of each triangle's coordinates, and the load lists
+            // it (`Ignored::TangentFrames`).
+            let framed = frame_uvs.filter(|_| generate).and_then(|frame_uvs| {
+                generated
+                    .entry((mesh.index(), primitive.index()))
+                    .or_insert_with(|| {
+                        tangents::generate(&positions, &normals, frame_uvs, &indices)
+                    })
+                    .as_ref()
+            });
+            if generate && framed.is_none() && material.anisotropy_strength > 0.0 {
+                return Err(format!("{label}: anisotropic material {}: more than {} triangles share one of its vertices, too many to generate tangent frames for; export TANGENT", material.name, tangents::MOST_TRIANGLES_AT_A_VERTEX).into());
+            }
+            if let Some(framed) = framed {
+                // In the mesh's own space and winding, then carried into
+                // the vertices' space as an authored tangent is. A vertex
+                // MikkTSpace leaves without a frame (one of degenerate
+                // coordinates alone, where glTF's tangent space is
+                // undefined) takes one in its normal's plane, as the
+                // packed vertex takes an absent tangent's, so its mesh
+                // keeps its vertex frames; Bevy takes MikkTSpace's
+                // default frame there (bevy_mesh `generate_tangents_for_mesh`).
+                let handedness = transform.determinant().signum();
+                vertices = framed
+                    .source
+                    .iter()
+                    .zip(&framed.frames)
+                    .map(|(&source, frame)| {
+                        let source = source as usize;
+                        let mut vertex = vertices[source];
+                        let normal = Vec3::from_array(vertex.normal);
+                        vertex.tangent = frame
+                            .and_then(|[x, y, z, w]| {
+                                let direction = Vec3::new(x, y, z);
+                                tangent_off_normal(Vec3::from_array(normals[source]), direction)
+                                    .and(tangent_off_normal(
+                                        normal,
+                                        transform.transform_vector3(direction),
+                                    ))
+                                    .map(|tangent| {
+                                        [tangent.x, tangent.y, tangent.z, w * handedness]
+                                    })
+                            })
+                            .unwrap_or_else(|| {
+                                normal.any_orthonormal_vector().extend(1.).to_array()
+                            });
+                        vertex
+                    })
+                    .collect();
+                if !influences.is_empty() {
+                    influences = framed
+                        .source
+                        .iter()
+                        .map(|&source| influences[source as usize])
+                        .collect();
+                }
+                for target in &mut morph_targets {
+                    target.deltas = framed
+                        .source
+                        .iter()
+                        .map(|&source| target.deltas[source as usize])
+                        .collect();
+                }
+                indices = framed.triangles.clone();
+            }
+            if transform.determinant() < 0.0 {
+                for triangle in indices.as_chunks_mut::<3>().0 {
+                    triangle.swap(1, 2);
+                }
+            }
             let key = BatchKey {
                 material: material_index,
                 skinned: skin.is_some(),

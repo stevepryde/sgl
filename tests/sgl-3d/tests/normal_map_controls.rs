@@ -12,8 +12,9 @@ use sgl_3d::{
     settings::{self, Settings},
     *,
 };
-// Tangent mode 0: absent, 1: supplied but derivative TBN, 2: authored TBN
-// selected by anisotropy. Materials are diffuse-only to isolate normal response.
+// Tangent mode 0: absent, so the frame of the quad's coordinates; 1:
+// supplied, so the vertex frame; 2: supplied on an anisotropic material.
+// Materials are diffuse-only to isolate normal response.
 const SIZE: [u32; 2] = [96, 96];
 fn asset(texel: [u8; 4], mapped: bool, tangent: u32) -> Asset {
     let n = Vec3::new(texel[0] as f32, texel[1] as f32, texel[2] as f32).map(|v| v / 127.5 - 1.);
@@ -350,4 +351,188 @@ fn known_normal_maps_match_vertex_normals_with_rotation_and_ao() {
             .save(std::path::Path::new(&directory).join("normal-controls.png"))
             .unwrap();
     }
+}
+
+// One material drawn by a mesh with vertex tangents and, for a while, by a
+// mesh without: it takes the vertex frame for its normal map only while
+// every mesh drawing it has one (specs/sgl3d-architecture.md, Material map
+// coordinates), so a mesh without, whose packed tangents are arbitrary, is
+// never shaded on them. Defects: the material keeping vertex frames once a
+// mesh without one draws it, not taking them back once that mesh leaves,
+// or the rule not reaching the frame. The oracle: the framed quad's
+// tangent is +Y, a valid frame chosen across its coordinates' U (+X) so
+// the two frames tell apart, and its "+X" texel lies along +Y on the
+// vertex frame and along +X on the frame of its coordinates (glTF 2.0
+// 3.7.2.1, 3.9.3).
+#[test]
+fn a_material_takes_vertex_frames_only_while_every_mesh_drawing_it_has_them() {
+    let required = cfg!(target_os = "macos")
+        || std::env::var("SGL_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0");
+    let adapter =
+        match pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default())) {
+            Ok(adapter) => adapter,
+            Err(error) => {
+                assert!(!required, "GPU required for normal-map evidence: {error}");
+                return;
+            }
+        };
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: graphics_device::features(&adapter),
+        required_limits: graphics_device::limits(&adapter),
+        ..Default::default()
+    }))
+    .unwrap();
+    let output = device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("vertex frame rule"),
+            size: wgpu::Extent3d {
+                width: SIZE[0],
+                height: SIZE[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+        .create_view(&Default::default());
+    let settings = Settings {
+        antialiasing: settings::Antialiasing::Off,
+        scene_resolution: settings::SceneResolution::Full,
+        bloom: settings::Bloom::Off,
+        atmosphere: false,
+        ambient_occlusion: settings::AmbientOcclusionQuality::Off,
+        ..Default::default()
+    };
+    let mut renderer = Renderer::new(&device);
+    let mut view = View::new(
+        &renderer,
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        SIZE,
+        1.,
+        &settings,
+    )
+    .unwrap();
+    let mut scene = Scene::new(&device, &queue);
+    let texel = [204, 128, 230, 255];
+    let material = scene
+        .add_materials(
+            &device,
+            &queue,
+            &[Material {
+                base: [0.5, 0.5, 0.5, 1.],
+                metallic: 0.,
+                roughness: 1.,
+                specular: 0.,
+                normal_texture: Some(MaterialTexture::new(0)),
+                ..Default::default()
+            }],
+            &[Image::Rgba8(image::RgbaImage::from_pixel(
+                4,
+                4,
+                image::Rgba(texel),
+            ))],
+        )
+        .unwrap()[0];
+    let mesh = |tangent: [f32; 4]| {
+        let mut quad = asset(texel, true, 0).meshes.remove(0);
+        for vertex in &mut quad.vertices {
+            vertex.tangent = tangent;
+        }
+        ModelMesh {
+            vertices: quad.vertices,
+            indices: quad.indices,
+            material,
+            deformation: Default::default(),
+        }
+    };
+    let framed = scene
+        .add_model(
+            &device,
+            &queue,
+            PreparedModel::new(vec![mesh([0., 1., 0., 1.])]).unwrap(),
+        )
+        .unwrap();
+    scene
+        .add_instance(
+            &device,
+            &queue,
+            InstanceState::new(framed),
+            Mobility::Static,
+        )
+        .unwrap();
+    let mut centre = |scene: &mut Scene| {
+        let mut input = FrameInput::new(Camera {
+            eye: Vec3::ZERO,
+            view: Mat4::IDENTITY,
+            projection: perspective(55f32.to_radians(), 1., 0.1),
+        });
+        input.camera_cut = true;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.render(
+            &device,
+            &queue,
+            &mut encoder,
+            scene,
+            &mut [ViewFrame {
+                view: &mut view,
+                input: &input,
+                settings: &settings,
+                output: ViewOutput::Texture(&output),
+                timing: None,
+            }],
+        );
+        queue.submit([encoder.finish()]);
+        renderer.finish_frame(scene);
+        let normals = diagnostics::read(
+            &device,
+            &queue,
+            view.diagnostic_target(DiagnosticTarget::Normal)
+                .unwrap()
+                .texture(),
+            8,
+        );
+        let at = (SIZE[1] / 2 * SIZE[0] + SIZE[0] / 2) as usize * 8;
+        let p = &normals[at..at + 8];
+        let x = diagnostics::half(p);
+        let y = diagnostics::half(&p[2..]);
+        let mut n = Vec3::new(x, y, 1. - x.abs() - y.abs());
+        if n.z < 0. {
+            n.x = (1. - y.abs()) * x.signum();
+            n.y = (1. - x.abs()) * y.signum();
+        }
+        n.normalize()
+    };
+    let tangent_space = Vec3::new(
+        texel[0] as f32 / 127.5 - 1.,
+        texel[1] as f32 / 127.5 - 1.,
+        texel[2] as f32 / 127.5 - 1.,
+    );
+    let on_vertex_frame = Vec3::new(-tangent_space.y, tangent_space.x, tangent_space.z).normalize();
+    let on_coordinates = tangent_space.normalize();
+    let expect = |label: &str, normal: Vec3, expected: Vec3| {
+        assert!(
+            normal.distance(expected) < 0.015,
+            "{label}: {normal}, expected {expected}"
+        );
+    };
+    expect("framed alone", centre(&mut scene), on_vertex_frame);
+    let unframed = scene
+        .add_model(
+            &device,
+            &queue,
+            PreparedModel::new(vec![mesh([0.; 4])]).unwrap(),
+        )
+        .unwrap();
+    expect(
+        "beside a mesh without a frame",
+        centre(&mut scene),
+        on_coordinates,
+    );
+    scene.remove_model(unframed).unwrap();
+    expect("after it leaves", centre(&mut scene), on_vertex_frame);
 }

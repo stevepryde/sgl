@@ -152,6 +152,13 @@
     "note": "Models/TextureTransformTest/glTF, unchanged (CC0-1.0; LICENSE.md itself CC-BY-4.0). Test-only: the published crate does not include it; provenance in the fixture's README.md."
   },
   {
+    "component": "Khronos glTF Sample Assets: Avocado (test fixture)",
+    "path": "crates/sgl-3d/tests/fixtures/gltf/Avocado/LICENSE.md",
+    "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/Avocado/LICENSE.md",
+    "prefix": "Avocado, Khronos glTF-Sample-Assets\nhttps://github.com/KhronosGroup/glTF-Sample-Assets, revision\ne124e8d8d7330a5372bc2b4d00d39a4a9d7997ea, Models/Avocado/glTF. The normal map\nis resized and a copy of the .gltf has its tangents removed; the fixture's\nREADME.md says what changed.\n\n",
+    "note": "Models/Avocado/glTF: the .gltf and .bin unchanged, the normal map resized to 512², a .gltf copy without TANGENT, the other images left out (CC0-1.0; LICENSE.md itself CC-BY-4.0). Test-only: the published crate does not include it; provenance in the fixture's README.md."
+  },
+  {
     "component": "Khronos glTF Sample Assets: Normal-Tangent Test (test fixture)",
     "path": "crates/sgl-3d/tests/fixtures/gltf/NormalTangentTest/LICENSE.md",
     "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/NormalTangentTest/LICENSE.md",

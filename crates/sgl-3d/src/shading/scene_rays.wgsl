@@ -25,12 +25,13 @@ struct SceneHit {
  tangent:vec3<f32>, bitangent:vec3<f32>, lightmap_uv:vec2<f32>, lightmap_bounds:vec4<f32>, authored_tangent:vec4<f32>,
  uv1:vec2<f32>, tangent1:vec3<f32>, bitangent1:vec3<f32>,
 }
-// A material's record: its values, textures and lightmap eligibility, and
-// the word it starts at, where its map bindings' transforms are read
+// A material's record: its values, textures and binding flags
+// (MATERIAL_BINDING_*: lightmap eligibility, derivative frames), and the
+// word it starts at, where its map bindings' transforms are read
 // (scene_map_uv).
 struct SceneMaterial {
  values:Material,
- textures:array<u32,SCENE_TEXTURES>, baked:u32, word:u32,
+ textures:array<u32,SCENE_TEXTURES>, flags:u32, word:u32,
 }
 fn scene_f32(at:u32)->f32 {
  return bitcast<f32>(scene_source[at]);
@@ -78,7 +79,7 @@ fn scene_material(at:u32)->SceneMaterial {
  for (var texture=0u;texture<SCENE_TEXTURES;texture++) {
   textures[texture]=scene_source[first+texture];
  }
- return SceneMaterial(scene_material_values(at),textures,scene_source[at+SCENE_MATERIAL_BAKED],at);
+ return SceneMaterial(scene_material_values(at),textures,scene_source[at+SCENE_MATERIAL_BINDING_FLAGS],at);
 }
 fn scene_image_size(image_word:u32)->vec2<u32> {
  return vec2(scene_source[image_word+SCENE_IMAGE_WIDTH],scene_source[image_word+SCENE_IMAGE_HEIGHT]);

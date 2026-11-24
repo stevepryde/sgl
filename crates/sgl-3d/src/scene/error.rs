@@ -77,7 +77,9 @@ pub enum SceneError {
     InvalidMaterialFactors,
     /// Anisotropy strength is outside 0..=1 or its rotation is not finite.
     InvalidAnisotropy,
-    /// An anisotropic material's mesh lacks authored tangent frames.
+    /// A mesh lacks tangent frames that its material needs: an anisotropic
+    /// material's, or a level of detail of a mesh whose material every mesh
+    /// gives a frame (`Scene::set_mesh_lods`).
     MissingAnisotropyTangents,
     /// A masked material's alpha cutoff is not finite and nonnegative.
     InvalidAlphaCutoff,
@@ -283,7 +285,7 @@ impl std::fmt::Display for SceneError {
                 "anisotropy strength must be finite in 0..1 and rotation finite"
             }
             Self::MissingAnisotropyTangents => {
-                "anisotropy requires authored nonzero tangent frames on every mesh using this material"
+                "a mesh lacks tangent frames its material needs: anisotropy, or the frames its other meshes and levels of detail have"
             }
             Self::InvalidAlphaCutoff => "an alpha cutoff must be finite and nonnegative",
             Self::InvalidReflectance => {

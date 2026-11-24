@@ -386,7 +386,7 @@ impl Scene {
     pub(crate) fn begin_frame(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> u64 {
         self.upload_decals(device, queue);
         self.candidates.upload(device, queue);
-        self.materials.prepare_frame(queue);
+        self.materials.prepare_frame(queue, &self.rays);
         self.instances
             .prepare_frame(queue, &self.models, &mut self.deformations);
         self.static_edits.begin_frame();

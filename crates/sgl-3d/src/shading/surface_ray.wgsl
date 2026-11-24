@@ -15,13 +15,15 @@ fn ray_tangent_frame(hit:SceneHit)->mat3x3<f32> {
 fn ray_map_uv(hit:SceneHit,material:SceneMaterial,slot:u32)->vec2<f32> {
  return scene_map_uv(material,slot,hit.uv,hit.uv1);
 }
-// Whether normal-map binding `slot`'s texel is taken on the hit's authored
-// tangent frame: where its material is anisotropic and the binding samples
-// the authored frame's UV set, the normal map's (the first without one).
+// Whether normal-map binding `slot`'s texel is taken on the hit's vertex
+// tangent frame: where every mesh drawing its material has one (its binding
+// flags set MATERIAL_BINDING_VERTEX_FRAMES) and the binding
+// samples the vertex frame's UV set, the normal map's (the first without
+// one).
 fn ray_authored_frame(material:SceneMaterial,slot:u32)->bool {
  let bits=material.values.map_uv_bits;
  let normal_set=(material.values.maps&MATERIAL_MAP_NORMAL)!=0u && scene_map_on_uv1(bits,MATERIAL_SLOT_RELIEF);
- return material.values.anisotropy_strength>0. && scene_map_on_uv1(bits,slot)==normal_set;
+ return (material.flags&MATERIAL_BINDING_VERTEX_FRAMES)!=0u && scene_map_on_uv1(bits,slot)==normal_set;
 }
 // The hit's position derivatives along the coordinates relief binding
 // `slot` samples at: its triangle's along the binding's UV set, carried
@@ -218,7 +220,7 @@ fn ray_surface(hit:SceneHit,material:SceneMaterial,base:vec4<f32>,emission:vec3<
  s.unlit=unlit;
  s.front=hit.front_face;
  s.moving=(hit.instance_flags&OBJECT_STATIC)==0u;
- s.baked=material.baked!=0u;
+ s.baked=(material.flags&MATERIAL_BINDING_BAKED)!=0u;
  s.uv=hit.uv;
  s.lightmap_uv=hit.lightmap_uv;
  s.lightmap_bounds=hit.lightmap_bounds;

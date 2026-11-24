@@ -28,9 +28,11 @@ fn surface_map_uv(i:Fragment,slot:u32)->vec2<f32> {
 // The tangent frame the texel of normal-map binding `slot` (the normal
 // map's or the clearcoat normal map's) is taken on: the frame of the
 // coordinates it was sampled at (specs/sgl3d-architecture.md, Material map
-// coordinates). Where the material is anisotropic and the binding samples
-// the authored frame's UV set (the normal map's, the first without one),
-// the authored tangent frame carried through the binding's transform
+// coordinates). Where every mesh drawing the material has a vertex tangent
+// frame, authored or generated at import (its binding flags leave
+// MATERIAL_BINDING_VERTEX_FRAMES set), and the binding samples the
+// vertex frame's UV set (the normal map's, the first without one), the
+// vertex tangent frame carried through the binding's transform
 // (map_uv_authored_frame), as KHR_materials_clearcoat takes the coat's on
 // the base's (the Khronos glTF Sample Renderer 0686eb2's NormalInfo t and b,
 // material_info.glsl 196–207); else three.js r185's derivative cotangent
@@ -39,7 +41,7 @@ fn surface_map_uv(i:Fragment,slot:u32)->vec2<f32> {
 // construction.
 fn surface_map_frame(i:Fragment,front:bool,slot:u32)->mat3x3<f32> {
  let normal_set=(material.maps&MATERIAL_MAP_NORMAL)!=0u && material_map_on_uv1(MATERIAL_SLOT_RELIEF);
- if material.anisotropy_strength>0. && material_map_on_uv1(slot)==normal_set {
+ if (material_bindings.flags&MATERIAL_BINDING_VERTEX_FRAMES)!=0u && material_map_on_uv1(slot)==normal_set {
   let authored=surface_tangent_frame(i,front);
   if !material_map_transformed(slot) {
    return authored;

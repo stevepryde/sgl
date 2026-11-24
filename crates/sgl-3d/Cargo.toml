@@ -40,6 +40,9 @@ diagnostics = []
 [dependencies]
 # Decodes a BC7 material image's level 0 for the scene's ray source.
 bcdec_rs.workspace = true
+# MikkTSpace tangent frames for glTF primitives that need one and carry none
+# (content::tangents), as glTF 2.0 3.7.2.1 defines absent tangents.
+bevy_mikktspace.workspace = true
 bytemuck.workspace = true
 sgl-post-fx.workspace = true
 glam.workspace = true

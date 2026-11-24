@@ -29,7 +29,8 @@
 // arbitrary one in the normal's plane, handedness +1, never zero, which a
 // shader cannot tell from an authored one: a shader used on meshes without
 // authored tangents derives its frame itself, as from screen derivatives
-// in material_surface (as SGL3D's own normal maps do), or has such meshes
+// in material_surface (as SGL3D's own normal maps do on a material such a
+// mesh draws), or has such meshes
 // flagged through its ShaderParams or shader data; `color` linear RGB and
 // alpha, as asset::Vertex::color;
 // `shader_data` the mesh's per-vertex data (PreparedModel::with_shader_data),

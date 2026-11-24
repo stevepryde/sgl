@@ -125,14 +125,26 @@ impl Default for MapUvs {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct MaterialBindings {
-    /// Whether lightmap charts light it.
-    pub baked: u32,
+    /// `MATERIAL_BINDING_*` bits: whether lightmap charts light it, and
+    /// whether every mesh drawing it has a vertex frame; the ray record's
+    /// binding flags word too.
+    pub flags: u32,
     /// The map bindings past the record's sixteen
     /// (`shading::material::more_maps`).
     pub more_maps: u32,
     pub padding: [u32; 2],
     pub map_uvs: [MapUv; MAP_BINDINGS.len()],
 }
+
+/// A material's binding flags (`MaterialBindings::flags`, the ray record's
+/// `flags`): lightmap charts light it.
+pub(crate) const MATERIAL_BINDING_BAKED: u32 = 1;
+/// Every mesh drawing it has a vertex tangent frame, so its relief maps
+/// take it (specs/sgl3d-architecture.md, Material map coordinates); clear,
+/// they take the derivative and triangle frames. The scene sets it from
+/// its count of meshes without one before anything draws the material, so
+/// a record it has not reached yet takes the frames every mesh has.
+pub(crate) const MATERIAL_BINDING_VERTEX_FRAMES: u32 = 2;
 
 /// The WGSL twins of the encoding.
 #[cfg(test)]
@@ -142,6 +154,11 @@ pub(crate) fn constants() -> Vec<crate::shading::layout_tests::Constant> {
     [
         ("MAP_UV_TRANSFORMED_SHIFT", TRANSFORMED_SHIFT),
         ("MATERIAL_SLOTS", MAP_BINDINGS.len() as u32),
+        ("MATERIAL_BINDING_BAKED", MATERIAL_BINDING_BAKED),
+        (
+            "MATERIAL_BINDING_VERTEX_FRAMES",
+            MATERIAL_BINDING_VERTEX_FRAMES,
+        ),
         ("MATERIAL_FIRST_MORE_SLOT", material::FIRST_MORE_SLOT as u32),
         (
             "MATERIAL_MORE_MAPS_TRANSFORMED_SHIFT",
@@ -166,7 +183,7 @@ pub(crate) fn mirrors() -> [crate::shading::layout_tests::Mirror; 2] {
             "geometry",
             "MaterialBindings",
             MaterialBindings,
-            [baked, more_maps, map_uvs]
+            [flags, more_maps, map_uvs]
         ),
     ]
 }

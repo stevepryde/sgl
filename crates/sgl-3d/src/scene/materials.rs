@@ -13,7 +13,9 @@ use crate::asset::{Image, Material as AuthoredMaterial, TextureWrap};
 use crate::content::identity::{MaterialId, ModelId, RenderTextureId};
 use crate::content::material::{AlphaMode, SurfaceMaterial};
 use crate::shading::bind::group2::MaterialMap;
-use crate::shading::map_uvs::MaterialBindings;
+use crate::shading::map_uvs::{
+    MATERIAL_BINDING_BAKED, MATERIAL_BINDING_VERTEX_FRAMES, MaterialBindings,
+};
 use crate::shading::material::MaterialUniform;
 use group::{Bound, Groups};
 use maps::{InEffect, authored, normal_wrap};
@@ -57,9 +59,12 @@ pub(crate) struct Material {
     /// What group 2 binds besides its buffers: its maps in effect.
     bound: Bound,
     buffer: wgpu::Buffer,
-    /// Group 2's `material_bindings`: lightmap eligibility, which
-    /// `set_baked` writes, and its map bindings' transforms.
-    baked: wgpu::Buffer,
+    /// Group 2's `material_bindings`: its binding flags, which `set_baked`
+    /// and `sync_frames` write, and its map bindings' transforms.
+    bindings: wgpu::Buffer,
+    /// Its binding flags as last written (`MATERIAL_BINDING_*`), in group
+    /// 2's `material_bindings` and its ray record alike.
+    flags: u32,
     casts_directional_shadow: bool,
     /// Its distinct textures.
     textures: Vec<usize>,
@@ -82,6 +87,13 @@ impl Material {
     /// Its record in the ray source.
     pub fn word(&self) -> u32 {
         self.record.start
+    }
+
+    /// Writes its binding flags to group 2 and its ray record.
+    fn write_flags(&mut self, queue: &wgpu::Queue, rays: &SceneRays, flags: u32) {
+        self.flags = flags;
+        crate::counters::write_buffer(queue, &self.bindings, 0, bytemuck::bytes_of(&flags));
+        rays.write_flags(queue, self.word(), flags);
     }
 
     /// Whether the frame's visibility mask (all groups when None) enables
@@ -274,11 +286,30 @@ impl Materials {
     }
 
     /// Before a frame: each shader parameter block's last submitted copy is
-    /// uploaded where it changed, and the block the frame draws recorded.
-    pub fn prepare_frame(&mut self, queue: &wgpu::Queue) {
+    /// uploaded where it changed, and the block the frame draws recorded;
+    /// and the materials' frames synchronised (`sync_frames`).
+    pub fn prepare_frame(&mut self, queue: &wgpu::Queue, rays: &SceneRays) {
         for (_, material) in self.slots.iter_mut() {
             if let Some(params) = &mut material.params {
                 params.prepare_frame(queue);
+            }
+        }
+        self.sync_frames(queue, rays);
+    }
+
+    /// Before anything draws or traces the materials (a frame, a probe
+    /// capture): each material whose meshes gained their first mesh without
+    /// a vertex frame, or lost their last, since takes the derivative frames
+    /// or leaves them (`MATERIAL_BINDING_VERTEX_FRAMES`).
+    pub fn sync_frames(&mut self, queue: &wgpu::Queue, rays: &SceneRays) {
+        for (_, material) in self.slots.iter_mut() {
+            let flags = if material.untangented == 0 {
+                material.flags | MATERIAL_BINDING_VERTEX_FRAMES
+            } else {
+                material.flags & !MATERIAL_BINDING_VERTEX_FRAMES
+            };
+            if flags != material.flags {
+                material.write_flags(queue, rays, flags);
             }
         }
     }
@@ -530,11 +561,11 @@ impl Materials {
             bytemuck::bytes_of(&uniform),
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
-        let baked = buffer(
+        let bindings = buffer(
             device,
             "material bindings",
             bytemuck::bytes_of(&MaterialBindings {
-                baked: 0,
+                flags: 0,
                 more_maps,
                 padding: [0; 2],
                 map_uvs: *uvs.rows(),
@@ -550,7 +581,7 @@ impl Materials {
             device,
             &self.textures,
             &bound,
-            [&values_buffer, &baked],
+            [&values_buffer, &bindings],
             None,
             None,
         );
@@ -570,12 +601,13 @@ impl Materials {
             group,
             bound,
             buffer: values_buffer,
-            baked,
+            bindings,
             casts_directional_shadow: material.casts_directional_shadow,
             textures: distinct,
             record,
             users: HashMap::new(),
             untangented: 0,
+            flags: 0,
             parameters: 0,
             params: None,
         }))
@@ -709,15 +741,20 @@ impl Materials {
     }
 
     /// Whether lightmap charts light the material.
-    pub fn set_baked(&self, queue: &wgpu::Queue, rays: &SceneRays, id: MaterialId, baked: bool) {
-        let material = self.slots.get(id).expect("a live material");
-        crate::counters::write_buffer(
-            queue,
-            &material.baked,
-            0,
-            bytemuck::cast_slice(&[u32::from(baked)]),
-        );
-        rays.write_baked(queue, material.word(), baked);
+    pub fn set_baked(
+        &mut self,
+        queue: &wgpu::Queue,
+        rays: &SceneRays,
+        id: MaterialId,
+        baked: bool,
+    ) {
+        let material = self.slots.get_mut(id).expect("a live material");
+        let flags = if baked {
+            material.flags | MATERIAL_BINDING_BAKED
+        } else {
+            material.flags & !MATERIAL_BINDING_BAKED
+        };
+        material.write_flags(queue, rays, flags);
     }
 
     pub fn remove(&mut self, rays: &mut SceneRays, id: MaterialId) -> Result<(), SceneError> {

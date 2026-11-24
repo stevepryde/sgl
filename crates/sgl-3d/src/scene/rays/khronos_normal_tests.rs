@@ -149,12 +149,21 @@ fn front_pixel(point: Vec2) -> ([u32; 2], Vec2) {
     ([x as u32, y as u32], centre)
 }
 
-/// Shades `asset`, anisotropic by `anisotropy` (which selects its authored
-/// tangent frame), and compares each quad with a dome in its row at 24
-/// points on the dome's curved part (4, 6 and 8 cm from its centre, where
-/// it tilts about 24°, 37° and 53°; its rim beyond is flat), from the front
-/// and the back, in raster and at ray hits.
-fn lit_as_its_geometry(file: &str, anisotropy: f32, domes: usize, quads: usize) {
+/// Which frame a test shades a Khronos asset's normal map on.
+#[derive(Clone, Copy, PartialEq)]
+enum Frames {
+    /// Each triangle's coordinates': its tangents removed.
+    Triangle,
+    /// Its vertex frames as loaded: authored, or generated where it has
+    /// none (`asset::LoadOptions::tangents`).
+    Vertex,
+}
+
+/// Shades `file` on `frames` and compares each quad with a dome in its row
+/// at 24 points on the dome's curved part (4, 6 and 8 cm from its centre,
+/// where it tilts about 24°, 37° and 53°; its rim beyond is flat), from the
+/// front and the back, in raster and at ray hits.
+fn lit_as_its_geometry(file: &str, frames: Frames, domes: usize, quads: usize) {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
@@ -165,7 +174,12 @@ fn lit_as_its_geometry(file: &str, anisotropy: f32, domes: usize, quads: usize) 
     )
     .unwrap_or_else(|error| panic!("{file}: {error}"));
     assert_eq!(asset.meshes.len(), 1, "{file}: one primitive");
-    asset.materials[0].anisotropy_strength = anisotropy;
+    for vertex in &mut asset.meshes[0].vertices {
+        match frames {
+            Frames::Triangle => vertex.tangent = [0.; 4],
+            Frames::Vertex => assert_ne!(vertex.tangent, [0.; 4], "{file}: a vertex frame"),
+        }
+    }
     let mesh = &asset.meshes[0];
     let (dome_cells, quad_cells): (Vec<_>, Vec<_>) =
         cells(mesh).into_iter().partition(|cell| !cell.flat);
@@ -263,32 +277,208 @@ fn lit_as_its_geometry(file: &str, anisotropy: f32, domes: usize, quads: usize) 
     );
 }
 
-// No tangents: the derivative frame in raster, the triangle frame at hits.
+// Its tangents generated at load (it carries none): the vertex frames.
 #[test]
-fn normal_tangent_test_is_lit_as_its_geometry() {
-    lit_as_its_geometry("NormalTangentTest/glTF/NormalTangentTest.gltf", 0., 15, 15);
+fn normal_tangent_test_is_lit_as_its_geometry_on_generated_frames() {
+    lit_as_its_geometry(
+        "NormalTangentTest/glTF/NormalTangentTest.gltf",
+        Frames::Vertex,
+        15,
+        15,
+    );
 }
 
-// Its tangents unused (an isotropic material): the derivative and triangle
-// frames under mirrored UVs.
+// The derivative frame in raster and the triangle frame at hits.
 #[test]
-fn normal_tangent_mirror_test_is_lit_as_its_geometry() {
+fn normal_tangent_test_is_lit_as_its_geometry_on_triangle_frames() {
+    lit_as_its_geometry(
+        "NormalTangentTest/glTF/NormalTangentTest.gltf",
+        Frames::Triangle,
+        15,
+        15,
+    );
+}
+
+// Its authored tangents, whose handedness follows the mirroring.
+#[test]
+fn normal_tangent_mirror_test_is_lit_as_its_geometry_on_its_tangents() {
     lit_as_its_geometry(
         "NormalTangentMirrorTest/glTF/NormalTangentMirrorTest.gltf",
-        0.,
+        Frames::Vertex,
         10,
         30,
     );
 }
 
-// Its authored tangents: an anisotropic material takes its normal map on
-// them, whose slight strength leaves the normal as it is.
+// The derivative and triangle frames under mirrored coordinates.
 #[test]
-fn normal_tangent_mirror_test_is_lit_as_its_geometry_on_its_tangents() {
+fn normal_tangent_mirror_test_is_lit_as_its_geometry_on_triangle_frames() {
     lit_as_its_geometry(
         "NormalTangentMirrorTest/glTF/NormalTangentMirrorTest.gltf",
-        1e-3,
+        Frames::Triangle,
         10,
         30,
+    );
+}
+
+// The Khronos Avocado (glTF-Sample-Assets e124e8d): a low-poly curved mesh
+// whose normal map was baked on its own tangents, which it carries
+// (Unity's). With TANGENT stripped, the loader's MikkTSpace frames must
+// shade it as its own tangents do, where the per-triangle frame does not:
+// around its cut face the per-triangle frame turns at every triangle edge
+// while the frame the map was baked on turns smoothly. A tangent-level
+// bound cannot hold on this asset: Unity's tangents differ from
+// MikkTSpace's on the same data (up to about 18° in direction, three
+// vertices' handedness), mostly where the map is flat. The oracle is the
+// asset's own tangents, at the shading level and comparatively: at ray
+// hits on every triangle (four points each), the generated frame's worst
+// angle from the authored frame's shaded normal must be under a quarter of
+// the per-triangle frame's worst on the same hits, and the per-triangle
+// frame must be visibly wrong somewhere (over 10°), or the case shows
+// nothing. A triangle where the file's own handedness contradicts its
+// coordinates' (glTF's B = (N x T) w must point toward decreasing V) is
+// left out: there the file's tangents are not the frame its map was baked
+// on, and both frames built from the coordinates disagree with them alike.
+// That is read from the fixture's data, and must leave out few. Defects:
+// generation skipped (the stripped asset then shades on the per-triangle
+// frame), its frames wrong-handed or turned, or shading not taking them
+// (the per-triangle frame again).
+#[test]
+fn generated_frames_shade_the_avocado_as_its_own_tangents_do() {
+    let Some((device, queue)) = crate::test_support::device() else {
+        return;
+    };
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gltf/Avocado/glTF");
+    let normal_only =
+        |image: crate::asset::GltfImage<'_>| -> crate::asset::Result<crate::asset::ImageSource> {
+            Ok(if image.uri == Some("Avocado_normal.png") {
+                crate::asset::ImageSource::Decode
+            } else {
+                crate::asset::ImageSource::Supplied(crate::asset::Image::Rgba8(
+                    image::RgbaImage::from_pixel(1, 1, image::Rgba([255; 4])),
+                ))
+            })
+        };
+    let load = |file: &str| {
+        crate::asset::load_with_options(
+            &directory.join(file),
+            crate::asset::LoadOptions {
+                images: Some(&normal_only),
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{file}: {error}"))
+    };
+    let authored = load("Avocado.gltf");
+    let generated = load("Avocado-NoTangents.gltf");
+    let mut per_triangle = authored.clone();
+    for vertex in &mut per_triangle.meshes[0].vertices {
+        vertex.tangent = [0.; 4];
+    }
+    // Four points on each triangle whose handedness agrees with its
+    // coordinates', each hit from 2 mm out along its face's normal.
+    let mesh = &authored.meshes[0];
+    let mut rays: Vec<[f32; 8]> = Vec::new();
+    let mut contradicted = 0;
+    for triangle in mesh.indices.as_chunks::<3>().0 {
+        let corners = triangle.map(|i| mesh.vertices[i as usize]);
+        let [a, b, c] = corners.map(|corner| Vec3::from_array(corner.position));
+        let normal = (b - a).cross(c - a).normalize();
+        // ∂p/∂U and ∂p/∂V from the triangle's positions and coordinates,
+        // and the handedness glTF's frame of them takes.
+        let [ua, ub, uc] = corners.map(|corner| glam::Vec2::from_array(corner.uv));
+        let (d1, d2) = (ub - ua, uc - ua);
+        let along_u = ((b - a) * d2.y - (c - a) * d1.y) / d1.perp_dot(d2);
+        let along_v = ((c - a) * d1.x - (b - a) * d2.x) / d1.perp_dot(d2);
+        let handedness = normal.cross(along_u).dot(-along_v).signum();
+        if corners.iter().any(|corner| corner.tangent[3] != handedness) {
+            contradicted += 1;
+            continue;
+        }
+        for weights in [
+            [1. / 3., 1. / 3., 1. / 3.],
+            [0.6, 0.2, 0.2],
+            [0.2, 0.6, 0.2],
+            [0.2, 0.2, 0.6],
+        ] {
+            let point = a * weights[0] + b * weights[1] + c * weights[2];
+            let origin = point + normal * 0.002;
+            rays.push([
+                origin.x, origin.y, origin.z, 0.0005, -normal.x, -normal.y, -normal.z, 0.004,
+            ]);
+        }
+    }
+    let shade = |asset: &Asset| {
+        let material = &asset.materials[0];
+        let maps = InEffect::of(material, BindingTier::Extended);
+        let relief = material.normal_texture.as_ref().unwrap().image;
+        normal_probe::observe(
+            &device,
+            &queue,
+            &Probe {
+                asset,
+                world: Mat4::IDENTITY,
+                material: MaterialUniform::new(
+                    &crate::SurfaceMaterial::authored(material),
+                    maps.maps(),
+                    &maps.samplers(),
+                    &maps.uvs(),
+                ),
+                relief,
+                coat: relief,
+                normal_maps_enabled: true,
+                observe: Observe::Base,
+                // Rays alone: raster draws nothing on screen.
+                vertex: "@vertex fn fixture_vs(v:FixtureVertex)->Fragment {var o:Fragment;o.world=(objects[0].model*vec4(v.position,1.)).xyz;o.clip=vec4(2.,2.,0.,1.);return o;}",
+                views: 1,
+                size: [1, 1],
+                rays: &rays,
+            },
+        )
+        .rays
+    };
+    let [own, mikktspace, triangle] = [&authored, &generated, &per_triangle].map(shade);
+    let degrees = |a: [f32; 4], b: [f32; 4]| {
+        Vec3::from_slice(&a[..3])
+            .normalize()
+            .dot(Vec3::from_slice(&b[..3]).normalize())
+            .clamp(-1., 1.)
+            .acos()
+            .to_degrees()
+    };
+    let (mut generated_worst, mut triangle_worst) = (0f32, 0f32);
+    let mut hits = 0;
+    for i in 0..rays.len() {
+        // A front hit in all three.
+        if [own[i], mikktspace[i], triangle[i]]
+            .iter()
+            .any(|hit| hit[3] != 1.)
+        {
+            continue;
+        }
+        hits += 1;
+        generated_worst = generated_worst.max(degrees(mikktspace[i], own[i]));
+        triangle_worst = triangle_worst.max(degrees(triangle[i], own[i]));
+    }
+    eprintln!(
+        "{contradicted} triangles left out; {hits} of {} hits: generated frame at worst {generated_worst:.2}°, per-triangle frame {triangle_worst:.2}° from the asset's own",
+        rays.len()
+    );
+    assert!(
+        hits > rays.len() * 9 / 10,
+        "{hits} of {} rays hit",
+        rays.len()
+    );
+    assert!(
+        contradicted * 100 < mesh.indices.len() / 3,
+        "{contradicted} triangles contradict their coordinates"
+    );
+    assert!(
+        triangle_worst > 10.,
+        "the per-triangle frame is never visibly off"
+    );
+    assert!(
+        generated_worst < triangle_worst / 4.,
+        "generated {generated_worst:.2}° against per-triangle {triangle_worst:.2}°"
     );
 }

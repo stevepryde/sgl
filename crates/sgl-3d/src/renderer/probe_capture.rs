@@ -170,8 +170,10 @@ impl Renderer {
         (settings, timing): (&Settings, Option<&crate::timing::GpuTiming>),
     ) {
         // Decals added since the last frame take their atlas first, and
-        // decoded images their mip chains.
+        // decoded images their mip chains; materials take the frames their
+        // meshes have now.
         scene.upload_decals(device, queue);
+        scene.materials.sync_frames(queue, &scene.rays);
         self.shared.build_mip_chains((device, queue), scene, timing);
         // Materials sample as the settings filter them, as a frame does.
         scene.materials.set_anisotropy(

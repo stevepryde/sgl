@@ -48,12 +48,29 @@ mod rig_tests;
 mod scene_checks;
 mod sources;
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod tangent_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod texture_transform_tests;
 mod topology;
 #[cfg(test)]
 mod topology_tests;
+
+/// What a glTF primitive that needs a tangent frame and carries no
+/// `TANGENT` gets: one whose material has a normal map or anisotropy, or a
+/// clearcoat normal map on the normal map's UV set (the first without one).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TangentFrames {
+    /// MikkTSpace's, on the normal map's UV set, as glTF 2.0 3.7.2.1 defines
+    /// absent tangents; a vertex whose triangles take different frames (a
+    /// mirrored seam) is split.
+    #[default]
+    Generate,
+    /// None: its normal maps take the per-triangle frame, and an
+    /// anisotropic material's primitive without `TANGENT` fails the load.
+    AuthoredOnly,
+}
 
 /// Optional application adaptations applied while loading an asset.
 #[derive(Clone, Copy, Default)]
@@ -75,6 +92,9 @@ pub struct LoadOptions<'a> {
     /// itself. Selecting none is an error.
     #[allow(clippy::type_complexity)]
     pub nodes: Option<&'a (dyn Fn(Option<&str>) -> bool + Sync)>,
+    /// Whether primitives that need a tangent frame and carry none get
+    /// MikkTSpace's ([`TangentFrames::Generate`], the default).
+    pub tangents: TangentFrames,
 }
 
 impl std::fmt::Debug for LoadOptions<'_> {
@@ -84,6 +104,7 @@ impl std::fmt::Debug for LoadOptions<'_> {
             .field("emissive_strength_cap", &self.emissive_strength_cap)
             .field("images", &self.images.map(|_| "Fn"))
             .field("nodes", &self.nodes.map(|_| "Fn"))
+            .field("tangents", &self.tangents)
             .finish()
     }
 }
@@ -276,6 +297,12 @@ pub enum Ignored {
     /// any other but `TRANSLATION`, `ROTATION` and `SCALE`. It is checked
     /// like them, and counts toward their shared count.
     InstanceAttribute { node: usize, name: String },
+    /// The tangent frames of mesh `mesh`'s primitive `primitive`, which
+    /// needs them and carries no `TANGENT`, where more than 1 024 triangles
+    /// share one of its vertices: generating them costs the square of that
+    /// count, so they are not, and its normal maps take the frame of each
+    /// triangle's coordinates (`LoadOptions::tangents`).
+    TangentFrames { mesh: usize, primitive: usize },
 }
 
 fn decode(
@@ -355,13 +382,18 @@ fn decode(
             Mat4::IDENTITY,
             (&document, &plan, include_node),
             (buffers, buffer_bytes),
-            (default_material, &materials),
+            (default_material, &materials, options.tangents),
             &mut rigging,
             &mut walk,
         )?;
     }
     // After batching, which leaves out meshes without triangles, such as a
     // strip of only degenerates.
+    ignored.extend(
+        walk.unframed()
+            .into_iter()
+            .map(|(mesh, primitive)| Ignored::TangentFrames { mesh, primitive }),
+    );
     let meshes = batch(walk.meshes, materials.len());
     let instanced: Vec<InstancedMesh> = walk
         .instanced

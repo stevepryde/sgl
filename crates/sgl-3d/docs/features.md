@@ -82,7 +82,7 @@ them through unrefracted. A probe captured on an
   `load_with_options` and `load_slice_with_options` (`LoadOptions`: an
   independent checked source/decoded byte caps, an emissive strength cap,
   images the game supplies, which are never decoded,
-  and a selection of mesh nodes for named rigid parts), or a
+  a selection of mesh nodes for named rigid parts, and `tangents`), or a
   procedural `asset::Asset` (`asset::Material::default()` is glTF's default
   material). File references are percent-decoded relative regular files
   beneath the glTF's directory, without parent segments or symlinks;
@@ -98,7 +98,24 @@ them through unrefracted. A probe captured on an
   (`TEXCOORD_2` on, `COLOR_1` on, `_NAME`), and morph target displacements
   other than position, normal and tangent (`TEXCOORD_n`, `COLOR_n`). A tangent along its normal
   (within 0.02°) is absent except on an anisotropic material, which
-  refuses it. Other
+  refuses it. A primitive without `TANGENT` whose material has a normal
+  map, anisotropy or a clearcoat normal map on the normal map's UV set
+  gets MikkTSpace tangents at load, as glTF 2.0 defines absent tangents
+  (`LoadOptions::tangents`, `TangentFrames::Generate` by default): about
+  0.75 µs a triangle on the CPU, native and in the browser alike (7–16 ms
+  for the Khronos assets without tangents; a primitive in which more than
+  1 024 triangles share one vertex is listed in `Asset::ignored` and keeps
+  the per-triangle frame, since the cost grows with that count's square),
+  and splits only where a
+  mirrored seam needs two frames (a few vertices). Nothing else pays: a
+  primitive with `TANGENT` or a material without those maps runs nothing.
+  Export tangents from the authoring tool to skip it, or load with
+  `TangentFrames::AuthoredOnly` to keep the milliseconds: such a
+  primitive's normal maps then take the frame of each triangle's
+  coordinates, which turns at triangle edges where a baked map expects a
+  smooth frame, and an anisotropic one fails the load. A material takes
+  its meshes' vertex tangents for its normal maps while every mesh drawing
+  it has them, and each triangle's frame otherwise. Other
   unsupported features return errors rather
   than partial models. Sparse accessor indices must strictly increase and
   stay below the accessor's count; invalid ones fail the load.
@@ -686,4 +703,4 @@ are captured between frames, offline or while a level loads:
 what moves is a [live probe](../README.md#live-specular-probes), which the
 game refreshes when it chooses.
 
-Also not provided: tangent generation and order-independent transparency.
+Also not provided: order-independent transparency.

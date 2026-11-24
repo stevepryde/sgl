@@ -97,6 +97,19 @@ impl Fixture {
                 .iter()
                 .map(|mesh| words[mesh.material])
                 .collect();
+            // A material every mesh of which has a vertex frame takes it,
+            // as the scene keeps it.
+            for (material, &word) in words.iter().enumerate() {
+                if asset.meshes.iter().all(|mesh| {
+                    mesh.material != material || crate::asset::tangent_frames(&mesh.vertices)
+                }) {
+                    rays.write_flags(
+                        queue,
+                        word,
+                        crate::shading::map_uvs::MATERIAL_BINDING_VERTEX_FRAMES,
+                    );
+                }
+            }
             let bounds = asset.meshes.iter().flat_map(|mesh| &mesh.vertices).fold(
                 [Vec3::INFINITY, Vec3::NEG_INFINITY],
                 |[min, max], vertex| {

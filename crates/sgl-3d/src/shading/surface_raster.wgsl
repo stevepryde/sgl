@@ -80,7 +80,7 @@ fn raster_surface(i:Fragment,front:bool,m:MaterialSurface,clusters:ClusterRange)
  s.unlit=unlit;
  s.front=front;
  s.moving=(objects[object].flags&OBJECT_STATIC)==0u;
- s.baked=material_bindings.baked!=0u;
+ s.baked=(material_bindings.flags&MATERIAL_BINDING_BAKED)!=0u;
  s.uv=i.uv;
  s.lightmap_uv=i.lightmap_uv;
  s.lightmap_bounds=i.lightmap_bounds;

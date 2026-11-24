@@ -248,11 +248,20 @@ struct FixtureVertex {
         }],
     });
     let object_group = group(device, &raster.get_bind_group_layout(1), &object);
-    // Every map binding on the first UV set, untransformed.
+    // Every map binding on the first UV set, untransformed; the vertex
+    // frames where every mesh has one, as the scene keeps them.
+    let vertex_frames = asset
+        .meshes
+        .iter()
+        .all(|mesh| crate::asset::tangent_frames(&mesh.vertices));
     let bindings = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("material bindings"),
         contents: bytemuck::bytes_of(&shading::map_uvs::MaterialBindings {
-            baked: 0,
+            flags: if vertex_frames {
+                shading::map_uvs::MATERIAL_BINDING_VERTEX_FRAMES
+            } else {
+                0
+            },
             more_maps: 0,
             padding: [0; 2],
             map_uvs: *shading::map_uvs::MapUvs::default().rows(),

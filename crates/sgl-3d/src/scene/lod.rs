@@ -45,7 +45,8 @@ impl Scene {
             .filter(|lod| !self.models.lod_tangents(lod))
             .count() as u32;
         // Preserve an existing tangent-capable material boundary even while
-        // isotropic, because a later material edit may activate anisotropy.
+        // isotropic: a later material edit may activate anisotropy, and its
+        // normal maps take its meshes' vertex frames.
         let requires_tangents = self.materials.get(material)?.untangented == previous_untangented;
         for lod in &alternatives {
             if !lod.max_error.is_finite() || lod.max_error < 0. {

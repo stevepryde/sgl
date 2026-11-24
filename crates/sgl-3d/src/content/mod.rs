@@ -36,6 +36,7 @@ pub mod shader;
 pub(crate) mod sprite;
 pub(crate) mod srgb;
 pub mod static_lighting;
+pub(crate) mod tangents;
 pub(crate) mod transient;
 
 mod meshopt;

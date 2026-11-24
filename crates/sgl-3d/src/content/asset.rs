@@ -9,8 +9,9 @@
 //! asset path instead of producing a partial model; an unsupported extension
 //! the file only uses is left out and listed in [`Asset::ignored`]. Opaque,
 //! masked and blended alpha modes are supported. Supported material
-//! extensions are scalar clearcoat, anisotropy with authored tangents,
-//! emissive strength, unlit, bump mapping, IOR, and specular with its maps.
+//! extensions are scalar clearcoat, anisotropy (on authored tangents, or
+//! ones the loader generates: `LoadOptions::tangents`), emissive strength,
+//! unlit, bump mapping, IOR, and specular with its maps.
 //! Authored punctual lights (`KHR_lights_punctual`) load as data in
 //! [`Asset::lights`], and `EXT_mesh_gpu_instancing` nodes as shared
 //! geometry and placements in [`Asset::instanced`], for the game to install.
@@ -21,7 +22,7 @@ use glam::Vec3;
 use super::deformation::{MeshDeformation, Rig};
 pub use super::gltf::{
     AssetLights, GltfImage, Ignored, ImageSource, InstancedMesh, InstancedNode, LightPlacement,
-    LoadOptions, PlacedLight, PunctualKind, PunctualLight, load, load_slice,
+    LoadOptions, PlacedLight, PunctualKind, PunctualLight, TangentFrames, load, load_slice,
     load_slice_with_options, load_with_options,
 };
 #[cfg(target_arch = "wasm32")]
@@ -75,10 +76,13 @@ pub struct Vertex {
     /// Supply the same bounds on all triangle vertices; outside is black.
     /// A mesh's vertices may name at most 65,536 distinct bounds.
     pub lightmap_bounds: [f32; 4],
-    /// Unit tangent XYZ and bitangent handedness W after node transforms.
-    /// Zero means absent for legacy isotropic geometry, and for an imported
-    /// tangent along its normal; a tangent within 0.02° of its normal is
-    /// treated as absent. Anisotropy requires a valid frame.
+    /// Unit tangent XYZ and bitangent handedness W after node transforms:
+    /// glTF's frame of the normal map's UV set (T along increasing U,
+    /// B = (N × T)·W toward decreasing V). Zero means absent, as does a
+    /// tangent within 0.02° of its normal. A material takes its meshes'
+    /// tangents for its normal maps while every mesh drawing it has them,
+    /// so a tangent that is not that frame (a placeholder) shades them
+    /// wrong: leave it zero. Anisotropy requires a valid frame.
     /// Made perpendicular to the normal and unit, then kept within 0.01°.
     pub tangent: [f32; 4],
 }
@@ -292,6 +296,30 @@ impl Material {
     /// packing), which shading reads from that map's sample.
     pub(crate) fn packed_occlusion(&self) -> bool {
         self.occlusion_texture.is_some() && self.occlusion_texture == self.mr_texture
+    }
+
+    /// Whether a vertex tangent frame serves it: it has a normal map or
+    /// anisotropy, or a clearcoat normal map on the frame's set, the normal
+    /// map's (the first without one), as specs/sgl3d-architecture.md's
+    /// Material map coordinates take the vertex frame. A glTF primitive it
+    /// draws that carries no TANGENT is given MikkTSpace's
+    /// (`LoadOptions::tangents`).
+    pub(crate) fn takes_vertex_frame(&self) -> bool {
+        self.normal_texture.is_some()
+            || self.anisotropy_strength > 0.0
+            || self
+                .coat_normal_texture
+                .as_ref()
+                .is_some_and(|texture| texture.uv_set == self.frame_set())
+    }
+
+    /// The UV set a vertex tangent frame is the frame of: the normal map's,
+    /// the first without one (specs/sgl3d-architecture.md, Material map
+    /// coordinates).
+    pub(crate) fn frame_set(&self) -> UvSet {
+        self.normal_texture
+            .as_ref()
+            .map_or(UvSet::Uv0, |texture| texture.uv_set)
     }
 
     /// Every map SGL3D samples: each it names but a bump map beside a

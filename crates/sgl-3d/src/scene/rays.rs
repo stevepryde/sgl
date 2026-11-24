@@ -115,14 +115,16 @@ const IMAGE_RGBA8: u32 = 0;
 const IMAGE_BC7: u32 = 1;
 
 /// A material's record in the source: its values (its maps' sampler states
-/// among them), its textures, whether lightmap charts light it and each map
+/// among them), its textures, its binding flags (`MATERIAL_BINDING_*`:
+/// whether lightmap charts light it, whether a mesh drawing it lacks a
+/// vertex frame) and each map
 /// binding's transform.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct MaterialRecord {
     material: MaterialUniform,
     textures: MaterialTextures,
-    baked: u32,
+    flags: u32,
     /// The map bindings past the record's sixteen
     /// (`shading::material::more_maps`), which only their samples read.
     more_maps: u32,
@@ -413,7 +415,7 @@ impl SceneRays {
         let record = MaterialRecord {
             material: *values,
             textures,
-            baked: 0,
+            flags: 0,
             more_maps,
             map_uvs: *map_uvs.rows(),
         };
@@ -428,10 +430,11 @@ impl SceneRays {
         self.write(queue, word + field as u32, bytemuck::cast_slice(&[*values]));
     }
 
-    /// Whether lightmap charts light the material whose record is at `word`.
-    pub fn write_baked(&self, queue: &wgpu::Queue, word: u32, baked: bool) {
-        let field = std::mem::offset_of!(MaterialRecord, baked) / 4;
-        self.write(queue, word + field as u32, &[u32::from(baked)]);
+    /// The binding flags (`MATERIAL_BINDING_*`) of the material record at
+    /// `word`.
+    pub fn write_flags(&self, queue: &wgpu::Queue, word: u32, flags: u32) {
+        let field = std::mem::offset_of!(MaterialRecord, flags) / 4;
+        self.write(queue, word + field as u32, &[flags]);
     }
 
     /// Places prepared `model`: allocates its range at a multiple of

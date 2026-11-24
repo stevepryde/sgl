@@ -18,6 +18,14 @@ override material_transforms_enabled:bool=false;
 // map binding on the second set, and from this shift in its high half for
 // each whose transform is not the identity.
 const MAP_UV_TRANSFORMED_SHIFT:u32=16u;
+// A material's binding flags (MaterialBindings.flags.x in raster, the ray
+// record's flags word at hits), which the scene writes beside its values:
+// lightmap charts light it; and every mesh drawing it has a vertex tangent
+// frame, so its relief maps take it (surface_map_frame, ray_map_frame),
+// the derivative and triangle frames where clear, as in a record the
+// scene has not reached yet. Rust owner: shading::map_uvs.
+const MATERIAL_BINDING_BAKED:u32=1u;
+const MATERIAL_BINDING_VERTEX_FRAMES:u32=2u;
 // One map binding's transform: the rows of the matrix
 // translation * rotation * scale, so u' = dot(u.xy, uv) + u.z and
 // v' = dot(v.xy, uv) + v.z.

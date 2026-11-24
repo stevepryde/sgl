@@ -1983,3 +1983,56 @@ Use the [current specs](README.md) for implementation and the
   which neither the extension nor its exporters define. Game shaders are
   validated against the fallback programs only: the sampling provider
   differs in function bodies that name SGL3D's own, reserved declarations.
+- **D-88** Decision, 2026-11-24 (#861): a glTF primitive whose material
+  takes a vertex tangent frame (a normal map, anisotropy, or a clearcoat
+  normal map on the normal map's set) and that carries no `TANGENT` gets
+  MikkTSpace's frames at import (`LoadOptions::tangents`,
+  `TangentFrames::Generate` by default; `AuthoredOnly` skips it), through
+  Bevy's `bevy_mikktspace` 1.0 with its `corrected-edge-sorting` and
+  `corrected-vertex-welding` features, once a mesh however many nodes use
+  it; and a material takes its meshes' vertex frames for its normal maps
+  while every mesh drawing it has one (`MATERIAL_BINDING_VERTEX_FRAMES`,
+  which the scene sets before a frame or a probe capture draws it, so a
+  record it has not reached takes the derivative and triangle frames),
+  those frames otherwise. Why: glTF 2.0 3.7.2.1 defines absent tangents as
+  MikkTSpace's, the frame a baked normal map expects. The per-triangle
+  frame turns at triangle edges where the bake's turns smoothly: on the
+  Khronos Avocado, against its own tangents, it is 22° off at ray hits
+  around its cut face (52° on a few pixels of a side view) where generated
+  frames are within 2.2°. An anisotropic file without tangents loaded only
+  with them. Measured (Apple M5, shared machine, provisional): about 0.75
+  µs a triangle, native and wasm32 in V8 alike, but the square of the
+  triangles sharing one vertex (fans of 1 000, 4 000 and 8 000 about 6, 84
+  and 331 ms: MikkTSpace's grouping compares a vertex's triangles
+  pairwise, which `bevy_mikktspace` keeps although no angular threshold
+  splits groups here), so a primitive in which more than 1 024 triangles
+  share one vertex keeps the per-triangle frame and is reported
+  (`Ignored::TangentFrames`, #902): 331 ms / 8 000² ≈ 5.2 ns a pair, so
+  the worst case under the cap costs about 5.2 ns × 1 024² ≈ 5.5 ms, while
+  a 256-segment disc's centre or cone's tip still generates; an upstream
+  change in `bevy_mikktspace` skipping that comparison when no threshold
+  is set would make the cap unnecessary. NormalTangentTest 7 ms (about
+  35% of its 20 ms native load), DamagedHelmet 12 ms (about 3%),
+  AntiqueCamera 16 ms (about 4%); splits add at most 63 vertices (2 KB
+  packed). Neither #852's opening scene nor Bistro nor Sponza generates
+  (no normal maps, or `TANGENT` on every primitive); the browser module
+  grows from 1 344 221 to 1 356 523 B brotli (+12.3 KB, 0.9%) in the `web`
+  profile, and the opening scene's first visible world moved within noise
+  (319 ms cold with generation, 302 without, three.js 298–306 in the same
+  runs). Not byte-exact with mikktspace.c: the corrected features change
+  only the last triangle's edge sort and the welding of vertices that
+  differ in NaN or in the sign of a zero (compared by `total_cmp` where
+  the C compares with `==`); they gave the same tangents as the default
+  features on the Khronos NormalTangentMirrorTest (Blender-written, within
+  0.028° and every handedness equal), Avocado and WaterBottle, and are
+  2–4× faster. The material-level rule reuses the count of frameless
+  meshes the scene keeps for anisotropy, with no varying or pipeline key;
+  a mesh-level bit would take a varying (14 of 16) or a sentinel in the
+  tangent's interpolated handedness. A vertex MikkTSpace leaves without a
+  frame (degenerate coordinates alone) takes one in its normal's plane, as
+  Bevy takes MikkTSpace's default there, so its mesh keeps its vertex
+  frames. Not taken: porting mikktspace.c into `content` as the Meshopt
+  decoders were (#854), since Bevy's crate is that port, safe,
+  dependency-free and fuzzed against the C original; Bevy's own use, which
+  writes each corner's tangent into its shared vertex, so a mirrored seam
+  keeps one frame where SGL3D splits.

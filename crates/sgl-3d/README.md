@@ -2259,7 +2259,8 @@ over the contract SGL3D declares, `shading/shader_contract.wgsl`, verbatim:
 // arbitrary one in the normal's plane, handedness +1, never zero, which a
 // shader cannot tell from an authored one: a shader used on meshes without
 // authored tangents derives its frame itself, as from screen derivatives
-// in material_surface (as SGL3D's own normal maps do), or has such meshes
+// in material_surface (as SGL3D's own normal maps do on a material such a
+// mesh draws), or has such meshes
 // flagged through its ShaderParams or shader data; `color` linear RGB and
 // alpha, as asset::Vertex::color;
 // `shader_data` the mesh's per-vertex data (PreparedModel::with_shader_data),
@@ -4063,6 +4064,27 @@ require embedded buffers, and embedded images unless the game supplies them
 loads on several threads: build it where it is used, or store a
 `LoadOptions<'static>` of `static` or leaked callbacks.
 
+`LoadOptions::tangents` decides what a primitive without `TANGENT` gets
+when its material has a normal map, anisotropy or a clearcoat normal map
+on the normal map's UV set. `TangentFrames::Generate`, the default, gives
+it MikkTSpace's frames on that set, as glTF 2.0 3.7.2.1 defines absent
+tangents, computed in the mesh's own space and carried through its node as
+an authored tangent is; a vertex where a mirrored seam meets two frames is
+split, with its skin influences and morph displacements, and one of
+degenerate coordinates alone takes an arbitrary frame in its normal's
+plane, glTF's tangent space being undefined there. It costs about 0.75 µs a
+triangle at load, native and in the browser alike, and nothing for a
+primitive with `TANGENT` or a material without those maps. MikkTSpace's
+grouping compares the triangles around each vertex pairwise, so a primitive
+in which more than 1 024 triangles share one vertex is not framed: it keeps
+the frame of each triangle's coordinates and the load lists it
+(`Ignored::TangentFrames`), so no file holds a load for more than a few
+milliseconds a vertex.
+`TangentFrames::AuthoredOnly` skips it: such a primitive's normal maps take
+the frame of each triangle's coordinates, and an anisotropic one fails the
+load. Exporting tangents from the authoring tool avoids generation
+altogether.
+
 The loader supports glTF triangle meshes, as triangles, strips or fans
 (a strip or fan becomes a triangle list at import, without the triangles
 that repeat an index, such as a joined strip's degenerates), baked rigid
@@ -4319,7 +4341,11 @@ through a transform draws with pipelines of its own, which resolve those
 maps' coordinates per pixel, and its meshes keep their second set (4 bytes a
 vertex). A normal, bump or clearcoat normal map is taken on the frame of the
 coordinates it samples; an authored tangent is the frame of the normal
-map's UV set as the mesh stores it, untransformed. Every frame reads a
+map's UV set as the mesh stores it, untransformed. A material takes its
+meshes' vertex tangents, authored or generated at load, for those maps
+while every mesh drawing it has them, and the frame of each triangle's
+coordinates otherwise, which turns at triangle edges where a baked map
+expects a smooth frame. Every frame reads a
 normal map as glTF defines it, its green channel toward decreasing V (up
 the image), with or without authored tangents, in raster and at ray hits.
 A set and a transform are fixed when the material is added, as its maps
@@ -4536,8 +4562,9 @@ appended tangent at `[0.; 4]`. `Material::anisotropy_strength` is finite 0..=1;
 linear RG direction (remapped to -1..1) and B strength. No texture means +T and
 full texture strength, as on a device of the `Basic` [binding tier](#binding-tiers),
 which binds no anisotropy map. File and embedded glTF imports use the same rules.
-Active anisotropy requires authored tangents; automatic tangent generation is
-not implemented. Normal maps and anisotropy share that frame. A tangent
+Active anisotropy requires vertex tangent frames: authored, or generated at
+load for a glTF primitive with coordinates on its normal map's set
+(`LoadOptions::tangents`). Normal maps and anisotropy share that frame. A tangent
 within 0.02° of its normal (as authored or after node transforms) spans no
 frame: it fails the load of an anisotropic material and is absent
 (`Vertex::tangent` zero, with no morph-target tangent delta) on any other.
@@ -4552,7 +4579,10 @@ material was added. Invalid values, or activation
 while any mesh drawn with the material (in any model, or as a level of detail)
 lacks tangent frames, return an error without changing CPU/GPU material state.
 Tangent-capable LOD replacements must preserve tangent frames, including when
-strength is currently zero. Adding a material with invalid anisotropy, or a
+strength is currently zero, which keeps a normal-mapped material on its
+vertex frames: a glTF primitive whose material has a normal map has frames,
+authored or generated, so a level of detail built for it in code supplies
+them too. Adding a material with invalid anisotropy, or a
 mesh without tangent frames drawn with an anisotropic material, returns a
 `SceneError`.
 

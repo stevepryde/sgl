@@ -189,7 +189,7 @@ fn trace(device: &wgpu::Device, queue: &wgpu::Queue, scene: &mut Scene, origin: 
  let hit=scene_decode_hit(scene_trace_nearest(SceneRay(vec4(origin,0.),vec4(direction,100.)),SCENE_SIDES_AS_RASTER),origin,direction);
  if hit.hit {{
   let material=scene_material(hit.material_word);
-  result[0]=vec4(hit.distance,material.values.base.x,f32(material.baked),f32(hit.instance_id));
+  result[0]=vec4(hit.distance,material.values.base.x,f32(material.flags&MATERIAL_BINDING_BAKED),f32(hit.instance_id));
  }}
 }}
 "#,

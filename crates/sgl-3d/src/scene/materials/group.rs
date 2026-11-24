@@ -91,14 +91,14 @@ impl Groups {
             device,
             textures,
             &material.bound,
-            [&material.buffer, &material.baked],
+            [&material.buffer, &material.bindings],
             material.params.as_ref(),
             emission,
         )
     }
 
     /// Group 2 of a material binding `bound`, of `textures`, its values
-    /// `buffer`, lightmap eligibility `baked` and its shader's parameter
+    /// `buffer`, its `MaterialBindings` `bindings` and its shader's parameter
     /// blocks `params`, the zero block twice without, sampled with the
     /// current anisotropy. `emission`, the view of the render texture the
     /// material names, fills the emission map's binding in place of its
@@ -108,7 +108,7 @@ impl Groups {
         device: &wgpu::Device,
         textures: &Textures,
         bound: &Bound,
-        [buffer, baked]: [&wgpu::Buffer; 2],
+        [buffer, bindings]: [&wgpu::Buffer; 2],
         params: Option<&ParamBlock>,
         emission: Option<&wgpu::TextureView>,
     ) -> wgpu::BindGroup {
@@ -143,7 +143,7 @@ impl Groups {
             },
             wgpu::BindGroupEntry {
                 binding: group2::MATERIAL_BINDINGS,
-                resource: baked.as_entire_binding(),
+                resource: bindings.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: group2::SHADER_PARAMS,

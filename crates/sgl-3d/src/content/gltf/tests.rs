@@ -7,12 +7,12 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-struct Fixture {
+pub(super) struct Fixture {
     directory: PathBuf,
 }
 
 impl Fixture {
-    fn new(source: &[u8], values: &[f32]) -> Self {
+    pub(super) fn new(source: &[u8], values: &[f32]) -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let directory = std::env::temp_dir().join(format!(
             "sgl-gltf-{}-{}",
@@ -55,7 +55,7 @@ impl Fixture {
         bytes
     }
 
-    fn path(&self) -> PathBuf {
+    pub(super) fn path(&self) -> PathBuf {
         self.directory.join("fixture.gltf")
     }
 }
@@ -397,6 +397,9 @@ fn tangents_ulps_off_the_normal(handedness: f32) -> [[f32; 4]; 2] {
     ]
 }
 
+// The fixture has no texture coordinates, so a missing TANGENT cannot be
+// generated (`LoadOptions::tangents`; `tangent_tests` load the generated
+// ones) and an anisotropic material without a usable one is refused.
 #[test]
 fn anisotropic_loader_rejects_missing_or_degenerate_authored_frames() {
     let invalid = [
