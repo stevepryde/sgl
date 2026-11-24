@@ -249,11 +249,28 @@ mod native {
             })
             .transpose()?;
         let mut settings = bistro_scene::resolve_settings(
-            bistro_scene::settings(options.max_quality, options.no_ray_shadows),
             fixture.as_ref(),
             settings_override.as_ref(),
+            options.max_quality,
+            options.no_ray_shadows,
             options.aa,
         )?;
+        let gi_volume_file: Option<serde_json::Value> = options
+            .gi_volume_file
+            .as_ref()
+            .map(|path| -> Result<_, Box<dyn Error>> {
+                Ok(serde_json::from_slice(&std::fs::read(path)?)?)
+            })
+            .transpose()?;
+        let gi_volume = bistro_scene::resolve_gi_volume(
+            fixture.as_ref(),
+            gi_volume_file.as_ref(),
+            options.max_quality,
+            options.no_gi,
+        )?;
+        let cascades = options.cascades.or(options
+            .max_quality
+            .then_some(bistro_scene::MAX_QUALITY_CASCADES));
         settings.diagnostics.disable.normal_maps = !options.normal_maps;
         settings.diagnostics.disable.fused_opaque = options.split;
         let cameras = bistro_scene::selected_cameras(fixture.as_ref(), &options.view)?;
@@ -509,22 +526,6 @@ mod native {
             // the scooter, not a claim that the source asset contains this light.
             local_light_ids.push(scene.add_light(&device, &queue, bistro_scene::rect_light())?);
         }
-        // Authored content covering the street/courtyard cameras, not an automatic bake.
-        let gi_volume = if options.no_gi {
-            None
-        } else if let Some(path) = &options.gi_volume_file {
-            Some(bistro_scene::volume_from_json(&serde_json::from_slice(
-                &std::fs::read(path)?,
-            )?)?)
-        } else if let Some(volume) = fixture
-            .as_ref()
-            .and_then(|f| f.get("dynamic_gi_volume"))
-            .filter(|v| !v.is_null())
-        {
-            Some(bistro_scene::volume_from_json(volume)?)
-        } else {
-            options.max_quality.then(bistro_scene::gi_volume)
-        };
         scene.set_dynamic_gi_volume(&device, gi_volume)?;
         let upload_ms = upload.elapsed().as_secs_f64() * 1000.;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -564,7 +565,7 @@ mod native {
             let camera_spec = fixture.as_ref().map(|_| camera_recipe);
             let mut frame = if fixture.is_some() {
                 let spec = camera_spec.ok_or("fixture camera not found")?;
-                bistro_scene::frame_from_json(spec, options.size, exposure, options.cascades)?
+                bistro_scene::frame_from_json(spec, options.size, exposure, cascades)?
             } else {
                 bistro_scene::frame(
                     name,
@@ -575,7 +576,7 @@ mod native {
                     options.max_quality,
                 )
             };
-            if let Some(cascades) = options.cascades
+            if let Some(cascades) = cascades
                 && let Some(shadow) = frame.directional_lights[0]
                     .as_mut()
                     .and_then(|sun| sun.shadow.as_mut())

@@ -81,20 +81,70 @@ pub fn selected_cameras(descriptor: Option<&Value>, requested: &str) -> Result<V
     Ok(selected)
 }
 
+/// The run's settings: the `--settings` file, else the recipe's `settings`,
+/// else the example default; then the `--max-quality` bundle's fields over
+/// it, then `--no-ray-shadows` and `--aa`. A combination that would drop the
+/// bundle or leave it unable to run is refused.
 pub fn resolve_settings(
-    base: Settings,
-    descriptor: Option<&Value>,
-    override_settings: Option<&Value>,
+    recipe: Option<&Value>,
+    settings_file: Option<&Value>,
+    max_quality: bool,
+    no_ray_shadows: bool,
     aa: Option<Antialiasing>,
 ) -> Result<Settings, String> {
-    let value = override_settings.or_else(|| descriptor.map(|d| &d["settings"]));
-    let mut settings = value.map_or(Ok(base), |value| {
+    if max_quality && settings_file.is_some() {
+        return Err(
+            "--settings is a complete Settings and cannot be combined with --max-quality; \
+                    give a recipe with --fixture instead"
+                .into(),
+        );
+    }
+    if max_quality && recipe.is_some_and(|r| r["ray_data"] == "disabled") {
+        return Err("--max-quality needs ray data, but this recipe sets ray_data disabled".into());
+    }
+    let value = settings_file.or_else(|| recipe.map(|r| &r["settings"]));
+    let mut settings = value.map_or(Ok(settings()), |value| {
         serde_json::from_value(value.clone()).map_err(|e| e.to_string())
     })?;
+    if max_quality {
+        apply_max_quality(&mut settings);
+    }
+    if no_ray_shadows {
+        settings.ray_traced_shadows = false;
+    }
     if let Some(aa) = aa {
         settings.antialiasing = aa;
     }
     Ok(settings)
+}
+
+/// The run's dynamic GI volume: none with `--no-gi`, else the `--gi-volume`
+/// file, else the recipe's (placed for its own scene), else, without a
+/// recipe, the `--max-quality` bundle's volume for the default asset.
+pub fn resolve_gi_volume(
+    recipe: Option<&Value>,
+    gi_volume_file: Option<&Value>,
+    max_quality: bool,
+    no_gi: bool,
+) -> Result<Option<DynamicGiVolume>, String> {
+    if no_gi {
+        return Ok(None);
+    }
+    if let Some(volume) = gi_volume_file {
+        return volume_from_json(volume).map(Some);
+    }
+    match recipe
+        .and_then(|r| r.get("dynamic_gi_volume"))
+        .filter(|v| !v.is_null())
+    {
+        Some(volume) => volume_from_json(volume).map(Some),
+        None if max_quality && recipe.is_some() => Err(
+            "--max-quality turns on dynamic GI, but this recipe has no dynamic_gi_volume; \
+             give --gi-volume FILE or --no-gi"
+                .into(),
+        ),
+        None => Ok(max_quality.then(gi_volume)),
+    }
 }
 
 pub fn compressed_format(manifest: &Value) -> Result<asset::CompressedFormat, String> {
@@ -239,30 +289,36 @@ pub fn asset_path(directory: &std::path::Path, name: &str) -> Result<std::path::
     Ok(path)
 }
 
-pub fn settings(max_quality: bool, no_ray_shadows: bool) -> Settings {
-    let mut settings = Settings {
+/// The example's default settings.
+pub fn settings() -> Settings {
+    Settings {
         antialiasing: Antialiasing::Taa,
         atmosphere: false,
         ..Default::default()
-    };
-    if max_quality {
-        settings.antialiasing = Antialiasing::Fsr2;
-        settings.fsr_quality = FsrQuality::NativeAa;
-        settings.scene_resolution = SceneResolution::Full;
-        settings.anisotropic_filtering = AnisotropicFiltering::X16;
-        settings.smaa_quality = SmaaQuality::Ultra;
-        settings.bloom = Bloom::On;
-        settings.shadow_quality = ShadowQuality::High;
-        settings.ambient_occlusion = AmbientOcclusionQuality::Ultra;
-        settings.screen_space_reflections = ScreenSpaceReflections::Full;
-        settings.reflection_method = ReflectionMethod::Velvet;
-        settings.world_space_reflections = WorldSpaceReflections::All;
-        settings.hardware_ray_tracing = true;
-        settings.ray_traced_shadows = !no_ray_shadows;
-        settings.ray_traced_shadow_quality = RayTracedShadowQuality::High;
-        settings.dynamic_gi = DynamicGiQuality::High;
     }
-    settings
+}
+
+/// Sun shadow cascades in the `--max-quality` bundle.
+pub const MAX_QUALITY_CASCADES: u32 = 4;
+
+/// The example-owned `--max-quality` bundle, not a library default: these
+/// fields replace `settings`' own; every other field is kept.
+pub fn apply_max_quality(settings: &mut Settings) {
+    settings.antialiasing = Antialiasing::Fsr2;
+    settings.fsr_quality = FsrQuality::NativeAa;
+    settings.scene_resolution = SceneResolution::Full;
+    settings.anisotropic_filtering = AnisotropicFiltering::X16;
+    settings.smaa_quality = SmaaQuality::Ultra;
+    settings.bloom = Bloom::On;
+    settings.shadow_quality = ShadowQuality::High;
+    settings.ambient_occlusion = AmbientOcclusionQuality::Ultra;
+    settings.screen_space_reflections = ScreenSpaceReflections::Full;
+    settings.reflection_method = ReflectionMethod::Velvet;
+    settings.world_space_reflections = WorldSpaceReflections::All;
+    settings.hardware_ray_tracing = true;
+    settings.ray_traced_shadows = true;
+    settings.ray_traced_shadow_quality = RayTracedShadowQuality::High;
+    settings.dynamic_gi = DynamicGiQuality::High;
 }
 
 /// Indices of the fixture's named materials: each name must match exactly
@@ -1027,7 +1083,7 @@ pub fn frame(
         illuminance: if name == "bevy" { 4.5 } else { 3. },
         shadow: Some(DirectionalShadow {
             distance: 60.,
-            cascades: if max_quality { 4 } else { 3 },
+            cascades: if max_quality { MAX_QUALITY_CASCADES } else { 3 },
         }),
         ..Default::default()
     });
@@ -1233,7 +1289,7 @@ pub fn frame_metadata(frame: &FrameInput) -> Value {
 /// A small fixture descriptor, kept with the example rather than renderer policy.
 /// Other embedded-GLB benchmarks can supply the same fields to the browser consumer.
 pub fn fixture() -> Value {
-    let mut baseline = settings(false, false);
+    let mut baseline = settings();
     baseline.dynamic_gi = DynamicGiQuality::Off;
     baseline.scene_resolution = SceneResolution::Full;
     let cameras: Vec<_> = CAMERAS.iter().map(|(name, eye, look_at)| {
@@ -1466,7 +1522,7 @@ mod tests {
             include_str!("../../fixtures/bistro-quality.json"),
         ] {
             let recipe: Value = serde_json::from_str(source).unwrap();
-            resolve_settings(settings(false, false), Some(&recipe), None, None).unwrap();
+            resolve_settings(Some(&recipe), None, false, false, None).unwrap();
             local_exposure_from_json(&recipe).unwrap();
             local_lights_from_json(&recipe).unwrap();
             fog_volumes_from_json(&recipe).unwrap();
@@ -1574,24 +1630,86 @@ mod tests {
 
     #[test]
     fn fixture_settings_are_resolved_before_explicit_overrides() {
-        let mut requested = settings(false, false);
+        let mut requested = settings();
         requested.antialiasing = Antialiasing::Fsr2;
         requested.hardware_ray_tracing = true;
         let fixture = json!({"settings":requested});
-        let resolved =
-            resolve_settings(settings(false, false), Some(&fixture), None, None).unwrap();
+        let resolved = resolve_settings(Some(&fixture), None, false, false, None).unwrap();
         assert_eq!(resolved.antialiasing, Antialiasing::Fsr2);
         assert!(resolved.hardware_ray_tracing);
-        let override_settings = json!(settings(false, false));
+        let override_settings = json!(settings());
         let resolved = resolve_settings(
-            settings(false, false),
             Some(&fixture),
             Some(&override_settings),
+            false,
+            false,
             Some(Antialiasing::Smaa),
         )
         .unwrap();
         assert_eq!(resolved.antialiasing, Antialiasing::Smaa);
         assert!(!resolved.hardware_ray_tracing);
+    }
+
+    #[test]
+    fn max_quality_applies_its_bundle_over_a_recipe_or_refuses() {
+        let recipe: Value =
+            serde_json::from_str(include_str!("../../fixtures/bistro-daylight.json")).unwrap();
+        let resolved = resolve_settings(Some(&recipe), None, true, false, None).unwrap();
+        // The bundle's fields win over the recipe's.
+        assert_eq!(resolved.antialiasing, Antialiasing::Fsr2);
+        assert_eq!(resolved.fsr_quality, FsrQuality::NativeAa);
+        assert_eq!(resolved.smaa_quality, SmaaQuality::Ultra);
+        assert_eq!(resolved.bloom, Bloom::On);
+        assert_eq!(resolved.ambient_occlusion, AmbientOcclusionQuality::Ultra);
+        assert_eq!(
+            resolved.screen_space_reflections,
+            ScreenSpaceReflections::Full
+        );
+        assert_eq!(resolved.reflection_method, ReflectionMethod::Velvet);
+        assert_eq!(resolved.world_space_reflections, WorldSpaceReflections::All);
+        assert!(resolved.hardware_ray_tracing && resolved.ray_traced_shadows);
+        assert_eq!(
+            resolved.ray_traced_shadow_quality,
+            RayTracedShadowQuality::High
+        );
+        assert_eq!(resolved.dynamic_gi, DynamicGiQuality::High);
+        // Fields the bundle does not name stay the recipe's, not the
+        // example default's (atmosphere off).
+        assert!(resolved.atmosphere);
+        // The recipe's volume, placed for its scene, wins over the bundle's.
+        let volume = resolve_gi_volume(Some(&recipe), None, true, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            volume.origin,
+            volume_from_json(&recipe["dynamic_gi_volume"])
+                .unwrap()
+                .origin
+        );
+        assert_ne!(volume.origin, gi_volume().origin);
+        // Later flags still apply over the bundle.
+        let resolved =
+            resolve_settings(Some(&recipe), None, true, true, Some(Antialiasing::Taa)).unwrap();
+        assert!(!resolved.ray_traced_shadows);
+        assert_eq!(resolved.antialiasing, Antialiasing::Taa);
+
+        // Combinations the bundle cannot honour are refused.
+        assert!(
+            resolve_settings(Some(&recipe), Some(&json!(settings())), true, false, None).is_err()
+        );
+        let lean: Value =
+            serde_json::from_str(include_str!("../../fixtures/bistro-lean.json")).unwrap();
+        assert!(resolve_settings(Some(&lean), None, true, false, None).is_err());
+        assert!(resolve_gi_volume(Some(&lean), None, true, false).is_err());
+        assert_eq!(resolve_gi_volume(Some(&lean), None, true, true), Ok(None));
+        // Without a recipe the bundle brings its own volume.
+        assert_eq!(
+            resolve_gi_volume(None, None, true, false)
+                .unwrap()
+                .unwrap()
+                .origin,
+            gi_volume().origin
+        );
     }
 
     #[test]

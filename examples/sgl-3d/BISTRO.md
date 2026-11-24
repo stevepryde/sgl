@@ -128,6 +128,7 @@ aesthetic acceptance test.
 
 ```sh
 cargo run --release -p sgl-3d-examples --example bistro -- --max-quality --rect-light --size 3840x2160 --frames 300 --output target/bistro/max
+cargo run --release -p sgl-3d-examples --example bistro -- --asset target/bistro-quality/BistroExterior.glb --fixture examples/sgl-3d/fixtures/bistro-daylight.json --max-quality --view street --size 1920x1080 --frames 300 --output target/bistro/max-daylight
 ```
 
 `--max-quality` is an example-owned bundle, not a new library default. It sets
@@ -143,14 +144,25 @@ the chosen preparation resolution; `--max-quality` never re-exports content.
 The original textures top out at 2048; that export decodes about 3.5 GiB of
 images before geometry/GPU data and needs substantially more RAM than 1024.
 
+With `--fixture`, the recipe keeps its content, cameras, sun, sky, lights,
+probes and exposure, and the bundle goes over its settings: the fields above
+replace the recipe's, the rest (atmosphere, fog, tone mapping, sharpening)
+stay the recipe's. The recipe's `dynamic_gi_volume` is kept, since it is
+placed for its scene; the bundle's volume applies only without a fixture. A
+prepared compressed package such as `target/bistro-quality` needs its recipe,
+which names the compressed-image manifest. `--max-quality` is refused with
+`--settings`, with a recipe that sets `ray_data: "disabled"`, and with a
+recipe without a GI volume unless `--gi-volume` or `--no-gi` is given.
+
 The JSON records the requested settings, actual AA, hardware RT state/errors,
 ray-source coverage and GI-volume presence. FSR can fall back to TAA; absent
 hardware ray tracing uses portable rays for GI/reflections and shadow maps.
 WSR and ray shadows internally trace at half resolution even at maximum
 supported quality. `--aa taa|fsr2|fsr3|smaa|off` isolates AA, `--no-gi` leaves out the
-volume, and `--no-ray-shadows` leaves shadows on maps. `--settings FILE` loads
-a complete serialized `Settings` bundle after the max/default bundle; the
-AA override then applies. Device features are selected from these resolved
+volume, and `--no-ray-shadows` leaves shadows on maps; both apply over the
+bundle and any recipe. `--settings FILE` loads a complete serialized
+`Settings` in place of the default or the recipe's; the AA override then
+applies. Device features are selected from these resolved
 settings, including FSR or hardware rays requested by a fixture. Use an
 explicit volume or `--max-quality` when its GI volume is required, or `--no-gi`
 to omit that volume. This supports
@@ -207,7 +219,7 @@ art-direction experiments, not proof of renderer accuracy.
 
 Optional `dynamic_gi_volume` in the fixture explicitly supplies `origin`,
 `spacing` and `probes`; settings select its quality. Native `--gi-volume FILE`
-accepts the same volume object, independently of the maximum-quality bundle.
+accepts the same volume object and replaces the fixture's or the bundle's.
 `--observe-gi` records asynchronous per-frame probe/ray/visibility/budget and
 convergence observations. This instrumentation adds GPU work: inspect it in a
 separate diagnostic run, never treat its timings as clean performance.
@@ -233,8 +245,9 @@ fixture sets the key, and `bistro-quality` stays without it as the control.
 Native and browser runs apply it alike.
 
 Native `--fixture FILE` applies the same camera/light/settings/GI and environment
-recipe, positive instance scale and named camera; `--settings`, `--exposure`
-and `--cascades` explicitly override it. `--view CAMERA_ID` selects any camera
+recipe, positive instance scale and named camera; `--settings`, `--exposure`,
+`--cascades`, `--max-quality`, `--aa` and `--no-ray-shadows` explicitly
+override it. `--view CAMERA_ID` selects any camera
 in that fixture. Auxiliary assets must be regular files confined to its asset
 directory; parent paths, absolute paths and symlink escapes are rejected.
 Native `--frames` remains total frames; `--warmup` selects the excluded prefix,
