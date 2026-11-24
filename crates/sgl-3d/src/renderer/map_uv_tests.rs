@@ -573,9 +573,11 @@ fn with_sets(
 // second set; and either differs from the coat on the base coordinates.
 // The light is the coat normal's mirror image of the view on the quarter
 // turn's frame, so the coat's highlight shows there and not on the base
-// coordinates: the tilted texel (0.6, 0.2, 0.8) lies along (-0.2, -0.6,
-// 0.8) on that frame (U' along -Y, V' along -X) and along (0.6, -0.2, 0.8)
-// on the base one, and the view is +Z. Extended alone binds the coat's maps.
+// coordinates: on glTF's frame (T along increasing U, B toward decreasing
+// V) the tilted texel (0.6, 0.2, 0.8) lies along (0.2, -0.6, 0.8) on that
+// frame (U' along -Y, V' along -X, so B' is +X) and along (0.6, 0.2, 0.8)
+// on the base one (V along -Y, so B is +Y), and the view is +Z. Extended
+// alone binds the coat's maps.
 #[test]
 fn a_coat_normal_maps_frame_follows_its_own_set() {
     let Some(mut harness) = harness(false) else {
@@ -616,7 +618,7 @@ fn a_coat_normal_maps_frame_follows_its_own_set() {
     let isotropic_first = coated(0., None, UvSet::Uv0);
     let anisotropic_second = coated(1e-3, Some(UvSet::Uv1), UvSet::Uv1);
     let bumped_first = coated(0., Some(UvSet::Uv1), UvSet::Uv0);
-    let coat = Vec3::new(-0.2, -0.6, 0.8).normalize();
+    let coat = Vec3::new(0.2, -0.6, 0.8).normalize();
     let toward_light = 2. * coat.z * coat - Vec3::Z;
     let mut draw = |material, first: fn([f32; 2]) -> [f32; 2], tangent| {
         let mesh = with_sets(quad(material, WHOLE, WHOLE, tangent), first, quarter);

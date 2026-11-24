@@ -50,24 +50,49 @@ fn map_uv_frame(t:MapUv,du:vec3<f32>,dv:vec3<f32>)->MapUvFrame {
 // B = (N x T) w toward decreasing V, the normal texture's +Y) carried
 // through `t`: the same frame of the coordinates `t` gives, T' along
 // increasing U' and B' toward decreasing V'. B is -dp/dv, so the position
-// derivatives (T, -B) are carried (map_uv_frame), their dual taken
-// (map_uv_relief_frame) and its bitangent turned back.
+// derivatives (T, -B) are carried (map_uv_frame) and their dual taken
+// (map_uv_relief_frame).
 fn map_uv_authored_frame(t:MapUv,authored:mat3x3<f32>)->mat3x3<f32> {
  let carried=map_uv_frame(t,authored[0],-authored[1]);
- let frame=map_uv_relief_frame(carried.du,carried.dv,authored[2],authored[2]);
- return mat3x3(frame[0],-frame[1],frame[2]);
+ return map_uv_relief_frame(carried.du,carried.dv,authored[2],authored[2]);
 }
-// The frame a relief texel (a normal, bump or clearcoat normal map's) is
-// taken on about the normal `n`, where the surface's position moves `du`
-// and `dv` along the texel's coordinates: their dual (cotangent) frame, the
-// surface gradient construction of three.js r185's TangentUtils, its axes
-// scaled alike. The dual keeps the signed UV Jacobian, measured against
-// `facing`, the normal of the side the derivatives were taken on: glTF's
-// tangent.w, the handedness of mirrored coordinates.
+// The frame a relief texel (a normal or clearcoat normal map's) is taken on
+// about the unit normal `n`, where its coordinates' surface gradients are
+// `gradient_u` and `gradient_v`, both perpendicular to `n` (any common
+// scale; a negative one, a back's, reverses T and B): glTF's tangent
+// space, orthonormal, T along increasing U and B = (N x T) w toward
+// decreasing V, so the texture's +Y points up its image (glTF 2.0 3.9.3,
+// 3.7.2.1). T is the surface's ∂p/∂U, which lies across the gradient of V,
+// and B the unit gradient of V reversed: per triangle, the frame MikkTSpace
+// builds (∂p/∂u normalised, its bitangent sign times N x T) and the Khronos
+// glTF Sample Renderer 0686eb2's derivative fallback takes
+// (material_info.glsl 164-171), which keeps no handedness. The one owner
+// of that frame for raster's derivative frame, a ray hit's triangle frame
+// and a carried authored frame (specs/sgl3d-architecture.md, Material map
+// coordinates). three.js r187 instead keeps the gradients as they are,
+// scaled by the longer one's inverse length (TangentUtils), so a stretched
+// or sheared unwrap shades flatter along its less dense axis and leans with
+// its shear, and takes B along the gradient of V, negating normalScale.y in
+// its glTF loader (GLTFLoader.js 3642-3645). No floor: raster's gradients
+// scale with a pixel's area. A degenerate frame (a gradient zero, or the two
+// parallel) takes none of the texel's slope.
+fn map_uv_texel_frame(gradient_u:vec3<f32>,gradient_v:vec3<f32>,n:vec3<f32>)->mat3x3<f32> {
+ let handedness=sign(dot(cross(gradient_u,gradient_v),n));
+ let squared=dot(gradient_v,gradient_v);
+ if handedness==0. || squared<=0. {
+  return mat3x3(vec3(0.),vec3(0.),n);
+ }
+ let scale=inverseSqrt(squared);
+ return mat3x3(cross(gradient_v,n)*(handedness*scale),-gradient_v*scale,n);
+}
+// The frame a relief texel is taken on about the normal `n`, where the
+// surface's position moves `du` and `dv` along the texel's coordinates:
+// the surface gradients of their dual (cotangent) frame, three.js r185's
+// TangentUtils', made glTF's frame by map_uv_texel_frame. The dual keeps
+// the signed UV Jacobian, measured against `facing`, the normal of the side
+// the derivatives were taken on: glTF's tangent.w, the handedness of
+// mirrored coordinates.
 fn map_uv_relief_frame(du:vec3<f32>,dv:vec3<f32>,n:vec3<f32>,facing:vec3<f32>)->mat3x3<f32> {
  let orientation=sign(dot(cross(du,dv),facing));
- let tangent=cross(dv,n)*orientation;
- let bitangent=cross(n,du)*orientation;
- let scale=inverseSqrt(max(max(dot(tangent,tangent),dot(bitangent,bitangent)),0.0000001));
- return mat3x3(tangent*scale,bitangent*scale,n);
+ return map_uv_texel_frame(cross(dv,n)*orientation,cross(n,du)*orientation,n);
 }

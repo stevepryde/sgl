@@ -49,11 +49,13 @@ fn ramp_at(at: DVec2) -> Vec3 {
 }
 
 /// The normal `layers` give a surface facing +Z whose U runs along +X and V
-/// along +Y, at material UV `uv` and `seconds`, from their documented
-/// meaning: each layer draws the map `scale` times per unit of UV, its
-/// pattern moved `velocity × seconds` across the surface, and the layers'
-/// height fields add, so their slopes, the tangent-space X and Y over Z
-/// scaled by the strength, add.
+/// along -Y (its picture upright, as glTF stores one, so a texel's X lies
+/// along +X and its Y, toward decreasing V, along +Y: glTF 2.0 3.9.3), at
+/// material UV `uv` and `seconds`, from their documented meaning: each
+/// layer draws the map `scale` times per unit of UV, its pattern moved
+/// `velocity × seconds` across the surface, and the layers' height fields
+/// add, so their slopes, the tangent-space X and Y over Z scaled by the
+/// strength, add.
 fn expected(layers: &[NormalLayer; 2], uv: DVec2, seconds: f64) -> Vec3 {
     let slope: Vec2 = layers
         .iter()
@@ -68,8 +70,8 @@ fn expected(layers: &[NormalLayer; 2], uv: DVec2, seconds: f64) -> Vec3 {
 }
 
 /// A square facing +Z at `DEPTH` in front of the camera, `HALF` metres
-/// from its centre to each side, its UV rising along +X and +Y, drawn with
-/// `material` and the ramp map.
+/// from its centre to each side, its U rising along +X and its V along -Y,
+/// drawn with `material` and the ramp map.
 fn plane(material: Material) -> Asset {
     let mut asset = test_support::cube();
     asset.meshes = vec![CpuMesh {
@@ -78,7 +80,7 @@ fn plane(material: Material) -> Asset {
                 uv1: [0.0; 2],
                 position: [x * HALF, y * HALF, -DEPTH],
                 normal: [0., 0., 1.],
-                uv: [(x + 1.) / 2., (y + 1.) / 2.],
+                uv: [(x + 1.) / 2., (1. - y) / 2.],
                 color: [1.; 4],
                 lightmap_uv: [0.; 2],
                 lightmap_bounds: [0., 0., 1., 1.],
@@ -97,7 +99,7 @@ fn plane(material: Material) -> Asset {
 /// The pixel nearest the plane's point at UV `uv`, and the UV and position
 /// of the plane where that pixel's centre sees it.
 fn pixel(projection: Mat4, uv: Vec2) -> (usize, DVec2, Vec3) {
-    let point = ((uv * 2. - 1.) * HALF).extend(-DEPTH);
+    let point = (Vec2::new(uv.x * 2. - 1., 1. - uv.y * 2.) * HALF).extend(-DEPTH);
     let ndc = projection.project_point3(point);
     let [x, y] = [ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5].map(|t| (t * SIZE[0] as f32) as u32);
     let centre = [x, y].map(|p| (p as f32 + 0.5) / SIZE[0] as f32 * 2. - 1.);
@@ -106,7 +108,7 @@ fn pixel(projection: Mat4, uv: Vec2) -> (usize, DVec2, Vec3) {
         -centre[1] / projection.y_axis.y * DEPTH,
         -DEPTH,
     );
-    let uv = (seen.truncate() / HALF + 1.) / 2.;
+    let uv = Vec2::new(seen.x / HALF + 1., 1. - seen.y / HALF) / 2.;
     ((y * SIZE[0] + x) as usize, uv.as_dvec2(), seen)
 }
 

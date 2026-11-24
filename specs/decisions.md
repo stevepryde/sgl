@@ -1804,3 +1804,28 @@ Use the [current specs](README.md) for implementation and the
   browser sets report no wave lanes and run AMD's permutations for hardware
   without 64-wide waves; a `quantizeToF16` or wider float stand-in for the
   narrow formats, which is not exact (SDK-P38).
+- **D-83** Decision, 2026-11-24 (#894): SGL3D takes a normal or clearcoat
+  normal map's texel in glTF's tangent space on every frame, built by one
+  function (`map_uv_texel_frame`) from the coordinates' surface gradients:
+  orthonormal, T the unit ∂p/∂U and B = (N × T)·w toward decreasing V
+  (glTF 2.0 3.9.3, 3.7.2.1), the frame MikkTSpace builds per triangle and
+  the Khronos glTF Sample Renderer's derivative fallback takes, as Filament
+  and Bevy shade theirs; the shader owns it, not the importer. Why: the
+  derivative and triangle frames took B along the gradient of V, glTF's
+  opposite, so every material not using authored tangents was lit with its
+  green channel inverted; and they kept three.js r187's proportions
+  (`TangentUtils`: the gradients scaled by the longer one's inverse
+  length, under a 1e-7 floor of SGL3D's own), which shaded a stretched
+  unwrap flatter along its less dense axis, turned a sheared one, and at
+  real pixel sizes flattened the map (about 20× at 512 px across 3 m).
+  Measured: the Khronos NormalTangentTest and NormalTangentMirrorTest
+  within 0.33° of their own geometry (up to 111° before); a stretched and
+  sheared plane on glTF's frame (4.1° off before, 15.8° mirrored); against
+  the authored tangents the Khronos WaterBottle's and Avocado's maps were
+  baked on, the derivative frame at p99 0.54° (1.23° before) and p90 0.27°
+  (0.60°). Not taken: three.js's negation of `normalScale.y` in its glTF
+  loader, since only the shader knows which frame a binding takes and a
+  material built in code passes no loader; three.js's proportions, since
+  glTF's frame is unit and square whatever the unwrap. Left to #861: a
+  per-triangle frame turns at triangle edges where an authored one
+  interpolates, up to 52° off the Avocado's own tangents on its rim.

@@ -1,5 +1,9 @@
 //! Known tangent-space maps versus the same shading normal supplied by vertices.
 //! The oracle is a world-space direction and equivalence of the public raster paths.
+//! The quad's U runs along +X and its V along -Y, its picture upright as glTF
+//! stores one, so a texel's +X lies along +X and its +Y, toward decreasing V,
+//! along +Y (glTF 2.0 3.9.3); its tangent, +X with handedness +1, is the
+//! conformant one (B = N x T = +Y, 3.7.2.1).
 #![cfg(not(target_arch = "wasm32"))]
 use sgl_3d::{
     asset::{Asset, CpuMesh, Image, Material, MaterialTexture, Vertex},
@@ -19,7 +23,7 @@ fn asset(texel: [u8; 4], mapped: bool, tangent: u32) -> Asset {
             uv1: [0.0; 2],
             position: [(u - 0.5) * 8., (v - 0.5) * 8., -5.],
             normal: normal.to_array(),
-            uv: [u, v],
+            uv: [u, 1. - v],
             tangent: if tangent > 0 {
                 [1., 0., 0., 1.]
             } else {

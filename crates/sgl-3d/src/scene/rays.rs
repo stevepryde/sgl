@@ -493,7 +493,13 @@ mod tests;
 mod portable_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod normal_probe;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod secondary_normal_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod khronos_normal_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod instance_tests;

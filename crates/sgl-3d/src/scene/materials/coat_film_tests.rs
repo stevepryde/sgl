@@ -52,8 +52,9 @@ fn flat(texel: [u8; 4]) -> Image {
 // red and its thickness the thinnest mixed toward the thickest by the
 // thickness map's green; the coat's normal is the clearcoat normal map's
 // texel, its X and Y at its scale, on the square's tangent frame (+U along
-// +X, +V along -Y, the normal +Z: glTF's textureInfo axes), while the base
-// keeps the geometry normal; at normal incidence the F0 the G-buffer records
+// +X, +V along -Y, the normal +Z, so the texel's +Y, toward decreasing V,
+// lies along +Y: glTF 2.0 3.9.3), while the base keeps the geometry
+// normal; at normal incidence the F0 the G-buffer records
 // (and a ray hit's surface_f0) is the film's reflectance, the exact
 // thin-film sum within its bound (iridescence_tests). Each map's other
 // channels are zero, so another channel or map reads something else.
@@ -94,7 +95,7 @@ fn clearcoat_and_iridescence_maps_scale_their_factors() {
     let coat = 0.5 * 0.6;
     let coat_roughness = 0.8 * 0.2;
     let tangent = Vec3::new(64., 192., 220.) / 255. * 2. - Vec3::ONE;
-    let coat_normal = Vec3::new(tangent.x * 0.5, -tangent.y * 0.5, tangent.z).normalize();
+    let coat_normal = Vec3::new(tangent.x * 0.5, tangent.y * 0.5, tangent.z).normalize();
     let film = thin_film(1.8, 1.5, 200. + 0.4 * 500., 1.);
 
     let projection = perspective(1., 1., 0.1);

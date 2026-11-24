@@ -152,6 +152,20 @@
     "note": "Models/TextureTransformTest/glTF, unchanged (CC0-1.0; LICENSE.md itself CC-BY-4.0). Test-only: the published crate does not include it; provenance in the fixture's README.md."
   },
   {
+    "component": "Khronos glTF Sample Assets: Normal-Tangent Test (test fixture)",
+    "path": "crates/sgl-3d/tests/fixtures/gltf/NormalTangentTest/LICENSE.md",
+    "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/NormalTangentTest/LICENSE.md",
+    "prefix": "Normal-Tangent Test, Khronos glTF-Sample-Assets\nhttps://github.com/KhronosGroup/glTF-Sample-Assets, revision\ne124e8d8d7330a5372bc2b4d00d39a4a9d7997ea, Models/NormalTangentTest/glTF.\n© 2017 Analytical Graphics, Inc.; mesh and textures by Ed Mackey. The .gltf\nis reduced to its normal map; the fixture's README.md says what changed.\n\n",
+    "note": "Models/NormalTangentTest/glTF: the .bin and normal map unchanged, the .gltf's material reduced to its normal map and the other images left out (© 2017 Analytical Graphics, Inc., Ed Mackey; CC0-1.0, the file's asset.copyright naming CC-BY-4.0; LICENSE.md itself CC-BY-4.0). Test-only: the published crate does not include it; provenance in the fixture's README.md."
+  },
+  {
+    "component": "Khronos glTF Sample Assets: Normal-Tangent Mirror Test (test fixture)",
+    "path": "crates/sgl-3d/tests/fixtures/gltf/NormalTangentMirrorTest/LICENSE.md",
+    "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/NormalTangentMirrorTest/LICENSE.md",
+    "prefix": "Normal-Tangent Mirror Test, Khronos glTF-Sample-Assets\nhttps://github.com/KhronosGroup/glTF-Sample-Assets, revision\ne124e8d8d7330a5372bc2b4d00d39a4a9d7997ea, Models/NormalTangentMirrorTest/glTF.\n© 2017–2018 Analytical Graphics, Inc.; mesh and textures by Ed Mackey,\nCC-BY-4.0. The .gltf is reduced to its normal map; the fixture's README.md\nsays what changed.\n\n",
+    "note": "Models/NormalTangentMirrorTest/glTF: the .bin and normal map unchanged, the .gltf's material reduced to its normal map and the other images left out (© 2017–2018 Analytical Graphics, Inc., Ed Mackey, CC-BY-4.0). Test-only: the published crate does not include it; provenance in the fixture's README.md."
+  },
+  {
     "component": "Khronos glTF Sample Assets: Rigged Simple (test fixture)",
     "path": "crates/sgl-3d/tests/fixtures/gltf/RiggedSimple/LICENSE.md",
     "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/e124e8d8d7330a5372bc2b4d00d39a4a9d7997ea/Models/RiggedSimple/LICENSE.md",

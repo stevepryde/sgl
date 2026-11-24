@@ -33,8 +33,9 @@ fn surface_map_uv(i:Fragment,slot:u32)->vec2<f32> {
 // (map_uv_authored_frame), as KHR_materials_clearcoat takes the coat's on
 // the base's (the Khronos glTF Sample Renderer 0686eb2's NormalInfo t and b,
 // material_info.glsl 196–207); else three.js r185's derivative cotangent
-// frame (TangentUtils) of the binding's coordinates, its axes scaled alike,
-// which follows their set, rotation and mirroring by construction.
+// frame (TangentUtils) of the binding's coordinates, made glTF's frame
+// (map_uv_texel_frame), which follows their set, rotation and mirroring by
+// construction.
 fn surface_map_frame(i:Fragment,front:bool,slot:u32)->mat3x3<f32> {
  let normal_set=(material.maps&MATERIAL_MAP_NORMAL)!=0u && material_map_on_uv1(MATERIAL_SLOT_RELIEF);
  if material.anisotropy_strength>0. && material_map_on_uv1(slot)==normal_set {
@@ -55,15 +56,13 @@ fn surface_map_frame(i:Fragment,front:bool,slot:u32)->mat3x3<f32> {
  // to -dpdy. Negate BOTH world and UV Y derivatives. The cotangent frame
  // is scaled by dot(cross(dx,-dy),n), positive wherever n faces the view,
  // an accepted back's flipped normal included, so the UV-weighted sums of
- // a and b below give the surface's own +T and +B on either side; face
- // reverses them on a back, to (-T,-B,-N) as surface_tangent_frame, ray_map_frame and the Khronos
- // glTF Sample Renderer 0686eb2 (material_info.glsl 164–171) give.
+ // a and b below are the surface's own gradients of U and V on either
+ // side; face reverses them on a back, to (-T,-B,-N) as
+ // surface_tangent_frame, ray_map_frame and the Khronos glTF Sample
+ // Renderer 0686eb2 (material_info.glsl 164–171) give.
  let a=cross(-dy,n);
  let b=cross(n,dx);
- let tangent=(a*uv_dx.x-b*uv_dy.x)*face;
- let bitangent=(a*uv_dx.y-b*uv_dy.y)*face;
- let scale=inverseSqrt(max(max(dot(tangent,tangent),dot(bitangent,bitangent)),0.0000001));
- return mat3x3(tangent*scale,bitangent*scale,n);
+ return map_uv_texel_frame((a*uv_dx.x-b*uv_dy.x)*face,(a*uv_dx.y-b*uv_dy.y)*face,n);
 }
 fn surface_normal(i:Fragment,front:bool)->vec3<f32> {
  let face=select(-1.0,1.0,front);

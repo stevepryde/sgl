@@ -4294,10 +4294,13 @@ through a transform draws with pipelines of its own, which resolve those
 maps' coordinates per pixel, and its meshes keep their second set (4 bytes a
 vertex). A normal, bump or clearcoat normal map is taken on the frame of the
 coordinates it samples; an authored tangent is the frame of the normal
-map's UV set as the mesh stores it, untransformed. A set and a transform
-are fixed when the material is added, as its maps are: to scroll a normal
-map use `normal_layers`, and to move any map use a material shader, whose
-`SurfaceContext.uv` is the first set as the mesh holds it.
+map's UV set as the mesh stores it, untransformed. Every frame reads a
+normal map as glTF defines it, its green channel toward decreasing V (up
+the image), with or without authored tangents, in raster and at ray hits.
+A set and a transform are fixed when the material is added, as its maps
+are: to scroll a normal map use `normal_layers`, and to move any map use a
+material shader, whose `SurfaceContext.uv` is the first set as the mesh
+holds it.
 `Vertex::lightmap_uv` alone selects the lightmap chart, whatever the maps
 sample.
 
