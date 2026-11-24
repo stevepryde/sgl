@@ -405,8 +405,9 @@ fn world(transmissive: bool) -> Asset {
 
 /// A tileable wave normal map: the normals of a height field summing
 /// sines of whole cycles across the tile in a dozen directions, each as
-/// steep as the next, encoded as glTF's tangent-space normal textures are,
-/// +X along U and +Y along V.
+/// steep as the next, encoded as glTF's tangent-space normal textures are:
+/// +X along increasing U, +Y toward decreasing V (up the image), so a
+/// texel's slopes are -dh/du and +dh/dv.
 fn wave_map() -> Image {
     // Cycles across the tile along U and V, and phase.
     const WAVES: [([f32; 2], f32); 12] = [
@@ -435,7 +436,7 @@ fn wave_map() -> Image {
                 gradient[axis] += SLOPE * cycles[axis] / length * angle.cos();
             }
         }
-        let normal = Vec3::new(-gradient[0], -gradient[1], 1.).normalize();
+        let normal = Vec3::new(-gradient[0], gradient[1], 1.).normalize();
         let byte = |v: f32| ((v * 0.5 + 0.5) * 255.).round() as u8;
         image::Rgba([byte(normal.x), byte(normal.y), byte(normal.z), 255])
     }))
