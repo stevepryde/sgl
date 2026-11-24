@@ -4,7 +4,7 @@ const [task, ...options] = Bun.argv.slice(2);
 
 const USAGE =
   "usage: bun scripts/tasks.ts check | check-browser | mutants [--package <crate>] | " +
-  "measure-browser [--baseline | --bistro | --loading [--ordinary] [--jobs-per-frame <count>]] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--depth-of-field off|low|medium|high] [--hdr-effect] [--outline off|sparse|dense] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--fsr-quality native|quality|balanced|performance|ultra] [--fsr-set selected|core] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--ray-data enabled|disabled] [--compressed-manifest <basename>] | " +
+  "measure-browser [--baseline | --bistro | --loading [--ordinary] [--jobs-per-frame <count>]] [--frames <count>] [--radius <across>,<up>] [--occlusion] [--output <json>] [--skip-build] [--scaled] [--prepared] [--local-shadows] [--depth-of-field off|low|medium|high] [--hdr-effect] [--outline off|sparse|dense] [--capture <png>] [--asset-dir <directory>] [--fixture <json>] [--settings <json>] [--view <camera>] [--size <WxH>] [--warmup <count>] [--exposure <stops>] [--aa taa|smaa|fsr2|fsr3|off] [--fsr-quality native|quality|balanced|performance|ultra] [--fsr-set selected|core] [--cascades <1..4>] [--motion] [--rect-light] [--no-cookies] [--sequence <directory>] [--observe-gi] [--no-normal-maps] [--split] [--compile] [--ray-data enabled|disabled] [--compressed-manifest <basename>] | " +
   "measure-browser --sprites [--count <sprites>] [--frames <count>] [--skip-build] | " +
   "measure-browser --startup [--scene minimal|opening] [--runs <count>] [--startup-path ordinary|prepared] [--captures <directory>] [--output <json>] [--skip-build]";
 
@@ -309,7 +309,8 @@ function measureBuild(example: string): string[][] {
 // frames, as `browser_loading` reports them.
 async function measureLoading(args: string[]): Promise<void> {
   let ordinary = false;
-  let jobs = 1;
+  // 0 starts every job as it comes.
+  let jobs = 0;
   let skipBuild = false;
   for (let at = 0; at < args.length; at += 1) {
     if (args[at] === "--loading") continue;
@@ -318,7 +319,7 @@ async function measureLoading(args: string[]): Promise<void> {
     else if (args[at] === "--jobs-per-frame" && at + 1 < args.length) jobs = Number(args[++at]);
     else throw new Error(USAGE);
   }
-  if (!Number.isInteger(jobs) || jobs < 1) throw new Error("--jobs-per-frame must be at least 1");
+  if (!Number.isInteger(jobs) || jobs < 0) throw new Error("--jobs-per-frame must be 0 (all at once) or more");
   const steps: string[][] = [["bun", "install", "--frozen-lockfile"], ...measureBuild("browser_loading")];
   for (const argv of skipBuild ? [] : steps) {
     const result = Bun.spawnSync(argv, { stderr: "inherit", stdout: "inherit" });
@@ -421,6 +422,7 @@ async function measureBrowser(args: string[]): Promise<void> {
     else if (args[at] === "--cascades" && at+1<args.length) sceneOptions.cascades=Number(args[++at]);
     else if (args[at] === "--observe-gi") sceneOptions.observe_gi=true;
     else if (args[at] === "--split") sceneOptions.split=true;
+    else if (args[at] === "--compile") sceneOptions.compile=true;
     else if (args[at] === "--no-normal-maps") sceneOptions.normal_maps=false;
     else if (args[at] === "--ray-data" && at+1<args.length) sceneOptions.ray_data=args[++at];
     else if (args[at] === "--compressed-manifest" && at+1<args.length) sceneOptions.compressed_manifest=args[++at];

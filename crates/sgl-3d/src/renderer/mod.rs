@@ -165,8 +165,8 @@ impl Renderer {
     /// Readies, before the frame, the shaders and pipelines `render` would
     /// create for the same arguments: at start, on entering a level, after
     /// a settings change. Call it once per loading frame, each view
-    /// resized first as before `render`, until it is ready, giving the
-    /// jobs it returns to the game's threads:
+    /// resized first as before `render`, until it is ready, running the
+    /// jobs it returns:
     ///
     /// ```no_run
     /// # fn frame(renderer: &mut sgl_3d::Renderer, device: &wgpu::Device, queue: &wgpu::Queue,
@@ -174,9 +174,9 @@ impl Renderer {
     /// #     workers: &std::sync::mpsc::Sender<sgl_3d::CompileJob>) -> bool {
     /// let compilation = renderer.compile(device, queue, scene, views);
     /// for job in compilation.jobs {
-    ///     // A worker thread of the game's runs `job.run()`. In the
-    ///     // browser, run a few here, then wait for the queue's
-    ///     // `on_submitted_work_done` before running more.
+    ///     // On native a worker thread of the game's runs `job.run()`. In
+    ///     // the browser run it here: it starts the browser's compile and
+    ///     // returns.
     ///     let _ = workers.send(job);
     /// }
     /// compilation.pending == 0 // then `render` creates nothing
@@ -204,11 +204,13 @@ impl Renderer {
     /// `pending` may rise again, and 0 is the only sign of completion.
     ///
     /// `render` never waits on this: it creates a missing program where it
-    /// needs it, runs a job that has not started in place, and waits for
-    /// one a thread is running. A failed job is reported once
-    /// ([`Compilation::errors`], on native) and no longer pending; drawing
-    /// its variant creates it in place and reports through the device as
-    /// it does without `compile`.
+    /// needs it and runs a job that has not started in place. On native it
+    /// waits for a job a thread is running; in the browser, where it cannot
+    /// wait, it creates the program again in place and the job's late
+    /// result is dropped. A failed job is reported once
+    /// ([`Compilation::errors`]) and no longer pending; drawing its variant
+    /// creates it in place and reports through the device as it does
+    /// without `compile`.
     ///
     /// # Panics
     ///

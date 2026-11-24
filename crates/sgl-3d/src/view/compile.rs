@@ -2,15 +2,19 @@
 //! stage keeps shader modules and pipelines in (`Compiled`), the renderer's
 //! `Compiler`, which says whether the pass in progress is a frame or a
 //! planning pass (`Renderer::compile`) and collects what a planning pass
-//! queues, and the job a game runs (`CompileJob`).
+//! queues, the job a game runs (`CompileJob`), and the `Creator` a slot's
+//! closure creates its pipelines through.
 //!
 //! A frame that meets an empty slot creates its programs in place. A
 //! planning pass queues a job for them instead and reports the slot
 //! missing. A job runs once, wherever the game runs it: a frame that meets
-//! a queued job runs it in place, and one that meets a running job waits
-//! for it. A job that fails leaves its slot failed, which a planning pass
-//! counts as settled and a frame creates in place, so drawing reports the
-//! failure the way it always has.
+//! a queued job runs it in place. On native a job creates at once, and a
+//! frame that meets a running job waits for it. In the browser a job starts
+//! WebGPU's asynchronous creation and its slot settles when that resolves;
+//! a frame cannot wait for it, so it creates the programs in place and the
+//! job's late result is dropped. A job that fails leaves its slot failed,
+//! which a planning pass counts as settled and a frame creates in place, so
+//! drawing reports the failure the way it always has.
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use wgpu::WasmNotSend;
@@ -39,20 +43,21 @@ impl std::error::Error for CompileError {}
 #[derive(Debug, Default)]
 #[must_use = "run or drop every job: a job held neither run nor dropped keeps `compile` reporting it pending"]
 pub struct Compilation {
-    /// Programs to compile: run each ([`CompileJob::run`]) on a thread of
-    /// the game's choosing on native, and a few per animation frame in the
-    /// browser. A job dropped without running is offered again.
+    /// Programs to compile: run each ([`CompileJob::run`]) as it comes, on
+    /// a thread of the game's choosing on native. A job dropped without
+    /// running is offered again.
     pub jobs: Vec<CompileJob>,
     /// How many programs the frame still waits for: one for each job not
     /// finished, these included. At 0 a `render` with the same arguments
     /// creates none, but for those in `errors`. It can rise again between
     /// calls: a stage whose programs are missing leaves its commands out,
     /// so what it feeds may be asked for only once its job has finished.
+    /// In the browser a job is finished once the browser has compiled what
+    /// it started, after `run` returned.
     pub pending: usize,
-    /// Programs whose jobs failed since the last call (native; in the
-    /// browser a failure reaches the device as drawing's does). Each is
-    /// reported once and is no longer pending: the frame that draws it
-    /// creates it in place.
+    /// Programs whose jobs failed since the last call. Each is reported
+    /// once and is no longer pending: the frame that draws it creates it in
+    /// place.
     pub errors: Vec<CompileError>,
 }
 
@@ -65,21 +70,23 @@ impl Compilation {
 }
 
 /// One program set to compile, from [`crate::Renderer::compile`]. `Send`
-/// on native. A frame that needs it first runs it in place, or waits for
-/// the thread running it.
+/// on native. A frame that needs it first runs it in place, or on native
+/// waits for the thread running it.
 pub struct CompileJob {
     cell: Erased,
     ran: bool,
 }
 
 impl CompileJob {
-    /// Compiles the programs with the device's ordinary creation calls on
-    /// the calling thread. In the browser those calls return at once and
-    /// the browser compiles in its GPU process, which presents nothing
-    /// until it has: pace jobs between animation frames.
+    /// Compiles the programs. On native it creates them with the device's
+    /// ordinary creation calls on the calling thread. In the browser it
+    /// starts WebGPU's asynchronous pipeline creation and returns, and the
+    /// browser compiles them without stalling the page: keep presenting
+    /// until [`Compilation::ready`]. The browser's device must come from
+    /// `sgl_webgpu::instance`.
     pub fn run(mut self) {
         self.ran = true;
-        self.cell.run();
+        self.cell.clone().run();
     }
 
     /// The program set it compiles, as [`CompileError::label`] names it:
@@ -110,16 +117,169 @@ type Erased = Arc<dyn Run + Send + Sync>;
 #[cfg(target_arch = "wasm32")]
 type Erased = Arc<dyn Run>;
 
+/// A slot's closure: it describes its programs to a creator, once for a job
+/// and again where a frame creates them in place, which in the browser it
+/// does when the job's asynchronous creation has not resolved.
 #[cfg(not(target_arch = "wasm32"))]
-type Make<T> = Box<dyn FnOnce(&wgpu::Device) -> T + Send>;
+type Make<T> = Box<dyn Fn(&Creator<'_>) -> Creation<T> + Send>;
 #[cfg(target_arch = "wasm32")]
-type Make<T> = Box<dyn FnOnce(&wgpu::Device) -> T>;
+type Make<T> = Box<dyn Fn(&Creator<'_>) -> Creation<T>>;
 
 trait Run {
-    fn run(&self);
+    fn run(self: Arc<Self>);
     /// Its handle was dropped without running it.
     fn release(&self);
     fn label(&self) -> &'static str;
+}
+
+/// What a slot's closure creates its pipelines through, the only way it
+/// creates them: at once (on native, and for a frame creating in place on
+/// either target), or for a job in the browser with WebGPU's asynchronous
+/// creation (`sgl_webgpu::create_render_pipeline_async`). What else the
+/// closure makes (shader modules, layouts, buffers, samplers) it makes at
+/// once with [`Self::device`].
+pub(crate) struct Creator<'a> {
+    device: &'a wgpu::Device,
+    /// A job in the browser: pipeline creation is asynchronous.
+    #[cfg(target_arch = "wasm32")]
+    asynchronous: bool,
+}
+
+impl<'a> Creator<'a> {
+    /// One that creates at once.
+    pub(crate) fn now(device: &'a wgpu::Device) -> Self {
+        Self {
+            device,
+            #[cfg(target_arch = "wasm32")]
+            asynchronous: false,
+        }
+    }
+
+    /// The device, for what the closure makes at once.
+    pub fn device(&self) -> &'a wgpu::Device {
+        self.device
+    }
+
+    /// `desc`'s pipeline. `desc` is read before this returns.
+    pub fn render_pipeline(
+        &self,
+        desc: &wgpu::RenderPipelineDescriptor<'_>,
+    ) -> Creation<wgpu::RenderPipeline> {
+        #[cfg(target_arch = "wasm32")]
+        if self.asynchronous {
+            return Creation::compiling(sgl_webgpu::create_render_pipeline_async(
+                self.device,
+                desc,
+            ));
+        }
+        Creation::Ready(self.device.create_render_pipeline(desc))
+    }
+
+    /// `desc`'s pipeline, as [`Self::render_pipeline`].
+    pub fn compute_pipeline(
+        &self,
+        desc: &wgpu::ComputePipelineDescriptor<'_>,
+    ) -> Creation<wgpu::ComputePipeline> {
+        #[cfg(target_arch = "wasm32")]
+        if self.asynchronous {
+            return Creation::compiling(sgl_webgpu::create_compute_pipeline_async(
+                self.device,
+                desc,
+            ));
+        }
+        Creation::Ready(self.device.create_compute_pipeline(desc))
+    }
+}
+
+/// Programs as a slot's closure created them: ready, or, for a job in the
+/// browser, what the browser is compiling. A closure that creates several
+/// pipelines combines their creations into its programs ([`Self::map`],
+/// [`Self::zip`], [`Self::array`], [`Self::all`]), which on native are
+/// the values themselves.
+pub(crate) enum Creation<T> {
+    Ready(T),
+    #[cfg(target_arch = "wasm32")]
+    Compiling(std::pin::Pin<Box<dyn Future<Output = Result<T, wgpu::Error>>>>),
+}
+
+impl<T: 'static> Creation<T> {
+    #[cfg(target_arch = "wasm32")]
+    fn compiling(future: impl Future<Output = Result<T, wgpu::Error>> + 'static) -> Self {
+        Self::Compiling(Box::pin(future))
+    }
+
+    /// The programs once created; the browser's first failure if any.
+    #[cfg(target_arch = "wasm32")]
+    async fn settled(self) -> Result<T, wgpu::Error> {
+        match self {
+            Self::Ready(value) => Ok(value),
+            Self::Compiling(future) => future.await,
+        }
+    }
+
+    /// The programs of a creator that creates at once ([`Creator::now`]).
+    pub(crate) fn now(self) -> T {
+        match self {
+            Self::Ready(value) => value,
+            #[cfg(target_arch = "wasm32")]
+            Self::Compiling(_) => {
+                unreachable!("a creator that creates at once returns the programs")
+            }
+        }
+    }
+
+    /// `f` of the programs, once they are created.
+    pub fn map<U: 'static>(self, f: impl FnOnce(T) -> U + 'static) -> Creation<U> {
+        match self {
+            Self::Ready(value) => Creation::Ready(f(value)),
+            #[cfg(target_arch = "wasm32")]
+            Self::Compiling(future) => Creation::compiling(async move { future.await.map(f) }),
+        }
+    }
+
+    /// Both, once both are created.
+    pub fn zip<U: 'static>(self, other: Creation<U>) -> Creation<(T, U)> {
+        match (self, other) {
+            (Self::Ready(a), Creation::Ready(b)) => Creation::Ready((a, b)),
+            #[cfg(target_arch = "wasm32")]
+            (a, b) => {
+                Creation::compiling(async move { Ok((a.settled().await?, b.settled().await?)) })
+            }
+        }
+    }
+
+    /// Each of `creations`, once all are created.
+    pub fn array<const N: usize>(creations: [Self; N]) -> Creation<[T; N]> {
+        Self::all(creations).map(|all| {
+            all.try_into()
+                .unwrap_or_else(|_| unreachable!("as many created as asked"))
+        })
+    }
+
+    /// Each of `creations`, in order, once all are created.
+    pub fn all(creations: impl IntoIterator<Item = Self>) -> Creation<Vec<T>> {
+        let creations: Vec<_> = creations.into_iter().collect();
+        #[cfg(target_arch = "wasm32")]
+        if creations
+            .iter()
+            .any(|creation| matches!(creation, Self::Compiling(_)))
+        {
+            return Creation::compiling(async move {
+                let mut values = Vec::with_capacity(creations.len());
+                for creation in creations {
+                    values.push(creation.settled().await?);
+                }
+                Ok(values)
+            });
+        }
+        Creation::Ready(creations.into_iter().map(Self::now).collect())
+    }
+}
+
+impl<T> From<T> for Creation<T> {
+    fn from(value: T) -> Self {
+        Self::Ready(value)
+    }
 }
 
 /// What the renderer lends its stages for a pass: whether it is a planning
@@ -235,7 +395,7 @@ struct Cell<T> {
     shared: Arc<Shared>,
     progress: Mutex<Progress<T>>,
     finished: Condvar,
-    /// Whether a game holds its job, or a thread is running it.
+    /// Whether a game holds its job, or the job is compiling.
     held: AtomicBool,
     /// The planning pass that last counted the slot missing.
     counted: AtomicU64,
@@ -244,6 +404,10 @@ struct Cell<T> {
 enum Progress<T> {
     Queued(Make<T>),
     Running,
+    /// The browser is compiling what the job started; the closure stays
+    /// for a frame that cannot wait for it.
+    #[cfg(target_arch = "wasm32")]
+    Compiling(Make<T>),
     Done(T),
     Failed,
     Taken,
@@ -291,11 +455,13 @@ impl<T: WasmNotSend + 'static> Compiled<T> {
     /// The programs. In a frame, always: created by `make`'s closure in
     /// place where no job made them, or by the job a planning pass queued,
     /// run in place if it has not started and waited for if a thread is
-    /// running it. In a planning pass, none while they are missing: the
+    /// running it; in the browser, made again in place while the browser
+    /// is still compiling the job's. In a planning pass, none while they are missing: the
     /// pass queues `make`'s closure as a job and counts the slot, once
     /// however often the pass asks. `make` runs only for a slot that is
-    /// empty or whose job failed, and its closure owns what it reads but
-    /// the device, which it is lent where it runs.
+    /// empty or whose job failed; its closure owns what it reads and
+    /// creates its pipelines through the [`Creator`] it is lent where it
+    /// runs.
     #[cfg_attr(
         target_arch = "wasm32",
         allow(
@@ -310,7 +476,7 @@ impl<T: WasmNotSend + 'static> Compiled<T> {
         make: impl FnOnce() -> F,
     ) -> Option<&mut T>
     where
-        F: FnOnce(&wgpu::Device) -> T + WasmNotSend + 'static,
+        F: Fn(&Creator<'_>) -> Creation<T> + WasmNotSend + 'static,
     {
         let planning = compiler.planning();
         if let State::Job(cell) = &self.state {
@@ -341,7 +507,7 @@ impl<T: WasmNotSend + 'static> Compiled<T> {
             State::Empty | State::Failed => {
                 #[cfg(all(test, not(target_arch = "wasm32")))]
                 in_place::record(label);
-                self.state = State::Ready(make()(&compiler.shared.device));
+                self.state = State::Ready(make()(&Creator::now(&compiler.shared.device)).now());
             }
             State::Job(_) => unreachable!("a job's slot was settled above"),
         }
@@ -356,11 +522,11 @@ enum Settled<T> {
 }
 
 impl<T: WasmNotSend + 'static> Cell<T> {
-    /// What the slot becomes. A frame runs a queued job in place and waits
-    /// for a running one. A planning pass leaves both missing and counts
-    /// the slot, handing its job out again if it was dropped unrun: decided
-    /// under the job's own lock, so never for a job that has since
-    /// finished.
+    /// What the slot becomes. A frame runs a queued job in place, waits for
+    /// a running one and creates in place what the browser is compiling. A
+    /// planning pass leaves all three missing and counts the slot, handing
+    /// its job out again if it was dropped unrun: decided under the job's
+    /// own lock, so never for a job that has since finished.
     fn settle(self: &Arc<Self>, compiler: &Compiler) -> Settled<T> {
         let planning = compiler.planning();
         let mut progress = lock(&self.progress);
@@ -369,13 +535,14 @@ impl<T: WasmNotSend + 'static> Cell<T> {
                 Progress::Done(value) => return Settled::Done(value),
                 Progress::Failed | Progress::Taken => return Settled::Failed,
                 Progress::Queued(make) if !planning => {
-                    // In place, as a frame without a job creates it: its
-                    // errors reach the device's handler, not a scope.
                     drop(progress);
-                    self.release();
-                    #[cfg(all(test, not(target_arch = "wasm32")))]
-                    in_place::record(self.label);
-                    return Settled::Done(make(&self.shared.device));
+                    return Settled::Done(self.create_in_place(&make));
+                }
+                // Left `Taken`, so the job's late result is dropped.
+                #[cfg(target_arch = "wasm32")]
+                Progress::Compiling(make) if !planning => {
+                    drop(progress);
+                    return Settled::Done(self.create_in_place(&make));
                 }
                 Progress::Running if !planning => {
                     *progress = Progress::Running;
@@ -394,6 +561,15 @@ impl<T: WasmNotSend + 'static> Cell<T> {
         }
     }
 
+    /// In place, as a frame without a job creates it: its errors reach the
+    /// device's handler, not a scope. The job is no longer the game's.
+    fn create_in_place(&self, make: &Make<T>) -> T {
+        self.release();
+        #[cfg(all(test, not(target_arch = "wasm32")))]
+        in_place::record(self.label);
+        make(&Creator::now(&self.shared.device)).now()
+    }
+
     /// Counts the slot missing in the planning pass, once a pass, and
     /// queues its job where it is `queued` and no game holds it.
     fn offer(self: &Arc<Self>, pass: &mut Pass, queued: bool) {
@@ -409,8 +585,8 @@ impl<T: WasmNotSend + 'static> Cell<T> {
         }
     }
 
-    /// Its job is no longer a game's to run: it finished, a frame ran it
-    /// in place, or its handle was dropped.
+    /// Its job is no longer a game's to run: it finished, a frame created
+    /// its programs in place, or its handle was dropped.
     fn release(&self) {
         if self.held.swap(false, Ordering::AcqRel) {
             self.shared.outstanding.fetch_sub(1, Ordering::AcqRel);
@@ -421,6 +597,54 @@ impl<T: WasmNotSend + 'static> Cell<T> {
         *lock(&self.progress) = result;
         self.release();
         self.finished.notify_all();
+    }
+
+    /// The job's result: the programs, or wgpu's description of why they
+    /// failed, reported once. In the browser the job's creation resolves
+    /// later (`resolve`).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn complete(&self, result: Result<T, String>) {
+        match result {
+            Ok(value) => self.finish(Progress::Done(value)),
+            Err(message) => {
+                self.report(message);
+                self.finish(Progress::Failed);
+            }
+        }
+    }
+
+    fn report(&self, message: String) {
+        lock(&self.shared.errors).push(CompileError {
+            label: self.label.to_owned(),
+            message,
+        });
+    }
+
+    /// The browser's answer to the creation a job started, unless a frame
+    /// created the programs in place meanwhile: then it is dropped.
+    #[cfg(target_arch = "wasm32")]
+    fn resolve(&self, result: Result<T, String>) {
+        let mut progress = lock(&self.progress);
+        if !matches!(*progress, Progress::Compiling(_)) {
+            return;
+        }
+        *progress = match result {
+            Ok(value) => Progress::Done(value),
+            Err(message) => {
+                self.report(message);
+                Progress::Failed
+            }
+        };
+        drop(progress);
+        self.release();
+    }
+
+    /// Calls `make` with `creator`, the job failed if it unwinds.
+    fn created(&self, make: &Make<T>, creator: &Creator<'_>) -> Creation<T> {
+        let mut unwound = Unwound(Some(self));
+        let creation = make(creator);
+        unwound.0 = None;
+        creation
     }
 }
 
@@ -437,7 +661,7 @@ impl<T: WasmNotSend + 'static> Drop for Unwound<'_, T> {
 }
 
 impl<T: WasmNotSend + 'static> Run for Cell<T> {
-    fn run(&self) {
+    fn run(self: Arc<Self>) {
         let make = {
             let mut progress = lock(&self.progress);
             match std::mem::replace(&mut *progress, Progress::Running) {
@@ -449,18 +673,41 @@ impl<T: WasmNotSend + 'static> Run for Cell<T> {
                 }
             }
         };
-        let mut unwound = Unwound(Some(self));
-        let (value, error) = scoped(&self.shared.device, make);
-        unwound.0 = None;
-        match error {
-            None => self.finish(Progress::Done(value)),
-            Some(message) => {
-                lock(&self.shared.errors).push(CompileError {
-                    label: self.label.to_owned(),
-                    message,
+        let device = &self.shared.device;
+        // wgpu's error scopes are per thread on native and per device in
+        // the browser, where this runs in one task: either way they capture
+        // this job's calls alone.
+        let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let value = self.created(&make, &Creator::now(device)).now();
+            let validation = pollster::block_on(validation.pop());
+            let internal = pollster::block_on(internal.pop());
+            self.complete(match validation.or(internal) {
+                None => Ok(value),
+                Some(error) => Err(error.to_string()),
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let creator = Creator {
+                device,
+                asynchronous: true,
+            };
+            let creation = self.created(&make, &creator);
+            // Its synchronous calls' errors (a shader module's), popped now
+            // and read once the browser has answered.
+            let (validation, internal) = (validation.pop(), internal.pop());
+            *lock(&self.progress) = Progress::Compiling(make);
+            wasm_bindgen_futures::spawn_local(async move {
+                let created = creation.settled().await;
+                let scoped = validation.await.or(internal.await);
+                self.resolve(match (created, scoped) {
+                    (Ok(value), None) => Ok(value),
+                    (_, Some(error)) | (Err(error), None) => Err(error.to_string()),
                 });
-                self.finish(Progress::Failed);
-            }
+            });
         }
     }
 
@@ -471,28 +718,6 @@ impl<T: WasmNotSend + 'static> Run for Cell<T> {
     fn label(&self) -> &'static str {
         self.label
     }
-}
-
-/// Runs `make` with the calling thread's validation and internal errors
-/// captured: wgpu's error scopes are per thread.
-#[cfg(not(target_arch = "wasm32"))]
-fn scoped<T>(device: &wgpu::Device, make: Make<T>) -> (T, Option<String>) {
-    let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
-    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let value = make(device);
-    let validation = pollster::block_on(validation.pop());
-    let internal = pollster::block_on(internal.pop());
-    (
-        value,
-        validation.or(internal).map(|error| error.to_string()),
-    )
-}
-
-/// In the browser an error scope's result arrives later, and wgpu's
-/// synchronous creation reports through the device as drawing does.
-#[cfg(target_arch = "wasm32")]
-fn scoped<T>(device: &wgpu::Device, make: Make<T>) -> (T, Option<String>) {
-    (make(device), None)
 }
 
 /// A shader module that program sets compiling apart share: composed and

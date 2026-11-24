@@ -20,7 +20,7 @@
 //! from its first pass's start to its last pass's end, since a scene's
 //! chains can take more passes than a frame times.
 use crate::scene::textures::Chains;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 use crate::view::targets::attachment;
 
 pub(crate) static MIP_CHAIN: crate::shading::Module = crate::shading::Module {
@@ -68,7 +68,8 @@ struct Programs {
 }
 
 impl Programs {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let entries: [_; BATCH] = std::array::from_fn(|binding| wgpu::BindGroupLayoutEntry {
             binding: binding as u32,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -93,7 +94,7 @@ impl Programs {
             immediate_size: 0,
         });
         let pipeline = |format: wgpu::TextureFormat, targets: usize, fragment| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("mip chain"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -115,11 +116,15 @@ impl Programs {
                 cache: None,
             })
         };
-        Self {
-            single: FORMATS.map(|format| pipeline(format, 1, MIP_CHAIN_FS_ENTRY)),
-            batch: FORMATS.map(|format| pipeline(format, BATCH, MIP_CHAIN_BATCH_FS_ENTRY)),
+        let single = Creation::array(FORMATS.map(|format| pipeline(format, 1, MIP_CHAIN_FS_ENTRY)));
+        let batch = Creation::array(
+            FORMATS.map(|format| pipeline(format, BATCH, MIP_CHAIN_BATCH_FS_ENTRY)),
+        );
+        single.zip(batch).map(move |(single, batch)| Self {
+            single,
+            batch,
             layout,
-        }
+        })
     }
 
     /// Draws every level below the first of `textures`, each from the

@@ -31,7 +31,7 @@
 //! Timing groups: `fog injection`, `fog filter`, `fog integration`.
 use crate::settings::FogQuality;
 use crate::view::bindings::FogVolume;
-use crate::view::compile::Compiled;
+use crate::view::compile::{Compiled, Creation, Creator};
 use crate::view::frame::FrameContext;
 use volumes::Volumes;
 
@@ -190,12 +190,13 @@ pub(crate) struct VolumetricFog {
 
 impl Pipelines {
     fn new(
-        device: &wgpu::Device,
+        creator: &Creator<'_>,
         lit: &wgpu::BindGroupLayout,
         inject_layout: &wgpu::BindGroupLayout,
         filter_layout: &wgpu::BindGroupLayout,
         integrate_layout: &wgpu::BindGroupLayout,
-    ) -> Self {
+    ) -> Creation<Self> {
+        let device = creator.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("volumetric fog"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&VOLUMETRIC_FOG]).into()),
@@ -209,7 +210,7 @@ impl Pipelines {
                 bind_group_layouts: layouts,
                 immediate_size: 0,
             });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(&layout),
                 module: &shader,
@@ -227,25 +228,28 @@ impl Pipelines {
             INJECT_ENTRY,
             &[],
         );
-        let filter = [0., 1.].map(|axis| {
+        let filter = Creation::array([0., 1.].map(|axis| {
             pipeline(
                 "volumetric fog filter",
                 &[None, Some(filter_layout)],
                 FILTER_FROXELS_ENTRY,
                 &[("filter_axis", axis)],
             )
-        });
+        }));
         let integrate = pipeline(
             "volumetric fog integration",
             &[None, Some(integrate_layout)],
             INTEGRATE_ENTRY,
             &[],
         );
-        Self {
-            inject,
-            filter,
-            integrate,
-        }
+        inject
+            .zip(filter)
+            .zip(integrate)
+            .map(move |((inject, filter), integrate)| Self {
+                inject,
+                filter,
+                integrate,
+            })
     }
 }
 
@@ -482,9 +486,9 @@ impl VolumetricFog {
                 &self.integrate_layout,
             ]
             .map(Clone::clone);
-            move |device: &wgpu::Device| {
+            move |creator: &Creator<'_>| {
                 let [lit, inject, filter, integrate] = &layouts;
-                Pipelines::new(device, lit, inject, filter, integrate)
+                Pipelines::new(creator, lit, inject, filter, integrate)
             }
         }) else {
             return;

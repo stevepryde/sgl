@@ -3,7 +3,7 @@
 //! stage's sky-view table, bound where a panorama is, and the lights'
 //! discs). Its timing group is `sky`.
 use crate::shading::{self, gbuffer};
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 
 pub(crate) static BACKDROP: shading::Module = shading::Module {
     name: "backdrop",
@@ -43,12 +43,16 @@ impl BackdropDraw {
         self.pipeline
             .get(compiler, "backdrop", || {
                 let unlit = unlit.clone();
-                move |device: &wgpu::Device| Self::create(device, &unlit)
+                move |creator: &Creator<'_>| Self::create(creator, &unlit)
             })
             .map(|pipeline| pipeline.clone())
     }
 
-    fn create(device: &wgpu::Device, unlit: &wgpu::BindGroupLayout) -> wgpu::RenderPipeline {
+    fn create(
+        creator: &Creator<'_>,
+        unlit: &wgpu::BindGroupLayout,
+    ) -> Creation<wgpu::RenderPipeline> {
+        let device = creator.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("backdrop"),
             source: wgpu::ShaderSource::Wgsl(shading::compose(&[&BACKDROP]).into()),
@@ -65,7 +69,7 @@ impl BackdropDraw {
                 write_mask: wgpu::ColorWrites::ALL,
             })
         });
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("backdrop"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {

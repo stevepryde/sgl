@@ -28,7 +28,7 @@
 use crate::frame_input::{
     AutoExposure, CompensationCurve, Exposure as AuthoredExposure, MeteringMask,
 };
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 use crate::view::frame::FrameContext;
 
 /// The histogram and adaptation.
@@ -232,7 +232,8 @@ fn texture(
 }
 
 impl Meter {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("auto exposure"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&EXPOSURE]).into()),
@@ -284,7 +285,7 @@ impl Meter {
             immediate_size: 0,
         });
         let pipeline = |entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pipeline_layout),
                 module: &shader,
@@ -293,45 +294,55 @@ impl Meter {
                 cache: None,
             })
         };
-        Self {
-            histogram_pipeline: pipeline(COMPUTE_HISTOGRAM_ENTRY),
-            average_pipeline: pipeline(COMPUTE_AVERAGE_ENTRY),
-            settings: crate::counters::buffer(
-                device,
-                &wgpu::BufferDescriptor {
-                    label: Some("auto exposure settings"),
-                    size: size_of::<AutoExposureUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                },
-            ),
-            histogram: crate::counters::buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("auto exposure histogram"),
-                    contents: &[0; 64 * 4],
-                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-                },
-            ),
-            correction: crate::counters::buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("auto exposure correction"),
-                    contents: &[0; 4],
-                    usage: wgpu::BufferUsages::STORAGE,
-                },
-            ),
-            mask: texture(
-                device,
-                "metering mask",
-                16,
-                wgpu::TextureFormat::R8Unorm,
-                wgpu::TextureUsages::empty(),
-            ),
-            mask_weights: None,
-            layout,
-            groups: Vec::new(),
-        }
+        let histogram_pipeline = pipeline(COMPUTE_HISTOGRAM_ENTRY);
+        let average_pipeline = pipeline(COMPUTE_AVERAGE_ENTRY);
+        let settings = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("auto exposure settings"),
+                size: size_of::<AutoExposureUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        let histogram = crate::counters::buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("auto exposure histogram"),
+                contents: &[0; 64 * 4],
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            },
+        );
+        let correction = crate::counters::buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("auto exposure correction"),
+                contents: &[0; 4],
+                usage: wgpu::BufferUsages::STORAGE,
+            },
+        );
+        let mask = texture(
+            device,
+            "metering mask",
+            16,
+            wgpu::TextureFormat::R8Unorm,
+            wgpu::TextureUsages::empty(),
+        );
+        let mask_weights = None;
+        let groups = Vec::new();
+        histogram_pipeline.zip(average_pipeline).map(
+            move |(histogram_pipeline, average_pipeline)| Self {
+                histogram_pipeline,
+                average_pipeline,
+                settings,
+                histogram,
+                correction,
+                mask,
+                mask_weights,
+                layout,
+                groups,
+            },
+        )
     }
 }
 

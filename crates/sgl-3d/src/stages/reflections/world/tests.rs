@@ -929,7 +929,8 @@ fn listed_rays(
             padding: [0; 2],
         }),
     );
-    let mut classify = super::classify::Classify::new(device);
+    let mut classify =
+        super::classify::Classify::new(&crate::view::compile::Creator::now(device)).now();
     classify.encode(
         device,
         &mut encoder,

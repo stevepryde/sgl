@@ -25,7 +25,7 @@ use crate::content::identity::ShaderId;
 use crate::shading::bind::{BindingTier, LitLayout};
 use crate::shading::programs::*;
 use crate::shading::{self, gbuffer};
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 use crate::view::targets::{composition_targets, mask_targets};
 use std::collections::HashMap;
 
@@ -276,7 +276,7 @@ impl GeometryPipelines {
         key: PipelineKey,
     ) -> (
         &'static str,
-        impl FnOnce(&wgpu::Device) -> wgpu::RenderPipeline + wgpu::WasmNotSend + 'static,
+        impl Fn(&Creator<'_>) -> Creation<wgpu::RenderPipeline> + wgpu::WasmNotSend + 'static,
     ) {
         use GeometryPass::*;
 
@@ -467,9 +467,9 @@ impl GeometryPipelines {
         let (depth_write, depth_compare) = depth(key.pass);
         let pulled = key.pass.pulled();
         let cull_mode = key.variant.cull.face();
-        let create = move |device: &wgpu::Device| {
-            let module = module.get(device);
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let create = move |creator: &Creator<'_>| {
+            let module = module.get(creator.device());
+            creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {

@@ -13,7 +13,7 @@ use super::cached_group::CachedGroup;
 use super::frame::HardwareRays;
 use crate::shading::bind::{BindingTier, LitLayout};
 use crate::shading::{self, Module, RayQueryForm};
-use crate::view::compile::{Compiled, Compiler, SharedModule};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator, SharedModule};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::{Arc, OnceLock};
@@ -191,7 +191,7 @@ impl TracePaths {
         hardware: Option<HardwareRays<'_>>,
         (pipelines, key): (&mut TracePipelines<K, P>, K),
         label: &'static str,
-        create: impl Fn(&wgpu::Device, &wgpu::ShaderModule, &wgpu::PipelineLayout) -> P
+        create: impl Fn(&Creator<'_>, &wgpu::ShaderModule, &wgpu::PipelineLayout) -> Creation<P>
         + Clone
         + WasmNotSend
         + 'static,
@@ -207,16 +207,21 @@ impl TracePaths {
                 .get(compiler, label, || {
                     let (shader, layout) = (path.shader.clone(), path.layout.clone());
                     let (create, failure) = (create.clone(), rays.device_form.failure.clone());
-                    move |device: &wgpu::Device| {
-                        let (pipeline, error) =
-                            scoped(device, || create(device, shader.get(device), &layout));
+                    // Created at once, inside error scopes of its own: the
+                    // candidate form needs hardware rays, which no browser
+                    // has, so it is native's and synchronous.
+                    move |creator: &Creator<'_>| {
+                        let device = creator.device();
+                        let (pipeline, error) = scoped(device, || {
+                            create(&Creator::now(device), shader.get(device), &layout).now()
+                        });
                         if let Some(error) = error {
                             let _ = failure.set(format!(
                                 "a tracing program of the candidate form failed on this device, \
                                  so rays trace in the baseline form: {error}"
                             ));
                         }
-                        pipeline
+                        Creation::Ready(pipeline)
                     }
                 })
                 .is_some();
@@ -237,7 +242,7 @@ impl TracePaths {
             .or_default()
             .get(compiler, label, || {
                 let (shader, layout) = (path.shader.clone(), path.layout.clone());
-                move |device: &wgpu::Device| create(device, shader.get(device), &layout)
+                move |creator: &Creator<'_>| create(creator, shader.get(creator.device()), &layout)
             })
             .is_some()
             .then_some(form)
@@ -274,7 +279,7 @@ mod tests {
     use super::{BindingTier, DeviceRayForm, TracePaths};
     use crate::shading::{Module, RayQueryForm};
     use crate::test_support;
-    use crate::view::compile::{Compiled, Compiler};
+    use crate::view::compile::{Compiled, Compiler, Creator};
     use crate::view::frame::HardwareRays;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -324,11 +329,11 @@ mod tests {
         let made = Arc::new(AtomicUsize::new(0));
         let create = {
             let made = made.clone();
-            move |device: &wgpu::Device,
+            move |creator: &Creator<'_>,
                   shader: &wgpu::ShaderModule,
                   layout: &wgpu::PipelineLayout| {
                 let first = made.fetch_add(1, Ordering::SeqCst) == 0;
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: None,
                     layout: Some(layout),
                     module: shader,

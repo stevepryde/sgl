@@ -50,7 +50,7 @@ pub(crate) mod screen_indirect;
 
 use crate::counters::Moment;
 use crate::view::cached_group::CachedGroup;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creator};
 use crate::view::draw_list::gpu::Phase;
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::frame::{CameraMask, FrameContext};
@@ -257,8 +257,8 @@ impl Opaque {
             .ambient_occlusion
             .get(ctx.compiler, "ambient occlusion", || {
                 let queue = ctx.queue.clone();
-                move |device: &wgpu::Device| {
-                    ambient_occlusion::AmbientOcclusion::new(device, &queue)
+                move |creator: &Creator<'_>| {
+                    ambient_occlusion::AmbientOcclusion::new(creator, &queue)
                 }
             })
         else {

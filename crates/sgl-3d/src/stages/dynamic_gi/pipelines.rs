@@ -2,7 +2,7 @@
 //! the blends', and the trace's for each path its rays take.
 use super::volume::Layouts;
 use crate::shading::{self, RayQueryForm};
-use crate::view::compile::Compiler;
+use crate::view::compile::{Compiler, Creation, Creator};
 use crate::view::frame::HardwareRays;
 use crate::view::pipelines::{LitConstants, PipelineSpecialisations};
 use crate::view::trace_paths::{TracePaths, TracePipelines};
@@ -89,7 +89,8 @@ pub(super) struct Trace {
 
 impl Pipelines {
     /// `layouts` are the stage's own groups'.
-    pub fn new(device: &wgpu::Device, layouts: &Layouts) -> Self {
+    pub fn new(creator: &Creator<'_>, layouts: &Layouts) -> Creation<Self> {
+        let device = creator.device();
         let module = |label, root| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
@@ -104,7 +105,7 @@ impl Pipelines {
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(&layout),
                 module: shader,
@@ -173,18 +174,44 @@ impl Pipelines {
             &update_shader,
             SCROLL_ENTRY,
         );
-        Self {
-            rank,
-            threshold,
-            claim_sums,
-            claim,
-            allocate,
-            prepare_trace,
-            update_irradiance,
-            update_depth,
-            settle,
-            scroll,
-        }
+        rank.zip(threshold)
+            .zip(claim_sums)
+            .zip(claim)
+            .zip(allocate)
+            .zip(prepare_trace)
+            .zip(update_irradiance)
+            .zip(update_depth)
+            .zip(settle)
+            .zip(scroll)
+            .map(
+                move |(
+                    (
+                        (
+                            (
+                                (
+                                    ((((rank, threshold), claim_sums), claim), allocate),
+                                    prepare_trace,
+                                ),
+                                update_irradiance,
+                            ),
+                            update_depth,
+                        ),
+                        settle,
+                    ),
+                    scroll,
+                )| Self {
+                    rank,
+                    threshold,
+                    claim_sums,
+                    claim,
+                    allocate,
+                    prepare_trace,
+                    update_irradiance,
+                    update_depth,
+                    settle,
+                    scroll,
+                },
+            )
     }
 }
 
@@ -219,8 +246,8 @@ impl Trace {
             hardware,
             (&mut self.pipelines, lit),
             "dynamic GI rays",
-            move |device, shader, layout| {
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            move |creator: &Creator<'_>, shader, layout| {
+                creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("dynamic GI rays"),
                     layout: Some(layout),
                     module: shader,

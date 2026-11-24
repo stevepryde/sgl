@@ -2986,16 +2986,22 @@ transition (another level's scene, a settings change, a resize).
   blur; the camera's lighting with screen-space indirect light's kept
   result) is a job too, queued with the first frame's. Most resizes need no
   program.
-- In the browser, pipeline creation returns at once and the browser compiles
-  in its GPU process, which presents nothing until it has. A browser game
-  runs one job or a few, then waits for `Queue::on_submitted_work_done`,
-  which fires once the browser has created them, before it runs more: each
-  stall is then one batch's compile, where jobs run every animation frame
-  without that wait pile up in the GPU process and stall the page for all
-  of them together. The first frame then creates nothing. WebGPU's
-  asynchronous pipeline creation, which `sgl-webgpu` makes reachable, will
-  remove the stall with no change to game code, and fill
-  `Compilation::errors` in the browser too (#880).
+- In the browser a job creates its pipelines with WebGPU's asynchronous
+  calls (`createRenderPipelineAsync`, `createComputePipelineAsync`, through
+  `sgl_webgpu::create_render_pipeline_async` and its compute twin): `run`
+  returns at once and the browser compiles without stalling the page or
+  its presentation. A browser game runs the jobs and calls `compile` once
+  an animation frame until it is ready; `pending` counts the jobs the
+  browser is still compiling. Starting a creation still costs the
+  browser's GPU process some work: in Chromium, starting the block world's
+  38 jobs at once kept the page from presenting for about 70 ms, and 8 a
+  frame for about 15 ms, ready 30 % later. A failed creation (a
+  shader module's error included) is reported in `Compilation::errors` as
+  on native. A frame drawn while a job is compiling creates that program
+  in place, synchronously, and the job's late result is dropped. The
+  device must come from `sgl_webgpu::instance`; another backend's makes
+  the first job panic with that instruction. The first frame then creates
+  nothing.
 
 The [loading example](../../examples/sgl-3d/examples/loading.rs) is the loop to copy, with
 the game's worker threads and what the run costs, and

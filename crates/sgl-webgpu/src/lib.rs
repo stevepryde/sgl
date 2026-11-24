@@ -84,6 +84,40 @@ pub fn buffer_as_webgpu(buffer: &wgpu::Buffer) -> Option<JsValue> {
         .map(|buffer| buffer.inner.clone().into())
 }
 
+/// Creates a [`wgpu::RenderPipeline`] with the browser's
+/// `GPUDevice.createRenderPipelineAsync`, which compiles it without stalling
+/// the page, resolving once it is ready to be used.
+///
+/// `desc` is read before the function returns. A validation or internal
+/// error is the future's `Err` (`wgpu::Error::Validation` or
+/// `wgpu::Error::Internal`) and reaches neither the device's error scopes
+/// nor its uncaptured error handler. This is the call gfx-rs/wgpu#10438 adds
+/// as `wgpu::Device::create_render_pipeline_async`.
+///
+/// # Panics
+///
+/// If `device` is from another backend.
+pub fn create_render_pipeline_async(
+    device: &wgpu::Device,
+    desc: &wgpu::RenderPipelineDescriptor<'_>,
+) -> impl Future<Output = Result<wgpu::RenderPipeline, wgpu::Error>> + 'static {
+    webgpu::create_render_pipeline_async(device, desc)
+}
+
+/// Creates a [`wgpu::ComputePipeline`] with the browser's
+/// `GPUDevice.createComputePipelineAsync`, as
+/// [`create_render_pipeline_async`] creates a render pipeline.
+///
+/// # Panics
+///
+/// If `device` is from another backend.
+pub fn create_compute_pipeline_async(
+    device: &wgpu::Device,
+    desc: &wgpu::ComputePipelineDescriptor<'_>,
+) -> impl Future<Output = Result<wgpu::ComputePipeline, wgpu::Error>> + 'static {
+    webgpu::create_compute_pipeline_async(device, desc)
+}
+
 /// A [`wgpu::Texture`] over a `GPUTexture` the program created or received
 /// in the browser, as wgpu's own backend offers with
 /// `Device::create_texture_from_webgpu_handle`.

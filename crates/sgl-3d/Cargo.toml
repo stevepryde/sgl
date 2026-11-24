@@ -69,9 +69,12 @@ pollster.workspace = true
 # In the browser `asset::load_slice_in_browser` has the browser decode a
 # glTF's images (`createImageBitmap`), which the scene copies into their
 # textures (`copy_external_image_to_texture`, wgpu's `web` feature). The
-# diagnostics clock is the page's `performance.now()`.
+# diagnostics clock is the page's `performance.now()`. A compile job starts
+# WebGPU's asynchronous pipeline creation through sgl-webgpu, and its slot
+# settles when that resolves.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys.workspace = true
+sgl-webgpu.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 web-sys = { workspace = true, features = [

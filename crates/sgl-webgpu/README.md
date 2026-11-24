@@ -33,6 +33,11 @@ web backend does. SPIR-V, GLSL and naga IR shader sources need this crate's
 
 ## Differs from wgpu's own backend
 
+- `create_render_pipeline_async` and `create_compute_pipeline_async` create
+  a pipeline with the browser's asynchronous call, which compiles it without
+  stalling the page; a failure is the future's `Err`, not a device error.
+  wgpu has no such call yet (gfx-rs/wgpu#3794).
+
 - The browser's objects come from this crate: `device_as_webgpu`,
   `queue_as_webgpu`, `texture_as_webgpu`, `texture_view_as_webgpu` and
   `buffer_as_webgpu` return the `GPUDevice`, `GPUQueue`, `GPUTexture`,

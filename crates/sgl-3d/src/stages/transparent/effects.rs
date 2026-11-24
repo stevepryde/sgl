@@ -3,6 +3,7 @@
 use crate::scene::transient::Transient;
 use crate::shading::gbuffer;
 use crate::shading::vertex::{GlowVertex, VertexLayout, vertex_layout};
+use crate::view::compile::{Creation, Creator};
 use crate::view::targets::mask_targets;
 
 /// Additive glow, under the unlit group 0.
@@ -45,7 +46,8 @@ pub(crate) struct Effects {
 }
 
 impl Effects {
-    pub fn new(device: &wgpu::Device, unlit: &wgpu::BindGroupLayout) -> Self {
+    pub fn new(creator: &Creator<'_>, unlit: &wgpu::BindGroupLayout) -> Creation<Self> {
+        let device = creator.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("additive glow"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&GLOW]).into()),
@@ -96,7 +98,7 @@ impl Effects {
         let [reactive, composition] = mask_targets();
         let masked_targets = [glow_targets[0].clone(), reactive, composition];
         let make = |masked: bool| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("additive transient geometry"),
                 layout: Some(&soft_layout),
                 vertex: wgpu::VertexState {
@@ -135,11 +137,15 @@ impl Effects {
                 cache: None,
             })
         };
-        Self {
-            soft_glow: make(false),
-            soft_glow_masked: make(true),
-            depth_layout,
-        }
+        let soft_glow = make(false);
+        let soft_glow_masked = make(true);
+        soft_glow
+            .zip(soft_glow_masked)
+            .map(move |(soft_glow, soft_glow_masked)| Self {
+                soft_glow,
+                soft_glow_masked,
+                depth_layout,
+            })
     }
 
     /// The opaque depth soft intersections read and the frame's

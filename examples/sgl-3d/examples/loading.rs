@@ -34,7 +34,8 @@
 //! directory aside gives a cold start, and slows whatever else is running.
 //!
 //! `browser_loading` is the same loop in the browser, where the page runs
-//! the jobs itself, a few per animation frame.
+//! the jobs itself: each starts the browser's asynchronous compile and
+//! returns.
 
 #[cfg(not(target_arch = "wasm32"))]
 #[path = "support/level.rs"]

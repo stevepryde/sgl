@@ -134,7 +134,7 @@ frame, after `View::resize` as before `render`:
 ```rust
 let compilation = renderer.compile(&device, &queue, &mut scene, &mut views);
 for job in compilation.jobs {
-    workers.send(job); // the game's threads run `job.run()`; in the browser, run a few here (below)
+    workers.send(job); // the game's threads run `job.run()`; in the browser, run each here
 }
 if compilation.ready() { /* `render` with these arguments creates nothing */ }
 ```
@@ -164,18 +164,21 @@ if compilation.ready() { /* `render` with these arguments creates nothing */ }
   and before the next `render`.
 - `render` never waits for it: what is missing is created in place, as
   without it. A job dropped without running is offered again;
-  `Compilation::errors` lists failed jobs (native), each once.
+  `Compilation::errors` lists failed jobs, each once.
 - Call it again after a settings change, a resize or for another level's
   scene, with a renderer that draws no other scene meanwhile. Most resizes
   need nothing.
-- In the browser, run one job or a few, then no more until
-  `queue.on_submitted_work_done` reports the browser has created them:
-  pipeline creation returns at once and the browser compiles in its GPU
-  process, presenting nothing until it has. Paced so, each batch stalls
-  the page for its own compile only; jobs run every animation frame
-  without that wait pile up and stall it for all of them together.
-  WebGPU's asynchronous pipeline creation, which `sgl-webgpu` makes
-  reachable, will remove the stall with no change to game code (#880).
+- In the browser, run the jobs here and keep presenting until `ready()`,
+  calling `compile` once a frame: a job starts WebGPU's asynchronous
+  pipeline creation and returns, the browser compiles while the page runs,
+  and `pending` counts what it is still compiling. Starting a creation
+  still costs the browser some work, so the game chooses: all at once is
+  ready soonest, a handful a frame keeps the loading screen smoothest. In
+  Chromium the block world's 38 jobs at once paused the page for about
+  70 ms; 8 a frame for about 15 ms, ready about 30 % later
+  ([`browser_loading`](../../../examples/sgl-3d/examples/browser_loading.rs)).
+  The device must come from `sgl_webgpu::instance`. A frame drawn before a
+  job resolves creates that program itself, as without `compile`.
 
 [`examples/loading.rs`](../../../examples/sgl-3d/examples/loading.rs) is the loop to copy, and
 [`examples/browser_loading.rs`](../../../examples/sgl-3d/examples/browser_loading.rs) the browser's.

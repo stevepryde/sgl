@@ -26,6 +26,9 @@ const CHECKS = [
   "compilation info",
   "surface present",
   "texture format tiers",
+  "asynchronous render pipeline",
+  "asynchronous compute pipeline",
+  "asynchronous pipeline error",
 ];
 
 function servePage() {

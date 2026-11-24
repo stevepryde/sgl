@@ -128,7 +128,7 @@ fn a_straddling_block_takes_depth_and_motion_from_one_pixel() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let velvet = Velvet::new(&device);
+    let velvet = Velvet::new(&crate::view::compile::Creator::now(&device)).now();
     let projection = crate::perspective(1.2, 1., NEAR);
     // This camera stands TRAVEL further along -z than the previous one,
     // whose view is the world.
@@ -345,7 +345,7 @@ fn a_straddling_block_takes_depth_and_motion_from_one_pixel() {
 /// (Godot's trace writes it 0), and in the third all of it is traced again.
 /// Returns the third frame's output.
 fn returning(device: &wgpu::Device, queue: &wgpu::Queue, before: f32) -> Vec<[f32; 4]> {
-    let velvet = Velvet::new(device);
+    let velvet = Velvet::new(&crate::view::compile::Creator::now(device)).now();
     let projection = crate::perspective(1.2, 1., NEAR);
     let plane = projection.project_point3(Vec3::new(0., 0., -5.)).z;
     let grid = || (0..HALF).flat_map(|y| (0..HALF).map(move |x| (x, y)));

@@ -10,7 +10,7 @@ use crate::content::identity::SpriteBatchId;
 use crate::content::sprite::SpriteFacing;
 use crate::shading::gbuffer::{COLOR as HDR, DEPTH, MOTION};
 use crate::shading::sprite::{facing_normal, group, order_key};
-use crate::view::compile::Compiled;
+use crate::view::compile::{Compiled, Creation, Creator};
 use crate::view::frame::FrameContext;
 use crate::view::sprites::{ListedBatch, Mark};
 use crate::view::targets::{composition_targets, mask_targets};
@@ -63,7 +63,8 @@ struct Programs {
 }
 
 impl Programs {
-    fn new(device: &wgpu::Device, unlit: &wgpu::BindGroupLayout) -> Self {
+    fn new(creator: &Creator<'_>, unlit: &wgpu::BindGroupLayout) -> Creation<Self> {
+        let device = creator.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sprites"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&SPRITES]).into()),
@@ -101,7 +102,7 @@ impl Programs {
                 constants,
                 ..Default::default()
             };
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
@@ -130,80 +131,86 @@ impl Programs {
             })
         };
         let premultiplied = Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING);
-        Self {
-            depth: pipeline(
-                "masked sprite depth and motion",
+        let depth = pipeline(
+            "masked sprite depth and motion",
+            &masked_layout,
+            (VS_ENTRY, DEPTH_FS_ENTRY),
+            &[],
+            &[Some(wgpu::ColorTargetState {
+                format: MOTION,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            true,
+        );
+        let masked = Creation::array([
+            pipeline(
+                "masked sprites",
                 &masked_layout,
-                (VS_ENTRY, DEPTH_FS_ENTRY),
+                (VS_ENTRY, MASKED_FS_ENTRY),
                 &[],
-                &[Some(wgpu::ColorTargetState {
-                    format: MOTION,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                true,
-            ),
-            masked: [
-                pipeline(
-                    "masked sprites",
-                    &masked_layout,
-                    (VS_ENTRY, MASKED_FS_ENTRY),
-                    &[],
-                    &[color(None)],
-                    false,
-                ),
-                pipeline(
-                    "masked sprites with temporal masks",
-                    &masked_layout,
-                    (VS_ENTRY, MASKED_MASKED_FS_ENTRY),
-                    &[],
-                    &[color(None), reactive.clone(), composition.clone()],
-                    false,
-                ),
-                pipeline(
-                    "changed masked sprites with temporal masks",
-                    &masked_layout,
-                    (VS_ENTRY, MASKED_MASKED_FS_ENTRY),
-                    &[("sprite_marks", 1.)],
-                    &[color(None), reactive.clone(), composition.clone()],
-                    false,
-                ),
-            ],
-            blended: [
-                pipeline(
-                    "blended sprites",
-                    &blended_layout,
-                    (ORDERED_VS_ENTRY, BLENDED_FS_ENTRY),
-                    &[],
-                    &[color(premultiplied)],
-                    false,
-                ),
-                pipeline(
-                    "blended sprites with temporal masks",
-                    &blended_layout,
-                    (ORDERED_VS_ENTRY, BLENDED_MASKED_FS_ENTRY),
-                    &[],
-                    &[color(premultiplied), reactive, composition],
-                    false,
-                ),
-            ],
-            footprint: pipeline(
-                "masked sprites' last footprint",
-                &masked_layout,
-                (VS_ENTRY, FOOTPRINT_FS_ENTRY),
-                &[],
-                &[
-                    Some(wgpu::ColorTargetState {
-                        format: HDR,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::empty(),
-                    }),
-                    kept,
-                    marked,
-                ],
+                &[color(None)],
                 false,
             ),
-        }
+            pipeline(
+                "masked sprites with temporal masks",
+                &masked_layout,
+                (VS_ENTRY, MASKED_MASKED_FS_ENTRY),
+                &[],
+                &[color(None), reactive.clone(), composition.clone()],
+                false,
+            ),
+            pipeline(
+                "changed masked sprites with temporal masks",
+                &masked_layout,
+                (VS_ENTRY, MASKED_MASKED_FS_ENTRY),
+                &[("sprite_marks", 1.)],
+                &[color(None), reactive.clone(), composition.clone()],
+                false,
+            ),
+        ]);
+        let blended = Creation::array([
+            pipeline(
+                "blended sprites",
+                &blended_layout,
+                (ORDERED_VS_ENTRY, BLENDED_FS_ENTRY),
+                &[],
+                &[color(premultiplied)],
+                false,
+            ),
+            pipeline(
+                "blended sprites with temporal masks",
+                &blended_layout,
+                (ORDERED_VS_ENTRY, BLENDED_MASKED_FS_ENTRY),
+                &[],
+                &[color(premultiplied), reactive, composition],
+                false,
+            ),
+        ]);
+        let footprint = pipeline(
+            "masked sprites' last footprint",
+            &masked_layout,
+            (VS_ENTRY, FOOTPRINT_FS_ENTRY),
+            &[],
+            &[
+                Some(wgpu::ColorTargetState {
+                    format: HDR,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::empty(),
+                }),
+                kept,
+                marked,
+            ],
+            false,
+        );
+        depth.zip(masked).zip(blended).zip(footprint).map(
+            move |(((depth, masked), blended), footprint)| Self {
+                depth,
+                masked,
+                blended,
+                footprint,
+            },
+        )
     }
 }
 
@@ -241,7 +248,7 @@ impl Sprites {
         let unlit = ctx.bindings.unlit.clone();
         self.programs
             .get(ctx.compiler, "sprites", move || {
-                move |device: &wgpu::Device| Programs::new(device, &unlit)
+                move |creator: &Creator<'_>| Programs::new(creator, &unlit)
             })
             .map(|programs| &*programs)
     }

@@ -5,6 +5,7 @@ use crate::scene::transient::Transient;
 use crate::shading::gbuffer::COLOR as HDR;
 use crate::shading::sprite::facing_normal;
 use crate::shading::vertex::{Attribute, VertexLayout};
+use crate::view::compile::{Creation, Creator};
 use crate::view::targets::mask_targets;
 use glam::{Mat4, Vec3};
 
@@ -55,7 +56,8 @@ pub(crate) struct Mist {
     buffer: wgpu::Buffer,
 }
 impl Mist {
-    pub fn new(device: &wgpu::Device, frame: &wgpu::BindGroupLayout) -> Self {
+    pub fn new(creator: &Creator<'_>, frame: &wgpu::BindGroupLayout) -> Creation<Self> {
+        let device = creator.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mist"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&MIST]).into()),
@@ -67,7 +69,7 @@ impl Mist {
             immediate_size: 0,
         });
         let pipeline = |masked: bool| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("ground mist"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -107,12 +109,16 @@ impl Mist {
                 cache: None,
             })
         };
-        Self {
-            mist: pipeline(false),
-            mist_masked: pipeline(true),
-            positions: Vec::new(),
-            buffer: buffer(device, 1),
-        }
+        let mist = pipeline(false);
+        let mist_masked = pipeline(true);
+        let positions = Vec::new();
+        let buffer = buffer(device, 1);
+        mist.zip(mist_masked).map(move |(mist, mist_masked)| Self {
+            mist,
+            mist_masked,
+            positions,
+            buffer,
+        })
     }
 
     /// Orders the scene's mist back to front from the view whose

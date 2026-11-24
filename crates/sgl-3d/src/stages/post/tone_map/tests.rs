@@ -778,13 +778,14 @@ fn float_composition_and_surface_outputs_apply_one_display_transfer() {
         let intermediate = target(&device, name, size, HDR);
         let sink = target(&device, "composition surface sink", size, sink_format);
         let composite = pipeline(
-            &device,
+            &crate::view::compile::Creator::now(&device),
             &[Some(inputs.layout())],
             &shader,
             "composite",
             &[sink_format],
             (None, &[]),
-        );
+        )
+        .now();
         let mut encoder = device.create_command_encoder(&Default::default());
         mapper.present_output(
             (&device, &crate::view::compile::Compiler::new(&device)),

@@ -8,7 +8,7 @@ use crate::settings::WorldSpaceReflections;
 use crate::shading;
 use crate::shading::RayQueryForm;
 use crate::view::cached_group::CachedGroup;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 use crate::view::frame::HardwareRays;
 use crate::view::history::{HistoryFrame, StageHistory};
 use crate::view::pipelines::{LitConstants, PipelineSpecialisations};
@@ -167,29 +167,37 @@ struct Programs {
 }
 
 impl Programs {
-    fn new(device: &wgpu::Device) -> Self {
-        let denoise_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("world-space reflection denoise"),
-            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&DENOISE]).into()),
-        });
+    fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let denoise_shader = creator
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("world-space reflection denoise"),
+                source: wgpu::ShaderSource::Wgsl(shading::compose(&[&DENOISE]).into()),
+            });
         let compute = |entry_point| {
-            Denoise::new(
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator
+                .compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(entry_point),
                     layout: None,
                     module: &denoise_shader,
                     entry_point: Some(entry_point),
                     compilation_options: Default::default(),
                     cache: None,
-                }),
-            )
+                })
+                .map(Denoise::new)
         };
-        Self {
-            classify: classify::Classify::new(device),
-            resolve: compute(WORLD_RESOLVE_ENTRY),
-            temporal: compute(WORLD_TEMPORAL_ENTRY),
-            upsample: compute(WORLD_UPSAMPLE_ENTRY),
-        }
+        classify::Classify::new(creator)
+            .zip(Creation::array([
+                compute(WORLD_RESOLVE_ENTRY),
+                compute(WORLD_TEMPORAL_ENTRY),
+                compute(WORLD_UPSAMPLE_ENTRY),
+            ]))
+            .map(|(classify, [resolve, temporal, upsample])| Self {
+                classify,
+                resolve,
+                temporal,
+                upsample,
+            })
     }
 }
 
@@ -358,13 +366,13 @@ impl WorldReflections {
             hardware,
             (&mut self.trace, (lit, all)),
             "world-space reflection rays",
-            move |device, shader, layout| {
+            move |creator: &Creator<'_>, shader, layout| {
                 let constants = [
                     lit.constants().as_slice(),
                     &[("world_reach_all", f64::from(u8::from(all)))],
                 ]
                 .concat();
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("world-space reflection rays"),
                     layout: Some(layout),
                     module: shader,

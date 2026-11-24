@@ -32,7 +32,7 @@
 use crate::settings::ContactShadows;
 use crate::shading;
 use crate::view::cached_group::CachedGroup;
-use crate::view::compile::Compiled;
+use crate::view::compile::{Compiled, Creator};
 use crate::view::frame::FrameContext;
 
 /// Godot's wave: the pixels a workgroup walks toward the light together.
@@ -256,12 +256,14 @@ impl ContactShadowStage {
         }
         let pipeline = self.pipelines[index].get(ctx.compiler, "contact shadows", || {
             let layout = self.pipeline_layout.clone();
-            move |device: &wgpu::Device| {
-                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some(module.name),
-                    source: wgpu::ShaderSource::Wgsl(shading::compose(&[module]).into()),
-                });
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            move |creator: &Creator<'_>| {
+                let shader = creator
+                    .device()
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some(module.name),
+                        source: wgpu::ShaderSource::Wgsl(shading::compose(&[module]).into()),
+                    });
+                creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some(module.name),
                     layout: Some(&layout),
                     module: &shader,

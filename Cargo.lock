@@ -2216,6 +2216,7 @@ dependencies = [
  "serde_json",
  "sgl-3d",
  "sgl-post-fx",
+ "sgl-webgpu",
  "sp-fidelity",
  "sp-fidelity-wgpu",
  "wasm-bindgen",

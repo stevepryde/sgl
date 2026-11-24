@@ -32,7 +32,7 @@ use crate::content::hdr_effect::HdrEffect;
 use crate::content::identity::HdrEffectId;
 use crate::shading::gbuffer::COLOR;
 use crate::shading::hdr_effect::{FRAGMENT_ENTRY, HdrEffectFrameUniform, program};
-use crate::view::compile::Compiled;
+use crate::view::compile::{Compiled, Creation, Creator};
 use crate::view::frame::FrameContext;
 use crate::view::targets::target;
 use std::collections::HashMap;
@@ -210,7 +210,7 @@ impl HdrEffectStage {
                 let layout = pass.pipeline_layout.clone();
                 let source = program(&module.source);
                 let label = module.label.clone();
-                move |device: &wgpu::Device| create_pipeline(device, &layout, &source, &label)
+                move |creator: &Creator<'_>| create_pipeline(creator, &layout, &source, &label)
             },
         )?;
         pass.dispatch(ctx, effect, pipeline, frame, exposure);
@@ -220,16 +220,18 @@ impl HdrEffectStage {
 
 /// The effect's pipeline from its composed `source` over `layout`.
 fn create_pipeline(
-    device: &wgpu::Device,
+    creator: &Creator<'_>,
     layout: &wgpu::PipelineLayout,
     source: &str,
     label: &str,
-) -> wgpu::RenderPipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+) -> Creation<wgpu::RenderPipeline> {
+    let module = creator
+        .device()
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(label),
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+    creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(layout),
         vertex: wgpu::VertexState {

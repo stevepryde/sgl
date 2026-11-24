@@ -33,7 +33,7 @@ use crate::shading::culling::{
     OCCLUSION_EARLY,
 };
 use crate::view::FrameViews;
-use crate::view::compile::{Compiled, Compiler, SharedModule};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator, SharedModule};
 use crate::view::draw_list::gpu::CullBuffers;
 use crate::view::frame::FrameContext;
 use pyramid::{Builder, Pyramid, SUPPORTED_STORAGE_TEXTURES};
@@ -116,20 +116,23 @@ impl Phase {
         module: &SharedModule,
         layouts: &[wgpu::BindGroupLayout; 3],
         entries: [&'static str; 3],
-    ) -> impl FnOnce(&wgpu::Device) -> Self + use<> {
+    ) -> impl Fn(&Creator<'_>) -> Creation<Self> + use<> {
         let (module, layouts) = (module.clone(), layouts.clone());
-        move |device| Self::new(device, module.get(device), &layouts, entries)
+        move |creator: &Creator<'_>| {
+            Self::new(creator, module.get(creator.device()), &layouts, entries)
+        }
     }
 
     fn new(
-        device: &wgpu::Device,
+        creator: &Creator<'_>,
         module: &wgpu::ShaderModule,
         layouts: &[wgpu::BindGroupLayout; 3],
         entries: [&str; 3],
-    ) -> Self {
-        let [instances, finalize, sections] = std::array::from_fn(|i| {
+    ) -> Creation<Self> {
+        let device = creator.device();
+        Creation::array(std::array::from_fn(|i| {
             let entry = entries[i];
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(
                     &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -143,12 +146,12 @@ impl Phase {
                 compilation_options: Default::default(),
                 cache: None,
             })
-        });
-        Self {
+        }))
+        .map(|[instances, finalize, sections]| Self {
             instances,
             finalize,
             sections,
-        }
+        })
     }
 }
 

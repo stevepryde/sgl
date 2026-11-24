@@ -1,6 +1,6 @@
 //! A `Compiled` slot's states, with a counting closure standing for the
 //! programs: where they are created, and how often.
-use super::{Compiled, Compiler};
+use super::{Compiled, Compiler, Creation, Creator};
 use crate::test_support;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,9 +10,9 @@ const LABEL: &str = "test programs";
 
 /// A slot's creating closure, which counts its runs in `runs` and returns
 /// the run's number.
-fn counting(runs: &Arc<AtomicUsize>) -> impl FnOnce(&wgpu::Device) -> usize + Send + 'static {
+fn counting(runs: &Arc<AtomicUsize>) -> impl Fn(&Creator<'_>) -> Creation<usize> + Send + 'static {
     let runs = runs.clone();
-    move |_| runs.fetch_add(1, Ordering::SeqCst) + 1
+    move |_| Creation::from(runs.fetch_add(1, Ordering::SeqCst) + 1)
 }
 
 // Plausible defect: a planning pass creates the programs on its own thread
@@ -95,10 +95,10 @@ fn a_frame_waits_for_a_job_a_thread_is_running() {
     let (jobs, _) = compiler.plan(|| {
         let count = counting(&runs);
         slot.get(&compiler, LABEL, || {
-            move |device: &wgpu::Device| {
+            move |creator: &Creator<'_>| {
                 started.send(()).unwrap();
                 released.recv().unwrap();
-                count(device)
+                count(creator)
             }
         });
     });
@@ -156,7 +156,8 @@ fn a_failed_job_is_reported_once_and_leaves_drawing_as_it_was() {
     let runs = Arc::new(AtomicUsize::new(0));
     let mut slot = Compiled::<usize>::default();
     let invalid = {
-        move |device: &wgpu::Device| {
+        move |creator: &Creator<'_>| {
+            let device = creator.device();
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: None,
                 source: wgpu::ShaderSource::Wgsl("@compute @workgroup_size(1) fn main() {}".into()),
@@ -169,7 +170,7 @@ fn a_failed_job_is_reported_once_and_leaves_drawing_as_it_was() {
                 compilation_options: Default::default(),
                 cache: None,
             });
-            0
+            Creation::from(0)
         }
     };
     let (jobs, _) = compiler.plan(|| {
@@ -208,9 +209,13 @@ fn a_job_that_panics_leaves_its_programs_to_the_frame() {
     let runs = Arc::new(AtomicUsize::new(0));
     let mut slot = Compiled::<usize>::default();
     let (jobs, _) = compiler.plan(|| {
-        slot.get(&compiler, LABEL, || -> fn(&wgpu::Device) -> usize {
-            |_| panic!("the job's own failure, for the test")
-        });
+        slot.get(
+            &compiler,
+            LABEL,
+            || -> fn(&Creator<'_>) -> Creation<usize> {
+                |_| panic!("the job's own failure, for the test")
+            },
+        );
     });
     for job in jobs {
         assert!(std::thread::spawn(move || job.run()).join().is_err());

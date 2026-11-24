@@ -7,7 +7,9 @@ fn ambient_occlusion_matches_independent_hemisphere_integral() {
         return;
     };
     pollster::block_on(async {
-        let mut ao = super::AmbientOcclusion::new(&device, &queue);
+        let mut ao =
+            super::AmbientOcclusion::new(&crate::view::compile::Creator::now(&device), &queue)
+                .now();
         for (size, wall, rotated) in [
             ([129, 113], false, false),
             ([129, 113], true, false),
@@ -139,7 +141,8 @@ fn an_unoccluded_plate_stays_unoccluded_up_to_its_silhouette() {
         false,
         Some(plate.clone()),
     );
-    let mut ao = super::AmbientOcclusion::new(&device, &queue);
+    let mut ao =
+        super::AmbientOcclusion::new(&crate::view::compile::Creator::now(&device), &queue).now();
     let mut encoder = device.create_command_encoder(&Default::default());
     let result = ao.encode(
         &device,
@@ -204,7 +207,8 @@ fn denoising_an_image_moved_one_column_moves_the_result() {
         return;
     };
     let size = [37, 11];
-    let mut ao = super::AmbientOcclusion::new(&device, &queue);
+    let mut ao =
+        super::AmbientOcclusion::new(&crate::view::compile::Creator::now(&device), &queue).now();
     // A frame at this size writes the parameters the denoiser reads.
     let (depth, normals) = analytic_geometry(
         &device,
@@ -356,7 +360,8 @@ fn depth_mips_hold_the_linear_depth_at_their_childrens_centre() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut ao = super::AmbientOcclusion::new(&device, &queue);
+    let mut ao =
+        super::AmbientOcclusion::new(&crate::view::compile::Creator::now(&device), &queue).now();
     for size in [[129, 113], [37, 5], [3, 1]] {
         let projection =
             crate::perspective(60f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1);
@@ -505,7 +510,8 @@ fn bind_groups_reuse_resources_and_follow_replaced_inputs() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let mut ao = super::AmbientOcclusion::new(&device, &queue);
+    let mut ao =
+        super::AmbientOcclusion::new(&crate::view::compile::Creator::now(&device), &queue).now();
     let mut view: crate::shading::uniforms::ViewUniform = bytemuck::Zeroable::zeroed();
     view.view = glam::Mat4::IDENTITY.to_cols_array_2d();
     let size = [129, 113];
@@ -569,7 +575,8 @@ fn bind_groups_reuse_resources_and_follow_replaced_inputs() {
         new_depth[2], new_normals[2],
         "replacement normals were ignored"
     );
-    let mut fresh = super::AmbientOcclusion::new(&device, &queue);
+    let mut fresh =
+        super::AmbientOcclusion::new(&crate::view::compile::Creator::now(&device), &queue).now();
     let (_, expected) = encode(&mut fresh, &wall_depth, &wall_normals, quality, 1.0);
     assert_eq!(result, expected, "replacement inputs used stale bindings");
 
@@ -630,7 +637,9 @@ fn jittered_depth_reconstructs_its_raster_ray() {
             )) * projection;
             let (depth, normals) =
                 analytic_geometry(&device, &queue, size, raster, false, false, None);
-            let mut ao = super::AmbientOcclusion::new(&device, &queue);
+            let mut ao =
+                super::AmbientOcclusion::new(&crate::view::compile::Creator::now(&device), &queue)
+                    .now();
             let mut encoder = device.create_command_encoder(&Default::default());
             ao.encode(
                 &device,
@@ -791,7 +800,8 @@ fn temporal_visibility_accumulates_and_rejects_invalid_history() {
         let depth = plane(3.0);
         let closer = plane(2.5);
         let disoccluded = plane(6.0);
-        let mut temporal = super::temporal::Temporal::new(&device);
+        let mut temporal =
+            super::temporal::Temporal::new(&crate::view::compile::Creator::now(&device)).now();
         let mut camera_history = CameraHistory::default();
         let mut camera = CameraFrame {
             view: glam::Mat4::IDENTITY,
@@ -951,7 +961,8 @@ fn temporal_visibility_keeps_history_when_the_receiver_follows_the_camera() {
         "var o:Output; o.normal=vec4(0.); o.depth=0.1/3.0; return o;",
     );
     let projection = crate::perspective(60f32.to_radians(), size[0] as f32 / size[1] as f32, 0.1);
-    let mut temporal = super::temporal::Temporal::new(&device);
+    let mut temporal =
+        super::temporal::Temporal::new(&crate::view::compile::Creator::now(&device)).now();
     let mut camera_history = CameraHistory::default();
     for frame in 0..16 {
         let value = if frame % 2 == 0 { 51u32 } else { 204 };

@@ -12,6 +12,7 @@
 //! It is allocated in the first frame that needs it, and again after a
 //! resize, as heat distortion's snapshot is, and keeps no history.
 use crate::shading::gbuffer::COLOR;
+use crate::view::compile::{Creation, Creator};
 use crate::view::targets::{attachment, hold};
 
 pub(crate) static COPY: crate::shading::Module = crate::shading::Module {
@@ -48,7 +49,8 @@ struct Levels {
 }
 
 impl Transmission {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("transmission copy source"),
             entries: &[
@@ -80,7 +82,7 @@ impl Transmission {
             immediate_size: 0,
         });
         let pipeline = |label, fragment| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -102,18 +104,22 @@ impl Transmission {
                 cache: None,
             })
         };
-        Self {
-            copy: pipeline("transmission copy", COPY_FS_ENTRY),
-            downsample: pipeline("transmission copy downsample", DOWNSAMPLE_FS_ENTRY),
-            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("transmission copy downsample"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            }),
+        let copy = pipeline("transmission copy", COPY_FS_ENTRY);
+        let downsample = pipeline("transmission copy downsample", DOWNSAMPLE_FS_ENTRY);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("transmission copy downsample"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let levels = None;
+        copy.zip(downsample).map(move |(copy, downsample)| Self {
+            copy,
+            downsample,
+            sampler,
             layout,
-            levels: None,
-        }
+            levels,
+        })
     }
 
     /// Copies `composed` (the composed frame) into the copy's first level and

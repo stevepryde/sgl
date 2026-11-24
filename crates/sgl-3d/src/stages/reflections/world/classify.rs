@@ -4,6 +4,7 @@
 //! listed for the trace's indirect dispatch.
 use crate::shading;
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::{Creation, Creator};
 
 /// Tracing pixels on a side of the classification's tiles, its workgroups
 /// (WGSL `WORLD_TILE`).
@@ -103,13 +104,15 @@ pub(super) struct Bindings<'a> {
 }
 
 impl Classify {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("world-space reflection classification"),
-            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&CLASSIFY]).into()),
-        });
+    pub fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let shader = creator
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("world-space reflection classification"),
+                source: wgpu::ShaderSource::Wgsl(shading::compose(&[&CLASSIFY]).into()),
+            });
         let pipeline = |entry_point| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry_point),
                 layout: None,
                 module: &shader,
@@ -121,14 +124,16 @@ impl Classify {
         let groups = |pipeline: &wgpu::ComputePipeline| {
             [0, 3].map(|index| CachedGroup::new(pipeline.get_bind_group_layout(index)))
         };
-        let classify = pipeline(CLASSIFY_ENTRY);
-        let prepare = pipeline(PREPARE_RAYS_ENTRY);
-        Self {
-            classify_groups: groups(&classify),
-            prepare_groups: groups(&prepare),
-            classify,
-            prepare,
-        }
+        // The groups' layouts are the pipelines', so they are made once
+        // those are.
+        pipeline(CLASSIFY_ENTRY)
+            .zip(pipeline(PREPARE_RAYS_ENTRY))
+            .map(move |(classify, prepare)| Self {
+                classify_groups: groups(&classify),
+                prepare_groups: groups(&prepare),
+                classify,
+                prepare,
+            })
     }
 
     /// Records the classification over a tracing grid of `reduced` pixels

@@ -44,6 +44,15 @@ pub fn fixture() -> String {
     bistro_scene::fixture().to_string()
 }
 
+/// Resolves at the page's next animation frame.
+async fn next_animation_frame() -> Result<(), String> {
+    let window = web_sys::window().ok_or("no window")?;
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        let _ = window.request_animation_frame(&resolve);
+    });
+    JsFuture::from(promise).await.map(|_| ()).map_err(js_error)
+}
+
 fn now() -> f64 {
     let performance = js_sys::Reflect::get(&js_sys::global(), &"performance".into()).unwrap();
     let function: js_sys::Function = js_sys::Reflect::get(&performance, &"now".into())
@@ -654,6 +663,54 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
     let mut gi_reports = Vec::new();
     let mut local_shadows = bistro_scene::LocalShadowMeasurements::default();
     let motion = options["motion"].as_bool() == Some(true);
+    // `--compile`: the first frame's programs readied ahead
+    // (`Renderer::compile`), every job run as it comes and the page given
+    // an animation frame between calls, as a browser game's loading screen
+    // does; the longest gap between those frames is how long compiling
+    // kept the page from presenting.
+    let compiled = if options["compile"].as_bool() == Some(true) {
+        phase("compile");
+        frame.elapsed_seconds = 0.;
+        frame.frame_time_ms = 1000. / 60.;
+        frame.camera_cut = true;
+        let started = now();
+        let (mut last, mut longest_gap, mut longest_call, mut jobs) = (started, 0_f64, 0_f64, 0);
+        loop {
+            let call = now();
+            let compilation = renderer.compile(
+                &device,
+                &queue,
+                &mut scene,
+                &mut [ViewFrame {
+                    view: &mut scene_view,
+                    input: &frame,
+                    settings: &settings,
+                    output: ViewOutput::Texture(&view),
+                    timing: None,
+                }],
+            );
+            longest_call = longest_call.max(now() - call);
+            if let Some(error) = compilation.errors.first() {
+                return Err(format!("compile job: {error}"));
+            }
+            if compilation.ready() {
+                break;
+            }
+            jobs += compilation.jobs.len();
+            compilation
+                .jobs
+                .into_iter()
+                .for_each(sgl_3d::CompileJob::run);
+            next_animation_frame().await?;
+            let at = now();
+            longest_gap = longest_gap.max(at - last);
+            last = at;
+        }
+        json!({"jobs": jobs, "ms": now() - started, "longest_frame_gap_ms": longest_gap,
+            "longest_compile_call_ms": longest_call})
+    } else {
+        Value::Null
+    };
     for index in 0..warmup + frames {
         phase(if index < warmup {
             "warmup frames"
@@ -816,6 +873,7 @@ async fn measured(descriptor: &str, options: &str) -> Result<Value, String> {
     Ok(
         json!({"schema":1,"benchmark":"embedded-scene-v1","scene":fixture["scene"],"fixture":fixture,
         "view":camera_id,"camera":camera_spec,"final_eye":if motion {(eye+Vec3::new((((warmup+frames-1) as f32/60.)*0.7).sin()*0.35,0.,0.)).to_array()}else{eye.to_array()},"size":size,"frames":frames,"warmup_frames":warmup,
+        "compile":compiled,
         "motion":{"enabled":motion,"route":"shared eye/target x += sin(t*0.7)*0.35 metres","fixed_step_seconds":1./60.,"capture_frame":warmup+frames-1},"exposure_stops":exposure,
         "settings":settings,"diagnostics":{"normal_maps_disabled":settings.diagnostics.disable.normal_maps,"split_opaque":settings.diagnostics.disable.fused_opaque},"lighting":{"local_lights":bistro_scene::local_light_report(&scene, &local_light_ids)?,"local_shadows":local_shadows.report(),"sun":effective_sun,"fog":bistro_scene::fog_report(&frame),"environment":format!("{:?}",frame.environment),"local_exposure":format!("{:?}",frame.local_exposure),"environment_intensity":frame.diffuse_environment.intensity,"ambient_occlusion_radius_m":frame.ambient_occlusion_radius,"screen_space_indirect_radius_m":frame.screen_space_indirect_radius,"rect":options["rect"].as_bool().unwrap_or(false),"cookies":options["no_cookies"].as_bool() != Some(true)},
         "reflections":{"specular_probes":specular_probes,"decals":bistro_scene::decal_report(&scene, &decal_ids)?},

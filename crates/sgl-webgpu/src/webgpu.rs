@@ -133,6 +133,9 @@ macro_rules! api_types {
 }
 
 api_types! {
+    Device => WebDevice,
+    RenderPipeline => WebRenderPipeline,
+    ComputePipeline => WebComputePipeline,
     Buffer => WebBuffer,
     Texture => WebTexture,
     TextureView => WebTextureView,
@@ -218,6 +221,40 @@ fn error_from_js(js_error: js_sys::Object) -> wgpu::Error {
         wgpu::Error::OutOfMemory { source }
     } else {
         panic!("Unexpected error");
+    }
+}
+
+/// SGL: gfx-rs/wgpu#10438's `pipeline_error_from_js`, for the asynchronous
+/// pipeline creation that PR adds (PROVENANCE.md). The binding of
+/// `GPUPipelineError` is `ext_bindings::GpuPipelineError`.
+fn pipeline_error_from_js(value: JsValue) -> wgpu::Error {
+    let source = Box::<dyn core::error::Error + Send + Sync>::from("<WebGPU Error>");
+    // The content timeline throws a `TypeError` for some invalid descriptors, such as a
+    // format whose feature is not enabled, and the promise rejects with it.
+    if let Some(error) = value.dyn_ref::<js_sys::TypeError>() {
+        return wgpu::Error::Validation {
+            source,
+            description: String::from(error.message()),
+        };
+    }
+    // A browser that predates `GPUPipelineError` rejects with an `OperationError` instead.
+    // Report that as internal, rather than misfiling it as a validation error.
+    let Some(error) = value.dyn_ref::<ext_bindings::GpuPipelineError>() else {
+        return wgpu::Error::Internal {
+            source,
+            description: format!("{value:?}"),
+        };
+    };
+    let description = error.message();
+    match error.reason().as_str() {
+        "validation" => wgpu::Error::Validation {
+            source,
+            description,
+        },
+        _ => wgpu::Error::Internal {
+            source,
+            description,
+        },
     }
 }
 
@@ -700,6 +737,140 @@ fn map_vertex_step_mode(mode: wgt::VertexStepMode) -> webgpu_sys::GpuVertexStepM
         VertexStepMode::Vertex => sm::Vertex,
         VertexStepMode::Instance => sm::Instance,
     }
+}
+
+/// SGL: as gfx-rs/wgpu#10438 splits it out of `create_render_pipeline`, so
+/// the synchronous and asynchronous calls share it.
+fn map_render_pipeline_descriptor(
+    desc: &wgpu::RenderPipelineDescriptor<'_>,
+) -> webgpu_sys::GpuRenderPipelineDescriptor {
+    let module = desc.vertex.module.as_web();
+    let mapped_vertex_state = webgpu_sys::GpuVertexState::new(&module.module);
+    insert_constants_map(
+        &mapped_vertex_state,
+        desc.vertex.compilation_options.constants,
+    );
+    if let Some(ep) = desc.vertex.entry_point {
+        mapped_vertex_state.set_entry_point(ep);
+    }
+
+    let buffers = desc
+        .vertex
+        .buffers
+        .iter()
+        .map(|vbuf| match vbuf {
+            Some(vbuf) => {
+                let mapped_attributes = vbuf
+                    .attributes
+                    .iter()
+                    .map(|attr| {
+                        webgpu_sys::GpuVertexAttribute::new_with_f64(
+                            map_vertex_format(attr.format),
+                            attr.offset as f64,
+                            attr.shader_location,
+                        )
+                    })
+                    .collect::<Vec<webgpu_sys::GpuVertexAttribute>>();
+
+                let mapped_vbuf = webgpu_sys::GpuVertexBufferLayout::new_with_f64(
+                    vbuf.array_stride as f64,
+                    &mapped_attributes,
+                );
+                mapped_vbuf.set_step_mode(map_vertex_step_mode(vbuf.step_mode));
+                js_sys::JsNullable::wrap(mapped_vbuf)
+            }
+            None => js_sys::JsNullable::new(),
+        })
+        .collect::<Vec<js_sys::JsNullable<webgpu_sys::GpuVertexBufferLayout>>>();
+
+    mapped_vertex_state.set_buffers(&buffers);
+
+    let mapped_desc = match desc.layout {
+        Some(layout) => webgpu_sys::GpuRenderPipelineDescriptor::new(
+            &layout.as_web().inner,
+            &mapped_vertex_state,
+        ),
+        None => webgpu_sys::GpuRenderPipelineDescriptor::new_with_gpu_auto_layout_mode(
+            webgpu_sys::GpuAutoLayoutMode::Auto,
+            &mapped_vertex_state,
+        ),
+    };
+
+    if let Some(label) = desc.label {
+        mapped_desc.set_label(label);
+    }
+
+    if let Some(ref depth_stencil) = desc.depth_stencil {
+        mapped_desc.set_depth_stencil(&map_depth_stencil_state(depth_stencil));
+    }
+
+    if let Some(ref frag) = desc.fragment {
+        let targets = frag
+            .targets
+            .iter()
+            .map(|target| match target {
+                Some(target) => {
+                    let mapped_format = map_texture_format(target.format);
+                    let mapped_color_state = webgpu_sys::GpuColorTargetState::new(mapped_format);
+                    if let Some(ref bs) = target.blend {
+                        let alpha = map_blend_component(&bs.alpha);
+                        let color = map_blend_component(&bs.color);
+                        let mapped_blend_state = webgpu_sys::GpuBlendState::new(&alpha, &color);
+                        mapped_color_state.set_blend(&mapped_blend_state);
+                    }
+                    mapped_color_state.set_write_mask(target.write_mask.bits());
+                    js_sys::JsNullable::wrap(mapped_color_state)
+                }
+                None => js_sys::JsNullable::new(),
+            })
+            .collect::<Vec<js_sys::JsNullable<webgpu_sys::GpuColorTargetState>>>();
+        let module = frag.module.as_web();
+        let mapped_fragment_desc = webgpu_sys::GpuFragmentState::new(&module.module, &targets);
+        insert_constants_map(&mapped_fragment_desc, frag.compilation_options.constants);
+        if let Some(ep) = frag.entry_point {
+            mapped_fragment_desc.set_entry_point(ep);
+        }
+        mapped_desc.set_fragment(&mapped_fragment_desc);
+    }
+
+    let mapped_multisample = webgpu_sys::GpuMultisampleState::new();
+    mapped_multisample.set_count(desc.multisample.count);
+    mapped_multisample.set_mask(desc.multisample.mask as u32);
+    mapped_multisample.set_alpha_to_coverage_enabled(desc.multisample.alpha_to_coverage_enabled);
+    mapped_desc.set_multisample(&mapped_multisample);
+
+    let mapped_primitive = map_primitive_state(&desc.primitive);
+    mapped_desc.set_primitive(&mapped_primitive);
+
+    mapped_desc
+}
+
+/// SGL: as gfx-rs/wgpu#10438 splits it out of `create_compute_pipeline`.
+fn map_compute_pipeline_descriptor(
+    desc: &wgpu::ComputePipelineDescriptor<'_>,
+) -> webgpu_sys::GpuComputePipelineDescriptor {
+    let shader_module = desc.module.as_web();
+    let mapped_compute_stage = webgpu_sys::GpuProgrammableStage::new(&shader_module.module);
+    insert_constants_map(&mapped_compute_stage, desc.compilation_options.constants);
+    if let Some(ep) = desc.entry_point {
+        mapped_compute_stage.set_entry_point(ep);
+    }
+    let mapped_desc = match desc.layout {
+        Some(layout) => webgpu_sys::GpuComputePipelineDescriptor::new(
+            &layout.as_web().inner,
+            &mapped_compute_stage,
+        ),
+        None => webgpu_sys::GpuComputePipelineDescriptor::new_with_gpu_auto_layout_mode(
+            webgpu_sys::GpuAutoLayoutMode::Auto,
+            &mapped_compute_stage,
+        ),
+    };
+
+    if let Some(label) = desc.label {
+        mapped_desc.set_label(label);
+    }
+
+    mapped_desc
 }
 
 fn map_extent_3d(extent: wgt::Extent3d) -> webgpu_sys::GpuExtent3dDict {
@@ -1227,6 +1398,7 @@ fn future_request_device(
                 WebDevice {
                     inner: device,
                     error_scope_count: Rc::new(Cell::new(0)),
+                    create_async: Cell::new(false),
                 }
                 .into(),
                 WebQueue { inner: queue }.into(),
@@ -1441,6 +1613,9 @@ pub struct WebDevice {
     pub(crate) inner: webgpu_sys::GpuDevice,
     /// Current number of error scopes that have been pushed on the device.
     error_scope_count: Rc<Cell<u32>>,
+    /// SGL: whether the next pipeline creation starts the browser's
+    /// asynchronous call (`creating_async`).
+    create_async: Cell<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -1570,14 +1745,118 @@ pub struct WebPipelineLayout {
     pub(crate) inner: webgpu_sys::GpuPipelineLayout,
 }
 
-#[derive(Debug, Clone)]
-pub struct WebRenderPipeline {
-    pub(crate) inner: webgpu_sys::GpuRenderPipeline,
+/// SGL: a pipeline's browser handle. A pipeline the asynchronous calls
+/// create holds the browser's promise of it instead, until
+/// `create_render_pipeline_async` or `create_compute_pipeline_async` takes
+/// the promise and sets the handle it resolves to, before the caller is
+/// given the pipeline (PROVENANCE.md).
+#[derive(Debug)]
+struct PipelineHandle<P> {
+    handle: OnceCell<P>,
+    promise: RefCell<Option<js_sys::Promise<P>>>,
 }
 
-#[derive(Debug, Clone)]
+impl<P> PipelineHandle<P> {
+    fn ready(handle: P) -> Self {
+        Self {
+            handle: OnceCell::from(handle),
+            promise: RefCell::new(None),
+        }
+    }
+
+    fn promised(promise: js_sys::Promise<P>) -> Self {
+        Self {
+            handle: OnceCell::new(),
+            promise: RefCell::new(Some(promise)),
+        }
+    }
+
+    #[track_caller]
+    fn get(&self) -> &P {
+        self.handle.get().expect(
+            "sgl-webgpu hands out a pipeline created asynchronously only once the browser \
+             resolved it",
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct WebRenderPipeline {
+    inner: PipelineHandle<webgpu_sys::GpuRenderPipeline>,
+}
+
+impl WebRenderPipeline {
+    #[track_caller]
+    fn inner(&self) -> &webgpu_sys::GpuRenderPipeline {
+        self.inner.get()
+    }
+}
+
+#[derive(Debug)]
 pub struct WebComputePipeline {
-    pub(crate) inner: webgpu_sys::GpuComputePipeline,
+    inner: PipelineHandle<webgpu_sys::GpuComputePipeline>,
+}
+
+impl WebComputePipeline {
+    #[track_caller]
+    fn inner(&self) -> &webgpu_sys::GpuComputePipeline {
+        self.inner.get()
+    }
+}
+
+/// SGL: `crate::create_render_pipeline_async`. wgpu gives a custom backend
+/// no way to make a `wgpu::RenderPipeline` but returning one from
+/// `create_render_pipeline`, so the device is marked for that one call,
+/// which starts `createRenderPipelineAsync` and returns a pipeline holding
+/// its promise (gfx-rs/wgpu#10438, PROVENANCE.md).
+pub(crate) fn create_render_pipeline_async(
+    device: &wgpu::Device,
+    desc: &wgpu::RenderPipelineDescriptor<'_>,
+) -> impl Future<Output = Result<wgpu::RenderPipeline, wgpu::Error>> + 'static {
+    let pipeline = device
+        .as_web()
+        .creating_async(|| device.create_render_pipeline(desc));
+    // Handled from here, so a creation whose future is dropped unpolled
+    // rejects without an unhandled promise.
+    let settled = wasm_bindgen_futures::JsFuture::from(
+        pipeline
+            .as_web()
+            .inner
+            .promise
+            .take()
+            .expect("the marked device started createRenderPipelineAsync"),
+    );
+    async move {
+        let handle = settled.await.map_err(pipeline_error_from_js)?;
+        let _ = pipeline.as_web().inner.handle.set(handle);
+        Ok(pipeline)
+    }
+}
+
+/// SGL: `crate::create_compute_pipeline_async`, as
+/// `create_render_pipeline_async`.
+pub(crate) fn create_compute_pipeline_async(
+    device: &wgpu::Device,
+    desc: &wgpu::ComputePipelineDescriptor<'_>,
+) -> impl Future<Output = Result<wgpu::ComputePipeline, wgpu::Error>> + 'static {
+    let pipeline = device
+        .as_web()
+        .creating_async(|| device.create_compute_pipeline(desc));
+    // Handled from here, so a creation whose future is dropped unpolled
+    // rejects without an unhandled promise.
+    let settled = wasm_bindgen_futures::JsFuture::from(
+        pipeline
+            .as_web()
+            .inner
+            .promise
+            .take()
+            .expect("the marked device started createComputePipelineAsync"),
+    );
+    async move {
+        let handle = settled.await.map_err(pipeline_error_from_js)?;
+        let _ = pipeline.as_web().inner.handle.set(handle);
+        Ok(pipeline)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1940,6 +2219,21 @@ impl WebDevice {
             inner: texture,
             drop_guard: Some(Rc::new(DropGuard::new(drop_callback))),
         }
+    }
+
+    /// SGL: runs `create` with the device marked, so the one pipeline it
+    /// creates starts the browser's asynchronous call. The mark is cleared
+    /// however `create` returns, a panic included.
+    fn creating_async<R>(&self, create: impl FnOnce() -> R) -> R {
+        struct Unmark<'a>(&'a Cell<bool>);
+        impl Drop for Unmark<'_> {
+            fn drop(&mut self) {
+                self.0.set(false);
+            }
+        }
+        self.create_async.set(true);
+        let _unmark = Unmark(&self.create_async);
+        create()
     }
 }
 
@@ -2351,110 +2645,24 @@ impl dispatch::DeviceInterface for WebDevice {
         &self,
         desc: &wgpu::RenderPipelineDescriptor<'_>,
     ) -> dispatch::DispatchRenderPipeline {
-        let module = desc.vertex.module.as_web();
-        let mapped_vertex_state = webgpu_sys::GpuVertexState::new(&module.module);
-        insert_constants_map(
-            &mapped_vertex_state,
-            desc.vertex.compilation_options.constants,
-        );
-        if let Some(ep) = desc.vertex.entry_point {
-            mapped_vertex_state.set_entry_point(ep);
-        }
+        // SGL: a device marked by `create_render_pipeline_async` starts the
+        // browser's asynchronous creation instead (PROVENANCE.md).
+        let create_async = self.create_async.replace(false);
 
-        let buffers = desc
-            .vertex
-            .buffers
-            .iter()
-            .map(|vbuf| match vbuf {
-                Some(vbuf) => {
-                    let mapped_attributes = vbuf
-                        .attributes
-                        .iter()
-                        .map(|attr| {
-                            webgpu_sys::GpuVertexAttribute::new_with_f64(
-                                map_vertex_format(attr.format),
-                                attr.offset as f64,
-                                attr.shader_location,
-                            )
-                        })
-                        .collect::<Vec<webgpu_sys::GpuVertexAttribute>>();
+        let mapped_desc = map_render_pipeline_descriptor(desc);
 
-                    let mapped_vbuf = webgpu_sys::GpuVertexBufferLayout::new_with_f64(
-                        vbuf.array_stride as f64,
-                        &mapped_attributes,
-                    );
-                    mapped_vbuf.set_step_mode(map_vertex_step_mode(vbuf.step_mode));
-                    js_sys::JsNullable::wrap(mapped_vbuf)
-                }
-                None => js_sys::JsNullable::new(),
-            })
-            .collect::<Vec<js_sys::JsNullable<webgpu_sys::GpuVertexBufferLayout>>>();
-
-        mapped_vertex_state.set_buffers(&buffers);
-
-        let mapped_desc = match desc.layout {
-            Some(layout) => webgpu_sys::GpuRenderPipelineDescriptor::new(
-                &layout.as_web().inner,
-                &mapped_vertex_state,
-            ),
-            None => webgpu_sys::GpuRenderPipelineDescriptor::new_with_gpu_auto_layout_mode(
-                webgpu_sys::GpuAutoLayoutMode::Auto,
-                &mapped_vertex_state,
-            ),
-        };
-
-        if let Some(label) = desc.label {
-            mapped_desc.set_label(label);
-        }
-
-        if let Some(ref depth_stencil) = desc.depth_stencil {
-            mapped_desc.set_depth_stencil(&map_depth_stencil_state(depth_stencil));
-        }
-
-        if let Some(ref frag) = desc.fragment {
-            let targets = frag
-                .targets
-                .iter()
-                .map(|target| match target {
-                    Some(target) => {
-                        let mapped_format = map_texture_format(target.format);
-                        let mapped_color_state =
-                            webgpu_sys::GpuColorTargetState::new(mapped_format);
-                        if let Some(ref bs) = target.blend {
-                            let alpha = map_blend_component(&bs.alpha);
-                            let color = map_blend_component(&bs.color);
-                            let mapped_blend_state = webgpu_sys::GpuBlendState::new(&alpha, &color);
-                            mapped_color_state.set_blend(&mapped_blend_state);
-                        }
-                        mapped_color_state.set_write_mask(target.write_mask.bits());
-                        js_sys::JsNullable::wrap(mapped_color_state)
-                    }
-                    None => js_sys::JsNullable::new(),
-                })
-                .collect::<Vec<js_sys::JsNullable<webgpu_sys::GpuColorTargetState>>>();
-            let module = frag.module.as_web();
-            let mapped_fragment_desc = webgpu_sys::GpuFragmentState::new(&module.module, &targets);
-            insert_constants_map(&mapped_fragment_desc, frag.compilation_options.constants);
-            if let Some(ep) = frag.entry_point {
-                mapped_fragment_desc.set_entry_point(ep);
+        if create_async {
+            let promise = self.inner.create_render_pipeline_async(&mapped_desc);
+            return WebRenderPipeline {
+                inner: PipelineHandle::promised(promise),
             }
-            mapped_desc.set_fragment(&mapped_fragment_desc);
+            .into();
         }
-
-        let mapped_multisample = webgpu_sys::GpuMultisampleState::new();
-        mapped_multisample.set_count(desc.multisample.count);
-        mapped_multisample.set_mask(desc.multisample.mask as u32);
-        mapped_multisample
-            .set_alpha_to_coverage_enabled(desc.multisample.alpha_to_coverage_enabled);
-        mapped_desc.set_multisample(&mapped_multisample);
-
-        let mapped_primitive = map_primitive_state(&desc.primitive);
-        mapped_desc.set_primitive(&mapped_primitive);
 
         let render_pipeline = self.inner.create_render_pipeline(&mapped_desc).unwrap();
 
         WebRenderPipeline {
-            inner: render_pipeline,
+            inner: PipelineHandle::ready(render_pipeline),
         }
         .into()
     }
@@ -2470,31 +2678,23 @@ impl dispatch::DeviceInterface for WebDevice {
         &self,
         desc: &wgpu::ComputePipelineDescriptor<'_>,
     ) -> dispatch::DispatchComputePipeline {
-        let shader_module = desc.module.as_web();
-        let mapped_compute_stage = webgpu_sys::GpuProgrammableStage::new(&shader_module.module);
-        insert_constants_map(&mapped_compute_stage, desc.compilation_options.constants);
-        if let Some(ep) = desc.entry_point {
-            mapped_compute_stage.set_entry_point(ep);
-        }
-        let mapped_desc = match desc.layout {
-            Some(layout) => webgpu_sys::GpuComputePipelineDescriptor::new(
-                &layout.as_web().inner,
-                &mapped_compute_stage,
-            ),
-            None => webgpu_sys::GpuComputePipelineDescriptor::new_with_gpu_auto_layout_mode(
-                webgpu_sys::GpuAutoLayoutMode::Auto,
-                &mapped_compute_stage,
-            ),
-        };
+        // SGL: as `create_render_pipeline`.
+        let create_async = self.create_async.replace(false);
 
-        if let Some(label) = desc.label {
-            mapped_desc.set_label(label);
+        let mapped_desc = map_compute_pipeline_descriptor(desc);
+
+        if create_async {
+            let promise = self.inner.create_compute_pipeline_async(&mapped_desc);
+            return WebComputePipeline {
+                inner: PipelineHandle::promised(promise),
+            }
+            .into();
         }
 
         let compute_pipeline = self.inner.create_compute_pipeline(&mapped_desc);
 
         WebComputePipeline {
-            inner: compute_pipeline,
+            inner: PipelineHandle::ready(compute_pipeline),
         }
         .into()
     }
@@ -3117,7 +3317,7 @@ impl Drop for WebPipelineLayout {
 
 impl dispatch::RenderPipelineInterface for WebRenderPipeline {
     fn get_bind_group_layout(&self, index: u32) -> dispatch::DispatchBindGroupLayout {
-        let bind_group_layout = self.inner.get_bind_group_layout(index);
+        let bind_group_layout = self.inner().get_bind_group_layout(index);
 
         WebBindGroupLayout {
             inner: bind_group_layout,
@@ -3133,7 +3333,7 @@ impl Drop for WebRenderPipeline {
 
 impl dispatch::ComputePipelineInterface for WebComputePipeline {
     fn get_bind_group_layout(&self, index: u32) -> dispatch::DispatchBindGroupLayout {
-        let bind_group_layout = self.inner.get_bind_group_layout(index);
+        let bind_group_layout = self.inner().get_bind_group_layout(index);
 
         WebBindGroupLayout {
             inner: bind_group_layout,
@@ -3506,7 +3706,7 @@ impl Drop for WebPipelineCache {
 
 impl dispatch::ComputePassInterface for WebComputePassEncoder {
     fn set_pipeline(&mut self, pipeline: &dispatch::DispatchComputePipeline) {
-        let pipeline = &pipeline.as_web().inner;
+        let pipeline = pipeline.as_web().inner();
         self.inner.set_pipeline(pipeline);
     }
 
@@ -3601,7 +3801,7 @@ impl Drop for WebComputePassEncoder {
 
 impl dispatch::RenderPassInterface for WebRenderPassEncoder {
     fn set_pipeline(&mut self, pipeline: &dispatch::DispatchRenderPipeline) {
-        let pipeline = &pipeline.as_web().inner;
+        let pipeline = pipeline.as_web().inner();
 
         self.inner.set_pipeline(pipeline);
     }
@@ -3893,7 +4093,7 @@ impl Drop for WebCommandBuffer {
 
 impl dispatch::RenderBundleEncoderInterface for WebRenderBundleEncoder {
     fn set_pipeline(&mut self, pipeline: &dispatch::DispatchRenderPipeline) {
-        let pipeline = &pipeline.as_web().inner;
+        let pipeline = pipeline.as_web().inner();
         self.inner.set_pipeline(pipeline);
     }
 

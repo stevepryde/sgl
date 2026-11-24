@@ -10,6 +10,7 @@
 //! to their inputs: the tables and the environment atlas still depend on the
 //! camera's height alone.
 use crate::shading::sky::{AERIAL_SIDE, AERIAL_SLICES};
+use crate::view::compile::{Creation, Creator};
 use glam::Mat4;
 
 /// The pass.
@@ -57,7 +58,8 @@ pub(super) struct AerialPipeline {
 }
 
 impl AerialPipeline {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -115,17 +117,15 @@ impl AerialPipeline {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        Self {
-            pipeline: device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(AERIAL_VIEW.name),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(AERIAL_VIEW_ENTRY),
-                compilation_options: Default::default(),
-                cache: None,
-            }),
-            layout,
-        }
+        let pipeline = creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(AERIAL_VIEW.name),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some(AERIAL_VIEW_ENTRY),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        pipeline.map(move |pipeline| Self { pipeline, layout })
     }
 }
 

@@ -5,7 +5,7 @@
 //! their own size and place in the frame (Frame items 11 and 14).
 use crate::shading::gbuffer::COLOR;
 use crate::shading::motion_tiles::{ENTRY_POINTS, GROUP_SIZE, MotionTilesUniform, TILE_SIZE};
-use crate::view::compile::{Compiled, Compiler, SharedModule};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator, SharedModule};
 use crate::view::targets::target_with_usage;
 
 /// The tile targets for one frame size.
@@ -77,14 +77,19 @@ impl MotionTiles {
 
     /// With its pipelines made here: for an owner that is itself made
     /// inside a compile job.
-    pub fn compiled(mut self, device: &wgpu::Device) -> Self {
-        self.pipelines = Self::pipelines(device, self.module.get(device)).into();
-        self
+    pub fn compiled(mut self, creator: &Creator<'_>) -> Creation<Self> {
+        Self::pipelines(creator, self.module.get(creator.device())).map(move |pipelines| {
+            self.pipelines = pipelines.into();
+            self
+        })
     }
 
-    fn pipelines(device: &wgpu::Device, module: &wgpu::ShaderModule) -> [wgpu::ComputePipeline; 3] {
-        ENTRY_POINTS.map(|entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    fn pipelines(
+        creator: &Creator<'_>,
+        module: &wgpu::ShaderModule,
+    ) -> Creation<[wgpu::ComputePipeline; 3]> {
+        Creation::array(ENTRY_POINTS.map(|entry| {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: None,
                 module,
@@ -95,7 +100,7 @@ impl MotionTiles {
                 },
                 cache: None,
             })
-        })
+        }))
     }
 
     /// The scales the passes read (`MotionTiles`), which a program's other
@@ -140,7 +145,7 @@ impl MotionTiles {
         let module = &self.module;
         let pipelines = self.pipelines.get(compiler, "motion tiles", || {
             let module = module.clone();
-            move |device: &wgpu::Device| Self::pipelines(device, module.get(device))
+            move |creator: &Creator<'_>| Self::pipelines(creator, module.get(creator.device()))
         });
         let Some(pipelines) = pipelines.map(|pipelines| pipelines.clone()) else {
             return &self.targets.as_ref().unwrap().neighborhood;

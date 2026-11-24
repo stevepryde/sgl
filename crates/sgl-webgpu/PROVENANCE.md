@@ -23,8 +23,8 @@ pedantic group in the ported module for the same reason.
 ## Departures
 
 Each is forced by the custom-backend interface or by compiling beside wgpu's
-own backend, except the upstream defects fixed and the browser features
-mapped last.
+own backend, except the asynchronous pipeline creation SGL adds, and the
+upstream defects fixed and the browser features mapped last.
 
 - **Wrapping.** Upstream converts its objects into wgpu's `Dispatch*` types
   with `.into()` and unwraps them with `as_webgpu()`. Here `custom_types!`
@@ -90,6 +90,25 @@ mapped last.
   `Uint8Array::copy_from` where upstream calls `set(&Uint8Array::view(..), 0)`
   in an `unsafe` block; it is the same copy. `unsafe` stays only on the trait
   methods wgpu declares unsafe.
+- **Asynchronous pipeline creation.** `create_render_pipeline_async` and
+  `create_compute_pipeline_async` follow gfx-rs/wgpu#10438 (open, at
+  `8869ac63d00e0972ff1c78936e18152f69b398e5`): its API shape, its
+  `pipeline_error_from_js` (here beside `error_from_js`) and its split of
+  each descriptor's mapping out of the synchronous call
+  (`map_render_pipeline_descriptor`, `map_compute_pipeline_descriptor`),
+  which both calls share. wgpu gives a custom backend no way to make a
+  `wgpu::RenderPipeline` or `wgpu::ComputePipeline` but returning one from
+  `DeviceInterface::create_*_pipeline`, so each function marks the device
+  (`WebDevice::create_async`) for one synchronous `create_*_pipeline` call,
+  cleared however it returns; the marked call starts the browser's
+  `create*PipelineAsync` and returns a pipeline holding its promise
+  (`PipelineHandle`), and the function's future sets the handle the promise
+  resolves to before it yields the pipeline. `GPUPipelineError` is a
+  hand-written binding in `ext_bindings.rs` (the vendored bindings predate
+  it) that reads `reason` as a string, so no second string enum of wgpu's
+  name is declared. When wgpu exposes the calls, the crate implements its
+  trait methods as that PR's backend does and deletes the two functions,
+  the mark and `PipelineHandle` ([D-75](../../specs/decisions.md)).
 - **Occlusion queries (upstream defect).** Upstream's `begin_render_pass`
   drops `RenderPassDescriptor::occlusion_query_set`, so every occlusion query
   failed the browser's validation. The port passes it.

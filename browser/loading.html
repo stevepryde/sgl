@@ -10,7 +10,7 @@
   const query = new URLSearchParams(location.search);
   try {
     await init();
-    const report = await measure(query.get("ordinary") === "1", Number(query.get("jobs") ?? 1));
+    const report = await measure(query.get("ordinary") === "1", Number(query.get("jobs") ?? 0));
     out.textContent = report;
     window.__sglReport = report;
   } catch (error) {

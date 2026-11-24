@@ -5,7 +5,7 @@
 use crate::settings::ScreenSpaceIndirect;
 use crate::shading::uniforms::ViewUniform;
 use crate::view::cached_group::CachedGroup;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 use crate::view::history::{HistoryFrame, Kept, StageRun};
 
 /// The pass's four dispatches.
@@ -237,15 +237,17 @@ pub(crate) struct ScreenIndirect {
 }
 
 impl Programs {
-    fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("screen-space indirect light"),
-            source: wgpu::ShaderSource::Wgsl(
-                crate::shading::compose(&[&SCREEN_INDIRECT_PASS]).into(),
-            ),
-        });
+    fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let module = creator
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("screen-space indirect light"),
+                source: wgpu::ShaderSource::Wgsl(
+                    crate::shading::compose(&[&SCREEN_INDIRECT_PASS]).into(),
+                ),
+            });
         let pipeline = |entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: None,
                 module: &module,
@@ -254,24 +256,30 @@ impl Programs {
                 cache: None,
             })
         };
-        let prefilter = pipeline(PREFILTER_ENTRY);
-        let gather = pipeline(GATHER_ENTRY);
-        let denoise = pipeline(DENOISE_ENTRY);
-        let accumulate = pipeline(ACCUMULATE_ENTRY);
-        let groups = [
-            CachedGroup::new(prefilter.get_bind_group_layout(0)),
-            CachedGroup::new(gather.get_bind_group_layout(0)),
-            CachedGroup::new(denoise.get_bind_group_layout(0)),
-            CachedGroup::new(accumulate.get_bind_group_layout(0)),
-            CachedGroup::new(accumulate.get_bind_group_layout(0)),
-        ];
-        Self {
-            prefilter,
-            gather,
-            denoise,
-            accumulate,
-            groups,
-        }
+        Creation::array([
+            pipeline(PREFILTER_ENTRY),
+            pipeline(GATHER_ENTRY),
+            pipeline(DENOISE_ENTRY),
+            pipeline(ACCUMULATE_ENTRY),
+        ])
+        // The groups' layouts are the pipelines', so they are made once
+        // those are.
+        .map(|[prefilter, gather, denoise, accumulate]| {
+            let groups = [
+                CachedGroup::new(prefilter.get_bind_group_layout(0)),
+                CachedGroup::new(gather.get_bind_group_layout(0)),
+                CachedGroup::new(denoise.get_bind_group_layout(0)),
+                CachedGroup::new(accumulate.get_bind_group_layout(0)),
+                CachedGroup::new(accumulate.get_bind_group_layout(0)),
+            ];
+            Self {
+                prefilter,
+                gather,
+                denoise,
+                accumulate,
+                groups,
+            }
+        })
     }
 }
 

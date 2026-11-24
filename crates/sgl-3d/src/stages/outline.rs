@@ -38,7 +38,7 @@ use crate::content::outline::Outline;
 use crate::scene::static_edits::posed_bounds;
 use crate::shading::uniforms::{FrameValues, ViewUniform};
 use crate::view::ViewData;
-use crate::view::compile::Compiled;
+use crate::view::compile::{Compiled, Creation, Creator};
 use crate::view::culling::clip_intersects;
 use crate::view::draw_list::{DrawInstances, DrawList};
 use crate::view::frame::FrameContext;
@@ -218,7 +218,12 @@ struct Programs {
 impl Programs {
     /// The programs for an output of `format` that stores the sRGB encoding
     /// written to it where `encodes_srgb`.
-    fn new(device: &wgpu::Device, format: wgpu::TextureFormat, encodes_srgb: bool) -> Self {
+    fn new(
+        creator: &Creator<'_>,
+        format: wgpu::TextureFormat,
+        encodes_srgb: bool,
+    ) -> Creation<Self> {
+        let device = creator.device();
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -269,7 +274,7 @@ impl Programs {
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
@@ -307,12 +312,12 @@ impl Programs {
                 write_mask: wgpu::ColorWrites::ALL,
             },
         );
-        Self {
+        rows.zip(composite).map(move |(rows, composite)| Self {
             rows_layout,
             composite_layout,
             rows,
             composite,
-        }
+        })
     }
 }
 
@@ -475,7 +480,7 @@ impl Outlining {
             );
         }
         let Some(programs) = self.programs.get(ctx.compiler, "outline", || {
-            move |device: &wgpu::Device| Programs::new(device, format, encodes_srgb)
+            move |creator: &Creator<'_>| Programs::new(creator, format, encodes_srgb)
         }) else {
             // A planning pass: the job is queued and the passes left out.
             return;

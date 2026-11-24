@@ -8,6 +8,7 @@
   import init, { Startup, decodeGlb } from "./browser_baseline.js";
   import { run } from "./startup-harness.js";
   let startup;
+  let prepared = null;
   run({
     library: "sgl",
     async init() { await init(); },
@@ -20,10 +21,28 @@
     async upload(layout) { startup.upload(JSON.stringify(layout)); await startup.completion(); },
     async view() { startup.view(); },
     // The prepared path: the first frame's programs compiled ahead
-    // (`Renderer::compile`), each pass's jobs created before the next.
-    async prepare() { while (!startup.prepare()) await startup.completion(); },
+    // (`Renderer::compile`), every job run as it comes, the page running
+    // an animation frame between calls while the browser compiles them.
+    // The longest gap between those frames is how long preparing kept the
+    // page from presenting.
+    async prepare() {
+      const started = performance.now();
+      let [last, longestGap, longestCall, calls] = [started, 0, 0, 0];
+      for (;;) {
+        const call = performance.now();
+        const ready = startup.prepare();
+        longestCall = Math.max(longestCall, performance.now() - call);
+        calls += 1;
+        if (ready) break;
+        await new Promise(requestAnimationFrame);
+        const at = performance.now();
+        longestGap = Math.max(longestGap, at - last);
+        last = at;
+      }
+      prepared = { ms: performance.now() - started, longest_frame_gap_ms: longestGap, longest_prepare_call_ms: longestCall, calls };
+    },
     frame(seconds, state) { startup.frame(seconds, state.yaw, state.mask, state.effect); },
     completion() { return startup.completion(); },
-    details() { return JSON.parse(startup.report()); },
+    details() { return { ...JSON.parse(startup.report()), prepare: prepared }; },
   });
 </script>

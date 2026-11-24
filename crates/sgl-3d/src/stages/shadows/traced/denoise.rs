@@ -15,7 +15,7 @@ use super::{Pass, texture};
 use crate::settings::RayTracedShadowQuality;
 use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 
 /// The entry points the denoiser's pipelines are created with.
 pub(crate) const TILE_CLASSIFICATION_ENTRY: &str = "traced_denoise_tile_classification";
@@ -291,34 +291,36 @@ struct Chain {
 }
 
 impl Chain {
-    fn new(device: &wgpu::Device, shape: Shape) -> Self {
+    fn new(creator: &Creator<'_>, shape: Shape) -> Creation<Self> {
         let (classification, filter) = match shape.lanes {
             Lanes::One => (&TILE_CLASSIFICATION_ONE, &FILTER_ONE),
             Lanes::Four => (&TILE_CLASSIFICATION_FOUR, &FILTER_FOUR),
         };
         let last = shape.passes - 1;
         let flag = |on: bool| f64::from(u8::from(on));
-        Self {
-            classification: Pass::new(device, classification, TILE_CLASSIFICATION_ENTRY, &[]),
-            filters: (0..shape.passes)
-                .map(|pass| {
-                    // Upstream's second pass of three finds a cleared tile
-                    // in its target as the classification wrote it; every
-                    // other pass, the last among them, writes it.
-                    let write_cleared = pass != 1 || pass == last;
-                    Pass::new(
-                        device,
-                        filter,
-                        FILTER_ENTRY,
-                        &[
-                            ("filter_step", f64::from(1u32 << pass)),
-                            ("filter_final", flag(pass == last)),
-                            ("filter_write_cleared", flag(write_cleared)),
-                        ],
-                    )
-                })
-                .collect(),
-        }
+        let classification = Pass::new(creator, classification, TILE_CLASSIFICATION_ENTRY, &[]);
+        let filters = Creation::all((0..shape.passes).map(|pass| {
+            // Upstream's second pass of three finds a cleared tile
+            // in its target as the classification wrote it; every
+            // other pass, the last among them, writes it.
+            let write_cleared = pass != 1 || pass == last;
+            Pass::new(
+                creator,
+                filter,
+                FILTER_ENTRY,
+                &[
+                    ("filter_step", f64::from(1u32 << pass)),
+                    ("filter_final", flag(pass == last)),
+                    ("filter_write_cleared", flag(write_cleared)),
+                ],
+            )
+        }));
+        classification
+            .zip(filters)
+            .map(|(classification, filters)| Self {
+                classification,
+                filters,
+            })
     }
 }
 
@@ -346,7 +348,7 @@ impl Denoiser {
                 .unwrap();
             ready &= chain
                 .get(compiler, "ray-traced shadow denoiser", || {
-                    move |device: &wgpu::Device| Chain::new(device, shape)
+                    move |creator: &Creator<'_>| Chain::new(creator, shape)
                 })
                 .is_some();
         }

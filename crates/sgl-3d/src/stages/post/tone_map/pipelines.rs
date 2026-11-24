@@ -7,7 +7,7 @@ use super::{
 };
 use crate::shading::gbuffer::COLOR as HDR;
 use crate::stages::post::{Output, inputs::pipeline};
-use crate::view::compile::{Compiled, Compiler, SharedModule};
+use crate::view::compile::{Compiled, Compiler, Creator, SharedModule};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -65,7 +65,7 @@ impl Pipelines {
             .or_default()
             .get(compiler, "presentation", || {
                 let (inputs, extra, shader) = (inputs.clone(), layout.cloned(), shader.clone());
-                move |device: &wgpu::Device| {
+                move |creator: &Creator<'_>| {
                     let layouts: &[_] = match &extra {
                         Some(extra) => &[Some(&inputs), Some(extra)],
                         None => &[Some(&inputs)],
@@ -76,9 +76,9 @@ impl Pipelines {
                         Output => (output.format, &encodes),
                     };
                     pipeline(
-                        device,
+                        creator,
                         layouts,
-                        shader.get(device),
+                        shader.get(creator.device()),
                         entry,
                         &[format],
                         (None, constants),

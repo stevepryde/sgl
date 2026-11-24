@@ -4,7 +4,7 @@
 //! and composition read.
 use crate::shading;
 use crate::view::cached_group::CachedGroup;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 use crate::view::reflection_camera;
 
 pub(crate) static PROBE_CULLING: shading::Module = shading::Module {
@@ -94,12 +94,13 @@ struct CullPass {
 }
 
 impl CullPass {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("specular probe tiled culling"),
             source: wgpu::ShaderSource::Wgsl(shading::compose(&[&PROBE_CULLING]).into()),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("specular probe tiled culling"),
             layout: None,
             module: &shader,
@@ -107,19 +108,21 @@ impl CullPass {
             compilation_options: Default::default(),
             cache: None,
         });
-        Self {
+        let camera = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("specular probe culling camera"),
+                size: std::mem::size_of::<CullingCamera>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        // Its group's layout is the pipeline's, so it is made once that is.
+        pipeline.map(|pipeline| Self {
             group: CachedGroup::new(pipeline.get_bind_group_layout(0)),
             pipeline,
-            camera: crate::counters::buffer(
-                device,
-                &wgpu::BufferDescriptor {
-                    label: Some("specular probe culling camera"),
-                    size: std::mem::size_of::<CullingCamera>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                },
-            ),
-        }
+            camera,
+        })
     }
 }
 

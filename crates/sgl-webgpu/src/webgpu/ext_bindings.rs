@@ -32,6 +32,27 @@ extern "C" {
     fn gpu(ext: &NavigatorWithGpu) -> webgpu_sys::Gpu;
 }
 
+// --- Bindings for `GPUPipelineError` ---
+// SGL: the vendored bindings (wasm-bindgen 0.2.127) have no `GPUPipelineError`,
+// which rejects `createRenderPipelineAsync` and `createComputePipelineAsync`
+// (PROVENANCE.md). `reason` is read as a string, not as the generated
+// `GPUPipelineErrorReason` enum, whose name wgpu's own bindings would share.
+#[wasm_bindgen]
+extern "C" {
+    /// A `GPUPipelineError`, a `DOMException` with a `reason`.
+    #[wasm_bindgen(js_name = GPUPipelineError, extends = js_sys::Object)]
+    #[derive(Debug, Clone)]
+    pub type GpuPipelineError;
+
+    /// `"validation"` or `"internal"`.
+    #[wasm_bindgen(method, getter)]
+    pub fn reason(this: &GpuPipelineError) -> String;
+
+    /// The `DOMException`'s message.
+    #[wasm_bindgen(method, getter)]
+    pub fn message(this: &GpuPipelineError) -> String;
+}
+
 impl NavigatorGpu for web_sys::Navigator {
     fn gpu(navigator: &Self) -> webgpu_sys::Gpu {
         // Must be an unchecked ref as this class does not exist at runtime.

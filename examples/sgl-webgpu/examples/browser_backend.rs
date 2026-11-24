@@ -144,6 +144,21 @@ pub async fn run() -> String {
         "texture format tiers",
         texture_format_tiers(&gpu).await,
     );
+    record(
+        &mut report,
+        "asynchronous render pipeline",
+        async_render_pipeline(&gpu).await,
+    );
+    record(
+        &mut report,
+        "asynchronous compute pipeline",
+        async_compute_pipeline(&gpu).await,
+    );
+    record(
+        &mut report,
+        "asynchronous pipeline error",
+        async_pipeline_error(&gpu).await,
+    );
     report
 }
 
@@ -1392,4 +1407,186 @@ async fn next_frame() -> Result<(), String> {
         .await
         .map(|_| ())
         .map_err(|error| format!("requestAnimationFrame: {error:?}"))
+}
+
+/// A render pipeline created asynchronously draws as its shader says: the
+/// whole target red, then its right half green.
+async fn async_render_pipeline(gpu: &Gpu) -> Result<String, String> {
+    let module = gpu
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("draw"),
+            source: wgpu::ShaderSource::Wgsl(DRAW_SHADER.into()),
+        });
+    let pipeline = sgl_webgpu::create_render_pipeline_async(
+        &gpu.device,
+        &wgpu::RenderPipelineDescriptor {
+            label: Some("asynchronous draw"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        },
+    )
+    .await
+    .map_err(|error| format!("creation failed: {error}"))?;
+    let texture = target(
+        gpu,
+        wgpu::TextureFormat::Rgba8Unorm,
+        1,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("asynchronous draw"),
+            color_attachments: &[Some(color_attachment(&view, None))],
+            ..Default::default()
+        });
+        pass.set_pipeline(&pipeline);
+        pass.draw(0..6, 0..1);
+    }
+    gpu.queue.submit([encoder.finish()]);
+    let texels = texels(gpu, &texture, 0).await?;
+    for (index, &got) in texels.iter().enumerate() {
+        let x = index % SIZE as usize;
+        let expected = if x < 2 { RED } else { GREEN };
+        ensure!(
+            got == expected,
+            "pixel ({x}, {}) is {got:?}, expected {expected:?}",
+            index / SIZE as usize
+        );
+    }
+    Ok("left half red, right half green".into())
+}
+
+/// A compute pipeline created asynchronously, with its layout derived from
+/// its shader and a constant set at creation, writes the values its shader
+/// says.
+async fn async_compute_pipeline(gpu: &Gpu) -> Result<String, String> {
+    const COUNT: u32 = 64;
+    let module = gpu
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("asynchronous compute"),
+            source: wgpu::ShaderSource::Wgsl(
+                "
+override step: u32 = 1u;
+@group(0) @binding(0) var<storage, read_write> values: array<u32, 64>;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    values[id.x] = id.x * step + 5u;
+}
+"
+                .into(),
+            ),
+        });
+    let pipeline = sgl_webgpu::create_compute_pipeline_async(
+        &gpu.device,
+        &wgpu::ComputePipelineDescriptor {
+            label: Some("asynchronous compute"),
+            layout: None,
+            module: &module,
+            entry_point: Some("main"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &[("step", 7.0)],
+                ..Default::default()
+            },
+            cache: None,
+        },
+    )
+    .await
+    .map_err(|error| format!("creation failed: {error}"))?;
+    let size = u64::from(COUNT * 4);
+    let storage = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("values"),
+        size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("asynchronous compute"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: storage.as_entire_binding(),
+        }],
+    });
+    let readback = readback_buffer(gpu, size);
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&storage, 0, &readback, 0, size);
+    gpu.queue.submit([encoder.finish()]);
+    let bytes = read(&readback, 0..size).await?;
+    for (i, value) in (0..COUNT).zip(bytes.chunks_exact(4)) {
+        let got = u32::from_le_bytes([value[0], value[1], value[2], value[3]]);
+        let expected = i * 7 + 5;
+        ensure!(got == expected, "value {i} is {got}, expected {expected}");
+    }
+    Ok(format!("{COUNT} values, step constant 7"))
+}
+
+/// A pipeline the browser must reject, its entry point missing from its
+/// module, resolves to a validation error that names the entry point, and
+/// a validation scope around its creation catches nothing.
+async fn async_pipeline_error(gpu: &Gpu) -> Result<String, String> {
+    let module = gpu
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("no such entry point"),
+            source: wgpu::ShaderSource::Wgsl("@compute @workgroup_size(1) fn main() {}".into()),
+        });
+    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let created = sgl_webgpu::create_compute_pipeline_async(
+        &gpu.device,
+        &wgpu::ComputePipelineDescriptor {
+            label: Some("no such entry point"),
+            layout: None,
+            module: &module,
+            entry_point: Some("absent"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            cache: None,
+        },
+    )
+    .await;
+    let caught = scope.pop().await;
+    let description = match created {
+        Err(wgpu::Error::Validation { description, .. }) => description,
+        Err(other) => return Err(format!("rejected with a non-validation error: {other:?}")),
+        Ok(_) => return Err("the browser created it".into()),
+    };
+    ensure!(
+        description.contains("absent"),
+        "the error does not name the entry point: {description}"
+    );
+    ensure!(caught.is_none(), "the error scope caught {caught:?}");
+    Ok(format!(
+        "validation error: {}",
+        description.lines().next().unwrap_or_default()
+    ))
 }

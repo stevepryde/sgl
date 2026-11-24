@@ -183,7 +183,15 @@ fn coverage(
             .into(),
         ),
     });
-    let raster = pipeline(device, &shader, "white", "fullscreen", FORMAT, &[]);
+    let raster = pipeline(
+        &crate::view::compile::Creator::now(device),
+        &shader,
+        "white",
+        "fullscreen",
+        FORMAT,
+        &[],
+    )
+    .now();
     let render = |target: &wgpu::Texture| {
         let view = target.create_view(&Default::default());
         let mut encoder = device.create_command_encoder(&Default::default());

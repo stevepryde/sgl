@@ -683,7 +683,8 @@ fn an_infinite_composed_texel_leaves_every_level_of_the_copy_finite() {
         })
         .collect();
     let composed = test_support::hdr_texture(&device, &queue, size, &texels);
-    let mut transmission = super::transmission::Transmission::new(&device);
+    let mut transmission =
+        super::transmission::Transmission::new(&crate::view::compile::Creator::now(&device)).now();
     let mut encoder = device.create_command_encoder(&Default::default());
     let copy = transmission
         .encode(&device, &mut encoder, &composed, None)

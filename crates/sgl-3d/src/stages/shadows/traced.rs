@@ -30,7 +30,7 @@ pub(crate) mod slots;
 use crate::settings::RayTracedShadowQuality;
 use crate::shading::{self, shadow_mask};
 use crate::view::cached_group::CachedGroup;
-use crate::view::compile::Compiled;
+use crate::view::compile::{Compiled, Creation, Creator};
 use crate::view::frame::{FrameContext, ShadowMask};
 use crate::view::history::{Kept, StageRun};
 use crate::view::trace_paths::{TracePaths, TracePipelines};
@@ -170,16 +170,18 @@ struct Pass {
 impl Pass {
     /// The pass `entry` of `module`, its pipeline constants `constants`.
     fn new(
-        device: &wgpu::Device,
+        creator: &Creator<'_>,
         module: &'static shading::Module,
         entry: &str,
         constants: &[(&str, f64)],
-    ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(entry),
-            source: wgpu::ShaderSource::Wgsl(shading::compose(&[module]).into()),
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    ) -> Creation<Self> {
+        let shader = creator
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(entry),
+                source: wgpu::ShaderSource::Wgsl(shading::compose(&[module]).into()),
+            });
+        let pipeline = creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(entry),
             layout: None,
             module: &shader,
@@ -190,11 +192,14 @@ impl Pass {
             },
             cache: None,
         });
-        let group = || CachedGroup::new(pipeline.get_bind_group_layout(0));
-        Self {
-            groups: [group(), group()],
-            pipeline,
-        }
+        // Its groups' layout is the pipeline's, so they are made once it is.
+        pipeline.map(|pipeline| {
+            let group = || CachedGroup::new(pipeline.get_bind_group_layout(0));
+            Self {
+                groups: [group(), group()],
+                pipeline,
+            }
+        })
     }
 }
 
@@ -410,8 +415,8 @@ impl TracedShadows {
             Some(hardware),
             (&mut self.trace, ()),
             "ray-traced shadow rays",
-            |device, shader, layout| {
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            |creator: &Creator<'_>, shader, layout| {
+                creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                     label: Some("ray-traced shadow rays"),
                     layout: Some(layout),
                     module: shader,
@@ -424,12 +429,12 @@ impl TracedShadows {
         let temporal = self
             .temporal
             .get(ctx.compiler, "ray-traced shadow temporal", || {
-                |device: &wgpu::Device| Pass::new(device, &TEMPORAL, TEMPORAL_ENTRY, &[])
+                |creator: &Creator<'_>| Pass::new(creator, &TEMPORAL, TEMPORAL_ENTRY, &[])
             });
         let upsample = self
             .upsample
             .get(ctx.compiler, "ray-traced shadow upsample", || {
-                |device: &wgpu::Device| Pass::new(device, &UPSAMPLE, UPSAMPLE_ENTRY, &[])
+                |creator: &Creator<'_>| Pass::new(creator, &UPSAMPLE, UPSAMPLE_ENTRY, &[])
             });
         // Every program is asked for before a planning pass that lacks one
         // leaves the stage's commands out: the lighting pass still takes

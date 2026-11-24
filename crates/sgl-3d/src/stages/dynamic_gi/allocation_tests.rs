@@ -59,7 +59,8 @@ fn allocate_from(
 ) -> Option<Vec<Frame>> {
     let (device, queue) = test_support::device()?;
     let stage = DynamicGi::new(&device);
-    let pipelines = Pipelines::new(&device, &stage.layouts);
+    let pipelines =
+        Pipelines::new(&crate::view::compile::Creator::now(&device), &stage.layouts).now();
     let count = placement.probes.iter().product::<u32>();
     let storage = |label, contents: &[u8]| {
         crate::scene::buffer(

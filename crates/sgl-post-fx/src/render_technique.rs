@@ -105,12 +105,17 @@ pub fn create_shader(
     }
 }
 
-/// What creates a technique's pipeline, with its shader modules: it owns
-/// what it reads but the device, and runs once, on any thread.
+/// What describes a technique's pipeline: given the device, it makes what
+/// the descriptor borrows (its layout and shader modules) and hands the
+/// descriptor to the sink it is given, which creates the pipeline the
+/// compiler's way (at once, or asynchronously in the browser). It owns what
+/// it reads but the device, runs on any thread, and may run more than once.
 #[cfg(not(target_arch = "wasm32"))]
-pub type CreatePipeline = Box<dyn FnOnce(&wgpu::Device) -> wgpu::RenderPipeline + Send>;
+pub type DescribePipeline =
+    Box<dyn Fn(&wgpu::Device, &mut dyn FnMut(&wgpu::RenderPipelineDescriptor<'_>)) + Send>;
 #[cfg(target_arch = "wasm32")]
-pub type CreatePipeline = Box<dyn FnOnce(&wgpu::Device) -> wgpu::RenderPipeline>;
+pub type DescribePipeline =
+    Box<dyn Fn(&wgpu::Device, &mut dyn FnMut(&wgpu::RenderPipelineDescriptor<'_>))>;
 
 /// Who creates the techniques' pipelines, and when (PROVENANCE DFX-2):
 /// DiligentFX may create a PSO asynchronously, and an effect whose PSOs are
@@ -120,17 +125,17 @@ pub type CreatePipeline = Box<dyn FnOnce(&wgpu::Device) -> wgpu::RenderPipeline>
 /// thread, a loading step) implements this and gives it to the effects
 /// (`set_pipeline_compiler`).
 pub trait PipelineCompiler {
-    /// The pipeline `create` makes for the technique that owns `slot`,
-    /// named `label`, or none while it is not ready. Called again each time
-    /// the technique is initialized until it is: `slot` is the technique's
-    /// storage for whatever the compiler keeps between calls, and `create`
-    /// may be dropped unrun once a pipeline is on its way.
+    /// The pipeline `describe` describes for the technique that owns
+    /// `slot`, named `label`, or none while it is not ready. Called again
+    /// each time the technique is initialized until it is: `slot` is the
+    /// technique's storage for whatever the compiler keeps between calls,
+    /// and `describe` may be dropped unrun once a pipeline is on its way.
     fn compile(
         &self,
         device: &wgpu::Device,
         slot: &mut PipelineSlot,
         label: &'static str,
-        create: CreatePipeline,
+        describe: DescribePipeline,
     ) -> Option<wgpu::RenderPipeline>;
 }
 
@@ -144,9 +149,13 @@ impl PipelineCompiler for InPlace {
         device: &wgpu::Device,
         _: &mut PipelineSlot,
         _: &'static str,
-        create: CreatePipeline,
+        describe: DescribePipeline,
     ) -> Option<wgpu::RenderPipeline> {
-        Some(create(device))
+        let mut pipeline = None;
+        describe(device, &mut |desc| {
+            pipeline = Some(device.create_render_pipeline(desc));
+        });
+        pipeline
     }
 }
 
@@ -283,8 +292,8 @@ impl PostFXRenderTechnique {
             })
             .collect();
         let (vertex_shader, pixel_shader) = (vertex_shader.clone(), pixel_shader.clone());
-        let create: CreatePipeline = Box::new(move |device: &wgpu::Device| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let describe: DescribePipeline = Box::new(move |device, create| {
+            create(&wgpu::RenderPipelineDescriptor {
                 label: Some(pso_name),
                 layout: Some(
                     &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -334,9 +343,9 @@ impl PostFXRenderTechnique {
                 }),
                 multiview_mask: None,
                 cache: None,
-            })
+            });
         });
-        self.pso = pipelines.compile(device, &mut self.slot, pso_name, create);
+        self.pso = pipelines.compile(device, &mut self.slot, pso_name, describe);
     }
 
     /// Whether the technique has its pipeline: DiligentFX's

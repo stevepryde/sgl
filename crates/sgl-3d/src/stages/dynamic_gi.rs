@@ -38,7 +38,7 @@
 use crate::Scene;
 use crate::scene::dynamic_gi::{InstalledVolume, ProbePlacement};
 use crate::shading::dynamic_gi as layout;
-use crate::view::compile::Compiled;
+use crate::view::compile::{Compiled, Creator};
 use crate::view::effective::Effective;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::LitConstants;
@@ -283,7 +283,7 @@ impl DynamicGi {
         // leaves the update out.
         let pipelines = self.pipelines.get(ctx.compiler, "dynamic GI", || {
             let layouts = self.layouts.clone();
-            move |device: &wgpu::Device| Pipelines::new(device, &layouts)
+            move |creator: &Creator<'_>| Pipelines::new(creator, &layouts)
         });
         let trace = self.trace.get_or_insert_with(|| {
             Trace::new(&self.layouts, &ctx.bindings.lit, &ctx.bindings.scene)

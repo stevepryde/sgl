@@ -1,4 +1,5 @@
 //! DiligentFX SSAO temporal accumulation; private to the opaque stage.
+use crate::view::compile::{Creation, Creator};
 use crate::{
     settings::AmbientOcclusionQuality,
     view::{
@@ -31,12 +32,13 @@ pub(super) struct Temporal {
     history: Kept<(StageRun, AmbientOcclusionQuality, f32)>,
 }
 impl Temporal {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("AO temporal accumulation"),
             source: wgpu::ShaderSource::Wgsl(sgl_post_fx::embed_wgsl!("temporal.wgsl").into()),
         });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipeline = creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("AO temporal accumulation"),
             layout: None,
             module: &module,
@@ -44,22 +46,23 @@ impl Temporal {
             compilation_options: Default::default(),
             cache: None,
         });
-        let groups = std::array::from_fn(|_| CachedGroup::new(pipeline.get_bind_group_layout(0)));
-        Self {
+        let params = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("AO temporal parameters"),
+                size: std::mem::size_of::<Params>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        // Its groups' layout is the pipeline's, so they are made once it is.
+        pipeline.map(|pipeline| Self {
+            groups: std::array::from_fn(|_| CachedGroup::new(pipeline.get_bind_group_layout(0))),
             pipeline,
-            groups,
-            params: crate::counters::buffer(
-                device,
-                &wgpu::BufferDescriptor {
-                    label: Some("AO temporal parameters"),
-                    size: std::mem::size_of::<Params>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                },
-            ),
+            params,
             targets: None,
             history: Kept::default(),
-        }
+        })
     }
     /// Settles the last render's history: see `Kept::settle`.
     pub fn settle(&mut self, finished: bool) {

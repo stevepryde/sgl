@@ -129,7 +129,7 @@ fn finite_hdr_survives_trace_filter_storage_and_both_resolves() {
     };
     eprintln!("GPU: {:?}", adapter.get_info());
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
-    let pipeline = Velvet::new(&device);
+    let pipeline = Velvet::new(&crate::view::compile::Creator::now(&device)).now();
     let projection = Mat4::from_scale(glam::Vec3::new(1., -1., 1.))
         * camera::rh::proj::directx::orthographic(-1., 1., -1., 1., 10., 0.1);
     queue.write_buffer(

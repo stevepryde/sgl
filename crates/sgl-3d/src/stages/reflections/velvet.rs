@@ -16,6 +16,7 @@ mod targets;
 
 use crate::shading::Module;
 use crate::view::cached_group::CachedGroup;
+use crate::view::compile::{Creation, Creator};
 use crate::view::history::StageHistory;
 use crate::view::reflection_camera;
 use glam::{Mat4, Vec4};
@@ -198,13 +199,14 @@ pub(crate) struct Velvet {
 }
 
 impl Velvet {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let pipeline = |label, program: &'static Module, entry_point| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(label),
                 source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[program]).into()),
             });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: None,
                 module: &module,
@@ -224,37 +226,66 @@ impl Velvet {
                 },
             )
         };
-        Self {
-            inputs: pipeline("Godot SSR inputs", &INPUTS, MAIN_ENTRY),
-            downsample: pipeline("Godot SSR downsample", &DOWNSAMPLE, MAIN_ENTRY),
-            hiz: pipeline("Godot SSR hi-z", &HIZ, MAIN_ENTRY),
-            trace: pipeline("Godot SSR main", &TRACE, MAIN_ENTRY),
-            temporal: pipeline("Godot SSR temporal", &TEMPORAL, MAIN_ENTRY),
-            filter: pipeline("Godot SSR roughness filter", &FILTER, MAIN_ENTRY),
-            resolve_half: pipeline("Godot SSR resolve", &RESOLVE, RESOLVE_HALF_ENTRY),
-            resolve_full: pipeline(
-                "Godot SSR resolve at full size",
-                &RESOLVE,
-                RESOLVE_FULL_ENTRY,
-            ),
-            linear: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("Godot SSR linear"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                ..Default::default()
-            }),
-            view: uniform("Godot SSR view", std::mem::size_of::<[[f32; 4]; 4]>()),
-            scene_data: uniform("Godot SSR scene data", std::mem::size_of::<SceneData>()),
-            trace_params: uniform("Godot SSR parameters", std::mem::size_of::<TraceParams>()),
-            temporal_params: uniform(
-                "Godot SSR temporal parameters",
-                std::mem::size_of::<TemporalParams>(),
-            ),
-            targets: None,
-            groups: None,
-            history: StageHistory::default(),
-        }
+        let inputs = pipeline("Godot SSR inputs", &INPUTS, MAIN_ENTRY);
+        let downsample = pipeline("Godot SSR downsample", &DOWNSAMPLE, MAIN_ENTRY);
+        let hiz = pipeline("Godot SSR hi-z", &HIZ, MAIN_ENTRY);
+        let trace = pipeline("Godot SSR main", &TRACE, MAIN_ENTRY);
+        let temporal = pipeline("Godot SSR temporal", &TEMPORAL, MAIN_ENTRY);
+        let filter = pipeline("Godot SSR roughness filter", &FILTER, MAIN_ENTRY);
+        let resolve_half = pipeline("Godot SSR resolve", &RESOLVE, RESOLVE_HALF_ENTRY);
+        let resolve_full = pipeline(
+            "Godot SSR resolve at full size",
+            &RESOLVE,
+            RESOLVE_FULL_ENTRY,
+        );
+        let linear = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Godot SSR linear"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        let view = uniform("Godot SSR view", std::mem::size_of::<[[f32; 4]; 4]>());
+        let scene_data = uniform("Godot SSR scene data", std::mem::size_of::<SceneData>());
+        let trace_params = uniform("Godot SSR parameters", std::mem::size_of::<TraceParams>());
+        let temporal_params = uniform(
+            "Godot SSR temporal parameters",
+            std::mem::size_of::<TemporalParams>(),
+        );
+        let targets = None;
+        let groups = None;
+        let history = StageHistory::default();
+        inputs
+            .zip(downsample)
+            .zip(hiz)
+            .zip(trace)
+            .zip(temporal)
+            .zip(filter)
+            .zip(resolve_half)
+            .zip(resolve_full)
+            .map(
+                move |(
+                    ((((((inputs, downsample), hiz), trace), temporal), filter), resolve_half),
+                    resolve_full,
+                )| Self {
+                    inputs,
+                    downsample,
+                    hiz,
+                    trace,
+                    temporal,
+                    filter,
+                    resolve_half,
+                    resolve_full,
+                    linear,
+                    view,
+                    scene_data,
+                    trace_params,
+                    temporal_params,
+                    targets,
+                    groups,
+                    history,
+                },
+            )
     }
 
     /// Settles the last render's history: see `Kept::settle`.

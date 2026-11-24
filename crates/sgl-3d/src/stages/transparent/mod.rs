@@ -14,7 +14,7 @@ use crate::scene::shaders::{ShadingChange, ShadingChanges};
 use crate::shading::bind::{self, BindingTier, BlendedTrace};
 use crate::view::FrameViews;
 use crate::view::cached_group::CachedGroup;
-use crate::view::compile::Compiled;
+use crate::view::compile::{Compiled, Creator};
 use crate::view::effective::CompositeDraws;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::GeometryPass;
@@ -276,7 +276,7 @@ impl Transparent {
         if ctx.effective.composite.mist {
             let mist = self.mist.get(ctx.compiler, "mist", || {
                 let unlit = ctx.bindings.unlit.clone();
-                move |device: &wgpu::Device| mist::Mist::new(device, &unlit)
+                move |creator: &Creator<'_>| mist::Mist::new(creator, &unlit)
             });
             if let Some(mist) = mist {
                 mist.order(
@@ -374,7 +374,7 @@ impl Transparent {
             .then(|| {
                 let effects = self.glow.get(ctx.compiler, "additive glow", || {
                     let unlit = ctx.bindings.unlit.clone();
-                    move |device: &wgpu::Device| effects::Effects::new(device, &unlit)
+                    move |creator: &Creator<'_>| effects::Effects::new(creator, &unlit)
                 })?;
                 let group = self.glow_group.get_or_insert_with(|| {
                     effects.depth_group(ctx.device, &targets.depth, &self.exposure)

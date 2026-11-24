@@ -1205,13 +1205,14 @@ fn bounded_filter_filters_as_the_sampler_filters_the_bounded_scene() {
     let format = wgpu::TextureFormat::Rgba32Float;
     let render = |entry: &str, scene: &wgpu::TextureView| {
         let pipeline = inputs::pipeline(
-            &device,
+            &crate::view::compile::Creator::now(&device),
             &[Some(inputs.layout())],
             &shader,
             entry,
             &[format],
             (None, &[]),
-        );
+        )
+        .now();
         let output = target(&device, entry, output_size, format);
         let group = inputs.group(&device, scene, &unread_bloom);
         let mut encoder = device.create_command_encoder(&Default::default());

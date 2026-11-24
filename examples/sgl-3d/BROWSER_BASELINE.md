@@ -196,7 +196,7 @@ bun scripts/tasks.ts measure-browser --startup --runs 5 --captures target/startu
 `--scene minimal|opening` runs one scene (both by default); `--startup-path
 prepared` readies each library's first frame before it: three.js with
 `renderer.compileAsync(scene, camera)`, SGL with `Renderer::compile`, running
-every job a pass returns and awaiting the queue before the next
+every job as it comes and waiting a frame between calls
 ([`startup-sgl.html`](../../browser/startup-sgl.html)); `--skip-build` reuses
 the built module. On a shared machine, build first and take timings one
 scene and a few runs at a time. The command prints a median

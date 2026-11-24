@@ -11,6 +11,7 @@
 //! context.
 mod inputs;
 
+use crate::view::compile::{Creation, Creator};
 pub(crate) use inputs::{FS_MAIN_ENTRY, INPUTS};
 use inputs::{Inputs, MATERIAL_FORMAT, MOTION_FORMAT, NORMAL_FORMAT};
 
@@ -236,11 +237,13 @@ impl PostFx {
     }
 
     /// The inputs pass's pipeline.
-    fn prepare_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("DiligentFX inputs"),
-            source: wgpu::ShaderSource::Wgsl(shading::compose(&[&INPUTS]).into()),
-        });
+    fn prepare_pipeline(creator: &Creator<'_>) -> Creation<wgpu::RenderPipeline> {
+        let module = creator
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("DiligentFX inputs"),
+                source: wgpu::ShaderSource::Wgsl(shading::compose(&[&INPUTS]).into()),
+            });
         let target = |format| {
             Some(wgpu::ColorTargetState {
                 format,
@@ -248,7 +251,7 @@ impl PostFx {
                 write_mask: wgpu::ColorWrites::ALL,
             })
         };
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("DiligentFX inputs from the G-buffer"),
             layout: None,
             vertex: wgpu::VertexState {
@@ -628,10 +631,18 @@ impl sgl_post_fx::render_technique::PipelineCompiler for TechniqueCompiler {
         _: &wgpu::Device,
         slot: &mut sgl_post_fx::render_technique::PipelineSlot,
         label: &'static str,
-        create: sgl_post_fx::render_technique::CreatePipeline,
+        describe: sgl_post_fx::render_technique::DescribePipeline,
     ) -> Option<wgpu::RenderPipeline> {
         slot.get_or_insert_with(Compiled::<wgpu::RenderPipeline>::default)
-            .get(&self.0, label, || create)
+            .get(&self.0, label, || {
+                move |creator: &Creator<'_>| {
+                    let mut created = None;
+                    describe(creator.device(), &mut |desc| {
+                        created = Some(creator.render_pipeline(desc));
+                    });
+                    created.expect("a technique describes its pipeline")
+                }
+            })
             .map(|pipeline| pipeline.clone())
     }
 }

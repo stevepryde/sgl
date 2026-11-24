@@ -6,16 +6,16 @@
 //! [--jobs-per-frame N]`, which prints its report.
 //!
 //! Each animation frame the page draws its loading screen (a pass that
-//! clears the page's canvas, standing in for one) and asks the renderer
-//! what the level's first frame still lacks. It runs up to
-//! `jobs_per_frame` of the compile jobs returned (1 unless asked), then no
-//! more until the browser has created those (`on_submitted_work_done`):
-//! pipeline creation returns at once and compiles in the browser's GPU
-//! process, which presents nothing until it has, so jobs run without that
-//! wait pile up there and stall the page for all of them together. Paced,
-//! the longest stall is one batch's compile. Every program the frame
-//! needs is a job. `--ordinary` skips `compile`: the first `render`
-//! creates everything in one frame.
+//! clears the page's canvas, standing in for one), asks the renderer what
+//! the level's first frame still lacks, and runs the compile jobs returned,
+//! all at once or up to `jobs_per_frame` a frame: each starts WebGPU's
+//! asynchronous pipeline creation, which compiles while the page keeps
+//! presenting, until `compile` reports ready. Starting a creation still
+//! costs the browser's GPU process some work, so a handful a frame keeps
+//! the loading screen smoother than all at once, at some cost in time to
+//! ready. Every program the frame needs is a job; a job that fails fails
+//! the report. `--ordinary` skips `compile`: the first `render` creates
+//! everything in one frame.
 //!
 //! It reports the wall time from the loop's start to the first level
 //! frame's completion on the GPU, the longest gap between two animation
@@ -39,12 +39,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::prelude::*;
 
-/// Runs the loop, ordinary or compiled with up to `jobs_per_frame` jobs
-/// an animation frame, and returns the report, or the line that failed.
+/// Runs the loop, ordinary or compiled, starting up to `jobs_per_frame`
+/// jobs an animation frame (all at 0), and returns the report, or the line
+/// that failed.
 #[wasm_bindgen]
 pub async fn measure(ordinary: bool, jobs_per_frame: u32) -> String {
     console_error_panic_hook::set_once();
-    measured(ordinary, jobs_per_frame.max(1) as usize)
+    let budget = if jobs_per_frame == 0 {
+        usize::MAX
+    } else {
+        jobs_per_frame as usize
+    };
+    measured(ordinary, budget)
         .await
         .unwrap_or_else(|error| format!("FAIL {error}\n"))
 }
@@ -133,10 +139,10 @@ impl LoadingScreen {
     }
 }
 
-/// Loading frames until the frame `input` lacks nothing and the browser
-/// has created its programs: each draws the loading screen and asks what
-/// is pending, and once the browser has created the last batch runs up to
-/// `jobs_per_frame` of the jobs returned. Returns the jobs run.
+/// Loading frames until the frame `input` lacks nothing: each draws the
+/// loading screen, asks what is pending once the jobs it was given have
+/// all started, and starts up to `jobs_per_frame` of them. Returns the
+/// jobs run, or the first job that failed.
 async fn compile(
     level: &mut Level,
     (device, queue): (&wgpu::Device, &wgpu::Queue),
@@ -146,28 +152,21 @@ async fn compile(
 ) -> Result<usize, String> {
     let mut queued: VecDeque<CompileJob> = VecDeque::new();
     let mut ran = 0;
-    // Whether the browser has created the programs of the jobs run so far:
-    // the queue reports work done only after the creations before it.
-    let created = Arc::new(AtomicBool::new(true));
     loop {
         screen.frame(device, queue).await;
-        if !created.load(Ordering::Acquire) {
-            continue;
+        if queued.is_empty() {
+            let compilation = level.compile(device, queue, input);
+            if let Some(error) = compilation.errors.first() {
+                return Err(format!("compile job: {error}"));
+            }
+            if compilation.ready() {
+                return Ok(ran);
+            }
+            queued.extend(compilation.jobs);
         }
-        let compilation = level.compile(device, queue, input);
-        if compilation.ready() {
-            return Ok(ran);
-        }
-        queued.extend(compilation.jobs);
-        let batch = jobs_per_frame.min(queued.len());
-        for job in queued.drain(..batch) {
+        for job in queued.drain(..jobs_per_frame.min(queued.len())) {
             job.run();
             ran += 1;
-        }
-        if batch > 0 {
-            created.store(false, Ordering::Release);
-            let created = created.clone();
-            queue.on_submitted_work_done(move || created.store(true, Ordering::Release));
         }
     }
 }
@@ -227,7 +226,11 @@ async fn measured(ordinary: bool, jobs_per_frame: usize) -> Result<String, Strin
         if ordinary {
             "ordinary: the first render creates what it needs".to_owned()
         } else {
-            format!("compiled, {jobs_per_frame} jobs an animation frame")
+            if jobs_per_frame == usize::MAX {
+                "compiled, every job started as it comes".to_owned()
+            } else {
+                format!("compiled, up to {jobs_per_frame} jobs started a frame")
+            }
         }
     );
     let configuration = surface

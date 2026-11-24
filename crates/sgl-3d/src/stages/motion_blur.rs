@@ -25,7 +25,7 @@
 //! Timing group: `motion blur`.
 use crate::shading::gbuffer::COLOR;
 use crate::shading::motion_tiles::{GROUP_SIZE, MOTION_TILES, MotionTilesUniform};
-use crate::view::compile::{Compiled, Compiler, SharedModule};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator, SharedModule};
 use crate::view::frame::FrameContext;
 use crate::view::motion_tiles::MotionTiles;
 use crate::view::targets::target_with_usage;
@@ -82,9 +82,10 @@ struct Filter {
 }
 
 impl Filter {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let shader = SharedModule::composed("motion blur", &MOTION_BLUR);
-        let filter = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let filter = creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(FILTER_ENTRY),
             layout: None,
             module: shader.get(device),
@@ -98,21 +99,25 @@ impl Filter {
             },
             cache: None,
         });
-        Self {
-            tiles: MotionTiles::new(device, shader).compiled(device),
+        let tiles = MotionTiles::new(device, shader).compiled(creator);
+        let uniform = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("motion blur settings"),
+                size: size_of::<MotionBlurUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        let output = None;
+        let groups = Vec::new();
+        tiles.zip(filter).map(move |(tiles, filter)| Self {
+            tiles,
             filter,
-            uniform: crate::counters::buffer(
-                device,
-                &wgpu::BufferDescriptor {
-                    label: Some("motion blur settings"),
-                    size: size_of::<MotionBlurUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                },
-            ),
-            output: None,
-            groups: Vec::new(),
-        }
+            uniform,
+            output,
+            groups,
+        })
     }
 }
 

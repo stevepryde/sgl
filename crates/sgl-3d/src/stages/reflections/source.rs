@@ -6,7 +6,7 @@ use super::probe_culling::ProbeCulling;
 use crate::shading;
 use crate::view::bindings::FogVolume;
 use crate::view::cached_group::CachedGroup;
-use crate::view::compile::{Compiled, Compiler, SharedModule};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator, SharedModule};
 use crate::view::reflection_camera;
 
 /// Source completion (`main`) and screen-space composition
@@ -189,7 +189,11 @@ struct Composition {
 }
 
 /// Source completion and screen-space composition for `variant`.
-fn completion(device: &wgpu::Device, shader: &wgpu::ShaderModule, variant: Variant) -> Completion {
+fn completion(
+    creator: &Creator<'_>,
+    shader: &wgpu::ShaderModule,
+    variant: Variant,
+) -> Creation<Completion> {
     let constants = [
         (
             "application_environment_enabled",
@@ -204,7 +208,7 @@ fn completion(device: &wgpu::Device, shader: &wgpu::ShaderModule, variant: Varia
         constants: &constants,
         ..Default::default()
     };
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    let pipeline = creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("reflection source completion"),
         layout: None,
         module: shader,
@@ -212,21 +216,27 @@ fn completion(device: &wgpu::Device, shader: &wgpu::ShaderModule, variant: Varia
         compilation_options: compilation_options(),
         cache: None,
     });
-    Completion {
-        group: CachedGroup::new(pipeline.get_bind_group_layout(0)),
-        pipeline,
-        composition: variant
-            .composition
-            .then(|| composition(device, shader, compilation_options())),
-    }
+    let composition = if variant.composition {
+        composition(creator, shader, compilation_options()).map(Some)
+    } else {
+        Creation::from(None)
+    };
+    // Its group's layout is the pipeline's, so it is made once that is.
+    pipeline
+        .zip(composition)
+        .map(|(pipeline, composition)| Completion {
+            group: CachedGroup::new(pipeline.get_bind_group_layout(0)),
+            pipeline,
+            composition,
+        })
 }
 
 fn composition(
-    device: &wgpu::Device,
+    creator: &Creator<'_>,
     shader: &wgpu::ShaderModule,
     options: wgpu::PipelineCompilationOptions<'_>,
-) -> Composition {
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+) -> Creation<Composition> {
+    let pipeline = creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("screen-space reflection composition"),
         layout: None,
         vertex: wgpu::VertexState {
@@ -258,10 +268,10 @@ fn composition(
         multiview_mask: None,
         cache: None,
     });
-    Composition {
+    pipeline.map(|pipeline| Composition {
         group: CachedGroup::new(pipeline.get_bind_group_layout(0)),
         pipeline,
-    }
+    })
 }
 
 /// Completes the forward pass by adding each receiver's environment specular.
@@ -364,7 +374,9 @@ impl ReflectionSource {
             "reflection source completion",
             || {
                 let shader = shader.clone();
-                move |device: &wgpu::Device| completion(device, shader.get(device), variant)
+                move |creator: &Creator<'_>| {
+                    completion(creator, shader.get(creator.device()), variant)
+                }
             },
         )
     }

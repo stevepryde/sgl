@@ -4,6 +4,7 @@
 //! full-screen pipeline and pass the post passes share; and
 //! `finite_filtered` and `bounded_filter`, through which every filtered read
 //! of the completed scene keeps it within `shading::SCENE_COLOR`'s bound.
+use crate::view::compile::{Creation, Creator};
 use crate::view::targets::attachment;
 use std::cell::RefCell;
 
@@ -158,13 +159,14 @@ pub(super) fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 /// A full-screen pipeline of `shader`'s `fragment` over `layouts`, writing
 /// `formats` with `blend`, with the fragment's pipeline `constants`.
 pub(super) fn pipeline(
-    device: &wgpu::Device,
+    creator: &Creator<'_>,
     layouts: &[Option<&wgpu::BindGroupLayout>],
     shader: &wgpu::ShaderModule,
     fragment: &str,
     formats: &[wgpu::TextureFormat],
     (blend, constants): (Option<wgpu::BlendState>, &[(&str, f64)]),
-) -> wgpu::RenderPipeline {
+) -> Creation<wgpu::RenderPipeline> {
+    let device = creator.device();
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(fragment),
         bind_group_layouts: layouts,
@@ -180,7 +182,7 @@ pub(super) fn pipeline(
             })
         })
         .collect();
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(fragment),
         layout: Some(&layout),
         vertex: wgpu::VertexState {

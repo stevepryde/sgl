@@ -50,7 +50,7 @@ use crate::Scene;
 use crate::shading::lights::{LOCAL_SHADOW_NONE, LocalShadowRecord};
 use crate::timing::GpuTiming;
 use crate::view::bindings::FrameBindings;
-use crate::view::compile::{Compiled, Compiler, SharedModule};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator, SharedModule};
 use crate::view::draw_list::DrawInstances;
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::{GeometryPass, GeometryPipelines};
@@ -169,18 +169,20 @@ struct FacePipelines {
 /// A depth-only pipeline over `layout` that writes every texel of the
 /// viewport, with `fragment` or the full-screen triangle's depth.
 fn face_pipeline(
-    device: &wgpu::Device,
+    creator: &Creator<'_>,
     label: &str,
     module: &wgpu::ShaderModule,
     groups: &[Option<&wgpu::BindGroupLayout>],
     fragment: Option<&str>,
-) -> wgpu::RenderPipeline {
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: groups,
-        immediate_size: 0,
-    });
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+) -> Creation<wgpu::RenderPipeline> {
+    let layout = creator
+        .device()
+        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: groups,
+            immediate_size: 0,
+        });
+    creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: Some(&layout),
         vertex: wgpu::VertexState {
@@ -256,11 +258,11 @@ impl Local {
             .then(|| {
                 self.clear.get(compiler, "local shadow clear", || {
                     let shader = shader.clone();
-                    move |device: &wgpu::Device| {
+                    move |creator: &Creator<'_>| {
                         face_pipeline(
-                            device,
+                            creator,
                             "local light shadow face clear",
-                            shader.get(device),
+                            shader.get(creator.device()),
                             &[],
                             None,
                         )
@@ -273,11 +275,11 @@ impl Local {
             .then(|| {
                 self.copy.get(compiler, "local shadow layer copy", || {
                     let (shader, layout) = (shader.clone(), copy_layout.clone());
-                    move |device: &wgpu::Device| {
+                    move |creator: &Creator<'_>| {
                         face_pipeline(
-                            device,
+                            creator,
                             "local light shadow layer copy",
-                            shader.get(device),
+                            shader.get(creator.device()),
                             &[Some(&layout)],
                             Some(COPY_FS_ENTRY),
                         )

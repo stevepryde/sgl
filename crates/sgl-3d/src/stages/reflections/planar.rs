@@ -7,7 +7,7 @@ use crate::content::identity::PlanarReflectorId;
 use crate::shading;
 use crate::shading::gbuffer;
 use crate::view::cached_group::CachedGroup;
-use crate::view::compile::{Compiled, SharedModule};
+use crate::view::compile::{Compiled, Creation, Creator, SharedModule};
 use crate::view::frame::FrameContext;
 use crate::view::pipelines::GeometryPass;
 use crate::view::reflected_camera::{self, Rect};
@@ -54,13 +54,13 @@ pub(crate) struct PlanarParameters {
 
 /// One of the stage's fragment pipelines.
 fn pipeline(
-    device: &wgpu::Device,
+    creator: &Creator<'_>,
     shader: &SharedModule,
     entry: &str,
     label: &str,
-) -> wgpu::RenderPipeline {
-    let shader = shader.get(device);
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+) -> Creation<wgpu::RenderPipeline> {
+    let shader = shader.get(creator.device());
+    creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
         layout: None,
         vertex: wgpu::VertexState {
@@ -195,8 +195,8 @@ impl Planar {
             .picture
             .get(ctx.compiler, "planar reflection", || {
                 let shader = shader.clone();
-                move |device: &wgpu::Device| {
-                    pipeline(device, &shader, PICTURE_ENTRY, "planar reflection")
+                move |creator: &Creator<'_>| {
+                    pipeline(creator, &shader, PICTURE_ENTRY, "planar reflection")
                 }
             })
             .cloned();
@@ -205,8 +205,8 @@ impl Planar {
                 .method
                 .get(ctx.compiler, "planar reflection method", || {
                     let shader = shader.clone();
-                    move |device: &wgpu::Device| {
-                        pipeline(device, &shader, METHOD_ENTRY, "planar reflection method")
+                    move |creator: &Creator<'_>| {
+                        pipeline(creator, &shader, METHOD_ENTRY, "planar reflection method")
                     }
                 })
                 .cloned(),

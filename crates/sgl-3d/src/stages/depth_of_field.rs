@@ -26,7 +26,7 @@
 use crate::DepthOfFieldParameters;
 use crate::settings::DepthOfField as Level;
 use crate::shading::gbuffer::COLOR;
-use crate::view::compile::{Compiled, SharedModule};
+use crate::view::compile::{Compiled, Creation, Creator, SharedModule};
 use crate::view::effective::DepthOfFieldFrame;
 use crate::view::frame::FrameContext;
 use crate::view::targets::target_with_usage;
@@ -205,10 +205,11 @@ struct Filter {
 }
 
 impl Filter {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let shader = SharedModule::composed(LABEL, &DEPTH_OF_FIELD);
-        let pipelines = ENTRY_POINTS.map(|entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let pipelines = Creation::array(ENTRY_POINTS.map(|entry| {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: None,
                 module: shader.get(device),
@@ -219,28 +220,33 @@ impl Filter {
                 },
                 cache: None,
             })
+        }));
+        let uniform = crate::counters::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("depth of field settings"),
+                size: size_of::<DepthOfFieldUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("depth of field linear clamp"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
-        Self {
+        let targets = None;
+        let replaced = false;
+        let groups = Vec::new();
+        pipelines.map(move |pipelines| Self {
             pipelines,
-            uniform: crate::counters::buffer(
-                device,
-                &wgpu::BufferDescriptor {
-                    label: Some("depth of field settings"),
-                    size: size_of::<DepthOfFieldUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                },
-            ),
-            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("depth of field linear clamp"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            }),
-            targets: None,
-            replaced: false,
-            groups: Vec::new(),
-        }
+            uniform,
+            sampler,
+            targets,
+            replaced,
+            groups,
+        })
     }
 }
 

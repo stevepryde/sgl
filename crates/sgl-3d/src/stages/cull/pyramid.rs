@@ -6,6 +6,7 @@
 //! src/mip_generation/experimental/depth.rs 557-612 and 683-698). Two
 //! layouts of six storage textures each and a uniform, so a device needs six
 //! storage textures a stage for it (`SUPPORTED_STORAGE_TEXTURES`).
+use crate::view::compile::{Creation, Creator};
 
 pub(crate) static PYRAMID: crate::shading::Module = crate::shading::Module {
     name: "depth_pyramid",
@@ -99,7 +100,8 @@ pub(crate) struct Builder {
 }
 
 impl Builder {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("depth pyramid"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&PYRAMID]).into()),
@@ -157,7 +159,7 @@ impl Builder {
             })
         });
         let pipeline = |layout: &wgpu::BindGroupLayout, entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(
                     &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -172,10 +174,10 @@ impl Builder {
                 cache: None,
             })
         };
-        let pipelines = [
+        let pipelines = Creation::array([
             pipeline(&layouts[0], DOWNSAMPLE_DEPTH_FIRST_ENTRY),
             pipeline(&layouts[1], DOWNSAMPLE_DEPTH_SECOND_ENTRY),
-        ];
+        ]);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("depth pyramid source"),
             ..Default::default()
@@ -196,12 +198,12 @@ impl Builder {
                 view_formats: &[],
             })
             .create_view(&Default::default());
-        Self {
+        pipelines.map(move |pipelines| Self {
             layouts,
             pipelines,
             sampler,
             dummy,
-        }
+        })
     }
 
     /// A pyramid over a depth of `size`.

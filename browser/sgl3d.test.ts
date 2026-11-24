@@ -66,6 +66,9 @@ test(
       expect(lines.some((line) => line.startsWith("ok HDR effect:"))).toBe(true);
       expect(lines.some((line) => line.startsWith("ok outline:"))).toBe(true);
       expect(lines.some((line) => line.startsWith("ok live specular probe:"))).toBe(true);
+      // Compile jobs create with WebGPU's asynchronous calls: still pending in
+      // the task that ran them, then the ordinary bytes once settled.
+      expect(lines.some((line) => line.startsWith("ok asynchronous compile jobs:"))).toBe(true);
       expect(lines.some((line) => line.startsWith("ok browser image decode:"))).toBe(true);
       // The frame compiled ahead ran its jobs and passed the same checks.
       expect(lines.find((line) => line.includes("compiled ahead:"))).toMatch(/^ok .* compile jobs run ahead/);

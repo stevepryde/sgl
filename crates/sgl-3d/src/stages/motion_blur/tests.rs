@@ -328,7 +328,7 @@ fn infinite_texels_blur_into_a_finite_frame() {
         size,
         wgpu::TextureFormat::Depth32Float,
     );
-    let mut blur = super::Filter::new(&device);
+    let mut blur = super::Filter::new(&crate::view::compile::Creator::now(&device)).now();
     let mut encoder = device.create_command_encoder(&Default::default());
     // Every surface 5 m away.
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

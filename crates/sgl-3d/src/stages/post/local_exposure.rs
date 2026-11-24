@@ -23,7 +23,7 @@
 //! They exist from the first frame whose contrasts are below 1 and are
 //! released by the first at 1, 1 and at resize. No history.
 use crate::shading::gbuffer::COLOR as HDR;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 
 /// The constants, V mapping and lookup the passes and the tone map share.
 pub(crate) static LOCAL_EXPOSURE: crate::shading::Module = crate::shading::Module {
@@ -275,8 +275,9 @@ fn group(
 }
 
 impl Pipelines {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(creator: &Creator<'_>) -> Creation<Self> {
         use wgpu::TextureViewDimension::{D2, D3};
+        let device = creator.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("local exposure"),
             source: wgpu::ShaderSource::Wgsl(
@@ -313,7 +314,7 @@ impl Pipelines {
                 immediate_size: 0,
             });
             let constants = axis.map(|axis| [("LOCAL_EXPOSURE_AXIS", f64::from(axis))]);
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pipeline_layout),
                 module: &shader,
@@ -325,15 +326,24 @@ impl Pipelines {
                 cache: None,
             })
         };
-        Self {
-            build: pipeline(&build_layout, BUILD_ENTRY, None),
-            blur_grid: [0, 1, 2].map(|axis| pipeline(&grid_layout, BLUR_GRID_ENTRY, Some(axis))),
-            gaussian: [0, 1].map(|axis| pipeline(&image_layout, GAUSSIAN_ENTRY, Some(axis))),
-            upsample: pipeline(&image_layout, UPSAMPLE_ENTRY, None),
-            build_layout,
-            grid_layout,
-            image_layout,
-        }
+        let build = pipeline(&build_layout, BUILD_ENTRY, None);
+        let blur_grid = Creation::array(
+            [0, 1, 2].map(|axis| pipeline(&grid_layout, BLUR_GRID_ENTRY, Some(axis))),
+        );
+        let gaussian =
+            Creation::array([0, 1].map(|axis| pipeline(&image_layout, GAUSSIAN_ENTRY, Some(axis))));
+        let upsample = pipeline(&image_layout, UPSAMPLE_ENTRY, None);
+        build.zip(blur_grid).zip(gaussian).zip(upsample).map(
+            |(((build, blur_grid), gaussian), upsample)| Self {
+                build,
+                blur_grid,
+                gaussian,
+                upsample,
+                build_layout,
+                grid_layout,
+                image_layout,
+            },
+        )
     }
 
     fn targets(&self, device: &wgpu::Device, scene_size: [u32; 2]) -> Targets {

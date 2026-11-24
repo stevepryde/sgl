@@ -10,7 +10,7 @@
 use super::inputs::{Inputs, draw, pipeline};
 use crate::BloomParameters;
 use crate::shading::gbuffer::COLOR as HDR;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 use crate::view::targets::target;
 
 /// The downsamples, upsamples and composite.
@@ -189,14 +189,16 @@ struct Pipelines {
 
 impl Pipelines {
     fn new(
-        device: &wgpu::Device,
+        creator: &Creator<'_>,
         inputs: &wgpu::BindGroupLayout,
         format: wgpu::TextureFormat,
-    ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("HDR bloom"),
-            source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&BLOOM]).into()),
-        });
+    ) -> Creation<Self> {
+        let shader = creator
+            .device()
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("HDR bloom"),
+                source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&BLOOM]).into()),
+            });
         let input = [Some(inputs)];
         // Bevy's energy-conserving upsample blend: the constant's share of
         // the coarser level over the finer one.
@@ -212,40 +214,21 @@ impl Pipelines {
                 operation: wgpu::BlendOperation::Add,
             },
         };
-        Self {
-            downsample_first: pipeline(
-                device,
-                &input,
-                &shader,
-                DOWNSAMPLE_FIRST_ENTRY,
-                &[format],
-                (None, &[]),
-            ),
-            downsample: pipeline(
-                device,
-                &input,
-                &shader,
-                DOWNSAMPLE_ENTRY,
-                &[format],
-                (None, &[]),
-            ),
-            upsample: pipeline(
-                device,
-                &input,
-                &shader,
-                UPSAMPLE_ENTRY,
-                &[format],
-                (Some(blend), &[]),
-            ),
-            composite: pipeline(
-                device,
-                &input,
-                &shader,
-                COMPOSITE_ENTRY,
-                &[HDR],
-                (None, &[]),
-            ),
-        }
+        let pipeline = |entry, format, blend| {
+            pipeline(creator, &input, &shader, entry, &[format], (blend, &[]))
+        };
+        Creation::array([
+            pipeline(DOWNSAMPLE_FIRST_ENTRY, format, None),
+            pipeline(DOWNSAMPLE_ENTRY, format, None),
+            pipeline(UPSAMPLE_ENTRY, format, Some(blend)),
+            pipeline(COMPOSITE_ENTRY, HDR, None),
+        ])
+        .map(|[downsample_first, downsample, upsample, composite]| Self {
+            downsample_first,
+            downsample,
+            upsample,
+            composite,
+        })
     }
 }
 
@@ -309,7 +292,7 @@ impl Bloom {
         // the combined target is handed on either way.
         let Some(pipelines) = self.pipelines.get(compiler, "bloom", || {
             let layout = inputs.layout().clone();
-            move |device: &wgpu::Device| Pipelines::new(device, &layout, format)
+            move |creator: &Creator<'_>| Pipelines::new(creator, &layout, format)
         }) else {
             return t.combined.clone();
         };

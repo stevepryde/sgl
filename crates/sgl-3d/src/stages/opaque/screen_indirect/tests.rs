@@ -113,7 +113,8 @@ impl Pass {
             &vec![[0.; 4]; (SIZE[0] * SIZE[1]) as usize],
         );
         Some(Self {
-            pyramid: AmbientOcclusion::new(&device, &queue),
+            pyramid: AmbientOcclusion::new(&crate::view::compile::Creator::now(&device), &queue)
+                .now(),
             stage: ScreenIndirect::new(&device),
             motion,
             device,

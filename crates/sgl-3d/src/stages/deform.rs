@@ -8,7 +8,7 @@
 //! in the scene source. Honours: nothing. Timing group: "deform".
 use crate::shading::culling::dispatch_side;
 use crate::shading::deformation::DeformDispatch;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 use crate::view::frame::FrameContext;
 
 pub(crate) static DEFORM: crate::shading::Module = crate::shading::Module {
@@ -78,7 +78,11 @@ impl Deform {
         }
     }
 
-    fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {
+    fn pipeline(
+        creator: &Creator<'_>,
+        layout: &wgpu::BindGroupLayout,
+    ) -> Creation<wgpu::ComputePipeline> {
+        let device = creator.device();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("deform"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&DEFORM]).into()),
@@ -88,7 +92,7 @@ impl Deform {
             bind_group_layouts: &[Some(layout)],
             immediate_size: 0,
         });
-        device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("deform"),
             layout: Some(&pipeline_layout),
             module: &module,
@@ -125,7 +129,7 @@ impl Deform {
         }
         let Some(pipeline) = self.pipeline.get(compiler, "deform", || {
             let layout = self.layout.clone();
-            move |device: &wgpu::Device| Self::pipeline(device, &layout)
+            move |creator: &Creator<'_>| Self::pipeline(creator, &layout)
         }) else {
             return;
         };

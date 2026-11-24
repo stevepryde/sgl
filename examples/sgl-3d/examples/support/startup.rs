@@ -395,9 +395,9 @@ impl Startup {
 
     /// The prepared path's preparation, one step: compiles the first
     /// frame's shaders and pipelines ahead of it (`Renderer::compile`) and
-    /// runs every job the step returns. True once nothing is pending; until
-    /// then the page awaits `completion()`, by which the browser has
-    /// created the jobs' pipelines, and calls it again.
+    /// runs every job the step returns, each starting the browser's
+    /// asynchronous creation. True once nothing is pending; until then the
+    /// page waits an animation frame and calls it again.
     pub fn prepare(&mut self) -> Result<bool, JsError> {
         let input = self.input(0., 0.)?;
         // The first frame's settings: the harness starts with every effect

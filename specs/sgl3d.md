@@ -261,7 +261,9 @@ settings SGL3D has today.
    frame would create, for the same scene, views, settings, frame inputs
    and output as `Renderer::render`, without submitting the frame's
    commands or committing history. Every one of them is a compile job it
-   returns, which the game runs on threads and at a pace of its choosing;
+   returns, which the game runs on threads of its choosing on native, and
+   in the browser as it comes, each starting WebGPU's asynchronous
+   creation, which stalls neither the page nor its presentation;
    neither the call nor the frame it readied creates one on its own
    thread (FSR's upscaler apart, which creates its own pipelines:
    [architecture](sgl3d-architecture.md), Shape). Drawing without it, or

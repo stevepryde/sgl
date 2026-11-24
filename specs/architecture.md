@@ -74,7 +74,8 @@ library; their rules, content, and process layouts stay with the games.
    - `sgl-webgpu` — SGL's WebGPU backend for wgpu in the browser, ported from
      wgpu's own and plugged in through wgpu's custom-backend interface. A
      browser game creates its `wgpu::Instance` from it; everything after is
-     wgpu's API. It is where SGL adds WebGPU calls wgpu does not expose yet.
+     wgpu's API. It is where SGL adds WebGPU calls wgpu does not expose yet,
+     such as the asynchronous pipeline creation SGL3D's compile jobs use.
      Empty on native.
    - `sgl-2d` — assets, immediate UI, and a caller-driven logical-canvas wgpu
      renderer

@@ -3,7 +3,7 @@
 //! whose sRGB encoding edges are detected on; HUD follows output. See README.md and the adjacent upstream
 //! licenses for shader/atlas provenance.
 use crate::settings::SmaaQuality;
-use crate::view::compile::{Compiled, Compiler, SharedModule};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator, SharedModule};
 
 pub(crate) static SMAA: crate::shading::Module = crate::shading::Module {
     name: "smaa",
@@ -187,18 +187,18 @@ fn lookup(
 /// A pipeline of `shader`'s `vertex_entry` and `entry` into `format`, with
 /// its pipeline `constants`.
 fn pipeline(
-    device: &wgpu::Device,
+    creator: &Creator<'_>,
     shader: &wgpu::ShaderModule,
     entry: &str,
     vertex_entry: &str,
     format: wgpu::TextureFormat,
     constants: &[(&str, f64)],
-) -> wgpu::RenderPipeline {
+) -> Creation<wgpu::RenderPipeline> {
     let options = || wgpu::PipelineCompilationOptions {
         constants,
         ..Default::default()
     };
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(entry),
         layout: None,
         vertex: wgpu::VertexState {
@@ -289,23 +289,29 @@ impl Smaa {
 
 impl Preset {
     /// The edge detection and weight pipelines of `quality`'s preset.
-    fn new(device: &wgpu::Device, shader: &wgpu::ShaderModule, quality: SmaaQuality) -> Self {
+    fn new(
+        creator: &Creator<'_>,
+        shader: &wgpu::ShaderModule,
+        quality: SmaaQuality,
+    ) -> Creation<Self> {
         let constants = preset(quality);
-        let [detect, calculate] = [
-            (DETECT_ENTRY, DETECT_VERTEX_ENTRY),
-            (CALCULATE_ENTRY, CALCULATE_VERTEX_ENTRY),
-        ]
-        .map(|(entry, vertex)| {
-            pipeline(
-                device,
-                shader,
-                entry,
-                vertex,
-                wgpu::TextureFormat::Rgba16Float,
-                &constants,
-            )
-        });
-        Self { detect, calculate }
+        Creation::array(
+            [
+                (DETECT_ENTRY, DETECT_VERTEX_ENTRY),
+                (CALCULATE_ENTRY, CALCULATE_VERTEX_ENTRY),
+            ]
+            .map(|(entry, vertex)| {
+                pipeline(
+                    creator,
+                    shader,
+                    entry,
+                    vertex,
+                    wgpu::TextureFormat::Rgba16Float,
+                    &constants,
+                )
+            }),
+        )
+        .map(|[detect, calculate]| Self { detect, calculate })
     }
 }
 
@@ -367,10 +373,10 @@ impl Smaa {
         let (shader, output_format) = (&self.shader, self.output_format);
         let blend = self.blend.get(compiler, "SMAA blend", || {
             let shader = shader.clone();
-            move |device: &wgpu::Device| {
+            move |creator: &Creator<'_>| {
                 pipeline(
-                    device,
-                    shader.get(device),
+                    creator,
+                    shader.get(creator.device()),
                     BLEND_ENTRY,
                     BLEND_VERTEX_ENTRY,
                     output_format,
@@ -380,7 +386,7 @@ impl Smaa {
         });
         let preset = self.preset.get(compiler, "SMAA", || {
             let shader = shader.clone();
-            move |device: &wgpu::Device| Preset::new(device, shader.get(device), quality)
+            move |creator: &Creator<'_>| Preset::new(creator, shader.get(creator.device()), quality)
         });
         // Both are asked for before a planning pass that lacks one leaves
         // the passes out.

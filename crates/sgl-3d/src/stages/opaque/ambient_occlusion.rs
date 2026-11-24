@@ -1,5 +1,6 @@
 //! Current-frame FP32 XeGTAO scalar visibility. See ambient_occlusion/README.md.
 mod temporal;
+use crate::view::compile::{Creation, Creator};
 use crate::{
     settings::AmbientOcclusionQuality, shading::uniforms::ViewUniform,
     view::cached_group::CachedGroup,
@@ -147,13 +148,14 @@ impl AmbientOcclusion {
         &self.hilbert_lut
     }
 
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub(crate) fn new(creator: &Creator<'_>, queue: &wgpu::Queue) -> Creation<Self> {
+        let device = creator.device();
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("XeGTAO FP32"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&XE_GTAO]).into()),
         });
         let pipeline = |name| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(name),
                 layout: None,
                 module: &module,
@@ -162,25 +164,36 @@ impl AmbientOcclusion {
                 cache: None,
             })
         };
-        let prefilter = pipeline(PREFILTER_ENTRY);
-        let prefilter_mip4 = pipeline(PREFILTER_MIP4_ENTRY);
-        let main = pipeline(MAIN_PASS_ENTRY);
-        let denoise = pipeline(DENOISE_ENTRY);
-        let groups = [&prefilter, &prefilter_mip4, &main, &denoise]
-            .map(|pipeline| CachedGroup::new(pipeline.get_bind_group_layout(0)));
-        Self {
-            prefilter,
-            prefilter_mip4,
-            main,
-            denoise,
-            groups,
-            pyramid_params: params_buffer(device, "XeGTAO depth prefilter constants"),
-            params: params_buffer(device, "XeGTAO constants"),
-            hilbert_lut: hilbert_lut(device, queue),
-            pyramid: None,
-            targets: None,
-            temporal: temporal::Temporal::new(device),
-        }
+        let pipelines = Creation::array([
+            pipeline(PREFILTER_ENTRY),
+            pipeline(PREFILTER_MIP4_ENTRY),
+            pipeline(MAIN_PASS_ENTRY),
+            pipeline(DENOISE_ENTRY),
+        ]);
+        let pyramid_params = params_buffer(device, "XeGTAO depth prefilter constants");
+        let params = params_buffer(device, "XeGTAO constants");
+        let hilbert_lut = hilbert_lut(device, queue);
+        // The groups' layouts are the pipelines', so they are made once
+        // those are.
+        pipelines.zip(temporal::Temporal::new(creator)).map(
+            |([prefilter, prefilter_mip4, main, denoise], temporal)| {
+                let groups = [&prefilter, &prefilter_mip4, &main, &denoise]
+                    .map(|pipeline| CachedGroup::new(pipeline.get_bind_group_layout(0)));
+                Self {
+                    prefilter,
+                    prefilter_mip4,
+                    main,
+                    denoise,
+                    groups,
+                    pyramid_params,
+                    params,
+                    hilbert_lut,
+                    pyramid: None,
+                    targets: None,
+                    temporal,
+                }
+            },
+        )
     }
     /// The depth pyramid and visibility of a frame, as the opaque stage
     /// encodes them in turn (`encode_depth_pyramid`, `encode_visibility`).

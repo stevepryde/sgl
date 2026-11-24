@@ -49,7 +49,7 @@ pub(crate) mod environment;
 use crate::FrameInput;
 use crate::content::lighting::{DirectionalLight, FrameEnvironment, Sky as SkyLook};
 use crate::shading::sky::SkyAtmosphereUniform;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creation, Creator};
 use crate::view::frame::FrameContext;
 use aerial::{AerialPipeline, AerialVolume, SkyAerialUniform};
 use environment::{AtlasCycle, EnvironmentAtlas, EnvironmentPipelines};
@@ -171,7 +171,8 @@ struct Pipelines {
 }
 
 impl Pipelines {
-    fn new(device: &wgpu::Device) -> Self {
+    fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -230,7 +231,7 @@ impl Pipelines {
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(module.name),
                 layout: Some(&pipeline_layout),
                 module: &shader,
@@ -239,19 +240,30 @@ impl Pipelines {
                 cache: None,
             })
         };
-        Self {
-            transmittance: pipeline(&TRANSMITTANCE, TRANSMITTANCE_ENTRY, &layouts[0]),
-            multiscattering: pipeline(&MULTISCATTERING, MULTISCATTERING_ENTRY, &layouts[1]),
-            sky_view: pipeline(&SKY_VIEW, SKY_VIEW_ENTRY, &layouts[2]),
-            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("sky tables"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            }),
-            layouts,
-            environment: EnvironmentPipelines::new(device),
-        }
+        let transmittance = pipeline(&TRANSMITTANCE, TRANSMITTANCE_ENTRY, &layouts[0]);
+        let multiscattering = pipeline(&MULTISCATTERING, MULTISCATTERING_ENTRY, &layouts[1]);
+        let sky_view = pipeline(&SKY_VIEW, SKY_VIEW_ENTRY, &layouts[2]);
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("sky tables"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let environment = EnvironmentPipelines::new(creator);
+        transmittance
+            .zip(multiscattering)
+            .zip(sky_view)
+            .zip(environment)
+            .map(
+                move |(((transmittance, multiscattering), sky_view), environment)| Self {
+                    transmittance,
+                    multiscattering,
+                    sky_view,
+                    sampler,
+                    layouts,
+                    environment,
+                },
+            )
     }
 }
 

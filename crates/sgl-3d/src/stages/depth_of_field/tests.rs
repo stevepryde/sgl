@@ -142,7 +142,7 @@ fn infinite_texels_focus_into_a_finite_frame() {
         rings: 4,
     };
     let uniform = super::DepthOfFieldUniform::new(&lens, near, size, size);
-    let mut filter = super::Filter::new(&device);
+    let mut filter = super::Filter::new(&crate::view::compile::Creator::now(&device)).now();
     let mut encoder = device.create_command_encoder(&Default::default());
     filter.dispatch(
         (&device, &queue),

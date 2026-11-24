@@ -45,6 +45,10 @@
 //! Then a mirror shows a live specular probe refreshed under each pace: its
 //! centre must hold the colour of the last published cube in every frame,
 //! and the report gives the refresh passes' GPU time (`live_probe`).
+//! Then a level is compiled ahead, its jobs creating with WebGPU's
+//! asynchronous calls: in the task that ran them every one is still
+//! pending, and its first frame, and one drawn while they compiled, match
+//! an ordinary level's bytes (`asynchronous compile jobs`).
 //! Then a mirror shows a source behind the viewer through a planar
 //! reflector: its centre must hold the colour the source has in that
 //! frame, at each level and in fog, and the report gives the frame's GPU
@@ -1060,6 +1064,295 @@ async fn configuration(
     Ok(report)
 }
 
+/// Resolves at the page's next animation frame, letting the browser run
+/// what it has queued meanwhile.
+async fn next_frame() -> Result<(), String> {
+    let window = web_sys::window().ok_or("no window")?;
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        let _ = window.request_animation_frame(&resolve);
+    });
+    wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("requestAnimationFrame: {error:?}"))
+}
+
+/// The page's count of `GPUDevice`'s pipeline creation calls so far,
+/// synchronous then asynchronous (`createRenderPipelineAsync`,
+/// `createComputePipelineAsync`), counted by wrapping the browser's own
+/// methods the first time it is asked.
+fn creation_calls() -> Result<[f64; 2], String> {
+    let calls = js_sys::Function::new_no_args(
+        "if (!globalThis.__sglCreations) {
+           const calls = globalThis.__sglCreations = [0, 0];
+           const device = GPUDevice.prototype;
+           for (const [name, kind] of [['createRenderPipeline', 0], ['createComputePipeline', 0],
+               ['createRenderPipelineAsync', 1], ['createComputePipelineAsync', 1]]) {
+             const create = device[name];
+             device[name] = function (...args) { calls[kind] += 1; return create.apply(this, args); };
+           }
+         }
+         return globalThis.__sglCreations;",
+    )
+    .call0(&wasm_bindgen::JsValue::NULL)
+    .map_err(|error| format!("counting creation calls: {error:?}"))?;
+    let calls = js_sys::Array::from(&calls);
+    Ok([0, 1].map(|kind| calls.get(kind).as_f64().unwrap_or(f64::NAN)))
+}
+
+/// How long a compile may stay pending before a check fails, in ms.
+const COMPILE_TIMEOUT: f64 = 30_000.;
+
+/// Calls `compile` until it reports ready, running every job as it comes and
+/// letting the page run between calls: in the browser a job's creation
+/// resolves after `run` returns. A failed job fails it. Returns the jobs run
+/// and the time taken, in ms.
+async fn until_ready(
+    mut compile: impl FnMut() -> sgl_3d::Compilation,
+) -> Result<(usize, f64), String> {
+    let started = js_sys::Date::now();
+    let mut jobs = 0;
+    loop {
+        let compilation = compile();
+        if let Some(error) = compilation.errors.first() {
+            return Err(format!("compile job: {error}"));
+        }
+        if compilation.ready() {
+            return Ok((jobs, js_sys::Date::now() - started));
+        }
+        if js_sys::Date::now() - started > COMPILE_TIMEOUT {
+            return Err(format!(
+                "{} programs still pending after {COMPILE_TIMEOUT} ms",
+                compilation.pending
+            ));
+        }
+        jobs += compilation.jobs.len();
+        compilation
+            .jobs
+            .into_iter()
+            .for_each(sgl_3d::CompileJob::run);
+        next_frame().await?;
+    }
+}
+
+/// The world under the shadowed sun, with its own scene, renderer and view
+/// (`compiled_ahead`), so each level draws its first frame from nothing.
+/// Boxed, so the three a check holds do not grow its future past the stack
+/// a debug build moves that through.
+struct CompileLevel {
+    scene: Scene,
+    renderer: Renderer,
+    view: View,
+    output: wgpu::Texture,
+    input: FrameInput,
+    settings: Settings,
+}
+
+impl CompileLevel {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Box<Self>, String> {
+        let mut scene = Scene::new(device, queue);
+        let model = scene
+            .add_asset(device, queue, world())
+            .map_err(|e| format!("add_asset: {e}"))?
+            .model;
+        scene
+            .add_instance(device, queue, InstanceState::new(model), Mobility::Static)
+            .map_err(|e| format!("add_instance: {e}"))?;
+        let settings = Settings::default();
+        let renderer = Renderer::new(device);
+        let output = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("compile level output"),
+            size: wgpu::Extent3d {
+                width: SIZE[0],
+                height: SIZE[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = View::new(
+            &renderer,
+            device,
+            queue,
+            output.format(),
+            SIZE,
+            1.,
+            &settings,
+        )
+        .map_err(|e| format!("View::new: {e}"))?;
+        let mut input = FrameInput::new(camera());
+        input.camera_cut = true;
+        input.directional_lights[0] = Some(DirectionalLight {
+            direction: SUN.normalize(),
+            color: [1., 1., 1.],
+            illuminance: 3.,
+            shadow: Some(DirectionalShadow {
+                distance: 20.,
+                cascades: 2,
+            }),
+            ..Default::default()
+        });
+        Ok(Box::new(Self {
+            scene,
+            renderer,
+            view,
+            output,
+            input,
+            settings,
+        }))
+    }
+
+    fn compile(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> sgl_3d::Compilation {
+        self.view.resize(device, SIZE, 1., &self.settings);
+        let target = self.output.create_view(&Default::default());
+        self.renderer.compile(
+            device,
+            queue,
+            &mut self.scene,
+            &mut [ViewFrame {
+                view: &mut self.view,
+                input: &self.input,
+                settings: &self.settings,
+                output: ViewOutput::Texture(&target),
+                timing: None,
+            }],
+        )
+    }
+
+    /// Encodes and submits the first frame, then reads it back.
+    async fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Vec<u8> {
+        self.view.resize(device, SIZE, 1., &self.settings);
+        let target = self.output.create_view(&Default::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        self.renderer.render(
+            device,
+            queue,
+            &mut encoder,
+            &mut self.scene,
+            &mut [ViewFrame {
+                view: &mut self.view,
+                input: &self.input,
+                settings: &self.settings,
+                output: ViewOutput::Texture(&target),
+                timing: None,
+            }],
+        );
+        queue.submit([encoder.finish()]);
+        self.renderer.finish_frame(&mut self.scene);
+        sgl_3d::diagnostics::read_async(device, queue, &self.output, 4).await
+    }
+}
+
+// Compiling ahead in the browser (the architecture's Program compilation),
+// where a job starts WebGPU's asynchronous creation and its slot settles
+// when the browser resolves it. Plausible defects: a job's pipeline never
+// reaches its slot, so `compile` never reports ready, or differs from the
+// one a frame creates; a frame that meets a job still compiling waits,
+// draws without it, or leaves it counted; its late result replaces the
+// frame's, is reported, or releases the job a second time. The fixture:
+// the world under the shadowed sun, drawn by three levels of their own:
+// ordinarily; after compiling until ready, the page running between calls;
+// and in the same task that started its jobs. Beside it, the browser's own
+// count of its creation calls while the early level's jobs run: a job that
+// fell back to synchronous creation calls `createRenderPipeline` or
+// `createComputePipeline`. The oracle is equivalence
+// with ordinary rendering on the same inputs, as the native compile tests'
+// (`compiled_and_ordinary_frames_are_the_same`): the same bytes, and the
+// contract's counts, `pending` 0 and no errors once the jobs settled. The
+// early level's late results cannot be observed; its `compile` is called
+// after twice the time the compiled level's jobs took to settle, for the
+// same pipelines, and half a second at least.
+async fn compiled_ahead(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, String> {
+    let ordinary = CompileLevel::new(device, queue)?
+        .render(device, queue)
+        .await;
+    let mut compiled = CompileLevel::new(device, queue)?;
+    let (jobs, settled) = until_ready(|| compiled.compile(device, queue))
+        .await
+        .map_err(|error| format!("compiled level: {error}"))?;
+    if jobs == 0 {
+        return Err("compiled level: compiling ran no job".into());
+    }
+    if compiled.render(device, queue).await != ordinary {
+        return Err("the compiled level's first frame differs from the ordinary one".into());
+    }
+
+    let mut early = CompileLevel::new(device, queue)?;
+    let compilation = early.compile(device, queue);
+    let early_jobs = compilation.jobs.len();
+    if early_jobs == 0 || compilation.pending != early_jobs || !compilation.errors.is_empty() {
+        return Err(format!(
+            "early level: {early_jobs} jobs, {} pending, errors {:?}",
+            compilation.pending, compilation.errors
+        ));
+    }
+    // The browser's own count of the creation calls the jobs make: every
+    // pipeline asynchronous, none synchronous.
+    let before = creation_calls()?;
+    compilation
+        .jobs
+        .into_iter()
+        .for_each(sgl_3d::CompileJob::run);
+    let after = creation_calls()?;
+    let (synchronous, asynchronous) = (after[0] - before[0], after[1] - before[1]);
+    if synchronous != 0. || asynchronous < early_jobs as f64 {
+        return Err(format!(
+            "the early level's {early_jobs} jobs called the browser's synchronous creation \
+             {synchronous} times and its asynchronous creation {asynchronous} times"
+        ));
+    }
+    // Each job started the browser's asynchronous creation and returned: in
+    // this task none has resolved, so every one is still pending. A job
+    // that created synchronously would be finished, and not pending.
+    let racing = early.compile(device, queue);
+    if racing.pending != early_jobs || !racing.jobs.is_empty() {
+        return Err(format!(
+            "early level right after its jobs ran: {} of {early_jobs} pending and {} jobs \
+             offered, where asynchronous creation leaves them all pending",
+            racing.pending,
+            racing.jobs.len()
+        ));
+    }
+    // Encoded in this task: no job's creation has resolved yet.
+    if early.render(device, queue).await != ordinary {
+        return Err(
+            "the first frame drawn while its jobs compiled differs from the ordinary one".into(),
+        );
+    }
+    // The frame drew everything the jobs make, so once their late results
+    // settle the level is ready without another job or a failure.
+    let waiting = js_sys::Date::now();
+    loop {
+        let after = early.compile(device, queue);
+        if !after.jobs.is_empty() || !after.errors.is_empty() {
+            return Err(format!(
+                "early level while its jobs settled: {} jobs offered, errors {:?}",
+                after.jobs.len(),
+                after.errors
+            ));
+        }
+        if after.ready() {
+            break;
+        }
+        if js_sys::Date::now() - waiting > COMPILE_TIMEOUT {
+            return Err(format!(
+                "early level: {} programs still pending after {COMPILE_TIMEOUT} ms",
+                after.pending
+            ));
+        }
+        next_frame().await?;
+    }
+    Ok(format!(
+        "{jobs} jobs settled in {settled:.0} ms; the compiled first frame and one drawn while \
+         {early_jobs} jobs compiled match the ordinary one's {} bytes",
+        ordinary.len()
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn render(
     device: &wgpu::Device,
@@ -1137,9 +1430,8 @@ async fn render(
     let mut compiled_jobs = None;
     if programs == Programs::Compiled {
         frame.camera_cut = true;
-        let mut jobs = 0;
-        loop {
-            let compilation = renderer.compile(
+        let (jobs, _) = until_ready(|| {
+            renderer.compile(
                 device,
                 queue,
                 scene,
@@ -1150,16 +1442,9 @@ async fn render(
                     output: ViewOutput::Texture(&view),
                     timing: None,
                 }],
-            );
-            if compilation.ready() {
-                break;
-            }
-            if compilation.jobs.is_empty() {
-                return Err("compile is pending with no job to run".into());
-            }
-            jobs += compilation.jobs.len();
-            compilation.jobs.into_iter().for_each(|job| job.run());
-        }
+            )
+        })
+        .await?;
         compiled_jobs = Some(jobs);
     }
     let mut timed_frames = 0;
@@ -1312,8 +1597,8 @@ fn hdr_effect(color:vec3<f32>,ctx:EffectContext,params:EffectParams)->vec3<f32> 
         });
         input.hdr_effect = effect;
         input.camera_cut = true;
-        loop {
-            let compilation = renderer.compile(
+        let (ran, _) = until_ready(|| {
+            renderer.compile(
                 device,
                 queue,
                 &mut scene,
@@ -1324,14 +1609,11 @@ fn hdr_effect(color:vec3<f32>,ctx:EffectContext,params:EffectParams)->vec3<f32> 
                     output: ViewOutput::Texture(&target),
                     timing: None,
                 }],
-            );
-            if compilation.ready() {
-                break;
-            }
-            if effect.is_some() {
-                jobs += compilation.jobs.len();
-            }
-            compilation.jobs.into_iter().for_each(|job| job.run());
+            )
+        })
+        .await?;
+        if effect.is_some() {
+            jobs += ran;
         }
         for index in 0..FRAMES {
             input.camera_cut = index == 0;
@@ -1470,9 +1752,8 @@ async fn outline(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, S
         hidden_color: [0., 1., 0., 1.],
         ..Outline::new(selection)
     });
-    let mut jobs = 0;
-    loop {
-        let compilation = renderer.compile(
+    let (jobs, _) = until_ready(|| {
+        renderer.compile(
             device,
             queue,
             &mut scene,
@@ -1483,13 +1764,9 @@ async fn outline(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<String, S
                 output: ViewOutput::Texture(&target),
                 timing: None,
             }],
-        );
-        if compilation.ready() {
-            break;
-        }
-        jobs += compilation.jobs.len();
-        compilation.jobs.into_iter().for_each(|job| job.run());
-    }
+        )
+    })
+    .await?;
     for index in 0..FRAMES {
         input.camera_cut = index == 0;
         let mut encoder = device.create_command_encoder(&Default::default());
@@ -2902,6 +3179,22 @@ async fn smoke(report: &mut String) -> Result<(), String> {
         }
         Err(error) => {
             let _ = writeln!(report, "FAIL live specular probe: {error}");
+        }
+    }
+    let compiled = compiled_ahead(&device, &queue).await;
+    let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
+    match compiled {
+        Ok(_) if !errors.is_empty() => {
+            let _ = writeln!(
+                report,
+                "FAIL asynchronous compile jobs: uncaptured {errors:?}"
+            );
+        }
+        Ok(detail) => {
+            let _ = writeln!(report, "ok asynchronous compile jobs: {detail}");
+        }
+        Err(error) => {
+            let _ = writeln!(report, "FAIL asynchronous compile jobs: {error}");
         }
     }
     let mirrored = mirror(&device, &queue).await;

@@ -18,6 +18,7 @@
 //! frame; Three filters once; Godot's `Sky.PROCESS_MODE_INCREMENTAL` updates
 //! its radiance map a roughness layer a frame, as this does (D-62).
 use crate::shading::pmrem_filter::{Atlas, PMREM_FILTER};
+use crate::view::compile::{Creation, Creator};
 use std::ops::Range;
 
 /// The capture and the filter.
@@ -212,7 +213,8 @@ pub(super) struct EnvironmentPipelines {
 }
 
 impl EnvironmentPipelines {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -295,7 +297,7 @@ impl EnvironmentPipelines {
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            creator.compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
                 layout: Some(&pipeline_layout),
                 module: &shader,
@@ -304,12 +306,14 @@ impl EnvironmentPipelines {
                 cache: None,
             })
         };
-        Self {
-            capture: pipeline(CAPTURE_ENTRY, &capture_layout),
-            filter: pipeline(FILTER_ENTRY, &filter_layout),
+        let capture = pipeline(CAPTURE_ENTRY, &capture_layout);
+        let filter = pipeline(FILTER_ENTRY, &filter_layout);
+        capture.zip(filter).map(move |(capture, filter)| Self {
+            capture,
+            filter,
             capture_layout,
             filter_layout,
-        }
+        })
     }
 }
 

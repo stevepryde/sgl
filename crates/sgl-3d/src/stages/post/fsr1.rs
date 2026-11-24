@@ -4,7 +4,7 @@
 //! Same stage order on native and WebGPU, with no optional GPU features.
 use super::inputs::{self, Inputs, draw, pipeline};
 use crate::shading::gbuffer::COLOR as HDR;
-use crate::view::compile::{Compiled, Compiler};
+use crate::view::compile::{Compiled, Compiler, Creator};
 use crate::view::targets::target;
 
 pub(crate) static FSR1: crate::shading::Module = crate::shading::Module {
@@ -43,13 +43,15 @@ impl Fsr1 {
         // target is handed on either way.
         let Some(easu) = self.easu.get(compiler, "FSR1 EASU", || {
             let layout = inputs.layout().clone();
-            move |device: &wgpu::Device| {
-                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("FSR1 EASU"),
-                    source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&FSR1]).into()),
-                });
+            move |creator: &Creator<'_>| {
+                let shader = creator
+                    .device()
+                    .create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("FSR1 EASU"),
+                        source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&FSR1]).into()),
+                    });
                 pipeline(
-                    device,
+                    creator,
                     &[Some(&layout)],
                     &shader,
                     "fsr1_easu",

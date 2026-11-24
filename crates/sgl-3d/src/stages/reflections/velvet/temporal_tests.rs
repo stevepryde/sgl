@@ -134,7 +134,7 @@ impl Pass {
         let hdr = wgpu::TextureFormat::Rgba16Float;
         let r32 = wgpu::TextureFormat::R32Float;
         let pass = Self {
-            pipeline: Velvet::new(device),
+            pipeline: Velvet::new(&crate::view::compile::Creator::now(device)).now(),
             current: texture(device, hdr),
             output: texture(device, hdr),
             history: [texture(device, hdr), texture(device, hdr)],
@@ -785,7 +785,7 @@ fn virtual_points_extend_the_normalised_view_ray() {
     let Some((device, queue)) = crate::test_support::device() else {
         return;
     };
-    let reflection = Velvet::new(&device);
+    let reflection = Velvet::new(&crate::view::compile::Creator::now(&device)).now();
     let points = [
         [0f32, 0., -10., 10.],
         [10., 0., -10., 10.],

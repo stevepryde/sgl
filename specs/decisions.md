@@ -2036,3 +2036,38 @@ Use the [current specs](README.md) for implementation and the
   dependency-free and fuzzed against the C original; Bevy's own use, which
   writes each corner's tangent into its shared vertex, so a mirrored seam
   keeps one frame where SGL3D splits.
+- **D-89** Decision, 2026-11-24 (#880): in the browser a compile job
+  starts WebGPU's asynchronous pipeline creation through `sgl-webgpu`
+  (D-75) and returns, so the page keeps presenting while the browser
+  compiles. A slot's closure creates its pipelines through the `Creator`
+  it is lent and returns a `Creation`, combined with `map`, `zip`, `array`
+  and `all`; on native a creation is the value itself, so native creation,
+  its timings and a game that never calls `compile` are unchanged. A job
+  pushes validation and internal error scopes, runs the closure and pops
+  them in one task, and stays pending until the browser resolves its
+  creations and scopes; `Compilation` and `CompileJob` keep their shape.
+  A frame that meets a job the browser is still compiling cannot wait, so
+  it creates the program again in place, as it creates any missing one,
+  and drops the job's late result: a closure may run twice. `sgl-post-fx`'s
+  `DescribePipeline` hands its descriptor to a sink SGL3D points at its
+  creator, so the crate still knows nothing of SGL3D. Not taken: leaving
+  the draw out until its pipeline is ready, as Bevy and three.js do, which
+  would make drawing without `compile` differ (D-71). Amends #880's plan
+  to delete pacing: starting a creation still costs the browser's GPU
+  process some work, so a game may start every job at once, ready
+  soonest, or a handful a frame, smoothest. As built (Apple M5, Chromium
+  149, shared machine, provisional; before is this change with jobs
+  creating synchronously, as D-86 left them): the `loading` example's
+  block world with every job at once reaches its first level frame in 150
+  to 175 ms with a longest gap between animation frames of 67 to 76 ms,
+  against 233 to 258 ms and 161 to 180 ms; eight jobs a frame, 192 ms and
+  15 ms against 233 to 249 ms and 67 to 68 ms; ordinary, 225 to 242 ms
+  and 175 to 184 ms. A cold start compiling for 4.7 s kept its longest gap
+  at 76 ms. Bistro readies in 87 ms against 147 ms, its longest gap 14 ms
+  either way; the startup comparison's prepared path readies cold in 83
+  ms with a longest gap of 20.5 ms against 118 ms and 37.9 ms, and warm
+  in 26 to 29 ms with 16 to 19 ms either way. Native, alternating with
+  `main` under the same load, did not differ: four job threads 77 to 100
+  ms against 91 to 98 ms, ordinary 113 to 179 ms against 110 to 210 ms.
+  The asynchronous creation's shape follows gfx-rs/wgpu#10438; the
+  creator began on the `t3/evaluate-sgl3d-renderer-alternatives` branch.

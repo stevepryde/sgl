@@ -9,7 +9,7 @@
 use crate::shading::gbuffer::DEPTH;
 use crate::shading::vertex::{DRAW_INSTANCE_LAYOUT, DRAW_INSTANCE_SLOT};
 use crate::view::FrameViews;
-use crate::view::compile::Compiled;
+use crate::view::compile::{Compiled, Creation, Creator};
 use crate::view::footprints::FootprintDraw;
 use crate::view::frame::FrameContext;
 use crate::view::targets::composition_targets;
@@ -34,10 +34,11 @@ pub(crate) struct Programs {
 
 impl Programs {
     fn new(
-        device: &wgpu::Device,
+        creator: &Creator<'_>,
         unlit: &wgpu::BindGroupLayout,
         scene: &wgpu::BindGroupLayout,
-    ) -> Self {
+    ) -> Creation<Self> {
+        let device = creator.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("instance footprints"),
             source: wgpu::ShaderSource::Wgsl(crate::shading::compose(&[&FOOTPRINTS]).into()),
@@ -49,7 +50,7 @@ impl Programs {
         });
         let targets = composition_targets();
         let pipeline = |label, depth_compare| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
@@ -79,10 +80,11 @@ impl Programs {
                 cache: None,
             })
         };
-        Self {
-            stood: pipeline("where instances stood", wgpu::CompareFunction::GreaterEqual),
-            stands: pipeline("where instances stand", wgpu::CompareFunction::Always),
-        }
+        let stood = pipeline("where instances stood", wgpu::CompareFunction::GreaterEqual);
+        let stands = pipeline("where instances stand", wgpu::CompareFunction::Always);
+        stood
+            .zip(stands)
+            .map(move |(stood, stands)| Self { stood, stands })
     }
 }
 
@@ -99,7 +101,7 @@ impl Footprints {
         let scene = ctx.bindings.scene.clone();
         self.programs
             .get(ctx.compiler, "instance footprints", move || {
-                move |device: &wgpu::Device| Programs::new(device, &unlit, &scene)
+                move |creator: &Creator<'_>| Programs::new(creator, &unlit, &scene)
             })
             .map(|programs| &*programs)
     }

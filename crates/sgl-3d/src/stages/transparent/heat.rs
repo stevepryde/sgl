@@ -5,6 +5,7 @@ use crate::content::transient::HeatDistortion;
 use crate::scene::transient::Transient;
 use crate::shading::gbuffer::COLOR as HDR;
 use crate::shading::vertex::{VertexLayout, vertex_layout};
+use crate::view::compile::{Creation, Creator};
 use crate::view::targets::{attachment, hold, mask_targets, target};
 
 pub(crate) static HEAT: crate::shading::Module = crate::shading::Module {
@@ -39,7 +40,8 @@ pub(crate) struct Heat {
     source: Option<wgpu::TextureView>,
 }
 impl Heat {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(creator: &Creator<'_>) -> Creation<Self> {
+        let device = creator.device();
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("heat snapshot layout"),
             entries: &[
@@ -87,8 +89,8 @@ impl Heat {
         // Distortion marks no reactivity, so its pass attaches that mask
         // not at all.
         let [_, composition] = mask_targets();
-        let pipeline = |masked: bool| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let create = |masked: bool| {
+            creator.render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("bounded heat shimmer"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -117,24 +119,30 @@ impl Heat {
                 cache: None,
             })
         };
-        Self {
-            pipeline: pipeline(false),
-            pipeline_masked: pipeline(true),
-            layout,
-            view: crate::counters::buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("heat stable camera"),
-                    contents: bytemuck::bytes_of(&View {
-                        camera: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                        render_per_scene: [1.; 2],
-                        _pad: [0.; 2],
-                    }),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                },
-            ),
-            source: None,
-        }
+        let pipeline = create(false);
+        let pipeline_masked = create(true);
+        let view = crate::counters::buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("heat stable camera"),
+                contents: bytemuck::bytes_of(&View {
+                    camera: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                    render_per_scene: [1.; 2],
+                    _pad: [0.; 2],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            },
+        );
+        let source = None;
+        pipeline
+            .zip(pipeline_masked)
+            .map(move |(pipeline, pipeline_masked)| Self {
+                pipeline,
+                pipeline_masked,
+                layout,
+                view,
+                source,
+            })
     }
     /// Heat distortion of `color`, at the render size, in place, its
     /// displacement authored in pixels of a `scene`-sized frame. Where it
@@ -227,7 +235,7 @@ mod tests {
             return;
         };
         pollster::block_on(async {
-            let mut heat = Heat::new(&device);
+            let mut heat = Heat::new(&crate::view::compile::Creator::now(&device)).now();
             let mut transient = Transient::new(&device);
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl("@vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32> {let p=vec2(f32((i<<1u)&2u),f32(i&2u));return vec4(p*2.-1.,.75,1.);}".into()) });
             let depth_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -596,7 +604,7 @@ mod tests {
             size,
             wgpu::TextureFormat::Depth32Float,
         );
-        let mut heat = Heat::new(&device);
+        let mut heat = Heat::new(&crate::view::compile::Creator::now(&device)).now();
         let mut transient = Transient::new(&device);
         // The whole frame, in front of the cleared depth.
         let vertices = [
