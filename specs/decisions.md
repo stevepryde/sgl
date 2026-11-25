@@ -2198,3 +2198,14 @@ Use the [current specs](README.md) for implementation and the
   things move into it as they are needed. Policy differs between games;
   the bookkeeping does not. Six of the owner's games wrote it, a hundred or
   two lines a side, and it is where their netcode bugs lived.
+
+- **D-96** Decision, 2026-11-25 (#915): the frozen cross-target digests of
+  `tests/sgl-physics/tests/parity.rs` are refrozen by each slice of the
+  kinematic physics plan (#914) that adds to their levels, changes a state
+  type's encoding or changes a movement rule, until the crate's first
+  release. They exist to show that native and `wasm32` agree, which each
+  refreeze confirms on both targets, and no game depends on their values
+  yet. The commit that changes one says what changed it. #914's review
+  fixes changed the collider encoding; #915 added ramps to the levels, the
+  cut to the encoding, and the floor rule. After the first release a
+  change to one is a breaking change like any other frozen value.

@@ -76,8 +76,8 @@ Choose by what the game is.
   predict and roll back over the network. A rigid-body solver's emergent
   behaviour fights designed handling. Collide against the game's own world
   model, such as a track spline, road, voxel grid or boxes, not its render
-  meshes. `sgl-physics` moves a box body through boxes, tiles or voxels
-  (`slide`, `snap_to_ground`) and answers `overlaps`, `cast` and
+  meshes. `sgl-physics` moves a box body through boxes, tiles or voxels,
+  ramps and slope blocks among them (`slide`, `snap_to_ground`) and answers `overlaps`, `cast` and
   `ray`, over a `ColliderSet`, a slice of colliders or a `CellWorld` the game
   answers cell by cell, with plain state that serialises and hashes. SGL3D's
   ray queries serve rendering only; keep gameplay queries in the simulation,

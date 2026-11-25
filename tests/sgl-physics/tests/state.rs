@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use sgl_core::math::{Vec2, Vec3};
 use sgl_core::{SplitMix64, digest_of};
 use sgl_physics::{
-    ALL_LAYERS, Collider, ColliderKind, ColliderSet, Contacts, Hit, MoverConfig, MoverSettings,
-    Shape, Vector, slide, snap_to_ground,
+    ALL_LAYERS, Collider, ColliderKind, ColliderSet, Contacts, Cut, Hit, MoverConfig,
+    MoverSettings, Shape, Vector, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -163,13 +163,17 @@ fn encoded<T: Serialize>(value: &T) -> usize {
 
 /// The largest value of each state type in space `V`: every id and layer
 /// mask at its widest varint, every optional field present.
-fn largest<V: Vector + Serialize>() -> [(usize, usize, &'static str); 6] {
+fn largest<V: Vector + Serialize>() -> [(usize, usize, &'static str); 7] {
     let half = V::ZERO;
     let shape = Shape::Box { half };
     let kind = ColliderKind::Sensor;
+    let mut up = V::ZERO;
+    up[1] = 1.0;
+    let cut = Cut::new(up, 0.0);
     let collider = Collider::new(u64::MAX, shape, half)
         .with_kind(kind)
-        .with_layers(u32::MAX);
+        .with_layers(u32::MAX)
+        .with_cut(cut);
     let contacts = Contacts::<V> {
         last_floor_id: Some(u64::MAX),
         last_wall_id: Some(u64::MAX),
@@ -181,8 +185,6 @@ fn largest<V: Vector + Serialize>() -> [(usize, usize, &'static str); 6] {
         normal: half,
         id: u64::MAX,
     };
-    let mut up = V::ZERO;
-    up[1] = 1.0;
     let config = mover(up, 0.01, 0.1, 0.7, 1e-4);
     [
         (encoded(&shape), Shape::<V>::MAX_POSTCARD_BYTES, "Shape"),
@@ -191,6 +193,7 @@ fn largest<V: Vector + Serialize>() -> [(usize, usize, &'static str); 6] {
             ColliderKind::MAX_POSTCARD_BYTES,
             "ColliderKind",
         ),
+        (encoded(&cut), Cut::<V>::MAX_POSTCARD_BYTES, "Cut"),
         (
             encoded(&collider),
             Collider::<V>::MAX_POSTCARD_BYTES,

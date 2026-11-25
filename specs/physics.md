@@ -6,9 +6,10 @@ what they hit and where they end up. It has no rigid bodies, forces, joints
 or solver, holds no loop, and keeps no state the game does not own. A game
 whose play is stacking, joints or rag dolls adds Rapier itself.
 
-This slice gives box bodies against box colliders. Later slices (ramps, the
-mover step, round bodies, moving colliders, planar bumps, surfaces) are
-planned in #914 and are not available until they land.
+This slice gives box bodies against box colliders, whole or cut by one
+plane into ramps (#915). Later slices (the mover step, round bodies, moving
+colliders, planar bumps, surfaces) are planned in #914 and are not available
+until they land.
 
 ## Requirements
 
@@ -40,18 +41,18 @@ planned in #914 and are not available until they land.
 6. **Order never shows.** A result never depends on the order a world visits
    colliders in, or on the order a set was built in: contacts at the same
    instant resolve to the lowest id, then the lowest position, compared
-   component by component (then the normal and the shape, so the order is
-   total). A list of colliders is in a fixed order (id, position, shape,
-   kind, layers) and holds each collider once, however many times a world
-   visited it. A set is derived data: a game may keep it or rebuild it from
+   component by component (then the normal, the shape and the cut, so the
+   order is total). A list of colliders is in a fixed order (id, position,
+   shape, kind, layers, cut) and holds each collider once, however many
+   times a world visited it. A set is derived data: a game may keep it or rebuild it from
    its own state at any step and get the same results.
 7. **One implementation for each pair of shapes,** and one mover for every
    body shape, generic over the sealed `Vector` trait for `Vec2` and `Vec3`:
-   no 2D-only or 3D-only copy of an algorithm. Box against box is the
-   closed-form sweep and is exact. For other pairs a query's tolerance
-   scales with the sizes of the two shapes, and the mover's tolerances
-   derive from the game's `skin`; never a fixed length. `cast`, `ray` and
-   `overlaps` take no length. A 3D query with no motion along z, among
+   no 2D-only or 3D-only copy of an algorithm. Box against box, whole or
+   cut, is the closed-form sweep and is exact. For other pairs a query's
+   tolerance scales with the sizes of the two shapes, and the mover's
+   tolerances derive from the game's `skin`; never a fixed length. `cast`,
+   `ray` and `overlaps` take no length. A 3D query with no motion along z, among
    colliders that span the body on z, gives bit-equal x and y to the 2D
    query.
 8. **Bounded work.** No query walks a range the caller's data can make
@@ -59,8 +60,9 @@ planned in #914 and are not available until they land.
    nothing.
 9. **Colliders.** A `Collider` is a `Shape` (`Box { half }` in this slice)
    at a position (its centre), a `ColliderKind` (`Solid`, `OneWay` or
-   `Sensor`), `layers: u32` and `id: u64`. The id is the game's: SGL carries
-   it into results and uses it to break ties, and hands out no handles.
+   `Sensor`), `layers: u32`, `id: u64` and an optional `Cut` (16, Ramps).
+   The id is the game's: SGL carries it into results and uses it to break
+   ties, and hands out no handles.
    Within one `ColliderSet` an id is unique, and inserting an id already
    present replaces that collider; in a slice, a cell world or a pair, ids
    may repeat. A query takes a mask and meets a collider when
@@ -68,7 +70,8 @@ planned in #914 and are not available until they land.
    only motion into a floor-classified face (one within `normal_threshold`
    of the configured up axis). A collider with a negative half-extent, or a
    position or half-extent that is not finite, occupies nothing: every query
-   skips it, through every world.
+   skips it, through every world. So does a cut collider whose cut leaves
+   nothing of its box, and a one-way platform with a cut.
 10. **Worlds.** A query reaches colliders only through the `World` trait.
     `colliders_near` visits every collider that may overlap a closed region;
     `colliders_along`, which the moving queries (`cast`, `ray`,
@@ -108,13 +111,15 @@ planned in #914 and are not available until they land.
       collider's, so a collider reached exactly at the end of a motion is
       offered by any world. Padding only adds candidates.
 11. **Sweep.** The box sweep is a closed-form slab test in the body's frame,
-    returning `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the
-    surface toward the body, from the last axis to enter. Boxes that touch
-    enter at exactly `t = 0`, read from the same edges as the overlap test,
-    and touching is not overlap. An exact tie between entering axes
+    returning `t ∈ [0, 1]` and a unit normal pointing from the surface
+    toward the body, from the last axis to enter: axis-aligned, or a cut's
+    normal. Boxes that touch enter at exactly `t = 0`, read from the same
+    edges as the overlap test, and touching is not overlap. An exact tie between entering axes
     resolves, for `slide` and `snap_to_ground`, to the axis most
     along `up` (on equal lengths y, then x, then z), then the others y, x,
-    z; `cast` and `ray`, which have no up, resolve it y, then x, then z.
+    z; `cast` and `ray`, which have no up, resolve it y, then x, then z. A
+    cut's axis comes after every cardinal axis: it decides only when it
+    enters strictly last.
     Already overlapping, moving away, and zero or non-finite motion give no
     contact. A box with no extent sweeps as a ray.
 12. **Mover settings.** `MoverConfig` is constructed only through `new`,
@@ -129,16 +134,20 @@ planned in #914 and are not available until they land.
     Results mirror exactly between y-up and y-down worlds.
 13. **Move and slide.** `slide` slides a body against a world,
     sweeps every finite nonzero remainder without an absolute motion cutoff,
-    slides at most a fixed number of times (`MAX_SLIDES_2D`, 2, and
-    `MAX_SLIDES_3D`, 3), and never moves the body more
-    than a rounding step into a solid collider. A body that starts inside one
+    slides at most a fixed number of times (`MAX_SLIDES_2D`, 3: a floor, a
+    ramp and a wall; `MAX_SLIDES_3D`, 4: a floor, a ramp and the two walls
+    of a corner; raised by one each for ramps, #915), and never moves the
+    body more than a rounding step into a solid collider. A body that starts inside one
     may move out or along it, and its least penetration depth never grows. It
     does not push bodies out: the game keeps them clear. Skin back-off
     shortens the whole swept motion to leave the configured gap along the
     contact normal, never reversing it or moving off the tested segment.
-    Sliding projects the motion left after the contact time, excluding the
-    backed-off portion. `snap_to_ground` probes `snap_distance` along `-up`,
-    meets only floor-classified faces, and backs off along its probe. A
+    After a wall or ceiling contact, sliding projects the motion left after
+    the contact time, excluding the backed-off portion; after a floor
+    contact, it turns everything the pass did not apply along the face (16,
+    Ramps). `snap_to_ground` probes `snap_distance` along `-up`, grounds
+    only on a floor-classified face met first (a steeper face met first
+    leaves the body where it is), and backs off along its probe. A
     one-way platform blocks a body within `skin` (plus rounding) below its
     floor face, never a body deeper inside it. A non-finite motion moves
     nothing.
@@ -149,12 +158,50 @@ planned in #914 and are not available until they land.
     than `block_epsilon`.
 15. **Queries.** `overlaps` lists every collider on the masked layers the
     body's shape overlaps, sensors included, in the fixed order, each once.
+    A cut collider is met as the shape it is: a ray, a cast or an overlap
+    passes through the part its cut removed.
     `cast` reports the first non-sensor collider a moving shape meets (`t`,
     normal and id), meeting a one-way platform as a whole box. A body
     overlapping a collider by no more than the collider's rounding allowance
     on one axis, moving into that face, meets it at `t = 0`: in world
     coordinates it touches. A collider the body overlaps more deeply at the
     start is passed. `ray` is a cast of a box with no extent.
+16. **Ramps.** A collider may be cut by one plane through its box; its solid
+    part is the box on the plane's inner side. In 3D the plane's normal has
+    one zero component. The sweep against a cut box is exact, and a contact
+    on the cut reports the plane's normal.
+    - `Cut` is a unit `normal` and an `offset` from the box's centre: the
+      solid part is the box where `normal · (p − position) ≤ offset`. Its
+      constructor normalises the normal (the ramp's only square root) and
+      refuses a zero or non-finite normal, a non-finite offset, and, in 3D,
+      a normal with no zero component; `Collider::with_cut` and
+      `with_kind` refuse a one-way platform with a cut. A cut serialises as
+      the normal it was built from and its offset, and is validated again,
+      to the same bits, when deserialised. A `CellWorld` scales a cut's
+      offset with its box; every world offers a cut collider by its box.
+    - The sweep is the slab test on the cardinal axes, by the solid part's
+      extent along each, and on the cut's normal, by the plane: a box and a
+      cut box are separated on one of those axes exactly when the normal
+      has a zero component in 3D. A body that overlaps a cut box may leave
+      it or move along it, never deeper, its axis of least penetration
+      chosen among those axes.
+    - Motion left after a contact with a floor-classified face turns along
+      that face and keeps its horizontal length, so a walkable slope does
+      not slow a body. Motion left after any other contact is projected onto
+      the face, as before, except that a face tilted toward `up` and too
+      steep to stand on gives it no height it did not already have: a body
+      pushed at the foot of such a slope stops there and holds still, and
+      one falling onto it slides down it. A slide never moves a body into a
+      face it has
+      already touched in the same move: between two such faces the
+      remaining motion follows their crease, and among three it stops.
+    - "Motion left" after a floor is everything the pass did not apply,
+      the skin back-off included, so a body walking or landing on any floor
+      covers exactly its motion across `up` when nothing else stops it. Its
+      part across `up` is kept whole, direction included, and only its part
+      along `up` changes to keep it on the face. In 2D two faces that are not
+      parallel meet at a point, so their crease stops the motion; faces
+      parallel to one already met add no constraint.
 
 ## Acceptance
 
@@ -170,3 +217,12 @@ planned in #914 and are not available until they land.
   motion matches the 2D move bit for bit.
 - A body state serialised with postcard and restored continues bit-equal to
   one that was not (`tests/sgl-physics/tests/state.rs`).
+- The ramp tests in `tests/sgl-physics/tests/ramps.rs` hold: hand-worked
+  sweeps against a 2D ramp and each kind of 3D ramp; a move never ends
+  inside a cut box, by the box's own definition sampled; walking over ramps
+  covers the same distance per step as flat ground and stays grounded down
+  them; a ramp too steep to stand on holds a body still at its foot and
+  gives a level push no height; a body in the
+  crease of a ramp and a wall penetrates neither, and one wedged in a crease
+  follows it; ramps mirror across each axis and between y-up and y-down;
+  and a cell world of ramps moves bit-equal to the slice.

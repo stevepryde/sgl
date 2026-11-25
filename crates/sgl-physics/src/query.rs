@@ -7,7 +7,7 @@ use core::cmp::Ordering;
 use sgl_core::{CanonicalWrite, StateHasher};
 
 use crate::config::MoverConfig;
-use crate::shape::{Collider, ColliderKind, Shape};
+use crate::shape::{Collider, ColliderKind, Cut, Shape, order_cuts};
 use crate::space::{self, Vector};
 use crate::sweep::{self, Contact, TIE_ORDER};
 use crate::world::{Unanswered, World};
@@ -20,7 +20,7 @@ pub struct Hit<V> {
     /// means touching at the start, `1` contact exactly at the end.
     pub t: f32,
     /// Unit normal of the face met, pointing from it toward the moving body.
-    /// Axis-aligned for boxes.
+    /// Axis-aligned for boxes; a ramp's plane gives its own normal.
     pub normal: V,
     /// The id of the collider met.
     pub id: u64,
@@ -104,7 +104,12 @@ pub fn overlaps<V: Vector, W: World<V> + ?Sized>(
     world.colliders_near(min - pad, max + pad, &mut |collider| {
         if collider.layers & mask != 0
             && collider.occupies()
-            && sweep::overlap(body, &collider.shape, collider.position - position)
+            && sweep::overlap(
+                body,
+                &collider.shape,
+                collider.cut.as_ref(),
+                collider.position - position,
+            )
         {
             found.push(*collider);
         }
@@ -120,12 +125,10 @@ pub(crate) enum Rule<'a, V> {
     /// [`cast`]: every collider but sensors, one-way platforms whole; those
     /// the body starts inside by more than a rounding step are passed.
     Cast,
-    /// [`slide`](crate::slide): an embedded body may
-    /// not go deeper, and a one-way platform blocks only motion into its
-    /// floor face.
+    /// [`slide`](crate::slide) and [`snap_to_ground`](crate::snap_to_ground):
+    /// an embedded body may not go deeper, and a one-way platform blocks
+    /// only motion into its floor face.
     Move(&'a MoverConfig<V>),
-    /// [`snap_to_ground`](crate::snap_to_ground): as `Move`, floors only.
-    Snap(&'a MoverConfig<V>),
 }
 
 /// The first contact of `body`, now at `origin + offset`, moving by `delta`,
@@ -162,6 +165,7 @@ pub(crate) fn first_contact<V: Vector, W: World<V> + ?Sized>(
             id: collider.id,
             position: collider.position,
             shape: collider.shape,
+            cut: collider.cut,
         };
         if best.is_none_or(|best| candidate.order(&best).is_lt()) {
             best = Some(candidate);
@@ -184,10 +188,10 @@ fn contact<V: Vector>(
     rel: V,
     rule: Rule<'_, V>,
 ) -> Option<Contact<V>> {
-    let target = &collider.shape;
+    let (target, cut) = (&collider.shape, collider.cut.as_ref());
     let config = match rule {
-        Rule::Cast if !sweep::overlap(body, target, rel) => {
-            return sweep::sweep(body, delta, target, rel, TIE_ORDER);
+        Rule::Cast if !sweep::overlap(body, target, cut, rel) => {
+            return sweep::sweep(body, delta, target, cut, rel, TIE_ORDER);
         }
         // A body whose edge equals a face in world coordinates can lie a
         // rounding step inside it once taken relative to the body: that is
@@ -195,27 +199,25 @@ fn contact<V: Vector>(
         // body started inside and the cast passes the collider.
         Rule::Cast => {
             let into = |normal: V| space::dot(delta, normal) < 0.0;
-            return sweep::resting(body, target, rel, collider.rounding(), TIE_ORDER, into);
+            let allowance = collider.rounding();
+            return sweep::resting(body, target, cut, rel, allowance, TIE_ORDER, into);
         }
-        Rule::Move(config) | Rule::Snap(config) => config,
+        Rule::Move(config) => config,
     };
     let order = config.tie_order();
     let one_way = collider.kind == ColliderKind::OneWay;
     let blocks_one_way = |normal: V| config.is_floor(normal) && space::dot(delta, normal) < 0.0;
-    let contact = if !sweep::overlap(body, target, rel) {
-        sweep::sweep(body, delta, target, rel, order)
+    let contact = if !sweep::overlap(body, target, cut, rel) {
+        sweep::sweep(body, delta, target, cut, rel, order)
     } else if one_way {
         // Within `skin` (plus the rounding of the platform's own coordinates)
         // below the floor face, a body rests on the platform, as Godot's
         // one-way margin has it; deeper, it is passing through.
         let allowance = collider.rounding() + space::splat(config.skin());
-        sweep::resting(body, target, rel, allowance, order, blocks_one_way)
+        sweep::resting(body, target, cut, rel, allowance, order, blocks_one_way)
     } else {
-        sweep::embedded(body, delta, target, rel, order)
+        sweep::embedded(body, delta, target, cut, rel, order)
     }?;
-    if matches!(rule, Rule::Snap(_)) && !config.is_floor(contact.normal) {
-        return None;
-    }
     if one_way && !blocks_one_way(contact.normal) {
         return None;
     }
@@ -230,12 +232,13 @@ struct Candidate<V> {
     id: u64,
     position: V,
     shape: Shape<V>,
+    cut: Option<Cut<V>>,
 }
 
 impl<V: Vector> Candidate<V> {
     /// Earliest first; at the same instant, the lowest id, then the lowest
-    /// position component by component, then the normal and the shape, so
-    /// the order is total.
+    /// position component by component, then the normal, the shape and the
+    /// cut, so the order is total.
     fn order(&self, other: &Self) -> Ordering {
         self.contact
             .t
@@ -244,6 +247,7 @@ impl<V: Vector> Candidate<V> {
             .then_with(|| space::compare(self.position, other.position))
             .then_with(|| space::compare(self.contact.normal, other.contact.normal))
             .then_with(|| self.shape.order(&other.shape))
+            .then_with(|| order_cuts(self.cut.as_ref(), other.cut.as_ref()))
     }
 }
 

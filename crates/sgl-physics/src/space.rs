@@ -102,6 +102,20 @@ pub(crate) fn dot<V: Vector>(v: V, d: V) -> f32 {
     sum.unwrap_or(0.0)
 }
 
+/// How far a box of half-extents `half` reaches along the unit direction
+/// `d` from its centre, `Σ |d_i| half_i`, summed in axis order over the axes
+/// `d` uses, so a 3D direction in the xy plane gives the 2D bits.
+pub(crate) fn reach<V: Vector>(half: V, d: V) -> f32 {
+    let mut sum: Option<f32> = None;
+    for axis in 0..V::AXES {
+        if d[axis] != 0.0 {
+            let term = d[axis].abs() * half[axis];
+            sum = Some(sum.map_or(term, |sum| sum + term));
+        }
+    }
+    sum.unwrap_or(0.0)
+}
+
 /// `v` with the part along the unit direction `d` removed (`v - d (v · d)`),
 /// leaving exactly unchanged every axis `d` does not use.
 pub(crate) fn reject<V: Vector>(v: V, d: V) -> V {

@@ -90,11 +90,13 @@ pub struct CellColliders<'a, V: Vector> {
 
 impl<V: Vector> CellColliders<'_, V> {
     /// Adds a collider given in cell-local units (the cell runs from `0` to
-    /// `1` along each axis). Its id, flags and layers pass through unchanged.
+    /// `1` along each axis), its cut's offset included. Its id, kind, layers
+    /// and cut normal pass through unchanged.
     pub fn push(&mut self, collider: Collider<V>) {
         let world = Collider {
             position: (self.corner + collider.position) * self.cell_size,
             shape: collider.shape.scaled(self.cell_size),
+            cut: collider.cut.map(|cut| cut.scaled(self.cell_size)),
             ..collider
         };
         (self.visit)(&world);

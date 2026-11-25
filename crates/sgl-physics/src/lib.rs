@@ -15,7 +15,8 @@
 //! # Conventions owned here
 //!
 //! **Normals** point from the surface toward the body that met it. Box
-//! normals are axis-aligned unit vectors.
+//! normals are axis-aligned unit vectors; a ramp's plane (a [`Cut`]) reports
+//! its own unit normal.
 //!
 //! **No up axis is assumed.** [`MoverConfig::up`] names it: a y-up 2D game
 //! passes `Vec2::Y`, a y-down one `Vec2::NEG_Y`, a 3D game `Vec3::Y`. Faces
@@ -35,7 +36,8 @@
 //! ([`slide`], [`snap_to_ground`]) resolves such a tie to the axis
 //! most along [`MoverConfig::up`], then y, then x, then z, so a body arriving
 //! exactly at a ledge's corner lands whichever axis is up. [`cast`] and
-//! [`ray`], which know no up axis, resolve it y, then x, then z.
+//! [`ray`], which know no up axis, resolve it y, then x, then z. A ramp's
+//! plane comes after every axis.
 //!
 //! # Contracts
 //!
@@ -77,7 +79,7 @@ pub use collider_set::ColliderSet;
 pub use config::{MoverConfig, MoverSettings};
 pub use contacts::Contacts;
 pub use query::{Hit, cast, overlaps, ray};
-pub use shape::{ALL_LAYERS, Collider, ColliderKind, Shape};
+pub use shape::{ALL_LAYERS, Collider, ColliderKind, Cut, Shape};
 pub use slide::{MAX_SLIDES_2D, MAX_SLIDES_3D, slide, snap_to_ground};
 pub use space::Vector;
 pub use world::{Unanswered, World};

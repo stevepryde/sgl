@@ -7,12 +7,12 @@ use crate::shape::Shape;
 use crate::space::{self, Vector};
 use crate::world::{Unanswered, World};
 
-/// Most times a 2D [`slide`] slides: a floor and a wall.
-pub const MAX_SLIDES_2D: usize = 2;
+/// Most times a 2D [`slide`] slides: a floor, a ramp and a wall.
+pub const MAX_SLIDES_2D: usize = 3;
 
-/// Most times a 3D [`slide`] slides: a floor and the two walls of a
-/// corner.
-pub const MAX_SLIDES_3D: usize = 3;
+/// Most times a 3D [`slide`] slides: a floor, a ramp and the two walls of
+/// a corner.
+pub const MAX_SLIDES_3D: usize = 4;
 
 /// The slide budget of space `V`.
 const fn max_slides<V: Vector>() -> usize {
@@ -28,9 +28,18 @@ const fn max_slides<V: Vector>() -> usize {
 /// and what it touched. Only colliders on a layer in `mask` take part.
 ///
 /// Each pass stops along the swept path a `skin` short of the earliest
-/// contact (along its normal), then projects the motion left after the
-/// contact time onto that surface and sweeps again; the backed-off portion is
-/// discarded. A move slides at most a fixed number of times:
+/// contact (along its normal), then sweeps again with the motion it has
+/// left, sliding along the surface it met. After a floor (a face within
+/// `normal_threshold` of `up`), everything the pass did not apply turns
+/// along the floor and keeps its part across `up`, so a walkable ramp does
+/// not slow a body and a landing keeps its run. After a wall or a ceiling,
+/// the motion left after the contact time is projected onto the face; the
+/// backed-off portion is discarded. A slope too steep to stand on is a
+/// wall that leans: the slide along it gains no height the motion did not
+/// ask for, so a body pushed at its foot stops there. A slide never moves the body into a
+/// face it has already touched in the same move: between two such faces it
+/// follows their crease (in 2D, where two faces meet at a point, it stops),
+/// and among three it stops. A move slides at most a fixed number of times:
 /// [`MAX_SLIDES_2D`] in 2D, [`MAX_SLIDES_3D`] in 3D. Sensors never block; a
 /// one-way platform blocks only motion into its floor face.
 ///
@@ -43,9 +52,9 @@ const fn max_slides<V: Vector>() -> usize {
 /// Contacts at the same instant resolve to the lowest id, then the lowest
 /// position, so the result never depends on the order the world visits its
 /// colliders in. An exact tie between axes resolves to the axis most along
-/// `up`, then y, x and z, so a body arriving exactly at a ledge's corner
-/// lands. Every finite nonzero remainder is swept, however small. A
-/// non-finite `delta` moves nothing.
+/// `up`, then y, x and z, and a ramp's plane after them all, so a body
+/// arriving exactly at a ledge's corner lands. Every finite nonzero
+/// remainder is swept, however small. A non-finite `delta` moves nothing.
 ///
 /// [`Unanswered`] when the world will not walk a pass's region: the body
 /// then moves nothing.
@@ -63,7 +72,8 @@ pub fn slide<V: Vector, W: World<V> + ?Sized>(
     }
     let mut remaining = delta;
     let mut total = V::ZERO;
-    for _ in 0..max_slides::<V>() {
+    let mut touched = [V::ZERO; MAX_SLIDES_3D];
+    for pass in 0..max_slides::<V>() {
         if remaining == V::ZERO {
             break;
         }
@@ -72,11 +82,23 @@ pub fn slide<V: Vector, W: World<V> + ?Sized>(
             total = total + remaining;
             break;
         };
-        let move_to = remaining * hit.t;
-        total = total + back_off(remaining, &hit, config.skin());
+        let applied = back_off(remaining, &hit, config.skin());
+        total = total + applied;
         contacts.record(&hit, config);
-        // Slide: keep only the part of the unspent motion along the surface.
-        remaining = space::reject(remaining - move_to, hit.normal);
+        let slid = if config.is_floor(hit.normal) {
+            along_floor(remaining - applied, hit.normal, config.up())
+        } else {
+            // Keep only the part of the unspent motion along the surface.
+            let unspent = remaining - remaining * hit.t;
+            without_climb(
+                space::reject(unspent, hit.normal),
+                unspent,
+                hit.normal,
+                config.up(),
+            )
+        };
+        remaining = clear_of(slid, hit.normal, &touched[..pass]);
+        touched[pass] = hit.normal;
     }
     contacts.effective = total;
 
@@ -89,14 +111,96 @@ pub fn slide<V: Vector, W: World<V> + ?Sized>(
     Ok((total, contacts))
 }
 
+/// `motion` turned along the floor face of unit `normal`: its part across
+/// `up` unchanged, and along `up` whatever keeps it on the face. A flat
+/// floor (`normal` equal to `up`) simply drops the part along `up`. The
+/// floor's `normal · up` exceeds the threshold, so the division is safe.
+fn along_floor<V: Vector>(motion: V, normal: V, up: V) -> V {
+    let across = space::reject(motion, up);
+    let rise = space::dot(across, normal) / space::dot(up, normal);
+    let mut out = across;
+    for axis in 0..V::AXES {
+        if up[axis] != 0.0 {
+            out[axis] = across[axis] - up[axis] * rise;
+        }
+    }
+    out
+}
+
+/// `slid`, the unspent motion projected onto a face that is not a floor,
+/// kept from climbing it. A slope too steep to stand on turns a run into
+/// height when the run is projected onto it, which would walk a body up a
+/// cliff a little each step; here the slide gains no height the unspent
+/// motion did not ask for, and what is left follows the face level. A wall
+/// or a ceiling (a face not tilted toward `up`) is returned as it is.
+fn without_climb<V: Vector>(slid: V, unspent: V, normal: V, up: V) -> V {
+    let tilt = space::dot(normal, up);
+    if tilt <= 0.0 {
+        return slid;
+    }
+    let asked = space::max(space::dot(unspent, up), 0.0);
+    let gained = space::dot(slid, up) - asked;
+    if gained <= 0.0 {
+        return slid;
+    }
+    let level = slid - up * gained;
+    // Back onto the face along its level direction, which leaves the height
+    // alone. The face is tilted and not flat, so `across` is not zero.
+    let across = space::reject(normal, up);
+    let facing = space::dot(across, normal);
+    if facing <= 0.0 {
+        return V::ZERO;
+    }
+    level - across * (space::dot(level, normal) / facing)
+}
+
+/// `motion`, slid along the face of unit normal `latest`, kept out of the
+/// faces met earlier in the move (`earlier`). Moving into one of them, it
+/// follows that face's crease with `latest`; moving into two, or along a
+/// crease into a third, it stops. A face parallel to one already met
+/// (the same floor twice, or a floor and a ceiling) adds no constraint.
+fn clear_of<V: Vector>(motion: V, latest: V, earlier: &[V]) -> V {
+    let Some(first) = earlier.iter().position(|&n| space::dot(motion, n) < 0.0) else {
+        return motion;
+    };
+    let along = crease(motion, earlier[first], latest);
+    let blocked = earlier
+        .iter()
+        .any(|&n| n != earlier[first] && n != latest && space::dot(along, n) < 0.0);
+    if blocked { V::ZERO } else { along }
+}
+
+/// `motion` along the line two faces of unit normals `a` and `b` meet in:
+/// its projection onto `a × b`. Parallel faces meet everywhere, and leave
+/// `motion` as it is. In 2D two other faces meet at a point, and the
+/// motion stops.
+fn crease<V: Vector>(motion: V, a: V, b: V) -> V {
+    if V::AXES == 2 {
+        let turn = a[0] * b[1] - a[1] * b[0];
+        return if turn == 0.0 { motion } else { V::ZERO };
+    }
+    let mut line = V::ZERO;
+    line[0] = a[1] * b[2] - a[2] * b[1];
+    line[1] = a[2] * b[0] - a[0] * b[2];
+    line[2] = a[0] * b[1] - a[1] * b[0];
+    let length = space::dot(line, line);
+    if length == 0.0 {
+        return motion;
+    }
+    line * (space::dot(motion, line) / length)
+}
+
 /// Probes `snap_distance` along `-up` from `position` and returns the
 /// translation that puts `body` back on the ground, or zero when no floor
 /// is within reach. Only colliders on a layer in `mask` take part.
 ///
 /// Only a floor-classified face grounds the body, so a body rising through a
-/// one-way platform is never pulled back onto its underside. After a move
-/// that walked off a small lip, it keeps a body on the ground across seams
-/// and down steps instead of dropping it into a one-step fall. It backs off
+/// one-way platform is never pulled back onto its underside. The probe
+/// stops at whatever it meets first: when that is not a floor (a slope too
+/// steep to stand on, beside a body at its foot), the body is not on the
+/// ground and does not move. After a move that walked off a small lip or
+/// down a ramp, it keeps a body on the ground across seams, down steps and
+/// down walkable slopes instead of dropping it into a fall. It backs off
 /// `skin` along its probe, and breaks ties between axes, as a move does.
 pub fn snap_to_ground<V: Vector, W: World<V> + ?Sized>(
     body: &Shape<V>,
@@ -107,10 +211,13 @@ pub fn snap_to_ground<V: Vector, W: World<V> + ?Sized>(
 ) -> Result<(V, Contacts<V>), Unanswered> {
     let probe = -config.up() * config.snap_distance();
     let mut contacts = Contacts::asked(probe);
-    let rule = Rule::Snap(config);
+    let rule = Rule::Move(config);
     let Some(hit) = first_contact(body, position, V::ZERO, probe, world, mask, rule)? else {
         return Ok((V::ZERO, contacts));
     };
+    if !config.is_floor(hit.normal) {
+        return Ok((V::ZERO, contacts));
+    }
     let safe = back_off(probe, &hit, config.skin());
     contacts.effective = safe;
     contacts.record(&hit, config);
@@ -440,10 +547,12 @@ mod tests {
         assert!(contacts.floor);
     }
 
-    /// Running down onto a floor keeps the horizontal travel after contact,
-    /// discarding only the portion removed by skin back-off.
+    /// Running down onto a floor keeps all of its horizontal travel: the
+    /// motion the skin back-off did not apply turns along the floor too, so
+    /// landing does not cost a running body distance (the floor rule, #915).
+    /// The vertical travel stops a skin above the floor.
     #[wasm_bindgen_test(unsupported = test)]
-    fn landing_while_running_keeps_the_horizontal_travel_after_contact() {
+    fn landing_while_running_keeps_all_its_horizontal_travel() {
         let set = set_with(&[(aabb(0.0, 0.0, 10.0, 0.5), ColliderKind::Solid)]);
         let (effective, contacts) = mv(
             aabb(0.0, 2.0, 0.5, 0.5),
@@ -453,11 +562,14 @@ mod tests {
         );
 
         assert!(contacts.floor);
-        // Contact at (2/3, -1); back-off removes 0.01 * 2/3 in x as well.
+        // Asked for 2 across; before the floor rule the back-off cost
+        // 0.01 * 2/3 of it (x = 299/150).
+        assert!((effective.x - 2.0).abs() < 1e-6, "x was {}", effective.x);
+        // Floor top 0.5 + body half 0.5 + skin.
         assert!(
-            (effective.x - 299.0 / 150.0).abs() < 1e-4,
-            "x was {}",
-            effective.x
+            (2.0 + effective.y - 1.01).abs() < 1e-6,
+            "y was {}",
+            effective.y
         );
     }
 

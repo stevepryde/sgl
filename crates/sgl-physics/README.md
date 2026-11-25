@@ -25,7 +25,13 @@ Every type and function is generic over `Vector`, implemented for
 A body is a `Shape` (in this release, `Shape::Box { half }`) at a position
 (its centre). A collider adds a `ColliderKind` (`Solid`, `OneWay`,
 `Sensor`), the layers it is on and the game's own `id: u64`, which queries
-report: SGL hands out no handles. An id is unique within a `ColliderSet`
+report: SGL hands out no handles. A collider's box may be cut by one plane
+into a ramp, a slope tile or a slope block: `with_cut(Cut::new(normal,
+offset))` keeps the box where `normal · (p - centre) <= offset`. In 3D the
+normal has a zero component (a ramp turning about one axis: upright,
+inverted or sideways); `Cut::new` panics otherwise, and a one-way platform
+takes no cut. Queries meet a ramp as the shape it is, and a contact on its
+plane reports the plane's normal. An id is unique within a `ColliderSet`
 (inserting it again replaces the collider) and may repeat in a slice, a
 `CellWorld` or a pair. Every query takes a layer `mask` (`ALL_LAYERS` for
 everything).
@@ -82,11 +88,16 @@ separates floors and ceilings from walls; `block_epsilon` is the shortfall
 the blocked flags ignore. `new` panics on an unusable `up`, a threshold
 outside `(0, 1)` or a negative or non-finite length.
 
-A move slides at most `MAX_SLIDES_2D` (2) times in 2D and `MAX_SLIDES_3D`
-(3) in 3D, stops a `skin` short of each contact along its path, breaks an
+A move slides at most `MAX_SLIDES_2D` (3) times in 2D and `MAX_SLIDES_3D`
+(4) in 3D, stops a `skin` short of each contact along its path, breaks an
 exact tie between axes at a corner toward `up` (so a body landing exactly on
 a ledge's corner lands), and never pushes a body
 out of geometry it starts inside: it may leave or slide, never go deeper.
+After a floor (a face within `normal_threshold` of `up`, a walkable ramp
+included) the motion keeps all of its part across `up`, so ramps and
+landings do not slow a body; after a wall or a ceiling (a ramp too steep to
+stand on included) it slides along the face. Between two faces it follows
+their crease. `snap_to_ground` keeps a body on a ramp it walks down.
 `Contacts` reports floor, wall and ceiling contacts, the last floor and
 ceiling normals and the ids of the last floor, wall and ceiling met.
 

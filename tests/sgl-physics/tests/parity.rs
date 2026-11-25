@@ -6,7 +6,7 @@
 use sgl_core::math::{IVec3, Vec2, Vec3};
 use sgl_core::{CanonicalWrite, SplitMix64, StateHasher};
 use sgl_physics::{
-    ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, MoverConfig,
+    ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Cut, MoverConfig,
     MoverSettings, Shape, Vector, World, cast, overlaps, ray, slide, snap_to_ground,
 };
 
@@ -63,14 +63,17 @@ fn unit(rng: &mut SplitMix64) -> f32 {
 /// A seeded walk through `world`: a game's fixed step, run `steps` times,
 /// with every result hashed. The velocity rules are the test's own: they
 /// only have to drive the body into floors, walls, ceilings, one-way
-/// platforms and sensors from one seed.
+/// platforms, sensors and ramps from one seed. Returns the digest and how
+/// many steps the body stood on a ramp (a floor whose normal is not along
+/// an axis).
 fn walk<V: Vector, W: World<V> + ?Sized>(
     world: &W,
     body: &Shape<V>,
     start: V,
     config: &MoverConfig<V>,
     steps: u32,
-) -> String {
+) -> (String, u32) {
+    let mut on_ramps = 0;
     let mut rng = SplitMix64::new(0x05ee_d914);
     let mut hasher = StateHasher::new();
     let (mut position, mut velocity, mut grounded) = (start, V::ZERO, false);
@@ -105,6 +108,9 @@ fn walk<V: Vector, W: World<V> + ?Sized>(
             position = position + snap;
         }
         grounded = contacts.floor;
+        let normal = contacts.last_floor_normal;
+        let tilted = (0..V::AXES).filter(|&axis| normal[axis] != 0.0).count() > 1;
+        on_ramps += u32::from(contacts.floor && tilted);
         for axis in 0..V::AXES {
             hasher.u32(position[axis].to_bits());
         }
@@ -123,19 +129,21 @@ fn walk<V: Vector, W: World<V> + ?Sized>(
             collider.canonical_write(&mut hasher);
         }
     }
-    hasher.finish().to_hex()
+    (hasher.finish().to_hex(), on_ramps)
 }
 
 /// A 2D side-on level of one-unit tiles: `#` solid, `=` a one-way platform
-/// a quarter tile thick at the tile's top, `s` a sensor. Row 0 is the top.
+/// a quarter tile thick at the tile's top, `s` a sensor, `/` and `\\` ramps
+/// rising to the right and to the left, `<` a half-height ramp rising to the
+/// left. Row 0 is the top.
 const LEVEL_2D: [&str; 8] = [
     "################",
     "#..............#",
     "#.....====.....#",
     "#..##......s...#",
-    "#.........###..#",
+    "#......../###..#",
     "#..====........#",
-    "#......##......#",
+    "#<..../##\\..../#",
     "################",
 ];
 
@@ -148,8 +156,16 @@ fn level_2d() -> ColliderSet<Vec2> {
             let full = Shape::Box {
                 half: Vec2::splat(0.5),
             };
+            let ramp = |normal: Vec2, offset: f32| {
+                Collider::new(id, full, Vec2::new(x, y)).with_cut(Cut::new(normal, offset))
+            };
             let collider = match tile {
                 b'#' => Collider::new(id, full, Vec2::new(x, y)),
+                b'/' => ramp(Vec2::new(-1.0, 1.0), 0.0),
+                b'\\' => ramp(Vec2::new(1.0, 1.0), 0.0),
+                // Through the bottom-right corner, (0.5, -0.5) from the
+                // centre: an offset of -0.5 / sqrt(5).
+                b'<' => ramp(Vec2::new(1.0, 2.0), -0.223_606_8),
                 b's' => Collider::new(id, full, Vec2::new(x, y)).with_kind(ColliderKind::Sensor),
                 b'=' => Collider::new(
                     id,
@@ -168,8 +184,10 @@ fn level_2d() -> ColliderSet<Vec2> {
 }
 
 /// A 3D voxel level answered cell by cell: a floor, walls, pillars, a low
-/// roof, a slab, a run of one-way platforms, a patch of sensors, and full
-/// blocks past the walls standing for unloaded cells.
+/// roof, a slab, a run of one-way platforms, a patch of sensors, slope
+/// blocks of each kind (rows rising to the walls, inverted ones under the
+/// roof's edge, and a wedge of two sideways ones),
+/// and full blocks past the walls standing for unloaded cells.
 fn voxel(cell: IVec3, out: &mut CellColliders<'_, Vec3>) {
     let id = u64::from((cell.x + 64).unsigned_abs())
         | u64::from((cell.y + 64).unsigned_abs()) << 8
@@ -186,8 +204,21 @@ fn voxel(cell: IVec3, out: &mut CellColliders<'_, Vec3>) {
     let wall = (x.abs() == 7 || z.abs() == 7) && y < 3;
     let pillar = matches!((x, z), (2, 2) | (-3, 1) | (4, -4)) && (0..2).contains(&y);
     let roof = y == 2 && (1..5).contains(&x) && (-3..2).contains(&z);
+    let slope = |normal: Vec3| full.with_cut(Cut::new(normal, 0.0));
     if outside || wall || y == -1 || pillar || roof {
         out.push(full);
+    } else if y == 0 && x == 6 {
+        out.push(slope(Vec3::new(-1.0, 1.0, 0.0)));
+    } else if y == 0 && z == 6 {
+        out.push(slope(Vec3::new(0.0, 1.0, -1.0)));
+    } else if y == 0 && z == -6 && x >= 0 {
+        out.push(slope(Vec3::new(0.0, 1.0, 1.0)));
+    } else if y == 0 && x == -6 && z >= 0 {
+        out.push(slope(Vec3::new(1.0, 1.0, 0.0)));
+    } else if y == 1 && z == 1 && (1..5).contains(&x) {
+        out.push(slope(Vec3::new(0.0, -1.0, 1.0)));
+    } else if (0..2).contains(&y) && z == -4 && (0..2).contains(&x) {
+        out.push(slope(Vec3::new(if x == 0 { -1.0 } else { 1.0 }, 0.0, -1.0)));
     } else if y == 0 && (-6..-1).contains(&x) && (-6..-1).contains(&z) {
         out.push(full.with_kind(ColliderKind::Sensor));
     } else if (x, y, z) == (0, 0, -3) {
@@ -218,7 +249,10 @@ fn voxel(cell: IVec3, out: &mut CellColliders<'_, Vec3>) {
 /// same seeded walk through a fixed 2D level (a set) and a fixed 3D level
 /// (a cell world paired with a set of crates). Frozen on first run (#914);
 /// refrozen when `ColliderKind` replaced the three flag bools in the
-/// canonical encoding of the colliders `overlaps` lists.
+/// canonical encoding of the colliders `overlaps` lists, and again when
+/// both levels gained ramps, `Collider`'s encoding gained its cut, and a
+/// move's floor contacts began keeping their run (#915). Each walk must
+/// stand on its ramps for the digest to cover them.
 #[wasm_bindgen_test(unsupported = test)]
 fn seeded_walks_through_fixed_levels_are_target_independent() {
     let level = level_2d();
@@ -226,7 +260,7 @@ fn seeded_walks_through_fixed_levels_are_target_independent() {
     let body_2d = Shape::Box {
         half: Vec2::new(0.375, 0.5),
     };
-    let walked_2d = walk(&level, &body_2d, Vec2::new(12.5, 1.6), &config_2d, 600);
+    let (walked_2d, on_ramps_2d) = walk(&level, &body_2d, Vec2::new(12.5, 1.6), &config_2d, 600);
 
     let mut crates = ColliderSet::new(2.0);
     for (id, (x, z)) in (1u64..).zip([(1.5, 3.5), (-2.25, -2.5), (5.0, 1.0)]) {
@@ -244,14 +278,20 @@ fn seeded_walks_through_fixed_levels_are_target_independent() {
         half: Vec3::new(0.3, 0.9, 0.3),
     };
     let world = (&cells, &crates);
-    let walked_3d = walk(&world, &body_3d, Vec3::new(-2.5, 2.0, 0.5), &config_3d, 600);
+    let (walked_3d, on_ramps_3d) =
+        walk(&world, &body_3d, Vec3::new(-2.5, 2.0, 0.5), &config_3d, 600);
+    // Steps the walks stood on a ramp: 124 in 2D, 61 in 3D.
+    assert!(
+        on_ramps_2d > 50 && on_ramps_3d > 30,
+        "{on_ramps_2d}, {on_ramps_3d}"
+    );
 
     assert_eq!(
         walked_2d,
-        "d199fe86fcbbc9ef11e4ada860301208460a475099843124679c1a3d3c2c370e"
+        "4d09066832d46becb611d2fdb35c0df3f952fd237020e33f0d98f3588a521410"
     );
     assert_eq!(
         walked_3d,
-        "b8e7900374e53b56aa595da82e8f96141cb24f3422f4fc09015eb983d2e651e0"
+        "a3e3d0b82b2cff810fed18c8724f190a45436ffd2336555f51a0cff2f3110eb0"
     );
 }
