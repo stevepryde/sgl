@@ -94,7 +94,7 @@ APIs. Every consumer-facing update carries [changelog and migration notes](CHANG
 that agents can follow.
 
 Versions follow semver as Cargo applies it. Depend on SGL with ordinary
-requirements such as `sgl-3d = "0.10.0"` and commit `Cargo.lock` (or reference
+requirements such as `sgl-3d = "0.11.0"` and commit `Cargo.lock` (or reference
 a full Git commit `rev`). During `0.x` a release that requires game changes
 advances the minor version and a patch release never does, so `cargo update`
 within a requirement is safe; move to a new minor version deliberately, using
