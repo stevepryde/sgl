@@ -102,8 +102,9 @@ captures on the same renderer reuse the cached pipelines.
    time in seconds (`elapsed_seconds`, an `f64`, which moves materials'
    normal layers, their shaders and the mist); `Renderer::render` with
    `&mut [ViewFrame { view, input, settings, output, timing }]`
-   into the output texture (`ViewOutput::Texture(&view)`). Draw the game's UI (`sgl-2d` can, on the same
-   device), submit, and call `Renderer::finish_frame(&mut scene)`. One
+   into the output texture (`ViewOutput::Texture(&view)`). Draw the game's UI
+   ([`sgl-2d` can, on the same device](../../sgl-2d/README.md#ui-and-huds)),
+   submit, and call `Renderer::finish_frame(&mut scene)`. One
    `render` call is one frame of the scene: never render it twice for one
    finished frame. A frame rendered and
    not finished, then rendered again as the same frame, restarts no

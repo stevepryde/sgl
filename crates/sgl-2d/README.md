@@ -67,13 +67,43 @@ Ordinary widgets stay below these layers regardless of list length. Draw
 cursors saturate within their bands after millions of steps; equal-z draws
 retain screen-list push order.
 
-For HUDs over SGL3D, share the game-owned wgpu device and queue and draw UI
-after the 3D scene. A HUD that drives `canvas::sprite::SpritePass` itself
-keeps one pass: `upload` adds a texture or replaces a known handle's pixels
-(an invalid texture returns a `TextureError`), `upload_normal` registers a
-diffuse's normal map after its `upload` or replaces it under a different
-handle, and `draw_stats` reports the draws `draw_screen` encodes. Follow the
-[SGL3D frame lifecycle](../sgl-3d/docs/README.md#a-frame)
+For a HUD over SGL3D, request one device for both renderers through
+`Context::try_new_with` (or `Gpu::headless_with` offscreen) with
+`sgl_3d::graphics_device::{limits, features}`. Create the SGL3D `View` with
+`canvas::blit::SCENE_FORMAT` at `Renderer::target_size` and render it into
+`Renderer::scene_view`, fetched again after `set_target_size`.
+`Renderer::render_screen` draws the list's
+screen channel over it, and `Renderer::blit_scene` then `Frame::present`
+shows it letterboxed. `read_scene_async` (or native `read_scene` /
+`capture_scene`) reads back that same image, with or without a surface
+frame.
+
+```rust
+let ctx = Context::try_new_with(window, true, |adapter| wgpu::DeviceDescriptor {
+    required_features: sgl_3d::graphics_device::features(adapter),
+    required_limits: sgl_3d::graphics_device::limits(adapter),
+    ..Default::default()
+})?;
+let (width, height) = canvas.target_size(); // canvas: sgl_2d::canvas::Renderer
+let mut view = View::new(&renderer, &ctx.device, &ctx.queue, SCENE_FORMAT, [width, height], 1., &settings)?;
+
+// Each frame:
+let mut encoder = ctx.device.create_command_encoder(&Default::default());
+let output = ViewOutput::Texture(canvas.scene_view());
+renderer.render(&ctx.device, &ctx.queue, &mut encoder, &mut scene,
+    &mut [ViewFrame { view: &mut view, input: &input, settings: &settings, output, timing: None }]);
+ctx.queue.submit([encoder.finish()]);
+renderer.finish_frame(&mut scene);
+canvas.render_screen(&ctx, &mut hud);
+if let Some(frame) = ctx.acquire() {
+    canvas.blit_scene(&ctx, &frame);
+    frame.present();
+}
+```
+
+A game that drives its own pass can still use `canvas::sprite::SpritePass`
+directly ([rendering](../../specs/rendering.md) requirements 2 and 5).
+Follow the [SGL3D frame lifecycle](../sgl-3d/docs/README.md#a-frame)
 and [3D integration conventions](../../docs/3d-development.md).
 `sgl_core::math` and SGL3D's `sgl_3d::glam` re-export the same workspace glam
 types, so matching vectors and matrices pass between them directly.

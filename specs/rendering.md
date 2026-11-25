@@ -71,10 +71,20 @@ Their CPU-side contracts are in [client](client.md).
    does not request another redraw or advance game state.
 7. The renderer renders and reads back its offscreen scene without a
    window: a `Gpu` (device + queue, which a windowed `Context` derefs to)
-   is enough for uploads, `render_scene`, `read_scene_async`, `read_scene`
-   and `capture_scene`. Only the swapchain blit needs a surface.
+   is enough for uploads, `render_scene`, `render_screen`,
+   `read_scene_async`, `read_scene` and `capture_scene`. Only the swapchain
+   blit (`render`, `render_lit`, `blit_scene`) needs a surface.
    `read_scene_async` is the readback on both platforms; `read_scene`, which
    blocks on it, and `capture_scene`, which writes a file, are native-only.
+8. A game may produce the canvas's picture itself (an SGL3D view, its own
+   passes) instead of the world channel. It renders into
+   `Renderer::scene_view`: `SCENE_FORMAT`, sRGB-encoded values,
+   `target_size` pixels, a view that is replaced when `set_target_size`
+   changes the size. `Renderer::render_screen` then draws the list's screen
+   channel over what the target holds, ignoring the world channel and
+   lighting, and `Renderer::blit_scene` letterboxes the target into a
+   swapchain frame as `render_lit` does. `read_scene_async` returns that
+   same composed picture, with or without a surface frame.
 
 ## Acceptance
 

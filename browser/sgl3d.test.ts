@@ -70,6 +70,10 @@ test(
       // the task that ran them, then the ordinary bytes once settled.
       expect(lines.some((line) => line.startsWith("ok asynchronous compile jobs:"))).toBe(true);
       expect(lines.some((line) => line.startsWith("ok browser image decode:"))).toBe(true);
+      // sgl-2d's canvas device as the game requests it, and one device
+      // running an SGL3D view with sgl-2d's HUD drawn over it.
+      expect(lines.some((line) => line.startsWith("ok 2D canvas device request:"))).toBe(true);
+      expect(lines.some((line) => line.startsWith("ok 2D HUD over the 3D view:"))).toBe(true);
       // The frame compiled ahead ran its jobs and passed the same checks.
       expect(lines.find((line) => line.includes("compiled ahead:"))).toMatch(/^ok .* compile jobs run ahead/);
       // Chromium grants texture-formats-tier2, which sgl-webgpu maps, so the

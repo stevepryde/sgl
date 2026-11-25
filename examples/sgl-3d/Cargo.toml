@@ -32,6 +32,8 @@ futures-channel.workspace = true
 js-sys.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
+# `browser_smoke` requests sgl-2d's canvas device and draws its HUD over an SGL3D view.
+sgl-2d.workspace = true
 # The browser examples create their wgpu instance on SGL's WebGPU backend.
 sgl-webgpu.workspace = true
 # `browser_smoke` reports which of the FSR port's resource sets a device runs.

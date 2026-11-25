@@ -54,6 +54,10 @@
 //! frame, at each level and in fog, and the report gives the frame's GPU
 //! time at two levels, in fog and without the picture, and what the
 //! reflected view draws (`mirror`).
+//! Last, on devices of their own requested through sgl-2d, a limit above
+//! the default the device must report and one beyond the adapter it must refuse
+//! (`canvas_device_request`), and an SGL3D view rendered into sgl-2d's
+//! canvas with a HUD drawn over it (`hud_over_view`).
 #![cfg(target_arch = "wasm32")]
 #![allow(clippy::future_not_send)]
 
@@ -3062,6 +3066,16 @@ pub async fn run() -> String {
             let _ = writeln!(report, "FAIL setup: {error}");
         }
     }
+    // Each on a device of its own, requested through sgl-2d. Boxed, so their
+    // state stays out of `run`'s future.
+    let _ = match Box::pin(canvas_device_request()).await {
+        Ok(detail) => writeln!(report, "ok 2D canvas device request: {detail}"),
+        Err(error) => writeln!(report, "FAIL 2D canvas device request: {error}"),
+    };
+    let _ = match Box::pin(hud_over_view()).await {
+        Ok(detail) => writeln!(report, "ok 2D HUD over the 3D view: {detail}"),
+        Err(error) => writeln!(report, "FAIL 2D HUD over the 3D view: {error}"),
+    };
     report
 }
 
@@ -3411,4 +3425,227 @@ async fn core_set(report: &mut String) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// sgl-2d's canvas device, requested by the game through the browser's
+/// WebGPU (#925). A request for the adapter's 2D texture limit, above
+/// wgpu's default, yields a device that reports it, which it does not if the
+/// request is ignored. (A limit below the default cannot show this here:
+/// WebGPU never grants a device less than its default limits.) A request
+/// one above the adapter's limit is refused with `GpuError::NoDevice`, not
+/// a panic or a hang.
+async fn canvas_device_request() -> Result<String, String> {
+    let default = wgpu::Limits::default().max_texture_dimension_2d;
+    let mut requested = 0;
+    let gpu = sgl_2d::canvas::Gpu::headless_with_async(|adapter| {
+        requested = adapter.limits().max_texture_dimension_2d;
+        wgpu::DeviceDescriptor {
+            label: Some("sgl-2d canvas, the adapter's 2D texture limit"),
+            required_limits: wgpu::Limits {
+                max_texture_dimension_2d: requested,
+                ..wgpu::Limits::default()
+            },
+            ..Default::default()
+        }
+    })
+    .await
+    .map_err(|e| format!("Gpu::headless_with_async: {e}"))?;
+    if requested <= default {
+        return Err(format!(
+            "the adapter's 2D texture limit {requested} is not above the default {default}, \
+             so a granted request looks like an ignored one"
+        ));
+    }
+    let reported = gpu.device.limits().max_texture_dimension_2d;
+    if reported != requested {
+        return Err(format!(
+            "requested max_texture_dimension_2d {requested}, the device reports {reported}"
+        ));
+    }
+    // One above the adapter's own limit: refused for that, where `u32::MAX`
+    // is refused as unrepresentable before the adapter is asked.
+    let beyond = requested + 1;
+    let refused = sgl_2d::canvas::Gpu::headless_with_async(|_| wgpu::DeviceDescriptor {
+        label: Some("sgl-2d canvas, beyond the adapter"),
+        required_limits: wgpu::Limits {
+            max_texture_dimension_2d: beyond,
+            ..wgpu::Limits::default()
+        },
+        ..Default::default()
+    })
+    .await;
+    match refused {
+        Err(sgl_2d::canvas::GpuError::NoDevice(reason)) => Ok(format!(
+            "max_texture_dimension_2d {reported} as requested (default {default}); {beyond} refused ({})",
+            reason.lines().next().unwrap_or_default()
+        )),
+        Err(other) => Err(format!("{beyond} refused as {other}, not NoDevice")),
+        Ok(_) => Err(format!(
+            "a device with max_texture_dimension_2d {beyond}, above the adapter's {requested}, was granted"
+        )),
+    }
+}
+
+/// One device, requested through sgl-2d with SGL3D's limits and features
+/// (#925), runs both renderers (#926): an SGL3D view renders into the
+/// sgl-2d canvas target, then `render_screen` draws an opaque HUD rectangle
+/// over it, and both are read back with `read_scene_async`. The oracle is
+/// the HUD's geometry and colour: a fresh canvas reads back black, so the
+/// view's picture reached it if it does not; afterwards every pixel inside
+/// the rectangle is the HUD colour and every pixel outside it is byte for
+/// byte what the view drew (fails if the screen pass clears, composites,
+/// misplaces or skips the HUD).
+async fn hud_over_view() -> Result<String, String> {
+    use sgl_2d::canvas::{DrawList, Overlay, Rect, blit::SCENE_FORMAT};
+    const CANVAS: [u32; 2] = [128, 72];
+    /// Columns 40..72 and rows 20..40: over the panel's corner and the
+    /// backdrop.
+    const HUD: [u32; 4] = [40, 20, 32, 20];
+    const HUD_COLOR: [u8; 4] = [0, 255, 0, 255];
+    let gpu = sgl_2d::canvas::Gpu::headless_with_async(|adapter| wgpu::DeviceDescriptor {
+        label: Some("sgl-2d canvas and SGL3D"),
+        required_features: sgl_3d::graphics_device::features(adapter),
+        required_limits: sgl_3d::graphics_device::limits(adapter),
+        ..Default::default()
+    })
+    .await
+    .map_err(|e| format!("Gpu::headless_with_async: {e}"))?;
+    let (device, queue) = (&gpu.device, &gpu.queue);
+    let uncaptured = Arc::new(Mutex::new(Vec::<String>::new()));
+    device.on_uncaptured_error(Arc::new({
+        let uncaptured = uncaptured.clone();
+        move |error| uncaptured.lock().unwrap().push(error.to_string())
+    }));
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    // A red clear, so a screen pass that clears or composites shows.
+    let mut canvas = Box::new(sgl_2d::canvas::Renderer::headless(
+        &gpu,
+        CANVAS[0],
+        CANVAS[1],
+        [1., 0., 0.],
+        sgl_2d::canvas::LightingSpace::Gamma,
+    ));
+    let mut scene = Box::new(Scene::new(device, queue));
+    let ids = scene
+        .add_asset(
+            device,
+            queue,
+            Asset {
+                meshes: vec![panel(Vec3::new(0., 0., -4.), Vec3::X, Vec3::Y * 0.75, 0)],
+                materials: vec![Material {
+                    unlit: true,
+                    double_sided: true,
+                    ..material([0.8, 0.3, 0.1, 1.], 0., 1.)
+                }],
+                images: Vec::new(),
+                rig: Default::default(),
+                ignored: Vec::new(),
+                lights: Default::default(),
+                instanced: Vec::new(),
+            },
+        )
+        .map_err(|e| format!("add_asset: {e}"))?;
+    scene
+        .add_instance(
+            device,
+            queue,
+            InstanceState::new(ids.model),
+            Mobility::Static,
+        )
+        .map_err(|e| format!("add_instance: {e}"))?;
+    let settings = Settings {
+        preset: RenderPreset::Low,
+        ..Settings::default()
+    };
+    let mut renderer = Box::new(Renderer::new(device));
+    let mut view = Box::new(
+        View::new(
+            &renderer,
+            device,
+            queue,
+            SCENE_FORMAT,
+            CANVAS,
+            1.,
+            &settings,
+        )
+        .map_err(|e| format!("View::new: {e}"))?,
+    );
+    let mut input = FrameInput::new(Camera {
+        eye: Vec3::ZERO,
+        view: Mat4::IDENTITY,
+        projection: sgl_3d::perspective(1., CANVAS[0] as f32 / CANVAS[1] as f32, 0.1),
+    });
+    input.backdrop = Backdrop::Color([0.1, 0.2, 0.4]);
+    input.camera_cut = true;
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.render(
+        device,
+        queue,
+        &mut encoder,
+        &mut scene,
+        &mut [ViewFrame {
+            view: &mut view,
+            input: &input,
+            settings: &settings,
+            output: ViewOutput::Texture(canvas.scene_view()),
+            timing: None,
+        }],
+    );
+    queue.submit([encoder.finish()]);
+    renderer.finish_frame(&mut scene);
+    let before = canvas
+        .read_scene_async(&gpu)
+        .await
+        .map_err(|e| format!("read_scene_async before the HUD: {e}"))?;
+    if before.chunks_exact(4).all(|px| px == [0, 0, 0, 255]) {
+        return Err("the canvas is black after the SGL3D view rendered into it".into());
+    }
+    let mut assets = sgl_2d::assets::Assets::new();
+    let white = canvas.white_texture(&gpu, &mut assets);
+    let mut list = DrawList::new();
+    Overlay {
+        color: HUD_COLOR.map(|c| f32::from(c) / 255.),
+        ..Overlay::new(white)
+    }
+    .fill_rect(
+        &mut list.screen,
+        Rect::new(HUD[0] as f32, HUD[1] as f32, HUD[2] as f32, HUD[3] as f32),
+    );
+    canvas.render_screen(&gpu, &mut list);
+    let after = canvas
+        .read_scene_async(&gpu)
+        .await
+        .map_err(|e| format!("read_scene_async after the HUD: {e}"))?;
+    if let Some(error) = validation.pop().await {
+        return Err(format!("validation error: {error}"));
+    }
+    let errors = std::mem::take(&mut *uncaptured.lock().unwrap());
+    if !errors.is_empty() {
+        return Err(format!("uncaptured {errors:?}"));
+    }
+    let (mut inside, mut outside) = (0, 0);
+    for (index, (was, is)) in before
+        .chunks_exact(4)
+        .zip(after.chunks_exact(4))
+        .enumerate()
+    {
+        let (x, y) = (index as u32 % CANVAS[0], index as u32 / CANVAS[0]);
+        let in_hud =
+            (HUD[0]..HUD[0] + HUD[2]).contains(&x) && (HUD[1]..HUD[1] + HUD[3]).contains(&y);
+        let expected = if in_hud { &HUD_COLOR[..] } else { was };
+        if is != expected {
+            return Err(format!(
+                "({x}, {y}) {} the HUD: {is:?}, expected {expected:?}",
+                if in_hud { "inside" } else { "outside" }
+            ));
+        }
+        if in_hud {
+            inside += 1;
+        } else {
+            outside += 1;
+        }
+    }
+    Ok(format!(
+        "{inside} pixels the HUD colour, {outside} the view's picture unchanged"
+    ))
 }

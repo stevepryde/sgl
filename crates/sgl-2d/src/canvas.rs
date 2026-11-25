@@ -3,7 +3,9 @@
 //!
 //! It provides device/surface bring-up ([`gpu::Context`]), an offscreen scene
 //! target at the logical resolution, and an aspect-preserving letterbox blit
-//! to the swapchain ([`Renderer`]).
+//! to the swapchain ([`Renderer`]). A game may render its own picture into
+//! that target and draw only the screen channel over it
+//! ([`Renderer::render_screen`], [`Renderer::blit_scene`]).
 //!
 //! The instanced sprite pipeline ([`sprite`]) consumes the
 //! [`DrawList`] seam ([`draw`]), shelf-packed texture atlasing ([`atlas`]),

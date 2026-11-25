@@ -959,16 +959,43 @@ impl SpritePass {
         target_size: (u32, u32),
         clip_scale: f32,
     ) {
+        self.prepare_channels(
+            device,
+            queue,
+            list,
+            Some((world_vp, world_units)),
+            screen_vp,
+            target_size,
+            clip_scale,
+        );
+    }
+
+    /// [`prepare`](Self::prepare) with the world channel optional: `None`
+    /// prepares the screen channel alone, leaving the world channel's
+    /// instances unconverted and unuploaded, so
+    /// [`draw_world`](Self::draw_world) encodes nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare_channels(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        list: &DrawList,
+        world: Option<(Mat4, WorldUnits)>,
+        screen_vp: Mat4,
+        target_size: (u32, u32),
+        clip_scale: f32,
+    ) {
         // --- Convert + batch. Scratch vectors persist across frames.
         self.raw.clear();
         self.batches.clear();
         self.target_size = target_size;
         // The most instances one buffer the device accepts can hold.
         let max_instances = device.limits().max_buffer_size / size_of::<InstanceRaw>() as u64;
-        let channels = [
-            (0usize, &list.world, world_units),
-            (1usize, &list.screen, WorldUnits::default()),
-        ];
+        let world_channel = world.map(|(_, units)| (0usize, &list.world, units));
+        let channels =
+            world_channel
+                .into_iter()
+                .chain([(1usize, &list.screen, WorldUnits::default())]);
         'convert: for (camera, channel, units) in channels {
             for inst in channel {
                 if self.raw.len() as u64 >= max_instances {
@@ -1031,11 +1058,13 @@ impl SpritePass {
         }
 
         // --- Upload cameras + instances (grow the buffer as needed).
-        queue.write_buffer(
-            &self.cameras[0].buffer,
-            0,
-            bytemuck::cast_slice(&world_vp.to_cols_array()),
-        );
+        if let Some((world_vp, _)) = world {
+            queue.write_buffer(
+                &self.cameras[0].buffer,
+                0,
+                bytemuck::cast_slice(&world_vp.to_cols_array()),
+            );
+        }
         queue.write_buffer(
             &self.cameras[1].buffer,
             0,

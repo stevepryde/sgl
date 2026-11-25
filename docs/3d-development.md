@@ -17,7 +17,9 @@ into the game's command encoder. It neither creates a window nor handles input;
 use game-owned winit or another compatible window integration, or in the
 browser a canvas surface on the page's WebGPU device, from an instance
 `sgl_webgpu::instance` creates. Request the device with
-`graphics_device::limits` and `graphics_device::features` on either. A
+`graphics_device::limits` and `graphics_device::features` on either; an
+`sgl-2d` HUD shares that device
+([UI and HUDs](../crates/sgl-2d/README.md#ui-and-huds)). A
 native game that opts in to hardware ray tracing also requests
 `graphics_device::ray_tracing_features` with wgpu's experimental token and
 turns `Settings::hardware_ray_tracing` on, and `Settings::ray_traced_shadows`

@@ -17,6 +17,12 @@
 //!    an aspect-preserving viewport (nearest sampling, fractional scale
 //!    allowed; the bars come from the swapchain clear outside the viewport).
 //!
+//! [`Renderer::render_lit`] runs all five; [`Renderer::render_scene`] runs
+//! 1–4. A game that produces the canvas picture itself (an SGL3D view, its
+//! own passes) renders it into [`Renderer::scene_view`] in place of 1–3,
+//! then runs 4 with [`Renderer::render_screen`] and 5 with
+//! [`Renderer::blit_scene`].
+//!
 //! **Color space** ([`LightingSpace`]): the **composited** target always
 //! holds sRGB-encoded 8-bit values ([`SCENE_FORMAT`]), so the screen pass,
 //! the blit (which decodes for an sRGB swapchain or copies for a unorm one)
@@ -476,9 +482,9 @@ impl Renderer {
     /// A renderer with no window: it uploads, renders the offscreen scene
     /// ([`render_scene`](Self::render_scene)) and reads it back
     /// ([`read_scene`](Self::read_scene) / [`capture_scene`](Self::capture_scene))
-    /// over a [`Gpu::headless`] device. Only [`render`](Self::render) /
-    /// [`render_lit`](Self::render_lit), which blit to a swapchain, need a
-    /// [`Context`].
+    /// over a [`Gpu::headless`] device. Only [`render`](Self::render),
+    /// [`render_lit`](Self::render_lit) and [`blit_scene`](Self::blit_scene),
+    /// which blit to a swapchain, need a [`Context`].
     pub fn headless(
         gpu: &Gpu,
         logical_width: u32,
@@ -664,7 +670,12 @@ impl Renderer {
 
     /// A view of the composited scene target (lit scene + UI), for extra
     /// passes (dev overlay, R-11+) to render into between the composite and
-    /// the blit.
+    /// the blit, and for a game's own scene producer to render the canvas
+    /// picture into before [`render_screen`](Self::render_screen). A render
+    /// attachment of [`target_size`](Self::target_size) pixels in
+    /// [`SCENE_FORMAT`], holding sRGB-encoded values in a unorm target.
+    /// [`set_target_size`](Self::set_target_size) replaces the view when the
+    /// size changes: fetch it again after a resize.
     pub fn scene_view(&self) -> &wgpu::TextureView {
         &self.composited_view
     }
@@ -886,42 +897,53 @@ impl Renderer {
                 label: Some("frame encoder"),
             });
         self.encode_scene(ctx, &mut encoder, list, camera, lighting);
-
-        // --- Blit pass: letterboxed copy into the swapchain (skipped when
-        // no swapchain frame is available).
-        let (win_w, win_h) = ctx.size();
-        let letterbox = fit_fractional(win_w, win_h, self.logical_width, self.logical_height);
+        // Skipped when no swapchain frame is available.
         if let Some(frame) = frame {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("letterbox blit pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &frame.view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        // The bars: cleared black; the viewport limits the blit.
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_viewport(
-                letterbox.x,
-                letterbox.y,
-                letterbox.width,
-                letterbox.height,
-                0.0,
-                1.0,
-            );
-            pass.set_pipeline(&self.blit_pipeline);
-            pass.set_bind_group(0, &self.blit_bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            self.encode_blit(&mut encoder, &frame.view, ctx.size());
         }
+        ctx.queue.submit(Some(encoder.finish()));
+    }
 
+    /// Draw `list`'s screen channel (UI/HUD) over what the composited
+    /// target already holds — typically a picture the game rendered into
+    /// [`scene_view`](Self::scene_view) — and submit. No clear, scene pass,
+    /// lights or composite: the world channel is ignored (not converted,
+    /// uploaded or drawn). Lays out like [`render_scene`](Self::render_scene)'s
+    /// screen channel. Sorts `list` by z. Needs no window; present with
+    /// [`blit_scene`](Self::blit_scene) or read back with
+    /// [`read_scene_async`](Self::read_scene_async).
+    pub fn render_screen(&mut self, gpu: &Gpu, list: &mut DrawList) {
+        list.sort();
+        let (screen_vp, ui_scale) = self.screen_view_proj();
+        self.sprites.prepare_channels(
+            &gpu.device,
+            &gpu.queue,
+            list,
+            None,
+            screen_vp,
+            (self.logical_width, self.logical_height),
+            ui_scale,
+        );
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("screen encoder"),
+            });
+        self.encode_screen(&mut encoder);
+        gpu.queue.submit(Some(encoder.finish()));
+    }
+
+    /// The letterbox blit of the composited target into the swapchain
+    /// `frame`, as [`render_lit`](Self::render_lit) ends: bars cleared
+    /// black, the target scaled into an aspect-preserving viewport.
+    /// Submits to `ctx`'s queue; the caller presents.
+    pub fn blit_scene(&self, ctx: &Context, frame: &Frame) {
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("blit encoder"),
+            });
+        self.encode_blit(&mut encoder, &frame.view, ctx.size());
         ctx.queue.submit(Some(encoder.finish()));
     }
 
@@ -958,12 +980,7 @@ impl Renderer {
         list.sort();
 
         let world_vp = camera.view_proj();
-        // The screen channel lays out in UI points (`ui_size`); game scenes
-        // run at scale 1.0 on an unscaled target where `x / 1.0 == x`
-        // exactly — the matrix and scissors are bit-identical to the
-        // fixed-logical path.
-        let (ui_size, ui_scale) = self.ui_layout();
-        let screen_vp = Camera::screen_view_proj_size(ui_size);
+        let (screen_vp, ui_scale) = self.screen_view_proj();
         // The world channel and lights are laid out in the camera's units
         // (pixels unless `Camera::with_units`); the screen channel is pixels.
         let world_units = camera.units();
@@ -1039,26 +1056,78 @@ impl Renderer {
         // to sRGB once here under Linear.
         self.composite.run(encoder, &self.composited_view);
 
-        // --- Screen channel (UI/HUD) over the lit scene — bypasses lighting.
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("screen sprite pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.composited_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            self.sprites.draw_screen(&mut pass);
-        }
+        self.encode_screen(encoder);
+    }
+
+    /// The screen channel's view-projection and clip scale. It lays out in
+    /// UI points (`ui_size`); game scenes run at scale 1.0 on an unscaled
+    /// target where `x / 1.0 == x` exactly — the matrix and scissors are
+    /// bit-identical to the fixed-logical path.
+    fn screen_view_proj(&self) -> (glam::Mat4, f32) {
+        let (ui_size, ui_scale) = self.ui_layout();
+        (Camera::screen_view_proj_size(ui_size), ui_scale)
+    }
+
+    /// Encode the prepared screen channel (UI/HUD) over the composited
+    /// target's contents — bypasses lighting.
+    fn encode_screen(&self, encoder: &mut wgpu::CommandEncoder) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("screen sprite pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &self.composited_view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        self.sprites.draw_screen(&mut pass);
+    }
+
+    /// Encode the letterbox blit of the composited target into `target`
+    /// (`size` pixels, the blit pipeline's format): bars cleared black, the
+    /// viewport limiting the blit.
+    fn encode_blit(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        size: (u32, u32),
+    ) {
+        let letterbox = fit_fractional(size.0, size.1, self.logical_width, self.logical_height);
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("letterbox blit pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    // The bars: cleared black; the viewport limits the blit.
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_viewport(
+            letterbox.x,
+            letterbox.y,
+            letterbox.width,
+            letterbox.height,
+            0.0,
+            1.0,
+        );
+        pass.set_pipeline(&self.blit_pipeline);
+        pass.set_bind_group(0, &self.blit_bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 
     /// Read the composited scene target (lit scene + UI) back as tightly
@@ -1695,6 +1764,138 @@ mod gpu_tests {
         assert_eq!(red.len(), 32 * 24, "covered pixels");
         assert_eq!((columns.clone().min(), columns.max()), (Some(8), Some(39)));
         assert_eq!((rows.clone().min(), rows.max()), (Some(24), Some(47)));
+    }
+
+    /// The scene a test renders into the canvas itself: `(0.2, 0.4, 0.6)`,
+    /// exact in 8 bits.
+    const SUPPLIED: [u8; 4] = [51, 102, 153, 255];
+    /// The HUD rectangle's colour: opaque green.
+    const HUD: [u8; 4] = [0, 255, 0, 255];
+
+    /// A headless `size` canvas (clear colour red) holding a scene the test
+    /// clears to [`SUPPLIED`] with its own pass, then `render_screen` over a
+    /// list with an opaque [`HUD`] fill over `hud` on the screen channel and
+    /// a white fill over the whole canvas on the world channel.
+    fn compose(gpu: &Gpu, size: (u32, u32), hud: Rect) -> Renderer {
+        let mut renderer =
+            Renderer::headless(gpu, size.0, size.1, [1.0, 0.0, 0.0], LightingSpace::Gamma);
+        let mut assets: Assets<Texture> = Assets::new();
+        let white = renderer.white_texture(gpu, &mut assets);
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("supplied scene"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: renderer.scene_view(),
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.2,
+                        g: 0.4,
+                        b: 0.6,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        gpu.queue.submit(Some(encoder.finish()));
+
+        let mut list = DrawList::new();
+        Overlay {
+            color: [0.0, 1.0, 0.0, 1.0],
+            ..Overlay::new(white)
+        }
+        .fill_rect(&mut list.screen, hud);
+        Overlay::new(white).fill_rect(
+            &mut list.world,
+            Rect::new(0.0, 0.0, size.0 as f32, size.1 as f32),
+        );
+        renderer.render_screen(gpu, &mut list);
+        renderer
+    }
+
+    /// #926: `render_screen` draws the screen channel over the picture the
+    /// canvas already holds. Every pixel is the HUD colour inside its
+    /// rectangle (columns 8..28, rows 4..16) and the supplied scene outside,
+    /// so neither the renderer's red clear (a clear or composite) nor the
+    /// world channel's white fill appears; and the world channel was never
+    /// prepared.
+    #[test]
+    fn render_screen_draws_the_hud_over_a_supplied_scene() {
+        let Some(gpu) = gpu() else { return };
+        let renderer = compose(&gpu, (64, 32), Rect::new(8.0, 4.0, 20.0, 12.0));
+        assert_eq!(renderer.sprites.draw_stats().world.instances, 0);
+        let pixels = renderer.read_scene(&gpu).expect("scene readback");
+        for (i, px) in pixels.chunks_exact(4).enumerate() {
+            let (x, y) = (i % 64, i / 64);
+            let inside = (8..28).contains(&x) && (4..16).contains(&y);
+            let expected = if inside { HUD } else { SUPPLIED };
+            assert_eq!(px, expected, "({x}, {y})");
+        }
+    }
+
+    /// #926: the blit letterboxes the composed canvas. A 32×32 canvas (HUD
+    /// over columns and rows 8..16) fits both a 96×48 and a 48×96 target at
+    /// scale 1.5, as 48×48 centred at x 24..72 and y 24..72 respectively.
+    /// Bars are black; canvas pixel (24, 24) lands 36 px into the image and
+    /// is the supplied scene; canvas pixel (12, 12) lands 18 px in and is the
+    /// HUD. The target is the headless blit's `Bgra8UnormSrgb`, read back
+    /// BGRA; its sRGB store re-encodes, hence ±1.
+    #[test]
+    fn blit_letterboxes_the_composed_canvas() {
+        let Some(gpu) = gpu() else { return };
+        let renderer = compose(&gpu, (32, 32), Rect::new(8.0, 8.0, 8.0, 8.0));
+        let black = [0, 0, 0, 255];
+        let cases = [
+            ((96, 48), [(4, 24), (90, 24)], (60, 36), (42, 18)),
+            ((48, 96), [(24, 4), (24, 90)], (36, 60), (18, 42)),
+        ];
+        for (size, bars, scene, hud) in cases {
+            let target = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("blit test target"),
+                size: wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            renderer.encode_blit(
+                &mut encoder,
+                &target.create_view(&wgpu::TextureViewDescriptor::default()),
+                size,
+            );
+            gpu.queue.submit(Some(encoder.finish()));
+            let bytes = read_texture(&gpu.device, &gpu.queue, &target, size.0, size.1, 4);
+            let check = |(x, y): (u32, u32), expected: [u8; 4]| {
+                let i = ((y * size.0 + x) * 4) as usize;
+                let rgba = [bytes[i + 2], bytes[i + 1], bytes[i], bytes[i + 3]];
+                assert!(
+                    rgba.iter().zip(expected).all(|(&a, b)| a.abs_diff(b) <= 1),
+                    "{size:?} at ({x}, {y}): {rgba:?}, expected {expected:?}"
+                );
+            };
+            for bar in bars {
+                check(bar, black);
+            }
+            check(scene, SUPPLIED);
+            check(hud, HUD);
+        }
     }
 
     /// The gamma composite stores the multiply-add unchanged: an 8-bit 128
