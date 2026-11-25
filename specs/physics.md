@@ -29,7 +29,14 @@ surfaces (#922) is planned in #914 and is not available until it lands.
 3. **Near is as good as far.** A query is computed relative to the body, so
    its accuracy depends on the sizes of the shapes and the distance between
    them, not on how far they are from the origin (a driving game's route runs
-   for kilometres).
+   for kilometres). A body pushed out of a solid (17) is placed relative to
+   where it starts too: the same scene shifted by a power of two that keeps
+   every difference exact is pushed out to the place it is near the origin,
+   rounded at the far coordinate (within a unit in the last place there).
+   The one exception is a rounding allowance (10) that grows with the
+   distance: a place inside a collider by no more than that collider's
+   allowance is touching far out and inside near the origin, so a body that
+   starts, or would end, that close to a surface may be freed differently.
 4. **The same on every target.** The crate uses only IEEE-754 add, subtract,
    multiply, divide, square root, comparison, minimum, maximum and floor, in
    a fixed order, with no fused multiply-add and no platform maths function.
@@ -164,7 +171,7 @@ surfaces (#922) is planned in #914 and is not available until it lands.
     `block_epsilon`. Every other `up` is a direction, however short or
     long: the crate normalises every direction (`up`, a cut's normal, a
     convex shape's rotation, a separation's normal, a planar body's
-    heading) by one routine that
+    heading and its turns) by one routine that
     divides by the largest absolute component before squaring, so neither
     underflow nor overflow occurs and the result is unit to within a few
     units in the last place. It names the up axis, skin, snap distance, floor
@@ -249,17 +256,22 @@ surfaces (#922) is planned in #914 and is not available until it lands.
       inside by no more than the collider's rounding allowance; one starting
       deeper inside passes it, as for a box. A triangle has no inside: a ray
       starting on its plane (within eight units in the last place of its
-      largest corner coordinate relative to the ray) meets it at once,
-      whichever way it goes. A ray passing within that rounding of a
+      largest corner coordinate relative to the ray), where the plane lies
+      in the triangle, and leaving the plane meets it at once, to whichever
+      side it goes; one moving in the plane meets nothing, from on the
+      triangle or not (a graze). A ray passing within that rounding of a
       triangle's edge meets the triangle, so a seam between two triangles
       has no gap; at a shared edge or corner the tie rule (6) picks one,
       and coplanar neighbours give the same normal (to the bit where their
       corners' cross products are exact). A graze, a hit whose normal the
       ray does not approach (tangent to a ball or a capsule, along a
-      polygon's edge, in a triangle's plane), is no contact. A 3D hull of
-      four or more points stores no faces to cross, so a ray meets it
-      through the kernel, a slop short (19), as it meets a ball or capsule
-      of no radius and a three-point hull with no area. A body with extent
+      polygon's edge, moving in a triangle's plane), is no contact. A 3D
+      hull of four or more points stores no faces to cross, so a ray meets
+      it through the kernel, a slop short (19), as it meets a capsule of no
+      radius (a segment, met where the ray crosses it) and a three-point
+      hull with no area. A ball of no radius is a point, and a ray, which
+      has no extent either, never meets it: the kernel makes no contact
+      between two shapes with no extent. A body with extent
       (`cast` with a ball, say) keeps its pairs: every one but box against
       box is met through the kernel, within its band.
     `distance` measures a shape at a position against one collider, of any
@@ -342,13 +354,17 @@ surfaces (#922) is planned in #914 and is not available until it lands.
       from the distances on the others (one ramp's plane per place), one
       more place moves the body along each ramp's normal a `skin` out of
       its plane, and one more along the normal out of each kernel overlap
-      whose cores are apart, a `skin` clear of it (19). When more
+      whose cores are apart, a `skin` clear of the collider's own surface
+      (19). When more
       distances than the cap are in reach on an axis, it keeps the nearest
       (staying put, zero, among them), and of two equally near the negative
       one. The nearest free place wins; of two equally near, the one most
       along `up`, then the lowest component by component, x first. Whether
       a place is free is decided by each collider's real shape, cut
-      included (`overlaps`). One it cannot free stays untouched and reports
+      included (`overlaps`), less its rounding allowance (10): a place
+      inside one by no more than that touches it. Near and far from the
+      origin it frees a body alike, but for that allowance (3). One it
+      cannot free stays untouched and reports
       `stuck` (or `crushed`, 21), its velocity and floor untouched.
       One-way colliders, soft colliders and sensors never push;
     - moves by `velocity * dt` with one `slide`, whose floor rule (16)
@@ -458,9 +474,13 @@ surfaces (#922) is planned in #914 and is not available until it lands.
       body would touch: the kernel's fraction plus the slop (no more than
       the skin) over the approach speed along the contact normal. The skin
       back-off then leaves the body between `skin` and `skin + slop / 4`
-      (`skin * 65 / 64`) from a flat face, the same as a box to within a
-      sixty-fourth of the skin, and at least `skin` from an edge or a
-      corner (the distance between convex shapes along a straight motion
+      (`skin * 65 / 64`) from a flat face, measured to the face's plane, the
+      same as a box to within a sixty-fourth of the skin. The back-off
+      retraces the motion, so it can carry the body beside the face's edge,
+      past the face's end: its gap to the face's plane is the same, and its
+      nearest point on the collider is then the edge, at least as far. It
+      rests at least `skin` from an edge or a corner (the distance between
+      convex shapes along a straight motion
       is convex, so stepping back along the motion opens it at least as
       fast as along the normal). With a zero skin it rests between `slop`
       and `1.25 * slop` away. A query (`cast`, and `ray` against a hull)
@@ -524,15 +544,22 @@ surfaces (#922) is planned in #914 and is not available until it lands.
       `Body::MAX_POSTCARD_BYTES` (112). A body with a non-finite number, a
       negative inverse mass or inertia, a heading with no direction or a
       shape that occupies nothing (9) occupies nothing: every planar
-      function leaves it as it is and meets nothing with it.
+      function leaves it as it is and meets nothing with it. Every planar
+      function answers finitely for finite inputs: a body whose own step
+      `f32` cannot hold (its position plus its motion, its turn, or its
+      velocity, spin or end after a bump) is left exactly as it was for that
+      step and takes no further part in it, a bump whose result `f32` cannot
+      hold changes nothing, and no other body is made non-finite by it.
     - **Turning.** The crate calls no trigonometric function. A turn of
       `angle` radians (a `Motion`'s `turn`, or `spin * dt`) is Box2D's
       normalised first-order step (`b2IntegrateRotation`): the heading
       turns by `atan(angle)`, short of `angle` by about a third of its
       square as a share (one per cent at a little over a tenth of a radian
-      a step). Over a motion the heading is the normalised blend of its
-      start and end values. A game that needs an exact angle keeps it and
-      sets the heading from it.
+      a step). The turned pair is normalised by the crate's one routine
+      (12), which cannot overflow, so a heading stays a unit direction for
+      any finite spin and step. Over a motion the heading is the normalised
+      blend of its start and end values. A game that needs an exact angle
+      keeps it and sets the heading from it.
     - **The slop and the contact gap.** A pair's slop is the query rule of
       19: a hundredth of the smaller shape's extent, at most a quarter of
       the smaller radius, at least 32 units in the last place of the
@@ -570,8 +597,9 @@ surfaces (#922) is planned in #914 and is not available until it lands.
       surfaces, and the `depth` at the deepest point, negative (the gap)
       for shapes within four slops (Box2D's speculative distance) and
       `None` further apart. Moving `b` by the depth along the normal leaves
-      them touching and not overlapping. Two balls whose centres coincide
-      have a zero normal, which separates nothing.
+      them touching and not overlapping. Two balls whose centres coincide,
+      or a ball centred on a capsule's segment, have no direction between
+      them, and `manifold` gives them a zero normal.
     - **The bump.** `bump(a, b, contact, restitution, friction)` is Box2D's
       single-pair sequential impulse applied once, without warm starting:
       a normal impulse that reverses `restitution` of the approach, then
@@ -597,9 +625,13 @@ surfaces (#922) is planned in #914 and is not available until it lands.
       overlaps is pushed apart along its manifold to a slop apart, split
       by inverse mass, pair by pair, in passes, at most
       `settings.max_separation_passes` (`MAX_SEPARATION_PASSES`, 16),
-      stopping after a pass that pushed nothing. It returns the `Impact`s
-      in time order: the two ids (lower first), when (a fraction of the
-      step), where, the normal and the normal impulse. `Settings { restitution,
+      stopping after a pass that pushed nothing; a pair with no direction
+      between them (20, The manifold) is pushed apart along +x, the one
+      first in body order toward −x, by how far they overlap along x, and a
+      push `f32` cannot hold leaves its pair where it is. It returns the
+      `Impact`s in time order: the two ids (lower first), when (a fraction
+      of the step), where, the normal and the normal impulse. `Settings {
+      restitution,
       friction, max_impacts, max_separation_passes }` (`Settings::new`
       sets the caps at their most) is checked, or `advance` panics. A
       `dt` that is not positive and finite changes nothing.
@@ -701,9 +733,13 @@ surfaces (#922) is planned in #914 and is not available until it lands.
       skin in all. So each soft collider nudges a body by at most its limit
       a step, and two bodies that walk into each other faster than their
       limits pass through each other. The displacement is swept and stops
-      a `skin` short of any rigid solid. `pushed_by` names the soft collider
-      that pushed furthest (the lowest in the fixed order of equals) when
-      nothing moving pushed the body. Soft contact takes nothing from the
+      a `skin` short of any rigid solid. When nothing moving pushed the body
+      and the displacement moves it, `pushed_by` names, of the soft
+      colliders that pushed, the one along whose normal the displacement
+      applied to the body moves it furthest (the lowest in the fixed order
+      of equals); when the soft pushes cancel, or a rigid solid blocks them,
+      so the body does not move, it is `None`. Soft contact takes nothing
+      from the
       velocity, as Box2D's soft planes do not clip it. `with_push` refuses
       a negative or non-finite limit, and the mover nudges nothing by one.
       A `push` is read only for a solid collider; `cast`, `ray`, `overlaps`

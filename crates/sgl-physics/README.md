@@ -135,7 +135,8 @@ state. Then `move_and_slide`:
   collider: the game decides what crushing does;
 - with `with_push(Push::Soft(limit))`, never stops a body at the collider
   but nudges it off by at most `limit` a step, after its move: for crowds,
-  and players who may push past one another.
+  and players who may push past one another. `pushed_by` names the soft
+  collider the body moved furthest along, or none when the pushes cancel.
 
 Only the mover reads a velocity or a push; every other query takes a
 collider where it stands. Bodies against bodies are the game's: it keeps
@@ -217,7 +218,7 @@ slops before the surfaces meet. A query's slop is a hundredth of the smaller sha
 (at most a quarter of the smaller radius); the mover's is a sixteenth of
 `skin`, and it reports the contact where the body would touch, so after
 the skin back-off a round or convex body rests between `skin` and
-`skin * 65 / 64` from a flat face, as a box rests `skin` from it. Its
+`skin * 65 / 64` from a flat face's plane, as a box rests `skin` from it. Its
 contact normal is the one between the shapes, so a ball slides around an
 outside corner and over the seams between flush tiles where a box
 catches. A ball or a capsule meeting a one-way platform's edge while
@@ -267,7 +268,10 @@ height (a bridge over a road). A bump keeps momentum, adds no energy at
 restitution 1 or below, and is the game's to scale; handling stays the
 game's. A turn by `spin * dt` follows Box2D's rotation step, which turns by
 `atan(spin * dt)`: keep an exact angle in the game if it matters. Contact is
-decided within a slop of the shapes' size, as for every kernel pair. See
+decided within a slop of the shapes' size, as for every kernel pair. Two
+balls at one point are pushed apart along x. A body whose own step `f32`
+cannot hold (a speed or spin near its limit) is left as it was for that
+step, and never makes another body non-finite. See
 [physics.md](../../specs/physics.md), requirement 20.
 
 ## Worlds
@@ -329,7 +333,8 @@ last place of the coordinates involved (micrometres on a 20 m triangle),
 and the normal is the triangle's own plane normal, turned toward the ray,
 so coplanar neighbours give the same normal across their seam and a
 wheel neither floats nor rocks there. A ray passing within rounding of a
-shared edge meets one of the triangles; seams have no gaps. A ball cast
+shared edge meets one of the triangles; seams have no gaps. A ray moving in
+a triangle's plane meets nothing. A ball cast
 meets a triangle through the kernel, a slop short of it, as every kernel
 pair does.
 

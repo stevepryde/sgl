@@ -197,8 +197,9 @@ impl MoverOptions {
 ///    from each along the way out of it, by at most that collider's limit
 ///    in all, to a `skin` clear when the limits allow, by `Box2D`'s plane
 ///    solver; the nudge is swept so it enters no rigid solid (`pushed_by`,
-///    when nothing moving pushed it, names the soft collider that nudged it
-///    furthest). Soft contact takes nothing from the velocity.
+///    when nothing moving pushed it and the nudge moves it, names the soft
+///    collider along whose push it moved furthest). Soft contact takes
+///    nothing from the velocity.
 /// 7. **Snap.** A walking body is snapped to the ground where it ends
 ///    ([`snap_to_ground`](crate::snap_to_ground)), so it follows seams and
 ///    small steps down.
@@ -257,6 +258,7 @@ pub fn move_and_slide<V: Vector, W: World<V> + ?Sized>(
         world: Passable {
             world,
             drop_through: options.drop_through,
+            skip: &[],
         },
         config,
         mask: options.mask,
@@ -287,19 +289,23 @@ impl From<Unanswered> for Halt {
 }
 
 /// The world as one step sees it: without its one-way platforms when the
-/// body drops through them.
-struct Passable<'a, W: ?Sized> {
+/// body drops through them, and without the colliders in `skip` (a carried
+/// body's platform, or the pushers a pressed body is inside, which move
+/// with it).
+struct Passable<'a, V: Vector, W: ?Sized> {
     world: &'a W,
     drop_through: bool,
+    skip: &'a [Collider<V>],
 }
 
-impl<W: ?Sized> Passable<'_, W> {
-    fn passes(&self, collider: &Collider<impl Vector>) -> bool {
-        !(self.drop_through && collider.kind == ColliderKind::OneWay)
+impl<V: Vector, W: ?Sized> Passable<'_, V, W> {
+    fn passes(&self, collider: &Collider<V>) -> bool {
+        let dropped = self.drop_through && collider.kind == ColliderKind::OneWay;
+        !dropped && !self.skip.iter().any(|skip| skip.order(collider).is_eq())
     }
 }
 
-impl<V: Vector, W: World<V> + ?Sized> World<V> for Passable<'_, W> {
+impl<V: Vector, W: World<V> + ?Sized> World<V> for Passable<'_, V, W> {
     fn colliders_near(
         &self,
         min: V,
@@ -371,53 +377,10 @@ fn halted<V: Vector>(
     Ok((next, contacts))
 }
 
-/// The world without the colliders in `skip`: a carried body's platform,
-/// or the pushers a pressed body is inside, which move with it.
-struct Except<'a, V: Vector, W: ?Sized> {
-    world: &'a W,
-    skip: &'a [Collider<V>],
-}
-
-impl<V: Vector, W: ?Sized> Except<'_, V, W> {
-    fn keeps(&self, collider: &Collider<V>) -> bool {
-        !self.skip.iter().any(|skip| skip.order(collider).is_eq())
-    }
-}
-
-impl<V: Vector, W: World<V> + ?Sized> World<V> for Except<'_, V, W> {
-    fn colliders_near(
-        &self,
-        min: V,
-        max: V,
-        visit: &mut dyn FnMut(&Collider<V>),
-    ) -> Result<(), Unanswered> {
-        self.world.colliders_near(min, max, &mut |collider| {
-            if self.keeps(collider) {
-                visit(collider);
-            }
-        })
-    }
-
-    fn colliders_along(
-        &self,
-        min: V,
-        max: V,
-        motion: V,
-        visit: &mut dyn FnMut(&Collider<V>),
-    ) -> Result<(), Unanswered> {
-        self.world
-            .colliders_along(min, max, motion, &mut |collider| {
-                if self.keeps(collider) {
-                    visit(collider);
-                }
-            })
-    }
-}
-
 /// One body, world and configuration for the length of a step.
 struct Mover<'a, V: Vector, W: ?Sized> {
     body: &'a Shape<V>,
-    world: Passable<'a, W>,
+    world: Passable<'a, V, W>,
     config: &'a MoverConfig<V>,
     mask: u32,
 }
@@ -601,10 +564,7 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         if !lands(self.body, start, at, motion) {
             return Err(Halt::Unsound);
         }
-        let world = Except {
-            world: &self.world,
-            skip,
-        };
+        let world = Passable { skip, ..self.world };
         let rule = Rule::Move(self.config);
         let hit = first_contact(self.body, start, at, motion, &world, self.mask, rule)?;
         Ok(hit.map_or(motion, |hit| back_off(motion, &hit, self.config.skin())))
@@ -613,9 +573,9 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
     /// Soft contact: the body at `start + at` nudged away from every soft
     /// collider it overlaps, along the plane [`sweep::way_apart`] gives,
     /// each by at most its limit, by `Box2D`'s plane solver to a `skin` clear,
-    /// then swept so it enters no solid. The translation and the soft
-    /// collider that pushed it furthest (the lowest in the fixed order of
-    /// equals).
+    /// then swept so it enters no solid. The translation and, of the soft
+    /// colliders that pushed, the one along whose normal the translation
+    /// moves the body furthest (the lowest in the fixed order of equals).
     fn soft(&self, start: V, at: V) -> Result<(V, Option<u64>), Halt> {
         let near = overlaps(self.body, start + at, &self.world, self.mask)?;
         let order = self.config.tie_order();
@@ -649,13 +609,15 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         if nudge == V::ZERO {
             return Ok((V::ZERO, None));
         }
+        let moved = self.press_along(start, at, nudge, &[])?;
+        // The one whose push the body moved furthest along.
         let mut furthest: Option<(f32, u64)> = None;
         for (plane, &id) in planes.iter().zip(&ids) {
-            if plane.push > 0.0 && furthest.is_none_or(|(push, _)| plane.push > push) {
-                furthest = Some((plane.push, id));
+            let along = space::dot(moved, plane.normal);
+            if plane.push > 0.0 && furthest.is_none_or(|(most, _)| along > most) {
+                furthest = Some((along, id));
             }
         }
-        let moved = self.press_along(start, at, nudge, &[])?;
         Ok((moved, furthest.map(|(_, id)| id)))
     }
 
@@ -684,7 +646,7 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
     }
 
     /// The step-up from `start + at`: lift, the same move across `up`,
-    /// settle. The end, relative to `start`, and its contacts when it lands
+    /// settle (three slides, the most a stage chains: `MAX_STAGE_SLIDES`). The end, relative to `start`, and its contacts when it lands
     /// on a floor further across `up` than the plain move's `plain` end.
     fn step_up(
         &self,
@@ -734,7 +696,8 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         across * (1.0 + (inset + 2.0 * self.config.skin()) / length)
     }
 
-    /// The move across `up` from `start + at`, one world axis at a time,
+    /// The move across `up` from `start + at`, one world axis at a time
+    /// (one slide's faces each, kept in its path: `MAX_STAGE_SLIDES`),
     /// each stopped at the last point where a floor lies within `depth`
     /// below the body. Returns the end, relative to `start`, its contacts,
     /// and whether any axis was shortened.
@@ -831,7 +794,12 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
             .as_ref()
             .map(|pressed| pressed.pusher)
             .or_else(|| pushers.first().map(|first| first.id));
-        let (candidates, cores) = self.places(at, &cores)?;
+        let solids: Vec<Collider<V>> = near
+            .iter()
+            .filter(|collider| collider.rigid_solid())
+            .copied()
+            .collect();
+        let (candidates, cores) = self.places(at, &solids)?;
         // A pusher never pushes a body back through itself.
         let along = |by: V| {
             pushers
@@ -852,16 +820,16 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         })
     }
 
-    /// The places a push-out tries for the body at `at`, inside some of
-    /// `cores`, nearest first (see [`Self::push_out`]), and the cores of
-    /// every rigid solid within its reach, which decide whether a place is
-    /// free.
+    /// The places a push-out tries for the body at `at`, which overlaps the
+    /// rigid solids `overlapped`, nearest first (see [`Self::push_out`]),
+    /// and the cores of every rigid solid within its reach, which decide
+    /// whether a place is free.
     fn places(
         &self,
         at: V,
-        cores: &[Collider<V>],
+        overlapped: &[Collider<V>],
     ) -> Result<(Vec<V>, Vec<Collider<V>>), Unanswered> {
-        let outs = self.ways_out(at, cores);
+        let outs = self.ways_out(at, overlapped);
         let skin = self.config.skin();
 
         // Everything the body could overlap anywhere within its reach.
@@ -1024,16 +992,20 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         self.inside(at, &cores)
     }
 
-    /// For each of `cores` the body at `at` overlaps through the kernel with
-    /// their cores apart, the move along the normal between them that
-    /// leaves it a `skin` clear.
-    fn ways_out(&self, at: V, cores: &[Collider<V>]) -> Vec<V> {
+    /// For each of `colliders` the body at `at` overlaps through the kernel
+    /// with their cores apart, the move along the normal between them that
+    /// leaves it a `skin` clear of the collider's surface. It reads each
+    /// collider's own shape, not its core less the rounding allowance: the
+    /// allowance grows with the distance from the origin, and a way out
+    /// measured from it would leave the body less than a skin clear far
+    /// out, and a different place than near the origin (physics.md 3).
+    fn ways_out(&self, at: V, colliders: &[Collider<V>]) -> Vec<V> {
         let skin = self.config.skin();
-        cores
+        colliders
             .iter()
-            .filter_map(|core| {
-                let rel = core.position - at;
-                sweep::way_out(self.body, &core.shape, core.cut.as_ref(), rel)
+            .filter_map(|collider| {
+                let rel = collider.position - at;
+                sweep::way_out(self.body, &collider.shape, collider.cut.as_ref(), rel)
             })
             .map(|(normal, depth)| normal * (depth + skin))
             .collect()

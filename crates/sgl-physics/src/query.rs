@@ -138,8 +138,10 @@ pub fn move_and_collide<V: Vector, W: World<V> + ?Sized>(
 /// surface, to a few units in the last place of the coordinates involved,
 /// and the normal is the surface's there (a triangle's own, turned against
 /// the ray). A triangle is two-sided and has no inside: a ray starting on
-/// it meets it at once. A ray touching a surface without approaching it (a
-/// tangent, a slide along a face) meets nothing. A 3D convex hull of four or
+/// it and leaving its plane meets it at once, to either side. A ray
+/// touching a surface without approaching it (a tangent, a slide along a
+/// face, a ray in a triangle's plane) meets nothing, and a ray never meets
+/// a ball of no radius, a point. A 3D convex hull of four or
 /// more points is met through the kernel, a slop short, as [`cast`] meets
 /// it (`specs/physics.md`, 15).
 pub fn ray<V: Vector, W: World<V> + ?Sized>(

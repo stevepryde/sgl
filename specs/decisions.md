@@ -2218,7 +2218,11 @@ Use the [current specs](README.md) for implementation and the
   added the surfaces drive, and made rays exact against balls, capsules,
   polygons and triangles, which changed it and the 2D round slide walk;
   #924's second pass made a planar heading normalised by that same routine,
-  which changed the planar pile-up by the last bits of its turned headings.
+  which changed the planar pile-up by the last bits of its turned headings;
+  #924's close-out normalised a planar heading's turn by that routine too,
+  which changed the pile-up's turned headings again in their last bits, and
+  measured the push-out's way out of a round or convex collider from the
+  collider's own surface, which changed the round walks where they push out.
   After the first release a change to one is a breaking change like any
   other frozen
   value.

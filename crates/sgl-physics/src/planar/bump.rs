@@ -59,8 +59,9 @@ pub struct Bump {
 /// are, and so is a body with zero inverse mass and inertia.
 ///
 /// Pure: the game applies the result, scales it or ignores it. The normal
-/// is normalised first; a zero one, or a body that is not sound, changes
-/// nothing.
+/// is normalised first; a zero one, a body that is not sound, or a bump
+/// whose result `f32` cannot hold (bodies near the top of its range)
+/// changes nothing.
 ///
 /// # Panics
 /// If `restitution` or `friction` is negative or not finite: an authoring
@@ -84,7 +85,7 @@ pub fn bump(a: &Body, b: &Body, contact: Contact, restitution: f32, friction: f3
     if !sound {
         return unchanged;
     }
-    impulse(
+    let out = impulse(
         &Response::of(a),
         &Response::of(b),
         contact.point - a.position,
@@ -92,7 +93,24 @@ pub fn bump(a: &Body, b: &Body, contact: Contact, restitution: f32, friction: f3
         normal,
         restitution,
         friction,
-    )
+    );
+    if out.is_finite() { out } else { unchanged }
+}
+
+impl Bump {
+    /// Whether every number of the bump is finite.
+    fn is_finite(&self) -> bool {
+        space::is_finite(self.velocity_a)
+            && space::is_finite(self.velocity_b)
+            && [
+                self.spin_a,
+                self.spin_b,
+                self.normal_impulse,
+                self.friction_impulse,
+            ]
+            .iter()
+            .all(|v| v.is_finite())
+    }
 }
 
 /// Panics unless `restitution` and `friction` are finite and not negative.

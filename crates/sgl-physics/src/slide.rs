@@ -57,7 +57,8 @@ const fn max_slides<V: Vector>() -> usize {
 ///
 /// Any [`Shape`] is a body. A ball, a capsule or a convex shape meets what
 /// it touches through the convex kernel and rests between `skin` and
-/// `skin * 65 / 64` from a flat face, as a box rests `skin` from it.
+/// `skin * 65 / 64` from a flat face's plane, as a box rests `skin` from
+/// it.
 ///
 /// Contacts at the same instant resolve to the lowest id, then the lowest
 /// position, so the result never depends on the order the world visits its
@@ -96,10 +97,16 @@ pub(crate) struct Faces<V> {
     len: usize,
 }
 
-/// Most faces one mover step meets: a step-up's three slides, or a guarded
-/// walk's one slide per axis, of at most [`MAX_SLIDES_3D`] passes each, and
-/// the ground under it.
-pub(crate) const MAX_STEP_FACES: usize = 3 * MAX_SLIDES_3D + 1;
+/// Most slides one stage of a mover step chains into its path: a step-up's
+/// lift, move across and settle, or a guarded walk's one slide per axis
+/// (three in 3D). The plain move is one slide, and each of those stages
+/// replaces its path rather than adding to it.
+const MAX_STAGE_SLIDES: usize = 3;
+
+/// Most faces one mover step meets: each pass of a slide meets at most one
+/// face, so a stage of [`MAX_STAGE_SLIDES`] slides of at most
+/// [`MAX_SLIDES_3D`] passes each, and the ground under where it ends.
+pub(crate) const MAX_STEP_FACES: usize = MAX_STAGE_SLIDES * MAX_SLIDES_3D + 1;
 
 impl<V: Vector> Faces<V> {
     pub(crate) fn new() -> Self {
@@ -113,16 +120,11 @@ impl<V: Vector> Faces<V> {
         &self.normals[..self.len]
     }
 
-    /// Adds a face met after these.
+    /// Adds a face met after these. A step meets at most
+    /// [`MAX_STEP_FACES`] faces, so this never writes past the list.
     pub(crate) fn push(&mut self, normal: V) {
-        debug_assert!(
-            self.len < MAX_STEP_FACES,
-            "a step met more faces than it can"
-        );
-        if self.len < MAX_STEP_FACES {
-            self.normals[self.len] = normal;
-            self.len += 1;
-        }
+        self.normals[self.len] = normal;
+        self.len += 1;
     }
 
     /// Adds the faces of a later part of the same step.

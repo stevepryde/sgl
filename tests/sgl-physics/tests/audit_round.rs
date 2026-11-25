@@ -510,8 +510,10 @@ fn a_round_body_never_ends_inside_a_solid_through_any_move_in_3d() {
 /// not where the body would touch), or nearer than the skin (a back-off
 /// too short, or none at an edge). Oracle: physics.md 19, The resting gap:
 /// after a kernel contact the body rests between `skin` and
-/// `skin * 65 / 64` from a flat face, and at least `skin` from an edge or
-/// a corner; measured by the shapes' definitions in `f64`. Balls, capsules
+/// `skin * 65 / 64` from a flat face, measured to the face's plane (beside
+/// the face's edge, where the back-off can carry it, its nearest point on
+/// the collider is the edge, at least as far), and at least `skin` from an
+/// edge or a corner; measured by the shapes' definitions in `f64`. Balls, capsules
 /// and convex polygons moved by `move_and_collide` at a box from every
 /// direction; a contact whose normal is a face's (axis-aligned) is a flat
 /// face.
@@ -752,9 +754,9 @@ fn kernel_results_never_depend_on_order_visits_or_place() {
             let at = v2(rng.grid(-12, 12, 0.25), rng.grid(-12, 12, 0.25));
             let delta = v2(rng.grid(-24, 24, 0.25), rng.grid(-24, 24, 0.25));
             let why = format!("{body:?} at {at} by {delta}");
-            // A body that starts inside a collider is pushed out to a place
-            // the push-out tests in world units; the comparison far out is
-            // for bodies that start clear.
+            // A body that starts inside a collider is compared far out by
+            // `a_push_out_far_from_the_origin_ends_where_it_does_near_it`,
+            // which keeps out the places a rounding allowance decides.
             let placed = flat::place(&body, flat::p(at), (1.0, 0.0));
             let clear = level
                 .iter()
@@ -1129,4 +1131,279 @@ fn a_thin_round_collider_far_out_never_breaks_a_push_out() {
         "{contacts:?}: {into} inside the crate at {}",
         state.position
     );
+}
+
+/// Where one step of a body at rest with no floor ends, less `shift`: the
+/// push-out and nothing else.
+fn pushed_out<V: sgl_physics::Vector>(
+    body: &Shape<V>,
+    at: V,
+    world: &[Collider<V>],
+    shift: V,
+) -> Option<V> {
+    let config = config(audit_support::up::<V>());
+    let mut state = MoverState {
+        position: at + shift,
+        velocity: V::ZERO,
+        floor: None,
+    };
+    let step = move_and_slide(
+        &mut state,
+        body,
+        0.25,
+        world,
+        &config,
+        &MoverOptions::default(),
+    )
+    .unwrap();
+    step.pushed_out.then_some(state.position - shift)
+}
+
+/// A collider's rounding allowance at its place, its largest component
+/// (physics.md 10: `4ε(|position| + half)` on each axis).
+fn allowance<V: sgl_physics::Vector>(c: &Collider<V>) -> f64 {
+    let half = c.shape.half_extents();
+    (0..V::AXES)
+        .map(|axis| {
+            4.0 * f64::from(f32::EPSILON)
+                * (f64::from(c.position[axis].abs()) + f64::from(half[axis]))
+        })
+        .fold(0.0, f64::max)
+}
+
+/// Defect: a push-out whose result depends on how far the scene is from
+/// the origin: one that measures its way out of a round or convex collider
+/// from the collider less its rounding allowance, which grows with the
+/// distance from the origin, so far out it leaves the body short of a skin
+/// clear and chooses another place (the audit measured two skins apart at
+/// 4096 units). Oracle: physics.md 3 and 17 (a query is computed relative
+/// to the body; the push-out puts a body a skin from what it leaves). A
+/// scene on a quarter grid moved by `2^k` on every axis, which keeps every
+/// difference exact, is pushed out to the place near the origin rounded at
+/// the far coordinate: within one unit in the last place there. Exempt, as
+/// the contract states (10, 17): a body that starts, or ends far out,
+/// inside a collider by no more than that collider's rounding allowance
+/// there, by the shapes' own definitions in `f64`; that is touching far
+/// out and inside near the origin. Balls, capsules and convex bodies
+/// started inside random levels of boxes, balls, capsules and convex
+/// colliders, in 2D and 3D, at 16, 256, 4096 and 8192 units.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_push_out_far_from_the_origin_ends_where_it_does_near_it() {
+    let mut compared = 0;
+    for k in [4, 8, 12, 13] {
+        let s = (1u32 << k) as f32;
+        let ulp = s * f32::EPSILON;
+        let shift2 = v2(s, -s);
+        let mut rng = Rng::new(0x0924_C002);
+        for _ in 0..40 {
+            let level: Vec<Collider<Vec2>> = (0..8u64)
+                .map(|id| {
+                    let at = v2(rng.grid(-8, 8, 0.25), rng.grid(-8, 8, 0.25));
+                    let shape = match rng.below(4) {
+                        0 => Shape::Box {
+                            half: v2(rng.grid(1, 4, 0.25), rng.grid(1, 4, 0.25)),
+                        },
+                        1 => Shape::Ball {
+                            radius: rng.grid(1, 4, 0.25),
+                        },
+                        2 => Shape::Capsule {
+                            half_axis: v2(rng.grid(-2, 2, 0.25), rng.grid(-2, 2, 0.25)),
+                            radius: 0.25,
+                        },
+                        _ => Shape::Convex(Convex::polygon(
+                            &[v2(-0.5, -0.5), v2(0.5, -0.5), v2(0.0, 0.75)],
+                            1.0,
+                            0.0,
+                        )),
+                    };
+                    Collider::new(id, shape, at)
+                })
+                .collect();
+            let moved: Vec<Collider<Vec2>> = level
+                .iter()
+                .map(|c| Collider {
+                    position: c.position + shift2,
+                    ..*c
+                })
+                .collect();
+            let in_band = |body: &Shape<Vec2>, at: Vec2| {
+                let placed = flat::place(body, flat::p(at), (1.0, 0.0));
+                moved.iter().any(|c| {
+                    let depth = -separation(&placed, &flat::collider(c));
+                    depth > 0.0 && depth <= allowance(c)
+                })
+            };
+            for _ in 0..4 {
+                let body = match rng.below(3) {
+                    0 => Shape::Ball { radius: 0.25 },
+                    1 => Shape::Capsule {
+                        half_axis: v2(0.0, 0.25),
+                        radius: 0.25,
+                    },
+                    _ => Shape::Convex(Convex::polygon(
+                        &[
+                            v2(-0.25, -0.25),
+                            v2(0.25, -0.25),
+                            v2(0.25, 0.25),
+                            v2(-0.25, 0.25),
+                        ],
+                        0.8,
+                        0.6,
+                    )),
+                };
+                let at = v2(rng.grid(-12, 12, 0.25), rng.grid(-12, 12, 0.25));
+                let Some(near) = pushed_out(&body, at, &level, Vec2::ZERO) else {
+                    continue;
+                };
+                let far = pushed_out(&body, at, &moved, shift2);
+                if in_band(&body, at + shift2)
+                    || far.is_some_and(|far| in_band(&body, far + shift2))
+                {
+                    continue;
+                }
+                let far = far.expect("inside far out as near the origin");
+                assert!(
+                    (far - near).abs().max_element() <= ulp,
+                    "2D at 2^{k}: {body:?} from {at}: {far} far, {near} near"
+                );
+                compared += 1;
+            }
+        }
+        let shift3 = v3(s, -s, s);
+        for _ in 0..40 {
+            let level: Vec<Collider<Vec3>> = (0..8u64)
+                .map(|id| {
+                    let at = v3(
+                        rng.grid(-6, 6, 0.25),
+                        rng.grid(-6, 6, 0.25),
+                        rng.grid(-6, 6, 0.25),
+                    );
+                    let shape = match rng.below(3) {
+                        0 => Shape::Box {
+                            half: v3(
+                                rng.grid(1, 4, 0.25),
+                                rng.grid(1, 4, 0.25),
+                                rng.grid(1, 4, 0.25),
+                            ),
+                        },
+                        1 => Shape::Ball {
+                            radius: rng.grid(1, 4, 0.25),
+                        },
+                        _ => Shape::Capsule {
+                            half_axis: v3(
+                                rng.grid(-2, 2, 0.25),
+                                rng.grid(-2, 2, 0.25),
+                                rng.grid(-2, 2, 0.25),
+                            ),
+                            radius: 0.25,
+                        },
+                    };
+                    Collider::new(id, shape, at)
+                })
+                .collect();
+            let moved: Vec<Collider<Vec3>> = level
+                .iter()
+                .map(|c| Collider {
+                    position: c.position + shift3,
+                    ..*c
+                })
+                .collect();
+            let in_band = |body: &Shape<Vec3>, at: Vec3| {
+                moved.iter().any(|c| {
+                    let depth = solid::depth(body, at, |p| solid::to_collider(p, c));
+                    depth > 0.0 && depth <= allowance(c)
+                })
+            };
+            for _ in 0..4 {
+                let body = if rng.chance(50) {
+                    Shape::Ball { radius: 0.25 }
+                } else {
+                    Shape::Capsule {
+                        half_axis: v3(0.0, 0.25, 0.0),
+                        radius: 0.25,
+                    }
+                };
+                let at = v3(
+                    rng.grid(-8, 8, 0.25),
+                    rng.grid(-8, 8, 0.25),
+                    rng.grid(-8, 8, 0.25),
+                );
+                let Some(near) = pushed_out(&body, at, &level, Vec3::ZERO) else {
+                    continue;
+                };
+                let far = pushed_out(&body, at, &moved, shift3);
+                if in_band(&body, at + shift3)
+                    || far.is_some_and(|far| in_band(&body, far + shift3))
+                {
+                    continue;
+                }
+                let far = far.expect("inside far out as near the origin");
+                assert!(
+                    (far - near).abs().max_element() <= ulp,
+                    "3D at 2^{k}: {body:?} from {at}: {far} far, {near} near"
+                );
+                compared += 1;
+            }
+        }
+    }
+    assert!(compared >= 300, "{compared} push-outs compared");
+}
+
+/// Defect: a ray that meets a ball of no radius (a point, which nothing
+/// with no extent can meet), or that passes through a capsule of no radius
+/// (a segment) it crosses. Oracle: physics.md 15, Rays (a ball of no
+/// radius is a point a ray never meets; a capsule of no radius is a
+/// segment, met through the kernel a slop short where the ray crosses it)
+/// and 19 (a cast stops between one and one and a quarter slops short; the
+/// slop is a hundredth of the smaller shape's extent, the ray's not
+/// counting). Rays straight through a point and across a unit-half-length
+/// segment, in 2D and 3D: the point is never met; the segment is met
+/// between `(1 - 1.25 * 0.01) / 2` and `(1 - 0.01) / 2` of the way,
+/// facing the ray.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_ray_meets_a_segment_it_crosses_and_never_a_point() {
+    let (low, high) = ((1.0 - 1.25 * 0.01) / 2.0, (1.0 - 0.01) / 2.0);
+    for at in [v2(0.0, 0.0), v2(37.5, -12.25)] {
+        let point = [Collider::new(1, Shape::Ball { radius: 0.0 }, at)];
+        let segment = [Collider::new(
+            2,
+            Shape::Capsule {
+                half_axis: v2(0.0, 1.0),
+                radius: 0.0,
+            },
+            at,
+        )];
+        let from = at - v2(1.0, 0.0);
+        let along = v2(2.0, 0.0);
+        assert_eq!(ray(from, along, &point[..], u32::MAX).unwrap(), None);
+        let hit = ray(from, along, &segment[..], u32::MAX)
+            .unwrap()
+            .expect("the segment is crossed");
+        assert!(
+            (low..=high).contains(&hit.t) && hit.normal == v2(-1.0, 0.0),
+            "{hit:?}"
+        );
+    }
+    for at in [v3(0.0, 0.0, 0.0), v3(37.5, -12.25, 3.0)] {
+        let point = [Collider::new(1, Shape::Ball { radius: 0.0 }, at)];
+        let segment = [Collider::new(
+            2,
+            Shape::Capsule {
+                half_axis: v3(0.0, 1.0, 0.0),
+                radius: 0.0,
+            },
+            at,
+        )];
+        let from = at - v3(1.0, 0.0, 0.0);
+        let along = v3(2.0, 0.0, 0.0);
+        assert_eq!(ray(from, along, &point[..], u32::MAX).unwrap(), None);
+        let hit = ray(from, along, &segment[..], u32::MAX)
+            .unwrap()
+            .expect("the segment is crossed");
+        let normal = flat::length(flat::p(v2(hit.normal.y, hit.normal.z)));
+        assert!(
+            (low..=high).contains(&hit.t) && hit.normal.x < -0.999_999 && normal < 1e-3,
+            "{hit:?}"
+        );
+    }
 }

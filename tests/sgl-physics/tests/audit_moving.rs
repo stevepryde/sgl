@@ -483,3 +483,70 @@ fn unanswered_at_any_stage_leaves_a_round_rider_as_it_was() {
     }
     panic!("no step completed within 400 queries");
 }
+
+fn pushed_by_names_the_soft_collider_the_body_moved_along<V: Vector>() {
+    let config = config(up::<V>());
+    let body = cuboid::<V>(0.5, 0.5, 0.5);
+    let start = MoverState {
+        position: V::ZERO,
+        velocity: V::ZERO,
+        floor: None,
+    };
+    // Above and below, each 0.3 deep with a limit of 0.2: their pushes
+    // cancel. To the left, 0.1 deep with a limit of 0.15: it pushes the
+    // body 0.1 and a skin to the right, less than either of the others
+    // pushes.
+    let above =
+        Collider::new(20, cuboid(1.0, 0.5, 1.0), vec(0.0, 0.7, 0.0)).with_push(Push::Soft(0.2));
+    let below =
+        Collider::new(21, cuboid(1.0, 0.5, 1.0), vec(0.0, -0.7, 0.0)).with_push(Push::Soft(0.2));
+    let left =
+        Collider::new(30, cuboid(0.5, 0.25, 0.25), vec(-0.9, 0.0, 0.0)).with_push(Push::Soft(0.15));
+    let step = |world: &[Collider<V>]| {
+        let mut state = start;
+        let contacts = move_and_slide(
+            &mut state,
+            &body,
+            DT,
+            world,
+            &config,
+            &MoverOptions::default(),
+        )
+        .unwrap();
+        (state.position, contacts.pushed_by)
+    };
+    let (at, by) = step(&[above, below, left]);
+    let expected = 0.1 + SKIN;
+    assert!(
+        (at[0] - expected).abs() <= 1e-5 && at[1].abs() <= 1e-5,
+        "moved to {at:?}"
+    );
+    assert_eq!(by, Some(30), "the body moved along the left one's push");
+    let (at, by) = step(&[above, below]);
+    assert_eq!((at, by), (V::ZERO, None), "the pushes cancel");
+    // A rigid wall touching the body's right side blocks the only push.
+    let wall = Collider::new(1, cuboid(0.5, 3.0, 3.0), vec(1.0, 0.0, 0.0));
+    let (at, by) = step(&[left, wall]);
+    assert_eq!((at, by), (V::ZERO, None), "the push is blocked");
+}
+
+/// Defect: `pushed_by` naming a soft collider whose push the body did not
+/// move along: the one whose accumulated push was largest though another
+/// cancelled it, or one named when the soft pushes cancel or are blocked
+/// and the body does not move. Oracle: physics.md 21, Soft contact
+/// (`pushed_by` names, of the soft colliders that pushed, the one along
+/// whose normal the displacement applied to the body moves it furthest;
+/// `None` when the body does not move) and the boxes' geometry: two soft
+/// boxes pressing the body from above and below by equal limits cancel,
+/// and a third, pushing less from the left, moves it right by its depth
+/// and a skin; it is named. The two alone, or the third against a rigid
+/// wall touching the body's other side, move nothing and name none.
+#[wasm_bindgen_test(unsupported = test)]
+fn pushed_by_names_the_soft_collider_the_body_moved_along_in_2d() {
+    pushed_by_names_the_soft_collider_the_body_moved_along::<Vec2>();
+}
+
+#[wasm_bindgen_test(unsupported = test)]
+fn pushed_by_names_the_soft_collider_the_body_moved_along_in_3d() {
+    pushed_by_names_the_soft_collider_the_body_moved_along::<Vec3>();
+}

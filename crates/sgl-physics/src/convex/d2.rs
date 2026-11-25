@@ -16,6 +16,8 @@
 
 use sgl_core::math::Vec2;
 
+use crate::space;
+
 use super::{
     Cast, ClosestPoints, DistanceState, MIN_DIRECTION_LENGTH_SQUARED, cast_by_advancement,
     max_float,
@@ -62,17 +64,20 @@ impl Rot {
     /// the pair is normalised. It turns by `atan(delta_angle)`, not
     /// `delta_angle`: short by about a third of `delta_angle` squared, as
     /// a share (one per cent at a tenth of a radian and a little over), and
-    /// never by a quarter turn or more. A zero result (it cannot arise from
-    /// a unit rotation) stays zero, as in the source.
+    /// never by a quarter turn or more.
+    ///
+    /// The pair is normalised by the crate's one normaliser
+    /// ([`space::direction`]), which divides by its largest component before
+    /// squaring, where the source squares first: for a unit rotation and
+    /// any finite turn the pair is finite and not zero, so the result is a
+    /// unit rotation, however large the turn. A turn that is not finite
+    /// leaves the rotation as it was.
     pub(crate) fn integrated(self, delta_angle: f32) -> Self {
-        let c = self.c - delta_angle * self.s;
-        let s = self.s + delta_angle * self.c;
-        let mag = (s * s + c * c).sqrt();
-        let inv_mag = if mag > 0.0 { 1.0 / mag } else { 0.0 };
-        Self {
-            c: c * inv_mag,
-            s: s * inv_mag,
-        }
+        let turned = Vec2::new(self.c - delta_angle * self.s, self.s + delta_angle * self.c);
+        space::direction(turned).map_or(self, |(unit, _)| Self {
+            c: unit.x,
+            s: unit.y,
+        })
     }
 }
 

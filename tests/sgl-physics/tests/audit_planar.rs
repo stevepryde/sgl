@@ -556,11 +556,9 @@ fn an_unsound_body_is_left_as_it_is_and_meets_nothing() {
 /// panic, or a non-finite body. Oracle: physics.md 20 (bounded work: at
 /// most `(max_impacts + 1) n (n - 1) / 2` times of impact and
 /// `max_separation_passes n (n - 1) / 2` manifolds; impacts in time order,
-/// lower id first, at most `max_impacts`) and 20 (two balls whose centres
-/// coincide have a zero normal, which separates nothing). 120 boxes,
-/// balls and capsules at one point, half of them moving, come out finite,
-/// with their impacts in order, within the caps; 100 equal balls at rest
-/// at one point stay there, finite.
+/// lower id first, at most `max_impacts`). 120 boxes, balls and capsules
+/// at one point, half of them moving, come out finite, with their impacts
+/// in order, within the caps.
 #[wasm_bindgen_test(unsupported = test)]
 fn a_hundred_bodies_at_one_point_end_finite_within_the_caps() {
     let mut rng = Rng::new(0x0924_2004);
@@ -596,20 +594,370 @@ fn a_hundred_bodies_at_one_point_end_finite_within_the_caps() {
         .all(|v| v.is_finite());
         assert!(finite && length(flat::p(b.heading)) > 0.5, "{b:?}");
     }
-    let ball = Body {
-        id: 0,
-        shape: Shape::Ball { radius: 0.5 },
-        position: v2(4.0, -3.0),
+}
+
+/// Defect: two bodies with no direction between them (two balls whose
+/// centres coincide, a ball on a capsule's segment) that `advance` never
+/// separates, because their manifold's normal is zero, though it reports
+/// its separation finished. Oracle: physics.md 20 (when the separation
+/// ends before its cap, no pair overlaps; a pair with no direction between
+/// them is pushed apart along +x, the one first in body order toward −x;
+/// a shuffled slice gives the same bodies, bit for bit), with overlap
+/// judged by the shapes' own definitions in `f64`. Each pair at rest at one
+/// point, the capsule lying along x so a push of the balls' radii alone
+/// does not clear it, ends apart, the lower id on the −x side, and the
+/// same with the slice reversed.
+#[wasm_bindgen_test(unsupported = test)]
+fn bodies_at_one_point_end_apart_along_x() {
+    let at = v2(4.0, -3.0);
+    let ball = |id: u64, radius: f32| Body {
+        id,
+        shape: Shape::Ball { radius },
+        position: at,
         heading: v2(1.0, 0.0),
         velocity: Vec2::ZERO,
         spin: 0.0,
         inverse_mass: 1.0,
         inverse_inertia: 1.0,
     };
-    let mut balls: Vec<Body> = (0..100).map(|id| Body { id, ..ball }).collect();
-    let impacts = planar::advance(&mut balls, 1.0 / 60.0, &settings, |_, _| true);
-    assert!(impacts.is_empty(), "{impacts:?}");
-    for b in &balls {
-        assert_eq!(b.position, ball.position, "{b:?}");
+    let capsule = |id: u64| Body {
+        shape: Shape::Capsule {
+            half_axis: v2(1.5, 0.0),
+            radius: 0.25,
+        },
+        inverse_mass: 0.5,
+        ..ball(id, 0.0)
+    };
+    let pairs = [
+        [ball(3, 0.5), ball(8, 0.5)],
+        [ball(3, 0.5), ball(8, 0.2)],
+        [ball(3, 0.4), capsule(8)],
+        [capsule(3), ball(8, 0.4)],
+    ];
+    for pair in pairs {
+        let mut bodies = pair;
+        let impacts = planar::advance(&mut bodies, 1.0 / 60.0, &Settings::new(0.5, 0.5), |_, _| {
+            true
+        });
+        assert!(impacts.is_empty(), "{impacts:?}");
+        let placed = bodies.map(|b| place(&b.shape, flat::p(b.position), unit(b.heading)));
+        let gap = separation(&placed[0], &placed[1]);
+        assert!(
+            gap > 0.0,
+            "{pair:?} ends overlapping by {}: {bodies:?}",
+            -gap
+        );
+        assert!(bodies[0].position.x < bodies[1].position.x, "{bodies:?}");
+        assert_eq!(bodies[0].position.y, at.y, "{bodies:?}");
+        assert_eq!(bodies[1].position.y, at.y, "{bodies:?}");
+        let mut reversed = [pair[1], pair[0]];
+        planar::advance(
+            &mut reversed,
+            1.0 / 60.0,
+            &Settings::new(0.5, 0.5),
+            |_, _| true,
+        );
+        assert_eq!([reversed[1], reversed[0]], bodies);
+    }
+}
+
+/// Whether every number a body carries is finite and its heading is unit
+/// to a few units in the last place, measured in `f64` (physics.md 12 and
+/// 20: a heading is normalised to within a few units in the last place).
+fn finite_and_unit(b: &Body) -> bool {
+    let numbers = [
+        b.position.x,
+        b.position.y,
+        b.velocity.x,
+        b.velocity.y,
+        b.heading.x,
+        b.heading.y,
+        b.spin,
+    ];
+    let heading = length(flat::p(b.heading));
+    numbers.iter().all(|v| v.is_finite()) && (heading - 1.0).abs() <= 4.0 * f64::from(f32::EPSILON)
+}
+
+/// Defect: a turn that overflows before it is normalised, so a body
+/// spinning fast enough ends with heading `(0, 0)` and from then on
+/// occupies nothing. Oracle: physics.md 20 (a heading stays a unit
+/// direction for any finite spin and step; a turn of `angle` turns by
+/// `atan(angle)`, worked in `f64` here). A ball heading along x with
+/// spin `1e30` advanced by `1/60` turns by all but a quarter turn: its
+/// heading is `(c, s) / |(c, s)|` of `(1, 1e30 / 60)`, and it still meets
+/// a ball laid over it.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_heading_turned_by_a_huge_spin_stays_unit() {
+    let spinning = Body {
+        id: 1,
+        shape: Shape::Box { half: v2(1.0, 0.5) },
+        position: v2(0.0, 0.0),
+        heading: v2(1.0, 0.0),
+        velocity: Vec2::ZERO,
+        spin: 1e30,
+        inverse_mass: 1.0,
+        inverse_inertia: 1.0,
+    };
+    let dt = 1.0f32 / 60.0;
+    let mut bodies = [spinning];
+    planar::advance(&mut bodies, dt, &Settings::new(0.5, 0.5), |_, _| true);
+    let after = bodies[0];
+    let expected = turned((1.0, 0.0), f64::from(spinning.spin * dt));
+    let heading = flat::p(after.heading);
+    assert!(finite_and_unit(&after), "{after:?}");
+    assert!(
+        (heading.0 - expected.0).abs() <= 1e-7 && (heading.1 - expected.1).abs() <= 1e-7,
+        "{heading:?} against {expected:?}"
+    );
+    assert_eq!(after.position, spinning.position);
+    let over = Body {
+        id: 2,
+        shape: Shape::Ball { radius: 0.25 },
+        position: v2(0.0, 0.8),
+        spin: 0.0,
+        ..spinning
+    };
+    // Turned to stand along y, the box reaches 1 up, through the ball.
+    let met = planar::manifold(&after, &over).expect("the turned box occupies its place");
+    assert!(met.depth > 0.0, "{met:?}");
+}
+
+/// Defect: a body whose motion is near the top of `f32` makes a bump
+/// overflow, and the overflow reaches the body it meets: the audit's
+/// reproduction left a well-formed ball's position NaN. Oracle: physics.md
+/// 20 (every planar function answers finitely for finite inputs; a body
+/// whose own step `f32` cannot hold is left as it was and takes no part,
+/// and no other body is made non-finite by it). A ball moving at `3e38`
+/// meets well-formed balls ahead of and beside it, advanced by `0.25`, and
+/// two balls at one point ride together to the top of `f32`: every body
+/// ends finite with a unit heading, and the impacts are finite.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_body_near_the_top_of_f32_makes_no_other_non_finite() {
+    let ball = Body {
+        id: 1,
+        shape: Shape::Ball { radius: 0.5 },
+        position: v2(0.0, 0.0),
+        heading: v2(1.0, 0.0),
+        velocity: v2(3e38, 0.0),
+        spin: 0.0,
+        inverse_mass: 1.0,
+        inverse_inertia: 1.0,
+    };
+    for at in [v2(1.0, 0.0), v2(2.0, 0.0), v2(5.0, 0.3), v2(0.0, 5.0)] {
+        let well_formed = Body {
+            id: 2,
+            position: at,
+            velocity: v2(1.0, 0.0),
+            ..ball
+        };
+        let mut bodies = [ball, well_formed];
+        let impacts = planar::advance(&mut bodies, 0.25, &Settings::new(0.5, 0.5), |_, _| true);
+        for b in &bodies {
+            assert!(finite_and_unit(b), "beside {at}: {b:?}");
+        }
+        for i in &impacts {
+            let numbers = [i.point.x, i.point.y, i.normal.x, i.normal.y, i.impulse];
+            assert!(numbers.iter().all(|v| v.is_finite()), "{i:?}");
+        }
+    }
+    // Two balls riding together to the top of `f32`, at one point: their
+    // separation's push is not something `f32` can hold there.
+    let riding = Body {
+        velocity: v2(f32::MAX, 0.0),
+        ..ball
+    };
+    let mut bodies = [riding, Body { id: 2, ..riding }];
+    planar::advance(&mut bodies, 1.0, &Settings::new(0.5, 0.5), |_, _| true);
+    for b in &bodies {
+        assert!(finite_and_unit(b), "{b:?}");
+    }
+}
+
+/// Defect: a body whose own step `f32` cannot hold (its motion, its
+/// position plus its motion, its turn) that moves part way, turns to no
+/// heading, or bumps the others with a non-finite motion. Oracle:
+/// physics.md 20 (such a body is left exactly as it was for the step and
+/// takes no part in it). So it comes out bit-equal to how it went in, and
+/// the others bit-equal to the same step without it, though it sits in
+/// their path.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_body_whose_step_f32_cannot_hold_is_left_as_it_was() {
+    let others = [
+        Body {
+            id: 1,
+            shape: Shape::Ball { radius: 0.5 },
+            position: v2(-2.0, 0.0),
+            heading: v2(1.0, 0.0),
+            velocity: v2(20.0, 0.0),
+            spin: 0.0,
+            inverse_mass: 1.0,
+            inverse_inertia: 2.0,
+        },
+        Body {
+            id: 9,
+            shape: Shape::Box { half: v2(0.5, 0.5) },
+            position: v2(2.0, 0.2),
+            heading: v2(0.0, 1.0),
+            velocity: v2(-10.0, 0.0),
+            spin: -2.0,
+            inverse_mass: 0.5,
+            inverse_inertia: 1.0,
+        },
+    ];
+    let dt = 2.0;
+    let settings = Settings::new(0.5, 0.5);
+    let mut alone = others;
+    let alone_impacts = planar::advance(&mut alone, dt, &settings, |_, _| true);
+    assert!(!alone_impacts.is_empty(), "the others meet");
+    let base = Body {
+        id: 5,
+        shape: Shape::Box { half: v2(1.0, 0.5) },
+        position: v2(0.0, 0.0),
+        heading: v2(1.0, 0.0),
+        velocity: Vec2::ZERO,
+        spin: 0.0,
+        inverse_mass: 1.0,
+        inverse_inertia: 1.0,
+    };
+    let hostile = [
+        // Its motion overflows.
+        Body {
+            velocity: v2(0.0, f32::MAX),
+            ..base
+        },
+        // Its turn overflows.
+        Body {
+            spin: -f32::MAX,
+            ..base
+        },
+        // Its end is past `f32`.
+        Body {
+            position: v2(0.0, 2e38),
+            velocity: v2(0.0, 1e38),
+            ..base
+        },
+    ];
+    for hostile in hostile {
+        let mut bodies = [others[0], hostile, others[1]];
+        let impacts = planar::advance(&mut bodies, dt, &settings, |_, _| true);
+        assert_eq!(bodies[1], hostile);
+        assert_eq!((bodies[0], bodies[2]), (alone[0], alone[1]), "{hostile:?}");
+        assert_eq!(impacts, alone_impacts, "{hostile:?}");
+    }
+}
+
+/// A value from `normal` or, one time in three, one of `hostile`.
+fn hostile_or(rng: &mut Rng, normal: f32, hostile: &[f32]) -> f32 {
+    if rng.chance(33) {
+        rng.pick(hostile) * if rng.chance(50) { -1.0 } else { 1.0 }
+    } else {
+        normal
+    }
+}
+
+/// Defect: any planar function that turns finite inputs into a non-finite
+/// body, impact, outcome or bump, or a heading that stops being unit: an
+/// overflow in a turn, a motion, a frame between two far bodies, a bump or
+/// a separation. Oracle: physics.md 20 (every planar function answers
+/// finitely for finite inputs; a heading stays unit for any finite spin
+/// and step) and 12 (unit to a few units in the last place), measured in
+/// `f64`. Groups of bodies near one hostile place, each with hostile
+/// spins, velocities, masses and inertias up to `f32::MAX` and subnormal,
+/// advanced by steps from a frame to ten seconds, and every pair through
+/// `time_of_impact`, `manifold` and `bump`.
+#[wasm_bindgen_test(unsupported = test)]
+fn no_finite_body_ends_non_finite() {
+    const HUGE: [f32; 6] = [1e20, 1e30, 1e38, 3e38, f32::MAX, 1e-40];
+    let mut rng = Rng::new(0x0924_A001);
+    for case in 0..200 {
+        let near: Vec2 = rng.vector(-50.0, 50.0);
+        let centre = v2(
+            hostile_or(&mut rng, near.x, &HUGE),
+            hostile_or(&mut rng, near.y, &HUGE),
+        );
+        let count = rng.int(2, 5) as u64;
+        let mut bodies: Vec<Body> = (0..count)
+            .map(|id| {
+                let mut b = body(&mut rng, id, centre);
+                b.position = centre + rng.vector::<Vec2>(-2.0, 2.0);
+                if rng.chance(20) {
+                    b.position.x = hostile_or(&mut rng, b.position.x, &HUGE);
+                }
+                b.velocity = v2(
+                    hostile_or(&mut rng, b.velocity.x, &HUGE),
+                    hostile_or(&mut rng, b.velocity.y, &HUGE),
+                );
+                b.spin = hostile_or(&mut rng, b.spin, &HUGE);
+                b.inverse_mass = hostile_or(&mut rng, b.inverse_mass, &HUGE).abs();
+                b.inverse_inertia = hostile_or(&mut rng, b.inverse_inertia, &HUGE).abs();
+                if rng.chance(10) {
+                    b.inverse_mass = 0.0;
+                }
+                b
+            })
+            .collect();
+        let dt = rng.pick(&[1.0 / 60.0, 0.25, 10.0]);
+        let before = bodies.clone();
+        let why = format!("case {case}: dt {dt} {before:?}");
+        for a in &before {
+            for b in &before {
+                let toi = planar::time_of_impact(a, Motion::of(a, dt), b, Motion::of(b, dt));
+                let contact = match toi {
+                    Toi::Hit { fraction, contact }
+                    | Toi::Failed {
+                        fraction,
+                        contact: Some(contact),
+                    } => {
+                        assert!((0.0..=1.0).contains(&fraction), "{toi:?} {why}");
+                        Some(contact)
+                    }
+                    Toi::Failed {
+                        fraction,
+                        contact: None,
+                    } => {
+                        assert!((0.0..=1.0).contains(&fraction), "{toi:?} {why}");
+                        None
+                    }
+                    _ => None,
+                };
+                if let Some(c) = contact {
+                    let numbers = [c.point.x, c.point.y, c.normal.x, c.normal.y];
+                    assert!(numbers.iter().all(|v| v.is_finite()), "{toi:?} {why}");
+                }
+                if let Some(m) = planar::manifold(a, b) {
+                    let mut numbers = vec![m.normal.x, m.normal.y, m.depth];
+                    numbers.extend(m.points().iter().flat_map(|p| [p.x, p.y]));
+                    assert!(numbers.iter().all(|v| v.is_finite()), "{m:?} {why}");
+                }
+                let contact = Contact {
+                    point: a.position,
+                    normal: v2(1.0, 0.0),
+                };
+                let bump = planar::bump(a, b, contact, 0.5, 0.5);
+                let numbers = [
+                    bump.velocity_a.x,
+                    bump.velocity_a.y,
+                    bump.spin_a,
+                    bump.velocity_b.x,
+                    bump.velocity_b.y,
+                    bump.spin_b,
+                    bump.normal_impulse,
+                    bump.friction_impulse,
+                ];
+                assert!(numbers.iter().all(|v| v.is_finite()), "{bump:?} {why}");
+            }
+        }
+        let impacts = planar::advance(&mut bodies, dt, &Settings::new(0.5, 0.5), |_, _| true);
+        for b in &bodies {
+            let start = before.iter().find(|s| s.id == b.id).expect("same bodies");
+            let unmoved = b == start;
+            assert!(unmoved || finite_and_unit(b), "{b:?} {why}");
+        }
+        for i in &impacts {
+            let numbers = [
+                i.time, i.point.x, i.point.y, i.normal.x, i.normal.y, i.impulse,
+            ];
+            assert!(numbers.iter().all(|v| v.is_finite()), "{i:?} {why}");
+        }
     }
 }

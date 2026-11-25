@@ -27,7 +27,8 @@ const SPECULATIVE_SLOPS: f32 = 4.0;
 pub struct Manifold {
     /// Unit normal from body `a` toward body `b`. Zero only for two balls
     /// (or a ball and a capsule's segment) whose centres coincide, which
-    /// no normal separates.
+    /// have no direction between them; [`advance`](super::advance) pushes
+    /// such a pair apart along +x.
     pub normal: Vec2,
     /// How far the bodies overlap along `normal` at the deepest point, in
     /// world units: positive when they overlap, negative (the gap) when

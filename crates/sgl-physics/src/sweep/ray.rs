@@ -2,9 +2,9 @@
 //! against a ball, a capsule, a 2D polygon or a 3D triangle (a convex
 //! shape of exactly three points), each in closed form with no slop, as
 //! `Box2D` and `Box3D` cast rays. Every other pair a point makes (a box, a cut
-//! box, a 3D hull of four or more points, a triangle with no area, a ball
-//! or capsule of no radius) stays where it was: the box sweep or the
-//! kernel.
+//! box, a 3D hull of four or more points, a triangle with no area, a
+//! capsule of no radius) stays where it was: the box sweep or the kernel.
+//! A ball of no radius is a point, which a ray never meets.
 //!
 //! Ported from `Box3D` v0.1.0 (commit
 //! `8441b4a06d6d09dcfb0b0f704df4d847d1437b92`): `b3RayCastSphere` of
@@ -37,7 +37,7 @@
 //! ([`resting`]), as a box does. A start read a rounding step behind the
 //! surface it is on, with the far crossing ahead, is a hit at the start. A
 //! triangle has no inside: a ray starting on its plane, to within the
-//! rounding of its coordinates, meets it at once.
+//! rounding of its coordinates, and leaving the plane meets it at once.
 //!
 //! **Grazes.** A hit whose normal the ray does not approach is no contact,
 //! as for every pair through the kernel: a ray tangent to a ball, or one
@@ -598,8 +598,9 @@ mod tests {
     /// 2) / 3. A level triangle (-10, 0, -10), (10, 0, -10), (0, 0, 10)
     /// about (0, 0.5, 0): down from (1, 5.5, 1) by 10, half way, facing up;
     /// exactly on its edge z = -10 too; a hundredth beyond it, nothing; a
-    /// ray in its plane, nothing; a ray starting on it meets it at once
-    /// whichever way it goes, facing back along it.
+    /// ray in its plane, nothing, from beside it or from on it; a ray
+    /// starting on it and leaving its plane meets it at once to either
+    /// side, facing back along it, however shallow its way off the plane.
     #[wasm_bindgen_test(unsupported = test)]
     fn a_ray_meets_a_triangle_on_either_side() {
         let v = Vec3::new;
@@ -628,9 +629,14 @@ mod tests {
         );
         assert_eq!(ray(v(0.0, 5.5, -10.01), down, &world), None);
         assert_eq!(ray(v(-20.0, 0.5, 0.0), v(40.0, 0.0, 0.0), &world), None);
+        assert_eq!(ray(v(1.0, 0.5, 1.0), v(4.0, 0.0, -3.0), &world), None);
         assert_eq!(
             ray(v(1.0, 0.5, 1.0), v(0.0, -1.0, 0.0), &world),
             Some((0.0, Vec3::Y, 1))
+        );
+        assert_eq!(
+            ray(v(1.0, 0.5, 1.0), v(4.0, 1e-3, -3.0), &world),
+            Some((0.0, Vec3::NEG_Y, 1))
         );
         assert_eq!(
             ray(v(1.0, 0.5, 1.0), v(0.0, 1.0, 0.0), &world),

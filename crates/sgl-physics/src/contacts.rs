@@ -65,8 +65,9 @@ pub struct Contacts<V> {
     /// carried the body on: its floor at the start of the step.
     pub carried_by: Option<u64>,
     /// The id of the collider that pushed the body: the moving collider
-    /// [`move_and_slide`](crate::move_and_slide) pushed it out of, or else
-    /// the soft collider that nudged it furthest.
+    /// [`move_and_slide`](crate::move_and_slide) pushed it out of, or else,
+    /// when soft colliders moved it, the one along whose push it moved
+    /// furthest; `None` when their pushes cancel or are blocked.
     pub pushed_by: Option<u64>,
 }
 

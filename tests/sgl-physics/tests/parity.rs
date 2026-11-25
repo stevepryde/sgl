@@ -521,6 +521,11 @@ fn round_extras_3d() -> [Collider<Vec3>; 3] {
 /// #920 encodes anew (the colliders it overlaps and its contacts) and the
 /// exact rays of #923: with the exact rays turned off it gives #920's
 /// digest, and with #920's new fields left out of the encodings #923's.
+/// The 2D mover walk was refrozen when the audit (#924) measured the
+/// push-out's way out of a round or convex collider from the collider's own
+/// surface instead of its core less the rounding allowance: with that one
+/// change undone it gives the digest before. The 3D mover walk keeps its
+/// digest.
 #[wasm_bindgen_test(unsupported = test)]
 fn seeded_round_walks_through_fixed_levels_are_target_independent() {
     let level = level_2d();
@@ -607,7 +612,7 @@ fn seeded_round_walks_through_fixed_levels_are_target_independent() {
     );
     assert_eq!(
         mover_2d,
-        "e3161b8d89697b5c5382badddaee6e8d7122ffc9bf702bcb2084c5897bf2e537"
+        "e876e07f4714da443abc804735b38fcab6a18421ad51680fd8ce5379d5aa0022"
     );
     assert_eq!(
         mover_3d,
@@ -882,7 +887,9 @@ fn planar_pile_up() -> Vec<planar::Body> {
 /// step's impacts and bodies hashed over ninety steps. The pile-up must
 /// bump for the digest to cover the bump. Frozen on first run (#921);
 /// refrozen when the audit (#924) made a heading normalised by the crate's
-/// one routine, which moves turned headings by their last bits.
+/// one routine, which moves turned headings by their last bits, and again
+/// when it normalised a heading's turn by that routine (the same digest as
+/// before with that one change undone).
 #[wasm_bindgen_test(unsupported = test)]
 fn a_seeded_planar_pile_up_is_target_independent() {
     let mut bodies = planar_pile_up();
@@ -913,7 +920,7 @@ fn a_seeded_planar_pile_up_is_target_independent() {
     assert!(impacts > 20, "{impacts}");
     assert_eq!(
         hasher.finish().to_hex(),
-        "ec55af611e9121df6033018b8aa906dabd42d127dd3fe3ef21c9961636a7237d"
+        "ccb109f4b80b7f3b3a210bd12bf07e6c379a699588d635802f2b6c325726d64a"
     );
 }
 

@@ -5,9 +5,10 @@ use sgl_core::math::Vec2;
 
 use super::bump::{Response, check_response, impulse, relative_velocity};
 use super::manifold::posed;
-use super::toi::{reach, sweep_slop, swept};
+use super::toi::{core, reach, sweep_slop, swept};
 use super::{Body, Contact, Toi};
-use crate::convex::d2::{Rot, Sweep, cross, dot, sweep_transform};
+use crate::convex::d2::{Rot, Sweep, cross, dot, rotate, sweep_transform};
+use crate::shape::Shape;
 use crate::space;
 
 /// The most impacts one [`advance`] resolves, the cap [`Settings`] may
@@ -110,18 +111,22 @@ struct Moving {
 }
 
 impl Moving {
+    /// The body as it starts the step, or `None` when it is not sound or
+    /// its own step is not finite: its motion, or its position plus its
+    /// motion, past what `f32` holds, or its turn not finite.
     fn new(index: usize, body: &Body, dt: f32) -> Option<Self> {
         let rotation = body.sound_rotation()?;
-        Some(Self {
+        let mut out = Self {
             index,
             body: *body,
             reach: reach(&body.shape),
             start: body.position,
             moved: Vec2::ZERO,
-            moved_by_end: body.velocity * dt,
+            moved_by_end: Vec2::ZERO,
             rotation,
-            rotation_by_end: rotation.integrated(body.spin * dt),
-        })
+            rotation_by_end: rotation,
+        };
+        out.restart(dt).then_some(out)
     }
 
     /// Its motion over the rest of the step, in a frame at `origin` from
@@ -145,10 +150,30 @@ impl Moving {
     }
 
     /// Restarts its motion from where it is, with its velocity and spin,
-    /// over the `left` seconds that remain.
-    fn restart(&mut self, left: f32) {
-        self.moved_by_end = self.moved + self.body.velocity * left;
-        self.rotation_by_end = self.rotation.integrated(self.body.spin * left);
+    /// over the `left` seconds that remain, and says whether that motion is
+    /// finite: its velocity and spin, the turn they give, and where it ends,
+    /// from the start of the step and in world units. When it is not, the
+    /// body is as it was before the call.
+    fn restart(&mut self, left: f32) -> bool {
+        let moved_by_end = self.moved + self.body.velocity * left;
+        let turn = self.body.spin * left;
+        let finite = space::is_finite(self.body.velocity)
+            && turn.is_finite()
+            && space::is_finite(moved_by_end)
+            && space::is_finite(self.start + moved_by_end);
+        if finite {
+            self.moved_by_end = moved_by_end;
+            self.rotation_by_end = self.rotation.integrated(turn);
+        }
+        finite
+    }
+
+    /// It bumped to `velocity` and `spin`, moving on with them over the
+    /// `left` seconds that remain; `None` when that motion is not finite.
+    fn bumped(mut self, velocity: Vec2, spin: f32, left: f32) -> Option<Self> {
+        self.body.velocity = velocity;
+        self.body.spin = spin;
+        self.restart(left).then_some(self)
     }
 }
 
@@ -177,8 +202,10 @@ struct Found {
 /// start) is pushed apart along its [`manifold`](super::manifold) to a slop
 /// apart, split by inverse mass, pair by pair in passes, at most
 /// `settings.max_separation_passes`, stopping after a pass that pushed
-/// nothing. A body with zero inverse mass is never pushed; one with zero
-/// inverse mass and inertia is never bumped either. Each body ends at its
+/// nothing; a pair with no direction between them (two balls at one point)
+/// is pushed apart along +x, the one first in body order toward −x. A body
+/// with zero inverse mass is never pushed; one with zero inverse mass and
+/// inertia is never bumped either. Each body ends at its
 /// position, heading (normalised and turned), velocity and spin.
 ///
 /// `collide(a, b)` says whether a pair can collide at all: a game returns
@@ -193,7 +220,10 @@ struct Found {
 /// in that order, and a shuffled slice gives the same bodies and impacts,
 /// bit for bit. Every pair is computed relative to its first body's start,
 /// so far from the origin is as good as near. A body that is not sound is
-/// left as it is.
+/// left as it is, and so is one whose own step `f32` cannot hold (its
+/// position plus its motion, its turn, or its velocity, spin or end after a
+/// bump), which takes no further part in the step: no body is ever made
+/// non-finite by another.
 ///
 /// Guaranteed: impacts in time order; a body with zero inverse mass moves
 /// only by its own velocity; and when the separation ends before its cap,
@@ -232,7 +262,7 @@ pub fn advance(
 
     // The fraction of the step done.
     let mut now = 0.0f32;
-    while impacts.len() < settings.max_impacts {
+    for _ in 0..settings.max_impacts {
         let Some(found) = earliest(&moving, &collide) else {
             break;
         };
@@ -253,14 +283,27 @@ pub fn advance(
             settings.restitution,
             settings.friction,
         );
-        moving[i].body.velocity = bumped.velocity_a;
-        moving[i].body.spin = bumped.spin_a;
-        moving[j].body.velocity = bumped.velocity_b;
-        moving[j].body.spin = bumped.spin_b;
-        // The others keep their motion: the same end, reached over the time
-        // left.
-        moving[i].restart(left);
-        moving[j].restart(left);
+        // A bump that leaves a body with a motion `f32` cannot hold is not
+        // applied: that body is left as it was and takes no further part,
+        // and the other keeps its own motion.
+        match (
+            moving[i].bumped(bumped.velocity_a, bumped.spin_a, left),
+            moving[j].bumped(bumped.velocity_b, bumped.spin_b, left),
+        ) {
+            (Some(after_a), Some(after_b)) => {
+                moving[i] = after_a;
+                moving[j] = after_b;
+            }
+            (after_a, after_b) => {
+                if after_b.is_none() {
+                    moving.remove(j);
+                }
+                if after_a.is_none() {
+                    moving.remove(i);
+                }
+                continue;
+            }
+        }
         impacts.push(Impact {
             a: a.body.id,
             b: b.body.id,
@@ -403,12 +446,27 @@ fn separate(moving: &mut [Moving], passes: usize, collide: &impl Fn(&Moving, &Mo
                 ) else {
                     continue;
                 };
-                if found.depth <= 0.0 || found.normal == Vec2::ZERO {
+                if found.depth <= 0.0 {
                     continue;
                 }
-                let push = found.normal * (found.depth + slop);
-                moving[i].moved = a.moved - push * (a.body.inverse_mass / total);
-                moving[j].moved = b.moved + push * (b.body.inverse_mass / total);
+                let push = if found.normal == Vec2::ZERO {
+                    // No direction between them (two balls whose centres
+                    // coincide): apart along +x, the first in body order
+                    // toward -x, by how far they overlap along x.
+                    let (_, a_most) = span_x(&a.body.shape, a.moved, a.rotation);
+                    let (b_least, _) = span_x(&b.body.shape, at_b, b.rotation);
+                    Vec2::new(a_most - b_least + slop, 0.0)
+                } else {
+                    found.normal * (found.depth + slop)
+                };
+                let moved_a = a.moved - push * (a.body.inverse_mass / total);
+                let moved_b = b.moved + push * (b.body.inverse_mass / total);
+                if !(space::is_finite(a.start + moved_a) && space::is_finite(b.start + moved_b)) {
+                    // A push `f32` cannot hold leaves the pair where it is.
+                    continue;
+                }
+                moving[i].moved = moved_a;
+                moving[j].moved = moved_b;
                 pushed = true;
             }
         }
@@ -416,4 +474,19 @@ fn separate(moving: &mut [Moving], passes: usize, collide: &impl Fn(&Moving, &Mo
             break;
         }
     }
+}
+
+/// The least and greatest x a shape reaches with its centre at `at`,
+/// turned by `rotation`.
+fn span_x(shape: &Shape<Vec2>, at: Vec2, rotation: Rot) -> (f32, f32) {
+    let proxy = core(shape);
+    let (least, most) =
+        proxy
+            .points()
+            .iter()
+            .fold((f32::MAX, -f32::MAX), |(least, most), point| {
+                let x = rotate(rotation, *point).x;
+                (space::min(least, x), space::max(most, x))
+            });
+    (at.x + least - proxy.radius(), at.x + most + proxy.radius())
 }
