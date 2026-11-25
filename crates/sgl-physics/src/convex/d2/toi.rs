@@ -102,14 +102,16 @@ pub(crate) struct Toi {
 }
 
 /// A position and a rotation (`b2Transform`).
-#[derive(Clone, Copy)]
-struct Transform {
-    p: Vec2,
-    q: Rot,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Transform {
+    /// The position.
+    pub p: Vec2,
+    /// The rotation.
+    pub q: Rot,
 }
 
 /// Where a sweep puts its shape at `time` (`b2GetSweepTransform`).
-fn sweep_transform(sweep: &Sweep, time: f32) -> Transform {
+pub(crate) fn sweep_transform(sweep: &Sweep, time: f32) -> Transform {
     let center = Vec2::new(
         (1.0 - time) * sweep.c1.x + time * sweep.c2.x,
         (1.0 - time) * sweep.c1.y + time * sweep.c2.y,
@@ -132,7 +134,7 @@ fn sweep_transform(sweep: &Sweep, time: f32) -> Transform {
 }
 
 /// The pose of `b` in the frame of `a` (`b2InvMulTransforms`).
-fn inv_mul_transforms(a: Transform, b: Transform) -> Transform {
+pub(crate) fn inv_mul_transforms(a: Transform, b: Transform) -> Transform {
     Transform {
         q: Rot {
             s: a.q.c * b.q.s - a.q.s * b.q.c,

@@ -334,7 +334,7 @@ impl<V: Vector> Pair<V> {
 
 /// Whether a pair can make contact at all: two shapes with no extent (a
 /// point against a point) never do.
-fn meets<V: Vector>(body: &Shape<V>, target: &Shape<V>) -> bool {
+pub(crate) fn meets<V: Vector>(body: &Shape<V>, target: &Shape<V>) -> bool {
     extent(body) > 0.0 || extent(target) > 0.0
 }
 
@@ -361,28 +361,41 @@ fn slop<V: Vector>(
 ) -> f32 {
     let fitted = match tolerance {
         Tolerance::Skin(skin) if skin > 0.0 => skin * SKIN_SLOP,
-        _ => {
-            let mut slop = f32::INFINITY;
-            for shape in [body, target] {
-                let extent = extent(shape);
-                if extent > 0.0 {
-                    slop = space::min(slop, extent * EXTENT_SLOP);
-                }
-            }
-            for shape in [body, target] {
-                let radius = shape.radius();
-                if radius > 0.0 {
-                    slop = space::min(slop, radius * RADIUS_SLOP);
-                }
-            }
-            slop
-        }
+        _ => shape_slop(body, target),
     };
     let largest = space::max(
         pair.target.largest(),
         pair.body.largest() + space::largest_abs(delta),
     );
-    space::max(fitted, ROUNDING_SLOP * largest)
+    space::max(fitted, rounding_slop(largest))
+}
+
+/// A query's slop for a pair of shapes before its rounding floor: a
+/// hundredth of the smaller shape's extent ([`EXTENT_SLOP`]), at most a
+/// quarter of the smaller radius ([`RADIUS_SLOP`]); a shape with no extent
+/// or no radius does not count. Infinite when neither shape has an extent,
+/// a pair that never [`meets`]. The planar bodies take theirs from here.
+pub(crate) fn shape_slop<V: Vector>(a: &Shape<V>, b: &Shape<V>) -> f32 {
+    let mut slop = f32::INFINITY;
+    for shape in [a, b] {
+        let extent = extent(shape);
+        if extent > 0.0 {
+            slop = space::min(slop, extent * EXTENT_SLOP);
+        }
+    }
+    for shape in [a, b] {
+        let radius = shape.radius();
+        if radius > 0.0 {
+            slop = space::min(slop, radius * RADIUS_SLOP);
+        }
+    }
+    slop
+}
+
+/// The least slop among coordinates up to `largest` ([`ROUNDING_SLOP`] of
+/// it), so `f32` can land a contact within a quarter of the slop.
+pub(crate) fn rounding_slop(largest: f32) -> f32 {
+    ROUNDING_SLOP * largest
 }
 
 /// A contact at the start against the motion itself: what a pair with no

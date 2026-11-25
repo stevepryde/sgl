@@ -1,7 +1,9 @@
 # Provenance and algorithm notes
 
 `sgl-physics` is SGL's own, except its convex kernel (`src/convex.rs` and
-`src/convex/`), which is ported from two projects by Erin Catto, both MIT:
+`src/convex/`) and the contact manifold and bump of its planar bodies
+(`src/planar/collide.rs`, `src/planar/collide/`, `src/planar/bump.rs`),
+which are ported from two projects by Erin Catto, both MIT:
 
 | Source | Tag | Commit | Licence here |
 | --- | --- | --- | --- |
@@ -16,13 +18,21 @@ functions each one follows.
 | --- | --- |
 | `convex.rs`: `Proxy`, the result types, `cast_by_advancement` | Box2D `b2ShapeProxy`, `b2MakeProxy`, `b2DistanceOutput`, `b2CastOutput`, `b2CastShape`; Box3D `b3ShapeProxy`, `b3DistanceOutput`, `b3CastOutput`, `b3ShapeCast` |
 | `convex/d2.rs`: `Proxy::offset`, `distance`, the simplex solvers, `shape_cast` | Box2D `src/distance.c`: `b2MakeOffsetProxy`, `b2ComputeShapeDistance`, `b2SolveSimplex2`, `b2SolveSimplex3`, `b2FindSupport`, `b2ComputeWitnessPoints`; `include/box2d/collision.h`, `include/box2d/math_functions.h` |
+| `convex/d2.rs`: `Rot::integrated` | Box2D `include/box2d/math_functions.h`: `b2IntegrateRotation` |
 | `convex/d2/toi.rs`: `Sweep`, `time_of_impact` | Box2D `src/distance.c`: `b2GetSweepTransform`, `b2MakeSeparationFunction`, `b2FindMinSeparation`, `b2EvaluateSeparation`, `b2ComputeTimeOfImpact` |
+| `planar/collide.rs`: `Polygon`, the circle and capsule manifolds | Box2D `src/manifold.c`: `b2MakeCapsule`, `b2CollideCircles`, `b2CollideCapsuleAndCircle`, `b2CollidePolygonAndCircle`; `src/geometry.c`: `b2MakeBox`, the normals of `b2MakePolygon`; `include/box2d/collision.h`: `b2Polygon`, `b2ManifoldPoint`, `b2LocalManifold`; `include/box2d/math_functions.h` |
+| `planar/collide/polygons.rs`: the polygon manifold | Box2D `src/manifold.c`: `b2ClipPolygons`, `b2FindMaxSeparation` (its scalar path), `b2CollidePolygons`, which `b2CollidePolygonAndCapsule` calls; `src/distance.c`: `b2ComputeSegmentDistance` |
+| `planar/manifold.rs`: which shape is A | Box2D `src/contact.c`: the primary order of `b2_contactRegistry` |
+| `planar/bump.rs`: `impulse` | Box2D `src/contact_solver.c`: the normal and friction rows of `b2PrepareContacts_Overflow` and `b2SolveContacts_Overflow`, and the velocity target of `b2ApplyRestitution_Overflow`, for one point |
 | `convex/d3.rs`: `Rot`, `Proxy::offset`, `distance`, `shape_cast` | Box3D `src/distance.c`: `b3GetProxySupport`, `b3ShapeDistance`; `b3MakeMatrixFromQuat`, `b3MulMV`, `b3Normalize` of `include/box3d/math_functions.h`; `include/box3d/types.h`, `include/box3d/collision.h` |
 | `convex/d3/simplex.rs`: the simplex and its solvers | Box3D `src/distance.c`: `b3BarycentricCoordsEdge`, `b3BarycentricCoordsTri`, `b3BarycentricCoordsTet`, `b3SolveSimplex2`, `b3SolveSimplex3`, `b3SolveSimplex4`, `b3ComputeWitnessPoints`; `src/math_internal.h` |
 
-Not ported: Box2D's `b2ComputeSegmentDistance` and its disabled
-`b2ShapeCastMerged`; Box3D's `b3TimeOfImpact` and everything after it; the
-debug simplex output and the time-of-impact counters of both.
+Not ported: Box2D's disabled `b2ShapeCastMerged`, `b2CollideCapsules`,
+the segment and chain functions of `src/manifold.c`, the SIMD path of
+`b2FindMaxSeparation`, and the rest of its solver (warm starting,
+softness, relaxation, rolling resistance); Box3D's `b3TimeOfImpact` and
+everything after it; the debug simplex output and the time-of-impact
+counters of both.
 
 ## Departures
 
@@ -96,6 +106,59 @@ These are the places the port differs, each with its reason.
     `MAX_GJK_ITERATIONS` (20 in 2D, 32 in 3D) and the cast's is
     `MAX_CAST_ITERATIONS` (20).
 
+### Planar bodies
+
+12. **The manifold's lengths are the pair's.** `b2CollidePolygons` takes
+    `B2_LINEAR_SLOP` and `B2_SPECULATIVE_DISTANCE` (four times it); here
+    they are the pair's slop, the query rule of the kernel's pairs, and
+    four of it.
+13. **Two capsules are two polygons.** Box2D collides two capsules with
+    `b2CollideCapsules`; here they go through `b2CollidePolygons` as two
+    two-sided polygons (`b2MakeCapsule`), as a polygon and a capsule do in
+    the source, so every pair with an edge has one manifold function. A
+    capsule no longer than the slop, which `b2CreateCapsuleShape` refuses
+    and `b2MakeCapsule` cannot give a direction, is met as a circle.
+14. **The normal runs from the first body.** Box2D swaps a pair into its
+    registry's order and reports the normal from that shape; here the pair
+    is swapped the same way and the normal turned back, so it always runs
+    from `a` toward `b`. Points come back in the frame of the pair's first
+    body's start, not shape A's.
+15. **One bump, applied once.** The bump is one sequential impulse at one
+    point: the normal row with restitution's velocity target
+    (`restitution * relativeVelocity`) folded into it, the friction row
+    clamped by that impulse, then the normal row once more, without
+    restitution and only pushing, to remove any approach the friction
+    left through the spins. Box2D applies restitution in a later pass
+    that may pull the normal impulse back below what friction was clamped
+    by; applied once, that leaves friction above its bound, so it is not
+    ported. Each impulse is applied as it is found rather than
+    accumulated. No restitution threshold (the game's restitution decides
+    every bump), softness, speculative bias, warm start, rolling
+    resistance or tangent speed.
+16. **A hit meets the manifold.** The kernel's time of impact reports a
+    witness of its distance query, which for two parallel faces can lie
+    anywhere along them; a bump there would spin a car that met a wall
+    square. A hit's contact is the manifold's at that instant: its normal,
+    and the middle of its two points when their separations are within a
+    slop, or else the closer one. Box2D meets a pair its time of impact
+    brought together the same way, through the next step's manifold.
+17. **Contacts within the step are not passed over.** The kernel's time of
+    impact reports `Separated` when the axis it found still separates the
+    shapes at the end of the motion; when the shapes turn, a contact that
+    begins and ends within the motion is missed that way, which Box2D
+    documents (`b2ComputeTimeOfImpact` "may miss some intermediate,
+    non-tunneling collisions") and the comparison with parry found (two
+    turning boxes that overlap for most of the step). The planar time of
+    impact checks the kernel's answer: over a stretch of the motion the
+    gap along the closest points' axis at its start cannot fall below its
+    lesser end value through translation (it is concave in time), and
+    turning moves the surfaces by at most `2 tan(phi / 2)` times their
+    reach per unit of fraction, so a stretch whose bound does not clear
+    half a slop is halved, its middle measured, at most `MAX_GAP_CHECKS`
+    (32) distance queries. A contact found is searched to with the kernel
+    again; a check that cannot settle is `Failed` where it stopped. The
+    kernel itself is unchanged.
+
 ## Algorithm notes
 
 **Proxies.** A shape is the hull of a few points grown by a radius: a ball
@@ -162,6 +225,30 @@ on a grid of halves; a diagonal cast far from the origin advances to
 positions that round differently there. Box3D's support search measures
 points from the proxy's first for the same reason, and that is ported.
 
+**The planar manifold (separating axes and clipping).** For two
+polygons, `b2FindMaxSeparation` finds, on each polygon's edge normals, how
+far the other polygon lies beyond them; the edge of greatest separation
+is the reference edge (A's on equal terms). Clearly apart (by more than a
+tenth of a slop), the closest points of the reference edge and the edge of
+the other polygon most against its normal (the incident edge) decide
+between a single vertex contact and the clipped edges; otherwise the
+incident edge is clipped to the reference edge's extent, giving one or two
+points, each midway between the surfaces with its own separation. Over
+182,616 random overlapping pairs of boxes and polygons the deepest clipped
+point was always as deep as the separating-axis depth, so moving a body
+by the manifold's depth along its normal separates it.
+
+**The bump.** With `r` the contact's offset from each centre, the
+effective mass along a direction `d` is `1 / (mA + mB + iA (rA x d)^2 +
+iB (rB x d)^2)`. Each impulse along `d` changes the bodies' relative
+velocity at the contact along `d` by exactly the impulse over that mass,
+and changes their kinetic energy by the impulse times the speed along `d`
+plus half its square over the mass, which is never positive for an impulse
+between zero and the one that stops the motion along `d` (friction, the
+last normal row) or that reverses at most all of it (the first normal
+row): so momentum, angular momentum about any point, and at restitution
+at most 1 no gain of energy, hold.
+
 ## Fragile in the sources
 
 Recorded so a later port update looks at them again.
@@ -182,3 +269,12 @@ Recorded so a later port update looks at them again.
 - `b2ComputeTimeOfImpact` notes that a sweep whose centre is at the origin
   can still have points far away (its `todo_erin`): keep the sweeps' frame
   near the shapes.
+- `b2ComputeTimeOfImpact` passes over a contact that begins and ends within
+  the motion when the shapes turn (departure 17).
+- `b2ClipPolygons` notes that its two points can be very close (its
+  "reduce to one point?" todo); kept as two.
+- `b2CollideCircles` and `b2CollideCapsuleAndCircle` leave the normal zero
+  for coincident centres, which no impulse or push can use.
+- `b2ApplyRestitution_Overflow` can pull a contact's normal impulse back
+  below the one its friction was clamped by, which further iterations
+  correct (departure 15).

@@ -21,15 +21,12 @@ use super::{
     max_float,
 };
 
-// The time of impact is unused until the mover of #921 calls it; the rest
-// of the kernel is wired in by #919.
-#[allow(dead_code)]
 mod toi;
 
-#[allow(unused_imports)]
+#[cfg(test)]
+use toi::Toi;
 pub(crate) use toi::{
-    MAX_PUSH_BACK_ITERATIONS, MAX_ROOT_ITERATIONS, MAX_TOI_ITERATIONS, Sweep, Toi, ToiState,
-    time_of_impact,
+    Sweep, ToiState, Transform, inv_mul_transforms, sweep_transform, time_of_impact,
 };
 
 /// The most points a 2D proxy holds (`B2_MAX_POLYGON_VERTICES`).
@@ -58,6 +55,25 @@ impl Rot {
     /// No rotation.
     #[cfg(test)]
     pub(crate) const IDENTITY: Self = Self { c: 1.0, s: 0.0 };
+
+    /// This rotation turned by `delta_angle` radians, by a normalised
+    /// first-order step (`b2IntegrateRotation`): the cosine and sine move
+    /// along their derivatives, `c - delta * s` and `s + delta * c`, and
+    /// the pair is normalised. It turns by `atan(delta_angle)`, not
+    /// `delta_angle`: short by about a third of `delta_angle` squared, as
+    /// a share (one per cent at a tenth of a radian and a little over), and
+    /// never by a quarter turn or more. A zero result (it cannot arise from
+    /// a unit rotation) stays zero, as in the source.
+    pub(crate) fn integrated(self, delta_angle: f32) -> Self {
+        let c = self.c - delta_angle * self.s;
+        let s = self.s + delta_angle * self.c;
+        let mag = (s * s + c * c).sqrt();
+        let inv_mag = if mag > 0.0 { 1.0 / mag } else { 0.0 };
+        Self {
+            c: c * inv_mag,
+            s: s * inv_mag,
+        }
+    }
 }
 
 impl Proxy {
@@ -70,22 +86,22 @@ impl Proxy {
     }
 }
 
-fn dot(a: Vec2, b: Vec2) -> f32 {
+pub(crate) fn dot(a: Vec2, b: Vec2) -> f32 {
     a.x * b.x + a.y * b.y
 }
 
-fn cross(a: Vec2, b: Vec2) -> f32 {
+pub(crate) fn cross(a: Vec2, b: Vec2) -> f32 {
     a.x * b.y - a.y * b.x
 }
 
 /// The cross product of a scalar and a vector (`b2CrossSV`): `v` turned a
 /// quarter turn counter-clockwise and scaled by `s`.
-fn cross_sv(s: f32, v: Vec2) -> Vec2 {
+pub(crate) fn cross_sv(s: f32, v: Vec2) -> Vec2 {
     Vec2::new(-s * v.y, s * v.x)
 }
 
 /// `v` as a unit vector, or zero when it is too short (`b2Normalize`).
-fn normalize(v: Vec2) -> Vec2 {
+pub(crate) fn normalize(v: Vec2) -> Vec2 {
     let length_squared = v.x * v.x + v.y * v.y;
     if length_squared > MIN_DIRECTION_LENGTH_SQUARED {
         let s = 1.0 / length_squared.sqrt();
@@ -95,21 +111,19 @@ fn normalize(v: Vec2) -> Vec2 {
     }
 }
 
-// The time of impact's, unused until #921.
-#[allow(dead_code)]
-fn rotate(q: Rot, v: Vec2) -> Vec2 {
+/// `v` turned by `q` (`b2RotateVector`).
+pub(crate) fn rotate(q: Rot, v: Vec2) -> Vec2 {
     Vec2::new(q.c * v.x - q.s * v.y, q.s * v.x + q.c * v.y)
 }
 
-// The time of impact's, unused until #921.
-#[allow(dead_code)]
-fn inv_rotate(q: Rot, v: Vec2) -> Vec2 {
+/// `v` turned back by `q` (`b2InvRotateVector`).
+pub(crate) fn inv_rotate(q: Rot, v: Vec2) -> Vec2 {
     Vec2::new(q.c * v.x + q.s * v.y, -q.s * v.x + q.c * v.y)
 }
 
 /// `point` rotated by `rotation`, then moved by `position`
 /// (`b2TransformPoint`).
-fn transform_point(position: Vec2, rotation: Rot, point: Vec2) -> Vec2 {
+pub(crate) fn transform_point(position: Vec2, rotation: Rot, point: Vec2) -> Vec2 {
     Vec2::new(
         (rotation.c * point.x - rotation.s * point.y) + position.x,
         (rotation.s * point.x + rotation.c * point.y) + position.y,
@@ -180,8 +194,6 @@ struct Simplex {
 /// simplex cache records. The time of impact reads its separating axis
 /// from it; nothing is warm started from it.
 pub(super) struct Features {
-    // Read by the time of impact, unused until #921.
-    #[allow(dead_code)]
     pub count: usize,
     pub index_a: [usize; 3],
     pub index_b: [usize; 3],

@@ -7,10 +7,11 @@ or solver, holds no loop, and keeps no state the game does not own. A game
 whose play is stacking, joints or rag dolls adds Rapier itself.
 
 This slice gives box bodies against box colliders, whole or cut by one
-plane into ramps (#915), the mover step (#916), and round bodies (balls and
+plane into ramps (#915), the mover step (#916), round bodies (balls and
 capsules) and convex colliders met through a convex kernel ported from
-Box2D and Box3D (#919, 19). Later slices (moving colliders, planar bumps,
-surfaces) are planned in #914 and are not available until they land.
+Box2D and Box3D (#919, 19), and planar bumps for vehicles (#921, 20).
+Later slices (moving colliders, surfaces) are planned in #914 and are not
+available until they land.
 
 ## Requirements
 
@@ -448,6 +449,130 @@ surfaces) are planned in #914 and are not available until they land.
       an outside corner and over seams between flush colliders; ties
       between contacts at one instant break as for boxes (6).
 
+20. **Planar bumps.** `sgl_physics::planar` collides vehicles in a plane
+    (#921): when two moving bodies first touch, how two overlapping ones
+    separate, what a bump leaves them with, and several bodies advanced
+    together through a step. 2D only: a 3D game uses it in its ground
+    plane and keeps height to itself (a banked track, a waterline, a
+    bridge above). It is not part of the mover, holds no state and has no
+    world: what a vehicle does next, its handling, is the game's.
+    - **Bodies.** A `planar::Body` is plain `Copy` data the game owns: the
+      game's `id: u64`, a 2D `Shape` in its own frame (box, ball, capsule
+      or convex polygon), a `position` (its centre of mass and the point it
+      turns about), a `heading` (the cosine and sine of its angle,
+      normalised before use), a `velocity`, a `spin` (radians per second,
+      counter-clockwise positive), and an `inverse_mass` and
+      `inverse_inertia`, zero for something a bump never moves or turns.
+      `box_inverse_inertia` and `disc_inverse_inertia` give a uniform
+      body's from its mass (zero for an infinite one). It serialises,
+      implements `CanonicalWrite` and its largest postcard size is
+      `Body::MAX_POSTCARD_BYTES` (112). A body with a non-finite number, a
+      negative inverse mass or inertia, a heading with no direction or a
+      shape that occupies nothing (9) occupies nothing: every planar
+      function leaves it as it is and meets nothing with it.
+    - **Turning.** The crate calls no trigonometric function. A turn of
+      `angle` radians (a `Motion`'s `turn`, or `spin * dt`) is Box2D's
+      normalised first-order step (`b2IntegrateRotation`): the heading
+      turns by `atan(angle)`, short of `angle` by about a third of its
+      square as a share (one per cent at a little over a tenth of a radian
+      a step). Over a motion the heading is the normalised blend of its
+      start and end values. A game that needs an exact angle keeps it and
+      sets the heading from it.
+    - **The slop and the contact gap.** A pair's slop is the query rule of
+      19: a hundredth of the smaller shape's extent, at most a quarter of
+      the smaller radius, at least 32 units in the last place of the
+      largest coordinate met. `time_of_impact(a, motion_a, b, motion_b)`
+      (`b2ComputeTimeOfImpact`, each shape grown by the slop so its target
+      is the radii plus one slop) reports contact when the surfaces come
+      within three quarters to one and a quarter slops of each other:
+      `Toi::Hit { fraction, contact }` leaves them that far apart, and
+      bodies already within a slop and a quarter hit at zero, approaching
+      or not. A motion is a translation and a turn; the centre moves
+      straight and the shape turns about it, so a spinning car's corner
+      does not pass through another car.
+    - **Never a clear path.** The outcome is typed: `Separated`, `Hit`,
+      `Overlapping` (the cores overlap at the start, or the surfaces do by
+      any amount) or `Failed { fraction, contact }`, clear only up to
+      `fraction`. Box2D's search can pass over a contact that begins and
+      ends within the motion when the shapes turn (its documented limit:
+      a car clipping another's corner at speed); the answer is checked for
+      one by the gap along the closest points' axis at the start of each
+      stretch of the motion, which no translation can close unseen (it is
+      concave in time), less how far turning can move the surfaces
+      (`2 tan(phi / 2)` per unit of fraction for a blend of headings `phi`
+      apart, times the reach), halving stretches that do not clear half a
+      slop, at most 32 distance queries (`MAX_GAP_CHECKS`): a contact
+      deeper than half a slop is found and searched to, and a check that
+      cannot settle answers `Failed` where it stopped. A hit's contact is
+      the manifold's at that instant: its normal, and the middle of its two
+      points when their separations are within a slop (faces meeting
+      flat), or else its closer point (a corner first).
+    - **The manifold.** `manifold(a, b)` is Box2D 3.2's contact manifold
+      (`b2CollidePolygons` and the circle and capsule functions of
+      `src/manifold.c`, through the pair order of its contact registry; two
+      capsules go through `b2CollidePolygons` as two-sided polygons): the
+      unit normal from `a` toward `b`, up to two points midway between the
+      surfaces, and the `depth` at the deepest point, negative (the gap)
+      for shapes within four slops (Box2D's speculative distance) and
+      `None` further apart. Moving `b` by the depth along the normal leaves
+      them touching and not overlapping. Two balls whose centres coincide
+      have a zero normal, which separates nothing.
+    - **The bump.** `bump(a, b, contact, restitution, friction)` is Box2D's
+      single-pair sequential impulse applied once, without warm starting:
+      a normal impulse that reverses `restitution` of the approach, then
+      friction clamped to `friction` times it, then a last normal impulse
+      that removes any approach the friction left through the spins. It
+      returns the new velocities and spins and the impulses (`Bump`); the
+      game applies, scales or ignores them. Momentum and angular momentum
+      are kept; kinetic energy is kept at restitution 1 without friction
+      and never grows for restitution at most 1; the pair is never left
+      approaching along the normal; a pair already parting, and a body with
+      zero inverse mass and inertia, are unchanged. Restitution and
+      friction are finite and not negative, or it panics.
+    - **`advance(bodies, dt, settings, collide)`.** Several bodies moved
+      together through `dt`: the earliest time of impact among the pairs,
+      every body advanced to it, that pair bumped, and on with the time
+      left, at most `settings.max_impacts` (`MAX_IMPACTS`, 64) times; the
+      rest of the step then moves without impacts. A pair counts when it
+      approaches at the contact faster than 64 units in the last place of
+      its speeds there and can respond along the normal; a pair touching
+      at the start that is parting is passed; a failed time of impact
+      stops the pair where it is clear when it approaches there. An impact
+      elsewhere leaves a body's own motion as it was. Then whatever
+      overlaps is pushed apart along its manifold to a slop apart, split
+      by inverse mass, pair by pair, in passes, at most
+      `settings.max_separation_passes` (`MAX_SEPARATION_PASSES`, 16),
+      stopping after a pass that pushed nothing. It returns the `Impact`s
+      in time order: the two ids (lower first), when (a fraction of the
+      step), where, the normal and the normal impulse. `Settings { restitution,
+      friction, max_impacts, max_separation_passes }` (`Settings::new`
+      sets the caps at their most) is checked, or `advance` panics. A
+      `dt` that is not positive and finite changes nothing.
+    - **Height is the game's.** `collide(a, b)` says whether a pair can
+      collide at all: a bridge over a road, an airborne car clearing a low
+      prop. It is called with the bodies as they were at the start of the
+      step, perhaps several times a pair, and must answer the same.
+    - **Order, place and bounds.** Bodies are processed in id order (then
+      their numbers), and ties between impacts at one instant go to the
+      pair first in that order, so a shuffled slice gives the same bodies
+      and impacts, bit for bit. Every pair is computed relative to its
+      first body's position at the start of the step: a scene shifted by a
+      power of two on a coarse grid gives bit-equal impacts (but for their
+      points), velocities, spins and headings, and positions within a unit
+      in the last place of the far coordinate; any other shift gives the
+      same result to within the contact band, half a slop, and that
+      rounding. Every pair is tested, which suits the tens of bodies a
+      race has: a step runs at most `(max_impacts + 1) n (n - 1) / 2` times
+      of impact and `max_separation_passes n (n - 1) / 2` manifolds for `n`
+      bodies, and allocates only for the bodies and the impacts.
+    - **Guaranteed and not.** Guaranteed: impacts in time order; a body
+      with zero inverse mass moves only by its own velocity; and when the
+      separation ends before its cap, no pair overlaps by more than
+      rounding. Not guaranteed: stacking, joints or resting contact (a pair
+      pressed together is bumped once a step and pushed apart when it
+      sinks in), and a pair the caps or a failed time of impact leave
+      overlapping.
+
 ## Acceptance
 
 - The frozen fixtures in `tests/sgl-physics/tests/parity.rs`, seeded walks
@@ -478,7 +603,21 @@ surfaces) are planned in #914 and are not available until they land.
   layers; a projectile stepped to each hit never passes a wall.
 - The kernel agrees with a second engine, parry, over thousands of seeded
   pairs in each dimension (`tests/sgl-physics/tests/oracle_parry.rs`,
-  native only).
+  native only), and so do the planar time of impact, against parry's
+  nonlinear one over turning motions, and manifold, against its contact
+  (`tests/sgl-physics/tests/oracle_parry_planar.rs`).
+- The planar tests in `tests/sgl-physics/tests/planar.rs` hold: times of
+  impact worked by hand (head-on, glancing, a corner to a face, a miss,
+  touching and overlapping, a bar that reaches a box only by turning, a
+  contact that begins and ends within the step); manifolds worked by hand,
+  and random overlapping pairs separated by their depth along their
+  normal, by a separating-axis test written for the test; the bump against
+  the physical laws; `advance` in time order, unmoved by a shuffled slice,
+  far from the origin as near it, replayed bit-equal through postcard,
+  never moving a body with zero inverse mass, and ending a pile-up of ten
+  apart within its caps; and the vehicle scenarios of #924 (cars that meet
+  only because one spins, a car scraping a wall, a bridge over a road).
+  The parity fixtures include a seeded planar pile-up.
 - A body state serialised with postcard and restored continues bit-equal to
   one that was not, and a `MoverState` restored and replayed through the
   same inputs is bit-equal to the forward run

@@ -25,6 +25,11 @@
 //! chosen per call in [`MoverOptions`]. [`move_and_collide`] stops a body at
 //! the first contact, and [`find_ledge`] finds a ledge to climb.
 //!
+//! Vehicles that bump in a plane are [`planar`]: the time of impact of
+//! bodies that turn as they move, the manifold of overlapping ones, the
+//! bump, and [`planar::advance`], several bodies stepped through their
+//! impacts in time order.
+//!
 //! # Conventions owned here
 //!
 //! **Normals** point from the surface toward the body that met it. Box
@@ -84,6 +89,7 @@ mod contacts;
 mod convex;
 mod ledge;
 mod mover;
+pub mod planar;
 mod query;
 mod shape;
 mod slide;

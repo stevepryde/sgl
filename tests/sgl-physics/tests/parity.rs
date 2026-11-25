@@ -8,7 +8,7 @@ use sgl_core::{CanonicalWrite, SplitMix64, StateHasher};
 use sgl_physics::{
     ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Convex, Cut,
     MoverConfig, MoverOptions, MoverSettings, MoverState, Shape, Vector, World, cast,
-    move_and_slide, overlaps, ray, slide, snap_to_ground,
+    move_and_slide, overlaps, planar, ray, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -597,5 +597,115 @@ fn seeded_round_walks_through_fixed_levels_are_target_independent() {
     assert_eq!(
         mover_3d,
         "4b8c2bbf77f995927cf490ed8758a89bd1f4b3cb684998dd04516aadd73bd107"
+    );
+}
+
+/// A seeded pile-up of planar bodies (#921): cars, balls, a capsule and a
+/// convex prop thrown together and spinning, beside an immovable wall,
+/// with headings drawn as grid pairs the crate normalises, so no
+/// platform maths function is used to build it.
+fn planar_pile_up() -> Vec<planar::Body> {
+    let mut rng = SplitMix64::new(0x0921);
+    let prop = Convex::polygon(
+        &[
+            Vec2::new(-0.5, -0.4),
+            Vec2::new(0.6, -0.3),
+            Vec2::new(0.4, 0.5),
+            Vec2::new(-0.3, 0.6),
+        ],
+        1.0,
+        0.0,
+    );
+    let shapes = [
+        Shape::Box {
+            half: Vec2::new(1.0, 0.5),
+        },
+        Shape::Ball { radius: 0.45 },
+        Shape::Box {
+            half: Vec2::new(0.9, 0.45),
+        },
+        Shape::Capsule {
+            half_axis: Vec2::new(0.5, 0.0),
+            radius: 0.3,
+        },
+        Shape::Convex(prop),
+        Shape::Box {
+            half: Vec2::new(1.1, 0.55),
+        },
+        Shape::Ball { radius: 0.35 },
+        Shape::Box {
+            half: Vec2::new(0.8, 0.4),
+        },
+    ];
+    let mut bodies: Vec<planar::Body> = (0u64..)
+        .zip(shapes)
+        .map(|(id, shape)| {
+            let at = Vec2::new((id % 4) as f32 * 2.75 - 4.0, (id / 4) as f32 * 2.75 - 1.5);
+            let half = shape.half_extents();
+            planar::Body {
+                id: 10 + 3 * id,
+                shape,
+                position: at,
+                heading: Vec2::new(unit(&mut rng) * 2.0 - 1.0, unit(&mut rng) + 0.25),
+                velocity: -at * (1.0 + 2.0 * unit(&mut rng))
+                    + Vec2::new(unit(&mut rng) - 0.5, unit(&mut rng) - 0.5),
+                spin: unit(&mut rng) * 8.0 - 4.0,
+                inverse_mass: 1.0 / (0.5 + unit(&mut rng)),
+                inverse_inertia: planar::box_inverse_inertia(1.0, half),
+            }
+        })
+        .collect();
+    bodies.push(planar::Body {
+        id: 1,
+        shape: Shape::Box {
+            half: Vec2::new(0.25, 6.0),
+        },
+        position: Vec2::new(5.0, 0.0),
+        heading: Vec2::new(1.0, 0.0),
+        velocity: Vec2::ZERO,
+        spin: 0.0,
+        inverse_mass: 0.0,
+        inverse_inertia: 0.0,
+    });
+    bodies
+}
+
+/// Defect: arithmetic in the planar bumps (#921) that rounds differently
+/// in the browser: the kernel's time of impact with turning sweeps, the
+/// manifold port, the bump and `advance`'s ordering. Oracle: native and
+/// `wasm32` must produce this digest from the same seeded pile-up, every
+/// step's impacts and bodies hashed over ninety steps. The pile-up must
+/// bump for the digest to cover the bump. Frozen on first run (#921).
+#[wasm_bindgen_test(unsupported = test)]
+fn a_seeded_planar_pile_up_is_target_independent() {
+    let mut bodies = planar_pile_up();
+    let settings = planar::Settings::new(0.3, 0.5);
+    let mut hasher = StateHasher::new();
+    let mut impacts = 0;
+    for _ in 0..90 {
+        for impact in planar::advance(&mut bodies, 1.0 / 60.0, &settings, |_, _| true) {
+            impacts += 1;
+            hasher.u64(impact.a);
+            hasher.u64(impact.b);
+            for value in [
+                impact.time,
+                impact.point.x,
+                impact.point.y,
+                impact.normal.x,
+                impact.normal.y,
+                impact.impulse,
+            ] {
+                hasher.u32(value.to_bits());
+            }
+        }
+        for body in &bodies {
+            body.canonical_write(&mut hasher);
+        }
+    }
+    // 80 impacts in all.
+    assert!(impacts > 20, "{impacts}");
+    assert_eq!(
+        hasher.finish().to_hex(),
+        "11b5935271aca8e2f6cbed22d4fc57372b39a1528fe8d9c8d2bbfb5307e16a7b"
     );
 }

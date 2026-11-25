@@ -15,6 +15,8 @@ use crate::space::{self, Vector};
 
 mod kernel;
 
+pub(crate) use kernel::{meets, rounding_slop, shape_slop};
+
 /// Axes in the order a tie between them resolves for a query that knows no
 /// up axis ([`cast`](crate::cast), [`ray`](crate::ray)): y, then x, then z.
 /// The mover puts the axis most along its up first

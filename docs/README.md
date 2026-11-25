@@ -86,7 +86,12 @@ Choose by what the game is.
   or a `CellWorld` the game answers cell by cell, with plain state that
   serialises and hashes. A top-down game's round body slides around
   corners, and a character in a level that is not a grid walks as a
-  capsule: neither needs Rapier's character controller. SGL3D's
+  capsule: neither needs Rapier's character controller. A driving game's
+  contacts (cars, karts, traffic, props and boats bumping in the ground
+  plane) are `sgl_physics::planar`: `advance` steps the bodies through
+  their impacts in time order and returns them; handling stays the
+  game's, and so does height (a car on a bridge, one in the air), which it
+  keeps out of `advance` with its `collide` filter. SGL3D's
   ray queries serve rendering only; keep gameplay queries in the simulation,
   which a headless server runs without a GPU. A query library such as
   [parry3d](https://parry.rs) suits a game that must collide with arbitrary

@@ -25,6 +25,7 @@ Every type and function is generic over `Vector`, implemented for
 | A world of many colliders the game fills | [`ColliderSet`](src/collider_set.rs) |
 | A tile map or voxel grid the game answers cell by cell | [`CellWorld`](src/cell_world.rs) |
 | A handful of colliders, or two worlds at once | a slice, or a pair `(A, B)`: [`World`](src/world.rs) |
+| Vehicles bumping in a plane: cars, karts, traffic, boats, pushed crates that turn | [`planar::advance`](src/planar/advance.rs), or [`planar::time_of_impact`](src/planar/toi.rs), [`planar::manifold`](src/planar/manifold.rs) and [`planar::bump`](src/planar/bump.rs) one pair at a time |
 
 A body is a `Shape` at a position (its centre): `Shape::Box { half }`,
 `Shape::Ball { radius }`, `Shape::Capsule { half_axis, radius }` (the
@@ -128,6 +129,49 @@ step's edge to stand on it. A body deep inside a round or convex collider
 mover's push-out frees it where its candidates can. See
 [physics.md](../../specs/physics.md), requirement 19, for every rule.
 
+## Planar bumps
+
+`sgl_physics::planar` is for vehicles that collide in a plane: a 3D game
+uses it in its ground plane and keeps height to itself. It is not the
+mover and has no world: the game owns a slice of `planar::Body` (its `id`,
+a 2D `Shape` in its own frame, `position`, `heading` as `(cos, sin)`,
+`velocity`, `spin` and inverse mass and inertia, zero for a wall or a
+parked prop; `box_inverse_inertia` and `disc_inverse_inertia` give a
+uniform body's) and steps it each tick:
+
+```rust
+use sgl_core::math::Vec2;
+use sgl_physics::Shape;
+use sgl_physics::planar::{self, Body, Settings};
+
+let half = Vec2::new(2.0, 1.0);
+let car = |id, x: f32, vx: f32| Body {
+    id,
+    shape: Shape::Box { half },
+    position: Vec2::new(x, 0.0),
+    heading: Vec2::new(1.0, 0.0),
+    velocity: Vec2::new(vx, 0.0),
+    spin: 0.0,
+    inverse_mass: 1.0 / 1200.0,
+    inverse_inertia: planar::box_inverse_inertia(1200.0, half),
+};
+let mut cars = [car(1, 0.0, 30.0), car(2, 4.25, 0.0)];
+let impacts = planar::advance(&mut cars, 1.0 / 60.0, &Settings::new(0.2, 0.5), |_, _| true);
+assert_eq!((impacts[0].a, impacts[0].b), (1, 2));
+```
+
+`advance` finds the earliest time of impact among the pairs, moves every
+body to it, bumps that pair and carries on, at most `MAX_IMPACTS` (64)
+times a step, then pushes apart whatever still overlaps, and returns the
+impacts in time order (ids, when, where, normal, impulse) for a crunch, a
+score or a broken combo. Its `collide` closure leaves out pairs apart in
+height (a bridge over a road). A bump keeps momentum, adds no energy at
+restitution 1 or below, and is the game's to scale; handling stays the
+game's. A turn by `spin * dt` follows Box2D's rotation step, which turns by
+`atan(spin * dt)`: keep an exact angle in the game if it matters. Contact is
+decided within a slop of the shapes' size, as for every kernel pair. See
+[physics.md](../../specs/physics.md), requirement 20.
+
 ## Worlds
 
 A `ColliderSet` buckets colliders in a grid of the game's cell size (a
@@ -204,8 +248,10 @@ behaviour. [Parity fixtures](../../tests/sgl-physics/tests/parity.rs),
 [state round trip](../../tests/sgl-physics/tests/state.rs), the
 [mover tests](../../tests/sgl-physics/tests/mover.rs), the
 [game scenarios](../../tests/sgl-physics/tests/scenarios.rs), the
-[round-body tests](../../tests/sgl-physics/tests/round.rs) and the
-[comparison with parry](../../tests/sgl-physics/tests/oracle_parry.rs)
+[round-body tests](../../tests/sgl-physics/tests/round.rs), the
+[planar tests](../../tests/sgl-physics/tests/planar.rs) and the
+comparisons with parry ([kernel](../../tests/sgl-physics/tests/oracle_parry.rs),
+[planar](../../tests/sgl-physics/tests/oracle_parry_planar.rs))
 exercise the cross-target, geometric, serialisation and mover boundaries. Run
 `cargo test -p sgl-physics -p sgl-physics-tests` for focused native checks.
 See [Physics](../../docs/README.md#physics) to choose a game's physics.
