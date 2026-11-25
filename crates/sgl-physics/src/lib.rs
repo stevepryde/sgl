@@ -10,7 +10,13 @@
 //! [`Collider`]s, a [`CellWorld`] it answers cell by cell (a tile map or a
 //! voxel grid), or a pair of those, and asks it [`slide`],
 //! [`snap_to_ground`], [`overlaps`], [`cast`] and [`ray`] inside its own
-//! fixed step.
+//! fixed step; [`distance`] measures a shape against one collider.
+//!
+//! A body or a collider is a [`Shape`]: a box, a ball, a capsule, or a
+//! [`Convex`] polygon (2D) or hull (3D) turned as the game chose. Box
+//! against box is a closed-form sweep and exact; every other pair goes
+//! through a convex kernel ported from `Box2D` and `Box3D` (`PROVENANCE.md`),
+//! to within a slop that scales with the shapes.
 //!
 //! A character is a [`MoverState`] the game keeps and steps with
 //! [`move_and_slide`] (Godot's name and meaning): it sets the velocity and
@@ -23,7 +29,8 @@
 //!
 //! **Normals** point from the surface toward the body that met it. Box
 //! normals are axis-aligned unit vectors; a ramp's plane (a [`Cut`]) reports
-//! its own unit normal.
+//! its own unit normal; a round or convex shape's contact reports the unit
+//! normal between the shapes, which leans at an edge or a corner.
 //!
 //! **No up axis is assumed.** [`MoverConfig::up`] names it: a y-up 2D game
 //! passes `Vec2::Y`, a y-down one `Vec2::NEG_Y`, a 3D game `Vec3::Y`. Faces
@@ -74,9 +81,6 @@ mod cell_world;
 mod collider_set;
 mod config;
 mod contacts;
-// Nothing calls the convex kernel until shapes, worlds and the mover are
-// wired to it (#919).
-#[allow(dead_code)]
 mod convex;
 mod ledge;
 mod mover;
@@ -95,8 +99,8 @@ pub use ledge::{Ledge, find_ledge};
 pub use mover::{
     Floor, LEDGE_SEARCH_STEPS, MAX_PUSH_OUT_PLANES, MoverOptions, MoverState, move_and_slide,
 };
-pub use query::{Hit, cast, move_and_collide, overlaps, ray};
-pub use shape::{ALL_LAYERS, Collider, ColliderKind, Cut, Shape};
+pub use query::{Hit, Separation, cast, distance, move_and_collide, overlaps, ray};
+pub use shape::{ALL_LAYERS, Collider, ColliderKind, Convex, Cut, Shape};
 pub use slide::{MAX_SLIDES_2D, MAX_SLIDES_3D, slide, snap_to_ground};
 pub use space::Vector;
 pub use world::{Unanswered, World};

@@ -3,8 +3,10 @@
 use core::cmp::Ordering;
 use core::fmt;
 
+use sgl_core::math::{Quat, Vec2, Vec3};
 use sgl_core::{CanonicalWrite, StateHasher};
 
+use crate::convex::{d2, d3};
 use crate::space::{self, Vector};
 
 /// Every collision layer: a collider on it, or a query masking it, meets
@@ -12,8 +14,21 @@ use crate::space::{self, Vector};
 pub const ALL_LAYERS: u32 = u32::MAX;
 
 /// A body's or collider's shape, centred on its position.
+///
+/// A box against a box, whole or cut ([`Cut`]), is met in closed form and
+/// exactly. Every other pair, which a ball, a capsule or a convex shape
+/// makes, is met through a convex kernel ported from `Box2D` and `Box3D`, to
+/// within a small contact tolerance that scales with the two shapes
+/// (`specs/physics.md`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(bound(
+        serialize = "V: Vector + serde::Serialize",
+        deserialize = "V: Vector + serde::Deserialize<'de>"
+    ))
+)]
 pub enum Shape<V> {
     /// An axis-aligned box with per-axis half-extents `half`, in the game's
     /// units. Zero along an axis is legal: a point, a line or a plane. A box
@@ -22,18 +37,76 @@ pub enum Shape<V> {
         /// Half of the box's size along each axis.
         half: V,
     },
+    /// A ball: a circle in 2D, a sphere in 3D, of `radius` about its
+    /// centre. A radius of zero is a point; a negative or non-finite one
+    /// occupies nothing.
+    Ball {
+        /// The ball's radius, in the game's units.
+        radius: f32,
+    },
+    /// A capsule: the segment from `-half_axis` to `half_axis` about its
+    /// centre, grown by `radius`. An upright character in a y-up world has
+    /// `half_axis` along y; its height is `2 * (half_axis.y + radius)`. A
+    /// negative or non-finite radius, or a non-finite axis, occupies
+    /// nothing.
+    Capsule {
+        /// Half of the segment, from the centre to one end.
+        half_axis: V,
+        /// How far the capsule reaches from its segment.
+        radius: f32,
+    },
+    /// A convex polygon in 2D (up to 8 vertices) or a convex hull in 3D (up
+    /// to 16 points), turned as the game chose when it built it: a rotated
+    /// box, a wall at an angle, a ramp of any slope, a simple convex prop.
+    Convex(Convex<V>),
 }
 
 impl<V: Vector> Shape<V> {
-    /// The largest postcard encoding of a shape: its variant and its
-    /// half-extents (13 bytes in 3D, 9 in 2D).
-    pub const MAX_POSTCARD_BYTES: usize = 1 + space::postcard_bytes::<V>();
+    /// The largest postcard encoding of a shape: its variant and the
+    /// largest variant's fields, a convex shape of its most points (194
+    /// bytes in 3D, 66 in 2D).
+    pub const MAX_POSTCARD_BYTES: usize = 1 + Convex::<V>::MAX_POSTCARD_BYTES;
 
-    /// Half-extents of the axis-aligned box that encloses the shape.
+    /// Half-extents of the axis-aligned box, centred on the shape's
+    /// position, that encloses the shape. Worlds find colliders by it.
     #[must_use]
     pub fn half_extents(&self) -> V {
         match *self {
             Self::Box { half } => half,
+            Self::Ball { radius } => space::splat(radius),
+            Self::Capsule { half_axis, radius } => {
+                let mut half = V::ZERO;
+                for axis in 0..V::AXES {
+                    half[axis] = half_axis[axis].abs() + radius;
+                }
+                half
+            }
+            Self::Convex(convex) => convex.half_extents(),
+        }
+    }
+
+    /// How far the shape reaches beyond its core, the hull of its points:
+    /// a ball's or a capsule's radius, and zero for a box or a convex
+    /// shape.
+    pub(crate) fn radius(&self) -> f32 {
+        match *self {
+            Self::Ball { radius } | Self::Capsule { radius, .. } => radius,
+            Self::Box { .. } | Self::Convex(_) => 0.0,
+        }
+    }
+
+    /// Whether the shape's own numbers describe something: finite, with no
+    /// negative half-extent or radius.
+    pub(crate) fn is_sound(&self) -> bool {
+        match *self {
+            Self::Box { half } => {
+                space::is_finite(half) && (0..V::AXES).all(|axis| half[axis] >= 0.0)
+            }
+            Self::Ball { radius } => radius.is_finite() && radius >= 0.0,
+            Self::Capsule { half_axis, radius } => {
+                space::is_finite(half_axis) && radius.is_finite() && radius >= 0.0
+            }
+            Self::Convex(_) => true,
         }
     }
 
@@ -41,27 +114,341 @@ impl<V: Vector> Shape<V> {
     pub(crate) fn scaled(self, scale: f32) -> Self {
         match self {
             Self::Box { half } => Self::Box { half: half * scale },
+            Self::Ball { radius } => Self::Ball {
+                radius: radius * scale,
+            },
+            Self::Capsule { half_axis, radius } => Self::Capsule {
+                half_axis: half_axis * scale,
+                radius: radius * scale,
+            },
+            Self::Convex(convex) => Self::Convex(convex.scaled(scale)),
         }
     }
 
-    /// A fixed total order over shapes, for breaking ties.
+    /// The variant's index, as postcard and the canonical encoding write it.
+    fn tag(&self) -> u8 {
+        match self {
+            Self::Box { .. } => 0,
+            Self::Ball { .. } => 1,
+            Self::Capsule { .. } => 2,
+            Self::Convex(_) => 3,
+        }
+    }
+
+    /// A fixed total order over shapes, for breaking ties: the variant,
+    /// then its fields.
     pub(crate) fn order(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Self::Box { half: a }, Self::Box { half: b }) => space::compare(*a, *b),
+            (Self::Ball { radius: a }, Self::Ball { radius: b }) => a.total_cmp(b),
+            (
+                Self::Capsule {
+                    half_axis: a,
+                    radius: ra,
+                },
+                Self::Capsule {
+                    half_axis: b,
+                    radius: rb,
+                },
+            ) => space::compare(*a, *b).then_with(|| ra.total_cmp(rb)),
+            (Self::Convex(a), Self::Convex(b)) => a.order(b),
+            _ => self.tag().cmp(&other.tag()),
         }
     }
 }
 
 impl<V: Vector> CanonicalWrite for Shape<V> {
-    /// A `u8` variant tag (`0` for a box), then the variant's fields: a box
-    /// writes its half-extents' bits in axis order.
+    /// A `u8` variant tag, then the variant's fields: `0`, a box's
+    /// half-extents; `1`, a ball's radius; `2`, a capsule's half axis and
+    /// radius; `3`, a convex shape (its point count and points). Vectors
+    /// write their components' bits in axis order, floats their bits.
     fn canonical_write(&self, out: &mut StateHasher) {
+        out.u8(self.tag());
         match *self {
-            Self::Box { half } => {
-                out.u8(0);
-                space::write(out, half);
+            Self::Box { half } => space::write(out, half),
+            Self::Ball { radius } => out.u32(radius.to_bits()),
+            Self::Capsule { half_axis, radius } => {
+                space::write(out, half_axis);
+                out.u32(radius.to_bits());
+            }
+            Self::Convex(convex) => convex.canonical_write(out),
+        }
+    }
+}
+
+/// Room for the points of a convex shape in either dimension: the 3D
+/// kernel's proxy capacity, which is the larger.
+const CONVEX_STORAGE: usize = d3::MAX_POINTS;
+const _: () = assert!(d2::MAX_POINTS <= CONVEX_STORAGE);
+
+/// A convex shape's points about its centre: the vertices of a convex
+/// polygon in 2D, or points whose convex hull is the shape in 3D, already
+/// turned by the rotation the game built it with.
+///
+/// Build it with [`Convex::polygon`] in 2D, from vertices and the cosine and
+/// sine of a rotation, or [`Convex::hull`] in 3D, from points and a unit
+/// quaternion. The crate calls
+/// no trigonometric function, so the game supplies the rotation. The
+/// points are stored inline, so a shape stays `Copy` with no handle. A
+/// convex shape serialises as its turned points and is validated again,
+/// to the same bits, when deserialised.
+///
+/// ```
+/// use sgl_core::math::Vec2;
+/// use sgl_physics::{Collider, Convex, Shape};
+///
+/// // A 4 x 1 wall turned an eighth of a turn counter-clockwise.
+/// let half = std::f32::consts::FRAC_1_SQRT_2;
+/// let corners = [
+///     Vec2::new(-2.0, -0.5),
+///     Vec2::new(2.0, -0.5),
+///     Vec2::new(2.0, 0.5),
+///     Vec2::new(-2.0, 0.5),
+/// ];
+/// let wall = Collider::new(3, Shape::Convex(Convex::polygon(&corners, half, half)), Vec2::ZERO);
+/// assert_eq!(wall.shape.half_extents().x, wall.shape.half_extents().y);
+/// ```
+#[derive(Clone, Copy, PartialEq)]
+pub struct Convex<V> {
+    /// The points in use, then zeros.
+    points: [V; CONVEX_STORAGE],
+    count: usize,
+}
+
+/// Why a convex shape was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InvalidConvex {
+    Count,
+    NotFinite,
+    Rotation,
+    NotConvex,
+}
+
+impl fmt::Display for InvalidConvex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Count => "Convex: a polygon needs 3 to 8 vertices, a hull 1 to 16 points",
+            Self::NotFinite => "Convex: every point must be finite",
+            Self::Rotation => "Convex: the rotation must be finite and non-zero",
+            Self::NotConvex => {
+                "Convex: a polygon's vertices must be strictly convex and counter-clockwise"
+            }
+        })
+    }
+}
+
+impl<V: fmt::Debug> fmt::Debug for Convex<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Convex")
+            .field(&&self.points[..self.count])
+            .finish()
+    }
+}
+
+impl<V: Vector> Convex<V> {
+    /// The most points a convex shape holds: 8 vertices in 2D
+    /// (`B2_MAX_POLYGON_VERTICES`), 16 points in 3D.
+    pub const MAX_POINTS: usize = if V::AXES == 2 {
+        d2::MAX_POINTS
+    } else {
+        d3::MAX_POINTS
+    };
+
+    /// The largest postcard encoding: a one-byte length and its most points
+    /// (193 bytes in 3D, 65 in 2D).
+    pub const MAX_POSTCARD_BYTES: usize = 1 + Self::MAX_POINTS * space::postcard_bytes::<V>();
+
+    /// The points, turned, about the shape's centre.
+    #[must_use]
+    pub fn points(&self) -> &[V] {
+        &self.points[..self.count]
+    }
+
+    /// The turned points, checked: finite, as many as the dimension holds
+    /// and, in 2D, the vertices of a strictly convex polygon in
+    /// counter-clockwise order.
+    fn validated(points: &[V]) -> Result<Self, InvalidConvex> {
+        let least = if V::AXES == 2 { 3 } else { 1 };
+        if points.len() < least || points.len() > Self::MAX_POINTS {
+            return Err(InvalidConvex::Count);
+        }
+        if !points.iter().all(|&point| space::is_finite(point)) {
+            return Err(InvalidConvex::NotFinite);
+        }
+        if V::AXES == 2 && !strictly_convex(points) {
+            return Err(InvalidConvex::NotConvex);
+        }
+        let mut out = Self {
+            points: [V::ZERO; CONVEX_STORAGE],
+            count: points.len(),
+        };
+        out.points[..points.len()].copy_from_slice(points);
+        Ok(out)
+    }
+
+    /// Half-extents of the box, centred on the shape's position, that
+    /// encloses its points.
+    fn half_extents(&self) -> V {
+        let mut half = V::ZERO;
+        for point in self.points() {
+            for axis in 0..V::AXES {
+                half[axis] = space::max(half[axis], point[axis].abs());
             }
         }
+        half
+    }
+
+    /// The same shape at `scale` times its size. A positive scale keeps a
+    /// convex shape convex, so it is not checked again.
+    fn scaled(self, scale: f32) -> Self {
+        let mut out = self;
+        for point in &mut out.points[..self.count] {
+            *point = *point * scale;
+        }
+        out
+    }
+
+    /// A fixed total order: the point count, then the points in order.
+    fn order(&self, other: &Self) -> Ordering {
+        self.count.cmp(&other.count).then_with(|| {
+            self.points()
+                .iter()
+                .zip(other.points())
+                .map(|(a, b)| space::compare(*a, *b))
+                .find(|order| order.is_ne())
+                .unwrap_or(Ordering::Equal)
+        })
+    }
+}
+
+/// Whether the 2D points are the vertices of a strictly convex polygon in
+/// counter-clockwise order: every other vertex lies strictly to the left
+/// of each edge, so the polygon turns left at every vertex and winds once.
+fn strictly_convex<V: Vector>(points: &[V]) -> bool {
+    let n = points.len();
+    (0..n).all(|i| {
+        let (a, b) = (points[i], points[(i + 1) % n]);
+        let edge = b - a;
+        (0..n).filter(|&j| j != i && j != (i + 1) % n).all(|j| {
+            let to = points[j] - a;
+            edge[0] * to[1] - edge[1] * to[0] > 0.0
+        })
+    })
+}
+
+impl Convex<Vec2> {
+    /// The convex polygon with vertices `points`, about its centre, turned
+    /// counter-clockwise by the rotation whose cosine and sine are `cos`
+    /// and `sin` (normalised first, so `(1, 0)` leaves it as given). The
+    /// vertices go counter-clockwise, as seen with x to the right and y up.
+    ///
+    /// # Panics
+    /// If there are fewer than 3 or more than 8 vertices, any is not
+    /// finite, the rotation is zero or not finite, or the turned vertices
+    /// are not strictly convex and counter-clockwise. All are authoring
+    /// errors.
+    #[must_use]
+    pub fn polygon(points: &[Vec2], cos: f32, sin: f32) -> Self {
+        Self::turned(points, cos, sin).unwrap_or_else(|invalid| panic!("{invalid}"))
+    }
+
+    fn turned(points: &[Vec2], cos: f32, sin: f32) -> Result<Self, InvalidConvex> {
+        if points.len() > Self::MAX_POINTS || points.is_empty() {
+            return Err(InvalidConvex::Count);
+        }
+        let length = (cos * cos + sin * sin).sqrt();
+        if !(length.is_finite() && length > 0.0) {
+            return Err(InvalidConvex::Rotation);
+        }
+        let rotation = d2::Rot {
+            c: cos / length,
+            s: sin / length,
+        };
+        let turned = d2::Proxy::offset(points, 0.0, Vec2::ZERO, rotation);
+        Self::validated(turned.points())
+    }
+}
+
+impl Convex<Vec3> {
+    /// The convex hull of `points`, about its centre, turned by the unit
+    /// quaternion `rotation` (normalised first, so `Quat::IDENTITY` leaves
+    /// it as given).
+    ///
+    /// # Panics
+    /// If there are no points or more than 16, any is not finite, or the
+    /// rotation is zero or not finite. All are authoring errors.
+    #[must_use]
+    pub fn hull(points: &[Vec3], rotation: Quat) -> Self {
+        Self::turned(points, rotation).unwrap_or_else(|invalid| panic!("{invalid}"))
+    }
+
+    fn turned(points: &[Vec3], rotation: Quat) -> Result<Self, InvalidConvex> {
+        if points.len() > Self::MAX_POINTS || points.is_empty() {
+            return Err(InvalidConvex::Count);
+        }
+        let (x, y, z, w) = (rotation.x, rotation.y, rotation.z, rotation.w);
+        let length = (x * x + y * y + z * z + w * w).sqrt();
+        if !(length.is_finite() && length > 0.0) {
+            return Err(InvalidConvex::Rotation);
+        }
+        let rotation = d3::Rot::from_quat(x / length, y / length, z / length, w / length);
+        let turned = d3::Proxy::offset(points, 0.0, Vec3::ZERO, &rotation);
+        Self::validated(turned.points())
+    }
+}
+
+impl<V: Vector> CanonicalWrite for Convex<V> {
+    /// The point count as a `u8`, then each point's bits in axis order.
+    fn canonical_write(&self, out: &mut StateHasher) {
+        // At most 16 points: the count fits a byte.
+        out.u8(u8::try_from(self.count).unwrap_or(u8::MAX));
+        for &point in self.points() {
+            space::write(out, point);
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<V: Vector + serde::Serialize> serde::Serialize for Convex<V> {
+    /// The turned points, as a sequence.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.points())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, V: Vector + serde::Deserialize<'de>> serde::Deserialize<'de> for Convex<V> {
+    /// A sequence of turned points, validated as [`Convex::polygon`] and
+    /// [`Convex::hull`] validate their turned points. Reading stops at the most a shape holds, so a
+    /// long sequence from the wire is refused without being stored.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Points<V>(core::marker::PhantomData<V>);
+
+        impl<'de, V: Vector + serde::Deserialize<'de>> serde::de::Visitor<'de> for Points<V> {
+            type Value = Convex<V>;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "at most {} points", Convex::<V>::MAX_POINTS)
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut points = [V::ZERO; CONVEX_STORAGE];
+                let mut count = 0;
+                while let Some(point) = seq.next_element::<V>()? {
+                    if count == Convex::<V>::MAX_POINTS {
+                        return Err(serde::de::Error::custom(InvalidConvex::Count));
+                    }
+                    points[count] = point;
+                    count += 1;
+                }
+                Convex::validated(&points[..count]).map_err(serde::de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_seq(Points(core::marker::PhantomData))
     }
 }
 
@@ -281,10 +668,11 @@ impl CanonicalWrite for ColliderKind {
 /// already present replaces that collider. In a slice, a
 /// [`CellWorld`](crate::CellWorld) or a pair of worlds, ids may repeat.
 ///
-/// A collider with a negative half-extent, or a position or half-extent that
-/// is not finite, occupies nothing: no query meets it, through any world. So
-/// does one whose cut leaves nothing of its box, and a one-way platform with
-/// a cut, which [`Self::with_cut`] and [`Self::with_kind`] refuse to build.
+/// A collider with a negative half-extent or radius, or a position, size or
+/// axis that is not finite, occupies nothing: no query meets it, through any
+/// world. So does one whose cut leaves nothing of its box, a cut on a shape
+/// that is not a box, and a one-way platform that is not a whole box, which
+/// [`Self::with_cut`] and [`Self::with_kind`] refuse to build.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
@@ -306,14 +694,15 @@ pub struct Collider<V> {
     /// The layers it is on. A query meets it when `layers & mask != 0`.
     pub layers: u32,
     /// A plane that cuts part of the box away (a ramp), or `None` for the
-    /// whole box. A world offers a cut collider by its whole box.
+    /// whole box. A world offers a cut collider by its whole box. Only a box
+    /// takes a cut.
     pub cut: Option<Cut<V>>,
 }
 
 impl<V: Vector> Collider<V> {
     /// The largest postcard encoding: its shape, position, kind, a `u32`
-    /// varint (five bytes), a `u64` varint (ten) and an optional cut. 58
-    /// bytes in 3D, 46 in 2D.
+    /// varint (five bytes), a `u64` varint (ten) and an optional cut. 239
+    /// bytes in 3D, 103 in 2D.
     pub const MAX_POSTCARD_BYTES: usize = Shape::<V>::MAX_POSTCARD_BYTES
         + space::postcard_bytes::<V>()
         + ColliderKind::MAX_POSTCARD_BYTES
@@ -338,13 +727,14 @@ impl<V: Vector> Collider<V> {
     /// The same collider of `kind`.
     ///
     /// # Panics
-    /// If `kind` is [`ColliderKind::OneWay`] and the collider has a cut: a
-    /// one-way platform is a whole box.
+    /// If `kind` is [`ColliderKind::OneWay`] and the collider has a cut or is
+    /// not a box: a one-way platform is a whole box.
     #[must_use]
     pub const fn with_kind(mut self, kind: ColliderKind) -> Self {
         assert!(
-            !(matches!(kind, ColliderKind::OneWay) && self.cut.is_some()),
-            "Collider: a one-way platform has no cut"
+            !(matches!(kind, ColliderKind::OneWay)
+                && (self.cut.is_some() || !matches!(self.shape, Shape::Box { .. }))),
+            "Collider: a one-way platform is a whole box"
         );
         self.kind = kind;
         self
@@ -353,30 +743,40 @@ impl<V: Vector> Collider<V> {
     /// The same collider with its box cut by `cut`: a ramp.
     ///
     /// # Panics
-    /// If the collider is a one-way platform, which is a whole box.
+    /// If the collider is a one-way platform, which is a whole box, or its
+    /// shape is not a box.
     #[must_use]
     pub const fn with_cut(mut self, cut: Cut<V>) -> Self {
         assert!(
             !matches!(self.kind, ColliderKind::OneWay),
-            "Collider: a one-way platform has no cut"
+            "Collider: a one-way platform is a whole box"
+        );
+        assert!(
+            matches!(self.shape, Shape::Box { .. }),
+            "Collider: only a box takes a cut"
         );
         self.cut = Some(cut);
         self
     }
 
-    /// Whether the collider occupies any space: a finite position and
-    /// finite, non-negative half-extents, and, when it is cut, a cut that
-    /// leaves something of the box on a collider that is not one-way. Every
-    /// query skips one that does not, so every world agrees on it.
+    /// Whether the collider occupies any space: a finite position and a
+    /// sound shape (finite, with no negative half-extent or radius), a
+    /// one-way platform that is a box, and, when it is cut, a box whose cut
+    /// leaves something of it on a collider that is not one-way. Every query
+    /// skips one that does not, so every world agrees on it.
     pub(crate) fn occupies(&self) -> bool {
         let half = self.shape.half_extents();
         let sound = space::is_finite(self.position)
             && space::is_finite(half)
             && (0..V::AXES).all(|axis| half[axis] >= 0.0);
+        let boxed = matches!(self.shape, Shape::Box { .. });
+        let sound =
+            sound && (boxed || (self.shape.is_sound() && self.kind != ColliderKind::OneWay));
         match self.cut {
             None => sound,
             Some(cut) => {
                 sound
+                    && boxed
                     && self.kind != ColliderKind::OneWay
                     && cut.offset >= -space::reach(half, cut.normal)
             }

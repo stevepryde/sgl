@@ -96,6 +96,10 @@ wasm-bindgen = "0.2.127"
 wasm-bindgen-futures = "0.4.77"
 wasm-bindgen-test = "0.3.77"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
+# A second engine sgl-physics' tests compare its kernel with; never a
+# dependency of a published crate.
+parry2d = { version = "0.31", default-features = false, features = ["alloc", "required-features", "std"] }
+parry3d = { version = "0.31", default-features = false, features = ["alloc", "required-features", "std"] }
 tungstenite = { version = "0.29", default-features = false, features = [
     "handshake",
 ] }

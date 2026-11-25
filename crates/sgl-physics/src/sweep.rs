@@ -6,10 +6,14 @@
 //! Every pair goes through one dispatch on the two [`Shape`]s and the
 //! target's [`Cut`]; a new shape adds its pairs here. A box against a box
 //! and a box against a cut box are both closed-form slab tests: the cut box
-//! adds one axis, its plane's normal.
+//! adds one axis, its plane's normal. Every other pair (a ball, a capsule or
+//! a convex shape, against anything) goes through the convex kernel
+//! ([`kernel`]), which meets it to within a slop.
 
 use crate::shape::{Cut, Shape};
 use crate::space::{self, Vector};
+
+mod kernel;
 
 /// Axes in the order a tie between them resolves for a query that knows no
 /// up axis ([`cast`](crate::cast), [`ray`](crate::ray)): y, then x, then z.
@@ -18,6 +22,18 @@ use crate::space::{self, Vector};
 /// corner while falling lands rather than being shoved sideways.
 pub(crate) const TIE_ORDER: [usize; 3] = [1, 0, 2];
 
+/// How tightly a pair met through the kernel makes contact: the slop it
+/// asks for. A box pair is exact and ignores it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Tolerance {
+    /// A query's ([`cast`](crate::cast), [`ray`](crate::ray)): scaled with
+    /// the two shapes.
+    Query,
+    /// The mover's: derived from its skin (the query's when the skin is
+    /// zero), and reported at touching so the skin back-off leaves the skin.
+    Skin(f32),
+}
+
 /// Where along a motion a body meets a target, and the face it meets.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Contact<V> {
@@ -25,13 +41,38 @@ pub(crate) struct Contact<V> {
     pub t: f32,
     /// Unit normal of the face met, pointing from the target toward the body.
     pub normal: V,
+    /// For a kernel contact with a whole box, the box's faces the contact
+    /// point lies on: bit `2 * axis` for the face toward `-axis`, bit
+    /// `2 * axis + 1` toward `+axis`. Several at an edge or a corner; zero
+    /// for every other contact, whose face is its normal's.
+    pub faces: u8,
+}
+
+impl<V: Vector> Contact<V> {
+    /// Whether `accept` takes the contact's normal or, for a kernel contact
+    /// at a box, the outward normal of a face of the box the contact lies
+    /// on. A round body meeting a platform's edge meets its top face there,
+    /// though the kernel's normal leans off it.
+    pub(crate) fn meets(&self, accept: impl Fn(V) -> bool) -> bool {
+        accept(self.normal)
+            || (0..2 * V::AXES).any(|face| {
+                self.faces & (1 << face) != 0 && accept(space::unit(face / 2, face % 2 == 1))
+            })
+    }
+}
+
+/// Whether the pair is met in closed form: a box against a box, whole or
+/// cut. Every other pair goes through the kernel.
+pub(crate) fn closed_form<V: Vector>(body: &Shape<V>, target: &Shape<V>) -> bool {
+    matches!((body, target), (Shape::Box { .. }, Shape::Box { .. }))
 }
 
 /// The first contact of `body` moving by `delta` with `target`, cut by
 /// `cut`, at `rel`, or `None` when the motion misses it, stops short of it,
 /// starts inside it, moves away from it, or is zero or not finite. An exact
 /// tie between entering axes resolves to the first of them in `order`, and
-/// a cut's axis enters after every cardinal one.
+/// a cut's axis enters after every cardinal one. A kernel pair meets within
+/// `tolerance` ([`kernel::sweep`]).
 pub(crate) fn sweep<V: Vector>(
     body: &Shape<V>,
     delta: V,
@@ -39,6 +80,7 @@ pub(crate) fn sweep<V: Vector>(
     cut: Option<&Cut<V>>,
     rel: V,
     order: [usize; 3],
+    tolerance: Tolerance,
 ) -> Option<Contact<V>> {
     match (body, target, cut) {
         (Shape::Box { half: body }, Shape::Box { half: target }, None) => {
@@ -47,6 +89,7 @@ pub(crate) fn sweep<V: Vector>(
         (Shape::Box { half: body }, Shape::Box { half: target }, Some(cut)) => {
             cut_box_sweep(*body, delta, &CutBox::new(*target, cut, rel), order)
         }
+        _ => kernel::sweep(body, delta, target, cut, rel, tolerance),
     }
 }
 
@@ -69,14 +112,69 @@ pub(crate) fn overlap<V: Vector>(
         (Shape::Box { half: body }, Shape::Box { half: target }, Some(cut)) => {
             CutBox::new(*target, cut, rel).overlaps(*body)
         }
+        _ => kernel::overlap(body, target, cut, rel),
     }
+}
+
+/// How far apart `body` and `target`, cut by `cut`, at `rel` are, and the
+/// unit normal from the target toward the body: `(0, zero)` when they touch
+/// or overlap. Two whole boxes are measured in closed form, every other
+/// pair by the kernel.
+pub(crate) fn separation<V: Vector>(
+    body: &Shape<V>,
+    target: &Shape<V>,
+    cut: Option<&Cut<V>>,
+    rel: V,
+) -> (f32, V) {
+    match (body, target, cut) {
+        (Shape::Box { half: body }, Shape::Box { half: target }, None) => {
+            // The gap on each axis the boxes are apart on; the body is at
+            // the origin, so it lies toward `-rel` from the target.
+            let mut gaps = V::ZERO;
+            for axis in 0..V::AXES {
+                let gap = rel[axis].abs() - (body[axis] + target[axis]);
+                if gap > 0.0 {
+                    gaps[axis] = if rel[axis] > 0.0 { -gap } else { gap };
+                }
+            }
+            let distance = space::dot(gaps, gaps).sqrt();
+            if distance > 0.0 {
+                let mut normal = gaps;
+                for axis in 0..V::AXES {
+                    normal[axis] = gaps[axis] / distance;
+                }
+                (distance, normal)
+            } else {
+                (0.0, V::ZERO)
+            }
+        }
+        _ => kernel::separation(body, target, cut, rel),
+    }
+}
+
+/// For a body overlapping `target` through the kernel with their cores
+/// apart, the unit normal out of it and how deep the body is along it: the
+/// push-out's way out. `None` for every box pair, whose way out the
+/// push-out finds from faces and planes, and when no direction is known.
+pub(crate) fn way_out<V: Vector>(
+    body: &Shape<V>,
+    target: &Shape<V>,
+    cut: Option<&Cut<V>>,
+    rel: V,
+) -> Option<(V, f32)> {
+    if closed_form(body, target) {
+        return None;
+    }
+    kernel::way_out(body, target, cut, rel)
 }
 
 /// The contact for a body that already overlaps `target` (a spawn, a moved
 /// collider, or rounding at a contact). It may move out of `target` or along
 /// it but not deeper: motion toward `target` along its axis of least
 /// penetration is a contact at `t = 0` on that axis's face, so a slide keeps
-/// only the motion along the face. Ties resolve in `order`.
+/// only the motion along the face. Ties resolve in `order`. A kernel pair
+/// blocks motion into the normal between the cores, or all motion when no
+/// way out is known ([`kernel::embedded`]).
 pub(crate) fn embedded<V: Vector>(
     body: &Shape<V>,
     delta: V,
@@ -84,6 +182,7 @@ pub(crate) fn embedded<V: Vector>(
     cut: Option<&Cut<V>>,
     rel: V,
     order: [usize; 3],
+    tolerance: Tolerance,
 ) -> Option<Contact<V>> {
     match (body, target, cut) {
         (Shape::Box { half: body }, Shape::Box { half: target }, Some(cut)) => {
@@ -108,8 +207,10 @@ pub(crate) fn embedded<V: Vector>(
             inward.then(|| Contact {
                 t: 0.0,
                 normal: space::unit(axis, along < 0.0),
+                faces: 0,
             })
         }
+        _ => kernel::embedded(body, delta, target, cut, rel, tolerance),
     }
 }
 
@@ -117,14 +218,18 @@ pub(crate) fn embedded<V: Vector>(
 /// on some axis, on that axis's face, when `blocks` accepts the face's
 /// normal: a body resting on a one-way platform within its skin, or one a
 /// rounding step inside a face it touches in world coordinates. Axes are
-/// tried in `order`.
+/// tried in `order`. A kernel pair measures the overlap along the normal
+/// between the cores, allowing at least its slop ([`kernel::resting`]).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resting<V: Vector>(
     body: &Shape<V>,
+    delta: V,
     target: &Shape<V>,
     cut: Option<&Cut<V>>,
     rel: V,
     allowance: V,
     order: [usize; 3],
+    tolerance: Tolerance,
     blocks: impl Fn(V) -> bool,
 ) -> Option<Contact<V>> {
     match (body, target, cut) {
@@ -137,8 +242,13 @@ pub(crate) fn resting<V: Vector>(
                 .iter()
                 .map(|&axis| (axis, space::unit(axis, rel[axis] <= 0.0)))
                 .find(|&(axis, normal)| depth[axis] <= allowance[axis] && blocks(normal))
-                .map(|(_, normal)| Contact { t: 0.0, normal })
+                .map(|(_, normal)| Contact {
+                    t: 0.0,
+                    normal,
+                    faces: 0,
+                })
         }
+        _ => kernel::resting(body, delta, target, cut, rel, allowance, tolerance, blocks),
     }
 }
 
@@ -209,6 +319,7 @@ fn box_sweep<V: Vector>(
         t: entry + 0.0,
         // The entering axis has motion: parallel axes never enter last.
         normal: space::unit(axis, delta[axis] < 0.0),
+        faces: 0,
     })
 }
 
@@ -309,6 +420,7 @@ impl<V: Vector> CutBox<V> {
             return (space::dot(delta, self.normal) < 0.0).then_some(Contact {
                 t: 0.0,
                 normal: self.normal,
+                faces: 0,
             });
         }
         // Compare signs directly, as the box does: a product of tiny values
@@ -318,6 +430,7 @@ impl<V: Vector> CutBox<V> {
         inward.then(|| Contact {
             t: 0.0,
             normal: space::unit(axis, side > 0),
+            faces: 0,
         })
     }
 
@@ -341,7 +454,11 @@ impl<V: Vector> CutBox<V> {
                 self.normal,
             )))
             .find(|&(within, normal)| within && blocks(normal))
-            .map(|(_, normal)| Contact { t: 0.0, normal })
+            .map(|(_, normal)| Contact {
+                t: 0.0,
+                normal,
+                faces: 0,
+            })
     }
 }
 
@@ -413,6 +530,7 @@ fn cut_box_sweep<V: Vector>(
     Some(Contact {
         t: entry + 0.0,
         normal,
+        faces: 0,
     })
 }
 
@@ -472,6 +590,7 @@ mod tests {
             None,
             Vec2::new(cx - bx, cy - by),
             TIE_ORDER,
+            Tolerance::Query,
         )
     }
 
@@ -522,8 +641,16 @@ mod tests {
         let rel = Vec2::new(0.0, -0.374_400_82);
         assert_eq!((rel.y + 0.125).to_bits(), (-0.249_400_82f32).to_bits());
         assert!(!overlap(&body, &floor, None, rel));
-        let hit = sweep(&body, Vec2::new(0.0, -3.0), &floor, None, rel, TIE_ORDER)
-            .expect("touching is a contact");
+        let hit = sweep(
+            &body,
+            Vec2::new(0.0, -3.0),
+            &floor,
+            None,
+            rel,
+            TIE_ORDER,
+            Tolerance::Query,
+        )
+        .expect("touching is a contact");
         assert_eq!(hit.t.to_bits(), 0.0f32.to_bits());
         assert_eq!(hit.normal, Vec2::Y);
     }
@@ -595,7 +722,16 @@ mod tests {
             half: Vec3::splat(0.5),
         };
         let rel = Vec3::splat(2.0);
-        let all = sweep(&cube, Vec3::splat(4.0), &cube, None, rel, TIE_ORDER).expect("hit");
+        let all = sweep(
+            &cube,
+            Vec3::splat(4.0),
+            &cube,
+            None,
+            rel,
+            TIE_ORDER,
+            Tolerance::Query,
+        )
+        .expect("hit");
         assert_eq!((all.t, all.normal), (0.25, Vec3::NEG_Y));
         let level = Vec3::new(2.0, 0.0, 2.0);
         let xz = sweep(
@@ -605,6 +741,7 @@ mod tests {
             None,
             level,
             TIE_ORDER,
+            Tolerance::Query,
         )
         .expect("hit");
         assert_eq!((xz.t, xz.normal), (0.25, Vec3::NEG_X));
@@ -673,15 +810,39 @@ mod tests {
     fn an_embedded_body_is_stopped_only_going_deeper() {
         let (body, block) = (boxed(0.5, 0.5), boxed(1.0, 1.0));
         let rel = Vec2::new(1.2, 0.0);
-        let deeper =
-            embedded(&body, Vec2::new(1.0, 0.0), &block, None, rel, TIE_ORDER).expect("blocked");
+        let deeper = embedded(
+            &body,
+            Vec2::new(1.0, 0.0),
+            &block,
+            None,
+            rel,
+            TIE_ORDER,
+            Tolerance::Query,
+        )
+        .expect("blocked");
         assert_eq!((deeper.t, deeper.normal), (0.0, Vec2::NEG_X));
         assert_eq!(
-            embedded(&body, Vec2::new(-1.0, 0.0), &block, None, rel, TIE_ORDER),
+            embedded(
+                &body,
+                Vec2::new(-1.0, 0.0),
+                &block,
+                None,
+                rel,
+                TIE_ORDER,
+                Tolerance::Query
+            ),
             None
         );
         assert_eq!(
-            embedded(&body, Vec2::new(0.0, 1.0), &block, None, rel, TIE_ORDER),
+            embedded(
+                &body,
+                Vec2::new(0.0, 1.0),
+                &block,
+                None,
+                rel,
+                TIE_ORDER,
+                Tolerance::Query
+            ),
             None
         );
     }

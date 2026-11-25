@@ -10,7 +10,7 @@ use crate::config::MoverConfig;
 use crate::shape::{Collider, ColliderKind, Cut, Shape, order_cuts};
 use crate::slide::back_off;
 use crate::space::{self, Vector};
-use crate::sweep::{self, Contact, TIE_ORDER};
+use crate::sweep::{self, Contact, TIE_ORDER, Tolerance};
 use crate::world::{Unanswered, World};
 
 /// The first blocking contact along a motion.
@@ -21,7 +21,9 @@ pub struct Hit<V> {
     /// means touching at the start, `1` contact exactly at the end.
     pub t: f32,
     /// Unit normal of the face met, pointing from it toward the moving body.
-    /// Axis-aligned for boxes; a ramp's plane gives its own normal.
+    /// Axis-aligned between boxes; a ramp's plane gives its own normal; a
+    /// round or convex shape's contact gives the normal between the shapes,
+    /// which leans at an edge or a corner.
     pub normal: V,
     /// The id of the collider met.
     pub id: u64,
@@ -56,6 +58,13 @@ impl<V: Vector> CanonicalWrite for Hit<V> {
 /// the start is passed, so a cast from inside a box finds what lies beyond
 /// it. Contacts at the same instant resolve to the lowest id, then the
 /// lowest position; an exact tie between axes resolves y, then x, then z.
+///
+/// A ball, a capsule or a convex shape, as the body or the collider, is met
+/// through the convex kernel to within a slop: a hundredth of the smaller
+/// shape's extent, at most a quarter of the smaller radius. `t` is where
+/// the shapes come within one to one and a quarter slops of each other,
+/// before they touch, and a body within the slop (overlap included) moving
+/// in meets the collider at `t = 0` (`specs/physics.md`, 19).
 ///
 /// `Ok(None)` when nothing is met, or `motion` is zero or not finite;
 /// [`Unanswered`] when the world will not walk the motion's region.
@@ -110,8 +119,9 @@ pub fn move_and_collide<V: Vector, W: World<V> + ?Sized>(
 
 /// The first collider a point travelling by `motion` from `origin` meets: a
 /// [`cast`] of a box with no extent. A ray starting on a face, or a rounding
-/// step inside it, and moving into the box meets it at `t = 0`; a ray from
-/// deeper inside a box passes it.
+/// step inside it, and moving into the collider meets it at `t = 0`; a ray
+/// from deeper inside one passes it. A ray meets a ball, a capsule or a
+/// convex collider a slop short of its surface, as [`cast`] does.
 pub fn ray<V: Vector, W: World<V> + ?Sized>(
     origin: V,
     motion: V,
@@ -123,7 +133,9 @@ pub fn ray<V: Vector, W: World<V> + ?Sized>(
 
 /// Every collider on a layer in `mask` that `body` at `position` overlaps,
 /// sensors included: how a game finds what is in a trigger or a hit box.
-/// Touching is not overlap.
+/// Touching is not overlap, except that two radius-less shapes met through
+/// the kernel (a box and a convex shape, say) that touch exactly may read
+/// either way.
 ///
 /// The list is in a fixed order (id, then position, then shape, kind and
 /// layers), never the order the world visited them in, and lists each
@@ -137,10 +149,13 @@ pub fn overlaps<V: Vector, W: World<V> + ?Sized>(
     let half = body.half_extents();
     let (min, max) = (position - half, position + half);
     let pad = pad(min, max);
+    let near = (min - pad * 0.5, max + pad * 0.5);
     let mut found = Vec::new();
     world.colliders_near(min - pad, max + pad, &mut |collider| {
         if collider.layers & mask != 0
             && collider.occupies()
+            && (sweep::closed_form(body, &collider.shape)
+                || reaches(near.0, near.1, V::ZERO, collider))
             && sweep::overlap(
                 body,
                 &collider.shape,
@@ -154,6 +169,59 @@ pub fn overlaps<V: Vector, W: World<V> + ?Sized>(
     found.sort_by(Collider::order);
     found.dedup_by(|a, b| a.order(b).is_eq());
     Ok(found)
+}
+
+/// How far a shape is from a collider: what [`distance`] measures.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Separation<V> {
+    /// The gap between their surfaces, in the game's units: zero when they
+    /// touch or overlap.
+    pub distance: f32,
+    /// Unit normal from the collider toward the shape across the gap, or
+    /// zero when they touch or overlap.
+    pub normal: V,
+}
+
+impl<V: Vector> Separation<V> {
+    /// The largest postcard encoding: an `f32` and the normal (16 bytes in
+    /// 3D, 12 in 2D).
+    pub const MAX_POSTCARD_BYTES: usize = 4 + space::postcard_bytes::<V>();
+}
+
+impl<V: Vector> CanonicalWrite for Separation<V> {
+    /// `distance`'s bits, then the normal's bits in axis order.
+    fn canonical_write(&self, out: &mut StateHasher) {
+        out.u32(self.distance.to_bits());
+        space::write(out, self.normal);
+    }
+}
+
+/// How far `body` at `position` is from `collider`, whatever its kind or
+/// layers: the gap between their surfaces and the direction across it. How
+/// a game measures a hit box's reach, an explosion's falloff or a sensor's
+/// nearness.
+///
+/// Two whole boxes are measured in closed form. Every other pair is
+/// measured by the convex kernel (GJK) to within the rounding of `f32` at
+/// the pair's size; a cut box is the solid part its plane leaves. Shapes that touch or
+/// overlap are zero apart, with no normal.
+///
+/// `None` when the collider occupies nothing, or the body's shape or
+/// position is not sound (a negative or non-finite size, a non-finite
+/// position).
+#[must_use]
+pub fn distance<V: Vector>(
+    body: &Shape<V>,
+    position: V,
+    collider: &Collider<V>,
+) -> Option<Separation<V>> {
+    if !collider.occupies() || !body.is_sound() || !space::is_finite(position) {
+        return None;
+    }
+    let rel = collider.position - position;
+    let (distance, normal) = sweep::separation(body, &collider.shape, collider.cut.as_ref(), rel);
+    Some(Separation { distance, normal })
 }
 
 /// What a sweep treats as blocking.
@@ -188,9 +256,13 @@ pub(crate) fn first_contact<V: Vector, W: World<V> + ?Sized>(
         space::min_each(start_min, start_min + delta),
         space::max_each(start_max, start_max + delta),
     );
+    let near = (start_min - pad * 0.5, start_max + pad * 0.5);
     let mut best: Option<Candidate<V>> = None;
     let mut consider = |collider: &Collider<V>| {
         if collider.layers & mask == 0 || !collider.kind.blocks() || !collider.occupies() {
+            return;
+        }
+        if !sweep::closed_form(body, &collider.shape) && !reaches(near.0, near.1, delta, collider) {
             return;
         }
         let rel = (collider.position - origin) - offset;
@@ -228,37 +300,82 @@ fn contact<V: Vector>(
     let (target, cut) = (&collider.shape, collider.cut.as_ref());
     let config = match rule {
         Rule::Cast if !sweep::overlap(body, target, cut, rel) => {
-            return sweep::sweep(body, delta, target, cut, rel, TIE_ORDER);
+            return sweep::sweep(body, delta, target, cut, rel, TIE_ORDER, Tolerance::Query);
         }
         // A body whose edge equals a face in world coordinates can lie a
         // rounding step inside it once taken relative to the body: that is
         // touching, and motion into the face meets it at once. Deeper, the
-        // body started inside and the cast passes the collider.
+        // body started inside and the cast passes the collider. A kernel
+        // pair allows its slop.
         Rule::Cast => {
             let into = |normal: V| space::dot(delta, normal) < 0.0;
             let allowance = collider.rounding();
-            return sweep::resting(body, target, cut, rel, allowance, TIE_ORDER, into);
+            let tolerance = Tolerance::Query;
+            return sweep::resting(
+                body, delta, target, cut, rel, allowance, TIE_ORDER, tolerance, into,
+            );
         }
         Rule::Move(config) => config,
     };
     let order = config.tie_order();
+    let tolerance = Tolerance::Skin(config.skin());
     let one_way = collider.kind == ColliderKind::OneWay;
+    // A one-way platform blocks motion into its floor face: the face a
+    // contact's normal names, or, for a round or convex body meeting the
+    // platform's edge, the top face whose edge it meets.
     let blocks_one_way = |normal: V| config.is_floor(normal) && space::dot(delta, normal) < 0.0;
     let contact = if !sweep::overlap(body, target, cut, rel) {
-        sweep::sweep(body, delta, target, cut, rel, order)
+        sweep::sweep(body, delta, target, cut, rel, order, tolerance)
     } else if one_way {
         // Within `skin` (plus the rounding of the platform's own coordinates)
         // below the floor face, a body rests on the platform, as Godot's
         // one-way margin has it; deeper, it is passing through.
         let allowance = collider.rounding() + space::splat(config.skin());
-        sweep::resting(body, target, cut, rel, allowance, order, blocks_one_way)
+        sweep::resting(
+            body,
+            delta,
+            target,
+            cut,
+            rel,
+            allowance,
+            order,
+            tolerance,
+            blocks_one_way,
+        )
     } else {
-        sweep::embedded(body, delta, target, cut, rel, order)
+        sweep::embedded(body, delta, target, cut, rel, order, tolerance)
     }?;
-    if one_way && !blocks_one_way(contact.normal) {
+    if one_way && !contact.meets(blocks_one_way) {
         return None;
     }
     Some(contact)
+}
+
+/// Whether `collider`'s box, grown by its rounding allowance, meets the box
+/// `min..=max` swept by `delta`, closed: the colliders a moving query meets
+/// through the kernel. A kernel pair makes contact a slop apart, so the
+/// kernel could find one with a collider just beyond the region a world
+/// offers; this keeps to colliders every world offers (its region is padded
+/// by twice what the caller pads `min..=max` by), so the result never
+/// depends on the world. A collider it leaves out the body never reaches.
+fn reaches<V: Vector>(min: V, max: V, delta: V, collider: &Collider<V>) -> bool {
+    let reach = collider.shape.half_extents() + collider.rounding();
+    let (lo, hi) = (collider.position - reach, collider.position + reach);
+    let (mut enter, mut leave) = (0.0f32, 1.0f32);
+    for axis in 0..V::AXES {
+        let d = delta[axis];
+        if d == 0.0 {
+            if max[axis] < lo[axis] || min[axis] > hi[axis] {
+                return false;
+            }
+            continue;
+        }
+        let (a, b) = ((lo[axis] - max[axis]) / d, (hi[axis] - min[axis]) / d);
+        let (entry, exit) = if d > 0.0 { (a, b) } else { (b, a) };
+        enter = space::max(enter, entry);
+        leave = space::min(leave, exit);
+    }
+    enter <= leave
 }
 
 /// A contact and the collider it was made with, ordered so the earliest

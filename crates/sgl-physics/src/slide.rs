@@ -45,10 +45,16 @@ const fn max_slides<V: Vector>() -> usize {
 /// one-way platform blocks only motion into its floor face.
 ///
 /// A body that starts inside a solid collider (a spawn, a moved collider, or
-/// rounding at a contact) may move out of it or along it, never deeper. A
-/// body inside a one-way platform is stopped only by a fall onto it from
-/// within `skin` (plus rounding) of its top face. `slide` never pushes a
-/// body out; [`move_and_slide`](crate::move_and_slide) does.
+/// rounding at a contact) may move out of it or along it, never deeper; a
+/// round or convex body whose way out the kernel does not know (a ball
+/// whose centre is inside a box) does not move. A body inside a one-way
+/// platform is stopped only by a fall onto it from within `skin` (plus
+/// rounding) of its top face. `slide` never pushes a body out;
+/// [`move_and_slide`](crate::move_and_slide) does.
+///
+/// Any [`Shape`] is a body. A ball, a capsule or a convex shape meets what
+/// it touches through the convex kernel and rests between `skin` and
+/// `skin * 65 / 64` from a flat face, as a box rests `skin` from it.
 ///
 /// Contacts at the same instant resolve to the lowest id, then the lowest
 /// position, so the result never depends on the order the world visits its

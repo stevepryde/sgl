@@ -22,3 +22,7 @@ wasm-bindgen-test.workspace = true
 # without a global cfg; property tests are native-only.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest.workspace = true
+# The second engine the kernel is compared with (oracle_parry.rs): native
+# only, as the comparison needs no browser.
+parry2d.workspace = true
+parry3d.workspace = true

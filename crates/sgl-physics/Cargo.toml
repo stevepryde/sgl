@@ -6,7 +6,7 @@ documentation = "https://docs.rs/sgl-physics"
 categories = ["game-development", "simulation"]
 keywords = ["gamedev", "deterministic", "collision", "physics"]
 readme = "README.md"
-description = "Deterministic kinematic physics for SGL games: box bodies, worlds and queries in 2D and 3D"
+description = "Deterministic kinematic physics for SGL games: boxes, balls, capsules and convex shapes, worlds and queries in 2D and 3D"
 # Ship the library, its README, provenance and licences.
 include = [
     "/src",

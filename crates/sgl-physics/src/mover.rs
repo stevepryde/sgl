@@ -10,6 +10,7 @@ use crate::query::{overlaps, pad};
 use crate::shape::{ALL_LAYERS, Collider, ColliderKind, Shape};
 use crate::slide::{Faces, clip_velocity, slide_faces, snap_to_ground};
 use crate::space::{self, Vector};
+use crate::sweep;
 use crate::world::{Unanswered, World};
 
 /// Most distances along each axis the push-out tries, the nearest first, so
@@ -155,10 +156,11 @@ impl MoverOptions {
 ///    body is one on a floor at the start of the step and not rising.
 /// 3. **Step-up.** When a walking body is stopped by a wall and `step_height` is not zero,
 ///    it lifts by up to `step_height` (a ceiling shortens the lift), makes
-///    the same move across `up`, and settles back down by the lift plus
-///    the snap distance. The climb is kept (`stepped`) only if it ends on a
-///    floor and gains more than `block_epsilon` of distance along the
-///    requested direction across `up` over the plain move.
+///    the same move across `up` (a ball or a capsule a little further, so
+///    its rounded bottom clears the step's edge), and settles back down by
+///    the lift plus the snap distance. The climb is kept (`stepped`) only
+///    if it ends on a floor and gains more than `block_epsilon` of distance
+///    along the requested direction across `up` over the plain move.
 /// 4. **Ledge guard.** When `ledge_drop` is set and a walking body's move
 ///    ends where no floor lies within `ledge_drop` below it (or within the
 ///    snap distance, if that is further: a drop the snap follows, such as
@@ -390,7 +392,7 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         }
         let (lift, mut climb) = self.slide(at, up * height)?;
         let lifted = at + lift;
-        let (forward, ahead) = self.slide(lifted, across)?;
+        let (forward, ahead) = self.slide(lifted, self.over(across, length))?;
         climb.absorb(&ahead);
         let over = lifted + forward;
         let settle = space::dot(lift, up) + self.config.snap_distance();
@@ -403,6 +405,23 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         // The distance gained along the requested direction.
         let gain = (space::dot(end - at, across) - space::dot(plain - at, across)) / length;
         Ok((gain > self.config.block_epsilon()).then_some((end, climb)))
+    }
+
+    /// How far a step-up moves the lifted body across: `across`, and for a
+    /// body with a radius (a ball, a capsule) further by enough that its
+    /// lowest point, a radius behind its leading surface, passes the step's
+    /// edge far enough for the edge to be a floor under it when it settles:
+    /// `radius * (1 - sqrt(1 - normal_threshold²))` past it, plus the skin
+    /// it was stopped at and a skin to spare. A box's lowest face reaches its
+    /// leading surface, so it moves `across` only. `length` is `across`'s.
+    fn over(&self, across: V, length: f32) -> V {
+        let radius = self.body.radius();
+        if radius <= 0.0 {
+            return across;
+        }
+        let threshold = self.config.normal_threshold();
+        let inset = radius * (1.0 - (1.0 - threshold * threshold).sqrt());
+        across * (1.0 + (inset + 2.0 * self.config.skin()) / length)
     }
 
     /// The move across `up` from `at`, one world axis at a time, each
@@ -453,16 +472,21 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
     /// it could reach on each axis, or leave that axis alone; on one axis a
     /// candidate may instead put it a `skin` out of a ramp's plane, by
     /// however far that is given its other axes' distances; and one moves it
-    /// along each ramp's normal a `skin` out of its plane. The nearest free
-    /// one wins, ties going to the one most along `up`, then the lowest
-    /// component by component. Whether a place is free is decided by each
-    /// collider's real shape, cut included.
+    /// along each ramp's normal a `skin` out of its plane, and one along the
+    /// normal out of each round or convex overlap whose cores are apart a
+    /// `skin` clear of it. The nearest free one wins, ties going to the one
+    /// most along `up`, then the lowest component by component. Whether a
+    /// place is free is decided by each collider's real shape, cut included.
+    /// Planes come from each collider's bounding box, so a round or convex
+    /// collider offers the faces of the box that encloses it.
     fn push_out(&self, at: V) -> Result<Escape<V>, Unanswered> {
         let near = overlaps(self.body, at, &self.world, self.mask)?;
         let cores: Vec<Collider<V>> = near.iter().filter_map(solid_core).collect();
         if !self.inside(at, &cores)? {
             return Ok(Escape::Free);
         }
+        let outs = self.ways_out(at, &cores);
+        let skin = self.config.skin();
 
         // Everything the body could overlap anywhere within its reach.
         let half = self.body.half_extents();
@@ -485,7 +509,6 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
 
         // Each ramp's unit normal, and how far the body must move along it
         // for its deepest point to be a skin out of the plane.
-        let skin = self.config.skin();
         let ramps: Vec<(V, f32)> = solids
             .iter()
             .filter_map(|solid| {
@@ -551,6 +574,9 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         for &(n, depth) in &ramps {
             push(n * depth);
         }
+        for &out in &outs {
+            push(out);
+        }
 
         let up = self.config.up();
         candidates.sort_by(|(da, a), (db, b)| {
@@ -564,6 +590,21 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
             }
         }
         Ok(Escape::Stuck)
+    }
+
+    /// For each of `cores` the body at `at` overlaps through the kernel with
+    /// their cores apart, the move along the normal between them that
+    /// leaves it a `skin` clear.
+    fn ways_out(&self, at: V, cores: &[Collider<V>]) -> Vec<V> {
+        let skin = self.config.skin();
+        cores
+            .iter()
+            .filter_map(|core| {
+                let rel = core.position - at;
+                sweep::way_out(self.body, &core.shape, core.cut.as_ref(), rel)
+            })
+            .map(|(normal, depth)| normal * (depth + skin))
+            .collect()
     }
 
     /// Whether the body at `at` is inside any of `cores`.
@@ -619,7 +660,9 @@ fn resolve<V: Vector>(
 /// included, or `None` for any other kind. A body whose edge equals a face
 /// in world coordinates can lie a rounding step inside it once taken
 /// relative to the body: that is touching, and a push-out must neither
-/// start from it nor count it against a place to move to.
+/// start from it nor count it against a place to move to. A ball or a
+/// capsule loses the largest allowance from its radius; a convex shape is
+/// kept whole, since the mover leaves a body a skin from one.
 fn solid_core<V: Vector>(collider: &Collider<V>) -> Option<Collider<V>> {
     if collider.kind != ColliderKind::Solid {
         return None;
@@ -629,6 +672,14 @@ fn solid_core<V: Vector>(collider: &Collider<V>) -> Option<Collider<V>> {
         Shape::Box { half } => Shape::Box {
             half: half - rounding,
         },
+        Shape::Ball { radius } => Shape::Ball {
+            radius: radius - space::largest_abs(rounding),
+        },
+        Shape::Capsule { half_axis, radius } => Shape::Capsule {
+            half_axis,
+            radius: radius - space::largest_abs(rounding),
+        },
+        convex @ Shape::Convex(_) => convex,
     };
     let cut = collider
         .cut

@@ -17,7 +17,7 @@ reference do not need to be in every prompt.
 | Build a 2D game | [sgl-2d](../crates/sgl-2d/README.md) | [Minimal window and sprite](../examples/direct-game/src/main.rs) |
 | Add a HUD, menu, or editing tool | [sgl-2d UI](../crates/sgl-2d/README.md#ui-and-huds), [tool composition](../specs/client.md#tool-composition) | [Tool UI](../examples/sgl-2d/examples/tool_ui.rs) |
 | Add fixed-step simulation or deterministic helpers | [sgl-core](../crates/sgl-core/README.md) | [Public modules](../crates/sgl-core/src/lib.rs) |
-| Move bodies through a 2D or 3D world of boxes, tiles or voxels; choose a game's physics | [sgl-physics](../crates/sgl-physics/README.md), [Physics](#physics) | [Platformer](../examples/sgl-physics/examples/platformer.rs), [networked mover](../examples/sgl-physics/examples/net_mover.rs), [public API](../crates/sgl-physics/src/lib.rs) |
+| Move boxes, balls and capsules through a 2D or 3D world of boxes, ramps, convex shapes, tiles or voxels; choose a game's physics | [sgl-physics](../crates/sgl-physics/README.md), [Physics](#physics) | [Platformer](../examples/sgl-physics/examples/platformer.rs), [networked mover](../examples/sgl-physics/examples/net_mover.rs), [public API](../crates/sgl-physics/src/lib.rs) |
 | Add multiplayer transport | [sgl-net](../crates/sgl-net/README.md) | [Transport API](../crates/sgl-net/src/lib.rs) |
 | Predict the local player and interpolate everyone else over the network | [sgl-core](../crates/sgl-core/README.md) | [`prediction`](../crates/sgl-core/src/prediction.rs) |
 | Add controller support | [sgl-input](../crates/sgl-input/README.md) | [Controller example](../examples/sgl-input/examples/controllers.rs) |
@@ -76,21 +76,25 @@ Choose by what the game is.
   predict and roll back over the network. A rigid-body solver's emergent
   behaviour fights designed handling. Collide against the game's own world
   model, such as a track spline, road, voxel grid or boxes, not its render
-  meshes. `sgl-physics` steps a character through boxes, tiles or voxels,
-  ramps and slope blocks among them (`move_and_slide`: velocity in,
-  position and floor out, with step-up, ledge guard, drop-through and
-  push-out; `find_ledge` for climbing), moves other bodies by a delta
+  meshes. `sgl-physics` steps a character, a box, a ball or a capsule,
+  through boxes, tiles or voxels, ramps and slope blocks, balls, capsules
+  and convex shapes at any angle (`move_and_slide`: velocity in, position
+  and floor out, with step-up, ledge guard, drop-through and push-out;
+  `find_ledge` for climbing), moves other bodies by a delta
   (`move_and_collide`, `slide`, `snap_to_ground`) and answers `overlaps`,
-  `cast` and `ray`, over a `ColliderSet`, a slice of colliders or a
-  `CellWorld` the game answers cell by cell, with plain state that
-  serialises and hashes. SGL3D's
+  `cast`, `ray` and `distance`, over a `ColliderSet`, a slice of colliders
+  or a `CellWorld` the game answers cell by cell, with plain state that
+  serialises and hashes. A top-down game's round body slides around
+  corners, and a character in a level that is not a grid walks as a
+  capsule: neither needs Rapier's character controller. SGL3D's
   ray queries serve rendering only; keep gameplay queries in the simulation,
   which a headless server runs without a GPU. A query library such as
   [parry3d](https://parry.rs) suits a game that must collide with arbitrary
   meshes.
 - Use a rigid-body engine only when simulated physics is the game: stacking,
   destruction, physics puzzles or sandboxes. Add [Rapier](https://rapier.rs)
-  (`rapier3d` or `rapier2d`). Its vectors and rotations, like parry's, are
+  (`rapier3d` or `rapier2d`) for its rigid bodies. Its vectors and
+  rotations, like parry's, are
   glam types, so they pass to and from `sgl_3d::glam` and `sgl_core::math`
   directly. In 3D, use metres and gravity along -Y to match SGL3D. Enable its
   `enhanced-determinism` feature when targets or a server and its clients

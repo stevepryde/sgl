@@ -368,10 +368,12 @@ fn a_set_offers_every_collider_overlapping_a_region() {
 /// Defect: a 3D path that differs from the 2D one where it should not (an
 /// extra rounding, a tie broken on z, a dot product that picks up the sign
 /// of a zero from an unused axis), so a 2D game and the same game in 3D
-/// disagree. Oracle: the 2D move itself. A 3D move with no motion on z,
-/// among colliders that span the body on z, gives bit-equal x and y, the
-/// same contacts and the same ids, for moves and ground snaps, in y-up and
-/// y-down worlds.
+/// disagree. Oracle: the 2D move itself. Among boxes, a 3D move with no
+/// motion on z, among colliders that span the body on z, gives bit-equal x
+/// and y, the same contacts and the same ids, for moves and ground snaps,
+/// in y-up and y-down worlds. It holds for box pairs only: a pair through
+/// the convex kernel is met by two different solvers in 2D and 3D, which
+/// agree only to its tolerance (physics.md, 7).
 #[test]
 fn a_3d_move_with_no_z_motion_matches_the_2d_move() {
     let boxes = prop::collection::vec((-8i32..8, -8i32..8, 1u8..3, 1u8..3, any::<bool>()), 0..10);

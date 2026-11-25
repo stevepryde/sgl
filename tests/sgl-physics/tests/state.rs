@@ -4,12 +4,12 @@
 #![allow(clippy::cast_precision_loss)]
 
 use serde::{Deserialize, Serialize};
-use sgl_core::math::{IVec3, Vec2, Vec3};
+use sgl_core::math::{IVec3, Quat, Vec2, Vec3};
 use sgl_core::{SplitMix64, digest_of};
 use sgl_physics::{
-    ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Contacts, Cut,
-    Floor, Hit, Ledge, MoverConfig, MoverOptions, MoverSettings, MoverState, Shape, Vector, World,
-    move_and_slide, slide, snap_to_ground,
+    ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Contacts, Convex,
+    Cut, Floor, Hit, Ledge, MoverConfig, MoverOptions, MoverSettings, MoverState, Separation,
+    Shape, Vector, World, move_and_slide, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -303,18 +303,29 @@ fn encoded<T: Serialize>(value: &T) -> usize {
 }
 
 /// The largest value of each state type in space `V`: every id and layer
-/// mask at its widest varint, every optional field present.
-fn largest<V: Vector + Serialize>() -> [(usize, usize, &'static str); 10] {
+/// mask at its widest varint, every optional field present, and the shape
+/// the convex one of the most points, `most`.
+fn largest<V: Vector + Serialize>(most: Convex<V>) -> [(usize, usize, &'static str); 12] {
     let half = V::ZERO;
-    let shape = Shape::Box { half };
+    let shape = Shape::Convex(most);
     let kind = ColliderKind::Sensor;
     let mut up = V::ZERO;
     up[1] = 1.0;
     let cut = Cut::new(up, 0.0);
-    let collider = Collider::new(u64::MAX, shape, half)
-        .with_kind(kind)
-        .with_layers(u32::MAX)
-        .with_cut(cut);
+    // Built field by field: only a box takes a cut, so this collider
+    // occupies nothing, but it is still data a game can send.
+    let collider = Collider {
+        id: u64::MAX,
+        shape,
+        position: half,
+        kind,
+        layers: u32::MAX,
+        cut: Some(cut),
+    };
+    let separation = Separation {
+        distance: 1.0,
+        normal: up,
+    };
     let contacts = Contacts::<V> {
         last_floor_id: Some(u64::MAX),
         last_wall_id: Some(u64::MAX),
@@ -349,6 +360,12 @@ fn largest<V: Vector + Serialize>() -> [(usize, usize, &'static str); 10] {
         (encoded(&floor), Floor::<V>::MAX_POSTCARD_BYTES, "Floor"),
         (encoded(&ledge), Ledge::<V>::MAX_POSTCARD_BYTES, "Ledge"),
         (encoded(&shape), Shape::<V>::MAX_POSTCARD_BYTES, "Shape"),
+        (encoded(&most), Convex::<V>::MAX_POSTCARD_BYTES, "Convex"),
+        (
+            encoded(&separation),
+            Separation::<V>::MAX_POSTCARD_BYTES,
+            "Separation",
+        ),
         (
             encoded(&kind),
             ColliderKind::MAX_POSTCARD_BYTES,
@@ -380,7 +397,28 @@ fn largest<V: Vector + Serialize>() -> [(usize, usize, &'static str); 10] {
 /// largest value of each type, must produce exactly the documented size.
 #[wasm_bindgen_test(unsupported = test)]
 fn the_largest_of_each_state_type_encodes_at_its_documented_size() {
-    for (size, documented, name) in largest::<Vec2>().into_iter().chain(largest::<Vec3>()) {
+    // A convex octagon, the most vertices a 2D polygon takes, and sixteen
+    // points, the most a 3D hull takes.
+    let octagon = [
+        (2.0, 0.0),
+        (1.4, 1.4),
+        (0.0, 2.0),
+        (-1.4, 1.4),
+        (-2.0, 0.0),
+        (-1.4, -1.4),
+        (0.0, -2.0),
+        (1.4, -1.4),
+    ]
+    .map(|(x, y)| Vec2::new(x, y));
+    let hull: Vec<Vec3> = (0u8..16)
+        .map(|i| {
+            let i = f32::from(i);
+            Vec3::new(i, i * i, -i)
+        })
+        .collect();
+    let flat = largest(Convex::polygon(&octagon, 1.0, 0.0));
+    let deep = largest(Convex::hull(&hull, Quat::IDENTITY));
+    for (size, documented, name) in flat.into_iter().chain(deep) {
         assert_eq!(size, documented, "{name}");
     }
 }

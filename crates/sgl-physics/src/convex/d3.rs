@@ -56,6 +56,7 @@ pub(crate) struct Rot {
 
 impl Rot {
     /// No rotation.
+    #[cfg(test)]
     pub(crate) const IDENTITY: Self = Self {
         cx: Vec3::X,
         cy: Vec3::Y,

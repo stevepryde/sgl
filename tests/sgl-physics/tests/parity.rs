@@ -3,12 +3,12 @@
 //! on every target"). Floats are compared by bit pattern.
 #![allow(clippy::cast_precision_loss)]
 
-use sgl_core::math::{IVec3, Vec2, Vec3};
+use sgl_core::math::{IVec3, Quat, Vec2, Vec3};
 use sgl_core::{CanonicalWrite, SplitMix64, StateHasher};
 use sgl_physics::{
-    ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Cut, MoverConfig,
-    MoverOptions, MoverSettings, MoverState, Shape, Vector, World, cast, move_and_slide, overlaps,
-    ray, slide, snap_to_ground,
+    ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Convex, Cut,
+    MoverConfig, MoverOptions, MoverSettings, MoverState, Shape, Vector, World, cast,
+    move_and_slide, overlaps, ray, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -133,6 +133,14 @@ fn walk<V: Vector, W: World<V> + ?Sized>(
     (hasher.finish().to_hex(), on_ramps)
 }
 
+/// The mover walks' seed for the box bodies.
+const BOX_SEED: u64 = 0x05ee_d916;
+
+/// The mover walks' seeds for the round bodies, chosen so each walk climbs
+/// a step, is stopped by its ledge guard and is pushed out.
+const ROUND_SEED_2D: u64 = 14;
+const ROUND_SEED_3D: u64 = 2;
+
 /// What a mover walk met, so the digest is known to cover each rule.
 #[derive(Default)]
 struct Met {
@@ -149,11 +157,11 @@ fn walk_mover<V: Vector, W: World<V> + ?Sized>(
     world: &W,
     extra: &[Collider<V>],
     body: &Shape<V>,
-    start: V,
+    (start, seed): (V, u64),
     config: &MoverConfig<V>,
     steps: u32,
 ) -> (String, Met) {
-    let mut rng = SplitMix64::new(0x05ee_d916);
+    let mut rng = SplitMix64::new(seed);
     let mut hasher = StateHasher::new();
     let mut state = MoverState {
         position: start,
@@ -382,9 +390,23 @@ fn seeded_walks_through_fixed_levels_are_target_independent() {
         Vec3::new(-3.0, 0.15, 0.0),
     )];
     let start_2d = Vec2::new(12.5, 1.6);
-    let (mover_2d, met_2d) = walk_mover(&level, &low_2d, &body_2d, start_2d, &config_2d, 600);
+    let (mover_2d, met_2d) = walk_mover(
+        &level,
+        &low_2d,
+        &body_2d,
+        (start_2d, BOX_SEED),
+        &config_2d,
+        600,
+    );
     let start_3d = Vec3::new(-2.5, 2.0, 0.5);
-    let (mover_3d, met_3d) = walk_mover(&world, &low_3d, &body_3d, start_3d, &config_3d, 600);
+    let (mover_3d, met_3d) = walk_mover(
+        &world,
+        &low_3d,
+        &body_3d,
+        (start_3d, BOX_SEED),
+        &config_3d,
+        600,
+    );
     for met in [&met_2d, &met_3d] {
         assert!(
             met.stepped > 0 && met.ledge_guarded > 0 && met.pushed_out > 0,
@@ -410,5 +432,164 @@ fn seeded_walks_through_fixed_levels_are_target_independent() {
     assert_eq!(
         mover_3d,
         "224e3f957df8691cec9a967f6853a1e1bda231001f922b0001508ddc79493717"
+    );
+}
+
+/// A ball, a capsule and a convex triangle in open tiles of the 2D level.
+fn round_extras_2d() -> [Collider<Vec2>; 3] {
+    let triangle = [
+        Vec2::new(-0.4, -0.3),
+        Vec2::new(0.4, -0.3),
+        Vec2::new(0.0, 0.4),
+    ];
+    [
+        Collider::new(6_001, Shape::Ball { radius: 0.3 }, Vec2::new(3.5, 1.3)),
+        Collider::new(
+            6_002,
+            Shape::Capsule {
+                half_axis: Vec2::new(0.0, 0.25),
+                radius: 0.2,
+            },
+            Vec2::new(13.5, 1.45),
+        ),
+        Collider::new(
+            6_003,
+            Shape::Convex(Convex::polygon(&triangle, 0.8, 0.6)),
+            Vec2::new(7.5, 4.5),
+        ),
+    ]
+}
+
+/// A ball, a lying capsule and a cube turned a quarter turn about y as a
+/// hull, in open cells of the 3D level.
+fn round_extras_3d() -> [Collider<Vec3>; 3] {
+    let corners: Vec<Vec3> = (0u8..8)
+        .map(|i| {
+            let sign = |bit: u8| if i >> bit & 1 == 0 { -0.35 } else { 0.35 };
+            Vec3::new(sign(0), sign(1), sign(2))
+        })
+        .collect();
+    let turn = Quat::from_xyzw(0.0, 0.382_683_43, 0.0, 0.923_879_5);
+    [
+        Collider::new(
+            6_001,
+            Shape::Ball { radius: 0.4 },
+            Vec3::new(-1.5, 0.4, 4.5),
+        ),
+        Collider::new(
+            6_002,
+            Shape::Capsule {
+                half_axis: Vec3::new(0.6, 0.0, 0.0),
+                radius: 0.25,
+            },
+            Vec3::new(3.5, 0.25, 4.5),
+        ),
+        Collider::new(
+            6_003,
+            Shape::Convex(Convex::hull(&corners, turn)),
+            Vec3::new(5.5, 0.5, -1.5),
+        ),
+    ]
+}
+
+/// Defect: arithmetic in the convex kernel or its wiring that rounds
+/// differently in the browser. Oracle: native and `wasm32` must produce
+/// these digests from the walks above with round bodies (#919): a ball
+/// through the 2D level and a capsule through the 3D level, each level
+/// with a ball, a capsule and a convex collider added, with `slide` and
+/// with the mover. The box walks above keep their digests: a box against a
+/// box is the closed-form sweep, which #919 left as it was. Frozen on first
+/// run (#919).
+#[wasm_bindgen_test(unsupported = test)]
+fn seeded_round_walks_through_fixed_levels_are_target_independent() {
+    let level = level_2d();
+    let extras_2d = round_extras_2d();
+    let world_2d = (&level, &extras_2d[..]);
+    let config_2d = mover(Vec2::Y, 0.01, 0.1, 0.7, 1e-4);
+    let ball = Shape::Ball { radius: 0.4 };
+    let start_2d = Vec2::new(12.5, 1.6);
+    let (walked_2d, on_ramps_2d) = walk(&world_2d, &ball, start_2d, &config_2d, 600);
+    let low_2d = [Collider::new(
+        5_000,
+        Shape::Box {
+            half: Vec2::new(1.5, 0.15),
+        },
+        Vec2::new(11.5, 1.15),
+    )];
+    let (mover_2d, met_2d) = walk_mover(
+        &world_2d,
+        &low_2d,
+        &ball,
+        (start_2d, ROUND_SEED_2D),
+        &config_2d,
+        600,
+    );
+
+    let mut crates = ColliderSet::new(2.0);
+    for (id, (x, z)) in (1u64..).zip([(1.5, 3.5), (-2.25, -2.5), (5.0, 1.0)]) {
+        crates.insert(Collider::new(
+            id,
+            Shape::Box {
+                half: Vec3::new(0.4, 0.4, 0.4),
+            },
+            Vec3::new(x, 0.4, z),
+        ));
+    }
+    let cells = CellWorld::new(1.0, voxel);
+    let extras_3d = round_extras_3d();
+    let world_3d = ((&cells, &crates), &extras_3d[..]);
+    let config_3d = mover(Vec3::Y, 0.01, 0.1, 0.7, 1e-4);
+    let walker = Shape::Capsule {
+        half_axis: Vec3::new(0.0, 0.6, 0.0),
+        radius: 0.3,
+    };
+    let start_3d = Vec3::new(-2.5, 2.0, 0.5);
+    let (walked_3d, on_ramps_3d) = walk(&world_3d, &walker, start_3d, &config_3d, 600);
+    let low_3d = [Collider::new(
+        5_000,
+        Shape::Box {
+            half: Vec3::new(2.0, 0.15, 2.0),
+        },
+        Vec3::new(-3.0, 0.15, 0.0),
+    )];
+    let (mover_3d, met_3d) = walk_mover(
+        &world_3d,
+        &low_3d,
+        &walker,
+        (start_3d, ROUND_SEED_3D),
+        &config_3d,
+        600,
+    );
+
+    // Steps the walks stood on a ramp: 87 in 2D, 27 in 3D.
+    assert!(
+        on_ramps_2d > 10 && on_ramps_3d > 10,
+        "{on_ramps_2d}, {on_ramps_3d}"
+    );
+    for met in [&met_2d, &met_3d] {
+        assert!(
+            met.stepped > 0 && met.ledge_guarded > 0 && met.pushed_out > 0,
+            "{} {} {}",
+            met.stepped,
+            met.ledge_guarded,
+            met.pushed_out
+        );
+    }
+
+    assert_eq!(
+        walked_2d,
+        "b6a37595c02a75e6a925157dbb8556528591e5d44c94037009e61f05dc3d2378"
+    );
+    assert_eq!(
+        walked_3d,
+        "6960a899bbdc5209b23493f96bf052012f171922cbc12c08ec041bd2916b5350"
+    );
+    assert_eq!(
+        mover_2d,
+        "6ef5762a52e83e00cc6be8ea643df1c7632b88fa46c22264d290e43415bfb52c"
+    );
+    assert_eq!(
+        mover_3d,
+        "c51cf3e6588f221d94bc8f801efc948af4234545b791d8998feb0bb32f690d7a"
     );
 }

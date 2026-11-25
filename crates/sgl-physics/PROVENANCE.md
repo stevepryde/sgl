@@ -51,11 +51,12 @@ These are the places the port differs, each with its reason.
    to reuse it; that test goes with the cache.
 3. **One frame, no transform.** The sources take shape B's pose in shape
    A's frame and bring B's points into it at the start of a query. Here
-   both proxies arrive in one frame: the caller builds them so, with
-   `Proxy::offset` when a shape is turned or moved, which is that same
-   step. `time_of_impact` does it itself for each pose it tries. The frame
-   is the body-relative one every other query in the crate uses; the kernel
-   does not recentre.
+   both proxies arrive in one frame: the caller builds them so, which is
+   that same step. A `Convex` shape turns its points once, with
+   `Proxy::offset`, when it is built; the pair glue (`src/sweep/kernel.rs`)
+   places each shape relative to the body. `time_of_impact` does it itself
+   for each pose it tries. The frame is the body-relative one every other
+   query in the crate uses; the kernel does not recentre.
 4. **Proxies own their points.** A 2D proxy holds up to 8 points, as in
    Box2D. Box3D's proxy points at the caller's array of up to 64; here it
    holds up to 16, the largest hull the crate offers.
@@ -135,7 +136,9 @@ cast that begins inside the target is an `InitialOverlap`. With
 `can_encroach`, one that begins inside the target but with cores more than
 `2 * slop` apart is instead allowed `slop` closer, so a round body resting
 on a surface can still be cast along or into it; Box2D's mover casts this
-way.
+way. The crate does not encroach: its pair glue grows the moving shape's
+radius by twice its slop, so the target is the radii plus one slop and
+every pair, round or not, meets a slop apart (`specs/physics.md`, 19).
 
 **Time of impact (local separating axis).** At a time when the shapes are
 apart, the distance query names the features nearest each other: two

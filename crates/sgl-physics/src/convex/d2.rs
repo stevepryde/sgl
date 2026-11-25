@@ -21,9 +21,11 @@ use super::{
     max_float,
 };
 
+// The time of impact is unused until the mover of #921 calls it; the rest
+// of the kernel is wired in by #919.
+#[allow(dead_code)]
 mod toi;
 
-// Unused until the mover of #921 calls it (the kernel is wired in by #919).
 #[allow(unused_imports)]
 pub(crate) use toi::{
     MAX_PUSH_BACK_ITERATIONS, MAX_ROOT_ITERATIONS, MAX_TOI_ITERATIONS, Sweep, Toi, ToiState,
@@ -54,6 +56,7 @@ pub(crate) struct Rot {
 
 impl Rot {
     /// No rotation.
+    #[cfg(test)]
     pub(crate) const IDENTITY: Self = Self { c: 1.0, s: 0.0 };
 }
 
@@ -92,10 +95,14 @@ fn normalize(v: Vec2) -> Vec2 {
     }
 }
 
+// The time of impact's, unused until #921.
+#[allow(dead_code)]
 fn rotate(q: Rot, v: Vec2) -> Vec2 {
     Vec2::new(q.c * v.x - q.s * v.y, q.s * v.x + q.c * v.y)
 }
 
+// The time of impact's, unused until #921.
+#[allow(dead_code)]
 fn inv_rotate(q: Rot, v: Vec2) -> Vec2 {
     Vec2::new(q.c * v.x + q.s * v.y, -q.s * v.x + q.c * v.y)
 }
@@ -173,6 +180,8 @@ struct Simplex {
 /// simplex cache records. The time of impact reads its separating axis
 /// from it; nothing is warm started from it.
 pub(super) struct Features {
+    // Read by the time of impact, unused until #921.
+    #[allow(dead_code)]
     pub count: usize,
     pub index_a: [usize; 3],
     pub index_b: [usize; 3],

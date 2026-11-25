@@ -21,19 +21,27 @@ Every type and function is generic over `Vector`, implemented for
 | What is in a trigger or a hit box | [`overlaps`](src/query.rs) |
 | What a moving shape hits first (a projectile, a sweep for room) | [`cast`](src/query.rs) |
 | What a ray hits first (a beam, line of sight, picking a block) | [`ray`](src/query.rs) |
+| How far a shape is from a collider (a hit box's reach, an explosion's falloff) | [`distance`](src/query.rs) |
 | A world of many colliders the game fills | [`ColliderSet`](src/collider_set.rs) |
 | A tile map or voxel grid the game answers cell by cell | [`CellWorld`](src/cell_world.rs) |
 | A handful of colliders, or two worlds at once | a slice, or a pair `(A, B)`: [`World`](src/world.rs) |
 
-A body is a `Shape` (in this release, `Shape::Box { half }`) at a position
-(its centre). A collider adds a `ColliderKind` (`Solid`, `OneWay`,
+A body is a `Shape` at a position (its centre): `Shape::Box { half }`,
+`Shape::Ball { radius }`, `Shape::Capsule { half_axis, radius }` (the
+segment from `-half_axis` to `half_axis` grown by `radius`; an upright
+character has `half_axis` along `up`), or `Shape::Convex`, a convex polygon
+of up to 8 vertices in 2D (`Convex::polygon(points, cos, sin)`) or hull of
+up to 16 points in 3D (`Convex::hull(points, quaternion)`), turned by a
+rotation the game supplies: a rotated box, a wall at an angle, a ramp of
+any slope. Every shape is a body and a collider for every query and the
+mover. A collider adds a `ColliderKind` (`Solid`, `OneWay`,
 `Sensor`), the layers it is on and the game's own `id: u64`, which queries
 report: SGL hands out no handles. A collider's box may be cut by one plane
 into a ramp, a slope tile or a slope block: `with_cut(Cut::new(normal,
 offset))` keeps the box where `normal · (p - centre) <= offset`. In 3D the
 normal has a zero component (a ramp turning about one axis: upright,
-inverted or sideways); `Cut::new` panics otherwise, and a one-way platform
-takes no cut. Queries meet a ramp as the shape it is, and a contact on its
+inverted or sideways); `Cut::new` panics otherwise. Only a box takes a cut,
+and a one-way platform is a whole box. Queries meet a ramp as the shape it is, and a contact on its
 plane reports the plane's normal. An id is unique within a `ColliderSet`
 (inserting it again replaces the collider) and may repeat in a slice, a
 `CellWorld` or a pair. Every query takes a layer `mask` (`ALL_LAYERS` for
@@ -97,6 +105,26 @@ reach, mask)` returns where a body pressed against a wall would hang from
 its top edge and where it would stand on it; hanging, climbing and their
 timing are the game's. The [platformer example](../../examples/sgl-physics/examples/platformer.rs)
 walks, jumps, climbs a step and drops through a platform.
+
+## Round and convex shapes
+
+Box against box, whole or cut, is a closed-form sweep and exact. Every
+other pair goes through a convex kernel ported from Box2D and Box3D
+([provenance](PROVENANCE.md)), which makes contact a *slop* short of
+touching: a cast stops between one and one and a quarter slops before the
+surfaces meet. A query's slop is a hundredth of the smaller shape's extent
+(at most a quarter of the smaller radius); the mover's is a sixteenth of
+`skin`, and it reports the contact where the body would touch, so after
+the skin back-off a round or convex body rests between `skin` and
+`skin * 65 / 64` from a flat face, as a box rests `skin` from it. Its
+contact normal is the one between the shapes, so a ball slides around an
+outside corner and over the seams between flush tiles where a box
+catches. A ball or a capsule meeting a one-way platform's edge while
+falling lands on it. A step-up carries a round body far enough over the
+step's edge to stand on it. A body deep inside a round or convex collider
+(a ball whose centre is inside a box) is not moved by `slide`; the
+mover's push-out frees it where its candidates can. See
+[physics.md](../../specs/physics.md), requirement 19, for every rule.
 
 ## Worlds
 
@@ -169,8 +197,10 @@ Read the [physics contract](../../specs/physics.md) before changing
 behaviour. [Parity fixtures](../../tests/sgl-physics/tests/parity.rs),
 [property tests](../../tests/sgl-physics/tests/properties.rs), the
 [state round trip](../../tests/sgl-physics/tests/state.rs), the
-[mover tests](../../tests/sgl-physics/tests/mover.rs) and the
-[game scenarios](../../tests/sgl-physics/tests/scenarios.rs) exercise the
-cross-target, geometric, serialisation and mover boundaries. Run
+[mover tests](../../tests/sgl-physics/tests/mover.rs), the
+[game scenarios](../../tests/sgl-physics/tests/scenarios.rs), the
+[round-body tests](../../tests/sgl-physics/tests/round.rs) and the
+[comparison with parry](../../tests/sgl-physics/tests/oracle_parry.rs)
+exercise the cross-target, geometric, serialisation and mover boundaries. Run
 `cargo test -p sgl-physics -p sgl-physics-tests` for focused native checks.
 See [Physics](../../docs/README.md#physics) to choose a game's physics.

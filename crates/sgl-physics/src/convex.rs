@@ -201,7 +201,7 @@ fn dot<V: Vector>(a: V, b: V) -> f32 {
 }
 
 /// Whether `v` is a unit vector (`b2IsNormalized`, `b3IsNormalized`).
-fn is_unit<V: Vector>(v: V) -> bool {
+pub(crate) fn is_unit<V: Vector>(v: V) -> bool {
     (1.0 - dot(v, v)).abs() < UNIT_TOLERANCE
 }
 
