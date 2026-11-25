@@ -120,7 +120,7 @@ pub(crate) enum Rule<'a, V> {
     /// [`cast`]: every collider but sensors, one-way platforms whole; those
     /// the body starts inside by more than a rounding step are passed.
     Cast,
-    /// [`move_and_slide`](crate::move_and_slide): an embedded body may
+    /// [`slide`](crate::slide): an embedded body may
     /// not go deeper, and a one-way platform blocks only motion into its
     /// floor face.
     Move(&'a MoverConfig<V>),

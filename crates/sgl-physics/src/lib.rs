@@ -8,7 +8,7 @@
 //!
 //! A game describes its world as a [`ColliderSet`] it fills, a slice of
 //! [`Collider`]s, a [`CellWorld`] it answers cell by cell (a tile map or a
-//! voxel grid), or a pair of those, and asks it [`move_and_slide`],
+//! voxel grid), or a pair of those, and asks it [`slide`],
 //! [`snap_to_ground`], [`overlaps`], [`cast`] and [`ray`] inside its own
 //! fixed step.
 //!
@@ -32,7 +32,7 @@
 //!
 //! **Ties between axes.** When a box meets another exactly at an edge or a
 //! corner, two axes enter at the same instant. The mover
-//! ([`move_and_slide`], [`snap_to_ground`]) resolves such a tie to the axis
+//! ([`slide`], [`snap_to_ground`]) resolves such a tie to the axis
 //! most along [`MoverConfig::up`], then y, then x, then z, so a body arriving
 //! exactly at a ledge's corner lands whichever axis is up. [`cast`] and
 //! [`ray`], which know no up axis, resolve it y, then x, then z.
@@ -78,6 +78,6 @@ pub use config::{MoverConfig, MoverSettings};
 pub use contacts::Contacts;
 pub use query::{Hit, cast, overlaps, ray};
 pub use shape::{ALL_LAYERS, Collider, ColliderKind, Shape};
-pub use slide::{MAX_SLIDES_2D, MAX_SLIDES_3D, move_and_slide, snap_to_ground};
+pub use slide::{MAX_SLIDES_2D, MAX_SLIDES_3D, slide, snap_to_ground};
 pub use space::Vector;
 pub use world::{Unanswered, World};

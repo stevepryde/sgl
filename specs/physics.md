@@ -72,7 +72,7 @@ planned in #914 and are not available until they land.
 10. **Worlds.** A query reaches colliders only through the `World` trait.
     `colliders_near` visits every collider that may overlap a closed region;
     `colliders_along`, which the moving queries (`cast`, `ray`,
-    `move_and_slide`, `snap_to_ground`) use, visits every collider that may
+    `slide`, `snap_to_ground`) use, visits every collider that may
     overlap a closed box swept by a motion, and defaults to
     `colliders_near` over the box enclosing the start and the end. Either
     may visit more, in any order and more than once, or answer
@@ -112,7 +112,7 @@ planned in #914 and are not available until they land.
     surface toward the body, from the last axis to enter. Boxes that touch
     enter at exactly `t = 0`, read from the same edges as the overlap test,
     and touching is not overlap. An exact tie between entering axes
-    resolves, for `move_and_slide` and `snap_to_ground`, to the axis most
+    resolves, for `slide` and `snap_to_ground`, to the axis most
     along `up` (on equal lengths y, then x, then z), then the others y, x,
     z; `cast` and `ray`, which have no up, resolve it y, then x, then z.
     Already overlapping, moving away, and zero or non-finite motion give no
@@ -127,7 +127,7 @@ planned in #914 and are not available until they land.
     `block_epsilon`. It names the up axis, skin, snap distance, floor
     threshold and blocked tolerance in the game's units, with no defaults.
     Results mirror exactly between y-up and y-down worlds.
-13. **Move and slide.** `move_and_slide` slides a body against a world,
+13. **Move and slide.** `slide` slides a body against a world,
     sweeps every finite nonzero remainder without an absolute motion cutoff,
     slides at most a fixed number of times (`MAX_SLIDES_2D`, 2, and
     `MAX_SLIDES_3D`, 3), and never moves the body more

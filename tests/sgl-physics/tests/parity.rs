@@ -7,7 +7,7 @@ use sgl_core::math::{IVec3, Vec2, Vec3};
 use sgl_core::{CanonicalWrite, SplitMix64, StateHasher};
 use sgl_physics::{
     ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, MoverConfig,
-    MoverSettings, Shape, Vector, World, cast, move_and_slide, overlaps, ray, snap_to_ground,
+    MoverSettings, Shape, Vector, World, cast, overlaps, ray, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -95,8 +95,7 @@ fn walk<V: Vector, W: World<V> + ?Sized>(
         } else {
             velocity[up_axis] - 0.05
         };
-        let (moved, contacts) =
-            move_and_slide(body, position, velocity, world, ALL_LAYERS, config).unwrap();
+        let (moved, contacts) = slide(body, position, velocity, world, ALL_LAYERS, config).unwrap();
         position = position + moved;
         if (contacts.floor && contacts.down_blocked) || (contacts.ceiling && contacts.up_blocked) {
             velocity[up_axis] = 0.0;

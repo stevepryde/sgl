@@ -7,10 +7,10 @@ use crate::shape::Shape;
 use crate::space::{self, Vector};
 use crate::world::{Unanswered, World};
 
-/// Most times a 2D [`move_and_slide`] slides: a floor and a wall.
+/// Most times a 2D [`slide`] slides: a floor and a wall.
 pub const MAX_SLIDES_2D: usize = 2;
 
-/// Most times a 3D [`move_and_slide`] slides: a floor and the two walls of a
+/// Most times a 3D [`slide`] slides: a floor and the two walls of a
 /// corner.
 pub const MAX_SLIDES_3D: usize = 3;
 
@@ -49,7 +49,7 @@ const fn max_slides<V: Vector>() -> usize {
 ///
 /// [`Unanswered`] when the world will not walk a pass's region: the body
 /// then moves nothing.
-pub fn move_and_slide<V: Vector, W: World<V> + ?Sized>(
+pub fn slide<V: Vector, W: World<V> + ?Sized>(
     body: &Shape<V>,
     position: V,
     delta: V,
@@ -226,7 +226,7 @@ mod tests {
         set: &ColliderSet<Vec2>,
         config: &MoverConfig<Vec2>,
     ) -> (Vec2, Contacts<Vec2>) {
-        move_and_slide(&body.shape(), body.center, delta, set, ALL_LAYERS, config)
+        slide(&body.shape(), body.center, delta, set, ALL_LAYERS, config)
             .expect("a set always answers")
     }
 
@@ -793,7 +793,7 @@ mod tests {
         );
         let body = aabb(0.0, 0.0, 0.5, 0.5);
         let delta = Vec2::new(3.0, 0.0);
-        let (through, _) = move_and_slide(
+        let (through, _) = slide(
             &body.shape(),
             body.center,
             delta,
@@ -803,7 +803,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(through, delta);
-        let (stopped, contacts) = move_and_slide(
+        let (stopped, contacts) = slide(
             &body.shape(),
             body.center,
             delta,
@@ -842,7 +842,7 @@ mod tests {
         let body = Shape::Box {
             half: Vec3::splat(0.5),
         };
-        let (moved, contacts) = move_and_slide(
+        let (moved, contacts) = slide(
             &body,
             Vec3::ZERO,
             Vec3::new(4.0, -4.0, 4.0),
@@ -877,7 +877,7 @@ mod tests {
                 place(Vec3::new(0.5, 0.5, 5.0)),
             )];
             let config = settings(up, 0.01, 0.1, 0.7, 1e-4);
-            let (_, contacts) = move_and_slide(
+            let (_, contacts) = slide(
                 &body,
                 Vec3::ZERO,
                 place(Vec3::new(4.0, -4.0, 0.0)),

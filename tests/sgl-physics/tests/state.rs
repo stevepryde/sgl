@@ -8,7 +8,7 @@ use sgl_core::math::{Vec2, Vec3};
 use sgl_core::{SplitMix64, digest_of};
 use sgl_physics::{
     ALL_LAYERS, Collider, ColliderKind, ColliderSet, Contacts, Hit, MoverConfig, MoverSettings,
-    Shape, Vector, move_and_slide, snap_to_ground,
+    Shape, Vector, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -71,7 +71,7 @@ fn step(body: &mut Body, step: u64, world: &ColliderSet<Vec3>, config: &MoverCon
     } else {
         body.velocity.y - 0.05
     };
-    let (moved, contacts) = move_and_slide(
+    let (moved, contacts) = slide(
         &body.shape,
         body.position,
         body.velocity,

@@ -15,7 +15,7 @@ use sgl_core::digest_of;
 use sgl_core::math::{IVec3, Vec2, Vec3};
 use sgl_physics::{
     ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Contacts,
-    MoverConfig, MoverSettings, Shape, Vector, World, cast, move_and_slide, snap_to_ground,
+    MoverConfig, MoverSettings, Shape, Vector, World, cast, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -293,7 +293,7 @@ fn a_2d_move_never_ends_inside_a_solid_and_mirrors_with_up() {
             }
             set
         };
-        let (effective, contacts) = move_and_slide(
+        let (effective, contacts) = slide(
             &shape(body.half),
             body.center,
             delta,
@@ -311,7 +311,7 @@ fn a_2d_move_never_ends_inside_a_solid_and_mirrors_with_up() {
             "moved further than asked"
         );
 
-        let (mirrored, mirrored_contacts) = move_and_slide(
+        let (mirrored, mirrored_contacts) = slide(
             &shape(body.half),
             Vec2::new(body.center.x, -body.center.y),
             Vec2::new(delta.x, -delta.y),
@@ -409,8 +409,8 @@ fn a_3d_move_with_no_z_motion_matches_the_2d_move() {
         let body2 = shape(half);
         let body3 = shape(half.extend(0.5));
         let (moved2, contacts2) =
-            move_and_slide(&body2, center, delta, &flat, ALL_LAYERS, &config2).unwrap();
-        let (moved3, contacts3) = move_and_slide(
+            slide(&body2, center, delta, &flat, ALL_LAYERS, &config2).unwrap();
+        let (moved3, contacts3) = slide(
             &body3,
             center.extend(0.0),
             delta.extend(0.0),
@@ -563,7 +563,7 @@ fn move3<W: World<Vec3> + ?Sized>(
     delta: Vec3,
     world: &W,
 ) -> (Vec3, Contacts<Vec3>) {
-    move_and_slide(
+    slide(
         &shape(body.half),
         body.center,
         delta,
@@ -970,7 +970,7 @@ fn a_scene_far_from_the_origin_moves_bit_equal_to_one_near_it() {
                 let mut out = Vec::new();
                 for world in [&list.as_slice() as &dyn World<Vec3>, &set] {
                     let (moved, contacts) =
-                        move_and_slide(&body, at, delta, world, ALL_LAYERS, &config3()).unwrap();
+                        slide(&body, at, delta, world, ALL_LAYERS, &config3()).unwrap();
                     let (snap, snapped) =
                         snap_to_ground(&body, at, world, ALL_LAYERS, &config3()).unwrap();
                     let hit = cast(&body, at, delta, world, ALL_LAYERS).unwrap();

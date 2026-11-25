@@ -54,7 +54,7 @@ pub trait World<V: Vector> {
     /// Calls `visit` with every collider that may overlap the closed box
     /// `min..=max` swept by `motion`, or returns [`Unanswered`] when the
     /// sweep is more than the world will walk. A moving query ([`cast`],
-    /// [`ray`], [`move_and_slide`], [`snap_to_ground`]) asks through it.
+    /// [`ray`], [`slide`], [`snap_to_ground`]) asks through it.
     ///
     /// The default asks [`Self::colliders_near`] for the box enclosing the
     /// start and the end. A world whose cost grows with the region, such as
@@ -63,7 +63,7 @@ pub trait World<V: Vector> {
     ///
     /// [`cast`]: crate::cast
     /// [`ray`]: crate::ray
-    /// [`move_and_slide`]: crate::move_and_slide
+    /// [`slide`]: crate::slide
     /// [`snap_to_ground`]: crate::snap_to_ground
     fn colliders_along(
         &self,
@@ -146,7 +146,7 @@ mod tests {
     use crate::config::{MoverConfig, MoverSettings};
     use crate::query::{cast, overlaps, ray};
     use crate::shape::Shape;
-    use crate::slide::{move_and_slide, snap_to_ground};
+    use crate::slide::{slide, snap_to_ground};
     use crate::{CellColliders, CellWorld};
     use sgl_core::math::{IVec2, Vec2};
     use wasm_bindgen_test::wasm_bindgen_test;
@@ -180,7 +180,7 @@ mod tests {
         let motion = Vec2::new(60.0, 0.0);
         let worlds: [&dyn World<Vec2>; 2] = [&cells, &pair];
         for world in worlds {
-            let moved = move_and_slide(&body, Vec2::ZERO, motion, world, u32::MAX, &config);
+            let moved = slide(&body, Vec2::ZERO, motion, world, u32::MAX, &config);
             assert_eq!(moved, Err(Unanswered));
             let snapped = snap_to_ground(&body, Vec2::ZERO, world, u32::MAX, &config);
             assert_eq!(snapped, Err(Unanswered));

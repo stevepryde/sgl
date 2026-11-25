@@ -13,7 +13,7 @@ Every type and function is generic over `Vector`, implemented for
 
 | Need | API |
 | --- | --- |
-| Move a body by a delta, sliding along what it meets | [`move_and_slide`](src/slide.rs) |
+| Move a body by a delta, sliding along what it meets | [`slide`](src/slide.rs) |
 | Keep a walking body on the ground across seams and down steps | [`snap_to_ground`](src/slide.rs) |
 | What is in a trigger or a hit box | [`overlaps`](src/query.rs) |
 | What a moving shape hits first (a projectile, a sweep for room) | [`cast`](src/query.rs) |
@@ -33,7 +33,7 @@ everything).
 ```rust
 use sgl_core::math::Vec2;
 use sgl_physics::{
-    ALL_LAYERS, Collider, ColliderSet, MoverConfig, MoverSettings, Shape, move_and_slide,
+    ALL_LAYERS, Collider, ColliderSet, MoverConfig, MoverSettings, Shape, slide,
 };
 
 let mut level = ColliderSet::new(2.0);
@@ -48,7 +48,7 @@ let config = MoverConfig::new(MoverSettings {
 let body = Shape::Box { half: Vec2::new(0.4, 0.5) };
 let mut position = Vec2::new(0.0, 3.0);
 let (moved, contacts) =
-    move_and_slide(&body, position, Vec2::new(0.5, -4.0), &level, ALL_LAYERS, &config)
+    slide(&body, position, Vec2::new(0.5, -4.0), &level, ALL_LAYERS, &config)
         .expect("a set always answers");
 position += moved;
 assert!(contacts.floor && contacts.last_floor_id == Some(7));
