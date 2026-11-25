@@ -57,13 +57,24 @@ pub struct Contacts<V> {
     /// geometry it could not leave within its own size, and left it where it
     /// was.
     pub stuck: bool,
+    /// [`move_and_slide`](crate::move_and_slide) found the body inside a
+    /// moving collider that could not push it free (it is held against
+    /// something else), pressed it as far as it goes, and stopped there.
+    pub crushed: bool,
+    /// The id of the moving collider [`move_and_slide`](crate::move_and_slide)
+    /// carried the body on: its floor at the start of the step.
+    pub carried_by: Option<u64>,
+    /// The id of the collider that pushed the body: the moving collider
+    /// [`move_and_slide`](crate::move_and_slide) pushed it out of, or else
+    /// the soft collider that nudged it furthest.
+    pub pushed_by: Option<u64>,
 }
 
 impl<V: Vector> Contacts<V> {
-    /// The largest postcard encoding: nine bools, five vectors, and three
-    /// optional `u64` varints of up to eleven bytes each (102 bytes in 3D, 82
-    /// in 2D).
-    pub const MAX_POSTCARD_BYTES: usize = 9 + 5 * space::postcard_bytes::<V>() + 3 * 11;
+    /// The largest postcard encoding: ten bools, five vectors, and five
+    /// optional `u64` varints of up to eleven bytes each (125 bytes in 3D,
+    /// 105 in 2D).
+    pub const MAX_POSTCARD_BYTES: usize = 10 + 5 * space::postcard_bytes::<V>() + 5 * 11;
 
     /// Contacts of a move that asked for `desired` and has touched nothing.
     pub(crate) fn asked(desired: V) -> Self {
@@ -147,5 +158,12 @@ impl<V: Vector> CanonicalWrite for Contacts<V> {
         out.bool(self.ledge_guarded);
         out.bool(self.pushed_out);
         out.bool(self.stuck);
+        out.bool(self.crushed);
+        for id in [self.carried_by, self.pushed_by] {
+            out.bool(id.is_some());
+            if let Some(id) = id {
+                out.u64(id);
+            }
+        }
     }
 }

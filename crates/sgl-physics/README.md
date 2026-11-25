@@ -19,10 +19,11 @@ Every type and function is generic over `Vector`, implemented for
 | Move a body by a delta, sliding along what it meets | [`slide`](src/slide.rs) |
 | Keep a walking body on the ground across seams and down steps | [`snap_to_ground`](src/slide.rs) |
 | What is in a trigger or a hit box | [`overlaps`](src/query.rs) |
+| Which triggers a body entered and left this step | [`sensors_at`, `sensor_events`](src/sensor.rs) |
 | What a moving shape hits first (a projectile, a sweep for room) | [`cast`](src/query.rs) |
 | What a ray hits first (a beam, line of sight, picking a block) | [`ray`](src/query.rs) |
 | How far a shape is from a collider (a hit box's reach, an explosion's falloff) | [`distance`](src/query.rs) |
-| A world of many colliders the game fills | [`ColliderSet`](src/collider_set.rs) |
+| A world of many colliders the game fills, and moves by id | [`ColliderSet`](src/collider_set.rs) |
 | A tile map or voxel grid the game answers cell by cell | [`CellWorld`](src/cell_world.rs) |
 | A handful of colliders, or two worlds at once | a slice, or a pair `(A, B)`: [`World`](src/world.rs) |
 | Vehicles bumping in a plane: cars, karts, traffic, boats, pushed crates that turn | [`planar::advance`](src/planar/advance.rs), or [`planar::time_of_impact`](src/planar/toi.rs), [`planar::manifold`](src/planar/manifold.rs) and [`planar::bump`](src/planar/bump.rs) one pair at a time |
@@ -100,14 +101,104 @@ position, velocity or body is not finite, or whose step would end where
 | `mask` | Layers the body collides with |
 
 `MoverOptions::default()` climbs nothing, guards nothing and meets every
-layer. `Contacts` reports `stepped`, `ledge_guarded`, `pushed_out` and `stuck`
-beside the floor, wall and ceiling contacts. Crouching needs nothing new:
+layer. `Contacts` reports `stepped`, `ledge_guarded`, `pushed_out`, `stuck`,
+`crushed`, `carried_by` and `pushed_by` beside the floor, wall and ceiling
+contacts. Crouching needs nothing new:
 change the body's shape, and ask `overlaps` whether the taller one fits
 before standing. `find_ledge(&shape, position, toward, &world, &config,
 reach, mask)` returns where a body pressed against a wall would hang from
 its top edge and where it would stand on it; hanging, climbing and their
 timing are the game's. The [platformer example](../../examples/sgl-physics/examples/platformer.rs)
 walks, jumps, climbs a step and drops through a platform.
+
+## Moving colliders
+
+A lift, a door, a crusher, a boat or another character is a collider the
+game moves itself, each step, before it steps the bodies near it: it sets
+the collider's `position` and its `velocity` (units per second, so
+`velocity * dt` is what it moved this step) in its `ColliderSet` by the
+collider's own id (`insert`, `set_position`, `set_velocity`, `remove`;
+each returns whether the id was there), or rebuilds the set from its own
+state. Then `move_and_slide`:
+
+- carries a body whose `floor` is a moving collider as it moved, stopped by
+  anything else in the way (`carried_by`), so a rider keeps its place on a
+  lift going up, down or sideways; a body that leaves it, by a jump or a
+  walk off the edge, keeps the platform's velocity, as Godot's
+  `CharacterBody` does;
+- presses a body that a moving collider moved into the way the collider
+  moved (`pushed_out`, `pushed_by`), or, when something else holds it
+  there, reports it `crushed` and leaves it inside nothing but the
+  collider: the game decides what crushing does;
+- with `with_push(Push::Soft(limit))`, never stops a body at the collider
+  but nudges it off by at most `limit` a step, after its move: for crowds,
+  and players who may push past one another.
+
+Only the mover reads a velocity or a push; every other query takes a
+collider where it stands. Bodies against bodies are the game's: it keeps
+each body's shape as a collider (rigid to block, soft to nudge) and steps
+its bodies in ascending id, each against the others as they stand. A
+trigger is a sensor: `sensors_at` lists the sensors a body is in, and
+`sensor_events(&before, &after)` the ones it entered and left, from lists
+the game keeps, so they roll back with its state.
+
+```rust
+use sgl_core::math::Vec2;
+use sgl_physics::{
+    ALL_LAYERS, Collider, ColliderSet, MoverConfig, MoverOptions, MoverSettings, MoverState,
+    Push, Shape, move_and_slide, sensor_events, sensors_at,
+};
+
+let dt = 1.0 / 60.0;
+let config = MoverConfig::new(MoverSettings {
+    up: Vec2::Y,
+    skin: 0.01,
+    snap_distance: 0.1,
+    normal_threshold: 0.7,
+    block_epsilon: 1e-4,
+});
+let body = Shape::Box { half: Vec2::new(0.4, 0.5) };
+let mut set = ColliderSet::new(2.0);
+set.insert(Collider::new(1, Shape::Box { half: Vec2::new(8.0, 0.5) }, Vec2::new(0.0, -0.5)));
+let mut lift = Collider::new(5, Shape::Box { half: Vec2::new(1.0, 0.25) }, Vec2::new(3.0, 0.25))
+    .with_velocity(Vec2::new(0.0, 2.0));
+set.insert(lift);
+// Each player's body, by id, and the sensors it was in last step.
+let mut players = [(10u64, MoverState::default()), (11, MoverState::default())];
+players[0].1.position = Vec2::new(-2.0, 0.505);
+players[1].1.position = Vec2::new(3.0, 1.005);
+let mut sensors: [Vec<u64>; 2] = Default::default();
+for (id, state) in &players {
+    set.insert(Collider::new(*id, body, state.position).with_push(Push::Soft(0.05)));
+}
+
+// One fixed step: move the colliders first...
+lift.position += lift.velocity * dt;
+set.set_position(lift.id, lift.position);
+set.set_velocity(lift.id, lift.velocity);
+// ...then step the bodies in ascending id, each against the others.
+for ((id, state), was_in) in players.iter_mut().zip(&mut sensors) {
+    set.remove(*id);
+    state.velocity.y -= 20.0 * dt;
+    let contacts =
+        move_and_slide(state, &body, dt, &set, &config, &MoverOptions::default())
+            .expect("a set always answers");
+    if contacts.crushed {
+        // The game's rule: a crushed player loses a life.
+    }
+    let now = sensors_at(&body, state.position, &set, ALL_LAYERS).expect("answers");
+    let (entered, left) = sensor_events(was_in, &now);
+    let _ = (entered, left); // pickups, checkpoints, damage zones
+    *was_in = now;
+    set.insert(
+        Collider::new(*id, body, state.position)
+            .with_velocity(state.velocity)
+            .with_push(Push::Soft(0.05)),
+    );
+}
+```
+
+See [physics.md](../../specs/physics.md), requirement 20, for every rule.
 
 ## Round and convex shapes
 
@@ -230,7 +321,7 @@ very long collider (a whole level's floor) into pieces.
 
 With the `serde` feature the plain types serialise; each documents its
 largest postcard size as `MAX_POSTCARD_BYTES` (for example
-`Contacts::<Vec3>::MAX_POSTCARD_BYTES`, 102), to budget against `sgl-net`'s
+`Contacts::<Vec3>::MAX_POSTCARD_BYTES`, 125), to budget against `sgl-net`'s
 `MAX_LATEST_STATE_BYTES`. All implement `sgl_core::CanonicalWrite`, so a
 client and its server can compare one digest to find a desync.
 
@@ -248,6 +339,8 @@ behaviour. [Parity fixtures](../../tests/sgl-physics/tests/parity.rs),
 [state round trip](../../tests/sgl-physics/tests/state.rs), the
 [mover tests](../../tests/sgl-physics/tests/mover.rs), the
 [game scenarios](../../tests/sgl-physics/tests/scenarios.rs), the
+[moving-collider tests](../../tests/sgl-physics/tests/moving.rs) and
+[scenarios](../../tests/sgl-physics/tests/scenarios_moving.rs), the
 [round-body tests](../../tests/sgl-physics/tests/round.rs), the
 [planar tests](../../tests/sgl-physics/tests/planar.rs) and the
 comparisons with parry ([kernel](../../tests/sgl-physics/tests/oracle_parry.rs),

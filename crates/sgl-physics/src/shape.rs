@@ -653,7 +653,7 @@ impl CanonicalWrite for ColliderKind {
 }
 
 /// One collider in a world: a shape at a position, how it behaves, the
-/// layers it is on, and the game's own id for it.
+/// layers it is on, the game's own id for it, and how it moves.
 ///
 /// SGL hands out no handles. `id` is the game's (an index and a generation,
 /// a block kind, a tile's coordinates): SGL carries it into what a query
@@ -667,6 +667,12 @@ impl CanonicalWrite for ColliderKind {
 /// world. So does one whose cut leaves nothing of its box, a cut on a shape
 /// that is not a box, and a one-way platform that is not a whole box, which
 /// [`Self::with_cut`] and [`Self::with_kind`] refuse to build.
+///
+/// A moving collider (a lift, a door, another body) carries its `velocity`,
+/// which [`move_and_slide`](crate::move_and_slide) reads: a body standing on
+/// it rides it, and one it has moved into is pushed out the way it moved.
+/// Its `push` says whether it blocks a body ([`Push::Rigid`]) or only nudges
+/// it ([`Push::Soft`]). Every other query takes the collider as it stands.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
@@ -691,21 +697,32 @@ pub struct Collider<V> {
     /// whole box. A world offers a cut collider by its whole box. Only a box
     /// takes a cut.
     pub cut: Option<Cut<V>>,
+    /// How fast it moves, in world units per second, like
+    /// [`MoverState::velocity`](crate::MoverState::velocity): what it moved
+    /// by this step, over the step's `dt`. Zero for a still collider. The
+    /// game moves it (its `position`) and sets this before stepping the
+    /// bodies near it. A velocity that is not finite moves nothing.
+    pub velocity: V,
+    /// Whether a solid collider blocks a body or nudges it; read only for a
+    /// [`ColliderKind::Solid`] collider.
+    pub push: Push,
 }
 
 impl<V: Vector> Collider<V> {
     /// The largest postcard encoding: its shape, position, kind, a `u32`
-    /// varint (five bytes), a `u64` varint (ten) and an optional cut. 239
-    /// bytes in 3D, 103 in 2D.
+    /// varint (five bytes), a `u64` varint (ten), an optional cut, its
+    /// velocity and its push. 256 bytes in 3D, 116 in 2D.
     pub const MAX_POSTCARD_BYTES: usize = Shape::<V>::MAX_POSTCARD_BYTES
         + space::postcard_bytes::<V>()
         + ColliderKind::MAX_POSTCARD_BYTES
         + 5
         + 10
         + 1
-        + Cut::<V>::MAX_POSTCARD_BYTES;
+        + Cut::<V>::MAX_POSTCARD_BYTES
+        + space::postcard_bytes::<V>()
+        + Push::MAX_POSTCARD_BYTES;
 
-    /// A solid collider on every layer.
+    /// A still, rigid, solid collider on every layer.
     #[must_use]
     pub const fn new(id: u64, shape: Shape<V>, position: V) -> Self {
         Self {
@@ -715,7 +732,58 @@ impl<V: Vector> Collider<V> {
             kind: ColliderKind::Solid,
             layers: ALL_LAYERS,
             cut: None,
+            velocity: V::ZERO,
+            push: Push::Rigid,
         }
+    }
+
+    /// The same collider moving at `velocity`, in world units per second.
+    #[must_use]
+    pub const fn with_velocity(mut self, velocity: V) -> Self {
+        self.velocity = velocity;
+        self
+    }
+
+    /// The same collider with `push`.
+    ///
+    /// # Panics
+    /// If `push` is [`Push::Soft`] with a limit that is negative or not
+    /// finite: an authoring error.
+    #[must_use]
+    pub const fn with_push(mut self, push: Push) -> Self {
+        if let Push::Soft(limit) = push {
+            assert!(
+                limit >= 0.0 && limit.is_finite(),
+                "Collider: a soft push's limit must be finite and non-negative"
+            );
+        }
+        self.push = push;
+        self
+    }
+
+    /// How far it moves in `dt`: `velocity * dt`, or zero when that is not
+    /// finite.
+    pub(crate) fn motion(&self, dt: f32) -> V {
+        let motion = self.velocity * dt;
+        if space::is_finite(motion) {
+            motion
+        } else {
+            V::ZERO
+        }
+    }
+
+    /// The limit of a solid collider that nudges rather than blocks, or
+    /// `None` for every other: a rigid solid, a one-way platform, a sensor.
+    pub(crate) fn soft(&self) -> Option<f32> {
+        match (self.kind, self.push) {
+            (ColliderKind::Solid, Push::Soft(limit)) => Some(limit),
+            _ => None,
+        }
+    }
+
+    /// Whether a solid collider blocks a body: solid and rigid.
+    pub(crate) fn rigid_solid(&self) -> bool {
+        self.kind == ColliderKind::Solid && self.push == Push::Rigid
     }
 
     /// The same collider of `kind`.
@@ -797,9 +865,9 @@ impl<V: Vector> Collider<V> {
     }
 
     /// A fixed total order over colliders: id, then position component by
-    /// component, then shape, kind, layers and cut (none first). A result
-    /// that lists colliders lists them in this order, so it never shows the
-    /// order a world visited them in.
+    /// component, then shape, kind, layers, cut (none first), velocity and
+    /// push. A result that lists colliders lists them in this order, so it
+    /// never shows the order a world visited them in.
     pub(crate) fn order(&self, other: &Self) -> Ordering {
         self.id
             .cmp(&other.id)
@@ -808,6 +876,8 @@ impl<V: Vector> Collider<V> {
             .then_with(|| self.kind.tag().cmp(&other.kind.tag()))
             .then_with(|| self.layers.cmp(&other.layers))
             .then_with(|| order_cuts(self.cut.as_ref(), other.cut.as_ref()))
+            .then_with(|| space::compare(self.velocity, other.velocity))
+            .then_with(|| self.push.order(other.push))
     }
 }
 
@@ -823,8 +893,8 @@ pub(crate) fn order_cuts<V: Vector>(a: Option<&Cut<V>>, b: Option<&Cut<V>>) -> O
 
 impl<V: Vector> CanonicalWrite for Collider<V> {
     /// `id` (`u64`), shape, position bits in axis order, kind, `layers`
-    /// (`u32`), then the cut as a bool tag followed, when present, by the
-    /// cut.
+    /// (`u32`), the cut as a bool tag followed, when present, by the cut,
+    /// then the velocity's bits in axis order and the push.
     fn canonical_write(&self, out: &mut StateHasher) {
         out.u64(self.id);
         self.shape.canonical_write(out);
@@ -834,6 +904,60 @@ impl<V: Vector> CanonicalWrite for Collider<V> {
         out.bool(self.cut.is_some());
         if let Some(cut) = &self.cut {
             cut.canonical_write(out);
+        }
+        space::write(out, self.velocity);
+        self.push.canonical_write(out);
+    }
+}
+
+/// How a solid collider meets a body the mover steps: it blocks it, or it
+/// nudges it aside without stopping it. Only
+/// [`move_and_slide`](crate::move_and_slide) and the moving queries it is
+/// built on ([`slide`](crate::slide), [`snap_to_ground`](crate::snap_to_ground),
+/// [`move_and_collide`](crate::move_and_collide), [`find_ledge`](crate::find_ledge))
+/// read it; [`cast`](crate::cast), [`ray`](crate::ray),
+/// [`overlaps`](crate::overlaps) and [`distance`](crate::distance) meet a
+/// soft collider as any solid.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Push {
+    /// Blocks a body from every side, and a body inside it is pushed out:
+    /// a wall, a lift, a door, a boat.
+    #[default]
+    Rigid,
+    /// Never blocks: a body moves into it, and after its move is nudged away
+    /// from it by at most this many world units a step. Two bodies that walk
+    /// into each other harder than that pass through each other: a crowd,
+    /// or players who may push past one another.
+    Soft(f32),
+}
+
+impl Push {
+    /// The largest postcard encoding: the variant's index (one byte) and a
+    /// soft push's `f32`.
+    pub const MAX_POSTCARD_BYTES: usize = 5;
+
+    /// A fixed total order: rigid first, then soft by limit.
+    fn order(self, other: Self) -> Ordering {
+        match (self, other) {
+            (Self::Rigid, Self::Rigid) => Ordering::Equal,
+            (Self::Rigid, Self::Soft(_)) => Ordering::Less,
+            (Self::Soft(_), Self::Rigid) => Ordering::Greater,
+            (Self::Soft(a), Self::Soft(b)) => a.total_cmp(&b),
+        }
+    }
+}
+
+impl CanonicalWrite for Push {
+    /// A `u8` variant tag, `0` rigid or `1` soft, then a soft push's limit
+    /// bits.
+    fn canonical_write(&self, out: &mut StateHasher) {
+        match *self {
+            Self::Rigid => out.u8(0),
+            Self::Soft(limit) => {
+                out.u8(1);
+                out.u32(limit.to_bits());
+            }
         }
     }
 }

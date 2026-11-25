@@ -7,8 +7,8 @@ use sgl_core::math::{IVec3, Quat, Vec2, Vec3};
 use sgl_core::{CanonicalWrite, SplitMix64, StateHasher};
 use sgl_physics::{
     ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Convex, Cut,
-    MoverConfig, MoverOptions, MoverSettings, MoverState, Shape, Vector, World, cast,
-    move_and_slide, overlaps, planar, ray, slide, snap_to_ground,
+    MoverConfig, MoverOptions, MoverSettings, MoverState, Push, Shape, Vector, World, cast,
+    move_and_slide, overlaps, planar, ray, sensor_events, sensors_at, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -341,7 +341,10 @@ fn voxel(cell: IVec3, out: &mut CellColliders<'_, Vec3>) {
 /// the push-out follow a ramp's normal; and again when the mover began
 /// keeping a step's motion as a translation from where the body started
 /// and writing back the start plus it (#924), which rounds the mover walks
-/// differently. Each walk must
+/// differently; and again when #920 added a collider's velocity and push to
+/// its encoding (the slide walks hash the colliders `overlaps` lists) and
+/// `crushed`, `carried_by` and `pushed_by` to `Contacts`' (the mover
+/// walks), every body moving bit for bit as before. Each walk must
 /// stand on its ramps, and each mover walk climb a step, be stopped by its
 /// guard and be pushed out, for the digest to cover them.
 #[wasm_bindgen_test(unsupported = test)]
@@ -422,19 +425,19 @@ fn seeded_walks_through_fixed_levels_are_target_independent() {
 
     assert_eq!(
         walked_2d,
-        "95f444cc305f128349252e025a3ba5a9bffe34812888e911d5b49345379db98f"
+        "e44d9e00fcc4cf8c1053871ca7f5dd486e58b6c9f6b45a5d6453bc2c70583570"
     );
     assert_eq!(
         walked_3d,
-        "c92050abb7a32ea6fd9594cedfd7708f66da315f43bda16ed1aa1a38617edf23"
+        "8b10913b42e61973361019d473e79aa941dbbccef74623999d90372a218e69c6"
     );
     assert_eq!(
         mover_2d,
-        "21a9828e36b97943776db5bf97a739688c4dc45e66a70c19dea1a8613204d0ea"
+        "32c70934bc40d9f6a66291cc4a101531fa46944d96981b343c12b474820fe690"
     );
     assert_eq!(
         mover_3d,
-        "472467b261fdd0e474fe0142af9afad0757253dfd4bafaf6eb8fd5bfb6f32921"
+        "ae636884e2c40d60c1b4277cf679602ca8ea9d177b5e4e487d46e3077cee6642"
     );
 }
 
@@ -505,7 +508,9 @@ fn round_extras_3d() -> [Collider<Vec3>; 3] {
 /// run (#919), and refrozen (#924) when the mover began keeping a step's
 /// motion as a translation from its start (the mover walks) and rotations
 /// began to be normalised by their largest component first (the 3D slide
-/// walk, whose hull is turned by a quaternion).
+/// walk, whose hull is turned by a quaternion); and again when #920 grew
+/// the encodings of `Collider` and `Contacts`, every body moving bit for
+/// bit as before.
 #[wasm_bindgen_test(unsupported = test)]
 fn seeded_round_walks_through_fixed_levels_are_target_independent() {
     let level = level_2d();
@@ -584,19 +589,209 @@ fn seeded_round_walks_through_fixed_levels_are_target_independent() {
 
     assert_eq!(
         walked_2d,
-        "b6a37595c02a75e6a925157dbb8556528591e5d44c94037009e61f05dc3d2378"
+        "8be15573899624a40fbcc1499d416089676496c5f2b6bda8f3e5f753af087fb2"
     );
     assert_eq!(
         walked_3d,
-        "cf196798b31c99844e7bd8cbe67b9d99e52fe2140c196bd057907e14366a5878"
+        "18e803a4d94b71e72b7885089cb8c429aa214f81359182251f2008e54968d2ba"
     );
     assert_eq!(
         mover_2d,
-        "217f96ae5c245f56dde581bbd603ac607c23dccf8b3376f7403ad6e02cddc2fb"
+        "e3161b8d89697b5c5382badddaee6e8d7122ffc9bf702bcb2084c5897bf2e537"
     );
     assert_eq!(
         mover_3d,
-        "4b8c2bbf77f995927cf490ed8758a89bd1f4b3cb684998dd04516aadd73bd107"
+        "e87bb98fe9e4f0d83af1f4569a06a689fba3c0ff38be8ae173f125a7d535ac71"
+    );
+}
+
+/// What a moving walk met, so the digest is known to cover each rule.
+#[derive(Default)]
+struct Moving {
+    carried: u32,
+    pushed: u32,
+    nudged: u32,
+    crushed: u32,
+    events: u32,
+}
+
+/// A vector from its x, y and z; 2D drops z.
+fn xyz<V: Vector>(x: f32, y: f32, z: f32) -> V {
+    let mut out = V::ZERO;
+    out[0] = x;
+    out[1] = y;
+    if V::AXES == 3 {
+        out[2] = z;
+    }
+    out
+}
+
+/// The game moving its lift (up and down between tops at 0.5 and 3) and its
+/// door (to and fro between -1 and 5.8), turning each at the ends, and
+/// telling the set by id.
+fn move_lift_and_door<V: Vector>(
+    lift: &mut Collider<V>,
+    door: &mut Collider<V>,
+    set: &mut ColliderSet<V>,
+) {
+    let top = lift.position[1] + 0.25;
+    if (lift.velocity[1] > 0.0 && top >= 3.0) || (lift.velocity[1] < 0.0 && top <= 0.5) {
+        lift.velocity = -lift.velocity;
+    }
+    if (door.velocity[0] > 0.0 && door.position[0] >= 5.8)
+        || (door.velocity[0] < 0.0 && door.position[0] <= -1.0)
+    {
+        door.velocity = -door.velocity;
+    }
+    for moving in [lift, door] {
+        moving.position = moving.position + moving.velocity * (1.0 / 60.0);
+        set.set_position(moving.id, moving.position);
+        set.set_velocity(moving.id, moving.velocity);
+    }
+}
+
+/// The game's input for body `index` at step `n`: the first keeps to the
+/// lift, the second heads for the wall and the lift by turns, and the third
+/// keeps to the middle, each wandering and now and then jumping.
+fn steer<V: Vector>(index: usize, n: u32, state: &mut MoverState<V>, rng: &mut SplitMix64) {
+    let heading = match index {
+        0 => 0.0,
+        1 if (n / 150).is_multiple_of(2) => 2.0,
+        1 => -2.0,
+        _ => -state.position[0],
+    };
+    state.velocity[0] = heading + unit(rng) * 2.0 - 1.0;
+    if V::AXES == 3 {
+        state.velocity[2] = unit(rng) * 2.0 - 1.0;
+    }
+    state.velocity[1] = if state.floor.is_some() && unit(rng) < 0.03 {
+        7.0
+    } else {
+        state.velocity[1] - 20.0 / 60.0
+    };
+}
+
+/// A seeded walk among moving colliders (#920), hashed every step: a lift
+/// (10) rising and falling, a door (11) sliding to and fro against a wall
+/// (2), and three bodies (20, 21 and 22) that are soft colliders to each
+/// other, walking and jumping at random, stepped in ascending id against
+/// the others as they stand, with a sensor (30) among them. The game moves
+/// the lift and the door first, turning each at the ends of its travel,
+/// then steps the bodies. Each step hashes every body's state, contacts and
+/// sensor list.
+fn walk_moving<V: Vector>(seed: u64, config: &MoverConfig<V>, steps: u32) -> (String, Moving) {
+    let mut rng = SplitMix64::new(seed);
+    let mut hasher = StateHasher::new();
+    let mut met = Moving::default();
+    let block = |id: u64, half: V, at: V| Collider::new(id, Shape::Box { half }, at);
+    let body = Shape::Box {
+        half: xyz(0.4, 0.5, 0.4),
+    };
+    let still = [
+        block(1, xyz(8.0, 0.5, 8.0), xyz(0.0, -0.5, 0.0)),
+        block(2, xyz(0.5, 2.0, 8.0), xyz(6.5, 2.0, 0.0)),
+        block(30, xyz(0.5, 0.5, 0.5), xyz(2.0, 0.5, 0.0)).with_kind(ColliderKind::Sensor),
+    ];
+    let mut lift =
+        block(10, xyz(1.0, 0.25, 1.0), xyz(-4.0, 0.25, 0.0)).with_velocity(xyz(0.0, 1.5, 0.0));
+    let mut door =
+        block(11, xyz(0.25, 1.0, 1.0), xyz(-1.0, 1.0, 0.0)).with_velocity(xyz(2.5, 0.0, 0.0));
+    let mut bodies = [
+        MoverState {
+            position: xyz(-4.0, 1.0 + 0.005, 0.0),
+            ..MoverState::default()
+        },
+        MoverState {
+            position: xyz(1.0, 0.5 + 0.005, 0.0),
+            ..MoverState::default()
+        },
+        MoverState {
+            position: xyz(-1.0, 0.5 + 0.005, 0.0),
+            ..MoverState::default()
+        },
+    ];
+    let soft = |id: u64, state: &MoverState<V>| {
+        Collider::new(id, body, state.position)
+            .with_velocity(state.velocity)
+            .with_push(Push::Soft(0.04))
+    };
+    let mut set = ColliderSet::new(2.0);
+    set.insert(lift);
+    set.insert(door);
+    for (id, state) in (20u64..).zip(&bodies) {
+        set.insert(soft(id, state));
+    }
+    let mut sensors: [Vec<u64>; 3] = Default::default();
+    for n in 0..steps {
+        move_lift_and_door(&mut lift, &mut door, &mut set);
+        for (index, id) in [(0, 20u64), (1, 21), (2, 22)] {
+            let state = &mut bodies[index];
+            set.remove(id);
+            steer(index, n, state, &mut rng);
+            let world = (&still[..], &set);
+            let contacts = move_and_slide(
+                state,
+                &body,
+                1.0 / 60.0,
+                &world,
+                config,
+                &MoverOptions::default(),
+            )
+            .unwrap();
+            met.carried += u32::from(contacts.carried_by == Some(10));
+            met.pushed += u32::from(contacts.pushed_by == Some(11));
+            met.nudged += u32::from(matches!(contacts.pushed_by, Some(20..=22)));
+            met.crushed += u32::from(contacts.crushed);
+            let now = sensors_at(&body, state.position, &world, ALL_LAYERS).unwrap();
+            let (entered, exited) = sensor_events(&sensors[index], &now);
+            met.events += u32::try_from(entered.len() + exited.len()).unwrap();
+            state.canonical_write(&mut hasher);
+            contacts.canonical_write(&mut hasher);
+            hasher.length(now.len());
+            for &sensor in &now {
+                hasher.u64(sensor);
+            }
+            sensors[index] = now;
+            set.insert(soft(id, state));
+        }
+    }
+    (hasher.finish().to_hex(), met)
+}
+
+/// Defect: arithmetic in the moving-collider rules (the carry, the press,
+/// the plane solver of soft contact, the sensor lists) that rounds
+/// differently in the browser. Oracle: native and `wasm32` must produce
+/// these digests from the seeded walks above, in 2D and 3D. Frozen on first
+/// run (#920). Each walk must ride the lift, be pushed by the door, be
+/// nudged by another body, be crushed against the wall and enter or leave
+/// the sensor for the digest to cover them (369, 375, 343, 22 and 18 times
+/// in 2D; 414, 408, 99, 44 and 14 in 3D).
+#[wasm_bindgen_test(unsupported = test)]
+fn seeded_walks_among_moving_colliders_are_target_independent() {
+    let (walked_2d, met_2d) = walk_moving(0x05ee_d920, &mover(Vec2::Y, 0.01, 0.1, 0.7, 1e-4), 900);
+    let (walked_3d, met_3d) = walk_moving(0x05ee_d920, &mover(Vec3::Y, 0.01, 0.1, 0.7, 1e-4), 900);
+    for met in [&met_2d, &met_3d] {
+        assert!(
+            met.carried > 0
+                && met.pushed > 0
+                && met.nudged > 0
+                && met.crushed > 0
+                && met.events > 0,
+            "{} {} {} {} {}",
+            met.carried,
+            met.pushed,
+            met.nudged,
+            met.crushed,
+            met.events
+        );
+    }
+    assert_eq!(
+        walked_2d,
+        "5b2859d895d2fb06ce2a4e51753997be0282eeaf89abe96d417d31c713e34065"
+    );
+    assert_eq!(
+        walked_3d,
+        "0dbc7d645a6b0626827cf1155a20249b6676b4930e0fccebba9d8f32183ad589"
     );
 }
 

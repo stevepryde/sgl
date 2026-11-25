@@ -2211,6 +2211,9 @@ Use the [current specs](README.md) for implementation and the
   and added mover walks to the levels, and its review fixes changed the
   mover's velocity rule, floor, step-up and push-out; #924's fixes made
   the mover keep a step's motion as a translation from its start and
-  normalise every direction by its largest component first. After the first
-  release a change to one is a breaking change like any other frozen
+  normalise every direction by its largest component first; #920 grew the
+  encodings of `Collider` (its velocity and push) and `Contacts` (`crushed`,
+  `carried_by`, `pushed_by`), with every body in the existing walks moving
+  bit for bit as before, and added a walk among moving colliders. After the
+  first release a change to one is a breaking change like any other frozen
   value.

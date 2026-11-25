@@ -41,8 +41,11 @@ const fn max_slides<V: Vector>() -> usize {
 /// face it has already touched in the same move: between two such faces it
 /// follows their crease (in 2D, where two faces meet at a point, it stops),
 /// and among three it stops. A move slides at most a fixed number of times:
-/// [`MAX_SLIDES_2D`] in 2D, [`MAX_SLIDES_3D`] in 3D. Sensors never block; a
-/// one-way platform blocks only motion into its floor face.
+/// [`MAX_SLIDES_2D`] in 2D, [`MAX_SLIDES_3D`] in 3D. Sensors and soft
+/// colliders ([`Push::Soft`](crate::Push::Soft)) never block; a one-way
+/// platform blocks only motion into its floor face. Every collider is taken
+/// where it stands: its velocity is not read (only
+/// [`move_and_slide`](crate::move_and_slide) reads it).
 ///
 /// A body that starts inside a solid collider (a spawn, a moved collider, or
 /// rounding at a contact) may move out of it or along it, never deeper; a
@@ -317,7 +320,8 @@ fn crease<V: Vector>(motion: V, a: V, b: V) -> V {
 /// is within reach. Only colliders on a layer in `mask` take part.
 ///
 /// Only a floor-classified face grounds the body, so a body rising through a
-/// one-way platform is never pulled back onto its underside. The probe
+/// one-way platform is never pulled back onto its underside. A soft
+/// collider is never ground, and every collider is taken where it stands. The probe
 /// stops at whatever it meets first: when that is not a floor (a slope too
 /// steep to stand on, beside a body at its foot), the body is not on the
 /// ground and does not move. After a move that walked off a small lip or

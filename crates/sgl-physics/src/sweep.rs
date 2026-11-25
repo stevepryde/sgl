@@ -161,6 +161,37 @@ pub(crate) fn way_out<V: Vector>(
     kernel::way_out(body, target, cut, rel)
 }
 
+/// For a body overlapping `target`, cut by `cut`, at `rel`, a unit normal
+/// out of it and how deep the body is along it: the plane a soft collider
+/// pushes the body out along. The kernel's way out ([`way_out`]) where it
+/// knows one; otherwise, for a box pair or overlapping cores, the axis along
+/// which the boxes enclosing the two shapes overlap least, out of the side
+/// the target is not on, ties going to the first axis in `order`. `None`
+/// when those boxes do not overlap.
+pub(crate) fn way_apart<V: Vector>(
+    body: &Shape<V>,
+    target: &Shape<V>,
+    cut: Option<&Cut<V>>,
+    rel: V,
+    order: [usize; 3],
+) -> Option<(V, f32)> {
+    if let Some(out) = way_out(body, target, cut, rel) {
+        return Some(out);
+    }
+    let depth = box_depths(body.half_extents(), target.half_extents(), rel);
+    let axis = order[..V::AXES]
+        .iter()
+        .copied()
+        .fold(order[0], |best, axis| {
+            if depth[axis] < depth[best] {
+                axis
+            } else {
+                best
+            }
+        });
+    (depth[axis] > 0.0).then(|| (space::unit(axis, rel[axis] <= 0.0), depth[axis]))
+}
+
 /// The contact for a body that already overlaps `target` (a spawn, a moved
 /// collider, or rounding at a contact). It may move out of `target` or along
 /// it but not deeper: motion toward `target` along its axis of least

@@ -29,6 +29,11 @@
 //! bodies that turn as they move, the manifold of overlapping ones, the
 //! bump, and [`planar::advance`], several bodies stepped through their
 //! impacts in time order.
+//! Moving colliders (lifts, doors, other bodies) carry a velocity the game
+//! sets as it moves them: the mover carries a body standing on one, pushes
+//! out a body one moved into (or reports it `crushed`), and nudges a body
+//! off a [`Push::Soft`] one by a limit. [`sensors_at`] and
+//! [`sensor_events`] tell a game which triggers a body entered and left.
 //!
 //! # Conventions owned here
 //!
@@ -90,7 +95,9 @@ mod convex;
 mod ledge;
 mod mover;
 pub mod planar;
+mod plane;
 mod query;
+mod sensor;
 mod shape;
 mod slide;
 mod space;
@@ -106,7 +113,8 @@ pub use mover::{
     Floor, LEDGE_SEARCH_STEPS, MAX_PUSH_OUT_PLANES, MoverOptions, MoverState, move_and_slide,
 };
 pub use query::{Hit, Separation, cast, distance, move_and_collide, overlaps, ray};
-pub use shape::{ALL_LAYERS, Collider, ColliderKind, Convex, Cut, Shape};
+pub use sensor::{sensor_events, sensors_at};
+pub use shape::{ALL_LAYERS, Collider, ColliderKind, Convex, Cut, Push, Shape};
 pub use slide::{MAX_SLIDES_2D, MAX_SLIDES_3D, slide, snap_to_ground};
 pub use space::Vector;
 pub use world::{Unanswered, World};

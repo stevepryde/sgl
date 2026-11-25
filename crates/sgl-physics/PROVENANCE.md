@@ -1,9 +1,10 @@
 # Provenance and algorithm notes
 
 `sgl-physics` is SGL's own, except its convex kernel (`src/convex.rs` and
-`src/convex/`) and the contact manifold and bump of its planar bodies
-(`src/planar/collide.rs`, `src/planar/collide/`, `src/planar/bump.rs`),
-which are ported from two projects by Erin Catto, both MIT:
+`src/convex/`), the contact manifold and bump of its planar bodies
+(`src/planar/collide.rs`, `src/planar/collide/`, `src/planar/bump.rs`) and
+the plane solver of soft contact (`src/plane.rs`), which are ported from two
+projects by Erin Catto, both MIT:
 
 | Source | Tag | Commit | Licence here |
 | --- | --- | --- | --- |
@@ -26,6 +27,7 @@ functions each one follows.
 | `planar/bump.rs`: `impulse` | Box2D `src/contact_solver.c`: the normal and friction rows of `b2PrepareContacts_Overflow` and `b2SolveContacts_Overflow`, and the velocity target of `b2ApplyRestitution_Overflow`, for one point |
 | `convex/d3.rs`: `Rot`, `Proxy::offset`, `distance`, `shape_cast` | Box3D `src/distance.c`: `b3GetProxySupport`, `b3ShapeDistance`; `b3MakeMatrixFromQuat`, `b3MulMV`, `b3Normalize` of `include/box3d/math_functions.h`; `include/box3d/types.h`, `include/box3d/collision.h` |
 | `convex/d3/simplex.rs`: the simplex and its solvers | Box3D `src/distance.c`: `b3BarycentricCoordsEdge`, `b3BarycentricCoordsTri`, `b3BarycentricCoordsTet`, `b3SolveSimplex2`, `b3SolveSimplex3`, `b3SolveSimplex4`, `b3ComputeWitnessPoints`; `src/math_internal.h` |
+| `plane.rs`: `Plane`, `solve` | Box2D `src/mover.c`: `b2SolvePlanes`; `b2CollisionPlane`, `b2PlaneSolverResult` of `include/box2d/collision.h`; `b2PlaneSeparation`, `b2Dot`, `b2MulAdd`, `b2ClampFloat`, `b2AbsFloat` of `include/box2d/math_functions.h` |
 
 Not ported: Box2D's disabled `b2ShapeCastMerged`, `b2CollideCapsules`,
 the segment and chain functions of `src/manifold.c`, the SIMD path of
@@ -33,6 +35,34 @@ the segment and chain functions of `src/manifold.c`, the SIMD path of
 softness, relaxation, rolling resistance); Box3D's `b3TimeOfImpact` and
 everything after it; the debug simplex output and the time-of-impact
 counters of both.
+
+Also not ported, of Box2D's mover: `b2ClipVector`: the solver serves soft contact only, whose planes
+Box2D's own documentation says not to clip a velocity against
+(`clipVelocity` false), and the mover clips against rigid faces by its own
+rule (`specs/physics.md`, 17); and `b2CollideMover`, which makes the
+planes from a capsule: here every shape pair gives its plane through the
+crate's own pair dispatch (`sweep::way_apart`).
+
+## Departures of the plane solver
+
+`plane.rs` follows `b2SolvePlanes` operation for operation, in its order,
+generic over both dimensions (`b2Dot` summed axis by axis in order).
+
+1. **A gap, not an overlap.** Box2D adds its linear slop to each plane's
+   separation, so a mover rests a slop inside what it touches and finds
+   the plane again next step. The crate's mover rests a gap from what it
+   touches (its `skin`), and a soft contact's bodies must come apart once
+   they stop pushing, so the solve subtracts the tolerance: it puts the
+   body that far clear of each plane when the limits allow.
+2. **The tolerance is the caller's.** The slop, half a centimetre scaled
+   by a process-wide setting in Box2D, is the mover's `skin`, in the
+   game's units, both for the gap and for the convergence test.
+3. **The iteration count is a named cap,** `MAX_PLANE_ITERATIONS` (20, the
+   source's literal), and the count used is not returned: it was the
+   source's diagnostic.
+4. **The planes' order is fixed.** The caller lists the planes in the
+   crate's fixed order of colliders (`specs/physics.md`, 6), since a
+   Gauss-Seidel pass depends on the order it visits them in.
 
 ## Departures
 

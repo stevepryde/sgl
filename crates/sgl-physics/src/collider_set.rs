@@ -20,12 +20,17 @@ const MAX_COLLIDER_CELLS: u64 = 1024;
 /// more cells. Either way a query only narrows the candidates: the crate
 /// tests each one exactly.
 ///
-/// A set is derived data. A game may keep one, or rebuild it from its own
-/// state at any step, in any order, and get the same results: no result
-/// depends on the order colliders were inserted in.
+/// A set is derived data. A game may keep one and update it as its
+/// colliders move, or rebuild it from its own state at any step, in any
+/// order, and get the same results: no result depends on the order
+/// colliders were inserted, moved or removed in.
 ///
-/// Ids are unique within a set: inserting a collider whose id is already
-/// present replaces the one there.
+/// Ids are unique within a set, and the game's id is how it updates one:
+/// [`insert`](Self::insert) adds a collider or replaces the one with its id,
+/// [`set_position`](Self::set_position) and
+/// [`set_velocity`](Self::set_velocity) move it, and
+/// [`remove`](Self::remove) takes it out. SGL hands out no handle, so an id
+/// that carries a generation never aliases an old collider.
 ///
 /// Work is bounded whatever the boxes' size: a collider spanning more than
 /// 1024 cells is not bucketed but checked by every query whose cells it
@@ -84,19 +89,74 @@ impl<V: Vector> ColliderSet<V> {
     /// Adds a collider, bucketing it into every grid cell its enclosing box,
     /// grown by its rounding allowance, meets, or keeping it apart when that
     /// is more than 1024 cells. A collider whose id is already in the set
-    /// replaces that one, in its place.
-    pub fn insert(&mut self, collider: Collider<V>) {
-        let index = if let Some(&index) = self.slots.get(&collider.id) {
+    /// replaces that one. Returns whether the id was already present.
+    pub fn insert(&mut self, collider: Collider<V>) -> bool {
+        let (index, present) = if let Some(&index) = self.slots.get(&collider.id) {
             self.unbucket(index);
             self.colliders[index] = collider;
-            index
+            (index, true)
         } else {
             let index = self.colliders.len();
             self.slots.insert(collider.id, index);
             self.colliders.push(collider);
             self.ranges.push(None);
-            index
+            (index, false)
         };
+        self.bucket(index);
+        present
+    }
+
+    /// Moves the collider with `id` to `position`, rebucketing it. Returns
+    /// whether the id was present; an absent id changes nothing.
+    pub fn set_position(&mut self, id: u64, position: V) -> bool {
+        let Some(&index) = self.slots.get(&id) else {
+            return false;
+        };
+        self.unbucket(index);
+        self.colliders[index].position = position;
+        self.bucket(index);
+        true
+    }
+
+    /// Sets the velocity of the collider with `id`, in world units per
+    /// second. Returns whether the id was present; an absent id changes
+    /// nothing.
+    pub fn set_velocity(&mut self, id: u64, velocity: V) -> bool {
+        let Some(&index) = self.slots.get(&id) else {
+            return false;
+        };
+        self.colliders[index].velocity = velocity;
+        true
+    }
+
+    /// Takes the collider with `id` out of the set. Returns whether the id
+    /// was present.
+    pub fn remove(&mut self, id: u64) -> bool {
+        let Some(index) = self.slots.remove(&id) else {
+            return false;
+        };
+        self.unbucket(index);
+        let last = self.colliders.len() - 1;
+        if index != last {
+            // The last collider takes the hole: its buckets and slot name
+            // its new place.
+            self.unbucket(last);
+            self.colliders.swap(index, last);
+            self.slots.insert(self.colliders[index].id, index);
+        }
+        self.colliders.pop();
+        self.ranges.pop();
+        if index != last {
+            self.bucket(index);
+        }
+        true
+    }
+
+    /// Buckets the collider at `index` into every grid cell its enclosing
+    /// box, grown by its rounding allowance, meets, or keeps it apart when
+    /// that is more than [`MAX_COLLIDER_CELLS`] cells.
+    fn bucket(&mut self, index: usize) {
+        let collider = &self.colliders[index];
         let half = collider.shape.half_extents();
         let grown = half + collider.rounding();
         let range = CellRange::<V>::of_corners(
@@ -154,8 +214,8 @@ impl<V: Vector> ColliderSet<V> {
         self.slots.clear();
     }
 
-    /// The colliders, in the order they were first inserted: a replacement
-    /// takes the place of the collider it replaced.
+    /// The colliders, in the set's own order, which inserts and removals
+    /// change. No query result depends on it.
     pub fn iter(&self) -> std::slice::Iter<'_, Collider<V>> {
         self.colliders.iter()
     }

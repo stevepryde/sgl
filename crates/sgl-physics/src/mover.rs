@@ -6,11 +6,12 @@ use sgl_core::{CanonicalWrite, StateHasher};
 
 use crate::config::MoverConfig;
 use crate::contacts::Contacts;
-use crate::query::{overlaps, pad};
+use crate::plane::{self, Plane};
+use crate::query::{Rule, first_contact, overlaps, pad, reaches};
 use crate::shape::{ALL_LAYERS, Collider, ColliderKind, Shape};
-use crate::slide::{Faces, clip_velocity, ground, slide_faces};
+use crate::slide::{Faces, back_off, clip_velocity, ground, lands, slide_faces};
 use crate::space::{self, Vector};
-use crate::sweep;
+use crate::sweep::{self, Tolerance};
 use crate::world::{Unanswered, World};
 
 /// Most distances along each axis the push-out tries, the nearest first, so
@@ -142,29 +143,48 @@ impl MoverOptions {
 /// `velocity` the part that points into what it touched and sets `floor`.
 /// Returns what the step ran into.
 ///
+/// Moving colliders (a lift, a door, another body) are the game's: it moves
+/// them, setting each one's `position` and `velocity` (in world units per
+/// second, over this `dt`), before it steps the bodies near them. A body is
+/// stepped against them as they stand then.
+///
 /// In order:
 ///
-/// 1. **Push-out.** A body that starts inside a solid collider is moved out
-///    the shortest way, at most its own size along each axis (its full
-///    extent on that axis), and the step goes on from there
-///    (`pushed_out`). One that cannot be freed so stays where it is,
-///    untouched, and the step reports `stuck`: what to do then is the
-///    game's. One-way platforms and sensors never push. The
-///    search tries at most [`MAX_PUSH_OUT_PLANES`] distances per axis, the
-///    nearest (staying put among them, and of two equally near the
-///    negative one), one of which may follow a ramp's plane, and a move
-///    along each ramp's normal. Of two equally short ways out, the one most
-///    along `up` wins, then the lowest component by component.
-/// 2. **Move** with [`slide`](crate::slide), by `velocity * dt`. A walking
-///    body is one on a floor at the start of the step and not rising.
-/// 3. **Step-up.** When a walking body is stopped by a wall and `step_height` is not zero,
+/// 1. **Carry.** A body whose `floor` names a collider that moves this step
+///    (found by its id under the body, where the ground probe looks or as
+///    far again below as the body is tall) is first moved as that collider
+///    moved, `velocity * dt`, until
+///    anything else blocks it, stopping a `skin` short as
+///    [`move_and_collide`](crate::move_and_collide) does (`carried_by`). A
+///    sensor never carries; a one-way platform does.
+/// 2. **Push-out.** A body inside a rigid solid collider is moved out and
+///    the step goes on from there (`pushed_out`). When a collider that
+///    moved this step is inside it, the body is first pressed the way that
+///    collider moved, until it is a `skin` clear of it, swept so it enters
+///    nothing else (`pushed_by`). Otherwise, or when that leaves it inside
+///    something, it is moved the shortest way out, at most its own size
+///    along each axis (its full extent on that axis), never against a
+///    moving collider's motion. One that cannot be freed so stays where it
+///    is, its velocity and floor untouched: `crushed` when a moving collider
+///    holds it (it is left pressed as far as it went, inside nothing but
+///    that collider), and `stuck` otherwise. What to do then is the game's.
+///    One-way platforms, soft colliders and sensors never push. The search
+///    tries at most [`MAX_PUSH_OUT_PLANES`] distances per axis, the nearest
+///    (staying put among them, and of two equally near the negative one),
+///    one of which may follow a ramp's plane, and a move along each ramp's
+///    normal. Of two equally short ways out, the one most along `up` wins,
+///    then the lowest component by component.
+/// 3. **Move** with [`slide`](crate::slide), by `velocity * dt`. A walking
+///    body is one on a floor at the start of the step and not rising. Soft
+///    colliders ([`Push::Soft`](crate::Push::Soft)) never stop it.
+/// 4. **Step-up.** When a walking body is stopped by a wall and `step_height` is not zero,
 ///    it lifts by up to `step_height` (a ceiling shortens the lift), makes
 ///    the same move across `up` (a ball or a capsule a little further, so
 ///    its rounded bottom clears the step's edge), and settles back down by
 ///    the lift plus the snap distance. The climb is kept (`stepped`) only
 ///    if it ends on a floor and gains more than `block_epsilon` of distance
 ///    along the requested direction across `up` over the plain move.
-/// 4. **Ledge guard.** When `ledge_drop` is set and a walking body's move
+/// 5. **Ledge guard.** When `ledge_drop` is set and a walking body's move
 ///    ends where no floor lies within `ledge_drop` below it (or within the
 ///    snap distance, if that is further: a drop the snap follows, such as
 ///    the ground falling away under a body walking down a ramp, is not a
@@ -173,10 +193,16 @@ impl MoverOptions {
 ///    last point where a floor still does (`ledge_guarded`). The body may
 ///    overhang until its trailing edge reaches the edge, and motion along
 ///    the edge is kept. The search halves [`LEDGE_SEARCH_STEPS`] times.
-/// 5. **Snap.** A walking body is snapped to the ground where it ends
+/// 6. **Soft contact.** A body overlapping soft colliders is nudged away
+///    from each along the way out of it, by at most that collider's limit
+///    in all, to a `skin` clear when the limits allow, by `Box2D`'s plane
+///    solver; the nudge is swept so it enters no rigid solid (`pushed_by`,
+///    when nothing moving pushed it, names the soft collider that nudged it
+///    furthest). Soft contact takes nothing from the velocity.
+/// 7. **Snap.** A walking body is snapped to the ground where it ends
 ///    ([`snap_to_ground`](crate::snap_to_ground)), so it follows seams and
 ///    small steps down.
-/// 6. **Velocity.** Every face the step met, in the order met, removes the
+/// 8. **Velocity.** Every face the step met, in the order met, removes the
 ///    part of `velocity` that points into it, by the rules
 ///    [`slide`](crate::slide) applies to the motion it has left: a floor removes the part against
 ///    `up` (a landing zeroes the fall, and a body standing on a ramp does
@@ -184,8 +210,11 @@ impl MoverOptions {
 ///    slide keeps the part along the wall, a head-bump zeroes the rise); a
 ///    slope too steep to stand on does too, gaining no height; and a later
 ///    face never turns it back into an earlier one, so in a corner or a
-///    wedge it follows the crease or stops.
-/// 7. **Floor.** A walking body's `floor` is the one the snap found under
+///    wedge it follows the crease or stops. A carried body that ends the
+///    step on no floor and touching no wall (it jumped, or walked off its
+///    platform) keeps the platform's velocity: it is added, as Godot's
+///    `CharacterBody` adds it by default.
+/// 9. **Floor.** A walking body's `floor` is the one the snap found under
 ///    it where it ends, or `None` when it has walked off its floor; any
 ///    other body's is the last floor it met, so a landing sets it.
 ///
@@ -304,10 +333,85 @@ impl<V: Vector, W: World<V> + ?Sized> World<V> for Passable<'_, W> {
 enum Escape<V> {
     /// It is inside nothing solid.
     Free,
-    /// It is out, after this translation.
-    Moved(V),
-    /// Nothing within its own size frees it.
+    /// It is out, after this translation, pushed by the moving collider
+    /// with this id or by none.
+    Moved { by: V, pusher: Option<u64> },
+    /// Nothing within its own size frees it, and nothing moved into it.
     Stuck,
+    /// A moving collider holds it against something else: pressed by this
+    /// translation, as far as it goes, and still inside the collider with
+    /// this id.
+    Crushed { by: V, pusher: u64 },
+}
+
+/// A press along a pusher's motion: how far it moved the body, whether that
+/// left the body free, and the pusher.
+struct Pressed<V> {
+    by: V,
+    free: bool,
+    pusher: u64,
+}
+
+/// A step that stops at its push-out (`stuck` or `crushed`): the body at
+/// `at` from where it started, its velocity and floor as they were.
+fn halted<V: Vector>(
+    state: MoverState<V>,
+    at: V,
+    mut contacts: Contacts<V>,
+    config: &MoverConfig<V>,
+) -> Result<(MoverState<V>, Contacts<V>), Halt> {
+    contacts.applied(at, config);
+    let mut next = state;
+    if at != V::ZERO {
+        next.position = state.position + at;
+        if !space::is_finite(next.position) {
+            return Err(Halt::Unsound);
+        }
+    }
+    Ok((next, contacts))
+}
+
+/// The world without the colliders in `skip`: a carried body's platform,
+/// or the pushers a pressed body is inside, which move with it.
+struct Except<'a, V: Vector, W: ?Sized> {
+    world: &'a W,
+    skip: &'a [Collider<V>],
+}
+
+impl<V: Vector, W: ?Sized> Except<'_, V, W> {
+    fn keeps(&self, collider: &Collider<V>) -> bool {
+        !self.skip.iter().any(|skip| skip.order(collider).is_eq())
+    }
+}
+
+impl<V: Vector, W: World<V> + ?Sized> World<V> for Except<'_, V, W> {
+    fn colliders_near(
+        &self,
+        min: V,
+        max: V,
+        visit: &mut dyn FnMut(&Collider<V>),
+    ) -> Result<(), Unanswered> {
+        self.world.colliders_near(min, max, &mut |collider| {
+            if self.keeps(collider) {
+                visit(collider);
+            }
+        })
+    }
+
+    fn colliders_along(
+        &self,
+        min: V,
+        max: V,
+        motion: V,
+        visit: &mut dyn FnMut(&Collider<V>),
+    ) -> Result<(), Unanswered> {
+        self.world
+            .colliders_along(min, max, motion, &mut |collider| {
+                if self.keeps(collider) {
+                    visit(collider);
+                }
+            })
+    }
 }
 
 /// One body, world and configuration for the length of a step.
@@ -339,16 +443,31 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         // Every stage below works in translations from `start`: `at` is
         // where the body is now, relative to it.
         let mut at = V::ZERO;
-        match self.push_out(start)? {
+        let platform = match state.floor {
+            Some(floor) => self.platform(start, floor.id, dt)?,
+            None => None,
+        };
+        if let Some(platform) = &platform {
+            at = self.carry(start, platform, dt)?;
+            contacts.carried_by = Some(platform.id);
+        }
+        let carried = platform.is_some();
+        let place = if carried { start + at } else { start };
+        match self.push_out(start, at, place, dt)? {
             Escape::Free => {}
-            Escape::Moved(by) => {
-                at = by;
+            Escape::Moved { by, pusher } => {
+                at = if carried { at + by } else { by };
                 contacts.pushed_out = true;
+                contacts.pushed_by = pusher;
             }
             Escape::Stuck => {
                 contacts.stuck = true;
-                contacts.applied(V::ZERO, config);
-                return Ok((state, contacts));
+                return halted(state, at, contacts, config);
+            }
+            Escape::Crushed { by, pusher } => {
+                contacts.crushed = true;
+                contacts.pushed_by = Some(pusher);
+                return halted(state, at + by, contacts, config);
             }
         }
 
@@ -374,6 +493,11 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         }
         contacts.absorb(&path.contacts);
         at = end;
+        let (nudge, nudged_by) = self.soft(start, at)?;
+        if nudge != V::ZERO {
+            at = at + nudge;
+            contacts.pushed_by = contacts.pushed_by.or(nudged_by);
+        }
         // A walking body stands on what lies under it where it ends, not on
         // what it touched on the way; one that is not walking lands on the
         // last floor it met.
@@ -394,12 +518,145 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
             return Err(Halt::Unsound);
         }
         contacts.applied(at, config);
+        let mut velocity = clip_velocity(state.velocity, path.faces.as_slice(), config);
+        // A body that leaves a moving platform, by a jump or a walk off its
+        // edge, keeps the platform's velocity, as Godot's `CharacterBody`
+        // does by default.
+        if let Some(platform) = &platform
+            && floor.is_none()
+            && !contacts.wall
+        {
+            velocity = velocity + platform.velocity;
+        }
         let next = MoverState {
             position,
-            velocity: clip_velocity(state.velocity, path.faces.as_slice(), config),
+            velocity,
             floor,
         };
         Ok((next, contacts))
+    }
+
+    /// The moving collider the body stands on at `start`: the one with
+    /// `id`, on its layers and not a sensor, whose box meets the body's box
+    /// swept down where the ground probe looks (the snap distance, or the
+    /// skin if that is longer) or, when none does, as far again below as
+    /// the body is tall (a platform that dropped away by its own motion),
+    /// the lowest in the fixed order where ids repeat; `None` when there is
+    /// none or it does not move in `dt`. The first search is the ground
+    /// probe's own query, so a world that answered the probe that left the
+    /// body here answers it.
+    fn platform(&self, start: V, id: u64, dt: f32) -> Result<Option<Collider<V>>, Unanswered> {
+        let config = self.config;
+        let up = config.up();
+        let near = space::max(config.snap_distance(), config.skin());
+        let mut found = self.floor_by_id(start, id, -up * near)?;
+        if found.is_none() {
+            let tall = 2.0 * space::reach(self.body.half_extents(), up);
+            found = self.floor_by_id(start, id, -up * (near + tall))?;
+        }
+        Ok(found.filter(|platform| platform.motion(dt) != V::ZERO))
+    }
+
+    /// The collider with `id` that could carry the body at `start`, whose
+    /// box, grown by its rounding allowance, meets the body's box swept by
+    /// `sweep`: a test every world's offer covers, so the answer never
+    /// depends on the world.
+    fn floor_by_id(&self, start: V, id: u64, sweep: V) -> Result<Option<Collider<V>>, Unanswered> {
+        let half = self.body.half_extents();
+        let (min, max) = (start - half, start + half);
+        let grow = pad(
+            space::min_each(min, min + sweep),
+            space::max_each(max, max + sweep),
+        );
+        let (lo, hi) = (min - grow * 0.5, max + grow * 0.5);
+        let mut found: Option<Collider<V>> = None;
+        self.world
+            .colliders_along(min - grow, max + grow, sweep, &mut |collider| {
+                if collider.id == id
+                    && collider.kind.blocks()
+                    && collider.layers & self.mask != 0
+                    && collider.occupies()
+                    && reaches(lo, hi, sweep, collider)
+                    && found.is_none_or(|found| collider.order(&found).is_lt())
+                {
+                    found = Some(*collider);
+                }
+            })?;
+        Ok(found)
+    }
+
+    /// The carry: the body at `start` moved as `platform` moved in `dt`,
+    /// until the first collider other than the platform blocks it, a `skin`
+    /// short of it along its path, as [`move_and_collide`](crate::move_and_collide)
+    /// stops. The translation, relative to `start`.
+    fn carry(&self, start: V, platform: &Collider<V>, dt: f32) -> Result<V, Halt> {
+        let motion = platform.motion(dt);
+        self.press_along(start, V::ZERO, motion, core::slice::from_ref(platform))
+    }
+
+    /// The body at `start + at` moved by `motion` through the world without
+    /// `skip`, stopped a `skin` short of the first collider that blocks it
+    /// along its path: the translation it makes.
+    fn press_along(&self, start: V, at: V, motion: V, skip: &[Collider<V>]) -> Result<V, Halt> {
+        if !lands(self.body, start, at, motion) {
+            return Err(Halt::Unsound);
+        }
+        let world = Except {
+            world: &self.world,
+            skip,
+        };
+        let rule = Rule::Move(self.config);
+        let hit = first_contact(self.body, start, at, motion, &world, self.mask, rule)?;
+        Ok(hit.map_or(motion, |hit| back_off(motion, &hit, self.config.skin())))
+    }
+
+    /// Soft contact: the body at `start + at` nudged away from every soft
+    /// collider it overlaps, along the plane [`sweep::way_apart`] gives,
+    /// each by at most its limit, by `Box2D`'s plane solver to a `skin` clear,
+    /// then swept so it enters no solid. The translation and the soft
+    /// collider that pushed it furthest (the lowest in the fixed order of
+    /// equals).
+    fn soft(&self, start: V, at: V) -> Result<(V, Option<u64>), Halt> {
+        let near = overlaps(self.body, start + at, &self.world, self.mask)?;
+        let order = self.config.tie_order();
+        let mut planes = Vec::new();
+        let mut ids = Vec::new();
+        for collider in &near {
+            let Some(limit) = collider.soft() else {
+                continue;
+            };
+            if !(limit > 0.0 && limit.is_finite()) {
+                continue;
+            }
+            let rel = (collider.position - start) - at;
+            let cut = collider.cut.as_ref();
+            if let Some((normal, offset)) =
+                sweep::way_apart(self.body, &collider.shape, cut, rel, order)
+            {
+                planes.push(Plane {
+                    normal,
+                    offset,
+                    limit,
+                    push: 0.0,
+                });
+                ids.push(collider.id);
+            }
+        }
+        if planes.is_empty() {
+            return Ok((V::ZERO, None));
+        }
+        let nudge = plane::solve(V::ZERO, &mut planes, self.config.skin());
+        if nudge == V::ZERO {
+            return Ok((V::ZERO, None));
+        }
+        let mut furthest: Option<(f32, u64)> = None;
+        for (plane, &id) in planes.iter().zip(&ids) {
+            if plane.push > 0.0 && furthest.is_none_or(|(push, _)| plane.push > push) {
+                furthest = Some((plane.push, id));
+            }
+        }
+        let moved = self.press_along(start, at, nudge, &[])?;
+        Ok((moved, furthest.map(|(_, id)| id)))
     }
 
     /// [`slide`](crate::slide) of the body at `start + at` by `delta`.
@@ -519,11 +776,11 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         Ok((here, path, shortened))
     }
 
-    /// Moves a body that starts inside a solid collider out by the shortest
-    /// translation, at most its own size along each axis, that leaves it
-    /// inside none. Candidates put the body a `skin` from a face of a solid
-    /// it could reach on each axis, or leave that axis alone; on one axis a
-    /// candidate may instead put it a `skin` out of a ramp's plane, by
+    /// Moves a body that starts inside a rigid solid collider out by the
+    /// shortest translation, at most its own size along each axis, that
+    /// leaves it inside none. Candidates put the body a `skin` from a face of
+    /// a solid it could reach on each axis, or leave that axis alone; on one
+    /// axis a candidate may instead put it a `skin` out of a ramp's plane, by
     /// however far that is given its other axes' distances; and one moves it
     /// along each ramp's normal a `skin` out of its plane, and one along the
     /// normal out of each round or convex overlap whose cores are apart a
@@ -533,13 +790,78 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
     /// and a place `f32` cannot hold is none. Planes come from each
     /// collider's bounding box, so a round or convex collider offers the
     /// faces of the box that encloses it.
-    fn push_out(&self, at: V) -> Result<Escape<V>, Unanswered> {
+    ///
+    /// A body inside a collider that moved this step (a pusher) is first
+    /// pressed the way it moved ([`Self::press`]), and that wins when it
+    /// leaves the body free; otherwise no candidate moves it against any
+    /// pusher's motion, and when none frees it the body is crushed, pressed
+    /// as far as it went.
+    ///
+    /// The body is at `at`, which is `start + offset`; the translation
+    /// returned is from `at`.
+    fn push_out(&self, start: V, offset: V, at: V, dt: f32) -> Result<Escape<V>, Halt> {
         let near = overlaps(self.body, at, &self.world, self.mask)?;
         let cores: Vec<Collider<V>> = near.iter().filter_map(solid_core).collect();
         if !self.inside(at, &cores)? {
             return Ok(Escape::Free);
         }
-        let outs = self.ways_out(at, &cores);
+        let mut pushers = Vec::new();
+        for collider in &near {
+            if let Some(core) = solid_core(collider)
+                && collider.motion(dt) != V::ZERO
+                && self.inside(at, core::slice::from_ref(&core))?
+            {
+                pushers.push(*collider);
+            }
+        }
+        let pressed = if pushers.is_empty() {
+            None
+        } else {
+            self.press(start, offset, &pushers, dt)?
+        };
+        if let Some(pressed) = &pressed
+            && pressed.free
+        {
+            return Ok(Escape::Moved {
+                by: pressed.by,
+                pusher: Some(pressed.pusher),
+            });
+        }
+        let pusher = pressed
+            .as_ref()
+            .map(|pressed| pressed.pusher)
+            .or_else(|| pushers.first().map(|first| first.id));
+        let (candidates, cores) = self.places(at, &cores)?;
+        // A pusher never pushes a body back through itself.
+        let along = |by: V| {
+            pushers
+                .iter()
+                .all(|pusher| space::dot(by, pusher.motion(dt)) >= 0.0)
+        };
+        for by in candidates {
+            if along(by) && !self.inside(at + by, &cores)? {
+                return Ok(Escape::Moved { by, pusher });
+            }
+        }
+        Ok(match pusher {
+            Some(pusher) => Escape::Crushed {
+                by: pressed.map_or(V::ZERO, |pressed| pressed.by),
+                pusher,
+            },
+            None => Escape::Stuck,
+        })
+    }
+
+    /// The places a push-out tries for the body at `at`, inside some of
+    /// `cores`, nearest first (see [`Self::push_out`]), and the cores of
+    /// every rigid solid within its reach, which decide whether a place is
+    /// free.
+    fn places(
+        &self,
+        at: V,
+        cores: &[Collider<V>],
+    ) -> Result<(Vec<V>, Vec<Collider<V>>), Unanswered> {
+        let outs = self.ways_out(at, cores);
         let skin = self.config.skin();
 
         // Everything the body could overlap anywhere within its reach.
@@ -550,9 +872,7 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         let mut solids = Vec::new();
         self.world
             .colliders_near(min - grow, max + grow, &mut |collider| {
-                if collider.kind == ColliderKind::Solid
-                    && collider.layers & self.mask != 0
-                    && collider.occupies()
+                if collider.rigid_solid() && collider.layers & self.mask != 0 && collider.occupies()
                 {
                     solids.push(*collider);
                 }
@@ -638,12 +958,70 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
                 .then_with(|| space::dot(*b, up).total_cmp(&space::dot(*a, up)))
                 .then_with(|| space::compare(*a, *b))
         });
-        for (_, by) in candidates {
-            if !self.inside(at + by, &cores)? {
-                return Ok(Escape::Moved(by));
+        Ok((candidates.into_iter().map(|(_, by)| by).collect(), cores))
+    }
+
+    /// Presses the body at `start + offset`, inside the moving `pushers`,
+    /// the way one of them moved: by as much as puts the body a `skin`
+    /// clear of where that pusher now is, had it been pushed from where the
+    /// pusher was before it moved, and no more than the pusher moved. The
+    /// pusher that would press it furthest decides (the lowest in the fixed
+    /// order of equals). The press is swept through the world without the
+    /// pushers and stops a `skin` short of whatever blocks it, so it never
+    /// enters anything else. `None` when no pusher met the body on its way
+    /// (it was inside the pusher before it moved).
+    fn press(
+        &self,
+        start: V,
+        offset: V,
+        pushers: &[Collider<V>],
+        dt: f32,
+    ) -> Result<Option<Pressed<V>>, Halt> {
+        let skin = self.config.skin();
+        let order = self.config.tie_order();
+        let mut best: Option<(f32, V, u64)> = None;
+        for pusher in pushers {
+            let motion = pusher.motion(dt);
+            // Where it was, relative to the body.
+            let was = ((pusher.position - start) - offset) - motion;
+            let cut = pusher.cut.as_ref();
+            let tolerance = Tolerance::Skin(skin);
+            let Some(contact) = sweep::sweep(
+                self.body,
+                -motion,
+                &pusher.shape,
+                cut,
+                was,
+                order,
+                tolerance,
+            ) else {
+                continue;
+            };
+            // The body, moving back along the pusher's motion, meets it at
+            // `t`; pushed by the rest of the motion it would touch the
+            // pusher, and the part a skin takes along the normal leaves the
+            // gap.
+            let approach = space::dot(motion, contact.normal).abs();
+            let met = space::max(0.0, contact.t - skin / approach);
+            let by = motion * (1.0 - met);
+            let length = space::dot(by, by);
+            if best.is_none_or(|(longest, _, _)| length > longest) {
+                best = Some((length, by, pusher.id));
             }
         }
-        Ok(Escape::Stuck)
+        let Some((_, by, pusher)) = best else {
+            return Ok(None);
+        };
+        let by = self.press_along(start, offset, by, pushers)?;
+        let free = !self.solid_at(start + (offset + by))?;
+        Ok(Some(Pressed { by, free, pusher }))
+    }
+
+    /// Whether the body at `at` is inside any rigid solid on its layers.
+    fn solid_at(&self, at: V) -> Result<bool, Unanswered> {
+        let near = overlaps(self.body, at, &self.world, self.mask)?;
+        let cores: Vec<Collider<V>> = near.iter().filter_map(solid_core).collect();
+        self.inside(at, &cores)
     }
 
     /// For each of `cores` the body at `at` overlaps through the kernel with
@@ -710,15 +1088,16 @@ fn resolve<V: Vector>(
     Some(by)
 }
 
-/// A solid collider less its rounding allowance on each side, its cut
-/// included, or `None` for any other kind. A body whose edge equals a face
+/// A rigid solid collider less its rounding allowance on each side, its
+/// cut included, or `None` for a soft one and any other kind. A body whose
+/// edge equals a face
 /// in world coordinates can lie a rounding step inside it once taken
 /// relative to the body: that is touching, and a push-out must neither
 /// start from it nor count it against a place to move to. A ball or a
 /// capsule loses the largest allowance from its radius; a convex shape is
 /// kept whole, since the mover leaves a body a skin from one.
 fn solid_core<V: Vector>(collider: &Collider<V>) -> Option<Collider<V>> {
-    if collider.kind != ColliderKind::Solid {
+    if !collider.rigid_solid() {
         return None;
     }
     let rounding = collider.rounding();

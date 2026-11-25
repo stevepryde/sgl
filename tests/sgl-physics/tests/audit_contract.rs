@@ -363,6 +363,8 @@ fn a_3d_world_with_no_z_motion_answers_as_the_2d_one() {
                 cut: c
                     .cut
                     .map(|cut| sgl_physics::Cut::new(lift(given_normal(&cut), 0.0), cut.offset())),
+                velocity: lift(c.velocity, 0.0),
+                push: c.push,
             })
             .collect();
         let case3 = Case {

@@ -49,7 +49,9 @@ impl<V: Vector> CanonicalWrite for Hit<V> {
 ///
 /// Sensors are passed through. A one-way platform is met like any solid
 /// box: a cast knows no up axis. A game whose casts should pass its
-/// platforms puts them on their own layer and leaves it out of `mask`.
+/// platforms puts them on their own layer and leaves it out of `mask`. A
+/// soft collider is met as any solid, and every collider where it stands:
+/// its velocity is not read.
 ///
 /// A body touching a face, or inside it by no more than the rounding of the
 /// collider's own coordinates (`4ε(|position| + half)` on that axis), meets
@@ -89,9 +91,11 @@ pub fn cast<V: Vector, W: World<V> + ?Sized>(
 /// break, a slide of its own) is the game's. For projectiles, pushed crates
 /// and anything whose response is not a character's.
 ///
-/// Colliders block as they do for [`slide`](crate::slide): sensors never,
-/// a one-way platform only motion into its floor face, and a collider the
-/// body starts inside only motion deeper into it. A body stopped against a
+/// Colliders block as they do for [`slide`](crate::slide): sensors and soft
+/// colliders ([`Push::Soft`](crate::Push::Soft)) never, a one-way platform
+/// only motion into its floor face, and a collider the body starts inside
+/// only motion deeper into it. Every collider is taken where it stands; its
+/// velocity is not read. A body stopped against a
 /// face and moved again along it is not blocked by that face. A non-finite
 /// `delta`, position or body size moves nothing, and so does a move whose
 /// end `f32` cannot hold (a finite position and motion whose sum is not
@@ -139,9 +143,10 @@ pub fn ray<V: Vector, W: World<V> + ?Sized>(
 /// the kernel (a box and a convex shape, say) that touch exactly may read
 /// either way.
 ///
-/// The list is in a fixed order (id, then position, then shape, kind and
-/// layers), never the order the world visited them in, and lists each
-/// collider once however many times the world visited it.
+/// The list is in a fixed order (id, then position, then shape, kind,
+/// layers, cut, velocity and push), never the order the world visited them
+/// in, and lists each collider once however many times the world visited
+/// it. Every collider is taken where it stands, soft ones included.
 pub fn overlaps<V: Vector, W: World<V> + ?Sized>(
     body: &Shape<V>,
     position: V,
@@ -211,7 +216,8 @@ impl<V: Vector> CanonicalWrite for Separation<V> {
 ///
 /// `None` when the collider occupies nothing, or the body's shape or
 /// position is not sound (a negative or non-finite size, a non-finite
-/// position).
+/// position). The collider is taken where it stands: its velocity and push
+/// are not read.
 #[must_use]
 pub fn distance<V: Vector>(
     body: &Shape<V>,
@@ -260,8 +266,14 @@ pub(crate) fn first_contact<V: Vector, W: World<V> + ?Sized>(
     );
     let near = (start_min - pad * 0.5, start_max + pad * 0.5);
     let mut best: Option<Candidate<V>> = None;
+    // The mover's sweeps pass a soft collider: it nudges a body after its
+    // move instead of stopping it.
+    let passes_soft = matches!(rule, Rule::Move(_));
     let mut consider = |collider: &Collider<V>| {
         if collider.layers & mask == 0 || !collider.kind.blocks() || !collider.occupies() {
+            return;
+        }
+        if passes_soft && collider.soft().is_some() {
             return;
         }
         if !sweep::closed_form(body, &collider.shape) && !reaches(near.0, near.1, delta, collider) {
@@ -360,7 +372,7 @@ fn contact<V: Vector>(
 /// offers; this keeps to colliders every world offers (its region is padded
 /// by twice what the caller pads `min..=max` by), so the result never
 /// depends on the world. A collider it leaves out the body never reaches.
-fn reaches<V: Vector>(min: V, max: V, delta: V, collider: &Collider<V>) -> bool {
+pub(crate) fn reaches<V: Vector>(min: V, max: V, delta: V, collider: &Collider<V>) -> bool {
     let reach = collider.shape.half_extents() + collider.rounding();
     let (lo, hi) = (collider.position - reach, collider.position + reach);
     let (mut enter, mut leave) = (0.0f32, 1.0f32);

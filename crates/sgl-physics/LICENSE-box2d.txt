@@ -5,8 +5,9 @@ src/distance.c, with the types of include/box2d/collision.h and the vector
 functions of include/box2d/math_functions.h, to src/convex.rs, src/convex/d2.rs
 and src/convex/d2/toi.rs; the contact manifold of src/manifold.c and the
 segment distance of src/distance.c to src/planar/collide.rs and
-src/planar/collide/polygons.rs; and the single-pair contact impulse of
-src/contact_solver.c to src/planar/bump.rs (PROVENANCE.md).
+src/planar/collide/polygons.rs; the single-pair contact impulse of
+src/contact_solver.c to src/planar/bump.rs; and the plane solver of
+src/mover.c to src/plane.rs (PROVENANCE.md).
 
 MIT License
 

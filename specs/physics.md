@@ -9,8 +9,9 @@ whose play is stacking, joints or rag dolls adds Rapier itself.
 This slice gives box bodies against box colliders, whole or cut by one
 plane into ramps (#915), the mover step (#916), round bodies (balls and
 capsules) and convex colliders met through a convex kernel ported from
-Box2D and Box3D (#919, 19), and planar bumps for vehicles (#921, 20).
-Later slices (moving colliders, surfaces) are planned in #914 and are not
+Box2D and Box3D (#919, 19), planar bumps for vehicles (#921, 20), and moving
+colliders: platforms that carry and push, bodies that block or nudge each
+other, and triggers (#920, 21). The last slice (surfaces) is planned in #914 and is not
 available until they land.
 
 ## Requirements
@@ -45,9 +46,10 @@ available until they land.
    instant resolve to the lowest id, then the lowest position, compared
    component by component (then the normal, the shape and the cut, so the
    order is total). A list of colliders is in a fixed order (id, position,
-   shape, kind, layers, cut) and holds each collider once, however many
-   times a world visited it. A set is derived data: a game may keep it or rebuild it from
-   its own state at any step and get the same results.
+   shape, kind, layers, cut, velocity, push) and holds each collider once,
+   however many times a world visited it. A set is derived data: a game may
+   keep it and update it by id, or rebuild it from its own state at any
+   step, in any order, and get the same results.
 7. **One implementation for each pair of shapes,** and one mover for every
    body shape, generic over the sealed `Vector` trait for `Vec2` and `Vec3`:
    no 2D-only or 3D-only copy of an algorithm. Box against box, whole or
@@ -68,7 +70,9 @@ available until they land.
 9. **Colliders.** A `Collider` is a `Shape` (`Box { half }`, `Ball {
    radius }`, `Capsule { half_axis, radius }` or `Convex`, 19) at a
    position (its centre), a `ColliderKind` (`Solid`, `OneWay` or
-   `Sensor`), `layers: u32`, `id: u64` and an optional `Cut` (16, Ramps).
+   `Sensor`), `layers: u32`, `id: u64`, an optional `Cut` (16, Ramps), a
+   `velocity` (zero by default) and a `push` (`Push::Rigid` by default, or
+   `Push::Soft(limit)`), which only the mover reads (21).
    The id is the game's: SGL carries it into results and uses it to break
    ties, and hands out no handles.
    Within one `ColliderSet` an id is unique, and inserting an id already
@@ -105,7 +109,8 @@ available until they land.
     - `CellWorld` is a tile or voxel grid the game answers cell by cell: a
       cell size and a function from an integer cell to that cell's
       colliders in cell-local units (the cell runs from 0 to 1), converted
-      by SGL as `(cell + local) * cell_size`. A cell's colliders lie within
+      by SGL as `(cell + local) * cell_size`, its velocity (cells per
+      second) and a soft push's limit scaled by the cell size. A cell's colliders lie within
       it, so it grows the region by `8ε(largest coordinate + cell_size)`,
       which covers their rounding allowance, and walks every cell the grown
       region meets, a cell whose upper face the region starts on included.
@@ -200,7 +205,9 @@ available until they land.
     read the same near the origin and far from it (3). A `move_and_slide` step also reports whether
     it climbed a step (`stepped`), its ledge guard shortened the move
     (`ledge_guarded`), it pushed the body out (`pushed_out`) or the body is
-    `stuck`. The last-contact fields report; the mover's velocity rule
+    `stuck` or `crushed`, and the ids of the moving collider that carried
+    the body (`carried_by`) and of the collider that pushed it
+    (`pushed_by`, 21). The last-contact fields report; the mover's velocity rule
     reads every face met (17), not them.
 15. **Queries.** `overlaps` lists every collider on the masked layers the
     body's shape overlaps, sensors included, in the fixed order, each once.
@@ -283,7 +290,10 @@ available until they land.
     from a rounded absolute position, `effective` and the blocked flags
     read it (14), and the position written back is the start plus it. In
     order, it:
-    - pushes a body that starts inside a solid collider out the shortest
+    - carries a body standing on a moving collider as it moved (21); the
+      push-out reads the body at the place the carry left it;
+    - pushes a body inside a rigid solid collider out (one that a moving
+      collider moved into is pressed the way it moved first, 21) the shortest
       way that frees it, at most its own size along each axis: the body's
       full extent on that axis (twice its half-extent). It tries at
       most `MAX_PUSH_OUT_PLANES` (8) distances per axis, each putting the
@@ -300,7 +310,8 @@ available until they land.
       along `up`, then the lowest component by component, x first. Whether
       a place is free is decided by each collider's real shape, cut
       included (`overlaps`). One it cannot free stays untouched and reports
-      `stuck`. One-way colliders and sensors never push;
+      `stuck` (or `crushed`, 21), its velocity and floor untouched.
+      One-way colliders, soft colliders and sensors never push;
     - moves by `velocity * dt` with one `slide`, whose floor rule (16)
       keeps a walk's motion across `up` whole, on flat floors and ramps; a
       walking body is one on a floor at the start and not rising along
@@ -325,6 +336,7 @@ available until they land.
       supported point, found by halving `LEDGE_SEARCH_STEPS` (16) times;
       the body may overhang until its trailing edge reaches the edge, and
       motion along the edge is kept;
+    - nudges a body off the soft colliders it overlaps (21);
     - snaps a walking body to the ground where it ends;
     - removes from `velocity`, for every face the step met in the order
       met, the part that points into it, by the rules `slide` applies to
@@ -333,7 +345,8 @@ available until they land.
       steep to stand on does too and gives it no height; and a later face
       never turns it into an earlier one (a floor counting as `up`), so it
       follows their crease or stops. A body wedged between faces, or
-      pinned in a corner, keeps no velocity into any of them;
+      pinned in a corner, keeps no velocity into any of them. A carried body
+      that leaves its platform keeps the platform's velocity (21);
     - sets `floor`: for a walking body, the floor the snap finds under it
       where it ends, or `None` once it has walked off one, whatever it
       touched on the way; for any other body, the last floor it met, so a
@@ -374,7 +387,8 @@ available until they land.
     its turned points and is validated again, to the same bits, when
     deserialised. Its largest postcard size is `Convex::MAX_POSTCARD_BYTES`
     (193 in 3D, 65 in 2D); `Shape::MAX_POSTCARD_BYTES` grows to that plus
-    a tag (194, 66) and `Collider::MAX_POSTCARD_BYTES` with it (239, 103).
+    a tag (194, 66) and `Collider::MAX_POSTCARD_BYTES` with it (256, 116,
+    with its velocity and push, 21).
     - **The kernel.** Every pair but box against box goes through
       `crate::convex`, GJK distance and the conservative-advancement shape
       cast ported from Box2D 3.2 and Box3D 0.1 (`PROVENANCE.md`): each
@@ -572,6 +586,107 @@ available until they land.
       pressed together is bumped once a step and pushed apart when it
       sinks in), and a pair the caps or a failed time of impact leave
       overlapping.
+21. **Moving colliders.** A game moves its colliders itself, each step,
+    before it steps the bodies near them: it sets a collider's `position`
+    and its `velocity`, in world units per second, so `velocity * dt` is
+    what it moved this step. It updates a `ColliderSet` by the collider's
+    own id (`insert`, which replaces a present id, `set_position`,
+    `set_velocity` and `remove`, each returning whether the id was
+    present; SGL hands out no handle), or rebuilds it from its own state;
+    results never depend on the order of inserts, moves or removals (6). A
+    velocity that is not finite moves nothing. Only `move_and_slide` reads
+    a velocity: `slide`, `snap_to_ground`, `move_and_collide`, `cast`,
+    `ray`, `overlaps`, `distance` and `find_ledge` take every collider
+    where it stands.
+    - **Carry.** A body whose `floor` names a collider that moves this step
+      is first moved as it moved, by its `velocity * dt`, through
+      everything but that collider, stopped a `skin` short of what blocks
+      it as `move_and_collide` stops: a carry that would press the body
+      into a wall, or through a shaft's rim beside the platform, stops
+      there. The step reports `carried_by`. It finds the floor by its id,
+      on the body's layers and not a sensor, the lowest in the fixed order
+      where ids repeat, among the colliders whose box meets the body's box
+      swept down where the ground probe looks (the snap distance, or the
+      skin if that is longer) or, when none does there, as far again below
+      as the body is tall: a platform that dropped away by its own motion
+      this step is still found, so a descending lift keeps its rider. The
+      first search is the ground probe's own query, so a world that
+      answered the probe that left the body there answers it. When the
+      floor is not there, nothing is carried. A one-way platform carries; a
+      sensor never does. The carry comes before the body's own move, so the
+      ground probe after it finds the platform where it moved to.
+    - **Leaving.** A carried body that ends the step on no floor and
+      touching no wall (it jumped, or walked off the platform's edge) has
+      the platform's velocity added to its velocity, as Godot's
+      `CharacterBody` does by default (`PLATFORM_ON_LEAVE_ADD_VELOCITY`).
+      The game sees it in the state and keeps or clears it.
+    - **Push and crushed.** A rigid solid collider that moved into a body is
+      a solid the body is inside, and the push-out (17) frees it. When a
+      collider the body is inside moved this step, the body is first
+      pressed the way that collider moved: by as much of its motion as puts
+      the body a `skin` clear of where it now is, read by sweeping the body
+      back along that motion against it where it was, and no more than it
+      moved; of several, the one that presses furthest. The press is swept
+      through everything but those colliders and stops a `skin` short of
+      what blocks it. When it leaves the body free, the push-out ends there
+      (`pushed_out`, `pushed_by`). Otherwise the push-out's nearest free
+      place is taken, never one against a moving collider's motion, so a
+      body is never pushed back through the collider that pushes it. When
+      none frees it, the body is held between a moving collider and
+      something else: it stays where the press left it, inside nothing but
+      the colliders that hold it, its velocity and floor as they were, and
+      the step reports `crushed` and the collider in `pushed_by` and moves
+      it no further. A collider that was already inside the body before it
+      moved has no way it came in by: the push-out's nearest free place
+      frees the body, or it is `crushed`. Guaranteed: a body free at the
+      start of a step never ends it inside a rigid solid by more than
+      rounding, unless the step reports `crushed`, and then only inside
+      the moving colliders that hold it. Not guaranteed: a collider that
+      moves further than the body's size in one step can pass through it.
+    - **Soft contact.** A solid collider with `Push::Soft(limit)` never
+      stops a body the mover steps: the sweeps of `slide`, `snap_to_ground`,
+      `move_and_collide` and `move_and_slide` pass it, it is never a floor,
+      and `find_ledge` does not count it. After its move, step-up and ledge
+      guard, before the snap, a body overlapping soft colliders is
+      displaced away from each along a plane: the normal and depth between
+      their cores where the kernel knows one (19), otherwise the axis along
+      which the boxes enclosing the two shapes overlap least, out of the
+      side the collider is not on, ties going to the axis most along `up`,
+      then y, x, z. A plane solve ported from Box2D v3.2.0's
+      `b2SolvePlanes` (`PROVENANCE.md`) places the body: at most
+      `MAX_PLANE_ITERATIONS` (20) passes over the planes in the fixed order,
+      each plane's accumulated push held within `0..=limit`, aiming a
+      `skin` clear of each and stopping when a pass pushes less than the
+      skin in all. So each soft collider nudges a body by at most its limit
+      a step, and two bodies that walk into each other faster than their
+      limits pass through each other. The displacement is swept and stops
+      a `skin` short of any rigid solid. `pushed_by` names the soft collider
+      that pushed furthest (the lowest in the fixed order of equals) when
+      nothing moving pushed the body. Soft contact takes nothing from the
+      velocity, as Box2D's soft planes do not clip it. `with_push` refuses
+      a negative or non-finite limit, and the mover nudges nothing by one.
+      A `push` is read only for a solid collider; `cast`, `ray`, `overlaps`
+      and `distance` meet a soft one as any solid.
+    - **Bodies against bodies** are the game's composition. It keeps the
+      other bodies' shapes as colliders in a set (rigid to block, soft to
+      nudge, with their velocities, so a body standing on another rides it)
+      and steps its bodies in ascending id: each is stepped against the
+      others as they stand at that moment, its own collider taken out of
+      the set for its step and put back where it ended. SGL holds no body
+      list and hides no order.
+    - **Triggers.** `sensors_at(shape, position, world, mask)` lists the
+      ids of the sensors the shape overlaps (touching is not overlap, 15),
+      ascending, each once, as a `Vec`: a body may stand in any number of
+      sensors, and a list never drops one. `sensor_events(before, after)`
+      gives the ids entered and left between two such lists, each
+      ascending, whatever the order or repeats of its inputs, as Box2D's
+      sensor begin and end events. The game keeps the lists, so they roll
+      back with the rest of its state.
+    - **Not offered.** Rotating platforms (a turning platform neither turns
+      nor swings its rider), conveyors that move a rider while standing
+      still (a surface velocity), carrying by a wall the body leans on
+      (Godot's `platform_wall_layers`), a mover that pushes the bodies it
+      walks into (Box2D's `PushBodies`), and Box2D's `b2ClipVector`.
 
 ## Acceptance
 
@@ -631,6 +746,20 @@ available until they land.
   crease of a ramp and a wall penetrates neither, and one wedged in a crease
   follows it; ramps mirror across each axis and between y-up and y-down;
   and a cell world of ramps moves bit-equal to the slice.
+- The moving-collider requirements hold in 2D and 3D
+  (`tests/sgl-physics/tests/moving.rs`): a rider keeps its place on a
+  platform moving every way and leaves it only by walking or jumping, with
+  the platform's velocity; a collider moved into a body pushes it clear the
+  way it moved, and one that would crush it against a wall reports
+  `crushed` and never leaves it in the wall; rigid bodies block each other
+  and soft ones nudge each other by no more than the limit and separate
+  when released; random worlds of moving colliders never leave a body
+  inside a rigid solid unless `crushed`; a set kept and updated by id and
+  one rebuilt shuffled step bit-equal; a restored scene replays bit-equal;
+  and the game scenarios of a lift, a shaft's rim, a crusher, a door, a
+  soft crowd, two boats and a pickup hold
+  (`tests/sgl-physics/tests/scenarios_moving.rs`). The parity fixtures
+  include a seeded walk among a lift, a door, soft bodies and a sensor.
 - The mover's requirements hold in 2D and 3D
   (`tests/sgl-physics/tests/mover.rs`), and so do the game scenarios of a
   voxel walker through a `CellWorld`, on ramps included, and a 2D platformer

@@ -17,7 +17,7 @@ reference do not need to be in every prompt.
 | Build a 2D game | [sgl-2d](../crates/sgl-2d/README.md) | [Minimal window and sprite](../examples/direct-game/src/main.rs) |
 | Add a HUD, menu, or editing tool | [sgl-2d UI](../crates/sgl-2d/README.md#ui-and-huds), [tool composition](../specs/client.md#tool-composition) | [Tool UI](../examples/sgl-2d/examples/tool_ui.rs) |
 | Add fixed-step simulation or deterministic helpers | [sgl-core](../crates/sgl-core/README.md) | [Public modules](../crates/sgl-core/src/lib.rs) |
-| Move boxes, balls and capsules through a 2D or 3D world of boxes, ramps, convex shapes, tiles or voxels; choose a game's physics | [sgl-physics](../crates/sgl-physics/README.md), [Physics](#physics) | [Platformer](../examples/sgl-physics/examples/platformer.rs), [networked mover](../examples/sgl-physics/examples/net_mover.rs), [public API](../crates/sgl-physics/src/lib.rs) |
+| Move boxes, balls and capsules through a 2D or 3D world of boxes, ramps, convex shapes, tiles or voxels, with lifts, doors, crowds and triggers; choose a game's physics | [sgl-physics](../crates/sgl-physics/README.md), [Physics](#physics) | [Platformer](../examples/sgl-physics/examples/platformer.rs), [networked mover](../examples/sgl-physics/examples/net_mover.rs), [public API](../crates/sgl-physics/src/lib.rs) |
 | Add multiplayer transport | [sgl-net](../crates/sgl-net/README.md) | [Transport API](../crates/sgl-net/src/lib.rs) |
 | Predict the local player and interpolate everyone else over the network | [sgl-core](../crates/sgl-core/README.md) | [`prediction`](../crates/sgl-core/src/prediction.rs) |
 | Add controller support | [sgl-input](../crates/sgl-input/README.md) | [Controller example](../examples/sgl-input/examples/controllers.rs) |
@@ -86,7 +86,12 @@ Choose by what the game is.
   or a `CellWorld` the game answers cell by cell, with plain state that
   serialises and hashes. A top-down game's round body slides around
   corners, and a character in a level that is not a grid walks as a
-  capsule: neither needs Rapier's character controller. A driving game's
+  capsule: neither needs Rapier's character controller. Lifts, doors,
+  crushers, boats and other characters are colliders the game moves by id
+  with a velocity: the mover carries a rider, pushes a body aside or
+  reports it `crushed`, and a soft collider nudges a crowd apart by a limit
+  instead of blocking it; `sensors_at` and `sensor_events` report the
+  triggers a body entered and left. A driving game's
   contacts (cars, karts, traffic, props and boats bumping in the ground
   plane) are `sgl_physics::planar`: `advance` steps the bodies through
   their impacts in time order and returns them; handling stays the

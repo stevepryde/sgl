@@ -4,7 +4,7 @@ use sgl_core::{CanonicalWrite, StateHasher};
 
 use crate::config::MoverConfig;
 use crate::query::{move_and_collide, overlaps};
-use crate::shape::{Collider, ColliderKind, Shape};
+use crate::shape::{Collider, Shape};
 use crate::slide::snap_to_ground;
 use crate::space::{self, Vector};
 use crate::world::{Unanswered, World};
@@ -49,9 +49,10 @@ impl<V: Vector> CanonicalWrite for Ledge<V> {
 /// a slide into the wall leaves the body; a `skin` of zero finds nothing.
 /// The wall blocks as it does for a move, so a one-way platform's side is
 /// never a wall and its edge is never reported. The ledge is refused when
-/// anything solid is where the body would hang, in the space it rises
-/// through beside the wall, or in the space it would move into to stand: an
-/// overhang above the ledge refuses it.
+/// anything solid and rigid is where the body would hang, in the space it
+/// rises through beside the wall, or in the space it would move into to
+/// stand: an overhang above the ledge refuses it. A soft collider never
+/// blocks it, and every collider is taken where it stands.
 ///
 /// `Ok(None)` when there is no such ledge, or `toward` has no direction
 /// across `up`; [`Unanswered`] when the world will not walk a query's
@@ -103,7 +104,7 @@ pub fn find_ledge<V: Vector, W: World<V> + ?Sized>(
     // Hang with the body's top level with the footprint, rise by the body's
     // height beside the wall, and move over the ledge to stand.
     let hang = position + up * (reach + space::dot(dropped, up));
-    let solid = |collider: &Collider<V>| collider.kind == ColliderKind::Solid;
+    let solid = |collider: &Collider<V>| collider.rigid_solid();
     if overlaps(body, hang, world, mask)?.iter().any(solid) {
         return Ok(None);
     }

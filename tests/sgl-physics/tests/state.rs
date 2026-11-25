@@ -8,7 +8,7 @@ use sgl_core::math::{IVec3, Quat, Vec2, Vec3};
 use sgl_core::{SplitMix64, digest_of};
 use sgl_physics::{
     ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Contacts, Convex,
-    Cut, Floor, Hit, Ledge, MoverConfig, MoverOptions, MoverSettings, MoverState, Separation,
+    Cut, Floor, Hit, Ledge, MoverConfig, MoverOptions, MoverSettings, MoverState, Push, Separation,
     Shape, Vector, World, move_and_slide, slide, snap_to_ground,
 };
 
@@ -305,7 +305,7 @@ fn encoded<T: Serialize>(value: &T) -> usize {
 /// The largest value of each state type in space `V`: every id and layer
 /// mask at its widest varint, every optional field present, and the shape
 /// the convex one of the most points, `most`.
-fn largest<V: Vector + Serialize>(most: Convex<V>) -> [(usize, usize, &'static str); 12] {
+fn largest<V: Vector + Serialize>(most: Convex<V>) -> [(usize, usize, &'static str); 13] {
     let half = V::ZERO;
     let shape = Shape::Convex(most);
     let kind = ColliderKind::Sensor;
@@ -321,6 +321,8 @@ fn largest<V: Vector + Serialize>(most: Convex<V>) -> [(usize, usize, &'static s
         kind,
         layers: u32::MAX,
         cut: Some(cut),
+        velocity: half,
+        push: Push::Soft(1.0),
     };
     let separation = Separation {
         distance: 1.0,
@@ -330,6 +332,8 @@ fn largest<V: Vector + Serialize>(most: Convex<V>) -> [(usize, usize, &'static s
         last_floor_id: Some(u64::MAX),
         last_wall_id: Some(u64::MAX),
         last_ceiling_id: Some(u64::MAX),
+        carried_by: Some(u64::MAX),
+        pushed_by: Some(u64::MAX),
         ..Contacts::default()
     };
     let hit = Hit {
@@ -372,6 +376,7 @@ fn largest<V: Vector + Serialize>(most: Convex<V>) -> [(usize, usize, &'static s
             "ColliderKind",
         ),
         (encoded(&cut), Cut::<V>::MAX_POSTCARD_BYTES, "Cut"),
+        (encoded(&Push::Soft(1.0)), Push::MAX_POSTCARD_BYTES, "Push"),
         (
             encoded(&collider),
             Collider::<V>::MAX_POSTCARD_BYTES,

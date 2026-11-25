@@ -241,7 +241,7 @@
     "component": "Box2D",
     "path": "crates/sgl-physics/LICENSE-box2d.txt",
     "url": "https://raw.githubusercontent.com/erincatto/box2d/178495ba35695aefe9c321e569d2277f06db3b90/LICENSE",
-    "prefix": "Box2D, https://github.com/erincatto/box2d\nRevision 178495ba35695aefe9c321e569d2277f06db3b90 (v3.2.0), LICENSE. sgl-physics\nports the GJK distance query, the shape cast and the time of impact of\nsrc/distance.c, with the types of include/box2d/collision.h and the vector\nfunctions of include/box2d/math_functions.h, to src/convex.rs, src/convex/d2.rs\nand src/convex/d2/toi.rs; the contact manifold of src/manifold.c and the\nsegment distance of src/distance.c to src/planar/collide.rs and\nsrc/planar/collide/polygons.rs; and the single-pair contact impulse of\nsrc/contact_solver.c to src/planar/bump.rs (PROVENANCE.md).\n\n"
+    "prefix": "Box2D, https://github.com/erincatto/box2d\nRevision 178495ba35695aefe9c321e569d2277f06db3b90 (v3.2.0), LICENSE. sgl-physics\nports the GJK distance query, the shape cast and the time of impact of\nsrc/distance.c, with the types of include/box2d/collision.h and the vector\nfunctions of include/box2d/math_functions.h, to src/convex.rs, src/convex/d2.rs\nand src/convex/d2/toi.rs; the contact manifold of src/manifold.c and the\nsegment distance of src/distance.c to src/planar/collide.rs and\nsrc/planar/collide/polygons.rs; the single-pair contact impulse of\nsrc/contact_solver.c to src/planar/bump.rs; and the plane solver of\nsrc/mover.c to src/plane.rs (PROVENANCE.md).\n\n"
   },
   {
     "component": "Box3D",
