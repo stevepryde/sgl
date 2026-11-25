@@ -302,9 +302,11 @@ struct Pair<V> {
 
 impl<V: Vector> Pair<V> {
     /// `body` at the origin and `target`, cut by `cut`, at `rel`, or `None`
-    /// when the body's own numbers describe nothing.
+    /// when either shape's own numbers describe nothing: such a shape
+    /// occupies nothing (physics.md 9), as a ball or capsule core the
+    /// push-out shrank by more than its radius does.
     fn new(body: &Shape<V>, target: &Shape<V>, cut: Option<&Cut<V>>, rel: V) -> Option<Self> {
-        body.is_sound().then(|| Self {
+        (body.is_sound() && target.is_sound()).then(|| Self {
             target: Hull::of(target, cut, rel),
             body: Hull::of(body, None, V::ZERO),
         })

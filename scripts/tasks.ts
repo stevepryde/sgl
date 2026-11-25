@@ -135,7 +135,7 @@ if (task === "check") {
 // cannot fail. Not part of `check`; needs `cargo install cargo-mutants`.
 // Each crate's report lands in `mutants.out/<crate>/mutants.out/`.
 
-const MUTANT_CRATES = ["sgl-core", "sgl-net", "sgl-2d"] as const;
+const MUTANT_CRATES = ["sgl-core", "sgl-net", "sgl-2d", "sgl-physics"] as const;
 
 // GPU passes and native socket/thread workers only run against real devices
 // and sockets; their mutants would mostly time out or be unviable. Globs

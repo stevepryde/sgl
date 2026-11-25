@@ -2216,7 +2216,9 @@ Use the [current specs](README.md) for implementation and the
   `carried_by`, `pushed_by`), with every body in the existing walks moving
   bit for bit as before, and added a walk among moving colliders; #923
   added the surfaces drive, and made rays exact against balls, capsules,
-  polygons and triangles, which changed it and the 2D round slide walk.
+  polygons and triangles, which changed it and the 2D round slide walk;
+  #924's second pass made a planar heading normalised by that same routine,
+  which changed the planar pile-up by the last bits of its turned headings.
   After the first release a change to one is a breaking change like any
   other frozen
   value.

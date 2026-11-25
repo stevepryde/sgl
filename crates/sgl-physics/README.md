@@ -300,8 +300,9 @@ and one whose centre is below a triangle is pushed out beneath it.
   indices each, with an id per triangle or one for all (the surface kind a
   query reports). It refuses non-finite positions, indices that are not
   triples or name no position, and more than `MAX_TRIANGLES` (2^20)
-  triangles (`SurfaceError`); a triangle with no area is dropped and
-  counted (`degenerate()`). It builds a tree once (Box3D's median split,
+  triangles (`SurfaceError`); a triangle with no area, or too large for
+  its edges' products to fit `f32`, is dropped and counted
+  (`degenerate()`). It builds a tree once (Box3D's median split,
   never deeper than `MAX_TREE_DEPTH`, 64) and offers one query at most
   `MAX_QUERY_TRIANGLES` (4096) triangles, past which the query is
   `Unanswered`; a long ray visits only the triangles along it.

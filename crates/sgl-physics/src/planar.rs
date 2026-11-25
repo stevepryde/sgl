@@ -115,10 +115,11 @@ impl Body {
         if !sound {
             return None;
         }
-        let length = (self.heading.x * self.heading.x + self.heading.y * self.heading.y).sqrt();
-        (length.is_finite() && length > 0.0).then(|| Rot {
-            c: self.heading.x / length,
-            s: self.heading.y / length,
+        // The crate's one normalising routine (physics.md 12): a heading of
+        // any finite length names its direction, however short or long.
+        space::direction(self.heading).map(|(unit, _)| Rot {
+            c: unit.x,
+            s: unit.y,
         })
     }
 

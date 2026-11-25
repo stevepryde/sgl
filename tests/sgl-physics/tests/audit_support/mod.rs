@@ -8,8 +8,12 @@
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
-    clippy::float_cmp
+    clippy::float_cmp,
+    clippy::many_single_char_names
 )]
+
+pub mod flat;
+pub mod solid;
 
 use std::collections::HashMap;
 

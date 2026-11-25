@@ -767,20 +767,43 @@ fn turned_cube(turn: Quat) -> Convex<Vec3> {
 }
 
 /// How far a round body at `at` reaches into a collider, by its definition:
-/// its radius less the least distance from its core (a point, or a segment
-/// sampled at 256 points, finer than a tenth of the skin) to the collider.
-/// Positive when it overlaps.
+/// its radius less the least distance from its core (a point, or a
+/// segment) to the collider. Positive when it overlaps. Every collider is
+/// convex, so the distance to it is convex along the segment, and a golden
+/// section search finds its least to the rounding of `to`; sampling, by
+/// contrast, misses a corner between samples by up to half their spacing.
 fn depth<V: Vector>(body: &Shape<V>, at: V, to: impl Fn(V) -> f32) -> f32 {
     match *body {
         Shape::Ball { radius } => radius - to(at),
         Shape::Capsule { half_axis, radius } => {
-            let nearest = (0..=256)
-                .map(|i| to(at - half_axis + half_axis * (2.0 * i as f32 / 256.0)))
+            let point = |s: f32| to(at + half_axis * s);
+            let ratio = (5.0f32.sqrt() - 1.0) / 2.0;
+            let (mut lo, mut hi) = (-1.0f32, 1.0f32);
+            for _ in 0..40 {
+                let (m1, m2) = (hi - ratio * (hi - lo), lo + ratio * (hi - lo));
+                if point(m1) <= point(m2) {
+                    hi = m2;
+                } else {
+                    lo = m1;
+                }
+            }
+            let nearest = [-1.0, 1.0, 0.5 * (lo + hi)]
+                .into_iter()
+                .map(point)
                 .fold(f32::INFINITY, f32::min);
             radius - nearest
         }
         _ => unreachable!("round bodies only"),
     }
+}
+
+/// Whether a collider's enclosing box lies within `margin` of a body's at
+/// `at` on every axis: one further away cannot reach the body, its depth
+/// below `-margin`.
+fn near<V: Vector>(body: &Shape<V>, at: V, collider: &Collider<V>, margin: f32) -> bool {
+    let (reach, half) = (body.half_extents(), collider.shape.half_extents());
+    (0..V::AXES)
+        .all(|axis| (at[axis] - collider.position[axis]).abs() < reach[axis] + half[axis] + margin)
 }
 
 // ------------------------------------------------------- top-down 2D games
@@ -1388,11 +1411,14 @@ fn a_round_body_never_ends_inside_a_collider_through_any_world_in_2d() {
                 }
             }
         });
+        // Colliders more than 0.1 from the body (ten skins) cannot change
+        // either comparison below, so only the near ones are measured.
         let into = |body: &Shape<Vec2>, at: Vec2| {
             slice
                 .iter()
+                .filter(|c| near(body, at, c, 0.1))
                 .map(|c| depth(body, at, |p| to_collider2(p, c)))
-                .fold(f32::NEG_INFINITY, f32::max)
+                .fold(-0.1, f32::max)
         };
         for _ in 0..40 {
             let body = round_body(&mut rng);
@@ -1471,11 +1497,13 @@ fn a_round_body_never_ends_inside_a_collider_through_any_world_in_3d() {
                 }
             }
         });
+        // As in 2D: only colliders within 0.1 of the body are measured.
         let into = |body: &Shape<Vec3>, at: Vec3| {
             slice
                 .iter()
+                .filter(|c| near(body, at, c, 0.1))
                 .map(|c| depth(body, at, |p| to_collider3(p, c, turn)))
-                .fold(f32::NEG_INFINITY, f32::max)
+                .fold(-0.1, f32::max)
         };
         for _ in 0..40 {
             let body = round_body(&mut rng);

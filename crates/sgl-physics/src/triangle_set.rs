@@ -106,9 +106,9 @@ impl TriangleSet {
     /// with `ids` the game's id for each triangle, or one id for them all.
     ///
     /// A triangle with no area to `f32`'s precision (its corners in a line
-    /// or coincident), or so large its edges overflow, is dropped and
-    /// counted ([`Self::degenerate`]), not refused: a model's slivers are
-    /// not an authoring error.
+    /// or coincident), or so large its edges or their products overflow,
+    /// is dropped and counted ([`Self::degenerate`]), not refused: a
+    /// model's slivers are not an authoring error.
     ///
     /// # Errors
     /// [`SurfaceError::Indices`] when the index count is not a multiple of

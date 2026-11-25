@@ -880,7 +880,9 @@ fn planar_pile_up() -> Vec<planar::Body> {
 /// manifold port, the bump and `advance`'s ordering. Oracle: native and
 /// `wasm32` must produce this digest from the same seeded pile-up, every
 /// step's impacts and bodies hashed over ninety steps. The pile-up must
-/// bump for the digest to cover the bump. Frozen on first run (#921).
+/// bump for the digest to cover the bump. Frozen on first run (#921);
+/// refrozen when the audit (#924) made a heading normalised by the crate's
+/// one routine, which moves turned headings by their last bits.
 #[wasm_bindgen_test(unsupported = test)]
 fn a_seeded_planar_pile_up_is_target_independent() {
     let mut bodies = planar_pile_up();
@@ -911,7 +913,7 @@ fn a_seeded_planar_pile_up_is_target_independent() {
     assert!(impacts > 20, "{impacts}");
     assert_eq!(
         hasher.finish().to_hex(),
-        "11b5935271aca8e2f6cbed22d4fc57372b39a1528fe8d9c8d2bbfb5307e16a7b"
+        "ec55af611e9121df6033018b8aa906dabd42d127dd3fe3ef21c9961636a7237d"
     );
 }
 

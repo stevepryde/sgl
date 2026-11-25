@@ -163,7 +163,8 @@ surfaces (#922) is planned in #914 and is not available until it lands.
     `(0, 1)`, and a negative or non-finite `skin`, `snap_distance` or
     `block_epsilon`. Every other `up` is a direction, however short or
     long: the crate normalises every direction (`up`, a cut's normal, a
-    convex shape's rotation, a separation's normal) by one routine that
+    convex shape's rotation, a separation's normal, a planar body's
+    heading) by one routine that
     divides by the largest absolute component before squaring, so neither
     underflow nor overflow occurs and the result is unit to within a few
     units in the last place. It names the up axis, skin, snap distance, floor
@@ -758,7 +759,8 @@ surfaces (#922) is planned in #914 and is not available until it lands.
       multiple of three, an index naming no position, an id count that is
       neither, and more than `MAX_TRIANGLES` (2^20). A triangle with no area
       to `f32` (its edge cross product within `4ε` of the product of its
-      edge lengths) or whose edges overflow is dropped and counted
+      edge lengths) or whose edges, or their products, overflow `f32` (no
+      ray could cross it) is dropped and counted
       (`degenerate`), not refused. The set keeps its triangles in a fixed
       order (id, then corners) and builds a bounding-volume tree from it
       once (Box3D's median split, `PROVENANCE.md`), so neither the tree nor

@@ -121,12 +121,19 @@ impl Triangle {
 
 /// Whether the corners span an area `f32` can tell from none: the cross
 /// product of two edges is longer than four units of rounding of the
-/// product of their lengths. The edges are scaled by their largest
-/// component first, so neither overflows nor underflows the test.
+/// product of their lengths, and the edges' products fit `f32`. The edges
+/// are scaled by their largest component first, so neither overflows nor
+/// underflows the test.
 fn has_area(corners: [Vec3; 3]) -> bool {
     let (e1, e2) = (corners[1] - corners[0], corners[2] - corners[0]);
-    let scale = space::max(space::largest_abs(e1), space::largest_abs(e2));
-    if !(scale.is_finite() && scale > 0.0) {
+    let scale = space::max(
+        space::max(space::largest_abs(e1), space::largest_abs(e2)),
+        space::largest_abs(corners[2] - corners[1]),
+    );
+    // A ray crosses a triangle by its edges' cross product in `f32`; a
+    // triangle whose edges' products overflow could never be met, so it
+    // is dropped as one with no area to `f32`.
+    if !(scale.is_finite() && scale > 0.0 && (2.0 * scale * scale).is_finite()) {
         return false;
     }
     let (e1, e2) = (e1 * (1.0 / scale), e2 * (1.0 / scale));
