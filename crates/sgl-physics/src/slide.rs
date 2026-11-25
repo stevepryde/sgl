@@ -29,14 +29,15 @@ const fn max_slides<V: Vector>() -> usize {
 ///
 /// Each pass stops along the swept path a `skin` short of the earliest
 /// contact (along its normal), then sweeps again with the motion it has
-/// left, sliding along the surface it met. After a floor (a face within
-/// `normal_threshold` of `up`), everything the pass did not apply turns
-/// along the floor and keeps its part across `up`, so a walkable ramp does
-/// not slow a body and a landing keeps its run. After a wall or a ceiling,
-/// the motion left after the contact time is projected onto the face; the
-/// backed-off portion is discarded. A slope too steep to stand on is a
-/// wall that leans: the slide along it gains no height the motion did not
-/// ask for, so a body pushed at its foot stops there. A slide never moves the body into a
+/// left: everything the pass did not apply, the skin back-off included.
+/// After a floor (a face within `normal_threshold` of `up`), that motion
+/// turns along the floor and keeps its part across `up`, so a walkable ramp
+/// does not slow a body and a landing keeps its run. After a wall or a
+/// ceiling, it is projected onto the face, which removes only its part into
+/// the face, so a body pushed into a wall keeps all of its fall and all of
+/// its run along the wall. A slope too steep to stand on is a wall that
+/// leans: the slide along it gains no height the motion did not ask for, so
+/// a body pushed at its foot stops there. A slide never moves the body into a
 /// face it has already touched in the same move: between two such faces it
 /// follows their crease (in 2D, where two faces meet at a point, it stops),
 /// and among three it stops. A move slides at most a fixed number of times:
@@ -46,8 +47,8 @@ const fn max_slides<V: Vector>() -> usize {
 /// A body that starts inside a solid collider (a spawn, a moved collider, or
 /// rounding at a contact) may move out of it or along it, never deeper. A
 /// body inside a one-way platform is stopped only by a fall onto it from
-/// within `skin` (plus rounding) of its top face. Nothing pushes a body out:
-/// the game keeps bodies clear itself.
+/// within `skin` (plus rounding) of its top face. `slide` never pushes a
+/// body out; [`move_and_slide`](crate::move_and_slide) does.
 ///
 /// Contacts at the same instant resolve to the lowest id, then the lowest
 /// position, so the result never depends on the order the world visits its
@@ -66,14 +67,73 @@ pub fn slide<V: Vector, W: World<V> + ?Sized>(
     mask: u32,
     config: &MoverConfig<V>,
 ) -> Result<(V, Contacts<V>), Unanswered> {
+    let (moved, contacts, _) = slide_faces(body, position, delta, world, mask, config)?;
+    Ok((moved, contacts))
+}
+
+/// The faces a move met, by unit normal, in the order met: what the mover
+/// clips a velocity against ([`clip_velocity`]). It holds every face one
+/// mover step can meet ([`MAX_STEP_FACES`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Faces<V> {
+    normals: [V; MAX_STEP_FACES],
+    len: usize,
+}
+
+/// Most faces one mover step meets: a step-up's three slides, or a guarded
+/// walk's one slide per axis, of at most [`MAX_SLIDES_3D`] passes each, and
+/// the ground under it.
+pub(crate) const MAX_STEP_FACES: usize = 3 * MAX_SLIDES_3D + 1;
+
+impl<V: Vector> Faces<V> {
+    pub(crate) fn new() -> Self {
+        Self {
+            normals: [V::ZERO; MAX_STEP_FACES],
+            len: 0,
+        }
+    }
+
+    pub(crate) fn as_slice(&self) -> &[V] {
+        &self.normals[..self.len]
+    }
+
+    /// Adds a face met after these.
+    pub(crate) fn push(&mut self, normal: V) {
+        debug_assert!(
+            self.len < MAX_STEP_FACES,
+            "a step met more faces than it can"
+        );
+        if self.len < MAX_STEP_FACES {
+            self.normals[self.len] = normal;
+            self.len += 1;
+        }
+    }
+
+    /// Adds the faces of a later part of the same step.
+    pub(crate) fn extend(&mut self, later: &Self) {
+        for &normal in later.as_slice() {
+            self.push(normal);
+        }
+    }
+}
+
+/// [`slide`], also returning the faces it met.
+pub(crate) fn slide_faces<V: Vector, W: World<V> + ?Sized>(
+    body: &Shape<V>,
+    position: V,
+    delta: V,
+    world: &W,
+    mask: u32,
+    config: &MoverConfig<V>,
+) -> Result<(V, Contacts<V>, Faces<V>), Unanswered> {
     let mut contacts = Contacts::asked(delta);
+    let mut faces = Faces::new();
     if !space::is_finite(delta) {
-        return Ok((V::ZERO, contacts));
+        return Ok((V::ZERO, contacts, faces));
     }
     let mut remaining = delta;
     let mut total = V::ZERO;
-    let mut touched = [V::ZERO; MAX_SLIDES_3D];
-    for pass in 0..max_slides::<V>() {
+    for _ in 0..max_slides::<V>() {
         if remaining == V::ZERO {
             break;
         }
@@ -85,30 +145,57 @@ pub fn slide<V: Vector, W: World<V> + ?Sized>(
         let applied = back_off(remaining, &hit, config.skin());
         total = total + applied;
         contacts.record(&hit, config);
+        // Everything the pass did not apply, the skin back-off included.
+        let unspent = remaining - applied;
         let slid = if config.is_floor(hit.normal) {
-            along_floor(remaining - applied, hit.normal, config.up())
+            along_floor(unspent, hit.normal, config.up())
         } else {
-            // Keep only the part of the unspent motion along the surface.
-            let unspent = remaining - remaining * hit.t;
-            without_climb(
-                space::reject(unspent, hit.normal),
-                unspent,
-                hit.normal,
-                config.up(),
-            )
+            along_face(unspent, hit.normal, config.up())
         };
-        remaining = clear_of(slid, hit.normal, &touched[..pass]);
-        touched[pass] = hit.normal;
+        remaining = clear_of(slid, hit.normal, faces.as_slice());
+        faces.push(hit.normal);
     }
-    contacts.effective = total;
+    contacts.applied(total, config);
+    Ok((total, contacts, faces))
+}
 
-    // The blocked flags compare requested against achieved motion along `up`,
-    // so they mean the same in a y-up and a y-down world.
-    let desired_up = space::dot(delta, config.up());
-    let effective_up = space::dot(total, config.up());
-    contacts.down_blocked = desired_up < 0.0 && effective_up > desired_up + config.block_epsilon();
-    contacts.up_blocked = desired_up > 0.0 && effective_up < desired_up - config.block_epsilon();
-    Ok((total, contacts))
+/// `velocity` less the parts that point into the faces of unit normals
+/// `faces`, met in that order, by the rules a slide applies to the motion it
+/// has left: a wall, a ceiling or a slope too steep to stand on projects it
+/// onto the face when it points into it, gaining no height it did not have
+/// ([`along_face`]); a floor removes its part against `up` and keeps its
+/// part across, so a body standing on a ramp does not slide down it; and a
+/// later face
+/// never turns it into an earlier one, following their crease
+/// ([`clear_of`]). For a floor the earlier face is the level one its rule
+/// keeps the velocity out of, `up` itself.
+pub(crate) fn clip_velocity<V: Vector>(velocity: V, faces: &[V], config: &MoverConfig<V>) -> V {
+    let up = config.up();
+    let mut velocity = velocity;
+    let mut met = Faces::new();
+    for &normal in faces {
+        let (face, slid) = if config.is_floor(normal) {
+            let slid = if space::dot(velocity, up) < 0.0 {
+                space::reject(velocity, up)
+            } else {
+                velocity
+            };
+            (up, slid)
+        } else if space::dot(velocity, normal) < 0.0 {
+            (normal, along_face(velocity, normal, up))
+        } else {
+            (normal, velocity)
+        };
+        velocity = clear_of(slid, face, met.as_slice());
+        met.push(face);
+    }
+    velocity
+}
+
+/// `motion` projected onto the face of unit `normal`, which removes its
+/// part into the face, kept from climbing a face too steep to stand on.
+fn along_face<V: Vector>(motion: V, normal: V, up: V) -> V {
+    without_climb(space::reject(motion, normal), motion, normal, up)
 }
 
 /// `motion` turned along the floor face of unit `normal`: its part across
@@ -227,7 +314,7 @@ pub fn snap_to_ground<V: Vector, W: World<V> + ?Sized>(
 /// Stops on the swept segment with a `skin` gap along the contact normal.
 /// Shortening the whole motion keeps the body on the path the sweep cleared;
 /// a contact within `skin` of the start yields zero, never reversed motion.
-fn back_off<V: Vector>(delta: V, hit: &Hit<V>, skin: f32) -> V {
+pub(crate) fn back_off<V: Vector>(delta: V, hit: &Hit<V>, skin: f32) -> V {
     // Every blocking contact has motion into its normal, embedded ones
     // included: they block only inward motion.
     let normal_motion = space::dot(delta, hit.normal).abs();
@@ -482,8 +569,8 @@ mod tests {
     }
 
     /// Walking diagonally into a wall must stop the horizontal motion a skin
-    /// short and spend the vertical motion remaining after the contact time.
-    /// Without the second pass the vertical motion is thrown away.
+    /// short and spend all of the vertical motion. Without the second pass
+    /// the vertical motion is thrown away.
     #[wasm_bindgen_test(unsupported = test)]
     fn wall_blocks_one_axis_and_the_slide_keeps_the_other() {
         let set = set_with(&[(aabb(2.0, 0.0, 0.5, 5.0), ColliderKind::Solid)]);
@@ -496,12 +583,10 @@ mod tests {
 
         // Body right edge 0.5 to wall left edge 1.5, less the skin.
         assert!((effective.x - 0.99).abs() < 1e-4, "x was {}", effective.x);
-        // Contact at (1, 1/3); backing off 0.01 in x also removes 1/300 in y.
-        assert!(
-            (effective.y - 299.0 / 300.0).abs() < 1e-4,
-            "y was {}",
-            effective.y
-        );
+        // Contact at t = 1/3; backing off 0.01 in x applies (0.99, 0.33) and
+        // leaves (2.01, 0.67), whose part along the wall, (0, 0.67), the
+        // slide keeps: y = 0.33 + 0.67 = 1.
+        assert!((effective.y - 1.0).abs() < 1e-4, "y was {}", effective.y);
         assert!(contacts.wall);
         assert_eq!(contacts.last_wall_id, Some(0));
         assert!(!contacts.floor && !contacts.ceiling);
@@ -937,12 +1022,13 @@ mod tests {
     /// y = -2.5, a wall whose face is at x = 3.5 and one at z = 3.875.
     /// Pass 1 meets the floor first, at t = 2/4 = 0.5 (the walls at 0.75
     /// and 0.84375); backing off 0.25 along y is 0.0625 of the motion, so
-    /// the body moves (1.75, -1.75, 1.75) and slides on with (2, 0, 2).
-    /// Pass 2 meets the x wall after 1.25 of 2 (t = 0.625, the z wall at
-    /// 0.8125), backs off to t = 0.5, moves (1, 0, 1), and slides on with
-    /// (0, 0, 0.75). Pass 3 meets the z wall after 0.625 of 0.75 and backs
-    /// off to 0.375. The body ends at (2.75, -1.75, 3.125), a skin from each
-    /// of the three faces.
+    /// the body moves (1.75, -1.75, 1.75) and leaves (2.25, -2.25, 2.25),
+    /// which the floor turns into (2.25, 0, 2.25). Pass 2 meets the x wall
+    /// after 1.25 of 2.25 (t = 5/9, the z wall at 13/18), backs off 0.25 of
+    /// 2.25 to t = 4/9, moves (1, 0, 1), and slides on with what it left,
+    /// (1.25, 0, 1.25), along the wall: (0, 0, 1.25). Pass 3 meets the z
+    /// wall after 0.625 of 1.25 and backs off to 0.375. The body ends at
+    /// (2.75, -1.75, 3.125), a skin from each of the three faces.
     #[wasm_bindgen_test(unsupported = test)]
     fn a_body_pushed_into_a_corner_slides_three_times() {
         let world = [
@@ -1001,6 +1087,84 @@ mod tests {
             assert!(contacts.floor, "up {up}: {contacts:?}");
             assert_eq!(contacts.last_floor_normal, up);
             assert!(!contacts.wall, "up {up}");
+        }
+    }
+
+    /// A unit body and a wall whose face is at x = 1, deep along every other
+    /// axis, in 2D and 3D.
+    fn beside_a_wall<V: Vector>() -> (Shape<V>, [Collider<V>; 1]) {
+        let mut half = V::ZERO;
+        let mut wall_half = V::ZERO;
+        let mut wall_at = V::ZERO;
+        for axis in 0..V::AXES {
+            half[axis] = 0.5;
+            wall_half[axis] = 50.0;
+        }
+        wall_half[0] = 0.5;
+        wall_at[0] = 1.5;
+        let wall = Collider::new(1, Shape::Box { half: wall_half }, wall_at);
+        (Shape::Box { half }, [wall])
+    }
+
+    /// A body pushed into a wall at 5 units a second (1/12 of a unit a
+    /// step) while it falls 0.1 a step, starting 0.05 from the wall, so the
+    /// first step meets it partway and every later one at the skin. Every
+    /// step it falls exactly the 0.1 asked for, and never passes the wall.
+    /// Oracle: the requirement (pressing into a wall takes nothing from the
+    /// motion along it) and geometry (the face at x = 1). Before the fix a
+    /// step from the skin fell 0.088: the slide kept only the motion after
+    /// the contact time, 0.88 of it.
+    fn wall_keeps_the_fall<V: Vector>() {
+        let (body, wall) = beside_a_wall::<V>();
+        let config = settings(space::unit::<V>(1, true), SKIN, SNAP, 0.7, 1e-4);
+        let mut delta = V::ZERO;
+        delta[0] = 5.0 / 60.0;
+        delta[1] = -0.1;
+        let mut position = V::ZERO;
+        position[0] = 1.0 - 0.5 - 0.05;
+        for step in 0..10 {
+            let (moved, contacts) =
+                slide(&body, position, delta, &wall[..], ALL_LAYERS, &config).unwrap();
+            position = position + moved;
+            assert!(contacts.wall, "{} step {step}", V::AXES);
+            assert!(
+                (moved[1] + 0.1).abs() < 1e-6,
+                "{}D step {step}: fell {}",
+                V::AXES,
+                -moved[1]
+            );
+            assert!(position[0] + 0.5 <= 1.0, "{}D step {step}", V::AXES);
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_body_pushed_into_a_wall_falls_exactly_as_far_as_asked() {
+        wall_keeps_the_fall::<Vec2>();
+        wall_keeps_the_fall::<Vec3>();
+    }
+
+    /// A walker standing a skin above a floor (top at y = -0.5) and pushed
+    /// into a wall at x = 1 while it walks along it at 3 units a second
+    /// on z, starting 0.05 from the wall: every step covers exactly the
+    /// 0.05 asked along z, and the body stays clear of both. Oracle: the
+    /// requirement and geometry.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_body_pushed_into_a_wall_covers_exactly_its_run_along_it() {
+        let (body, [wall]) = beside_a_wall::<Vec3>();
+        let floor = block3(2, Vec3::new(0.0, -1.0, 0.0), Vec3::new(50.0, 0.5, 50.0));
+        let world = [wall, floor];
+        let config = settings(Vec3::Y, SKIN, SNAP, 0.7, 1e-4);
+        let delta = Vec3::new(5.0 / 60.0, -20.0 / 3600.0, 0.05);
+        let mut position = Vec3::new(0.45, SKIN, 0.0);
+        for step in 0..10 {
+            let (moved, _) =
+                slide(&body, position, delta, &world[..], ALL_LAYERS, &config).unwrap();
+            position += moved;
+            assert!((moved.z - 0.05).abs() < 1e-6, "step {step}: {moved}");
+            assert!(
+                position.x + 0.5 <= 1.0 && position.y - 0.5 >= -0.5,
+                "step {step}"
+            );
         }
     }
 }

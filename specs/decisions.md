@@ -2207,5 +2207,8 @@ Use the [current specs](README.md) for implementation and the
   refreeze confirms on both targets, and no game depends on their values
   yet. The commit that changes one says what changed it. #914's review
   fixes changed the collider encoding; #915 added ramps to the levels, the
-  cut to the encoding, and the floor rule. After the first release a
-  change to one is a breaking change like any other frozen value.
+  cut to the encoding, and the floor rule; #916 grew `Contacts`' encoding
+  and added mover walks to the levels, and its review fixes changed the
+  mover's velocity rule, floor, step-up and push-out. After the first
+  release a change to one is a breaking change like any other frozen
+  value.

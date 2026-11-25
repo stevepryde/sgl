@@ -4,11 +4,12 @@
 #![allow(clippy::cast_precision_loss)]
 
 use serde::{Deserialize, Serialize};
-use sgl_core::math::{Vec2, Vec3};
+use sgl_core::math::{IVec3, Vec2, Vec3};
 use sgl_core::{SplitMix64, digest_of};
 use sgl_physics::{
-    ALL_LAYERS, Collider, ColliderKind, ColliderSet, Contacts, Cut, Hit, MoverConfig,
-    MoverSettings, Shape, Vector, slide, snap_to_ground,
+    ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Contacts, Cut,
+    Floor, Hit, Ledge, MoverConfig, MoverOptions, MoverSettings, MoverState, Shape, Vector, World,
+    move_and_slide, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -132,6 +133,146 @@ fn a_restored_body_continues_bit_equal() {
     assert!(stood > 10, "the walk stood on something only {stood} times");
 }
 
+/// One fixed step of a game using the mover: the input for step `step`
+/// comes from the step number alone (a run, a jump, holding down to drop
+/// through, a guarded stretch), so a restored run is fed what the original
+/// was. Climbing, the guard and drop-through all read the state's `floor`,
+/// so a lost floor shows.
+fn mover_step<V: Vector, W: World<V> + ?Sized>(
+    state: &mut MoverState<V>,
+    step: u64,
+    body: &Shape<V>,
+    world: &W,
+    config: &MoverConfig<V>,
+) -> Contacts<V> {
+    let mut rng = SplitMix64::new(step ^ 0x0916);
+    let mut unit = || (rng.next_u64() >> 40) as f32 / 16_777_216.0;
+    for axis in [0, 2].into_iter().take(V::AXES - 1) {
+        state.velocity[axis] = unit() * 8.0 - 4.0;
+    }
+    state.velocity[1] = if state.floor.is_some() && unit() < 0.1 {
+        7.0
+    } else {
+        state.velocity[1] - 20.0 / 60.0
+    };
+    let options = MoverOptions {
+        step_height: 0.3,
+        ledge_drop: (step % 60 < 30).then_some(0.4),
+        drop_through: unit() < 0.2,
+        mask: ALL_LAYERS,
+    };
+    move_and_slide(state, body, 1.0 / 60.0, world, config, &options).unwrap()
+}
+
+/// A voxel level answered cell by cell: ground, a few half-cell steps, a
+/// pit, a run of one-way platforms and walls round the edge.
+fn voxels(cell: IVec3, out: &mut CellColliders<'_, Vec3>) {
+    let id = u64::from((cell.x + 64).unsigned_abs())
+        | u64::from((cell.y + 64).unsigned_abs()) << 8
+        | u64::from((cell.z + 64).unsigned_abs()) << 16;
+    let (x, y, z) = (cell.x, cell.y, cell.z);
+    let at = |half: Vec3, center: Vec3| Collider::new(id, Shape::Box { half }, center);
+    let full = at(Vec3::splat(0.5), Vec3::splat(0.5));
+    if x.abs() >= 6 || z.abs() >= 6 || (y == -1 && !(x == 2 && z == 2)) {
+        out.push(full);
+    } else if y == 0 && (x + z).rem_euclid(5) == 0 {
+        out.push(at(Vec3::new(0.5, 0.125, 0.5), Vec3::new(0.5, 0.125, 0.5)));
+    } else if y == 1 && x == -2 {
+        out.push(
+            at(Vec3::new(0.5, 0.1, 0.5), Vec3::new(0.5, 0.9, 0.5)).with_kind(ColliderKind::OneWay),
+        );
+    }
+}
+
+/// A 2D level: a floor with a pit, a low step, a one-way deck and walls.
+fn level_2d() -> ColliderSet<Vec2> {
+    let mut set = ColliderSet::new(2.0);
+    let slab = |id, min: Vec2, max: Vec2| {
+        Collider::new(
+            id,
+            Shape::Box {
+                half: (max - min) * 0.5,
+            },
+            (min + max) * 0.5,
+        )
+    };
+    set.insert(slab(1, Vec2::new(-8.0, -1.0), Vec2::new(1.0, 0.0)));
+    set.insert(slab(2, Vec2::new(1.0, -3.0), Vec2::new(2.0, -2.0)));
+    set.insert(slab(3, Vec2::new(2.0, -1.0), Vec2::new(8.0, 0.0)));
+    set.insert(slab(4, Vec2::new(4.0, 0.0), Vec2::new(8.0, 0.25)));
+    set.insert(slab(5, Vec2::new(-8.0, 0.0), Vec2::new(-7.0, 9.0)));
+    set.insert(slab(6, Vec2::new(7.0, 0.0), Vec2::new(8.0, 9.0)));
+    set.insert(slab(7, Vec2::new(-5.0, 1.9), Vec2::new(-1.0, 2.0)).with_kind(ColliderKind::OneWay));
+    set
+}
+
+/// Steps a mover from `start` through 150 fixed steps, and again from the
+/// state at step 50 sent through postcard, checking every later step is
+/// bit-equal. Returns how many steps stood on a floor.
+fn replay<V, W>(start: MoverState<V>, body: &Shape<V>, world: &W, config: &MoverConfig<V>) -> u32
+where
+    V: Vector + Serialize + for<'de> Deserialize<'de>,
+    W: World<V> + ?Sized,
+{
+    let mut state = start;
+    for n in 0..50 {
+        mover_step(&mut state, n, body, world, config);
+    }
+    let bytes = postcard::to_allocvec(&state).unwrap();
+    let mut restored: MoverState<V> = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(postcard::to_allocvec(&restored).unwrap(), bytes);
+    let mut stood = 0;
+    for n in 50..150 {
+        let forward = mover_step(&mut state, n, body, world, config);
+        let again = mover_step(&mut restored, n, body, world, config);
+        assert_eq!(
+            postcard::to_allocvec(&restored).unwrap(),
+            postcard::to_allocvec(&state).unwrap(),
+            "diverged at step {n}"
+        );
+        assert_eq!(digest_of(&restored), digest_of(&state));
+        assert_eq!(digest_of(&again), digest_of(&forward));
+        stood += u32::from(state.floor.is_some());
+    }
+    stood
+}
+
+/// Defect: a mover state that loses something on the wire (the floor's id
+/// or normal, a velocity component), or a mover that keeps something
+/// between calls, so a client replaying its inputs from a saved state
+/// diverges from the run it replays. Oracle: the round trip: a state sent
+/// through postcard at step 50 and stepped through the same inputs is
+/// bit-equal, step by step, to the forward run, through a 2D set and a 3D
+/// voxel cell world.
+#[wasm_bindgen_test(unsupported = test)]
+fn a_restored_mover_replays_its_inputs_bit_equal() {
+    let start = MoverState {
+        position: Vec2::new(-3.0, 1.0),
+        ..MoverState::default()
+    };
+    let body = Shape::Box {
+        half: Vec2::new(0.4, 0.5),
+    };
+    let stood = replay(
+        start,
+        &body,
+        &level_2d(),
+        &mover(Vec2::Y, 0.01, 0.1, 0.7, 1e-4),
+    );
+    assert!(stood > 10, "2D stood {stood} times");
+
+    let start = MoverState {
+        position: Vec3::new(0.5, 1.5, 0.5),
+        ..MoverState::default()
+    };
+    let body = Shape::Box {
+        half: Vec3::new(0.3, 0.9, 0.3),
+    };
+    let world = CellWorld::new(1.0, voxels);
+    let stood = replay(start, &body, &world, &mover(Vec3::Y, 0.01, 0.1, 0.7, 1e-4));
+    assert!(stood > 10, "3D stood {stood} times");
+}
+
 /// Defect: a config that comes back from the wire with a different `up`
 /// (normalised twice, so rounded twice), so a client classifies a face as a
 /// floor where its server saw a wall. Oracle: the round trip, by the bits of
@@ -163,7 +304,7 @@ fn encoded<T: Serialize>(value: &T) -> usize {
 
 /// The largest value of each state type in space `V`: every id and layer
 /// mask at its widest varint, every optional field present.
-fn largest<V: Vector + Serialize>() -> [(usize, usize, &'static str); 7] {
+fn largest<V: Vector + Serialize>() -> [(usize, usize, &'static str); 10] {
     let half = V::ZERO;
     let shape = Shape::Box { half };
     let kind = ColliderKind::Sensor;
@@ -186,7 +327,27 @@ fn largest<V: Vector + Serialize>() -> [(usize, usize, &'static str); 7] {
         id: u64::MAX,
     };
     let config = mover(up, 0.01, 0.1, 0.7, 1e-4);
+    let floor = Floor {
+        normal: up,
+        id: u64::MAX,
+    };
+    let state = MoverState {
+        floor: Some(floor),
+        ..MoverState::default()
+    };
+    let ledge = Ledge {
+        hang: up,
+        stand: up,
+        id: u64::MAX,
+    };
     [
+        (
+            encoded(&state),
+            MoverState::<V>::MAX_POSTCARD_BYTES,
+            "MoverState",
+        ),
+        (encoded(&floor), Floor::<V>::MAX_POSTCARD_BYTES, "Floor"),
+        (encoded(&ledge), Ledge::<V>::MAX_POSTCARD_BYTES, "Ledge"),
         (encoded(&shape), Shape::<V>::MAX_POSTCARD_BYTES, "Shape"),
         (
             encoded(&kind),

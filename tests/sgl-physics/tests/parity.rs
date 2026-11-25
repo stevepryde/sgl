@@ -7,7 +7,8 @@ use sgl_core::math::{IVec3, Vec2, Vec3};
 use sgl_core::{CanonicalWrite, SplitMix64, StateHasher};
 use sgl_physics::{
     ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Cut, MoverConfig,
-    MoverSettings, Shape, Vector, World, cast, overlaps, ray, slide, snap_to_ground,
+    MoverOptions, MoverSettings, MoverState, Shape, Vector, World, cast, move_and_slide, overlaps,
+    ray, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -132,6 +133,73 @@ fn walk<V: Vector, W: World<V> + ?Sized>(
     (hasher.finish().to_hex(), on_ramps)
 }
 
+/// What a mover walk met, so the digest is known to cover each rule.
+#[derive(Default)]
+struct Met {
+    stepped: u32,
+    ledge_guarded: u32,
+    pushed_out: u32,
+}
+
+/// A seeded walk with [`move_and_slide`] through `world` and the colliders
+/// `extra`, hashed every step: a step height throughout, the ledge guard
+/// for a stretch in the middle, drop-through now and then, and a crate
+/// dropped into the body at step `steps / 2`, which pushes it out.
+fn walk_mover<V: Vector, W: World<V> + ?Sized>(
+    world: &W,
+    extra: &[Collider<V>],
+    body: &Shape<V>,
+    start: V,
+    config: &MoverConfig<V>,
+    steps: u32,
+) -> (String, Met) {
+    let mut rng = SplitMix64::new(0x05ee_d916);
+    let mut hasher = StateHasher::new();
+    let mut state = MoverState {
+        position: start,
+        ..MoverState::default()
+    };
+    let mut heading = V::ZERO;
+    let mut dropped = extra.to_vec();
+    let mut met = Met::default();
+    for step in 0..steps {
+        for axis in [0, 2].into_iter().take(V::AXES - 1) {
+            if heading[axis] == 0.0 || unit(&mut rng) < 0.03 {
+                heading[axis] = if unit(&mut rng) < 0.5 { -4.0 } else { 4.0 };
+            }
+            state.velocity[axis] = heading[axis] + unit(&mut rng) * 2.0 - 1.0;
+        }
+        let jump = unit(&mut rng) < 0.02;
+        state.velocity[1] = if state.floor.is_some() && jump {
+            9.0
+        } else {
+            state.velocity[1] - 20.0 / 60.0
+        };
+        if step == steps / 2 {
+            // A crate a third of the body's size, in its upper half.
+            let half = body.half_extents() * (1.0 / 3.0);
+            let mut at = state.position;
+            at[1] += body.half_extents()[1] * 0.5;
+            dropped.push(Collider::new(9_999, Shape::Box { half }, at));
+        }
+        let options = MoverOptions {
+            step_height: 0.3,
+            ledge_drop: (steps / 4..steps * 3 / 4).contains(&step).then_some(0.2),
+            drop_through: unit(&mut rng) < 0.1,
+            mask: ALL_LAYERS,
+        };
+        let pair = (world, &dropped[..]);
+        let contacts =
+            move_and_slide(&mut state, body, 1.0 / 60.0, &pair, config, &options).unwrap();
+        met.stepped += u32::from(contacts.stepped);
+        met.ledge_guarded += u32::from(contacts.ledge_guarded);
+        met.pushed_out += u32::from(contacts.pushed_out);
+        state.canonical_write(&mut hasher);
+        contacts.canonical_write(&mut hasher);
+    }
+    (hasher.finish().to_hex(), met)
+}
+
 /// A 2D side-on level of one-unit tiles: `#` solid, `=` a one-way platform
 /// a quarter tile thick at the tile's top, `s` a sensor, `/` and `\\` ramps
 /// rising to the right and to the left, `<` a half-height ramp rising to the
@@ -247,12 +315,24 @@ fn voxel(cell: IVec3, out: &mut CellColliders<'_, Vec3>) {
 /// multiply-add, a platform maths function, an order that depends on a
 /// hash map). Oracle: native and `wasm32` must produce this digest from the
 /// same seeded walk through a fixed 2D level (a set) and a fixed 3D level
-/// (a cell world paired with a set of crates). Frozen on first run (#914);
-/// refrozen when `ColliderKind` replaced the three flag bools in the
-/// canonical encoding of the colliders `overlaps` lists, and again when
-/// both levels gained ramps, `Collider`'s encoding gained its cut, and a
-/// move's floor contacts began keeping their run (#915). Each walk must
-/// stand on its ramps for the digest to cover them.
+/// (a cell world paired with a set of crates), and from a seeded walk with
+/// the mover (#916) through the same levels: steps, a guarded stretch,
+/// drop-through and a push-out. Frozen on first run (#914); refrozen when
+/// `ColliderKind` replaced the three flag bools in the canonical encoding
+/// of the colliders `overlaps` lists; again when both levels gained ramps,
+/// `Collider`'s encoding gained its cut, and a move's floor contacts began
+/// keeping their run (#915); and again when #916 added `Contacts`'
+/// `last_wall_normal` and its four mover flags to its canonical encoding
+/// and the mover walks to the fixture, merged with #915: a wall or ceiling
+/// contact began keeping the skin back-off's share of the motion along
+/// the face, the mover's walk became one slide, and its ledge guard began
+/// treating a drop within the snap distance as ground; and again when the
+/// mover's review fixes (#916) clipped the velocity against every face a
+/// step met, took a walking body's floor from the ground under where it
+/// ends, measured a step-up's gain along the requested direction, and let
+/// the push-out follow a ramp's normal. Each walk must
+/// stand on its ramps, and each mover walk climb a step, be stopped by its
+/// guard and be pushed out, for the digest to cover them.
 #[wasm_bindgen_test(unsupported = test)]
 fn seeded_walks_through_fixed_levels_are_target_independent() {
     let level = level_2d();
@@ -280,18 +360,55 @@ fn seeded_walks_through_fixed_levels_are_target_independent() {
     let world = (&cells, &crates);
     let (walked_3d, on_ramps_3d) =
         walk(&world, &body_3d, Vec3::new(-2.5, 2.0, 0.5), &config_3d, 600);
-    // Steps the walks stood on a ramp: 124 in 2D, 61 in 3D.
+    // Steps the walks stood on a ramp: 123 in 2D, 22 in 3D.
     assert!(
-        on_ramps_2d > 50 && on_ramps_3d > 30,
+        on_ramps_2d > 50 && on_ramps_3d > 10,
         "{on_ramps_2d}, {on_ramps_3d}"
     );
+    // A low platform, 0.3 high, on each level's floor: a step the mover
+    // climbs and an edge its guard keeps it on.
+    let low_2d = [Collider::new(
+        5_000,
+        Shape::Box {
+            half: Vec2::new(1.5, 0.15),
+        },
+        Vec2::new(11.5, 1.15),
+    )];
+    let low_3d = [Collider::new(
+        5_000,
+        Shape::Box {
+            half: Vec3::new(2.0, 0.15, 2.0),
+        },
+        Vec3::new(-3.0, 0.15, 0.0),
+    )];
+    let start_2d = Vec2::new(12.5, 1.6);
+    let (mover_2d, met_2d) = walk_mover(&level, &low_2d, &body_2d, start_2d, &config_2d, 600);
+    let start_3d = Vec3::new(-2.5, 2.0, 0.5);
+    let (mover_3d, met_3d) = walk_mover(&world, &low_3d, &body_3d, start_3d, &config_3d, 600);
+    for met in [&met_2d, &met_3d] {
+        assert!(
+            met.stepped > 0 && met.ledge_guarded > 0 && met.pushed_out > 0,
+            "{} {} {}",
+            met.stepped,
+            met.ledge_guarded,
+            met.pushed_out
+        );
+    }
 
     assert_eq!(
         walked_2d,
-        "4d09066832d46becb611d2fdb35c0df3f952fd237020e33f0d98f3588a521410"
+        "95f444cc305f128349252e025a3ba5a9bffe34812888e911d5b49345379db98f"
     );
     assert_eq!(
         walked_3d,
-        "a3e3d0b82b2cff810fed18c8724f190a45436ffd2336555f51a0cff2f3110eb0"
+        "c92050abb7a32ea6fd9594cedfd7708f66da315f43bda16ed1aa1a38617edf23"
+    );
+    assert_eq!(
+        mover_2d,
+        "ec9cfefbd8d19efcb18cbb713e316da11470a976b8b162f69e00588e8d91153d"
+    );
+    assert_eq!(
+        mover_3d,
+        "224e3f957df8691cec9a967f6853a1e1bda231001f922b0001508ddc79493717"
     );
 }

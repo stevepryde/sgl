@@ -158,6 +158,15 @@ impl<V: Vector> MoverConfig<V> {
         self.settings.block_epsilon
     }
 
+    /// The same settings probing `distance` along `-up` when snapping: how
+    /// the mover asks whether a floor lies within a given depth below a body.
+    /// `distance` is finite and non-negative.
+    pub(crate) fn with_snap_distance(&self, distance: f32) -> Self {
+        let mut probe = *self;
+        probe.settings.snap_distance = distance;
+        probe
+    }
+
     /// Whether `normal` belongs to a face a body can stand on.
     #[must_use]
     pub fn is_floor(&self, normal: V) -> bool {

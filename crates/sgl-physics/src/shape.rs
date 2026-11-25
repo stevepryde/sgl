@@ -179,6 +179,14 @@ impl<V: Vector> Cut<V> {
         }
     }
 
+    /// The same plane moved `by` into the solid part.
+    pub(crate) fn moved_in(self, by: f32) -> Self {
+        Self {
+            offset: self.offset - by,
+            ..self
+        }
+    }
+
     /// A fixed total order over cuts, for breaking ties.
     fn order(&self, other: &Self) -> Ordering {
         space::compare(self.given, other.given).then_with(|| self.offset.total_cmp(&other.offset))

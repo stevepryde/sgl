@@ -13,6 +13,9 @@ Every type and function is generic over `Vector`, implemented for
 
 | Need | API |
 | --- | --- |
+| Step a character: velocity in; position, velocity and floor out, with step-up, ledge guard, drop-through and push-out | [`move_and_slide`](src/mover.rs) |
+| Move until the first contact and stop there (a projectile, a pushed crate, a bounce of the game's own) | [`move_and_collide`](src/query.rs) |
+| Find a ledge a body pressed against a wall could hang from and climb onto | [`find_ledge`](src/ledge.rs) |
 | Move a body by a delta, sliding along what it meets | [`slide`](src/slide.rs) |
 | Keep a walking body on the ground across seams and down steps | [`snap_to_ground`](src/slide.rs) |
 | What is in a trigger or a hit box | [`overlaps`](src/query.rs) |
@@ -60,6 +63,41 @@ position += moved;
 assert!(contacts.floor && contacts.last_floor_id == Some(7));
 ```
 
+## The mover
+
+`move_and_slide(&mut state, &shape, dt, &world, &config, &options)` is one
+fixed step of a character, Godot's `move_and_slide`. The game keeps a
+`MoverState { position, velocity, floor }` (plain data; `floor` is the
+`Floor { normal, id }` it stands on, or `None`) and sets `velocity` each
+step: gravity, jumping, speeds, flying and water are its own. The step
+moves by `velocity * dt`, snaps a walking body to the ground, removes from
+`velocity` the part into every face it touched, in order (a landing zeroes
+the fall, a head-bump the rise, a wall the part into it; in a corner or a
+wedge it keeps only what runs along both), and sets `floor`: for a walking
+body, what lies under it where it ends. A body standing on a walkable ramp
+stays put under gravity. A body that starts inside a solid is pushed out
+the shortest way, at most its own size per axis, ramps' normals included,
+or left where it is and reported `stuck`.
+
+`MoverOptions` are per call, because they change with the body's state:
+
+| Option | Effect |
+| --- | --- |
+| `step_height` | Tallest step a walking body climbs without a jump; `0` climbs nothing |
+| `ledge_drop` | `Some(depth)` keeps a walking body from walking off a drop deeper than `depth` and `snap_distance` (crouch-walking); it still walks down ramps; `None` guards nothing |
+| `drop_through` | Passes one-way platforms for this step: hold it to drop through the one stood on |
+| `mask` | Layers the body collides with |
+
+`MoverOptions::default()` climbs nothing, guards nothing and meets every
+layer. `Contacts` reports `stepped`, `ledge_guarded`, `pushed_out` and `stuck`
+beside the floor, wall and ceiling contacts. Crouching needs nothing new:
+change the body's shape, and ask `overlaps` whether the taller one fits
+before standing. `find_ledge(&shape, position, toward, &world, &config,
+reach, mask)` returns where a body pressed against a wall would hang from
+its top edge and where it would stand on it; hanging, climbing and their
+timing are the game's. The [platformer example](../../examples/sgl-physics/examples/platformer.rs)
+walks, jumps, climbs a step and drops through a platform.
+
 ## Worlds
 
 A `ColliderSet` buckets colliders in a grid of the game's cell size (a
@@ -98,8 +136,9 @@ included) the motion keeps all of its part across `up`, so ramps and
 landings do not slow a body; after a wall or a ceiling (a ramp too steep to
 stand on included) it slides along the face. Between two faces it follows
 their crease. `snap_to_ground` keeps a body on a ramp it walks down.
-`Contacts` reports floor, wall and ceiling contacts, the last floor and
-ceiling normals and the ids of the last floor, wall and ceiling met.
+`Contacts` reports floor, wall and ceiling contacts, the last floor,
+ceiling and wall normals and the ids of the last floor, wall and ceiling
+met.
 
 ## Determinism and the network
 
@@ -114,14 +153,16 @@ very long collider (a whole level's floor) into pieces.
 
 With the `serde` feature the plain types serialise; each documents its
 largest postcard size as `MAX_POSTCARD_BYTES` (for example
-`Contacts::<Vec3>::MAX_POSTCARD_BYTES`, 86), to budget against `sgl-net`'s
+`Contacts::<Vec3>::MAX_POSTCARD_BYTES`, 102), to budget against `sgl-net`'s
 `MAX_LATEST_STATE_BYTES`. All implement `sgl_core::CanonicalWrite`, so a
 client and its server can compare one digest to find a desync.
 
 Read the [physics contract](../../specs/physics.md) before changing
 behaviour. [Parity fixtures](../../tests/sgl-physics/tests/parity.rs),
-[property tests](../../tests/sgl-physics/tests/properties.rs) and the
-[state round trip](../../tests/sgl-physics/tests/state.rs) exercise the
-cross-target, geometric and serialisation boundaries. Run
+[property tests](../../tests/sgl-physics/tests/properties.rs), the
+[state round trip](../../tests/sgl-physics/tests/state.rs), the
+[mover tests](../../tests/sgl-physics/tests/mover.rs) and the
+[game scenarios](../../tests/sgl-physics/tests/scenarios.rs) exercise the
+cross-target, geometric, serialisation and mover boundaries. Run
 `cargo test -p sgl-physics -p sgl-physics-tests` for focused native checks.
 See [Physics](../../docs/README.md#physics) to choose a game's physics.

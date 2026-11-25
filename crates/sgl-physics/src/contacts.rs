@@ -28,6 +28,8 @@ pub struct Contacts<V> {
     pub last_floor_normal: V,
     /// Normal of the most recent ceiling contact, or zero if there was none.
     pub last_ceiling_normal: V,
+    /// Normal of the most recent wall contact, or zero if there was none.
+    pub last_wall_normal: V,
     /// Id of the collider of the most recent floor contact.
     pub last_floor_id: Option<u64>,
     /// Id of the collider of the most recent wall contact.
@@ -43,13 +45,25 @@ pub struct Contacts<V> {
     pub down_blocked: bool,
     /// Motion along `up` was asked for and not achieved: a head-bump.
     pub up_blocked: bool,
+    /// [`move_and_slide`](crate::move_and_slide) climbed a step.
+    pub stepped: bool,
+    /// [`move_and_slide`](crate::move_and_slide)'s ledge guard shortened the
+    /// move to keep the body over a floor.
+    pub ledge_guarded: bool,
+    /// [`move_and_slide`](crate::move_and_slide) moved the body out of solid
+    /// geometry it started inside.
+    pub pushed_out: bool,
+    /// [`move_and_slide`](crate::move_and_slide) found the body inside solid
+    /// geometry it could not leave within its own size, and left it where it
+    /// was.
+    pub stuck: bool,
 }
 
 impl<V: Vector> Contacts<V> {
-    /// The largest postcard encoding: five bools, four vectors, and three
-    /// optional `u64` varints of up to eleven bytes each (86 bytes in 3D, 70
+    /// The largest postcard encoding: nine bools, five vectors, and three
+    /// optional `u64` varints of up to eleven bytes each (102 bytes in 3D, 82
     /// in 2D).
-    pub const MAX_POSTCARD_BYTES: usize = 5 + 4 * space::postcard_bytes::<V>() + 3 * 11;
+    pub const MAX_POSTCARD_BYTES: usize = 9 + 5 * space::postcard_bytes::<V>() + 3 * 11;
 
     /// Contacts of a move that asked for `desired` and has touched nothing.
     pub(crate) fn asked(desired: V) -> Self {
@@ -71,8 +85,40 @@ impl<V: Vector> Contacts<V> {
             self.last_ceiling_id = Some(hit.id);
         } else {
             self.wall = true;
+            self.last_wall_normal = hit.normal;
             self.last_wall_id = Some(hit.id);
         }
+    }
+
+    /// Adds the contacts of a later part of the same move: its flags join
+    /// these, and its most recent contacts replace these.
+    pub(crate) fn absorb(&mut self, later: &Self) {
+        if later.floor {
+            self.floor = true;
+            self.last_floor_normal = later.last_floor_normal;
+            self.last_floor_id = later.last_floor_id;
+        }
+        if later.ceiling {
+            self.ceiling = true;
+            self.last_ceiling_normal = later.last_ceiling_normal;
+            self.last_ceiling_id = later.last_ceiling_id;
+        }
+        if later.wall {
+            self.wall = true;
+            self.last_wall_normal = later.last_wall_normal;
+            self.last_wall_id = later.last_wall_id;
+        }
+    }
+
+    /// Records the motion applied and sets the blocked flags, which compare
+    /// it with the motion asked for along `up`, so they mean the same in a
+    /// y-up and a y-down world.
+    pub(crate) fn applied(&mut self, effective: V, config: &MoverConfig<V>) {
+        self.effective = effective;
+        let desired_up = space::dot(self.desired, config.up());
+        let effective_up = space::dot(effective, config.up());
+        self.down_blocked = desired_up < 0.0 && effective_up > desired_up + config.block_epsilon();
+        self.up_blocked = desired_up > 0.0 && effective_up < desired_up - config.block_epsilon();
     }
 }
 
@@ -86,6 +132,7 @@ impl<V: Vector> CanonicalWrite for Contacts<V> {
         out.bool(self.wall);
         space::write(out, self.last_floor_normal);
         space::write(out, self.last_ceiling_normal);
+        space::write(out, self.last_wall_normal);
         for id in [self.last_floor_id, self.last_wall_id, self.last_ceiling_id] {
             out.bool(id.is_some());
             if let Some(id) = id {
@@ -96,5 +143,9 @@ impl<V: Vector> CanonicalWrite for Contacts<V> {
         space::write(out, self.effective);
         out.bool(self.down_blocked);
         out.bool(self.up_blocked);
+        out.bool(self.stepped);
+        out.bool(self.ledge_guarded);
+        out.bool(self.pushed_out);
+        out.bool(self.stuck);
     }
 }

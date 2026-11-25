@@ -7,9 +7,9 @@ or solver, holds no loop, and keeps no state the game does not own. A game
 whose play is stacking, joints or rag dolls adds Rapier itself.
 
 This slice gives box bodies against box colliders, whole or cut by one
-plane into ramps (#915). Later slices (the mover step, round bodies, moving
-colliders, planar bumps, surfaces) are planned in #914 and are not available
-until they land.
+plane into ramps (#915), and the mover step (#916). Later slices (round
+bodies, moving colliders, planar bumps, surfaces) are planned in #914 and
+are not available until they land.
 
 ## Requirements
 
@@ -75,7 +75,7 @@ until they land.
 10. **Worlds.** A query reaches colliders only through the `World` trait.
     `colliders_near` visits every collider that may overlap a closed region;
     `colliders_along`, which the moving queries (`cast`, `ray`,
-    `slide`, `snap_to_ground`) use, visits every collider that may
+    `slide`, `snap_to_ground`, `move_and_collide`) use, visits every collider that may
     overlap a closed box swept by a motion, and defaults to
     `colliders_near` over the box enclosing the start and the end. Either
     may visit more, in any order and more than once, or answer
@@ -138,13 +138,15 @@ until they land.
     ramp and a wall; `MAX_SLIDES_3D`, 4: a floor, a ramp and the two walls
     of a corner; raised by one each for ramps, #915), and never moves the
     body more than a rounding step into a solid collider. A body that starts inside one
-    may move out or along it, and its least penetration depth never grows. It
-    does not push bodies out: the game keeps them clear. Skin back-off
+    may move out or along it, and its least penetration depth never grows.
+    `slide` does not push bodies out; `move_and_slide` does (17). Skin back-off
     shortens the whole swept motion to leave the configured gap along the
     contact normal, never reversing it or moving off the tested segment.
-    After a wall or ceiling contact, sliding projects the motion left after
-    the contact time, excluding the backed-off portion; after a floor
-    contact, it turns everything the pass did not apply along the face (16,
+    The motion left after a contact is everything the pass did not apply,
+    the skin back-off included: after a wall or ceiling contact, sliding
+    projects it onto the face, removing only its part into the face, so a
+    body pushed into a wall keeps its whole fall and its whole run along
+    the wall; after a floor contact, it turns it along the face (16,
     Ramps). `snap_to_ground` probes `snap_distance` along `-up`, grounds
     only on a floor-classified face met first (a steeper face met first
     leaves the body where it is), and backs off along its probe. A
@@ -152,10 +154,14 @@ until they land.
     floor face, never a body deeper inside it. A non-finite motion moves
     nothing.
 14. **Contacts.** `Contacts` records the floor, wall and ceiling contacts of
-    a move, the last floor and ceiling normals, the ids of the last floor,
-    wall and ceiling met, the motion asked for and applied, and whether
-    motion against or along `up` was asked for and not achieved by more
-    than `block_epsilon`.
+    a move, the last floor, ceiling and wall normals, the ids of the last
+    floor, wall and ceiling met, the motion asked for and applied, and
+    whether motion against or along `up` was asked for and not achieved by
+    more than `block_epsilon`. A `move_and_slide` step also reports whether
+    it climbed a step (`stepped`), its ledge guard shortened the move
+    (`ledge_guarded`), it pushed the body out (`pushed_out`) or the body is
+    `stuck`. The last-contact fields report; the mover's velocity rule
+    reads every face met (17), not them.
 15. **Queries.** `overlaps` lists every collider on the masked layers the
     body's shape overlaps, sensors included, in the fixed order, each once.
     A cut collider is met as the shape it is: a ray, a cast or an overlap
@@ -166,6 +172,11 @@ until they land.
     on one axis, moving into that face, meets it at `t = 0`: in world
     coordinates it touches. A collider the body overlaps more deeply at the
     start is passed. `ray` is a cast of a box with no extent.
+    `move_and_collide` (Godot's name and meaning) moves a shape by a delta
+    until the first collider that blocks it as it would block `slide`,
+    stops a `skin` short along its path, and returns the translation and
+    the contact; it does not slide. A body stopped so and moved along the
+    face is not blocked by it.
 16. **Ramps.** A collider may be cut by one plane through its box; its solid
     part is the box on the plane's inner side. In 3D the plane's normal has
     one zero component. The sweep against a cut box is exact, and a contact
@@ -188,7 +199,7 @@ until they land.
     - Motion left after a contact with a floor-classified face turns along
       that face and keeps its horizontal length, so a walkable slope does
       not slow a body. Motion left after any other contact is projected onto
-      the face, as before, except that a face tilted toward `up` and too
+      the face (13), except that a face tilted toward `up` and too
       steep to stand on gives it no height it did not already have: a body
       pushed at the foot of such a slope stops there and holds still, and
       one falling onto it slides down it. A slide never moves a body into a
@@ -202,12 +213,80 @@ until they land.
       along `up` changes to keep it on the face. In 2D two faces that are not
       parallel meet at a point, so their crease stops the motion; faces
       parallel to one already met add no constraint.
+17. **Mover.** `move_and_slide` (Godot's name and meaning) is one fixed
+    step of a character over a `MoverState { position, velocity, floor }`
+    the game owns: plain `Copy` data, `floor` the normal and id of the
+    floor it stands on or `None`, serialised and hashed like the other
+    state types. It takes the game's `dt` (a negative or non-finite one
+    changes nothing) and `MoverOptions { step_height, ledge_drop,
+    drop_through, mask }` per call (lengths finite and non-negative, or it
+    panics), and, in order:
+    - pushes a body that starts inside a solid collider out the shortest
+      way that frees it, at most its own size along each axis. It tries at
+      most `MAX_PUSH_OUT_PLANES` (8) distances per axis, each putting the
+      body a `skin` from a box face or from a ramp's plane; a ramp's
+      distance on one axis is worked out from the distances on the others
+      (one ramp's plane per place), and one more place moves the body
+      along each ramp's normal a `skin` out of its plane. Whether a place
+      is free is decided by each collider's real shape, cut included. One
+      it cannot free stays untouched and reports `stuck`. One-way colliders
+      and sensors never push;
+    - moves by `velocity * dt` with one `slide`, whose floor rule (16)
+      keeps a walk's motion across `up` whole, on flat floors and ramps; a
+      walking body is one on a floor at the start and not rising along
+      `up`;
+    - climbs a step when a walking body is stopped by a wall and
+      `step_height` is not zero: lift by up to `step_height` (a ceiling
+      shortens it), the same move across `up`, settle by the lift plus
+      `snap_distance`; kept only if it ends on a floor (a ramp's included)
+      and gains more than `block_epsilon` of distance along the requested
+      direction across `up` over the plain move;
+    - with `ledge_drop` set, guards a walking body whose move ends with no
+      floor within `ledge_drop` or `snap_distance`, whichever is further
+      (plus `skin`), below it, so the ground a walker follows down a ramp
+      is never a ledge: the move across
+      `up` is made again one world axis at a time, each ending at the last
+      supported point, found by halving `LEDGE_SEARCH_STEPS` (16) times;
+      the body may overhang until its trailing edge reaches the edge, and
+      motion along the edge is kept;
+    - snaps a walking body to the ground where it ends;
+    - removes from `velocity`, for every face the step met in the order
+      met, the part that points into it, by the rules `slide` applies to
+      the motion it has left (13, 16): a floor removes the part against
+      `up`; a wall or a ceiling projects it onto the face; a slope too
+      steep to stand on does too and gives it no height; and a later face
+      never turns it into an earlier one (a floor counting as `up`), so it
+      follows their crease or stops. A body wedged between faces, or
+      pinned in a corner, keeps no velocity into any of them;
+    - sets `floor`: for a walking body, the floor the snap finds under it
+      where it ends, or `None` once it has walked off one, whatever it
+      touched on the way; for any other body, the last floor it met, so a
+      landing sets it.
+
+    A body standing on a walkable ramp under gravity stays where it is:
+    the floor rule takes the fall out of the motion and the velocity
+    alike, and leaves no part across `up` to slide down the slope with.
+
+    `drop_through` passes every one-way collider for the step. Any
+    `Unanswered` query leaves the state exactly as it was and returns
+    `Unanswered`. Nothing is cached between calls. Gravity, jumping,
+    speeds, flying and water are the game's: how it sets the velocity.
+18. **Ledges.** `find_ledge` finds the top edge of the wall a body is
+    pressed against (within twice `skin` along a direction across `up`)
+    when that edge lies within `reach` of the body's top, above or below,
+    and returns where the body would hang (beside the wall, its top level
+    with the edge plus `skin`), where it would stand (a `skin` above the
+    top and past the edge) and the id of what it would stand on. It
+    refuses a ledge with anything solid where the body would hang, beside
+    the wall as it rises, or where it would move to stand, and a one-way
+    collider's side is never a wall. Hanging and climbing are the game's.
 
 ## Acceptance
 
-- The frozen fixtures in `tests/sgl-physics/tests/parity.rs`, a seeded walk
-  through a fixed 2D and a fixed 3D level hashed every step, produce
-  identical values on native and `wasm32`.
+- The frozen fixtures in `tests/sgl-physics/tests/parity.rs`, seeded walks
+  through a fixed 2D and a fixed 3D level hashed every step, with `slide`
+  and with `move_and_slide` (steps, a guarded stretch, drop-through and a
+  push-out), produce identical values on native and `wasm32`.
 - The property tests in `tests/sgl-physics/tests/properties.rs` hold: a move
   never ends inside a solid through any world; the same level as a slice, a
   set, a cell world or sets built in two orders, large colliders and motions
@@ -216,7 +295,9 @@ until they land.
   bit-equal; a cast from exactly on a face meets it; a 3D move with no z
   motion matches the 2D move bit for bit.
 - A body state serialised with postcard and restored continues bit-equal to
-  one that was not (`tests/sgl-physics/tests/state.rs`).
+  one that was not, and a `MoverState` restored and replayed through the
+  same inputs is bit-equal to the forward run
+  (`tests/sgl-physics/tests/state.rs`).
 - The ramp tests in `tests/sgl-physics/tests/ramps.rs` hold: hand-worked
   sweeps against a 2D ramp and each kind of 3D ramp; a move never ends
   inside a cut box, by the box's own definition sampled; walking over ramps
@@ -226,3 +307,7 @@ until they land.
   crease of a ramp and a wall penetrates neither, and one wedged in a crease
   follows it; ramps mirror across each axis and between y-up and y-down;
   and a cell world of ramps moves bit-equal to the slice.
+- The mover's requirements hold in 2D and 3D
+  (`tests/sgl-physics/tests/mover.rs`), and so do the game scenarios of a
+  voxel walker through a `CellWorld`, on ramps included, and a 2D platformer
+  (`tests/sgl-physics/tests/scenarios.rs`).

@@ -8,6 +8,7 @@ use sgl_core::{CanonicalWrite, StateHasher};
 
 use crate::config::MoverConfig;
 use crate::shape::{Collider, ColliderKind, Cut, Shape, order_cuts};
+use crate::slide::back_off;
 use crate::space::{self, Vector};
 use crate::sweep::{self, Contact, TIE_ORDER};
 use crate::world::{Unanswered, World};
@@ -71,6 +72,42 @@ pub fn cast<V: Vector, W: World<V> + ?Sized>(
     first_contact(body, position, V::ZERO, motion, world, mask, Rule::Cast)
 }
 
+/// Moves `body` from `position` by `delta` until the first collider on a
+/// layer in `mask` blocks it, and stops a `skin` short of it along the path:
+/// Godot's `move_and_collide`. Returns the translation to apply to
+/// `position` and the contact, or the whole `delta` and `None` when nothing
+/// is in the way. It does not slide: what the body does next (a bounce, a
+/// break, a slide of its own) is the game's. For projectiles, pushed crates
+/// and anything whose response is not a character's.
+///
+/// Colliders block as they do for [`slide`](crate::slide): sensors never,
+/// a one-way platform only motion into its floor face, and a collider the
+/// body starts inside only motion deeper into it. A body stopped against a
+/// face and moved again along it is not blocked by that face. A non-finite
+/// `delta` moves nothing.
+///
+/// [`Unanswered`] when the world will not walk the motion's region: the
+/// body then moves nothing.
+pub fn move_and_collide<V: Vector, W: World<V> + ?Sized>(
+    body: &Shape<V>,
+    position: V,
+    delta: V,
+    world: &W,
+    mask: u32,
+    config: &MoverConfig<V>,
+) -> Result<(V, Option<Hit<V>>), Unanswered> {
+    if delta == V::ZERO || !space::is_finite(delta) {
+        return Ok((V::ZERO, None));
+    }
+    let rule = Rule::Move(config);
+    Ok(
+        match first_contact(body, position, V::ZERO, delta, world, mask, rule)? {
+            Some(hit) => (back_off(delta, &hit, config.skin()), Some(hit)),
+            None => (delta, None),
+        },
+    )
+}
+
 /// The first collider a point travelling by `motion` from `origin` meets: a
 /// [`cast`] of a box with no extent. A ray starting on a face, or a rounding
 /// step inside it, and moving into the box meets it at `t = 0`; a ray from
@@ -125,9 +162,9 @@ pub(crate) enum Rule<'a, V> {
     /// [`cast`]: every collider but sensors, one-way platforms whole; those
     /// the body starts inside by more than a rounding step are passed.
     Cast,
-    /// [`slide`](crate::slide) and [`snap_to_ground`](crate::snap_to_ground):
-    /// an embedded body may not go deeper, and a one-way platform blocks
-    /// only motion into its floor face.
+    /// [`slide`](crate::slide), [`snap_to_ground`](crate::snap_to_ground)
+    /// and [`move_and_collide`]: an embedded body may not go deeper, and a
+    /// one-way platform blocks only motion into its floor face.
     Move(&'a MoverConfig<V>),
 }
 
@@ -257,7 +294,7 @@ impl<V: Vector> Candidate<V> {
 /// pad covers the rounding of the body's own coordinates (several units in
 /// the last place of the region's largest); a world covers the collider's
 /// ([`World`]). It adds candidates only, and the exact tests decide.
-fn pad<V: Vector>(min: V, max: V) -> V {
+pub(crate) fn pad<V: Vector>(min: V, max: V) -> V {
     let largest = space::max(space::largest_abs(min), space::largest_abs(max));
     space::splat(largest * (8.0 * f32::EPSILON))
 }

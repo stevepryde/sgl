@@ -12,6 +12,13 @@
 //! [`snap_to_ground`], [`overlaps`], [`cast`] and [`ray`] inside its own
 //! fixed step.
 //!
+//! A character is a [`MoverState`] the game keeps and steps with
+//! [`move_and_slide`] (Godot's name and meaning): it sets the velocity and
+//! reads back the position, the velocity less what was blocked, and the
+//! floor, with a step-up, a ledge guard, one-way drop-through and push-out
+//! chosen per call in [`MoverOptions`]. [`move_and_collide`] stops a body at
+//! the first contact, and [`find_ledge`] finds a ledge to climb.
+//!
 //! # Conventions owned here
 //!
 //! **Normals** point from the surface toward the body that met it. Box
@@ -71,6 +78,8 @@ mod contacts;
 // wired to it (#919).
 #[allow(dead_code)]
 mod convex;
+mod ledge;
+mod mover;
 mod query;
 mod shape;
 mod slide;
@@ -82,7 +91,11 @@ pub use cell_world::{CellColliders, CellWorld, MAX_QUERY_CELLS};
 pub use collider_set::ColliderSet;
 pub use config::{MoverConfig, MoverSettings};
 pub use contacts::Contacts;
-pub use query::{Hit, cast, overlaps, ray};
+pub use ledge::{Ledge, find_ledge};
+pub use mover::{
+    Floor, LEDGE_SEARCH_STEPS, MAX_PUSH_OUT_PLANES, MoverOptions, MoverState, move_and_slide,
+};
+pub use query::{Hit, cast, move_and_collide, overlaps, ray};
 pub use shape::{ALL_LAYERS, Collider, ColliderKind, Cut, Shape};
 pub use slide::{MAX_SLIDES_2D, MAX_SLIDES_3D, slide, snap_to_ground};
 pub use space::Vector;

@@ -2397,6 +2397,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sgl-physics-examples"
+version = "0.10.0"
+dependencies = [
+ "sgl-2d",
+ "sgl-core",
+ "sgl-physics",
+ "winit",
+]
+
+[[package]]
 name = "sgl-physics-tests"
 version = "0.10.0"
 dependencies = [
