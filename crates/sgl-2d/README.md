@@ -20,6 +20,12 @@ For resource lifetimes, color spaces, and presentation behavior, read the
 In the browser `Context` and `Gpu::headless_async` create their wgpu instance
 on [sgl-webgpu](../sgl-webgpu/README.md); a game that creates its own device
 there uses `sgl_webgpu::instance` too.
+The device has default limits and no optional features unless the game
+requests it: `Context::try_new_with` / `Gpu::headless_with` (and their
+`_async` forms) pass the selected adapter to the game's closure and request
+the `wgpu::DeviceDescriptor` it returns, so one device can serve the canvas
+and SGL3D (`sgl_3d::graphics_device::{limits, features}`). A device the game
+negotiated itself wraps as `Gpu { device, queue }` for offscreen rendering.
 `Context` caps initial and resized swapchain dimensions per axis to the device's
 maximum 2D texture dimension; `Context::size` reports the configured dimensions.
 `Renderer::read_scene_async` reads the scene back on either platform; its

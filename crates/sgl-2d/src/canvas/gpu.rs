@@ -9,6 +9,12 @@
 //! passes need — so headless tools and tests can render without a window
 //! through [`Gpu::headless`]; a [`Context`] derefs to it. The swapchain is
 //! sRGB; present mode comes from the vsync flag (PR-1: default off).
+//!
+//! The device has default limits and no optional features unless the game
+//! supplies the request ([`Context::try_new_with_async`],
+//! [`Gpu::headless_with_async`]), so one device can serve the canvas and
+//! another renderer such as SGL3D. A game that negotiates its own device
+//! wraps it as `Gpu { device, queue }` for the offscreen path.
 
 use std::fmt;
 use std::ops::Deref;
@@ -51,7 +57,7 @@ pub struct Gpu {
 pub enum GpuError {
     /// No wgpu adapter is available on this host.
     NoAdapter(String),
-    /// The adapter refused a default-limits device.
+    /// The adapter refused the requested device.
     NoDevice(String),
 }
 
@@ -59,7 +65,7 @@ impl std::fmt::Display for GpuError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoAdapter(err) => write!(f, "no wgpu adapter available ({err})"),
-            Self::NoDevice(err) => write!(f, "adapter cannot create a default device ({err})"),
+            Self::NoDevice(err) => write!(f, "adapter cannot create the requested device ({err})"),
         }
     }
 }
@@ -76,8 +82,8 @@ fn instance() -> wgpu::Instance {
     instance
 }
 
-/// The canvas renderer's device, windowed or headless: default limits and
-/// no optional features.
+/// The canvas renderer's default device, windowed or headless: default
+/// limits and no optional features.
 fn device_descriptor(label: &'static str) -> wgpu::DeviceDescriptor<'static> {
     wgpu::DeviceDescriptor {
         label: Some(label),
@@ -99,13 +105,33 @@ impl Gpu {
     /// A device + queue from whatever adapter the host offers, with no
     /// surface: for offscreen rendering, native scene capture, and tests.
     pub async fn headless_async() -> Result<Self, GpuError> {
+        Self::headless_with_async(|_| device_descriptor("sgl headless device")).await
+    }
+
+    /// Native convenience wrapper around [`Self::headless_with_async`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn headless_with(
+        request: impl FnOnce(&wgpu::Adapter) -> wgpu::DeviceDescriptor<'static>,
+    ) -> Result<Self, GpuError> {
+        pollster::block_on(Self::headless_with_async(request))
+    }
+
+    /// [`Self::headless_async`] with the game's device request: `request`
+    /// is called once with the selected adapter and its descriptor is what
+    /// the device is requested with, so one device can serve the canvas and
+    /// another renderer (SGL3D's `sgl_3d::graphics_device::{limits,
+    /// features}` give its limits and features for the adapter). A refused
+    /// request is [`GpuError::NoDevice`].
+    pub async fn headless_with_async(
+        request: impl FnOnce(&wgpu::Adapter) -> wgpu::DeviceDescriptor<'static>,
+    ) -> Result<Self, GpuError> {
         let instance = instance();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions::default())
             .await
             .map_err(|err| GpuError::NoAdapter(err.to_string()))?;
         let (device, queue) = adapter
-            .request_device(&device_descriptor("sgl headless device"))
+            .request_device(&request(&adapter))
             .await
             .map_err(|err| GpuError::NoDevice(err.to_string()))?;
         Ok(Self { device, queue })
@@ -173,6 +199,32 @@ impl Context {
         window: Arc<Window>,
         vsync: bool,
     ) -> Result<Self, RendererInitError> {
+        Self::try_new_with_async(window, vsync, |_| device_descriptor("sgl canvas device")).await
+    }
+
+    /// Native convenience wrapper around [`Self::try_new_with_async`].
+    /// Browser callers must await `try_new_with_async`, as with [`Self::new`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn try_new_with(
+        window: Arc<Window>,
+        vsync: bool,
+        request: impl FnOnce(&wgpu::Adapter) -> wgpu::DeviceDescriptor<'static>,
+    ) -> Result<Self, RendererInitError> {
+        pollster::block_on(Self::try_new_with_async(window, vsync, request))
+    }
+
+    /// [`Self::try_new_async`] with the game's device request: `request` is
+    /// called once with the adapter selected for the surface and its
+    /// descriptor is what the device is requested with, so one device can
+    /// serve the canvas and another renderer (SGL3D's
+    /// `sgl_3d::graphics_device::{limits, features}` give its limits and
+    /// features for the adapter). A refused request is
+    /// [`RendererInitError::Device`].
+    pub async fn try_new_with_async(
+        window: Arc<Window>,
+        vsync: bool,
+        request: impl FnOnce(&wgpu::Adapter) -> wgpu::DeviceDescriptor<'static>,
+    ) -> Result<Self, RendererInitError> {
         let instance = instance();
         // The surface borrows nothing beyond the Arc<Window> it is given, so
         // it is 'static for as long as that Arc is alive.
@@ -189,7 +241,7 @@ impl Context {
             .await
             .map_err(|error| RendererInitError::Adapter(error.to_string()))?;
         let (device, queue) = adapter
-            .request_device(&device_descriptor("sgl canvas device"))
+            .request_device(&request(&adapter))
             .await
             .map_err(|error| RendererInitError::Device(error.to_string()))?;
         let caps = surface.get_capabilities(&adapter);
@@ -292,5 +344,56 @@ impl Context {
             queue: self.gpu.queue.clone(),
             view,
         })
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::{Gpu, GpuError, device_descriptor};
+    use crate::canvas::test_gpu::unavailable;
+    use crate::canvas::{LightingSpace, Renderer};
+
+    /// Below wgpu's default of 8192, so every adapter can grant it.
+    const LOWERED_MAX_TEXTURE_2D: u32 = 4096;
+
+    fn request_max_texture_2d(
+        max: u32,
+    ) -> impl FnOnce(&wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
+        move |_| {
+            let mut descriptor = device_descriptor("sgl test device");
+            descriptor.required_limits.max_texture_dimension_2d = max;
+            descriptor
+        }
+    }
+
+    /// The game's request reaches the device: its lowered limit is what the
+    /// device reports and what the renderer clamps its target to.
+    #[test]
+    fn headless_with_requests_the_games_descriptor() {
+        let gpu = match Gpu::headless_with(request_max_texture_2d(LOWERED_MAX_TEXTURE_2D)) {
+            Ok(gpu) => gpu,
+            Err(err) => {
+                unavailable::<()>(&err.to_string());
+                return;
+            }
+        };
+        assert_eq!(
+            gpu.device.limits().max_texture_dimension_2d,
+            LOWERED_MAX_TEXTURE_2D
+        );
+        let mut renderer = Renderer::headless(&gpu, 8, 8, [0.0; 3], LightingSpace::Gamma);
+        renderer.set_target_size(&gpu, 6000, 8);
+        assert!(renderer.target_size().0 <= LOWERED_MAX_TEXTURE_2D);
+    }
+
+    /// A request the adapter cannot grant is an error, not a panic.
+    #[test]
+    fn headless_with_refused_request_is_no_device() {
+        if Gpu::headless().is_err() {
+            unavailable::<()>("no headless device");
+            return;
+        }
+        let result = Gpu::headless_with(request_max_texture_2d(u32::MAX));
+        assert!(matches!(result, Err(GpuError::NoDevice(_))));
     }
 }

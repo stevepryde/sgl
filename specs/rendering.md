@@ -23,6 +23,16 @@ Their CPU-side contracts are in [client](client.md).
    `try_new_async`); `Context::new` / `new_async` panic with it. Initial and
    resized surface dimensions are capped per axis to the device's maximum
    2D texture dimension; `Context::size` reports that configured size.
+   The device is requested with default limits and no optional features
+   unless the game supplies the request: `Context::try_new_with` /
+   `try_new_with_async` and `Gpu::headless_with` / `headless_with_async`
+   call the game's closure with the selected adapter and request the
+   `wgpu::DeviceDescriptor` it returns, so one device can serve the canvas
+   and another renderer (SGL3D's `graphics_device` helpers give its limits
+   and features). A request the adapter refuses is the same
+   `RendererInitError::Device` or `GpuError::NoDevice`. A game that
+   negotiates its own device wraps it as `Gpu { device, queue }` for the
+   offscreen path.
 2. The game uploads decoded straight-alpha RGBA8 textures explicitly under
    their asset handles, through `Renderer` or a game-owned
    `canvas::sprite::SpritePass`. Rendering does not load files or decode

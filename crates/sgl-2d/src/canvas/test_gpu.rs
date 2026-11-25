@@ -16,7 +16,7 @@ pub(crate) const REQUIRE_GPU_ENV: &str = "SGL_REQUIRE_GPU";
 
 /// Report an unavailable GPU: panic when [`REQUIRE_GPU_ENV`] demands one,
 /// otherwise print the skip reason and return `None`.
-fn unavailable<T>(reason: &str) -> Option<T> {
+pub(crate) fn unavailable<T>(reason: &str) -> Option<T> {
     let required = std::env::var(REQUIRE_GPU_ENV).is_ok_and(|v| !v.is_empty() && v != "0");
     assert!(
         !required,
