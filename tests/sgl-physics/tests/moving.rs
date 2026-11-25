@@ -1,4 +1,4 @@
-//! Moving colliders (#920, physics.md 20): riding a platform and leaving
+//! Moving colliders (#920, physics.md 21): riding a platform and leaving
 //! it, a collider that pushes or crushes a body, bodies that block or nudge
 //! each other, triggers, and the set a game updates by id. Every expected
 //! value comes from a requirement of `specs/physics.md`, from Godot's
@@ -110,7 +110,7 @@ fn advance<V: Vector>(collider: &mut Collider<V>, set: &mut ColliderSet<V>) {
 // ------------------------------------------------------------------ riding
 
 /// Defect: a rider left behind by its platform, falling a step behind a
-/// descending one, or drifting on it. Oracle: physics.md 20, a body on a
+/// descending one, or drifting on it. Oracle: physics.md 21, a body on a
 /// moving collider rides it: its place relative to the platform stays the
 /// same to within the skin, step after step, the platform stays its floor
 /// and the step names it in `carried_by`, whichever way it moves, a lift
@@ -162,7 +162,7 @@ fn a_rider_keeps_its_place_on_a_moving_platform_in_3d() {
 
 /// Defect: a rider that leaves without walking or jumping, keeps the
 /// platform's velocity while still on it, or loses it on leaving. Oracle:
-/// physics.md 20 and Godot's `CharacterBody` default
+/// physics.md 21 and Godot's `CharacterBody` default
 /// (`PLATFORM_ON_LEAVE_ADD_VELOCITY`): a body standing still stays on its
 /// platform, and one that leaves it in a step, by a jump or by walking off
 /// its edge, ends the step with the platform's velocity added to its own.
@@ -223,7 +223,7 @@ fn a_rider_leaves_only_by_walking_or_jumping<V: Vector>() {
 
 /// Defect: a platform found wherever a world offers it, so one that has
 /// left its rider still carries it through a slice (which offers every
-/// collider) and not through a set. Oracle: physics.md 6 and 20, the floor
+/// collider) and not through a set. Oracle: physics.md 6 and 21, the floor
 /// is found under the body and results never depend on the world. A
 /// platform 2 wide slides 3 units in one step, out from under its rider:
 /// nothing carries the rider, it is left standing on nothing, and a slice
@@ -273,7 +273,7 @@ fn a_rider_leaves_only_by_walking_or_jumping_in_3d() {
 }
 
 /// Defect: a carry moved without a sweep, so a fast platform takes its
-/// rider through a thin wall it cannot pass. Oracle: physics.md 20, a carry
+/// rider through a thin wall it cannot pass. Oracle: physics.md 21, a carry
 /// that would press the body into a solid is stopped there. A platform 6
 /// wide slides at 60 units a second (a unit a step) under a wall 0.1 thick
 /// hanging from above, whose bottom clears the platform by 0.3, less than
@@ -327,7 +327,7 @@ fn door<V: Vector>(direction: V, gap: f32) -> Collider<V> {
 
 /// Defect: a body a collider moves into left inside it, pushed out the
 /// wrong way (back through the door, or up), or pushed further than the
-/// door moved. Oracle: physics.md 20, a collider that has moved into a body
+/// door moved. Oracle: physics.md 21, a collider that has moved into a body
 /// pushes it out the way it moved: after every step the body's trailing
 /// face is clear of the door's leading face by no more than the skin, the
 /// body has not moved across the door's motion, and the step names the
@@ -379,7 +379,7 @@ fn a_collider_moved_into_a_body_pushes_it_clear_in_3d() {
 }
 
 /// Defect: a pusher that frees a body the shortest way (along one axis)
-/// rather than the way it moved. Oracle: physics.md 20, the push prefers
+/// rather than the way it moved. Oracle: physics.md 21, the push prefers
 /// the collider's motion when that way is free. A block moving up and to
 /// the right (and along z in 3D) at an angle into a body floating in open
 /// space (no gravity, nothing else near) leaves it moved only along that
@@ -432,7 +432,7 @@ fn a_pusher_at_an_angle_pushes_the_way_it_moved_in_3d() {
 }
 
 /// Defect: a body crushed against a wall pushed into the wall, through the
-/// door, or not reported. Oracle: physics.md 20 and geometry. The body is
+/// door, or not reported. Oracle: physics.md 21 and geometry. The body is
 /// 0.8 wide: once the door's leading face is less than that from the wall
 /// it cannot fit and the step reports `crushed` (by the door), and while
 /// the room is more than its width and two skins it is not crushed. It is
@@ -485,7 +485,7 @@ fn a_crushed_body_never_enters_the_wall_in_3d() {
 
 /// Two bodies, ids 1 and 2, on a floor, walking at each other at `speed`
 /// for `walk` steps and then standing, stepped in ascending id against the
-/// other as it stands (physics.md 20's convention): each step removes the
+/// other as it stands (physics.md 21's convention): each step removes the
 /// body's own collider from the set, steps it, and puts it back where it
 /// ended. Calls `check` after each body's step with its id, where it
 /// started, the state and the contacts, and `pair` after both.
@@ -535,7 +535,7 @@ fn overlap_x<V: Vector>(a: V, b: V) -> f32 {
 }
 
 /// Defect: bodies that walk into each other end overlapping, or never come
-/// to rest. Oracle: physics.md 20, a rigid body blocks: two bodies walked
+/// to rest. Oracle: physics.md 21, a rigid body blocks: two bodies walked
 /// at each other never overlap, by the boxes' own geometry, and come to
 /// rest facing each other no more than two skins apart.
 fn rigid_bodies_block_each_other<V: Vector>() {
@@ -568,7 +568,7 @@ fn rigid_bodies_block_each_other_in_3d() {
 
 /// Defect: a soft contact that stops a body, nudges it by more than its
 /// limit, or holds two bodies together once they stop pushing. Oracle:
-/// physics.md 20. Walking at 2 units a second (a thirtieth of a unit a
+/// physics.md 21. Walking at 2 units a second (a thirtieth of a unit a
 /// step) against a limit of 0.02 a step, each body's x moves by its own
 /// walk plus a nudge of at most the limit, and the nudge names the other
 /// body; they overlap, since the walk beats the limit, and once they stand
@@ -615,7 +615,7 @@ fn soft_bodies_nudge_each_other_in_3d() {
 }
 
 /// Defect: a soft nudge applied without a sweep, pressing a body into a
-/// rigid wall. Oracle: physics.md 20, the nudge never puts the body into a
+/// rigid wall. Oracle: physics.md 21, the nudge never puts the body into a
 /// rigid solid. A body standing against a wall (its face a skin away) with
 /// a soft collider of a generous limit (0.5) overlapping it from the other
 /// side by 0.3 is nudged toward the wall and stops a skin short of it,
@@ -679,7 +679,7 @@ fn sensor_events_report_each_entry_and_exit_once() {
 }
 
 /// Defect: `sensors_at` listing a solid, a sensor on another layer, one the
-/// body only touches, or one id twice. Oracle: physics.md 20 and the
+/// body only touches, or one id twice. Oracle: physics.md 21 and the
 /// geometry, every value exact in `f32`: the body (half-extents 0.5 about
 /// the origin) overlaps sensors 4 and 9 (9 twice, in a slice where ids may
 /// repeat) and the solid 1; it touches sensor 7 exactly at x = 0.5; sensor
@@ -846,7 +846,7 @@ fn step_digest<V: Vector>(states: &[MoverState<V>], contacts: &[Contacts<V>]) ->
 }
 
 /// Defect: a result that depends on the order a set was updated or built
-/// in (physics.md 6 and 20). Oracle: the same game run twice, once with one
+/// in (physics.md 6 and 21). Oracle: the same game run twice, once with one
 /// set kept across steps and updated by id (moves, velocities, a sensor and
 /// a crate removed and inserted again), once with a set rebuilt every step
 /// from the
@@ -942,7 +942,7 @@ impl<V: Vector> World<V> for RefusingOne<'_, V> {
 }
 
 /// Defect: a step that writes part of its work before a later query is
-/// refused, or carries on past a refusal. Oracle: physics.md 17 and 20, an
+/// refused, or carries on past a refusal. Oracle: physics.md 17 and 21, an
 /// `Unanswered` query at any stage leaves the state exactly as it was and
 /// the step answers `Unanswered`. A body riding a lift, with a door moved
 /// into it and a soft neighbour overlapping it, so every stage asks: a
@@ -1028,7 +1028,7 @@ fn unanswered_moves_nothing_with_moving_colliders_in_3d() {
 // ------------------------------------------------------------- the details
 
 /// Defect: a cell world that passes a moving collider's velocity or a soft
-/// limit through in cell units. Oracle: physics.md 10 and 20, a cell
+/// limit through in cell units. Oracle: physics.md 10 and 21, a cell
 /// world's colliders are given in cell-local units, lengths and speeds
 /// alike. At a cell size of 2, a platform moving one and a half cells a
 /// second carries its rider 3 units a second, and a soft limit of 0.01
@@ -1085,7 +1085,7 @@ fn a_cell_world_scales_velocity_and_soft_limit_by_its_cell() {
 /// Defect: finding a moving floor by asking a still voxel world about a
 /// region far larger than the step asked about before, so a large body
 /// standing still gets `Unanswered` where it was answered. Oracle:
-/// physics.md 10 and 20, a cell world walks at most 4096 cells and the
+/// physics.md 10 and 21, a cell world walks at most 4096 cells and the
 /// first search for a floor is the ground probe's own query. A body 10
 /// cells across standing on a floor of one-unit voxels asks about some
 /// 1300 cells a query; three times its size each way would be some 30 000.
@@ -1161,7 +1161,7 @@ fn velocity_push_and_the_new_contacts_reach_the_digest_and_the_order() {
 }
 
 /// Defect: a soft push whose limit is negative or not finite accepted, so
-/// the solver pulls a body into a collider. Oracle: physics.md 20, an
+/// the solver pulls a body into a collider. Oracle: physics.md 21, an
 /// authoring error.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
@@ -1226,7 +1226,7 @@ fn random_world<V: Vector>(rng: &mut Rng) -> Option<(V, Vec<Collider<V>>)> {
 
 /// Defect: a moving collider, a carry, a push or a soft nudge that leaves a
 /// body inside a solid. Oracle: the shapes' own definitions at their
-/// positions after the move, in `f64`, no crate query (physics.md 20 and
+/// positions after the move, in `f64`, no crate query (physics.md 21 and
 /// 13). Random worlds of still boxes, rigid boxes moving at up to 6 units a
 /// second (turning now and then) and soft boxes, with a body walking and
 /// jumping among them: after every step the body is inside no rigid solid
@@ -1314,7 +1314,7 @@ fn never_inside_a_solid_with_moving_colliders_in_3d() {
 
 /// Defect: a step that reads anything but its arguments and the world, so
 /// a client restoring a saved body and the moving colliders' saved places
-/// and velocities replays differently. Oracle: physics.md 2 and 20, the
+/// and velocities replays differently. Oracle: physics.md 2 and 21, the
 /// forward run itself. The game keeps the scene's colliders and moves each
 /// by its own velocity every step, turning the lift, the door and the
 /// wanderer at fixed steps; its two bodies are run 120 steps. At step 60

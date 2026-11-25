@@ -27,6 +27,9 @@ Every type and function is generic over `Vector`, implemented for
 | A tile map or voxel grid the game answers cell by cell | [`CellWorld`](src/cell_world.rs) |
 | A handful of colliders, or two worlds at once | a slice, or a pair `(A, B)`: [`World`](src/world.rs) |
 | Vehicles bumping in a plane: cars, karts, traffic, boats, pushed crates that turn | [`planar::advance`](src/planar/advance.rs), or [`planar::time_of_impact`](src/planar/toi.rs), [`planar::manifold`](src/planar/manifold.rs) and [`planar::bump`](src/planar/bump.rs) one pair at a time |
+| Triangles from a model or authored geometry, for sight lines, camera casts and ground (3D) | [`TriangleSet`](src/triangle_set.rs) |
+| Ground given as a grid of heights (3D) | [`HeightField`](src/height_field.rs) |
+| The ground under a wheel, a hovering racer or a thing placed on terrain (3D) | [`ground_under`](src/ground.rs) |
 
 A body is a `Shape` at a position (its centre): `Shape::Box { half }`,
 `Shape::Ball { radius }`, `Shape::Capsule { half_axis, radius }` (the
@@ -198,15 +201,19 @@ for ((id, state), was_in) in players.iter_mut().zip(&mut sensors) {
 }
 ```
 
-See [physics.md](../../specs/physics.md), requirement 20, for every rule.
+See [physics.md](../../specs/physics.md), requirement 21, for every rule.
 
 ## Round and convex shapes
 
-Box against box, whole or cut, is a closed-form sweep and exact. Every
-other pair goes through a convex kernel ported from Box2D and Box3D
-([provenance](PROVENANCE.md)), which makes contact a *slop* short of
-touching: a cast stops between one and one and a quarter slops before the
-surfaces meet. A query's slop is a hundredth of the smaller shape's extent
+Box against box, whole or cut, is a closed-form sweep and exact, and so
+is a `ray` against a ball, a capsule, a 2D polygon or a 3D triangle (a
+convex shape of exactly three points): it meets the surface where it is,
+to a few units in the last place of the coordinates involved, as Box2D's
+and Box3D's ray casts do. Every other pair, a 3D hull of four or more
+points met by a ray included, goes through a convex kernel ported from
+Box2D and Box3D ([provenance](PROVENANCE.md)), which makes contact a
+*slop* short of touching: a cast stops between one and one and a quarter
+slops before the surfaces meet. A query's slop is a hundredth of the smaller shape's extent
 (at most a quarter of the smaller radius); the mover's is a sixteenth of
 `skin`, and it reports the contact where the body would touch, so after
 the skin back-off a round or convex body rests between `skin` and
@@ -280,6 +287,55 @@ query walks only the cells along its motion, so a long ray is answered
 where the box enclosing it would not be. A larger walk is `Unanswered`, and
 the body moves nothing.
 
+## Surfaces
+
+Two 3D worlds hold geometry a game gives once, for queries: walking on
+them is not offered, and the mover's floors are still authored as boxes,
+ramps and convex shapes. The mover accepts a surface world and meets each
+triangle as a solid convex collider, returning finite state from every
+step, but a body can catch on a seam between two flat triangles and stop,
+and one whose centre is below a triangle is pushed out beneath it.
+
+- `TriangleSet::new(positions, indices, ids)` takes triangles, three
+  indices each, with an id per triangle or one for all (the surface kind a
+  query reports). It refuses non-finite positions, indices that are not
+  triples or name no position, and more than `MAX_TRIANGLES` (2^20)
+  triangles (`SurfaceError`); a triangle with no area is dropped and
+  counted (`degenerate()`). It builds a tree once (Box3D's median split,
+  never deeper than `MAX_TREE_DEPTH`, 64) and offers one query at most
+  `MAX_QUERY_TRIANGLES` (4096) triangles, past which the query is
+  `Unanswered`; a long ray visits only the triangles along it.
+- `HeightField::new(heights, columns, rows, cell, origin, ids)` is a grid
+  of `columns` by `rows` samples on the xz plane, y up, sample `(column,
+  row)` at `origin + (column * cell, heights[row * columns + column], row *
+  cell)`, each cell two triangles split from its `(column + 1, row)` corner
+  to its `(column, row + 1)` corner, with an id per cell or one for all, at
+  most `MAX_HEIGHT_SAMPLES` (2^22). A query walks its cells as a
+  `CellWorld` does, at most `MAX_QUERY_CELLS`; outside the grid there is
+  no ground.
+- `ground_under(point, max_height, depth, &world, mask)` is the highest
+  surface straight down (`-y`) through `point`, from `max_height` above it
+  to `depth` below it, with its height, its normal (pointing up) and its id,
+  so a deck over a vehicle is not taken for the floor under it. It asks any
+  `World<Vec3>`.
+
+`ray` and `cast` meet both worlds as they meet any other: a chase camera
+casts a `Shape::Ball` from the vehicle toward where it wants to be and
+stops where the cast does; a sight line is a `ray`. Each triangle is a
+convex collider of its three corners, two-sided. A ray or `ground_under`
+meets it exactly: the height is the surface's own, to a few units in the
+last place of the coordinates involved (micrometres on a 20 m triangle),
+and the normal is the triangle's own plane normal, turned toward the ray,
+so coplanar neighbours give the same normal across their seam and a
+wheel neither floats nor rocks there. A ray passing within rounding of a
+shared edge meets one of the triangles; seams have no gaps. A ball cast
+meets a triangle through the kernel, a slop short of it, as every kernel
+pair does.
+
+`sgl-3d` loads a model's positions and indices (`CpuMesh`); a game copies
+them into a `TriangleSet` itself, in world units after its own instance
+transform. Neither crate depends on the other, and the GPU is never read.
+
 ## Settings
 
 `MoverConfig::new(MoverSettings { up, skin, snap_distance, normal_threshold,
@@ -342,9 +398,12 @@ behaviour. [Parity fixtures](../../tests/sgl-physics/tests/parity.rs),
 [moving-collider tests](../../tests/sgl-physics/tests/moving.rs) and
 [scenarios](../../tests/sgl-physics/tests/scenarios_moving.rs), the
 [round-body tests](../../tests/sgl-physics/tests/round.rs), the
-[planar tests](../../tests/sgl-physics/tests/planar.rs) and the
+[planar tests](../../tests/sgl-physics/tests/planar.rs), the
+[surface tests](../../tests/sgl-physics/tests/surfaces.rs) and
+[beside moving colliders](../../tests/sgl-physics/tests/surfaces_moving.rs), and the
 comparisons with parry ([kernel](../../tests/sgl-physics/tests/oracle_parry.rs),
-[planar](../../tests/sgl-physics/tests/oracle_parry_planar.rs))
+[planar](../../tests/sgl-physics/tests/oracle_parry_planar.rs),
+[surfaces](../../tests/sgl-physics/tests/oracle_parry_surfaces.rs))
 exercise the cross-target, geometric, serialisation and mover boundaries. Run
 `cargo test -p sgl-physics -p sgl-physics-tests` for focused native checks.
 See [Physics](../../docs/README.md#physics) to choose a game's physics.

@@ -7,8 +7,9 @@ use sgl_core::math::{IVec3, Quat, Vec2, Vec3};
 use sgl_core::{CanonicalWrite, SplitMix64, StateHasher};
 use sgl_physics::{
     ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Convex, Cut,
-    MoverConfig, MoverOptions, MoverSettings, MoverState, Push, Shape, Vector, World, cast,
-    move_and_slide, overlaps, planar, ray, sensor_events, sensors_at, slide, snap_to_ground,
+    HeightField, Hit, MoverConfig, MoverOptions, MoverSettings, MoverState, Push, Shape,
+    TriangleSet, Vector, World, cast, ground_under, move_and_slide, overlaps, planar, ray,
+    sensor_events, sensors_at, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -508,9 +509,18 @@ fn round_extras_3d() -> [Collider<Vec3>; 3] {
 /// run (#919), and refrozen (#924) when the mover began keeping a step's
 /// motion as a translation from its start (the mover walks) and rotations
 /// began to be normalised by their largest component first (the 3D slide
-/// walk, whose hull is turned by a quaternion); and again when #920 grew
+/// walk, whose hull is turned by a quaternion); again when #920 grew
 /// the encodings of `Collider` and `Contacts`, every body moving bit for
-/// bit as before.
+/// bit as before; and the 2D slide walk again
+/// when rays became exact against balls, capsules and polygons (#923): its
+/// ray down each step meets the added ball, capsule and polygon where they
+/// are, not a slop short. The 3D slide walk keeps its digest: its rays
+/// down met no ball or capsule, and its hull, of eight points, stays on
+/// the kernel. The mover walks cast no rays. The 2D slide walk was
+/// refrozen once more when #920 and #923 met, since it hashes both what
+/// #920 encodes anew (the colliders it overlaps and its contacts) and the
+/// exact rays of #923: with the exact rays turned off it gives #920's
+/// digest, and with #920's new fields left out of the encodings #923's.
 #[wasm_bindgen_test(unsupported = test)]
 fn seeded_round_walks_through_fixed_levels_are_target_independent() {
     let level = level_2d();
@@ -589,7 +599,7 @@ fn seeded_round_walks_through_fixed_levels_are_target_independent() {
 
     assert_eq!(
         walked_2d,
-        "8be15573899624a40fbcc1499d416089676496c5f2b6bda8f3e5f753af087fb2"
+        "4dbf3d20d41db4e2032fbd90595d5b828f41cb5cb73606c98844314117914808"
     );
     assert_eq!(
         walked_3d,
@@ -902,5 +912,154 @@ fn a_seeded_planar_pile_up_is_target_independent() {
     assert_eq!(
         hasher.finish().to_hex(),
         "11b5935271aca8e2f6cbed22d4fc57372b39a1528fe8d9c8d2bbfb5307e16a7b"
+    );
+}
+
+/// The surfaces the drive crosses: a ramp rising to a deck, the deck, a
+/// ramp down and a wall behind, as triangles, and beside them a height
+/// field of heights drawn from `rng`.
+fn surface_scene(rng: &mut SplitMix64) -> (TriangleSet, HeightField) {
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+    let mut ids = Vec::new();
+    let mut quad = |corners: [Vec3; 4], id: u64| {
+        let base = u32::try_from(positions.len()).expect("small");
+        positions.extend(corners);
+        indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+        ids.extend([id, id]);
+    };
+    // A ramp rising to a deck, a deck, a ramp down, and a wall behind.
+    quad(
+        [
+            Vec3::new(0.0, 0.0, -2.0),
+            Vec3::new(4.0, 1.5, -2.0),
+            Vec3::new(4.0, 1.5, 2.0),
+            Vec3::new(0.0, 0.0, 2.0),
+        ],
+        1,
+    );
+    quad(
+        [
+            Vec3::new(4.0, 1.5, -2.0),
+            Vec3::new(8.0, 1.5, -2.0),
+            Vec3::new(8.0, 1.5, 2.0),
+            Vec3::new(4.0, 1.5, 2.0),
+        ],
+        2,
+    );
+    quad(
+        [
+            Vec3::new(8.0, 1.5, -2.0),
+            Vec3::new(11.0, 0.0, -2.0),
+            Vec3::new(11.0, 0.0, 2.0),
+            Vec3::new(8.0, 1.5, 2.0),
+        ],
+        3,
+    );
+    quad(
+        [
+            Vec3::new(-3.0, 0.0, -3.0),
+            Vec3::new(-3.0, 6.0, -3.0),
+            Vec3::new(-3.0, 6.0, 3.0),
+            Vec3::new(-3.0, 0.0, 3.0),
+        ],
+        4,
+    );
+    let mesh = TriangleSet::new(&positions, &indices, &ids).expect("a sound mesh");
+    let heights: Vec<f32> = (0..16 * 6)
+        .map(|_| (rng.next_u64() % 5) as f32 * 0.125 - 0.25)
+        .collect();
+    let field = HeightField::new(&heights, 16, 6, 1.0, Vec3::new(-4.0, 0.0, 2.0), &[9])
+        .expect("a sound grid");
+    (mesh, field)
+}
+
+/// A drive across surfaces (#923): a kart crossing a ramp and a deck built
+/// from triangles beside a height field of seeded quarter-unit heights,
+/// each step asking `ground_under` for its four wheels, casting its chase
+/// camera's ball back toward a wall of triangles and looking ahead along a
+/// ray, then a seeded batch of rays and ball casts across the scene, every
+/// result hashed. The kart's path and the queries are the test's own; they
+/// only have to reach the triangles, their seams and the field from one
+/// seed. Frozen on first run (#923), and refrozen when rays became exact
+/// against triangles, which they had met a slop short through the kernel
+/// (#923).
+#[wasm_bindgen_test(unsupported = test)]
+fn seeded_queries_against_surfaces_are_target_independent() {
+    let mut rng = SplitMix64::new(0x0923_2000);
+    let (mesh, field) = surface_scene(&mut rng);
+    let world = (&mesh, &field);
+
+    let mut hasher = StateHasher::new();
+    let write = |hasher: &mut StateHasher, found: Option<Hit<Vec3>>| {
+        hasher.bool(found.is_some());
+        if let Some(hit) = found {
+            hit.canonical_write(hasher);
+        }
+    };
+    let mut stood_on = [0u32; 10];
+    let mut camera_stopped = 0;
+    let camera = Shape::Ball { radius: 0.3 };
+    for step in 0..240 {
+        let x = -1.0 + step as f32 * 0.05;
+        let z = 0.75 * unit(&mut rng) - 0.375 + if step >= 120 { 2.5 } else { 0.0 };
+        let kart = Vec3::new(x, 2.5, z);
+        for (dx, dz) in [(-0.6, -0.4), (-0.6, 0.4), (0.6, -0.4), (0.6, 0.4)] {
+            let wheel = kart + Vec3::new(dx, 0.0, dz);
+            let ground = ground_under(wheel, 0.5, 4.0, &world, ALL_LAYERS).expect("answered");
+            hasher.bool(ground.is_some());
+            if let Some(ground) = ground {
+                stood_on[usize::try_from(ground.id).expect("small")] += 1;
+                ground.canonical_write(&mut hasher);
+            }
+        }
+        // Toward a point beyond the wall at x = -3.
+        let behind = Vec3::new(-(x + 3.5) - unit(&mut rng), 1.0 + unit(&mut rng), 0.0);
+        let stopped = cast(&camera, kart, behind, &world, ALL_LAYERS).expect("answered");
+        camera_stopped += u32::from(stopped.is_some());
+        write(&mut hasher, stopped);
+        let ahead = Vec3::new(6.0, -2.0 * unit(&mut rng), 0.5 - unit(&mut rng));
+        write(
+            &mut hasher,
+            ray(kart, ahead, &world, ALL_LAYERS).expect("answered"),
+        );
+    }
+    for _ in 0..120 {
+        let from = Vec3::new(
+            16.0 * unit(&mut rng) - 4.0,
+            2.0 + 3.0 * unit(&mut rng),
+            10.0 * unit(&mut rng) - 3.0,
+        );
+        let motion = Vec3::new(
+            8.0 * unit(&mut rng) - 4.0,
+            -6.0 * unit(&mut rng),
+            8.0 * unit(&mut rng) - 4.0,
+        );
+        write(
+            &mut hasher,
+            ray(from, motion, &world, ALL_LAYERS).expect("answered"),
+        );
+        let ball = Shape::Ball {
+            radius: 0.1 + 0.4 * unit(&mut rng),
+        };
+        if overlaps(&ball, from, &world, ALL_LAYERS)
+            .expect("answered")
+            .is_empty()
+        {
+            write(
+                &mut hasher,
+                cast(&ball, from, motion, &world, ALL_LAYERS).expect("answered"),
+            );
+        }
+    }
+    // Wheels stood on both ramps, the deck and the field, and the camera
+    // was stopped by the wall or the deck.
+    assert!(
+        [1, 2, 3, 9].iter().all(|&id| stood_on[id] > 20) && camera_stopped > 20,
+        "{stood_on:?} {camera_stopped}"
+    );
+    assert_eq!(
+        hasher.finish().to_hex(),
+        "1f4cb91d83a9547ac354371ecd4010741fcba0b80360e156eefd06a784f961e7"
     );
 }

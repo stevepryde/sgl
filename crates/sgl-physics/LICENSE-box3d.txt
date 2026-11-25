@@ -4,7 +4,11 @@ ports the GJK distance query and the shape cast of src/distance.c, which
 credits Dirk Gregorius with portions, with the types of include/box3d/types.h
 and include/box3d/collision.h and the vector functions of
 include/box3d/math_functions.h and src/math_internal.h, to src/convex.rs,
-src/convex/d3.rs and src/convex/d3/simplex.rs (PROVENANCE.md).
+src/convex/d3.rs and src/convex/d3/simplex.rs, and the mesh tree of
+src/mesh.c, the bounds tests of src/simd.h and the height-field grid of
+src/height_field.c to src/triangle_set.rs, src/surface.rs and
+src/height_field.rs, and the ray casts of src/sphere.c, src/capsule.c and
+src/simd.c to src/sweep/ray.rs (PROVENANCE.md).
 
 MIT License
 

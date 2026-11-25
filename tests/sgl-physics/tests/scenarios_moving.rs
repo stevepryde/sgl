@@ -2,7 +2,7 @@
 //! lift and crusher, a door, a crowd, boats and a pickup, each driven the
 //! way a game drives it, a fixed step in which the game first moves its
 //! colliders and then steps its bodies. Every expectation comes from the
-//! requirement (physics.md 20) or from the level's geometry, worked in the
+//! requirement (physics.md 21) or from the level's geometry, worked in the
 //! comment beside it. Runs natively and in a wasm runtime.
 #![allow(clippy::cast_precision_loss)]
 
@@ -66,7 +66,7 @@ const PLAYER: Vec2 = Vec2::new(0.4, 0.5);
 
 /// Defect: a lift that loses its rider on the way up or down, lets it sink
 /// into the deck or float above it, or keeps it when it jumps. Oracle:
-/// physics.md 20 and the level. A lift 2 wide (id 5) runs from its top at
+/// physics.md 21 and the level. A lift 2 wide (id 5) runs from its top at
 /// y = 0 to y = 5 and back at 2 units a second, turning at each end, as
 /// the game moves it. The player standing on it rides the whole travel up
 /// and down: every step its floor is the lift and its feet are on the deck
@@ -145,7 +145,7 @@ fn a_player_rides_a_lift_through_its_travel_and_leaves_by_jumping() {
 }
 
 /// Defect: a descending lift that drags a rider standing on the shaft's rim
-/// down through the rim. Oracle: physics.md 20 (a carry that would press
+/// down through the rim. Oracle: physics.md 21 (a carry that would press
 /// the body into a solid is stopped there) and the level. The player stands
 /// across the rim at x = 1, half on the lift (id 3, the lower id, so the
 /// rider's floor is the lift) and half on the rim, a ledge 0.2 thick (id
@@ -188,7 +188,7 @@ fn a_descending_lift_does_not_pull_its_rider_through_the_rim() {
 }
 
 /// Defect: a crusher that pushes its victim into the floor, lets it through,
-/// or never says so. Oracle: physics.md 20 and the level: a block (id 8,
+/// or never says so. Oracle: physics.md 21 and the level: a block (id 8,
 /// 2 wide) comes down at 3 units a second onto the player standing on the
 /// ground. Once its underside is lower than the player is tall (1 unit) the
 /// player cannot fit and every step reports `crushed` by it; while it is
@@ -230,7 +230,7 @@ fn a_crusher_reports_crushed() {
 
 /// Defect: a sliding door that passes through a body standing in its way,
 /// knocks it off the floor or into the wall behind it. Oracle: physics.md
-/// 20 and the room: a door (id 9) 0.2 thick slides along +z at 2 units a
+/// 21 and the room: a door (id 9) 0.2 thick slides along +z at 2 units a
 /// second across a corridor where a player (0.6 wide and deep, 1.8 tall)
 /// stands. Every step after it reaches the player, the player is ahead of
 /// it, clear of its face by no more than the skin, still standing on the
@@ -280,7 +280,7 @@ fn a_sliding_door_shoves_a_standing_player_aside() {
 
 /// Defect: a crowd with soft contact that jams (a body stopped dead by
 /// another, as rigid contact stops it), or whose bodies sink into one
-/// another without bound. Oracle: physics.md 20. Twelve capsules (radius
+/// another without bound. Oracle: physics.md 21. Twelve capsules (radius
 /// 0.3) in a ring of radius 4 walk to its centre at 1.5 units a second, a
 /// fortieth of a unit a step, stepped in ascending id against the others as
 /// they stand, each a soft collider of limit 0.05. Soft contact never takes
@@ -369,7 +369,7 @@ fn a_soft_crowd_gathers_without_jamming_or_sinking() {
 // --------------------------------------------------------------- the boats
 
 /// Defect: boats that sail through each other, or one stepped later that
-/// ends inside one stepped earlier. Oracle: physics.md 20 and geometry: two
+/// ends inside one stepped earlier. Oracle: physics.md 21 and geometry: two
 /// boats (rigid boxes 2 long and 0.8 wide, ids 1 and 2) on still water (no
 /// gravity, nothing below) sail bow to bow along x, their keels 0.3 apart
 /// across, stepped in ascending id against the other as it stands. They
@@ -423,7 +423,7 @@ fn two_boats_stepped_in_id_order_block_each_other() {
 // -------------------------------------------------------------- the pickup
 
 /// Defect: a pickup that fires twice, never, or on the wrong step. Oracle:
-/// physics.md 20 and the level: a coin's sensor (id 40, half a unit
+/// physics.md 21 and the level: a coin's sensor (id 40, half a unit
 /// across, at x = 3) on the player's path; the player walks from x = 0 to
 /// x = 6 at 4 units a second. Over the walk `sensor_events` reports the
 /// coin entered exactly once, on the first step the player's box reaches

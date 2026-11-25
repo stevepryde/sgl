@@ -17,7 +17,7 @@ reference do not need to be in every prompt.
 | Build a 2D game | [sgl-2d](../crates/sgl-2d/README.md) | [Minimal window and sprite](../examples/direct-game/src/main.rs) |
 | Add a HUD, menu, or editing tool | [sgl-2d UI](../crates/sgl-2d/README.md#ui-and-huds), [tool composition](../specs/client.md#tool-composition) | [Tool UI](../examples/sgl-2d/examples/tool_ui.rs) |
 | Add fixed-step simulation or deterministic helpers | [sgl-core](../crates/sgl-core/README.md) | [Public modules](../crates/sgl-core/src/lib.rs) |
-| Move boxes, balls and capsules through a 2D or 3D world of boxes, ramps, convex shapes, tiles or voxels, with lifts, doors, crowds and triggers; choose a game's physics | [sgl-physics](../crates/sgl-physics/README.md), [Physics](#physics) | [Platformer](../examples/sgl-physics/examples/platformer.rs), [networked mover](../examples/sgl-physics/examples/net_mover.rs), [public API](../crates/sgl-physics/src/lib.rs) |
+| Move boxes, balls and capsules through a 2D or 3D world of boxes, ramps, convex shapes, tiles or voxels, with lifts, doors, crowds and triggers; cast sight lines, chase cameras and ground under wheels against 3D triangles and height fields; choose a game's physics | [sgl-physics](../crates/sgl-physics/README.md), [Physics](#physics) | [Platformer](../examples/sgl-physics/examples/platformer.rs), [networked mover](../examples/sgl-physics/examples/net_mover.rs), [public API](../crates/sgl-physics/src/lib.rs) |
 | Add multiplayer transport | [sgl-net](../crates/sgl-net/README.md) | [Transport API](../crates/sgl-net/src/lib.rs) |
 | Predict the local player and interpolate everyone else over the network | [sgl-core](../crates/sgl-core/README.md) | [`prediction`](../crates/sgl-core/src/prediction.rs) |
 | Add controller support | [sgl-input](../crates/sgl-input/README.md) | [Controller example](../examples/sgl-input/examples/controllers.rs) |
@@ -96,10 +96,14 @@ Choose by what the game is.
   plane) are `sgl_physics::planar`: `advance` steps the bodies through
   their impacts in time order and returns them; handling stays the
   game's, and so does height (a car on a bridge, one in the air), which it
-  keeps out of `advance` with its `collide` filter. SGL3D's
+  keeps out of `advance` with its `collide` filter. Camera obstruction
+  (a chase camera's ball `cast`), sight lines (`ray`) and the ground under
+  a vehicle (`ground_under`) have an SGL answer in 3D: a `TriangleSet` the
+  game builds from a model's positions and indices, or a `HeightField`;
+  collision for walking is still authored as simple shapes. SGL3D's
   ray queries serve rendering only; keep gameplay queries in the simulation,
   which a headless server runs without a GPU. A query library such as
-  [parry3d](https://parry.rs) suits a game that must collide with arbitrary
+  [parry3d](https://parry.rs) suits a game that must walk on arbitrary
   meshes.
 - Use a rigid-body engine only when simulated physics is the game: stacking,
   destruction, physics puzzles or sandboxes. Add [Rapier](https://rapier.rs)

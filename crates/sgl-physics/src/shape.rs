@@ -394,6 +394,22 @@ impl Convex<Vec3> {
         let turned = d3::Proxy::offset(points, 0.0, Vec3::ZERO, &rotation);
         Self::validated(turned.points())
     }
+
+    /// The flat hull of one triangle's corners about its centre, unturned:
+    /// how a [`TriangleSet`](crate::TriangleSet) or a
+    /// [`HeightField`](crate::HeightField) offers a triangle. Its callers
+    /// built the corners from finite positions and kept only finite ones,
+    /// and three is within the count a hull holds, so the public
+    /// constructor's checks are not repeated.
+    pub(crate) fn triangle(corners: [Vec3; 3]) -> Self {
+        debug_assert!(corners.iter().all(|&point| space::is_finite(point)));
+        let mut out = Self {
+            points: [Vec3::ZERO; CONVEX_STORAGE],
+            count: 3,
+        };
+        out.points[..3].copy_from_slice(&corners);
+        out
+    }
 }
 
 impl<V: Vector> CanonicalWrite for Convex<V> {

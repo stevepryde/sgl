@@ -97,13 +97,16 @@ struct Case<V> {
 }
 
 /// Defect: a kernel pair whose contact is past touching (the body is cast
-/// into the collider) or far short of it, with the wrong normal, or a mover
-/// that does not leave the skin. Oracle: the geometry each case works by
-/// hand, and the contract: a query meets a kernel pair before touching and
-/// within 1.25 slops of it, the slop at most a hundredth of the smaller
-/// shape's extent; `move_and_collide` leaves between `skin` and
-/// `skin * (1 + 1/64)` (its slop is a sixteenth of the skin, met within a
-/// quarter of it).
+/// into the collider) or far short of it, a ray that is not exact, with the
+/// wrong normal, or a mover that does not leave the skin. Oracle: the
+/// geometry each case works by hand, and the contract: a query meets a
+/// kernel pair before touching and within 1.25 slops of it, the slop at
+/// most a hundredth of the smaller shape's extent; a ray meets a ball, a
+/// capsule or a polygon where it touches, to a few units in the last place
+/// of its coordinates (here 4 ε of the motion's 10, in `t`); a 3D hull of
+/// eight points stays on the kernel; `move_and_collide` leaves between
+/// `skin` and `skin * (1 + 1/64)` (its slop is a sixteenth of the skin, met
+/// within a quarter of it).
 fn check<V: Vector>(cases: &[Case<V>]) {
     for case in cases {
         let world = [case.collider];
@@ -116,15 +119,26 @@ fn check<V: Vector>(cases: &[Case<V>]) {
         let hit: Hit<V> = hit
             .unwrap()
             .unwrap_or_else(|| panic!("{}: no hit", case.name));
-        let slop = slop_bound(&case.body, &case.collider.shape);
-        let earliest = case.touch - 1.25 * slop / case.speed;
-        assert!(
-            hit.t < case.touch && hit.t >= earliest - 1e-6,
-            "{}: t {} outside {earliest}..{}",
-            case.name,
-            hit.t,
-            case.touch
-        );
+        let hull = matches!(case.collider.shape, Shape::Convex(_)) && V::AXES == 3;
+        if point && !hull {
+            assert!(
+                (hit.t - case.touch).abs() <= 4.0 * f32::EPSILON,
+                "{}: t {} against {}",
+                case.name,
+                hit.t,
+                case.touch
+            );
+        } else {
+            let slop = slop_bound(&case.body, &case.collider.shape);
+            let earliest = case.touch - 1.25 * slop / case.speed;
+            assert!(
+                hit.t < case.touch && hit.t >= earliest - 1e-6,
+                "{}: t {} outside {earliest}..{}",
+                case.name,
+                hit.t,
+                case.touch
+            );
+        }
         assert!(
             length(hit.normal - case.normal) < 1e-4,
             "{}: normal {:?}, expected {:?}",
@@ -309,7 +323,8 @@ fn every_new_pair_meets_where_geometry_puts_it_in_2d() {
             speed: 4.0,
             normal: Vec2::Y,
         },
-        // A ray from 5 left of a radius-1 ball's centre meets it after 4.
+        // A ray from 5 left of a radius-1 ball's centre meets it after 4 of
+        // its 10: exactly, at t = 0.4.
         Case {
             name: "ray at ball",
             body: cuboid(Vec2::ZERO),
@@ -320,7 +335,8 @@ fn every_new_pair_meets_where_geometry_puts_it_in_2d() {
             speed: 10.0,
             normal: Vec2::NEG_X,
         },
-        // A standing capsule's side is at x = -0.5.
+        // A standing capsule's side is at x = -0.5: met after 4.5 of 10,
+        // exactly, at t = 0.45.
         Case {
             name: "ray at capsule",
             body: cuboid(Vec2::ZERO),
@@ -331,16 +347,20 @@ fn every_new_pair_meets_where_geometry_puts_it_in_2d() {
             speed: 10.0,
             normal: Vec2::NEG_X,
         },
-        // The diamond's left corner is at x = -sqrt(2).
+        // The diamond's upper-left face is the line `(y - x) / sqrt(2) = 1`
+        // with outward normal (-1, 1) / sqrt(2); a ray along y = 0.25 meets
+        // it at x = 0.25 - sqrt(2), after 5.25 - sqrt(2) of its 10, closing
+        // on it at 10 / sqrt(2). (A ray at the corner would meet both faces
+        // at once and report one of them.)
         Case {
             name: "ray at a turned square",
             body: cuboid(Vec2::ZERO),
-            start: v2(-5.0, 0.0),
+            start: v2(-5.0, 0.25),
             motion: v2(10.0, 0.0),
             collider: diamond2(13),
-            touch: (5.0 - SQRT_2) / 10.0,
-            speed: 10.0,
-            normal: Vec2::NEG_X,
+            touch: (5.25 - SQRT_2) / 10.0,
+            speed: 10.0 * FRAC_1_SQRT_2,
+            normal: v2(-FRAC_1_SQRT_2, FRAC_1_SQRT_2),
         },
     ]);
 }

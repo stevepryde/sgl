@@ -2414,8 +2414,9 @@ functions of include/box2d/math_functions.h, to src/convex.rs, src/convex/d2.rs
 and src/convex/d2/toi.rs; the contact manifold of src/manifold.c and the
 segment distance of src/distance.c to src/planar/collide.rs and
 src/planar/collide/polygons.rs; the single-pair contact impulse of
-src/contact_solver.c to src/planar/bump.rs; and the plane solver of
-src/mover.c to src/plane.rs (PROVENANCE.md).
+src/contact_solver.c to src/planar/bump.rs; the plane solver of
+src/mover.c to src/plane.rs; and the polygon ray cast of src/geometry.c to
+src/sweep/ray.rs (PROVENANCE.md).
 
 MIT License
 
@@ -2449,7 +2450,11 @@ ports the GJK distance query and the shape cast of src/distance.c, which
 credits Dirk Gregorius with portions, with the types of include/box3d/types.h
 and include/box3d/collision.h and the vector functions of
 include/box3d/math_functions.h and src/math_internal.h, to src/convex.rs,
-src/convex/d3.rs and src/convex/d3/simplex.rs (PROVENANCE.md).
+src/convex/d3.rs and src/convex/d3/simplex.rs, and the mesh tree of
+src/mesh.c, the bounds tests of src/simd.h and the height-field grid of
+src/height_field.c to src/triangle_set.rs, src/surface.rs and
+src/height_field.rs, and the ray casts of src/sphere.c, src/capsule.c and
+src/simd.c to src/sweep/ray.rs (PROVENANCE.md).
 
 MIT License
 

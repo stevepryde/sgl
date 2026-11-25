@@ -23,7 +23,9 @@ pub struct Hit<V> {
     /// Unit normal of the face met, pointing from it toward the moving body.
     /// Axis-aligned between boxes; a ramp's plane gives its own normal; a
     /// round or convex shape's contact gives the normal between the shapes,
-    /// which leans at an edge or a corner.
+    /// which leans at an edge or a corner. A [`ray`] reports the surface's
+    /// own normal where it crosses it: a triangle's plane, a polygon's
+    /// edge, a ball's or a capsule's radius.
     pub normal: V,
     /// The id of the collider met.
     pub id: u64,
@@ -62,8 +64,9 @@ impl<V: Vector> CanonicalWrite for Hit<V> {
 /// lowest position; an exact tie between axes resolves y, then x, then z.
 ///
 /// A ball, a capsule or a convex shape, as the body or the collider, is met
-/// through the convex kernel to within a slop: a hundredth of the smaller
-/// shape's extent, at most a quarter of the smaller radius. `t` is where
+/// through the convex kernel to within a slop (a body with no extent, which
+/// [`ray`] casts, meets most of them exactly instead): a hundredth of the
+/// smaller shape's extent, at most a quarter of the smaller radius. `t` is where
 /// the shapes come within one to one and a quarter slops of each other,
 /// before they touch, and a body within the slop (overlap included) moving
 /// in meets the collider at `t = 0` (`specs/physics.md`, 19).
@@ -126,8 +129,19 @@ pub fn move_and_collide<V: Vector, W: World<V> + ?Sized>(
 /// The first collider a point travelling by `motion` from `origin` meets: a
 /// [`cast`] of a box with no extent. A ray starting on a face, or a rounding
 /// step inside it, and moving into the collider meets it at `t = 0`; a ray
-/// from deeper inside one passes it. A ray meets a ball, a capsule or a
-/// convex collider a slop short of its surface, as [`cast`] does.
+/// from deeper inside one passes it.
+///
+/// A ray is exact against a box, a cut box, a ball, a capsule, a 2D polygon
+/// and a 3D triangle (a convex shape of three points, as a
+/// [`TriangleSet`](crate::TriangleSet) or a
+/// [`HeightField`](crate::HeightField) offers): `t` is where it crosses the
+/// surface, to a few units in the last place of the coordinates involved,
+/// and the normal is the surface's there (a triangle's own, turned against
+/// the ray). A triangle is two-sided and has no inside: a ray starting on
+/// it meets it at once. A ray touching a surface without approaching it (a
+/// tangent, a slide along a face) meets nothing. A 3D convex hull of four or
+/// more points is met through the kernel, a slop short, as [`cast`] meets
+/// it (`specs/physics.md`, 15).
 pub fn ray<V: Vector, W: World<V> + ?Sized>(
     origin: V,
     motion: V,

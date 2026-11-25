@@ -7,7 +7,8 @@ use crate::shape::{Collider, Push};
 use crate::space::{self, CellRange, Vector};
 use crate::world::{Unanswered, World};
 
-/// Most cells a [`CellWorld`] walks for one query. A query whose region
+/// Most cells a [`CellWorld`] walks for one query, or a
+/// [`HeightField`](crate::HeightField) of its grid. A query whose region
 /// meets more is [`Unanswered`]: the body moves nothing and the caller is
 /// told. 4096 cells is a 16-cell cube in 3D (a reach of about 15 cells on
 /// the diagonal) and a 64-cell square in 2D.
@@ -114,45 +115,12 @@ where
     V: Vector,
     F: Fn(V::Cell, &mut CellColliders<'_, V>),
 {
-    /// How far to grow a region before walking it, on every axis.
-    ///
-    /// A world must offer every collider whose box, grown by its own
-    /// rounding allowance `4ε(|position| + half)`, meets the region
-    /// ([`World`]). A cell world cannot grow its colliders before it walks,
-    /// since it learns them cell by cell, so it grows the region instead. A
-    /// collider lies within its cell, and a cell that meets the grown region
-    /// lies within a cell of it, so `|position| + half` is at most the
-    /// region's largest coordinate plus a cell or so: without this a
-    /// collider in a large cell whose face sits on the cell's boundary, met
-    /// by a body near the origin, is left out by a region a rounding step
-    /// short of that boundary. The factor 8 also covers the rounding of the
-    /// steps of a swept walk.
-    fn allowance(&self, min: V, max: V) -> V {
-        let largest = space::max(space::largest_abs(min), space::largest_abs(max));
-        space::splat(8.0 * f32::EPSILON * (largest + self.cell_size))
-    }
-
-    /// The cells the closed box `min..=max` meets, a cell whose upper face it
-    /// starts on included; `None` when the box is inverted, [`Unanswered`]
-    /// when it reaches past the `i32` grid or is not finite.
-    fn range(&self, min: V, max: V) -> Result<Option<CellRange<V>>, Unanswered> {
-        let mut range = CellRange::<V> {
-            min: V::Cell::default(),
-            max: V::Cell::default(),
-        };
-        for axis in 0..V::AXES {
-            let lo = -(-min[axis] / self.cell_size).floor() - 1.0;
-            let hi = (max[axis] / self.cell_size).floor();
-            if !(lo.abs() < GRID_LIMIT && hi.abs() < GRID_LIMIT) {
-                return Err(Unanswered);
-            }
-            if lo > hi {
-                return Ok(None);
-            }
-            range.min[axis] = cell_index(lo);
-            range.max[axis] = cell_index(hi);
+    /// The walk over this world's cells: every cell exists.
+    fn grid(&self) -> Grid<V> {
+        Grid {
+            cell_size: self.cell_size,
+            within: None,
         }
-        Ok(Some(range))
     }
 
     /// Asks the game for one cell's colliders.
@@ -187,15 +155,8 @@ where
         max: V,
         visit: &mut dyn FnMut(&Collider<V>),
     ) -> Result<(), Unanswered> {
-        let grow = self.allowance(min, max);
-        let Some(range) = self.range(min - grow, max + grow)? else {
-            return Ok(());
-        };
-        if range.count() > MAX_QUERY_CELLS {
-            return Err(Unanswered);
-        }
-        range.for_each(|cell| self.ask(cell, &mut *visit));
-        Ok(())
+        self.grid()
+            .near(min, max, |cell| self.ask(cell, &mut *visit))
     }
 
     /// Walks the cells along the motion, each once: the motion is cut into
@@ -210,6 +171,107 @@ where
         max: V,
         motion: V,
         visit: &mut dyn FnMut(&Collider<V>),
+    ) -> Result<(), Unanswered> {
+        self.grid()
+            .along(min, max, motion, |cell| self.ask(cell, &mut *visit))
+    }
+}
+
+/// How a uniform grid of cells is walked for one query: the cells a region
+/// meets, or the cells along a motion, each once, at most
+/// [`MAX_QUERY_CELLS`] of them. A [`CellWorld`] walks its cells with it, and
+/// a [`HeightField`](crate::HeightField) the columns of its grid.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Grid<V: Vector> {
+    /// World units across one cell.
+    pub cell_size: f32,
+    /// The only cells that exist, or `None` for every cell: a cell outside
+    /// is neither walked nor counted.
+    pub within: Option<CellRange<V>>,
+}
+
+impl<V: Vector> Grid<V> {
+    /// How far to grow a region before walking it, on every axis.
+    ///
+    /// A world must offer every collider whose box, grown by its own
+    /// rounding allowance `4ε(|position| + half)`, meets the region
+    /// ([`World`]). A cell world cannot grow its colliders before it walks,
+    /// since it learns them cell by cell, so it grows the region instead. A
+    /// collider lies within its cell, and a cell that meets the grown region
+    /// lies within a cell of it, so `|position| + half` is at most the
+    /// region's largest coordinate plus a cell or so: without this a
+    /// collider in a large cell whose face sits on the cell's boundary, met
+    /// by a body near the origin, is left out by a region a rounding step
+    /// short of that boundary. The factor 8 also covers the rounding of the
+    /// steps of a swept walk.
+    fn allowance(&self, min: V, max: V) -> V {
+        let largest = space::max(space::largest_abs(min), space::largest_abs(max));
+        space::splat(8.0 * f32::EPSILON * (largest + self.cell_size))
+    }
+
+    /// The cells the closed box `min..=max` meets, a cell whose upper face it
+    /// starts on included, held to [`Self::within`]; `None` when the box is
+    /// inverted or meets none of them, [`Unanswered`] when it reaches past
+    /// the `i32` grid or is not finite.
+    fn range(&self, min: V, max: V) -> Result<Option<CellRange<V>>, Unanswered> {
+        let mut range = CellRange::<V> {
+            min: V::Cell::default(),
+            max: V::Cell::default(),
+        };
+        for axis in 0..V::AXES {
+            let lo = -(-min[axis] / self.cell_size).floor() - 1.0;
+            let hi = (max[axis] / self.cell_size).floor();
+            if !(lo.abs() < GRID_LIMIT && hi.abs() < GRID_LIMIT) {
+                return Err(Unanswered);
+            }
+            if lo > hi {
+                return Ok(None);
+            }
+            range.min[axis] = cell_index(lo);
+            range.max[axis] = cell_index(hi);
+        }
+        let Some(within) = self.within else {
+            return Ok(Some(range));
+        };
+        for axis in 0..V::AXES {
+            range.min[axis] = range.min[axis].max(within.min[axis]);
+            range.max[axis] = range.max[axis].min(within.max[axis]);
+            if range.min[axis] > range.max[axis] {
+                return Ok(None);
+            }
+        }
+        Ok(Some(range))
+    }
+
+    /// Calls `visit` with every cell the closed box `min..=max`, grown by
+    /// [`Self::allowance`], meets, or answers [`Unanswered`] without
+    /// visiting any when that is more than [`MAX_QUERY_CELLS`].
+    pub(crate) fn near(
+        &self,
+        min: V,
+        max: V,
+        mut visit: impl FnMut(V::Cell),
+    ) -> Result<(), Unanswered> {
+        let grow = self.allowance(min, max);
+        let Some(range) = self.range(min - grow, max + grow)? else {
+            return Ok(());
+        };
+        if range.count() > MAX_QUERY_CELLS {
+            return Err(Unanswered);
+        }
+        range.for_each(&mut visit);
+        Ok(())
+    }
+
+    /// Calls `visit` with every cell along the motion, each once (see
+    /// [`CellWorld::colliders_along`]), or answers [`Unanswered`] without
+    /// visiting any when that is more than [`MAX_QUERY_CELLS`].
+    pub(crate) fn along(
+        &self,
+        min: V,
+        max: V,
+        motion: V,
+        mut visit: impl FnMut(V::Cell),
     ) -> Result<(), Unanswered> {
         let (lo, hi) = (
             space::min_each(min, min + motion),
@@ -237,9 +299,10 @@ where
             let (c, d) = (max + from, max + to);
             self.range(space::min_each(a, b) - grow, space::max_each(c, d) + grow)
         };
-        // Count first, so a walk over the cap asks about no cell. Along each
-        // axis a step's range never moves back, so a cell an earlier step
-        // walked and this one meets lies in the step just before.
+        // Count first, so a walk over the cap visits no cell. Along each
+        // axis a step's range never moves back, and holding it to `within`
+        // keeps that, so a cell an earlier step walked and this one meets
+        // lies in the step just before.
         let mut walked = 0u64;
         let mut before: Option<CellRange<V>> = None;
         for i in 0..steps {
@@ -259,7 +322,7 @@ where
             if let Some(range) = range {
                 range.for_each(|cell| {
                     if !before.is_some_and(|before| before.contains(cell)) {
-                        self.ask(cell, &mut *visit);
+                        visit(cell);
                     }
                 });
             }

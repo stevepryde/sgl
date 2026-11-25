@@ -6,14 +6,17 @@
 //! Every pair goes through one dispatch on the two [`Shape`]s and the
 //! target's [`Cut`]; a new shape adds its pairs here. A box against a box
 //! and a box against a cut box are both closed-form slab tests: the cut box
-//! adds one axis, its plane's normal. Every other pair (a ball, a capsule or
-//! a convex shape, against anything) goes through the convex kernel
+//! adds one axis, its plane's normal. A point (a box with no extent: a
+//! ray) against a ball, a capsule, a 2D polygon or a 3D triangle is exact
+//! too, in closed form ([`ray`]). Every other pair (a ball, a capsule or a
+//! convex shape, against anything) goes through the convex kernel
 //! ([`kernel`]), which meets it to within a slop.
 
 use crate::shape::{Cut, Shape};
 use crate::space::{self, Vector};
 
 mod kernel;
+mod ray;
 
 pub(crate) use kernel::{meets, rounding_slop, shape_slop};
 
@@ -84,6 +87,9 @@ pub(crate) fn sweep<V: Vector>(
     order: [usize; 3],
     tolerance: Tolerance,
 ) -> Option<Contact<V>> {
+    if let Some(point) = ray::Target::of(body, target, cut) {
+        return ray::sweep(point, delta, rel);
+    }
     match (body, target, cut) {
         (Shape::Box { half: body }, Shape::Box { half: target }, None) => {
             box_sweep(*body, delta, *target, rel, order)
@@ -104,6 +110,9 @@ pub(crate) fn overlap<V: Vector>(
     cut: Option<&Cut<V>>,
     rel: V,
 ) -> bool {
+    if let Some(point) = ray::Target::of(body, target, cut) {
+        return ray::inside(point, rel);
+    }
     match (body, target, cut) {
         (Shape::Box { half: body }, Shape::Box { half: target }, None) => {
             (0..V::AXES).all(|axis| {
@@ -256,6 +265,9 @@ pub(crate) fn resting<V: Vector>(
     tolerance: Tolerance,
     blocks: impl Fn(V) -> bool,
 ) -> Option<Contact<V>> {
+    if let Some(point) = ray::Target::of(body, target, cut) {
+        return ray::resting(point, rel, allowance, blocks);
+    }
     match (body, target, cut) {
         (Shape::Box { half: body }, Shape::Box { half: target }, Some(cut)) => {
             CutBox::new(*target, cut, rel).resting(*body, allowance, order, blocks)

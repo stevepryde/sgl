@@ -2,9 +2,11 @@
 
 `sgl-physics` is SGL's own, except its convex kernel (`src/convex.rs` and
 `src/convex/`), the contact manifold and bump of its planar bodies
-(`src/planar/collide.rs`, `src/planar/collide/`, `src/planar/bump.rs`) and
-the plane solver of soft contact (`src/plane.rs`), which are ported from two
-projects by Erin Catto, both MIT:
+(`src/planar/collide.rs`, `src/planar/collide/`, `src/planar/bump.rs`),
+the plane solver of soft contact (`src/plane.rs`), the trees and grids of
+its 3D surfaces (`src/triangle_set.rs`, `src/height_field.rs`,
+`src/surface.rs`) and a ray's exact pairs (`src/sweep/ray.rs`), which are
+ported from two projects by Erin Catto, both MIT:
 
 | Source | Tag | Commit | Licence here |
 | --- | --- | --- | --- |
@@ -28,13 +30,25 @@ functions each one follows.
 | `convex/d3.rs`: `Rot`, `Proxy::offset`, `distance`, `shape_cast` | Box3D `src/distance.c`: `b3GetProxySupport`, `b3ShapeDistance`; `b3MakeMatrixFromQuat`, `b3MulMV`, `b3Normalize` of `include/box3d/math_functions.h`; `include/box3d/types.h`, `include/box3d/collision.h` |
 | `convex/d3/simplex.rs`: the simplex and its solvers | Box3D `src/distance.c`: `b3BarycentricCoordsEdge`, `b3BarycentricCoordsTri`, `b3BarycentricCoordsTet`, `b3SolveSimplex2`, `b3SolveSimplex3`, `b3SolveSimplex4`, `b3ComputeWitnessPoints`; `src/math_internal.h` |
 | `plane.rs`: `Plane`, `solve` | Box2D `src/mover.c`: `b2SolvePlanes`; `b2CollisionPlane`, `b2PlaneSolverResult` of `include/box2d/collision.h`; `b2PlaneSeparation`, `b2Dot`, `b2MulAdd`, `b2ClampFloat`, `b2AbsFloat` of `include/box2d/math_functions.h` |
+| `triangle_set.rs`: the tree's build and walks | Box3D `src/mesh.c`: `b3BuildRecursive`, `b3SplitMedian`, `b3SplitHalf`, `b3StoreLeaf`, the depth-first layout of `b3SortMeshTriangles`, the stack walks of `b3QueryMesh` and `b3ShapeCastMesh`; `B3_DESIRED_TRIANGLES_PER_LEAF` |
+| `surface.rs`: the swept-box test | Box3D `src/simd.h`: `b3TestBoundsOverlap`, `b3TestBoundsRayOverlap` (citing van den Bergen, p. 80), as `b3ShapeCastMesh` sets them up |
+| `height_field.rs`: the grid layout and a cell's triangles | Box3D `src/height_field.c`: `b3GetHeightFieldCellCorners`, `b3QueryHeightField` |
+| `sweep/ray.rs`: a ray against a ball, a capsule and a triangle | Box3D `src/sphere.c`: `b3RayCastSphere`; `src/capsule.c`: `b3RayCastCapsule`; `src/simd.c`: `b3IntersectRayTriangle`; the hit normal of `b3RayCastMesh` in `src/mesh.c` |
+| `sweep/ray.rs`: a ray against a polygon | Box2D `src/geometry.c`: `b2CastRayPolygon`, and the edge normals of `b2MakePolygon` |
+
 
 Not ported: Box2D's disabled `b2ShapeCastMerged`, `b2CollideCapsules`,
 the segment and chain functions of `src/manifold.c`, the SIMD path of
 `b2FindMaxSeparation`, and the rest of its solver (warm starting,
-softness, relaxation, rolling resistance); Box3D's `b3TimeOfImpact` and
-everything after it; the debug simplex output and the time-of-impact
-counters of both.
+softness, relaxation, rolling resistance); Box2D's `b2CastRayCircle`,
+which is `b3RayCastSphere` operation for operation, and
+`b2CastRayCapsule`, a 2D-only capsule cast `b3RayCastCapsule` (dot
+products only) already covers in both dimensions, so each pair has one
+implementation; the rounded-polygon branch of `b2CastRayPolygon` (the
+crate has no rounded polygons); Box3D's `b3RayCastHollowSphere`; Box3D's
+`b3TimeOfImpact` and everything after it; the debug simplex output and
+the time-of-impact counters of both. The surfaces' omissions are listed
+under their departures.
 
 Also not ported, of Box2D's mover: `b2ClipVector`: the solver serves soft contact only, whose planes
 Box2D's own documentation says not to clip a velocity against
@@ -42,27 +56,6 @@ Box2D's own documentation says not to clip a velocity against
 rule (`specs/physics.md`, 17); and `b2CollideMover`, which makes the
 planes from a capsule: here every shape pair gives its plane through the
 crate's own pair dispatch (`sweep::way_apart`).
-
-## Departures of the plane solver
-
-`plane.rs` follows `b2SolvePlanes` operation for operation, in its order,
-generic over both dimensions (`b2Dot` summed axis by axis in order).
-
-1. **A gap, not an overlap.** Box2D adds its linear slop to each plane's
-   separation, so a mover rests a slop inside what it touches and finds
-   the plane again next step. The crate's mover rests a gap from what it
-   touches (its `skin`), and a soft contact's bodies must come apart once
-   they stop pushing, so the solve subtracts the tolerance: it puts the
-   body that far clear of each plane when the limits allow.
-2. **The tolerance is the caller's.** The slop, half a centimetre scaled
-   by a process-wide setting in Box2D, is the mover's `skin`, in the
-   game's units, both for the gap and for the convergence test.
-3. **The iteration count is a named cap,** `MAX_PLANE_ITERATIONS` (20, the
-   source's literal), and the count used is not returned: it was the
-   source's diagnostic.
-4. **The planes' order is fixed.** The caller lists the planes in the
-   crate's fixed order of colliders (`specs/physics.md`, 6), since a
-   Gauss-Seidel pass depends on the order it visits them in.
 
 ## Departures
 
@@ -188,6 +181,138 @@ These are the places the port differs, each with its reason.
     (32) distance queries. A contact found is searched to with the kernel
     again; a check that cannot settle is `Failed` where it stopped. The
     kernel itself is unchanged.
+
+### Plane solver
+
+`plane.rs` follows `b2SolvePlanes` operation for operation, in its order,
+generic over both dimensions (`b2Dot` summed axis by axis in order).
+
+18. **A gap, not an overlap.** Box2D adds its linear slop to each plane's
+    separation, so a mover rests a slop inside what it touches and finds
+    the plane again next step. The crate's mover rests a gap from what it
+    touches (its `skin`), and a soft contact's bodies must come apart once
+    they stop pushing, so the solve subtracts the tolerance: it puts the
+    body that far clear of each plane when the limits allow.
+19. **The tolerance is the caller's.** The slop, half a centimetre scaled
+    by a process-wide setting in Box2D, is the mover's `skin`, in the
+    game's units, both for the gap and for the convergence test.
+20. **The iteration count is a named cap,** `MAX_PLANE_ITERATIONS` (20, the
+    source's literal), and the count used is not returned: it was the
+    source's diagnostic.
+21. **The planes' order is fixed.** The caller lists the planes in the
+    crate's fixed order of colliders (`specs/physics.md`, 6), since a
+    Gauss-Seidel pass depends on the order it visits them in.
+
+### Surfaces
+
+Not ported from `src/mesh.c`: vertex welding (`b3WeldVertices` and its
+spatial hash), edge identification and the concave-edge flags
+(`b3IdentifyEdges`), which only Box3D's contact generation reads, the
+binned surface-area split (`b3SplitBinnedSah`; the median split, Box3D's
+`useMedianSplit`, is the simpler of its two), the mesh scale, materials,
+the triangle-box overlap (`b3TestBoundsTriangleOverlap`), the per-triangle
+shape cast of `b3ShapeCastMesh`, and the mover and contact functions. Not ported from
+`src/height_field.c`: compressed heights, holes and materials, the grid
+DDA of `b3ShapeCastHeightField`, and the mover and contact functions.
+
+22. **A triangle is a convex collider.** Box3D casts a ray against each
+    triangle exactly and a shape by `b3ShapeCast` against it. Here a world
+    offers each triangle as a convex collider of its three corners, and
+    the crate's one implementation of each pair meets it: a ray by the
+    ray-triangle pair (below), every other shape by the kernel. Its
+    corners are kept in a fixed order and about the centre of their box, so
+    winding and starting corner never show.
+23. **The world offers; the query keeps the best.** Box3D's walks shrink
+    the ray as hits are found and visit children front to back by the
+    split axis. A world here offers every triangle near a region or along
+    a sweep and the query keeps the earliest contact, so the walk keeps no
+    hit, visits left child before right, and stores no split axis.
+24. **Each triangle's own box is tested too, against the sweep.**
+    `b3ShapeCastMesh` tests a leaf's triangles against the bounds of the
+    sweep only; here each triangle's box takes the node's full test
+    (bounds and edge axes), so a long diagonal ray offers only what lies
+    along it, and the count against the query cap depends on the geometry,
+    not the tree. Boxes are grown by twice each triangle's rounding
+    allowance, and the swept test errs toward meeting by sixteen units of
+    rounding of the largest coordinate, so no box the sweep reaches is
+    left out.
+25. **A bounded build.** Box3D refuses a mesh whose tree outgrows its
+    256-deep stack. Here the build halves its runs by count (`b3SplitHalf`)
+    once a path is 44 nodes deep, which reaches a leaf from any run of at
+    most `MAX_TRIANGLES` within 64, so every mesh builds and every walk
+    fits its fixed stack. The triangles are sorted (id, then corners)
+    before the build, so the tree never depends on the order they were
+    given in.
+26. **Degenerate triangles by `f32`, not by a length.** Box3D drops a
+    triangle whose area is under a hundredth of `linearSlop` squared. There
+    is no length here, so a triangle is dropped when its edges' cross
+    product is within `4ε` of the product of their lengths (scaled first,
+    so neither overflows), or its numbers overflow.
+27. **Height fields.** Heights are `f32` as given, not compressed to 16
+    bits. The grid sits at the game's origin and cell size instead of a
+    unit grid scaled by a transform. A query walks cells as `CellWorld`
+    does, capped, rather than by Box3D's DDA, and grows its region by the
+    rounding of the grid's coordinates before looking cells up.
+
+No kernel change was needed for flat triangles: a ball and a convex shape
+against three coplanar points meet as the parry comparison
+(`tests/sgl-physics/tests/oracle_parry_surfaces.rs`) expects.
+
+### Rays
+
+The ray pairs follow their sources' arithmetic in their order, the body
+(the ray's start) at the origin, with the input's `maxFraction` at 1: the
+crate's ray is its whole motion. Box3D's clamp and log of a fraction past
+`maxFraction`, which cannot arise here, are left out.
+
+28. **One implementation in both dimensions.** `b3RayCastSphere` and
+    `b3RayCastCapsule` use dot products only, so each serves 2D and 3D;
+    the polygon (2D) and the triangle (3D) are each their dimension's only
+    such shape.
+29. **A start inside passes.** The sources report a ray starting inside a
+    ball, a capsule or a polygon as a hit at its start, with no normal.
+    Here it passes, and meets what lies beyond, as a ray starting inside a
+    box does; a start inside by no more than the collider's rounding
+    allowance meets it at once, as for a box.
+30. **A start on the surface meets it.** `b3RayCastSphere` and
+    `b3RayCastCapsule` miss when the near crossing is behind the start;
+    here, when the start is not inside and the far crossing is ahead, the
+    near one is behind only by rounding, and the ray meets the surface at
+    the start. `b2CastRayPolygon` enters an edge's half-plane only when the
+    ray enters it strictly after the start; here, before any edge has been
+    entered, a start on an edge's line moving in enters it at once.
+    `b3IntersectRayTriangle` refuses a crossing at or behind the start;
+    here a start within eight units in the last place of the triangle's
+    largest corner coordinate of its plane meets it at once.
+31. **Grazes and slides are no contact.** The sources report a ray
+    tangent to a ball or a capsule as a hit; here a hit whose normal the
+    ray does not approach is none, as for every pair through the kernel.
+    `b2CastRayPolygon` lets a ray parallel to an edge and on its line
+    continue; here it misses, as a ray sliding along a box's face does.
+32. **Two-sided triangles, measured from their own corners.**
+    `b3IntersectRayTriangle` meets only a triangle's front (a negative
+    denominator) and takes its normal and plane from the corners relative
+    to the ray. Here both sides are met, the normal is turned against the
+    ray, and the normal and the edges come from the triangle's own corners
+    about its centre, normalised by the crate's normaliser, so they do not
+    depend on where the ray starts and coplanar neighbours share a normal.
+    The crossing is measured with the unit normal from the first corner.
+33. **No gaps at seams.** Two triangles sharing an edge compute it, and
+    its corners relative to the ray, each from its own position, and the
+    two can round a unit in the last place apart; the source's edge test
+    then lets a ray exactly on the seam pass between them (the first runs
+    lost about one ray in thirty aimed at seams). Here a ray passing within
+    eight units in the last place of the triangle's largest corner
+    coordinate of an edge meets the triangle.
+34. **Directions by the crate's normaliser.** The capsule's axis and
+    length come from its half-axis, and the ray's direction from its
+    motion, by the normaliser that serves every direction in the crate
+    (`b3GetLengthAndNormalize` and `1 / length` in the source); a capsule
+    falls back to a ball only when its half-axis is zero (the source: under
+    a hundredth of `linearSlop`, a length this crate does not have). The
+    polygon's edge normals are computed per query from its vertices (Box2D
+    stores them in `b2Polygon`), and its vertices are already relative to
+    the ray, so Box2D's shift to the first vertex is not needed.
 
 ## Algorithm notes
 

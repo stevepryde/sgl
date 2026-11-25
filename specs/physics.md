@@ -9,10 +9,11 @@ whose play is stacking, joints or rag dolls adds Rapier itself.
 This slice gives box bodies against box colliders, whole or cut by one
 plane into ramps (#915), the mover step (#916), round bodies (balls and
 capsules) and convex colliders met through a convex kernel ported from
-Box2D and Box3D (#919, 19), planar bumps for vehicles (#921, 20), and moving
+Box2D and Box3D (#919, 19), planar bumps for vehicles (#921, 20), moving
 colliders: platforms that carry and push, bodies that block or nudge each
-other, and triggers (#920, 21). The last slice (surfaces) is planned in #914 and is not
-available until they land.
+other, and triggers (#920, 21), and 3D surfaces for sight and ground:
+triangles, height fields and `ground_under` (#923, 22). Walking on
+surfaces (#922) is planned in #914 and is not available until it lands.
 
 ## Requirements
 
@@ -53,9 +54,11 @@ available until they land.
 7. **One implementation for each pair of shapes,** and one mover for every
    body shape, generic over the sealed `Vector` trait for `Vec2` and `Vec3`:
    no 2D-only or 3D-only copy of an algorithm. Box against box, whole or
-   cut, is the closed-form sweep and is exact. Every other pair goes
-   through the convex kernel (19), on one dispatch on the pair, in
-   `sweep.rs`; nothing else in the crate assumes a body is a box beyond the
+   cut, is the closed-form sweep and is exact, and so is a point (a box
+   with no extent, as `ray` casts) against a ball, a capsule, a 2D polygon
+   or a 3D triangle (15, Rays). Every other pair goes through the convex
+   kernel (19), on one dispatch on the pair, in `sweep.rs`; nothing else in
+   the crate assumes a body is a box beyond the
    bounding half-extents the worlds use. For those pairs a query's
    tolerance scales with the sizes of the two shapes, and the mover's
    tolerances derive from the game's `skin`; never a fixed length. `cast`,
@@ -98,7 +101,8 @@ available until they land.
     is `f32::EPSILON`), meets the region: a face computed relative to the
     body may lie that far from where it lies in world coordinates. It is
     implemented for a slice (every collider), `ColliderSet`, `CellWorld`, a
-    pair `(A, B)` (both; unanswered when either is) and references to them.
+    pair `(A, B)` (both; unanswered when either is), the 3D surfaces
+    `TriangleSet` and `HeightField` (22) and references to them.
     - `ColliderSet` buckets colliders in a uniform grid of the game's cell
       size. An insert buckets at most a fixed number of cells (1024) and
       keeps a larger collider apart; a query visits at most about as many
@@ -148,8 +152,9 @@ available until they land.
     cut's axis comes after every cardinal axis: it decides only when it
     enters strictly last.
     Already overlapping, moving away, and zero or non-finite motion give no
-    contact. A box with no extent sweeps as a ray. Every other pair is
-    swept by the kernel (19).
+    contact. A box with no extent sweeps as a ray. A point against a ball,
+    a capsule, a polygon or a triangle is swept exactly (15, Rays); every
+    other pair by the kernel (19).
 12. **Mover settings.** `MoverConfig` is constructed only through `new`,
     from a `MoverSettings` whose public fields name each value; its own
     fields are private with read-only accessors, so callers cannot bypass
@@ -223,6 +228,39 @@ available until they land.
     collider the body overlaps more deeply at the start is passed. For a
     kernel pair `t` is where the shapes come within the contact band (19),
     before they touch. `ray` is a cast of a box with no extent.
+    - **Rays.** A ray is exact against every shape but a 3D hull of four or
+      more points: against a box or a cut box by the sweep (11), and
+      against a ball, a capsule, a 2D polygon and a 3D triangle (a convex
+      shape of exactly three points) by a closed form of its own, ported
+      from Box2D's and Box3D's ray casts (`PROVENANCE.md`): the ball's and
+      the capsule's crossings measured from the ray's closest approach, the
+      polygon clipped against its edges' half-planes, the triangle crossed
+      from either side. `t` and the point it gives are the true crossing to
+      a few units in the last place of the coordinates involved (the
+      shape's position relative to the ray's start, its size and the ray's
+      length; 3), with no slop; near a tangent the crossing along the ray
+      is ill-conditioned, but the point still lies on the surface to that
+      bound. The normal is the surface's there: along the radius of a ball
+      or a capsule, the edge's of a polygon (at a corner, the edge the ray
+      enters by last), a triangle's own plane normal, from its corners
+      alone, turned against the ray. A ray starting on a ball, a capsule or
+      a polygon and moving in meets it at `t = 0`, as does one starting
+      inside by no more than the collider's rounding allowance; one starting
+      deeper inside passes it, as for a box. A triangle has no inside: a ray
+      starting on its plane (within eight units in the last place of its
+      largest corner coordinate relative to the ray) meets it at once,
+      whichever way it goes. A ray passing within that rounding of a
+      triangle's edge meets the triangle, so a seam between two triangles
+      has no gap; at a shared edge or corner the tie rule (6) picks one,
+      and coplanar neighbours give the same normal (to the bit where their
+      corners' cross products are exact). A graze, a hit whose normal the
+      ray does not approach (tangent to a ball or a capsule, along a
+      polygon's edge, in a triangle's plane), is no contact. A 3D hull of
+      four or more points stores no faces to cross, so a ray meets it
+      through the kernel, a slop short (19), as it meets a ball or capsule
+      of no radius and a three-point hull with no area. A body with extent
+      (`cast` with a ball, say) keeps its pairs: every one but box against
+      box is met through the kernel, within its band.
     `distance` measures a shape at a position against one collider, of any
     kind or layer: the gap between their surfaces and the unit normal from
     the collider toward the shape, zero and no normal when they touch or
@@ -389,8 +427,9 @@ available until they land.
     (193 in 3D, 65 in 2D); `Shape::MAX_POSTCARD_BYTES` grows to that plus
     a tag (194, 66) and `Collider::MAX_POSTCARD_BYTES` with it (256, 116,
     with its velocity and push, 21).
-    - **The kernel.** Every pair but box against box goes through
-      `crate::convex`, GJK distance and the conservative-advancement shape
+    - **The kernel.** Every pair but box against box and a ray's exact
+      pairs (15, Rays) goes through `crate::convex`, GJK distance and the
+      conservative-advancement shape
       cast ported from Box2D 3.2 and Box3D 0.1 (`PROVENANCE.md`): each
       shape is a proxy, a few points grown by a radius (a ball one point, a
       capsule two, a box its corners, a cut box the corners and plane
@@ -423,8 +462,9 @@ available until they land.
       corner (the distance between convex shapes along a straight motion
       is convex, so stepping back along the motion opens it at least as
       fast as along the normal). With a zero skin it rests between `slop`
-      and `1.25 * slop` away. A query (`cast`, `ray`) reports the kernel's
-      own fraction, so a projectile stepped to a hit is a slop clear of the
+      and `1.25 * slop` away. A query (`cast`, and `ray` against a hull)
+      reports the kernel's own fraction, so a projectile stepped to a hit
+      is a slop clear of the
       surface and its next cast meets it at `t = 0` when moving in.
     - **Never a clear path.** A cast that reaches the kernel's iteration
       cap, or whose result `f32` cannot tell from overlap, stops the body
@@ -687,6 +727,81 @@ available until they land.
       still (a surface velocity), carrying by a wall the body leans on
       (Godot's `platform_wall_layers`), a mover that pushes the bodies it
       walks into (Box2D's `PushBodies`), and Box2D's `b2ClipVector`.
+22. **Surfaces (3D).** Two worlds hold geometry a game gives once, from
+    positions and indices it supplies (never GPU data), immutable once
+    built: what a ray, a cast, an overlap or `ground_under` meets. Walking
+    on them is not offered (#922): the mover's floors are authored as
+    simple shapes. Given a surface world, `move_and_slide`, `slide`,
+    `snap_to_ground` and `move_and_collide` meet each triangle as the solid
+    convex collider it is offered as, through the kernel, and every step
+    returns finite state, or is `Unanswered` and leaves the state as it
+    was; nothing more is promised. A body can catch on the seam between two
+    coplanar triangles as on a corner and stop there, and a triangle has
+    no inside, so a body overlapping one is pushed out to the nearer side,
+    beneath the surface when its centre is below it.
+    - **Triangles as colliders.** Each triangle is offered to a query as a
+      solid convex collider of its three corners on every layer
+      (`Shape::Convex`), carrying the game's id, so it is met by the same
+      pairs as any convex collider: exactly by a ray (15, Rays), through the
+      kernel (19) by every other shape. Its position is
+      the centre of the box enclosing it and its points its corners about
+      that, in a fixed order (by coordinates), so a triangle wound either
+      way or started from any corner is the same collider to the bit, and
+      the collider's box is the triangle's. Triangles are two-sided. A ray
+      or `ground_under` meets a triangle where it is, to rounding, with the
+      triangle's own normal: coplanar neighbours give one normal across
+      their seam, a ray on a seam meets one of them, and a ball cast meets
+      a triangle within the kernel's band.
+    - **`TriangleSet::new(positions, indices, ids)`** takes three indices a
+      triangle and one id per triangle or one for all, and refuses
+      (`SurfaceError`) a non-finite position, an index count that is not a
+      multiple of three, an index naming no position, an id count that is
+      neither, and more than `MAX_TRIANGLES` (2^20). A triangle with no area
+      to `f32` (its edge cross product within `4ε` of the product of its
+      edge lengths) or whose edges overflow is dropped and counted
+      (`degenerate`), not refused. The set keeps its triangles in a fixed
+      order (id, then corners) and builds a bounding-volume tree from it
+      once (Box3D's median split, `PROVENANCE.md`), so neither the tree nor
+      a result depends on the order the triangles were given in. Each
+      triangle's box is grown by twice its rounding allowance, so the set
+      offers every triangle whose box grown once meets a region (10). The
+      build halves its runs once a path is 44 nodes deep, so no path is
+      deeper than `MAX_TREE_DEPTH` (64), the walk's fixed stack. A region
+      walks the nodes it meets; a motion walks the nodes, and each
+      triangle's box, its swept box meets (bounds and the segment-box
+      separating axes), so a long ray offers only what lies along it. One
+      query is offered at most `MAX_QUERY_TRIANGLES` (4096) triangles,
+      counting only triangles whose own box meets the region or the sweep,
+      so the count depends on the geometry alone; past it, or for a region
+      that is not finite, the query is `Unanswered`.
+    - **`HeightField::new(heights, columns, rows, cell, origin, ids)`** is
+      `columns` by `rows` samples (at least 2 x 2, at most
+      `MAX_HEIGHT_SAMPLES`, 2^22) on the xz plane, y up: sample `(column,
+      row)` is `heights[row * columns + column]` at `origin + (column *
+      cell, height, row * cell)`. Each cell is two triangles, split from its
+      `(column + 1, row)` corner to its `(column, row + 1)` corner (Box3D's
+      and parry's split), with one id per cell (`row * (columns - 1) +
+      column`) or one for all. It refuses non-finite numbers, a cell that is
+      not positive, and cells too small to tell apart at the origin. It
+      answers a region by cell lookup and a motion by the walk `CellWorld`
+      makes (10), over its own cells only, with the region grown by the
+      rounding of the grid's coordinates; at most `MAX_QUERY_CELLS` cells,
+      past which the query is `Unanswered`. Outside the grid there is no
+      ground. A cell triangle with no area to `f32` (a cliff far steeper
+      than the cell is wide) is left out.
+    - **`ground_under(point, max_height, depth, world, mask)`** is the
+      highest surface on a masked layer straight down (`-y`, SGL3D's up
+      being `+y`) through `point`, from `max_height` above it to `depth`
+      below it: a `ray` from `point + max_height` down by `max_height +
+      depth`, through any `World<Vec3>`, so a deck higher than `max_height`
+      over a vehicle is not its floor. `Ground { height, normal, id }` is
+      the y the ray stopped at, the contact normal (pointing up, whichever
+      way a triangle is wound) and the collider's id; a surface the ray
+      starts inside is passed. Its tolerance is the ray's (15, Rays): exact
+      on boxes, ramps, balls, capsules and triangles (so on a height field
+      too), the contact band on a 3D hull of four or more points. `None`
+      when nothing is there or the inputs are not finite,
+      negative or both zero.
 
 ## Acceptance
 
@@ -705,7 +820,8 @@ available until they land.
   with no z motion matches the 2D move bit for bit.
 - The round-body tests in `tests/sgl-physics/tests/round.rs` hold: every
   new pair, in each dimension, meets where hand-worked geometry puts it
-  within the contact band, and the mover rests within its stated gap;
+  within the contact band (a ray, exactly), and the mover rests within its
+  stated gap;
   `overlaps` and `distance` read the shapes themselves; random balls and
   capsules never end inside a box, slab, ramp, ball, capsule or convex
   collider, by the shapes' own definitions sampled, and move bit-equal
@@ -717,10 +833,17 @@ available until they land.
   out of a crate; beams and swept balls stop at the first thing on their
   layers; a projectile stepped to each hit never passes a wall.
 - The kernel agrees with a second engine, parry, over thousands of seeded
-  pairs in each dimension (`tests/sgl-physics/tests/oracle_parry.rs`,
-  native only), and so do the planar time of impact, against parry's
-  nonlinear one over turning motions, and manifold, against its contact
+  pairs in each dimension, and rays against balls, capsules, boxes,
+  polygons and triangles meet them where parry's ray casts do, to
+  rounding beyond parry's own precision
+  (`tests/sgl-physics/tests/oracle_parry.rs`, native only), and so do the
+  planar time of impact, against parry's nonlinear one over turning
+  motions, and manifold, against its contact
   (`tests/sgl-physics/tests/oracle_parry_planar.rs`).
+- Rays against a ball, a capsule, a polygon and a triangle meet them where
+  hand-worked closed forms do, grazes, starts on the surface and starts
+  inside included, and a ray starting on any of them at a seeded point
+  moving in meets it at once (`src/sweep/ray.rs`).
 - The planar tests in `tests/sgl-physics/tests/planar.rs` hold: times of
   impact worked by hand (head-on, glancing, a corner to a face, a miss,
   touching and overlapping, a bar that reaches a box only by turning, a
@@ -764,3 +887,33 @@ available until they land.
   (`tests/sgl-physics/tests/mover.rs`), and so do the game scenarios of a
   voxel walker through a `CellWorld`, on ramps included, and a 2D platformer
   (`tests/sgl-physics/tests/scenarios.rs`).
+- The surface tests in `tests/sgl-physics/tests/surfaces.rs` hold: rays
+  and `ground_under` against a triangle box and ramp agree with the box and
+  cut-box colliders to rounding, and ball casts within the band; under a
+  bridge the ground is the road and on it the bridge; over a seam one
+  answer in any order; height fields of a plane and a ridge give the
+  analytic height and normal; under two 20 m triangles the ground is the
+  plane's height to rounding with one normal across their seam, a kart's
+  wheels rolling across a seam never jump, and a ray onto a seam never
+  falls between its triangles;
+  shuffled and rewound triangles, and a scene moved by 2^17, change no bit;
+  each world answers as a slice of its own triangles and offers what lies
+  within a triangle's rounding allowance; a long ray visits only what lies
+  along it and a query over a cap is `Unanswered`; a kart's wheels, a chase
+  camera and a line of sight get their answers. Rays agree with parry's
+  `TriMesh` to rounding (against a height field, with a `TriMesh` of
+  parry's own triangles of it, as parry's `HeightField` ray cast misses
+  some rays its triangles meet) and ball casts with its `TriMesh` and
+  `HeightField` within the band
+  (`tests/sgl-physics/tests/oracle_parry_surfaces.rs`, native only), and a
+  drive across surfaces joins the cross-target fixtures.
+- Surfaces beside moving colliders and sensors hold
+  (`tests/sgl-physics/tests/surfaces_moving.rs`): `ground_under` over
+  terrain and a lift moved by id is the higher of the two within reach,
+  wherever the lift is heading; a ray through triangles and a set meets
+  the nearer, a moved door or a round one included, in either pair order;
+  a triangle is never a trigger and a sensor beside a surface is still
+  one, and `overlaps` and `distance` read the triangles a world offers;
+  and the mover over triangles and terrain, from starts on, inside and
+  under the surface and at a thousand units a second, returns finite
+  state from every step.

@@ -63,7 +63,12 @@ history once the frame is submitted. A view's history restarts itself on
 `FrameInput::camera_cut`, a resize that changes its targets, a different
 scene and a finished frame of its scene that did not render it. Do not
 advance simulation from the renderer. To choose a game's
-physics, see [Physics](README.md#physics).
+physics, see [Physics](README.md#physics). A chase camera kept out of walls,
+a line of sight and the ground under a vehicle are `sgl-physics` queries
+(`cast` with a ball, `ray`, `ground_under`) against a `TriangleSet` the game
+fills from a loaded model's `CpuMesh` positions and indices, in world units,
+or a `HeightField`; collision for walking is still authored as simple
+shapes.
 
 Persist `settings::Settings` inside the game's own settings record. Keep an
 explicit value separate from `Preset` and resolve it without rewriting the saved

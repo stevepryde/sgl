@@ -1,5 +1,6 @@
-//! The pairs the closed-form box sweep does not cover: every pair a ball, a
-//! capsule or a convex shape makes, a cut box met by one of them included.
+//! The pairs the closed-form box sweep and a ray's exact pairs ([`super::ray`])
+//! do not cover: every pair a ball, a capsule or a convex shape makes, a cut
+//! box met by one of them included.
 //! Each shape becomes a convex kernel proxy ([`crate::convex`]) in the body's
 //! frame, the body at the origin, and the kernel measures and casts it.
 //!

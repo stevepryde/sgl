@@ -12,11 +12,18 @@
 //! [`snap_to_ground`], [`overlaps`], [`cast`] and [`ray`] inside its own
 //! fixed step; [`distance`] measures a shape against one collider.
 //!
+//! In 3D, triangles a game gives once (a [`TriangleSet`], from a model's
+//! positions and indices) and ground given as heights (a [`HeightField`])
+//! are worlds too: what a camera's ball cast, a line of sight or
+//! [`ground_under`] a wheel meets. Nothing walks on them; the mover's
+//! floors are authored as simple shapes.
+//!
 //! A body or a collider is a [`Shape`]: a box, a ball, a capsule, or a
 //! [`Convex`] polygon (2D) or hull (3D) turned as the game chose. Box
-//! against box is a closed-form sweep and exact; every other pair goes
-//! through a convex kernel ported from `Box2D` and `Box3D` (`PROVENANCE.md`),
-//! to within a slop that scales with the shapes.
+//! against box is a closed-form sweep and exact, and a [`ray`] is exact
+//! against a box, a ball, a capsule, a 2D polygon and a 3D triangle; every
+//! other pair goes through a convex kernel ported from `Box2D` and `Box3D`
+//! (`PROVENANCE.md`), to within a slop that scales with the shapes.
 //!
 //! A character is a [`MoverState`] the game keeps and steps with
 //! [`move_and_slide`] (Godot's name and meaning): it sets the velocity and
@@ -92,6 +99,8 @@ mod collider_set;
 mod config;
 mod contacts;
 mod convex;
+mod ground;
+mod height_field;
 mod ledge;
 mod mover;
 pub mod planar;
@@ -101,13 +110,17 @@ mod sensor;
 mod shape;
 mod slide;
 mod space;
+mod surface;
 mod sweep;
+mod triangle_set;
 mod world;
 
 pub use cell_world::{CellColliders, CellWorld, MAX_QUERY_CELLS};
 pub use collider_set::ColliderSet;
 pub use config::{MoverConfig, MoverSettings};
 pub use contacts::Contacts;
+pub use ground::{Ground, ground_under};
+pub use height_field::{HeightField, MAX_HEIGHT_SAMPLES};
 pub use ledge::{Ledge, find_ledge};
 pub use mover::{
     Floor, LEDGE_SEARCH_STEPS, MAX_PUSH_OUT_PLANES, MoverOptions, MoverState, move_and_slide,
@@ -117,4 +130,6 @@ pub use sensor::{sensor_events, sensors_at};
 pub use shape::{ALL_LAYERS, Collider, ColliderKind, Convex, Cut, Push, Shape};
 pub use slide::{MAX_SLIDES_2D, MAX_SLIDES_3D, slide, snap_to_ground};
 pub use space::Vector;
+pub use surface::SurfaceError;
+pub use triangle_set::{MAX_QUERY_TRIANGLES, MAX_TREE_DEPTH, MAX_TRIANGLES, TriangleSet};
 pub use world::{Unanswered, World};

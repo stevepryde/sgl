@@ -4,7 +4,9 @@
 //! seeded pairs of balls, capsules, boxes and convex shapes at random
 //! poses, in each dimension, the crate's separation must equal parry's and
 //! its casts must meet where parry says the shapes touch, within the
-//! contact band the crate states. Native only: the comparison needs no
+//! contact band the crate states. Rays against balls, capsules, boxes,
+//! polygons and triangles, which the crate meets exactly, must meet them
+//! where parry's do, to rounding. Native only: the comparison needs no
 //! browser, and parry is not built for `wasm32` here.
 #![cfg(not(target_arch = "wasm32"))]
 #![allow(clippy::cast_precision_loss)]
@@ -17,7 +19,7 @@ use parry3d::shape as shape3;
 
 use sgl_core::SplitMix64;
 use sgl_core::math::{Quat, Vec2, Vec3};
-use sgl_physics::{ALL_LAYERS, Collider, Convex, Shape, Vector, cast, distance};
+use sgl_physics::{ALL_LAYERS, Collider, Convex, Shape, Vector, cast, distance, ray};
 
 /// How far the crate's separation may differ from parry's, beyond parry's
 /// own precision ([`parry_bound`]). Every query decides at the resolution
@@ -462,4 +464,206 @@ fn the_3d_kernel_agrees_with_parry() {
         }
     }
     assert!(tally.hits > 300, "{tally:?}");
+}
+
+// ------------------------------------------------------------------ rays
+
+/// How far apart the crate's hit and parry's may lie along the normal, in
+/// units of the largest coordinate the ray involves: eight units in the
+/// last place. The crate meets a ball, a capsule, a box, a polygon and a
+/// triangle exactly, to a few units in the last place; so does parry for
+/// a ball, a capsule, a box and a triangle (closed forms in `f32` with no
+/// tolerance: its precision is its rounding), and the test's own
+/// `at + motion * t` adds one or two more.
+const RAY_ROUNDING: f32 = 8.0 * f32::EPSILON;
+
+/// Parry's own precision for a ray against a polygon, which it casts by
+/// GJK (`minkowski_ray_cast` in parry's `query/gjk/gjk.rs`): it stops once
+/// the ray's advanced origin is within `eps_tol`, `10 ε` in the game's
+/// units, of the shape, short of the surface.
+const PARRY_RAY_GJK: f32 = 10.0 * f32::EPSILON;
+
+/// Parry's own precision for a ray against a ball of `radius` from a start
+/// `offset` from its centre (`ray_toi_with_ball` in parry's
+/// `query/ray/ray_ball.rs`): it solves `b² - a c` with `c = |offset|² -
+/// r²`, which carries the rounding of `|offset|²`, so its crossing strays
+/// by about `ε |offset|²` over the half chord along the ray, `ε |offset|²
+/// / r` along the normal; four times that. `Box3D`'s form, which the crate
+/// ports, measures from the ray's closest approach and does not lose it:
+/// the first run found a ball of radius 0.2505297 at (0.10287285, 0.5) met
+/// from (2.3128715, -2.4755244) by (-3.1494644, 4.3657475) at t =
+/// 0.64290961 in `f64`, 0.64290965 by the crate and 0.6429101 by parry.
+fn parry_ball_ray(offset: f32, radius: f32) -> f32 {
+    4.0 * f32::EPSILON * offset * offset / radius
+}
+
+/// The largest normal difference between two exact hits on a ball or a
+/// capsule: the hits agree to [`RAY_ROUNDING`] (about 1e-5 at these sizes)
+/// and the smallest radius here is 0.1, which turns that into 1e-4 of
+/// normal; ten times that.
+const ROUND_NORMAL: f32 = 1e-3;
+
+/// What a ray comparison found.
+#[derive(Default, Debug)]
+struct Rays {
+    count: usize,
+    hits: usize,
+    /// The largest distance between the hits along the normal, in units of
+    /// `f32::EPSILON` times the ray's largest coordinate, where parry is
+    /// exact (no slack) and where it is not.
+    worst: f32,
+    worst_with_slack: f32,
+}
+
+/// Checks the crate's ray hit against parry's: both or neither, and the
+/// hits within `rounding` along the crate's normal. `at` and `end` are the
+/// ray's start and end; `normal_bound` is how far the normals may differ,
+/// when they are comparable.
+#[allow(clippy::too_many_arguments)]
+fn compare_ray<V: Vector + core::fmt::Display>(
+    what: &str,
+    at: V,
+    motion: V,
+    ours: Option<(f32, V)>,
+    theirs: Option<(f32, V)>,
+    slack: f32,
+    normal_bound: Option<f32>,
+    tally: &mut Rays,
+) {
+    let largest = |v: V| (0..V::AXES).fold(0.0f32, |most, axis| most.max(v[axis].abs()));
+    let unit = f32::EPSILON * largest(at).max(largest(at + motion));
+    let dot = |a: V, b: V| (0..V::AXES).map(|axis| a[axis] * b[axis]).sum::<f32>();
+    tally.count += 1;
+    match (ours, theirs) {
+        (Some((t, normal)), Some((toi, found))) => {
+            tally.hits += 1;
+            let along = dot(motion * t - motion * toi, normal).abs();
+            if slack == 0.0 {
+                tally.worst = tally.worst.max(along / unit);
+            } else {
+                tally.worst_with_slack = tally.worst_with_slack.max(along / unit);
+            }
+            assert!(
+                along <= RAY_ROUNDING / f32::EPSILON * unit + slack,
+                "{what} from {at} by {motion}: t {t} against parry's {toi}, {along} apart"
+            );
+            if let Some(bound) = normal_bound {
+                let off = normal - found;
+                assert!(
+                    dot(off, off).sqrt() <= bound,
+                    "{what} from {at} by {motion}: normal {normal} against parry's {found}"
+                );
+            }
+        }
+        (None, None) => {}
+        (ours, theirs) => {
+            panic!("{what} from {at} by {motion}: the crate meets {ours:?}, parry {theirs:?}")
+        }
+    }
+}
+
+/// Defect: a ray pair that is not exact (the kernel's slop back), a wrong
+/// root, a wrong end cap, a polygon edge clipped on the wrong side, or a
+/// start on or beside the surface read wrong. Oracle: parry's ray casts.
+/// For 2000 random rays in 2D from outside a ball, a capsule, a box or a
+/// polygon, the crate meets the shape exactly when parry does, at the same
+/// place to [`RAY_ROUNDING`] (plus [`PARRY_RAY_GJK`] for a polygon), with
+/// the same normal on a ball and a capsule.
+#[test]
+fn rays_in_2d_agree_with_parry() {
+    let mut rng = SplitMix64::new(0x0923_7200);
+    let mut tally = Rays::default();
+    for _ in 0..2000 {
+        let target = shape2d(&mut rng);
+        let collider = Collider::new(1, target, Vec2::new(draw(&mut rng, -4.0, 4.0), 0.5));
+        let at = Vec2::new(draw(&mut rng, -4.0, 4.0), draw(&mut rng, -4.0, 4.0));
+        let parry = parry2(&target);
+        let pose = pose2(collider.position);
+        if parry.contains_point(&pose, at) {
+            continue;
+        }
+        let aim =
+            collider.position + Vec2::new(draw(&mut rng, -1.5, 1.5), draw(&mut rng, -1.5, 1.5));
+        let motion = (aim - at) * draw(&mut rng, 0.5, 2.0);
+        let ours = ray(at, motion, &[collider][..], ALL_LAYERS)
+            .unwrap()
+            .map(|hit| (hit.t, hit.normal));
+        let theirs = parry
+            .cast_ray_and_get_normal(&pose, &parry2d::query::Ray::new(at, motion), 1.0, true)
+            .map(|hit| (hit.time_of_impact, hit.normal));
+        let (slack, normals) = match target {
+            Shape::Ball { radius } => (
+                parry_ball_ray((at - collider.position).length(), radius),
+                Some(ROUND_NORMAL),
+            ),
+            Shape::Capsule { .. } => (0.0, Some(ROUND_NORMAL)),
+            Shape::Convex(_) => (PARRY_RAY_GJK, None),
+            Shape::Box { .. } => (0.0, None),
+        };
+        let what = format!("{target:?} at {}", collider.position);
+        compare_ray(&what, at, motion, ours, theirs, slack, normals, &mut tally);
+    }
+    assert!(tally.hits > 600, "{tally:?}");
+}
+
+/// [`rays_in_2d_agree_with_parry`] in 3D, with balls, capsules, boxes and
+/// triangles (a convex shape of three points; a hull of four or more stays
+/// on the kernel). A triangle's normal is its plane's, turned against the
+/// ray, as parry's is.
+#[test]
+fn rays_in_3d_agree_with_parry() {
+    let mut rng = SplitMix64::new(0x0923_7300);
+    let mut tally = Rays::default();
+    let vector = |rng: &mut SplitMix64, size: f32| {
+        Vec3::new(
+            draw(rng, -size, size),
+            draw(rng, -size, size),
+            draw(rng, -size, size),
+        )
+    };
+    for _ in 0..2000 {
+        let target = match shape3d(&mut rng) {
+            Shape::Convex(_) => {
+                let corners = [
+                    vector(&mut rng, 1.0),
+                    vector(&mut rng, 1.0),
+                    vector(&mut rng, 1.0),
+                ];
+                Shape::Convex(Convex::hull(&corners, Quat::IDENTITY))
+            }
+            other => other,
+        };
+        let parry: Box<dyn shape3::Shape> = match target {
+            Shape::Convex(hull) => {
+                let [a, b, c] = [hull.points()[0], hull.points()[1], hull.points()[2]];
+                Box::new(shape3::Triangle::new(a, b, c))
+            }
+            _ => parry3(&target),
+        };
+        let collider = Collider::new(1, target, vector(&mut rng, 2.0));
+        let at = vector(&mut rng, 4.0);
+        let pose = pose3(collider.position);
+        if parry.contains_point(&pose, at) {
+            continue;
+        }
+        let motion = (collider.position + vector(&mut rng, 0.6) - at) * draw(&mut rng, 0.5, 2.0);
+        let ours = ray(at, motion, &[collider][..], ALL_LAYERS)
+            .unwrap()
+            .map(|hit| (hit.t, hit.normal));
+        let theirs = parry
+            .cast_ray_and_get_normal(&pose, &parry3d::query::Ray::new(at, motion), 1.0, true)
+            .map(|hit| (hit.time_of_impact, hit.normal));
+        let (slack, normals) = match target {
+            Shape::Ball { radius } => (
+                parry_ball_ray((at - collider.position).length(), radius),
+                Some(ROUND_NORMAL),
+            ),
+            Shape::Capsule { .. } => (0.0, Some(ROUND_NORMAL)),
+            Shape::Convex(_) => (0.0, Some(1e-5)),
+            Shape::Box { .. } => (0.0, None),
+        };
+        let what = format!("{target:?} at {}", collider.position);
+        compare_ray(&what, at, motion, ours, theirs, slack, normals, &mut tally);
+    }
+    assert!(tally.hits > 600, "{tally:?}");
 }
