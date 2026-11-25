@@ -16,8 +16,8 @@ reference do not need to be in every prompt.
 | Check that normal maps (third-party textures, a generator's output) are green up, as SGL3D reads them, not green down (DirectX) | [Normal-map convention](../crates/sgl-3d/docs/README.md#steering) | [Convention check](../examples/sgl-3d/examples/normal_convention.rs) (`--example normal_convention -- --help`) |
 | Build a 2D game | [sgl-2d](../crates/sgl-2d/README.md) | [Minimal window and sprite](../examples/direct-game/src/main.rs) |
 | Add a HUD, menu, or editing tool | [sgl-2d UI](../crates/sgl-2d/README.md#ui-and-huds), [tool composition](../specs/client.md#tool-composition) | [Tool UI](../examples/sgl-2d/examples/tool_ui.rs) |
-| Add fixed-step simulation, collision, or deterministic helpers | [sgl-core](../crates/sgl-core/README.md) | [Public modules](../crates/sgl-core/src/lib.rs) |
-| Choose a game's physics | [Physics](#physics) | [Arcade collision](../crates/sgl-core/src/collision.rs) |
+| Add fixed-step simulation or deterministic helpers | [sgl-core](../crates/sgl-core/README.md) | [Public modules](../crates/sgl-core/src/lib.rs) |
+| Move bodies through a 2D or 3D world of boxes, tiles or voxels; choose a game's physics | [sgl-physics](../crates/sgl-physics/README.md), [Physics](#physics) | [Public API](../crates/sgl-physics/src/lib.rs) |
 | Add multiplayer transport | [sgl-net](../crates/sgl-net/README.md) | [Transport API](../crates/sgl-net/src/lib.rs) |
 | Predict the local player and interpolate everyone else over the network | [sgl-core](../crates/sgl-core/README.md) | [`prediction`](../crates/sgl-core/src/prediction.rs) |
 | Add controller support | [sgl-input](../crates/sgl-input/README.md) | [Controller example](../examples/sgl-input/examples/controllers.rs) |
@@ -65,20 +65,25 @@ before sharing a GPU device or composing 2D UI over a 3D frame.
 
 ## Physics
 
-SGL has no physics engine. Physics belongs to the game; choose it by what
-the game is.
+SGL's physics is kinematic: bodies move because the game says so, and
+[`sgl-physics`](../crates/sgl-physics/README.md) finds what they hit and
+where they end up, in 2D and 3D. It has no rigid bodies, forces or joints.
+Choose by what the game is.
 
 - Most games, including driving, platformers and shooters, and especially
-  multiplayer games, are better with custom arcade physics: movement rules
-  written for the game's feel, which stay tunable, cheap, deterministic, and
-  easy to predict and roll back over the network. A rigid-body solver's
-  emergent behaviour fights designed handling. Collide against the game's own
-  world model, such as a track spline, road, voxel grid or boxes, not its
-  render meshes. In 2D, [`sgl_core::collision`](../crates/sgl-core/README.md)
-  sweeps and slides boxes. SGL3D's ray queries serve rendering only; keep
-  gameplay queries in the simulation, which a headless server runs without a
-  GPU. A query library such as [parry3d](https://parry.rs) suits a game that
-  must collide with arbitrary meshes.
+  multiplayer games, are better with arcade physics: movement rules written
+  for the game's feel, which stay tunable, cheap, deterministic, and easy to
+  predict and roll back over the network. A rigid-body solver's emergent
+  behaviour fights designed handling. Collide against the game's own world
+  model, such as a track spline, road, voxel grid or boxes, not its render
+  meshes. `sgl-physics` moves a box body through boxes, tiles or voxels
+  (`move_and_slide`, `snap_to_ground`) and answers `overlaps`, `cast` and
+  `ray`, over a `ColliderSet`, a slice of colliders or a `CellWorld` the game
+  answers cell by cell, with plain state that serialises and hashes. SGL3D's
+  ray queries serve rendering only; keep gameplay queries in the simulation,
+  which a headless server runs without a GPU. A query library such as
+  [parry3d](https://parry.rs) suits a game that must collide with arbitrary
+  meshes.
 - Use a rigid-body engine only when simulated physics is the game: stacking,
   destruction, physics puzzles or sandboxes. Add [Rapier](https://rapier.rs)
   (`rapier3d` or `rapier2d`). Its vectors and rotations, like parry's, are

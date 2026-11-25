@@ -58,7 +58,8 @@ library boundary to its governing contract.
   sheets, glyph rendering, lighting, overlays, and immediate-mode widgets for
   game HUDs, menus, and tools.
 - **Simulation and input:** fixed-step timing, deterministic hashing and RNG,
-  grids, frame animation, swept-AABB collision, and controller events/state.
+  grids, frame animation, kinematic physics for box bodies in 2D and 3D, and
+  controller events/state.
 - **Networking:** reliable-ordered and latest-state delivery over UDP,
   WebSocket, or in-memory transports; simulated networks for repeatable tests.
 - **Agent-oriented development:** explicit ownership and lifecycle contracts,
@@ -72,7 +73,8 @@ and rendering settings.
 
 | Crate | Provides |
 | --- | --- |
-| [sgl-core](crates/sgl-core/README.md) | Fixed-step time, grids, hashing, seeded RNG, animation, collision, and math |
+| [sgl-core](crates/sgl-core/README.md) | Fixed-step time, grids, hashing, seeded RNG, animation, and math |
+| [sgl-physics](crates/sgl-physics/README.md) | Kinematic physics in 2D and 3D: box bodies, worlds, queries, and a mover |
 | [sgl-net](crates/sgl-net/README.md) | Opaque-payload UDP, WebSocket, memory, and simulated transports |
 | [sgl-input](crates/sgl-input/README.md) | Controller discovery, events, and held state |
 | [sgl-2d](crates/sgl-2d/README.md) | Sprite and logical-canvas rendering, assets, text, lighting, and immediate UI; also HUDs over 3D |

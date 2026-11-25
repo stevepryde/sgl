@@ -1,0 +1,31 @@
+[package]
+name = "sgl-physics"
+repository.workspace = true
+rust-version.workspace = true
+documentation = "https://docs.rs/sgl-physics"
+categories = ["game-development", "simulation"]
+keywords = ["gamedev", "deterministic", "collision", "physics"]
+readme = "README.md"
+description = "Deterministic kinematic physics for SGL games: box bodies, worlds and queries in 2D and 3D"
+# Ship only the library, its README and licences.
+include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Serialise the plain state types. glam is named only to switch on its own
+# `serde` support for the vectors; the types still come from `sgl_core::math`.
+serde = ["dep:serde", "dep:glam", "glam/serde"]
+
+[dependencies]
+sgl-core.workspace = true
+glam = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+wasm-bindgen-test.workspace = true

@@ -10,14 +10,15 @@ import {
 } from "./dependency-boundaries";
 
 const GPU = ["wgpu", "winit", "sgl-webgpu"];
-const SGL = ["sgl-core", "sgl-net", "sgl-2d", "sgl-input", "sgl-3d", "sgl-post-fx"];
+const SGL = ["sgl-core", "sgl-physics", "sgl-net", "sgl-2d", "sgl-input", "sgl-3d", "sgl-post-fx"];
 const NET_IO = ["tungstenite", "getrandom", "mio", "socket2", "web-sys"];
 
 // What each crate must never link, on any target. Every entry is a spec
 // requirement: architecture.md 3-4, netcode.md acceptance, rendering.md
-// acceptance, core.md 1, and D-75 for sgl-webgpu.
+// acceptance, core.md 1, physics.md 1, and D-75 for sgl-webgpu.
 const forbidden: Record<string, string[]> = {
   "sgl-core": ["sgl-net", "sgl-2d", ...GPU, ...NET_IO, "image", "fontdue"],
+  "sgl-physics": ["sgl-net", "sgl-2d", "sgl-input", "sgl-3d", "sgl-post-fx", ...GPU, ...NET_IO, "image", "fontdue"],
   "sgl-net": ["sgl-2d", "sgl-core", ...GPU, "image", "fontdue"],
   "sgl-2d": ["sgl-net", "tungstenite"],
   "sgl-direct-game": ["sgl-net"],

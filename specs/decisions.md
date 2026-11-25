@@ -450,11 +450,12 @@ Use the [current specs](README.md) for implementation and the
     it; each light's direction and fall-off stay the surface's, where Bevy
     takes them at the back lobe's point.
 
-- **D-33** Owner direction, 2026-10-08: SGL has no physics engine; games
-  choose their physics. Most games, and especially multiplayer ones, use
-  custom arcade physics, in 2D on `sgl_core::collision`; a rigid-body engine
-  (Rapier, as the game's own dependency) is for games whose play is simulated
-  physics. SGL builds physics only where it brings a significant benefit.
+- **D-33** Superseded by D-94. Owner direction, 2026-10-08: SGL has no
+  physics engine; games choose their physics. Most games, and especially
+  multiplayer ones, use custom arcade physics, in 2D on
+  `sgl_core::collision`; a rigid-body engine (Rapier, as the game's own
+  dependency) is for games whose play is simulated physics. SGL builds
+  physics only where it brings a significant benefit.
   Rationale: Rapier made the owner's driving game handle worse than arcade
   rules; designed handling, prediction and rollback come easier from rules
   written for the game.
@@ -2165,6 +2166,24 @@ Use the [current specs](README.md) for implementation and the
   Rationale: a leak of up to half the light through a solid occluder is
   worse than dimmer open ground under a sun below 6°, and the bound is the
   ported reference's own.
+- **D-94** Decision, 2026-11-25 (#914): SGL has kinematic physics, in its
+  own crate `sgl-physics`, for 2D and 3D: shapes, queries, worlds a game can
+  answer for itself (tile and voxel grids among them), a mover, moving
+  colliders, triggers and planar bumps. It has no rigid-body simulation: a
+  game whose play is stacking, joints or rag dolls adds Rapier itself. The
+  crate's state is plain data so that authority, prediction and replay over
+  `sgl-net` are a copy and a repeat. Box against box is SGL's own
+  closed-form sweep; round and rotated shapes are ported from the collision
+  half of Box2D and Box3D (MIT). Porting Jolt, or all of Box2D or Box3D, was
+  declined: the owner's games are kinematic, a C or C++ engine fits the Rust
+  browser build badly, and whole-world snapshots (experimental in Box2D 3.2,
+  not offered for rollback in Box3D) are a heavier way to roll back than
+  copying a body. `sgl_core::collision` moves into the crate and is deleted
+  from `sgl-core`. Supersedes D-33.
+  Rationale: the games had each rewritten the same movement, collision and
+  prediction code, and their networking model wants pure functions over
+  plain state, identical on native and in the browser.
+
 - **D-95** Decision, 2026-11-25 (#918, owner's direction): the line SGL
   drew at "prediction is the game's" is not a strict boundary. The
   bookkeeping moves into SGL as `sgl_core::prediction`: input history with

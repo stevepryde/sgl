@@ -1,10 +1,8 @@
-//! Reusable deterministic helpers, fixed-step timing, animation, collision,
-//! and math.
+//! Reusable deterministic helpers, fixed-step timing, animation, and math.
 //!
 //! Dependency rule: this foundation crate has no internal SGL crate dependencies.
 
 pub mod anim;
-pub mod collision;
 mod grid;
 mod hash;
 pub mod math;

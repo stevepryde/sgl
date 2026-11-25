@@ -1,0 +1,23 @@
+[package]
+name = "sgl-physics-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Integration tests for sgl-physics, kept out of its published package.
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+postcard.workspace = true
+serde.workspace = true
+sgl-core.workspace = true
+sgl-physics = { workspace = true, features = ["serde"] }
+wasm-bindgen-test.workspace = true
+
+# proptest pulls getrandom, which does not build for wasm32-unknown-unknown
+# without a global cfg; property tests are native-only.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+proptest.workspace = true

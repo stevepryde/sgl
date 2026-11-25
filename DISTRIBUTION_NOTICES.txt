@@ -212,6 +212,7 @@ sgl-3d
 sgl-core
 sgl-input
 sgl-net
+sgl-physics
 sgl-post-fx
 sgl-webgpu
 sha1@0.10.7 — authors: RustCrypto Developers
@@ -728,7 +729,7 @@ Apache License
    See the License for the specific language governing permissions and
    limitations under the License.
 
---- Applies to: as-raw-xcb-connection@1.0.1, codespan-reporting@0.13.1, raw-window-metal@1.1.0, sgl-2d, sgl-3d, sgl-core, sgl-input, sgl-net, sgl-webgpu, static_assertions@1.1.0, x11rb-protocol@0.13.2, x11rb@0.13.2, zeroize@1.9.0, zune-core@0.5.3, zune-jpeg@0.5.15
+--- Applies to: as-raw-xcb-connection@1.0.1, codespan-reporting@0.13.1, raw-window-metal@1.1.0, sgl-2d, sgl-3d, sgl-core, sgl-input, sgl-net, sgl-physics, sgl-webgpu, static_assertions@1.1.0, x11rb-protocol@0.13.2, x11rb@0.13.2, zeroize@1.9.0, zune-core@0.5.3, zune-jpeg@0.5.15
 
 Apache License
                            Version 2.0, January 2004

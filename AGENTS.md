@@ -53,7 +53,7 @@ compatibility shims solely to avoid updating consumers.
   with any required data conversion or explicit re-export, and what to
   exercise afterwards only when it is not obvious. Never require regeneration
   for unrelated edits or dependency bumps.
-- All seven library crates share `workspace.package.version` in the root
+- All eight library crates share `workspace.package.version` in the root
   `Cargo.toml`; keep `version.workspace = true` in each crate. Update the
   root's internal dependency version requirements alongside release bumps.
 - At release, move those entries into a dated version section, merging
@@ -145,9 +145,9 @@ compatibility shims solely to avoid updating consumers.
   must be worth having, though: a feature is built and kept only if a game
   would plausibly use it and it adds something SGL does not already give.
   Ask when a game would use it; where the answer is "probably never",
-  decline it, or remove it if it has landed (D-76). None
-  of those three exists yet. Do not add a layer process or compatibility-lock
-  machinery.
+  decline it, or remove it if it has landed (D-76). Physics
+  has joined, kinematic only, as `sgl-physics` (D-94); the other two do not
+  exist yet. Do not add a layer process or compatibility-lock machinery.
 - Baked and generated assets (lightmaps, probe captures, other bakes) are
   content, refreshed only by explicitly running their export commands when their
   inputs or format change. Never add fingerprints, source or lockfile hashing,

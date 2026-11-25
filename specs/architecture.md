@@ -82,11 +82,14 @@ library; their rules, content, and process layouts stay with the games.
    - `sgl-input` — controller discovery and normalized events/state, independent
      of rendering; games retain focus, assignment and binding policy
    - `sgl-net` — opaque UDP, WebSocket, in-memory, and simulated transports
-   - `sgl-core` — deterministic grid, hash, time, animation, collision, math,
-     and RNG helpers
+   - `sgl-physics` — kinematic physics for 2D and 3D: box bodies, worlds the
+     game answers (tile and voxel grids among them), queries and a mover; no
+     rigid bodies ([physics](physics.md))
+   - `sgl-core` — deterministic grid, hash, time, animation, math, and RNG
+     helpers
 4. Native client, browser client, and headless server are all valid consumers.
-   A server must be able to depend on `sgl-net` and `sgl-core` without wgpu or
-   winit.
+   A server must be able to depend on `sgl-net`, `sgl-core` and `sgl-physics`
+   without wgpu or winit.
    `sgl-3d` must not require `winit`, input handling, `sgl-net`, or a game crate.
    Its wgpu backend may depend on platform graphics libraries. SGL3D and the
    ports it runs build for `wasm32-unknown-unknown` and run in the browser on

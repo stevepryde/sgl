@@ -8,7 +8,8 @@ These documents define the library's required behavior. For usage, start with
 | --- | --- |
 | Game/library ownership and crate dependencies | [Architecture](architecture.md) |
 | Languages, runtime, and platform choices | [Stack](stack.md) |
-| Deterministic helpers, time, animation, collision | [Core](core.md) |
+| Deterministic helpers, time, animation | [Core](core.md) |
+| Kinematic physics: shapes, worlds, queries, the mover | [Physics](physics.md) |
 | 2D assets, text, UI, and tool composition | [Client building blocks](client.md) |
 | 2D sprite and canvas rendering | [Rendering](rendering.md) |
 | 3D behavior, rendering development, and roadmap | [SGL3D](sgl3d.md) |

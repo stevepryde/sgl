@@ -1,8 +1,8 @@
 # Core
 
 `sgl-core` is the deterministic foundation: fixed-step time, hashing, seeded
-RNG, grids, frame animation, and swept-AABB collision. A native server and a
-browser client must get identical results from it.
+RNG, grids and frame animation. A native server and a browser client must get
+identical results from it.
 
 ## Requirements
 
@@ -68,37 +68,8 @@ browser client must get identical results from it.
    consumes no time, after as many zero-time advances as it has playback
    positions (frames plus other steps, doubled for ping-pong), by when every
    position has played at least once.
-7. **Collision.** `CollisionConfig` is constructed only through `new`;
-   its fields are private with read-only accessors, so callers cannot bypass
-   validation or mutate the normalized up axis. `CollisionConfig::new`
-   refuses an `up` whose length is not finite and
-   normalizable, including finite components with an overflowing length.
-   `sweep_aabb` is a closed-form swept AABB test returning
-   `t ∈ [0, 1]` and an axis-aligned unit normal pointing from the surface
-   toward the body. `move_and_collide` slides a kinematic body against a
-   `ColliderSet`, sweeps every finite nonzero remainder without an absolute
-   motion cutoff, and never moves it more than a rounding step into a solid
-   collider; a body that starts inside one may move out or along it, and its
-   least penetration depth never grows. It does not push bodies out: the game
-   keeps them clear. Skin back-off shortens the whole swept motion to leave
-   the configured gap along the contact normal, never reversing it or moving
-   off the tested segment. Sliding projects the motion left after the contact
-   time, excluding the backed-off portion. `snap_to_ground` uses the same
-   back-off along its probe. Sensors never block; one-way platforms block only
-   motion into a floor-classified face (one within `normal_threshold` of the
-   configured up axis), including a body within `skin` (plus rounding) below
-   that face, never a body deeper inside them.
-   `CollisionConfig` names the up axis, skin, snap distance, and
-   thresholds in the caller's units, rejecting negative or non-finite
-   lengths; results mirror exactly between y-up and y-down worlds.
-   Swept broadphase queries preserve their min/max corners without a
-   center/half-extents round trip, including contacts exactly at the end
-   of the motion on a grid-cell boundary.
-   `ColliderSet::query` returns every collider overlapping the region (it may
-   return more). Neither `insert` nor `query` walks an unbounded cell range:
-   an insert buckets at most a fixed number of cells, and a query visits at
-   most about as many cells as the set holds colliders, plus the oversized
-   colliders. An inverted box (negative half-extents) addresses no cells.
+7. *Moved.* Collision is `sgl-physics`'s ([physics](physics.md),
+   [D-94](decisions.md)).
 8. Overflow checks are on in every profile; arithmetic on caller sizes must
    fail as an error or be checked, not wrap.
 9. **Prediction.** `prediction` keeps the bookkeeping of client prediction

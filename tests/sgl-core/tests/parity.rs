@@ -2,8 +2,6 @@
 //! native server and a browser client must agree on (core.md acceptance).
 //! Floats are compared by bit pattern.
 
-use sgl_core::collision::{Aabb, sweep_aabb};
-use sgl_core::math::Vec2;
 use sgl_core::random::Rng;
 use sgl_core::time::FixedClock;
 use sgl_core::{SplitMix64, StateHasher};
@@ -71,21 +69,6 @@ fn fixed_clock_cadence_is_target_independent() {
     }
     assert_eq!(steps, 219);
     assert_eq!(clock.alpha.to_bits(), 1_058_362_689);
-}
-
-#[wasm_bindgen_test(unsupported = test)]
-fn swept_aabb_hit_is_target_independent() {
-    let body = Aabb {
-        center: Vec2::new(-3.25, 0.5),
-        half: Vec2::new(0.5, 0.75),
-    };
-    let target = Aabb {
-        center: Vec2::new(1.0, 0.0),
-        half: Vec2::new(1.0, 1.0),
-    };
-    let hit = sweep_aabb(&body, Vec2::new(7.3, 1.1), &target).expect("the sweep hits");
-    assert_eq!(hit.t.to_bits(), 1_052_827_760);
-    assert_eq!(hit.normal, Vec2::NEG_X);
 }
 
 /// `Rng::usize` must not reduce a different word width on wasm32 (#518).

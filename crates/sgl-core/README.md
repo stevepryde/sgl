@@ -16,8 +16,7 @@ same API.
 | General seeded randomness | [`random::Rng`](src/random.rs) |
 | Bounded row-major grid | [`Grid2`](src/grid.rs) |
 | Frame animation and scripted sequences | [`anim`](src/anim.rs) |
-| Swept AABB, kinematic sliding, sensors, and one-way platforms | [`collision`](src/collision.rs) |
-| Shared 2D vector and geometry helpers | [`math`](src/math.rs) |
+| Shared vector and geometry types | [`math`](src/math.rs) |
 
 `FixedClock::with_hz` is render-paced: it clamps each frame delta to one
 fixed step and runs at most one simulation step per frame, so its cadence
@@ -63,26 +62,6 @@ panic on an empty range; check that a slice is nonempty before drawing an index.
 finite elapsed seconds. Zero, negative, and non-finite deltas are ignored;
 they do not create time debt or trigger sequence steps or random draws.
 Each sequence tick still clears the previous completion edge and action queue.
-
-Collision units and the up axis belong to the game. Supply them through
-`CollisionConfig::new`; SGL does not choose a world scale or entity layout.
-Its fields are private: read the validated values with `up()`, `skin()`,
-`snap_distance()`, `normal_threshold()`, and `block_epsilon()`. To change a
-value, construct a new config so validation and up-axis normalization run again.
-Its `up` direction must have a finite, nonzero normalizable length;
-`CollisionConfig::new` panics if the length overflows even when its components are finite.
-Contacts leave the configured `skin` gap along the surface normal by stopping
-earlier on the swept path. A diagonal slide keeps the tangential motion left
-after the contact time; the backed-off motion is discarded, so it also stops
-earlier along the surface. Ground snapping backs off along its probe too.
-Contacts at the exact end of a sweep are included, even on a broadphase
-cell boundary. Every finite nonzero motion is swept, including motion below
-`f32::EPSILON` in the game's units; unobstructed motion is applied in full.
-`Aabb::from_min_max` computes center/half-extents, so its
-reconstructed corners may differ from the supplied corners by float rounding.
-`collision` is 2D arcade physics: it moves bodies the game drives, with no
-forces, mass or rotation. See [Physics](../../docs/README.md#physics) to
-choose a game's physics.
 
 Read the [core contract](../../specs/core.md) before changing deterministic
 behavior. [Parity fixtures](../../tests/sgl-core/tests/parity.rs) and [property tests](../../tests/sgl-core/tests/properties.rs)

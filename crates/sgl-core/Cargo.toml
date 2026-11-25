@@ -4,9 +4,9 @@ repository.workspace = true
 rust-version.workspace = true
 documentation = "https://docs.rs/sgl-core"
 categories = ["game-development", "algorithms"]
-keywords = ["gamedev", "deterministic", "collision", "animation"]
+keywords = ["gamedev", "deterministic", "hashing", "animation"]
 readme = "README.md"
-description = "Deterministic timing, grids, hashing, animation, and collision for SGL games"
+description = "Deterministic timing, grids, hashing, and animation for SGL games"
 # Ship only the library, its README and licences.
 include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 version.workspace = true
