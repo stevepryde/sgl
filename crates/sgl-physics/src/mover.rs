@@ -8,7 +8,7 @@ use crate::config::MoverConfig;
 use crate::contacts::Contacts;
 use crate::query::{overlaps, pad};
 use crate::shape::{ALL_LAYERS, Collider, ColliderKind, Shape};
-use crate::slide::{Faces, clip_velocity, slide_faces, snap_to_ground};
+use crate::slide::{Faces, clip_velocity, ground, slide_faces};
 use crate::space::{self, Vector};
 use crate::sweep;
 use crate::world::{Unanswered, World};
@@ -145,13 +145,16 @@ impl MoverOptions {
 /// In order:
 ///
 /// 1. **Push-out.** A body that starts inside a solid collider is moved out
-///    the shortest way, at most its own size along each axis, and the step
-///    goes on from there (`pushed_out`). One that cannot be freed so stays
-///    where it is, untouched, and the step reports `stuck`: what to do
-///    then is the game's. One-way platforms and sensors never push. The
-///    search tries at most [`MAX_PUSH_OUT_PLANES`] distances per axis, one
-///    of which may follow a ramp's plane, and a move along each ramp's
-///    normal.
+///    the shortest way, at most its own size along each axis (its full
+///    extent on that axis), and the step goes on from there
+///    (`pushed_out`). One that cannot be freed so stays where it is,
+///    untouched, and the step reports `stuck`: what to do then is the
+///    game's. One-way platforms and sensors never push. The
+///    search tries at most [`MAX_PUSH_OUT_PLANES`] distances per axis, the
+///    nearest (staying put among them, and of two equally near the
+///    negative one), one of which may follow a ramp's plane, and a move
+///    along each ramp's normal. Of two equally short ways out, the one most
+///    along `up` wins, then the lowest component by component.
 /// 2. **Move** with [`slide`](crate::slide), by `velocity * dt`. A walking
 ///    body is one on a floor at the start of the step and not rising.
 /// 3. **Step-up.** When a walking body is stopped by a wall and `step_height` is not zero,
@@ -171,7 +174,8 @@ impl MoverOptions {
 ///    overhang until its trailing edge reaches the edge, and motion along
 ///    the edge is kept. The search halves [`LEDGE_SEARCH_STEPS`] times.
 /// 5. **Snap.** A walking body is snapped to the ground where it ends
-///    ([`snap_to_ground`]), so it follows seams and small steps down.
+///    ([`snap_to_ground`](crate::snap_to_ground)), so it follows seams and
+///    small steps down.
 /// 6. **Velocity.** Every face the step met, in the order met, removes the
 ///    part of `velocity` that points into it, by the rules
 ///    [`slide`](crate::slide) applies to the motion it has left: a floor removes the part against
@@ -189,8 +193,16 @@ impl MoverOptions {
 /// snapping included. `Contacts::effective` is the whole step's
 /// translation, push-out and snap included.
 ///
-/// `dt` is the game's fixed step. A negative or non-finite `dt`, or a
-/// non-finite velocity, changes nothing.
+/// `dt` is the game's fixed step. A negative or non-finite `dt`, a position,
+/// velocity or body size that is not finite, or a step that would carry the
+/// body where `f32` cannot hold its position (a finite position and motion
+/// whose sum is not finite), changes nothing and reports no contact.
+///
+/// The step keeps what it applies as a translation from where the body
+/// started: each stage starts from the translation so far, and
+/// `Contacts::effective` and the blocked flags read it, so they do not
+/// depend on how far the body is from the world's origin. The position
+/// written back is the start plus that translation.
 ///
 /// [`Unanswered`] when the world will not walk a query's region: the state
 /// is then left exactly as it was. Nothing is cached between calls, so the
@@ -220,9 +232,29 @@ pub fn move_and_slide<V: Vector, W: World<V> + ?Sized>(
         config,
         mask: options.mask,
     };
-    let (next, contacts) = mover.step(*state, dt, options)?;
-    *state = next;
-    Ok(contacts)
+    match mover.step(*state, dt, options) {
+        Ok((next, contacts)) => {
+            *state = next;
+            Ok(contacts)
+        }
+        Err(Halt::Unanswered) => Err(Unanswered),
+        Err(Halt::Unsound) => Ok(Contacts::asked(state.velocity * dt)),
+    }
+}
+
+/// Why a step stopped before its end, leaving the state as it was.
+enum Halt {
+    /// A query was [`Unanswered`].
+    Unanswered,
+    /// The body's place, size or motion is not finite, or a stage would
+    /// carry it where `f32` cannot hold its position.
+    Unsound,
+}
+
+impl From<Unanswered> for Halt {
+    fn from(_: Unanswered) -> Self {
+        Self::Unanswered
+    }
 }
 
 /// The world as one step sees it: without its one-way platforms when the
@@ -292,20 +324,25 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         state: MoverState<V>,
         dt: f32,
         options: &MoverOptions,
-    ) -> Result<(MoverState<V>, Contacts<V>), Unanswered> {
+    ) -> Result<(MoverState<V>, Contacts<V>), Halt> {
         let config = self.config;
         let up = config.up();
         let delta = state.velocity * dt;
         let mut contacts = Contacts::asked(delta);
-        if !space::is_finite(delta) {
-            return Ok((state, contacts));
-        }
         let start = state.position;
-        let mut at = start;
-        match self.push_out(at)? {
+        if !(space::is_finite(delta)
+            && space::is_finite(start)
+            && space::is_finite(self.body.half_extents()))
+        {
+            return Err(Halt::Unsound);
+        }
+        // Every stage below works in translations from `start`: `at` is
+        // where the body is now, relative to it.
+        let mut at = V::ZERO;
+        match self.push_out(start)? {
             Escape::Free => {}
             Escape::Moved(by) => {
-                at = at + by;
+                at = by;
                 contacts.pushed_out = true;
             }
             Escape::Stuck => {
@@ -316,20 +353,21 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         }
 
         let walking = state.floor.is_some() && space::dot(state.velocity, up) <= 0.0;
-        let (moved, mut path) = self.slide(at, delta)?;
+        let (moved, mut path) = self.slide(start, at, delta)?;
         let mut end = at + moved;
         if walking
             && options.step_height > 0.0
             && path.contacts.wall
-            && let Some((stepped, climb)) = self.step_up(at, delta, end, options.step_height)?
+            && let Some((stepped, climb)) =
+                self.step_up(start, at, delta, end, options.step_height)?
         {
             (end, path) = (stepped, climb);
             contacts.stepped = true;
         }
         if let Some(drop) = options.ledge_drop {
             let depth = space::max(drop, config.snap_distance()) + config.skin();
-            if walking && !self.floor_within(end, depth)? {
-                let (guarded, along, shortened) = self.guarded(at, delta, depth)?;
+            if walking && !self.floor_within(start, end, depth)? {
+                let (guarded, along, shortened) = self.guarded(start, at, delta, depth)?;
                 (end, path) = (guarded, along);
                 contacts.ledge_guarded = shortened;
             }
@@ -340,7 +378,7 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         // what it touched on the way; one that is not walking lands on the
         // last floor it met.
         let floor = if walking {
-            let (snapped, ground) = snap_to_ground(self.body, at, &self.world, self.mask, config)?;
+            let (snapped, ground) = self.ground(start, at, config)?;
             at = at + snapped;
             contacts.absorb(&ground);
             if ground.floor {
@@ -351,52 +389,67 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
             floor_of(&path.contacts)
         };
 
-        contacts.applied(at - start, config);
+        let position = start + at;
+        if !space::is_finite(position) {
+            return Err(Halt::Unsound);
+        }
+        contacts.applied(at, config);
         let next = MoverState {
-            position: at,
+            position,
             velocity: clip_velocity(state.velocity, path.faces.as_slice(), config),
             floor,
         };
         Ok((next, contacts))
     }
 
-    fn slide(&self, from: V, delta: V) -> Result<(V, Path<V>), Unanswered> {
-        let (moved, contacts, faces) =
-            slide_faces(self.body, from, delta, &self.world, self.mask, self.config)?;
-        Ok((moved, Path { contacts, faces }))
+    /// [`slide`](crate::slide) of the body at `start + at` by `delta`.
+    fn slide(&self, start: V, at: V, delta: V) -> Result<(V, Path<V>), Halt> {
+        let world = &self.world;
+        let (body, mask, config) = (self.body, self.mask, self.config);
+        match slide_faces(body, start, at, delta, world, mask, config)? {
+            Some((moved, contacts, faces)) => Ok((moved, Path { contacts, faces })),
+            None => Err(Halt::Unsound),
+        }
     }
 
-    /// Whether a floor lies within `depth` below the body at `at`, as the
-    /// ground snap finds one.
-    fn floor_within(&self, at: V, depth: f32) -> Result<bool, Unanswered> {
+    /// [`snap_to_ground`](crate::snap_to_ground) of the body at
+    /// `start + at`, probing as `config` says.
+    fn ground(&self, start: V, at: V, config: &MoverConfig<V>) -> Result<(V, Contacts<V>), Halt> {
+        ground(self.body, start, at, &self.world, self.mask, config)?.ok_or(Halt::Unsound)
+    }
+
+    /// Whether a floor lies within `depth` below the body at `start + at`,
+    /// as the ground snap finds one.
+    fn floor_within(&self, start: V, at: V, depth: f32) -> Result<bool, Halt> {
         let probe = self.config.with_snap_distance(depth);
-        let (_, ground) = snap_to_ground(self.body, at, &self.world, self.mask, &probe)?;
+        let (_, ground) = self.ground(start, at, &probe)?;
         Ok(ground.floor)
     }
 
-    /// The step-up from `at`: lift, the same move across `up`, settle. The
-    /// end and its contacts when it lands on a floor further across `up`
-    /// than the plain move's `plain` end.
+    /// The step-up from `start + at`: lift, the same move across `up`,
+    /// settle. The end, relative to `start`, and its contacts when it lands
+    /// on a floor further across `up` than the plain move's `plain` end.
     fn step_up(
         &self,
+        start: V,
         at: V,
         delta: V,
         plain: V,
         height: f32,
-    ) -> Result<Option<(V, Path<V>)>, Unanswered> {
+    ) -> Result<Option<(V, Path<V>)>, Halt> {
         let up = self.config.up();
         let across = space::reject(delta, up);
         let length = space::dot(across, across).sqrt();
         if length <= 0.0 {
             return Ok(None);
         }
-        let (lift, mut climb) = self.slide(at, up * height)?;
+        let (lift, mut climb) = self.slide(start, at, up * height)?;
         let lifted = at + lift;
-        let (forward, ahead) = self.slide(lifted, self.over(across, length))?;
+        let (forward, ahead) = self.slide(start, lifted, self.over(across, length))?;
         climb.absorb(&ahead);
         let over = lifted + forward;
         let settle = space::dot(lift, up) + self.config.snap_distance();
-        let (down, landing) = self.slide(over, -up * settle)?;
+        let (down, landing) = self.slide(start, over, -up * settle)?;
         if !landing.contacts.floor {
             return Ok(None);
         }
@@ -424,11 +477,11 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         across * (1.0 + (inset + 2.0 * self.config.skin()) / length)
     }
 
-    /// The move across `up` from `at`, one world axis at a time, each
-    /// stopped at the last point where a floor lies within `depth` below
-    /// the body. Returns the end, its contacts, and whether any axis was
-    /// shortened.
-    fn guarded(&self, at: V, delta: V, depth: f32) -> Result<(V, Path<V>, bool), Unanswered> {
+    /// The move across `up` from `start + at`, one world axis at a time,
+    /// each stopped at the last point where a floor lies within `depth`
+    /// below the body. Returns the end, relative to `start`, its contacts,
+    /// and whether any axis was shortened.
+    fn guarded(&self, start: V, at: V, delta: V, depth: f32) -> Result<(V, Path<V>, bool), Halt> {
         let up = self.config.up();
         let across = space::reject(delta, up);
         let mut here = at;
@@ -439,8 +492,8 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
             if part == V::ZERO {
                 continue;
             }
-            let (moved, along) = self.slide(here, part)?;
-            if self.floor_within(here + moved, depth)? {
+            let (moved, along) = self.slide(start, here, part)?;
+            if self.floor_within(start, here + moved, depth)? {
                 here = here + moved;
                 path.absorb(&along);
                 continue;
@@ -452,8 +505,8 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
             let mut kept = (V::ZERO, Path::default());
             for _ in 0..LEDGE_SEARCH_STEPS {
                 let mid = (supported + unsupported) * 0.5;
-                let (moved, along) = self.slide(here, part * mid)?;
-                if self.floor_within(here + moved, depth)? {
+                let (moved, along) = self.slide(start, here, part * mid)?;
+                if self.floor_within(start, here + moved, depth)? {
                     supported = mid;
                     kept = (moved, along);
                 } else {
@@ -476,9 +529,10 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
     /// normal out of each round or convex overlap whose cores are apart a
     /// `skin` clear of it. The nearest free one wins, ties going to the one
     /// most along `up`, then the lowest component by component. Whether a
-    /// place is free is decided by each collider's real shape, cut included.
-    /// Planes come from each collider's bounding box, so a round or convex
-    /// collider offers the faces of the box that encloses it.
+    /// place is free is decided by each collider's real shape, cut included,
+    /// and a place `f32` cannot hold is none. Planes come from each
+    /// collider's bounding box, so a round or convex collider offers the
+    /// faces of the box that encloses it.
     fn push_out(&self, at: V) -> Result<Escape<V>, Unanswered> {
         let near = overlaps(self.body, at, &self.world, self.mask)?;
         let cores: Vec<Collider<V>> = near.iter().filter_map(solid_core).collect();
@@ -552,7 +606,7 @@ impl<V: Vector, W: World<V> + ?Sized> Mover<'_, V, W> {
         let within = |by: V| (0..V::AXES).all(|axis| by[axis].abs() <= reach[axis]);
         let mut candidates = Vec::new();
         let mut push = |by: V| {
-            if by != V::ZERO && within(by) {
+            if by != V::ZERO && within(by) && space::is_finite(at + by) {
                 let distance = (0..V::AXES).fold(0.0, |sum, axis| sum + by[axis] * by[axis]);
                 candidates.push((distance, by));
             }
@@ -725,17 +779,4 @@ impl<V: Vector> Path<V> {
         self.contacts.absorb(&later.contacts);
         self.faces.extend(&later.faces);
     }
-}
-
-/// `v` scaled to unit length, or `None` when it has no usable length.
-pub(crate) fn unit<V: Vector>(v: V) -> Option<V> {
-    let length = space::dot(v, v).sqrt();
-    if !(length.is_finite() && length > 0.0) {
-        return None;
-    }
-    let mut out = v;
-    for axis in 0..V::AXES {
-        out[axis] = v[axis] / length;
-    }
-    Some(out)
 }

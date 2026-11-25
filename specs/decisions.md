@@ -2209,6 +2209,8 @@ Use the [current specs](README.md) for implementation and the
   fixes changed the collider encoding; #915 added ramps to the levels, the
   cut to the encoding, and the floor rule; #916 grew `Contacts`' encoding
   and added mover walks to the levels, and its review fixes changed the
-  mover's velocity rule, floor, step-up and push-out. After the first
+  mover's velocity rule, floor, step-up and push-out; #924's fixes made
+  the mover keep a step's motion as a translation from its start and
+  normalise every direction by its largest component first. After the first
   release a change to one is a breaking change like any other frozen
   value.

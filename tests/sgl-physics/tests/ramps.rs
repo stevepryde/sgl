@@ -420,10 +420,11 @@ fn a_cut_the_sweep_cannot_meet_exactly_is_refused() {
     assert!(catch_unwind(|| Cut::new(Vec3::new(1.0, 2.0, 1e-3), 0.0)).is_err());
     assert!(catch_unwind(|| Cut::new(Vec2::ZERO, 0.0)).is_err());
     assert!(catch_unwind(|| Cut::new(Vec2::new(f32::NAN, 1.0), 0.0)).is_err());
-    assert!(catch_unwind(|| Cut::new(Vec2::new(1e30, 1e30), 0.0)).is_err());
     assert!(catch_unwind(|| Cut::new(Vec2::Y, f32::INFINITY)).is_err());
-    // Any 2D direction, and a 3D one turning about one axis, are taken.
+    // Any 2D direction, and a 3D one turning about one axis, are taken,
+    // however long (physics.md 16).
     let _ = Cut::new(Vec2::new(0.3, -7.0), 0.25);
+    let _ = Cut::new(Vec2::new(1e30, 1e30), 0.0);
     let _ = Cut::new(Vec3::new(0.0, 1.0, -2.0), -0.5);
     let ramp = Collider::new(1, shape(Vec2::splat(0.5)), Vec2::ZERO);
     let cut = Cut::new(Vec2::new(-1.0, 1.0), 0.0);

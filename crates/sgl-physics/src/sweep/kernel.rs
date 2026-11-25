@@ -324,7 +324,7 @@ impl<V: Vector> Pair<V> {
     /// The pair with the body moved back along `delta` by `back`, or `None`
     /// when `delta` has no direction.
     fn backed(&self, delta: V, back: f32) -> Option<Self> {
-        let along = direction(delta)?;
+        let (along, _) = space::direction(delta)?;
         Some(Self {
             target: self.target,
             body: self.body.moved(along * -back),
@@ -385,29 +385,11 @@ fn slop<V: Vector>(
     space::max(fitted, ROUNDING_SLOP * largest)
 }
 
-/// `v` as a unit vector, scaled first so a very short one still has a
-/// direction, or `None` when it has none.
-fn direction<V: Vector>(v: V) -> Option<V> {
-    let scale = space::largest_abs(v);
-    if !(scale.is_finite() && scale > 0.0) {
-        return None;
-    }
-    let mut out = v;
-    for axis in 0..V::AXES {
-        out[axis] = v[axis] / scale;
-    }
-    let length = space::dot(out, out).sqrt();
-    for axis in 0..V::AXES {
-        out[axis] /= length;
-    }
-    Some(out)
-}
-
 /// A contact at the start against the motion itself: what a pair with no
 /// known way out answers, so the body does not move. `None` only for a
 /// motion with no direction, which moves nothing anyway.
 fn blocked<V: Vector>(delta: V) -> Option<Contact<V>> {
-    direction(delta).map(|along| Contact {
+    space::direction(delta).map(|(along, _)| Contact {
         t: 0.0,
         normal: -along,
         faces: 0,
@@ -619,7 +601,7 @@ pub(super) fn resting<V: Vector>(
     let (gap, normal, point) = match pair.start() {
         Start::Apart { gap, normal, point } => (gap, normal, point),
         Start::Deep => {
-            let along = direction(delta)?;
+            let (along, _) = space::direction(delta)?;
             let back = pair.backed(delta, within(along))?;
             match back.start() {
                 Start::Apart { gap, normal, point } if gap >= 0.0 => (0.0, normal, point),

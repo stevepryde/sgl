@@ -148,12 +148,21 @@ surfaces) are planned in #914 and are not available until they land.
     from a `MoverSettings` whose public fields name each value; its own
     fields are private with read-only accessors, so callers cannot bypass
     validation or change the normalised up axis. `new` refuses an
-    `up` whose length is not finite and normalisable (including finite
-    components whose length overflows), a `normal_threshold` outside
+    `up` that is zero or not finite, a `normal_threshold` outside
     `(0, 1)`, and a negative or non-finite `skin`, `snap_distance` or
-    `block_epsilon`. It names the up axis, skin, snap distance, floor
+    `block_epsilon`. Every other `up` is a direction, however short or
+    long: the crate normalises every direction (`up`, a cut's normal, a
+    convex shape's rotation, a separation's normal) by one routine that
+    divides by the largest absolute component before squaring, so neither
+    underflow nor overflow occurs and the result is unit to within a few
+    units in the last place. It names the up axis, skin, snap distance, floor
     threshold and blocked tolerance in the game's units, with no defaults.
     Results mirror exactly between y-up and y-down worlds.
+    A stated limit: `skin` must be larger than the spacing of `f32` values
+    at the body's distance from the origin (about the coordinate times
+    2^-23); below that a body can end a rounding step or two inside a
+    solid. At 65,536 units, where the spacing is 1/128, a skin of 0.01 is
+    too small.
 13. **Move and slide.** `slide` slides a body against a world,
     sweeps every finite nonzero remainder without an absolute motion cutoff,
     slides at most a fixed number of times (`MAX_SLIDES_2D`, 3: a floor, a
@@ -175,13 +184,19 @@ surfaces) are planned in #914 and are not available until they land.
     only on a floor-classified face met first (a steeper face met first
     leaves the body where it is), and backs off along its probe. A
     one-way platform blocks a body within `skin` (plus rounding) below its
-    floor face, never a body deeper inside it. A non-finite motion moves
-    nothing.
+    floor face, never a body deeper inside it. A motion, position or body
+    size that is not finite moves nothing and reports no contact, and so
+    does a finite position and motion whose sum `f32` cannot hold (a
+    `snap_to_ground` probe included): a finite body never moves to an
+    infinite place.
 14. **Contacts.** `Contacts` records the floor, wall and ceiling contacts of
     a move, the last floor, ceiling and wall normals, the ids of the last
     floor, wall and ceiling met, the motion asked for and applied, and
     whether motion against or along `up` was asked for and not achieved by
-    more than `block_epsilon`. A `move_and_slide` step also reports whether
+    more than `block_epsilon`. The motion applied is measured relative to
+    the body, as the sum of the translations the move applied, never as a
+    difference of absolute positions, so `effective` and the blocked flags
+    read the same near the origin and far from it (3). A `move_and_slide` step also reports whether
     it climbed a step (`stepped`), its ledge guard shortened the move
     (`ledge_guarded`), it pushed the body out (`pushed_out`) or the body is
     `stuck`. The last-contact fields report; the mover's velocity rule
@@ -211,14 +226,18 @@ surfaces) are planned in #914 and are not available until they land.
     until the first collider that blocks it as it would block `slide`,
     stops a `skin` short along its path, and returns the translation and
     the contact; it does not slide. A body stopped so and moved along the
-    face is not blocked by it.
+    face is not blocked by it. Like `slide`, it moves nothing and reports
+    no contact for a motion, position or body size that is not finite, or
+    a finite position and motion whose sum `f32` cannot hold.
 16. **Ramps.** A collider may be cut by one plane through its box; its solid
     part is the box on the plane's inner side. In 3D the plane's normal has
     one zero component. The sweep against a cut box is exact, and a contact
     on the cut reports the plane's normal.
     - `Cut` is a unit `normal` and an `offset` from the box's centre: the
       solid part is the box where `normal · (p − position) ≤ offset`. Its
-      constructor normalises the normal (the ramp's only square root) and
+      constructor normalises the normal (the ramp's only square root) as
+      `up` is normalised (12), so a normal however short or long, its
+      squared length underflowing or overflowing `f32`, comes out unit, and
       refuses a zero or non-finite normal, a non-finite offset, and, in 3D,
       a normal with no zero component; `Collider::with_cut` and
       `with_kind` refuse a one-way platform with a cut. A cut serialises as
@@ -252,12 +271,20 @@ surfaces) are planned in #914 and are not available until they land.
     step of a character over a `MoverState { position, velocity, floor }`
     the game owns: plain `Copy` data, `floor` the normal and id of the
     floor it stands on or `None`, serialised and hashed like the other
-    state types. It takes the game's `dt` (a negative or non-finite one
-    changes nothing) and `MoverOptions { step_height, ledge_drop,
-    drop_through, mask }` per call (lengths finite and non-negative, or it
-    panics), and, in order:
+    state types. It takes the game's `dt` and `MoverOptions { step_height,
+    ledge_drop, drop_through, mask }` per call (lengths finite and
+    non-negative, or it panics). A negative or non-finite `dt`, a
+    non-finite velocity, a state whose position or body shape is not
+    finite, and finite inputs whose sum `f32` cannot hold (a position plus
+    the motion a stage would apply) change nothing in the state and report
+    no contact. The step keeps what it applies as a translation from where
+    the body started: each stage starts from the translation so far, never
+    from a rounded absolute position, `effective` and the blocked flags
+    read it (14), and the position written back is the start plus it. In
+    order, it:
     - pushes a body that starts inside a solid collider out the shortest
-      way that frees it, at most its own size along each axis. It tries at
+      way that frees it, at most its own size along each axis: the body's
+      full extent on that axis (twice its half-extent). It tries at
       most `MAX_PUSH_OUT_PLANES` (8) distances per axis, each putting the
       body's box a `skin` from a face of a collider's box (a round or
       convex collider offers the faces of the box that encloses it) or
@@ -265,9 +292,13 @@ surfaces) are planned in #914 and are not available until they land.
       from the distances on the others (one ramp's plane per place), one
       more place moves the body along each ramp's normal a `skin` out of
       its plane, and one more along the normal out of each kernel overlap
-      whose cores are apart, a `skin` clear of it (19). Whether a place is
-      free is decided by each collider's real shape, cut included
-      (`overlaps`). One it cannot free stays untouched and reports
+      whose cores are apart, a `skin` clear of it (19). When more
+      distances than the cap are in reach on an axis, it keeps the nearest
+      (staying put, zero, among them), and of two equally near the negative
+      one. The nearest free place wins; of two equally near, the one most
+      along `up`, then the lowest component by component, x first. Whether
+      a place is free is decided by each collider's real shape, cut
+      included (`overlaps`). One it cannot free stays untouched and reports
       `stuck`. One-way colliders and sensors never push;
     - moves by `velocity * dt` with one `slide`, whose floor rule (16)
       keeps a walk's motion across `up` whole, on flat floors and ramps; a
@@ -310,6 +341,9 @@ surfaces) are planned in #914 and are not available until they land.
     A body standing on a walkable ramp under gravity stays where it is:
     the floor rule takes the fall out of the motion and the velocity
     alike, and leaves no part across `up` to slide down the slope with.
+    A resting body stays where it is to within the skin: on its first
+    steps it may close up to `skin` of its gap along `-up`, and once a
+    step leaves it where it was its position is bit-equal step to step.
 
     `drop_through` passes every one-way collider for the step. Any
     `Unanswered` query leaves the state exactly as it was and returns
@@ -331,8 +365,8 @@ surfaces) are planned in #914 and are not available until they land.
     16 points in 3D, are bodies and colliders for every query and for the
     mover. A `Convex` is built by `Convex::polygon(points, cos, sin)` (2D)
     or `Convex::hull(points, quaternion)` (3D) from the game's points about
-    the shape's centre and a rotation the game supplies (normalised first;
-    the crate calls no trigonometric function); it stores the turned
+    the shape's centre and a rotation the game supplies (normalised first,
+    as `up` is (12); the crate calls no trigonometric function); it stores the turned
     points inline, so `Shape` stays `Copy`, and refuses non-finite points,
     too many or too few (3 to 8 in 2D, 1 to 16 in 3D), and in 2D vertices
     that are not strictly convex and counter-clockwise. It serialises as

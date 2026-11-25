@@ -3,7 +3,6 @@
 use sgl_core::{CanonicalWrite, StateHasher};
 
 use crate::config::MoverConfig;
-use crate::mover::unit;
 use crate::query::{move_and_collide, overlaps};
 use crate::shape::{Collider, ColliderKind, Shape};
 use crate::slide::snap_to_ground;
@@ -75,7 +74,7 @@ pub fn find_ledge<V: Vector, W: World<V> + ?Sized>(
     );
     let up = config.up();
     let skin = config.skin();
-    let Some(ahead) = unit(space::reject(toward, up)) else {
+    let Some((ahead, _)) = space::direction(space::reject(toward, up)) else {
         return Ok(None);
     };
     let (_, wall) = move_and_collide(body, position, ahead * (2.0 * skin), world, mask, config)?;

@@ -61,7 +61,10 @@ const fn max_slides<V: Vector>() -> usize {
 /// colliders in. An exact tie between axes resolves to the axis most along
 /// `up`, then y, x and z, and a ramp's plane after them all, so a body
 /// arriving exactly at a ledge's corner lands. Every finite nonzero
-/// remainder is swept, however small. A non-finite `delta` moves nothing.
+/// remainder is swept, however small. A non-finite `delta`, position or
+/// body size moves nothing and reports no contact, and so does a move whose
+/// end `f32` cannot hold (a finite position and motion whose sum is not
+/// finite).
 ///
 /// [`Unanswered`] when the world will not walk a pass's region: the body
 /// then moves nothing.
@@ -73,8 +76,12 @@ pub fn slide<V: Vector, W: World<V> + ?Sized>(
     mask: u32,
     config: &MoverConfig<V>,
 ) -> Result<(V, Contacts<V>), Unanswered> {
-    let (moved, contacts, _) = slide_faces(body, position, delta, world, mask, config)?;
-    Ok((moved, contacts))
+    Ok(
+        match slide_faces(body, position, V::ZERO, delta, world, mask, config)? {
+            Some((moved, contacts, _)) => (moved, contacts),
+            None => (V::ZERO, Contacts::asked(delta)),
+        },
+    )
 }
 
 /// The faces a move met, by unit normal, in the order met: what the mover
@@ -123,28 +130,41 @@ impl<V: Vector> Faces<V> {
     }
 }
 
-/// [`slide`], also returning the faces it met.
+/// What [`slide_faces`] moved: the translation, the contacts and the faces
+/// met.
+pub(crate) type Slid<V> = (V, Contacts<V>, Faces<V>);
+
+/// [`slide`] of a body at `origin + offset`, also returning the faces it
+/// met, with every position taken relative to `origin`: the mover passes
+/// its step's start and the translation it has applied so far, so nothing
+/// it measures depends on how far the body is from the world's origin.
+///
+/// `None`, having moved nothing, when `delta`, the body's place or its size
+/// is not finite, or a pass would end where `f32` cannot hold the body's
+/// position ([`lands`]).
 pub(crate) fn slide_faces<V: Vector, W: World<V> + ?Sized>(
     body: &Shape<V>,
-    position: V,
+    origin: V,
+    offset: V,
     delta: V,
     world: &W,
     mask: u32,
     config: &MoverConfig<V>,
-) -> Result<(V, Contacts<V>, Faces<V>), Unanswered> {
+) -> Result<Option<Slid<V>>, Unanswered> {
     let mut contacts = Contacts::asked(delta);
     let mut faces = Faces::new();
-    if !space::is_finite(delta) {
-        return Ok((V::ZERO, contacts, faces));
-    }
     let mut remaining = delta;
     let mut total = V::ZERO;
     for _ in 0..max_slides::<V>() {
         if remaining == V::ZERO {
             break;
         }
+        if !lands(body, origin, offset + total, remaining) {
+            return Ok(None);
+        }
         let rule = Rule::Move(config);
-        let Some(hit) = first_contact(body, position, total, remaining, world, mask, rule)? else {
+        let from = offset + total;
+        let Some(hit) = first_contact(body, origin, from, remaining, world, mask, rule)? else {
             total = total + remaining;
             break;
         };
@@ -162,7 +182,16 @@ pub(crate) fn slide_faces<V: Vector, W: World<V> + ?Sized>(
         faces.push(hit.normal);
     }
     contacts.applied(total, config);
-    Ok((total, contacts, faces))
+    Ok(Some((total, contacts, faces)))
+}
+
+/// Whether a body of `body`'s size at `origin + offset`, moved by `motion`,
+/// ends where `f32` holds its position: its size, its place and the place
+/// it would move to are all finite. A move that fails this moves nothing,
+/// as a non-finite motion does, so a finite state never steps to an
+/// infinite one.
+pub(crate) fn lands<V: Vector>(body: &Shape<V>, origin: V, offset: V, motion: V) -> bool {
+    space::is_finite(body.half_extents()) && space::is_finite(origin + offset + motion)
 }
 
 /// `velocity` less the parts that point into the faces of unit normals
@@ -294,7 +323,9 @@ fn crease<V: Vector>(motion: V, a: V, b: V) -> V {
 /// ground and does not move. After a move that walked off a small lip or
 /// down a ramp, it keeps a body on the ground across seams, down steps and
 /// down walkable slopes instead of dropping it into a fall. It backs off
-/// `skin` along its probe, and breaks ties between axes, as a move does.
+/// `skin` along its probe, and breaks ties between axes, as a move does. A
+/// position or body size that is not finite, or a probe whose end `f32`
+/// cannot hold, moves nothing and reports no contact.
 pub fn snap_to_ground<V: Vector, W: World<V> + ?Sized>(
     body: &Shape<V>,
     position: V,
@@ -303,18 +334,37 @@ pub fn snap_to_ground<V: Vector, W: World<V> + ?Sized>(
     config: &MoverConfig<V>,
 ) -> Result<(V, Contacts<V>), Unanswered> {
     let probe = -config.up() * config.snap_distance();
+    Ok(ground(body, position, V::ZERO, world, mask, config)?
+        .unwrap_or((V::ZERO, Contacts::asked(probe))))
+}
+
+/// [`snap_to_ground`] of a body at `origin + offset`, taken relative to
+/// `origin` as [`slide_faces`] is. `None`, having moved nothing, when the
+/// body's place or size, or the end of its probe, is not finite.
+pub(crate) fn ground<V: Vector, W: World<V> + ?Sized>(
+    body: &Shape<V>,
+    origin: V,
+    offset: V,
+    world: &W,
+    mask: u32,
+    config: &MoverConfig<V>,
+) -> Result<Option<(V, Contacts<V>)>, Unanswered> {
+    let probe = -config.up() * config.snap_distance();
+    if !lands(body, origin, offset, probe) {
+        return Ok(None);
+    }
     let mut contacts = Contacts::asked(probe);
     let rule = Rule::Move(config);
-    let Some(hit) = first_contact(body, position, V::ZERO, probe, world, mask, rule)? else {
-        return Ok((V::ZERO, contacts));
+    let Some(hit) = first_contact(body, origin, offset, probe, world, mask, rule)? else {
+        return Ok(Some((V::ZERO, contacts)));
     };
     if !config.is_floor(hit.normal) {
-        return Ok((V::ZERO, contacts));
+        return Ok(Some((V::ZERO, contacts)));
     }
     let safe = back_off(probe, &hit, config.skin());
     contacts.effective = safe;
     contacts.record(&hit, config);
-    Ok((safe, contacts))
+    Ok(Some((safe, contacts)))
 }
 
 /// Stops on the swept segment with a `skin` gap along the contact normal.

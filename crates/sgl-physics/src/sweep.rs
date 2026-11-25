@@ -137,16 +137,7 @@ pub(crate) fn separation<V: Vector>(
                     gaps[axis] = if rel[axis] > 0.0 { -gap } else { gap };
                 }
             }
-            let distance = space::dot(gaps, gaps).sqrt();
-            if distance > 0.0 {
-                let mut normal = gaps;
-                for axis in 0..V::AXES {
-                    normal[axis] = gaps[axis] / distance;
-                }
-                (distance, normal)
-            } else {
-                (0.0, V::ZERO)
-            }
+            space::direction(gaps).map_or((0.0, V::ZERO), |(normal, distance)| (distance, normal))
         }
         _ => kernel::separation(body, target, cut, rel),
     }

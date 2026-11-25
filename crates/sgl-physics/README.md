@@ -84,8 +84,10 @@ the fall, a head-bump the rise, a wall the part into it; in a corner or a
 wedge it keeps only what runs along both), and sets `floor`: for a walking
 body, what lies under it where it ends. A body standing on a walkable ramp
 stays put under gravity. A body that starts inside a solid is pushed out
-the shortest way, at most its own size per axis, ramps' normals included,
-or left where it is and reported `stuck`.
+the shortest way, at most its own full extent along each axis, ramps'
+normals included, or left where it is and reported `stuck`. A state whose
+position, velocity or body is not finite, or whose step would end where
+`f32` cannot hold the position, is left as it was.
 
 `MoverOptions` are per call, because they change with the body's state:
 
@@ -151,8 +153,11 @@ defaults: `Vec2::Y`
 for a y-up 2D world, `Vec2::NEG_Y` for a y-down one, `Vec3::Y` for SGL3D's.
 `skin` is the gap a contact leaves; `normal_threshold` (`normal · up`)
 separates floors and ceilings from walls; `block_epsilon` is the shortfall
-the blocked flags ignore. `new` panics on an unusable `up`, a threshold
-outside `(0, 1)` or a negative or non-finite length.
+the blocked flags ignore. `new` panics on a zero or non-finite `up`, a
+threshold outside `(0, 1)` or a negative or non-finite length; any other
+`up`, however short or long, is normalised to a unit vector. `skin` must be
+larger than the spacing of `f32` values where the bodies are (about the
+coordinate times 2^-23): at 65,536 units a skin of 0.01 is too small.
 
 A move slides at most `MAX_SLIDES_2D` (3) times in 2D and `MAX_SLIDES_3D`
 (4) in 3D, stops a `skin` short of each contact along its path, breaks an

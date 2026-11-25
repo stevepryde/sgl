@@ -88,8 +88,8 @@ impl<V: Vector> MoverConfig<V> {
     /// Validates the settings and normalises `up`.
     ///
     /// # Panics
-    /// If `up` is not a usable direction (zero, not finite, or so long its
-    /// length overflows); if `normal_threshold` is outside `(0, 1)`, where
+    /// If `up` is zero or not finite (any other direction, however short or
+    /// long, is normalised exactly enough to be unit); if `normal_threshold` is outside `(0, 1)`, where
     /// every face would classify alike and floors, ceilings and walls stop
     /// being distinguishable; or if `skin`, `snap_distance` or
     /// `block_epsilon` is negative or not finite (a negative skin backs a
@@ -100,15 +100,9 @@ impl<V: Vector> MoverConfig<V> {
     }
 
     fn validated(settings: MoverSettings<V>) -> Result<Self, Invalid> {
-        let up = settings.up;
-        let length = space::dot(up, up).sqrt();
-        if !(length.is_finite() && length > 0.0) {
+        let Some((unit, _)) = space::direction(settings.up) else {
             return Err(Invalid::Up);
-        }
-        let mut unit = up;
-        for axis in 0..V::AXES {
-            unit[axis] = up[axis] / length;
-        }
+        };
         if !(settings.normal_threshold > 0.0 && settings.normal_threshold < 1.0) {
             return Err(Invalid::Threshold);
         }
@@ -299,11 +293,12 @@ mod tests {
         }
     }
 
-    /// Finite components alone do not make a usable direction: a squared
-    /// length check alone accepts this vector and normalises it to zero.
+    /// Defect: a direction whose squared length overflows normalised to
+    /// zero (or was refused). Oracle: physics.md 12, any finite non-zero
+    /// `up` is a direction, here exactly the x axis.
     #[wasm_bindgen_test(unsupported = test)]
-    #[should_panic(expected = "MoverConfig: up must be a finite non-zero direction")]
-    fn the_config_rejects_an_up_direction_whose_length_overflows() {
-        let _ = MoverConfig::new(settings(Vec2::new(1e20, 0.0), SKIN, SNAP, 0.7, 1e-4));
+    fn the_config_normalises_an_up_direction_whose_length_overflows() {
+        let config = MoverConfig::new(settings(Vec2::new(1e20, 0.0), SKIN, SNAP, 0.7, 1e-4));
+        assert_eq!(config.up(), Vec2::X);
     }
 }

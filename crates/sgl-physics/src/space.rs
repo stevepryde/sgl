@@ -162,6 +162,59 @@ pub(crate) fn largest_abs<V: Vector>(v: V) -> f32 {
     (0..V::AXES).fold(0.0, |largest, axis| max(largest, v[axis].abs()))
 }
 
+/// Scales `components` to unit length in place and returns the length it
+/// had, or `None`, leaving them as they were, when one is not finite or all
+/// are zero. The crate's one normaliser, for every direction a game gives
+/// or the crate measures: `up`, a cut's normal, a convex shape's rotation,
+/// a separation's normal.
+///
+/// It divides by the largest absolute component before squaring, so the
+/// squares lie in `[0, 1]` with one of them exactly 1: neither underflow nor
+/// overflow can occur, and the result is unit to within a few units in the
+/// last place for any finite non-zero direction. The squares are summed in
+/// order over the non-zero components, so a zero component, like an axis a
+/// 2D vector does not have, changes no bit of the others. The returned
+/// length overflows to infinity only when the direction's own length does.
+pub(crate) fn normalise(components: &mut [f32]) -> Option<f32> {
+    if !components.iter().all(|c| c.is_finite()) {
+        return None;
+    }
+    let scale = components
+        .iter()
+        .fold(0.0, |largest, c| max(largest, c.abs()));
+    if scale == 0.0 {
+        return None;
+    }
+    let mut squares: Option<f32> = None;
+    for c in components.iter_mut() {
+        *c /= scale;
+        if *c != 0.0 {
+            let square = *c * *c;
+            squares = Some(squares.map_or(square, |sum| sum + square));
+        }
+    }
+    let root = squares.unwrap_or(1.0).sqrt();
+    for c in components.iter_mut() {
+        *c /= root;
+    }
+    Some(scale * root)
+}
+
+/// `v` as a unit vector and its length, by [`normalise`], or `None` when a
+/// component is not finite or all are zero.
+pub(crate) fn direction<V: Vector>(v: V) -> Option<(V, f32)> {
+    let mut components = [0.0; 3];
+    for axis in 0..V::AXES {
+        components[axis] = v[axis];
+    }
+    let length = normalise(&mut components[..V::AXES])?;
+    let mut out = v;
+    for axis in 0..V::AXES {
+        out[axis] = components[axis];
+    }
+    Some((out, length))
+}
+
 /// Orders two vectors component by component, x first, by each float's
 /// total order.
 pub(crate) fn compare<V: Vector>(a: V, b: V) -> Ordering {

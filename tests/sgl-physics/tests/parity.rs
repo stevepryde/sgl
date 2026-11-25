@@ -338,7 +338,10 @@ fn voxel(cell: IVec3, out: &mut CellColliders<'_, Vec3>) {
 /// mover's review fixes (#916) clipped the velocity against every face a
 /// step met, took a walking body's floor from the ground under where it
 /// ends, measured a step-up's gain along the requested direction, and let
-/// the push-out follow a ramp's normal. Each walk must
+/// the push-out follow a ramp's normal; and again when the mover began
+/// keeping a step's motion as a translation from where the body started
+/// and writing back the start plus it (#924), which rounds the mover walks
+/// differently. Each walk must
 /// stand on its ramps, and each mover walk climb a step, be stopped by its
 /// guard and be pushed out, for the digest to cover them.
 #[wasm_bindgen_test(unsupported = test)]
@@ -427,11 +430,11 @@ fn seeded_walks_through_fixed_levels_are_target_independent() {
     );
     assert_eq!(
         mover_2d,
-        "ec9cfefbd8d19efcb18cbb713e316da11470a976b8b162f69e00588e8d91153d"
+        "21a9828e36b97943776db5bf97a739688c4dc45e66a70c19dea1a8613204d0ea"
     );
     assert_eq!(
         mover_3d,
-        "224e3f957df8691cec9a967f6853a1e1bda231001f922b0001508ddc79493717"
+        "472467b261fdd0e474fe0142af9afad0757253dfd4bafaf6eb8fd5bfb6f32921"
     );
 }
 
@@ -499,7 +502,10 @@ fn round_extras_3d() -> [Collider<Vec3>; 3] {
 /// with a ball, a capsule and a convex collider added, with `slide` and
 /// with the mover. The box walks above keep their digests: a box against a
 /// box is the closed-form sweep, which #919 left as it was. Frozen on first
-/// run (#919).
+/// run (#919), and refrozen (#924) when the mover began keeping a step's
+/// motion as a translation from its start (the mover walks) and rotations
+/// began to be normalised by their largest component first (the 3D slide
+/// walk, whose hull is turned by a quaternion).
 #[wasm_bindgen_test(unsupported = test)]
 fn seeded_round_walks_through_fixed_levels_are_target_independent() {
     let level = level_2d();
@@ -582,14 +588,14 @@ fn seeded_round_walks_through_fixed_levels_are_target_independent() {
     );
     assert_eq!(
         walked_3d,
-        "6960a899bbdc5209b23493f96bf052012f171922cbc12c08ec041bd2916b5350"
+        "cf196798b31c99844e7bd8cbe67b9d99e52fe2140c196bd057907e14366a5878"
     );
     assert_eq!(
         mover_2d,
-        "6ef5762a52e83e00cc6be8ea643df1c7632b88fa46c22264d290e43415bfb52c"
+        "217f96ae5c245f56dde581bbd603ac607c23dccf8b3376f7403ad6e02cddc2fb"
     );
     assert_eq!(
         mover_3d,
-        "c51cf3e6588f221d94bc8f801efc948af4234545b791d8998feb0bb32f690d7a"
+        "4b8c2bbf77f995927cf490ed8758a89bd1f4b3cb684998dd04516aadd73bd107"
     );
 }

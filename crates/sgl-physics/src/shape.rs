@@ -356,13 +356,13 @@ impl Convex<Vec2> {
         if points.len() > Self::MAX_POINTS || points.is_empty() {
             return Err(InvalidConvex::Count);
         }
-        let length = (cos * cos + sin * sin).sqrt();
-        if !(length.is_finite() && length > 0.0) {
+        let mut turn = [cos, sin];
+        if space::normalise(&mut turn).is_none() {
             return Err(InvalidConvex::Rotation);
         }
         let rotation = d2::Rot {
-            c: cos / length,
-            s: sin / length,
+            c: turn[0],
+            s: turn[1],
         };
         let turned = d2::Proxy::offset(points, 0.0, Vec2::ZERO, rotation);
         Self::validated(turned.points())
@@ -386,12 +386,11 @@ impl Convex<Vec3> {
         if points.len() > Self::MAX_POINTS || points.is_empty() {
             return Err(InvalidConvex::Count);
         }
-        let (x, y, z, w) = (rotation.x, rotation.y, rotation.z, rotation.w);
-        let length = (x * x + y * y + z * z + w * w).sqrt();
-        if !(length.is_finite() && length > 0.0) {
+        let mut q = [rotation.x, rotation.y, rotation.z, rotation.w];
+        if space::normalise(&mut q).is_none() {
             return Err(InvalidConvex::Rotation);
         }
-        let rotation = d3::Rot::from_quat(x / length, y / length, z / length, w / length);
+        let rotation = d3::Rot::from_quat(q[0], q[1], q[2], q[3]);
         let turned = d3::Proxy::offset(points, 0.0, Vec3::ZERO, &rotation);
         Self::validated(turned.points())
     }
@@ -513,8 +512,8 @@ impl<V: Vector> Cut<V> {
     /// reach against it leaves nothing, and the collider occupies nothing.
     ///
     /// # Panics
-    /// If `normal` is not a usable direction (zero, not finite, or so long
-    /// its length overflows), if in 3D it has no zero component, or if
+    /// If `normal` is zero or not finite (any other direction, however short
+    /// or long, is normalised exactly enough to be unit), if in 3D it has no zero component, or if
     /// `offset` is not finite. All are authoring errors.
     #[must_use]
     pub fn new(normal: V, offset: f32) -> Self {
@@ -524,14 +523,9 @@ impl<V: Vector> Cut<V> {
     fn validated(given: V, offset: f32) -> Result<Self, InvalidCut> {
         // A ramp's only square root: the sweep and the slide read the unit
         // normal this computes once.
-        let length = space::dot(given, given).sqrt();
-        if !(length.is_finite() && length > 0.0) {
+        let Some((normal, _)) = space::direction(given) else {
             return Err(InvalidCut::Normal);
-        }
-        let mut normal = given;
-        for axis in 0..V::AXES {
-            normal[axis] = given[axis] / length;
-        }
+        };
         if V::AXES == 3 && (0..V::AXES).all(|axis| normal[axis] != 0.0) {
             return Err(InvalidCut::Turn);
         }

@@ -8,7 +8,7 @@ use sgl_core::{CanonicalWrite, StateHasher};
 
 use crate::config::MoverConfig;
 use crate::shape::{Collider, ColliderKind, Cut, Shape, order_cuts};
-use crate::slide::back_off;
+use crate::slide::{back_off, lands};
 use crate::space::{self, Vector};
 use crate::sweep::{self, Contact, TIE_ORDER, Tolerance};
 use crate::world::{Unanswered, World};
@@ -93,7 +93,9 @@ pub fn cast<V: Vector, W: World<V> + ?Sized>(
 /// a one-way platform only motion into its floor face, and a collider the
 /// body starts inside only motion deeper into it. A body stopped against a
 /// face and moved again along it is not blocked by that face. A non-finite
-/// `delta` moves nothing.
+/// `delta`, position or body size moves nothing, and so does a move whose
+/// end `f32` cannot hold (a finite position and motion whose sum is not
+/// finite).
 ///
 /// [`Unanswered`] when the world will not walk the motion's region: the
 /// body then moves nothing.
@@ -105,7 +107,7 @@ pub fn move_and_collide<V: Vector, W: World<V> + ?Sized>(
     mask: u32,
     config: &MoverConfig<V>,
 ) -> Result<(V, Option<Hit<V>>), Unanswered> {
-    if delta == V::ZERO || !space::is_finite(delta) {
+    if delta == V::ZERO || !lands(body, position, V::ZERO, delta) {
         return Ok((V::ZERO, None));
     }
     let rule = Rule::Move(config);
