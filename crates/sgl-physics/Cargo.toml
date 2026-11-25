@@ -7,8 +7,14 @@ categories = ["game-development", "simulation"]
 keywords = ["gamedev", "deterministic", "collision", "physics"]
 readme = "README.md"
 description = "Deterministic kinematic physics for SGL games: box bodies, worlds and queries in 2D and 3D"
-# Ship only the library, its README and licences.
-include = ["/src", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
+# Ship the library, its README, provenance and licences.
+include = [
+    "/src",
+    "/README.md",
+    "/PROVENANCE.md",
+    "/LICENSE*",
+    "/THIRD_PARTY_NOTICES.txt",
+]
 version.workspace = true
 edition.workspace = true
 license.workspace = true

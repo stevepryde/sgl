@@ -67,6 +67,10 @@ mod cell_world;
 mod collider_set;
 mod config;
 mod contacts;
+// Nothing calls the convex kernel until shapes, worlds and the mover are
+// wired to it (#919).
+#[allow(dead_code)]
+mod convex;
 mod query;
 mod shape;
 mod slide;

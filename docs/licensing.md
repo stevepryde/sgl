@@ -77,9 +77,10 @@ When creating or maintaining a game, carry these rules into the game's own
 ## Maintaining SGL
 
 [THIRD_PARTY_NOTICES.txt](../THIRD_PARTY_NOTICES.txt) covers code and assets copied
-into SGL. The 3D, post-effects and WebGPU crates also carry package-local
-copies so their notices travel through crates.io. Normal Cargo dependencies
-belong in the separate distribution bundle, not the source-notices list.
+into SGL. The 3D, physics, post-effects and WebGPU crates also carry
+package-local copies so their notices travel through crates.io. Normal Cargo
+dependencies belong in the separate distribution bundle, not the
+source-notices list.
 
 [upstreams.json](../licenses/upstreams.json) records each original licence file's
 upstream revision, destination and SGL provenance prefix. On a port update,

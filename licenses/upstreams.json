@@ -236,5 +236,17 @@
     "path": "crates/sgl-webgpu/LICENSE-wasm-bindgen.txt",
     "url": "https://raw.githubusercontent.com/wasm-bindgen/wasm-bindgen/a579ee62b631fd1fa96c7740b52a2952b07c0219/LICENSE-MIT",
     "prefix": "wasm-bindgen, https://github.com/wasm-bindgen/wasm-bindgen\nRevision a579ee62b631fd1fa96c7740b52a2952b07c0219 (0.2.127), LICENSE-MIT\n(wasm-bindgen is dual licensed MIT OR Apache-2.0; sgl-webgpu uses it under\nthe MIT terms below). src/webgpu/webgpu_sys/ is web-sys 0.2.127's generated\nWebGPU bindings as wgpu v30.0.2 vendors them (PROVENANCE.md).\n\n"
+  },
+  {
+    "component": "Box2D",
+    "path": "crates/sgl-physics/LICENSE-box2d.txt",
+    "url": "https://raw.githubusercontent.com/erincatto/box2d/178495ba35695aefe9c321e569d2277f06db3b90/LICENSE",
+    "prefix": "Box2D, https://github.com/erincatto/box2d\nRevision 178495ba35695aefe9c321e569d2277f06db3b90 (v3.2.0), LICENSE. sgl-physics\nports the GJK distance query, the shape cast and the time of impact of\nsrc/distance.c, with the types of include/box2d/collision.h and the vector\nfunctions of include/box2d/math_functions.h, to src/convex.rs, src/convex/d2.rs\nand src/convex/d2/toi.rs (PROVENANCE.md).\n\n"
+  },
+  {
+    "component": "Box3D",
+    "path": "crates/sgl-physics/LICENSE-box3d.txt",
+    "url": "https://raw.githubusercontent.com/erincatto/box3d/8441b4a06d6d09dcfb0b0f704df4d847d1437b92/LICENSE",
+    "prefix": "Box3D, https://github.com/erincatto/box3d\nRevision 8441b4a06d6d09dcfb0b0f704df4d847d1437b92 (v0.1.0), LICENSE. sgl-physics\nports the GJK distance query and the shape cast of src/distance.c, which\ncredits Dirk Gregorius with portions, with the types of include/box3d/types.h\nand include/box3d/collision.h and the vector functions of\ninclude/box3d/math_functions.h and src/math_internal.h, to src/convex.rs,\nsrc/convex/d3.rs and src/convex/d3/simplex.rs (PROVENANCE.md).\n\n"
   }
 ]

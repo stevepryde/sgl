@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 const OUTPUTS = [
   ["THIRD_PARTY_NOTICES.txt", ""],
   ["crates/sgl-3d/THIRD_PARTY_NOTICES.txt", "crates/sgl-3d/"],
+  ["crates/sgl-physics/THIRD_PARTY_NOTICES.txt", "crates/sgl-physics/"],
   ["crates/sgl-post-fx/THIRD_PARTY_NOTICES.txt", "crates/sgl-post-fx/"],
   ["crates/sgl-webgpu/THIRD_PARTY_NOTICES.txt", "crates/sgl-webgpu/"],
 ] as const;
