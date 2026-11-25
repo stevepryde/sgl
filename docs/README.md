@@ -17,7 +17,7 @@ reference do not need to be in every prompt.
 | Build a 2D game | [sgl-2d](../crates/sgl-2d/README.md) | [Minimal window and sprite](../examples/direct-game/src/main.rs) |
 | Add a HUD, menu, or editing tool | [sgl-2d UI](../crates/sgl-2d/README.md#ui-and-huds), [tool composition](../specs/client.md#tool-composition) | [Tool UI](../examples/sgl-2d/examples/tool_ui.rs) |
 | Add fixed-step simulation or deterministic helpers | [sgl-core](../crates/sgl-core/README.md) | [Public modules](../crates/sgl-core/src/lib.rs) |
-| Move bodies through a 2D or 3D world of boxes, tiles or voxels; choose a game's physics | [sgl-physics](../crates/sgl-physics/README.md), [Physics](#physics) | [Platformer](../examples/sgl-physics/examples/platformer.rs), [public API](../crates/sgl-physics/src/lib.rs) |
+| Move bodies through a 2D or 3D world of boxes, tiles or voxels; choose a game's physics | [sgl-physics](../crates/sgl-physics/README.md), [Physics](#physics) | [Platformer](../examples/sgl-physics/examples/platformer.rs), [networked mover](../examples/sgl-physics/examples/net_mover.rs), [public API](../crates/sgl-physics/src/lib.rs) |
 | Add multiplayer transport | [sgl-net](../crates/sgl-net/README.md) | [Transport API](../crates/sgl-net/src/lib.rs) |
 | Predict the local player and interpolate everyone else over the network | [sgl-core](../crates/sgl-core/README.md) | [`prediction`](../crates/sgl-core/src/prediction.rs) |
 | Add controller support | [sgl-input](../crates/sgl-input/README.md) | [Controller example](../examples/sgl-input/examples/controllers.rs) |
@@ -99,6 +99,24 @@ Choose by what the game is.
 Step physics inside the game's fixed-step loop (set Rapier's
 `IntegrationParameters::dt` to `FixedClock::fixed_dt()`) and copy the resulting
 poses to instances or sprites when presenting.
+
+### Over the network
+
+A networked game runs one step function on the server and in the client's
+prediction: the server steps each player from an `InputQueue` under a
+`FixedClock` with `CatchUp`; the client predicts with the same function
+through `sgl_core::prediction::Predictor` and, on each snapshot, takes the
+server's `MoverState` and replays the inputs not yet acknowledged.
+`MoverState` is plain data, so the snapshot is the state itself, encoded
+with postcard on `sgl-net`'s latest-state class, and its
+`MAX_POSTCARD_BYTES` against `MAX_LATEST_STATE_BYTES` says how many players
+one payload holds (24 in 3D). Inputs go with their tick on an unreliable
+lane, resending those not yet acknowledged. Compare the `digest_of` the
+state predicted for a tick with the server's for that tick to find a
+desync. The
+[networked mover](../examples/sgl-physics/examples/net_mover.rs) is that
+model end to end, server, client and messages, over `sgl-net`'s simulated
+network; copy its [shared half](../examples/sgl-physics/net_sim.rs).
 
 ## Distributing a game
 

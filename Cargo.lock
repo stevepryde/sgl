@@ -2400,8 +2400,11 @@ dependencies = [
 name = "sgl-physics-examples"
 version = "0.10.0"
 dependencies = [
+ "postcard",
+ "serde",
  "sgl-2d",
  "sgl-core",
+ "sgl-net",
  "sgl-physics",
  "winit",
 ]
@@ -2414,6 +2417,7 @@ dependencies = [
  "proptest",
  "serde",
  "sgl-core",
+ "sgl-net",
  "sgl-physics",
  "wasm-bindgen-test",
 ]

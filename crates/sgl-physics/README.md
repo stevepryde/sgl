@@ -157,6 +157,14 @@ largest postcard size as `MAX_POSTCARD_BYTES` (for example
 `MAX_LATEST_STATE_BYTES`. All implement `sgl_core::CanonicalWrite`, so a
 client and its server can compare one digest to find a desync.
 
+The crate knows nothing of `sgl-net`: a networked game steps the mover in
+one function its server and its client's `sgl_core::prediction::Predictor`
+both call, sends `MoverState` as its snapshot, and replays unacknowledged
+inputs from it. The [networked mover](../../examples/sgl-physics/examples/net_mover.rs)
+does this over `sgl-net`, with the budget for a latest-state payload (24
+players' 3D `MoverState`), and its [test](../../tests/sgl-physics/tests/net.rs)
+fails if a state stops surviving the trip.
+
 Read the [physics contract](../../specs/physics.md) before changing
 behaviour. [Parity fixtures](../../tests/sgl-physics/tests/parity.rs),
 [property tests](../../tests/sgl-physics/tests/properties.rs), the

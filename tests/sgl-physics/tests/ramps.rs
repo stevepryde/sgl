@@ -10,7 +10,7 @@
 use sgl_core::math::{Vec2, Vec3};
 use sgl_physics::{
     ALL_LAYERS, Collider, ColliderKind, Contacts, Cut, Hit, MoverConfig, MoverSettings, Shape,
-    Vector, World, cast, overlaps, ray, slide, snap_to_ground,
+    Vector, cast, overlaps, ray, slide, snap_to_ground,
 };
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -932,7 +932,7 @@ mod properties {
     use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
     use sgl_core::digest_of;
     use sgl_core::math::IVec3;
-    use sgl_physics::{CellColliders, CellWorld};
+    use sgl_physics::{CellColliders, CellWorld, World};
 
     const SEED: [u8; 32] = *b"sgl-physics ramp property seed 1";
 

@@ -11,9 +11,12 @@ publish = false
 workspace = true
 
 [dev-dependencies]
+postcard.workspace = true
+serde.workspace = true
 sgl-2d.workspace = true
 sgl-core.workspace = true
-sgl-physics.workspace = true
+sgl-net = { workspace = true, features = ["udp"] }
+sgl-physics = { workspace = true, features = ["serde"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 winit = { workspace = true, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
