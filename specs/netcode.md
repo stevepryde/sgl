@@ -1,7 +1,9 @@
 # Netcode
 
 SGL networking is payload transport. Games own messages, authority, rooms,
-prediction, and failure policy.
+prediction policy, and failure policy. The bookkeeping of client prediction
+and snapshot interpolation is offered, apart from any transport, by
+`sgl_core::prediction` ([core](core.md), D-95).
 
 `sgl-net` is the shared replacement for the transport copies originally in
 tiny, Torchmates, and Elemental Chaos. Those games agree on the contract below.

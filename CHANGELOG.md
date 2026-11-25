@@ -15,6 +15,8 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` adds `prediction` (new): `Predictor` (input history, reconcile and replay through the game's step function), `InputQueue` (a server's per-client inputs by tick), `Correction` (a fading visual offset), `SnapshotBuffer` (snapshot interpolation with bounded extrapolation) and `Sample` (previous and current state for drawing between steps). No game-code changes are needed; a game may replace its own prediction bookkeeping with it ([guide](crates/sgl-core/README.md)).
+
 ## 0.10.0 — 2026-11-24
 
 Move every SGL crate to `0.10.0` together and commit the updated `Cargo.lock`.

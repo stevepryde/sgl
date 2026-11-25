@@ -8,6 +8,7 @@ pub mod collision;
 mod grid;
 mod hash;
 pub mod math;
+pub mod prediction;
 pub mod random;
 mod rng;
 pub mod time;

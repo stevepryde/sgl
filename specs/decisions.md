@@ -2165,3 +2165,17 @@ Use the [current specs](README.md) for implementation and the
   Rationale: a leak of up to half the light through a solid occluder is
   worse than dimmer open ground under a sun below 6°, and the bound is the
   ported reference's own.
+- **D-95** Decision, 2026-11-25 (#918, owner's direction): the line SGL
+  drew at "prediction is the game's" is not a strict boundary. The
+  bookkeeping moves into SGL as `sgl_core::prediction`: input history with
+  reset and replay, a server input queue, a fading visual correction,
+  snapshot interpolation, previous and current samples, and their counters.
+  Policy stays the game's: what is predicted, the messages, who has
+  authority, and when to snap. The game gives its step and interpolation
+  functions; SGL owns no loop, connection or message. A correction fades
+  linearly to zero over a time the game chooses, so it reaches zero exactly
+  without a hidden snap threshold.
+  Rationale: SGL's point is to absorb what several games can reuse, and
+  things move into it as they are needed. Policy differs between games;
+  the bookkeeping does not. Six of the owner's games wrote it, a hundred or
+  two lines a side, and it is where their netcode bugs lived.

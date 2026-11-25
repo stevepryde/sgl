@@ -10,6 +10,7 @@ same API.
 | Need | API |
 | --- | --- |
 | Fixed-step simulation and interpolation | [`time::FixedClock`](src/time.rs) |
+| Client prediction, server input queues and snapshot interpolation | [`prediction`](src/prediction.rs) |
 | Schema-driven canonical hashing and raw byte digests | [`StateHasher`, `CanonicalWrite`, `Digest`](src/hash.rs) |
 | Frozen seeded random stream | [`SplitMix64`, `derive_stream_seed`](src/rng.rs) |
 | General seeded randomness | [`random::Rng`](src/random.rs) |
@@ -31,6 +32,22 @@ and `fixed_dt()` the same in `f32` seconds. `dropped_dt` reports supplied time
 that will never be simulated.
 Use its interpolation fraction for presentation, keeping game simulation
 separate from rendering.
+
+`prediction` keeps the bookkeeping of a networked game on a shared fixed
+step; what is predicted, the messages, authority and when to snap stay the
+game's. A client's `Predictor` steps each tick's input at once with the
+game's step function, keeps it until the server acknowledges that tick, and
+on each snapshot replays the rest from the server's state (`reconcile`), or
+says `Behind` or `Ahead` when it cannot. Its `sample()` is the previous and
+current state to draw at the clock's `alpha`, and a `Correction` fades a
+reconcile's visual jump over a time the game chooses. The server takes one
+input a tick from each client's `InputQueue`, which repeats the last on a
+gap and drops late ones. A `SnapshotBuffer` draws what the client does not
+predict a few ticks behind with the game's interpolation function, and
+extrapolates a bounded number of ticks when snapshots run out. Capacities,
+delays and the fade time are the game's, and a full buffer refuses. For
+diagnostics: `Predictor::corrections` and `pending().len()`,
+`InputQueue::gaps` and `late`, `SnapshotBuffer::len` and `extrapolations`.
 
 `SplitMix64` and canonical hashes have frozen cross-target contracts.
 `random::Rng` is deterministic for a seed, the same on every target, within

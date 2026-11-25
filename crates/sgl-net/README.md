@@ -1,8 +1,9 @@
 # sgl-net
 
 Payload-opaque networking for native clients, browser clients, and headless
-servers. Games own message schemas, serialization, authority, prediction,
-rooms, and reconnect policy. SGL owns transport framing, queues, delivery,
+servers. Games own message schemas, serialization, authority, prediction
+policy, rooms, and reconnect policy (`sgl_core::prediction` keeps prediction's
+bookkeeping). SGL owns transport framing, queues, delivery,
 and connection lifecycle, with no rendering or windowing dependency.
 
 ## Choose a transport

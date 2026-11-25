@@ -111,6 +111,8 @@ frozen SGL API.
 - CPU PNG decode and texture handles; renderer uploads RGBA8
 - Texture atlas packing
 - Fixed-step accumulator with interpolation alpha
+- Client prediction bookkeeping: input history and replay, server input
+  queue, snapshot interpolation
 - Frame animation from an explicit sheet-frame order and fps
 - Camera
 - Collision primitives (AABB sweep, tiles, circles and rects)
@@ -125,7 +127,9 @@ frozen SGL API.
 - RON for authored data, postcard for wire payloads
 
 Gameplay, entity layout, maps, items, protocol enums, prediction policy, save
-schema, rooms, and screen flow stay in the game.
+schema, rooms, and screen flow stay in the game. `sgl_core::prediction` keeps
+the bookkeeping of prediction; what is predicted, the messages, authority and
+when to snap stay the game's (D-95).
 
 ## Acceptance
 

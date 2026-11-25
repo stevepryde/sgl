@@ -101,6 +101,33 @@ browser client must get identical results from it.
    colliders. An inverted box (negative half-extents) addresses no cells.
 8. Overflow checks are on in every profile; arithmetic on caller sizes must
    fail as an error or be checked, not wrap.
+9. **Prediction.** `prediction` keeps the bookkeeping of client prediction
+   and snapshot interpolation; the game gives its step and interpolation
+   functions as closures and keeps its loop, messages, authority and when to
+   snap (D-95). Ticks are `u64`: tick `t`'s input is applied by the step
+   that runs `t`, and acknowledging `t` sends the state after that step.
+   Every buffer has a capacity fixed at construction; a full one refuses
+   with a typed error and never grows or drops the newest.
+   `Predictor::reconcile` drops the inputs through the acknowledged tick,
+   takes the server's state and replays the rest, so reconciling with the
+   true state ends exactly where not reconciling would. Its sample's
+   previous state becomes the replayed state a step before the end, so
+   interpolation cannot hide a correction; when nothing replays, a state that
+   agrees with the prediction leaves the sample as it was and one that
+   differs becomes the sample at rest. No tick a peer supplies panics: a
+   predictor at `u64::MAX` refuses the input and a queue there stays there. An acknowledgement older than the history or not yet
+   predicted is refused as `Behind` or `Ahead` and changes nothing.
+   `InputQueue` holds a client's inputs at most `capacity` ticks ahead and
+   hands each tick out once, in order: its own input if it arrived, else the
+   last one taken; it keeps the first of duplicates and drops inputs for
+   ticks already run. `Correction` and `SnapshotBuffer` are presentation and
+   never change simulated state. A correction fades linearly from what was
+   added to exactly zero over the game's fade time, never growing or
+   changing sign. `SnapshotBuffer` keeps only snapshots newer than its
+   newest and samples `delay_ticks` behind the game's tick with
+   `interpolate(a, b, t)` on the two snapshots around the instant; past the
+   newest it extrapolates along the last two (`t > 1`) for at most
+   `max_extrapolation_ticks`, then holds, and counts each such sample.
 
 ## Acceptance
 
