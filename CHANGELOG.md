@@ -15,6 +15,12 @@ docs and specs the entry links.
 
 ## Unreleased
 
+## 0.12.0 — 2026-11-26
+
+Games that use default features need no changes. Games that disable
+`sgl-3d` default features and rely on generated tangents must enable the
+`mikktspace` feature explicitly or export tangents with their assets.
+
 - `sgl-core` `prediction::InputQueue` adds `first_queued_tick` and `last_queued_tick`, the earliest and latest ticks with a queued input, and `skip_to(tick)`, which moves the next tick forward, discarding the inputs it passes without handing them out or making them the repeated input, where a server could only `take` them; `push` and `take` are unchanged. No game-code changes are needed.
 - `sgl-core` `prediction::SnapshotBuffer` adds `insert_recent(tick, snapshot) -> Inserted` (keeps the newest `capacity` ticks in tick order: a full buffer drops its oldest for a newer tick, a late snapshot takes its place, one at a held tick replaces it), `newest() -> Option<(u64, &S)>`, and `sample_with(&self, now_tick, alpha, interpolate, extrapolate)`, which samples without changing the buffer and, past the newest snapshot, calls `extrapolate(newest, ticks)` on that snapshot alone, returning `Sampled::Extrapolated` within `max_extrapolation_ticks` and `Sampled::Held` beyond it ([guide](crates/sgl-core/README.md)). `push` and `sample` behave as before. No game-code changes are needed.
 - `sgl-3d`: MikkTSpace tangent generation (`asset::TangentFrames::Generate`) is now the default-on `mikktspace` feature, and `bevy_mikktspace` an optional dependency; no game-code change is needed with default features. A game that exports its tangents or builds its meshes in code can set `default-features = false` (keeping any other features it names, such as `diagnostics`): a primitive that needs a frame and carries no `TANGENT` then keeps the frame of each triangle's coordinates and is listed as `asset::Ignored::TangentFrames`, and an anisotropic one fails the load. Regenerate the game's distribution notices after dropping it.
