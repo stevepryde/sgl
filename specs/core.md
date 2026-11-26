@@ -91,7 +91,9 @@ identical results from it.
    `InputQueue` holds a client's inputs at most `capacity` ticks ahead and
    hands each tick out once, in order: its own input if it arrived, else the
    last one taken; it keeps the first of duplicates and drops inputs for
-   ticks already run. `Correction` and `SnapshotBuffer` are presentation and
+   ticks already run. `skip_to` moves only forward: it discards the inputs
+   of the ticks it passes, which are never handed out or repeated, and
+   keeps the rest. `Correction` and `SnapshotBuffer` are presentation and
    never change simulated state. A correction fades linearly from what was
    added to exactly zero over the game's fade time, never growing or
    changing sign. `SnapshotBuffer` keeps only snapshots newer than its

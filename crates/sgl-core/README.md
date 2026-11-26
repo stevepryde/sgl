@@ -41,10 +41,13 @@ says `Behind` or `Ahead` when it cannot. Its `sample()` is the previous and
 current state to draw at the clock's `alpha`, and a `Correction` fades a
 reconcile's visual jump over a time the game chooses. The server takes one
 input a tick from each client's `InputQueue`, which repeats the last on a
-gap and drops late ones. A `SnapshotBuffer` draws what the client does not
-predict a few ticks behind with the game's interpolation function, and
-extrapolates a bounded number of ticks when snapshots run out. Capacities,
-delays and the fade time are the game's, and a full buffer refuses. For
+gap and drops late ones; a server that falls behind reads the queued range
+with `first_queued_tick` and `last_queued_tick` and jumps ahead with
+`skip_to`, which discards what it passes without running or repeating it.
+A `SnapshotBuffer` draws what the client does not predict a few ticks
+behind with the game's interpolation function, and extrapolates a bounded
+number of ticks when snapshots run out. Capacities, delays and the fade
+time are the game's, and a full buffer refuses. For
 diagnostics: `Predictor::corrections` and `pending().len()`,
 `InputQueue::gaps` and `late`, `SnapshotBuffer::len` and `extrapolations`.
 

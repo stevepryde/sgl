@@ -8,6 +8,12 @@ use std::collections::VecDeque;
 /// input taken; an input for a tick already run is dropped. The queue holds
 /// inputs for at most `capacity` ticks ahead of the next one to run and
 /// refuses inputs beyond that with [`QueueFull`].
+///
+/// A server that falls behind a client's stream can read the queued range
+/// with [`first_queued_tick`](Self::first_queued_tick) and
+/// [`last_queued_tick`](Self::last_queued_tick) and jump ahead with
+/// [`skip_to`](Self::skip_to), which discards the inputs it passes without
+/// running or repeating them.
 #[derive(Debug, Clone)]
 pub struct InputQueue<I> {
     /// Slot `k` holds the input for tick `next_tick + k`.
@@ -120,6 +126,40 @@ impl<I> InputQueue<I> {
         self.late
     }
 
+    /// The earliest tick with a queued input, if any.
+    #[must_use]
+    pub fn first_queued_tick(&self) -> Option<u64> {
+        let index = self.slots.iter().position(Option::is_some)?;
+        Some(self.next_tick + index as u64)
+    }
+
+    /// The latest tick with a queued input, if any.
+    #[must_use]
+    pub fn last_queued_tick(&self) -> Option<u64> {
+        let index = self.slots.iter().rposition(Option::is_some)?;
+        Some(self.next_tick + index as u64)
+    }
+
+    /// Move the next tick to run forward to `tick` without running the
+    /// ticks before it: their queued inputs are discarded, never handed
+    /// out and never repeated, and inputs for `tick` onward stay queued.
+    /// The input a later gap repeats is still the last one taken. Skipped
+    /// ticks count as neither gaps nor late inputs; an input that arrives
+    /// for one afterwards is late. A `tick` at or before
+    /// [`next_tick`](Self::next_tick) changes nothing. Returns how many
+    /// queued inputs were discarded.
+    pub fn skip_to(&mut self, tick: u64) -> usize {
+        let Some(ahead) = tick.checked_sub(self.next_tick) else {
+            return 0;
+        };
+        let passed =
+            usize::try_from(ahead).map_or(self.slots.len(), |ahead| ahead.min(self.slots.len()));
+        let discarded = self.slots.drain(..passed).flatten().count();
+        self.queued -= discarded;
+        self.next_tick = tick;
+        discarded
+    }
+
     /// Queue `input` for `tick`.
     pub fn push(&mut self, tick: u64, input: I) -> Result<Pushed, QueueFull> {
         let Some(ahead) = tick.checked_sub(self.next_tick) else {
@@ -197,5 +237,51 @@ mod tests {
         assert_eq!(queue.take(), (5, TickInput::Missing));
         assert_eq!(queue.push(8, 'd'), Ok(Pushed::Queued));
         assert_eq!(queue.len(), 2);
+    }
+
+    /// Defect: a skip that runs, repeats or keeps an input it passed, drops
+    /// one it should keep, or moves backwards. Oracle: `skip_to`'s contract.
+    /// After tick 0's `'a'` is taken, `'b'` (tick 2) and `'c'` (tick 5) are
+    /// queued across gaps at 1, 3 and 4; skipping to 4 discards `'b'` alone,
+    /// so tick 4 repeats `'a'`, not `'b'`, and tick 5 is `'c'`.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn skipping_discards_passed_inputs_without_repeating_them() {
+        let mut queue = InputQueue::new(0, 8);
+        assert_eq!(queue.first_queued_tick(), None);
+        assert_eq!(queue.push(0, 'a'), Ok(Pushed::Queued));
+        assert_eq!(queue.take(), (0, TickInput::Received(&'a')));
+        assert_eq!(queue.push(5, 'c'), Ok(Pushed::Queued));
+        assert_eq!(queue.push(2, 'b'), Ok(Pushed::Queued));
+        assert_eq!(queue.first_queued_tick(), Some(2));
+        assert_eq!(queue.last_queued_tick(), Some(5));
+
+        assert_eq!(queue.skip_to(4), 1);
+        assert_eq!((queue.next_tick(), queue.len()), (4, 1));
+        assert_eq!(queue.first_queued_tick(), Some(5));
+        assert_eq!(queue.last_queued_tick(), Some(5));
+        assert_eq!(queue.skip_to(3), 0);
+        assert_eq!(queue.next_tick(), 4);
+        assert_eq!(queue.push(3, 'x'), Ok(Pushed::Late));
+
+        assert_eq!(queue.take(), (4, TickInput::Repeated(&'a')));
+        assert_eq!(queue.take(), (5, TickInput::Received(&'c')));
+        assert_eq!(queue.take(), (6, TickInput::Repeated(&'c')));
+        assert_eq!((queue.gaps(), queue.late()), (2, 1));
+    }
+
+    /// A skip past everything queued, and past the window, empties the
+    /// queue and reopens the window from the new tick.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn skipping_beyond_the_window_empties_the_queue() {
+        let mut queue = InputQueue::new(10, 4);
+        assert_eq!(queue.push(11, 'a'), Ok(Pushed::Queued));
+        assert_eq!(queue.push(13, 'b'), Ok(Pushed::Queued));
+        assert_eq!(queue.skip_to(100), 2);
+        assert!(queue.is_empty());
+        assert_eq!(queue.first_queued_tick(), None);
+        assert_eq!(queue.push(103, 'c'), Ok(Pushed::Queued));
+        assert_eq!(queue.take(), (100, TickInput::Missing));
+        assert_eq!(queue.skip_to(u64::MAX), 1);
+        assert_eq!(queue.take(), (u64::MAX, TickInput::Missing));
     }
 }

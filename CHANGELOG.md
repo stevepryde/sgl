@@ -15,6 +15,8 @@ docs and specs the entry links.
 
 ## Unreleased
 
+- `sgl-core` `prediction::InputQueue` adds `first_queued_tick` and `last_queued_tick`, the earliest and latest ticks with a queued input, and `skip_to(tick)`, which moves the next tick forward, discarding the inputs it passes without handing them out or making them the repeated input, where a server could only `take` them; `push` and `take` are unchanged. No game-code changes are needed.
+
 ## 0.11.0 — 2026-11-25
 
 Move every SGL crate to `0.11.0` together and commit the updated `Cargo.lock`.
