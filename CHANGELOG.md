@@ -16,6 +16,7 @@ docs and specs the entry links.
 ## Unreleased
 
 - `sgl-core` `prediction::InputQueue` adds `first_queued_tick` and `last_queued_tick`, the earliest and latest ticks with a queued input, and `skip_to(tick)`, which moves the next tick forward, discarding the inputs it passes without handing them out or making them the repeated input, where a server could only `take` them; `push` and `take` are unchanged. No game-code changes are needed.
+- `sgl-core` `prediction::SnapshotBuffer` adds `insert_recent(tick, snapshot) -> Inserted` (keeps the newest `capacity` ticks in tick order: a full buffer drops its oldest for a newer tick, a late snapshot takes its place, one at a held tick replaces it), `newest() -> Option<(u64, &S)>`, and `sample_with(&self, now_tick, alpha, interpolate, extrapolate)`, which samples without changing the buffer and, past the newest snapshot, calls `extrapolate(newest, ticks)` on that snapshot alone, returning `Sampled::Extrapolated` within `max_extrapolation_ticks` and `Sampled::Held` beyond it ([guide](crates/sgl-core/README.md)). `push` and `sample` behave as before. No game-code changes are needed.
 
 ## 0.11.0 — 2026-11-25
 

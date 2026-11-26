@@ -2226,3 +2226,18 @@ Use the [current specs](README.md) for implementation and the
   After the first release a change to one is a breaking change like any
   other frozen
   value.
+
+- **D-97** Decision, 2026-11-26 (#928): `SnapshotBuffer` keeps two policies
+  side by side. `push` and `sample` refuse a snapshot when full or not
+  newer, drop what sampling has passed and extrapolate along the last two
+  snapshots. `insert_recent` and `sample_with` keep the newest `capacity`
+  ticks in tick order, replace a snapshot at a held tick, sample without
+  changing the buffer and extrapolate from the newest snapshot alone with
+  a function the game gives. Neither replaces the other: the first gives a
+  single stream back-pressure and a history that playback consumes, and
+  needs no velocity in the state; the second serves a track that fills
+  while nothing draws it, that several views draw, or whose snapshots
+  carry authoritative velocity, where one snapshot must already move.
+  Rationale: the choice is the game's policy for each track (D-95), and
+  both share one buffer, one playback setting and one rule for where an
+  instant falls, so nothing is implemented twice.

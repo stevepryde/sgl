@@ -35,7 +35,9 @@
 //! smoothing. It gives its step function and its interpolation function as
 //! closures. Every function here is a pure function of its arguments: no
 //! clocks, no randomness, the same on every target. Every buffer has a
-//! capacity fixed at construction; a full one refuses and says so.
+//! capacity fixed at construction; a full one refuses and says so, unless
+//! the game asks a [`SnapshotBuffer`] to keep the newest instead
+//! ([`SnapshotBuffer::insert_recent`]).
 //! [`Correction`] and [`SnapshotBuffer`] are presentation: they never change
 //! simulated state.
 
@@ -49,4 +51,4 @@ pub use correction::Correction;
 pub use predictor::{PredictError, Predictor, ReconcileError, Reconciled};
 pub use queue::{InputQueue, Pushed, QueueFull, TickInput};
 pub use sample::Sample;
-pub use snapshots::{Playback, Sampled, SnapshotBuffer, SnapshotRejected};
+pub use snapshots::{Inserted, Playback, Sampled, SnapshotBuffer, SnapshotRejected};

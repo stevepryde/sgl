@@ -77,8 +77,10 @@ identical results from it.
    functions as closures and keeps its loop, messages, authority and when to
    snap (D-95). Ticks are `u64`: tick `t`'s input is applied by the step
    that runs `t`, and acknowledging `t` sends the state after that step.
-   Every buffer has a capacity fixed at construction; a full one refuses
-   with a typed error and never grows or drops the newest.
+   Every buffer has a capacity fixed at construction and never grows or
+   drops the newest; a full one refuses with a typed error, except a
+   `SnapshotBuffer` filled through `insert_recent`, which drops its oldest
+   (D-97).
    `Predictor::reconcile` drops the inputs through the acknowledged tick,
    takes the server's state and replays the rest, so reconciling with the
    true state ends exactly where not reconciling would. Its sample's
@@ -96,11 +98,24 @@ identical results from it.
    keeps the rest. `Correction` and `SnapshotBuffer` are presentation and
    never change simulated state. A correction fades linearly from what was
    added to exactly zero over the game's fade time, never growing or
-   changing sign. `SnapshotBuffer` keeps only snapshots newer than its
-   newest and samples `delay_ticks` behind the game's tick with
+   changing sign. `SnapshotBuffer::push` keeps only snapshots newer than its
+   newest and `sample` draws `delay_ticks` behind the game's tick with
    `interpolate(a, b, t)` on the two snapshots around the instant; past the
    newest it extrapolates along the last two (`t > 1`) for at most
-   `max_extrapolation_ticks`, then holds, and counts each such sample.
+   `max_extrapolation_ticks`, then holds, and counts each such sample. It
+   drops the snapshots the instant has passed. `insert_recent` and
+   `sample_with` are the other policy, for a track that fills while nothing
+   draws it, that several views draw, or whose snapshots carry their own
+   velocity. `insert_recent` holds the snapshots of the newest `capacity`
+   ticks it was given, in tick order: a full buffer drops its oldest for a
+   newer tick, a snapshot at a held tick replaces the one held, and one
+   older than every tick of a full buffer is dropped. `sample_with` draws
+   the same instant as `sample` and changes nothing, so samples in any
+   order each draw what they would alone: `interpolate` between two
+   snapshots, and past the newest `extrapolate(newest, ticks)` on that
+   snapshot alone, one snapshot being enough, with `ticks` the time past it
+   and at most `max_extrapolation_ticks`: `Extrapolated` within the bound,
+   `Held` with the state at the bound beyond it.
 
 ## Acceptance
 

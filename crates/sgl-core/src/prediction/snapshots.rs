@@ -28,6 +28,15 @@ pub struct Playback {
 ///
 /// Sampling drops the snapshots that instant has passed. The buffer holds at
 /// most `capacity` snapshots; when it is full a new one is refused.
+///
+/// A track that fills while nothing draws it, that several views draw, or
+/// whose snapshots carry their own velocity takes the other pair instead.
+/// [`insert_recent`](Self::insert_recent) holds the snapshots of the newest
+/// `capacity` ticks, in tick order whatever order they arrive in.
+/// [`sample_with`](Self::sample_with) draws the same instant without
+/// changing the buffer, and past the newest snapshot calls the game's
+/// `extrapolate(newest, ticks)` on that snapshot alone. Either pair works on
+/// any buffer; a track normally keeps to one.
 #[derive(Debug, Clone)]
 pub struct SnapshotBuffer<S> {
     /// Strictly increasing ticks.
@@ -37,7 +46,7 @@ pub struct SnapshotBuffer<S> {
     extrapolations: u64,
 }
 
-/// What [`SnapshotBuffer::sample`] drew.
+/// What [`SnapshotBuffer::sample`] or [`SnapshotBuffer::sample_with`] drew.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sampled<S> {
     /// The instant is before the oldest snapshot held: that snapshot.
@@ -45,10 +54,11 @@ pub enum Sampled<S> {
     /// The instant lies between two snapshots, or on one.
     Interpolated(S),
     /// The instant is past the newest snapshot, within the extrapolation
-    /// bound: extrapolated from the last two.
+    /// bound: extrapolated from the last two by `sample`, from the newest
+    /// alone by `sample_with`.
     Extrapolated(S),
-    /// The instant is past the bound (or past the only snapshot): held where
-    /// extrapolation stopped (or at that snapshot).
+    /// The instant is past the bound: held where extrapolation stopped.
+    /// `sample` also holds past the only snapshot it has, at that snapshot.
     Held(S),
 }
 
@@ -60,6 +70,30 @@ impl<S> Sampled<S> {
             Self::Early(s) | Self::Interpolated(s) | Self::Extrapolated(s) | Self::Held(s) => s,
         }
     }
+}
+
+/// What [`SnapshotBuffer::insert_recent`] did with a snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum Inserted {
+    /// Held at a tick not held before. A full buffer dropped its oldest
+    /// snapshot for it.
+    Added,
+    /// Its tick was already held; it took that snapshot's place.
+    Replaced,
+    /// The buffer is full and every snapshot held is newer; dropped.
+    TooOld,
+}
+
+/// Where a drawn instant falls among the snapshots held.
+enum Place {
+    /// Before the oldest snapshot.
+    Early,
+    /// `t` of the way from snapshot `at` to the one after it, `t` in
+    /// `[0, 1)`.
+    Between { at: usize, t: f32 },
+    /// `ticks` past the newest snapshot; zero on it.
+    PastNewest { ticks: f64 },
 }
 
 /// Why [`SnapshotBuffer::push`] refused a snapshot.
@@ -122,8 +156,16 @@ impl<S: Clone> SnapshotBuffer<S> {
         self.snapshots.back().map(|&(tick, _)| tick)
     }
 
-    /// Samples that ran past the newest snapshot ([`Sampled::Extrapolated`]
-    /// or [`Sampled::Held`] there).
+    /// The newest snapshot held, with its tick.
+    #[must_use]
+    pub fn newest(&self) -> Option<(u64, &S)> {
+        self.snapshots.back().map(|(tick, state)| (*tick, state))
+    }
+
+    /// [`sample`](Self::sample)s that ran past the newest snapshot
+    /// ([`Sampled::Extrapolated`] or [`Sampled::Held`] there).
+    /// [`sample_with`](Self::sample_with) cannot change the buffer and is
+    /// not counted; a game counts the kinds it returns.
     #[must_use]
     pub fn extrapolations(&self) -> u64 {
         self.extrapolations
@@ -151,16 +193,34 @@ impl<S: Clone> SnapshotBuffer<S> {
         Ok(())
     }
 
-    /// Draw the instant `now_tick + alpha - delay_ticks` with
-    /// `interpolate(a, b, t)`. `alpha` is the fixed clock's, clamped to
-    /// `[0, 1)` (NaN reads as 0). `None` when no snapshot is held.
+    /// Hold `snapshot`, the state at `tick`, among the snapshots of the
+    /// newest `capacity` ticks, in tick order. It never refuses the newest:
+    /// a full buffer drops its oldest snapshot for a newer tick, whether or
+    /// not anything has been sampled. A late snapshot takes its place in
+    /// order, one at a tick already held replaces that snapshot, and one
+    /// older than every tick of a full buffer is dropped.
+    pub fn insert_recent(&mut self, tick: u64, snapshot: S) -> Inserted {
+        let at = self.snapshots.partition_point(|&(held, _)| held < tick);
+        if let Some((_, held)) = self.snapshots.get_mut(at).filter(|(held, _)| *held == tick) {
+            *held = snapshot;
+            return Inserted::Replaced;
+        }
+        if self.snapshots.len() < self.capacity {
+            self.snapshots.insert(at, (tick, snapshot));
+            return Inserted::Added;
+        }
+        if at == 0 {
+            return Inserted::TooOld;
+        }
+        self.snapshots.pop_front();
+        self.snapshots.insert(at - 1, (tick, snapshot));
+        Inserted::Added
+    }
+
+    /// Where the instant `now_tick + alpha - delay_ticks` falls. `None`
+    /// when no snapshot is held.
     #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-    pub fn sample(
-        &mut self,
-        now_tick: u64,
-        alpha: f32,
-        interpolate: impl FnOnce(&S, &S, f32) -> S,
-    ) -> Option<Sampled<S>> {
+    fn place(&self, now_tick: u64, alpha: f32) -> Option<Place> {
         let alpha = if alpha.is_nan() {
             0.0
         } else {
@@ -171,22 +231,45 @@ impl<S: Clone> SnapshotBuffer<S> {
             .checked_sub(self.playback.delay_ticks)
             .filter(|&base| base >= oldest)
         else {
-            return Some(Sampled::Early(self.snapshots[0].1.clone()));
+            return Some(Place::Early);
         };
         // The newest snapshot at or before the instant; ticks are integers
         // and `alpha < 1`, so comparing whole ticks is exact.
         let at = self.snapshots.partition_point(|&(tick, _)| tick <= base) - 1;
-        if at + 1 < self.snapshots.len() {
-            self.snapshots.drain(..at);
-            let ((a_tick, a), (b_tick, b)) = (&self.snapshots[0], &self.snapshots[1]);
-            let t = ((base - a_tick) as f64 + alpha) / (b_tick - a_tick) as f64;
-            return Some(Sampled::Interpolated(interpolate(a, b, t as f32)));
-        }
+        let a_tick = self.snapshots[at].0;
+        let ticks = (base - a_tick) as f64 + alpha;
+        Some(match self.snapshots.get(at + 1) {
+            Some(&(b_tick, _)) => Place::Between {
+                at,
+                t: (ticks / (b_tick - a_tick) as f64) as f32,
+            },
+            None => Place::PastNewest { ticks },
+        })
+    }
+
+    /// Draw the instant `now_tick + alpha - delay_ticks` with
+    /// `interpolate(a, b, t)`. `alpha` is the fixed clock's, clamped to
+    /// `[0, 1)` (NaN reads as 0). `None` when no snapshot is held.
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    pub fn sample(
+        &mut self,
+        now_tick: u64,
+        alpha: f32,
+        interpolate: impl FnOnce(&S, &S, f32) -> S,
+    ) -> Option<Sampled<S>> {
+        let past = match self.place(now_tick, alpha)? {
+            Place::Early => return Some(Sampled::Early(self.snapshots[0].1.clone())),
+            Place::Between { at, t } => {
+                self.snapshots.drain(..at);
+                let (a, b) = (&self.snapshots[0].1, &self.snapshots[1].1);
+                return Some(Sampled::Interpolated(interpolate(a, b, t)));
+            }
+            Place::PastNewest { ticks } => ticks,
+        };
 
         // Past the newest: keep it and the one before for extrapolation.
-        self.snapshots.drain(..at.saturating_sub(1));
-        let newest_tick = self.newest_tick().expect("checked nonempty");
-        let past = (base - newest_tick) as f64 + alpha;
+        self.snapshots
+            .drain(..self.snapshots.len().saturating_sub(2));
         if past == 0.0 {
             return self
                 .snapshots
@@ -197,7 +280,8 @@ impl<S: Clone> SnapshotBuffer<S> {
         if self.snapshots.len() < 2 {
             return Some(Sampled::Held(self.snapshots[0].1.clone()));
         }
-        let ((before_tick, before), (_, newest)) = (&self.snapshots[0], &self.snapshots[1]);
+        let ((before_tick, before), (newest_tick, newest)) =
+            (&self.snapshots[0], &self.snapshots[1]);
         let span = (newest_tick - before_tick) as f64;
         let bound = self.playback.max_extrapolation_ticks as f64;
         let along = |past: f64| (1.0 + past / span) as f32;
@@ -205,6 +289,46 @@ impl<S: Clone> SnapshotBuffer<S> {
             Sampled::Extrapolated(interpolate(before, newest, along(past)))
         } else {
             Sampled::Held(interpolate(before, newest, along(bound)))
+        })
+    }
+
+    /// Draw the instant [`sample`](Self::sample) draws, without changing
+    /// the buffer: any number of views sample it, in any order, and each
+    /// draws what it would have drawn alone.
+    ///
+    /// Between two snapshots it calls `interpolate(a, b, t)`. Past the
+    /// newest it calls `extrapolate(newest, ticks)` on that snapshot alone,
+    /// so one snapshot that carries its velocity is enough to move: `ticks`
+    /// is how far past it the instant is, and never more than
+    /// [`Playback::max_extrapolation_ticks`]. Within that bound the result
+    /// is [`Sampled::Extrapolated`]; beyond it, [`Sampled::Held`] with the
+    /// state at the bound, which a game may choose not to draw.
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    pub fn sample_with(
+        &self,
+        now_tick: u64,
+        alpha: f32,
+        interpolate: impl FnOnce(&S, &S, f32) -> S,
+        extrapolate: impl FnOnce(&S, f32) -> S,
+    ) -> Option<Sampled<S>> {
+        Some(match self.place(now_tick, alpha)? {
+            Place::Early => Sampled::Early(self.snapshots[0].1.clone()),
+            Place::Between { at, t } => Sampled::Interpolated(interpolate(
+                &self.snapshots[at].1,
+                &self.snapshots[at + 1].1,
+                t,
+            )),
+            Place::PastNewest { ticks } => {
+                let newest = &self.snapshots[self.snapshots.len() - 1].1;
+                let bound = self.playback.max_extrapolation_ticks as f64;
+                if ticks == 0.0 {
+                    Sampled::Interpolated(newest.clone())
+                } else if ticks <= bound {
+                    Sampled::Extrapolated(extrapolate(newest, ticks as f32))
+                } else {
+                    Sampled::Held(extrapolate(newest, bound as f32))
+                }
+            }
         })
     }
 }
@@ -389,6 +513,201 @@ mod tests {
             assert!(refused_in_a_row < 2, "tick {tick}");
             let _ = buffer.sample(tick, 0.0, interpolate);
         }
+    }
+
+    /// What `extrapolate` was given: the snapshot's tick twice, and the
+    /// ticks past it.
+    fn extrapolate(newest: &Made, ticks: f32) -> Made {
+        (newest.0, newest.0, ticks)
+    }
+
+    /// A position and the velocity the server sent with it, in units a
+    /// tick.
+    type Moving = (f64, f64);
+
+    fn coast(newest: &Moving, ticks: f32) -> Moving {
+        (newest.0 + newest.1 * f64::from(ticks), newest.1)
+    }
+
+    /// For samples that must not reach one of the two functions.
+    fn never<S>(_: &S, _: &S, _: f32) -> S {
+        unreachable!("no pair of snapshots to interpolate")
+    }
+
+    /// Oracle, by hand (#928): one snapshot at tick 10, at 5 and moving 1 a
+    /// tick, drawn with no delay and a bound of 3 ticks. At tick 12 it has
+    /// moved 2, to 7; at 11.5, 1.5, to 6.5; at 13, the bound, 3, to 8. At
+    /// 13.5 and at 40 it is past the bound and holds at 8. `sample` cannot
+    /// move one snapshot and holds it where it was; the buffer is the same
+    /// after every `sample_with`.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn one_snapshot_moves_along_its_own_velocity_up_to_the_bound() {
+        let playback = Playback {
+            delay_ticks: 0,
+            max_extrapolation_ticks: 3,
+        };
+        let mut buffer: SnapshotBuffer<Moving> = SnapshotBuffer::new(4, playback);
+        assert_eq!(buffer.sample_with(12, 0.0, never, coast), None);
+        assert_eq!(buffer.insert_recent(10, (5.0, 1.0)), Inserted::Added);
+        let drawn = |now_tick, alpha| buffer.sample_with(now_tick, alpha, never, coast);
+        assert_eq!(drawn(10, 0.0), Some(Sampled::Interpolated((5.0, 1.0))));
+        assert_eq!(drawn(12, 0.0), Some(Sampled::Extrapolated((7.0, 1.0))));
+        assert_eq!(drawn(11, 0.5), Some(Sampled::Extrapolated((6.5, 1.0))));
+        assert_eq!(drawn(13, 0.0), Some(Sampled::Extrapolated((8.0, 1.0))));
+        assert_eq!(drawn(13, 0.5), Some(Sampled::Held((8.0, 1.0))));
+        assert_eq!(drawn(40, 0.0), Some(Sampled::Held((8.0, 1.0))));
+        assert_eq!(buffer.extrapolations(), 0);
+        assert_eq!(
+            buffer.sample(12, 0.0, never),
+            Some(Sampled::Held((5.0, 1.0)))
+        );
+    }
+
+    /// Oracle, by hand: snapshots at 10, 14 and 20, drawn 3 ticks behind
+    /// with a bound of 3. Past the newest the extrapolator gets snapshot 20
+    /// alone and the ticks past it: 1.5 at the instant 21.5, 3 at the bound
+    /// (23), and still 3, held, at 25.5. A delay longer than the game's
+    /// tick draws the oldest.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn past_the_newest_the_extrapolator_gets_it_and_the_bounded_ticks() {
+        let buffer = buffer();
+        let drawn = |now_tick, alpha| buffer.sample_with(now_tick, alpha, interpolate, extrapolate);
+        assert_eq!(drawn(24, 0.5), Some(Sampled::Extrapolated((20, 20, 1.5))));
+        assert_eq!(drawn(26, 0.0), Some(Sampled::Extrapolated((20, 20, 3.0))));
+        assert_eq!(drawn(28, 0.5), Some(Sampled::Held((20, 20, 3.0))));
+        assert_eq!(drawn(23, 0.0), Some(Sampled::Interpolated(snapshot(20))));
+        assert_eq!(drawn(2, 0.5), Some(Sampled::Early(snapshot(10))));
+    }
+
+    /// Three views draw one buffer (10, 14, 20; 3 ticks behind) at their own
+    /// instants: 21.5 (1.5 past the newest), 12.5 (0.625 of the way from 10
+    /// to 14) and 9.9 (before the oldest). Oracle: each draws what it would
+    /// alone, whichever is drawn first and however often. `sample`, drawn
+    /// latest first, has dropped snapshot 10 by the second view.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn views_sampling_in_any_order_each_draw_their_own_instant() {
+        let buffer = buffer();
+        let views = [
+            (24, 0.5, Sampled::Extrapolated((20, 20, 1.5))),
+            (15, 0.5, Sampled::Interpolated((10, 14, 0.625))),
+            (12, 0.9, Sampled::Early(snapshot(10))),
+        ];
+        for order in [[0, 1, 2], [2, 1, 0], [1, 0, 2], [0, 0, 1]] {
+            for (now_tick, alpha, expected) in order.map(|view| views[view]) {
+                let drawn = buffer.sample_with(now_tick, alpha, interpolate, extrapolate);
+                assert_eq!(drawn, Some(expected), "order {order:?}");
+            }
+        }
+        assert_eq!(buffer.len(), 3);
+
+        let mut consumed = buffer.clone();
+        let _ = consumed.sample(24, 0.5, interpolate);
+        assert_eq!(
+            consumed.sample(15, 0.5, interpolate),
+            Some(Sampled::Early(snapshot(14)))
+        );
+    }
+
+    /// Oracle (#928): a track of 32 that nothing draws takes a 33rd, newer
+    /// snapshot in place of its oldest. After ticks 1 to 33 it holds 32,
+    /// its newest is 33 and its oldest is 2 (what a draw before every
+    /// snapshot gets). `push` refuses the 33rd.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_full_buffer_takes_a_newer_snapshot_with_no_draw_between() {
+        let playback = Playback {
+            delay_ticks: 3,
+            max_extrapolation_ticks: 6,
+        };
+        let mut rolling = SnapshotBuffer::new(32, playback);
+        let mut strict = SnapshotBuffer::new(32, playback);
+        assert_eq!(rolling.newest(), None);
+        for tick in 1..=32 {
+            assert_eq!(rolling.insert_recent(tick, snapshot(tick)), Inserted::Added);
+            strict.push(tick, snapshot(tick)).unwrap();
+        }
+        assert_eq!(rolling.insert_recent(33, snapshot(33)), Inserted::Added);
+        assert_eq!(rolling.len(), 32);
+        assert_eq!(rolling.newest(), Some((33, &snapshot(33))));
+        assert_eq!(
+            rolling.sample_with(0, 0.0, interpolate, extrapolate),
+            Some(Sampled::Early(snapshot(2)))
+        );
+        assert_eq!(
+            strict.push(33, snapshot(33)),
+            Err(SnapshotRejected::Full { capacity: 32 })
+        );
+    }
+
+    /// Oracle, by hand: a buffer of 4 holding 10 and 20 takes a late 14 in
+    /// tick order, so the instant 12 is halfway from 10 to 14 and 17 is
+    /// halfway from 14 to 20. Full at 10, 14, 20, 26, a late 12 is among
+    /// the newest four ticks seen (12, 14, 20, 26), so 10 goes and 13 is
+    /// halfway from 12 to 14; a late 5 is older than all four and changes
+    /// nothing.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_late_snapshot_is_held_in_tick_order_unless_older_than_a_full_buffer() {
+        let playback = Playback {
+            delay_ticks: 0,
+            max_extrapolation_ticks: 3,
+        };
+        let mut buffer = SnapshotBuffer::new(4, playback);
+        for tick in [10, 20, 14] {
+            assert_eq!(buffer.insert_recent(tick, snapshot(tick)), Inserted::Added);
+        }
+        let drawn = |buffer: &SnapshotBuffer<Made>, now_tick| {
+            buffer.sample_with(now_tick, 0.0, interpolate, extrapolate)
+        };
+        assert_eq!(
+            drawn(&buffer, 12),
+            Some(Sampled::Interpolated((10, 14, 0.5)))
+        );
+        assert_eq!(
+            drawn(&buffer, 17),
+            Some(Sampled::Interpolated((14, 20, 0.5)))
+        );
+
+        assert_eq!(buffer.insert_recent(26, snapshot(26)), Inserted::Added);
+        assert_eq!(buffer.insert_recent(12, snapshot(12)), Inserted::Added);
+        assert_eq!(buffer.len(), 4);
+        assert_eq!(drawn(&buffer, 0), Some(Sampled::Early(snapshot(12))));
+        assert_eq!(
+            drawn(&buffer, 13),
+            Some(Sampled::Interpolated((12, 14, 0.5)))
+        );
+
+        let before = buffer.clone();
+        assert_eq!(buffer.insert_recent(5, snapshot(5)), Inserted::TooOld);
+        assert_eq!(buffer.len(), 4);
+        for now_tick in [0, 13, 17, 23, 26] {
+            assert_eq!(drawn(&buffer, now_tick), drawn(&before, now_tick));
+        }
+        assert_eq!(buffer.newest(), Some((26, &snapshot(26))));
+    }
+
+    /// A snapshot at a tick already held, newest or not, replaces the one
+    /// held and adds none: the buffer draws the new contents at that tick.
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_snapshot_at_a_held_tick_replaces_the_one_held() {
+        let playback = Playback {
+            delay_ticks: 0,
+            max_extrapolation_ticks: 3,
+        };
+        let mut buffer = SnapshotBuffer::new(3, playback);
+        for tick in [10, 14, 20] {
+            assert_eq!(buffer.insert_recent(tick, snapshot(tick)), Inserted::Added);
+        }
+        assert_eq!(buffer.insert_recent(20, (99, 99, 0.0)), Inserted::Replaced);
+        assert_eq!(buffer.insert_recent(10, (77, 77, 0.0)), Inserted::Replaced);
+        assert_eq!(buffer.len(), 3);
+        assert_eq!(buffer.newest(), Some((20, &(99, 99, 0.0))));
+        assert_eq!(
+            buffer.sample_with(12, 0.0, interpolate, extrapolate),
+            Some(Sampled::Interpolated((77, 14, 0.5)))
+        );
+        assert_eq!(
+            buffer.sample_with(21, 0.0, interpolate, extrapolate),
+            Some(Sampled::Extrapolated((99, 99, 1.0)))
+        );
     }
 
     /// A snapshot with a wrong tick blocks every later one until the game

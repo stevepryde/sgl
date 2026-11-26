@@ -44,10 +44,28 @@ input a tick from each client's `InputQueue`, which repeats the last on a
 gap and drops late ones; a server that falls behind reads the queued range
 with `first_queued_tick` and `last_queued_tick` and jumps ahead with
 `skip_to`, which discards what it passes without running or repeating it.
-A `SnapshotBuffer` draws what the client does not predict a few ticks
-behind with the game's interpolation function, and extrapolates a bounded
-number of ticks when snapshots run out. Capacities, delays and the fade
-time are the game's, and a full buffer refuses. For
+A `SnapshotBuffer` draws what the client does not
+predict a few ticks behind with the game's interpolation function, and
+extrapolates a bounded number of ticks when snapshots run out. Its `push`
+and `sample` suit one stream drawn once a frame: a full buffer refuses, and
+sampling drops what it has passed. A track that fills while nothing draws
+it, that several views draw, or whose snapshots carry their own velocity
+uses `insert_recent` and `sample_with` instead: the buffer keeps the newest
+`capacity` ticks in tick order (a late snapshot takes its place, one at a
+held tick replaces it), sampling changes nothing, and past the newest
+snapshot the game's `extrapolate(newest, ticks)` moves that snapshot alone,
+returned as `Sampled::Extrapolated` within the bound and `Sampled::Held`
+beyond it, which a game may choose not to draw:
+
+```rust
+track.insert_recent(tick, state);
+let drawn = track.sample_with(now_tick, alpha, State::lerp, |newest, ticks| {
+    newest.moved(newest.velocity * ticks * TICK_SECONDS)
+});
+```
+
+Capacities, delays and the fade time are the game's, and a full buffer
+refuses unless `insert_recent` is what fills it. For
 diagnostics: `Predictor::corrections` and `pending().len()`,
 `InputQueue::gaps` and `late`, `SnapshotBuffer::len` and `extrapolations`.
 
