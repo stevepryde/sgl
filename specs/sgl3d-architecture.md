@@ -319,6 +319,31 @@ instance's buffers. None of the path allocates per frame on the CPU once
 its buffers have their size, beyond the staging wgpu's
 `Queue::write_buffer` makes for the upload.
 
+**Secondary motion.** Hair, tails, straps and loose clothing move by opt-in
+CPU code in content (`spring_bones`), beside the rig and pose it reads. A
+game names chains of rig nodes and sphere and capsule colliders on other
+nodes, and calls `SpringBones::step` once a frame with the pose it sampled,
+the instance's world matrix, a world-space force and its `dt`; the step
+turns each chain's nodes in that pose and changes nothing else. It ports
+Godot 8f2e46b's `SpringBoneSimulator3D`, VRM's spring bone: a Verlet tail
+per bone, drawn back to its animated direction, pulled by gravity and the
+force, held at its length in the pose and outside every collider: where
+restoring the length would put a tail back inside one, the tail goes to the
+nearest point where the bone's reach meets the collider's surface, which
+the upstreams leave inside (D-100). Bones shorter than a collider is wide
+follow its surface; a longer bone's middle cuts through it, and a tail
+moving further than a collider's width in one step can pass it. It steps at
+a fixed rate inside `step` with a capped number of steps a call, and writes
+the pose between its last two states, so motion does not depend on the
+frame rate (D-100). It simulates in world space, with the world matrix
+interpolated to each step's time, so the instance's own movement moves the
+chains. Lengths a game gives (a chain's tip and radius, a collider's
+radius) are in their node's space and scale into the world with it and the
+instance, as bone lengths do, where Godot keeps them unscaled (D-100). It
+is presentation: it holds no authority, a server does not run it, and the
+renderer sees only the pose. Substeps, iterations and caps are the module's
+constants.
+
 An instance also carries shader data, four `f32` its materials' shaders
 read (`Scene::set_instance_shader_data`, zero when it is added): a wind
 phase, a chunk's anchor. Their motion is measured from the data of the last

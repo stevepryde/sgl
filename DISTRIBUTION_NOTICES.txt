@@ -9846,6 +9846,11 @@ crates/sgl-3d/src/LICENSE-godot.txt
 
 Godot Engine, https://github.com/godotengine/godot
 Revision ed1daf0bf001b61586d9930840f2f1394092c079 (4.7.2-stable), LICENSE.txt.
+From revision 8f2e46bca3c1cca8f3b759a0eaf67e44082b81a4, whose LICENSE.txt
+is the same, SGL3D ports SpringBoneSimulator3D
+(scene/3d/spring_bone_simulator_3d.cpp, skeleton_modifier_3d.cpp,
+spring_bone_collision_sphere_3d.cpp and spring_bone_collision_capsule_3d.cpp)
+to content/spring_bones.rs.
 
 Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md).
 Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.

@@ -28,7 +28,7 @@ This page is the detailed reference:
 - [Reflections](#reflections), [TAA, SMAA and FSR](#temporal-anti-aliasing), [ambient occlusion](#ambient-occlusion), [screen-space indirect light](#screen-space-indirect-light)
 - [Exposure and grading](#exposure-bloom-and-colour-grading), [HDR effects](#hdr-effects), [depth of field](#depth-of-field), [motion blur](#motion-blur), [fog](#volumetric-fog)
 - [Specular probes](#baked-specular-probes), [live specular probes](#live-specular-probes), [diffuse lighting](#baked-diffuse-lighting), [irradiance volume](#irradiance-volume), [dynamic GI](#dynamic-diffuse-gi), [asset limits](#asset-and-environment-limits)
-- [Skinning and morphs](#skinned-meshes-and-morph-targets), [scrolling normals](#scrolling-normal-layers), [programmable surfaces](#programmable-surfaces), [mesh LOD](#spatial-mesh-lod), [sprites](#world-space-sprites), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
+- [Skinning and morphs](#skinned-meshes-and-morph-targets), [spring bones](#spring-bones), [scrolling normals](#scrolling-normal-layers), [programmable surfaces](#programmable-surfaces), [mesh LOD](#spatial-mesh-lod), [sprites](#world-space-sprites), [soft effects](#soft-additive-effects), [heat shimmer](#bounded-heat-shimmer)
 - [Settings and fallbacks](#settings-and-capability-fallback), [binding tiers](#binding-tiers), [GPU timing](#gpu-pass-timing), [diagnostics](#validation-and-diagnostics)
 
 ## Dependencies and data conventions
@@ -2726,6 +2726,83 @@ against the analytic bend:
 
 ```sh
 cargo run -p sgl-3d-examples --example skinned -- target/skinned.png
+```
+
+## Spring bones
+
+Hair, tails, scarves, straps and coat tails swing with `spring_bones`: CPU
+code that turns chains of a rig's nodes in the pose a game samples, so they
+lag, swing, settle and stay out of the body. It only writes the pose; the
+pose reaches the frame through skinning as any pose does.
+
+- **Frame order.** Per character each frame: sample (or blend) its
+  animation into a `Pose`, then `springs.step(&rig, &mut pose, world,
+  force, dt)`, then `pose.local_matrices`, `rig.joint_matrices` and
+  `Scene::set_instance_deformation`. `world` is the instance's
+  model-to-world matrix this frame (its `InstanceState::pose`), so walking,
+  turning and jumping swing the chains by inertia; `force` is a
+  world-space push on every bone in world units as gravity's, which the game varies
+  for wind; `dt` is the frame's seconds. Give `step` a freshly sampled pose
+  every call: a chain node's rotation in it is the direction stiffness
+  pulls back to. Keep one `SpringBones` per instance (it holds the chains'
+  motion); `step` allocates nothing. Call `reset()` on a spawn, teleport or
+  cut, and the next step starts at rest in the pose it is given.
+- **Chains.** `Chain { nodes, tip, stiffness, drag, gravity, radius }`:
+  `nodes` are rig nodes, each the parent of the next; each bone runs from a
+  node to the next and turns its node, and `tip` is the length of a last
+  bone past the last node, along the way that node lies from its parent
+  (zero for none; glTF keeps no leaf bone's tail, so without it the last
+  node does not move). `stiffness` (1 by default) pulls a bone back to its
+  animated direction, `drag` (0..=1, 0.4) damps it, `gravity` (0) pulls it
+  down the world's −Y, and `radius` (0.02) is how far each tail stays from
+  a collider: VRM's `stiffness`, `dragForce`, `gravityPower` and
+  `hitRadius`. Lengths (`tip`, `radius`, the bones' own) are in the node's
+  units and scale with it, through its ancestors and the instance, so a
+  rig authored in centimetres under a 0.01 root and a scaled instance move
+  at their world size; `stiffness`, `gravity` and `force` are in world
+  units. A bone held out level with `gravity` equal to `stiffness`
+  settles halfway to straight down. `Chain::from_root(&rig, node)` follows
+  single children from `node` to a leaf or a fork. A node belongs to one
+  chain: forked parts (two pigtails) are chains from the fork's children.
+  A chain may hang from another chain's node, given in any order: SGL
+  solves chains by the depth of their first node, so it follows the
+  chain above it.
+- **Colliders.** `Collider { node, shape }` with `ColliderShape::Sphere {
+  center, radius }` or `Capsule { head, tail, radius }`, in the node's
+  space, moving with it, its radius scaling with the node as its points
+  do (by the uniform scale: non-uniform scale is not supported); every
+  collider acts on every chain. Size them from
+  the body bones' positions: a sphere at the head, capsules along the torso
+  and the upper arms and legs.
+- **Refusals.** `SpringBones::new(&rig, &chains, &colliders)` refuses a
+  node the rig lacks, a chain node that is not the child of the one before
+  it, a node two chains name, and a non-finite or negative value (a `drag` above 1), naming the
+  chain or collider (`SpringBonesError`). `step` leaves the pose as given
+  for a non-finite `world` or `force` and resets; a non-finite or
+  non-positive `dt` runs no step and still writes the pose.
+- **What an asset needs.** Bones along each loose part (a ponytail's
+  bones down its length, a skirt's in strips from the waist), the part
+  skinned to them, and the last bone's length given as `tip`.
+- **Behaviour.** It ports Godot's `SpringBoneSimulator3D` (VRM spring bone)
+  and steps at a fixed 1/60 s, at most eight steps a call, writing the pose
+  between its last two steps, so a chain moves alike at 30, 60 and 144 Hz.
+  A longer frame (a hitch) runs eight steps with the frame's movement
+  spread across them, so the hair does not whip. A tail that restoring its
+  bone's length would leave inside a collider is placed where the bone's
+  reach meets the collider's surface, and the pose written between two
+  steps goes through the same collider pass where it is drawn, so what is
+  drawn stays outside every collider at any call rate. Bones shorter
+  than a collider is wide follow its surface; a longer bone's middle cuts
+  through it, and a tail moving further than a collider's width in one
+  step can pass it. Not provided: rotation-axis locks, angle limits,
+  per-bone settings, plane colliders and per-vertex cloth.
+
+The `spring_bones` example generates a body with a head, a torso and a
+ponytail, walks, stops and turns it, and renders the swing; its test checks
+that no hair tail enters the head's or the torso's collider:
+
+```sh
+cargo run -p sgl-3d-examples --example spring_bones -- target/spring_bones.png
 ```
 
 ## Retained scene and frame lifecycle

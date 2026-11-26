@@ -57,7 +57,7 @@
     "component": "Godot",
     "path": "crates/sgl-3d/src/LICENSE-godot.txt",
     "url": "https://raw.githubusercontent.com/godotengine/godot/ed1daf0bf001b61586d9930840f2f1394092c079/LICENSE.txt",
-    "prefix": "Godot Engine, https://github.com/godotengine/godot\nRevision ed1daf0bf001b61586d9930840f2f1394092c079 (4.7.2-stable), LICENSE.txt.\n\n"
+    "prefix": "Godot Engine, https://github.com/godotengine/godot\nRevision ed1daf0bf001b61586d9930840f2f1394092c079 (4.7.2-stable), LICENSE.txt.\nFrom revision 8f2e46bca3c1cca8f3b759a0eaf67e44082b81a4, whose LICENSE.txt\nis the same, SGL3D ports SpringBoneSimulator3D\n(scene/3d/spring_bone_simulator_3d.cpp, skeleton_modifier_3d.cpp,\nspring_bone_collision_sphere_3d.cpp and spring_bone_collision_capsule_3d.cpp)\nto content/spring_bones.rs.\n\n"
   },
   {
     "component": "Bend Studio screen-space shadows",

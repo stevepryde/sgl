@@ -226,7 +226,9 @@ impl Rig {
     /// up from it to the nearest composed ancestor or its root, then down.
     /// A chain of ancestors is at most as long as there are nodes, the cap
     /// that ends a cycle's walk. `locals` and `globals` hold one per node.
-    fn global(
+    /// `spring_bones` composes its chains through it, clearing a node's
+    /// entry in `globals` when it changes that node's local matrix.
+    pub(crate) fn global(
         &self,
         node: usize,
         locals: &[Mat4],

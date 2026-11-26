@@ -2273,3 +2273,24 @@ Use the [current specs](README.md) for implementation and the
   and a start inside are rightly no contact, and a pick needs all three. A
   voxel game selecting blocks and aiming at a target ball from inside it
   had to keep its own ray tests for those.
+
+- **D-100** Decision, 2026-11-26 (#932): secondary motion is driven
+  through bones. Chains of rig nodes are simulated on the CPU and written
+  into the pose, ported from Godot's `SpringBoneSimulator3D` (VRM spring
+  bone), and reach the frame through the skinning that exists. Per-vertex
+  cloth is not built: it needs a new deformation input through the deform
+  stage, the ray source and motion vectors, and costs more per character
+  than a scene of many players in a browser affords, to gain fine wrinkles
+  that bone-driven sheets do without. Revisit it when a game has a garment
+  in close-up that bone sheets cannot carry. A rigid-body engine is not
+  involved: Rapier has no cloth. Departure from Godot and VRM, which
+  integrate once per rendered frame: a fixed 1/60 s step with interpolated
+  output, since per-frame drag makes the same hair looser at a higher frame
+  rate. Second departure: the upstreams restore a bone's length after
+  pushing its tail out of a collider, which leaves it up to 38 mm inside a
+  0.10 m sphere in SGL's port; SGL then solves both constraints together on
+  the circle where they meet, so a garment does not sink into the body it
+  covers. Third departure: bone lengths, tips and radii scale with their
+  node and the instance, which Godot leaves unscaled, so a rig authored in
+  centimetres under a 0.01-scale root, or an instance a game scales, keeps
+  its colliders.

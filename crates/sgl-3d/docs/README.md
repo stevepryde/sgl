@@ -95,7 +95,8 @@ captures on the same renderer reuse the cached pipelines.
 3. Each frame: `Scene::set_instance` per moving instance (pose, `visible`,
    `capture_visible`), `set_instance_deformation` per deforming one (its
    joint matrices and morph weights, from an `animation::Pose` sampled at
-   the game's time), `set_light` per changed light and
+   the game's time, after `spring_bones::SpringBones::step` has swung its
+   hair and loose clothing in that pose), `set_light` per changed light and
    `set_decal` per moved decal; `View::resize` (nothing happens unless the size, the scale or a
    setting that [applies at resize](settings.md#when-changes-apply) changed);
    a `FrameInput` with the camera, the authored look and the presentation
@@ -252,6 +253,8 @@ The examples live in the repository, not the published crate:
 fog, `--cookie` a spot light's cookie);
 [`examples/skinned.rs`](../../../examples/sgl-3d/examples/skinned.rs) adds a skinned, morphed glTF
 sampled and posed with `animation::Pose`,
+[`examples/spring_bones.rs`](../../../examples/sgl-3d/examples/spring_bones.rs) a ponytail swung
+by `spring_bones` around a body's colliders,
 [`examples/gltf_lights.rs`](../../../examples/sgl-3d/examples/gltf_lights.rs) a glTF's authored
 lights installed, with the suns for the frame's two slots picked,
 [`examples/gltf_instancing.rs`](../../../examples/sgl-3d/examples/gltf_instancing.rs) a glTF's

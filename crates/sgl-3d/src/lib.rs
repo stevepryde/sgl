@@ -45,7 +45,8 @@ pub use content::render_texture::RenderTexture;
 pub use content::shader::{MaterialShader, ShaderSource};
 pub use content::transient::FogVolume;
 pub use content::{
-    animation, asset, baked_specular_probe, deformation, environment, geometry, static_lighting,
+    animation, asset, baked_specular_probe, deformation, environment, geometry, spring_bones,
+    static_lighting,
 };
 pub use frame_input::{
     AgxLook, AutoExposure, BloomParameters, Camera, ColorGrading, ColorGradingGlobal,

@@ -157,6 +157,14 @@ them through unrefracted. A probe captured on an
   shadow faces, so skip it for unchanged poses. Rigid meshes stay baked at
   their nodes' rest transforms; clips move them only as named rigid parts.
   [Skinned meshes and morph targets](../README.md#skinned-meshes-and-morph-targets).
+- **Spring bones**: hair, tails, straps and loose clothing swing, settle
+  and stay out of the body (`spring_bones`): the game names chains of rig
+  nodes (`Chain`: tip length, stiffness, drag, gravity, radius) and sphere
+  and capsule colliders on body nodes, and steps them once a frame with the
+  sampled pose, the instance's world matrix, a wind force and its `dt`.
+  Godot's VRM spring bone at a fixed 1/60 s, so the motion does not depend
+  on the frame rate; CPU only, writing nothing but the chains' rotations.
+  [Spring bones](../README.md#spring-bones).
 - **Scene**: starts empty; the game adds, replaces and removes materials,
   models, instances, lights, decals and environments between frames (`add_…`,
   `set_…`, `remove_…`), each named by the identity its addition returned.
@@ -689,6 +697,8 @@ size, and record counts must fit `u32`.
 
 An animation player, mixer or state machine: `animation::Pose` samples and
 blends clips at the times and weights the game gives it, and holds no clock.
+Per-vertex cloth: loose clothing moves through bones with `spring_bones`
+(D-100).
 DLSS and MetalFX upscaling are [not planned](../../../specs/sgl3d.md#planned).
 The directional cascades cull by frustum alone.
 

@@ -1,7 +1,7 @@
 //! Content: the CPU data a game authors or loads and hands to a `Scene`:
-//! meshes, materials and images (glTF), rigs and the sampling and blending
-//! of their animation clips, the identities a scene issues for
-//! them, instance states, lights, decals, environments, baked lighting,
+//! meshes, materials and images (glTF), rigs, the sampling and blending
+//! of their animation clips and the secondary motion of their chains, the
+//! identities a scene issues for them, instance states, lights, decals, environments, baked lighting,
 //! specular probes, the dynamic GI volume's placement, the irradiance
 //! volume's placement and cells, mesh alternatives, material shaders,
 //! render textures' sizes, selections' outlines and transient geometry;
@@ -33,6 +33,7 @@ pub(crate) mod outline;
 pub(crate) mod planar_reflector;
 pub(crate) mod render_texture;
 pub mod shader;
+pub mod spring_bones;
 pub(crate) mod sprite;
 pub(crate) mod srgb;
 pub mod static_lighting;
