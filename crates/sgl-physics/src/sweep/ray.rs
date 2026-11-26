@@ -198,21 +198,32 @@ pub(super) struct BallLine<V> {
 /// The crossings of the line of a ray from the origin by `delta` with the
 /// ball of `radius` about `center`, or `None` when the line passes outside
 /// it. A line exactly tangent crosses at one point.
-pub(super) fn ball_line<V: Vector>(center: V, radius: f32, delta: V) -> Option<BallLine<V>> {
+fn ball_line<V: Vector>(center: V, radius: f32, delta: V) -> Option<BallLine<V>> {
+    ball_line_with(center, radius, delta, |closest, radius| {
+        let rr = radius * radius;
+        let cc = space::dot(closest, closest);
+        if cc > rr {
+            return None;
+        }
+        Some((rr - cc).sqrt())
+    })
+}
+
+/// Share the sphere projection with closed picking, which calculates the
+/// half-chord at wider precision without changing the contact ray's math.
+pub(super) fn ball_line_with<V: Vector>(
+    center: V,
+    radius: f32,
+    delta: V,
+    half_chord: impl FnOnce(V, f32) -> Option<f32>,
+) -> Option<BallLine<V>> {
     // Shift the ray so the ball's centre is the origin.
     let s = -center;
-    let rr = radius * radius;
     let (d, length) = space::direction(delta)?;
     // The closest point on the ray's line to the centre: dot(s + t d, d) = 0.
     let t = -space::dot(s, d);
     let c = s + d * t;
-    let cc = space::dot(c, c);
-    if cc > rr {
-        // The line passes outside the ball.
-        return None;
-    }
-    // Pythagoras.
-    let h = (rr - cc).sqrt();
+    let h = half_chord(c, radius)?;
     Some(BallLine {
         s,
         d,

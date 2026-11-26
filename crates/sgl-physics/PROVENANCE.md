@@ -35,7 +35,7 @@ functions each one follows.
 | `height_field.rs`: the grid layout and a cell's triangles | Box3D `src/height_field.c`: `b3GetHeightFieldCellCorners`, `b3QueryHeightField` |
 | `sweep/ray.rs`: a ray against a ball, a capsule and a triangle | Box3D `src/sphere.c`: `b3RayCastSphere`; `src/capsule.c`: `b3RayCastCapsule`; `src/simd.c`: `b3IntersectRayTriangle`; the hit normal of `b3RayCastMesh` in `src/mesh.c` |
 | `sweep/ray.rs`: a ray against a polygon | Box2D `src/geometry.c`: `b2CastRayPolygon`, and the edge normals of `b2MakePolygon` |
-| `sweep/span.rs`: a ray's stretch in a ball and in a polygon | the same `b3RayCastSphere` (its line crossings, `ball_line` in `sweep/ray.rs`, kept to both roots) and `b2CastRayPolygon` (its half-plane clip, kept to both ends and closed) |
+| `sweep/span.rs`: a ray's stretch in a ball and in a polygon | the same `b3RayCastSphere` (its line crossings, `ball_line_with` in `sweep/ray.rs`, kept to both roots with wider half-chord arithmetic) and `b2CastRayPolygon` (its half-plane clip, kept to both ends and closed) |
 
 
 Not ported: Box2D's disabled `b2ShapeCastMerged`, `b2CollideCapsules`,

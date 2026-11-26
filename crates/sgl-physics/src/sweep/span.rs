@@ -12,7 +12,7 @@
 //! The kernels are the contact ray's. A box, whole or cut, is clipped by the
 //! slabs and the cut's plane the box sweep reads ([`super::slab`],
 //! [`super::below`], [`super::CutBox`]); a ball by the line crossings of the
-//! `b3RayCastSphere` port ([`ray::ball_line`]); a polygon by its edges'
+//! `b3RayCastSphere` port ([`ray::ball_line_with`]); a polygon by its edges'
 //! half-planes ([`ray::polygon_edge`]), as `b2CastRayPolygon` clips it. A
 //! capsule is its two end balls and the side between them: the side is this
 //! file's own closed form, since `b3RayCastCapsule` finds only where a ray
@@ -150,12 +150,23 @@ fn planes<V: Vector>(lo: V, hi: V, cut: Option<(V, f32)>, delta: V) -> Option<Sp
 /// A ball of positive `radius` about `center`: where the ray's line crosses
 /// it, a tangent at one point, with the radius's direction at each end.
 fn ball<V: Vector>(center: V, radius: f32, delta: V) -> Option<Span<V>> {
-    let line = ray::ball_line(center, radius, delta)?;
+    let line = ray::ball_line_with(center, radius, delta, half_chord)?;
     let normal = |along: f32| space::direction(line.s + line.d * along).map(|(normal, _)| normal);
     held(
         (line.near / line.length, normal(line.near)),
         (line.far / line.length, normal(line.far)),
     )
+}
+
+/// Half the chord for a line passing the center by `offset`. Squaring a
+/// positive finite `f32` radius in `f64` keeps it finite and nonzero.
+#[allow(clippy::cast_possible_truncation)]
+fn half_chord<V: Vector>(offset: V, radius: f32) -> Option<f32> {
+    let distance_squared = (0..V::AXES)
+        .map(|axis| f64::from(offset[axis]).powi(2))
+        .sum::<f64>();
+    let remaining = f64::from(radius).powi(2) - distance_squared;
+    (remaining >= 0.0).then(|| remaining.sqrt() as f32)
 }
 
 /// A capsule of positive `radius` about `rel`: the union of its two end
@@ -181,7 +192,7 @@ fn capsule<V: Vector>(rel: V, half_axis: V, radius: f32, delta: V) -> Option<Spa
         }));
     };
     for cap in [c1, c2] {
-        if let Some(line) = ray::ball_line(cap, radius, delta) {
+        if let Some(line) = ray::ball_line_with(cap, radius, delta, half_chord) {
             join(line.near, line.far);
         }
     }
@@ -211,37 +222,18 @@ fn side<V: Vector>(
     radius: f32,
     d: V,
 ) -> Option<(f32, f32)> {
-    // Across the axis the line is `sc + perp t`: within the radius where
-    // `a t² + 2 b t + c <= 0`.
+    // Solve across the axis around the closest point. The small chord
+    // stays distinct from the large distance to that point on a long ray.
     let sc = s - axis * u;
     let perp = d - axis * a12;
-    let a = space::dot(perp, perp);
-    let b = space::dot(sc, perp);
-    let c = space::dot(sc, sc) - radius * radius;
-    let across = if a == 0.0 {
-        // Along the axis: within the radius all the way, or never.
-        if c > 0.0 {
-            return None;
-        }
-        (f32::NEG_INFINITY, f32::INFINITY)
+    let across = if let Some((direction, speed)) = space::direction(perp) {
+        let along = -space::dot(sc, direction);
+        let closest = sc + direction * along;
+        let half = half_chord(closest, radius)?;
+        ((along - half) / speed, (along + half) / speed)
     } else {
-        let disc = b * b - a * c;
-        if disc < 0.0 {
-            return None;
-        }
-        // The roots, each from the sum that does not cancel.
-        let root = disc.sqrt();
-        if b <= 0.0 {
-            let larger = root - b;
-            if larger == 0.0 {
-                (0.0, 0.0)
-            } else {
-                (c / larger, larger / a)
-            }
-        } else {
-            let smaller = -b - root;
-            (smaller / a, c / smaller)
-        }
+        half_chord(sc, radius)?;
+        (f32::NEG_INFINITY, f32::INFINITY)
     };
     // Along the axis the line is at `u + a12 t`: between the centres.
     let along = if a12 == 0.0 {

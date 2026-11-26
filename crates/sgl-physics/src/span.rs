@@ -353,6 +353,31 @@ mod tests {
         assert_eq!(spans(at(106.0, 50.0), along, &world), vec![]);
     }
 
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_ray_from_a_ball_center_exits_halfway_when_it_travels_two_radii() {
+        for radius in [1e-25, 1e20] {
+            let world = [Collider::new(1, Shape::Ball { radius }, Vec3::ZERO)];
+            assert_eq!(
+                span(Vec3::ZERO, Vec3::X * (2.0 * radius), &world),
+                (0.0, 0.5, None, Some(Vec3::X))
+            );
+        }
+    }
+
+    #[wasm_bindgen_test(unsupported = test)]
+    fn a_distant_capsule_crossing_does_not_round_into_a_tangent() {
+        let capsule = Shape::Capsule {
+            half_axis: Vec3::Z,
+            radius: 1.0,
+        };
+        let world = [Collider::new(1, capsule, Vec3::ZERO)];
+        assert!(spans(Vec3::new(-1000.0, 1.01, 0.0), Vec3::X * 2000.0, &world).is_empty());
+
+        // Half a radius off center gives a chord of length sqrt(3).
+        let (enter, exit, _, _) = span(Vec3::new(-10_000.0, 0.5, 0.0), Vec3::X * 20_000.0, &world);
+        assert!(((exit - enter) * 20_000.0 - 3.0_f32.sqrt()).abs() < 0.002);
+    }
+
     /// Defect: a ray is over a capsule's cylinder beyond its ends, misses
     /// its caps, or one running along its side or tangent to it is over
     /// nothing. Oracle: hand-worked geometry. A capsule of half-axis (0, 2,
