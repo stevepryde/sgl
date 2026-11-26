@@ -35,6 +35,7 @@ functions each one follows.
 | `height_field.rs`: the grid layout and a cell's triangles | Box3D `src/height_field.c`: `b3GetHeightFieldCellCorners`, `b3QueryHeightField` |
 | `sweep/ray.rs`: a ray against a ball, a capsule and a triangle | Box3D `src/sphere.c`: `b3RayCastSphere`; `src/capsule.c`: `b3RayCastCapsule`; `src/simd.c`: `b3IntersectRayTriangle`; the hit normal of `b3RayCastMesh` in `src/mesh.c` |
 | `sweep/ray.rs`: a ray against a polygon | Box2D `src/geometry.c`: `b2CastRayPolygon`, and the edge normals of `b2MakePolygon` |
+| `sweep/span.rs`: a ray's stretch in a ball and in a polygon | the same `b3RayCastSphere` (its line crossings, `ball_line` in `sweep/ray.rs`, kept to both roots) and `b2CastRayPolygon` (its half-plane clip, kept to both ends and closed) |
 
 
 Not ported: Box2D's disabled `b2ShapeCastMerged`, `b2CollideCapsules`,
@@ -313,6 +314,19 @@ crate's ray is its whole motion. Box3D's clamp and log of a fraction past
     polygon's edge normals are computed per query from its vertices (Box2D
     stores them in `b2Polygon`), and its vertices are already relative to
     the ray, so Box2D's shift to the first vertex is not needed.
+35. **A ray's whole stretch, closed.** The sources' ray casts report where
+    a ray comes in. `ray_spans` (`sweep/span.rs`) also wants where it goes
+    out, and counts the surface as part of the solid, so the grazes of
+    departure 31 and the starts inside of departure 29 are stretches
+    there; the contact ray is unchanged. A ball keeps both roots of
+    `b3RayCastSphere`'s line crossing, which the contact ray and the
+    stretch share. A polygon keeps both ends of `b2CastRayPolygon`'s clip,
+    with a ray on an edge's line let through. A capsule is not
+    `b3RayCastCapsule`, which follows one crossing through its cases: it
+    is the union of the two end balls and the side between them, the side
+    this crate's own closed form (the line within the radius of the axis,
+    a quadratic solved from the sum that does not cancel, between the
+    planes through the two centres).
 
 ## Algorithm notes
 

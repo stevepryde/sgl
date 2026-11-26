@@ -144,6 +144,10 @@ pub fn move_and_collide<V: Vector, W: World<V> + ?Sized>(
 /// a ball of no radius, a point. A 3D convex hull of four or
 /// more points is met through the kernel, a slop short, as [`cast`] meets
 /// it (`specs/physics.md`, 15).
+///
+/// A ray is a contact query: what stops a point. To pick what a pointer or
+/// a crosshair is over, where a ray lying in a face, a tangent and a start
+/// inside a collider all count, ask [`ray_spans`](crate::ray_spans).
 pub fn ray<V: Vector, W: World<V> + ?Sized>(
     origin: V,
     motion: V,

@@ -2255,3 +2255,21 @@ Use the [current specs](README.md) for implementation and the
   compile under one feature set and not another; making the default
   `AuthoredOnly` without it, which would make what a load does depend on
   which crate in a build enabled the feature.
+
+- **D-99** Decision, 2026-11-26 (#930): picking is its own query,
+  `sgl_physics::ray_spans`, beside the contact ray, not a mode of it. It
+  lists every collider whose closed solid a ray touches, with the stretch
+  of the ray in each, and leaves `ray`, `cast` and the mover as they were.
+  Declined: a flag on `ray` to keep grazes (one function with two meanings
+  of "meets", and still no answer for a start inside); growing the shapes
+  or the ray by a margin (a ray beside a block would pick it, by a length
+  no game chose); and reporting only the first span (a ray that starts in
+  one collider could never reach the next, and which of two voxels owns a
+  shared face would be SGL's rule). Sensors are listed, as `overlaps`
+  lists them, because a pick volume need not block. A 3D convex shape is
+  not: a triangle has no solid and `ray` meets it from either side, and a
+  hull stores no faces.
+  Rationale: a contact needs an approach, so a ray along a face, a tangent
+  and a start inside are rightly no contact, and a pick needs all three. A
+  voxel game selecting blocks and aiming at a target ball from inside it
+  had to keep its own ray tests for those.

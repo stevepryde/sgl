@@ -54,8 +54,8 @@ pub trait World<V: Vector> {
     /// Calls `visit` with every collider that may overlap the closed box
     /// `min..=max` swept by `motion`, or returns [`Unanswered`] when the
     /// sweep is more than the world will walk. A moving query ([`cast`],
-    /// [`ray`], [`slide`], [`snap_to_ground`], [`move_and_collide`]) asks
-    /// through it.
+    /// [`ray`], [`ray_spans`], [`slide`], [`snap_to_ground`],
+    /// [`move_and_collide`]) asks through it.
     ///
     /// The default asks [`Self::colliders_near`] for the box enclosing the
     /// start and the end. A world whose cost grows with the region, such as
@@ -64,6 +64,7 @@ pub trait World<V: Vector> {
     ///
     /// [`cast`]: crate::cast
     /// [`ray`]: crate::ray
+    /// [`ray_spans`]: crate::ray_spans
     /// [`slide`]: crate::slide
     /// [`snap_to_ground`]: crate::snap_to_ground
     /// [`move_and_collide`]: crate::move_and_collide

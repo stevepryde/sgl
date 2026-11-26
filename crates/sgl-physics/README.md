@@ -21,7 +21,8 @@ Every type and function is generic over `Vector`, implemented for
 | What is in a trigger or a hit box | [`overlaps`](src/query.rs) |
 | Which triggers a body entered and left this step | [`sensors_at`, `sensor_events`](src/sensor.rs) |
 | What a moving shape hits first (a projectile, a sweep for room) | [`cast`](src/query.rs) |
-| What a ray hits first (a beam, line of sight, picking a block) | [`ray`](src/query.rs) |
+| What a ray hits first (a beam, line of sight) | [`ray`](src/query.rs) |
+| What a pointer, a crosshair or an aimed tool is over (picking a block, a hit box, a target) | [`ray_spans`](src/span.rs) |
 | How far a shape is from a collider (a hit box's reach, an explosion's falloff) | [`distance`](src/query.rs) |
 | A world of many colliders the game fills, and moves by id | [`ColliderSet`](src/collider_set.rs) |
 | A tile map or voxel grid the game answers cell by cell | [`CellWorld`](src/cell_world.rs) |
@@ -203,6 +204,38 @@ for ((id, state), was_in) in players.iter_mut().zip(&mut sensors) {
 ```
 
 See [physics.md](../../specs/physics.md), requirement 21, for every rule.
+
+## Picking
+
+`ray` asks what stops a point, so it passes what the point only touches: a
+ray lying in a face, a tangent, and a collider it starts inside. A pick
+wants all of those. `ray_spans` lists every collider on the masked layers
+whose closed solid the ray touches, its surface included, nearest first,
+each as a `RaySpan`: the fractions of the motion where the ray enters and
+leaves it, and the outward normal crossed at each.
+
+```rust
+use sgl_core::math::Vec3;
+use sgl_physics::{ALL_LAYERS, Collider, Shape, ray_spans};
+
+// A target ball, aimed at from inside it.
+let targets = [Collider::new(4, Shape::Ball { radius: 2.0 }, Vec3::ZERO)];
+let over = ray_spans(Vec3::ZERO, Vec3::X * 8.0, &targets[..], ALL_LAYERS).unwrap();
+// It starts inside (no surface crossed coming in) and leaves a quarter along.
+assert_eq!((over[0].enter, over[0].enter_normal), (0.0, None));
+assert_eq!((over[0].exit, over[0].exit_normal), (0.25, Some(Vec3::X)));
+```
+
+Nothing is grown to make a touch count: a ray beside a solid is not over
+it, however near. The rules that differ between games stay the game's. A
+ray that starts in a collider has `enter == 0.0` and no `enter_normal`:
+take it as the pick, or skip to the next span. A ray lying in the face two
+voxels share is over both, in id order: choose by the game's own rule.
+Colliders of every kind are listed, sensors included, so a pick volume
+need not block anything; pick among them by layer. It reads a box, a ramp,
+a ball, a capsule and a 2D polygon, through every world. A 3D convex shape
+(a triangle of a surface, a hull) is never listed: `ray` meets those. See
+[physics.md](../../specs/physics.md), requirement 15.
 
 ## Round and convex shapes
 

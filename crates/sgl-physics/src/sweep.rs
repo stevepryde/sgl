@@ -11,14 +11,20 @@
 //! too, in closed form ([`ray`]). Every other pair (a ball, a capsule or a
 //! convex shape, against anything) goes through the convex kernel
 //! ([`kernel`]), which meets it to within a slop.
+//!
+//! A contact asks for an approach. The stretch of a ray that lies in a
+//! collider's closed solid, its surface included, is [`span`]'s, read from
+//! the same slabs and crossings.
 
 use crate::shape::{Cut, Shape};
 use crate::space::{self, Vector};
 
 mod kernel;
 mod ray;
+mod span;
 
 pub(crate) use kernel::{meets, rounding_slop, shape_slop};
+pub(crate) use span::span;
 
 /// Axes in the order a tie between them resolves for a query that knows no
 /// up axis ([`cast`](crate::cast), [`ray`](crate::ray)): y, then x, then z.

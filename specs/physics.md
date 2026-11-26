@@ -11,8 +11,9 @@ plane into ramps (#915), the mover step (#916), round bodies (balls and
 capsules) and convex colliders met through a convex kernel ported from
 Box2D and Box3D (#919, 19), planar bumps for vehicles (#921, 20), moving
 colliders: platforms that carry and push, bodies that block or nudge each
-other, and triggers (#920, 21), and 3D surfaces for sight and ground:
-triangles, height fields and `ground_under` (#923, 22). Walking on
+other, and triggers (#920, 21), 3D surfaces for sight and ground:
+triangles, height fields and `ground_under` (#923, 22), and picking by a
+ray's closed spans (#930, 15). Walking on
 surfaces (#922) is planned in #914 and is not available until it lands.
 
 ## Requirements
@@ -69,7 +70,8 @@ surfaces (#922) is planned in #914 and is not available until it lands.
    bounding half-extents the worlds use. For those pairs a query's
    tolerance scales with the sizes of the two shapes, and the mover's
    tolerances derive from the game's `skin`; never a fixed length. `cast`,
-   `ray`, `overlaps` and `distance` take no length. Among box pairs, a 3D
+   `ray`, `ray_spans`, `overlaps` and `distance` take no length. Among box
+   pairs, a 3D
    query with no motion along z, among colliders that span the body on z,
    gives bit-equal x and y to the 2D query; the kernel's two dimensions are
    different solvers, so a pair through it agrees between them only to its
@@ -98,7 +100,7 @@ surfaces (#922) is planned in #914 and is not available until it lands.
    not a box); `Collider::with_cut` and `with_kind` refuse to build them.
 10. **Worlds.** A query reaches colliders only through the `World` trait.
     `colliders_near` visits every collider that may overlap a closed region;
-    `colliders_along`, which the moving queries (`cast`, `ray`,
+    `colliders_along`, which the moving queries (`cast`, `ray`, `ray_spans`,
     `slide`, `snap_to_ground`, `move_and_collide`) use, visits every collider that may
     overlap a closed box swept by a motion, and defaults to
     `colliders_near` over the box enclosing the start and the end. Either
@@ -274,6 +276,49 @@ surfaces (#922) is planned in #914 and is not available until it lands.
       between two shapes with no extent. A body with extent
       (`cast` with a ball, say) keeps its pairs: every one but box against
       box is met through the kernel, within its band.
+    - **Spans.** `ray_spans` answers a different question from `ray`
+      ([D-97](decisions.md)): not what stops a point, but what a pointer, a
+      crosshair or an aimed tool is over. It lists every collider on the
+      masked layers whose closed solid the ray touches, each as a
+      `RaySpan`: `enter` and `exit`, the
+      fractions of the motion between which the ray is in the solid
+      (`0 <= enter <= exit <= 1`), the outward unit normal of the surface
+      crossed at each, and the collider's id. The surface is part of the
+      solid, so everything `ray` passes as a graze or a start inside is a
+      span: a ray lying in a box's face or along its edge, one through a
+      corner or tangent to a ball or a capsule (`enter == exit`), one along
+      a polygon's edge or in a ramp's plane, and a ray starting inside.
+      Nothing is grown to make that so: no radius, margin or allowance.
+      Each decision is one comparison of the values the contact ray
+      computes, relative to the ray's start (3), so a ray beside a solid
+      by any amount `f32` holds there has no span, and a start or a
+      tangent within the rounding of those values may read either way.
+      `enter_normal` is `None` when the ray starts in the solid without
+      entering it there (inside it, or on its surface and leaving), and
+      then `enter` is 0; `exit_normal` is `None` when the ray ends in the
+      solid, and then `exit` is 1. What a game does with a collider its
+      ray starts in, and which of two colliders sharing a face owns a ray
+      lying in it (both are listed), is the game's rule.
+      Colliders of every kind are listed, sensors included and a one-way
+      platform whole, as `overlaps` lists them, each where it stands; the
+      mask selects among them. The list is ordered by `enter`, then by the
+      fixed order of colliders (6), and holds a collider once however many
+      times a world visited it. A zero or non-finite motion and a
+      non-finite origin list nothing.
+      A box's normals are axis-aligned, by the last axis to let the ray in
+      and the first to let it out, a tie resolving y, then x, then z; a
+      cut's plane gives its normal only when it lets the ray in strictly
+      last or out strictly first (11). The kernels are the contact ray's:
+      the slabs and the cut's plane of the box sweep, both roots of the
+      ball's line crossing, the polygon's half-plane clip. A capsule is
+      its two end balls and the side between them, the side in a closed
+      form of its own (`PROVENANCE.md`, departure 35); its normal is the
+      direction from the nearest point of its segment. It reads a box,
+      whole or cut, a ball, a capsule and a 2D polygon. A 3D convex shape
+      has no span and is never listed: a triangle is a surface with no
+      solid, which `ray` already meets from either side, and a hull
+      stores no faces. Nor is a ball or a capsule of no radius. So a
+      `TriangleSet` or a `HeightField` lists nothing.
     `distance` measures a shape at a position against one collider, of any
     kind or layer: the gap between their surfaces and the unit normal from
     the collider toward the shape, zero and no normal when they touch or
@@ -882,6 +927,16 @@ surfaces (#922) is planned in #914 and is not available until it lands.
   hand-worked closed forms do, grazes, starts on the surface and starts
   inside included, and a ray starting on any of them at a seeded point
   moving in meets it at once (`src/sweep/ray.rs`).
+- The span tests in `src/span.rs` hold: a ray lying in a box's face, along
+  its edge and through its corner, in a ramp's slope, tangent to a ball
+  and to a capsule's side, along a capsule's side and a polygon's edge,
+  and starting inside each, has the span hand-worked geometry gives it,
+  and one just beside each has none; the points of 500 seeded rays that
+  lie inside a box, a ramp, a ball, a capsule and a polygon, by the
+  shapes' own definitions sampled, are in their spans and those outside
+  are not; spans are listed nearest first, then by id, once each, sensors
+  included, by the mask; a ray lying between two layers of voxels is over
+  both through a slice, a set and a cell world alike.
 - The planar tests in `tests/sgl-physics/tests/planar.rs` hold: times of
   impact worked by hand (head-on, glancing, a corner to a face, a miss,
   touching and overlapping, a bar that reaches a box only by turning, a

@@ -8,8 +8,8 @@ use sgl_core::math::{IVec3, Quat, Vec2, Vec3};
 use sgl_core::{SplitMix64, digest_of};
 use sgl_physics::{
     ALL_LAYERS, CellColliders, CellWorld, Collider, ColliderKind, ColliderSet, Contacts, Convex,
-    Cut, Floor, Hit, Ledge, MoverConfig, MoverOptions, MoverSettings, MoverState, Push, Separation,
-    Shape, Vector, World, move_and_slide, slide, snap_to_ground,
+    Cut, Floor, Hit, Ledge, MoverConfig, MoverOptions, MoverSettings, MoverState, Push, RaySpan,
+    Separation, Shape, Vector, World, move_and_slide, slide, snap_to_ground,
 };
 
 /// Mover settings from positional values, in `MoverSettings`' order.
@@ -305,7 +305,7 @@ fn encoded<T: Serialize>(value: &T) -> usize {
 /// The largest value of each state type in space `V`: every id and layer
 /// mask at its widest varint, every optional field present, and the shape
 /// the convex one of the most points, `most`.
-fn largest<V: Vector + Serialize>(most: Convex<V>) -> [(usize, usize, &'static str); 13] {
+fn largest<V: Vector + Serialize>(most: Convex<V>) -> [(usize, usize, &'static str); 14] {
     let half = V::ZERO;
     let shape = Shape::Convex(most);
     let kind = ColliderKind::Sensor;
@@ -339,6 +339,13 @@ fn largest<V: Vector + Serialize>(most: Convex<V>) -> [(usize, usize, &'static s
     let hit = Hit {
         t: 1.0,
         normal: half,
+        id: u64::MAX,
+    };
+    let span = RaySpan {
+        enter: 0.0,
+        exit: 1.0,
+        enter_normal: Some(up),
+        exit_normal: Some(up),
         id: u64::MAX,
     };
     let config = mover(up, 0.01, 0.1, 0.7, 1e-4);
@@ -388,6 +395,7 @@ fn largest<V: Vector + Serialize>(most: Convex<V>) -> [(usize, usize, &'static s
             "Contacts",
         ),
         (encoded(&hit), Hit::<V>::MAX_POSTCARD_BYTES, "Hit"),
+        (encoded(&span), RaySpan::<V>::MAX_POSTCARD_BYTES, "RaySpan"),
         (
             encoded(&config),
             MoverConfig::<V>::MAX_POSTCARD_BYTES,

@@ -10,7 +10,10 @@
 //! [`Collider`]s, a [`CellWorld`] it answers cell by cell (a tile map or a
 //! voxel grid), or a pair of those, and asks it [`slide`],
 //! [`snap_to_ground`], [`overlaps`], [`cast`] and [`ray`] inside its own
-//! fixed step; [`distance`] measures a shape against one collider.
+//! fixed step; [`distance`] measures a shape against one collider. What a
+//! pointer or a crosshair is over is [`ray_spans`]: every collider a ray
+//! touches, faces, edges and tangents included, and the stretch of the ray
+//! inside each.
 //!
 //! In 3D, triangles a game gives once (a [`TriangleSet`], from a model's
 //! positions and indices) and ground given as heights (a [`HeightField`])
@@ -110,6 +113,7 @@ mod sensor;
 mod shape;
 mod slide;
 mod space;
+mod span;
 mod surface;
 mod sweep;
 mod triangle_set;
@@ -130,6 +134,7 @@ pub use sensor::{sensor_events, sensors_at};
 pub use shape::{ALL_LAYERS, Collider, ColliderKind, Convex, Cut, Push, Shape};
 pub use slide::{MAX_SLIDES_2D, MAX_SLIDES_3D, slide, snap_to_ground};
 pub use space::Vector;
+pub use span::{RaySpan, ray_spans};
 pub use surface::SurfaceError;
 pub use triangle_set::{MAX_QUERY_TRIANGLES, MAX_TREE_DEPTH, MAX_TRIANGLES, TriangleSet};
 pub use world::{Unanswered, World};

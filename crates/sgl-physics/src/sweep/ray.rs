@@ -178,10 +178,27 @@ pub(super) fn resting<V: Vector>(
     })
 }
 
-/// `b3RayCastSphere`: a ray from the origin by `delta` against a ball of
-/// `radius` about `center`, as its fraction and the unit normal there. The
-/// start is not inside.
-fn ball<V: Vector>(center: V, radius: f32, delta: V) -> Option<(f32, V)> {
+/// Where the line of a ray from the origin by `delta` crosses a ball: the
+/// first half of `b3RayCastSphere`, which the contact ray ([`ball`]) and the
+/// closed span ([`super::span`]) both read.
+pub(super) struct BallLine<V> {
+    /// The ray's start, from the ball's centre.
+    pub s: V,
+    /// The ray's unit direction.
+    pub d: V,
+    /// The ray's length.
+    pub length: f32,
+    /// How far along `d` from the start the line enters the ball: negative
+    /// when that is behind the start.
+    pub near: f32,
+    /// How far along `d` the line leaves it; `near` where it is tangent.
+    pub far: f32,
+}
+
+/// The crossings of the line of a ray from the origin by `delta` with the
+/// ball of `radius` about `center`, or `None` when the line passes outside
+/// it. A line exactly tangent crosses at one point.
+pub(super) fn ball_line<V: Vector>(center: V, radius: f32, delta: V) -> Option<BallLine<V>> {
     // Shift the ray so the ball's centre is the origin.
     let s = -center;
     let rr = radius * radius;
@@ -196,12 +213,32 @@ fn ball<V: Vector>(center: V, radius: f32, delta: V) -> Option<(f32, V)> {
     }
     // Pythagoras.
     let h = (rr - cc).sqrt();
-    let mut fraction = t - h;
+    Some(BallLine {
+        s,
+        d,
+        length,
+        near: t - h,
+        far: t + h,
+    })
+}
+
+/// `b3RayCastSphere`: a ray from the origin by `delta` against a ball of
+/// `radius` about `center`, as its fraction and the unit normal there. The
+/// start is not inside.
+fn ball<V: Vector>(center: V, radius: f32, delta: V) -> Option<(f32, V)> {
+    let BallLine {
+        s,
+        d,
+        length,
+        near,
+        far,
+    } = ball_line(center, radius, delta)?;
+    let mut fraction = near;
     if fraction < 0.0 {
         // Both crossings behind: the ray moves away. Otherwise the start,
         // which is not inside, is on the surface and read a rounding step
         // behind it: a hit at the start.
-        if t + h < 0.0 {
+        if far < 0.0 {
             return None;
         }
         fraction = 0.0;
@@ -301,7 +338,7 @@ fn capsule<V: Vector>(rel: V, half_axis: V, radius: f32, delta: V) -> Option<(f3
 }
 
 /// `b3ClampFloat(value, 0, upper)`, by comparison alone.
-fn clamp(value: f32, upper: f32) -> f32 {
+pub(super) fn clamp(value: f32, upper: f32) -> f32 {
     if value < 0.0 {
         0.0
     } else if value < upper {
@@ -325,7 +362,7 @@ fn capsule_nearest<V: Vector>(half_axis: V, rel: V) -> V {
 /// The outward unit normal of a polygon's edge from vertex `i` to the
 /// next, from its own vertices (`b2MakePolygon`), and how far the origin
 /// lies inside that edge: `dot(normal, vertex - origin)`, positive inside.
-fn polygon_edge<V: Vector>(points: &[V], i: usize, rel: V) -> (V, f32) {
+pub(super) fn polygon_edge<V: Vector>(points: &[V], i: usize, rel: V) -> (V, f32) {
     let edge = points[(i + 1) % points.len()] - points[i];
     let mut outward = V::ZERO;
     outward[0] = edge[1];

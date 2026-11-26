@@ -84,7 +84,9 @@ Choose by what the game is.
   (`move_and_collide`, `slide`, `snap_to_ground`) and answers `overlaps`,
   `cast`, `ray` and `distance`, over a `ColliderSet`, a slice of colliders
   or a `CellWorld` the game answers cell by cell, with plain state that
-  serialises and hashes. A top-down game's round body slides around
+  serialises and hashes. What a pointer or a crosshair is over (a block, a
+  hit box, a target, from a ray lying in a face or starting inside one) is
+  `ray_spans`. A top-down game's round body slides around
   corners, and a character in a level that is not a grid walks as a
   capsule: neither needs Rapier's character controller. Lifts, doors,
   crushers, boats and other characters are colliders the game moves by id
