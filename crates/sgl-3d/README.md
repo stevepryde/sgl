@@ -4098,7 +4098,13 @@ milliseconds a vertex.
 `TangentFrames::AuthoredOnly` skips it: such a primitive's normal maps take
 the frame of each triangle's coordinates, and an anisotropic one fails the
 load. Exporting tangents from the authoring tool avoids generation
-altogether.
+altogether. The generator is the `mikktspace` feature, on by default, which
+alone brings in `bevy_mikktspace`. A game that exports every tangent its
+normal maps need, or builds its meshes in code, can drop it
+(`default-features = false`): `Generate` then generates nothing, so each
+such primitive takes the frame of each triangle's coordinates and is listed
+(`Ignored::TangentFrames`), and an anisotropic one fails the load; authored
+`TANGENT`, `AuthoredOnly` and code-built meshes load and draw as with it.
 
 The loader supports glTF triangle meshes, as triangles, strips or fans
 (a strip or fan becomes a triangle list at import, without the triangles

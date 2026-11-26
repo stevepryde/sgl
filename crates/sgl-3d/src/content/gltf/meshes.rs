@@ -121,13 +121,14 @@ pub(super) struct Walk {
 
 /// Tangent frames generated for glTF primitives, by mesh and primitive
 /// index: in the mesh's own space and winding, whichever node uses it;
-/// none where too many triangles share a vertex.
+/// none where too many triangles share a vertex, or without the
+/// `mikktspace` feature.
 type Generated = HashMap<(usize, usize), Option<tangents::Framed>>;
 
 impl Walk {
     /// The primitives (mesh and primitive index) whose frames were not
-    /// generated because too many triangles share one of their vertices,
-    /// in order.
+    /// generated, because too many triangles share one of their vertices
+    /// or the build has no generator (the `mikktspace` feature), in order.
     pub(super) fn unframed(&self) -> Vec<(usize, usize)> {
         let mut unframed: Vec<_> = self
             .generated
@@ -530,9 +531,10 @@ fn read_primitives(
             };
             let mut vertices = vertices;
             // None where too many triangles share a vertex
-            // (`tangents::MOST_TRIANGLES_AT_A_VERTEX`): the primitive keeps
-            // the frame of each triangle's coordinates, and the load lists
-            // it (`Ignored::TangentFrames`).
+            // (`tangents::MOST_TRIANGLES_AT_A_VERTEX`) or without the
+            // `mikktspace` feature: the primitive keeps the frame of each
+            // triangle's coordinates, and the load lists it
+            // (`Ignored::TangentFrames`).
             let framed = frame_uvs.filter(|_| generate).and_then(|frame_uvs| {
                 generated
                     .entry((mesh.index(), primitive.index()))
@@ -542,7 +544,12 @@ fn read_primitives(
                     .as_ref()
             });
             if generate && framed.is_none() && material.anisotropy_strength > 0.0 {
-                return Err(format!("{label}: anisotropic material {}: more than {} triangles share one of its vertices, too many to generate tangent frames for; export TANGENT", material.name, tangents::MOST_TRIANGLES_AT_A_VERTEX).into());
+                return Err(if cfg!(feature = "mikktspace") {
+                    format!("{label}: anisotropic material {}: more than {} triangles share one of its vertices, too many to generate tangent frames for; export TANGENT", material.name, tangents::MOST_TRIANGLES_AT_A_VERTEX)
+                } else {
+                    format!("{label}: anisotropic material {} requires TANGENT, which sgl-3d generates only with its mikktspace feature; export tangents, or enable the feature", material.name)
+                }
+                .into());
             }
             if let Some(framed) = framed {
                 // In the mesh's own space and winding, then carried into

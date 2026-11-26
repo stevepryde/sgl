@@ -1,6 +1,10 @@
 //! Tangent frames the loader generates (`LoadOptions::tangents`): MikkTSpace
 //! for a primitive whose material takes a vertex frame and that carries no
-//! `TANGENT`, on Khronos assets and hand-built documents.
+//! `TANGENT`, on Khronos assets and hand-built documents. Those that need
+//! the generator run with the `mikktspace` feature; one checks the build
+//! without it.
+// The generator's helpers go unused without it.
+#![cfg_attr(not(feature = "mikktspace"), allow(dead_code))]
 use super::tests::Fixture;
 use super::*;
 use crate::asset::{Asset, Vertex};
@@ -46,6 +50,7 @@ fn framed(vertex: &Vertex) -> bool {
 // leaving a vertex without a usable frame; geometry or triangles changed
 // where no seam asks for a split. The oracle is the setting's contract;
 // whether the frames shade right is `scene::rays::khronos_normal_tests`'.
+#[cfg(feature = "mikktspace")]
 #[test]
 fn a_normal_mapped_primitive_without_tangents_gets_a_frame_on_every_vertex() {
     let path = khronos("NormalTangentTest/glTF/NormalTangentTest.gltf");
@@ -238,6 +243,7 @@ fn assert_seam_frames(mesh: &crate::asset::CpuMesh) {
 // decreasing V is +Y = N x T, handedness +1; on the right U rises along
 // −X, T is −X and B is +Y = −(N x T), handedness −1; and the unsplit
 // load's own streams, matched by position.
+#[cfg(feature = "mikktspace")]
 #[test]
 fn a_mirrored_seam_splits_its_vertices_with_their_skin_and_morphs() {
     let fixture = seam(true);
@@ -276,6 +282,7 @@ fn a_mirrored_seam_splits_its_vertices_with_their_skin_and_morphs() {
 // tangent reaching a vertex, or the mesh left without frames, which would
 // take its whole material off its vertex frames. The oracle is the
 // contract: a frame glTF accepts, in the normal's plane.
+#[cfg(feature = "mikktspace")]
 #[test]
 fn degenerate_coordinates_take_a_frame_in_the_normals_plane() {
     let fixture = seam_at(true, |_, _| [0.5, 0.5]);
@@ -292,6 +299,7 @@ fn degenerate_coordinates_take_a_frame_in_the_normals_plane() {
 // glTF's frame of each node's coordinates as they lie after its
 // transform (`assert_seam_frames`); the seam is symmetric about x = 0, so
 // both nodes' triangles left of it take +X with handedness +1.
+#[cfg(feature = "mikktspace")]
 #[test]
 fn a_mesh_two_nodes_use_takes_each_nodes_frame() {
     let (mut document, values) = seam_parts(true, |x, y| [1. - f32::abs(x), (1. - y) / 2.]);
@@ -371,6 +379,7 @@ fn fan(triangles: u32) -> Fixture {
 // and the load's time: a 20 000-triangle fan generated takes over a second
 // in a release build, several times more in a debug one, and loads in a
 // small part of that when skipped.
+#[cfg(feature = "mikktspace")]
 #[test]
 fn a_vertex_too_many_triangles_share_keeps_the_triangle_frame() {
     let at_cap = tangents_cap();
@@ -398,6 +407,51 @@ fn a_vertex_too_many_triangles_share_keeps_the_triangle_frame() {
         );
         assert!(seconds < 0.5, "{triangles} triangles: {seconds} s");
     }
+}
+
+// Without the `mikktspace` feature there is no generator: a primitive that
+// needs a frame and carries no TANGENT loads under the default setting as
+// under `AuthoredOnly`, keeping the frame of each triangle's coordinates,
+// and is listed, as one over the cap is; an anisotropic one fails the load,
+// naming the feature. Defects: such a primitive given a placeholder frame
+// (which would take its material off the triangle frame), split, or left
+// unlisted; one listed where the game asked for no generation; an
+// anisotropic one loaded without a frame, or refused as if over the cap.
+// The oracle is the contract (`TangentFrames::Generate`,
+// `Ignored::TangentFrames`).
+#[cfg(not(feature = "mikktspace"))]
+#[test]
+fn without_mikktspace_a_primitive_without_tangents_keeps_the_triangle_frame() {
+    let fixture = seam(true);
+    let generated = load_frames(&fixture.path(), TangentFrames::Generate);
+    let authored = load_frames(&fixture.path(), TangentFrames::AuthoredOnly);
+    assert_eq!(
+        generated.ignored,
+        [Ignored::TangentFrames {
+            mesh: 0,
+            primitive: 0
+        }]
+    );
+    assert!(authored.ignored.is_empty(), "{:?}", authored.ignored);
+    for asset in [&generated, &authored] {
+        assert_eq!(asset.meshes.len(), 1);
+        let vertices = &asset.meshes[0].vertices;
+        assert_eq!(vertices.len(), 4, "a split");
+        assert!(vertices.iter().all(|vertex| vertex.tangent == [0.; 4]));
+    }
+    let (mut document, values) = seam_parts(true, |x, y| [1. - f32::abs(x), (1. - y) / 2.]);
+    document["extensionsUsed"] = serde_json::json!(["KHR_materials_anisotropy"]);
+    document["materials"][0]["extensions"] =
+        serde_json::json!({"KHR_materials_anisotropy": {"anisotropyStrength": 0.7}});
+    let fixture = Fixture::new(&serde_json::to_vec(&document).unwrap(), &values);
+    let error = load_with_options(&fixture.path(), LoadOptions::default())
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains("mikktspace feature") && error.contains("TANGENT"),
+        "{error}"
+    );
 }
 
 /// The cap the loader applies.

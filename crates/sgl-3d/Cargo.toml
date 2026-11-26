@@ -34,15 +34,20 @@ include = [
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [features]
-default = []
+default = ["mikktspace"]
 diagnostics = []
+# MikkTSpace tangent frames for glTF primitives that need one and carry none
+# (`asset::TangentFrames::Generate`). Without it such a primitive keeps the
+# frame of each triangle's coordinates and is listed in `Asset::ignored`.
+mikktspace = ["dep:bevy_mikktspace"]
 
 [dependencies]
 # Decodes a BC7 material image's level 0 for the scene's ray source.
 bcdec_rs.workspace = true
 # MikkTSpace tangent frames for glTF primitives that need one and carry none
-# (content::tangents), as glTF 2.0 3.7.2.1 defines absent tangents.
-bevy_mikktspace.workspace = true
+# (content::tangents), as glTF 2.0 3.7.2.1 defines absent tangents; the
+# `mikktspace` feature.
+bevy_mikktspace = { workspace = true, optional = true }
 bytemuck.workspace = true
 sgl-post-fx.workspace = true
 glam.workspace = true
@@ -98,7 +103,9 @@ pollster.workspace = true
 wasm-bindgen-test.workspace = true
 # Unit tests exercise the diagnostics accessors.
 # Keep this path-only: Cargo omits it when publishing, avoiding a registry self-dependency.
-sgl-3d = { path = ".", features = ["diagnostics"] }
+# Without default features, so `--no-default-features` tests the build without
+# `mikktspace`.
+sgl-3d = { path = ".", default-features = false, features = ["diagnostics"] }
 
 # The floor tests validate frames on wgpu's noop backend, which reports the
 # floor's limits and runs wgpu's validation without a GPU or a backend's

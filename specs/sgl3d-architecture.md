@@ -3687,8 +3687,9 @@ last, after everything it may use, and refuses a directive in it.
   has a normal map, anisotropy or a clearcoat normal map on the normal
   map's set, generated at import by MikkTSpace (`LoadOptions::tangents`,
   `TangentFrames::Generate` by default; glTF 2.0 3.7.2.1 defines absent
-  tangents so; `content::tangents`, through `bevy_mikktspace`,
-  [D-88](decisions.md)) on that set as stored, in the mesh's own space and
+  tangents so; `content::tangents`, through `bevy_mikktspace`, the
+  default-on `mikktspace` feature, [D-88](decisions.md),
+  [D-97](decisions.md)) on that set as stored, in the mesh's own space and
   winding, once a mesh whichever nodes use it, unless more than
   `tangents::MOST_TRIANGLES_AT_A_VERTEX` (1 024) triangles share one of its
   vertices (`Ignored::TangentFrames`), then carried through each node as an

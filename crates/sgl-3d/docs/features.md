@@ -113,7 +113,10 @@ them through unrefracted. A probe captured on an
   `TangentFrames::AuthoredOnly` to keep the milliseconds: such a
   primitive's normal maps then take the frame of each triangle's
   coordinates, which turns at triangle edges where a baked map expects a
-  smooth frame, and an anisotropic one fails the load. A material takes
+  smooth frame, and an anisotropic one fails the load. Building without the
+  default `mikktspace` feature drops the generator and its `bevy_mikktspace`
+  dependency: such a primitive then takes that triangle frame under either
+  setting and is listed in `Asset::ignored`. A material takes
   its meshes' vertex tangents for its normal maps while every mesh drawing
   it has them, and each triangle's frame otherwise. Other
   unsupported features return errors rather

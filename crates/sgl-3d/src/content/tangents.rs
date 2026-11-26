@@ -10,9 +10,14 @@
 //! each triangle corner its own frame; a vertex whose corners take different
 //! frames (a mirrored island meeting another at a seam whose coordinates
 //! coincide) is split, so each keeps its own (specs/sgl3d-architecture.md,
-//! Material map coordinates).
+//! Material map coordinates). The generator is the `mikktspace` feature,
+//! on by default; without it `generate` frames nothing, so each such
+//! triangle list keeps the frame of each triangle's coordinates.
+#[cfg(feature = "mikktspace")]
 use bevy_mikktspace::{Geometry, TangentSpace};
+#[cfg(feature = "mikktspace")]
 use rustc_hash::FxHashMap;
+#[cfg(feature = "mikktspace")]
 use std::collections::HashMap;
 
 /// The most triangles that may share one vertex of a triangle list that
@@ -30,6 +35,7 @@ pub(crate) const MOST_TRIANGLES_AT_A_VERTEX: usize = 1024;
 
 /// A triangle list's corners, read by MikkTSpace, and the frame it gives
 /// each corner.
+#[cfg(feature = "mikktspace")]
 struct Corners<'a> {
     positions: &'a [[f32; 3]],
     normals: &'a [[f32; 3]],
@@ -38,12 +44,14 @@ struct Corners<'a> {
     frames: Vec<Option<[f32; 4]>>,
 }
 
+#[cfg(feature = "mikktspace")]
 impl Corners<'_> {
     fn vertex(&self, face: usize, vert: usize) -> usize {
         self.triangles[face * 3 + vert] as usize
     }
 }
 
+#[cfg(feature = "mikktspace")]
 impl Geometry for Corners<'_> {
     fn num_faces(&self) -> usize {
         self.triangles.len() / 3
@@ -78,6 +86,7 @@ impl Geometry for Corners<'_> {
 
 /// A triangle list with a frame for each vertex.
 #[derive(Debug, PartialEq)]
+#[cfg_attr(not(feature = "mikktspace"), allow(dead_code))]
 pub(crate) struct Framed {
     /// Each vertex's source vertex: the source's own first, in order, then
     /// one for each split, each a copy of the vertex it names.
@@ -94,6 +103,7 @@ pub(crate) struct Framed {
 /// `positions`, `normals` and the coordinates `uvs` of the normal map, one
 /// of each a vertex, in the triangles' own winding and space; none where
 /// more than `MOST_TRIANGLES_AT_A_VERTEX` triangles share one vertex.
+#[cfg(feature = "mikktspace")]
 pub(crate) fn generate(
     positions: &[[f32; 3]],
     normals: &[[f32; 3]],
@@ -130,10 +140,22 @@ pub(crate) fn generate(
     Some(split(positions.len(), triangles, &corners.frames))
 }
 
+/// None: without the `mikktspace` feature there is no generator.
+#[cfg(not(feature = "mikktspace"))]
+pub(crate) fn generate(
+    _positions: &[[f32; 3]],
+    _normals: &[[f32; 3]],
+    _uvs: &[[f32; 2]],
+    _triangles: &[u32],
+) -> Option<Framed> {
+    None
+}
+
 /// `triangles` over `vertices` source vertices with each corner's frame
 /// `corners`: a vertex keeps its first corner's frame, and a corner with
 /// another frame takes a copy of it with that frame, one copy a distinct
 /// frame.
+#[cfg(feature = "mikktspace")]
 fn split(vertices: usize, triangles: &[u32], corners: &[Option<[f32; 4]>]) -> Framed {
     let key = |frame: Option<[f32; 4]>| frame.map(|frame| frame.map(f32::to_bits));
     let mut source: Vec<u32> = (0..vertices as u32).collect();
@@ -167,7 +189,7 @@ fn split(vertices: usize, triangles: &[u32], corners: &[Option<[f32; 4]>]) -> Fr
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "mikktspace"))]
 mod tests {
     use super::*;
     use glam::Vec3;

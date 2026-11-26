@@ -64,7 +64,10 @@ mod topology_tests;
 pub enum TangentFrames {
     /// MikkTSpace's, on the normal map's UV set, as glTF 2.0 3.7.2.1 defines
     /// absent tangents; a vertex whose triangles take different frames (a
-    /// mirrored seam) is split.
+    /// mirrored seam) is split. Without the `mikktspace` feature (on by
+    /// default) none is generated: the primitive keeps the frame of each
+    /// triangle's coordinates and is listed as [`Ignored::TangentFrames`],
+    /// and an anisotropic one fails the load.
     #[default]
     Generate,
     /// None: its normal maps take the per-triangle frame, and an
@@ -299,9 +302,10 @@ pub enum Ignored {
     InstanceAttribute { node: usize, name: String },
     /// The tangent frames of mesh `mesh`'s primitive `primitive`, which
     /// needs them and carries no `TANGENT`, where more than 1 024 triangles
-    /// share one of its vertices: generating them costs the square of that
-    /// count, so they are not, and its normal maps take the frame of each
-    /// triangle's coordinates (`LoadOptions::tangents`).
+    /// share one of its vertices (generating them costs the square of that
+    /// count) or sgl-3d is built without its `mikktspace` feature: they are
+    /// not generated, and its normal maps take the frame of each triangle's
+    /// coordinates (`LoadOptions::tangents`).
     TangentFrames { mesh: usize, primitive: usize },
 }
 

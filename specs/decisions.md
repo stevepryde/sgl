@@ -2241,3 +2241,17 @@ Use the [current specs](README.md) for implementation and the
   Rationale: the choice is the game's policy for each track (D-95), and
   both share one buffer, one playback setting and one rule for where an
   instant falls, so nothing is implemented twice.
+
+- **D-98** Decision, 2026-11-26 (#927): `bevy_mikktspace` is optional,
+  behind `sgl-3d`'s `mikktspace` feature, on by default, and nothing else
+  in `content::tangents` depends on it. Without it `TangentFrames::Generate`
+  generates nothing: a primitive it would frame takes the per-triangle
+  frame (what `AuthoredOnly` gives, and a primitive over the D-88 cap
+  takes) and is listed as `Ignored::TangentFrames`, and an anisotropic one
+  fails the load, naming the feature. Why: a game whose dependency policy
+  excludes Bevy crates (Steveworld's) exports its tangents or builds its
+  meshes in code, and needs no generator. Not taken: removing `Generate`
+  from the enum without the feature, which would make the same game code
+  compile under one feature set and not another; making the default
+  `AuthoredOnly` without it, which would make what a load does depend on
+  which crate in a build enabled the feature.

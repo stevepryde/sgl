@@ -267,6 +267,17 @@ fn lit_as_its_geometry(
             .join(file),
     )
     .unwrap_or_else(|error| panic!("{file}: {error}"));
+    // Without the `mikktspace` feature an asset without TANGENT has no
+    // vertex frames to light, as its load reports.
+    if !cfg!(feature = "mikktspace")
+        && matches!(frames, Frames::Vertex)
+        && asset
+            .ignored
+            .iter()
+            .any(|ignored| matches!(ignored, crate::asset::Ignored::TangentFrames { .. }))
+    {
+        return;
+    }
     assert_eq!(asset.meshes.len(), 1, "{file}: one primitive");
     for vertex in &mut asset.meshes[0].vertices {
         match frames {
@@ -388,6 +399,7 @@ fn lit_as_its_geometry(
 }
 
 // Its tangents generated at load (it carries none): the vertex frames.
+#[cfg(feature = "mikktspace")]
 #[test]
 fn normal_tangent_test_is_lit_as_its_geometry_on_generated_frames() {
     lit_as_its_geometry(
@@ -525,6 +537,7 @@ fn khronos_assets_are_lit_as_their_geometry_in_planar_reflections() {
 // generation skipped (the stripped asset then shades on the per-triangle
 // frame), its frames wrong-handed or turned, or shading not taking them
 // (the per-triangle frame again).
+#[cfg(feature = "mikktspace")]
 #[test]
 fn generated_frames_shade_the_avocado_as_its_own_tangents_do() {
     let Some((device, queue)) = crate::test_support::device() else {
