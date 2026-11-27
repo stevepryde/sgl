@@ -695,7 +695,11 @@ fn sprites_bind_the_masks_only_in_frames_they_mark() {
 // frame. The oracle: wgpu's own count of the device's pipelines and shader
 // modules and the library's count of buffers it created and bytes it
 // uploaded over two frames, equal with and without an empty batch, and
-// with and without a sprite image (beyond the image's own upload).
+// with and without a sprite image (beyond the image's own upload). The
+// device is waited on after each frame, so the frame's geometry statistics
+// readback has arrived and the next frame reuses its buffer: unwaited, the
+// second frame makes a second buffer or not as the readback happens to
+// have arrived, and the counts differ by chance.
 #[test]
 fn an_empty_batch_costs_nothing() {
     let run = |image: bool, empty: bool| {
@@ -710,8 +714,10 @@ fn an_empty_batch_costs_nothing() {
         let started = crate::counters::snapshot();
         let mut frames = Frames::new(&device, &queue, settings(settings::Antialiasing::Taa));
         let camera = camera(Vec3::ZERO, Vec3::NEG_Z);
-        frames.render(&device, &queue, &mut scene, camera);
-        frames.render(&device, &queue, &mut scene, camera);
+        for _ in 0..2 {
+            frames.render(&device, &queue, &mut scene, camera);
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        }
         let counted = crate::counters::snapshot().since(&started);
         let hub = instance.generate_report().unwrap();
         let hub = hub.hub_report();
